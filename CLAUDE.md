@@ -74,25 +74,51 @@ Meta_Kim/
 ├── CLAUDE.md                        # 本文件（Claude Code 自动读取）
 ├── .claude/
 │   ├── agents/                      # 8 个可 spawn 的子代理
-│   │   ├── meta-warden.md           # 经理 — 协调 + 质量标准
+│   │   ├── meta-warden.md           # 经理 — 协调 + 质量标准 + 元评审 + 意图放大审查
 │   │   ├── meta-genesis.md          # 灵魂元 — SOUL.md 设计
 │   │   ├── meta-artisan.md          # 技艺元 — Skill/Tool 匹配
 │   │   ├── meta-sentinel.md         # 哨兵元 — 安全/权限
 │   │   ├── meta-librarian.md        # 典藏元 — 记忆/知识
-│   │   ├── meta-conductor.md        # 编排元 — 工作流
-│   │   ├── meta-prism.md            # 审查员 — 质量法医
+│   │   ├── meta-conductor.md        # 编排元 — 工作流 + 事件牌组 + 节奏控制
+│   │   ├── meta-prism.md            # 审查员 — 质量法医 + 被审查协议
 │   │   └── meta-scout.md            # 发现者 — 工具扫描
 │   └── skills/
-│       └── meta-theory/SKILL.md     # 元理论方法论
+│       └── meta-theory/
+│           ├── SKILL.md             # 元理论方法论（统一入口）
+│           └── references/
+│               ├── meta-theory.md           # 四主线总纲 + 5标准 + 三层架构
+│               ├── rhythm-orchestration.md  # 节奏编排：牌组机制 + 发牌规则 + 七大启发
+│               ├── intent-amplification.md  # 意图放大：意图核+交付壳 + 5维进化放大
+│               ├── ten-step-governance.md   # 十步治理：每步详解 + 复杂度路由 + 元评审
+│               ├── create-agent.md          # 创建流水线详细模板
+│               └── dev-governance.md        # 开发治理 5 维度展开
+├── install-deps.sh                  # 元技能依赖一键安装
 ├── README.md                        # 项目概览
-├── meta.md                          # 元理论原文（老金直播记录）
-├── analysis/                        # 四引擎分析文档
-└── task_plan.md                     # 执行计划
+├── meta/
+│   └── meta.md                      # 元理论原文（老金直播记录）
+└── package.json                     # 项目依赖
 ```
 
-## 依赖
+## 依赖（元技能）
 
-本项目是纯文档 + Agent/Skill 项目，无需安装任何依赖。
-用 Claude Code 打开目录即可使用。
+本项目的 8 个 agent 在工作时会调用一些社区高星 Skill 来放大准确率和高效性。
+运行 `install-deps.sh` 可一键安装到全局 `~/.claude/skills/`：
+
+```bash
+bash install-deps.sh
+```
+
+| 元技能 | 来源 | 调用者 | 用途 |
+|--------|------|--------|------|
+| **agent-teams-playbook** | [KimYx0207/agent-teams-playbook](https://github.com/KimYx0207/agent-teams-playbook) | Warden, Conductor | 6 阶段多 Agent 编排框架，5 种场景决策树 |
+| **findskill** | [KimYx0207/findskill](https://github.com/KimYx0207/findskill) | Artisan, Scout | Skills.sh 生态搜索引擎 |
+| **superpowers** | [obra/superpowers](https://github.com/obra/superpowers) ⭐89K | 全员 | 纪律性工作流：brainstorming、TDD、systematic-debugging、verification |
+| **everything-claude-code** | [affaan-m/everything-claude-code](https://github.com/affaan-m/everything-claude-code) ⭐81K | Artisan, Sentinel, Prism, Scout | 29 skill + 13 subagent 候选池 |
+| **planning-with-files** | [OthmanAdi/planning-with-files](https://github.com/OthmanAdi/planning-with-files) ⭐16K | Warden, Librarian, Conductor | Manus 式文件化规划（task_plan + findings + progress） |
+| **cli-anything** | [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) ⭐17K | Scout (可选) | GUI→CLI 自动转换 |
+| **skill-creator** | [anthropics/skills](https://github.com/anthropics/skills) (官方) | Genesis | Skill 全生命周期：设计→测试→评分→迭代→打包 |
+
+> 安装脚本支持代理：设置 `HTTPS_PROXY` 或 `HTTP_PROXY` 环境变量即可。
+> 已安装的 Skill 会自动跳过（不会重复安装）。
 
 如需运行 `meta-factory.mjs` 纯函数（agent 创建管线），请参考 `个人主页` 项目中的 `scripts/meta/` 目录。

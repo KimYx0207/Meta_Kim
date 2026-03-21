@@ -1,284 +1,473 @@
 ---
 name: meta-theory
 description: |
-  Agent system design methodology based on the "最小可治理单元" (Minimum Governable Unit) theory.
-  Use this skill PROACTIVELY when:
-  - Designing new AI agent systems or multi-agent architectures
-  - Deciding how to split responsibilities across agents
-  - Evaluating whether an existing agent is doing too much (一锅炖) or the system is over-fragmented (碎成渣)
-  - Planning agent team structures, workflows, or organizational hierarchies
-  - Reviewing agent SOUL.md / system prompts for scope creep
-  - Anyone mentions "元", "meta", "agent拆分", "职责划分", "治理", or "organizational design for AI"
-  This skill provides the complete theoretical framework — the 5 criteria, 3 layers, 9 dimensions, 2 failure modes, and validation methodology.
+  元兵工厂 — 最小可治理单元方法论。统一入口，动态流程。
+
+  四条主线：元(拆) → 组织镜像(组) → 节奏编排(发) → 意图放大(成)
+
+  触发条件（任一匹配）：
+  - 用户讨论"元"、"meta"、"最小可治理单元"、"元兵工厂"
+  - 用户讨论"组织镜像"、"节奏编排"、"意图放大"、"事件牌组"、"出牌"
+  - 用户要求创建agent、设计架构、拆分职责
+  - 用户给出复杂开发任务、要求治理流程
+  - 用户说"按元架构做"、"走治理流程"
+  - 用户问"怎么拆"、"怎么组"、"怎么发"、"怎么成"
 ---
 
-# Meta-Theory: 最小可治理单元方法论
+# 元兵工厂 — 最小可治理单元方法论
 
-_Source: 老金 2.5h livestream "从单一指令到全组织行动"_
+## 你的角色
 
-## Core Definition
+你是 **元架构执行框架**。收到触发条件时，你负责：
+1. **判断输入类型** → 选择对应流程
+2. **按流程执行** → 每一步有具体操作指令
+3. **贯穿三条铁律** → Critical > Fetch > Review
 
-**元 = 最小可治理单元 (Minimum Governable Unit)**
+### 三条铁律
 
-Not "最小执行单位" — the word **治理** (governable) is the key distinction. A button is a unit. A code block is a unit. But they can't necessarily be orchestrated, verified, replaced, or evolved. A 元 can.
+1. **Critical > 猜测** — 需求不清时追问，不假设
+2. **Fetch > 假设** — 先搜索验证，不假设 agent/skill 存在
+3. **Review > 信任** — 任何产出必须评审，不信任单次结果
 
-## The 5 Criteria (元的五标准)
+---
 
-Every valid 元 must satisfy ALL five. If any fails, it's not a proper 元 — it's either too big, too small, or too tangled.
-
-| # | Criterion | What It Means | Red Flag If Violated |
-|---|-----------|---------------|---------------------|
-| 1 | **独立 (Independent)** | Can receive input and produce output on its own. Can be understood, discussed, and invoked in isolation. | "This agent needs Agent X running simultaneously to do anything" |
-| 2 | **足够小 (Small Enough)** | Single domain of responsibility. Splitting further would add governance cost without benefit. | "This agent handles prompts AND security AND memory AND tools" |
-| 3 | **边界清晰 (Clear Boundaries)** | Explicitly defined: what it IS responsible for, what it IS NOT. | "Well, Agent A sometimes does security checks too, when it feels like it" |
-| 4 | **可替换 (Replaceable)** | Swapping it out doesn't collapse the system. Can be upgraded, replaced, or reorganized. | "If we change the review agent, the entire pipeline breaks" |
-| 5 | **可复用 (Reusable)** | Useful across multiple tasks/scenarios. Not a one-off hack. | "This only works for that one specific workflow we ran last Tuesday" |
-
-### Validation Checklist
-
-When evaluating a candidate 元, fill this table:
+## 动态流程选择
 
 ```
-| Criterion       | Evidence (具体证据)                    | Pass? |
-|-----------------|---------------------------------------|-------|
-| Independent     | Input: ___ → Output: ___              | ✅/❌  |
-| Small Enough    | Covers domain: ___ (and nothing else) | ✅/❌  |
-| Clear Boundaries| Responsible for: ___ / NOT for: ___   | ✅/❌  |
-| Replaceable     | If removed, affects: ___              | ✅/❌  |
-| Reusable        | Used in scenarios: ___                | ✅/❌  |
+[用户输入]
+  ↓
+Critical: 判断输入类型
+  ├─ 类型A：讨论元理论/拆分原则/评估 agent → 元理论分析流程
+  ├─ 类型B：创建新 agent/拆分现有 agent → Agent 创建流水线
+  ├─ 类型C：复杂开发任务/功能实现 → 开发治理流程
+  ├─ 类型D：已有方案要审查 → 审查验证流程
+  └─ 类型E：节奏/出牌/编排策略 → 节奏编排流程
 ```
 
-All 5 must pass. 4/5 = redesign needed.
+---
 
-## The 2 Failure Modes (两种死法)
+## 类型A：元理论分析流程
 
-These are the two extremes that 元 theory exists to avoid. Every design decision should be checked against both.
+### 场景
+用户想理解元理论、讨论拆分原则、评估现有 agent 是否合理、讨论组织镜像/意图放大。
 
-### 死法一: 一锅炖 (Everything in One Pot)
+### 执行步骤
 
-**Symptom**: One agent/prompt handles everything. Looks powerful. Actually overloaded.
+**Step 1: 读取理论框架**
+读取 `references/meta-theory.md` 获取完整方法论（四条主线、5标准、四种死法、三层架构）。
 
-- Context, attention, judgment, and stability are all finite resources
-- Cramming everything in doesn't create omnipotence — it creates a "fat system" that will eventually cross-contaminate, fatigue, and lose control
-- "一个人什么都干，不叫强。在系统设计里，这通常意味着偷懒。"
-
-**Diagnostic questions**:
-- Does this agent have more than 2 unrelated domains of responsibility?
-- Would its SOUL.md/system prompt exceed 300 lines if all responsibilities were properly documented?
-- Could you split its work across 2+ specialists without creating sync overhead?
-
-If yes to any → you're probably in 一锅炖 territory.
-
-### 死法二: 碎成渣 (Fragmented to Dust)
-
-**Symptom**: Too many tiny agents. Each does almost nothing. Coordination cost exceeds execution value.
-
-- "今天一个 agent，明天一个 agent，后天再来一个 agent。工具越堆越多，角色越分越细，最后系统像一地玻璃渣，看着很高级，谁也拼不回来。"
-
-**Diagnostic questions**:
-- Can this agent produce meaningful output independently, or does it always need another agent's output first?
-- Is the communication overhead between these agents greater than the value of separating them?
-- Could two of these agents be merged without violating the "足够小" criterion?
-
-If yes to any → you've probably fragmented too far.
-
-### The Sweet Spot
-
-"既足够小，又足够完整；既能独立存在，又能进入协作；既能承担职责，又不会把整个系统拖死。"
-
-## The 3 Layers of 元
-
-元 is not flat. It operates on at least three layers:
-
-### Layer 1: 执行元 (Execution Meta)
-
-The front-line workers. They DO the business work directly.
-
-- Write content, analyze data, generate code, review documents, create designs
-- Most important quality: **职责纯 (pure responsibility)**
-- "今天你让写稿的顺手做审校，明天让审校的顺手做策略 — 最后每个人都在'帮忙'，系统却越来越脏"
-- **"顺手，是系统的大敌"** — this is a core principle. Cross-responsibility "helpfulness" is system contamination.
-
-### Layer 2: 编排元 (Orchestration Meta)
-
-The conductors. They don't do the work — they organize who does what, when.
-
-Decides:
-- Who goes first, who goes after
-- What depends on what
-- Which steps are linear vs parallel
-- Where to fall back on errors
-- What conditions gate the next step
-- **Rhythm control**: not just task ordering, but WHEN to deliver what (节奏编排)
-
-"协同可以扁平，治理不能缺位" — Flat collaboration is fine. Missing governance is fatal.
-
-### Layer 3: 基础设施元 (Infrastructure Meta)
-
-The capability builders. They don't produce business output — they build the capabilities that make everything else possible.
-
-The 9 capability dimensions:
-
-| # | Dimension | What It Covers |
-|---|-----------|---------------|
-| 1 | 提示词体系 (Prompt System) | SOUL.md design, Core Truths, persona definition |
-| 2 | 技能体系 (Skill System) | Skill matching, creation, audit |
-| 3 | 工具体系 (Tool System) | Tool selection, MCP server matching |
-| 4 | 知识体系 (Knowledge System) | Domain knowledge, reference materials |
-| 5 | 记忆体系 (Memory System) | MEMORY.md strategy, cross-session continuity |
-| 6 | 工作流体系 (Workflow System) | Pipeline design, phase orchestration |
-| 7 | 规则基线 (Rule Baseline) | Decision Rules, Anti-AI-Slop, behavioral constraints |
-| 8 | 权限控制 (Permission Control) | Access boundaries, role permissions |
-| 9 | 安全与回滚 (Security & Rollback) | Hooks, safety red lines, rollback mechanisms |
-
-**Key insight**: These 9 dimensions should NOT all live in one agent. That's 死法一. They should be grouped by coupling into specialized infrastructure 元, each satisfying the 5 criteria.
-
-## The 4 Death Modes (四种典型死法)
-
-Beyond the two extremes, there are four specific anti-patterns:
-
-### 1. 把所有东西塞进一个 Agent
-
-"听起来像万能。实际上像超载。" Context, attention, and stability are finite. An agent that does everything will eventually cross-contaminate and lose coherence.
-
-### 2. 不分边界
-
-"顺手，是系统的大敌。" When every agent "helps out" with a little bit of everything, you get collective responsibility pollution. Systems don't die from nobody working — they die from everyone doing a little extra outside their lane.
-
-### 3. 只有执行，没有治理
-
-Only planning direction + execution. Missing: review, meta-review, revision, verification, feedback, evolution. "会动，不等于成熟。会动，不等于可靠。"
-
-### 4. 只追结果，不做结构
-
-One successful run ≠ a working method. "一次生成成功，不值钱" — Can you repeat it? Can someone else repeat it? Can it survive a model change? If not, you didn't build a system — you got lucky.
-
-## The 10-Step Governance Process
-
-A mature system flow has 10 steps. The real difficulty is in steps 4-10:
-
+**Step 2: 搜索现有 agent**
 ```
- 1. 方向 (Direction)     — Set the goal
- 2. 规划 (Planning)      — Break down the work
- 3. 执行 (Execution)     — Do the work
- 4. 评审 (Review)        — Judge the output
- 5. 元评审 (Meta-Review) — Judge the judge
- 6. 修订 (Revision)      — Fix based on feedback
- 7. 验证 (Verification)  — Confirm fixes actually work
- 8. 汇总 (Summary)       — Aggregate results
- 9. 反馈 (Feedback)      — Higher-level evaluation
-10. 进化 (Evolution)     — Learn and improve for next cycle
+Glob: .claude/agents/*.md
+```
+读取每个 agent 定义文件，理解现状。
+
+**Step 3: 5标准逐项验证**
+
+对每个 agent 填表：
+
+| 标准 | 证据 | Pass? |
+|------|------|-------|
+| 独立 — 可单独理解、调用、产出 | {具体证据} | ✅/❌ |
+| 足够小 — 再拆无意义或成本反噬 | {具体证据} | ✅/❌ |
+| 边界清晰 — 明确"只管"和"不碰" | {具体证据} | ✅/❌ |
+| 可替换 — 换掉不塌，能升级/重组 | {具体证据} | ✅/❌ |
+| 可复用 — 跨场景有用，非一次性 | {具体证据} | ✅/❌ |
+
+**Step 4: 四种死法检测**
+
+| 死法 | 症状 | 诊断问题 |
+|------|------|---------|
+| 一锅炖 | 一个 agent 什么都能干 | >2 不相关域？SOUL.md >300行？ |
+| 碎成渣 | agent 太多太碎 | 需要其他 agent 输出才能产出？协调成本>价值？ |
+| 只有执行没有治理 | 只有方向→规划→执行 | 谁评审？谁评审评审者？经验怎么沉淀？ |
+| 只追结果不做结构 | 一次跑通就当圣经 | 明天还能跑通吗？别人接手能跑通吗？ |
+
+**Step 5: 输出分析报告**，包含每个 agent 的验证表 + 死法检测结果 + 改进建议。
+
+---
+
+## 类型B：Agent 创建流水线
+
+### 场景
+用户要求创建新 agent、拆分现有 agent 职责。
+
+### 你的角色
+你扮演 **meta-warden**（管道协调者）。`.claude/agents/meta-*.md` 是各站点的方法论参考——你在每个站点开始时读取对应文件，按其中的方法论执行。
+
+### 两种入口
+
+- **模式A（发现模式）**：用户说"帮我设计agent"但没有明确清单 → 走完整 Phase 1
+- **模式B（直接模式）**：用户已有明确清单 → 跳过 Phase 1，直接 Phase 2
+
+### Phase 1: 发现与拆分（模式A专用）
+
+**Step 0: 数据收集**
+
+运行以下 git 命令收集项目数据：
+
+```bash
+# 提交总数
+git log --since="6 months ago" --oneline | wc -l
+
+# 提交类型分布
+git log --since="6 months ago" --oneline | awk '{print $2}' | sed 's/:.*//' | sort | uniq -c | sort -rn
+
+# 目录变更热力图
+git log --since="6 months ago" --name-only --pretty=format:"" | sed '/^$/d' | sed 's|/[^/]*$||' | sort | uniq -c | sort -rn | head -20
+
+# 文件共变分析（高耦合检测）
+git log --since="6 months ago" --name-only --pretty=format:"---" | awk 'BEGIN{RS="---"} NF>1 {for(i=1;i<=NF;i++) for(j=i+1;j<=NF;j++) print $i, $j}' | sed 's|/[^/]*$||g' | sort | uniq -c | sort -rn | head -15
 ```
 
-"第一次做出来，不等于做对。做对，不等于做稳。做稳，不等于下次还能持续变好。"
+**Step 1: 能力维度列举**
+- 变更频率 >5% 的目录区域 = 候选独立域
+- 共变频率高的目录 = 应合并到同一 agent
+- 共变频率低的目录 = 可分离
 
-**The self-correction chain** is what separates a mature system from one that just "会动":
-- No review → it only charges forward blindly
-- No verification → it only performs
-- No evolution → it repeats mistakes
-- No rollback → it eventually drives off a cliff
+**Step 2: 耦合分组**
+- 高耦合合并，低耦合分离
+- 耦合判定：如果 A 改了，B 是否经常也要改？是→同 agent，否→可分
 
-## The Full Chain: 元 → 组织镜像 → 节奏编排 → 意图放大
+**Step 2.5: 用户确认**
+用 `AskUserQuestion` 展示拆分方案，列出每个候选 agent 的名称、职责域、数据证据。
+**铁律**：如果用户说"这两个能力类型不同"，即使数据显示耦合，也必须拆开。
 
-This is the complete methodology from atomic units to system-level outcomes:
+### Phase 2: 按需设计
 
-| Layer | Solves | Core Question |
-|-------|--------|--------------|
-| **元** | 怎么拆 (How to split) | What is the minimum governable unit? |
-| **组织镜像** | 怎么组 (How to organize) | How do 元 form a functional structure? |
-| **节奏编排** | 怎么发 (How to deliver) | When to release what, when to hold back? |
-| **意图放大** | 怎么成 (How to succeed) | How does a high-level intent become system-wide action? |
+**Genesis（灵魂）和 Artisan（技能）每个 Agent 必跑。其他三站按需判定。**
 
-### 组织镜像 (Organizational Mirror)
+在 Step 3 Genesis 完成后，对每个 Agent 回答三个问题：
 
-Map real organizational mechanisms into the multi-agent system:
-- 层级委派 (hierarchical delegation)
-- 职责分工 (role division)
-- 独立工作空间 (isolated workspaces)
-- 评审反馈 (review feedback)
-- 持续进化 (continuous evolution)
+| 问题 | Yes → 触发站点 |
+|------|---------------|
+| 它会修改文件、调用外部 API、操作数据库？ | Sentinel（安全） |
+| 它需要记住上次做了什么、积累学习经验？ | Librarian（记忆） |
+| 它需要和其他 Agent 交接成果、协调执行顺序？ | Conductor（编排） |
 
-NOT anthropomorphization. It's architectural mapping. "在功能结构上，它越来越像一个真正能运转的组织。"
+三个问题全 No → 只跑 Genesis + Artisan。
 
-Three problems it solves:
-1. **串味 (Cross-contamination)**: Domain A's content bleeds into Domain B
-2. **协调爆炸 (Coordination explosion)**: N agents → N² communication links
-3. **认知成本 (Cognitive overhead)**: Humans end up serving the system instead of the reverse
+**Step 3: Genesis — 灵魂设计（必选）**
 
-### 节奏编排 (Rhythm Orchestration)
+读取 `.claude/agents/meta-genesis.md`，按其方法论设计 SOUL.md。
 
-Inspired by open-world game event deck design. Key principles:
+产出必须包含 **8 个必备模块**：
+1. Core Truths — ≥3 条行为锚点，具体到该领域
+2. Role + Core Work — 有明确的"只管/不碰"边界
+3. Decision Rules — ≥3 条 if/then 规则
+4. Thinking Framework — 领域特定的分析步骤（不是工作流的复述）
+5. Anti-AI-Slop — 该领域的具体套话检测信号
+6. Output Quality — 好/坏示例对比
+7. Deliverable Flow — 清晰的 input→process→output
+8. Meta-Skills — ≥2 个自我提升方向
 
-1. **表面自由，底层有序** — Users feel freedom, but there's an optimal delivery order underneath
-2. **发牌员 (Dealers)** — Some 元 don't create content, they deliver it at the right moment
-3. **留白元 (Silence Meta)** — Sometimes the optimal action is doing nothing. "空白本身也是一种被设计的体验"
-4. **出牌成本** — Every piece of information competes for attention. "真正成熟的系统，不是知道的都说，而是知道什么时候说最值钱"
-5. **跳过 (Skip)** — If the user already knows, skip the card
-6. **插队 (Priority override)** — Critical issues jump the queue (紧急治理元)
-7. **同一意图，多种交付壳** — Same core message, different delivery formats per context
+**质量自检**：把 Agent 名字换成别的，SOUL.md 还成立 → 没有领域深度，D 级，重做。
 
-## How to Apply: Splitting Methodology
+**Step 4: Artisan — 技能匹配（必选）**
 
-When you need to split a monolithic agent or design a new multi-agent system:
+读取 `.claude/agents/meta-artisan.md`。
 
-### Step 1: List All Capability Dimensions
+1. 扫描可用 Skills：`ls .claude/skills/*/SKILL.md` + 系统内置 Skills
+2. ROI 评分：`ROI = (任务覆盖度 × 使用频率) / (上下文成本 + 学习曲线)`
+3. 产出：每个 Agent 的 Skill 推荐清单（Top 5-8，带 ROI 分数和理由）
 
-Enumerate every distinct responsibility the system needs. Be specific — "handles everything" is not a dimension.
+**Step 5: Sentinel — 安全设计（按需）**
 
-### Step 2: Group by Coupling
+读取 `.claude/agents/meta-sentinel.md`。
+- 威胁建模：该 Agent 领域的 Top 5 威胁
+- 权限设计：3 级（CAN / CANNOT / NEVER）
+- Hook 设计：PreToolUse / PostToolUse / Stop hooks
+- 产出：安全规则 + Hook 配置 + 权限边界
 
-Identify which dimensions are tightly coupled (splitting them would require constant sync) vs loosely coupled (they can work independently).
+**Step 6: Librarian — 记忆设计（按需）**
 
-**Coupling test**: If Dimension A changes, must Dimension B immediately update? If yes → same 元. If no → candidate for separation.
+读取 `.claude/agents/meta-librarian.md`。
+- 记忆架构：3 层（索引层 / 主题层 / 归档层）
+- 过期策略：按类型设过期规则
+- 产出：MEMORY.md 模板 + 持久化策略
 
-### Step 3: Validate Each Candidate 元
+**Step 7: Conductor — 编排设计（按需）**
 
-Run every proposed 元 through the 5-criteria checklist. ALL must pass.
+读取 `.claude/agents/meta-conductor.md`。
+- 协作流程：Agent 间的调用顺序、并行/串行
+- 触发条件：什么情况下 spawn 这个 Agent
+- 产出：工作流配置 + 触发规则
 
-### Step 4: Check for 碎成渣
+### Phase 3: 审查与修订
 
-For each proposed 元, ask: "Can this produce meaningful output independently?" If it can only work as a pass-through, it's too small. Merge it back.
+**Step 8: 批判性审查**
 
-**Anti-fragmentation test**: If merging two proposed 元 doesn't violate "足够小" (they're still in the same domain), merge them.
+对每个 Agent 的完整设计，回答 4 个问题：
+1. 我做了什么假设？有数据支撑吗？
+2. 把 Agent 名字换成别的，设计还成立吗？（成立 = 没有领域深度，重做）
+3. 有没有"顺手"的痕迹？（职责溢出到其他 Agent 领域）
+4. 哪些是真正思考过的，哪些是套模板的？
 
-### Step 5: Check for 一锅炖
+质量评级：
+- **S/A** → 通过
+- **B** → 补充具体案例、数据引用
+- **C** → 重写套话段落
+- **D** → 回到对应站点重做
 
-For the final grouping, ask: "Does any single 元 span more than 2 unrelated domains?" If yes, it needs further splitting.
+AI-Slop 检测：套话密度 >0 扣分、无具体文件/函数引用 = 不及格、可替换性高 = 无深度
 
-### Step 6: Define Interfaces
+**Step 9: 修订** — 最多 2 轮。2 轮后仍 B 级，交给用户决定。
 
-For each 元, define:
-- **Input**: What does it receive?
-- **Output**: What does it produce?
-- **Boundary**: What does it explicitly NOT handle?
-- **Collaboration protocol**: How does it communicate with neighboring 元?
+### Phase 4: 整合与验证
 
-### Step 7: Design Governance
+**Step 10: 整合写入**
 
-Apply the 10-step process. Ensure steps 4-10 are not missing. Specifically:
-- Who reviews each 元's output?
-- Who reviews the reviewer?
-- How does the system learn from each cycle?
+生成 `.claude/agents/{name}.md`，结构包含：身份、职责边界、Core Truths、Decision Rules、Thinking Framework、Anti-AI-Slop、Output Quality、Deliverable Flow、Meta-Skills、技能装备、安全规则（如有）、记忆策略（如有）、工作流（如有）、五标准验证表。
 
-## Quick Reference Card
+同步更新 `CLAUDE.md` 中的 agent 列表。
+
+**Step 11: 最终验证**
+
+| 检查项 | 不通过处理 |
+|--------|-----------|
+| 五标准 5/5 PASS | 回 Step 9 修订 |
+| 无死法（一锅炖/碎成渣） | 回 Step 2 重新分组 |
+| 8 模块完整 | 回 Step 3 补充 |
+| 跳站有明确理由 | 无理由 → 补跑 |
+
+**Step 12: 用户确认**
+
+用 `AskUserQuestion` 展示完整产出摘要。**获取用户明确的"确认"后才写入文件。**
+
+---
+
+## 类型C：开发治理流程
+
+### 场景
+用户给出复杂开发任务、要求按元架构执行。
+
+### 复杂度路由
 
 ```
-元 = 最小可治理单元
-
-五标准: 独立 | 足够小 | 边界清晰 | 可替换 | 可复用
-
-三层: 执行元(做事) → 编排元(调度) → 基础设施元(造能力)
-
-两种死法: 一锅炖(太胖) ↔ 碎成渣(太碎)
-
-四链路: 元(拆) → 组织镜像(组) → 节奏编排(发) → 意图放大(成)
-
-十步治理: 方向→规划→执行→评审→元评审→修订→验证→汇总→反馈→进化
-
-核心原则:
-  - "顺手，是系统的大敌"
-  - "一次生成成功，不值钱"
-  - "会动，不等于成熟"
-  - "协同可以扁平，治理不能缺位"
-  - "空白本身也是一种被设计的体验"
+IF <2 文件改动 → 简单：方向→执行→评审→验证→反馈（5步）
+IF 2-5 文件 → 中等：方向→规划→执行→评审→元评审→修订→验证→反馈（8步）
+IF >5 文件/多模块 → 复杂：全部10步
 ```
+
+**路由升级条件**：
+- 文件数从 <2 增加到 >2 → 简单升中等
+- 出现跨模块依赖 → 中等升复杂
+- Sentinel 报安全问题 → 任何升复杂
+- Prism 发现系统性问题 → 中等升复杂
+
+### 任务路由决策树
+
+```
+IF 只涉及 UI/样式/组件 → spawn Frontend agent
+IF 只涉及 API/DB/Auth → spawn Backend agent
+IF 涉及 ≥2 领域 → 拆解后并行 spawn
+IF 代码变更完成 → 必须 spawn Quality 验证
+IF 未找到匹配 agent → 触发类型B（创建流水线）
+```
+
+**注意**：不硬编码具体 agent 名，先用 Glob 搜索 `.claude/agents/*.md` 确认存在。
+
+### 完整 8 阶段流程
+
+**阶段 1: Critical 分析**
+- 需求清晰度检测（模糊 → 用 AskUserQuestion 追问，最多 2 轮）
+- 抽象化为"需要什么类型的元"
+- 复杂度评估 + 风险评估
+
+**阶段 2: Fetch 搜索**
+- 搜索现有 agents：`Glob: .claude/agents/*.md`
+- 搜索现有 skills：`Glob: .claude/skills/*/SKILL.md`
+- 验证能力匹配度
+
+**阶段 3: Critical 决策**
+- 找到匹配 → 验证是否符合"只管"边界 → 选择该 agent
+- 未找到 → 触发类型B创建流水线
+
+**阶段 4: Execution 执行**
+- 任务分配 + 文件所有权声明
+- 并行/串行决策（文件不重叠 → 安全并行，重叠 → 串行）
+
+**阶段 5: Review 评审**
+- 代码质量（code-reviewer agent）
+- UX 体验（web-design-guidelines skill，如适用）
+- 安全扫描（code-security skill，如适用）
+
+**阶段 6: Meta-Review 元评审**
+- agent 越界检测（meta-prism agent）
+- 架构合规性 + KISS/DRY/SOLID 检测
+
+**阶段 7: Revision 修订**（如需）
+- 根据评审意见修订，重新提交 Review，最多 2 轮
+
+**阶段 8: Evolution 意图放大**
+
+5 维度进化检测（每次任务完成后必须执行）：
+
+| 维度 | 检测什么 |
+|------|---------|
+| 模式复用 | 这次的解法能不能抽象成可复用模式？ |
+| agent 边界 | 现有 agent 边界还合理吗？需要拆/合？ |
+| 引导优化 | 用户交互路径能不能更短更顺？ |
+| 流程瓶颈 | 哪一步最慢/最容易出错？ |
+| 能力覆盖 | 有没有发现新的能力缺口？ |
+
+**检测不是终点——检测结果必须转化为放大操作**：
+
+| 维度 | 检测结果 | 放大操作 |
+|------|---------|---------|
+| 模式复用 | 发现可复用模式 | → 提取为 Skill/模板 → 注册到 Artisan 候选池 |
+| agent边界 | 边界不合理 | → 触发拆分/合并 → 走类型B创建流水线 |
+| 引导优化 | 交互路径冗余 | → 更新引导牌触发条件 → 优化追问策略 |
+| 流程瓶颈 | 发现瓶颈 | → 调整牌组优先级 → 增加并行或跳过条件 |
+| 能力覆盖 | 发现缺口 | → 创建新元/Skill → 或调用 Scout 搜索外部工具 |
+
+详细检测表见 `references/dev-governance.md`，进化放大操作详见 `references/intent-amplification.md`。
+
+### 事件牌组
+
+| 牌 | 触发条件 | 动作 |
+|----|---------|------|
+| 引导牌 | 需求模糊 | 追问 2 轮 |
+| 方向牌 | 需求清晰 | 记录意图 |
+| 规划牌 | 复杂度高 | 任务拆解 |
+| 执行牌 | 规划完成 | 分配任务 |
+| 审查牌 | 执行完成 | 质量评审 |
+| 元评审牌 | 审查完成 | 越界检测 |
+| 跳过牌 | 注意力成本 > 收益 | 简化跳过 |
+| 插队牌 | 紧急状态 | 优先处理 |
+| 留白牌 | 连续完成/需消化 | 暂停推送 |
+| 迭代牌 | 验收未通过 < 3 轮 | 重新循环 |
+
+---
+
+## 类型D：审查验证流程
+
+### 场景
+用户已有方案/agent 定义，要审查是否合理。
+
+### 执行步骤
+
+**Step 1: 读取待审查方案**
+读取用户指定的 agent 定义文件或方案文档。
+
+**Step 2: 审查检查表**
+
+逐项执行：
+- [ ] 5标准验证（每项填证据 + Pass/Fail）
+- [ ] 四种死法检测（无一锅炖/碎成渣/只执行/只追结果）
+- [ ] 8 模块完整性（SOUL.md 8 模块齐全）
+- [ ] AI-Slop 检测（套话/可替换性/具体性）
+- [ ] 质量评级（S/A/B/C/D）
+- [ ] 十步治理覆盖度（是否包含评审→元评审→验证→进化链路？详见 `references/ten-step-governance.md`）
+
+**Step 3: 输出审查报告**
+
+包含：每项的具体证据、评级、改进建议。不合格项必须给出具体修复操作。
+
+---
+
+## 类型E：节奏编排流程
+
+### 场景
+用户要设计系统的出牌策略、节奏控制、注意力成本管理。
+
+### 执行步骤
+
+**Step 1: 读取节奏编排方法论**
+
+读取两个参考文件：
+- `references/meta-theory.md` 的节奏编排概要
+- `references/rhythm-orchestration.md` 的完整注意力成本模型 + 发牌规则 + 七大启发
+
+**Step 2: 诊断当前节奏问题**
+
+用注意力成本三定律诊断：
+- 出牌有成本 → 是否信息过载（连续高成本推送）？
+- 时机决定价值 → 推送时机是否合理（该推的没推，不该推的乱推）？
+- 沉默也是设计 → 是否缺少留白（用户没有消化空间）？
+
+再检查三个内部机制：
+- **留白机制** → 是否连续 ≥3 轮高密度推送没有暂停？
+- **紧急治理机制** → 安全/质量警报是否能正确插队？
+- **发牌接口** → 交付通道选择是否合理（该写文件的用了对话，该通知的用了spawn）？
+
+**Step 3: 搜索现有编排**
+```
+Glob: .claude/agents/meta-conductor.md
+Grep: "牌" OR "编排" OR "节奏" in .claude/agents/*.md
+```
+
+**Step 4: 设计事件牌组配置**
+
+为该场景构建完整牌组：
+- 为每张牌填写：id、type、priority(1-10)、cost(low/mid/high)、precondition、skip_condition、interrupt_trigger、delivery_shell
+- 应用5条发牌规则（默认按priority → 检查skip → 留白防过载 → 插队优先 → 迭代上限）
+- 配置 Sentinel → Conductor 和 Prism → Conductor 的插队信号通道
+
+**Step 5: 选择交付壳**
+
+每张牌选择交付壳：
+- 确定受众（CEO/开发者/用户/审查员）
+- 确定触点（文档/对话/通知）
+- 确定上下文密度（首次/复查/紧急）
+- 确定注意力预算（高/中/低）
+
+**Step 6: 输出编排方案**
+
+格式：场景描述 → 问题诊断 → 牌组配置（含每张牌的完整属性） → 发牌规则 → 交付壳选择 → 预期效果。
+
+---
+
+## 关键约束
+
+1. **你是执行者**：收到触发后主动判断类型并执行，不是只输出理论
+2. **Critical 第一步**：任何输入先批判分析，不假设
+3. **Fetch 第二步**：先搜索验证 agent/skill 是否存在，不假设
+4. **Review 最后一步**：任何产出必须评审
+5. **Evolution 闭环**：任务完成后必须 5 维度进化检测
+6. **按需读取 references**：深入理论细节时读 `references/*.md`，但核心执行逻辑在本文件
+7. **注意力成本**：成熟系统知道什么时候说最值钱，不一股脑倾泻
+
+---
+
+## 依赖资源
+
+| 资源 | 何时读取 | 内容 |
+|------|---------|------|
+| `references/meta-theory.md` | 类型A/D/E 需要理论依据时 | 四条主线、5标准、四种死法、组织镜像、节奏编排概要、意图放大概要 |
+| `references/rhythm-orchestration.md` | 类型E 需要节奏编排详情时 | 注意力成本模型、发牌规则、七大启发、牌数据结构、插队信号通道 |
+| `references/intent-amplification.md` | 类型C阶段8 需要进化放大详情时 | 意图核+交付壳模型、壳选择4维度、5维进化放大操作、CEO报告壳适配 |
+| `references/ten-step-governance.md` | 类型C/D 需要完整治理路径时 | 十步每步详解（执行者/输入/输出/质量门控）、复杂度路由、元评审协议 |
+| `references/create-agent.md` | 类型B Phase 2-4 需要详细模板时 | 按需站点判定表、输出文件模板、验证检查表 |
+| `references/dev-governance.md` | 类型C 阶段 8 需要详细检测表时 | 5维度展开子表、元技能调用映射 |
+| `.claude/agents/meta-*.md` | 类型B 各站点开始时 | 对应站点的完整方法论 |
+
+---
+
+## 测试验证
+
+用以下场景验证 skill 有效性：
+
+**测试1：元理论分析（类型A）**
+> "帮我看看现有的 agent 有什么问题，是否需要拆分"
+→ 预期：执行 5 标准验证 + 四种死法检测，输出分析报告
+
+**测试2：创建 agent（类型B）**
+> "我需要一个数据分析 agent"
+→ 预期：走 Phase 1-4 流水线，输出完整 agent 定义文件
+
+**测试3：复杂开发任务（类型C）**
+> "我需要实现一个用户认证系统，包含登录、注册、Token刷新、权限验证"
+→ 预期：走 8 阶段治理流程，搜索 agent → 执行 → 评审 → 进化
+
+**测试4：审查方案（类型D）**
+> "帮我审查一下这个 agent 的定义是否合理"
+→ 预期：执行审查检查表，输出评级 + 改进建议
+
+**测试5：节奏编排（类型E）**
+> "我的系统信息推送太多，用户被淹死了，怎么设计出牌策略？"
+→ 预期：分析节奏问题，设计事件牌组配置
+
+**测试6：组织镜像（类型A变体）**
+> "我有5个 agent 但它们之间经常串味，怎么用组织镜像解决？"
+→ 预期：分析串味根因，用组织镜像方法设计隔离方案

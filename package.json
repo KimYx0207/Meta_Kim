@@ -1,0 +1,25 @@
+{
+  "name": "meta-kim",
+  "version": "1.1.0",
+  "description": "Cross-runtime Meta_Kim prompt pack for Claude Code, OpenClaw, and Codex.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync:runtimes": "node scripts/sync-runtimes.mjs",
+    "check:runtimes": "node scripts/sync-runtimes.mjs --check",
+    "validate": "node scripts/validate-project.mjs",
+    "check": "npm run check:runtimes && npm run validate"
+  },
+  "keywords": [
+    "claude-code",
+    "openclaw",
+    "codex",
+    "agents",
+    "prompt-pack"
+  ],
+  "author": "KimYx0207",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
