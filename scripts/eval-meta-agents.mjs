@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -214,6 +214,87 @@ function extractOpenClawReply(raw) {
   return parsed;
 }
 
+async function runCommandWithIgnoredStdin(file, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, {
+      cwd: options.cwd,
+      env: options.env,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    let timeoutId = null;
+    let killTimerId = null;
+
+    function settle(error, result) {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (killTimerId) {
+        clearTimeout(killTimerId);
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    }
+
+    if (typeof options.timeout === "number" && options.timeout > 0) {
+      timeoutId = setTimeout(() => {
+        child.kill("SIGTERM");
+        killTimerId = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, 5_000);
+        settle(
+          new Error(
+            `Command timed out after ${options.timeout}ms: ${file} ${args.join(" ")}`
+          )
+        );
+      }, options.timeout);
+    }
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      settle(error);
+    });
+
+    child.on("close", (code, signal) => {
+      if (finished) {
+        return;
+      }
+      if (code === 0) {
+        settle(null, { stdout, stderr });
+        return;
+      }
+
+      const failureDetails = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+      const suffix = signal ? ` (signal: ${signal})` : "";
+      settle(
+        new Error(
+          `Command failed: ${file} ${args.join(" ")}${suffix}${
+            failureDetails ? `\n${failureDetails}` : ""
+          }`
+        )
+      );
+    });
+  });
+}
+
 function scoreClaudeCase(caseConfig, payload) {
   const joined = [
     payload.agent,
@@ -262,7 +343,7 @@ async function loadClaudeAgentIds() {
 }
 
 async function runClaudeDiscovery(agentIds) {
-  const { stdout } = await execFileAsync(
+  const { stdout } = await runCommandWithIgnoredStdin(
     "claude",
     ["agents"],
     {
@@ -299,7 +380,7 @@ async function runClaudeCases(agentIds) {
         "agent 写你的 agent id；owns 写你只负责的 3 个短语；refuses 写你明确不负责的 2 个短语；" +
         "artifact 写你最核心的产物；delegates_to 写跨边界时最常升级/委派的 2 个 agent id。";
 
-      const { stdout } = await execFileAsync(
+      const { stdout } = await runCommandWithIgnoredStdin(
         "claude",
         [
           "-p",
