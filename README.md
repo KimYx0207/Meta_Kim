@@ -10,9 +10,52 @@
 
 **An open-source meta-architecture for intent amplification across Claude Code, Codex, and OpenClaw**
 
-Meta_Kim turns meta agents, skills, MCP, hooks, memory policy, workspaces, and runtime mirrors into one coherent cross-runtime system.
+Meta_Kim is about teaching AI systems to organize complex work before they answer.
+
+**Meta -> Organizational Mirroring -> Rhythm Orchestration -> Intent Amplification**
 
 </div>
+
+## Author and Support
+
+<div align="center">
+  <img src="images/二维码基础款.png" alt="Contact QR" width="560"/>
+  <p>
+    GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
+    𝕏 <a href="https://x.com/KimYx0207">@KimYx0207</a> |
+    Website <a href="https://www.aiking.dev/">aiking.dev</a> |
+    WeChat Official Account: <strong>老金带你玩AI</strong>
+  </p>
+  <p>
+    Feishu knowledge base:
+    <a href="https://my.feishu.cn/wiki/OhQ8wqntFihcI1kWVDlcNdpznFf">ongoing updates</a>
+  </p>
+</div>
+
+<div align="center">
+  <table align="center">
+    <tr>
+      <td align="center">
+        <img src="images/微信.jpg" alt="WeChat Pay QR" width="220"/>
+        <br/>
+        <strong>WeChat Pay</strong>
+      </td>
+      <td align="center">
+        <img src="images/支付宝.jpg" alt="Alipay QR" width="220"/>
+        <br/>
+        <strong>Alipay</strong>
+      </td>
+    </tr>
+  </table>
+</div>
+
+## At a Glance
+
+- Default front door: `meta-warden`
+- Organizational backbone: `8` meta agents
+- Industry layer: `20` industries, `100` department agents, `1000` specialists
+- Supported runtimes: Claude Code, Codex, OpenClaw
+- Primary behavior: amplify intent first, then execute and coordinate
 
 ## What This Project Is
 
@@ -314,39 +357,6 @@ The methodological basis comes from the evaluation work on meta-based intent amp
 
 The paper explains the method.  
 This repository turns that method into runtime-ready engineering assets.
-
-## Author and Support
-
-<div align="center">
-  <img src="images/二维码基础款.png" alt="Contact QR" width="560"/>
-  <p>
-    GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
-    𝕏 <a href="https://x.com/KimYx0207">@KimYx0207</a> |
-    Website <a href="https://www.aiking.dev/">aiking.dev</a> |
-    WeChat Official Account: <strong>老金带你玩AI</strong>
-  </p>
-  <p>
-    Feishu knowledge base:
-    <a href="https://my.feishu.cn/wiki/OhQ8wqntFihcI1kWVDlcNdpznFf">ongoing updates</a>
-  </p>
-</div>
-
-<div align="center">
-  <table align="center">
-    <tr>
-      <td align="center">
-        <img src="images/微信.jpg" alt="WeChat Pay QR" width="220"/>
-        <br/>
-        <strong>WeChat Pay</strong>
-      </td>
-      <td align="center">
-        <img src="images/支付宝.jpg" alt="Alipay QR" width="220"/>
-        <br/>
-        <strong>Alipay</strong>
-      </td>
-    </tr>
-  </table>
-</div>
 
 ## License
 
