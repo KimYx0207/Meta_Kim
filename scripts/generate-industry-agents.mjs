@@ -74,6 +74,74 @@ function buildGuardrails(industry) {
   ];
 }
 
+function toSentenceCase(input) {
+  if (!input) return input;
+  return input.charAt(0).toUpperCase() + input.slice(1);
+}
+
+function buildSpecialistOwns(agent, specialist, deliverables) {
+  return dedupe([
+    specialist.mandate,
+    `The ${specialist.title} slice inside ${agent.department.title}.`,
+    ...deliverables.slice(0, 4).map((item) => `Own the ${item}.`),
+  ]).map((item) => item.endsWith(".") ? item : `${toSentenceCase(item)}.`);
+}
+
+function buildSpecialistRefuses(agent, specialist) {
+  return [
+    `Do not absorb the full ${agent.department.title} scope when this specialist slice is enough.`,
+    "Do not arbitrate cross-department conflicts alone.",
+    "Do not fake evidence, user signal, or tool usage.",
+    `Do not widen beyond ${specialist.title} just because adjacent work exists.`,
+  ];
+}
+
+function buildSpecialistActivationSignals(agent, specialist, expectedInputs, deliverables) {
+  return [
+    `The team needs ${specialist.title.toLowerCase()} work inside ${agent.industry.name} ${agent.department.title}.`,
+    `The parent department cannot move forward until someone owns ${deliverables[0] ?? "a specialist-grade deliverable"}.`,
+    `The task needs sharper handling of ${expectedInputs[0] ?? "critical inputs"} before a broader decision is safe.`,
+    "The team needs a narrow specialist judgment instead of a generic department-level answer.",
+  ];
+}
+
+function buildSpecialistDecisionRules(agent, specialist, expectedInputs, deliverables) {
+  return [
+    `If the task no longer fits ${specialist.title}, hand it back to \`${agent.id}\` instead of stretching scope.`,
+    `If key inputs such as ${expectedInputs.slice(0, 2).join(" and ")} are missing, state the gap before acting confident.`,
+    `If the requested output goes beyond ${deliverables.slice(0, 2).join(" and ")}, separate what this specialist can do from what needs another owner.`,
+    "If assumptions drive the recommendation, write the assumptions explicitly instead of hiding them.",
+    "If a cross-department dependency appears, escalate rather than silently taking over adjacent work.",
+  ];
+}
+
+function buildSpecialistQualityBar(specialist, deliverables) {
+  return [
+    `Produces specialist-grade outputs such as ${deliverables.slice(0, 2).join(" and ")} instead of generic advice.`,
+    "Names assumptions, uncertainty, and breakpoints clearly.",
+    "Stays narrow enough to be trustworthy, but concrete enough to be executable.",
+    "Leaves the parent department with something usable for the next decision.",
+  ];
+}
+
+function buildSpecialistHandoffRules(agent, specialist) {
+  return [
+    `Return conclusions, artifacts, and unresolved gaps to \`${agent.id}\`.`,
+    `If the work collides with sibling specialists, ask ${agent.department.title} to coordinate the next handoff.`,
+    "Escalate cross-department collisions to `meta-warden` instead of improvising governance.",
+    `Keep the specialist role sharp: ${specialist.title} should enrich the parent department, not replace it.`,
+  ];
+}
+
+function buildSpecialistAntiSlop(specialist) {
+  return [
+    `Reject vague advice that never becomes a ${specialist.title} deliverable.`,
+    "Reject fake confidence built on unverified inputs.",
+    "Reject bloated scope that tries to solve the whole vertical in one pass.",
+    "Reject named-expert cosplay; use experts as lenses, not as masks.",
+  ];
+}
+
 function buildDepartmentSpecialists(department) {
   return department.subAgents.map((specialistId) => {
     const specialist = specialistTemplatesByDepartment[department.id]?.find(
@@ -175,6 +243,13 @@ function renderSpecialistBrief(agent, specialist) {
   const deliverables = dedupe([...specialist.outputs, ...department.outputs]);
   const guardrails = buildGuardrails(industry);
   const specialistId = `${agent.id}-${specialist.id}`;
+  const owns = buildSpecialistOwns(agent, specialist, deliverables);
+  const refuses = buildSpecialistRefuses(agent, specialist);
+  const activationSignals = buildSpecialistActivationSignals(agent, specialist, expectedInputs, deliverables);
+  const decisionRules = buildSpecialistDecisionRules(agent, specialist, expectedInputs, deliverables);
+  const qualityBar = buildSpecialistQualityBar(specialist, deliverables);
+  const handoffRules = buildSpecialistHandoffRules(agent, specialist);
+  const antiSlop = buildSpecialistAntiSlop(specialist);
 
   return `# ${industry.name} ${department.title} / ${specialist.title}
 
@@ -197,6 +272,18 @@ ${toBullets([
   "This specialist exists to own one narrow, repeatable slice of work inside the department.",
 ])}
 
+## Owns
+
+${toBullets(owns)}
+
+## Refuses
+
+${toBullets(refuses)}
+
+## Activate When
+
+${toBullets(activationSignals)}
+
 ## Reference Thinkers
 
 ${toBullets(expertLenses)}
@@ -217,6 +304,10 @@ ${toBullets(expectedInputs)}
 
 ${toBullets(deliverables)}
 
+## Decision Rules
+
+${toBullets(decisionRules)}
+
 ## Upstream and Downstream
 
 ${toBullets([
@@ -224,6 +315,18 @@ ${toBullets([
   `Downstream: returns specialist-grade signal back to ${department.title}.`,
   "Escalate cross-department conflicts to meta-warden instead of solving them silently.",
 ])}
+
+## Quality Bar
+
+${toBullets(qualityBar)}
+
+## Handoff Rules
+
+${toBullets(handoffRules)}
+
+## Anti-Slop Checks
+
+${toBullets(antiSlop)}
 
 ## Guardrails
 
