@@ -147,9 +147,9 @@ The default user-facing interpretation should be:
 
 ## Agent Foundry
 
-The next production layer in this repository is a **published industry library**, not a pile of temporary build folders.
+The industry layer in this repository is a **published library**, not a pile of temporary build folders.
 
-The release now exposes:
+This repository exposes:
 
 - **20 industries**
 - **5 departments per industry**
@@ -174,7 +174,7 @@ Read it this way:
 - `factory/runtime-packs/` is the full machine-facing 1100-agent import surface
 - `factory/flagship-complete/` is the curated 20-agent polished layer
 
-Inside the public release, explanation stays in the root README files.  
+Project-level explanation lives in the root README files.  
 The `factory/` subdirectories are for assets, indexes, and runtime packs, not nested user manuals.
 
 ### Factory Release Map
@@ -193,16 +193,13 @@ The remaining top-level files in `factory/` are support indexes and protocols:
 - `department-call-protocol.json`: default routing and handoff rules
 - `orchestration-playbooks.md`: cross-department operating flows
 
-## Public vs Private Research
+## About `meta/` and Ignored Local Folders
 
-The long-form local research manuscript under `meta/` is intentionally not part of the public GitHub payload.
+The `meta/` directory is a local reference area for the author and is not part of the GitHub release surface.
 
-This public repository ships the runtime-facing architecture and production tooling.  
-Private research notes stay local.
+This repository ships the runtime-facing architecture and production tooling.
 
-## What You May See Locally But Will Not Ship to GitHub
-
-If you open the repository on your own machine, you may still see some local-only folders.
+If you open the repository on your own machine, you may also see ignored local folders.
 
 - `meta/`: local research manuscript and drafting notes, gitignored
 - `image/`: local screenshot/temp export folder, gitignored
