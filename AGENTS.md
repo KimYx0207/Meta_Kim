@@ -80,32 +80,27 @@ Those are runtime mirrors maintained by sync tooling.
 After changing canonical source files:
 
 1. run `npm run sync:runtimes`
-2. run `npm run validate`
-3. run `npm run eval:agents` when you need runtime-level acceptance
-4. run `npm run verify:all` for full validation + acceptance pass
+2. run `npm run discover:global` (required on first setup, re-run after installing new global capabilities)
+3. run `npm run validate`
+4. run `npm run eval:agents` when you need runtime-level acceptance
+5. run `npm run verify:all` for full validation + acceptance pass
 
-## Industry Agent Foundry
+### Global Capability Discovery
 
-This repository also contains a department-first industry library.
+Meta_Kim now supports discovering global capabilities across all three runtimes:
 
-See:
+```bash
+npm run discover:global
+```
 
-- `factory/`
-- `factory/agent-library/`
-- `factory/flagship-complete/`
-- `factory/runtime-packs/`
+This scans:
+- `~/.claude/` — agents, skills, hooks, plugins, commands
+- `~/.openclaw/` — agents, skills, hooks, commands
+- `~/.codex/` — agents, skills, commands
 
-The current matrix is:
+And generates `.claude/capability-index/global-capabilities.json` for use by the meta-theory skill's Fetch phase. This file is gitignored — it contains local absolute paths and is regenerated on each machine.
 
-- 20 industries
-- 5 departments per industry
-- 100 department-level agents
-- 1000 specialist agents
-- organization and orchestration assets for multi-department routing
-- runtime-pack projections for Claude Code, Codex, and OpenClaw under `factory/runtime-packs/`
-
-The foundry is for scalable domain expansion.  
-It is intentionally separate from the canonical meta-agent source.
+This allows the meta architecture to see and integrate with your globally-installed capabilities, not just the project's 8 meta agents.
 
 ## Most Important Instruction
 

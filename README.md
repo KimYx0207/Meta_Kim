@@ -59,7 +59,6 @@ Meta_Kim is about teaching AI systems to organize complex work before they answe
 
 - Default front door: `meta-warden`
 - Organizational backbone: `8` meta agents
-- Industry layer: `20` industries, `100` department agents, `1000` specialists
 - Supported runtimes: Claude Code, Codex, OpenClaw
 - Primary behavior: amplify intent first, then execute and coordinate
 - Business run discipline: `one department -> one primary deliverable -> one closed handoff chain`
@@ -335,6 +334,7 @@ Meta_Kim/
 ├─ .agents/        Codex project-level skill mirror
 ├─ codex/          Codex global config example
 ├─ openclaw/       OpenClaw workspaces, template config, runtime mirrors
+├─ contracts/      Runtime governance contracts
 ├─ images/         Public assets used by the README
 ├─ scripts/        Sync, validation, MCP, evaluation, OpenClaw helper, and agent health reporting scripts
 ├─ shared-skills/  Shared skill mirrors across runtimes
@@ -362,19 +362,6 @@ So:
 
 - `.codex/` is the repo content Codex reads directly
 - `codex/` is only the example directory for wiring `~/.codex/config.toml`
-
-- Automotive
-- Travel & Hospitality
-- Biotech
-- Public Sector
-
-### Department archetypes
-
-- `strategy-office`
-- `growth-operations`
-- `product-delivery`
-- `risk-compliance`
-- `research-intelligence`
 
 ## Commands
 
@@ -425,12 +412,6 @@ For reading order if you just want to understand:
 1. `README.md` (this file) — start here
 2. `CLAUDE.md` — Claude Code specific guide
 3. `AGENTS.md` — Codex and cross-runtime guide
-
-For the industry agent library:
-
-- `factory/agent-library/`
-- `factory/flagship-complete/agents/`
-- `factory/runtime-packs/`
 
 ## Paper and Method Basis
 

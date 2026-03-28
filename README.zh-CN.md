@@ -59,7 +59,6 @@ Meta_Kim 不是教 AI 多说，而是教 AI 先学会组织复杂任务。
 
 - 默认入口：`meta-warden`
 - 组织骨架：`8` 个元 agent
-- 行业层：`20` 个行业、`100` 个部门 agent、`1000` 个 specialist
 - 运行时：Claude Code、Codex、OpenClaw
 - 目标：先做意图放大，再做执行与协作
 - 业务 run 纪律：`一个部门 -> 一个主交付物 -> 一条闭合交付链`
@@ -120,7 +119,7 @@ node scripts/agent-health-report.mjs
 
 查看 8 个 agent 的状态：版本号、frontmatter 完整性、边界定义、workspace 文件、skill 同步情况，综合健康分。
 
-### 第五步：开始使用（Claude Code）
+### 第六步：开始使用（Claude Code）
 
 用 Claude Code 打开仓库，直接说：
 
@@ -343,7 +342,7 @@ Meta_Kim/
 ├─ .agents/        Codex 项目级 skills 镜像
 ├─ codex/          Codex 全局配置示例
 ├─ openclaw/       OpenClaw workspace、模板配置、运行时镜像
-├─ factory/        发布版行业 agent 层与三端导入包
+├─ contracts/      运行时治理合约
 ├─ images/         README 使用的公开图片资源
 ├─ scripts/        同步、校验、MCP、自检、OpenClaw 准备、agent 健康度报告脚本
 ├─ shared-skills/  跨运行时共享技能镜像
@@ -371,69 +370,6 @@ Codex 的配置分两层：
 
 - `.codex/` 是 Codex 真正会直接读取的仓库内内容
 - `codex/` 只是一个配置示例目录，用来说明 `~/.codex/config.toml` 应该怎么接
-
-## `factory/` 里到底有什么
-
-`factory/` 仅包含发布资产和机器索引。
-
-### 三个主目录
-
-- `factory/agent-library/`
-  - 完整人类可读库
-  - 包含 `100` 个部门 agent 和 `1000` 个 specialist agent
-- `factory/flagship-complete/`
-  - `20` 个旗舰 agent 成品层
-- `factory/runtime-packs/`
-  - Claude Code / Codex / OpenClaw 三端导入包
-  - 总计 `1100` 个运行时包
-
-### 机器索引
-
-- `factory/organization-map.json`
-  - 完整组织图
-- `factory/department-call-protocol.json`
-  - 默认路由与 handoff 规则
-- `factory/agent-library/agent-index.json`
-  - 全量 agent 索引
-- `factory/flagship-complete/index.json`
-  - 20 个旗舰索引
-- `factory/flagship-complete/summary.json`
-  - 旗舰总包统计
-- `factory/runtime-packs/summary.json`
-  - 三端运行时总包统计
-
-### 行业覆盖
-
-当前行业层覆盖：
-
-- 游戏
-- 互联网
-- 金融
-- AI
-- 医疗
-- 股票
-- 投资
-- Web3
-- 自媒体
-- 电商
-- 教育
-- 法律
-- 制造
-- 物流
-- 房地产
-- 能源
-- 汽车
-- 旅游与酒店
-- 生物科技
-- 公共部门
-
-每个行业统一使用 5 类部门模板：
-
-- `strategy-office`
-- `growth-operations`
-- `product-delivery`
-- `risk-compliance`
-- `research-intelligence`
 
 ## 这些命令什么时候要跑
 
@@ -487,12 +423,6 @@ Codex 的配置分两层：
 1. `README.zh-CN.md`（本文件）——从这里开始
 2. `CLAUDE.md` ——Claude Code 专用指南
 3. `AGENTS.md` ——Codex 和跨运行时指南
-
-如果想看做好的行业 agent：
-
-- `factory/agent-library/`
-- `factory/flagship-complete/agents/`
-- `factory/runtime-packs/`
 
 ## 方法依据与论文
 

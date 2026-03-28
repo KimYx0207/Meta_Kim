@@ -86,11 +86,8 @@ npm run discover:global
 This generates `.claude/capability-index/global-capabilities.json` which includes:
 
 **Claude Code** (`~/.claude/`):
-- 85+ global agents (ai-engineer, backend-architect, code-reviewer, etc.)
-- 30+ global skills (agent-browser, planning-with-files, claudeception, etc.)
-- 37+ hooks (session-start, user-prompt-submit, post-tool-use, etc.)
-- 9+ plugins (LSP servers, tool extensions)
-- 33+ commands (commit, debug, test-driven-development, etc.)
+- Global agents, skills, hooks, plugins, and commands
+- Numbers vary by local installation — run `npm run discover:global` to see current counts
 
 **OpenClaw** (`~/.openclaw/`):
 - Skills and workspace configurations
