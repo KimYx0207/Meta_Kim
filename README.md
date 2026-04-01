@@ -17,7 +17,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green"/>
 </p>
 
-**An open-source governance layer that makes AI coding assistants handle complex tasks properly — across Claude Code, Codex, and OpenClaw.**
+**A governance layer for AI coding assistants — designed to make complex tasks done right, with one unified discipline that runs on Claude Code, Codex, and OpenClaw.**
 
 Most AI coding tools jump straight to writing code. Meta_Kim adds a step in between: clarify what you actually need, plan who does what, then execute with review.
 
@@ -25,38 +25,120 @@ The result: fewer broken multi-file changes, clearer agent responsibilities, and
 
 </div>
 
-## Author and Support
+## At a Glance
 
-<div align="center">
-  <img src="images/二维码基础款.png" alt="Contact QR" width="560"/>
-  <p>
-    GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
-    𝕏 <a href="https://x.com/KimYx0207">@KimYx0207</a> |
-    Website <a href="https://www.aiking.dev/">aiking.dev</a> |
-    WeChat Official Account: <strong>老金带你玩AI</strong>
-  </p>
-  <p>
-    Feishu knowledge base:
-    <a href="https://my.feishu.cn/wiki/OhQ8wqntFihcI1kWVDlcNdpznFf">ongoing updates</a>
-  </p>
-</div>
+- 8 specialized meta agents behind one default entry point
+- **One unified governance discipline** projected across Claude Code, Codex, and OpenClaw
+- Every task goes through: Clarify → Search → Execute → Review → Evolve
+- **Four iron rules**: Critical > Guessing, Fetch > Assuming, Thinking > Rushing, Review > Trusting
+- Discipline: one department, one primary deliverable, one closed handoff chain
 
-<div align="center">
-  <table align="center">
-    <tr>
-      <td align="center">
-        <img src="images/微信.jpg" alt="WeChat Pay QR" width="220"/>
-        <br/>
-        <strong>WeChat Pay</strong>
-      </td>
-      <td align="center">
-        <img src="images/支付宝.jpg" alt="Alipay QR" width="220"/>
-        <br/>
-        <strong>Alipay</strong>
-      </td>
-    </tr>
-  </table>
-</div>
+> **"Across three runtimes" does NOT mean "three different things."** Meta_Kim is one intent-amplification method — the same 8-stage spine, the same 8 meta agents, the same governance logic. Each runtime (Claude Code, Codex, OpenClaw) simply uses its native structure to host that same discipline. See [Runtime Entry Points](#runtime-entry-points) for details.
+
+## Paper and Method Basis
+
+The methodological foundation comes from evaluation work on meta-based intent amplification:
+
+- Paper: <https://zenodo.org/records/18957649>
+- DOI: `10.5281/zenodo.18957649`
+
+The paper explains the method. This repository turns that method into runtime-ready engineering assets.
+
+## The Meta Philosophy
+
+In Meta_Kim:
+
+**meta = the smallest governable unit that exists to support intent amplification**
+
+A valid meta unit must be:
+
+- independently understandable
+- small enough to stay controllable
+- explicit about what it owns and refuses
+- replaceable without collapsing the whole system
+- reusable across workflows
+
+Meta is an architectural unit here, not decoration.
+
+## Core Method
+
+Meta_Kim follows one chain:
+
+```mermaid
+flowchart LR
+    A[Meta] --> B[Organizational Mirroring]
+    B --> C[Rhythm Orchestration]
+    C --> D[Intent Amplification]
+```
+
+- `Meta`: how to split
+- `Organizational Mirroring`: how to structure
+- `Rhythm Orchestration`: how to dispatch
+- `Intent Amplification`: how to complete
+
+Remove any one of these and the method is incomplete.
+
+## Development Governance Spine (The Core — Read This First)
+
+For **complex work** (multi-file, cross-module, or requiring multiple capabilities), Meta_Kim follows an eight-stage spine. The early chain lines up with the **four iron rules**: clarify before guessing, search before assuming, plan before rushing, verify before trusting — with **Thinking** in the middle to shape the card deck and delivery shell.
+
+**Eight-stage spine** (left to right; compatible with Mermaid 8.x viewers):
+
+```mermaid
+graph LR
+  S1[1 Critical] --> S2[2 Fetch]
+  S2 --> S3[3 Thinking]
+  S3 --> S4[4 Execution]
+  S4 --> S5[5 Review]
+  S5 --> S6[6 Meta-Review]
+  S6 --> S7[7 Verification]
+  S7 --> S8[8 Evolution]
+```
+
+**Iron rules on the early chain** (top to bottom; node text avoids `>` so older Mermaid parsers do not choke):
+
+```mermaid
+graph TD
+  CR[Critical beats Guessing] --> FE[Fetch beats Assuming]
+  FE --> TH[Thinking shapes deck and shell]
+  TH --> RV[Review beats Trusting]
+```
+
+- **Stage 1 Critical**: Clarify scope before guessing
+- **Stage 2 Fetch**: Search existing agents/skills before assuming they don't exist
+- **Stage 3 Thinking**: Plan sub-tasks, design card deck, prepare delivery shell
+- **Stage 4 Execution**: Spawn sub-agents via Task() — do NOT self-execute
+- **Stage 5 Review**: Review every output against quality standards
+- **Stage 6 Meta-Review**: Review the review standards themselves
+- **Stage 7 Verification**: Verify fixes actually applied, close findings
+- **Stage 8 Evolution**: Capture patterns, update scars log, feed back into the system
+
+`meta-conductor` tracks `stageState` / `controlState` (including skip / interrupt / iteration). `meta-warden` and `meta-prism` own gates (`gateState`, verification closure). That hidden skeleton is not a second product UI; it keeps dealing rhythm and public-display discipline consistent. Details: `.claude/skills/meta-theory/references/dev-governance.md`.
+
+### Rollback Protocol
+
+When the Verification stage finds that fixes introduced more problems, the system supports four rollback levels:
+
+| Level | Trigger | Action |
+|---|---|---|
+| File-level | Single file regression | Restore that file from the last known good state |
+| Subtask-level | One subtask broke adjacent paths | Roll back only that subtask's file set |
+| Partial rollback | Some subtasks succeeded, some failed | Keep successful ones, rollback failed, re-enter Thinking for decomposition |
+| Full rollback | Cross-module contamination, original assumption invalid | `git stash` all uncommitted changes, return to Stage 1 Critical |
+
+**Rule**: Rollback is not failure — rollback is the system knowing when to stop before making things worse.
+
+### Evolution Output Storage
+
+Stage 8 Evolution outputs must be persisted to explicit locations, not just left in conversation context:
+
+| Output | Storage Location |
+|---|---|
+| Reusable patterns | `memory/patterns/` |
+| Scar records | `memory/scars/` |
+| New skills | `.claude/skills/` |
+| Agent boundary adjustments | `.claude/agents/` (trigger `npm run sync:runtimes`) |
+| Capability gap records | `memory/capability-gaps.md` |
 
 ## When You Need This
 
@@ -76,20 +158,148 @@ The result: fewer broken multi-file changes, clearer agent responsibilities, and
 4. **Reviews every output** — code quality, security, architecture compliance, boundary violations
 5. **Learns from each run** — captures reusable patterns, records failures for prevention
 
-## At a Glance
+## Runtime Entry Points
 
-- 8 specialized meta agents behind one default entry point
-- Works on Claude Code, Codex, and OpenClaw with the same governance logic
-- Every task goes through: Clarify → Search → Execute → Review → Evolve
-- Discipline: one department, one primary deliverable, one closed handoff chain
+Meta_Kim is **one unified discipline** — not three separate products. The same 8-stage spine and 8 meta agents run on all three runtimes, each using its native interface.
+
+| Runtime | Entry point | Where configs live | Role |
+|---|---|---|---|
+| **Claude Code** | `CLAUDE.md` | `.claude/`, `.mcp.json` | Canonical editing runtime — edit meta agents, skills, hooks, MCP here |
+| **Codex** | `AGENTS.md` | `.codex/`, `.agents/`, `codex/config.toml.example` | Codex-native agent and skill projection |
+| **OpenClaw** | `openclaw/workspaces/` | `openclaw/` | Local workspace agents and template config |
+
+Key point: Claude Code is the **canonical editing runtime** — you edit agent definitions and skills here, then sync to the other runtimes. The other runtimes are not separate projects; they are projections of the same governance logic into different environments.
+
+### Per-Runtime Setup
+
+#### In Claude Code
+
+Claude Code automatically reads `CLAUDE.md`, `.claude/agents/`, `.claude/skills/`, and `.mcp.json`. Just open the project and talk.
+
+#### In Codex
+
+Codex reads `AGENTS.md` (the project guide), `.codex/agents/` (8 TOML-based custom agents mirroring the meta agents), and `.agents/skills/` (meta-theory skill mirror). For MCP wiring, see `codex/config.toml.example` — it shows how to wire Meta_Kim's MCP server into Codex. Note: Codex is a **read/execute runtime**, not the editing runtime. You edit agent definitions in Claude Code, then sync to Codex via `npm run sync:runtimes`.
+
+#### In OpenClaw
+
+```bash
+npm install
+npm run prepare:openclaw-local
+```
+
+Then talk to the agent directly:
+
+```bash
+openclaw agent --local --agent meta-warden --message "I need a system to handle batch data exports with progress tracking." --json --timeout 120
+```
+
+## The Eight Meta Agents
+
+- `meta-warden`: default entry, arbitration, synthesis
+- `meta-conductor`: orchestration, sequencing, rhythm control
+- `meta-genesis`: prompt identity, persona, `SOUL.md`
+- `meta-artisan`: skills, MCP, tool and capability fit
+- `meta-sentinel`: hooks, safety, permissions, rollback
+- `meta-librarian`: memory, continuity, context policy
+- `meta-prism`: quality review, drift detection, anti-slop checks
+- `meta-scout`: external capability discovery and evaluation
+
+The default front door is `meta-warden`. The other seven meta agents are backstage specialists, not the public menu.
+
+## How the System Works
+
+You don't need to know the internals. But if you're curious:
+
+```mermaid
+flowchart TD
+    A[You describe what you need] --> B[System clarifies scope]
+    B --> C[Search existing capabilities]
+    C --> D[Route to specialists]
+    D --> E[Agents execute]
+    E --> F[Review output]
+    F --> G[Capture patterns]
+```
+
+Every valid business run must keep a single organizing thread:
+
+- one department
+- one primary deliverable
+- one closed handoff chain
+
+If a plan bundles unrelated goals into the same run, `meta-conductor` should reject it and `meta-warden` should keep it out of public display.
+
+### Critical: You Are the Dispatcher, Not the Executor
+
+**This is the most important behavioral rule across all runtimes (Claude Code, Codex, OpenClaw):**
+
+When you receive a complex task:
+
+- **You do NOT write code directly.** You are the orchestrator.
+- **For Type C tasks** (multi-file, cross-module, or requiring multiple capabilities): use the 8-stage spine.
+- **You MUST spawn sub-agents** for each sub-task in Execution stage via Task() invocations.
+- **Your job ends at Stage 4 dispatch.** After spawning agents, wait for their results, then proceed to Stage 5 Review.
+
+**Anti-pattern to AVOID:**
+```
+User: build a notification system
+→ You immediately start writing code across 10 files
+```
+
+**Correct pattern:**
+```
+User: build a notification system
+→ Critical: clarify scope
+→ Fetch: search existing agents
+→ Thinking: plan sub-tasks, design card deck
+→ Execution: spawn sub-agents via Task()
+→ Review: check each agent's output
+→ Meta-Review + Verification + Evolution
+```
+
+If you find yourself about to write code without having spawned an agent first: **STOP.** Ask "Who should handle this?"
+
+## How To Use It
+
+### Auto Mode (just talk normally)
+
+For complex tasks, just describe what you need. The governance flow activates automatically when the system detects multi-file or cross-module work.
+
+```text
+"Build a notification system — email, SMS, and in-app — with a shared queue and retry logic."
+```
+
+```text
+"The checkout flow is broken across 3 services. Fix the race condition and add proper error handling."
+```
+
+The system will: ask clarifying questions if needed → search existing agents → route to the right specialist → execute → review → capture patterns.
+
+### Manual Mode (when you know what you want)
+
+If you specifically want to design, review, or audit agents:
+
+```text
+"Design an agent for handling data export jobs in this project."
+```
+
+```text
+"Audit my agent definitions — are the boundaries clean?"
+```
+
+```text
+"My agents keep overlapping responsibilities. Fix the organizational structure."
+```
 
 ## Quick Start (Clone to Working in 5 Minutes)
+
+Now that you understand what Meta_Kim is and how it works, here is how to get started.
 
 ### Prerequisites
 
 - **Node.js** v18+ (for sync, validate, and OpenClaw scripts)
 - **Git** (to clone)
 - **Claude Code CLI** (optional, only needed for `eval:agents`)
+- **Codex CLI** (optional, only needed for `eval:agents`)
 - **OpenClaw CLI** (optional, only needed for `npm run prepare:openclaw-local`)
 
 ### Step 1: Clone & Install
@@ -202,168 +412,6 @@ At the engineering level, it organizes:
 - `sync / validate / eval`: synchronization, validation, and acceptance tooling
 
 Under the hood, Meta_Kim may also use a **hidden state skeleton** for stage progression, gates, interrupts, and display readiness. This skeleton is not a second user interface; it is the invisible governance backbone that keeps `Critical / Fetch / Thinking / Review` and card dealing consistent.
-
-## The Meta Philosophy
-
-In Meta_Kim:
-
-**meta = the smallest governable unit that exists to support intent amplification**
-
-A valid meta unit must be:
-
-- independently understandable
-- small enough to stay controllable
-- explicit about what it owns and refuses
-- replaceable without collapsing the whole system
-- reusable across workflows
-
-Meta is an architectural unit here, not decoration.
-
-## Core Method
-
-Meta_Kim follows one chain:
-
-```mermaid
-flowchart LR
-    A[Meta] --> B[Organizational Mirroring]
-    B --> C[Rhythm Orchestration]
-    C --> D[Intent Amplification]
-```
-
-- `Meta`: how to split
-- `Organizational Mirroring`: how to structure
-- `Rhythm Orchestration`: how to dispatch
-- `Intent Amplification`: how to complete
-
-Remove any one of these and the method is incomplete.
-
-## Development governance spine (complex work)
-
-For **Type C development governance** (multi-file / cross-layer work), Meta_Kim follows an eight-stage spine. The early chain lines up with the **three iron rules**: clarify before guessing, search before assuming, verify before trusting — with **Thinking** in the middle to shape the card deck and delivery shell.
-
-**Eight-stage spine** (left to right; compatible with Mermaid 8.x viewers):
-
-```mermaid
-graph LR
-  S1[1 Critical] --> S2[2 Fetch]
-  S2 --> S3[3 Thinking]
-  S3 --> S4[4 Execution]
-  S4 --> S5[5 Review]
-  S5 --> S6[6 Meta-Review]
-  S6 --> S7[7 Verification]
-  S7 --> S8[8 Evolution]
-```
-
-**Iron rules on the early chain** (top to bottom; node text avoids `>` so older Mermaid parsers do not choke):
-
-```mermaid
-graph TD
-  CR[Critical beats Guessing] --> FE[Fetch beats Assuming]
-  FE --> TH[Thinking shapes deck and shell]
-  TH --> RV[Review beats Trusting]
-```
-
-**meta-conductor** tracks `stageState` / `controlState` (including skip / interrupt / iteration). **meta-warden** and **meta-prism** own **gates** (`gateState`, verification closure). That **hidden skeleton** is not a second product UI; it keeps dealing rhythm and public-display discipline consistent. Details: `.claude/skills/meta-theory/references/dev-governance.md`.
-
-## How the System Works
-
-You don't need to know the internals. But if you're curious:
-
-```mermaid
-flowchart TD
-    A[You describe what you need] --> B[System clarifies scope]
-    B --> C[Search existing capabilities]
-    C --> D[Route to specialists]
-    D --> E[Agents execute]
-    E --> F[Review output]
-    F --> G[Capture patterns]
-```
-
-The default front door is `meta-warden`. The other seven meta agents are backstage specialists, not the public menu.
-
-Every valid business run must keep a single organizing thread:
-
-- one department
-- one primary deliverable
-- one closed handoff chain
-
-If a plan bundles unrelated goals into the same run, `meta-conductor` should reject it and `meta-warden` should keep it out of public display.
-
-## The Eight Meta Agents
-
-- `meta-warden`: default entry, arbitration, synthesis
-- `meta-conductor`: orchestration, sequencing, rhythm control
-- `meta-genesis`: prompt identity, persona, `SOUL.md`
-- `meta-artisan`: skills, MCP, tool and capability fit
-- `meta-sentinel`: hooks, safety, permissions, rollback
-- `meta-librarian`: memory, continuity, context policy
-- `meta-prism`: quality review, drift detection, anti-slop checks
-- `meta-scout`: external capability discovery and evaluation
-
-## Runtime Entry Points
-
-Meta_Kim keeps one operating logic while letting each runtime use its native interface.
-
-| Runtime | Entry point | Main repo surface | Purpose |
-| --- | --- | --- | --- |
-| Claude Code | `CLAUDE.md` | `.claude/`, `.mcp.json` | Canonical editing runtime for meta agents, skills, hooks, and MCP |
-| Codex | `AGENTS.md` | `.codex/`, `.agents/`, `codex/config.toml.example` | Codex-native agent and skill projection |
-| OpenClaw | `openclaw/workspaces/` | `openclaw/` | Local workspace agents and template config with the same governance logic |
-
-## How To Use It
-
-### Auto Mode (just talk normally)
-
-For complex tasks, just describe what you need. The governance flow activates automatically when the system detects multi-file or cross-module work.
-
-```text
-"Build a notification system — email, SMS, and in-app — with a shared queue and retry logic."
-```
-
-```text
-"The checkout flow is broken across 3 services. Fix the race condition and add proper error handling."
-```
-
-The system will: ask clarifying questions if needed → search existing agents → route to the right specialist → execute → review → capture patterns.
-
-### Manual Mode (when you know what you want)
-
-If you specifically want to design, review, or audit agents:
-
-```text
-"Design an agent for handling data export jobs in this project."
-```
-
-```text
-"Audit my agent definitions — are the boundaries clean?"
-```
-
-```text
-"My agents keep overlapping responsibilities. Fix the organizational structure."
-```
-
-### Per-Runtime Setup
-
-#### In Claude Code
-
-Claude Code automatically reads `CLAUDE.md`, `.claude/agents/`, `.claude/skills/`, and `.mcp.json`. Just open the project and talk.
-
-#### In Codex
-
-Codex reads `AGENTS.md`, `.codex/agents/`, and `.agents/skills/`. For MCP wiring, see `codex/config.toml.example`.
-
-#### In OpenClaw
-
-```bash
-npm install
-npm run prepare:openclaw-local
-```
-
-Then talk to the agent directly:
-
-```bash
-openclaw agent --local --agent meta-warden --message "I need a system to handle batch data exports with progress tracking." --json --timeout 120
-```
 
 ## Repository Structure
 
@@ -483,15 +531,38 @@ For reading order if you just want to understand:
 2. `CLAUDE.md` — Claude Code specific guide
 3. `AGENTS.md` — Codex and cross-runtime guide
 
-## Paper and Method Basis
+## Author and Support
 
-The methodological basis comes from the evaluation work on meta-based intent amplification.
+<div align="center">
+  <img src="images/二维码基础款.png" alt="Contact QR" width="560"/>
+  <p>
+    GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
+    𝕏 <a href="https://x.com/KimYx0207">@KimYx0207</a> |
+    Website <a href="https://www.aiking.dev/">aiking.dev</a> |
+    WeChat Official Account: <strong>老金带你玩AI</strong>
+  </p>
+  <p>
+    Feishu knowledge base:
+    <a href="https://my.feishu.cn/wiki/OhQ8wqntFihcI1kWVDlcNdpznFf">ongoing updates</a>
+  </p>
+</div>
 
-- Paper: <https://zenodo.org/records/18957649>
-- DOI: `10.5281/zenodo.18957649`
-
-The paper explains the method.  
-This repository turns that method into runtime-ready engineering assets.
+<div align="center">
+  <table align="center">
+    <tr>
+      <td align="center">
+        <img src="images/微信.jpg" alt="WeChat Pay QR" width="220"/>
+        <br/>
+        <strong>WeChat Pay</strong>
+      </td>
+      <td align="center">
+        <img src="images/支付宝.jpg" alt="Alipay QR" width="220"/>
+        <br/>
+        <strong>Alipay</strong>
+      </td>
+    </tr>
+  </table>
+</div>
 
 ## License
 
