@@ -183,6 +183,18 @@ Prism: Collect Evidence -> AI-Slop Scan -> Assertion Evaluation -> Claims Verifi
   |-- Warden: Close verification gate and record evolution backlog
 ```
 
+### Gate Division of Labor
+
+**Shared Gate Ownership with Warden**: Meta-Review and Verification gates require both Prism and Warden to close. See `meta-warden.md` § "Gate Division of Labor" for the authoritative gate table.
+
+| Gate | Owner | Prism's Role | Warden's Role |
+|------|-------|-------------|--------------|
+| Meta-Review Gate | `meta-warden` + `meta-prism` | Provides: drift evidence, assertion report, revision instructions | Reviews revision instructions, approves revision scope |
+| Verification Gate | `meta-warden` + `meta-prism` | Provides: `fixEvidence` + `closeFindings` for each required revision | Reviews closure packet, makes final gate decision |
+| Synthesis Gate | `meta-warden` | — | Owner; Prism does not participate in synthesis gate |
+
+**Escalation Rule**: If `criteriaState` drifts (review standards become too loose or too strict), Prism escalates to Warden for standards recalibration via the `surfaceState: debug-surface` mechanism.
+
 ## Core Analysis Interfaces (Conceptual Layer)
 
 - `parseReviewScores()`: Parse rating results

@@ -70,6 +70,18 @@ Output: Skill Loadout report -> Warden assembles
 Notify: Sentinel (security impact), Genesis (SOUL.md skill reference update)
 ```
 
+### Collaboration Boundary with Conductor
+
+**Overlap Zone**: When a workflow involves a new agent being created (Type B pipeline), both Artisan and Conductor participate:
+
+| Who | Does What | Boundary |
+|-----|-----------|---------|
+| **Artisan** | Maps skills/tools to the new agent's SOUL.md identity | Selects skill filenames and tool configurations; does NOT attach skills to workflow stages |
+| **Conductor** | Decides when in the workflow the new agent's capabilities should be invoked | Owns stage-card execution lanes, card-deck timing, and dispatch sequencing |
+| **Both** | Align during Type B Phase 3 Design On Demand | Artisan's skill loadout feeds Conductor's dispatch board |
+
+**Key Rule**: Artisan operates at the **agent identity level** (what capabilities does this agent have?). Conductor operates at the **workflow execution level** (when and how are those capabilities invoked?). These are distinct layers — do not conflate skill matching with stage sequencing.
+
 ## Core Functions
 
 - `matchSkillsToAgent(soulProfile, platform)` -> Skill/tool loadout for **one agent identity** (post-Genesis SOUL)

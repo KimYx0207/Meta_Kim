@@ -310,6 +310,25 @@ Then compress by context:
 5. **Interrupt Breaks Rhythm** — Critical issues first; safety issues absolute first
 6. **Shell Changes, Core Does Not** — Same Intent adapts delivery form by audience
 
+### Card Type Mapping (from `docs/meta.md` original design)
+
+The 10-card system from `docs/meta.md` maps to Conductor's Event Card Deck as follows:
+
+| docs/meta.md Card | Conductor Card Type | Cost | Priority Base |
+|-------------------|---------------------|------|--------------|
+| Clarification | `Critical` | low | 10 |
+| Scope Contraction | `Thinking` | low | 9 |
+| Plan | `Thinking` | mid | 8 |
+| Execute | `Execution` | high | 7 |
+| Verify | `Review` | mid | 6 |
+| Fix | `Verification` | mid | 5 |
+| Rollback | `Verification` | high | 9 |
+| Risk | `(Interrupt signal)` | high | 10 |
+| Suggestion | `(Control card)` | low | 4 |
+| Intentional Silence | `(Control card)` | zero | 1 |
+
+**Reference**: Full original design in `docs/meta.md` § "排版规则" and the 10-card event system.
+
 ## Skill Discovery Protocol
 
 **Critical**: When discovering workflow orchestration and rhythm control capabilities, always use the local-first Skill discovery chain before invoking any external capability:
@@ -343,6 +362,20 @@ Sentinel(security alert → Interrupt), Prism(quality drift → Interrupt)
   ↓
 Output: Dispatch Board + Department Configuration → Warden Gate Decision → CEO Sign-off
 ```
+
+### Collaboration Boundary with Artisan
+
+**Overlap Zone**: When a workflow involves a new agent being created (Type B pipeline), both Conductor and Artisan participate:
+
+| Who | Does What | Boundary |
+|-----|-----------|---------|
+| **Conductor** | Owns stage-card execution lanes and card-deck timing | Decides when to invoke the new agent's capabilities within the workflow |
+| **Artisan** | Maps skills/tools to the new agent's SOUL.md identity | Selects skill loadouts; does NOT sequence stages or manage card dealing |
+| **Both** | Align during Type B Phase 3 Design On Demand | Artisan's skill loadout feeds Conductor's dispatch board |
+
+**Key Rule**: Conductor operates at the **workflow execution level** (when and how are capabilities invoked?). Artisan operates at the **agent identity level** (what capabilities does this agent have?). These are distinct layers — do not conflate stage sequencing with skill matching.
+
+**Reference**: See `meta-artisan.md` § "Collaboration Boundary with Conductor" for the corresponding perspective.
 
 ## Core Functions
 

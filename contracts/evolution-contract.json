@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "owner": "Meta_Kim",
+  "description": "Evolution feedback loop — maps 5+1 structural learning dimensions to their operational targets. Governs how Evolution Stage 8 outputs close the loop back into the system.",
+  "evolutionFeedbackLoop": {
+    "patternReuse": {
+      "target": "artisan-candidate-pool",
+      "storage": ".claude/skills/{skill-name}/SKILL.md",
+      "trigger": "extract-as-skill",
+      "evidence": "≥3 occurrences of the same pattern across different tasks"
+    },
+    "boundaryDrift": {
+      "target": "warden-type-b-pipeline",
+      "storage": ".claude/agents/{agent}.md",
+      "trigger": "split-or-merge",
+      "evidence": "Stew-All or Shattered death pattern detected"
+    },
+    "rhythmBottleneck": {
+      "target": "conductor-card-deck",
+      "storage": "contracts/workflow-contract.json",
+      "trigger": "update-card-priority-or-skip",
+      "evidence": "≥3 consecutive high-cost card plays without pause"
+    },
+    "capabilityGap": {
+      "target": "scout-discovery-queue",
+      "storage": "memory/capability-gaps.md",
+      "trigger": "external-search",
+      "evidence": "Fetch returned 0 matches for a required capability"
+    },
+    "processBottleneck": {
+      "target": "conductor-orchestration",
+      "storage": "contracts/workflow-contract.json",
+      "trigger": "adjust-stage-priority",
+      "evidence": "Review gate consistently fails at the same stage"
+    },
+    "scarDetected": {
+      "target": "critical-checklist",
+      "storage": "contracts/scar-protocol.md",
+      "trigger": "update-prevention-rule",
+      "evidence": "impact: recovered or critical"
+    }
+  },
+  "amplificationOperations": {
+    "patternReuse": "extract-and-persist",
+    "boundaryDrift": "trigger-type-b-split",
+    "rhythmBottleneck": "update-card-costs",
+    "capabilityGap": "queue-for-scout",
+    "processBottleneck": "reorder-stages",
+    "scarDetected": "append-to-protocol"
+  }
+}
