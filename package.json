@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Cross-runtime Meta_Kim prompt pack for Claude Code, OpenClaw, and Codex.",
   "private": true,
   "type": "module",
