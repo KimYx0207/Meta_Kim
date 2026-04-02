@@ -216,9 +216,9 @@ Meta_Kim follows one chain:
 
 ```mermaid
 flowchart LR
-    A[Yuan (元)] --> B[Organizational Mirroring]
-    B --> C[Rhythm Orchestration]
-    C --> D[Intent Amplification]
+    A["Yuan / 元"] --> B["Organizational Mirroring"]
+    B --> C["Rhythm Orchestration"]
+    C --> D["Intent Amplification"]
 ```
 
 - `Yuan (元)`: how to split
