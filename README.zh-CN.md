@@ -800,22 +800,35 @@ npm run validate
 - Codex agents 是否有效
 - hooks / MCP / package scripts 是否配置正确
 
-#### 6. 需要验收时再跑运行时测试
+#### 6. 需要时再跑轻量运行时 smoke
 
 ```bash
 npm run eval:agents
 ```
 
-这一步是真实运行时验收：
+默认的 `eval:agents` 是轻量、无 LLM 的 runtime smoke：
 
 - 可用且通过的运行时会显示 `passed`
-- 没装、不可达或暂时超时的可选运行时可能显示 `skipped`
-- 真的回归或配置错误会显示 `failed`
+- 没装或当前不可用的可选运行时可能显示 `skipped`
+- 配置错误、注册表接线错误会显示 `failed`
+- 它**不会**主动打开 Claude / Codex / OpenClaw 的实时 prompt 会话
+
+如果你明确要跑较慢的、带实时 prompt 的运行时验收：
+
+```bash
+npm run eval:agents:live
+```
 
 全部一起跑：
 
 ```bash
 npm run verify:all
+```
+
+需要完整 live 验收时：
+
+```bash
+npm run verify:all:live
 ```
 
 #### 7. OpenClaw 本地运行前，额外准备一次
@@ -868,8 +881,10 @@ node scripts/agent-health-report.mjs
 | `npm run test:mcp` | 改了 MCP 相关逻辑时 | 自测 `meta-runtime-server` |
 | `npm run validate` | 每次准备提交前 | 做静态完整性校验 |
 | `npm run check` | 想快速做一轮静态检查 | `check:runtimes + validate` |
-| `npm run eval:agents` | 要验收真实运行时时 | 运行 Claude / Codex / OpenClaw 验收 |
-| `npm run verify:all` | 发布前 / 大改后 | `check + eval:agents` |
+| `npm run eval:agents` | 要快速做一轮 runtime smoke 时 | 做 CLI / 配置 / hook / registry 级别的轻量检查，不跑 LLM prompt 验收 |
+| `npm run eval:agents:live` | 要做真实 live 运行时验收时 | 运行较慢的 Claude / Codex / OpenClaw prompt 验收 |
+| `npm run verify:all` | 发布前 / 大改后 | `check + 轻量 eval + tests` |
+| `npm run verify:all:live` | runtime 敏感发布前 | `check + live eval + tests` |
 | `node scripts/agent-health-report.mjs` | 想看总体健康度时 | 生成 8 个 agent 的健康报告 |
 
 **Windows / PATH：** 从图形界面或编辑器里启动任务时，Node 子进程继承到的 `PATH` 有时比你单独开的终端更短。遇到 `eval:agents` 找不到 CLI 时，优先检查 `%APPDATA%\\npm\\`、`where.exe` 结果，仍不行就设置绝对路径环境变量：
@@ -887,7 +902,8 @@ node scripts/agent-health-report.mjs
 3. 跑 `npm run sync:runtimes`
 4. 跑 `npm run discover:global`
 5. 跑 `npm run validate`
-6. 需要运行时验收时，再跑 `npm run eval:agents`
+6. 需要 smoke 级运行时验收时，再跑 `npm run eval:agents`
+7. 只有明确需要 live prompt 验收时，再跑 `npm run eval:agents:live`
 
 这样最不容易把三端镜像改乱。
 
@@ -907,21 +923,27 @@ node scripts/agent-health-report.mjs
 
 ### 4. `eval:agents` 里看到 `skipped` 是不是就说明项目坏了？
 
-不一定。`skipped` 常见原因是对应 CLI 没装、暂时不可用，或者运行时超时。真正的硬失败会标成 `failed`。
+不一定。`skipped` 常见原因是对应 CLI 没装，或者对应 runtime 当前不可用。真正的硬失败会标成 `failed`。
 
-### 5. 为什么默认入口不是 8 个 agent 直接给用户选？
+### 5. `eval:agents` 和 `eval:agents:live` 有什么区别？
+
+`eval:agents` 是轻量 runtime smoke，只检查 CLI 可用性、配置接线、hook 和 runtime scaffolding，不主动打开 LLM prompt 会话。
+
+`eval:agents:live` 是更重的 live runtime 验收，会真实调用 Claude / Codex / OpenClaw，会慢很多。
+
+### 6. 为什么默认入口不是 8 个 agent 直接给用户选？
 
 因为 Meta_Kim 的设计目标不是“给你一排角色菜单”，而是先用统一前门接住需求，再在后台做分工。
 
-### 6. 什么情况下可以不走 agent？
+### 7. 什么情况下可以不走 agent？
 
 只有纯 `Q / Query`。也就是纯解释、纯问答、没有改代码、没有外部副作用、没有交付链要求。只要任务会执行、会产生产物、会进入审查或验证，就必须有 owner。
 
-### 7. `docs/meta.md` 是不是必读？
+### 8. `docs/meta.md` 是不是必读？
 
 不是。它更像方法长文和研究稿。第一次上手先读本 README 即可。
 
-### 8. 我只想看仓库地图，应该读什么？
+### 9. 我只想看仓库地图，应该读什么？
 
 读 `docs/repo-map.md`。
 

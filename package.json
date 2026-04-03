@@ -17,11 +17,13 @@
     "test:mcp": "node scripts/mcp/meta-runtime-server.mjs --self-test",
     "prepare:openclaw-local": "node scripts/prepare-openclaw-local.mjs",
     "eval:agents": "node scripts/eval-meta-agents.mjs",
+    "eval:agents:live": "node scripts/eval-meta-agents.mjs --live",
     "probe:clis": "node scripts/eval-meta-agents.mjs --probe-clis-only",
     "test:meta-theory": "node --test tests/meta-theory/*.test.mjs",
     "validate": "node scripts/validate-project.mjs",
     "check": "npm run check:runtimes && npm run validate",
-    "verify:all": "npm run check && npm run check:global:meta-theory && node scripts/eval-meta-agents.mjs --require-all-runtimes && npm run test:meta-theory"
+    "verify:all": "npm run check && npm run check:global:meta-theory && node scripts/eval-meta-agents.mjs --require-all-runtimes && npm run test:meta-theory",
+    "verify:all:live": "npm run check && npm run check:global:meta-theory && node scripts/eval-meta-agents.mjs --require-all-runtimes --live && npm run test:meta-theory"
   },
   "keywords": [
     "claude-code",

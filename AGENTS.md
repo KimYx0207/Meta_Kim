@@ -224,8 +224,10 @@ After changing canonical files:
 1. run `npm run sync:runtimes`
 2. run `npm run discover:global`
 3. run `npm run validate`
-4. run `npm run eval:agents` when runtime acceptance matters
-5. run `npm run verify:all` before release or after larger changes
+4. run `npm run eval:agents` when smoke-level runtime acceptance matters
+5. run `npm run eval:agents:live` only when you explicitly need slower prompt-backed runtime acceptance
+6. run `npm run verify:all` before release or after larger changes
+7. run `npm run verify:all:live` only before runtime-sensitive releases that need the live acceptance layer
 
 Useful supporting commands:
 
@@ -233,6 +235,8 @@ Useful supporting commands:
 - `npm run probe:clis`
 - `npm run test:mcp`
 - `node scripts/agent-health-report.mjs`
+
+`eval:agents` is now the lightweight runtime smoke layer: it checks CLI availability, runtime wiring, hooks, and registry/config scaffolding without opening live prompt sessions. Use the `:live` variants only when you actually need real Claude / Codex / OpenClaw prompt-backed acceptance.
 
 ## One-Line Interpretation
 

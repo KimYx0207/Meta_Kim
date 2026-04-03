@@ -795,22 +795,35 @@ This checks:
 - Codex agent definitions
 - hooks, MCP config, and package scripts
 
-#### 6. Run runtime acceptance only when you need it
+#### 6. Run runtime smoke only when you need it
 
 ```bash
 npm run eval:agents
 ```
 
-This is the real runtime acceptance step:
+Default `eval:agents` is the lightweight, no-LLM runtime smoke step:
 
 - installed and healthy runtimes report `passed`
-- optional runtimes that are missing, unavailable, or timed out may report `skipped`
-- actual regressions or broken config report `failed`
+- optional runtimes that are missing or unavailable may report `skipped`
+- broken config or registry wiring report `failed`
+- it does **not** open live prompt sessions with Claude / Codex / OpenClaw
 
-Run everything together with:
+If you explicitly want the slower live runtime check that talks to the runtimes:
+
+```bash
+npm run eval:agents:live
+```
+
+Run the full maintenance stack with:
 
 ```bash
 npm run verify:all
+```
+
+And the full live stack with:
+
+```bash
+npm run verify:all:live
 ```
 
 #### 7. Prepare OpenClaw locally only if you plan to use it
@@ -863,8 +876,10 @@ The system routes each request through the matching governance stage.
 | `npm run test:mcp` | after changing MCP-related code | self-tests `meta-runtime-server` |
 | `npm run validate` | before committing | runs static integrity validation |
 | `npm run check` | when you want a quick static pass | runs `check:runtimes + validate` |
-| `npm run eval:agents` | for runtime acceptance | runs Claude / Codex / OpenClaw evaluation |
-| `npm run verify:all` | before release or after bigger changes | runs `check + eval:agents` |
+| `npm run eval:agents` | for fast runtime smoke | runs CLI/config/hook/runtime-registry smoke without LLM prompt checks |
+| `npm run eval:agents:live` | when you want live runtime acceptance | runs the slower Claude / Codex / OpenClaw prompt-backed evaluation |
+| `npm run verify:all` | before release or after bigger changes | runs `check + lightweight eval + tests` |
+| `npm run verify:all:live` | before runtime-sensitive releases | runs `check + live eval + tests` |
 | `node scripts/agent-health-report.mjs` | when you want an overview | generates a health report for all 8 agents |
 
 **Windows / PATH:** a Node process started from a GUI app or editor task may inherit a shorter `PATH` than your terminal. If `eval:agents` cannot find a CLI, first check `%APPDATA%\\npm\\`, then `where.exe`, and if needed set absolute paths through:
@@ -882,7 +897,8 @@ If you are changing agents, skills, README files, or runtime-facing config, the 
 3. run `npm run sync:runtimes`
 4. run `npm run discover:global`
 5. run `npm run validate`
-6. run `npm run eval:agents` only when runtime acceptance matters
+6. run `npm run eval:agents` when smoke-level runtime acceptance matters
+7. only run `npm run eval:agents:live` when you truly need live prompt-backed acceptance
 
 That keeps the three runtime projections aligned.
 
@@ -902,21 +918,27 @@ Usually no. It is machine-local capability inventory with local absolute paths.
 
 ### 4. If `eval:agents` says `skipped`, is the project broken?
 
-Not necessarily. `skipped` usually means a runtime is optional and currently unavailable, not installed, or timed out. Real failures are reported as `failed`.
+Not necessarily. `skipped` usually means a runtime is optional and currently unavailable or not installed. Real failures are reported as `failed`.
 
-### 5. Why is the default front door not a menu of 8 agents?
+### 5. What is the difference between `eval:agents` and `eval:agents:live`?
+
+`eval:agents` is lightweight runtime smoke. It checks CLI availability, registry/config wiring, and runtime-specific scaffolding without opening LLM-backed prompt sessions.
+
+`eval:agents:live` is the heavier live acceptance step. It opens real Claude / Codex / OpenClaw runtime interactions and is slower by design.
+
+### 6. Why is the default front door not a menu of 8 agents?
 
 Because Meta_Kim is designed to receive one user request through one public entry point, then do specialization backstage.
 
-### 6. When can a task skip agents entirely?
+### 7. When can a task skip agents entirely?
 
 Only for pure `Q / Query` work: explanation or Q&A with no code change, no external side effect, and no deliverable / handoff chain. Once the task executes, produces artifacts, or enters review / verification, it needs an owner.
 
-### 7. Is `docs/meta.md` required reading?
+### 8. Is `docs/meta.md` required reading?
 
 No. It is the long-form theory manuscript. Start with this README instead.
 
-### 8. I only want the directory map. What should I read?
+### 9. I only want the directory map. What should I read?
 
 Read `docs/repo-map.md`.
 

@@ -10,10 +10,26 @@ import { fileURLToPath } from "node:url";
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
+const rawArgs = process.argv.slice(2);
 const requireAllRuntimes = process.argv.includes("--require-all-runtimes");
+const evalMode = rawArgs.includes("--live") || rawArgs.includes("--mode=live")
+  ? "live"
+  : "smoke";
+const runtimeArg = rawArgs.find((arg) => arg.startsWith("--runtime="));
+const selectedRuntimes = new Set(
+  runtimeArg
+    ? runtimeArg
+        .slice("--runtime=".length)
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+    : ["claude", "codex", "openclaw"]
+);
 const claudeAgentsDir = path.join(repoRoot, ".claude", "agents");
 const openclawLocalConfigPath = path.join(repoRoot, "openclaw", "openclaw.local.json");
 const prepareOpenClawScriptPath = path.join(repoRoot, "scripts", "prepare-openclaw-local.mjs");
+const activeChildren = new Map();
+let cleanupInFlight = false;
 
 function readEnvCliOverride(envKey) {
   const raw = process.env[envKey];
@@ -154,6 +170,104 @@ async function resolveCliCommand(spec) {
       `(npm global shims are often under %APPDATA%\\npm). Set ${envKey} to the full path of the executable, ` +
       `or run the same command from a terminal where "${unixName}" already works.`
   );
+}
+
+function isRuntimeSelected(runtimeName) {
+  return selectedRuntimes.has(runtimeName);
+}
+
+function logProgress(message) {
+  process.stderr.write(`[eval:agents:${evalMode}] ${message}\n`);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function markChildActive(child, label) {
+  activeChildren.set(child.pid, { child, label });
+  child.once("close", () => {
+    activeChildren.delete(child.pid);
+  });
+}
+
+async function killProcessTree(pid, options = {}) {
+  const signal = options.signal ?? "SIGTERM";
+  if (!pid) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    try {
+      await execFileAsync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        cwd: repoRoot,
+        timeout: 15_000,
+        windowsHide: true,
+      });
+    } catch {
+      // Best-effort cleanup; process may already be gone.
+    }
+    return;
+  }
+
+  const targets = [-pid, pid];
+  for (const target of targets) {
+    try {
+      process.kill(target, signal);
+      return;
+    } catch {
+      // try next target
+    }
+  }
+}
+
+async function terminateChildTree(child, options = {}) {
+  const pid = child?.pid;
+  if (!pid || child.exitCode !== null) {
+    return;
+  }
+
+  const graceMs = options.graceMs ?? 5_000;
+  await killProcessTree(pid, { signal: "SIGTERM" });
+
+  for (let waited = 0; waited < graceMs; waited += 100) {
+    if (child.exitCode !== null) {
+      return;
+    }
+    await delay(100);
+  }
+
+  await killProcessTree(pid, { signal: "SIGKILL" });
+}
+
+async function cleanupActiveChildren(reason) {
+  if (cleanupInFlight) {
+    return;
+  }
+  cleanupInFlight = true;
+
+  const entries = [...activeChildren.values()];
+  if (entries.length > 0) {
+    logProgress(`${reason}; cleaning ${entries.length} child process(es)`);
+  }
+
+  await Promise.allSettled(
+    entries.map(({ child }) => terminateChildTree(child))
+  );
+}
+
+function installSignalCleanup() {
+  const handleSignal = (signal) => {
+    void cleanupActiveChildren(`received ${signal}`).finally(() => {
+      process.exitCode = 130;
+      process.exit();
+    });
+  };
+
+  process.once("SIGINT", () => handleSignal("SIGINT"));
+  process.once("SIGTERM", () => handleSignal("SIGTERM"));
 }
 
 /** Only resolve CLIs and print JSON — same logic as eval, no smoke tests. */
@@ -719,14 +833,15 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
       cwd: options.cwd,
       env: options.env,
       windowsHide: true,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
+    markChildActive(child, `${file} ${args.join(" ")}`);
 
     let stdout = "";
     let stderr = "";
     let finished = false;
     let timeoutId = null;
-    let killTimerId = null;
 
     function settle(error, result) {
       if (finished) {
@@ -735,9 +850,6 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
       finished = true;
       if (timeoutId) {
         clearTimeout(timeoutId);
-      }
-      if (killTimerId) {
-        clearTimeout(killTimerId);
       }
       if (error) {
         reject(error);
@@ -748,15 +860,13 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
 
     if (typeof options.timeout === "number" && options.timeout > 0) {
       timeoutId = setTimeout(() => {
-        child.kill("SIGTERM");
-        killTimerId = setTimeout(() => {
-          child.kill("SIGKILL");
-        }, 5_000);
-        settle(
-          new Error(
-            `Command timed out after ${options.timeout}ms: ${file} ${args.join(" ")}`
-          )
-        );
+        void terminateChildTree(child).finally(() => {
+          settle(
+            new Error(
+              `Command timed out after ${options.timeout}ms: ${file} ${args.join(" ")}`
+            )
+          );
+        });
       }, options.timeout);
     }
 
@@ -870,6 +980,7 @@ async function loadClaudeAgentIds() {
 }
 
 async function runClaudeDiscovery(agentIds) {
+  logProgress(`Claude discovery: checking ${agentIds.length} registered agent(s)`);
   const cmd = await getResolvedClaudeCommand();
   const { stdout } = await runCommandWithIgnoredStdin(cmd.file, cmd.toArgs(["agents"]), {
     cwd: repoRoot,
@@ -884,11 +995,22 @@ async function runClaudeDiscovery(agentIds) {
   };
 }
 
+async function runClaudeSmoke(agentIds) {
+  const discovery = await runClaudeDiscovery(agentIds);
+  return {
+    status: discovery.ok ? "passed" : "failed",
+    ok: discovery.ok,
+    discovery,
+    mode: "smoke",
+  };
+}
+
 async function runClaudeCases(agentIds) {
   const results = [];
 
   for (let index = 0; index < agentIds.length; index += 1) {
     const agentId = agentIds[index];
+    logProgress(`Claude live case ${index + 1}/${agentIds.length}: ${agentId}`);
     const caseConfig = claudeCases[agentId];
     if (!caseConfig) {
       results.push({
@@ -973,11 +1095,80 @@ async function runClaudeCases(agentIds) {
   return results;
 }
 
+async function runClaudeLive(agentIds) {
+  const discovery = await runClaudeDiscovery(agentIds);
+  const results = await runClaudeCases(agentIds);
+  return summarizeClaudeRuntime(discovery, results);
+}
+
 async function runCodexSmoke() {
   const codexCmd = await getResolvedCodexCommand();
   let versionStdout;
   try {
-    ({ stdout: versionStdout } = await execFileAsync(
+    logProgress("Codex smoke: probing CLI and structural repo wiring");
+    ({ stdout: versionStdout } = await runCommandWithIgnoredStdin(
+      codexCmd.file,
+      codexCmd.toArgs(["--version"]),
+      {
+        cwd: repoRoot,
+        timeout: 30_000,
+        env: { ...process.env, NO_COLOR: "1" },
+      }
+    ));
+  } catch (error) {
+    if (isOptionalRuntimeUnavailable(error.message)) {
+      return {
+        status: "skipped",
+        ok: false,
+        retryable: true,
+        reason: "codex_runtime_unavailable",
+        error: error.message,
+      };
+    }
+    throw error;
+  }
+
+  const configExamplePath = path.join(repoRoot, "codex", "config.toml.example");
+  const configExample = await fs.readFile(configExamplePath, "utf8");
+  const codexAgentFiles = (await fs.readdir(path.join(repoRoot, ".codex", "agents")))
+    .filter((file) => file.endsWith(".toml"))
+    .sort();
+  const payload = {
+    runtime: "codex",
+    cli_version: versionStdout.trim(),
+    entrypoint: "AGENTS.md",
+    project_skill_root: ".agents/skills/meta-theory",
+    compat_skill_mirror: ".codex/skills/meta-theory.md",
+    custom_agents: codexAgentFiles.map((file) => file.replace(/\.toml$/, "")),
+    mcp_supported: configExample.includes("[mcp_servers.meta_kim_runtime]"),
+    sandbox_configurable: configExample.includes("sandbox_mode"),
+    approvals_configurable: configExample.includes("approval_policy"),
+  };
+
+  const structuralOk =
+    payload.runtime === "codex" &&
+    payload.entrypoint === "AGENTS.md" &&
+    payload.project_skill_root === ".agents/skills/meta-theory" &&
+    payload.compat_skill_mirror === ".codex/skills/meta-theory.md" &&
+    payload.custom_agents.includes("meta-warden") &&
+    payload.mcp_supported === true &&
+    payload.sandbox_configurable === true &&
+    payload.approvals_configurable === true;
+
+  return {
+    status: structuralOk ? "passed" : "failed",
+    ok: structuralOk,
+    mode: "smoke",
+    sample: payload,
+  };
+}
+
+async function runCodexLive() {
+  const codexCmd = await getResolvedCodexCommand();
+  let versionStdout;
+  try {
+    logProgress("Codex live: probing CLI and running repository smoke prompt");
+    ({ stdout: versionStdout } = await runCommandWithIgnoredStdin(
       codexCmd.file,
       codexCmd.toArgs(["--version"]),
       {
@@ -1106,9 +1297,10 @@ async function runCodexSmoke() {
     },
   };
 }
-
-async function runOpenClawSmoke() {
-  await execFileAsync(
+ 
+async function collectOpenClawBaseStatus() {
+  logProgress("OpenClaw smoke: preparing local config and validating hooks");
+  await runCommandWithIgnoredStdin(
     "node",
     [prepareOpenClawScriptPath],
     {
@@ -1125,7 +1317,7 @@ async function runOpenClawSmoke() {
     OPENCLAW_CONFIG_PATH: openclawLocalConfigPath,
   };
 
-  const validation = await execFileAsync(
+  const validation = await runCommandWithIgnoredStdin(
     command.file,
     command.toArgs(["config", "validate"]),
     {
@@ -1141,7 +1333,7 @@ async function runOpenClawSmoke() {
     output: "",
   };
   try {
-    const hooks = await execFileAsync(
+    const hooks = await runCommandWithIgnoredStdin(
       command.file,
       command.toArgs(["hooks", "list", "--verbose"]),
       {
@@ -1169,11 +1361,40 @@ async function runOpenClawSmoke() {
     };
   }
 
+  return {
+    command,
+    env,
+    validationOutput,
+    hooksDiscovery,
+  };
+}
+
+async function runOpenClawSmoke() {
+  const baseStatus = await collectOpenClawBaseStatus();
+  const ok =
+    baseStatus.validationOutput.toLowerCase().includes("config valid") &&
+    baseStatus.hooksDiscovery.ok;
+
+  return {
+    status: ok ? "passed" : "failed",
+    ok,
+    mode: "smoke",
+    configOk: baseStatus.validationOutput.toLowerCase().includes("config valid"),
+    hooksOk: baseStatus.hooksDiscovery.ok,
+    hooksDiscovery: baseStatus.hooksDiscovery.output,
+    validation: baseStatus.validationOutput,
+  };
+}
+
+async function runOpenClawLive() {
+  const baseStatus = await collectOpenClawBaseStatus();
+
   const smokeAgents = await loadClaudeAgentIds();
   const agentResults = [];
 
   for (const agentId of smokeAgents) {
     try {
+      logProgress(`OpenClaw live case ${agentResults.length + 1}/${smokeAgents.length}: ${agentId}`);
       const caseConfig = claudeCases[agentId];
       const prompt =
         "你正在做 Meta_Kim 元 agent 角色边界自检。只输出一段 JSON，不要解释。" +
@@ -1183,9 +1404,9 @@ async function runOpenClawSmoke() {
         "artifact：一个字符串，你最核心的产物；" +
         "delegates_to：字符串数组，恰好 2 个 agent id，跨边界时最常委派给谁。";
       const sessionId = `eval-${agentId}-${crypto.randomUUID()}`;
-      const { stdout, stderr } = await execFileAsync(
-        command.file,
-        command.toArgs([
+      const { stdout, stderr } = await runCommandWithIgnoredStdin(
+        baseStatus.command.file,
+        baseStatus.command.toArgs([
           "agent",
           "--local",
           "--agent",
@@ -1201,7 +1422,7 @@ async function runOpenClawSmoke() {
         {
           cwd: repoRoot,
           timeout: 180_000,
-          env,
+          env: baseStatus.env,
         }
       );
 
@@ -1258,93 +1479,126 @@ async function runOpenClawSmoke() {
 
   return {
     status:
-      validationOutput.toLowerCase().includes("config valid") &&
-      hooksDiscovery.ok &&
+      baseStatus.validationOutput.toLowerCase().includes("config valid") &&
+      baseStatus.hooksDiscovery.ok &&
       agentResults.every((result) => result.ok && result.injectionOk)
         ? "passed"
         : "failed",
     ok:
-      validationOutput.toLowerCase().includes("config valid") &&
-      hooksDiscovery.ok &&
+      baseStatus.validationOutput.toLowerCase().includes("config valid") &&
+      baseStatus.hooksDiscovery.ok &&
       agentResults.every((result) => result.ok && result.injectionOk),
-    configOk: validationOutput.toLowerCase().includes("config valid"),
-    hooksOk: hooksDiscovery.ok,
-    hooksDiscovery: hooksDiscovery.output,
-    validation: validationOutput,
+    configOk: baseStatus.validationOutput.toLowerCase().includes("config valid"),
+    hooksOk: baseStatus.hooksDiscovery.ok,
+    hooksDiscovery: baseStatus.hooksDiscovery.output,
+    validation: baseStatus.validationOutput,
     agentResults,
   };
 }
 
 async function main() {
+  installSignalCleanup();
+  for (const runtimeName of selectedRuntimes) {
+    if (!["claude", "codex", "openclaw"].includes(runtimeName)) {
+      throw new Error(`Unknown runtime filter: ${runtimeName}`);
+    }
+  }
+  logProgress(`starting ${evalMode} evaluation for ${[...selectedRuntimes].join(", ")}`);
+
   const agentIds = await loadClaudeAgentIds();
   const report = {
     timestamp: new Date().toISOString(),
+    mode: evalMode,
+    requestedRuntimes: [...selectedRuntimes],
     claude: null,
     codex: null,
     openclaw: null,
   };
 
   try {
-    const discovery = await runClaudeDiscovery(agentIds);
-    const results = await runClaudeCases(agentIds);
-    report.claude = summarizeClaudeRuntime(discovery, results);
-  } catch (error) {
-    report.claude = isOptionalRuntimeUnavailable(error.message)
-      ? {
-          status: "skipped",
-          ok: false,
-          retryable: true,
-          reason: "claude_runtime_unavailable",
-          error: error.message,
-        }
-      : {
-          status: "failed",
-          ok: false,
-          error: error.message,
-        };
-  }
+    if (isRuntimeSelected("claude")) {
+      try {
+        report.claude =
+          evalMode === "live"
+            ? await runClaudeLive(agentIds)
+            : await runClaudeSmoke(agentIds);
+      } catch (error) {
+        report.claude = isOptionalRuntimeUnavailable(error.message)
+          ? {
+              status: "skipped",
+              ok: false,
+              retryable: true,
+              reason: "claude_runtime_unavailable",
+              error: error.message,
+            }
+          : {
+              status: "failed",
+              ok: false,
+              error: error.message,
+            };
+      }
 
-  try {
-    report.codex = await runCodexSmoke();
-  } catch (error) {
-    report.codex = isOptionalRuntimeUnavailable(error.message)
-      ? {
-          status: "skipped",
-          ok: false,
-          retryable: true,
-          reason: "codex_runtime_unavailable",
-          error: error.message,
-        }
-      : {
-          status: "failed",
-          ok: false,
-          error: error.message,
-        };
-  }
+      logProgress(`Claude result: ${report.claude.status}`);
+    }
 
-  try {
-    report.openclaw = await runOpenClawSmoke();
-  } catch (error) {
-    report.openclaw = isOptionalRuntimeUnavailable(error.message)
-      ? {
-          status: "skipped",
-          ok: false,
-          retryable: true,
-          reason: "openclaw_runtime_unavailable",
-          error: error.message,
-        }
-      : {
-          status: "failed",
-          ok: false,
-          error: error.message,
-        };
+    if (isRuntimeSelected("codex")) {
+      try {
+        report.codex =
+          evalMode === "live"
+            ? await runCodexLive()
+            : await runCodexSmoke();
+      } catch (error) {
+        report.codex = isOptionalRuntimeUnavailable(error.message)
+          ? {
+              status: "skipped",
+              ok: false,
+              retryable: true,
+              reason: "codex_runtime_unavailable",
+              error: error.message,
+            }
+          : {
+              status: "failed",
+              ok: false,
+              error: error.message,
+            };
+      }
+
+      logProgress(`Codex result: ${report.codex.status}`);
+    }
+
+    if (isRuntimeSelected("openclaw")) {
+      try {
+        report.openclaw =
+          evalMode === "live"
+            ? await runOpenClawLive()
+            : await runOpenClawSmoke();
+      } catch (error) {
+        report.openclaw = isOptionalRuntimeUnavailable(error.message)
+          ? {
+              status: "skipped",
+              ok: false,
+              retryable: true,
+              reason: "openclaw_runtime_unavailable",
+              error: error.message,
+            }
+          : {
+              status: "failed",
+              ok: false,
+              error: error.message,
+            };
+      }
+
+      logProgress(`OpenClaw result: ${report.openclaw.status}`);
+    }
+  } finally {
+    await cleanupActiveChildren("final sweep");
   }
 
   const runtimeStatuses = [
-    summarizeRuntimeReport("claude", report.claude),
-    summarizeRuntimeReport("codex", report.codex),
-    summarizeRuntimeReport("openclaw", report.openclaw),
-  ];
+    isRuntimeSelected("claude") ? summarizeRuntimeReport("claude", report.claude) : null,
+    isRuntimeSelected("codex") ? summarizeRuntimeReport("codex", report.codex) : null,
+    isRuntimeSelected("openclaw") ? summarizeRuntimeReport("openclaw", report.openclaw) : null,
+  ].filter(Boolean);
 
   report.summary = {
     passed: runtimeStatuses.filter((item) => item.status === "passed").map((item) => item.runtime),
