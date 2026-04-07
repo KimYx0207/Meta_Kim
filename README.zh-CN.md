@@ -903,6 +903,8 @@ node setup.mjs
 
 `node setup.mjs` 会依次做环境检查、`npm install`、9 个全局元技能安装、`validate`，以及 MCP 自测。它不会重写仓库内 runtime 镜像，也不会生成全局能力索引；这些维护步骤见下面的手动流程。
 
+> **第三方元技能（如 findskill）**：请**以本仓库为准**。`setup.mjs` 安装的是 **`KimYx0207/findskill`**（在公开生态能力上的维护与优化版），落地目录为 `~/.claude/skills/findskill/`。不要在不同渠道再装一份「官方 / 市场」拷贝以免并行重复源；若别处写作 `find-skills` 等，常与上述为同一类能力，以 Meta_Kim 安装结果为准。
+
 > 纯 Node.js 脚本，Windows / macOS / Linux 通用，不依赖 bash。
 
 ---

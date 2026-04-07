@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation
+
+- State that **Meta_Kim** (`node setup.mjs`) is the canonical install path for **KimYx0207/findskill** (maintained/optimized on top of public baselines); discourage parallel duplicate installs and note that labels like `find-skills` often name the same capability family (`README.zh-CN.md`, `CLAUDE.md`).
+
 ### Fixed
 
 - Install **planning-with-files** from `skills/planning-with-files/` (sparse/subdir copy) in `install-deps.sh`, `setup.mjs`, and `install-global-skills-all-runtimes.mjs` so `~/.claude/skills/planning-with-files/SKILL.md` exists and Claude Code can load the skill and its frontmatter hooks. Whole-repo clone left SKILL only nested, so the skill was invisible.

@@ -10,6 +10,12 @@ If you only remember three things:
 - `.claude/agents/*.md`, `.claude/skills/meta-theory/SKILL.md`, and `contracts/workflow-contract.json` are the long-term source of truth.
 - After editing canonical files, resync and validate before trusting the result.
 
+## Third-party meta-skills (canonical install)
+
+Packs such as **findskill** are installed by **`node setup.mjs`** from **`KimYx0207/*`** repos declared in `setup.mjs`. These are **maintained and optimized for Meta_Kim** on top of public-ecosystem baselines.
+
+**Canonical path:** install and document through **this repository** — do not parallel-install duplicate marketplace copies under different folder names unless you explicitly need both. If you see labels like `find-skills`, they often refer to the same capability family as the `findskill` skill directory.
+
 ## Read This Repository Correctly
 
 Meta_Kim is not Claude-only logic.
