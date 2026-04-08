@@ -891,6 +891,20 @@ Codex 和 OpenClaw 使用各自原生机制实现等效行为。
 
 ### 一键安装（推荐）
 
+**无需先 clone（`npx` 会临时拉取仓库并执行安装向导）：**
+
+```bash
+npx --yes github:KimYx0207/Meta_Kim meta-kim
+```
+
+中文界面、只做环境检查：
+
+```bash
+npx --yes github:KimYx0207/Meta_Kim meta-kim -- --lang zh-CN --check
+```
+
+**经典方式（克隆后进目录）：**
+
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
 cd Meta_Kim
@@ -899,6 +913,7 @@ node setup.mjs
 
 | 用法 | 说明 |
 | --- | --- |
+| `npx --yes github:KimYx0207/Meta_Kim meta-kim` | 与 `node setup.mjs` 相同，省略手动 `git clone` / `cd` |
 | `node setup.mjs` | 交互式向导（选语言 → 安装 / 更新 / 检查） |
 | `node setup.mjs --lang en` | 跳过语言选择，使用英语 |
 | `node setup.mjs --update` | 更新所有技能和依赖 |
@@ -1116,6 +1131,7 @@ node scripts/agent-health-report.mjs
 
 | 命令 | 什么时候用 | 作用 |
 | --- | --- | --- |
+| `npx --yes github:KimYx0207/Meta_Kim meta-kim` | **不想先 clone** | 与 `node setup.mjs` 相同（`npx` 会拉取本仓库） |
 | `node setup.mjs` | **首次拉仓库** | **交互式向导：语言 → 安装 / 更新 / 检查** |
 | `node setup.mjs --update` | 依赖/技能需要更新时 | 更新所有技能 + 可选运行时同步 |
 | `node setup.mjs --check` | 想先做环境体检时 | 环境 + 依赖 + 跨运行时同步验证 |

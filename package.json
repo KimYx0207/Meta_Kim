@@ -40,6 +40,9 @@
   ],
   "author": "KimYx0207",
   "license": "MIT",
+  "bin": {
+    "meta-kim": "./bin/meta-kim.mjs"
+  },
   "engines": {
     "node": ">=18"
   },

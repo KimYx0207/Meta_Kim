@@ -889,6 +889,20 @@ Codex and OpenClaw use their own native mechanisms for equivalent behavior.
 
 ### One-Click Setup (Recommended)
 
+**Without cloning first** (`npx` fetches the repo temporarily and runs the same wizard as `setup.mjs`):
+
+```bash
+npx --yes github:KimYx0207/Meta_Kim meta-kim
+```
+
+Chinese UI + check-only example:
+
+```bash
+npx --yes github:KimYx0207/Meta_Kim meta-kim -- --lang zh-CN --check
+```
+
+**Classic flow** (clone, then enter the directory):
+
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
 cd Meta_Kim
@@ -897,6 +911,7 @@ node setup.mjs
 
 | Usage                              | Description                                              |
 | ---------------------------------- | -------------------------------------------------------- |
+| `npx --yes github:KimYx0207/Meta_Kim meta-kim` | Same as `node setup.mjs`; skips manual `git clone` / `cd` |
 | `node setup.mjs`                   | Interactive setup (language → install / update / check)  |
 | `node setup.mjs --lang zh-CN`     | Skip language selection, use Chinese                     |
 | `node setup.mjs --update`          | Update all skills and dependencies                       |
@@ -1111,6 +1126,7 @@ The system routes each request through the matching governance stage.
 
 | Command                                  | When to use it                                   | What it does                                                          |
 | ---------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
+| `npx --yes github:KimYx0207/Meta_Kim meta-kim` | **without cloning first**                  | same as `node setup.mjs` (`npx` fetches this repo)                    |
 | `node setup.mjs`                       | **first setup**                            | interactive wizard: language → install / update / check        |
 | `node setup.mjs --update`              | when skills/deps need updating                   | update all skills + optional runtime sync                      |
 | `node setup.mjs --check`               | when you want an environment preflight          | env + dependency + cross-runtime sync verification             |
