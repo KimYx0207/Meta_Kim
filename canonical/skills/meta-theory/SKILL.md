@@ -171,14 +171,20 @@ The `prompt` must contain everything the agent needs — files, context, user re
 
 ## Type B: Agent Creation
 
-**Dispatch map (Type B):** **`meta-genesis`** and **`meta-artisan`** are mandatory; **`meta-prism`** and **`meta-warden`** handle review and synthesis; **`meta-sentinel`**, **`meta-librarian`**, and **`meta-conductor`** are optional by trigger.
+**Dispatch map (Type B):** **`meta-genesis`** and **`meta-artisan`** are mandatory; **`meta-prism`** and **`meta-warden`** handle review and synthesis; **`meta-scout`**, **`meta-sentinel`**, and **`meta-librarian`** are optional factory stations by trigger; **`meta-conductor`** stays orchestration-only.
 
 Read `.claude/skills/meta-theory/references/create-agent.md` for the full pipeline. Quick summary:
 1. Discovery → data collection → coupling grouping → user confirmation
 2. Pre-design → check if global agent already covers the need
-3. Design → Genesis (SOUL.md) → Artisan (skills) → optional Sentinel/Librarian/Conductor
+3. Design → Warden gap approval → Conductor task board → Genesis (identity) → Artisan (loadout) → optional Scout/Sentinel/Librarian → Prism review → Warden approval
 4. Review → meta-prism quality check
 5. Integration → write `.claude/agents/{name}.md`
+
+**Factory artifacts (Type B execution-agent mode):**
+- `capabilityGapPacket`
+- `executionAgentCard`
+- `orchestrationTaskBoardPacket`
+- `evolutionWritebackPacket`
 
 ### Station Deliverable Contract (Mandatory)
 

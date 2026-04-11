@@ -50,6 +50,12 @@ When Fetch does not find a clean owner, resolve the gap in this order:
 
 **No-owner execution is illegal.** Even a temporary fallback must be named and tracked as an owner, not treated as anonymous direct execution.
 
+When Step 2 is chosen, the governed run must explicitly record the factory lane:
+
+- `capabilityGapPacket`
+- `orchestrationTaskBoardPacket`
+- `executionAgentCard` when the gap is resolved via execution-agent creation or upgrade
+
 ### Protocol-First Rule
 
 Before Stage 4 starts, Thinking must produce explicit protocol artifacts for the run:
@@ -57,6 +63,7 @@ Before Stage 4 starts, Thinking must produce explicit protocol artifacts for the
 - `taskClassification`
 - `cardPlanPacket`
 - `dispatchEnvelopePacket`
+- `orchestrationTaskBoardPacket`
 - `dispatchBoard`
 - `workerTaskPackets`
 - `resultMergePlan`
@@ -68,6 +75,8 @@ Before Stage 4 starts, Thinking must produce explicit protocol artifacts for the
 If these protocol artifacts do not exist, the run is not ready for Execution.
 
 For `governanceFlow` in `complex_dev` or `meta_analysis`, the machine-validated JSON artifact must also include **`intentPacket`** (`trueUserIntent`, `successCriteria`, `nonGoals`, `intentPacketVersion: v1`) and **`intentGatePacket`** (`ambiguitiesResolved`, `requiresUserChoice`, `defaultAssumptions`, `intentGatePacketVersion: v1`; if `requiresUserChoice` is true, include non-empty `pendingUserChoices[]`) before Execution — see `config/contracts/workflow-contract.json` (`protocols.intentPacket`, `protocols.intentGatePacket`, `runDiscipline.protocolFirst.intentPacketRequiredWhenGovernanceFlows` / `intentGatePacketRequiredWhenGovernanceFlows`).
+
+If `taskClassification.upgradeReasons` includes `owner_creation_required`, the artifact must also include **`capabilityGapPacket`** before Execution. If `capabilityGapPacket.resolutionAction` is `create_execution_agent` or `upgrade_execution_agent`, the artifact must include **`executionAgentCard`** before Conductor may dispatch the new owner.
 
 ---
 
@@ -83,7 +92,7 @@ When work is not done after one pass (open review findings, `verificationPacket.
 
 Stop when `validate:run` passes **or** the user explicitly accepts risk with documented `accepted_risk` and honest `publicReady=false`.
 
-**Session recovery (API / compact / tool failure):** Check `.meta-kim/state/{profile}/run-index.sqlite` first for the latest validated governed run, then load the governed artifact as the source of truth. After an interrupted session, reload at minimum: `runHeader`, `taskClassification`, `intentPacket`, `intentGatePacket` (when required), `cardPlanPacket`, `dispatchEnvelopePacket`, `dispatchBoard`, `workerTaskPackets` / `workerResultPackets`, `reviewPacket`, `verificationPacket`, `summaryPacket`, `evolutionWritebackPacket`. If a local `compactionPacket` exists, use it only as continuity aid; it never replaces the governed artifact. Re-run `npm run validate:run -- <artifact.json>` before claiming closure. The same packet list is printed by `npm run prompt:next-iteration -- <artifact.json>` under **Minimal context reload**.
+**Session recovery (API / compact / tool failure):** Check `.meta-kim/state/{profile}/run-index.sqlite` first for the latest validated governed run, then load the governed artifact as the source of truth. After an interrupted session, reload at minimum: `runHeader`, `taskClassification`, `intentPacket`, `intentGatePacket` (when required), `cardPlanPacket`, `dispatchEnvelopePacket`, `orchestrationTaskBoardPacket`, `capabilityGapPacket` / `executionAgentCard` (when applicable), `dispatchBoard`, `workerTaskPackets` / `workerResultPackets`, `reviewPacket`, `verificationPacket`, `summaryPacket`, `evolutionWritebackPacket`. If a local `compactionPacket` exists, use it only as continuity aid; it never replaces the governed artifact. Re-run `npm run validate:run -- <artifact.json>` before claiming closure. The same packet list is printed by `npm run prompt:next-iteration -- <artifact.json>` under **Minimal context reload**.
 
 Optional **soft todo gate** (off by default): set `META_KIM_SOFT_PUBLIC_READY_GATES=1` when running `validate:run`. If `summaryPacket.publicReady` is true, no `workerTaskPacket` may have `taskTodoState: "open"`. Omit `taskTodoState` if not tracking todos. See `config/contracts/workflow-contract.json` → `runDiscipline.runArtifactValidation.softPublicReadyTodoGate`.
 

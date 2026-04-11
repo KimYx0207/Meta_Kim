@@ -13,7 +13,7 @@ describe("workflow-contract.json — schema compliance", async () => {
 
   test("schemaVersion exists", () => {
     assert.notEqual(contract.schemaVersion, undefined);
-    assert.ok(contract.schemaVersion >= 4, "schemaVersion should be >= 4 after dispatch-envelope + local-state hardening");
+    assert.ok(contract.schemaVersion >= 5, "schemaVersion should be >= 5 after execution-agent factory packet hardening");
   });
 
   test('owner is "Meta_Kim"', () => {
@@ -127,12 +127,15 @@ describe("workflow-contract.json — schema compliance", async () => {
     );
   });
 
-  test("protocols has all 12 governed packet types", () => {
+  test("protocols has all 15 governed packet types", () => {
     const expected = [
       "runHeader",
       "taskClassification",
       "cardPlanPacket",
       "dispatchEnvelopePacket",
+      "orchestrationTaskBoardPacket",
+      "capabilityGapPacket",
+      "executionAgentCard",
       "dispatchBoard",
       "workerTaskPacket",
       "workerResultPacket",
@@ -146,7 +149,7 @@ describe("workflow-contract.json — schema compliance", async () => {
     for (const packet of expected) {
       assert.ok(keys.includes(packet), `missing protocol packet: ${packet}`);
     }
-    assert.equal(expected.length, 12);
+    assert.equal(expected.length, 15);
   });
 
   test("publicDisplayRequires has all 5 conditions", () => {
@@ -241,6 +244,7 @@ describe("workflow-contract.json — schema compliance", async () => {
     assert.ok(requiredPackets.includes("taskClassification"));
     assert.ok(requiredPackets.includes("cardPlanPacket"));
     assert.ok(requiredPackets.includes("dispatchEnvelopePacket"));
+    assert.ok(requiredPackets.includes("orchestrationTaskBoardPacket"));
     assert.ok(requiredPackets.includes("summaryPacket"));
   });
 
@@ -271,6 +275,65 @@ describe("workflow-contract.json — schema compliance", async () => {
       "inherit_summary_only",
       "inherit_full_context",
     ]);
+  });
+
+  test("orchestration task board is mandatory for non-query governance flows", () => {
+    const boardWhen =
+      contract.runDiscipline?.protocolFirst?.orchestrationTaskBoardPacketRequiredWhenGovernanceFlows ?? [];
+    assert.ok(boardWhen.includes("simple_exec"));
+    assert.ok(boardWhen.includes("complex_dev"));
+    assert.ok(boardWhen.includes("meta_analysis"));
+    assert.ok(!boardWhen.includes("query"));
+
+    const fields = contract.protocols?.orchestrationTaskBoardPacket?.requiredFields ?? [];
+    for (const field of ["dispatchBoardId", "boardMode", "tasks", "synthesisOwner"]) {
+      assert.ok(fields.includes(field), `orchestrationTaskBoardPacket missing ${field}`);
+    }
+
+    const taskFields = contract.protocols?.orchestrationTask?.requiredFields ?? [];
+    for (const field of ["taskId", "taskKind", "owner", "sequence", "dependsOn", "deliverable"]) {
+      assert.ok(taskFields.includes(field), `orchestrationTask missing ${field}`);
+    }
+  });
+
+  test("capability gap and execution agent packets are conditionally enforced", () => {
+    const gapWhen =
+      contract.runDiscipline?.protocolFirst?.capabilityGapPacketRequiredWhenUpgradeReasons ?? [];
+    assert.ok(
+      gapWhen.includes("owner_creation_required"),
+      "capabilityGapPacket must be required when owner creation is needed"
+    );
+
+    const gapFields = contract.protocols?.capabilityGapPacket?.requiredFields ?? [];
+    for (const field of [
+      "gapId",
+      "requestedCapability",
+      "currentAgentsChecked",
+      "insufficiencyReason",
+      "resolutionAction",
+      "requestedBy",
+      "approvedBy",
+    ]) {
+      assert.ok(gapFields.includes(field), `capabilityGapPacket missing ${field}`);
+    }
+
+    const cardWhen =
+      contract.runDiscipline?.protocolFirst?.executionAgentCardRequiredWhenResolutionActions ?? [];
+    assert.ok(cardWhen.includes("create_execution_agent"));
+    assert.ok(cardWhen.includes("upgrade_execution_agent"));
+
+    const cardFields = contract.protocols?.executionAgentCard?.requiredFields ?? [];
+    for (const field of [
+      "agentId",
+      "purpose",
+      "capabilities",
+      "nonCapabilities",
+      "dependencies",
+      "inputs",
+      "outputs",
+    ]) {
+      assert.ok(cardFields.includes(field), `executionAgentCard missing ${field}`);
+    }
   });
 
   test("local state + compaction policy are explicit", () => {
@@ -415,7 +478,17 @@ describe("workflow-contract.json — schema compliance", async () => {
     assert.equal(decision.writebackRequiresTargets, true);
 
     const evolutionFields = contract.protocols?.evolutionWritebackPacket?.requiredFields ?? [];
-    for (const field of ["ownerAssessment", "writebackDecision", "decisionReason", "writebacks", "scarIds", "syncRequired"]) {
+    for (const field of [
+      "ownerAssessment",
+      "writebackDecision",
+      "decisionReason",
+      "writebacks",
+      "retain",
+      "upgrade",
+      "retire",
+      "scarIds",
+      "syncRequired",
+    ]) {
       assert.ok(evolutionFields.includes(field), `evolutionWritebackPacket missing ${field}`);
     }
   });
@@ -427,6 +500,7 @@ describe("workflow-contract.json — schema compliance", async () => {
     assert.equal(runArtifactValidation.deliverableLinkMustReferencePrimaryDeliverable, true);
     assert.equal(runArtifactValidation.summaryPacketRequired, true);
     assert.equal(runArtifactValidation.cardPlanPacketRequired, true);
+    assert.equal(runArtifactValidation.orchestrationTaskBoardPacketRequired, true);
     assert.equal(runArtifactValidation.publicReadyField, "summaryPacket.publicReady");
   });
 

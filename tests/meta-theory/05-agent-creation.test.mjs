@@ -149,7 +149,7 @@ describe("05 — Type B Agent Creation Pipeline", async () => {
     });
 
     test("A-10: Sentinel/Librarian/Conductor marked as On Demand with trigger questions", () => {
-      const onDemandStations = ["Sentinel", "Librarian", "Conductor"];
+      const onDemandStations = ["Scout", "Sentinel", "Librarian", "Conductor"];
       for (const station of onDemandStations) {
         assert.match(
           pipelineCorpus,
@@ -158,6 +158,11 @@ describe("05 — Type B Agent Creation Pipeline", async () => {
         );
       }
 
+      assert.match(
+        pipelineCorpus,
+        /local capability.*missing|external capability.*missing|search externally/is,
+        "Missing Scout trigger question"
+      );
       assert.match(
         pipelineCorpus,
         /Will it modify files.*call external APIs.*operate databases/is,
@@ -172,6 +177,24 @@ describe("05 — Type B Agent Creation Pipeline", async () => {
         pipelineCorpus,
         /hand off results to other Agents.*coordinate execution order/is,
         "Missing Conductor trigger question"
+      );
+    });
+
+    test("A-10b: Plain-language execution chain is documented", () => {
+      assert.match(
+        pipelineCorpus,
+        /Warden.*front door|public front door/i,
+        "Pipeline must describe Warden as the front door"
+      );
+      assert.match(
+        pipelineCorpus,
+        /Conductor.*orchestrat/i,
+        "Pipeline must describe Conductor as orchestration-only"
+      );
+      assert.match(
+        pipelineCorpus,
+        /Execution Agents?.*do the actual work|actual workers/i,
+        "Pipeline must state that execution agents do the actual work"
       );
     });
 
@@ -220,6 +243,69 @@ describe("05 — Type B Agent Creation Pipeline", async () => {
         /D.*redo/i,
         "D grade should trigger redo"
       );
+    });
+
+    test("A-13: Base-meta factory is explicit and excludes Conductor from capability building", () => {
+      assert.match(
+        pipelineCorpus,
+        /Base[- ]Meta Factory|Execution-Agent Factory/i,
+        "Missing explicit factory section"
+      );
+      for (const station of [
+        "Genesis",
+        "Artisan",
+        "Scout",
+        "Sentinel",
+        "Librarian",
+      ]) {
+        assert.match(
+          pipelineCorpus,
+          new RegExp(station, "i"),
+          `Factory section must include ${station}`
+        );
+      }
+      assert.match(
+        pipelineCorpus,
+        /Conductor.*does not build capability|Conductor.*not part of the factory/i,
+        "Factory section must state that Conductor is not the capability-building station"
+      );
+    });
+
+    test("A-14: Execution agent role card requires the 5 fixed fields", () => {
+      assert.match(
+        pipelineCorpus,
+        /Execution Agent Role Card/i,
+        "Missing execution agent role card section"
+      );
+      for (const field of [
+        /what it is for|purpose/i,
+        /can do|capabilities/i,
+        /cannot do|non-capabilities|boundaries/i,
+        /dependencies/i,
+        /inputs/i,
+        /outputs/i,
+      ]) {
+        assert.match(
+          pipelineCorpus,
+          field,
+          `Role card must include ${field}`
+        );
+      }
+    });
+
+    test("A-15: Four fixed artifacts are documented", () => {
+      for (const artifact of [
+        /Capability Gap Sheet|capabilityGapPacket/i,
+        /Execution Agent Role Card|executionAgentCard/i,
+        /Orchestration Task Board|orchestrationTaskBoardPacket/i,
+        /Evolution Record|evolutionWritebackPacket/i,
+      ]) {
+        assert.match(
+          pipelineCorpus,
+          artifact,
+          `Missing fixed artifact reference: ${artifact}`
+        );
+      }
     });
   });
 

@@ -119,7 +119,7 @@ async function main() {
   lines.push("");
   lines.push("Minimal context reload (after API error, compaction, or new session):");
   lines.push(
-    "  Reload into context: runHeader, taskClassification, intentPacket, intentGatePacket (if complex_dev/meta_analysis), cardPlanPacket, dispatchBoard,"
+    "  Reload into context: runHeader, taskClassification, intentPacket, intentGatePacket (if complex_dev/meta_analysis), cardPlanPacket, dispatchEnvelopePacket, orchestrationTaskBoardPacket, capabilityGapPacket / executionAgentCard (when applicable), dispatchBoard,"
   );
   lines.push(
     "  workerTaskPackets, workerResultPackets, reviewPacket, verificationPacket, summaryPacket, evolutionWritebackPacket — then npm run validate:run -- <artifact.json>."

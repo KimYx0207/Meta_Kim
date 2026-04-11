@@ -158,6 +158,21 @@
     "reviewOwner": "meta-prism",
     "verificationOwner": "meta-warden"
   },
+  "orchestrationTaskBoardPacket": {
+    "dispatchBoardId": "dispatch-001",
+    "boardMode": "direct_dispatch",
+    "tasks": [
+      {
+        "taskId": "task-001",
+        "taskKind": "execution",
+        "owner": "meta-conductor",
+        "sequence": 1,
+        "dependsOn": [],
+        "deliverable": "auth-refresh-hardening:token-refresh"
+      }
+    ],
+    "synthesisOwner": "meta-warden"
+  },
   "dispatchBoard": {
     "boardId": "dispatch-001",
     "goal": "stabilize refresh token behavior and close one security finding",
@@ -303,6 +318,19 @@
         "reason": "run artifact closure expectations tightened"
       }
     ],
+    "retain": [
+      {
+        "target": "meta-conductor",
+        "reason": "Existing owner boundary remains valid for this auth-hardening run."
+      }
+    ],
+    "upgrade": [
+      {
+        "target": "config/contracts/workflow-contract.json",
+        "reason": "Execution-board discipline should be captured as reusable governance policy."
+      }
+    ],
+    "retire": [],
     "scarIds": [],
     "syncRequired": true
   }

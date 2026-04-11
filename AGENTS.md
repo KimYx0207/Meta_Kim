@@ -8,6 +8,7 @@ If you only remember three things:
 
 - Meta_Kim is one cross-runtime governance system, not three separate projects.
 - `meta-warden` is the default public front door.
+- `meta-conductor` orchestrates; the execution-agent factory is `meta-genesis` + `meta-artisan` + `meta-scout` + `meta-sentinel` + `meta-librarian`.
 - Long-term edits belong in `canonical/` and `config/contracts/workflow-contract.json`; Codex-facing files are mostly projections or runtime adapters.
 
 ## Read This Repository Correctly

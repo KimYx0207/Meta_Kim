@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "owner": "Meta_Kim",
   "businessWorkflow": {
     "id": "business",
@@ -396,6 +396,7 @@
         "taskClassification",
         "cardPlanPacket",
         "dispatchEnvelopePacket",
+        "orchestrationTaskBoardPacket",
         "dispatchBoard",
         "workerTaskPacket",
         "workerResultPacket",
@@ -411,6 +412,20 @@
         "proposal_review",
         "rhythm"
       ],
+      "orchestrationTaskBoardPacketRequiredWhenGovernanceFlows": [
+        "simple_exec",
+        "complex_dev",
+        "meta_analysis",
+        "proposal_review",
+        "rhythm"
+      ],
+      "capabilityGapPacketRequiredWhenUpgradeReasons": [
+        "owner_creation_required"
+      ],
+      "executionAgentCardRequiredWhenResolutionActions": [
+        "create_execution_agent",
+        "upgrade_execution_agent"
+      ],
       "intentPacketRequiredWhenGovernanceFlows": [
         "complex_dev",
         "meta_analysis"
@@ -419,7 +434,7 @@
         "complex_dev",
         "meta_analysis"
       ],
-      "description": "intentPacket is required in run artifacts when taskClassification.governanceFlow is listed in intentPacketRequiredWhenGovernanceFlows (IntentGate-style intent lock-in). intentGatePacket is required for the same flows (structured ambiguity / assumptions gate before Execution). dispatchEnvelopePacket is required for all non-pure-query flows so every executable run has an explicit owner, capability boundary, memory mode, and review / verification routing before dispatch."
+      "description": "intentPacket is required in run artifacts when taskClassification.governanceFlow is listed in intentPacketRequiredWhenGovernanceFlows (IntentGate-style intent lock-in). intentGatePacket is required for the same flows (structured ambiguity / assumptions gate before Execution). dispatchEnvelopePacket is required for all non-pure-query flows so every executable run has an explicit owner, capability boundary, memory mode, and review / verification routing before dispatch. orchestrationTaskBoardPacket is the mandatory Conductor task board for the same executable flows. capabilityGapPacket is required when taskClassification.upgradeReasons records owner_creation_required. executionAgentCard is required when capabilityGapPacket resolves the gap through execution-agent creation or upgrade."
     },
     "localState": {
       "root": ".meta-kim/state",
@@ -534,6 +549,7 @@
       "publicReadyField": "summaryPacket.publicReady",
       "summaryPacketRequired": true,
       "cardPlanPacketRequired": true,
+      "orchestrationTaskBoardPacketRequired": true,
       "dispatchEnvelopePacketRequiredForNonQuery": true,
       "compactionPacketOptional": true,
       "compactionPacketLocalOnly": true,
@@ -625,6 +641,64 @@
         "inherit_full_context"
       ],
       "description": "Mandatory execution shell for non-query flows: who owns the task, which capabilities are allowed/blocked, what memory policy the child gets, and which owners close review / verification."
+    },
+    "orchestrationTaskBoardPacket": {
+      "requiredFields": [
+        "dispatchBoardId",
+        "boardMode",
+        "tasks",
+        "synthesisOwner"
+      ],
+      "boardModeEnum": [
+        "direct_dispatch",
+        "factory_then_dispatch"
+      ],
+      "description": "Conductor-owned task board for executable work. It says who does what, in what order, what each task must deliver, and who synthesizes the final result."
+    },
+    "orchestrationTask": {
+      "requiredFields": [
+        "taskId",
+        "taskKind",
+        "owner",
+        "sequence",
+        "dependsOn",
+        "deliverable"
+      ],
+      "taskKindEnum": [
+        "execution",
+        "factory_build",
+        "factory_upgrade"
+      ]
+    },
+    "capabilityGapPacket": {
+      "requiredFields": [
+        "gapId",
+        "requestedCapability",
+        "currentAgentsChecked",
+        "insufficiencyReason",
+        "resolutionAction",
+        "requestedBy",
+        "approvedBy"
+      ],
+      "resolutionActionEnum": [
+        "create_execution_agent",
+        "upgrade_execution_agent",
+        "reuse_existing_owner",
+        "accepted_gap"
+      ],
+      "description": "Human-language capability gap sheet. It records why current owners are insufficient and what decision was made before the execution-agent factory starts."
+    },
+    "executionAgentCard": {
+      "requiredFields": [
+        "agentId",
+        "purpose",
+        "capabilities",
+        "nonCapabilities",
+        "dependencies",
+        "inputs",
+        "outputs"
+      ],
+      "description": "Mandatory execution-agent role card whenever the factory creates or upgrades an execution agent. The card defines purpose, boundaries, dependencies, inputs, and outputs."
     },
     "cardDecision": {
       "requiredFields": [
@@ -804,6 +878,9 @@
         "writebackDecision",
         "decisionReason",
         "writebacks",
+        "retain",
+        "upgrade",
+        "retire",
         "scarIds",
         "syncRequired"
       ]

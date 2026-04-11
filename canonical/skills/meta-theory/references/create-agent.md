@@ -59,13 +59,64 @@ Decide **Global vs Project-Specific** need using **3 Hard Criteria**: **Domain G
 
 **Genesis** is **Mandatory**. **Artisan** is **Mandatory**.
 
-**Sentinel**, **Librarian**, and **Conductor** are **On Demand** — add a station only when its trigger fires.
+**Scout**, **Sentinel**, and **Librarian** are **On Demand** factory stations.
+**Conductor** is **orchestration-only** — it may open the task board before the factory starts or consume the resulting card after approval, but it is **not part of the capability-building factory**.
 
 On-demand trigger questions (answer honestly before skipping):
 
+- Is local capability or dependency coverage missing, requiring an external search?
 - Will it modify files, call external APIs, or operate databases?
 - Must it need to remember what it did last time across sessions?
 - Must it hand off results to other Agents or coordinate execution order across agents?
+
+## Execution-Agent Factory Lane
+
+When Type B is triggered by a **capability gap in actual business execution**, use the stricter **execution-agent factory lane** instead of an ad-hoc prompt-writing loop.
+
+Professional role split:
+
+- **Warden** is the **public front door** and approval owner.
+- **Conductor** owns orchestration only: it converts the gap into a task board and later dispatches the result.
+- **Base-meta factory** owns capability building only: **Genesis + Artisan + Scout + Sentinel + Librarian**.
+- **Execution agents are the actual workers**. The factory never performs business execution directly.
+
+Factory lane:
+
+1. **Warden** confirms that an existing owner is insufficient.
+2. **Conductor** emits the capability-gap decision and task board.
+3. **Genesis** defines the execution-agent identity.
+4. **Artisan** defines skill / tool / dependency loadout.
+5. **Scout** backfills external capability only when local coverage is missing.
+6. **Sentinel** validates safety boundaries.
+7. **Librarian** provisions memory / reuse strategy.
+8. **Prism** runs the quality gate.
+9. **Warden** approves admission into the callable execution roster.
+
+Rule: Conductor may participate before or after the factory, but **Conductor does not build capability**.
+
+## Fixed Artifacts (Execution-Agent Factory Mode)
+
+The execution-agent factory lane must produce these explicit artifacts:
+
+1. **Capability Gap Sheet** (`capabilityGapPacket`) — what is missing, which owners were checked, and what decision was made.
+2. **Execution Agent Role Card** (`executionAgentCard`) — the execution agent's contract.
+3. **Orchestration Task Board** (`orchestrationTaskBoardPacket`) — ordered execution tasks plus synthesis owner.
+4. **Evolution Record** (`evolutionWritebackPacket`) — retain / upgrade / retire outcomes after the run.
+
+## Execution Agent Role Card
+
+Every created or upgraded execution agent must ship with one explicit role card. No free-form shortcut.
+
+Required fields:
+
+- **Purpose** — what it is for
+- **Capabilities** — what it can do
+- **Non-Capabilities / Boundaries** — what it cannot do
+- **Dependencies** — skills, tools, MCPs, external packages, or other capability sources
+- **Inputs** — what it accepts
+- **Outputs** — what it must deliver
+
+This card is the build contract for the factory and the dispatch contract for Conductor.
 
 ### Phase 4 — Review and Revision
 
@@ -125,17 +176,18 @@ Use whatever prompt/confirm mechanism the runtime supports:
 
 ### Station selection
 
-**Genesis (soul) and Artisan (skills) run for every agent.** The other three stations are conditional.
+**Genesis (soul) and Artisan (skills) run for every agent.** **Scout**, **Sentinel**, and **Librarian** are conditional factory stations. **Conductor** remains outside the factory and only owns orchestration.
 
 After Step 3 (Genesis), for each agent answer:
 
 | Question | Yes → station | Rationale |
 |----------|---------------|-----------|
+| Is local capability coverage missing? | Scout | Search external skills / tools only after baseline proves the gap is real |
 | Will it modify files, call external APIs, or touch databases? | Sentinel | Writes = risk surface |
 | Must it remember prior work or accumulate learning? | Librarian | Cross-session consistency |
 | Must it hand off to other agents or coordinate order? | Conductor | Multi-agent collaboration |
 
-All three No → only Genesis + Artisan.
+All factory questions No → only Genesis + Artisan. If the Conductor question is Yes, open orchestration design **after** the factory card is complete.
 
 ### Step 3: Genesis — soul design (required)
 

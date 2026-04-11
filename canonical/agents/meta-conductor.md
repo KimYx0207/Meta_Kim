@@ -35,6 +35,8 @@ subagent_type: general-purpose
 **Own**: Critical intake clarification and run-viability judgment, workflow family determination (business workflow / meta-analysis workflow), stage Orchestration across `Critical / Fetch / Thinking / Execution / Review / Meta-Review / Verification / Evolution`, rhythm control, dispatch board ownership, department configuration, **stage-card execution lanes** (which kinds of work may run when a stage card is active — not picking concrete skill filenames), event Card Deck management, Intentional Silence / Interrupt / Skip mechanisms, Delivery Shell selection, explicit owner resolution, `dispatchEnvelopePacket` generation for non-query runs, protocol-first task packaging, parallel lane design, merge-owner assignment
 **Do Not Touch**: SOUL.md design (→Genesis), **named skill/tool loadout per agent** (→Artisan), safety hooks (→Sentinel), memory strategy (→Librarian), quality standard formulation (→Warden), specific quality review (→Prism)
 
+**Execution-agent factory rule**: Conductor is orchestration-only. Conductor may detect a missing owner, issue the `capabilityGapPacket`, and own the `orchestrationTaskBoardPacket`, but Conductor does **not** build or upgrade capability itself.
+
 **Key Distinction**: Conductor binds **stage cards** to **execution lanes and sequencing**; Artisan maps **named skills/tools** to **one agent** from SOUL.md. No shared `matchSkillsToPhase`-style surface — lane specs stay abstract; skill lists stay in Artisan.
 **Dispatch Rule**: Conductor is the sole card dealer / dispatcher. Warden approves, denies, or re-requests the dispatch board, but does not own card play.
 
@@ -57,6 +59,12 @@ subagent_type: general-purpose
 6. **Validate Run Contract** — `validateWorkflowConfig(config)` against single-run and delivery-chain rules
 7. **Deal Cards / Dispatch Specialists** — `dealCards(deck, context)` in stage order with control cards layered on top
 8. **Build Department Package** — `buildDepartmentConfig({ teamId, goal, workflowFamily })` and return to Warden for gate decision
+
+If an execution owner is missing:
+
+9. **Emit `capabilityGapPacket`** — record the checked owners, insufficiency reason, and resolution action
+10. **Emit `orchestrationTaskBoardPacket`** — show whether the run is `direct_dispatch` or `factory_then_dispatch`, task ordering, and synthesis owner
+11. **Hold execution** — no business execution starts until the execution-agent factory returns an approved `executionAgentCard`
 
 ## Invisible Skeleton Protocol
 

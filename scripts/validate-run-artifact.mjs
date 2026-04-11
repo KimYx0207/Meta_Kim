@@ -22,6 +22,9 @@ export const PACKET_LOCATIONS = {
   intentGatePacket: "intentGatePacket",
   cardPlanPacket: "cardPlanPacket",
   dispatchEnvelopePacket: "dispatchEnvelopePacket",
+  orchestrationTaskBoardPacket: "orchestrationTaskBoardPacket",
+  capabilityGapPacket: "capabilityGapPacket",
+  executionAgentCard: "executionAgentCard",
   dispatchBoard: "dispatchBoard",
   workerTaskPacket: "workerTaskPackets",
   workerResultPacket: "workerResultPackets",
@@ -86,6 +89,18 @@ function ensureStringArray(value, context) {
   ensureArray(value, context);
   for (const [index, item] of value.entries()) {
     ensureString(item, `${context}[${index}]`);
+  }
+}
+
+function ensureDecisionItems(value, context) {
+  ensureArray(value, context);
+  for (const [index, item] of value.entries()) {
+    ensure(
+      item && typeof item === "object",
+      `${context}[${index}] must be an object.`,
+    );
+    ensureString(item.target, `${context}[${index}].target`);
+    ensureString(item.reason, `${context}[${index}].reason`);
   }
 }
 
@@ -322,6 +337,212 @@ function validateDispatchEnvelope(contract, artifact) {
   ensure(
     overlaps.length === 0,
     `dispatchEnvelopePacket capability boundary overlaps are forbidden: ${overlaps.join(", ")}`,
+  );
+}
+
+function validateOrchestrationTaskBoard(contract, artifact) {
+  const when =
+    contract.runDiscipline.protocolFirst
+      .orchestrationTaskBoardPacketRequiredWhenGovernanceFlows ?? [];
+  const flow = artifact.taskClassification?.governanceFlow;
+  if (!when.includes(flow)) {
+    return;
+  }
+
+  const packet = artifact.orchestrationTaskBoardPacket;
+  ensure(
+    packet && typeof packet === "object",
+    `orchestrationTaskBoardPacket is required when governanceFlow is ${flow}.`,
+  );
+  ensureFields(
+    packet,
+    contract.protocols.orchestrationTaskBoardPacket.requiredFields,
+    "orchestrationTaskBoardPacket",
+  );
+  ensure(
+    packet.dispatchBoardId === artifact.dispatchBoard?.boardId,
+    "orchestrationTaskBoardPacket.dispatchBoardId must match dispatchBoard.boardId.",
+  );
+  ensureEnum(
+    packet.boardMode,
+    contract.protocols.orchestrationTaskBoardPacket.boardModeEnum,
+    "orchestrationTaskBoardPacket.boardMode",
+  );
+  ensureArray(packet.tasks, "orchestrationTaskBoardPacket.tasks");
+  ensure(
+    packet.tasks.length >= 1,
+    "orchestrationTaskBoardPacket.tasks must contain at least one task.",
+  );
+  ensureString(
+    packet.synthesisOwner,
+    "orchestrationTaskBoardPacket.synthesisOwner",
+  );
+
+  const taskIds = new Set();
+  const sequences = new Set();
+  let hasFactoryTask = false;
+  for (const [index, task] of packet.tasks.entries()) {
+    ensureFields(
+      task,
+      contract.protocols.orchestrationTask.requiredFields,
+      `orchestrationTaskBoardPacket.tasks[${index}]`,
+    );
+    ensure(!taskIds.has(task.taskId), `Duplicate orchestration taskId: ${task.taskId}`);
+    taskIds.add(task.taskId);
+    ensureEnum(
+      task.taskKind,
+      contract.protocols.orchestrationTask.taskKindEnum,
+      `orchestrationTaskBoardPacket.tasks[${index}].taskKind`,
+    );
+    ensureString(
+      task.owner,
+      `orchestrationTaskBoardPacket.tasks[${index}].owner`,
+    );
+    ensure(
+      Number.isInteger(task.sequence) && task.sequence >= 1,
+      `orchestrationTaskBoardPacket.tasks[${index}].sequence must be a positive integer.`,
+    );
+    ensure(
+      !sequences.has(task.sequence),
+      `Duplicate orchestration sequence: ${task.sequence}`,
+    );
+    sequences.add(task.sequence);
+    ensureArray(
+      task.dependsOn,
+      `orchestrationTaskBoardPacket.tasks[${index}].dependsOn`,
+    );
+    ensureString(
+      task.deliverable,
+      `orchestrationTaskBoardPacket.tasks[${index}].deliverable`,
+    );
+    if (task.taskKind !== "execution") {
+      hasFactoryTask = true;
+    }
+  }
+
+  for (const [index, task] of packet.tasks.entries()) {
+    for (const [depIndex, dep] of task.dependsOn.entries()) {
+      ensureString(
+        dep,
+        `orchestrationTaskBoardPacket.tasks[${index}].dependsOn[${depIndex}]`,
+      );
+      ensure(
+        taskIds.has(dep),
+        `orchestrationTaskBoardPacket task ${task.taskId} depends on unknown taskId ${dep}.`,
+      );
+    }
+  }
+
+  if (packet.boardMode === "factory_then_dispatch") {
+    ensure(
+      hasFactoryTask,
+      "orchestrationTaskBoardPacket.boardMode=factory_then_dispatch requires at least one factory task.",
+    );
+  }
+  if (packet.boardMode === "direct_dispatch") {
+    ensure(
+      hasFactoryTask === false,
+      "orchestrationTaskBoardPacket.boardMode=direct_dispatch may not include factory tasks.",
+    );
+  }
+}
+
+function validateCapabilityGapPacketWhenRequired(contract, artifact) {
+  const when =
+    contract.runDiscipline.protocolFirst
+      .capabilityGapPacketRequiredWhenUpgradeReasons ?? [];
+  const upgradeReasons = artifact.taskClassification?.upgradeReasons ?? [];
+  const shouldRequire = upgradeReasons.some((reason) => when.includes(reason));
+  if (!shouldRequire) {
+    return;
+  }
+
+  const packet = artifact.capabilityGapPacket;
+  ensure(
+    packet && typeof packet === "object",
+    "capabilityGapPacket is required when upgradeReasons include owner_creation_required.",
+  );
+  ensureFields(
+    packet,
+    contract.protocols.capabilityGapPacket.requiredFields,
+    "capabilityGapPacket",
+  );
+  ensureString(packet.gapId, "capabilityGapPacket.gapId");
+  ensureString(
+    packet.requestedCapability,
+    "capabilityGapPacket.requestedCapability",
+  );
+  ensureStringArray(
+    packet.currentAgentsChecked,
+    "capabilityGapPacket.currentAgentsChecked",
+  );
+  ensure(
+    packet.currentAgentsChecked.length >= 1,
+    "capabilityGapPacket.currentAgentsChecked must contain at least one checked owner.",
+  );
+  ensureString(
+    packet.insufficiencyReason,
+    "capabilityGapPacket.insufficiencyReason",
+  );
+  ensureEnum(
+    packet.resolutionAction,
+    contract.protocols.capabilityGapPacket.resolutionActionEnum,
+    "capabilityGapPacket.resolutionAction",
+  );
+  ensureString(packet.requestedBy, "capabilityGapPacket.requestedBy");
+  ensureString(packet.approvedBy, "capabilityGapPacket.approvedBy");
+}
+
+function validateExecutionAgentCardWhenRequired(contract, artifact) {
+  const when =
+    contract.runDiscipline.protocolFirst
+      .executionAgentCardRequiredWhenResolutionActions ?? [];
+  const resolutionAction = artifact.capabilityGapPacket?.resolutionAction;
+  if (!when.includes(resolutionAction)) {
+    return;
+  }
+
+  const packet = artifact.executionAgentCard;
+  ensure(
+    packet && typeof packet === "object",
+    `executionAgentCard is required when capabilityGapPacket.resolutionAction is ${resolutionAction}.`,
+  );
+  ensureFields(
+    packet,
+    contract.protocols.executionAgentCard.requiredFields,
+    "executionAgentCard",
+  );
+  ensureString(packet.agentId, "executionAgentCard.agentId");
+  ensureString(packet.purpose, "executionAgentCard.purpose");
+  ensureStringArray(
+    packet.capabilities,
+    "executionAgentCard.capabilities",
+  );
+  ensure(
+    packet.capabilities.length >= 1,
+    "executionAgentCard.capabilities must contain at least one capability.",
+  );
+  ensureStringArray(
+    packet.nonCapabilities,
+    "executionAgentCard.nonCapabilities",
+  );
+  ensure(
+    packet.nonCapabilities.length >= 1,
+    "executionAgentCard.nonCapabilities must contain at least one explicit boundary.",
+  );
+  ensureArray(packet.dependencies, "executionAgentCard.dependencies");
+  for (const [index, dep] of packet.dependencies.entries()) {
+    ensureString(dep, `executionAgentCard.dependencies[${index}]`);
+  }
+  ensureStringArray(packet.inputs, "executionAgentCard.inputs");
+  ensure(
+    packet.inputs.length >= 1,
+    "executionAgentCard.inputs must contain at least one input.",
+  );
+  ensureStringArray(packet.outputs, "executionAgentCard.outputs");
+  ensure(
+    packet.outputs.length >= 1,
+    "executionAgentCard.outputs must contain at least one output.",
   );
 }
 
@@ -855,6 +1076,18 @@ function validateSummaryAndEvolution(contract, artifact) {
     evolutionPacket.writebacks,
     "evolutionWritebackPacket.writebacks",
   );
+  ensureDecisionItems(
+    evolutionPacket.retain,
+    "evolutionWritebackPacket.retain",
+  );
+  ensureDecisionItems(
+    evolutionPacket.upgrade,
+    "evolutionWritebackPacket.upgrade",
+  );
+  ensureDecisionItems(
+    evolutionPacket.retire,
+    "evolutionWritebackPacket.retire",
+  );
   ensureArray(evolutionPacket.scarIds, "evolutionWritebackPacket.scarIds");
   ensureEnum(
     evolutionPacket.writebackDecision,
@@ -872,6 +1105,13 @@ function validateSummaryAndEvolution(contract, artifact) {
       "writebackDecision=writeback requires at least one writeback target.",
     );
   }
+  ensure(
+    evolutionPacket.retain.length +
+      evolutionPacket.upgrade.length +
+      evolutionPacket.retire.length >=
+      1,
+    "evolutionWritebackPacket must record at least one retain/upgrade/retire decision.",
+  );
 }
 
 function validateCompactionPacket(contract, artifact) {
@@ -976,6 +1216,15 @@ function validateRequiredPackets(contract, artifact) {
     ) {
       continue;
     }
+    if (
+      packetName === "orchestrationTaskBoardPacket" &&
+      !(
+        contract.runDiscipline.protocolFirst
+          .orchestrationTaskBoardPacketRequiredWhenGovernanceFlows ?? []
+      ).includes(artifact.taskClassification?.governanceFlow)
+    ) {
+      continue;
+    }
     const packet = getPacket(artifact, packetName);
     ensure(
       packet !== undefined,
@@ -1001,6 +1250,9 @@ export function validateArtifact(contract, artifact) {
     contract.protocols.dispatchBoard.requiredFields,
     "dispatchBoard",
   );
+  validateOrchestrationTaskBoard(contract, artifact);
+  validateCapabilityGapPacketWhenRequired(contract, artifact);
+  validateExecutionAgentCardWhenRequired(contract, artifact);
   validateWorkerPackets(contract, artifact);
   validateFindingChain(contract, artifact);
   validateSummaryAndEvolution(contract, artifact);

@@ -172,6 +172,9 @@ function summarizeArtifact(artifact, artifactPath) {
     payload: {
       taskClassification: artifact.taskClassification,
       cardPlanPacket: artifact.cardPlanPacket,
+      orchestrationTaskBoardPacket: artifact.orchestrationTaskBoardPacket,
+      capabilityGapPacket: artifact.capabilityGapPacket,
+      executionAgentCard: artifact.executionAgentCard,
       reviewFindings: artifact.reviewPacket.findings,
       verificationResults: artifact.verificationPacket.verificationResults,
       summaryPacket: artifact.summaryPacket,

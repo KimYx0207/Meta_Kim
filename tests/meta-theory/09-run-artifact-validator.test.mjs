@@ -43,6 +43,7 @@ describe("validate-run-artifact.mjs", () => {
     const result = await validateFixture(validFixture);
     assert.equal(result.ok, true);
     assert.ok(result.validatedPackets.includes("dispatchEnvelopePacket"));
+    assert.ok(result.validatedPackets.includes("orchestrationTaskBoardPacket"));
     assert.ok(result.validatedPackets.includes("cardPlanPacket"));
     assert.ok(result.validatedPackets.includes("summaryPacket"));
   });
@@ -108,6 +109,64 @@ describe("validate-run-artifact.mjs", () => {
     });
     await assert.rejects(
       execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], { cwd: REPO_ROOT })
+    );
+  });
+
+  test("rejects missing orchestration task board for non-query flows", async () => {
+    const tempFixture = await writeTempFixture((artifact) => {
+      delete artifact.orchestrationTaskBoardPacket;
+    });
+    await assert.rejects(
+      execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], {
+        cwd: REPO_ROOT,
+      })
+    );
+  });
+
+  test("rejects missing capability gap packet when owner creation is required", async () => {
+    const tempFixture = await writeTempFixture((artifact) => {
+      artifact.taskClassification.upgradeReasons = [
+        ...artifact.taskClassification.upgradeReasons,
+        "owner_creation_required",
+      ];
+      delete artifact.capabilityGapPacket;
+    });
+    await assert.rejects(
+      execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], {
+        cwd: REPO_ROOT,
+      })
+    );
+  });
+
+  test("rejects execution agent card gaps when factory action is create_execution_agent", async () => {
+    const tempFixture = await writeTempFixture((artifact) => {
+      artifact.taskClassification.upgradeReasons = [
+        ...artifact.taskClassification.upgradeReasons,
+        "owner_creation_required",
+      ];
+      artifact.capabilityGapPacket = {
+        gapId: "gap-001",
+        requestedCapability: "topic-analysis",
+        currentAgentsChecked: ["meta-prism", "meta-artisan"],
+        insufficiencyReason: "No execution agent currently owns this business capability.",
+        resolutionAction: "create_execution_agent",
+        requestedBy: "meta-conductor",
+        approvedBy: "meta-warden",
+      };
+      artifact.executionAgentCard = {
+        agentId: "topic-analyst",
+        purpose: "Owns topic analysis execution for growth workflows.",
+        capabilities: ["topic-clustering", "trend-prioritization"],
+        nonCapabilities: ["article-writing"],
+        dependencies: ["findskill:topic-analysis"],
+        inputs: ["growth goal", "candidate topics"],
+        outputs: [],
+      };
+    });
+    await assert.rejects(
+      execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], {
+        cwd: REPO_ROOT,
+      })
     );
   });
 });

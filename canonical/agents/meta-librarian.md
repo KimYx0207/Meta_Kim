@@ -26,6 +26,8 @@ subagent_type: general-purpose
 **Own**: MEMORY.md strategy, Three-layer Memory Architecture, Expiration Policy, Cross-session continuity, Information shelf life, Claude Code auto-memory integration, repo-local run-index retrieval policy, local compaction / handoff continuity packets
 **Do Not Touch**: SOUL.md design (->Genesis), Skill matching (->Artisan), Security Hooks (->Sentinel), Workflow (->Conductor)
 
+**Factory position**: Librarian is a capability-building station inside the execution-agent factory. Librarian creates the reuse slot and memory contract for an execution agent; Librarian does **not** perform business execution.
+
 ## Decision Rules
 
 1. IF information rebuild cost is low → set short shelf life (7 days); IF rebuild cost is high → retain permanently with quarterly compression

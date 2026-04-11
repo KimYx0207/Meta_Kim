@@ -310,8 +310,8 @@ async function validateWorkflowContract() {
   const contract = JSON.parse(await fs.readFile(contractPath, "utf8"));
 
   assert(
-    (contract.schemaVersion ?? 0) >= 3,
-    "workflow-contract.json schemaVersion must be >= 3 after card-governance hardening.",
+    (contract.schemaVersion ?? 0) >= 5,
+    "workflow-contract.json schemaVersion must be >= 5 after execution-agent factory hardening.",
   );
   assert(
     contract.runDiscipline?.singleDepartmentPerRun === true,
@@ -654,6 +654,7 @@ async function validateWorkflowContract() {
     "runHeader",
     "taskClassification",
     "cardPlanPacket",
+    "orchestrationTaskBoardPacket",
     "dispatchBoard",
     "workerTaskPacket",
     "workerResultPacket",
@@ -665,6 +666,37 @@ async function validateWorkflowContract() {
     assert(
       requiredPackets.includes(packet),
       `workflow-contract.json protocolFirst.requiredPackets must include ${packet}.`,
+    );
+  }
+  for (const flow of [
+    "simple_exec",
+    "complex_dev",
+    "meta_analysis",
+    "proposal_review",
+    "rhythm",
+  ]) {
+    assert(
+      contract.runDiscipline?.protocolFirst?.orchestrationTaskBoardPacketRequiredWhenGovernanceFlows?.includes(
+        flow,
+      ),
+      `workflow-contract.json orchestrationTaskBoardPacketRequiredWhenGovernanceFlows must include ${flow}.`,
+    );
+  }
+  assert(
+    contract.runDiscipline?.protocolFirst?.capabilityGapPacketRequiredWhenUpgradeReasons?.includes(
+      "owner_creation_required",
+    ),
+    "workflow-contract.json capabilityGapPacketRequiredWhenUpgradeReasons must include owner_creation_required.",
+  );
+  for (const action of [
+    "create_execution_agent",
+    "upgrade_execution_agent",
+  ]) {
+    assert(
+      contract.runDiscipline?.protocolFirst?.executionAgentCardRequiredWhenResolutionActions?.includes(
+        action,
+      ),
+      `workflow-contract.json executionAgentCardRequiredWhenResolutionActions must include ${action}.`,
     );
   }
 
@@ -735,6 +767,38 @@ async function validateWorkflowContract() {
         "silenceDecision",
         "controlDecisions",
         "defaultShellId",
+      ],
+    ],
+    [
+      "orchestrationTaskBoardPacket",
+      ["dispatchBoardId", "boardMode", "tasks", "synthesisOwner"],
+    ],
+    [
+      "orchestrationTask",
+      ["taskId", "taskKind", "owner", "sequence", "dependsOn", "deliverable"],
+    ],
+    [
+      "capabilityGapPacket",
+      [
+        "gapId",
+        "requestedCapability",
+        "currentAgentsChecked",
+        "insufficiencyReason",
+        "resolutionAction",
+        "requestedBy",
+        "approvedBy",
+      ],
+    ],
+    [
+      "executionAgentCard",
+      [
+        "agentId",
+        "purpose",
+        "capabilities",
+        "nonCapabilities",
+        "dependencies",
+        "inputs",
+        "outputs",
       ],
     ],
     [
@@ -885,6 +949,9 @@ async function validateWorkflowContract() {
     "writebackDecision",
     "decisionReason",
     "writebacks",
+    "retain",
+    "upgrade",
+    "retire",
     "scarIds",
     "syncRequired",
   ]) {
@@ -916,6 +983,7 @@ async function validateWorkflowContract() {
     "deliverableLinkMustReferencePrimaryDeliverable",
     "summaryPacketRequired",
     "cardPlanPacketRequired",
+    "orchestrationTaskBoardPacketRequired",
   ]) {
     assert(
       runArtifactValidation?.[field] === true,
