@@ -24,6 +24,22 @@ import { fileURLToPath } from "node:url";
 import { resolveTargetContext } from "./meta-kim-sync-config.mjs";
 import { t } from "./meta-kim-i18n.mjs";
 
+// ── ANSI colors (matching setup.mjs) ─────────────────────────────────
+
+const C = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  cyan: "\x1b[36m",
+};
+
+// Deep amber colors matching setup.mjs logo
+const AMBER = "\x1b[38;2;160;120;60m";
+const AMBER_BRIGHT = "\x1b[38;2;200;160;80m";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 
@@ -81,7 +97,7 @@ function loadSkillsManifest() {
 
     return { skillRepos, claudePluginSpecs };
   } catch (err) {
-    console.warn(t.failManifestLoad(err.message));
+    console.warn(`${C.yellow}⚠${C.reset} ${t.failManifestLoad(err.message)}`);
     return { skillRepos: [], claudePluginSpecs: [] };
   }
 }
@@ -145,15 +161,17 @@ async function installGitSkill(targetDir, repoUrl) {
       }
       try {
         runGit(["-C", targetDir, "pull", "--ff-only"]);
-        console.log(t.okUpdated(targetDir));
+        console.log(`${C.green}✓${C.reset} ${t.okUpdated(targetDir)}`);
       } catch {
-        console.warn(t.warnPullFailed(targetDir));
+        console.warn(`${C.yellow}⚠${C.reset} ${t.warnPullFailed(targetDir)}`);
         await fs.rm(targetDir, { recursive: true, force: true });
         runGit(["clone", "--depth", "1", repoUrl, targetDir]);
-        console.log(t.okCloned(targetDir));
+        console.log(`${C.green}✓${C.reset} ${t.okCloned(targetDir)}`);
       }
     } else {
-      console.log(t.skipExists(targetDir));
+      console.log(
+        `${C.yellow}⊘${C.reset} ${C.dim}${t.skipExists(targetDir)}${C.reset}`,
+      );
     }
     return;
   }
@@ -163,13 +181,15 @@ async function installGitSkill(targetDir, repoUrl) {
   }
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
   runGit(["clone", "--depth", "1", repoUrl, targetDir]);
-  console.log(t.okCloned(targetDir));
+  console.log(`${C.green}✓${C.reset} ${t.okCloned(targetDir)}`);
 }
 
 async function installGitSkillFromSubdir(targetDir, repoUrl, subdirPath) {
   assertUnderHome(targetDir);
   if ((await pathExists(targetDir)) && !updateMode) {
-    console.log(t.skipExists(targetDir));
+    console.log(
+      `${C.yellow}⊘${C.reset} ${C.dim}${t.skipExists(targetDir)}${C.reset}`,
+    );
     return;
   }
 
@@ -202,7 +222,9 @@ async function installGitSkillFromSubdir(targetDir, repoUrl, subdirPath) {
     }
     await fs.mkdir(path.dirname(targetDir), { recursive: true });
     await fs.cp(src, targetDir, { recursive: true, force: true });
-    console.log(t.okBasename(path.basename(targetDir), targetDir));
+    console.log(
+      `${C.green}✓${C.reset} ${t.okBasename(path.basename(targetDir), targetDir)}`,
+    );
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
@@ -214,7 +236,9 @@ async function installSkillCreator(targetBaseSkills) {
   assertUnderHome(targetDir);
 
   if ((await pathExists(targetDir)) && !updateMode) {
-    console.log(t.skipExists(targetDir));
+    console.log(
+      `${C.yellow}⊘${C.reset} ${C.dim}${t.skipExists(targetDir)}${C.reset}`,
+    );
     return;
   }
 
@@ -247,14 +271,16 @@ async function installSkillCreator(targetBaseSkills) {
       recursive: true,
       force: true,
     });
-    console.log(t.okBasename("skill-creator", targetDir));
+    console.log(
+      `${C.green}✓${C.reset} ${t.okBasename("skill-creator", targetDir)}`,
+    );
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
 }
 
 async function installAllSkillsForRuntime(label, skillsRoot, runtimeId) {
-  console.log(`\n${t.skillsHeader(label, skillsRoot)}`);
+  console.log(`\n${C.bold}${AMBER}--- ${label}: ${skillsRoot} ---${C.reset}`);
   assertUnderHome(skillsRoot);
   if (!dryRun) {
     await fs.mkdir(skillsRoot, { recursive: true });
@@ -262,7 +288,9 @@ async function installAllSkillsForRuntime(label, skillsRoot, runtimeId) {
 
   for (const spec of SKILL_REPOS) {
     if (spec.targets && !spec.targets.includes(runtimeId)) {
-      console.log(t.skipNotApplicable(spec.id, runtimeId));
+      console.log(
+        `${C.yellow}⊘${C.reset} ${C.dim}${t.skipNotApplicable(spec.id, runtimeId)}${C.reset}`,
+      );
       continue;
     }
     const targetDir = path.join(skillsRoot, spec.id);
@@ -279,10 +307,12 @@ function installClaudePlugins() {
   if (skipPlugins || CLAUDE_PLUGIN_SPECS.length === 0) {
     return;
   }
-  console.log(`\n${t.pluginsHeader}`);
+  console.log(
+    `\n${C.bold}${AMBER}--- Claude Code plugins (user scope) ---${C.reset}`,
+  );
   const r = spawnSync("claude", ["--version"], { encoding: "utf8" });
   if (r.status !== 0) {
-    console.warn(t.warnClaNotFound);
+    console.warn(`${C.yellow}⚠${C.reset} ${t.warnClaNotFound}`);
     return;
   }
 
@@ -313,20 +343,24 @@ function installClaudePlugins() {
     // Extract bare name from spec like "superpowers@claude-plugins-official"
     const bareName = spec.split("@")[0];
     if (installedNames.has(bareName)) {
-      console.log(t.skipAlreadyInstalled(bareName));
+      console.log(
+        `${C.yellow}⊘${C.reset} ${C.dim}${t.skipAlreadyInstalled(bareName)}${C.reset}`,
+      );
       continue;
     }
     if (dryRun) {
       console.log(t.dryRun(`claude plugin install ${spec}`));
       continue;
     }
-    console.log(t.installingPlugin(spec));
+    console.log(`${C.cyan}→${C.reset} ${t.installingPlugin(spec)}`);
     const p = spawnSync("claude", ["plugin", "install", spec], {
       stdio: "inherit",
       shell: os.platform() === "win32",
     });
     if (p.status !== 0) {
-      console.warn(t.warnPluginFailed(spec, p.status));
+      console.warn(
+        `${C.yellow}⚠${C.reset} ${t.warnPluginFailed(spec, p.status)}`,
+      );
     }
   }
 }
@@ -365,7 +399,7 @@ async function main() {
 
   // Optional: graphify (code knowledge graph)
   if (!pluginsOnly) {
-    console.log(`\n${t.pythonToolsOptionalHeader}`);
+    console.log(`\n${C.bold}${AMBER}--- Python Tools (optional) ---${C.reset}`);
     const pyCmd = ["python3", "python"].find((cmd) => {
       try {
         const r = spawnSync(cmd, ["--version"], {
@@ -410,7 +444,7 @@ async function main() {
           });
           console.log(t.okGraphifyInstalled);
         } else {
-          console.warn(t.warnGraphifyPipFailed);
+          console.warn(`${C.yellow}⚠${C.reset} ${t.warnGraphifyPipFailed}`);
         }
       }
     }

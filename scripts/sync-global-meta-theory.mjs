@@ -16,6 +16,17 @@ import {
   resolveTargetContext,
 } from "./meta-kim-sync-config.mjs";
 
+// ANSI colors matching setup.mjs
+const C = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  amber: "\x1b[38;2;160;120;60m",
+};
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const sourceDir = canonicalSkillRoot;
@@ -430,7 +441,9 @@ async function runCheck() {
       sourceFingerprint !== null &&
       targetFingerprint.hash === sourceFingerprint.hash &&
       targetFingerprint.fileCount === sourceFingerprint.fileCount;
-    console.log(`${inSync ? "OK" : "MISSING"} ${target.label}: ${target.dir}`);
+    console.log(
+      `${inSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}${target.label}: ${target.dir}${C.reset}`,
+    );
     if (!inSync) {
       failed = true;
     }
@@ -438,7 +451,9 @@ async function runCheck() {
 
   for (const target of cleanupTargets) {
     const exists = await pathExists(target.dir);
-    console.log(`${exists ? "LEGACY" : "OK"} ${target.label}: ${target.dir}`);
+    console.log(
+      `${exists ? `${C.yellow}⊘${C.reset}` : `${C.green}✓${C.reset}`} ${C.dim}${target.label}: ${target.dir}${C.reset}`,
+    );
     if (exists) {
       failed = true;
     }
@@ -454,7 +469,7 @@ async function runCheck() {
       repoHooksFp.hash === globalHooksFp.hash &&
       repoHooksFp.fileCount === globalHooksFp.fileCount;
     console.log(
-      `${hooksInSync ? "OK" : "MISSING"} Claude Code global hooks (meta-kim): ${globalHooksPath}`,
+      `${hooksInSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Claude Code global hooks (meta-kim): ${globalHooksPath}${C.reset}`,
     );
     if (!hooksInSync) {
       failed = true;
@@ -465,6 +480,8 @@ async function runCheck() {
 }
 
 async function runSync() {
+  // Leading newline to separate from parent's progress message
+  console.log("");
   if (!(await pathExists(sourceSkillFile))) {
     throw new Error(`Missing canonical skill source: ${sourceSkillFile}`);
   }
@@ -472,21 +489,29 @@ async function runSync() {
   for (const target of cleanupTargets) {
     const removed = await removeIfExists(target.dir);
     if (removed) {
-      console.log(`Removed ${target.label}: ${target.dir}`);
+      console.log(
+        `${C.green}✓${C.reset} ${C.dim}Removed ${target.label}: ${target.dir}${C.reset}`,
+      );
     }
   }
 
   for (const target of activeTargets) {
     await copyCanonicalSkill(target.dir);
-    console.log(`Synced ${target.label}: ${target.dir}`);
+    console.log(
+      `${C.green}✓${C.reset} ${C.dim}Synced ${target.label}: ${target.dir}${C.reset}`,
+    );
   }
 
   if (selectedTargetIds.includes("claude") && !skipGlobalHooks) {
     await copyCanonicalHooksToGlobal();
-    console.log(`Synced Claude Code global hooks: ${globalMetaKimHooksDir()}`);
+    console.log(
+      `${C.green}✓${C.reset} ${C.dim}Synced Claude Code global hooks: ${globalMetaKimHooksDir()}${C.reset}`,
+    );
     await syncClaudeGlobalSettingsHooks();
   } else {
-    console.log("Skipped Claude Code global hooks.");
+    console.log(
+      `${C.yellow}⊘${C.reset} ${C.dim}Skipped Claude Code global hooks.${C.reset}`,
+    );
   }
 }
 

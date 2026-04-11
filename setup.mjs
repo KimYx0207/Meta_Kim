@@ -279,7 +279,8 @@ const I18N = {
     updateSyncSkip: "Sync skipped or failed",
     updateReGlobal: "Re-select global skills directory?",
     askReselectRuntimes: "Re-select AI coding tools for this machine?",
-    askPythonToolsUpdate: "Install/update Python graphify tool? (optional)",
+    askPythonToolsUpdate:
+      "Install Python graphify (code knowledge graph, 71x token compression)?",
     pythonToolsSkipped: "Python tools skipped",
     askGlobalSkillsUpdate: "Update global skills? (optional)",
     updateSkillsDone: "Global skills updated",
@@ -480,7 +481,8 @@ const I18N = {
     updateSyncSkip: "未同步或同步失败",
     updateReGlobal: "是否重新选择全局技能目录？",
     askReselectRuntimes: "重新选择这台电脑的 AI 编程工具？",
-    askPythonToolsUpdate: "安装/更新 Python graphify 工具？（可选）",
+    askPythonToolsUpdate:
+      "安装 Python graphify（代码知识图谱，71x token 压缩）？",
     pythonToolsSkipped: "Python 工具已跳过",
     askGlobalSkillsUpdate: "更新全局技能？（可选）",
     updateSkillsDone: "全局技能已更新",
@@ -695,7 +697,7 @@ const I18N = {
     askReselectRuntimes:
       "このパソコンで使うAIコーディングツールを再選択しますか？",
     askPythonToolsUpdate:
-      "Python graphify ツールをインストール/更新しますか？（オプション）",
+      "Python graphify（コードナレッジグラフ、71x トークン圧縮）をインストールしますか？",
     pythonToolsSkipped: "Python ツールをスキップしました",
     askGlobalSkillsUpdate: "グローバルスキルを更新しますか？（オプション）",
     updateSkillsDone: "グローバルスキルが更新されました",
@@ -904,7 +906,8 @@ const I18N = {
     updateSyncSkip: "동기화를 건너뛰었거나 실패했습니다",
     updateReGlobal: "전역 스킬 디렉토리를 다시 선택할까요?",
     askReselectRuntimes: "이 컴퓨터에서 사용할 AI 코딩 도구를 다시 선택할까요?",
-    askPythonToolsUpdate: "Python graphify 도구를 설치/업데이트할까요? (선택)",
+    askPythonToolsUpdate:
+      "Python graphify (코드 지식 그래프, 71x 토큰 압축)를 설치할까요?",
     pythonToolsSkipped: "Python 도구 건너뜀",
     askGlobalSkillsUpdate: "전역 스킬을 업데이트할까요? (선택)",
     updateSkillsDone: "전역 스킬 업데이트 완료",
@@ -981,10 +984,15 @@ const C = {
   magenta: "\x1b[35m",
   blue: "\x1b[34m",
   white: "\x1b[37m",
+  // Logo/frame only - dark amber gold
+  amber: "\x1b[38;2;160;120;60m",
+  amberBright: "\x1b[38;2;200;160;80m",
+  // Section headings - gray for contrast
+  section: "\x1b[38;5;240m",
 };
 
 function log(icon, msg) {
-  console.log(`  ${icon} ${msg}`);
+  console.log(`${icon} ${msg}`);
 }
 function ok(msg) {
   log(`${C.green}✓${C.reset}`, msg);
@@ -999,10 +1007,10 @@ function fail(msg) {
   log(`${C.red}✗${C.reset}`, msg);
 }
 function info(msg) {
-  log(`${C.cyan}ℹ${C.reset}`, msg);
+  log(`${C.dim}ℹ${C.reset}`, msg);
 }
 function heading(msg) {
-  console.log(`\n${C.bold}${C.cyan}▸ ${msg}${C.reset}\n`);
+  console.log(`\n${C.bold}${C.section}  ▸ ${msg}${C.reset}\n`);
 }
 
 function run(cmd, opts = {}) {
@@ -1046,7 +1054,7 @@ function gitProxyArgs() {
 function ask(question) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
-    rl.question(`  ${C.bold}${C.cyan}?${C.reset} ${question} `, (answer) => {
+    rl.question(`${C.bold}?${C.reset} ${question} `, (answer) => {
       rl.close();
       resolve(answer.trim());
     });
@@ -1062,7 +1070,7 @@ async function askYesNo(question, defaultYes = true) {
 }
 
 async function askSelect(question, options) {
-  console.log(`\n  ${C.bold}${C.cyan}?${C.reset} ${question}`);
+  console.log(`\n  ${C.bold}?${C.reset} ${question}`);
   options.forEach((opt, i) => {
     console.log(`    ${C.dim}${i + 1}.${C.reset} ${opt}`);
   });
@@ -1077,7 +1085,7 @@ async function askMultiSelectTargets(question, choices, defaultIds) {
   }
 
   const defaultSet = new Set(defaultIds);
-  console.log(`\n  ${C.bold}${C.cyan}?${C.reset} ${question}`);
+  console.log(`\n  ${C.bold}?${C.reset} ${question}`);
   choices.forEach((choice, index) => {
     const marker = defaultSet.has(choice.id) ? `${C.green}x${C.reset}` : " ";
     console.log(
@@ -1167,18 +1175,18 @@ function showInstallOverview(activeTargets, installScope) {
 ${C.bold}  ${t.installOverviewTitle}${C.reset}
 
   ${C.dim}${t.installOverviewWill}${C.reset}
-${bullets.map((b) => `  ${C.dim}•${C.reset} ${b}`).join("\n")}
+${bullets.map((b) => `${C.dim}•${C.reset} ${b}`).join("\n")}
   ${C.dim}•${C.reset} ${C.dim}${t.installOverviewOptionalPython}${C.reset} ${C.yellow}(optional)${C.reset}
 
-  ${C.dim}${t.installOverviewTargets}${C.reset}${C.cyan}${activeTargets.join(", ")}${C.reset}
-  ${C.dim}${t.installOverviewScope}${C.reset}${C.cyan}${scopeLabel}${C.reset}
+  ${C.dim}${t.installOverviewTargets}${C.reset}${activeTargets.join(", ")}
+  ${C.dim}${t.installOverviewScope}${C.reset}${scopeLabel}
   ${C.dim}${t.installOverviewEstimated}${C.reset}${t.installOverviewTime}
 `);
 }
 
 /** Execute with progress indicator */
 async function withProgress(label, fn) {
-  process.stdout.write(`  ${C.dim}→${C.reset} ${label}...`);
+  process.stdout.write(`${C.dim}→${C.reset} ${label}...`);
   const startTime = Date.now();
 
   try {
@@ -1223,7 +1231,7 @@ async function askInstallScope() {
     },
   ];
 
-  console.log(`  ${C.bold}${C.cyan}?${C.reset} ${t.installScopePrompt}\n`);
+  console.log(`${C.bold}${C.dim}?${C.reset} ${t.installScopePrompt}\n`);
 
   scopes.forEach((scope, i) => {
     const defaultMark =
@@ -1263,7 +1271,7 @@ async function ensureGlobalSkillsDir() {
   console.log(`
   ${C.bold}${t.globalDirTitle}${C.reset}
 
-  ${promptLines[0].replace("~/.claude/skills/", `${C.cyan}~/.claude/skills/${C.reset}`)}
+  ${promptLines[0]}
   ${C.dim}•${C.reset} ${promptLines[1].split("— ")[1]}
   ${C.dim}•${C.reset} ${promptLines[2].split("— ")[1]}
   ${C.dim}•${C.reset} ${promptLines[3].split("— ")[1]}
@@ -1602,9 +1610,9 @@ async function detectRuntimes() {
     !runtimes.cursor
   ) {
     console.log(`\n  ${C.yellow}⚠ ${t.noRuntime}${C.reset}`);
-    console.log(`  ${C.dim}${t.noRuntimeHint1}${C.reset}`);
+    console.log(`${C.dim}${t.noRuntimeHint1}${C.reset}`);
     console.log(
-      `  ${C.dim}${fmt(t.noRuntimeHint2, {
+      `${C.dim}${fmt(t.noRuntimeHint2, {
         claudeCodeDocs:
           EXTERNAL_URLS.claudeCodeDocs ||
           "https://docs.anthropic.com/en/docs/claude-code",
@@ -1788,7 +1796,7 @@ function installSkillFromSubdir(skill, target, proxy) {
 async function installAllSkills() {
   heading(t.stepSkills);
   if (!silentMode) {
-    console.log(`  ${C.dim}${t.shipsSkills(SKILLS.length)}${C.reset}`);
+    console.log(`${C.dim}${t.shipsSkills(SKILLS.length)}${C.reset}`);
     SKILLS.forEach((s) => console.log(`    ${C.dim}•${C.reset} ${s.name}`));
     console.log();
   }
@@ -1888,34 +1896,32 @@ async function validate() {
 
 function showNextSteps(runtimes) {
   console.log("");
-  console.log(`  ${C.bold}${C.green}✓ ${t.setupComplete}${C.reset}`);
+  console.log(`${C.bold}${C.green}✓ ${t.setupComplete}${C.reset}`);
   console.log("");
   console.log(`${C.bold}  ${t.howToUse}${C.reset}
 `);
 
   if (runtimes.claude) {
-    console.log(`  ${C.cyan}1.${C.reset} ${t.step1Open}
+    console.log(`${C.dim}1.${C.reset} ${t.step1Open}
      ${C.dim}cd "${PROJECT_DIR}" && claude${C.reset}
 
-  ${C.cyan}2.${C.reset} ${t.step2Try}
+  ${C.dim}2.${C.reset} ${t.step2Try}
      ${C.dim}/meta-theory review my agent definitions${C.reset}
 
-  ${C.cyan}3.${C.reset} ${t.step3Or}
+  ${C.dim}3.${C.reset} ${t.step3Or}
      ${C.dim}Build a user authentication system${C.reset}
      ${C.dim}${t.step3Hint}${C.reset}
 `);
   }
 
   if (runtimes.codex)
-    console.log(`  ${C.cyan}Codex:${C.reset} ${C.dim}${t.codexNote}${C.reset}`);
+    console.log(`${C.dim}Codex:${C.reset} ${C.dim}${t.codexNote}${C.reset}`);
   if (runtimes.openclaw)
     console.log(
-      `  ${C.cyan}OpenClaw:${C.reset} ${C.dim}${t.openclawNote}${C.reset}`,
+      `${C.dim}OpenClaw:${C.reset} ${C.dim}${t.openclawNote}${C.reset}`,
     );
   if (runtimes.cursor)
-    console.log(
-      `  ${C.cyan}Cursor:${C.reset} ${C.dim}${t.cursorNote}${C.reset}`,
-    );
+    console.log(`${C.dim}Cursor:${C.reset} ${C.dim}${t.cursorNote}${C.reset}`);
 
   if (
     !runtimes.claude &&
@@ -1923,9 +1929,9 @@ function showNextSteps(runtimes) {
     !runtimes.openclaw &&
     !runtimes.cursor
   ) {
-    console.log(`  ${C.yellow}${t.noRuntimeGetStarted}${C.reset}`);
+    console.log(`${C.yellow}${t.noRuntimeGetStarted}${C.reset}`);
     console.log(
-      `  ${C.dim}${
+      `${C.dim}${
         EXTERNAL_URLS.claudeCodeDocs ||
         "https://docs.anthropic.com/en/docs/claude-code"
       }${C.reset}`,
@@ -2014,15 +2020,15 @@ function bannerLogo() {
   };
 
   const word = ["M", "E", "T", "A", "_", "K", "I", "M"];
-  // Gold gradient: bright yellow → amber → gold (hermes-inspired)
+  // Gold gradient: deep amber (24-bit RGB, dark and subtle)
   const rowColors = [
-    "\x1b[38;5;226m",
-    "\x1b[38;5;220m",
-    "\x1b[38;5;214m",
-    "\x1b[38;5;208m",
-    "\x1b[38;5;202m",
-    "\x1b[38;5;214m",
-    "\x1b[38;5;220m",
+    "\x1b[38;2;160;120;60m",
+    "\x1b[38;2;180;140;70m",
+    "\x1b[38;2;200;160;80m",
+    "\x1b[38;2;180;140;70m",
+    "\x1b[38;2;160;120;60m",
+    "\x1b[38;2;140;100;50m",
+    "\x1b[38;2;120;80;40m",
   ];
 
   // Build ASCII art lines
@@ -2074,7 +2080,7 @@ function bannerLogo() {
   };
 
   const sep = "\u2500".repeat(30);
-  const frame = `\x1b[38;5;214m${C.bold}`; // amber frame
+  const frame = `\x1b[38;2;160;120;60m${C.bold}`; // deep amber frame
 
   const versionText = `Setup v${packageVersion}`;
   const tagline = "AI Coding Governance Layer";
@@ -2091,7 +2097,7 @@ function bannerLogo() {
   });
   console.log(`${frame}  \u2503${blank}\u2503`);
   console.log(
-    `${frame}  \u2503${C.bold}\x1b[38;5;226m${center(versionText)}${C.reset}${frame}\u2503`,
+    `${frame}  \u2503${C.bold}\x1b[38;2;200;160;80m${center(versionText)}${C.reset}${frame}\u2503`,
   );
   console.log(
     `${frame}  \u2503${C.dim}${center(tagline)}${C.reset}${frame}\u2503`,
@@ -2116,7 +2122,7 @@ function showModeInfo() {
         ? t.modeSilent
         : t.modeInteractive;
   console.log(
-    `  ${C.dim}Mode: ${modeStr} | ${platform()} | Node ${process.versions.node}${C.reset}`,
+    `${C.dim}Mode: ${modeStr} | ${platform()} | Node ${process.versions.node}${C.reset}`,
   );
 }
 
@@ -2140,7 +2146,7 @@ async function main() {
     const targetContext = await resolveTargetContext(args);
     checkSync(detectedRuntimes, targetContext.supportedTargets);
     console.log(
-      `  ${C.dim}activeTargets=${targetContext.activeTargets.join(", ")} supportedTargets=${targetContext.supportedTargets.join(", ")}${C.reset}`,
+      `${C.dim}activeTargets=${targetContext.activeTargets.join(", ")} supportedTargets=${targetContext.supportedTargets.join(", ")}${C.reset}`,
     );
     const localState = await ensureProfileState();
     console.log(`${C.bold}  Local state${C.reset}`);
@@ -2380,7 +2386,7 @@ async function runCheck() {
   const targetContext = await resolveTargetContext(args);
   checkSync(runtimes, targetContext.supportedTargets);
   console.log(
-    `  ${C.dim}activeTargets=${targetContext.activeTargets.join(", ")} supportedTargets=${targetContext.supportedTargets.join(", ")}${C.reset}`,
+    `${C.dim}activeTargets=${targetContext.activeTargets.join(", ")} supportedTargets=${targetContext.supportedTargets.join(", ")}${C.reset}`,
   );
 }
 
