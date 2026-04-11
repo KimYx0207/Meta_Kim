@@ -31,15 +31,6 @@ export const localOverridesPath = path.join(
 );
 export const supportedTargetIds = ["claude", "codex", "openclaw", "cursor"];
 
-export async function pathExists(targetPath) {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function readJsonIfExists(filePath) {
   try {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
@@ -260,17 +251,6 @@ export function parseScopeArg(argv = process.argv.slice(2)) {
     }
   }
   return "project"; // Default: write to repo-local
-}
-
-/**
- * Resolve output path for a given runtime asset.
- * @param {string} runtimeId - "claude" | "codex" | "openclaw"
- * @param {string} scope - "project" | "global" | "both"
- * @param {string} baseDir - repoRoot for project scope, or runtime home dir for global
- * @param {string} relativePath - Relative path from profile's outputPaths (e.g. ".claude/agents")
- */
-export function resolveOutputPath(runtimeId, scope, baseDir, relativePath) {
-  return path.join(baseDir, relativePath);
 }
 
 /**

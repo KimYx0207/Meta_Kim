@@ -1667,7 +1667,7 @@ function runNodeScript(scriptRelative, extraArgs = []) {
     {
       cwd: PROJECT_DIR,
       stdio: "inherit",
-      shell: false,
+      shell: isWin,
     },
   );
 }
@@ -1753,22 +1753,29 @@ function installSkillFromSubdir(skill, target, proxy) {
   const url = `https://github.com/${skill.repo}.git`;
   const tmp = join(tmpdir(), `meta-kim-skill-${Date.now()}`);
   try {
-    run(
+    const cloneResult = run(
       `git ${proxy} clone --depth 1 --filter=blob:none --sparse "${url}" "${tmp}"`.trim(),
     );
-    run(`git sparse-checkout set "${skill.subdir}"`, { cwd: tmp });
-    const src = join(tmp, skill.subdir);
-    if (existsSync(src)) {
-      mkdirSync(target, { recursive: true });
-      cpSync(src, target, { recursive: true });
-      ok(t.skillSubdirInstalled(skill.name, skill.subdir));
-      return true;
+    if (cloneResult === null) {
+      fail(t.skillFailed(skill.name, "clone failed"));
+      return false;
     }
-    fail(t.skillSubdirNotFound(skill.name));
-    return false;
-  } catch {
-    fail(t.skillFailed(skill.name, ""));
-    return false;
+    const checkoutResult = run(`git sparse-checkout set "${skill.subdir}"`, {
+      cwd: tmp,
+    });
+    if (checkoutResult === null) {
+      fail(t.skillSubdirNotFound(skill.name));
+      return false;
+    }
+    const src = join(tmp, skill.subdir);
+    if (!existsSync(src)) {
+      fail(t.skillSubdirNotFound(skill.name));
+      return false;
+    }
+    mkdirSync(target, { recursive: true });
+    cpSync(src, target, { recursive: true });
+    ok(t.skillSubdirInstalled(skill.name, skill.subdir));
+    return true;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
