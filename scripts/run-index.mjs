@@ -191,10 +191,12 @@ function summarizeArtifact(artifact, artifactPath) {
     writebackDecision: artifact.evolutionWritebackPacket.writebackDecision,
     payload: {
       taskClassification: artifact.taskClassification,
+      fetchPacket: artifact.fetchPacket,
       cardPlanPacket: artifact.cardPlanPacket,
       orchestrationTaskBoardPacket: artifact.orchestrationTaskBoardPacket,
       capabilityGapPacket: artifact.capabilityGapPacket,
       executionAgentCard: artifact.executionAgentCard,
+      reviewPacket: artifact.reviewPacket,
       reviewFindings: artifact.reviewPacket.findings,
       verificationResults: artifact.verificationPacket.verificationResults,
       summaryPacket: artifact.summaryPacket,

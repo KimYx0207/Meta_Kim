@@ -72,5 +72,10 @@ describe("run-index.mjs", () => {
     assert.equal(result.rows[0].publicReady, true);
     assert.equal(result.rows[0].openFindingsCount, 0);
     assert.ok(result.rows[0].ownerAgents.includes("meta-conductor"));
+    assert.equal(result.rows[0].payload.taskClassification.queryScope, "current_project");
+    assert.equal(result.rows[0].payload.fetchPacket.projectsChecked.length, 1);
+    assert.deepEqual(result.rows[0].payload.summaryPacket.sourceProjects, [
+      result.rows[0].payload.taskClassification.projectRef,
+    ]);
   });
 });

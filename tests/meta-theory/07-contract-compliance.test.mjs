@@ -13,7 +13,10 @@ describe("workflow-contract.json — schema compliance", async () => {
 
   test("schemaVersion exists", () => {
     assert.notEqual(contract.schemaVersion, undefined);
-    assert.ok(contract.schemaVersion >= 5, "schemaVersion should be >= 5 after execution-agent factory packet hardening");
+    assert.ok(
+      contract.schemaVersion >= 6,
+      "schemaVersion should be >= 6 after Critical/Fetch/Thinking/Review packet hardening"
+    );
   });
 
   test('owner is "Meta_Kim"', () => {
@@ -127,10 +130,11 @@ describe("workflow-contract.json — schema compliance", async () => {
     );
   });
 
-  test("protocols has all 15 governed packet types", () => {
+  test("protocols has all 16 governed packet types", () => {
     const expected = [
       "runHeader",
       "taskClassification",
+      "fetchPacket",
       "cardPlanPacket",
       "dispatchEnvelopePacket",
       "orchestrationTaskBoardPacket",
@@ -149,7 +153,7 @@ describe("workflow-contract.json — schema compliance", async () => {
     for (const packet of expected) {
       assert.ok(keys.includes(packet), `missing protocol packet: ${packet}`);
     }
-    assert.equal(expected.length, 15);
+    assert.equal(expected.length, 16);
   });
 
   test("publicDisplayRequires has all 5 conditions", () => {
@@ -185,6 +189,13 @@ describe("workflow-contract.json — schema compliance", async () => {
     assert.equal(classification.classifierVersion, "v2");
     assert.deepEqual(classification.taskClassEnum, ["Q", "A", "P", "S"]);
     assert.deepEqual(classification.requestClassEnum, ["query", "execute", "plan", "strategy"]);
+    assert.deepEqual(classification.queryScopeEnum, ["current_project", "all_projects"]);
+    assert.deepEqual(classification.registryStatusEnum, [
+      "known",
+      "prompt_join",
+      "joined",
+      "skipped",
+    ]);
     assert.ok(classification.governanceFlowEnum.includes("simple_exec"));
     assert.ok(classification.governanceFlowEnum.includes("complex_dev"));
     assert.ok(classification.governanceFlowEnum.includes("proposal_review"));
@@ -242,6 +253,7 @@ describe("workflow-contract.json — schema compliance", async () => {
   test("protocolFirst requires taskClassification packet", () => {
     const requiredPackets = contract.runDiscipline?.protocolFirst?.requiredPackets ?? [];
     assert.ok(requiredPackets.includes("taskClassification"));
+    assert.ok(requiredPackets.includes("fetchPacket"));
     assert.ok(requiredPackets.includes("cardPlanPacket"));
     assert.ok(requiredPackets.includes("dispatchEnvelopePacket"));
     assert.ok(requiredPackets.includes("orchestrationTaskBoardPacket"));
@@ -262,6 +274,8 @@ describe("workflow-contract.json — schema compliance", async () => {
       "taskRef",
       "allowedCapabilities",
       "blockedCapabilities",
+      "route",
+      "ownerSelection",
       "memoryMode",
       "workspaceHint",
       "resultSchemaRef",
@@ -271,10 +285,52 @@ describe("workflow-contract.json — schema compliance", async () => {
       assert.ok(fields.includes(field), `dispatchEnvelopePacket missing ${field}`);
     }
     assert.deepEqual(contract.protocols?.dispatchEnvelopePacket?.memoryModeEnum, [
-      "fresh_context",
-      "inherit_summary_only",
-      "inherit_full_context",
+      "project_only",
+      "cross_project_readonly",
     ]);
+    assert.deepEqual(contract.protocols?.dispatchEnvelopePacket?.routeEnum, [
+      "project_only",
+      "cross_project",
+    ]);
+    assert.deepEqual(contract.protocols?.dispatchEnvelopePacket?.ownerSelectionEnum, [
+      "capability_first",
+    ]);
+  });
+
+  test("task classification and fetch packet record project scope", () => {
+    const taskFields = contract.protocols?.taskClassification?.requiredFields ?? [];
+    for (const field of ["queryScope", "projectRef", "registryStatus", "crossProjectReason"]) {
+      assert.ok(taskFields.includes(field), `taskClassification missing ${field}`);
+    }
+
+    const fetchFields = contract.protocols?.fetchPacket?.requiredFields ?? [];
+    for (const field of [
+      "projectsChecked",
+      "projectLocalSources",
+      "globalRegistryHits",
+      "capabilityMatches",
+      "capabilityGaps",
+      "graphSources",
+      "knowledgeSources",
+    ]) {
+      assert.ok(fetchFields.includes(field), `fetchPacket missing ${field}`);
+    }
+  });
+
+  test("review and summary packets track source projects", () => {
+    const reviewFields = contract.protocols?.reviewPacket?.requiredFields ?? [];
+    assert.ok(reviewFields.includes("sourceProjects"));
+    assert.ok(reviewFields.includes("crossProjectContaminationCheck"));
+    assert.deepEqual(contract.protocols?.reviewPacket?.crossProjectContaminationCheckEnum, [
+      "pass",
+      "fail",
+    ]);
+
+    const reviewFindingFields = contract.protocols?.reviewFinding?.requiredFields ?? [];
+    assert.ok(reviewFindingFields.includes("sourceProject"));
+
+    const summaryFields = contract.protocols?.summaryPacket?.requiredFields ?? [];
+    assert.ok(summaryFields.includes("sourceProjects"));
   });
 
   test("orchestration task board is mandatory for non-query governance flows", () => {
@@ -343,6 +399,8 @@ describe("workflow-contract.json — schema compliance", async () => {
     assert.ok(localState.profileKeyRequires?.includes("repo_path_hash"));
     assert.ok(localState.profileKeyRequires?.includes("runtime_family"));
     assert.equal(localState.runIndex?.canonicalSource, false);
+    assert.equal(localState.globalProjectRegistry?.pathPattern, "~/.meta-kim/global/project-registry.sqlite");
+    assert.equal(localState.globalProjectRegistry?.storesProjectBodies, false);
     assert.equal(localState.compaction?.localOnly, true);
     assert.equal(localState.compaction?.publicArtifactForbidden, true);
 

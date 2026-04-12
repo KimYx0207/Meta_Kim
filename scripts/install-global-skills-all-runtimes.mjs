@@ -30,6 +30,11 @@ import {
   resolveManifestSkillSubdir,
   shouldUseCliShell,
 } from "./install-platform-config.mjs";
+import {
+  buildGitHubTarballUrl,
+  classifyGitInstallFailure,
+  shouldUseArchiveFallback,
+} from "./install-error-classifier.mjs";
 import { fileURLToPath } from "node:url";
 import { resolveTargetContext } from "./meta-kim-sync-config.mjs";
 import { t } from "./meta-kim-i18n.mjs";
@@ -60,6 +65,8 @@ const skipPlugins =
   process.argv.includes("--skip-plugins") ||
   process.argv.includes("--no-plugins");
 const cliArgs = process.argv.slice(2);
+const installFailures = [];
+const archiveFallbacks = [];
 
 /**
  * Load skills manifest from shared config (single source of truth)
@@ -148,12 +155,157 @@ async function pathExists(p) {
 function runGit(args, opts = {}) {
   if (dryRun) {
     console.log(t.dryRun(`git ${args.join(" ")}`));
-    return;
+    return { status: 0, stdout: "", stderr: "" };
   }
-  execFileSync("git", args, { stdio: "inherit", ...opts });
+  const result = spawnSync("git", args, {
+    encoding: "utf8",
+    shell: false,
+    stdio: "pipe",
+    ...opts,
+  });
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+  if (result.status !== 0) {
+    const error = new Error(`git ${args.join(" ")} failed`);
+    error.status = result.status;
+    error.stdout = result.stdout;
+    error.stderr = result.stderr;
+    throw error;
+  }
+  return result;
 }
 
-async function installGitSkill(targetDir, repoUrl) {
+function recordInstallFailure(details) {
+  installFailures.push(details);
+}
+
+async function extractArchiveInto(targetDir, archivePath, subdirPath) {
+  const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-archive-"));
+  try {
+    if (dryRun) {
+      console.log(t.dryRun(`tar -xzf ${archivePath} -C ${extractDir}`));
+    } else {
+      execFileSync("tar", ["-xzf", archivePath, "-C", extractDir], {
+        stdio: "pipe",
+      });
+    }
+
+    const entries = await fs.readdir(extractDir, { withFileTypes: true });
+    const rootEntry = entries.find((entry) => entry.isDirectory());
+    if (!rootEntry) {
+      throw new Error(`Archive extraction produced no root directory: ${archivePath}`);
+    }
+
+    const rootDir = path.join(extractDir, rootEntry.name);
+    const sourceDir = subdirPath
+      ? path.join(rootDir, ...subdirPath.split("/").filter(Boolean))
+      : rootDir;
+    if (!(await pathExists(sourceDir))) {
+      throw new Error(`Archive fallback missing subdir: ${sourceDir}`);
+    }
+
+    await fs.mkdir(path.dirname(targetDir), { recursive: true });
+    await fs.cp(sourceDir, targetDir, { recursive: true, force: true });
+  } finally {
+    await fs.rm(extractDir, { recursive: true, force: true });
+  }
+}
+
+async function installViaArchiveFallback({
+  skillId,
+  targetDir,
+  repoUrl,
+  subdirPath,
+  category,
+  failureText,
+}) {
+  const archiveUrl = buildGitHubTarballUrl(repoUrl);
+  if (!archiveUrl) {
+    throw new Error(`Archive fallback only supports GitHub HTTPS remotes: ${repoUrl}`);
+  }
+
+  const response = await fetch(archiveUrl, {
+    headers: {
+      "user-agent": "meta-kim/2.0",
+      accept: "application/vnd.github+json",
+    },
+    redirect: "follow",
+  });
+  if (!response.ok) {
+    throw new Error(`Archive fallback HTTP ${response.status} for ${archiveUrl}`);
+  }
+
+  const archivePath = path.join(os.tmpdir(), `meta-kim-${Date.now()}-${path.basename(targetDir)}.tar.gz`);
+  try {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(archivePath, buffer);
+    await extractArchiveInto(targetDir, archivePath, subdirPath);
+    archiveFallbacks.push({ skillId, targetDir, category });
+    console.warn(
+      `${C.yellow}⚠${C.reset} ${t.warnArchiveFallback(skillId, category)}`,
+    );
+    console.log(`${C.green}✓${C.reset} ${t.okArchiveInstalled(targetDir)}`);
+  } catch (error) {
+    recordInstallFailure({
+      skillId,
+      targetDir,
+      repoUrl,
+      category,
+      failureText,
+      fallback: "archive",
+      reason: error.message,
+    });
+    console.warn(
+      `${C.yellow}⚠${C.reset} ${t.warnArchiveFailed(skillId, category, error.message)}`,
+    );
+  } finally {
+    await fs.rm(archivePath, { force: true });
+  }
+}
+
+async function handleGitFailure({
+  skillId,
+  targetDir,
+  repoUrl,
+  subdirPath,
+  error,
+}) {
+  const category = classifyGitInstallFailure(error);
+  const failureText = [error?.message, error?.stderr, error?.stdout]
+    .filter(Boolean)
+    .join("\n");
+
+  if (shouldUseArchiveFallback(category)) {
+    await installViaArchiveFallback({
+      skillId,
+      targetDir,
+      repoUrl,
+      subdirPath,
+      category,
+      failureText,
+    });
+    return;
+  }
+
+  recordInstallFailure({
+    skillId,
+    targetDir,
+    repoUrl,
+    category,
+    failureText,
+    fallback: "none",
+    reason: error?.message || String(error),
+  });
+  console.warn(
+    `${C.yellow}⚠${C.reset} ${t.warnGitInstallFailed(skillId, category)}`,
+  );
+}
+
+async function installGitSkill(skillId, targetDir, repoUrl) {
   assertUnderHome(targetDir);
   if (await pathExists(targetDir)) {
     if (updateMode) {
@@ -167,8 +319,17 @@ async function installGitSkill(targetDir, repoUrl) {
       } catch {
         console.warn(`${C.yellow}⚠${C.reset} ${t.warnPullFailed(targetDir)}`);
         await fs.rm(targetDir, { recursive: true, force: true });
-        runGit(["clone", "--depth", "1", repoUrl, targetDir]);
-        console.log(`${C.green}✓${C.reset} ${t.okCloned(targetDir)}`);
+        try {
+          runGit(["clone", "--depth", "1", repoUrl, targetDir]);
+          console.log(`${C.green}✓${C.reset} ${t.okCloned(targetDir)}`);
+        } catch (error) {
+          await handleGitFailure({
+            skillId,
+            targetDir,
+            repoUrl,
+            error,
+          });
+        }
       }
     } else {
       console.log(
@@ -182,11 +343,20 @@ async function installGitSkill(targetDir, repoUrl) {
     return;
   }
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
-  runGit(["clone", "--depth", "1", repoUrl, targetDir]);
-  console.log(`${C.green}✓${C.reset} ${t.okCloned(targetDir)}`);
+  try {
+    runGit(["clone", "--depth", "1", repoUrl, targetDir]);
+    console.log(`${C.green}✓${C.reset} ${t.okCloned(targetDir)}`);
+  } catch (error) {
+    await handleGitFailure({
+      skillId,
+      targetDir,
+      repoUrl,
+      error,
+    });
+  }
 }
 
-async function installGitSkillFromSubdir(targetDir, repoUrl, subdirPath) {
+async function installGitSkillFromSubdir(skillId, targetDir, repoUrl, subdirPath) {
   assertUnderHome(targetDir);
   if ((await pathExists(targetDir)) && !updateMode) {
     console.log(
@@ -208,25 +378,35 @@ async function installGitSkillFromSubdir(targetDir, repoUrl, subdirPath) {
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-skill-"));
   try {
-    runGit([
-      "clone",
-      "--depth",
-      "1",
-      "--filter=blob:none",
-      "--sparse",
-      repoUrl,
-      tmp,
-    ]);
-    runGit(["sparse-checkout", "set", subdirPath], { cwd: tmp });
-    const src = path.join(tmp, ...subdirPath.split("/").filter(Boolean));
-    if (!(await pathExists(src))) {
-      throw new Error(`Sparse checkout path missing after clone: ${src}`);
+    try {
+      runGit([
+        "clone",
+        "--depth",
+        "1",
+        "--filter=blob:none",
+        "--sparse",
+        repoUrl,
+        tmp,
+      ]);
+      runGit(["sparse-checkout", "set", subdirPath], { cwd: tmp });
+      const src = path.join(tmp, ...subdirPath.split("/").filter(Boolean));
+      if (!(await pathExists(src))) {
+        throw new Error(`Sparse checkout path missing after clone: ${src}`);
+      }
+      await fs.mkdir(path.dirname(targetDir), { recursive: true });
+      await fs.cp(src, targetDir, { recursive: true, force: true });
+      console.log(
+        `${C.green}✓${C.reset} ${t.okBasename(path.basename(targetDir), targetDir)}`,
+      );
+    } catch (error) {
+      await handleGitFailure({
+        skillId,
+        targetDir,
+        repoUrl,
+        subdirPath,
+        error,
+      });
     }
-    await fs.mkdir(path.dirname(targetDir), { recursive: true });
-    await fs.cp(src, targetDir, { recursive: true, force: true });
-    console.log(
-      `${C.green}✓${C.reset} ${t.okBasename(path.basename(targetDir), targetDir)}`,
-    );
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

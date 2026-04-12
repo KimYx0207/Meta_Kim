@@ -10,6 +10,10 @@
   "taskClassification": {
     "taskClass": "A",
     "requestClass": "execute",
+    "queryScope": "current_project",
+    "projectRef": "project-auth-refresh-hardening",
+    "registryStatus": "known",
+    "crossProjectReason": "default_current_project_scope",
     "governanceFlow": "complex_dev",
     "triggerReasons": [
       "multi_file",
@@ -25,6 +29,55 @@
     "decisionSource": "classifier-v2",
     "classifierVersion": "v2",
     "complexity": "medium"
+  },
+  "fetchPacket": {
+    "projectsChecked": [
+      {
+        "projectRef": "project-auth-refresh-hardening",
+        "checkMode": "current_project",
+        "reason": "default query scope"
+      }
+    ],
+    "projectLocalSources": [
+      {
+        "projectRef": "project-auth-refresh-hardening",
+        "sourceType": "run_index",
+        "sourceRef": ".meta-kim/state/default/run-index.sqlite"
+      },
+      {
+        "projectRef": "project-auth-refresh-hardening",
+        "sourceType": "graph",
+        "sourceRef": "graphify-out/graph.json"
+      }
+    ],
+    "globalRegistryHits": [],
+    "capabilityMatches": [
+      {
+        "capability": "auth_refresh_hardening",
+        "owner": "meta-conductor",
+        "sourceProject": "project-auth-refresh-hardening"
+      },
+      {
+        "capability": "verification_notes",
+        "owner": "meta-prism",
+        "sourceProject": "project-auth-refresh-hardening"
+      }
+    ],
+    "capabilityGaps": [],
+    "graphSources": [
+      {
+        "projectRef": "project-auth-refresh-hardening",
+        "sourceType": "graph",
+        "sourceRef": "graphify-out/graph.json"
+      }
+    ],
+    "knowledgeSources": [
+      {
+        "projectRef": "project-auth-refresh-hardening",
+        "sourceType": "doc",
+        "sourceRef": "docs/auth-refresh.md"
+      }
+    ]
   },
   "intentPacket": {
     "trueUserIntent": "Harden refresh-token handling so secrets never live inline in source; one consolidated deliverable for the auth module.",
@@ -152,7 +205,9 @@
     "blockedCapabilities": [
       "security_policy_override"
     ],
-    "memoryMode": "inherit_summary_only",
+    "route": "project_only",
+    "ownerSelection": "capability_first",
+    "memoryMode": "project_only",
     "workspaceHint": "auth-refresh-hardening",
     "resultSchemaRef": "config/contracts/workflow-contract.json#/protocols/workerResultPacket",
     "reviewOwner": "meta-prism",
@@ -216,6 +271,10 @@
     "protocolCompliance": "PASS",
     "qualityGate": "FAIL",
     "revisionNeeded": true,
+    "sourceProjects": [
+      "project-auth-refresh-hardening"
+    ],
+    "crossProjectContaminationCheck": "pass",
     "reviews": [
       {
         "type": "security",
@@ -231,6 +290,7 @@
         "findingId": "finding-001",
         "severity": "high",
         "owner": "meta-sentinel",
+        "sourceProject": "project-auth-refresh-hardening",
         "summary": "refresh token fallback still accepted an inline secret",
         "requiredAction": "remove inline secret fallback and require env-based secret resolution",
         "fixArtifact": "src/auth/refresh.ts",
@@ -282,6 +342,9 @@
     "consolidatedDeliverablePresent": true,
     "publicReady": true,
     "commentReviewAcknowledged": true,
+    "sourceProjects": [
+      "project-auth-refresh-hardening"
+    ],
     "deliveryShellsUsed": [
       "shell-structured-status",
       "shell-review-delta"

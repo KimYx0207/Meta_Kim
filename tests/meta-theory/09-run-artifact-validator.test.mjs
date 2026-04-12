@@ -42,6 +42,7 @@ describe("validate-run-artifact.mjs", () => {
   test("accepts a valid run artifact with full finding lineage", async () => {
     const result = await validateFixture(validFixture);
     assert.equal(result.ok, true);
+    assert.ok(result.validatedPackets.includes("fetchPacket"));
     assert.ok(result.validatedPackets.includes("dispatchEnvelopePacket"));
     assert.ok(result.validatedPackets.includes("orchestrationTaskBoardPacket"));
     assert.ok(result.validatedPackets.includes("cardPlanPacket"));
@@ -91,6 +92,46 @@ describe("validate-run-artifact.mjs", () => {
     });
     await assert.rejects(
       execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], { cwd: REPO_ROOT })
+    );
+  });
+
+  test("rejects missing fetchPacket for governed runs", async () => {
+    const tempFixture = await writeTempFixture((artifact) => {
+      delete artifact.fetchPacket;
+    });
+    await assert.rejects(
+      execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], {
+        cwd: REPO_ROOT,
+      })
+    );
+  });
+
+  test("rejects current-project fetch packets that check other projects", async () => {
+    const tempFixture = await writeTempFixture((artifact) => {
+      artifact.fetchPacket.projectsChecked = [
+        ...artifact.fetchPacket.projectsChecked,
+        {
+          projectRef: "project-other",
+          checkMode: "global_registry_hit",
+          reason: "unexpected cross-project fetch",
+        },
+      ];
+    });
+    await assert.rejects(
+      execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], {
+        cwd: REPO_ROOT,
+      })
+    );
+  });
+
+  test("rejects review findings that do not name a source project", async () => {
+    const tempFixture = await writeTempFixture((artifact) => {
+      delete artifact.reviewPacket.findings[0].sourceProject;
+    });
+    await assert.rejects(
+      execFileAsync("node", ["scripts/validate-run-artifact.mjs", tempFixture], {
+        cwd: REPO_ROOT,
+      })
     );
   });
 

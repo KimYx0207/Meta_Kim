@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { detectProjectRegistryEntry } from "./project-registry.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -100,15 +101,22 @@ export async function ensureProfileState(options = {}) {
     profile: paths.profile,
     profileKey: paths.profileKey,
     repoRoot,
-    repoPathHash: repoPathHash(),
+    repoPathHash: repoPathHash(repoPath),
     runtimeFamily: paths.runtimeFamily,
     host: os.hostname(),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
 
+  const projectRegistry = await detectProjectRegistryEntry({
+    repoPath,
+    runtimeFamily: paths.runtimeFamily,
+  });
+  metadata.projectRef = projectRegistry.projectRef;
+  metadata.registryStatus = projectRegistry.registryStatus;
+
   await fs.writeFile(paths.profileFile, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
-  return { ...paths, metadata };
+  return { ...paths, metadata, projectRegistry };
 }
 
 export async function detectProfileCollision(options = {}) {

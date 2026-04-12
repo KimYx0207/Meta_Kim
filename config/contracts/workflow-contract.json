@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "owner": "Meta_Kim",
   "businessWorkflow": {
     "id": "business",
@@ -170,6 +170,16 @@
         "execute",
         "plan",
         "strategy"
+      ],
+      "queryScopeEnum": [
+        "current_project",
+        "all_projects"
+      ],
+      "registryStatusEnum": [
+        "known",
+        "prompt_join",
+        "joined",
+        "skipped"
       ],
       "governanceFlowEnum": [
         "query",
@@ -394,6 +404,7 @@
       "requiredPackets": [
         "runHeader",
         "taskClassification",
+        "fetchPacket",
         "cardPlanPacket",
         "dispatchEnvelopePacket",
         "orchestrationTaskBoardPacket",
@@ -448,6 +459,11 @@
         "pathPattern": ".meta-kim/state/{profile}/run-index.sqlite",
         "indexesValidatedArtifactsOnly": true,
         "canonicalSource": false
+      },
+      "globalProjectRegistry": {
+        "pathPattern": "~/.meta-kim/global/project-registry.sqlite",
+        "storesProjectBodies": false,
+        "storesProjectRegistryOnly": true
       },
       "compaction": {
         "pathPattern": ".meta-kim/state/{profile}/compaction/",
@@ -584,6 +600,10 @@
       "requiredFields": [
         "taskClass",
         "requestClass",
+        "queryScope",
+        "projectRef",
+        "registryStatus",
+        "crossProjectReason",
         "governanceFlow",
         "triggerReasons",
         "upgradeReasons",
@@ -593,6 +613,18 @@
         "classifierVersion",
         "complexity"
       ]
+    },
+    "fetchPacket": {
+      "requiredFields": [
+        "projectsChecked",
+        "projectLocalSources",
+        "globalRegistryHits",
+        "capabilityMatches",
+        "capabilityGaps",
+        "graphSources",
+        "knowledgeSources"
+      ],
+      "description": "Explicit Fetch-stage packet: which projects were checked, which local/global sources were consulted, which capabilities matched, which gaps remain, and which graph/knowledge sources influenced the run."
     },
     "intentPacket": {
       "requiredFields": [
@@ -629,16 +661,24 @@
         "taskRef",
         "allowedCapabilities",
         "blockedCapabilities",
+        "route",
+        "ownerSelection",
         "memoryMode",
         "workspaceHint",
         "resultSchemaRef",
         "reviewOwner",
         "verificationOwner"
       ],
+      "routeEnum": [
+        "project_only",
+        "cross_project"
+      ],
+      "ownerSelectionEnum": [
+        "capability_first"
+      ],
       "memoryModeEnum": [
-        "fresh_context",
-        "inherit_summary_only",
-        "inherit_full_context"
+        "project_only",
+        "cross_project_readonly"
       ],
       "description": "Mandatory execution shell for non-query flows: who owns the task, which capabilities are allowed/blocked, what memory policy the child gets, and which owners close review / verification."
     },
@@ -793,8 +833,14 @@
         "protocolCompliance",
         "qualityGate",
         "revisionNeeded",
+        "sourceProjects",
+        "crossProjectContaminationCheck",
         "reviews",
         "findings"
+      ],
+      "crossProjectContaminationCheckEnum": [
+        "pass",
+        "fail"
       ]
     },
     "reviewFinding": {
@@ -802,6 +848,7 @@
         "findingId",
         "severity",
         "owner",
+        "sourceProject",
         "summary",
         "requiredAction",
         "fixArtifact",
@@ -848,6 +895,7 @@
         "deliverableChainClosed",
         "consolidatedDeliverablePresent",
         "publicReady",
+        "sourceProjects",
         "deliveryShellsUsed",
         "blockedBy"
       ]

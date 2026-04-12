@@ -308,8 +308,8 @@ async function validateWorkflowContract() {
   const contract = JSON.parse(await fs.readFile(contractPath, "utf8"));
 
   assert(
-    (contract.schemaVersion ?? 0) >= 5,
-    "workflow-contract.json schemaVersion must be >= 5 after execution-agent factory hardening.",
+    (contract.schemaVersion ?? 0) >= 6,
+    "workflow-contract.json schemaVersion must be >= 6 after Critical/Fetch/Thinking/Review packet hardening.",
   );
   assert(
     contract.runDiscipline?.singleDepartmentPerRun === true,
@@ -651,6 +651,7 @@ async function validateWorkflowContract() {
   for (const packet of [
     "runHeader",
     "taskClassification",
+    "fetchPacket",
     "cardPlanPacket",
     "orchestrationTaskBoardPacket",
     "dispatchBoard",
@@ -736,12 +737,29 @@ async function validateWorkflowContract() {
     reviewPacketFields.includes("findings"),
     "workflow-contract.json reviewPacket must require findings.",
   );
+  assert(
+    reviewPacketFields.includes("sourceProjects"),
+    "workflow-contract.json reviewPacket must require sourceProjects.",
+  );
+  assert(
+    reviewPacketFields.includes("crossProjectContaminationCheck"),
+    "workflow-contract.json reviewPacket must require crossProjectContaminationCheck.",
+  );
+  assert(
+    JSON.stringify(contract.protocols?.reviewPacket?.crossProjectContaminationCheckEnum ?? []) ===
+      JSON.stringify(["pass", "fail"]),
+    "workflow-contract.json reviewPacket crossProjectContaminationCheckEnum must be [pass, fail].",
+  );
   for (const [protocolName, expectedFields] of [
     [
       "taskClassification",
       [
         "taskClass",
         "requestClass",
+        "queryScope",
+        "projectRef",
+        "registryStatus",
+        "crossProjectReason",
         "governanceFlow",
         "triggerReasons",
         "upgradeReasons",
@@ -750,6 +768,18 @@ async function validateWorkflowContract() {
         "decisionSource",
         "classifierVersion",
         "complexity",
+      ],
+    ],
+    [
+      "fetchPacket",
+      [
+        "projectsChecked",
+        "projectLocalSources",
+        "globalRegistryHits",
+        "capabilityMatches",
+        "capabilityGaps",
+        "graphSources",
+        "knowledgeSources",
       ],
     ],
     [
@@ -762,6 +792,22 @@ async function validateWorkflowContract() {
         "silenceDecision",
         "controlDecisions",
         "defaultShellId",
+      ],
+    ],
+    [
+      "dispatchEnvelopePacket",
+      [
+        "ownerAgent",
+        "taskRef",
+        "allowedCapabilities",
+        "blockedCapabilities",
+        "route",
+        "ownerSelection",
+        "memoryMode",
+        "workspaceHint",
+        "resultSchemaRef",
+        "reviewOwner",
+        "verificationOwner",
       ],
     ],
     [
@@ -856,6 +902,7 @@ async function validateWorkflowContract() {
         "findingId",
         "severity",
         "owner",
+        "sourceProject",
         "summary",
         "requiredAction",
         "fixArtifact",
@@ -888,6 +935,7 @@ async function validateWorkflowContract() {
         "deliverableChainClosed",
         "consolidatedDeliverablePresent",
         "publicReady",
+        "sourceProjects",
         "deliveryShellsUsed",
         "blockedBy",
       ],

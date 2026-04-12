@@ -18,6 +18,7 @@ const artifactArg = process.argv[2];
 export const PACKET_LOCATIONS = {
   runHeader: "runHeader",
   taskClassification: "taskClassification",
+  fetchPacket: "fetchPacket",
   intentPacket: "intentPacket",
   intentGatePacket: "intentGatePacket",
   cardPlanPacket: "cardPlanPacket",
@@ -141,6 +142,21 @@ function validateTaskClassification(contract, taskClassification) {
     "taskClassification.requestClass",
   );
   ensureEnum(
+    taskClassification.queryScope,
+    classificationPolicy.queryScopeEnum,
+    "taskClassification.queryScope",
+  );
+  ensureString(taskClassification.projectRef, "taskClassification.projectRef");
+  ensureEnum(
+    taskClassification.registryStatus,
+    classificationPolicy.registryStatusEnum,
+    "taskClassification.registryStatus",
+  );
+  ensureString(
+    taskClassification.crossProjectReason,
+    "taskClassification.crossProjectReason",
+  );
+  ensureEnum(
     taskClassification.governanceFlow,
     classificationPolicy.governanceFlowEnum,
     "taskClassification.governanceFlow",
@@ -187,6 +203,70 @@ function validateTaskClassification(contract, taskClassification) {
         taskClassification.governanceFlow === "query" &&
         taskClassification.bypassReasons.includes("pure_query"),
       "ownerRequired=false is only legal for pure-query runs.",
+    );
+  }
+}
+
+function validateFetchPacket(contract, artifact) {
+  const packet = artifact.fetchPacket;
+  ensureFields(packet, contract.protocols.fetchPacket.requiredFields, "fetchPacket");
+
+  for (const field of [
+    "projectsChecked",
+    "projectLocalSources",
+    "globalRegistryHits",
+    "capabilityMatches",
+    "capabilityGaps",
+    "graphSources",
+    "knowledgeSources",
+  ]) {
+    ensureArray(packet[field], `fetchPacket.${field}`);
+  }
+
+  for (const [index, item] of packet.projectsChecked.entries()) {
+    ensure(item && typeof item === "object", `fetchPacket.projectsChecked[${index}] must be an object.`);
+    ensureString(item.projectRef, `fetchPacket.projectsChecked[${index}].projectRef`);
+    ensureString(item.checkMode, `fetchPacket.projectsChecked[${index}].checkMode`);
+    ensureString(item.reason, `fetchPacket.projectsChecked[${index}].reason`);
+  }
+
+  for (const field of ["projectLocalSources", "globalRegistryHits", "graphSources", "knowledgeSources"]) {
+    for (const [index, item] of packet[field].entries()) {
+      ensure(item && typeof item === "object", `fetchPacket.${field}[${index}] must be an object.`);
+      ensureString(item.projectRef, `fetchPacket.${field}[${index}].projectRef`);
+      ensureString(item.sourceType, `fetchPacket.${field}[${index}].sourceType`);
+      ensureString(item.sourceRef, `fetchPacket.${field}[${index}].sourceRef`);
+    }
+  }
+
+  for (const [index, item] of packet.capabilityMatches.entries()) {
+    ensure(item && typeof item === "object", `fetchPacket.capabilityMatches[${index}] must be an object.`);
+    ensureString(item.capability, `fetchPacket.capabilityMatches[${index}].capability`);
+    ensureString(item.owner, `fetchPacket.capabilityMatches[${index}].owner`);
+    ensureString(item.sourceProject, `fetchPacket.capabilityMatches[${index}].sourceProject`);
+  }
+
+  for (const [index, item] of packet.capabilityGaps.entries()) {
+    ensure(item && typeof item === "object", `fetchPacket.capabilityGaps[${index}] must be an object.`);
+    ensureString(item.capability, `fetchPacket.capabilityGaps[${index}].capability`);
+    ensureString(item.reason, `fetchPacket.capabilityGaps[${index}].reason`);
+  }
+
+  const checkedProjects = packet.projectsChecked.map((item) => item.projectRef);
+  ensure(
+    checkedProjects.includes(artifact.taskClassification.projectRef),
+    "fetchPacket.projectsChecked must include taskClassification.projectRef.",
+  );
+
+  if (artifact.taskClassification.queryScope === "current_project") {
+    ensure(
+      packet.projectsChecked.length === 1 &&
+        checkedProjects[0] === artifact.taskClassification.projectRef,
+      "current_project runs may only check the current project in fetchPacket.projectsChecked.",
+    );
+    ensure(
+      packet.globalRegistryHits.length === 0,
+      "current_project runs must not record global registry hits.",
     );
   }
 }
@@ -311,6 +391,16 @@ function validateDispatchEnvelope(contract, artifact) {
     packet.blockedCapabilities,
     "dispatchEnvelopePacket.blockedCapabilities",
   );
+  ensureEnum(
+    packet.route,
+    contract.protocols.dispatchEnvelopePacket.routeEnum,
+    "dispatchEnvelopePacket.route",
+  );
+  ensureEnum(
+    packet.ownerSelection,
+    contract.protocols.dispatchEnvelopePacket.ownerSelectionEnum,
+    "dispatchEnvelopePacket.ownerSelection",
+  );
   ensure(
     packet.allowedCapabilities.length >= 1,
     "dispatchEnvelopePacket.allowedCapabilities must contain at least one capability.",
@@ -338,6 +428,28 @@ function validateDispatchEnvelope(contract, artifact) {
     overlaps.length === 0,
     `dispatchEnvelopePacket capability boundary overlaps are forbidden: ${overlaps.join(", ")}`,
   );
+
+  if (artifact.taskClassification?.queryScope === "current_project") {
+    ensure(
+      packet.route === "project_only",
+      "current_project runs must use dispatchEnvelopePacket.route=project_only.",
+    );
+    ensure(
+      packet.memoryMode === "project_only",
+      "current_project runs must use dispatchEnvelopePacket.memoryMode=project_only.",
+    );
+  }
+
+  if (artifact.taskClassification?.queryScope === "all_projects") {
+    ensure(
+      packet.route === "cross_project",
+      "all_projects runs must use dispatchEnvelopePacket.route=cross_project.",
+    );
+    ensure(
+      packet.memoryMode === "cross_project_readonly",
+      "all_projects runs must use dispatchEnvelopePacket.memoryMode=cross_project_readonly.",
+    );
+  }
 }
 
 function validateOrchestrationTaskBoard(contract, artifact) {
@@ -895,6 +1007,12 @@ function validateFindingChain(contract, artifact) {
     "verificationPacket",
   );
 
+  ensureArray(reviewPacket.sourceProjects, "reviewPacket.sourceProjects");
+  ensureEnum(
+    reviewPacket.crossProjectContaminationCheck,
+    contract.protocols.reviewPacket.crossProjectContaminationCheckEnum,
+    "reviewPacket.crossProjectContaminationCheck",
+  );
   ensureArray(reviewPacket.findings, "reviewPacket.findings");
   ensureArray(
     verificationPacket.revisionResponses,
@@ -921,6 +1039,14 @@ function validateFindingChain(contract, artifact) {
       !findings.has(finding.findingId),
       `Duplicate review findingId: ${finding.findingId}`,
     );
+    ensureString(
+      finding.sourceProject,
+      `review finding ${finding.findingId} sourceProject`,
+    );
+    ensure(
+      reviewPacket.sourceProjects.includes(finding.sourceProject),
+      `review finding ${finding.findingId} sourceProject must appear in reviewPacket.sourceProjects.`,
+    );
     ensureEnum(
       finding.closeState,
       findingClosure.closeStateEnum,
@@ -931,6 +1057,13 @@ function validateFindingChain(contract, artifact) {
       `review finding ${finding.findingId} cannot start in a terminal closeState.`,
     );
     findings.set(finding.findingId, finding);
+  }
+
+  if (reviewPacket.crossProjectContaminationCheck === "fail") {
+    ensure(
+      reviewPacket.revisionNeeded === true,
+      "cross-project contamination failures must require revision.",
+    );
   }
 
   const revisionsByFinding = new Map();
@@ -1028,7 +1161,34 @@ function validateSummaryAndEvolution(contract, artifact) {
     summaryPacket.deliveryShellsUsed,
     "summaryPacket.deliveryShellsUsed",
   );
+  ensureArray(summaryPacket.sourceProjects, "summaryPacket.sourceProjects");
   ensureArray(summaryPacket.blockedBy, "summaryPacket.blockedBy");
+
+  for (const [index, projectRef] of summaryPacket.sourceProjects.entries()) {
+    ensureString(projectRef, `summaryPacket.sourceProjects[${index}]`);
+  }
+  for (const projectRef of artifact.reviewPacket.sourceProjects) {
+    ensure(
+      summaryPacket.sourceProjects.includes(projectRef),
+      `summaryPacket.sourceProjects must include reviewPacket source project ${projectRef}.`,
+    );
+  }
+  const checkedProjects = new Set(
+    artifact.fetchPacket.projectsChecked.map((item) => item.projectRef),
+  );
+  for (const projectRef of summaryPacket.sourceProjects) {
+    ensure(
+      checkedProjects.has(projectRef),
+      `summaryPacket.sourceProjects may only reference projects checked during Fetch (${projectRef}).`,
+    );
+  }
+  if (artifact.taskClassification.queryScope === "current_project") {
+    ensure(
+      summaryPacket.sourceProjects.length === 1 &&
+        summaryPacket.sourceProjects[0] === artifact.taskClassification.projectRef,
+      "current_project runs must summarize exactly one source project.",
+    );
+  }
 
   const shellIds = new Set(
     artifact.cardPlanPacket.deliveryShells.map(
@@ -1241,6 +1401,7 @@ export function validateArtifact(contract, artifact) {
     "runHeader",
   );
   validateTaskClassification(contract, artifact.taskClassification);
+  validateFetchPacket(contract, artifact);
   validateIntentPacketWhenRequired(contract, artifact);
   validateIntentGatePacketWhenRequired(contract, artifact);
   validateCardPlan(contract, artifact);

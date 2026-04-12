@@ -36,6 +36,12 @@ async function main() {
   if (flow) {
     lines.push(`governanceFlow: ${flow}`);
   }
+  if (!artifact.fetchPacket) {
+    lines.push(
+      "- [ ] Add fetchPacket (projectsChecked, projectLocalSources, globalRegistryHits, capabilityMatches, capabilityGaps, graphSources, knowledgeSources)."
+    );
+    actionItems += 1;
+  }
 
   if (!artifact.intentPacket && (flow === "complex_dev" || flow === "meta_analysis")) {
     lines.push(
@@ -119,7 +125,7 @@ async function main() {
   lines.push("");
   lines.push("Minimal context reload (after API error, compaction, or new session):");
   lines.push(
-    "  Reload into context: runHeader, taskClassification, intentPacket, intentGatePacket (if complex_dev/meta_analysis), cardPlanPacket, dispatchEnvelopePacket, orchestrationTaskBoardPacket, capabilityGapPacket / executionAgentCard (when applicable), dispatchBoard,"
+    "  Reload into context: runHeader, taskClassification, fetchPacket, intentPacket, intentGatePacket (if complex_dev/meta_analysis), cardPlanPacket, dispatchEnvelopePacket, orchestrationTaskBoardPacket, capabilityGapPacket / executionAgentCard (when applicable), dispatchBoard,"
   );
   lines.push(
     "  workerTaskPackets, workerResultPackets, reviewPacket, verificationPacket, summaryPacket, evolutionWritebackPacket — then npm run validate:run -- <artifact.json>."
