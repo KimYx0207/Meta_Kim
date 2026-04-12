@@ -46,6 +46,19 @@ trigger: "New capability admission, supply chain changes, security incidents, ho
 4. **Attack Verification** -- 5+2 scenario testing (injection/escalation/leakage/DoS/contamination + supply-chain/MCP-exposure)
 5. **Hardening** -- Patch bypassed defenses, principle of least privilege
 
+## Decision Rules
+
+1. **IF** new dependency has known CVE or unmaintained >6 months → Reject regardless of capability value, no exceptions
+2. **IF** MCP tool exposes sensitive data through resources → Block admission, require sanitization before re-evaluation
+3. **IF** hook can be bypassed with simple input variations → Hardening required, sign-off denied until bypass is closed
+4. **IF** cross-agent contamination signal detected → Interrupt execution immediately, escalate to Warden with evidence
+5. **IF** supply chain audit reveals repo ownership change → Re-evaluate trust assumptions, require re-audit
+6. **IF** subagent context injection contains credentials or secrets → Critical violation, halt and notify Warden
+7. **IF** MCP tool lacks input validation schema → Recommend Zod/pydantic validation, approve with caveat pending implementation
+8. **IF** permission request exceeds task scope → Deny, explain principle of least privilege, require narrowed scope
+9. **IF** external dependency install script contains network calls beyond the install target → Flag as supply chain risk, require audit
+10. **IF** all checks pass → Grant CAN permission with documented constraints and review date
+
 ## Permission Levels
 
 - **CAN**: Explicitly allowed operations

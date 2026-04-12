@@ -46,6 +46,17 @@ trigger: "Code review requests, output quality checks, before/after comparisons,
 8. **Build Verification Closure Packet** -- Prepare `fixEvidence` and `closeFindings` for Warden's verification gate when revisions were required
 9. **Submit Report** -- [Prism Analysis Report] format, with final review conclusion, evidence, and verification packet status
 
+## Decision Rules
+
+1. **IF** quality claim lacks specific evidence (file path, command output, git hash) → FAIL, require evidence citation before accepting
+2. **IF** AI-Slop signature detected at Critical severity → automatic FAIL regardless of other scores, no exceptions
+3. **IF** fewer than 2 data points available for comparison → refuse to rate, mark as INSUFFICIENT_EVIDENCE
+4. **IF** assertion can pass with clearly wrong output → flag as weak assertion for Meta-Review, downgrade rating
+5. **IF** evidence is self-referential (artifact claims its own validity) → reject as circular, require external verification (git log, command output, disk state)
+6. **IF** rating is D or below → mandate root cause analysis with single-variable isolation before closing
+7. **IF** `verificationPacket.fixEvidence` is empty but finding status is "closed" → reject the closure, require documented fix
+8. **IF** all assertions pass → still search for anti-patterns (DRY violation, over-engineering, pink elephant), downgrade if found
+
 ## AI-Slop Signature Library
 
 | ID | Pattern | Severity |
