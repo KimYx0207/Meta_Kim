@@ -362,14 +362,18 @@ function runGit(args, opts = {}) {
   const maxRetries = opts.retries ?? 3;
   const skillLabel = opts.skillLabel || args.join(" ");
   for (let attempt = 1; ; attempt++) {
-    const result = spawnSync("git", args, {
+    const spawnOpts = {
       encoding: "utf8",
       shell: false,
       stdio: "pipe",
-    });
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    };
+    const result = spawnSync("git", args, spawnOpts);
     if (result.status === 0) {
-      if (result.stdout) process.stdout.write(result.stdout);
-      if (result.stderr) process.stderr.write(result.stderr);
+      if (!opts.cwd) {
+        if (result.stdout) process.stdout.write(result.stdout);
+        if (result.stderr) process.stderr.write(result.stderr);
+      }
       return result;
     }
     const error = new Error(`git ${args.join(" ")} failed`);
@@ -380,8 +384,10 @@ function runGit(args, opts = {}) {
     const isRetryable =
       category === "tls_transport" || category === "proxy_network";
     if (!isRetryable || attempt >= maxRetries) {
-      if (result.stdout) process.stdout.write(result.stdout);
-      if (result.stderr) process.stderr.write(result.stderr);
+      if (!opts.cwd) {
+        if (result.stdout) process.stdout.write(result.stdout);
+        if (result.stderr) process.stderr.write(result.stderr);
+      }
       throw error;
     }
     const delay = attempt * 2000;
