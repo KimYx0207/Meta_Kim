@@ -184,7 +184,9 @@ function recordInstallFailure(details) {
 }
 
 async function extractArchiveInto(targetDir, archivePath, subdirPath) {
-  const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-archive-"));
+  const extractDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meta-kim-archive-"),
+  );
   try {
     if (dryRun) {
       console.log(t.dryRun(`tar -xzf ${archivePath} -C ${extractDir}`));
@@ -197,7 +199,9 @@ async function extractArchiveInto(targetDir, archivePath, subdirPath) {
     const entries = await fs.readdir(extractDir, { withFileTypes: true });
     const rootEntry = entries.find((entry) => entry.isDirectory());
     if (!rootEntry) {
-      throw new Error(`Archive extraction produced no root directory: ${archivePath}`);
+      throw new Error(
+        `Archive extraction produced no root directory: ${archivePath}`,
+      );
     }
 
     const rootDir = path.join(extractDir, rootEntry.name);
@@ -225,7 +229,9 @@ async function installViaArchiveFallback({
 }) {
   const archiveUrl = buildGitHubTarballUrl(repoUrl);
   if (!archiveUrl) {
-    throw new Error(`Archive fallback only supports GitHub HTTPS remotes: ${repoUrl}`);
+    throw new Error(
+      `Archive fallback only supports GitHub HTTPS remotes: ${repoUrl}`,
+    );
   }
 
   const response = await fetch(archiveUrl, {
@@ -236,10 +242,15 @@ async function installViaArchiveFallback({
     redirect: "follow",
   });
   if (!response.ok) {
-    throw new Error(`Archive fallback HTTP ${response.status} for ${archiveUrl}`);
+    throw new Error(
+      `Archive fallback HTTP ${response.status} for ${archiveUrl}`,
+    );
   }
 
-  const archivePath = path.join(os.tmpdir(), `meta-kim-${Date.now()}-${path.basename(targetDir)}.tar.gz`);
+  const archivePath = path.join(
+    os.tmpdir(),
+    `meta-kim-${Date.now()}-${path.basename(targetDir)}.tar.gz`,
+  );
   try {
     const buffer = Buffer.from(await response.arrayBuffer());
     await fs.writeFile(archivePath, buffer);
@@ -356,7 +367,12 @@ async function installGitSkill(skillId, targetDir, repoUrl) {
   }
 }
 
-async function installGitSkillFromSubdir(skillId, targetDir, repoUrl, subdirPath) {
+async function installGitSkillFromSubdir(
+  skillId,
+  targetDir,
+  repoUrl,
+  subdirPath,
+) {
   assertUnderHome(targetDir);
   if ((await pathExists(targetDir)) && !updateMode) {
     console.log(
@@ -477,9 +493,14 @@ async function installAllSkillsForRuntime(label, skillsRoot, runtimeId) {
     }
     const targetDir = path.join(skillsRoot, spec.id);
     if (spec.subdir) {
-      await installGitSkillFromSubdir(targetDir, spec.repo, spec.subdir);
+      await installGitSkillFromSubdir(
+        spec.id,
+        targetDir,
+        spec.repo,
+        spec.subdir,
+      );
     } else {
-      await installGitSkill(targetDir, spec.repo);
+      await installGitSkill(spec.id, targetDir, spec.repo);
     }
   }
   const hasManifestSkillCreator = SKILL_REPOS.some(
@@ -633,10 +654,12 @@ async function main() {
       console.log(t.pythonInstallHintGraphify);
     } else {
       // Check if graphify already installed via pip show (more reliable than --version)
-      const pipShow = runPythonModule(
-        python,
-        ["-m", "pip", "show", "graphifyy"],
-      );
+      const pipShow = runPythonModule(python, [
+        "-m",
+        "pip",
+        "show",
+        "graphifyy",
+      ]);
       if (pipShow.status === 0) {
         const version =
           extractPipShowVersion(readProcessText(pipShow)) ?? "unknown";

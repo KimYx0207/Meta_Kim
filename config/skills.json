@@ -46,6 +46,7 @@
     {
       "id": "everything-claude-code",
       "repo": "affaan-m/everything-claude-code",
+      "subdir": "skills",
       "targets": [
         "claude",
         "codex",

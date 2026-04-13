@@ -42,6 +42,13 @@ const STRINGS = {
     dryRun: (cmd) => `[dry-run] ${cmd}`,
     okUpdated: (path) => `[OK] updated ${path}`,
     warnPullFailed: (path) => `[WARN] pull failed, re-cloning ${path}`,
+    warnGitInstallFailed: (id, category) =>
+      `[WARN] git install failed for ${id} (${category})`,
+    warnArchiveFallback: (id, category) =>
+      `[WARN] falling back to archive for ${id} (${category})`,
+    okArchiveInstalled: (path) => `[OK] archive installed ${path}`,
+    warnArchiveFailed: (id, category, reason) =>
+      `[WARN] archive fallback failed for ${id} (${category}): ${reason}`,
     okCloned: (path) => `[OK] cloned ${path}`,
     skipExists: (path) => `[SKIP] exists ${path}`,
     okBasename: (name, dest) => `[OK] ${name} -> ${dest}`,
@@ -151,6 +158,13 @@ const STRINGS = {
     dryRun: (cmd) => `[dry-run] ${cmd}`,
     okUpdated: (path) => `[OK] 已更新 ${path}`,
     warnPullFailed: (path) => `[WARN] pull 失败，重新克隆 ${path}`,
+    warnGitInstallFailed: (id, category) =>
+      `[WARN] ${id} git 安装失败 (${category})`,
+    warnArchiveFallback: (id, category) =>
+      `[WARN] ${id} 回退到归档安装 (${category})`,
+    okArchiveInstalled: (path) => `[OK] 归档安装完成 ${path}`,
+    warnArchiveFailed: (id, category, reason) =>
+      `[WARN] ${id} 归档安装失败 (${category}): ${reason}`,
     okCloned: (path) => `[OK] 已克隆 ${path}`,
     skipExists: (path) => `[SKIP] 已存在 ${path}`,
     okBasename: (name, dest) => `[OK] ${name} -> ${dest}`,
@@ -248,6 +262,13 @@ const STRINGS = {
     dryRun: (cmd) => `[dry-run] ${cmd}`,
     okUpdated: (path) => `[OK] 更新済み ${path}`,
     warnPullFailed: (path) => `[WARN] pull 失敗、再クローン ${path}`,
+    warnGitInstallFailed: (id, category) =>
+      `[WARN] ${id} gitインストール失敗 (${category})`,
+    warnArchiveFallback: (id, category) =>
+      `[WARN] ${id} アーカイブフォールバック (${category})`,
+    okArchiveInstalled: (path) => `[OK] アーカイブインストール ${path}`,
+    warnArchiveFailed: (id, category, reason) =>
+      `[WARN] ${id} アーカイブ失敗 (${category}): ${reason}`,
     okCloned: (path) => `[OK] クローン済み ${path}`,
     skipExists: (path) => `[SKIP] 存在 ${path}`,
     okBasename: (name, dest) => `[OK] ${name} -> ${dest}`,
@@ -355,6 +376,13 @@ const STRINGS = {
     dryRun: (cmd) => `[dry-run] ${cmd}`,
     okUpdated: (path) => `[OK] 업데이트됨 ${path}`,
     warnPullFailed: (path) => `[WARN] pull 실패, 재클론 ${path}`,
+    warnGitInstallFailed: (id, category) =>
+      `[WARN] ${id} git 설치 실패 (${category})`,
+    warnArchiveFallback: (id, category) =>
+      `[WARN] ${id} 아카이브 폴백 (${category})`,
+    okArchiveInstalled: (path) => `[OK] 아카이브 설치됨 ${path}`,
+    warnArchiveFailed: (id, category, reason) =>
+      `[WARN] ${id} 아카이브 실패 (${category}): ${reason}`,
     okCloned: (path) => `[OK] 클론됨 ${path}`,
     skipExists: (path) => `[SKIP] 존재함 ${path}`,
     okBasename: (name, dest) => `[OK] ${name} -> ${dest}`,
