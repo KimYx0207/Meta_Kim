@@ -8,6 +8,7 @@
  *   node setup.mjs --update     # Update installed skills
  *   node setup.mjs --check      # Environment check only
  *   node setup.mjs --silent     # Non-interactive (CI / scripts)
+ *   node setup.mjs --skills a,b # Limit global skill repos (non-interactive / CI)
  */
 
 import { execSync, spawnSync } from "node:child_process";
@@ -32,6 +33,7 @@ import {
   extractPipShowVersion,
   readProcessText,
   runPythonModule,
+  checkNetworkx,
 } from "./scripts/graphify-runtime.mjs";
 import { resolveManifestSkillSubdir } from "./scripts/install-platform-config.mjs";
 import { buildNodeScriptSpawn } from "./scripts/node-spawn-config.mjs";
@@ -45,6 +47,7 @@ import {
 import {
   loadLocalOverrides,
   normalizeTargets,
+  parseSkillsArg,
   resolveTargetContext,
   resolveRuntimeHomeDir,
   writeLocalOverrides,
@@ -102,6 +105,7 @@ function loadSkillsManifest() {
           repo,
           subdir,
           claudePlugin: skill.claudePlugin,
+          defaultSelected: skill.defaultSelected ?? true,
           targets: skill.targets || ["claude", "codex", "openclaw"],
         };
       }),
@@ -116,6 +120,30 @@ const skillsManifest = loadSkillsManifest();
 const SKILL_OWNER = skillsManifest.skillOwner;
 const SKILLS = skillsManifest.skills;
 const EXTERNAL_URLS = skillsManifest.externalUrls;
+
+function getDefaultSkillIds() {
+  return SKILLS.filter((s) => s.defaultSelected).map((s) => s.name);
+}
+
+function normalizeSkillIds(rawIds) {
+  const validByLower = new Map(
+    SKILLS.map((s) => [s.name.toLowerCase(), s.name]),
+  );
+  const seen = new Set();
+  const out = [];
+  for (const raw of rawIds || []) {
+    const key = String(raw || "")
+      .trim()
+      .toLowerCase();
+    if (!key) continue;
+    const canonical = validByLower.get(key);
+    if (!canonical) continue;
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
+  }
+  return out;
+}
 
 const packageJsonPath = join(PROJECT_DIR, "package.json");
 const packageVersion = existsSync(packageJsonPath)
@@ -249,8 +277,13 @@ const I18N = {
     depMissing: (n) => `${n} — MISSING`,
     depNoFiles: (n) => `${n} — directory exists but no .md files`,
     selectRuntimeTargets: "Which AI coding tools do you use on this machine?",
+    selectSkillDependencies:
+      "Which third-party skill repositories should be installed globally?",
     inputTargetsHint: (d) =>
       `Enter numbers, comma for multiple; Enter to use default ${d}`,
+    inputSkillIdsHint: (d) =>
+      `Enter numbers, comma for multiple; Enter to use default ${d}`,
+    warnUnknownSkillId: (id) => `Unknown skill id (ignored): ${id}`,
     depSummaryAll: "All 9 dependencies verified",
     depSummarySome: (ok, total) =>
       `Only ${ok}/${total} dependencies verified — re-run with --update`,
@@ -265,7 +298,7 @@ const I18N = {
     syncOpenclawWorkspaces: (n) =>
       `OpenClaw workspaces: ${n}/8 agents — each folder has the 9 required .md files (BOOT, SOUL, …)`,
     syncOpenclawSkill: "OpenClaw shared meta-theory",
-    syncSharedSkills: "shared-skills/meta-theory.md",
+    syncSharedSkills: "Shared skills/meta-theory.md",
     syncCursorAgents: (n) => `Cursor agents: ${n}/8 .md files`,
     syncCursorSkills: "Cursor skills/meta-theory/SKILL.md",
     syncCursorMcp: "Cursor .cursor/mcp.json",
@@ -286,6 +319,18 @@ const I18N = {
       "graphify Claude skill registered to ~/.claude/skills/graphify/",
     graphifySkillFailed:
       "graphify Claude skill registration failed (non-blocking)",
+    networkxCheck: (v) => `networkx ${v}`,
+    networkxUpgrading:
+      "Upgrading networkx to >=3.4 for graphify compatibility...",
+    networkxUpgraded: (v) => `networkx upgraded to ${v}`,
+    networkxUpgradeFailed:
+      "networkx upgrade failed (graphify may not generate graphs correctly)",
+    networkxAlreadyOk: (v) => `networkx ${v} — compatible`,
+    graphifyHookInstalling:
+      "Installing git hooks for auto graph rebuild on commit/checkout...",
+    graphifyHookInstalled:
+      "graphify git hooks installed (auto-rebuild on commit/checkout)",
+    graphifyHookFailed: "graphify git hook installation failed (non-blocking)",
     updateHeading: "Update Mode",
     updateNpm: "Reinstalling npm dependencies...",
     updateSkills: "Updating all skills...",
@@ -310,10 +355,12 @@ const I18N = {
     installOverviewSyncConfig:
       "Sync configurations to project directory (canonical → .claude/.codex/openclaw/.cursor/)",
     installOverviewInstallSkills:
-      "Install 9 global skill repositories (~/.claude/skills/)",
+      "Install selected global skill repositories (~/.claude/skills/)",
     installOverviewSyncMeta: "Sync meta-theory to global directory",
     installOverviewOptionalPython: "Install Python graphify tool",
     installOverviewTargets: "Target tools:",
+    installOverviewSkillList: "Skill repositories:",
+    installOverviewNoSkills: "(none selected)",
     installOverviewScope: "Installation scope:",
     installOverviewEstimated: "Estimated time:",
     installOverviewTime: "2-5 minutes (depends on network speed)",
@@ -333,6 +380,8 @@ const I18N = {
       "Global skills install failed, check error messages",
     warnMetaTheorySyncFailed: "meta-theory sync failed, check error messages",
     warnSkillsUpdateFailed: "Global skills update failed, check error messages",
+    warnSkillsUpdateFailedHint:
+      "If the log shows EBUSY or 'resource busy', close Explorer/IDE on the skills folder, wait for antivirus/indexing to finish, then retry. You can delete leftover *.staged-* dirs manually once nothing holds the path.",
     warnMetaTheoryUpdateFailed: "meta-theory sync failed, check error messages",
     warnManifestLoadFail: (msg) => `Failed to load skills manifest: ${msg}`,
     labelOptional: "(optional)",
@@ -346,6 +395,14 @@ const I18N = {
       "Repo projection sync failed — some runtime configs may be stale",
     pipErrorDetail: (err) => `  pip error: ${err}`,
     modeInfoLine: (mode, plat, ver) => `Mode: ${mode} | ${plat} | Node ${ver}`,
+    stepLabel: (n, label) => `Step ${n}: ${label}`,
+    // Proxy
+    proxyHeading: "Network / Proxy",
+    proxyDetectedPrompt: (port, url) =>
+      `Detected proxy port ${port} (${url}). Use it?`,
+    proxySkip: "No proxy — using direct connection",
+    proxySkipDeclined: "Proxy declined — using direct connection",
+    proxySaved: (url) => `Proxy saved: ${url}`,
     stepLabel: (n, label) => `Step ${n}: ${label}`,
     progressInstallPython: "Install Python graphify tool",
     checkTargets: (active, supported) =>
@@ -479,7 +536,10 @@ const I18N = {
     depMissing: (n) => `${n} — 缺失`,
     depNoFiles: (n) => `${n} — 目录存在但无 .md 文件`,
     selectRuntimeTargets: "这台电脑上用哪些 AI 编程工具？",
+    selectSkillDependencies: "要安装哪些第三方技能仓库到全局 ~/.*/skills/？",
     inputTargetsHint: (d) => `输入编号，逗号多选；回车使用默认 ${d}`,
+    inputSkillIdsHint: (d) => `输入编号，逗号多选；回车使用默认 ${d}`,
+    warnUnknownSkillId: (id) => `未知的技能 id（已忽略）：${id}`,
     depSummaryAll: "全部 9 个依赖验证通过",
     depSummarySome: (ok, total) =>
       `仅 ${ok}/${total} 个依赖验证通过 — 请使用 --update 重新安装`,
@@ -514,6 +574,16 @@ const I18N = {
     graphifySkillRegistered:
       "graphify Claude 技能已注册到 ~/.claude/skills/graphify/",
     graphifySkillFailed: "graphify Claude 技能注册失败（不影响其他功能）",
+    networkxCheck: (v) => `networkx ${v}`,
+    networkxUpgrading: "正在升级 networkx 至 >=3.4 以兼容 graphify...",
+    networkxUpgraded: (v) => `networkx 已升级至 ${v}`,
+    networkxUpgradeFailed: "networkx 升级失败（graphify 可能无法正确生成图谱）",
+    networkxAlreadyOk: (v) => `networkx ${v} — 版本兼容`,
+    graphifyHookInstalling:
+      "正在安装 git hook（commit/checkout 时自动重建图谱）...",
+    graphifyHookInstalled:
+      "graphify git hook 已安装（commit/checkout 时自动重建图谱）",
+    graphifyHookFailed: "graphify git hook 安装失败（不影响其他功能）",
     updateHeading: "更新模式",
     updateNpm: "正在重新安装 npm 依赖...",
     updateSkills: "正在更新所有技能...",
@@ -537,10 +607,12 @@ const I18N = {
     installOverviewWill: "此过程将：",
     installOverviewSyncConfig:
       "同步配置文件 (canonical → .claude/.codex/openclaw/.cursor/)",
-    installOverviewInstallSkills: "安装 9 个全局技能仓库",
+    installOverviewInstallSkills: "安装所选全局技能仓库（~/.claude/skills/）",
     installOverviewSyncMeta: "同步 meta-theory 到全局目录",
     installOverviewOptionalPython: "可选：安装 Python graphify 工具",
     installOverviewTargets: "目标工具：",
+    installOverviewSkillList: "技能仓库：",
+    installOverviewNoSkills: "（未选择）",
     installOverviewScope: "安装范围：",
     installOverviewEstimated: "预计用时：",
     installOverviewTime: "2-5 分钟（取决于网络速度）",
@@ -559,6 +631,8 @@ const I18N = {
     warnSkillsInstallFailed: "全局技能安装失败，请检查错误信息",
     warnMetaTheorySyncFailed: "meta-theory 同步失败，请检查错误信息",
     warnSkillsUpdateFailed: "全局技能更新失败，请检查错误信息",
+    warnSkillsUpdateFailedHint:
+      "若日志含 EBUSY/目录被占用：请先关闭对该目录的资源管理器窗口与 IDE 监视、等待杀毒/索引结束后再重试；解锁后可手动删除残留的 *.staged-* 临时目录。",
     warnMetaTheoryUpdateFailed: "meta-theory 同步失败，请检查错误信息",
     warnManifestLoadFail: (msg) => `加载技能清单失败：${msg}`,
     labelOptional: "（可选）",
@@ -570,6 +644,14 @@ const I18N = {
     failRepoSync: "仓库投影同步失败 — 部分运行时配置可能过期",
     pipErrorDetail: (err) => `  pip 错误：${err}`,
     modeInfoLine: (mode, plat, ver) => `模式：${mode} | ${plat} | Node ${ver}`,
+    stepLabel: (n, label) => `步骤 ${n}：${label}`,
+    // Proxy
+    proxyHeading: "网络 / 代理",
+    proxyDetectedPrompt: (port, url) =>
+      `检测到代理端口 ${port}（${url}），是否使用？`,
+    proxySkip: "未检测到代理 — 直连",
+    proxySkipDeclined: "已拒绝代理 — 直连",
+    proxySaved: (url) => `已保存代理：${url}`,
     stepLabel: (n, label) => `步骤 ${n}：${label}`,
     progressInstallPython: "安装 Python graphify 工具",
     checkTargets: (active, supported) =>
@@ -715,8 +797,13 @@ const I18N = {
     depMissing: (n) => `${n} — 見つかりません`,
     depNoFiles: (n) => `${n} — ディレクトリはありますが.mdファイルがありません`,
     selectRuntimeTargets: "このパソコンで使うAIコーディングツールを選択",
+    selectSkillDependencies:
+      "グローバル ~/.*/skills/ に入れるサードパーティスキルリポジトリを選んでください",
     inputTargetsHint: (d) =>
       `番号を入力、カンマで複数選択；Enterでデフォルト ${d}`,
+    inputSkillIdsHint: (d) =>
+      `番号を入力、カンマで複数選択；Enterでデフォルト ${d}`,
+    warnUnknownSkillId: (id) => `不明なスキル ID（無視）: ${id}`,
     depSummaryAll: "9つの依存関係すべて検証済み",
     depSummarySome: (ok, total) =>
       `${ok}/${total} の依存関係のみ検証 — --update で再インストールしてください`,
@@ -751,6 +838,17 @@ const I18N = {
     graphifySkillRegistered:
       "graphify Claude スキルを ~/.claude/skills/graphify/ に登録",
     graphifySkillFailed: "graphify Claude スキル登録失敗（非ブロッキング）",
+    networkxCheck: (v) => `networkx ${v}`,
+    networkxUpgrading: "graphify互換のためnetworkxを>=3.4にアップグレード中...",
+    networkxUpgraded: (v) => `networkxを${v}にアップグレードしました`,
+    networkxUpgradeFailed:
+      "networkxのアップグレードに失敗（グラフ生成が正しく動作しない可能性）",
+    networkxAlreadyOk: (v) => `networkx ${v} — 互換性あり`,
+    graphifyHookInstalling:
+      "git hookをインストール中（commit/checkout時にグラフ自動再構築）...",
+    graphifyHookInstalled:
+      "graphify git hookインストール完了（commit/checkout時に自動再構築）",
+    graphifyHookFailed: "graphify git hookインストール失敗（非ブロッキング）",
     updateHeading: "アップデートモード",
     updateNpm: "npm依存関係を再インストール中...",
     updateSkills: "すべてのスキルを更新中...",
@@ -780,10 +878,12 @@ const I18N = {
     installOverviewSyncConfig:
       "プロジェクトディレクトリに設定を同期 (canonical → .claude/.codex/openclaw/.cursor/)",
     installOverviewInstallSkills:
-      "9つのグローバルスキルリポジトリをインストール (~/.claude/skills/)",
+      "選択したグローバルスキルリポジトリをインストール (~/.claude/skills/)",
     installOverviewSyncMeta: "meta-theory をグローバルディレクトリに同期",
     installOverviewOptionalPython: "Python graphify ツールをインストール",
     installOverviewTargets: "対象ツール：",
+    installOverviewSkillList: "スキルリポジトリ：",
+    installOverviewNoSkills: "（未選択）",
     installOverviewScope: "インストール範囲：",
     installOverviewEstimated: "予想時間：",
     installOverviewTime: "2-5分（ネットワーク速度によります）",
@@ -805,6 +905,8 @@ const I18N = {
     warnMetaTheorySyncFailed: "meta-theory 同期失敗、エラーを確認してください",
     warnSkillsUpdateFailed:
       "グローバルスキル更新失敗、エラーを確認してください",
+    warnSkillsUpdateFailedHint:
+      "ログに EBUSY 等がある場合: スキルフォルダを開いているエクスプローラー/IDE を閉じ、ウイルス対策/インデックス完了を待って再実行。*.staged-* は解放後に手動削除可。",
     warnMetaTheoryUpdateFailed:
       "meta-theory 同期失敗、エラーを確認してください",
     warnManifestLoadFail: (msg) => `スキルマニフェストの読み込みに失敗：${msg}`,
@@ -821,6 +923,14 @@ const I18N = {
     pipErrorDetail: (err) => `  pip エラー：${err}`,
     modeInfoLine: (mode, plat, ver) =>
       `モード：${mode} | ${plat} | Node ${ver}`,
+    stepLabel: (n, label) => `ステップ ${n}：${label}`,
+    // Proxy
+    proxyHeading: "ネットワーク / プロキシ",
+    proxyDetectedPrompt: (port, url) =>
+      `プロキシポート ${port}（${url}）を検出。使用しますか？`,
+    proxySkip: "プロキシ未検出 — 直接接続",
+    proxySkipDeclined: "プロキシ辞退 — 直接接続",
+    proxySaved: (url) => `プロキシを保存：${url}`,
     stepLabel: (n, label) => `ステップ ${n}：${label}`,
     progressInstallPython: "Python graphify ツールをインストール",
     checkTargets: (active, supported) =>
@@ -959,7 +1069,11 @@ const I18N = {
     depMissing: (n) => `${n} — 누락`,
     depNoFiles: (n) => `${n} — 디렉토리는 있으나 .md 파일 없음`,
     selectRuntimeTargets: "이 컴퓨터에서 사용할 AI 코딩 도구 선택",
+    selectSkillDependencies:
+      "전역 ~/.*/skills/에 설치할 서드파티 스킬 저장소를 선택하세요",
     inputTargetsHint: (d) => `번호 입력, 쉼표로 다중 선택；Enter로 기본값 ${d}`,
+    inputSkillIdsHint: (d) => `번호 입력, 쉼표로 다중 선택；Enter로 기본값 ${d}`,
+    warnUnknownSkillId: (id) => `알 수 없는 스킬 id(무시): ${id}`,
     depSummaryAll: "9개 의존성 모두 확인 완료",
     depSummarySome: (ok, total) =>
       `${ok}/${total}개 의존성만 확인 — --update로 재설치하세요`,
@@ -994,6 +1108,18 @@ const I18N = {
     graphifySkillRegistered:
       "graphify Claude 스킬이 ~/.claude/skills/graphify/에 등록됨",
     graphifySkillFailed: "graphify Claude 스킬 등록 실패 (비차단)",
+    networkxCheck: (v) => `networkx ${v}`,
+    networkxUpgrading:
+      "graphify 호환성을 위해 networkx를 >=3.4로 업그레이드 중...",
+    networkxUpgraded: (v) => `networkx ${v}(으)로 업그레이드 완료`,
+    networkxUpgradeFailed:
+      "networkx 업그레이드 실패 (그래프 생성이 올바르지 않을 수 있음)",
+    networkxAlreadyOk: (v) => `networkx ${v} — 호환 가능`,
+    graphifyHookInstalling:
+      "git hook 설치 중 (commit/checkout 시 그래프 자동 재구축)...",
+    graphifyHookInstalled:
+      "graphify git hook 설치 완료 (commit/checkout 시 자동 재구축)",
+    graphifyHookFailed: "graphify git hook 설치 실패 (비차단)",
     updateHeading: "업데이트 모드",
     updateNpm: "npm 의존성 재설치 중...",
     updateSkills: "모든 스킬 업데이트 중...",
@@ -1018,10 +1144,12 @@ const I18N = {
     installOverviewSyncConfig:
       "프로젝트 디렉토리에 설정 동기화 (canonical → .claude/.codex/openclaw/.cursor/)",
     installOverviewInstallSkills:
-      "9개 전역 스킬 리포지토리 설치 (~/.claude/skills/)",
+      "선택한 전역 스킬 리포지토리 설치 (~/.claude/skills/)",
     installOverviewSyncMeta: "meta-theory를 전역 디렉토리에 동기화",
     installOverviewOptionalPython: "Python graphify 도구 설치",
     installOverviewTargets: "대상 도구:",
+    installOverviewSkillList: "스킬 저장소:",
+    installOverviewNoSkills: "(선택 없음)",
     installOverviewScope: "설치 범위:",
     installOverviewEstimated: "예상 시간:",
     installOverviewTime: "2-5분(네트워크 속도에 따라 다름)",
@@ -1041,6 +1169,8 @@ const I18N = {
     warnMetaTheorySyncFailed:
       "meta-theory 동기화 실패, 오류 메시지를 확인하세요",
     warnSkillsUpdateFailed: "전역 스킬 업데이트 실패, 오류 메시지를 확인하세요",
+    warnSkillsUpdateFailedHint:
+      "로그에 EBUSY 등이 있으면: 탐색기/IDE로 skills 폴더를 닫고, 백신/인덱싱이 끝난 뒤 재시도. 잠금 해제 후 *.staged-* 폴더는 수동 삭제 가능.",
     warnMetaTheoryUpdateFailed:
       "meta-theory 동기화 실패, 오류 메시지를 확인하세요",
     warnManifestLoadFail: (msg) => `스킬 매니페스트 로드 실패：${msg}`,
@@ -1054,6 +1184,14 @@ const I18N = {
       "리포지토리 프로젝션 동기화 실패 — 일부 런타임 설정이 오래되었을 수 있음",
     pipErrorDetail: (err) => `  pip 오류：${err}`,
     modeInfoLine: (mode, plat, ver) => `모드：${mode} | ${plat} | Node ${ver}`,
+    stepLabel: (n, label) => `단계 ${n}：${label}`,
+    // Proxy
+    proxyHeading: "네트워크 / 프록시",
+    proxyDetectedPrompt: (port, url) =>
+      `프록시 포트 ${port}（${url}）감지됨. 사용하시겠습니까?`,
+    proxySkip: "프록시 미감지 — 직접 연결",
+    proxySkipDeclined: "프록시 거절됨 — 직접 연결",
+    proxySaved: (url) => `프록시 저장됨: ${url}`,
     stepLabel: (n, label) => `단계 ${n}：${label}`,
     progressInstallPython: "Python graphify 도구 설치",
     checkTargets: (active, supported) =>
@@ -1235,6 +1373,163 @@ async function askMultiSelectTargets(question, choices, defaultIds) {
   return normalizeTargets(mapped);
 }
 
+async function askMultiSelectSkillRepos(question, choices, defaultIds) {
+  if (silentMode) {
+    return defaultIds;
+  }
+
+  const defaultSet = new Set(defaultIds);
+  console.log(`\n${C.bold}?${C.reset} ${question}\n`);
+  choices.forEach((choice, index) => {
+    const marker = defaultSet.has(choice.id) ? `${C.green}x${C.reset}` : " ";
+    console.log(
+      `${C.dim}${index + 1}.${C.reset} [${marker}] ${choice.label} ${C.dim}(${choice.id})${C.reset}`,
+    );
+  });
+  console.log("");
+  const answer = await ask(
+    `${t.inputSkillIdsHint(`${C.dim}${defaultIds.join(", ")}${C.reset}`)}`,
+  );
+  if (!answer) {
+    return defaultIds;
+  }
+
+  const parts = answer
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const mapped = parts.map((part) => {
+    if (/^\d+$/.test(part)) {
+      const index = Number.parseInt(part, 10) - 1;
+      return choices[index]?.id ?? part;
+    }
+    return part;
+  });
+
+  return normalizeSkillIds(mapped);
+}
+
+async function resolveSelectedSkillDependencyIds() {
+  const cliSkills = parseSkillsArg(args);
+  if (cliSkills !== null) {
+    const validLower = new Set(SKILLS.map((s) => s.name.toLowerCase()));
+    for (const raw of cliSkills) {
+      const k = String(raw || "")
+        .trim()
+        .toLowerCase();
+      if (k && !validLower.has(k)) {
+        warn(t.warnUnknownSkillId(k));
+      }
+    }
+    return normalizeSkillIds(cliSkills);
+  }
+  if (silentMode) {
+    return getDefaultSkillIds();
+  }
+  const defaultIds = getDefaultSkillIds();
+  const choices = SKILLS.map((s) => ({
+    id: s.name,
+    label: s.repo,
+  }));
+  return askMultiSelectSkillRepos(
+    t.selectSkillDependencies,
+    choices,
+    defaultIds,
+  );
+}
+
+// ── Proxy configuration ────────────────────────────────
+
+/**
+ * Detect Windows system proxy from registry.
+ * Returns { url, port, source } or null.
+ */
+function detectWindowsSystemProxy() {
+  if (platform() !== "win32") return null;
+  try {
+    const enableResult = execSync(
+      'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable',
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+    );
+    if (!enableResult.includes("0x1")) return null;
+
+    const serverResult = execSync(
+      'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer',
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+    );
+    const match = serverResult.match(/REG_SZ\s+(.+)/);
+    if (!match) return null;
+
+    let raw = match[1].trim();
+    if (raw.includes("=")) {
+      const httpsEntry = raw
+        .split(";")
+        .find((s) => s.trim().startsWith("https="));
+      const httpEntry = raw
+        .split(";")
+        .find((s) => s.trim().startsWith("http="));
+      raw = (httpsEntry || httpEntry || raw).split("=").pop().trim();
+    }
+    if (!raw.includes("://")) raw = `http://${raw}`;
+
+    // Extract port from URL
+    let port = null;
+    try {
+      const parsed = new URL(raw);
+      port = parsed.port ? parseInt(parsed.port, 10) : null;
+    } catch {
+      // ignore
+    }
+
+    return { url: raw, port, source: "system" };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask user to configure git proxy.
+ * Auto-detects system proxy port. Default = YES (use it). User can opt out.
+ * Returns { port, url, source } or null (skip / no proxy).
+ * Saves result to localOverrides.gitProxy.
+ */
+async function askProxyConfig() {
+  const localOverrides = await loadLocalOverrides();
+
+  // Silent mode: skip (no proxy)
+  if (silentMode) {
+    return null;
+  }
+
+  heading(t.proxyHeading);
+
+  // Auto-detect system proxy, ask user to confirm (default = yes)
+  const sysProxy = detectWindowsSystemProxy();
+
+  if (sysProxy) {
+    const answer = await ask(
+      `${t.proxyDetectedPrompt(sysProxy.port, sysProxy.url)} ${C.dim}[Y/n]${C.reset}:`,
+    );
+    const trimmed = answer.trim().toLowerCase();
+    // Default = yes (use proxy), only skip if user explicitly says n or no
+    if (trimmed === "n" || trimmed === "no") {
+      skip(t.proxySkipDeclined);
+      if (localOverrides.gitProxy != null) {
+        await writeLocalOverrides({ ...localOverrides, gitProxy: undefined });
+      }
+      return null;
+    }
+    // Empty input or y/yes → accept proxy
+    ok(t.proxySaved(sysProxy.url));
+    await writeLocalOverrides({ ...localOverrides, gitProxy: sysProxy.url });
+    return { url: sysProxy.url, source: "system" };
+  }
+
+  // No system proxy detected — skip entirely
+  skip(t.proxySkip);
+  return null;
+}
+
 // ── Step 0: Language selection ───────────────────────────
 
 async function selectLanguage() {
@@ -1268,7 +1563,7 @@ function isFirstRun() {
 }
 
 /** Show installation overview before starting (scope-aware bullets) */
-function showInstallOverview(activeTargets, installScope) {
+function showInstallOverview(activeTargets, installScope, skillIds = []) {
   const bullets = [];
   bullets.push(t.installOverviewSyncConfig);
 
@@ -1292,6 +1587,15 @@ function showInstallOverview(activeTargets, installScope) {
       both: t.installScopeBothLabel,
     }[installScope] || installScope;
 
+  const skillLine =
+    installScope === "project"
+      ? ""
+      : `\n${C.dim}${t.installOverviewSkillList}${C.reset}${
+          skillIds.length > 0
+            ? skillIds.join(", ")
+            : t.installOverviewNoSkills
+        }`;
+
   console.log(`
 ${C.bold}${t.installOverviewTitle}${C.reset}
 
@@ -1300,7 +1604,7 @@ ${bullets.map((b) => `${C.dim}•${C.reset} ${b}`).join("\n")}
 ${C.dim}•${C.reset} ${C.dim}${t.installOverviewOptionalPython}${C.reset} ${C.yellow}${t.labelOptional}${C.reset}
 
 ${C.dim}${t.installOverviewTargets}${C.reset}${activeTargets.join(", ")}
-${C.dim}${t.installOverviewScope}${C.reset}${scopeLabel}
+${C.dim}${t.installOverviewScope}${C.reset}${scopeLabel}${skillLine}
 ${C.dim}${t.installOverviewEstimated}${C.reset}${t.installOverviewTime}
 `);
 }
@@ -1597,16 +1901,6 @@ function checkSync(
     }
   }
 
-  // --- Shared ---
-  if (repoTargets.includes("openclaw")) {
-    const sharedSkill = join(PROJECT_DIR, "shared-skills", "meta-theory.md");
-    if (existsSync(sharedSkill)) ok(t.syncSharedSkills);
-    else {
-      warn(t.syncMissing("shared-skills/meta-theory.md"));
-      allOk = false;
-    }
-  }
-
   // --- Cursor ---
   if (repoTargets.includes("cursor")) {
     console.log("");
@@ -1794,7 +2088,7 @@ async function selectActiveTargets(runtimes) {
   return chosenTargets;
 }
 
-function runNodeScript(scriptRelative, extraArgs = []) {
+function runNodeScript(scriptRelative, extraArgs = [], envOverrides = {}) {
   // Automatically pass --lang to child scripts
   const langArgs = currentLangCode ? ["--lang", currentLangCode] : [];
   const spawnConfig = buildNodeScriptSpawn(
@@ -1804,7 +2098,14 @@ function runNodeScript(scriptRelative, extraArgs = []) {
     extraArgs,
     langArgs,
   );
-  return spawnSync(spawnConfig.command, spawnConfig.args, spawnConfig.options);
+  const mergedOptions = {
+    ...spawnConfig.options,
+    env: {
+      ...process.env,
+      ...envOverrides,
+    },
+  };
+  return spawnSync(spawnConfig.command, spawnConfig.args, mergedOptions);
 }
 
 // ── Step 3: Auto-configure project files ────────────────
@@ -1963,6 +2264,8 @@ async function installPythonTools() {
     const version =
       extractPipShowVersion(readProcessText(pipShow)) ?? "unknown";
     ok(t.graphifyAlreadyInstalled(version));
+    // Still check networkx even if graphify was already installed
+    ensureNetworkxCompatibility(python);
     return;
   }
 
@@ -1997,6 +2300,60 @@ async function installPythonTools() {
     ok(t.graphifySkillRegistered);
   } else {
     warn(t.graphifySkillFailed);
+  }
+
+  // Ensure networkx >= 3.4 for louvain_communities(max_level) compatibility
+  ensureNetworkxCompatibility(python);
+
+  // Install git hooks so graphify auto-updates on every commit/checkout
+  info(t.graphifyHookInstalling);
+  const hookResult = runPythonModule(
+    python,
+    ["-m", "graphify", "hook", "install"],
+    undefined,
+    { stdio: "pipe" },
+  );
+  if (hookResult.status === 0) {
+    ok(t.graphifyHookInstalled);
+  } else {
+    warn(t.graphifyHookFailed);
+  }
+}
+
+function ensureNetworkxCompatibility(python) {
+  const nx = checkNetworkx(python);
+  if (!nx.installed) {
+    // networkx not found — will be pulled in by graphify, check again
+    const recheck = checkNetworkx(python);
+    if (!recheck.installed || recheck.meets) return;
+    if (!recheck.meets) upgradeNetworkx(python);
+    return;
+  }
+  if (nx.meets) {
+    ok(t.networkxAlreadyOk(nx.version));
+    return;
+  }
+  upgradeNetworkx(python);
+}
+
+function upgradeNetworkx(python) {
+  info(t.networkxUpgrading);
+  const result = runPythonModule(
+    python,
+    ["-m", "pip", "install", "--upgrade", "networkx"],
+    undefined,
+    { stdio: "pipe" },
+  );
+  if (result.status === 0) {
+    const recheck = checkNetworkx(python);
+    const newVersion = recheck.version ?? "latest";
+    ok(t.networkxUpgraded(newVersion));
+  } else {
+    warn(t.networkxUpgradeFailed);
+    const stderr = readProcessText(result);
+    if (stderr) {
+      console.log(`${C.dim}${t.pipErrorDetail(stderr)}${C.reset}`);
+    }
   }
 }
 
@@ -2336,8 +2693,16 @@ async function runInstall() {
   // 新增：询问安装范围
   const installScope = await askInstallScope();
 
+  // Ask proxy configuration (saves to localOverrides)
+  await askProxyConfig();
+
+  let selectedSkillIds = [];
+  if (installScope === "global" || installScope === "both") {
+    selectedSkillIds = await resolveSelectedSkillDependencyIds();
+  }
+
   // Show installation overview
-  showInstallOverview(activeTargets, installScope);
+  showInstallOverview(activeTargets, installScope, selectedSkillIds);
 
   const confirm = await askYesNo(t.confirmStartInstall, true);
   if (!confirm) {
@@ -2380,16 +2745,29 @@ async function runInstall() {
 
     // 安装全局技能
     stepNum++;
-    await withProgress(t.stepLabel(stepNum, t.progressInstallSkills), () => {
-      const installResult = runNodeScript(
-        "scripts/install-global-skills-all-runtimes.mjs",
-        ["--targets", activeTargets.join(",")],
-      );
-      if (installResult.status !== 0) {
-        warn(t.warnSkillsInstallFailed);
-      }
-      return installResult.status === 0;
-    });
+    await withProgress(
+      t.stepLabel(stepNum, t.progressInstallSkills),
+      async () => {
+        const localOverrides = await loadLocalOverrides();
+        const proxyEnv = localOverrides.gitProxy
+          ? { META_KIM_GIT_PROXY: localOverrides.gitProxy }
+          : {};
+        const skillArgs =
+          selectedSkillIds.length > 0
+            ? ["--targets", activeTargets.join(","), "--skills", selectedSkillIds.join(",")]
+            : ["--targets", activeTargets.join(","), "--skills", ""];
+        const installResult = runNodeScript(
+          "scripts/install-global-skills-all-runtimes.mjs",
+          skillArgs,
+          proxyEnv,
+        );
+        if (installResult.status !== 0) {
+          warn(t.warnSkillsInstallFailed);
+          warn(`${C.dim}${t.warnSkillsUpdateFailedHint}${C.reset}`);
+        }
+        return installResult.status === 0;
+      },
+    );
 
     // 同步全局 meta-theory
     stepNum++;
@@ -2444,6 +2822,9 @@ async function runUpdate() {
   // ── 0. Ask for update scope (like install mode) ─────────────────────
   const updateScope = await askInstallScope();
 
+  // Ask proxy configuration (saves to localOverrides)
+  await askProxyConfig();
+
   // ── 1. npm install (always — new code may have new deps) ────────────
   info(t.updateNpm);
   const npmResult = spawnSync("npm", ["install"], {
@@ -2480,12 +2861,31 @@ async function runUpdate() {
   console.log("");
   const wantGlobalSkills = await askYesNo(t.askGlobalSkillsUpdate, true);
   if (wantGlobalSkills) {
+    const updateSkillIds = await resolveSelectedSkillDependencyIds();
+    const localOverrides = await loadLocalOverrides();
+    const proxyEnv = localOverrides.gitProxy
+      ? { META_KIM_GIT_PROXY: localOverrides.gitProxy }
+      : {};
+    const updateSkillArgs =
+      updateSkillIds.length > 0
+        ? [
+            "--update",
+            "--targets",
+            activeTargets.join(","),
+            "--skills",
+            updateSkillIds.join(","),
+          ]
+        : ["--update", "--targets", activeTargets.join(","), "--skills", ""];
     const updateInstallResult = runNodeScript(
       "scripts/install-global-skills-all-runtimes.mjs",
-      ["--update", "--targets", activeTargets.join(",")],
+      updateSkillArgs,
+      proxyEnv,
     );
     if (updateInstallResult.status === 0) ok(t.updateSkillsDone);
-    else warn(t.warnSkillsUpdateFailed);
+    else {
+      warn(t.warnSkillsUpdateFailed);
+      warn(`${C.dim}${t.warnSkillsUpdateFailedHint}${C.reset}`);
+    }
   } else {
     skip(`${C.dim}${t.globalSkillsSkipped}${C.reset}`);
   }

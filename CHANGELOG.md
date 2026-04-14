@@ -4,6 +4,27 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
+## [2.0.2] - 2026-04-14
+
+### Fixed
+
+- **Windows `EBUSY` on skill staging cleanup**: `deployStagedSkill` no longer fails the whole global install when deleting a sibling `*.staged-*` folder hits `resource busy or locked` (Defender/indexer/transient handles). Uses `rmDirWithRetry` + `rmDirBestEffortLocked` with short backoff; lock errors log `warnStagingLocked` instead of aborting after a successful deploy.
+- **Proxy detection UX overhaul**: `setup.mjs` now asks user to confirm detected proxy (default = yes, Enter to accept). Previously auto-detected and applied system proxy silently, which caused TLS failures.
+- **Proxy auto-detection removed from install script**: `install-global-skills-all-runtimes.mjs` no longer auto-detects system proxy — only respects `--proxy` flag, `META_KIM_GIT_PROXY` env, or user's explicit choice from setup.mjs.
+- **"loopback proxy stripped" false positive**: Fixed — strip logic now checks `META_KIM_GIT_PROXY` env var, so configured proxies are not stripped.
+- **git subprocess proxy propagation**: `spawnSync` and `spawn` in `runGit()`/`runGitAsync()` now pass `env: process.env`, so proxy env vars actually reach git.
+- **Staging directory EBUSY crashes**: `cleanupStaleStagingDirs()` now catches Windows lock errors and skips locked directories with a warning instead of crashing.
+- **False-positive SKILL.md quarantine**: `listSkillFiles()` in `install-skill-sanitizer.mjs` now skips `openclaw/`, `cursor/`, `codex/`, and `openclaw/skills/` subdirectories — these contain legitimate cross-platform sub-skills (e.g. gstack's own OpenClaw skills) and are not invalid nested garbage.
+- **`os.platform()` typo**: Fixed to `os.platform()` in `install-global-skills-all-runtimes.mjs`.
+- **`sleepSyncMs` for Windows**: Replaced `spawnSync("sleep", ...)` with PowerShell `Start-Sleep` on Windows; POSIX `sleep` on others; last-resort busy-wait as fallback.
+
+### Changed
+
+- **`askProxyConfig()` default = yes**: When a proxy is detected, the prompt now defaults to using it (`[Y/n]`). User can still opt out by typing `n`.
+- **Git fallback strategy**: `runGit()` and `runGitAsync()` now try direct connection first, then fall back to proxy if network fails. If user has no proxy configured, direct succeeds and proxy is never attempted.
+- **`i18n` proxy keys**: Added `proxyDetectedPrompt`, `proxySkip`, `proxySkipDeclined`, `proxySaved`, `proxyFallbackProxy`, `proxyFallbackProxySuccess` across all 4 languages (en, zh-CN, ja-JP, ko-KR).
+- **Concurrency limiting**: `MAX_CONCURRENT_CLONES = 3` limits parallel git clones to prevent system resource exhaustion.
+
 ## [2.0.1] - 2026-04-13
 
 ### Added

@@ -107,25 +107,41 @@ export async function detectLegacySubdirInstall(targetDir, subdirPath) {
   // like a full cloned repository. This avoids deleting arbitrary user-created
   // folders that happen to contain a matching subdir name.
   return (
-    (await pathExists(nestedSubdir)) &&
-    (await pathExists(gitMetadataPath))
+    (await pathExists(nestedSubdir)) && (await pathExists(gitMetadataPath))
+  );
+}
+
+/**
+ * Bundled copies of other runtimes (OpenClaw/Codex/Cursor) ship nested SKILL.md files
+ * that are not required to match Claude Code frontmatter. Match case-insensitively and
+ * skip any path segment (e.g. OpenClaw vs openclaw on Windows).
+ */
+export function shouldSkipBundledRuntimePath(relPath) {
+  const n = relPath.replace(/\\/g, "/");
+  return (
+    /(^|\/)openclaw(\/|$)/i.test(n) ||
+    /(^|\/)codex(\/|$)/i.test(n) ||
+    /(^|\/)cursor(\/|$)/i.test(n)
   );
 }
 
 export async function listSkillFiles(rootDir) {
   const results = [];
 
-  async function walk(currentDir) {
+  async function walk(currentDir, relPath = "") {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
-      const entryPath = path.join(currentDir, entry.name);
+      const childRelPath = relPath ? `${relPath}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        await walk(entryPath);
+        if (shouldSkipBundledRuntimePath(childRelPath)) {
+          continue;
+        }
+        await walk(path.join(currentDir, entry.name), childRelPath);
         continue;
       }
 
       if (entry.isFile() && entry.name === "SKILL.md") {
-        results.push(entryPath);
+        results.push(path.join(currentDir, entry.name));
       }
     }
   }
