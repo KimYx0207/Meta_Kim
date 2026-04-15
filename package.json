@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "Governance layer for AI coding: meta agents, workflow contract, meta-theory; canonical in canonical/, with generated Claude/Codex/OpenClaw/Cursor projections.",
   "private": true,
   "type": "module",

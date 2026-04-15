@@ -4,6 +4,15 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
+## [2.0.6] - 2026-04-15
+
+### Added
+
+- **Principle enforcement via 3 execution lanes (PRIN-01~05)**: Added mandatory principle compliance checks across the meta-agent governance chain to close the gap between "principles defined" and "principles enforced":
+  - `meta-prism`: New **Principle Violation Assertions (PRIN-01~05)** section — Configurable, Single Source, Layering, Decoupling, i18n enforced as mandatory check dimensions equivalent to AI-Slop detection; missing = review incomplete, no evidence = FAIL
+  - `meta-genesis`: New **7th stress-test category (Principle Violation Detection)** with PRIN-ST-01~05 sub-tests; Iron Rule blocks SOUL.md delivery on any principle failure
+  - `meta-warden`: New **Principle Compliance Gate** in Quality Gate checklist — principle violations are governance findings (not quality notes), cannot be accepted-risk, must fix or reject
+
 ## [2.0.5] - 2026-04-15
 
 ### Added
