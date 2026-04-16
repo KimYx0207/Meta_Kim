@@ -368,11 +368,10 @@ const I18N = {
     graphifyInstalled: "graphify installed and Claude skill registered",
     graphifyInstallFailed: "graphify installation failed (non-blocking)",
     graphifyAlreadyInstalled: (v) => `graphify ${v} — already installed`,
-    graphifySkillRegistering: "Registering graphify Claude skill...",
-    graphifySkillRegistered:
-      "graphify Claude skill registered to ~/.claude/skills/graphify/",
-    graphifySkillFailed:
-      "graphify Claude skill registration failed (non-blocking)",
+    graphifySkillRegistering: (p) => `Registering graphify ${p} skill...`,
+    graphifySkillRegistered: (p) => `graphify ${p} skill registered`,
+    graphifySkillFailed: (p) =>
+      `graphify ${p} skill registration failed (non-blocking)`,
     networkxCheck: (v) => `networkx ${v}`,
     networkxUpgrading:
       "Upgrading networkx to >=3.4 for graphify compatibility...",
@@ -671,10 +670,9 @@ const I18N = {
     graphifyInstalled: "graphify 已安装，Claude 技能已注册",
     graphifyInstallFailed: "graphify 安装失败（不影响其他功能）",
     graphifyAlreadyInstalled: (v) => `graphify ${v} — 已安装`,
-    graphifySkillRegistering: "正在注册 graphify Claude 技能...",
-    graphifySkillRegistered:
-      "graphify Claude 技能已注册到 ~/.claude/skills/graphify/",
-    graphifySkillFailed: "graphify Claude 技能注册失败（不影响其他功能）",
+    graphifySkillRegistering: (p) => `正在注册 graphify ${p} 技能...`,
+    graphifySkillRegistered: (p) => `graphify ${p} 技能已注册`,
+    graphifySkillFailed: (p) => `graphify ${p} 技能注册失败（不影响其他功能）`,
     networkxCheck: (v) => `networkx ${v}`,
     networkxUpgrading: "正在升级 networkx 至 >=3.4 以兼容 graphify...",
     networkxUpgraded: (v) => `networkx 已升级至 ${v}`,
@@ -977,10 +975,10 @@ const I18N = {
     graphifyInstalled: "graphify インストール完了、Claude スキル登録済み",
     graphifyInstallFailed: "graphify インストール失敗（非ブロッキング）",
     graphifyAlreadyInstalled: (v) => `graphify ${v} — インストール済み`,
-    graphifySkillRegistering: "graphify Claude スキルを登録中...",
-    graphifySkillRegistered:
-      "graphify Claude スキルを ~/.claude/skills/graphify/ に登録",
-    graphifySkillFailed: "graphify Claude スキル登録失敗（非ブロッキング）",
+    graphifySkillRegistering: (p) => `graphify ${p} スキルを登録中...`,
+    graphifySkillRegistered: (p) => `graphify ${p} スキル登録済み`,
+    graphifySkillFailed: (p) =>
+      `graphify ${p} スキル登録失敗（非ブロッキング）`,
     networkxCheck: (v) => `networkx ${v}`,
     networkxUpgrading: "graphify互換のためnetworkxを>=3.4にアップグレード中...",
     networkxUpgraded: (v) => `networkxを${v}にアップグレードしました`,
@@ -1293,10 +1291,9 @@ const I18N = {
     graphifyInstalled: "graphify 설치 완료, Claude 스킬 등록됨",
     graphifyInstallFailed: "graphify 설치 실패 (비차단)",
     graphifyAlreadyInstalled: (v) => `graphify ${v} — 이미 설치됨`,
-    graphifySkillRegistering: "graphify Claude 스킬 등록 중...",
-    graphifySkillRegistered:
-      "graphify Claude 스킬이 ~/.claude/skills/graphify/에 등록됨",
-    graphifySkillFailed: "graphify Claude 스킬 등록 실패 (비차단)",
+    graphifySkillRegistering: (p) => `graphify ${p} 스킬 등록 중...`,
+    graphifySkillRegistered: (p) => `graphify ${p} 스킬 등록됨`,
+    graphifySkillFailed: (p) => `graphify ${p} 스킬 등록 실패 (비차단)`,
     networkxCheck: (v) => `networkx ${v}`,
     networkxUpgrading:
       "graphify 호환성을 위해 networkx를 >=3.4로 업그레이드 중...",
@@ -2589,7 +2586,7 @@ async function installPythonTools(activeTargets) {
   for (const target of activeTargets) {
     const platform = GRAPHIFY_PLATFORM_MAP[target];
     if (!platform) continue;
-    info(t.graphifySkillRegistering);
+    info(t.graphifySkillRegistering(platform));
     const skillResult = runPythonModule(
       python,
       ["-m", "graphify", platform, "install"],
@@ -2597,9 +2594,9 @@ async function installPythonTools(activeTargets) {
       { stdio: "pipe" },
     );
     if (skillResult.status === 0) {
-      ok(t.graphifySkillRegistered);
+      ok(t.graphifySkillRegistered(platform));
     } else {
-      warn(t.graphifySkillFailed);
+      warn(t.graphifySkillFailed(platform));
     }
   }
 }
