@@ -536,7 +536,7 @@ flowchart TB
 
 *例：Meta_Kim に複雑な複数ファイルのリファクタリングを依頼し、ステップ 6 まで完了してセッションが終了しました。次のセッションで、システムが compaction パケットを読み取り「ステップ 6 完了、ステップ 7 は未着手」を確認 — ステップ 7 から再開でき、最初からやり直す必要がありません。*
 
-**その他のファイル：** `doctor-cache/` は `npm run doctor:governance` のキャッシュ結果、`migrations/` はバージョン間のデータ構造アップグレードを追跡、`profile.json` はプロファイルのメタデータです。すべてスクリプトが自動管理するため、手動で編集する必要はありません。
+**その他のファイル：** `doctor-cache/` は `npm run doctor:governance` の実行結果を保存（各実行後に書き込み）、`migrations/` はバージョン間のデータ構造アップグレードを追跡、`profile.json` はプロファイルのメタデータです。すべてスクリプトが自動管理するため、手動で編集する必要はありません。
 
 **クイックリファレンス：**
 
@@ -546,7 +546,7 @@ flowchart TB
 | `state/{profile}/profile.json` | プロファイルのメタデータ（作成日時、名前） | 自動 — `setup.mjs` が `default` プロファイルを作成 |
 | `state/{profile}/run-index.sqlite` | ガバナンス run のインデックス — 誰が何を実行したか、何が見つかったか、何が未解決か | オンデマンド — `npm run index:runs -- <artifact>` |
 | `state/{profile}/compaction/` | セッション間の引き継ぎパケット：未完了のステップ、未処理の発見、未閉鎖の検証ゲート | オンデマンド — セッションをまたぐ場合に書き込み |
-| `state/{profile}/doctor-cache/` | `npm run doctor:governance` のキャッシュ結果 | オンデマンド — `doctor:governance` 実行時 |
+| `state/{profile}/doctor-cache/` | `npm run doctor:governance` のキャッシュ結果 | オンデマンド — `doctor:governance` 実行後に書き込み |
 | `state/{profile}/migrations/` | 状態移行の追跡（バージョン間のスキーマアップグレード） | 自動 — バージョン間で状態スキーマが変更された時 |
 
 ### グローバル導入後の対応状況
@@ -600,6 +600,20 @@ Meta_Kim の記憶は一枚岩ではありません。3 層に分かれ、各層
   - 「神ノード」（入次数が高すぎる）→ 直列ボトルネックとして扱う
 - **激活**: オプション Python 手順の `node setup.mjs` または `npm run graphify:install`——インストール/確認、networkx、Claude 側登録、**当該リポジトリ**の git hook。初回グラフ生成は hook 実行または手動ビルドに依存
 - **查询**: `python -m graphify query "あなたの質問"`——自然言語でコードグラフにクエリ
+
+### プラットフォーム自動化比較
+
+| 機能 | Claude Code | Codex | OpenClaw | Cursor |
+| --- | --- | --- | --- | --- |
+| PreToolUse hook（Glob/Grep 前の自動プロンプト） | ✅ settings.json | ❌ | ❌ | ❌ |
+| スラッシュコマンド `/graphify` | ✅ | ✅ | ✅ | ✅ |
+| git hook 自動再構築（post-commit/checkout） | ✅ | ✅ | ✅ | ✅ |
+| AGENTS.md 常駐ルール | N/A | ✅ | ✅ | ✅ |
+| setup.mjs マルチプラットフォーム導入 | ✅ claude | ✅ codex | ✅ claw | ✅ cursor |
+
+** 핵심**: Claude Codeは唯一つの **PreToolUse hook** を持つプラットフォームであり、Glob/Grep の前に自動プロンプトが表示されます。其他プラットフォーム（Codex、OpenClaw、Cursor）はセッション起動時に注入される **AGENTS.md** ルールを使用します——グラフ認知は依然として存在しますが、トリガータイミングはセッション開始時であり毎回検索時ではありません。両方のメカニズムは導入後に自動化されています。
+
+マルチプラットフォーム導入は `node setup.mjs` を実行してください——選択した全プラットフォームをループし、各プラットフォームに対して `graphify <platform> install` を幂等実行します。
 
 ### 第三層: SQL（ベクトル級セッション検索）
 

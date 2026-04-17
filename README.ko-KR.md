@@ -540,7 +540,7 @@ flowchart TB
 
 *예: Meta_Kim에게 복잡한 다중 파일 리팩토링을 맡기고, 6단계까지 완료한 후 세션이 끝났습니다. 다음 세션에서 시스템이 compaction 패킷을 읽어 "6단계 완료, 7단계 미시작"을 확인 — 7단계부터 바로 시작하고 처음부터 다시 할 필요가 없습니다.*
 
-**기타 파일:** `doctor-cache/`는 `npm run doctor:governance`의 캐시 결과, `migrations/`는 버전 간 데이터 구조 업그레이드 추적, `profile.json`은 프로필 메타데이터입니다. 모두 스크립트가 자동 관리하므로 수동 편집할 필요가 없습니다.
+**기타 파일:** `doctor-cache/`는 `npm run doctor:governance` 실행 결과를 저장(각 실행 후 기록), `migrations/`는 버전 간 데이터 구조 업그레이드 추적, `profile.json`은 프로필 메타데이터입니다. 모두 스크립트가 자동 관리하므로 수동 편집할 필요가 없습니다.
 
 **빠른 참고:**
 
@@ -550,7 +550,7 @@ flowchart TB
 | `state/{profile}/profile.json` | 프로필 메타데이터 (생성 시간, 이름) | 자동 — `setup.mjs`가 `default` 프로필 생성 |
 | `state/{profile}/run-index.sqlite` | 거버넌스 run 인덱스 — 누가 무엇을 실행했는지, 무엇을 발견했는지, 미해결 사항 | 온디맨드 — `npm run index:runs -- <artifact>` |
 | `state/{profile}/compaction/` | 세션 간 인계 패킷: 미완료 단계, 미처리 발견, 미폐쇄 검증 게이트 | 온디맨드 — 세션을 넘어 이어질 때 기록 |
-| `state/{profile}/doctor-cache/` | `npm run doctor:governance` 캐시 결과 | 온디맨드 — `doctor:governance` 실행 시 |
+| `state/{profile}/doctor-cache/` | `npm run doctor:governance` 캐시 결과 | 온디맨드 — `doctor:governance` 실행 후 기록 |
 | `state/{profile}/migrations/` | 상태 마이그레이션 추적 (버전 간 스키마 업그레이드) | 자동 — 버전 간 상태 스키마 변경 시 |
 
 ### 전역 설치 후 사용 가능한 기능
@@ -602,6 +602,20 @@ Meta_Kim은 단일 기억 레이어를 사용하지 않습니다. 세 가지 다
   - "갓 노드"(높은 진입도) → 직렬 병목으로 플래그
 - **활성화**: 선택 Python 단계 `node setup.mjs` 또는 `npm run graphify:install`——설치/검사, networkx, Claude 측 등록, **해당 리포지토리** git hook. 최초 그래프 생성은 hook 실행 또는 수동 빌드에 따름
 - **쿼리**: `python -m graphify query "당신의 질문"`——자연어로 코드 그래프에 쿼리
+
+### 플랫폼 자동화 비교
+
+| 기능 | Claude Code | Codex | OpenClaw | Cursor |
+| --- | --- | --- | --- | --- |
+| PreToolUse hook（Glob/Grep 전 자동 프롬프트） | ✅ settings.json | ❌ | ❌ | ❌ |
+| 슬래시 명령 `/graphify` | ✅ | ✅ | ✅ | ✅ |
+| git hook 자동 재구축（post-commit/checkout） | ✅ | ✅ | ✅ | ✅ |
+| AGENTS.md 상주 규칙 | N/A | ✅ | ✅ | ✅ |
+| setup.mjs 멀티플랫폼 설치 | ✅ claude | ✅ codex | ✅ claw | ✅ cursor |
+
+**핵심 인사이트**: Claude Code는 **PreToolUse hook**을 갖춘 유일한 플랫폼으로, Glob/Grep 검색 전에 자동으로 프롬프트를 표시합니다. 다른 플랫폼(Codex, OpenClaw, Cursor)은 세션 시작 시 주입되는 **AGENTS.md** 규칙을 사용합니다 — 그래프 인식은 여전히 존재하지만 트리거 시점은 검색 시가 아닌 세션 시작 시입니다. 두 메커니즘 모두 설치 후 자동화됩니다.
+
+멀티플랫폼 설치는 `node setup.mjs`를 실행하세요 — 선택한 모든 플랫폼을 순회하며 각 플랫폼에 대해 `graphify <platform> install`을 멱등 실행합니다.
 
 ### 3층: SQL (벡터 수준 세션 검색)
 

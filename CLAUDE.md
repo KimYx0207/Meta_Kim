@@ -264,11 +264,23 @@ Meta_Kim can leverage [graphify](https://github.com/safishamsi/graphify) (`pip i
 
 ### Three different things (do not confuse them)
 
-1. **Refreshing `graphify-out/` (data)** — `python -m graphify hook install` registers **per-repo** git hooks (post-commit / post-checkout) so the graph rebuilds when you commit or checkout; `npm run graphify:install` / `node setup.mjs` (optional Python step) also run `claude install` + `hook install` **idempotently** even if graphify was already installed via pip.
+1. **Refreshing `graphify-out/` (data)** — `python -m graphify hook install` registers **per-repo** git hooks (post-commit / post-checkout) so the graph rebuilds when you commit or checkout. `npm run graphify:install` / `node setup.mjs` runs pip install + `hook install` + `graphify <platform> install` **idempotently** for all selected platforms — pip success no longer skips skill registration.
 2. **Using the graph in governance (behavior)** — `canonical/skills/meta-theory/references/dev-governance.md` Fetch **Step 0.5** tells the model to check `graphify-out/graph.json` and quality gates; this is **not** a background daemon — the skill must be followed.
 3. **Claude Code subagents (hint only)** — `subagent-context.mjs` injects a short rule to prefer `GRAPH_REPORT.md` then `graph.json`; it does **not** embed those files into context automatically.
 
-Codex / OpenClaw / Cursor do not get that SubagentStart hook from `sync:runtimes`; they still get the same **meta-theory** references after sync. Use **`python -m graphify codex install`** or **`python -m graphify claw install`** in a **target repo** if you want graphify to patch that repo’s `AGENTS.md` (see `python -m graphify --help`). Meta_Kim’s root `AGENTS.md` is maintained here; prefer the Fetch step + reading `graphify-out/GRAPH_REPORT.md` over duplicating installers unless you know the merge impact.
+### Platform Automation Comparison
+
+| Capability | Claude Code | Codex | OpenClaw | Cursor |
+|-----------|------------|-------|----------|--------|
+| PreToolUse hook (auto-prompt before Glob/Grep) | ✅ settings.json | ❌ | ❌ | ❌ |
+| Slash command `/graphify` | ✅ | ✅ | ✅ | ✅ |
+| git hook auto-rebuild (post-commit/checkout) | ✅ | ✅ | ✅ | ✅ |
+| AGENTS.md resident rules | N/A | ✅ | ✅ | ✅ |
+| Multi-platform install via setup.mjs | ✅ claude | ✅ codex | ✅ claw | ✅ cursor |
+
+**Key insight**: Claude Code is the only platform with a **PreToolUse hook** that auto-prompts before searches. Other platforms (Codex, OpenClaw, Cursor) use **AGENTS.md** rules injected at startup — graph awareness is still present but triggers at session start rather than per-search. Both mechanisms are automatic once installed.
+
+For multi-platform setups, run `node setup.mjs` — it loops through all selected platforms and runs `graphify <platform> install` for each one idempotently.
 
 ### How It Works
 
@@ -283,12 +295,11 @@ Graph context is used automatically when ALL conditions are met:
 - Source files > 20 (excluding node_modules/, .git/, dist/)
 - Python 3.10+ installed
 - graphify installed (`pip install graphifyy`)
-- Current project is NOT Meta_Kim itself
 
 ### Installation
 
 ```bash
-# Via setup.mjs (interactive, auto-detects Python; optional step installs pip package + claude install + hook install)
+# Via setup.mjs (interactive — installs pip package + hook + all selected platforms' graphify skill)
 node setup.mjs
 
 # Via install-deps.sh

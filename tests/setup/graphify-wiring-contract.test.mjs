@@ -19,27 +19,29 @@ describe("graphify idempotent wiring (contract)", () => {
     assert.ok(hookIdx > claudeIdx, "hook install must follow claude install");
   });
 
-  test("setup.mjs installPythonTools wires hooks after pip-already-installed branch", () => {
+  test("setup.mjs installPythonTools wires graphify for all activeTargets", () => {
     const lines = readFileSync(path.join(root, "setup.mjs"), "utf8").split(
       /\r?\n/,
     );
     const start = lines.findIndex((l) =>
-      l.includes("async function installPythonTools()"),
+      l.includes("async function installPythonTools("),
     );
     const end = lines.findIndex(
       (l, i) => i > start && l.startsWith("// ── Step 4.6:"),
     );
-    assert.ok(start !== -1 && end !== -1);
+    assert.ok(start !== -1 && end !== -1, "installPythonTools body not found");
     const body = lines.slice(start, end).join("\n");
-    assert.match(body, /ok\(t\.graphifyAlreadyInstalled\(version\)\)/);
-    assert.match(body, /Idempotent wiring/);
     assert.match(body, /\["-m", "graphify", "hook", "install"\]/);
-    const afterInstalled = body.split(
-      "ok(t.graphifyAlreadyInstalled(version));",
-    )[1];
-    assert.ok(afterInstalled);
+    assert.match(body, /for \(const target of activeTargets\)/);
+    assert.match(
+      body,
+      /\["-m", "graphify", "[a-z]+", "install"\]/,
+      "per-platform graphify install present",
+    );
+    // pip install failure must NOT return early (skill install still needs to run)
+    const afterPip = body.split(/pip install.*graphifyy.*\]/s)[1] || "";
     assert.doesNotMatch(
-      afterInstalled.slice(0, 120),
+      afterPip.slice(0, 120),
       /^\s*return;/m,
       "no early return right after already-installed ok()",
     );
@@ -58,7 +60,10 @@ describe("graphify idempotent wiring (contract)", () => {
 
   test("canonical subagent-context mentions GRAPH_REPORT.md", () => {
     const src = readFileSync(
-      path.join(root, "canonical/runtime-assets/claude/hooks/subagent-context.mjs"),
+      path.join(
+        root,
+        "canonical/runtime-assets/claude/hooks/subagent-context.mjs",
+      ),
       "utf8",
     );
     assert.match(src, /GRAPH_REPORT\.md/);

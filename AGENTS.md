@@ -241,9 +241,23 @@ Files that should usually be treated as mirrors or adapters:
 - `openclaw/skills/` and `openclaw/workspaces/*`
 - `openclaw/openclaw.template.json` (from `canonical/runtime-assets/openclaw/`)
 
-## Code graph (`graphify-out/`) — Codex, OpenClaw, Cursor
+## Code graph (`graphify-out/`) — Platform Automation
 
-There is **no** `SubagentStart` hook in the Codex / OpenClaw / Cursor projections from `config/sync.json` (only `.claude/hooks/` carries `subagent-context.mjs`). Cross-runtime parity for **how to use** a graph is the synced **meta-theory** reference `canonical/skills/meta-theory/references/dev-governance.md` (Fetch **Step 0.5**).
+Cross-runtime parity for **how to use** a graph is the synced **meta-theory** reference `canonical/skills/meta-theory/references/dev-governance.md` (Fetch **Step 0.5**). There is **no** `SubagentStart` hook in the Codex / OpenClaw / Cursor projections (only `.claude/hooks/` carries `subagent-context.mjs`).
+
+### Platform Automation Comparison
+
+| Capability | Claude Code | Codex | OpenClaw | Cursor |
+|-----------|------------|-------|----------|--------|
+| PreToolUse hook (auto-prompt before Glob/Grep) | ✅ settings.json | ❌ | ❌ | ❌ |
+| Slash command `/graphify` | ✅ | ✅ | ✅ | ✅ |
+| git hook auto-rebuild (post-commit/checkout) | ✅ | ✅ | ✅ | ✅ |
+| AGENTS.md resident rules | N/A | ✅ | ✅ | ✅ |
+| Multi-platform install via setup.mjs | ✅ claude | ✅ codex | ✅ claw | ✅ cursor |
+
+**Key insight**: Claude Code is the only platform with a **PreToolUse hook** that auto-prompts before searches. Other platforms (Codex, OpenClaw, Cursor) use **AGENTS.md** rules injected at startup — graph awareness is still present but triggers at session start rather than per-search. Both mechanisms are automatic once installed.
+
+For multi-platform setups, run `node setup.mjs` — it loops through all selected platforms and runs `graphify <platform> install` for each one idempotently.
 
 **When `graphify-out/graph.json` exists in the repo root** (this repo or a target project): for complex or multi-file work, follow Fetch Step 0.5 and **prefer reading `graphify-out/GRAPH_REPORT.md` first** when present, then `graph.json` or subgraph queries as needed.
 

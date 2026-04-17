@@ -540,7 +540,7 @@ flowchart TB
 
 *例子：你让 Meta_Kim 做一个复杂的多文件重构，做到第 6 步断了。下次开新会话，系统从 compaction 包读到"做到第 6 步了，第 7 步还没开始"，直接从第 7 步继续，不用从头来。*
 
-**其他文件：** `doctor-cache/` 存 `npm run doctor:governance` 的缓存结果，`migrations/` 追踪版本间的数据结构升级，`profile.json` 存 profile 元信息。全部由脚本自动管理，你不需要手动编辑。
+**其他文件：** `doctor-cache/` 存储每次 `npm run doctor:governance` 的执行结果，`migrations/` 追踪版本间的数据结构升级，`profile.json` 存 profile 元信息。全部由脚本自动管理，你不需要手动编辑。
 
 **快速参考：**
 
@@ -602,6 +602,20 @@ Meta_Kim 的记忆不是单一的。它有三层，各有分工，共同保障 a
   - 存在"上帝节点"（入度过高）→ 标记为串行瓶颈
 - **激活方式**：`node setup.mjs` 可选 Python 步骤或 `npm run graphify:install`——安装/校验、networkx、Claude 侧注册、**当前仓库** git hook；图谱首次生成仍依赖 hook 触发或手动构建命令
 - **查询方式**：`python -m graphify query "你的问题"`——用自然语言查询代码图谱
+
+### 平台自动化对比
+
+| 能力 | Claude Code | Codex | OpenClaw | Cursor |
+| --- | --- | --- | --- | --- |
+| PreToolUse hook（Glob/Grep 前自动提示） | ✅ settings.json | ❌ | ❌ | ❌ |
+| 斜杠命令 `/graphify` | ✅ | ✅ | ✅ | ✅ |
+| git hook 自动重建（post-commit/checkout） | ✅ | ✅ | ✅ | ✅ |
+| AGENTS.md 常驻规则 | 不适用 | ✅ | ✅ | ✅ |
+| setup.mjs 多平台安装 | ✅ claude | ✅ codex | ✅ claw | ✅ cursor |
+
+**核心洞察**：Claude Code 是唯一一个拥有 **PreToolUse hook** 的平台——在搜索前自动提示。其他平台（Codex、OpenClaw、Cursor）使用 **AGENTS.md** 规则，这些规则在会话启动时注入，图谱感知仍然存在，但触发时机是会话开始而非每次搜索。两种机制安装后都是自动化的。
+
+多平台安装请运行 `node setup.mjs`——它会遍历所有选中的平台，幂等执行 `graphify <platform> install`。
 
 ### 第三层：SQL（向量级会话检索）
 

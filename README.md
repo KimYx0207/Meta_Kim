@@ -541,7 +541,7 @@ When you're halfway through a conversation and your token budget runs out, the c
 
 *Example: You ask Meta_Kim to do a complex multi-file refactor. You get through step 6 before the session ends. Next session, the system reads the compaction packet: "at step 6, step 7 hasn't started" — picks up from step 7, no need to start over.*
 
-**Other files:** `doctor-cache/` stores `npm run doctor:governance` results, `migrations/` tracks schema upgrades between Meta_Kim versions, `profile.json` stores profile metadata. All managed by scripts — you never edit them by hand.
+**Other files:** `doctor-cache/` stores `npm run doctor:governance` results (written after each run), `migrations/` tracks schema upgrades between Meta_Kim versions, `profile.json` stores profile metadata. All managed by scripts — you never edit them by hand.
 
 **Quick reference:**
 
@@ -603,6 +603,20 @@ Each layer has different activation requirements:
   - A "god node" with too many incoming edges -> mark as a serial bottleneck
 - **Activation**: `node setup.mjs` optional Python step or `npm run graphify:install` — install/check, networkx, Claude-side registration, **this repo’s** git hooks; first graph build still depends on a hook run or a manual build command
 - **Query**: `python -m graphify query "your question"` — natural language query against the code graph
+
+### Platform Automation Comparison
+
+| Capability | Claude Code | Codex | OpenClaw | Cursor |
+|-----------|------------|-------|----------|--------|
+| PreToolUse hook (auto-prompt before Glob/Grep) | ✅ settings.json | ❌ | ❌ | ❌ |
+| Slash command `/graphify` | ✅ | ✅ | ✅ | ✅ |
+| git hook auto-rebuild (post-commit/checkout) | ✅ | ✅ | ✅ | ✅ |
+| AGENTS.md resident rules | N/A | ✅ | ✅ | ✅ |
+| Multi-platform install via setup.mjs | ✅ claude | ✅ codex | ✅ claw | ✅ cursor |
+
+**Key insight**: Claude Code is the only platform with a **PreToolUse hook** that auto-prompts before searches. Other platforms (Codex, OpenClaw, Cursor) use **AGENTS.md** rules injected at startup — graph awareness is still present but triggers at session start rather than per-search. Both mechanisms are automatic once installed.
+
+For multi-platform setups, run `node setup.mjs` — it loops through all selected platforms and runs `graphify <platform> install` for each one idempotently.
 
 ### Layer 3: SQL (vector-level session retrieval)
 
