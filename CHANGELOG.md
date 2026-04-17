@@ -4,6 +4,20 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
+## [2.0.8] - 2026-04-17
+
+### Added
+
+- **meta-conductor Stage 4 agent-team-playbook integration**: Pipeline Mode integration with `agent-teams-playbook` v4.5. Conductor now invokes the playbook at Stage 4 (Execution) to obtain orchestration decisions (scenario selection, team blueprint, collaboration mode), parses the natural language output, and converts `teamBlueprint` to `workerTaskPackets` for dispatch board execution. Strict mode: parsing failures throw `ParseError` immediately (no silent defaults). Error codes: `SCENARIO_MISSING`, `BLUEPRINT_EMPTY`, `BLUEPRINT_COLUMN_MISMATCH`, `DISPATCH_BOARD_MISSING`.
+
+- **Integration protocol document**: `docs/protocols/meta-conductor-agent-teams-playbook-integration.md` defines the full integration architecture, invocation format, expected output patterns, parsing strategy, error handling, and field mapping table.
+
+- **Integration test**: `tests/integration/agent-teams-playbook-integration.test.mjs` validates the complete pipeline (6/6 tests passing): scenario parsing, team blueprint parsing, collaboration mode parsing, workerTaskPackets conversion, strict mode error handling, and end-to-end integration flow.
+
+### Changed
+
+- **meta-conductor version**: Bumped from v1.1.0 to v1.2.0. Added `agent-team-playbook Pipeline Mode integration (Stage 4 Execution)` to `own` field in agent frontmatter.
+
 ## [2.0.7] - 2026-04-16
 
 ### Added
