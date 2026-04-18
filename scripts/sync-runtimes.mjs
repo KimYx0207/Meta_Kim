@@ -23,6 +23,12 @@ import { CATEGORIES, openRecorder } from "./install-manifest.mjs";
 
 const cliArgs = process.argv.slice(2);
 const checkOnly = process.argv.includes("--check");
+const jsonMode = process.argv.includes("--json");
+
+// Captures "will be written" entries whenever writeGeneratedFile runs under
+// --check. Populated even when not in --json mode so callers get deterministic
+// planning data; consumers just ignore it when they do not need it.
+const staleFiles = [];
 
 // Recorder is lazily opened in main() when scope includes "project" so every
 // write point (writeGeneratedFile / writeGeneratedJson) can record through
@@ -612,6 +618,11 @@ async function writeGeneratedFile(filePath, nextContent) {
   }
 
   if (checkOnly) {
+    staleFiles.push({
+      path: filePath,
+      category: inferProjectCategory(filePath),
+      action: currentContent === null ? "create" : "update",
+    });
     return { changed: true };
   }
 
@@ -1192,6 +1203,34 @@ Examples:
         changedFiles.push(dp.cursorMcp);
       }
     }
+  }
+
+  if (checkOnly && jsonMode) {
+    const byCategory = staleFiles.reduce((acc, f) => {
+      const k = f.category || "unknown";
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+    const byAction = staleFiles.reduce((acc, f) => {
+      acc[f.action] = (acc[f.action] || 0) + 1;
+      return acc;
+    }, {});
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          scope,
+          targets: selectedTargets,
+          total: staleFiles.length,
+          byCategory,
+          byAction,
+          staleFiles,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    if (staleFiles.length > 0) process.exitCode = 1;
+    return;
   }
 
   if (checkOnly && changedFiles.length > 0) {
