@@ -3127,16 +3127,38 @@ async function installPythonTools(activeTargets, inUpdateMode = false) {
 
   // Idempotent wiring: register graphify skill for each active target + git hooks once.
   // git hooks are cross-platform (commit/checkout trigger), install once.
-  const hookResult = runPythonModule(
-    python,
-    ["-m", "graphify", "hook", "install"],
-    undefined,
-    { stdio: "pipe" },
-  );
-  if (hookResult.status === 0) {
-    ok(t.graphifyHookInstalled);
+  // If the repo wasn't cloned via git (e.g. extracted from a zip), `.git` won't
+  // exist and `graphify hook install` has nowhere to write — that's not a real
+  // failure, just a no-op environment. Skip cleanly instead of alarming the user.
+  if (!existsSync(join(PROJECT_DIR, ".git"))) {
+    info(
+      "Skipping graphify git hook (not a git repository — run `git init` or clone via git to enable auto-rebuild)",
+    );
   } else {
-    warn(t.graphifyHookFailed);
+    const hookResult = runPythonModule(
+      python,
+      ["-m", "graphify", "hook", "install"],
+      undefined,
+      { stdio: "pipe" },
+    );
+    if (hookResult.status === 0) {
+      ok(t.graphifyHookInstalled);
+    } else {
+      warn(t.graphifyHookFailed);
+      const hookStdout = readProcessText(hookResult);
+      const hookStderr = (hookResult.stderr || "").toString().trim();
+      if (hookStdout) {
+        console.log(`${C.dim}stdout: ${hookStdout}${C.reset}`);
+      }
+      if (hookStderr) {
+        console.log(`${C.dim}stderr: ${hookStderr}${C.reset}`);
+      }
+      if (hookResult.error?.message) {
+        console.log(
+          `${C.dim}spawn error: ${hookResult.error.message}${C.reset}`,
+        );
+      }
+    }
   }
 
   // Register graphify skill for each active platform
