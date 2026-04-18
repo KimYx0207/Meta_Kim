@@ -36,7 +36,89 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { collectFindings } from "./footprint.mjs";
-import { CATEGORIES } from "./install-manifest.mjs";
+import {
+  CATEGORIES,
+  manifestPathFor,
+  readManifest,
+} from "./install-manifest.mjs";
+
+/**
+ * Convert an install-manifest entry into the same shape as a scan finding so
+ * planActions() can consume either source uniformly. Returns null for entries
+ * the current uninstall pipeline cannot act on (pip-package, mcp-server,
+ * git-hook — those need dedicated actions the pipeline does not model yet).
+ */
+export function manifestEntryToFinding(entry) {
+  if (!entry?.path || !entry?.category) return null;
+  if (
+    entry.kind === "pip-package" ||
+    entry.kind === "mcp-server" ||
+    entry.kind === "git-hook"
+  ) {
+    return null;
+  }
+  const base = {
+    path: entry.path,
+    category: entry.category,
+    source: entry.source || "manifest",
+    purpose: entry.purpose || null,
+  };
+  if (entry.kind === "settings-merge") {
+    const commands = entry.mergedHookCommands || [];
+    return {
+      ...base,
+      kind: "settings-merge",
+      managedHookCount: commands.length,
+      managedHooks: commands.map((command) => ({
+        event: null,
+        matcher: null,
+        command,
+      })),
+    };
+  }
+  return {
+    ...base,
+    kind: entry.kind === "dir" ? "dir" : "file",
+    size: entry.size ?? null,
+    mtime: null,
+  };
+}
+
+/**
+ * Collect findings from install manifests (global + project) for the given
+ * scope. Returns an empty array when no manifest exists or all entries are
+ * non-actionable — callers should then fall back to collectFindings().
+ */
+export function findingsFromManifest({ scope, repoRoot }) {
+  const findings = [];
+  if (scope === "global" || scope === "both") {
+    try {
+      const m = readManifest(manifestPathFor("global"));
+      if (m?.entries) {
+        for (const entry of m.entries) {
+          const finding = manifestEntryToFinding(entry);
+          if (finding) findings.push(finding);
+        }
+      }
+    } catch {
+      /* best-effort: manifest read failures fall through to scan */
+    }
+  }
+  if (scope === "project" || scope === "both") {
+    try {
+      const m = readManifest(manifestPathFor("project", repoRoot));
+      if (m?.entries) {
+        for (const entry of m.entries) {
+          const finding = manifestEntryToFinding(entry);
+          if (finding) findings.push(finding);
+        }
+      }
+    } catch {
+      /* best-effort: manifest read failures fall through to scan */
+    }
+  }
+  return findings;
+}
 
 const C = {
   reset: "\x1b[0m",
@@ -53,6 +135,10 @@ const MSG = {
     title: "Meta_Kim uninstall",
     dryNote: "DRY-RUN — nothing will be deleted. Re-run with --yes to apply.",
     liveNote: "LIVE RUN — changes will be applied now.",
+    sourceManifest:
+      "Source: install-manifest (recorded entries from prior sync runs).",
+    sourceScan:
+      "Source: filesystem scan (no manifest found, or --no-manifest was passed).",
     planHeader: "Planned actions:",
     actRemoveDir: (p) => `  − remove directory: ${p}`,
     actRemoveFile: (p) => `  − remove file: ${p}`,
@@ -78,6 +164,9 @@ const MSG = {
     title: "Meta_Kim 卸载",
     dryNote: "DRY-RUN 模式 — 不会真删。加 --yes 后才执行。",
     liveNote: "LIVE 模式 — 现在开始执行实际删除。",
+    sourceManifest: "来源：install-manifest（历次 sync 记录的条目）。",
+    sourceScan:
+      "来源：文件系统扫描（未找到 manifest，或传入了 --no-manifest）。",
     planHeader: "计划执行的操作：",
     actRemoveDir: (p) => `  − 删除目录：${p}`,
     actRemoveFile: (p) => `  − 删除文件：${p}`,
@@ -102,6 +191,10 @@ const MSG = {
     title: "Meta_Kim アンインストール",
     dryNote: "DRY-RUN — 削除しません。--yes で実行します。",
     liveNote: "LIVE 実行 — 変更を即時適用します。",
+    sourceManifest:
+      "ソース：install-manifest（過去の sync で記録されたエントリ）。",
+    sourceScan:
+      "ソース：ファイルシステムスキャン（manifest なし、または --no-manifest 指定）。",
     planHeader: "実行予定の操作：",
     actRemoveDir: (p) => `  − ディレクトリ削除：${p}`,
     actRemoveFile: (p) => `  − ファイル削除：${p}`,
@@ -126,6 +219,9 @@ const MSG = {
     title: "Meta_Kim 제거",
     dryNote: "DRY-RUN — 실제 삭제 안 함. --yes 로 재실행하면 적용.",
     liveNote: "LIVE 모드 — 변경이 즉시 적용됩니다.",
+    sourceManifest: "소스: install-manifest (이전 sync에 기록된 항목).",
+    sourceScan:
+      "소스: 파일시스템 스캔 (manifest 없음 또는 --no-manifest 지정).",
     planHeader: "실행 예정 작업:",
     actRemoveDir: (p) => `  − 디렉터리 삭제: ${p}`,
     actRemoveFile: (p) => `  − 파일 삭제: ${p}`,
@@ -224,8 +320,22 @@ function stripManagedHookBlocks(hooksSection, predicate) {
   return { hooks: next, stripped };
 }
 
-function planActions({ scope, repoRoot, deep, purgeProjectAgents }) {
-  const findings = collectFindings({ scope, repoRoot });
+function planActions({
+  scope,
+  repoRoot,
+  deep,
+  purgeProjectAgents,
+  useManifest = true,
+}) {
+  let findings = [];
+  let source = "scan";
+  if (useManifest) {
+    findings = findingsFromManifest({ scope, repoRoot });
+    if (findings.length > 0) source = "manifest";
+  }
+  if (findings.length === 0) {
+    findings = collectFindings({ scope, repoRoot });
+  }
   const actions = [];
 
   for (const f of findings) {
@@ -268,7 +378,7 @@ function planActions({ scope, repoRoot, deep, purgeProjectAgents }) {
           kind: "remove",
           path: f.path,
           catLabel: "D",
-          recursive: true,
+          recursive: f.kind === "dir",
         });
         break;
       }
@@ -316,7 +426,7 @@ function planActions({ scope, repoRoot, deep, purgeProjectAgents }) {
           kind: "remove",
           path: f.path,
           catLabel: "H",
-          recursive: true,
+          recursive: f.kind === "dir",
         });
         break;
       }
@@ -337,12 +447,13 @@ function planActions({ scope, repoRoot, deep, purgeProjectAgents }) {
   }
 
   const seen = new Set();
-  return actions.filter((a) => {
+  const deduped = actions.filter((a) => {
     const key = `${a.kind}::${a.path}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+  return { actions: deduped, source };
 }
 
 function describe(action, t) {
@@ -412,12 +523,19 @@ async function main() {
   const apply = flag("yes");
   const deep = flag("deep");
   const purgeProjectAgents = flag("purge-project-agents");
+  const useManifest = !flag("no-manifest");
   const lang = resolveLang(valueOf("lang"));
   const t = MSG[lang] || MSG.en;
 
   const repoRoot = REPO_ROOT;
 
-  const actions = planActions({ scope, repoRoot, deep, purgeProjectAgents });
+  const { actions, source } = planActions({
+    scope,
+    repoRoot,
+    deep,
+    purgeProjectAgents,
+    useManifest,
+  });
 
   const lines = [];
   lines.push(`${C.bold}${C.cyan}${t.title}${C.reset}`);
@@ -425,6 +543,9 @@ async function main() {
     apply
       ? `${C.yellow}${t.liveNote}${C.reset}`
       : `${C.dim}${t.dryNote}${C.reset}`,
+  );
+  lines.push(
+    `${C.dim}${source === "manifest" ? t.sourceManifest : t.sourceScan}${C.reset}`,
   );
   if (!purgeProjectAgents)
     lines.push(`${C.dim}${t.projectAgentsKept}${C.reset}`);
