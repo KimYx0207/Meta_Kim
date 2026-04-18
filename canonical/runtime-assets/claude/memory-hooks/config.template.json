@@ -1,0 +1,38 @@
+{
+  "memoryService": {
+    "protocol": "http",
+    "http": {
+      "endpoint": "http://127.0.0.1:8888",
+      "healthCheckTimeout": 3000
+    },
+    "defaultTags": ["claude-code", "auto-generated"],
+    "maxMemoriesPerSession": 8
+  },
+  "hooks": {
+    "sessionStart": {
+      "enabled": true,
+      "timeout": 20000,
+      "priority": "high"
+    },
+    "sessionEnd": {
+      "enabled": false,
+      "timeout": 15000,
+      "priority": "normal"
+    }
+  },
+  "projectDetection": {
+    "gitRepository": true,
+    "frameworkDetection": true,
+    "confidenceThreshold": 0.3
+  },
+  "output": {
+    "verbose": false,
+    "showMemoryDetails": false,
+    "style": "balanced"
+  },
+  "_notes": [
+    "This is a template - copied to ~/.claude/hooks/config.json if none exists.",
+    "The installed config is NOT overwritten on subsequent runs.",
+    "Users can override MCP_MEMORY_URL and MCP_MEMORY_LIMIT via environment variables."
+  ]
+}

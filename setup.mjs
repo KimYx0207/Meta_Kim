@@ -26,7 +26,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { homedir, platform, tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import {
@@ -3141,6 +3141,185 @@ async function installPythonTools(activeTargets, inUpdateMode = false) {
 
 // ── Step 4.6: Optional MCP Memory Service (Layer 3) ─────
 
+// Python resolution strategy for MCP Memory Service.
+// The upstream package depends on safetensors, which often fails to build on
+// Python 3.13. We prefer 3.11/3.12; if the detected Python is outside that
+// range, we try to build an isolated venv locked to 3.12.
+//
+// NOTE: detectPython310() returns a launcher descriptor, not a string:
+//   { command: string, args: string[], version: { major, minor, patch }, versionText }
+// All helpers below consume and return the same shape so they integrate
+// cleanly with runPythonModule(python, args) and formatPythonLauncher(python).
+
+function isSupportedMemoryPython(pythonLauncher) {
+  const v = pythonLauncher?.version;
+  if (!v || typeof v.major !== "number" || typeof v.minor !== "number") {
+    return false;
+  }
+  return v.major === 3 && v.minor >= 11 && v.minor <= 12;
+}
+
+function probePythonLauncher(command, args, spawnFn = spawnSync) {
+  try {
+    const result = spawnFn(command, [...args, "--version"], {
+      encoding: "utf8",
+      shell: false,
+    });
+    if (result?.error || result?.status !== 0) return null;
+    const versionText = readProcessText(result);
+    const m = /Python\s+(\d+)\.(\d+)(?:\.(\d+))?/i.exec(versionText || "");
+    if (!m) return null;
+    return {
+      command,
+      args: [...args],
+      version: {
+        major: Number(m[1]),
+        minor: Number(m[2]),
+        patch: Number(m[3] || 0),
+      },
+      versionText: (versionText || "").trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function findPython311Or312(spawnFn = spawnSync) {
+  const isWin = platform() === "win32";
+  const candidates = isWin
+    ? [
+        ["py", ["-3.12"]],
+        ["py", ["-3.11"]],
+        ["python3.12", []],
+        ["python3.11", []],
+      ]
+    : [
+        ["python3.12", []],
+        ["python3.11", []],
+        ["py", ["-3.12"]],
+        ["py", ["-3.11"]],
+      ];
+
+  for (const [command, args] of candidates) {
+    const probe = probePythonLauncher(command, args, spawnFn);
+    if (probe && isSupportedMemoryPython(probe)) {
+      return probe;
+    }
+  }
+  return null;
+}
+
+function venvPythonPath(venvDir) {
+  const isWin = platform() === "win32";
+  return isWin
+    ? join(venvDir, "Scripts", "python.exe")
+    : join(venvDir, "bin", "python");
+}
+
+function createMemoryServiceVenv(sourceLauncher, venvDir, spawnFn = spawnSync) {
+  if (!sourceLauncher) return null;
+  try {
+    const parent = dirname(venvDir);
+    if (!existsSync(parent)) {
+      mkdirSync(parent, { recursive: true });
+    }
+    const result = spawnFn(
+      sourceLauncher.command,
+      [...sourceLauncher.args, "-m", "venv", venvDir],
+      { encoding: "utf8", shell: false, stdio: "inherit" },
+    );
+    if (result.status !== 0) return null;
+
+    const venvPython = venvPythonPath(venvDir);
+    if (!existsSync(venvPython)) return null;
+
+    const probed = probePythonLauncher(venvPython, [], spawnFn);
+    if (!probed) return null;
+    return { ...probed, absolutePath: true };
+  } catch {
+    return null;
+  }
+}
+
+function resolvePythonForMemoryService(detectedPython) {
+  if (isSupportedMemoryPython(detectedPython)) {
+    return { python: detectedPython, venvCreated: false };
+  }
+
+  const detectedLabel = detectedPython?.versionText || "unknown";
+  warn(
+    `Detected ${detectedLabel} — mcp-memory-service prefers Python 3.11/3.12 (safetensors may fail on 3.13).`,
+  );
+
+  const venvDir = join(homedir(), ".meta-kim", "memory-venv");
+  const existingVenvPython = venvPythonPath(venvDir);
+  if (existsSync(existingVenvPython)) {
+    const existingProbe = probePythonLauncher(existingVenvPython, []);
+    if (existingProbe && isSupportedMemoryPython(existingProbe)) {
+      ok(`Reusing existing venv: ${venvDir}`);
+      return {
+        python: { ...existingProbe, absolutePath: true },
+        venvCreated: false,
+        venvDir,
+      };
+    }
+  }
+
+  info("Attempting to create an isolated venv locked to Python 3.11/3.12...");
+  const sourceLauncher = findPython311Or312();
+  if (!sourceLauncher) {
+    warn(
+      "No Python 3.11/3.12 launcher found — falling back to detected Python (install may fail).",
+    );
+    info(
+      platform() === "win32"
+        ? "Install Python 3.12 from python.org, or run: winget install Python.Python.3.12"
+        : "Install Python 3.12 via your package manager (e.g. apt/brew/pyenv).",
+    );
+    return { python: detectedPython, venvCreated: false, fallback: true };
+  }
+
+  const venvLauncher = createMemoryServiceVenv(sourceLauncher, venvDir);
+  if (!venvLauncher) {
+    warn(
+      "Failed to create 3.12 venv — falling back to detected Python (install may fail).",
+    );
+    return { python: detectedPython, venvCreated: false, fallback: true };
+  }
+
+  ok(`Created venv at ${venvDir}`);
+  return { python: venvLauncher, venvCreated: true, venvDir };
+}
+
+function runMcpMemoryHookInstaller() {
+  const hookScript = join(
+    PROJECT_DIR,
+    "scripts",
+    "install-mcp-memory-hooks.mjs",
+  );
+  if (!existsSync(hookScript)) {
+    warn(`Hook installer missing: ${hookScript}`);
+    return;
+  }
+
+  info("Installing Claude Code SessionStart hook for memory service...");
+  const spawnDesc = buildNodeScriptSpawn(
+    process.execPath,
+    PROJECT_DIR,
+    "scripts/install-mcp-memory-hooks.mjs",
+  );
+  const result = spawnSync(spawnDesc.command, spawnDesc.args, {
+    ...spawnDesc.options,
+    stdio: "inherit",
+  });
+
+  if (result.status === 0) {
+    ok("SessionStart hook installed");
+  } else {
+    warn("Hook installation reported warnings (non-blocking)");
+  }
+}
+
 function checkMcpMemoryService(python) {
   const result = runPythonModule(python, [
     "-m",
@@ -3162,12 +3341,18 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
   heading(t.stepMcpMemory);
 
   // Detect Python — reuse same detection as graphify for consistency
-  const python = checkPython310();
-  if (!python) {
+  const detected = checkPython310();
+  if (!detected) {
     warn(t.pythonNotFound);
     info(t.pythonHint);
     return;
   }
+
+  // Resolve Python for mcp-memory-service (safetensors prefers 3.11/3.12).
+  // When the detected Python is outside that range, try to build/reuse a venv
+  // locked to 3.12. Falls back to the detected Python with a warning.
+  const resolved = resolvePythonForMemoryService(detected);
+  const python = resolved.python;
 
   // Check if already installed
   const existing = checkMcpMemoryService(python);
@@ -3190,7 +3375,7 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
         }
         return;
       }
-      const newVersion = checkMcpMemoryService().version ?? "latest";
+      const newVersion = checkMcpMemoryService(python).version ?? "latest";
       ok(t.mcpMemoryUpgraded(newVersion));
     } else {
       ok(t.mcpMemoryAlreadyInstalled(existing.version ?? "unknown"));
@@ -3203,7 +3388,7 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
       return;
     }
 
-    // Install via pip (use detected Python for cross-platform compatibility)
+    // Install via pip (use resolved Python for cross-platform compatibility)
     info(t.mcpMemoryInstalling);
     const installResult = runPythonModule(python, [
       "-m",
@@ -3223,7 +3408,19 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
     }
   }
 
-  // Register in .mcp.json
+  // Register in project .mcp.json. When running inside a venv we write the
+  // absolute python path so Claude Code can launch it without shell PATH setup.
+  // `python` here is a launcher descriptor { command, args, version, ... }.
+  const memoryServerConfig = resolved.venvCreated
+    ? {
+        command: python.command,
+        args: [...python.args, "-m", "mcp_memory_service"],
+      }
+    : {
+        command: "python",
+        args: ["-m", "mcp_memory_service"],
+      };
+
   const mcpPath = join(PROJECT_DIR, ".mcp.json");
   if (existsSync(mcpPath)) {
     try {
@@ -3231,12 +3428,14 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
       if (mcpConfig.mcpServers?.["mcp-memory-service"]) {
         ok(t.mcpMemoryServerExists);
       } else {
-        if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
-        mcpConfig.mcpServers["mcp-memory-service"] = {
-          command: "python",
-          args: ["-m", "mcp_memory_service"],
+        const nextConfig = {
+          ...mcpConfig,
+          mcpServers: {
+            ...(mcpConfig.mcpServers ?? {}),
+            "mcp-memory-service": memoryServerConfig,
+          },
         };
-        writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + "\n");
+        writeFileSync(mcpPath, JSON.stringify(nextConfig, null, 2) + "\n");
         ok(t.mcpMemoryServerRegistered);
       }
     } catch {
@@ -3246,10 +3445,7 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
     // Create minimal .mcp.json with just the memory service
     const newConfig = {
       mcpServers: {
-        "mcp-memory-service": {
-          command: "python",
-          args: ["-m", "mcp_memory_service"],
-        },
+        "mcp-memory-service": memoryServerConfig,
       },
     };
     writeFileSync(mcpPath, JSON.stringify(newConfig, null, 2) + "\n");
@@ -3257,6 +3453,11 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
   }
 
   info(t.mcpMemoryServerStartHint);
+
+  // Step 4.7 — auto-install the Claude Code SessionStart hook so the full
+  // pipeline (pip package → .mcp.json → hook file → SessionStart registration
+  // → health check) runs from a single `node setup.mjs` invocation.
+  runMcpMemoryHookInstaller();
 }
 
 function ensureNetworkxCompatibility(python) {
