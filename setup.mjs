@@ -3077,11 +3077,13 @@ async function installPythonTools(activeTargets, inUpdateMode = false) {
 
 // ── Step 4.6: Optional MCP Memory Service (Layer 3) ─────
 
-function checkMcpMemoryService(spawnFn = spawnSync) {
-  const result = spawnFn("pip", ["show", "mcp-memory-service"], {
-    encoding: "utf8",
-    shell: false,
-  });
+function checkMcpMemoryService(python) {
+  const result = runPythonModule(python, [
+    "-m",
+    "pip",
+    "show",
+    "mcp-memory-service",
+  ]);
   if (result.status !== 0) {
     return { installed: false, version: null };
   }
@@ -3095,17 +3097,27 @@ function checkMcpMemoryService(spawnFn = spawnSync) {
 async function installMcpMemoryServiceStep(inUpdateMode = false) {
   heading(t.stepMcpMemory);
 
+  // Detect Python — reuse same detection as graphify for consistency
+  const python = checkPython310();
+  if (!python) {
+    warn(t.pythonNotFound);
+    info(t.pythonHint);
+    return;
+  }
+
   // Check if already installed
-  const existing = checkMcpMemoryService();
+  const existing = checkMcpMemoryService(python);
   if (existing.installed) {
     if (inUpdateMode) {
       // Upgrade in update mode
       info(t.mcpMemoryUpgrading);
-      const upgradeResult = spawnSync(
+      const upgradeResult = runPythonModule(python, [
+        "-m",
         "pip",
-        ["install", "--upgrade", "mcp-memory-service"],
-        { encoding: "utf8", shell: false, stdio: "pipe" },
-      );
+        "install",
+        "--upgrade",
+        "mcp-memory-service",
+      ]);
       if (upgradeResult.status !== 0) {
         const stderr = readProcessText(upgradeResult);
         warn(t.mcpMemoryUpgradeFailed);
@@ -3127,13 +3139,14 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
       return;
     }
 
-    // Install via pip
+    // Install via pip (use detected Python for cross-platform compatibility)
     info(t.mcpMemoryInstalling);
-    const installResult = spawnSync("pip", ["install", "mcp-memory-service"], {
-      encoding: "utf8",
-      shell: false,
-      stdio: "pipe",
-    });
+    const installResult = runPythonModule(python, [
+      "-m",
+      "pip",
+      "install",
+      "mcp-memory-service",
+    ]);
     if (installResult.status !== 0) {
       const stderr = readProcessText(installResult);
       warn(t.mcpMemoryInstallFailed);
