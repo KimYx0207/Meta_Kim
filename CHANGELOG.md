@@ -8,6 +8,23 @@ When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the
 
 ### Added
 
+- **Install footprint + uninstaller (Phase 1 of Install Manifest project)**: Three new scripts give users full visibility and reversibility over what Meta_Kim writes to their system.
+  - **`scripts/install-manifest.mjs`** — Schema v1 plus helpers (`readManifest`, `writeManifest`, `record`, `removeByPath`, `validate`, `listByCategory`, `manifestPathFor`). Two manifest files: `~/.meta-kim/install-manifest.json` (global) and `<repo>/.meta-kim/install-manifest.json` (project). Nine categories (A–I) cover global skills, global hooks, global settings merges, project skills/hooks/agents/settings, local state, and shared dependencies. No sync script is wired in yet — that lands in Phase 2.
+  - **`scripts/footprint.mjs` + `npm run meta:status` / `:json` / `:diff`** — Tree/JSON/diff views of everything Meta_Kim has installed on the current machine. Prefers manifest data when present; falls back to deterministic filesystem scan of runtime homes (`~/.claude`, `~/.codex`, `~/.claw`, `~/.cursor`) and the current repository. Identifies Meta_Kim–managed hook entries inside `~/.claude/settings.json` (including double-backslash-escaped Windows paths written by older sync runs — see Known Issues below). 4 languages (en/zh/ja/ko) with auto-detection via `--lang`, `METAKIM_LANG`, `LANG`.
+  - **`scripts/uninstall.mjs` + `npm run meta:uninstall` / `:yes` / `:deep`** — Dry-run by default, refuses to delete without `--yes`. Supports `--scope=global|project|both` (default `both`), `--deep` (also `pip uninstall` graphifyy/mcp-memory-service and remove `.git/hooks/post-{commit,checkout}` written by graphify), `--purge-project-agents` (normally kept because they are repo-owned source files). Automatically backs up `~/.claude/settings.json` to a timestamped file before stripping Meta_Kim-managed hook entries, and never touches unrelated hook blocks.
+
+### Planned
+
+- **Install Manifest Phase 2** — `sync-runtimes.mjs`, `sync-global-meta-theory.mjs`, `install-global-skills-all-runtimes.mjs`, and `claude-settings-merge.mjs` will call `record()` on every write so the manifest becomes the canonical source of truth.
+- **Install Manifest Phase 3** — `setup.mjs` pre-flight diff of old manifest vs planned operations.
+- **Install Manifest Phase 4** — Manifest-driven version-aware upgrade path.
+
+### Known Issues (to be fixed in Phase 2)
+
+- `scripts/claude-settings-merge.mjs` `hookCommandNode(absScriptPath)` produces Windows paths that are double-JSON-encoded when serialized back to `settings.json` (observed as `\\\\` on disk). The matchers `isGlobalMetaKimManagedHookCommand` / `isRepoMetaKimHookCommand` only check the single-backslash form and silently miss the double-escaped entries, which (in the worst case) causes sync to skip cleanup of old Meta_Kim hook blocks and leave duplicates. Phase 1 works around the gap with its own normalizing matcher inside `footprint.mjs` + `uninstall.mjs`; Phase 2 will fix `hookCommandNode` and the matchers at the source.
+
+### Added
+
 - **scripts/doctor-hooks.mjs + `npm run meta:doctor:hooks` / `:fix`**: New scanner for `~/.claude/settings.json` (and optionally the repo's `.claude/settings.json` via `--all`). Identifies hook entries whose `command` path references a non-existent file ("zombie hooks" — typically left behind by copying `settings.json` between machines with different usernames or OSes) and lists them for review. `--fix` writes a timestamped backup (`settings.json.backup-<ISO>`) and removes only the zombie entries, preserving every live hook block. Supports `--lang` (en/zh/ja/ko, auto-detected from `METAKIM_LANG`/`LANG`), `--silent` (CI mode with zombie-count exit code), `--project` (only project-level settings), `--all` (both user-level and project-level).
 
 ### Migration Notes
