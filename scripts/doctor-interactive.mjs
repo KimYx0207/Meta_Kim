@@ -50,7 +50,69 @@ function runCommand(label, cmd, args = []) {
   }
 }
 
+/** Run full diagnostic suite (used by both non-interactive mode and "full" menu option). */
+async function runFullDiagnostic() {
+  console.log(`\n${"=".repeat(60)}`);
+  console.log("  完整诊断报告 — Full Diagnostic Report");
+  console.log(`${"=".repeat(60)}`);
+  const results = [];
+
+  results.push([
+    "运行环境诊断",
+    runCommand("运行环境诊断", "npm", ["meta:doctor:governance"]),
+  ]);
+  results.push([
+    "安装验证",
+    runCommand("安装状态诊断", "npm", ["meta:validate"]),
+  ]);
+  results.push([
+    "运行时检查",
+    runCommand("运行时镜像检查", "npm", ["meta:check:runtimes"]),
+  ]);
+  results.push([
+    "全局同步检查",
+    runCommand("全局同步检查", "npm", ["meta:check:global"]),
+  ]);
+  results.push([
+    "运行时集成",
+    runCommand("运行时集成诊断", "npm", ["meta:eval:agents"]),
+  ]);
+
+  console.log(`\n${"=".repeat(60)}`);
+  console.log("  诊断汇总 — Diagnostic Summary");
+  console.log(`${"=".repeat(60)}`);
+  for (const [name, ok] of results) {
+    const icon = ok ? "✓" : "✗";
+    const color = ok ? "\x1b[32m" : "\x1b[31m";
+    console.log(`  ${color}${icon}\x1b[0m ${name}`);
+  }
+  const passed = results.filter(([, ok]) => ok).length;
+  console.log(`\n  通过: ${passed}/${results.length}`);
+  if (passed === results.length) {
+    console.log("  \x1b[32m全部通过 — All checks passed!\x1b[0m");
+  } else {
+    console.log(
+      "  部分诊断失败 — Some checks failed. Review above for details.",
+    );
+  }
+  console.log(`${"=".repeat(60)}\n`);
+}
+
 async function main() {
+  // Detect non-interactive environment (e.g. Claude Code bash, CI)
+  const isInteractive =
+    process.stdin.isTTY &&
+    process.stdout.isTTY &&
+    !process.env.TERM?.startsWith("dumb");
+
+  if (!isInteractive) {
+    console.log(
+      `\n[INFO] Non-interactive mode detected — running full diagnostic...\n`,
+    );
+    await runFullDiagnostic();
+    return;
+  }
+
   console.log(`
 ╔═══════════════════════════════════════════════════╗
 ║          Meta_Kim 交互式诊断中心                   ║
@@ -108,82 +170,29 @@ async function main() {
 
       switch (answer) {
         case "runtime":
-          runCommand("运行环境诊断", "npm", ["run", "meta:doctor:governance"]);
+          runCommand("运行环境诊断", "npm", ["meta:doctor:governance"]);
           break;
 
         case "install":
-          runCommand("安装状态诊断 (meta:validate)", "npm", [
-            "run",
-            "meta:validate",
-          ]);
+          runCommand("安装状态诊断 (meta:validate)", "npm", ["meta:validate"]);
           console.log("");
           runCommand("安装状态诊断 (meta:check:runtimes)", "npm", [
-            "run",
             "meta:check:runtimes",
           ]);
           break;
 
         case "sync":
-          runCommand("同步状态诊断", "npm", ["run", "meta:check:runtimes"]);
+          runCommand("同步状态诊断", "npm", ["meta:check:runtimes"]);
           console.log("");
-          runCommand("同步状态诊断 (global)", "npm", [
-            "run",
-            "meta:check:global",
-          ]);
+          runCommand("同步状态诊断 (global)", "npm", ["meta:check:global"]);
           break;
 
         case "agents":
-          runCommand("运行时集成诊断", "npm", ["run", "meta:eval:agents"]);
+          runCommand("运行时集成诊断", "npm", ["meta:eval:agents"]);
           break;
 
         case "full":
-          console.log(`\n${"=".repeat(60)}`);
-          console.log("  完整诊断报告 — Full Diagnostic Report");
-          console.log(`${"=".repeat(60)}`);
-          const results = [];
-
-          results.push([
-            "运行环境诊断",
-            runCommand("运行环境诊断", "npm", [
-              "run",
-              "meta:doctor:governance",
-            ]),
-          ]);
-          results.push([
-            "安装验证",
-            runCommand("安装状态诊断", "npm", ["run", "meta:validate"]),
-          ]);
-          results.push([
-            "运行时检查",
-            runCommand("运行时镜像检查", "npm", ["run", "meta:check:runtimes"]),
-          ]);
-          results.push([
-            "全局同步检查",
-            runCommand("全局同步检查", "npm", ["run", "meta:check:global"]),
-          ]);
-          results.push([
-            "运行时集成",
-            runCommand("运行时集成诊断", "npm", ["run", "meta:eval:agents"]),
-          ]);
-
-          console.log(`\n${"=".repeat(60)}`);
-          console.log("  诊断汇总 — Diagnostic Summary");
-          console.log(`${"=".repeat(60)}`);
-          for (const [name, ok] of results) {
-            const icon = ok ? "✓" : "✗";
-            const color = ok ? "\x1b[32m" : "\x1b[31m";
-            console.log(`  ${color}${icon}\x1b[0m ${name}`);
-          }
-          const passed = results.filter(([, ok]) => ok).length;
-          console.log(`\n  通过: ${passed}/${results.length}`);
-          if (passed === results.length) {
-            console.log("  \x1b[32m全部通过 — All checks passed!\x1b[0m");
-          } else {
-            console.log(
-              "  部分诊断失败 — Some checks failed. Review above for details.",
-            );
-          }
-          console.log(`${"=".repeat(60)}\n`);
+          await runFullDiagnostic();
           break;
 
         case "exit":
