@@ -274,7 +274,7 @@ Conductor sequences the analysis work and manages the dispatch board.
 
 ### Execution
 1. Read agent definitions: `Glob canonical/agents/*.md`
-2. Dispatch quality audit (capability = "code quality review, AI-slop detection, Five Criteria + Four Death Patterns audit"):
+2. Dispatch quality audit via **meta-prism** (capability = "code quality review, AI-slop detection, Five Criteria + Four Death Patterns audit"):
    ```
    Fetch-first: Search who declares "Own: code quality review" + "Own: quality forensics, AI-slop detection"
    → Match best → Invoke
@@ -283,7 +283,7 @@ Conductor sequences the analysis work and manages the dispatch board.
    Output: evidence table per agent + quality rating + fix operations.
    ```
 
-### Exit Gate (capability = "coordination, arbitration, final synthesis")
+### Exit Gate (meta-warden: coordination, arbitration, final synthesis)
 ```
 Fetch-first: Search who declares "Own: coordination and final synthesis"
 → Match best → Invoke
@@ -305,7 +305,7 @@ Output: gap confirmation + ≥2 approaches.
 ```
 
 ### Orchestration (Conductor)
-Conductor owns the dispatch board, card deck, worker task board, and handoff plan for the station pipeline. **Genesis (capability = "agent/persona SOUL design")** and **Artisan (capability = "skill/tool loadout matching")** are mandatory stations; **Prism (capability = "quality review")** and **Warden (capability = "coordination + synthesis")** handle review and synthesis; **Scout (capability = "external capability discovery")**, **Sentinel (capability = "security + permissions")**, and **Librarian (capability = "memory + continuity")** are optional factory stations by trigger.
+Conductor owns the dispatch board, card deck, worker task board, and handoff plan for the station pipeline. **meta-genesis (capability = "agent/persona SOUL design")** and **meta-artisan (capability = "skill/tool loadout matching")** are mandatory stations; **meta-prism (capability = "quality review")** and **meta-warden (capability = "coordination + synthesis")** handle review and synthesis; **meta-scout (capability = "external capability discovery")**, **meta-sentinel (capability = "security + permissions")**, and **meta-librarian (capability = "memory + continuity")** are optional factory stations by trigger.
 
 Read `canonical/skills/meta-theory/references/create-agent.md` for the full pipeline. Quick summary:
 1. Discovery → data collection → coupling grouping → user confirmation
@@ -413,7 +413,7 @@ Conductor sequences the review work and manages the dispatch board via capabilit
 
 ### Execution
 1. Read the proposal/document
-2. Dispatch quality audit (capability = "code quality review, Five Criteria, Death Patterns, AI-Slop detection"):
+2. Dispatch quality audit via **meta-prism** (capability = "code quality review, Five Criteria, Death Patterns, AI-Slop detection"):
    ```
    Fetch-first: Search who declares "Own: code quality review"
    → Match best → Invoke
@@ -429,7 +429,7 @@ Conductor sequences the review work and manages the dispatch board via capabilit
    Input: [list of claims to verify]
    ```
 
-### Exit Gate (capability = "coordination + final synthesis")
+### Exit Gate (meta-warden: coordination + final synthesis)
 ```
 Fetch-first: Search who declares "Own: coordination and final synthesis"
 → Match best → Invoke

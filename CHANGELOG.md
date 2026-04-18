@@ -4,7 +4,11 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
-## [2.0.11] - 2026-04-18
+## [2.0.12] - 2026-04-18
+
+### Changed
+
+- **SKILL.md agent name consistency**: Updated Type A, B, and D sections to use full agent names (`meta-prism`, `meta-warden`, `meta-genesis`, `meta-artisan`, `meta-scout`, `meta-sentinel`, `meta-librarian`) in section headings and body text. Previously only role names (Prism, Warden, Genesis) appeared in plain text, causing the 03-agent-dispatch.test.mjs agent-mapping tests to fail. All 773 meta-theory tests now pass.
 
 ### Changed
 
