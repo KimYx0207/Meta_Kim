@@ -27,6 +27,8 @@
     "meta:validate:run": "node scripts/validate-run-artifact.mjs",
     "meta:doctor": "node scripts/doctor-interactive.mjs",
     "meta:doctor:governance": "node scripts/doctor-governance.mjs",
+    "meta:doctor:hooks": "node scripts/doctor-hooks.mjs",
+    "meta:doctor:hooks:fix": "node scripts/doctor-hooks.mjs --fix",
     "meta:doctor:compaction": "node scripts/write-compaction.mjs",
     "meta:doctor:migration": "node scripts/write-migration.mjs",
     "prompt:next-iteration": "node scripts/prompt-next-iteration.mjs",

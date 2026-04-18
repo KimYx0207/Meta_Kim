@@ -4,6 +4,16 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
+## [Unreleased]
+
+### Added
+
+- **scripts/doctor-hooks.mjs + `npm run meta:doctor:hooks` / `:fix`**: New scanner for `~/.claude/settings.json` (and optionally the repo's `.claude/settings.json` via `--all`). Identifies hook entries whose `command` path references a non-existent file ("zombie hooks" — typically left behind by copying `settings.json` between machines with different usernames or OSes) and lists them for review. `--fix` writes a timestamped backup (`settings.json.backup-<ISO>`) and removes only the zombie entries, preserving every live hook block. Supports `--lang` (en/zh/ja/ko, auto-detected from `METAKIM_LANG`/`LANG`), `--silent` (CI mode with zombie-count exit code), `--project` (only project-level settings), `--all` (both user-level and project-level).
+
+### Migration Notes
+
+- Users on a new machine should run `node setup.mjs` then `npm run sync:global:meta-theory` — do **not** copy `~/.claude/settings.json` between machines (hook `command` values are absolute paths and will not resolve under a different username or OS). `npm run meta:doctor:hooks` detects and `:fix` cleans up after an accidental copy.
+
 ## [2.0.12] - 2026-04-18
 
 ### Changed
