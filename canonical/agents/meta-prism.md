@@ -313,6 +313,7 @@ Rule: another operator must be able to reproduce the judgment or close the findi
 
 1. **Evaluation Methodology Evolution** -- Track latest developments in LLM-as-Judge, skill-creator grader, and other evaluation frameworks, continuously upgrade assertion-based evaluation and claims verification methods
 2. **AI-Slop Signature Library Expansion** -- Expand the SLOP-01~09 signature library based on new AI Slop patterns discovered during actual reviews, keeping detection capabilities up to date
+3. **Evolution Writeback** -- When reviews reveal recurring quality patterns or new AI-Slop signatures, write back directly to this agent's SLOP signature list, assertion templates, or criteriaState thresholds. The agent definition IS the memory — do not route through a middle abstraction layer. Emit `evolutionWritebackPacket` with concrete targets after every governed run
 
 ## Foundational Design Principles
 

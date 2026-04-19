@@ -531,6 +531,73 @@ describe("Part G: evolution writeback to agent definitions", async () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Part G2: Every canonical agent declares Evolution Writeback
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("Part G2: agent-level evolution writeback completeness", async () => {
+  const agentDir = path.resolve("canonical/agents");
+  const agentFiles = (await fs.readdir(agentDir)).filter(
+    (f) => f.startsWith("meta-") && f.endsWith(".md"),
+  );
+
+  test("all canonical meta-agents exist", () => {
+    assert.ok(
+      agentFiles.length >= 8,
+      `Expected >=8 canonical meta-agents, found ${agentFiles.length}`,
+    );
+  });
+
+  test("every canonical meta-agent declares an evolution writeback mechanism", async () => {
+    const missing = [];
+    for (const file of agentFiles) {
+      const content = await fs.readFile(path.join(agentDir, file), "utf-8");
+      const hasWriteback =
+        /evolution\s+writeback/i.test(content) ||
+        /evolutionWritebackPacket/i.test(content) ||
+        /recordEvolutionBacklog/i.test(content) ||
+        /evolution\s+backlog/i.test(content);
+      if (!hasWriteback) {
+        missing.push(file);
+      }
+    }
+    assert.deepStrictEqual(
+      missing,
+      [],
+      `These agents lack evolution writeback declaration: ${missing.join(", ")}. ` +
+        `Per "Direct Over Indirect" principle, every agent must declare how it writes ` +
+        `evolution learnings back to its own definition.`,
+    );
+  });
+
+  test("meta-scout has Output Quality module (Good/Bad comparison)", async () => {
+    const scout = await fs.readFile(
+      path.join(agentDir, "meta-scout.md"),
+      "utf-8",
+    );
+    assert.ok(
+      /Output Quality/.test(scout) &&
+        /Good.*Report|A-grade/i.test(scout) &&
+        /Bad.*Report|D-grade/i.test(scout),
+      "meta-scout must have an Output Quality section with Good/Bad comparison examples",
+    );
+  });
+
+  test("meta-scout has >= 3 Core Truths", async () => {
+    const scout = await fs.readFile(
+      path.join(agentDir, "meta-scout.md"),
+      "utf-8",
+    );
+    const ctMatches = scout.match(/^\d+\.\s+\*\*/gm) || [];
+    const ctInline = scout.match(/^\*\*CT\d+\*\*/gm) || [];
+    const total = ctMatches.length + ctInline.length;
+    assert.ok(
+      total >= 3,
+      `meta-scout should have >= 3 Core Truths, found ${total}`,
+    );
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Part H: Memory Data Safety
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

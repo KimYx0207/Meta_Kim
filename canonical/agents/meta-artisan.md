@@ -170,6 +170,7 @@ Rule: the deliverables must answer "what is the best capability stack for this a
 
 1. **Skill Ecosystem Tracking** — Regularly scan Skills.sh and Claude Code ecosystem for new skills, update the platform capability index, ensure the recommendation pool stays current
 2. **ROI Model Calibration** — Collect actual usage data (which recommended skills are truly high-frequency, which were installed but unused), calibrate ROI formula weight parameters
+3. **Evolution Writeback** — When ROI scoring reveals systematic misjudgments or new platform capabilities emerge, write back directly to this agent's Decision Rules or ROI formula. The agent definition IS the memory — do not route through a middle abstraction layer. Emit `evolutionWritebackPacket` with concrete targets after every governed run
 
 ## Foundational Design Principles
 

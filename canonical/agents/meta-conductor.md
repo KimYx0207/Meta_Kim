@@ -536,6 +536,7 @@ Rule: if the board allows multiple unrelated topics, detached worker tasks, or m
 
 1. **Orchestration Pattern Library** — Keep reusable patterns for parallel steps, skip rules, and rollback paths
 2. **Rhythm Awareness Optimization** — Tune Intentional Silence, Interrupt, and Delivery Shell choices from execution evidence
+3. **Evolution Writeback** — When orchestration reveals rhythm bottlenecks or dispatch board patterns, write back directly to this agent's Decision Rules or card-deck defaults. The agent definition IS the memory — do not route through a middle abstraction layer. Emit `evolutionWritebackPacket` with concrete targets after every governed run
 
 ## Foundational Design Principles
 

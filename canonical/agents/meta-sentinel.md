@@ -171,6 +171,7 @@ Rule: another operator must be able to tell exactly what is allowed, what is blo
 
 1. **Threat Intelligence Updates** -- Track new attack vectors in LLM security (prompt injection variants, indirect injection, multi-step attack chains), expand the Top 5 threat model
 2. **Hook Pattern Library** -- Accumulate proven Hook configuration patterns, categorized by scenario (file operations / API calls / databases / user input), to accelerate security configuration for new agents
+3. **Evolution Writeback** -- When security audits reveal new attack vectors or permission model gaps, write back directly to this agent's Decision Rules or Threat Model. The agent definition IS the memory — do not route through a middle abstraction layer. Emit `evolutionWritebackPacket` with concrete targets after every governed run
 
 ## Foundational Design Principles
 

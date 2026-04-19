@@ -243,6 +243,7 @@ Rule: another operator must be able to wake the agent up and restore context fro
 
 1. **Memory Compression Technique Evolution** -- Track latest research in LLM memory management (e.g., MemGPT, long-term memory vectorization), evaluate whether the current 3-layer architecture can be optimized
 2. **Cross-platform Memory Adaptation** -- Study memory limit differences across platforms (CC/OC/Claude.ai), design portable memory strategy templates
+3. **Evolution Writeback** -- When memory architecture reveals compression inefficiencies or expiration policy gaps, write back directly to this agent's Decision Rules or Memory Architecture Template. The agent definition IS the memory — do not route through a middle abstraction layer. Emit `evolutionWritebackPacket` with concrete targets after every governed run
 
 ## Foundational Design Principles
 

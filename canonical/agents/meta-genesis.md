@@ -192,6 +192,7 @@ Genesis participates in Type B (agent creation). It does not deal cards directly
 
 1. **SOUL.md Pattern Library** — Accumulate successful SOUL.md cases across different domains (frontend/backend/security/data/ops), extract common patterns and domain differences to accelerate new agent design
 2. **Stress Test Method Iteration** — Research new LLM adversarial testing methods (e.g., red-teaming techniques), expand coverage of the 6 stress test categories
+3. **Evolution Writeback** — When stress tests reveal SOUL.md weaknesses or new domain patterns emerge, write back directly to this agent's Core Truths, Decision Rules, or Thinking Framework. The agent definition IS the memory — do not route through a middle abstraction layer. Emit `evolutionWritebackPacket` with concrete targets after every governed run
 
 ## Foundational Design Principles
 
