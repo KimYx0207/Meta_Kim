@@ -25,7 +25,8 @@
       "verify",
       "summary",
       "feedback",
-      "evolve"
+      "evolve",
+      "mirror"
     ],
     "markerPhases": [
       "meta_review",
@@ -38,7 +39,8 @@
       "verify",
       "summary",
       "feedback",
-      "evolve"
+      "evolve",
+      "mirror"
     ],
     "summaryPreference": [
       "summary",
@@ -59,7 +61,8 @@
         "verify": "经理验证",
         "summary": "经理汇总",
         "feedback": "CEO反馈",
-        "evolve": "Agent进化"
+        "evolve": "Agent进化",
+        "mirror": "镜像发布"
       },
       "en-US": {
         "direction": "CEO Direction",
@@ -71,8 +74,14 @@
         "verify": "Manager Verify",
         "summary": "Manager Summary",
         "feedback": "CEO Feedback",
-        "evolve": "Agent Evolution"
+        "evolve": "Agent Evolution",
+        "mirror": "Mirror Publish"
       }
+    },
+    "mirrorPolicy": {
+      "appliesToTeamIds": ["team-ai"],
+      "failureMode": "soft",
+      "rationale": "Only team-ai runs produce articles eligible for ai-memory-demo mirror. Mirror failures do NOT block workflow terminal status; a daily cron picks up stragglers. Public display checks file-system presence of ai-memory-demo/.claude/skills/articles/drafts/<slug>.md rather than a DB flag."
     }
   },
   "metaWorkflow": {

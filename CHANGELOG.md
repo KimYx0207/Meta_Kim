@@ -4,9 +4,11 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
-## [Unreleased]
+## [2.0.13] - 2026-04-20
 
 ### Added
+
+- **Layer 3 auto-start on setup**: `node setup.mjs` now automatically starts the MCP Memory Service (HTTP mode) in the background after installation, then verifies the health endpoint at `http://localhost:8000`. If the server starts successfully, a platform-specific boot auto-start entry is created (Windows Startup VBS / macOS LaunchAgent / Linux XDG autostart). The entire sequence is non-blocking — failures print manual instructions instead of aborting setup. Five new i18n keys added per language (en / zh-CN / ja-JP / ko-KR): `mcpMemoryAutoStarting`, `mcpMemoryAutoStarted`, `mcpMemoryAutoStartFailed`, `mcpMemoryAutoStartManual`, `mcpMemoryAutoStartBoot`.
 
 - **Install Manifest Phase 4 — manifest-driven uninstall**: `scripts/uninstall.mjs` now prefers the install manifest over the filesystem-scan heuristic, so teardown follows the exact set of entries Meta_Kim actually wrote (rather than a path-pattern guess).
   - New `manifestEntryToFinding(entry)` adapter maps a schema-v1 manifest entry onto the scan-finding shape that `planActions` already consumes. Entries with `kind` of `pip-package` / `mcp-server` / `git-hook` return `null` — they need dedicated actions the pipeline does not model yet, so only `file` / `dir` / `settings-merge` entries reach `planActions`.

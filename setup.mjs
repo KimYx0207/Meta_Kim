@@ -456,6 +456,11 @@ Possible causes:
     mcpMemoryHookInstalled: "SessionStart hook installed",
     mcpMemoryHookWarnings:
       "Hook installation reported warnings (non-blocking) — underlying stderr shown below:",
+    mcpMemoryAutoStarting: "Starting MCP Memory Service (HTTP, background)...",
+    mcpMemoryAutoStarted: "MCP Memory Service running at http://localhost:8000",
+    mcpMemoryAutoStartFailed: "Auto-start failed — start manually:",
+    mcpMemoryAutoStartManual: "  memory server --http",
+    mcpMemoryAutoStartBoot: "Boot auto-start configured",
     updateHeading: "Update Mode",
     updateNpm: "Reinstalling npm dependencies...",
     updateSkills: "Updating all skills...",
@@ -853,6 +858,11 @@ ${r ? `原始错误：${r}` : ""}
     mcpMemoryHookInstalled: "SessionStart 钩子已安装",
     mcpMemoryHookWarnings:
       "钩子安装产生警告（不影响后续流程）——以下是子进程 stderr 原文：",
+    mcpMemoryAutoStarting: "正在启动 MCP Memory Service（HTTP 后台模式）...",
+    mcpMemoryAutoStarted: "MCP Memory Service 已运行于 http://localhost:8000",
+    mcpMemoryAutoStartFailed: "自动启动失败——请手动启动：",
+    mcpMemoryAutoStartManual: "  memory server --http",
+    mcpMemoryAutoStartBoot: "已配置开机自启",
     updateHeading: "更新模式",
     updateNpm: "正在重新安装 npm 依赖...",
     updateSkills: "正在更新所有技能...",
@@ -1268,6 +1278,13 @@ ${r ? `生エラー：${r}` : ""}
     mcpMemoryHookInstalled: "SessionStart フックをインストールしました",
     mcpMemoryHookWarnings:
       "フックのインストール中に警告が発生しました（非ブロッキング）——子プロセスの stderr を以下に表示します:",
+    mcpMemoryAutoStarting:
+      "MCP Memory Service（HTTP バックグラウンド）を起動中...",
+    mcpMemoryAutoStarted:
+      "MCP Memory Service が http://localhost:8000 で実行中",
+    mcpMemoryAutoStartFailed: "自動起動に失敗——手動で起動してください：",
+    mcpMemoryAutoStartManual: "  memory server --http",
+    mcpMemoryAutoStartBoot: "起動時自動開始を設定しました",
     updateHeading: "アップデートモード",
     updateNpm: "npm依存関係を再インストール中...",
     updateSkills: "すべてのスキルを更新中...",
@@ -1681,6 +1698,12 @@ ${r ? `원본 오류：${r}` : ""}
     mcpMemoryHookInstalled: "SessionStart 훅 설치 완료",
     mcpMemoryHookWarnings:
       "훅 설치에서 경고가 발생했습니다 (비차단) — 하위 프로세스의 stderr 원문은 아래와 같습니다:",
+    mcpMemoryAutoStarting: "MCP Memory Service (HTTP 백그라운드) 시작 중...",
+    mcpMemoryAutoStarted:
+      "MCP Memory Service가 http://localhost:8000에서 실행 중",
+    mcpMemoryAutoStartFailed: "자동 시작 실패 — 수동으로 시작하세요:",
+    mcpMemoryAutoStartManual: "  memory server --http",
+    mcpMemoryAutoStartBoot: "부팅 시 자동 시작 구성 완료",
     updateHeading: "업데이트 모드",
     updateNpm: "npm 의존성 재설치 중...",
     updateSkills: "모든 스킬 업데이트 중...",
@@ -3405,6 +3428,152 @@ function checkMcpMemoryService(python) {
   };
 }
 
+function findMemoryBinPath(resolved) {
+  const plat = platform();
+  const pythonCmd = resolved.python.command || resolved.python;
+  const pythonDir = dirname(pythonCmd);
+  const binName = plat === "win32" ? "memory.exe" : "memory";
+
+  const sameDir = join(pythonDir, binName);
+  if (existsSync(sameDir)) return sameDir;
+
+  if (plat === "win32") {
+    const scriptsDir = join(pythonDir, "Scripts", binName);
+    if (existsSync(scriptsDir)) return scriptsDir;
+  }
+
+  const binDir = join(pythonDir, "..", "bin", binName);
+  if (existsSync(binDir)) return resolve(binDir);
+
+  return null;
+}
+
+async function startMcpMemoryServiceBackground(resolved) {
+  const memoryBin = findMemoryBinPath(resolved);
+  if (!memoryBin) {
+    warn(t.mcpMemoryAutoStartFailed);
+    info(t.mcpMemoryAutoStartManual);
+    return;
+  }
+
+  info(t.mcpMemoryAutoStarting);
+  const env = { ...process.env, MCP_ALLOW_ANONYMOUS_ACCESS: "true" };
+  const plat = platform();
+
+  try {
+    if (plat === "win32") {
+      execSync(`start /B "" "${memoryBin}" server --http`, {
+        env,
+        stdio: "ignore",
+      });
+    } else {
+      execSync(`nohup "${memoryBin}" server --http >/dev/null 2>&1 &`, {
+        env,
+        stdio: "ignore",
+        shell: "/bin/bash",
+      });
+    }
+  } catch {
+    // Background start may report errors but still succeed
+  }
+
+  await new Promise((r) => setTimeout(r, 4000));
+
+  try {
+    const healthy = await new Promise((resolve) => {
+      const http = require("http");
+      const req = http.get(
+        "http://127.0.0.1:8000/api/health",
+        { timeout: 5000 },
+        (res) => {
+          let body = "";
+          res.on("data", (c) => (body += c));
+          res.on("end", () => resolve(body.includes("healthy")));
+        },
+      );
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+
+    if (healthy) {
+      ok(t.mcpMemoryAutoStarted);
+      const bootOk = configureBootAutoStart(memoryBin);
+      if (bootOk) ok(t.mcpMemoryAutoStartBoot);
+      return;
+    }
+  } catch {}
+
+  warn(t.mcpMemoryAutoStartFailed);
+  info(t.mcpMemoryAutoStartManual);
+}
+
+function configureBootAutoStart(memoryBin) {
+  const plat = platform();
+  try {
+    if (plat === "win32") {
+      const startupDir = join(
+        homedir(),
+        "AppData",
+        "Roaming",
+        "Microsoft",
+        "Windows",
+        "Start Menu",
+        "Programs",
+        "Startup",
+      );
+      if (!existsSync(startupDir)) return false;
+      const cmdPath = join(startupDir, "mcp-memory-start.cmd");
+      const vbsPath = join(startupDir, "mcp-memory-silent.vbs");
+      writeFileSync(
+        cmdPath,
+        `@echo off\r\nset MCP_ALLOW_ANONYMOUS_ACCESS=true\r\n"${memoryBin}" server --http\r\n`,
+      );
+      writeFileSync(
+        vbsPath,
+        `Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.Run """${cmdPath}""", 0, False\r\n`,
+      );
+      return true;
+    }
+    if (plat === "darwin") {
+      const launchDir = join(homedir(), "Library", "LaunchAgents");
+      mkdirSync(launchDir, { recursive: true });
+      const logPath = join(homedir(), ".meta-kim", "mcp-memory.log");
+      mkdirSync(join(homedir(), ".meta-kim"), { recursive: true });
+      writeFileSync(
+        join(launchDir, "com.meta-kim.mcp-memory-service.plist"),
+        `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.meta-kim.mcp-memory-service</string>
+  <key>ProgramArguments</key><array>
+    <string>${memoryBin}</string><string>server</string><string>--http</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>MCP_ALLOW_ANONYMOUS_ACCESS</key><string>true</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>${logPath}</string>
+  <key>StandardErrorPath</key><string>${logPath}</string>
+</dict></plist>`,
+      );
+      return true;
+    }
+    // Linux: XDG autostart
+    const autoDir = join(homedir(), ".config", "autostart");
+    mkdirSync(autoDir, { recursive: true });
+    writeFileSync(
+      join(autoDir, "mcp-memory-service.desktop"),
+      `[Desktop Entry]\nType=Application\nName=MCP Memory Service\nExec=env MCP_ALLOW_ANONYMOUS_ACCESS=true "${memoryBin}" server --http\nNoDisplay=true\n`,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function installMcpMemoryServiceStep(inUpdateMode = false) {
   heading(t.stepMcpMemory);
 
@@ -3526,6 +3695,9 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
   // pipeline (pip package → .mcp.json → hook file → SessionStart registration
   // → health check) runs from a single `node setup.mjs` invocation.
   await runMcpMemoryHookInstaller();
+
+  // Step 4.8 — start the HTTP server in background and configure boot auto-start
+  await startMcpMemoryServiceBackground(resolved);
 }
 
 function ensureNetworkxCompatibility(python) {
