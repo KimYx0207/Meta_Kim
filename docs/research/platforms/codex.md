@@ -31,7 +31,7 @@ Note: The `.agents/skills/` project-level path is a **universal path** shared by
 | Basic SKILL.md | Y | Full support |
 | `allowed-tools` | Y | Tool restriction per skill |
 | `context: fork` | N | Not supported |
-| Hooks | N | Not supported |
+| Hooks | Y | `.codex/hooks.json` (SessionStart, SessionStop, UserPromptSubmit, PreToolUse, PostToolUse); v0.117.0+ |
 | Plugins | N | No marketplace |
 
 ### Agent Configuration

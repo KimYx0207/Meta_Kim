@@ -24,6 +24,7 @@ import sys
 import urllib.request
 import urllib.error
 import argparse
+import re
 from datetime import datetime, timezone
 
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
@@ -323,9 +324,37 @@ def format_memories(mems, header, max_len):
 
 # ─── SessionStart (layered) ────────────────────────────────────────────────
 
+def _write_session_start_note():
+    """Write a session-start record to MCP Memory."""
+    try:
+        project_name = detect_project_name()
+        cwd = os.getcwd()
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")[:19]
+        content = (
+            f"Claude Code 会话启动 - {now} - "
+            f"工作目录: {cwd} - 项目: {project_name}"
+        )
+        tags = ["会话", "启动", "系统", project_name]
+        _api_post("/api/memories", {
+            "content": content,
+            "tags": tags,
+            "memory_type": "note",
+            "metadata": {
+                "generated_by": "meta-kim-session-start",
+                "project_dir": cwd,
+            },
+        })
+    except Exception:
+        pass
+
+
 def main_session_start():
     """L1 compact: task state + filtered memories. ~120-500 chars."""
     parts = []
+
+    # Write session-start record first
+    if check_service_health():
+        _write_session_start_note()
 
     ts = load_task_state()
     if ts:

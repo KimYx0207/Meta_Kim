@@ -1493,6 +1493,9 @@ async function installAllSkillsForRuntime(label, runtimeHome, runtimeId) {
     }
     await sanitizeCompatibilityRoots(runtimeId, skillsRoot, spec);
     await ensureHookLayoutAliases(runtimeHome, spec);
+    // Hook co-deployment for subdirExtraction installs (e.g. planning-with-files)
+    await deployHookSubdirs(spec, targetDir, runtimeId);
+    await deployHookConfigFiles(spec, targetDir, runtimeId);
   }
   const hasManifestSkillCreator = SKILL_REPOS.some(
     (spec) => spec.id === "skill-creator",
@@ -1641,11 +1644,70 @@ async function installPluginBundlesForNonClaudeRuntimes(
         }
       }
 
+      // Fallback: if platform subdir was too sparse (no SKILL.md or key files),
+      // try the spec's fallbackContentDir (e.g. "skills") as the main content
+      if (ok && spec.fallbackContentDir) {
+        const hasSkillFile =
+          (await pathExists(path.join(targetDir, "SKILL.md"))) ||
+          (await pathExists(path.join(targetDir, "AGENTS.md"))) ||
+          (await pathExists(path.join(targetDir, "CLAUDE.md")));
+        const dirSize = await (async () => {
+          try {
+            const entries = await fs.readdir(targetDir);
+            return entries.length;
+          } catch {
+            return 0;
+          }
+        })();
+        // If only 1-2 files pulled and no key entry file, it's too sparse
+        if (!hasSkillFile && dirSize <= 2 && !dryRun) {
+          const fallback = spec.fallbackContentDir;
+          const tmp2 = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-fb-"));
+          try {
+            await runGitAsync(
+              [
+                "clone",
+                "--depth",
+                "1",
+                "--filter=blob:none",
+                "--sparse",
+                spec.repo,
+                tmp2,
+              ],
+              { skillLabel: `${spec.id}-fallback (${runtimeId})` },
+            );
+            await runGitAsync(["sparse-checkout", "set", fallback], {
+              cwd: tmp2,
+            });
+            const src2 = path.join(
+              tmp2,
+              ...fallback.split("/").filter(Boolean),
+            );
+            if ((await pathExists(src2)) && !(await isEmptyDir(src2))) {
+              await fs.rm(targetDir, { recursive: true, force: true });
+              await fs.mkdir(path.dirname(targetDir), { recursive: true });
+              await fs.cp(src2, targetDir, { recursive: true, force: true });
+              console.log(
+                `${C.cyan}↻${C.reset} ${spec.id} -> ${targetDir} ${C.dim}(fallback from ${fallback})${C.reset}`,
+              );
+            }
+          } catch {
+            // fallback failed — keep what we have
+          } finally {
+            await fs.rm(tmp2, { recursive: true, force: true });
+          }
+        }
+      }
+
       if (!ok) {
         console.warn(
           `${C.yellow}⚠${C.reset} ${spec.id}: no suitable subdir for ${runtimeId} (tried: ${triedSubdirs.join(", ")})`,
         );
       }
+
+      // Hook co-deployment for plugin bundles
+      await deployHookSubdirs(spec, targetDir, runtimeId);
+      await deployHookConfigFiles(spec, targetDir, runtimeId);
     }
   }
 }
@@ -2735,6 +2797,117 @@ async function main() {
   // if (logFileResolved) {
   //   console.log(`\n${C.cyan}📋 ${t.logSaved(logFileResolved)}${C.reset}`);
   // }
+}
+
+// ========== Hook Co-Deployment ==========
+
+async function deployHookSubdirs(spec, targetDir, runtimeId) {
+  const hookSubdirs = spec.hookSubdirs;
+  if (!hookSubdirs || !hookSubdirs[runtimeId]) return;
+
+  const subdirs = hookSubdirs[runtimeId];
+  if (!Array.isArray(subdirs) || subdirs.length === 0) return;
+
+  const hooksDir = path.join(targetDir, "hooks");
+  if (!dryRun) {
+    await fs.mkdir(hooksDir, { recursive: true });
+  }
+
+  for (const hookSubdir of subdirs) {
+    if (dryRun) {
+      console.log(
+        t.dryRun(
+          `git sparse-checkout ${spec.repo}:${hookSubdir} -> ${hooksDir}`,
+        ),
+      );
+      continue;
+    }
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-hook-"));
+    try {
+      await runGitAsync(
+        [
+          "clone",
+          "--depth",
+          "1",
+          "--filter=blob:none",
+          "--sparse",
+          spec.repo,
+          tmp,
+        ],
+        { skillLabel: `${spec.id}-hooks (${runtimeId})` },
+      );
+      await runGitAsync(["sparse-checkout", "set", hookSubdir], { cwd: tmp });
+      const src = path.join(tmp, ...hookSubdir.split("/").filter(Boolean));
+      if ((await pathExists(src)) && !(await isEmptyDir(src))) {
+        const entries = await fs.readdir(src);
+        for (const entry of entries) {
+          const srcPath = path.join(src, entry);
+          const destPath = path.join(hooksDir, entry);
+          const stat = await fs.stat(srcPath);
+          if (stat.isFile()) {
+            await fs.copyFile(srcPath, destPath);
+          } else if (stat.isDirectory()) {
+            await fs.cp(srcPath, destPath, { recursive: true, force: true });
+          }
+        }
+        console.log(
+          `${C.green}✓${C.reset} ${spec.id} hooks -> ${hooksDir} ${C.dim}(from ${hookSubdir})${C.reset}`,
+        );
+      }
+    } catch {
+      // hook subdir absent — non-fatal
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  }
+}
+
+async function deployHookConfigFiles(spec, targetDir, runtimeId) {
+  const hookConfigFiles = spec.hookConfigFiles;
+  if (!hookConfigFiles || !hookConfigFiles[runtimeId]) return;
+
+  const configFile = hookConfigFiles[runtimeId];
+  if (dryRun) {
+    console.log(
+      t.dryRun(
+        `git sparse-checkout ${spec.repo}:${configFile} -> ${targetDir}`,
+      ),
+    );
+    return;
+  }
+
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-hcfg-"));
+  try {
+    await runGitAsync(
+      [
+        "clone",
+        "--depth",
+        "1",
+        "--filter=blob:none",
+        "--sparse",
+        spec.repo,
+        tmp,
+      ],
+      { skillLabel: `${spec.id}-hookconfig (${runtimeId})` },
+    );
+    // sparse-checkout the parent dir of the config file
+    const parentDir = path.dirname(configFile).replace(/\\/g, "/");
+    await runGitAsync(["sparse-checkout", "set", parentDir || "."], {
+      cwd: tmp,
+    });
+    const srcPath = path.join(tmp, ...configFile.split("/").filter(Boolean));
+    if (await pathExists(srcPath)) {
+      const destPath = path.join(targetDir, path.basename(configFile));
+      await fs.copyFile(srcPath, destPath);
+      console.log(
+        `${C.green}✓${C.reset} ${spec.id} ${path.basename(configFile)} -> ${targetDir} ${C.dim}(from ${configFile})${C.reset}`,
+      );
+    }
+  } catch {
+    // config file absent — non-fatal
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
 }
 
 main().catch((err) => {

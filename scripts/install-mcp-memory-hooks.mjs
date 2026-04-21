@@ -8,12 +8,12 @@
  *      to ~/.claude/hooks/mcp_memory_global.py
  *   2. Seed ~/.claude/hooks/config.json from config.template.json if not present
  *      (NEVER overwrite an existing config — user customizations are preserved)
- *   3. Copy stop-save-progress.mjs from canonical/runtime-assets/claude/hooks/
+ *   3. Copy stop-save-progress.mjs and stop-memory-save.mjs from canonical/runtime-assets/claude/hooks/
  *      to ~/.claude/hooks/meta-kim/
  *   4. Copy commands from canonical/runtime-assets/claude/commands/ to ~/.claude/commands/
  *      (e.g., save-progress command)
  *   5. Register the SessionStart hook in ~/.claude/settings.json
- *   6. Register the Stop hook in ~/.claude/settings.json (stop-save-progress.mjs)
+ *   6. Register the Stop hook in ~/.claude/settings.json (stop-save-progress.mjs + stop-memory-save.mjs)
  *   7. Warn if MCP server not responding on http://localhost:8000
  *
  * Usage:
@@ -69,6 +69,10 @@ const CANONICAL_STOP_HOOK_SOURCE = join(
   CANONICAL_HOOKS_DIR,
   "stop-save-progress.mjs",
 );
+const CANONICAL_MEMORY_SAVE_HOOK_SOURCE = join(
+  CANONICAL_HOOKS_DIR,
+  "stop-memory-save.mjs",
+);
 const CANONICAL_COMMANDS_DIR = join(
   REPO_ROOT,
   "canonical",
@@ -82,6 +86,10 @@ const HOOK_TARGET = join(HOOKS_TARGET_DIR, "mcp_memory_global.py");
 const CONFIG_TARGET = join(HOOKS_TARGET_DIR, "config.json");
 const META_KIM_HOOKS_DIR = join(HOOKS_TARGET_DIR, "meta-kim");
 const STOP_HOOK_TARGET = join(META_KIM_HOOKS_DIR, "stop-save-progress.mjs");
+const MEMORY_SAVE_HOOK_TARGET = join(
+  META_KIM_HOOKS_DIR,
+  "stop-memory-save.mjs",
+);
 const COMMANDS_TARGET_DIR = join(homedir(), ".claude", "commands");
 const CLAUDE_SETTINGS = join(homedir(), ".claude", "settings.json");
 
@@ -159,17 +167,35 @@ function copyStopHookFile() {
     filesEqual(CANONICAL_STOP_HOOK_SOURCE, STOP_HOOK_TARGET)
   ) {
     ok(`Stop hook already up-to-date: ${STOP_HOOK_TARGET}`);
-    return true;
+  } else {
+    try {
+      copyFileSync(CANONICAL_STOP_HOOK_SOURCE, STOP_HOOK_TARGET);
+      ok(`Stop hook copied → ${STOP_HOOK_TARGET}`);
+    } catch (err) {
+      warn(`Failed to copy stop hook: ${err.message}`);
+    }
   }
 
-  try {
-    copyFileSync(CANONICAL_STOP_HOOK_SOURCE, STOP_HOOK_TARGET);
-    ok(`Stop hook copied → ${STOP_HOOK_TARGET}`);
-    return true;
-  } catch (err) {
-    warn(`Failed to copy stop hook: ${err.message}`);
-    return false;
+  // Also copy the MCP Memory save hook
+  if (!existsSync(CANONICAL_MEMORY_SAVE_HOOK_SOURCE)) {
+    warn(
+      `Memory save hook source missing: ${CANONICAL_MEMORY_SAVE_HOOK_SOURCE}`,
+    );
+  } else if (
+    existsSync(MEMORY_SAVE_HOOK_TARGET) &&
+    filesEqual(CANONICAL_MEMORY_SAVE_HOOK_SOURCE, MEMORY_SAVE_HOOK_TARGET)
+  ) {
+    ok(`Memory save hook already up-to-date: ${MEMORY_SAVE_HOOK_TARGET}`);
+  } else {
+    try {
+      copyFileSync(CANONICAL_MEMORY_SAVE_HOOK_SOURCE, MEMORY_SAVE_HOOK_TARGET);
+      ok(`Memory save hook copied → ${MEMORY_SAVE_HOOK_TARGET}`);
+    } catch (err) {
+      warn(`Failed to copy memory save hook: ${err.message}`);
+    }
   }
+
+  return true;
 }
 
 async function copyCommandsDir() {
@@ -381,19 +407,33 @@ function registerStopHook() {
 
   try {
     const settings = JSON.parse(readFileSync(CLAUDE_SETTINGS, "utf8"));
-    const pythonCmd = pickPythonCommand();
 
     const existingBlocks = settings.hooks?.Stop ?? [];
-    const alreadyRegistered = existingBlocks.some((b) =>
+    const hasSaveProgress = existingBlocks.some((b) =>
       b?.hooks?.some((h) => h?.command?.includes("stop-save-progress.mjs")),
     );
+    const hasMemorySave = existingBlocks.some((b) =>
+      b?.hooks?.some((h) => h?.command?.includes("stop-memory-save.mjs")),
+    );
 
-    if (alreadyRegistered) {
-      ok("Stop hook already registered");
+    if (hasSaveProgress && hasMemorySave) {
+      ok("Stop hooks already registered");
       return true;
     }
 
-    const stopHookCommand = `node "${STOP_HOOK_TARGET}"`;
+    const newHooks = [];
+    if (!hasMemorySave) {
+      newHooks.push({
+        type: "command",
+        command: `node "${MEMORY_SAVE_HOOK_TARGET}"`,
+      });
+    }
+    if (!hasSaveProgress) {
+      newHooks.push({
+        type: "command",
+        command: `node "${STOP_HOOK_TARGET}"`,
+      });
+    }
 
     const nextSettings = {
       ...settings,
@@ -403,12 +443,7 @@ function registerStopHook() {
           ...existingBlocks,
           {
             matcher: "*",
-            hooks: [
-              {
-                type: "command",
-                command: stopHookCommand,
-              },
-            ],
+            hooks: newHooks,
           },
         ],
       },
@@ -418,7 +453,7 @@ function registerStopHook() {
       CLAUDE_SETTINGS,
       JSON.stringify(nextSettings, null, 2) + "\n",
     );
-    ok("Stop hook registered in settings.json");
+    ok(`Stop hook(s) registered in settings.json (+${newHooks.length})`);
     return true;
   } catch (err) {
     warn(`Failed to register Stop hook: ${err.message}`);
@@ -435,7 +470,9 @@ function removeStopHook() {
     const filteredBlocks = settings.hooks.Stop.map((block) => ({
       ...block,
       hooks: (block?.hooks ?? []).filter(
-        (h) => !h?.command?.includes("stop-save-progress.mjs"),
+        (h) =>
+          !h?.command?.includes("stop-save-progress.mjs") &&
+          !h?.command?.includes("stop-memory-save.mjs"),
       ),
     })).filter((block) => (block.hooks ?? []).length > 0);
 
@@ -564,7 +601,9 @@ function remove() {
   removeSessionStartHook();
   removeStopHook();
   info(`Hook file retained (manual delete: rm "${HOOK_TARGET}")`);
-  info(`Stop hook file retained (manual delete: rm "${STOP_HOOK_TARGET}")`);
+  info(
+    `Stop hook files retained (manual delete: rm "${STOP_HOOK_TARGET}" "${MEMORY_SAVE_HOOK_TARGET}")`,
+  );
   info(`Config retained (manual delete: rm "${CONFIG_TARGET}")`);
   ok("Done.\n");
 }

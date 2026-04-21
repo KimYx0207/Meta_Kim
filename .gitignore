@@ -44,6 +44,11 @@ scripts/generate-todo-list.mjs
 tests/output/
 tests/.cache/
 
+# ========== Planning & Progress (local scratch) ==========
+task_plan.md
+progress.md
+findings.md
+
 # ========== Backup / Temporary ==========
 .backup/
 

@@ -30,7 +30,7 @@
 | Basic SKILL.md | Y | Full support |
 | `allowed-tools` | Y | Tool restriction per skill |
 | `context: fork` | N | Not supported |
-| Hooks | N | Not supported |
+| Hooks | Y | Plugin SDK 28 hooks (agent lifecycle, tool execution, message flow, subagent coordination, gateway lifecycle) |
 | Plugins | N | No marketplace |
 | Workspaces | Y | Multi-agent workspace isolation |
 

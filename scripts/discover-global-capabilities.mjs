@@ -2,9 +2,10 @@
  * Meta_Kim 跨平台能力发现器 v2
  *
  * 功能：
- * 1. 扫描3个平台的全局能力（agents/skills/hooks/plugins/commands）
+ * 1. 扫描4个平台的全局能力（agents/skills/hooks/plugins/commands）
  * 2. 使用直接文件遍历而不是glob，更可靠
  * 3. 生成统一的能力索引
+ * 4. 支持 Claude Code / OpenClaw / Codex / Cursor
  */
 
 import { promises as fs } from "node:fs";
@@ -56,6 +57,16 @@ const PLATFORMS = {
         scanSkillFilesRecursive(path.join(baseDir, "skills")),
       commands: async (baseDir) =>
         scanCommandFiles(path.join(baseDir, "commands")),
+    },
+  },
+  cursor: {
+    name: "Cursor",
+    baseDir: () => path.join(os.homedir(), ".cursor"),
+    scanners: {
+      agents: async () => [],
+      skills: async (baseDir) => scanSkillFiles(path.join(baseDir, "skills")),
+      plugins: async (baseDir) =>
+        scanPluginFiles(path.join(baseDir, "plugins")),
     },
   },
 };

@@ -60,6 +60,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "node .claude/hooks/stop-memory-save.mjs"
+          },
+          {
+            "type": "command",
             "command": "node .claude/hooks/stop-compaction.mjs"
           },
           {

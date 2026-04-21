@@ -34,8 +34,8 @@ Note: The `.agents/skills/` project-level path is a **universal path** shared by
 | Basic SKILL.md | Y | Full AgentSkills support |
 | `allowed-tools` | Y | Tool restriction per skill |
 | `context: fork` | N | Not supported |
-| Hooks | N | Not supported |
-| Plugins | N | No marketplace |
+| Hooks | Y | `.cursor/hooks.json` (userPromptSubmit, preToolUse, postToolUse, stop); some bugs reported |
+| Plugins | Y | Reuses Claude Code marketplace infrastructure (`~/.cursor/plugins/`) |
 
 ### Agent Format
 
@@ -60,14 +60,23 @@ This differs from Claude Code (YAML frontmatter + body) and Codex (TOML format).
 5. **planning-with-files** (OthmanAdi): 16+ platforms including Cursor
 6. **AgentSkills standard**: Universal `.agents/skills/` path works for Cursor
 
+### Plugin System
+
+Cursor supports plugins via Claude Code marketplace infrastructure:
+
+- `~/.cursor/plugins/installed.json` — lists installed plugins (e.g., `superpowers@superpowers-marketplace`)
+- `~/.cursor/plugins/marketplaces.json` — configured marketplace sources (`claude-plugins-official`, `anthropic-agent-skills`, `superpowers-marketplace`)
+- Plugin installation follows the same `name@registry` format as Claude Code
+
 ### Differences from Claude Code
 
-- No hooks system
+- Hooks system via `.cursor/hooks.json` (userPromptSubmit, preToolUse, postToolUse, stop)
 - No context:fork capability
-- No plugin marketplace
+- Plugin system reuses Claude Code marketplace (not a separate ecosystem)
 - Agent format is plain Markdown (no frontmatter)
 - Shares `.agents/skills/` universal project path with Codex and others
 - Global skill install path is `~/.cursor/skills/`
+- No global agents directory (agents are project-level only)
 
 ## Data Sources
 

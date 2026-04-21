@@ -11,8 +11,10 @@ Cross-referencing platform capabilities with dependency requirements to determin
 | SKILL.md Format | Y | Y | Y | Y |
 | allowed-tools | Y | Y | Y | Y |
 | context:fork | Y | N | N | N |
-| Hooks System | Y | N | N | N |
-| Claude Plugins | Y | N | N | N |
+| Hooks System | Y (12 events) | Y (5 events, v0.117.0+) | Y (Plugin SDK 28 hooks) | Y (4 events, some bugs) |
+| Marketplace Plugins | Y (11 plugins) | Limited (placeholder) | Limited (placeholder) | Y (reuses Claude marketplaces) |
+| Commands | Y (34 commands) | Y (15 commands) | N | N |
+| Global Agents Path | `~/.claude/agents/` | `~/.codex/agents/` | `~/.openclaw/` workspaces | N (project-level only) |
 
 Source: see `platforms/*.md` for detailed per-platform research.
 
@@ -45,11 +47,11 @@ Notes: Private/restricted repo. `subdirMapping` selects `windows` on win32, `ori
 | Platform | Decision | Install Method | Rationale |
 |----------|----------|---------------|-----------|
 | Claude Code | DISTRIBUTE | `git clone --depth 1` | Uses `.claude/hooks/` + `.claude/settings.json` |
-| Codex | SKIP | N/A | Hooks system not supported |
-| OpenClaw | SKIP | N/A | Hooks system not supported |
-| Cursor | SKIP | N/A | Hooks system not supported |
+| Codex | SKIP | N/A | hookprompt only implements Claude Code's hook format |
+| OpenClaw | SKIP | N/A | hookprompt only implements Claude Code's hook format |
+| Cursor | SKIP | N/A | hookprompt only implements Claude Code's hook format |
 
-Notes: Only claude-only dependency. Correctly isolated via `targets: ["claude"]` in skills.json.
+Notes: Claude-only by design — hookprompt's code targets Claude Code's specific hook configuration format. Codex and Cursor both have hooks systems, but hookprompt does not implement adapters for them.
 
 ### 4. superpowers
 
@@ -125,25 +127,25 @@ Notes: From `anthropics/skills` repo. SKILL.md specification reference.
 |------|--------|-------|
 | `config/skills.json` | CORRECT | All 9 skills have correct targets |
 | `config/sync.json` | CORRECT | cursor in all 3 target lists |
-| `scripts/meta-kim-sync-config.mjs` | MINOR ISSUE | cursor `supportsGlobalDependencyInstall: false` contradicts actual install behavior |
+| `scripts/meta-kim-sync-config.mjs` | RESOLVED | `supportsGlobalDependencyInstall: true` (previously reported as `false`; fixed) |
 | `scripts/sync-runtimes.mjs` | CORRECT | Full cursor sync support |
 | `scripts/install-global-skills-all-runtimes.mjs` | CORRECT | cursor in resolveHomes() and main() |
 
 ### Issue: supportsGlobalDependencyInstall Flag
 
-**Location**: `scripts/meta-kim-sync-config.mjs:128`
+**Location**: `scripts/meta-kim-sync-config.mjs:127`
 
 ```js
 cursor: {
   activation: {
-    supportsGlobalDependencyInstall: false,  // <-- contradicts actual behavior
+    supportsGlobalDependencyInstall: true,  // corrected from false
   }
 }
 ```
 
-`install-global-skills-all-runtimes.mjs` does install to `~/.cursor/skills/` globally. The flag should be `true`.
+Previously reported as `false`, but `install-global-skills-all-runtimes.mjs` does install to `~/.cursor/skills/` globally. The flag has been corrected to `true`.
 
-**Impact**: Non-blocking. The install script does not read this flag, but it is semantically incorrect metadata.
+**Impact**: Resolved. Flag now matches actual behavior.
 
 ## Research Date
 

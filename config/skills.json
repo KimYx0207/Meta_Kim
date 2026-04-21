@@ -43,6 +43,7 @@
       "repo": "obra/superpowers",
       "claudePlugin": "superpowers@superpowers-marketplace",
       "installMethod": "pluginMarketplace",
+      "fallbackContentDir": "skills",
       "targets": [
         "claude",
         "codex",
@@ -70,6 +71,14 @@
       "installMethod": "subdirExtraction",
       "subdir": "skills/planning-with-files",
       "pluginHookCompat": true,
+      "hookSubdirs": {
+        "codex": [".codex/hooks"],
+        "cursor": [".cursor/hooks"]
+      },
+      "hookConfigFiles": {
+        "codex": ".codex/hooks.json",
+        "cursor": ".cursor/hooks.json"
+      },
       "targets": [
         "claude",
         "codex",

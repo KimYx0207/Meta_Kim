@@ -33,29 +33,30 @@
 - Claude Code 的项目级 `subagents + skills + hooks + MCP`
 - Codex 的仓库级 `AGENTS.md + custom agents + project skills + MCP config + sandbox/approval config example`
 - OpenClaw 的 `workspace family + skill + bundled hooks + boot + memory + local auth bootstrap + agent-to-agent`
+- Cursor 的项目级 `agents + skills + MCP config`
 
 ### 不能诚实宣称“仓库全覆盖”的部分
 
-- Claude Code、Codex、OpenClaw 的账号体系、桌面 UI、云端状态
+- Claude Code、Codex、OpenClaw、Cursor 的账号体系、桌面 UI、云端状态
 - OpenClaw 的 hook 启用结果仍依赖宿主 OpenClaw CLI/网关版本
 - Codex 与 Claude 的最终工具面仍受宿主会话参数、审批策略、运行环境影响
 
 ## 三、能力面逐项审计
 
-| 能力面 | Claude Code | Codex | OpenClaw | Meta_Kim 当前状态 |
-| --- | --- | --- | --- | --- |
-| 理论总源 | 原生可读项目文档 | 原生可读项目文档 | 原生可读 workspace 文档 | 已覆盖，主源为 `docs/meta.md` |
-| 角色入口 | `CLAUDE.md` + `.claude/agents/` | `AGENTS.md` + `.codex/agents/` | `workspaces/<agent>/SOUL.md` 等 | 已覆盖 |
-| 子代理 / 自定义代理 | 原生 subagents | 原生 custom agents / subagents | 原生多 agent workspace | 已覆盖 |
-| 项目级 Skill | `.claude/skills/` | `.agents/skills/` | workspace skill + installable skill | 已覆盖 |
-| 兼容 Skill 镜像 | 不需要 | `.codex/skills/` 兼容镜像 | `openclaw/skills/` 镜像 | 已覆盖 |
-| MCP | `.mcp.json` | `config.toml` 例子 | 共享同一 MCP server | 已覆盖 |
-| Hook / 守卫 | `.claude/settings.json` | 无仓库级原生 hook 文件面 | bundled hooks + `BOOT.md` | 已覆盖，但不是 1:1 同构 |
-| 启动文件 | `CLAUDE.md` / agent prompt | `AGENTS.md` / custom agent prompt | `BOOT.md` / `BOOTSTRAP.md` / `IDENTITY.md` | 已覆盖 |
-| 记忆入口 | 文档式约定 | 宿主上下文 + SQLite/agents state | `MEMORY.md` + `session-memory` hook | 已覆盖 |
-| 多代理路由 | Claude 原生委派 | Codex subagents | OpenClaw agent-to-agent | 已覆盖 |
-| Sandbox / Approval | Claude 原生 permission / tool control | `sandbox_mode` / `approval_policy` | 宿主网关与工具约束 | 已覆盖到仓库配置入口 |
-| 本地验证 | `claude agents` + schema eval | `codex exec --json` smoke | `openclaw config validate` + 本地 agent smoke | 已覆盖 |
+| 能力面 | Claude Code | Codex | OpenClaw | Cursor | Meta_Kim 当前状态 |
+| --- | --- | --- | --- | --- | --- |
+| 理论总源 | 原生可读项目文档 | 原生可读项目文档 | 原生 workspace 文档 | 原生可读项目文档 | 已覆盖，主源为 `docs/meta.md` |
+| 角色入口 | `CLAUDE.md` + `.claude/agents/` | `AGENTS.md` + `.codex/agents/` | `workspaces/<agent>/SOUL.md` 等 | `.cursor/agents/*.md`（项目级） | 已覆盖 |
+| 子代理 / 自定义代理 | 原生 subagents | 原生 custom agents / subagents | 原生多 agent workspace | Cursor 原生 agent rules | 已覆盖 |
+| 项目级 Skill | `.claude/skills/` | `.agents/skills/` | workspace skill + installable skill | `.agents/skills/`（通用路径） | 已覆盖 |
+| 兼容 Skill 镜像 | 不需要 | `.codex/skills/` 兼容镜像 | `openclaw/skills/` 镜像 | `~/.cursor/skills/` 全局 | 已覆盖 |
+| MCP | `.mcp.json` | `config.toml` 例子 | 共享同一 MCP server | `.cursor/mcp.json` | 已覆盖 |
+| Hook / 守卫 | `.claude/settings.json` (12 events) | `.codex/hooks.json` (5 events) | Plugin SDK 28 hooks + bundled hooks | `.cursor/hooks.json` (4 events) | 已覆盖，但不是 1:1 同构 |
+| 启动文件 | `CLAUDE.md` / agent prompt | `AGENTS.md` / custom agent prompt | `BOOT.md` / `BOOTSTRAP.md` / `IDENTITY.md` | `.cursorrules` / agent prompt | 已覆盖 |
+| 记忆入口 | 文档式约定 | 宿主上下文 + SQLite/agents state | `MEMORY.md` + `session-memory` hook | 文档式约定 | 已覆盖 |
+| 多代理路由 | Claude 原生委派 | Codex subagents | OpenClaw agent-to-agent | Cursor 原生 agent 委派 | 已覆盖 |
+| Sandbox / Approval | Claude 原生 permission / tool control | `sandbox_mode` / `approval_policy` | 宿主网关与工具约束 | Cursor 原生 approval | 已覆盖到仓库配置入口 |
+| 本地验证 | `claude agents` + schema eval | `codex exec --json` smoke | `openclaw config validate` + 本地 agent smoke | `.cursor/agents/` 存在性检查 | 已覆盖 |
 
 ## 四、仓库内对应位置
 
@@ -82,6 +83,10 @@
   - `openclaw/workspaces/*/AGENTS.md`
   - `openclaw/workspaces/*/TOOLS.md`
   - `openclaw/workspaces/*/skills/meta-theory/SKILL.md`
+- Cursor:
+  - `.cursor/agents/*.md`
+  - `.cursor/skills/meta-theory/SKILL.md`
+  - `.cursor/mcp.json`
 
 ## 五、最终判断
 
