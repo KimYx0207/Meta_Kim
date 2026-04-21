@@ -6,6 +6,16 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
+## [Unreleased]
+
+### Fixed
+
+- **4-runtime hooks correction** — All four platforms (Claude Code, Codex, OpenClaw, Cursor) have native hooks systems. Previous docs incorrectly stated only Claude Code had hooks. Codex has `hooks.json` (5 events since v0.117.0), OpenClaw has Plugin SDK hooks (28 hooks), and Cursor has `hooks.json` (4 events). Updated `runtime-capability-matrix.md`, `runtime-coverage-audit.md`, `distribution-matrix.md`, and all 4 README language variants.
+- **PWF hook co-deployment** — `install-global-skills-all-runtimes.mjs` now deploys planning-with-files lifecycle hooks to Codex (`.codex/hooks/` + `hooks.json`) and Cursor (`.cursor/hooks/` + `hooks.json`) via new `deployHookSubdirs()` and `deployHookConfigFiles()` helpers.
+- **Superpowers sparse fallback** — Added `fallbackContentDir` logic to detect when platform-specific subdirs (`.codex/`, `.cursor/`) are too sparse and fall back to the main `skills/` content directory.
+- **discover-global-capabilities.mjs** — Added Cursor platform scanning (skills + plugins).
+- **README cross-platform mapping** — Added hooks to Codex, OpenClaw, and Cursor entries in all 4 language READMEs (EN/ZH/JA/KO).
+
 ## [2.0.15] - 2026-04-20
 
 ### Added

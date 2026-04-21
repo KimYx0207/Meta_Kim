@@ -467,9 +467,9 @@ Meta_Kim은 현재 4개 플랫폼에 매핑되어 있습니다:
 | 플랫폼 | 상태 | 매핑 방식 |
 | --- | --- | --- |
 | **Claude Code** | 완전 지원 | `.claude/agents/*.md` + `SKILL.md` + hooks + MCP |
-| **Codex** | 완전 지원 | `.codex/agents/*.toml` + skills + commands |
-| **OpenClaw** | 완전 지원 | `openclaw/` 디렉터리 구조 + workspaces |
-| **Cursor** | 완전 지원 | `.cursor/agents/*.md` + skills + MCP |
+| **Codex** | 완전 지원 | `.codex/agents/*.toml` + skills + commands + hooks |
+| **OpenClaw** | 완전 지원 | `openclaw/` 디렉터리 구조 + workspaces + hooks |
+| **Cursor** | 완전 지원 | `.cursor/agents/*.md` + skills + hooks + MCP |
 
 핵심 논리는 동일(`canonical/`)하며, `npm run sync:runtimes`를 통해 다른 플랫폼별 파일 구조로 투영합니다.
 
@@ -478,9 +478,9 @@ flowchart TB
     CANONICAL["canonical/<br/>(단일 소스 레이어)"]
 
     CANONICAL --> |npm run sync:runtimes| CLAUDE[".claude/<br/>Claude Code<br/>agents + skills + hooks"]
-    CANONICAL --> |npm run sync:runtimes| CODEX[".codex/<br/>Codex<br/>agents.toml + skills"]
-    CANONICAL --> |npm run sync:runtimes| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills"]
-    CANONICAL --> |npm run sync:runtimes| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + MCP"]
+    CANONICAL --> |npm run sync:runtimes| CODEX[".codex/<br/>Codex<br/>agents.toml + skills + hooks"]
+    CANONICAL --> |npm run sync:runtimes| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills + hooks"]
+    CANONICAL --> |npm run sync:runtimes| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + hooks + MCP"]
 
     NEW[새 플랫폼...] -.-> |설정 매핑| CANONICAL
 

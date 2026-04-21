@@ -468,9 +468,9 @@ Meta_Kim currently maps to four platforms:
 | Platform | Status | Mapping style |
 | --- | --- | --- |
 | **Claude Code** | Fully supported | `.claude/agents/*.md` + `SKILL.md` + hooks + MCP |
-| **Codex** | Fully supported | `.codex/agents/*.toml` + skills + commands |
-| **OpenClaw** | Fully supported | `openclaw/` directory structure + workspaces |
-| **Cursor** | Fully supported | `.cursor/agents/*.md` + skills + MCP |
+| **Codex** | Fully supported | `.codex/agents/*.toml` + skills + commands + hooks |
+| **OpenClaw** | Fully supported | `openclaw/` directory structure + workspaces + hooks |
+| **Cursor** | Fully supported | `.cursor/agents/*.md` + skills + hooks + MCP |
 
 The core logic is the same (`canonical/`), and the repository projects it into different platform-specific file structures through `npm run sync:runtimes`.
 
@@ -479,9 +479,9 @@ flowchart TB
     CANONICAL["canonical/<br/>(single source layer)"]
 
     CANONICAL --> |npm run sync:runtimes| CLAUDE[".claude/<br/>Claude Code<br/>agents + skills + hooks"]
-    CANONICAL --> |npm run sync:runtimes| CODEX[".codex/<br/>Codex<br/>agents.toml + skills"]
-    CANONICAL --> |npm run sync:runtimes| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills"]
-    CANONICAL --> |npm run sync:runtimes| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + MCP"]
+    CANONICAL --> |npm run sync:runtimes| CODEX[".codex/<br/>Codex<br/>agents.toml + skills + hooks"]
+    CANONICAL --> |npm run sync:runtimes| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills + hooks"]
+    CANONICAL --> |npm run sync:runtimes| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + hooks + MCP"]
 
     NEW[New platform...] -.-> |config mapping| CANONICAL
 

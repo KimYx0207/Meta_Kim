@@ -467,9 +467,9 @@ Meta_Kim 当前已经映射了 4 个平台：
 | 平台 | 状态 | 映射方式 |
 | --- | --- | --- |
 | **Claude Code** | 完整支持 | `.claude/agents/*.md` + `SKILL.md` + hooks + MCP |
-| **Codex** | 完整支持 | `.codex/agents/*.toml` + skills + commands |
-| **OpenClaw** | 完整支持 | `openclaw/` 目录结构 + workspaces |
-| **Cursor** | 完整支持 | `.cursor/agents/*.md` + skills + MCP |
+| **Codex** | 完整支持 | `.codex/agents/*.toml` + skills + commands + hooks |
+| **OpenClaw** | 完整支持 | `openclaw/` 目录结构 + workspaces + hooks |
+| **Cursor** | 完整支持 | `.cursor/agents/*.md` + skills + hooks + MCP |
 
 核心逻辑是同一套（`canonical/` 目录），只是通过同步脚本（`npm run sync:runtimes`）投影到不同平台的文件结构。
 
@@ -478,9 +478,9 @@ flowchart TB
     CANONICAL["canonical/<br/>（统一源码层）"]
 
     CANONICAL --> |npm run sync:runtimes| CLAUDE[".claude/<br/>Claude Code<br/>agents + skills + hooks"]
-    CANONICAL --> |npm run sync:runtimes| CODEX[".codex/<br/>Codex<br/>agents.toml + skills"]
-    CANONICAL --> |npm run sync:runtimes| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills"]
-    CANONICAL --> |npm run sync:runtimes| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + MCP"]
+    CANONICAL --> |npm run sync:runtimes| CODEX[".codex/<br/>Codex<br/>agents.toml + skills + hooks"]
+    CANONICAL --> |npm run sync:runtimes| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills + hooks"]
+    CANONICAL --> |npm run sync:runtimes| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + hooks + MCP"]
 
     NEW[新平台...] -.-> |配置映射| CANONICAL
 
@@ -500,7 +500,7 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | **agent** | 原生 agents/subagents，项目级与用户级都成熟 | custom agents/subagents 很强 | workspace 型 agent，支持 agent-to-agent | agent 投影可用，较轻 |
 | **skill/references** | 原生 skill、references、全局技能生态完整 | `.agents/skills/` 兼容很好 | workspace skill + installable skill | skill/references 接入较轻 |
-| **hook/自动化** | 项目级 hooks + settings.json + 插件生态 | 没有仓库级原生 hook 文件面 | 有 workspace boot/hook 风格能力 | 原生治理 hook 最弱 |
+| **hook/自动化** | 项目级 hooks + settings.json + 插件生态（12 events） | hooks.json 原生支持（5 events, v0.117.0+） | Plugin SDK hooks（28 hooks） | hooks.json 原生支持（4 events） |
 | **MCP/配置** | 原生 MCP 与配置面完整 | 可接 runtime adapter 与 MCP | workspace config 明确 | 可接 MCP，但整体较轻 |
 | **治理闭环承载力** | **最高** | 高，但低于 Claude Code | 高，但形态不同 | 最轻 |
 
