@@ -52,6 +52,10 @@ findings.md
 # ========== Backup / Temporary ==========
 .backup/
 
+# ========== Terminal / Shell Cache Files ==========
+*.omp.cache
+pwsh.*.omp.cache
+
 
 # ========== Root-level images (docs/images/ is tracked) ==========
 # README files reference docs/images/ — do NOT ignore docs/images/
