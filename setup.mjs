@@ -641,6 +641,8 @@ Possible causes:
     npxQuickDirExists: "Directory already exists — will update files inside",
     npxQuickDone: "Project ready!",
     npxQuickOpenIn: "Open your platform in this directory:",
+    npxQuickAskDeploy:
+      "Deploy runtime files to a custom directory? (e.g. Desktop)",
     aboutAuthor: "About the Author",
     contactWebsite: "Website",
     contactGithub: "GitHub",
@@ -1076,6 +1078,7 @@ ${r ? `原始错误：${r}` : ""}
     npxQuickDirExists: "目录已存在 — 将更新其中的文件",
     npxQuickDone: "项目就绪！",
     npxQuickOpenIn: "在该目录打开你的平台：",
+    npxQuickAskDeploy: "要把运行时文件部署到指定目录吗？（比如桌面）",
     aboutAuthor: "关于作者",
     contactWebsite: "个人主页",
     contactGithub: "GitHub",
@@ -1547,6 +1550,8 @@ ${r ? `生エラー：${r}` : ""}
     npxQuickDirExists: "ディレクトリが既に存在します — ファイルを更新します",
     npxQuickDone: "プロジェクトの準備完了！",
     npxQuickOpenIn: "このディレクトリでプラットフォームを開く：",
+    npxQuickAskDeploy:
+      "ランタイムファイルを指定ディレクトリにデプロイしますか？（例：デスクトップ）",
     aboutAuthor: "作者について",
     contactWebsite: "ウェブサイト",
     contactGithub: "GitHub",
@@ -1997,6 +2002,8 @@ ${r ? `원본 오류：${r}` : ""}
     npxQuickDirExists: "디렉터리가 이미 존재합니다 — 파일을 업데이트합니다",
     npxQuickDone: "프로젝트 준비 완료!",
     npxQuickOpenIn: "이 디렉터리에서 플랫폼 열기:",
+    npxQuickAskDeploy:
+      "런타임 파일을 지정 디렉터리에 배포할까요? (예: 바탕 화면)",
     aboutAuthor: "작성자 소개",
     contactWebsite: "웹사이트",
     contactGithub: "GitHub",
@@ -2632,6 +2639,32 @@ function deployPlatformFiles(platformId, targetDir) {
     copyIfExists(".cursor", ".cursor");
   }
   return fileCount;
+}
+
+async function offerDeployToDirectory(runtimes, activeTargets) {
+  const wantDeploy = await askYesNo(t.npxQuickAskDeploy, false);
+  if (!wantDeploy) return;
+
+  const platformId = await askQuickPlatform();
+  const targetDir = await askTargetDirectory();
+
+  if (existsSync(targetDir)) {
+    console.log(`${C.dim}  ${t.npxQuickDirExists}${C.reset}`);
+  } else {
+    mkdirSync(targetDir, { recursive: true });
+  }
+
+  console.log(`${C.dim}  ${t.npxQuickCreating} ${targetDir}${C.reset}`);
+
+  await withProgress(t.npxQuickCopyFiles, async () => {
+    const count = deployPlatformFiles(platformId, targetDir);
+    quickDeployDir = targetDir;
+    return count > 0;
+  });
+
+  console.log(`${C.green}${C.bold}✓ ${t.npxQuickDone}${C.reset}`);
+  console.log(`${C.dim}  ${targetDir}${C.reset}`);
+  console.log("");
 }
 
 async function runQuickDeploy() {
@@ -4460,7 +4493,6 @@ async function main() {
   // ── Interactive: choose action ──
   const actionLabels = [
     t.actionInstall,
-    t.actionInstallQuick,
     t.actionUpdate,
     t.actionCheck,
     t.actionExit,
@@ -4468,9 +4500,8 @@ async function main() {
   const actionIdx = await askSelect(t.actionPrompt, actionLabels);
 
   if (actionIdx === 0) await runInstall();
-  else if (actionIdx === 1) await runQuickDeploy();
-  else if (actionIdx === 2) await runUpdate();
-  else if (actionIdx === 3) await runCheck();
+  else if (actionIdx === 1) await runUpdate();
+  else if (actionIdx === 2) await runCheck();
   else process.exit(0);
 }
 
@@ -4637,23 +4668,8 @@ async function runInstall() {
 
   console.log(`\n${C.bold}${C.green}✓ ${t.installComplete}${C.reset}\n`);
 
-  // Post-install activation status table
-  const activationStatus = `
-┌─────────────────────────────────────────────────────────────┐
-│  Meta_Kim 安装概览                                           │
-├─────────────────────────────────────────────────────────────┤
-│  ✓ Layer 1 (Memory)      已自动激活 — 记忆在本次会话生效      │
-│  ✓ Layer 2 (Graphify)    已安装 — 下次 git 操作时生成图谱     │
-│  ○ Layer 3 (SQLite-Vec)  未启动 — 需要运行 MCP 服务           │
-│     启动命令: npm run meta:doctor  选择 "运行环境诊断"         │
-├─────────────────────────────────────────────────────────────┤
-│  接下来:                                                    │
-│  1. 运行 npm run meta:check 验证安装状态                    │
-│  2. 在当前目录启动 Claude Code 开始使用                      │
-│  3. 遇到问题? 运行 npm run meta:doctor                     │
-└─────────────────────────────────────────────────────────────┘
-`;
-  console.log(activationStatus);
+  // Ask user if they want to deploy to a custom directory
+  await offerDeployToDirectory(runtimes, activeTargets);
 
   showNextSteps(runtimes);
 }
@@ -4760,6 +4776,8 @@ async function runUpdate() {
   const { supportedTargets } = await resolveTargetContext(args);
   checkSync(runtimes, supportedTargets);
   console.log(`\n${C.bold}${C.green}✓ ${t.updateComplete}${C.reset}\n`);
+
+  await offerDeployToDirectory(runtimes, activeTargets);
 }
 
 async function runCheck() {
