@@ -23,6 +23,7 @@ import {
   rmSync,
   readdirSync,
   cpSync,
+  statSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -294,17 +295,13 @@ ${r ? `Raw error: ${r}` : ""}
       "After installation, here is what is available and how each layer activates:",
     postInstallNotesPlatformSync: "Platform capability sync:",
     platformClauleCode: "Claude Code",
-    platformClauleCodeCap:
-      "agents + skills + hooks (Layer 1 Memory auto / Layer 2 Graphify auto / Layer 3 SQL needs server startup)",
+    platformClauleCodeCap: "agents + skills + hooks",
     platformCodex: "Codex",
-    platformCodexCap:
-      "agents + skills (Layer 1 Memory needs manual hook config / Layer 2 Graphify auto / Layer 3 SQL needs server startup)",
+    platformCodexCap: "agents + skills",
     platformOpenClaw: "OpenClaw",
-    platformOpenClawCap:
-      "workspace + skills (Layer 1 Memory needs manual hook config / Layer 2 Graphify auto / Layer 3 SQL needs server startup)",
+    platformOpenClawCap: "workspace + skills",
     platformCursor: "Cursor",
-    platformCursorCap:
-      "agents + skills (Layer 1 Memory needs manual hook config / Layer 2 Graphify auto / Layer 3 SQL needs server startup)",
+    platformCursorCap: "agents + skills",
     postInstallNotesLayerActivation: "Three-layer memory activation:",
     layer1Label: "Layer 1 (Memory)",
     layer1Note: "automatic — built into Claude Code",
@@ -643,6 +640,8 @@ Possible causes:
     npxQuickOpenIn: "Open your platform in this directory:",
     npxQuickAskDeploy:
       "Deploy runtime files to a custom directory? (e.g. Desktop)",
+    npxQuickDeployYes: "Yes, deploy to a custom directory",
+    npxQuickDeployNo: "No, skip for now",
     aboutAuthor: "About the Author",
     contactWebsite: "Website",
     contactGithub: "GitHub",
@@ -749,17 +748,13 @@ ${r ? `原始错误：${r}` : ""}
     postInstallNotesIntro: "安装完成后，各层能力的使用方式如下：",
     postInstallNotesPlatformSync: "各平台能力同步情况：",
     platformClauleCode: "Claude Code",
-    platformClauleCodeCap:
-      "agents + skills + hooks（第1层 Memory 自动 / 第2层 Graphify 自动 / 第3层 SQL 需启动服务）",
+    platformClauleCodeCap: "agents + skills + hooks",
     platformCodex: "Codex",
-    platformCodexCap:
-      "agents + skills（第1层 Memory 需手动配置 hooks / 第2层 Graphify 自动 / 第3层 SQL 需启动服务）",
+    platformCodexCap: "agents + skills",
     platformOpenClaw: "OpenClaw",
-    platformOpenClawCap:
-      "workspace + skills（第1层 Memory 需手动配置 hooks / 第2层 Graphify 自动 / 第3层 SQL 需启动服务）",
+    platformOpenClawCap: "workspace + skills",
     platformCursor: "Cursor",
-    platformCursorCap:
-      "agents + skills（第1层 Memory 需手动配置 hooks / 第2层 Graphify 自动 / 第3层 SQL 需启动服务）",
+    platformCursorCap: "agents + skills",
     postInstallNotesLayerActivation: "三层记忆激活方式：",
     layer1Label: "第一层（Memory）",
     layer1Note: "自动激活——内置于 Claude Code",
@@ -1072,13 +1067,15 @@ ${r ? `原始错误：${r}` : ""}
     npxQuickPlatformCursor: "Cursor",
     npxQuickPlatformAll: "全部平台",
     npxQuickDirPrompt: "项目创建在哪里？",
-    npxQuickDirDefault: "~/桌面/Meta_Kim",
+    npxQuickDirDefault: "~/Desktop/Meta_Kim",
     npxQuickCreating: "正在创建项目：",
     npxQuickCopyFiles: "正在拷贝平台文件",
     npxQuickDirExists: "目录已存在 — 将更新其中的文件",
     npxQuickDone: "项目就绪！",
     npxQuickOpenIn: "在该目录打开你的平台：",
     npxQuickAskDeploy: "要把运行时文件部署到指定目录吗？（比如桌面）",
+    npxQuickDeployYes: "是，部署到指定目录",
+    npxQuickDeployNo: "不用了，跳过",
     aboutAuthor: "关于作者",
     contactWebsite: "个人主页",
     contactGithub: "GitHub",
@@ -1192,17 +1189,13 @@ ${r ? `生エラー：${r}` : ""}
     postInstallNotesIntro: "インストール完了後、各層の使い方は以下の通りです：",
     postInstallNotesPlatformSync: "各プラットフォームの同期状況：",
     platformClauleCode: "Claude Code",
-    platformClauleCodeCap:
-      "agents + skills + hooks（第1層 Memory 自動 / 第2層 Graphify 自動 / 第3層 SQL サーバー起動必要）",
+    platformClauleCodeCap: "agents + skills + hooks",
     platformCodex: "Codex",
-    platformCodexCap:
-      "agents + skills（第1層 Memory hooks手動設定必要 / 第2層 Graphify 自動 / 第3層 SQL サーバー起動必要）",
+    platformCodexCap: "agents + skills",
     platformOpenClaw: "OpenClaw",
-    platformOpenClawCap:
-      "workspace + skills（第1層 Memory hooks手動設定必要 / 第2層 Graphify 自動 / 第3層 SQL サーバー起動必要）",
+    platformOpenClawCap: "workspace + skills",
     platformCursor: "Cursor",
-    platformCursorCap:
-      "agents + skills（第1層 Memory hooks手動設定必要 / 第2層 Graphify 自動 / 第3層 SQL サーバー起動必要）",
+    platformCursorCap: "agents + skills",
     postInstallNotesLayerActivation: "3層メモリの有効化方法：",
     layer1Label: "第1層（Memory）",
     layer1Note: "自動有効 — Claude Code に組み込み済み",
@@ -1552,6 +1545,8 @@ ${r ? `生エラー：${r}` : ""}
     npxQuickOpenIn: "このディレクトリでプラットフォームを開く：",
     npxQuickAskDeploy:
       "ランタイムファイルを指定ディレクトリにデプロイしますか？（例：デスクトップ）",
+    npxQuickDeployYes: "はい、指定ディレクトリにデプロイ",
+    npxQuickDeployNo: "スキップ",
     aboutAuthor: "作者について",
     contactWebsite: "ウェブサイト",
     contactGithub: "GitHub",
@@ -1663,17 +1658,13 @@ ${r ? `원본 오류：${r}` : ""}
     postInstallNotesIntro: "설치 완료 후 각 층의 사용 방식은 다음과 같습니다:",
     postInstallNotesPlatformSync: "각 플랫폼 동기화 현황:",
     platformClauleCode: "Claude Code",
-    platformClauleCodeCap:
-      "agents + skills + hooks (Layer 1 Memory 자동 / Layer 2 Graphify 자동 / Layer 3 SQL 서버 시작 필요)",
+    platformClauleCodeCap: "agents + skills + hooks",
     platformCodex: "Codex",
-    platformCodexCap:
-      "agents + skills (Layer 1 Memory hooks 수동 설정 필요 / Layer 2 Graphify 자동 / Layer 3 SQL 서버 시작 필요)",
+    platformCodexCap: "agents + skills",
     platformOpenClaw: "OpenClaw",
-    platformOpenClawCap:
-      "workspace + skills (Layer 1 Memory hooks 수동 설정 필요 / Layer 2 Graphify 자동 / Layer 3 SQL 서버 시작 필요)",
+    platformOpenClawCap: "workspace + skills",
     platformCursor: "Cursor",
-    platformCursorCap:
-      "agents + skills (Layer 1 Memory hooks 수동 설정 필요 / Layer 2 Graphify 자동 / Layer 3 SQL 서버 시작 필요)",
+    platformCursorCap: "agents + skills",
     postInstallNotesLayerActivation: "3층 메모리 활성화 방식:",
     layer1Label: "제1층 (Memory)",
     layer1Note: "자동 활성화 — Claude Code에 내장됨",
@@ -1996,7 +1987,7 @@ ${r ? `원본 오류：${r}` : ""}
     npxQuickPlatformCursor: "Cursor",
     npxQuickPlatformAll: "모든 플랫폼",
     npxQuickDirPrompt: "프로젝트를 어디에 만들까요?",
-    npxQuickDirDefault: "~/바탕 화면/Meta_Kim",
+    npxQuickDirDefault: "~/Desktop/Meta_Kim",
     npxQuickCreating: "프로젝트 생성 중:",
     npxQuickCopyFiles: "플랫폼 파일 복사 중",
     npxQuickDirExists: "디렉터리가 이미 존재합니다 — 파일을 업데이트합니다",
@@ -2004,6 +1995,8 @@ ${r ? `원본 오류：${r}` : ""}
     npxQuickOpenIn: "이 디렉터리에서 플랫폼 열기:",
     npxQuickAskDeploy:
       "런타임 파일을 지정 디렉터리에 배포할까요? (예: 바탕 화면)",
+    npxQuickDeployYes: "네, 지정 디렉터리에 배포",
+    npxQuickDeployNo: "건너뛰기",
     aboutAuthor: "작성자 소개",
     contactWebsite: "웹사이트",
     contactGithub: "GitHub",
@@ -2641,13 +2634,24 @@ function deployPlatformFiles(platformId, targetDir) {
   return fileCount;
 }
 
-async function offerDeployToDirectory(runtimes, activeTargets) {
-  const wantDeploy = await askYesNo(t.npxQuickAskDeploy, false);
-  if (!wantDeploy) return;
+async function askDeployDirectory() {
+  console.log("");
 
-  const platformId = await askQuickPlatform();
+  const choiceIdx = await askSelect(t.npxQuickAskDeploy, [
+    t.npxQuickDeployYes,
+    t.npxQuickDeployNo,
+  ]);
+  if (choiceIdx !== 0) {
+    console.log("");
+    return null;
+  }
+
   const targetDir = await askTargetDirectory();
+  console.log("");
+  return targetDir;
+}
 
+async function copyToDeployDir(activeTargets, targetDir) {
   if (existsSync(targetDir)) {
     console.log(`${C.dim}  ${t.npxQuickDirExists}${C.reset}`);
   } else {
@@ -2656,11 +2660,13 @@ async function offerDeployToDirectory(runtimes, activeTargets) {
 
   console.log(`${C.dim}  ${t.npxQuickCreating} ${targetDir}${C.reset}`);
 
-  await withProgress(t.npxQuickCopyFiles, async () => {
-    const count = deployPlatformFiles(platformId, targetDir);
-    quickDeployDir = targetDir;
-    return count > 0;
-  });
+  for (const platformId of activeTargets) {
+    await withProgress(`  ${t.npxQuickCopyFiles} (${platformId})`, async () => {
+      const count = deployPlatformFiles(platformId, targetDir);
+      return count > 0;
+    });
+  }
+  quickDeployDir = targetDir;
 
   console.log(`${C.green}${C.bold}✓ ${t.npxQuickDone}${C.reset}`);
   console.log(`${C.dim}  ${targetDir}${C.reset}`);
@@ -4522,6 +4528,9 @@ async function runInstall() {
     selectedSkillIds = await resolveSelectedSkillDependencyIds();
   }
 
+  // Ask deploy directory BEFORE confirm (so user decides upfront)
+  const deployDir = await askDeployDirectory();
+
   // Show installation overview
   showInstallOverview(activeTargets, installScope, selectedSkillIds);
   await showExistingFootprint(installScope);
@@ -4668,8 +4677,10 @@ async function runInstall() {
 
   console.log(`\n${C.bold}${C.green}✓ ${t.installComplete}${C.reset}\n`);
 
-  // Ask user if they want to deploy to a custom directory
-  await offerDeployToDirectory(runtimes, activeTargets);
+  // Copy runtime files to user-chosen directory (if opted in earlier)
+  if (deployDir) {
+    await copyToDeployDir(activeTargets, deployDir);
+  }
 
   showNextSteps(runtimes);
 }
@@ -4687,6 +4698,9 @@ async function runUpdate() {
 
   // Ask proxy configuration (saves to localOverrides)
   await askProxyConfig();
+
+  // Ask deploy directory BEFORE update starts
+  const deployDir = await askDeployDirectory();
 
   // ── 1. npm install (always — new code may have new deps) ────────────
   info(t.updateNpm);
@@ -4777,7 +4791,10 @@ async function runUpdate() {
   checkSync(runtimes, supportedTargets);
   console.log(`\n${C.bold}${C.green}✓ ${t.updateComplete}${C.reset}\n`);
 
-  await offerDeployToDirectory(runtimes, activeTargets);
+  // Copy runtime files to user-chosen directory (if opted in earlier)
+  if (deployDir) {
+    await copyToDeployDir(activeTargets, deployDir);
+  }
 }
 
 async function runCheck() {
