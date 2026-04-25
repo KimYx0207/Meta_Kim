@@ -16,7 +16,8 @@
  *   META_KIM_PROMPT_INSTALL_SCOPE=1 / META_KIM_PROMPT_PROXY=1
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { execSync, spawnSync, spawn } from "node:child_process";
+import http from "node:http";
 import {
   existsSync,
   mkdirSync,
@@ -446,6 +447,8 @@ Possible causes:
       "MCP Memory Service installation failed (non-blocking)",
     mcpMemoryAlreadyInstalled: (v) =>
       `MCP Memory Service ${v} — already installed`,
+    mcpMemoryStopping: "Stopping running MCP Memory Service before upgrade...",
+    mcpMemoryStopped: "MCP Memory Service stopped",
     mcpMemoryUpgrading: "Upgrading MCP Memory Service to latest version...",
     mcpMemoryUpgraded: (v) => `MCP Memory Service upgraded to ${v}`,
     mcpMemoryUpgradeFailed: "MCP Memory Service upgrade failed (non-blocking)",
@@ -887,6 +890,8 @@ ${r ? `原始错误：${r}` : ""}
     mcpMemoryInstalled: "MCP Memory Service 已安装",
     mcpMemoryInstallFailed: "MCP Memory Service 安装失败（不影响其他功能）",
     mcpMemoryAlreadyInstalled: (v) => `MCP Memory Service ${v} — 已安装`,
+    mcpMemoryStopping: "升级前正在停止 MCP Memory Service...",
+    mcpMemoryStopped: "MCP Memory Service 已停止",
     mcpMemoryUpgrading: "正在升级 MCP Memory Service 至最新版本...",
     mcpMemoryUpgraded: (v) => `MCP Memory Service 已升级至 ${v}`,
     mcpMemoryUpgradeFailed: "MCP Memory Service 升级失败（不影响其他功能）",
@@ -1341,6 +1346,8 @@ ${r ? `生エラー：${r}` : ""}
       "MCP Memory Service インストール失敗（非ブロッキング）",
     mcpMemoryAlreadyInstalled: (v) =>
       `MCP Memory Service ${v} — すでにインストール済み`,
+    mcpMemoryStopping: "アップグレード前に MCP Memory Service を停止中...",
+    mcpMemoryStopped: "MCP Memory Service を停止しました",
     mcpMemoryUpgrading:
       "MCP Memory Service を最新バージョンにアップグレード中...",
     mcpMemoryUpgraded: (v) =>
@@ -1804,6 +1811,8 @@ ${r ? `원본 오류：${r}` : ""}
     mcpMemoryInstalled: "MCP Memory Service 설치 완료",
     mcpMemoryInstallFailed: "MCP Memory Service 설치 실패 (비차단)",
     mcpMemoryAlreadyInstalled: (v) => `MCP Memory Service ${v} — 이미 설치됨`,
+    mcpMemoryStopping: "업그레이드 전 MCP Memory Service 중지 중...",
+    mcpMemoryStopped: "MCP Memory Service 중지됨",
     mcpMemoryUpgrading:
       "MCP Memory Service을(를) 최신 버전으로 업그레이드 중...",
     mcpMemoryUpgraded: (v) =>
@@ -3877,9 +3886,28 @@ function checkMcpMemoryService(python) {
 
 function findMemoryBinPath(resolved) {
   const plat = platform();
-  const pythonCmd = resolved.python.command || resolved.python;
-  const pythonDir = dirname(pythonCmd);
   const binName = plat === "win32" ? "memory.exe" : "memory";
+
+  // Strategy 1: resolve python executable, then check nearby directories
+  let pythonCmd = resolved.python.command || resolved.python;
+  if (
+    !/\//.test(pythonCmd) &&
+    !/\\/.test(pythonCmd) &&
+    !/[A-Za-z]:/.test(pythonCmd)
+  ) {
+    try {
+      const launcher = resolved.python;
+      const result = spawnSync(
+        launcher.command,
+        [...launcher.args, "-c", "import sys; print(sys.executable)"],
+        { encoding: "utf8", shell: false },
+      );
+      if (result.status === 0 && result.stdout.trim()) {
+        pythonCmd = result.stdout.trim();
+      }
+    } catch {}
+  }
+  const pythonDir = dirname(pythonCmd);
 
   const sameDir = join(pythonDir, binName);
   if (existsSync(sameDir)) return sameDir;
@@ -3892,7 +3920,42 @@ function findMemoryBinPath(resolved) {
   const binDir = join(pythonDir, "..", "bin", binName);
   if (existsSync(binDir)) return resolve(binDir);
 
+  // Strategy 2: search system PATH (handles cross-install pip --user case)
+  const whichCmd = plat === "win32" ? "where" : "which";
+  try {
+    const result = spawnSync(whichCmd, [binName], {
+      encoding: "utf8",
+      shell: true,
+    });
+    if (result.status === 0 && result.stdout.trim()) {
+      const found = result.stdout.trim().split(/\r?\n/)[0];
+      if (found && existsSync(found)) return found;
+    }
+  } catch {}
+
   return null;
+}
+
+function stopMcpMemoryService() {
+  const plat = platform();
+  try {
+    if (plat === "win32") {
+      execSync("taskkill /F /IM memory.exe", { stdio: "pipe" });
+    } else if (plat === "darwin") {
+      try {
+        execSync(
+          "launchctl unload ~/Library/LaunchAgents/com.meta-kim.mcp-memory-service.plist 2>/dev/null",
+          { stdio: "pipe" },
+        );
+      } catch {}
+      execSync("pkill -f 'memory server --http'", { stdio: "pipe" });
+    } else {
+      execSync("pkill -f 'memory server --http'", { stdio: "pipe" });
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function startMcpMemoryServiceBackground(resolved) {
@@ -3905,33 +3968,31 @@ async function startMcpMemoryServiceBackground(resolved) {
 
   info(t.mcpMemoryAutoStarting);
   const env = { ...process.env, MCP_ALLOW_ANONYMOUS_ACCESS: "true" };
-  const plat = platform();
 
   try {
-    if (plat === "win32") {
-      execSync(`start /B "" "${memoryBin}" server --http`, {
-        env,
-        stdio: "ignore",
-      });
-    } else {
-      execSync(`nohup "${memoryBin}" server --http >/dev/null 2>&1 &`, {
-        env,
-        stdio: "ignore",
-        shell: "/bin/bash",
-      });
-    }
+    const child = spawn(memoryBin, ["server", "--http"], {
+      env,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.unref();
   } catch {
     // Background start may report errors but still succeed
   }
 
-  await new Promise((r) => setTimeout(r, 4000));
+  // Poll health endpoint — service may need several seconds to initialize
+  const POLL_INTERVAL = 1500;
+  const POLL_MAX_MS = 10000;
+  const pollStart = Date.now();
+  let healthy = false;
 
-  try {
-    const healthy = await new Promise((resolve) => {
-      const http = require("http");
+  while (Date.now() - pollStart < POLL_MAX_MS) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+    healthy = await new Promise((resolve) => {
       const req = http.get(
         "http://127.0.0.1:8000/api/health",
-        { timeout: 5000 },
+        { timeout: 3000 },
         (res) => {
           let body = "";
           res.on("data", (c) => (body += c));
@@ -3944,14 +4005,15 @@ async function startMcpMemoryServiceBackground(resolved) {
         resolve(false);
       });
     });
+    if (healthy) break;
+  }
 
-    if (healthy) {
-      ok(t.mcpMemoryAutoStarted);
-      const bootOk = configureBootAutoStart(memoryBin);
-      if (bootOk) ok(t.mcpMemoryAutoStartBoot);
-      return;
-    }
-  } catch {}
+  if (healthy) {
+    ok(t.mcpMemoryAutoStarted);
+    const bootOk = configureBootAutoStart(memoryBin);
+    if (bootOk) ok(t.mcpMemoryAutoStartBoot);
+    return;
+  }
 
   warn(t.mcpMemoryAutoStartFailed);
   info(t.mcpMemoryAutoStartManual);
@@ -4042,6 +4104,13 @@ async function installMcpMemoryServiceStep(inUpdateMode = false) {
   const existing = checkMcpMemoryService(python);
   if (existing.installed) {
     if (inUpdateMode) {
+      // Stop running service before upgrading (Windows locks the binary)
+      info(t.mcpMemoryStopping);
+      const stopped = stopMcpMemoryService();
+      if (stopped) {
+        ok(t.mcpMemoryStopped);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
       // Upgrade in update mode
       info(t.mcpMemoryUpgrading);
       const upgradeResult = runPythonModule(python, [
