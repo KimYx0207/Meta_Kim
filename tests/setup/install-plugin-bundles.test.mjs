@@ -15,7 +15,14 @@ const SCRIPT = path.join(
 function runDryRun(extraArgs = []) {
   const result = spawnSync(
     process.execPath,
-    [SCRIPT, "--dry-run", "--plugins-only", ...extraArgs],
+    [
+      SCRIPT,
+      "--dry-run",
+      "--plugins-only",
+      "--targets",
+      "claude,codex,openclaw,cursor",
+      ...extraArgs,
+    ],
     {
       encoding: "utf8",
       env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },

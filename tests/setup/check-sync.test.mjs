@@ -45,12 +45,12 @@ function validateWorkspaces(homeDir, workspaceIds, allDirs) {
 }
 
 describe("validateHooks()", () => {
-  test("returns all present when all 10 hooks exist", () => {
+  test("returns all present when all canonical hooks exist", () => {
     const hooksDir = "/home/user/.claude/hooks/meta-kim";
     const allFiles = CANONICAL_HOOKS.map((h) => path.join(hooksDir, h));
     const result = validateHooks(hooksDir, allFiles);
     assert.strictEqual(result.allPresent, true);
-    assert.strictEqual(result.present.length, 10);
+    assert.strictEqual(result.present.length, CANONICAL_HOOKS.length);
     assert.strictEqual(result.missing.length, 0);
   });
 
@@ -62,7 +62,7 @@ describe("validateHooks()", () => {
     const result = validateHooks(hooksDir, allFiles);
     assert.strictEqual(result.allPresent, false);
     assert.strictEqual(result.present.length, 3);
-    assert.strictEqual(result.missing.length, 6);
+    assert.strictEqual(result.missing.length, CANONICAL_HOOKS.length - 3);
     assert.ok(result.missing.includes("stop-completion-guard.mjs"));
   });
 
@@ -71,7 +71,7 @@ describe("validateHooks()", () => {
     const result = validateHooks(hooksDir, []);
     assert.strictEqual(result.allPresent, false);
     assert.strictEqual(result.present.length, 0);
-    assert.strictEqual(result.missing.length, 9);
+    assert.strictEqual(result.missing.length, CANONICAL_HOOKS.length);
   });
 
   test("hooks in wrong subdir are not counted", () => {

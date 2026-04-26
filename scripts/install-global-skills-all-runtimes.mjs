@@ -1512,6 +1512,7 @@ async function installAllSkillsForRuntime(label, runtimeHome, runtimeId) {
     await deployHookSubdirs(spec, runtimeHome, runtimeId);
     await deployHookConfigFiles(spec, runtimeHome, runtimeId);
     await deployHookExtraFiles(spec, runtimeHome, runtimeId);
+    await patchCodexPlanningHooksForPlatform(spec, runtimeHome, runtimeId);
     await mergeHookSettings(spec, runtimeHome, runtimeId);
     await cleanupDisabledSkillResidue(runtimeHome, spec.id);
   }
@@ -1727,6 +1728,7 @@ async function installPluginBundlesForNonClaudeRuntimes(
       await deployHookSubdirs(spec, runtimeHome, runtimeId);
       await deployHookConfigFiles(spec, runtimeHome, runtimeId);
       await deployHookExtraFiles(spec, runtimeHome, runtimeId);
+      await patchCodexPlanningHooksForPlatform(spec, runtimeHome, runtimeId);
       await mergeHookSettings(spec, runtimeHome, runtimeId);
     }
   }
@@ -1737,6 +1739,40 @@ async function installClaudePlugins() {
     return;
   }
   console.log(`\n${C.bold}${AMBER}${t.pluginsHeader}${C.reset}`);
+
+  // Auto-register plugin marketplaces if not already present.
+  // This is needed on fresh Mac/Linux installs where marketplaces are not
+  // pre-registered (unlike Windows which has them installed by default).
+  // Registry: marketplace-id -> GitHub repo URL (marketplace.json's "name" field
+  // becomes the marketplace-id used in "plugin@marketplace" spec).
+  const MARKETPLACE_URLS = {
+    "superpowers-marketplace":
+      "https://github.com/obra/superpowers-marketplace",
+    "everything-claude-code":
+      "https://github.com/affaan-m/everything-claude-code",
+  };
+
+  if (dryRun) {
+    const neededMarketplaces = new Set(
+      CLAUDE_PLUGIN_SPECS.map((spec) => spec.split("@")[1]).filter(
+        (id) => id in MARKETPLACE_URLS,
+      ),
+    );
+    if (neededMarketplaces.size > 0) {
+      console.log(`\n${C.dim}  Checking plugin marketplaces...${C.reset}`);
+      for (const mktId of neededMarketplaces) {
+        console.log(
+          t.dryRun(
+            `claude plugin marketplace add ${MARKETPLACE_URLS[mktId]} (${mktId})`,
+          ),
+        );
+      }
+    }
+    for (const spec of CLAUDE_PLUGIN_SPECS) {
+      console.log(t.dryRun(`claude plugin install ${spec}`));
+    }
+    return;
+  }
 
   // Probe which claude invocation method works.
   // Windows edge-case: a broken npm .cmd shim may shadow a working
@@ -1771,18 +1807,6 @@ async function installClaudePlugins() {
     console.warn(`${C.yellow}⚠${C.reset} ${t.warnClaNotFound}`);
     return;
   }
-
-  // Auto-register plugin marketplaces if not already present.
-  // This is needed on fresh Mac/Linux installs where marketplaces are not
-  // pre-registered (unlike Windows which has them installed by default).
-  // Registry: marketplace-id -> GitHub repo URL (marketplace.json's "name" field
-  // becomes the marketplace-id used in "plugin@marketplace" spec).
-  const MARKETPLACE_URLS = {
-    "superpowers-marketplace":
-      "https://github.com/obra/superpowers-marketplace",
-    "everything-claude-code":
-      "https://github.com/affaan-m/everything-claude-code",
-  };
 
   // Collect marketplace IDs needed by CLAUDE_PLUGIN_SPECS (spec format: "name@marketplace")
   const neededMarketplaces = new Set(
@@ -3098,6 +3122,314 @@ async function deployHookConfigFiles(spec, runtimeHome, runtimeId) {
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
+}
+
+function codexPlanningHookCommand(runtimeHome, scriptName) {
+  const scriptPath = path.join(runtimeHome, "hooks", scriptName);
+  if (os.platform() === "win32") {
+    return `python "${scriptPath}"`;
+  }
+  return `python3 "${scriptPath}" 2>/dev/null || python "${scriptPath}" 2>/dev/null || true`;
+}
+
+function buildCodexPlanningHooksJson(runtimeHome) {
+  return {
+    hooks: {
+      SessionStart: [
+        {
+          matcher: "startup|resume",
+          hooks: [
+            {
+              type: "command",
+              command: codexPlanningHookCommand(runtimeHome, "session_start.py"),
+              statusMessage: "Loading planning context",
+            },
+          ],
+        },
+      ],
+      UserPromptSubmit: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: codexPlanningHookCommand(
+                runtimeHome,
+                "user_prompt_submit.py",
+              ),
+            },
+          ],
+        },
+      ],
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [
+            {
+              type: "command",
+              command: codexPlanningHookCommand(runtimeHome, "pre_tool_use.py"),
+              statusMessage: "Checking plan before Bash",
+            },
+          ],
+        },
+      ],
+      PostToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [
+            {
+              type: "command",
+              command: codexPlanningHookCommand(runtimeHome, "post_tool_use.py"),
+              statusMessage: "Reviewing Bash against plan",
+            },
+          ],
+        },
+      ],
+      Stop: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: codexPlanningHookCommand(runtimeHome, "stop.py"),
+              timeout: 30,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function buildCodexPlanningHookAdapterPy() {
+  return [
+    "#!/usr/bin/env python3",
+    "from __future__ import annotations",
+    "",
+    "import json",
+    "import shutil",
+    "import subprocess",
+    "import sys",
+    "from pathlib import Path",
+    "from typing import Any",
+    "",
+    "",
+    "HOOK_DIR = Path(__file__).resolve().parent",
+    "",
+    "",
+    "def load_payload() -> dict[str, Any]:",
+    "    raw = sys.stdin.read().strip()",
+    "    if not raw:",
+    "        return {}",
+    "    try:",
+    "        payload = json.loads(raw)",
+    "    except json.JSONDecodeError:",
+    "        return {}",
+    "    return payload if isinstance(payload, dict) else {}",
+    "",
+    "",
+    "def cwd_from_payload(payload: dict[str, Any]) -> Path:",
+    '    cwd = payload.get("cwd")',
+    "    if isinstance(cwd, str) and cwd:",
+    "        return Path(cwd)",
+    "    return Path.cwd()",
+    "",
+    "",
+    "def emit_json(payload: dict[str, Any]) -> None:",
+    "    if not payload:",
+    "        return",
+    "    json.dump(payload, sys.stdout, ensure_ascii=False)",
+    '    sys.stdout.write("\\n")',
+    "",
+    "",
+    "def parse_json(text: str) -> dict[str, Any]:",
+    "    if not text.strip():",
+    "        return {}",
+    "    try:",
+    "        payload = json.loads(text)",
+    "    except json.JSONDecodeError:",
+    "        return {}",
+    "    return payload if isinstance(payload, dict) else {}",
+    "",
+    "",
+    "def _read_lines(path: Path) -> list[str]:",
+    "    try:",
+    '        return path.read_text(encoding="utf-8", errors="replace").splitlines()',
+    "    except OSError:",
+    "        return []",
+    "",
+    "",
+    "def _head(path: Path, count: int) -> str:",
+    '    return "\\n".join(_read_lines(path)[:count])',
+    "",
+    "",
+    "def _tail(path: Path, count: int) -> str:",
+    '    return "\\n".join(_read_lines(path)[-count:])',
+    "",
+    "",
+    "def _count_statuses(plan_file: Path) -> tuple[int, int, int, int]:",
+    "    lines = _read_lines(plan_file)",
+    '    total = sum(1 for line in lines if "### Phase" in line)',
+    '    complete = sum(1 for line in lines if "**Status:** complete" in line)',
+    '    in_progress = sum(1 for line in lines if "**Status:** in_progress" in line)',
+    '    pending = sum(1 for line in lines if "**Status:** pending" in line)',
+    "    if complete == 0 and in_progress == 0 and pending == 0:",
+    '        complete = sum(1 for line in lines if "[complete]" in line)',
+    '        in_progress = sum(1 for line in lines if "[in_progress]" in line)',
+    '        pending = sum(1 for line in lines if "[pending]" in line)',
+    "    return total, complete, in_progress, pending",
+    "",
+    "",
+    "def _native_user_prompt_submit(cwd: Path) -> tuple[str, str]:",
+    '    plan_file = cwd / "task_plan.md"',
+    "    if not plan_file.is_file():",
+    '        return "", ""',
+    "    parts = [",
+    '        "[planning-with-files] ACTIVE PLAN -- current state:",',
+    "        _head(plan_file, 50),",
+    '        "",',
+    '        "=== recent progress ===",',
+    '        _tail(cwd / "progress.md", 20),',
+    '        "",',
+    '        "[planning-with-files] Read findings.md for research context. Continue from the current phase.",',
+    "    ]",
+    '    return "\\n".join(parts).strip(), ""',
+    "",
+    "",
+    "def _native_session_start(cwd: Path) -> tuple[str, str]:",
+    '    skill_script = HOOK_DIR.parent / "skills" / "planning-with-files" / "scripts" / "session-catchup.py"',
+    "    if skill_script.is_file():",
+    "        subprocess.run(",
+    "            [sys.executable, str(skill_script), str(cwd)],",
+    "            cwd=str(cwd),",
+    "            text=True,",
+    "            capture_output=True,",
+    "            check=False,",
+    "        )",
+    '    return _native_user_prompt_submit(cwd)',
+    "",
+    "",
+    "def _native_pre_tool_use(cwd: Path) -> tuple[str, str]:",
+    '    plan_file = cwd / "task_plan.md"',
+    '    stderr = _head(plan_file, 30) if plan_file.is_file() else ""',
+    '    return json.dumps({"decision": "allow"}), stderr',
+    "",
+    "",
+    "def _native_post_tool_use(cwd: Path) -> tuple[str, str]:",
+    '    if (cwd / "task_plan.md").is_file():',
+    '        return "[planning-with-files] Update progress.md with what you just did. If a phase is now complete, update task_plan.md status.", ""',
+    '    return "", ""',
+    "",
+    "",
+    "def _native_stop(cwd: Path) -> tuple[str, str]:",
+    '    plan_file = cwd / "task_plan.md"',
+    "    if not plan_file.is_file():",
+    '        return "", ""',
+    "    total, complete, _in_progress, _pending = _count_statuses(plan_file)",
+    "    if complete == total and total > 0:",
+    '        message = f"[planning-with-files] ALL PHASES COMPLETE ({complete}/{total}). If the user has additional work, add new phases to task_plan.md before starting."',
+    "    else:",
+    '        message = f"[planning-with-files] Task incomplete ({complete}/{total} phases done). Update progress.md, then read task_plan.md and continue working on the remaining phases."',
+    '    return json.dumps({"followup_message": message}, ensure_ascii=False), ""',
+    "",
+    "",
+    "def _run_native_script(script_name: str, cwd: Path) -> tuple[str, str]:",
+    '    if script_name == "session-start.sh":',
+    "        return _native_session_start(cwd)",
+    '    if script_name == "user-prompt-submit.sh":',
+    "        return _native_user_prompt_submit(cwd)",
+    '    if script_name == "pre-tool-use.sh":',
+    "        return _native_pre_tool_use(cwd)",
+    '    if script_name == "post-tool-use.sh":',
+    "        return _native_post_tool_use(cwd)",
+    '    if script_name == "stop.sh":',
+    "        return _native_stop(cwd)",
+    '    return "", ""',
+    "",
+    "",
+    "def run_shell_script(script_name: str, cwd: Path) -> tuple[str, str]:",
+    '    sh_bin = shutil.which("sh")',
+    "    script_path = HOOK_DIR / script_name",
+    "    if sh_bin and script_path.is_file():",
+    "        result = subprocess.run(",
+    "            [sh_bin, str(script_path)],",
+    "            cwd=str(cwd),",
+    "            text=True,",
+    "            capture_output=True,",
+    "            check=False,",
+    "        )",
+    "        return result.stdout.strip(), result.stderr.strip()",
+    "    return _run_native_script(script_name, cwd)",
+    "",
+    "",
+    "def main_guard(func) -> int:",
+    "    try:",
+    "        func()",
+    "    except Exception as exc:  # pragma: no cover",
+    '        print(f"[planning-with-files hook] {exc}", file=sys.stderr)',
+    "        return 0",
+    "    return 0",
+    "",
+  ].join("\n");
+}
+
+function buildCodexWrapperPy(scriptName) {
+  return [
+    "#!/usr/bin/env python3",
+    "from __future__ import annotations",
+    "",
+    "import codex_hook_adapter as adapter",
+    "",
+    "",
+    "def main() -> None:",
+    "    payload = adapter.load_payload()",
+    "    root = adapter.cwd_from_payload(payload)",
+    `    stdout, _ = adapter.run_shell_script("${scriptName}", root)`,
+    "    if stdout:",
+    '        adapter.emit_json({"systemMessage": stdout})',
+    "",
+    "",
+    'if __name__ == "__main__":',
+    "    raise SystemExit(adapter.main_guard(main))",
+    "",
+  ].join("\n");
+}
+
+async function patchCodexPlanningHooksForPlatform(spec, runtimeHome, runtimeId) {
+  if (
+    runtimeId !== "codex" ||
+    spec.id !== "planning-with-files" ||
+    dryRun
+  ) {
+    return;
+  }
+
+  const hooksDir = path.join(runtimeHome, "hooks");
+  if (!(await pathExists(hooksDir))) {
+    return;
+  }
+
+  await fs.writeFile(
+    path.join(runtimeHome, "hooks.json"),
+    `${JSON.stringify(buildCodexPlanningHooksJson(runtimeHome), null, 2)}\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(hooksDir, "codex_hook_adapter.py"),
+    buildCodexPlanningHookAdapterPy(),
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(hooksDir, "session_start.py"),
+    buildCodexWrapperPy("session-start.sh"),
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(hooksDir, "user_prompt_submit.py"),
+    buildCodexWrapperPy("user-prompt-submit.sh"),
+    "utf8",
+  );
+  console.log(
+    `${C.green}✓${C.reset} ${spec.id} Codex hooks patched for ${os.platform()}`,
+  );
 }
 
 // ========== Hook Extra Files Deployment ==========
