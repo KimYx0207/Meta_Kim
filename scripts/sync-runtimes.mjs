@@ -720,10 +720,13 @@ function buildRuntimeSkillMap(targetId) {
       { pattern: /canonical\/agents\//g, replacement: ".codex/agents/" },
       // Hooks: Codex doesn't have hooks — strip to safe fallback
       { pattern: /\.claude\/hooks\//g, replacement: ".codex/" },
-      // Capability index: strip
-      { pattern: /\.claude\/capability-index\//g, replacement: ".codex/" },
-      // Legacy .claude/skills/ references in source → canonical/skills/
-      { pattern: /\.claude\/skills\//g, replacement: "canonical/skills/" },
+      // Capability index: preserve subdirectory structure
+      {
+        pattern: /\.claude\/capability-index\//g,
+        replacement: ".codex/capability-index/",
+      },
+      // Legacy .claude/skills/ references in source → platform-specific path
+      { pattern: /\.claude\/skills\//g, replacement: ".codex/skills/" },
     ],
     openclaw: [
       // Skill references: canonical/ → openclaw/skills/meta-theory/references/
@@ -741,10 +744,13 @@ function buildRuntimeSkillMap(targetId) {
       },
       // Hooks: OpenClaw doesn't have hooks — strip
       { pattern: /\.claude\/hooks\//g, replacement: "openclaw/" },
-      // Capability index: strip
-      { pattern: /\.claude\/capability-index\//g, replacement: "openclaw/" },
-      // Legacy .claude/skills/ references in source → canonical/skills/
-      { pattern: /\.claude\/skills\//g, replacement: "canonical/skills/" },
+      // Capability index: preserve subdirectory structure
+      {
+        pattern: /\.claude\/capability-index\//g,
+        replacement: "openclaw/capability-index/",
+      },
+      // Legacy .claude/skills/ references in source → platform-specific path
+      { pattern: /\.claude\/skills\//g, replacement: "openclaw/skills/" },
     ],
     cursor: [
       // Skill references: canonical/ → .cursor/skills/meta-theory/references/
@@ -758,10 +764,13 @@ function buildRuntimeSkillMap(targetId) {
       { pattern: /canonical\/agents\//g, replacement: ".cursor/agents/" },
       // Hooks: Cursor doesn't have hooks
       { pattern: /\.claude\/hooks\//g, replacement: ".cursor/" },
-      // Capability index: strip
-      { pattern: /\.claude\/capability-index\//g, replacement: ".cursor/" },
-      // Legacy .claude/skills/ references in source → canonical/skills/
-      { pattern: /\.claude\/skills\//g, replacement: "canonical/skills/" },
+      // Capability index: preserve subdirectory structure
+      {
+        pattern: /\.claude\/capability-index\//g,
+        replacement: ".cursor/capability-index/",
+      },
+      // Legacy .claude/skills/ references in source → platform-specific path
+      { pattern: /\.claude\/skills\//g, replacement: ".cursor/skills/" },
     ],
   };
 

@@ -632,6 +632,11 @@ async function buildCapabilityIndex(scannedResults) {
     registryName: "meta-kim-capabilities",
     canonicalProjection: ".claude/capability-index/meta-kim-capabilities.json",
     compatibilityMirror: ".claude/capability-index/global-capabilities.json",
+    mirroredTo: [
+      ".codex/capability-index/",
+      "openclaw/capability-index/",
+      ".cursor/capability-index/",
+    ],
     summary: {
       totalAgents: 0,
       totalSkills: 0,
@@ -748,16 +753,32 @@ async function main() {
     console.log(formatTableOutput(index));
   }
 
-  // 写入索引文件（相对仓库根，避免从子目录调用时写错路径）
-  const indexDir = path.join(repoRoot, ".claude", "capability-index");
-  await fs.mkdir(indexDir, { recursive: true });
-  const metaKimIndex = path.join(indexDir, "meta-kim-capabilities.json");
-  const compatibilityIndex = path.join(indexDir, "global-capabilities.json");
+  // 写入索引文件到所有平台的 capability-index 目录
   const content = JSON.stringify(index, null, 2);
-  await fs.writeFile(metaKimIndex, content);
-  await fs.writeFile(compatibilityIndex, content);
-  console.error(`\n✅ Index written to: ${metaKimIndex}`);
-  console.error(`✅ Compatibility mirror written to: ${compatibilityIndex}`);
+  const platformIndexDirs = [
+    path.join(repoRoot, ".claude", "capability-index"),
+    path.join(repoRoot, ".codex", "capability-index"),
+    path.join(repoRoot, "openclaw", "capability-index"),
+    path.join(repoRoot, ".cursor", "capability-index"),
+  ];
+
+  for (const indexDir of platformIndexDirs) {
+    await fs.mkdir(indexDir, { recursive: true });
+    await fs.writeFile(
+      path.join(indexDir, "meta-kim-capabilities.json"),
+      content,
+    );
+    await fs.writeFile(
+      path.join(indexDir, "global-capabilities.json"),
+      content,
+    );
+  }
+
+  console.error(`\n✅ Index written to ${platformIndexDirs.length} platforms:`);
+  for (const dir of platformIndexDirs) {
+    const rel = path.relative(repoRoot, dir).replace(/\\/g, "/");
+    console.error(`   ${rel}/`);
+  }
 }
 
 await main();
