@@ -3,18 +3,14 @@ name: meta-theory
 version: 2.0.0
 author: KimYx0207
 user-invocable: true
-trigger: "元理论|执行元理论|跑元理论|元架构|元兵工厂|最小可治理单元|组织镜像|节奏编排|意图放大|事件牌组|出牌|SOUL.md|四种死法|五标准|agent职责|agent边界|agent拆分|agent设计|agent创建|agent治理|多文件|跨模块|职责冲突|重构|拆解|治理|元|知识图谱|代码图谱|graphify|graph context|meta theory|run meta theory|execute meta theory|meta-theory|meta architecture|agent governance|intent amplification|meta arsenal|smallest governable unit|organizational mirror|rhythm orchestration|card deck|card play|four death patterns|five criteria|agent design|agent split|agent creation|refactor|multi-file|cross-module|governance|governable|knowledge graph|code graph"
+trigger: "元理论|执行元理论|跑元理论|元架构|元兵工厂|最小可治理单元|组织镜像|节奏编排|意图放大|事件牌组|出牌|SOUL.md|四种死法|五标准|agent职责|agent边界|agent拆分|agent设计|agent创建|agent治理|多文件|跨模块|职责冲突|重构|拆解|治理|元|知识图谱|代码图谱|graphify|graph context|meta theory|run meta theory|execute meta theory|meta-theory|meta architecture|agent governance|intent amplification|meta arsenal|smallest governable unit|organizational mirror|rhythm orchestration|card deck|card play|four death patterns|five criteria|agent design|agent split|agent creation|refactor|multi-file|cross-module|governance|governable|knowledge graph|code graph|报错|error|debug|debugging|启动失败|startup|build fail|compile error|tauri|pnpm|cargo|npm run|启动不了|跑不起来|fix|修复|analysis|analyze|diagnose|排查"
 tools:
   - shell
   - filesystem
   - browser
   - memory
 description: |
-  Meta Arsenal — governance skill for meta architecture, agent design/review, and rhythm orchestration.
-  Distinguish meta architecture from project technical architecture before acting.
-  Evolution writeback records capability gaps and pattern insights into agent definitions directly.
-  Complex development work follows the 8-stage execution spine:
-  Critical → Fetch → Thinking → Execution → Review → Meta-Review → Verification → Evolution.
+  Meta Arsenal — governance and development orchestration skill. ALWAYS invoke this skill when the user explicitly calls /meta-theory, regardless of the task type. This skill handles far more than just agent governance — it is the structured entry point for ANY non-trivial development task: debugging build/startup failures (npm, pnpm, tauri, cargo, vite, webpack), analyzing project errors, multi-file refactors, cross-module changes, feature implementation, code quality audits, security reviews, architecture decisions, agent design and review, capability discovery, intent amplification, and rhythm/card-deck orchestration. The skill uses an 8-stage execution spine (Critical → Fetch → Thinking → Execution → Review → Meta-Review → Verification → Evolution) that routes work to specialist agents internally. Use this skill whenever the task involves: errors, debugging, startup problems, build failures, complex features, agent creation, organizational design, knowledge graphs, code quality, or any task where structured governance adds value. When in doubt, invoke — the skill will classify and route appropriately. Do NOT skip invocation when the user explicitly requests /meta-theory.
 ---
 
 # Meta Arsenal — Dispatcher
