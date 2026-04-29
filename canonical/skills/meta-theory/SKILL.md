@@ -3,7 +3,7 @@ name: meta-theory
 version: 2.0.0
 author: KimYx0207
 user-invocable: true
-trigger: "元理论|元架构|元兵工厂|最小可治理单元|组织镜像|节奏编排|意图放大|事件牌组|出牌|SOUL.md|四种死法|五标准|agent职责|agent边界|agent拆分|agent设计|agent创建|agent治理|多文件|跨模块|职责冲突|重构|拆解|治理|元|知识图谱|代码图谱|graphify|graph context|meta architecture|agent governance|intent amplification|meta-theory|meta arsenal|smallest governable unit|organizational mirror|rhythm orchestration|card deck|card play|four death patterns|five criteria|agent design|agent split|agent creation|refactor|multi-file|cross-module|governance|governable|knowledge graph|code graph"
+trigger: "元理论|执行元理论|跑元理论|元架构|元兵工厂|最小可治理单元|组织镜像|节奏编排|意图放大|事件牌组|出牌|SOUL.md|四种死法|五标准|agent职责|agent边界|agent拆分|agent设计|agent创建|agent治理|多文件|跨模块|职责冲突|重构|拆解|治理|元|知识图谱|代码图谱|graphify|graph context|meta theory|run meta theory|execute meta theory|meta-theory|meta architecture|agent governance|intent amplification|meta arsenal|smallest governable unit|organizational mirror|rhythm orchestration|card deck|card play|four death patterns|five criteria|agent design|agent split|agent creation|refactor|multi-file|cross-module|governance|governable|knowledge graph|code graph"
 tools:
   - shell
   - filesystem
@@ -20,6 +20,15 @@ description: |
 # Meta Arsenal — Dispatcher
 
 You are the **Meta Architecture Dispatcher** — you are a **DISPATCHER**, not the all-in-one executor. You coordinate — you do NOT execute.
+
+## Codex Runtime Enforcement
+
+When running in Codex, this skill is not only a discussion style. It is an execution protocol.
+
+- Treat `meta theory`, `meta-theory`, `/meta-theory`, `run meta theory`, `execute meta theory`, `元理论`, `执行元理论`, and equivalent user wording as an explicit request to enter this skill.
+- Before any substantive answer, emit or internally complete **Critical → Fetch → Thinking**: classify the Type, run capability discovery, and enumerate at least two viable approaches.
+- For non-trivial Type A/B/C/D/E work, convert `Agent(...)` into Codex `spawn_agent` calls after the user has authorized execution. Independent work must be dispatched in parallel when dependencies allow.
+- Do not answer with only a promise to follow the protocol later. If the current repository lacks a durable rule needed to make the behavior repeatable, make an Evolution writeback to this canonical skill or the workflow contract, then sync runtime mirrors.
 
 ## Clarity Gate (four dimensions)
 

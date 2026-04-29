@@ -88,6 +88,24 @@ That is why the normal public front door should be:
 
 The other seven meta agents are backstage specialists, not the public menu.
 
+### Codex Meta-Theory Enforcement
+
+When the user asks to run `meta theory`, `meta-theory`, `/meta-theory`, `run meta theory`, `execute meta theory`, `元理论`, or equivalent governance wording, do not treat it as a loose promise or ordinary chat style.
+
+Codex must first run the visible or internal Stage 1-3 protocol:
+
+```text
+Critical -> Fetch -> Thinking
+```
+
+That means:
+
+- clarify ambiguity before dispatch when needed
+- run Fetch-first capability discovery before naming agents
+- enumerate at least two viable solution paths before choosing one
+- for non-trivial Type A/B/C/D/E work, map `Agent(...)` to Codex `spawn_agent` after user authorization and dispatch independent work in parallel when possible
+- if this behavior fails, perform an Evolution writeback to `canonical/skills/meta-theory/SKILL.md` or `config/contracts/workflow-contract.json`, then run `npm run meta:sync`
+
 ## Critical Rule: Orchestrate Before You Execute
 
 For complex development work, Codex should behave as an orchestrator first.
