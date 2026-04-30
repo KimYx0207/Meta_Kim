@@ -6,6 +6,18 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
+## [2.0.20] - 2026-04-30
+
+### Fixed
+
+- **Footprint diff accuracy** — `footprint --diff` now checks manifest paths with real filesystem existence instead of exact-string matching against scanner aggregate rows. Directory and child-file paths are treated as the same coverage relationship, preventing existing runtime skill files from being reported as missing.
+- **Project/global manifest comparison** — `--scope=both` now compares against both project and global install manifests instead of falling back to only one side.
+- **Sync manifest refreshes** — Runtime sync and global meta-theory sync replace their own previous manifest entries and re-record managed paths even when files are already up to date, preventing stale source paths from persisting.
+
+### Tests
+
+- Added manifest recorder coverage for source replacement and verified release readiness with `npm run meta:verify:all` on 2026-04-30.
+
 ## [2.0.19] - 2026-04-28
 
 ### Fixed

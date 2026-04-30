@@ -248,12 +248,25 @@ export function safeStat(p) {
  *       category: CATEGORIES.C });
  *   await rec.flush();
  */
-export function openRecorder({ scope, repoRoot, metaKimVersion, verbose }) {
+export function openRecorder({
+  scope,
+  repoRoot,
+  metaKimVersion,
+  verbose,
+  replaceSources = [],
+}) {
   let manifest;
   try {
     manifest =
       readManifest(manifestPathFor(scope, repoRoot)) ??
       createEmpty({ scope, repoRoot, metaKimVersion });
+    if (replaceSources.length > 0) {
+      const sourceSet = new Set(replaceSources);
+      manifest = {
+        ...manifest,
+        entries: manifest.entries.filter((entry) => !sourceSet.has(entry.source)),
+      };
+    }
     if (metaKimVersion && manifest.metaKimVersion !== metaKimVersion) {
       manifest = { ...manifest, metaKimVersion };
     }

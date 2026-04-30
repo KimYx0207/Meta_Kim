@@ -522,11 +522,45 @@ function humanSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function isVirtualManifestPath(value) {
+  return /^[a-z]+:/i.test(value) && !/^[a-z]:[\\/]/i.test(value);
+}
+
+function normalizeComparablePath(value) {
+  return String(value).replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
+}
+
+function pathCovers(left, right) {
+  const leftNorm = normalizeComparablePath(left);
+  const rightNorm = normalizeComparablePath(right);
+  return (
+    leftNorm === rightNorm ||
+    leftNorm.startsWith(`${rightNorm}/`) ||
+    rightNorm.startsWith(`${leftNorm}/`)
+  );
+}
+
+function mergeManifests(manifests) {
+  const entries = [];
+  for (const manifest of manifests.filter(Boolean)) {
+    entries.push(...(manifest.entries ?? []));
+  }
+  return entries.length > 0 ? { entries } : null;
+}
+
+function isDiffRecordableFinding(finding) {
+  return finding.category !== CATEGORIES.H && finding.category !== CATEGORIES.I;
+}
+
 function renderDiff(findings, manifest, t) {
-  const onDisk = new Set(findings.map((f) => f.path));
-  const inManifest = new Set((manifest?.entries ?? []).map((e) => e.path));
-  const missing = [...inManifest].filter((p) => !onDisk.has(p));
-  const unrecorded = [...onDisk].filter((p) => !inManifest.has(p));
+  const onDisk = findings.filter(isDiffRecordableFinding).map((f) => f.path);
+  const inManifest = (manifest?.entries ?? []).map((e) => e.path);
+  const missing = inManifest.filter(
+    (p) => !isVirtualManifestPath(p) && !existsSync(p),
+  );
+  const unrecorded = onDisk.filter(
+    (p) => !inManifest.some((manifestPath) => pathCovers(manifestPath, p)),
+  );
   const lines = [`${C.bold}${t.diffHeader}${C.reset}`];
   for (const p of missing)
     lines.push(`${C.red}${t.diffInManifestMissing(p)}${C.reset}`);
@@ -569,10 +603,14 @@ async function main() {
   const findings = collectFindings({ scope, repoRoot });
 
   let manifest = null;
-  if (scope === "project" || scope === "both") {
+  if (scope === "both") {
+    manifest = mergeManifests([
+      readManifest(manifestPathFor("project", repoRoot)),
+      readManifest(manifestPathFor("global")),
+    ]);
+  } else if (scope === "project") {
     manifest = readManifest(manifestPathFor("project", repoRoot));
-  }
-  if (!manifest && (scope === "global" || scope === "both")) {
+  } else if (scope === "global") {
     manifest = readManifest(manifestPathFor("global"));
   }
 

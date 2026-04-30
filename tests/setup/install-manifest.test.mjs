@@ -17,6 +17,7 @@ import {
   createEmpty,
   listByCategory,
   manifestPathFor,
+  openRecorder,
   readManifest,
   record,
   removeByPath,
@@ -285,6 +286,52 @@ describe("install-manifest schema + helpers", () => {
       assert.notEqual(secondWrite.updatedAt, firstWrite.updatedAt);
       const onDisk = JSON.parse(readFileSync(file, "utf8"));
       assert.equal(onDisk.createdAt, firstWrite.createdAt);
+    });
+  });
+
+  test("openRecorder replaceSources drops stale source entries only", () => {
+    withTmpDir((dir) => {
+      let manifest = createEmpty({
+        scope: "project",
+        repoRoot: dir,
+        metaKimVersion: "x",
+      });
+      manifest = record(manifest, {
+        path: path.join(dir, ".codex", "old.toml"),
+        category: CATEGORIES.G,
+        source: "sync-runtimes",
+        purpose: "project-settings",
+        kind: "file",
+      });
+      manifest = record(manifest, {
+        path: path.join(dir, ".git", "hooks", "post-commit"),
+        category: CATEGORIES.I,
+        source: "setup",
+        purpose: "graphify-git-hook",
+        kind: "file",
+      });
+      writeManifest(manifestPathFor("project", dir), manifest);
+
+      const recorder = openRecorder({
+        scope: "project",
+        repoRoot: dir,
+        replaceSources: ["sync-runtimes"],
+      });
+      recorder.recordFile(path.join(dir, ".codex", "new.toml"), {
+        category: CATEGORIES.G,
+        source: "sync-runtimes",
+        purpose: "project-settings",
+      });
+      recorder.flush();
+
+      const next = readManifest(manifestPathFor("project", dir));
+      assert.deepEqual(
+        next.entries.map((entry) => entry.path).sort(),
+        [
+          path.join(dir, ".codex", "new.toml"),
+          path.join(dir, ".git", "hooks", "post-commit"),
+        ].sort(),
+      );
     });
   });
 });

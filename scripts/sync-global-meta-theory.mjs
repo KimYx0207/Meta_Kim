@@ -257,6 +257,24 @@ async function syncClaudeGlobalSettingsHooks() {
   assertHomeBound(settingsPath);
 
   const template = buildMetaKimHooksTemplate(absHooks);
+  const recordSettingsMerge = () => {
+    recordSafe((rec) => {
+      const managedCommands = [];
+      for (const blocks of Object.values(template)) {
+        for (const block of blocks ?? []) {
+          for (const h of block.hooks ?? []) {
+            if (h?.command) managedCommands.push(h.command);
+          }
+        }
+      }
+      rec.recordSettingsMerge(settingsPath, managedCommands, {
+        source: "sync-global-meta-theory",
+        purpose: "claude-global-settings-merge",
+        category: CATEGORIES.C,
+      });
+    });
+  };
+
   let base = {};
   if (await pathExists(settingsPath)) {
     const raw = await fs.readFile(settingsPath, "utf8");
@@ -285,6 +303,7 @@ async function syncClaudeGlobalSettingsHooks() {
     console.log(
       `Claude Code settings hooks already up to date: ${settingsPath}`,
     );
+    recordSettingsMerge();
     return;
   }
 
@@ -297,21 +316,7 @@ async function syncClaudeGlobalSettingsHooks() {
 
   await fs.writeFile(settingsPath, out, "utf8");
   console.log(`Merged Meta_Kim hooks into ${settingsPath}`);
-  recordSafe((rec) => {
-    const managedCommands = [];
-    for (const blocks of Object.values(template)) {
-      for (const block of blocks ?? []) {
-        for (const h of block.hooks ?? []) {
-          if (h?.command) managedCommands.push(h.command);
-        }
-      }
-    }
-    rec.recordSettingsMerge(settingsPath, managedCommands, {
-      source: "sync-global-meta-theory",
-      purpose: "claude-global-settings-merge",
-      category: CATEGORIES.C,
-    });
-  });
+  recordSettingsMerge();
 }
 
 async function runCheck() {
@@ -391,6 +396,7 @@ async function runSync() {
   manifestRecorder = openRecorder({
     scope: "global",
     metaKimVersion: process.env.META_KIM_VERSION ?? null,
+    replaceSources: ["sync-global-meta-theory"],
   });
 
   for (const target of cleanupTargets) {

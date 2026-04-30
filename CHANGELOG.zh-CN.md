@@ -6,6 +6,18 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 发布新版本时，请在顶部（旧版本之前）添加新的 **`## [版本号] - YYYY-MM-DD`** 部分。
 
+## [2.0.20] - 2026-04-30
+
+### 修复
+
+- **footprint diff 准确性** — `footprint --diff` 现在使用真实文件系统存在性判断 manifest 路径是否缺失，不再把 manifest 里的子文件和扫描器汇总的目录项做精确字符串比较。目录与子文件会被视为同一覆盖关系，避免真实存在的 runtime skill 文件被误报 missing。
+- **project/global manifest 对比** — `--scope=both` 现在会同时读取 project 与 global install manifest，不再只比较其中一侧。
+- **sync manifest 刷新** — runtime sync 与 global meta-theory sync 会替换自己上次写入的 manifest 记录，并且即使文件已经最新也重新登记受管理路径，避免旧 source 路径长期残留。
+
+### 测试
+
+- 新增 manifest recorder 的 source replacement 回归测试，并于 2026-04-30 使用 `npm run meta:verify:all` 完成发布级验证。
+
 ## [2.0.19] - 2026-04-28
 
 ### 修复

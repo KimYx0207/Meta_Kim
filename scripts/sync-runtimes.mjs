@@ -642,6 +642,18 @@ ${agent.body}
 }
 
 async function writeGeneratedFile(filePath, nextContent) {
+  const recordGeneratedFile = () => {
+    const category = inferProjectCategory(filePath);
+    if (!category) return;
+    recordSafe((rec) =>
+      rec.recordFile(filePath, {
+        source: "sync-runtimes",
+        purpose: inferProjectPurpose(category),
+        category,
+      }),
+    );
+  };
+
   let currentContent = null;
   try {
     currentContent = await fs.readFile(filePath, "utf8");
@@ -652,6 +664,9 @@ async function writeGeneratedFile(filePath, nextContent) {
   }
 
   if (currentContent === nextContent) {
+    if (!checkOnly) {
+      recordGeneratedFile();
+    }
     return { changed: false };
   }
 
@@ -666,16 +681,7 @@ async function writeGeneratedFile(filePath, nextContent) {
 
   await ensureDir(path.dirname(filePath));
   await fs.writeFile(filePath, nextContent, "utf8");
-  const category = inferProjectCategory(filePath);
-  if (category) {
-    recordSafe((rec) =>
-      rec.recordFile(filePath, {
-        source: "sync-runtimes",
-        purpose: inferProjectPurpose(category),
-        category,
-      }),
-    );
-  }
+  recordGeneratedFile();
   return { changed: true };
 }
 
@@ -1136,6 +1142,7 @@ Examples:
       scope: "project",
       repoRoot,
       metaKimVersion: process.env.META_KIM_VERSION ?? null,
+      replaceSources: ["sync-runtimes"],
     });
   }
 
