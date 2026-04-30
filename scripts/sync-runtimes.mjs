@@ -511,7 +511,7 @@ Generated from \`${agent.sourceFile}\`. Edit the canonical source first, then ru
 - \`AGENTS.md\` only lists the Meta_Kim team, not the full OpenClaw registry.
 - When the user asks which agents exist, how many agents exist, or who can collaborate right now, query the live runtime registry first through \`agents_list\`. If that tool is unavailable, fall back to an explicit runtime command and state the result source.
 - Stay inside your own responsibility boundary unless the user explicitly asks you to coordinate broader work.
-- An optional local research note may exist at \`docs/meta.md\`, but public runtime behavior must not depend on it.
+- The theory source is \`canonical/skills/meta-theory/references/meta-theory.md\`; public runtime behavior must not depend on local narrative notes.
 
 ${agent.body}
 `;

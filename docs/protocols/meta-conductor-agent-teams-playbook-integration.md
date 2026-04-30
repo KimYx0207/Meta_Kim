@@ -375,7 +375,7 @@ Success    Failure
 Verification of this protocol integration:
 
 ```bash
-npm run validate
+npm run meta:validate
 ```
 
 Expected validation targets:
@@ -389,4 +389,4 @@ Expected validation targets:
 
 - **Integration Target**: `canonical/agents/meta-conductor.md` (Stage 4 section)
 - **Playbook Source**: `~/.claude/skills/agent-teams-playbook/SKILL.md` (v4.5)
-- **Validation Command**: `npm run validate`
+- **Validation Command**: `npm run meta:validate`

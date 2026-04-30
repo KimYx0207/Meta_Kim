@@ -30,7 +30,7 @@ function ensurePython({ requirePip = false } = {}) {
 }
 
 function runCheck() {
-  const python = ensurePython();
+  const python = ensurePython({ requirePip: true });
   if (!python) {
     return;
   }
@@ -39,7 +39,7 @@ function runCheck() {
 
   const pipShow = runPythonModule(python, ["-m", "pip", "show", "graphifyy"]);
   if (pipShow.status !== 0) {
-    console.log("graphify not installed");
+    fail("graphify not installed");
     return;
   }
 

@@ -13,9 +13,13 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { ensureProfileState } from "./meta-kim-local-state.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
+const CANONICAL_CAPABILITY_INDEX = "config/capability-index/meta-kim-capabilities.json";
+const LOCAL_GLOBAL_INVENTORY =
+  ".meta-kim/state/{profile}/capability-index/global-capabilities.json";
 
 // ========== 平台定义 ==========
 
@@ -352,6 +356,7 @@ async function scanHookFiles(dir) {
   for await (const filePath of walkDir(dir, 3)) {
     if (
       filePath.endsWith(".js") ||
+      filePath.endsWith(".mjs") ||
       filePath.endsWith(".py") ||
       filePath.endsWith(".sh")
     ) {
@@ -651,17 +656,103 @@ async function scanPlatform(platformId, platform) {
 
 // ========== 索引构建 ==========
 
-async function buildCapabilityIndex(scannedResults) {
+async function collectRepoCanonicalCapabilities() {
+  const agents = await scanMarkdownFiles(path.join(repoRoot, "canonical", "agents"));
+  const skills = await scanSkillFiles(path.join(repoRoot, "canonical", "skills"));
+  const skillReferences = await scanMarkdownFilesRecursive(
+    path.join(repoRoot, "canonical", "skills", "meta-theory", "references"),
+  );
+  const sharedHooks = await scanHookFiles(
+    path.join(repoRoot, "canonical", "runtime-assets", "shared", "hooks"),
+  );
+  const claudeHooks = await scanHookFiles(
+    path.join(repoRoot, "canonical", "runtime-assets", "claude", "hooks"),
+  );
+  const openclawHooks = await scanHookFiles(
+    path.join(repoRoot, "canonical", "runtime-assets", "openclaw", "hooks"),
+  );
+
+  const toRepoCapability = (item, type, namespace) => ({
+    id: item.id,
+    type,
+    namespace,
+    path: path.relative(repoRoot, item.path).replace(/\\/g, "/"),
+    relativePath: item.relativePath?.replace(/\\/g, "/"),
+    size: item.size,
+    modified: item.modified,
+  });
+
+  return {
+    agents: agents.map((item) => toRepoCapability(item, "agents", "canonical")),
+    skills: [
+      ...skills.map((item) => toRepoCapability(item, "skills", "canonical")),
+      ...skillReferences.map((item) =>
+        toRepoCapability(item, "skills", "canonical-reference"),
+      ),
+    ],
+    hooks: [...sharedHooks, ...claudeHooks, ...openclawHooks].map((item) =>
+      toRepoCapability(item, "hooks", "canonical-runtime-assets"),
+    ),
+    plugins: [],
+    commands: [],
+  };
+}
+
+async function buildRepoCapabilityIndex() {
+  const capabilities = await collectRepoCanonicalCapabilities();
   const index = {
     generatedAt: new Date().toISOString(),
     registryName: "meta-kim-capabilities",
-    canonicalProjection: ".claude/capability-index/meta-kim-capabilities.json",
-    compatibilityMirror: ".claude/capability-index/global-capabilities.json",
+    scope: "repo-canonical",
+    canonicalProjection: CANONICAL_CAPABILITY_INDEX,
+    canonicalSource: CANONICAL_CAPABILITY_INDEX,
+    localGlobalInventory: LOCAL_GLOBAL_INVENTORY,
     mirroredTo: [
-      ".codex/capability-index/",
-      "openclaw/capability-index/",
-      ".cursor/capability-index/",
+      ".claude/capability-index/meta-kim-capabilities.json",
+      ".codex/capability-index/meta-kim-capabilities.json",
+      "openclaw/capability-index/meta-kim-capabilities.json",
+      ".cursor/capability-index/meta-kim-capabilities.json",
     ],
+    fetchOrder: [
+      "repo canonical capability index",
+      "runtime mirror",
+      "local global inventory",
+      "fallback general agent with capability gap record",
+    ],
+    summary: {
+      totalAgents: capabilities.agents.length,
+      totalSkills: capabilities.skills.length,
+      totalHooks: capabilities.hooks.length,
+      totalPlugins: 0,
+      totalCommands: 0,
+    },
+    byCapabilityType: {
+      agents: Object.fromEntries(
+        capabilities.agents.map((cap) => [`repo:${cap.namespace}:${cap.id}`, cap]),
+      ),
+      skills: Object.fromEntries(
+        capabilities.skills.map((cap) => [`repo:${cap.namespace}:${cap.id}`, cap]),
+      ),
+      hooks: Object.fromEntries(
+        capabilities.hooks.map((cap) => [`repo:${cap.namespace}:${cap.id}`, cap]),
+      ),
+      plugins: {},
+      commands: {},
+    },
+  };
+
+  return index;
+}
+
+async function buildGlobalCapabilityInventory(scannedResults, profile) {
+  const index = {
+    generatedAt: new Date().toISOString(),
+    registryName: "global-capabilities",
+    scope: "local-global-inventory",
+    profile,
+    canonicalProjection: CANONICAL_CAPABILITY_INDEX,
+    repoCanonicalIndex: CANONICAL_CAPABILITY_INDEX,
+    localInventoryPath: LOCAL_GLOBAL_INVENTORY.replace("{profile}", profile),
     summary: {
       totalAgents: 0,
       totalSkills: 0,
@@ -770,16 +861,26 @@ async function main() {
     }
   }
 
-  const index = await buildCapabilityIndex(scannedResults);
+  const profileState = await ensureProfileState();
+  const repoCapabilityIndex = await buildRepoCapabilityIndex();
+  const globalInventory = await buildGlobalCapabilityInventory(
+    scannedResults,
+    profileState.profile,
+  );
 
   if (outputFormat === "json") {
-    console.log(JSON.stringify(index, null, 2));
+    console.log(JSON.stringify(globalInventory, null, 2));
   } else {
-    console.log(formatTableOutput(index));
+    console.log(formatTableOutput(globalInventory));
   }
 
-  // 写入索引文件到所有平台的 capability-index 目录
-  const content = JSON.stringify(index, null, 2);
+  // Write the repo-neutral canonical index, then mirror only that index into
+  // runtime projections. Machine-specific global inventory stays local-only.
+  const repoContent = `${JSON.stringify(repoCapabilityIndex, null, 2)}\n`;
+  const canonicalIndexPath = path.join(repoRoot, CANONICAL_CAPABILITY_INDEX);
+  await fs.mkdir(path.dirname(canonicalIndexPath), { recursive: true });
+  await fs.writeFile(canonicalIndexPath, repoContent);
+
   const platformIndexDirs = [
     path.join(repoRoot, ".claude", "capability-index"),
     path.join(repoRoot, ".codex", "capability-index"),
@@ -791,15 +892,27 @@ async function main() {
     await fs.mkdir(indexDir, { recursive: true });
     await fs.writeFile(
       path.join(indexDir, "meta-kim-capabilities.json"),
-      content,
+      repoContent,
     );
-    await fs.writeFile(
-      path.join(indexDir, "global-capabilities.json"),
-      content,
-    );
+    await fs.rm(path.join(indexDir, "global-capabilities.json"), {
+      force: true,
+    });
   }
 
-  console.error(`\n✅ Index written to ${platformIndexDirs.length} platforms:`);
+  const localInventoryPath = path.join(
+    profileState.profileDir,
+    "capability-index",
+    "global-capabilities.json",
+  );
+  await fs.mkdir(path.dirname(localInventoryPath), { recursive: true });
+  await fs.writeFile(
+    localInventoryPath,
+    `${JSON.stringify(globalInventory, null, 2)}\n`,
+  );
+
+  console.error(`\n✅ Canonical index written to ${CANONICAL_CAPABILITY_INDEX}`);
+  console.error(`✅ Local inventory written to ${path.relative(repoRoot, localInventoryPath).replace(/\\/g, "/")}`);
+  console.error(`✅ Canonical index mirrored to ${platformIndexDirs.length} platforms:`);
   for (const dir of platformIndexDirs) {
     const rel = path.relative(repoRoot, dir).replace(/\\/g, "/");
     console.error(`   ${rel}/`);

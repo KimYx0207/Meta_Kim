@@ -716,7 +716,7 @@ flowchart TB
 | `npm run meta:deps:install:all-runtimes` | 모든 런타임에 설치 |
 | `npm run meta:deps:install:claude-plugins` | Claude Code marketplace plugin만 설치 |
 | `npm run discover:global` | 글로벌 역량 스캔 |
-| `npm run sync:global:meta-theory` | meta-theory를 사용자 수준에 동기화 |
+| `npm run meta:sync:global` | meta-theory를 사용자 수준에 동기화 |
 
 #### Plugin marketplace 스킬（Superpowers、Everything Claude Code、cli-anything）
 
@@ -739,7 +739,7 @@ flowchart TB
 | `npm run meta:validate:run -- <file.json>` | governed run 산출물 검증 |
 | `npm run meta:eval:agents` | 경량 runtime smoke 테스트 |
 | `npm run meta:eval:agents:live` | 실시간 prompt 포함 런타임 수락 |
-| `npm run probe:clis` | 로컬 CLI 도구 탐지 |
+| `npm run meta:probe:clis` | 로컬 CLI 도구 탐지 |
 | `npm run meta:test:mcp` | MCP 자체 테스트 |
 | `npm run meta:index:runs -- <dir>` | 검증된 run 산출물 인덱스 |
 | `npm run meta:query:runs -- --owner <agent>` | run 인덱스 조회 |

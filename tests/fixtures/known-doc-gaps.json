@@ -1,0 +1,16 @@
+[
+  {
+    "path": "tests/meta-theory/00-capability-discovery.test.mjs",
+    "messageContains": "DRY conflict detection",
+    "owner": "meta-prism",
+    "expiry": "2026-05-31",
+    "closeCondition": "SKILL.md documents overlap/duplicate detection for capability discovery."
+  },
+  {
+    "path": "tests/meta-theory/00-capability-discovery.test.mjs",
+    "messageContains": "ROI formula",
+    "owner": "meta-artisan",
+    "expiry": "2026-05-31",
+    "closeCondition": "SKILL.md documents the ROI formula or the test becomes a hard assertion."
+  }
+]

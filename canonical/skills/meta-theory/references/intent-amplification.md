@@ -1,6 +1,6 @@
 # Intent amplification — full reference
 
-> Distilled from `docs/meta.md` (long-form narrative); aligns with the Meta_Kim methodology.
+> Distilled into the canonical meta-theory reference set; aligns with the Meta_Kim methodology.
 
 ## Core proposition
 

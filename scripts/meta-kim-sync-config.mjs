@@ -22,6 +22,11 @@ export const canonicalRuntimeAssetsDir = path.join(
   canonicalRoot,
   "runtime-assets",
 );
+export const canonicalCapabilityIndexDir = path.join(
+  repoRoot,
+  "config",
+  "capability-index",
+);
 export const syncManifestPath = path.join(repoRoot, "config", "sync.json");
 export const localOverridesPath = path.join(
   repoRoot,
@@ -607,7 +612,13 @@ export function validateSyncManifest(manifest) {
   if (!manifest.canonicalRoots || typeof manifest.canonicalRoots !== "object") {
     throw new Error("sync manifest canonicalRoots must exist");
   }
-  for (const key of ["agents", "skills", "runtimeAssets", "contracts"]) {
+  for (const key of [
+    "agents",
+    "skills",
+    "runtimeAssets",
+    "contracts",
+    "capabilityIndex",
+  ]) {
     if (
       typeof manifest.canonicalRoots[key] !== "string" ||
       !manifest.canonicalRoots[key].trim()

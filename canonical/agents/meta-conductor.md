@@ -14,7 +14,7 @@ trigger: "Multi-step tasks, Type C execution, rhythm optimization, or when workf
 
 > Workflow Orchestration & Rhythm Controller — Workflow Orchestration, department Orchestration, rhythm control
 
-**Canon narrative** (`docs/meta.md` uses Chinese labels for the same chain): **Meta → organizational mirror → rhythm orchestration → intent amplification** — Conductor owns **rhythm orchestration** mechanics (sequence, skip, interrupt, silence, delivery shell) so intent becomes scheduled action.
+**Canon narrative** (`canonical/skills/meta-theory/references/meta-theory.md` defines the theory source): **Meta → organizational mirror → rhythm orchestration → intent amplification** — Conductor owns **rhythm orchestration** mechanics (sequence, skip, interrupt, silence, delivery shell) so intent becomes scheduled action.
 
 ## Identity
 
@@ -44,7 +44,7 @@ trigger: "Multi-step tasks, Type C execution, rhythm optimization, or when workf
 **Key Distinction**: Conductor binds **stage cards** to **execution lanes and sequencing**; Artisan maps **named skills/tools** to **one agent** from SOUL.md. No shared `matchSkillsToPhase`-style surface — lane specs stay abstract; skill lists stay in Artisan.
 **Dispatch Rule**: Conductor is the sole card dealer / dispatcher. Warden approves, denies, or re-requests the dispatch board, but does not own card play.
 
-### Four dealer questions (compact, aligned with `docs/meta.md`)
+### Four dealer questions (compact, aligned with the theory reference)
 
 | # | Question | Resolves |
 |---|----------|----------|
@@ -378,11 +378,11 @@ Then compress by context:
 5. **Interrupt Breaks Rhythm** — Critical issues first; safety issues absolute first
 6. **Shell Changes, Core Does Not** — Same Intent adapts delivery form by audience
 
-### Card Type Mapping (from `docs/meta.md` original design)
+### Card Type Mapping (from the canonical theory design)
 
-The 10-card system from `docs/meta.md` maps to Conductor's Event Card Deck as follows:
+The 10-card system maps to Conductor's Event Card Deck as follows:
 
-| docs/meta.md Card | Conductor Card Type | Cost | Priority Base |
+| Theory Card | Conductor Card Type | Cost | Priority Base |
 |-------------------|---------------------|------|--------------|
 | Clarification | `Critical` | low | 10 |
 | Scope Contraction | `Thinking` | low | 9 |
@@ -395,7 +395,7 @@ The 10-card system from `docs/meta.md` maps to Conductor's Event Card Deck as fo
 | Suggestion | `(Control card)` | low | 4 |
 | Intentional Silence | `(Control card)` | zero | 1 |
 
-**Reference**: Full original design in `docs/meta.md` (layout and card-typography rules) and the 10-card event system.
+**Reference**: Full design lives in `canonical/skills/meta-theory/references/meta-theory.md` and the synced meta-theory references.
 
 ## Skill Discovery Protocol
 
@@ -714,7 +714,7 @@ mode                   → dispatchEnvelopePacket.route
 | Assignment | Owner | Rationale |
 |------------|-------|-----------|
 | **Review Owner** | `meta-prism` | Quality audit on parsed results and task board completeness |
-| **Verification Owner** | `npm run validate` | Schema validation of generated dispatch board |
+| **Verification Owner** | `npm run meta:validate` | Schema validation of generated dispatch board |
 | **Synthesis Owner** | `meta-warden` | Final approval before card dealing resumes |
 
 ---

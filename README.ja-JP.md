@@ -714,7 +714,7 @@ flowchart TB
 | `npm run meta:deps:install:all-runtimes` | すべての runtime にインストール |
 | `npm run meta:deps:install:claude-plugins` | Claude Code marketplace plugin のみインストール |
 | `npm run discover:global` | グローバル能力をスキャン |
-| `npm run sync:global:meta-theory` | meta-theory をユーザー級へ同期 |
+| `npm run meta:sync:global` | meta-theory をユーザー級へ同期 |
 
 #### Plugin marketplace 系 skill（Superpowers、Everything Claude Code、cli-anything）
 
@@ -737,7 +737,7 @@ flowchart TB
 | `npm run meta:validate:run -- <file.json>` | ガバナンス run の成果物を検証 |
 | `npm run meta:eval:agents` | 軽量な runtime smoke テスト |
 | `npm run meta:eval:agents:live` | 実際の prompt を使った受け入れ検証 |
-| `npm run probe:clis` | ローカル CLI ツールを検出 |
+| `npm run meta:probe:clis` | ローカル CLI ツールを検出 |
 | `npm run meta:test:mcp` | MCP の自己テスト |
 | `npm run meta:index:runs -- <dir>` | 検証済み run 産物を索引化 |
 | `npm run meta:query:runs -- --owner <agent>` | run index を検索 |

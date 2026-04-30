@@ -46,8 +46,8 @@
     "meta:graphify:update": "node scripts/graphify-cli.mjs update",
     "meta:validate": "node scripts/validate-project.mjs",
     "meta:check": "npm run meta:check:runtimes && npm run meta:validate",
-    "meta:verify:all": "npm run meta:check && npm run meta:check:global && node scripts/eval-meta-agents.mjs --require-all-runtimes && npm run meta:test:setup && npm run meta:test:meta-theory",
-    "meta:verify:all:live": "npm run meta:check && npm run meta:check:global && node scripts/eval-meta-agents.mjs --require-all-runtimes --live && npm run meta:test:setup && npm run meta:test:meta-theory",
+    "meta:verify:all": "npm run meta:check && npm run meta:graphify:check && npm run meta:check:global && node scripts/eval-meta-agents.mjs --require-all-runtimes && npm run meta:test:setup && npm run meta:test:meta-theory",
+    "meta:verify:all:live": "npm run meta:check && npm run meta:graphify:check && npm run meta:check:global && node scripts/eval-meta-agents.mjs --require-all-runtimes --live && npm run meta:test:setup && npm run meta:test:meta-theory",
     "meta:setup:install": "node setup.mjs",
     "meta:setup:update": "node setup.mjs --update",
     "meta:setup:check": "node setup.mjs --check"

@@ -179,7 +179,7 @@ When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the
 
 ### Migration Notes
 
-- Users on a new machine should run `node setup.mjs` then `npm run sync:global:meta-theory` — do **not** copy `~/.claude/settings.json` between machines (hook `command` values are absolute paths and will not resolve under a different username or OS). `npm run meta:doctor:hooks` detects and `:fix` cleans up after an accidental copy.
+- Users on a new machine should run `node setup.mjs` then `npm run meta:sync:global` — do **not** copy `~/.claude/settings.json` between machines (hook `command` values are absolute paths and will not resolve under a different username or OS). `npm run meta:doctor:hooks` detects and `:fix` cleans up after an accidental copy.
 
 - **MCP Memory Service port migration (`8888` → `8000`)**: existing installs have a local `~/.claude/hooks/config.json` that was seeded from the *old* template with `endpoint: "http://127.0.0.1:8888"`. That file is *preserved by design* (user customizations are never overwritten), so the template fix alone will not migrate it. Two safe paths forward:
   1. Edit `~/.claude/hooks/config.json` manually: change `memoryService.http.endpoint` from `:8888` to `:8000`.
@@ -295,7 +295,7 @@ When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the
 
 ### Changed
 
-- **graphify (install + docs + tests)**: `setup.mjs` optional Python step and `npm run graphify:install` now **idempotently** run `python -m graphify claude install` and `python -m graphify hook install` even when `graphifyy` is already installed via pip (fixes silent skip of git hooks). `scripts/graphify-cli.mjs` `install`/`update` appends `hook install`. `install-global-skills-all-runtimes.mjs` runs the same wiring when pip reports graphify already present. **Docs** (`CLAUDE.md`, `README.md` / `README.zh-CN.md` / `README.ja-JP.md` / `README.ko-KR.md`, `AGENTS.md`): separate **data refresh** (hooks/commands) vs **Fetch Step 0.5** (model behavior) vs **Claude subagent hint** (no embedding); Codex/OpenClaw/Cursor consumption via synced `dev-governance.md` and optional `graphify codex|claw install` in target repos. **Hook** [`canonical/runtime-assets/claude/hooks/subagent-context.mjs`](canonical/runtime-assets/claude/hooks/subagent-context.mjs): prefer `graphify-out/GRAPH_REPORT.md` when present. **Tests**: [`tests/setup/graphify-wiring-contract.test.mjs`](tests/setup/graphify-wiring-contract.test.mjs) locks the contract.
+- **graphify (install + docs + tests)**: `setup.mjs` optional Python step and `npm run meta:graphify:install` now **idempotently** run `python -m graphify claude install` and `python -m graphify hook install` even when `graphifyy` is already installed via pip (fixes silent skip of git hooks). `scripts/graphify-cli.mjs` `install`/`update` appends `hook install`. `install-global-skills-all-runtimes.mjs` runs the same wiring when pip reports graphify already present. **Docs** (`CLAUDE.md`, `README.md` / `README.zh-CN.md` / `README.ja-JP.md` / `README.ko-KR.md`, `AGENTS.md`): separate **data refresh** (hooks/commands) vs **Fetch Step 0.5** (model behavior) vs **Claude subagent hint** (no embedding); Codex/OpenClaw/Cursor consumption via synced `dev-governance.md` and optional `graphify codex|claw install` in target repos. **Hook** [`canonical/runtime-assets/claude/hooks/subagent-context.mjs`](canonical/runtime-assets/claude/hooks/subagent-context.mjs): prefer `graphify-out/GRAPH_REPORT.md` when present. **Tests**: [`tests/setup/graphify-wiring-contract.test.mjs`](tests/setup/graphify-wiring-contract.test.mjs) locks the contract.
 
 - **Documentation (CLAUDE.md)**: Clarified generated/runtime wiring vs canonical edit targets; Cursor as fourth runtime projection; expanded maintenance commands (`check`, `check:global:meta-theory`, `deps:update`, `graphify:install`, `prompt:next-iteration`, etc.); graphify working-directory notes.
 
@@ -503,7 +503,7 @@ When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the
 - Wrap Markdown **tables** in `<div align="center">` across all four READMEs so GitHub / VS Code previews center consistently (including stage tables with `Critical`, Hooks, Commands, etc.).
 - **Repository structure**: replace ASCII tree with **path | description** tables in `README.md`, `README.ja-JP.md`, and `README.ko-KR.md` (match `README.zh-CN.md` granularity); add `codex/`, `docs/`, `shared-skills/`, `CHANGELOG.md` rows where missing.
 - **JA/KO**: add the **two-layer workflow vocabulary** table (8-stage spine vs 10-phase business contract); add **`npx … meta-kim`** row to Quick Start usage tables; link abbreviated npm script lists to **`README.md#commands`** for the full command reference.
-- Document **Meta_Kim** (`node setup.mjs`) as the canonical install path for **KimYx0207/findskill**; four README languages plus `CLAUDE.md` state that **in-repo naming uses `findskill` only** (aligned with `~/.claude/skills/findskill/`).
+- Document **Meta_Kim** (`node setup.mjs`) as the preferred install path for **KimYx0207/findskill**; four README languages plus `CLAUDE.md` state that **in-repo naming uses `findskill` only** (aligned with the Claude global skill path).
 - **`npx` one-shot entry**: `npx github:KimYx0207/Meta_Kim meta-kim` documented as equivalent to `node setup.mjs` with per-locale `--check` examples.
 
 ### Added
@@ -521,7 +521,7 @@ When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the
 - Extend `config/contracts/workflow-contract.json` again to formalize card governance: `cardPlanPacket`, `cardDecision`, `deliveryShell`, `silenceDecision`, `controlDecision`, `summaryPacket`, explicit dealer ownership, and run-artifact validation policy.
 - Add `scripts/validate-run-artifact.mjs` plus run-artifact fixtures/tests so Meta_Kim now validates real packet chains instead of only schema presence.
 - Sync `README.md`, `README.zh-CN.md`, `CLAUDE.md`, and `AGENTS.md` to the new card/dealer/silence/summary/run-validator model; these doc changes now map to concrete contract and script additions instead of standalone wording.
-- Align `package.json` with the latest released changelog version and stop public-facing docs from treating private/untracked `docs/meta.md` and `docs/repo-map.md` as required public entry points.
+- Align `package.json` with the latest released changelog version and stop public-facing docs from treating internal narrative notes and `docs/repo-map.md` as required public entry points.
 - Clarify in both README files that `docs/` is internal-only and remove any public requirement to read `docs/runtime-capability-matrix.md`.
 - Harden `config/contracts/workflow-contract.json` from documentation-only governance toward runtime-checkable governance: add `taskClassification`, finding-level closure rules, explicit `writebackDecision`, and hard public-display gate semantics.
 - Extend `scripts/validate-project.mjs` and `tests/meta-theory/07-contract-compliance.test.mjs` to enforce the new task-classification, finding-closure, evolution-decision, and runtime-parity requirements.
@@ -560,7 +560,7 @@ When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the
 
 ### Added
 
-- Canonical owner-first governance rules in `.claude/skills/meta-theory/references/dev-governance.md`: only pure `Q / Query` may bypass agents; every executable task must have an explicit owner.
+- Owner-first governance rules in the meta-theory references: only pure `Q / Query` may bypass agents; every executable task must have an explicit owner.
 - Explicit capability-gap resolution ladder: existing owner -> Type B owner creation/composition -> temporary `generalPurpose` owner with required justification and Evolution follow-up.
 - Protocol-first dispatch requirements: `runHeader`, `dispatchBoard`, `workerTaskPacket`, `workerResultPacket`, `reviewPacket`, `verificationPacket`, and `evolutionWritebackPacket`.
 - Parallelism requirements in the canonical sources: independent work must declare `dependsOn`, `parallelGroup`, and `mergeOwner` instead of defaulting to unnecessary serial execution.
@@ -568,7 +568,7 @@ When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the
 
 ### Synced
 
-- Synced the strengthened canonical `meta-theory` skill and `dev-governance` reference into Codex mirrors, OpenClaw mirrors, shared skills, and workspace packs via `npm run sync:runtimes`.
+- Synced the strengthened `meta-theory` skill and `dev-governance` reference into Codex mirrors, OpenClaw mirrors, shared skills, and workspace packs via `npm run meta:sync`.
 - Synced the stronger owner-first / protocol-first / parallelism rules back into both public README files so outward-facing docs match the canonical project rules.
 
 ## [1.2.0] - 2026-03-28

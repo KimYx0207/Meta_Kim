@@ -22,7 +22,8 @@
     "agents": "canonical/agents",
     "skills": "canonical/skills/meta-theory",
     "runtimeAssets": "canonical/runtime-assets",
-    "contracts": "contracts"
+    "contracts": "config/contracts",
+    "capabilityIndex": "config/capability-index"
   },
   "generatedTargets": {
     "claude": [

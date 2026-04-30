@@ -1,6 +1,6 @@
 # Ten-step governance — full reference
 
-> Distilled from `docs/meta.md`; aligns with the Meta_Kim methodology.
+> Distilled into the canonical meta-theory reference set; aligns with the Meta_Kim methodology.
 > **Steps 1–3 = “it moves.” Steps 4–10 = “it matures.”**
 
 ## Core proposition

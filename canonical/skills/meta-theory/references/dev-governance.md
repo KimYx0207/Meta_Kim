@@ -2,7 +2,7 @@
 
 > Detailed operating spec for Type C (Development Governance Flow).
 > The Type C section in `SKILL.md` is the entry summary; this file contains the full procedure.
-> For extended long-form narrative (including historical Chinese material), see `docs/meta.md`.
+> For the theory source, see `canonical/skills/meta-theory/references/meta-theory.md`.
 > Read this file when executing Type C — Development Governance Flow.
 
 ## 1. AGENT INVOCATION PRINCIPLE (Non-Negotiable)
@@ -17,7 +17,7 @@ Need an agent for X → Search who declares "Own X" → Call the best match
 
 | Step | Action |
 |------|--------|
-| 1. Search | `Glob: .claude/agents/*.md` + read meta-kim-capabilities.json (compat: global-capabilities.json) |
+| 1. Search | Read `config/capability-index/meta-kim-capabilities.json`, then the runtime mirror, then `.meta-kim/state/{profile}/capability-index/global-capabilities.json` |
 | 2. Match | Score each agent's "Own" boundary against needed capability (3=perfect / 1-2=partial / 0=none) |
 | 3. Invoke | 3 → invoke directly / 1-2 → invoke + note gaps / 0 → capability gap detected |
 
@@ -83,17 +83,17 @@ If `taskClassification.upgradeReasons` includes `owner_creation_required`, the a
 
 ## 1B. Multi-iteration closure (until gates pass)
 
-When work is not done after one pass (open review findings, `verificationPacket.verified !== true`, or `npm run validate:run` fails), treat the run like a **Ralph-style loop** without inventing new stage names:
+When work is not done after one pass (open review findings, `verificationPacket.verified !== true`, or `npm run meta:validate:run` fails), treat the run like a **Ralph-style loop** without inventing new stage names:
 
 1. **Execution / Revision** — address the highest-severity open findings; update code or docs as needed.
 2. **Review** — refresh `reviewPacket` and finding `closeState` transitions (`open` → `fixed_pending_verify` as appropriate).
 3. **Verification** — refresh `revisionResponses`, `verificationResults`, and `closeFindings` until every finding is `verified_closed` or `accepted_risk`.
 4. **Summary** — align `summaryPacket` with `config/contracts/workflow-contract.json` `runDiscipline.publicDisplayRequires` before setting `publicReady=true`.
-5. **Validate** — run `npm run validate:run -- <artifact.json>`; if it fails, run `npm run prompt:next-iteration -- <artifact.json>` and feed the printed checklist back into the orchestrator.
+5. **Validate** — run `npm run meta:validate:run -- <artifact.json>`; if it fails, run `npm run prompt:next-iteration -- <artifact.json>` and feed the printed checklist back into the orchestrator.
 
 Stop when `validate:run` passes **or** the user explicitly accepts risk with documented `accepted_risk` and honest `publicReady=false`.
 
-**Session recovery (API / compact / tool failure):** Check `.meta-kim/state/{profile}/run-index.sqlite` first for the latest validated governed run, then load the governed artifact as the source of truth. After an interrupted session, reload at minimum: `runHeader`, `taskClassification`, `intentPacket`, `intentGatePacket` (when required), `cardPlanPacket`, `dispatchEnvelopePacket`, `orchestrationTaskBoardPacket`, `capabilityGapPacket` / `executionAgentCard` (when applicable), `dispatchBoard`, `workerTaskPackets` / `workerResultPackets`, `reviewPacket`, `verificationPacket`, `summaryPacket`, `evolutionWritebackPacket`. If a local `compactionPacket` exists, use it only as continuity aid; it never replaces the governed artifact. Re-run `npm run validate:run -- <artifact.json>` before claiming closure. The same packet list is printed by `npm run prompt:next-iteration -- <artifact.json>` under **Minimal context reload**.
+**Session recovery (API / compact / tool failure):** Check `.meta-kim/state/{profile}/run-index.sqlite` first for the latest validated governed run, then load the governed artifact as the source of truth. After an interrupted session, reload at minimum: `runHeader`, `taskClassification`, `intentPacket`, `intentGatePacket` (when required), `cardPlanPacket`, `dispatchEnvelopePacket`, `orchestrationTaskBoardPacket`, `capabilityGapPacket` / `executionAgentCard` (when applicable), `dispatchBoard`, `workerTaskPackets` / `workerResultPackets`, `reviewPacket`, `verificationPacket`, `summaryPacket`, `evolutionWritebackPacket`. If a local `compactionPacket` exists, use it only as continuity aid; it never replaces the governed artifact. Re-run `npm run meta:validate:run -- <artifact.json>` before claiming closure. The same packet list is printed by `npm run prompt:next-iteration -- <artifact.json>` under **Minimal context reload**.
 
 Optional **soft todo gate** (off by default): set `META_KIM_SOFT_PUBLIC_READY_GATES=1` when running `validate:run`. If `summaryPacket.publicReady` is true, no `workerTaskPacket` may have `taskTodoState: "open"`. Omit `taskTodoState` if not tracking todos. See `config/contracts/workflow-contract.json` → `runDiscipline.runArtifactValidation.softPublicReadyTodoGate`.
 
@@ -101,7 +101,7 @@ Optional **soft comment-review gate**: set `META_KIM_SOFT_COMMENT_REVIEW=1` when
 
 Optional Claude **Stop hook** (project default off): `META_KIM_STOP_COMPLETION_GUARD=hint` logs a stderr reminder when the last assistant message claims completion without governance cues; `=block` returns `{"decision":"block",...}` so the model continues. See `.claude/hooks/stop-completion-guard.mjs`.
 
-**Governance doctor:** `npm run doctor:governance` checks contract readability, Claude hook command set, `npm run check:runtimes`, and `validate:run` on the sample fixture — use before release or when mirrors drift.
+**Governance doctor:** `npm run meta:doctor:governance` checks contract readability, Claude hook command set, `npm run meta:check:runtimes`, and `meta:validate:run` on the sample fixture — use before release or when mirrors drift.
 
 ---
 
@@ -407,26 +407,23 @@ CHECK: Does graphify-out/graph.json exist in the target project root?
     - Quality gate: if AMBIGUOUS nodes > 30% OR total nodes < 10 → mark as low-quality, agents use direct Read as primary
     - Record graphContext in Fetch output for downstream stages
   IF NO →
-    - Check auto-generation conditions (all must be true):
-        a) Source files > 20 (excluding node_modules/ .git/ dist/)
-        b) Python 3.10+ available (python --version)
-        c) graphify installed (graphify --version)
-        d) Current project is NOT Meta_Kim itself
-    - If all conditions met → run `graphify` and wait for completion
-    - If conditions not met → proceed without graph, no error
+    - For Meta_Kim itself: fail the governance run and require `npm run meta:graphify:check` / graph rebuild before execution.
+    - For external target projects: record graph absence in Fetch output and decide whether graph generation is required for the task.
 ```
 
 **Step 2 — Capability index search** (if no perfect local match):
 ```
-IF .claude/capability-index/meta-kim-capabilities.json is missing OR stale for the current machine
+IF config/capability-index/meta-kim-capabilities.json is missing OR stale
   → run npm run discover:global first
 
 IF discover:global lists few skills/agents but the task needs Meta_Kim third-party skills (install-deps list)
   AND ~/.codex/skills or ~/.openclaw/skills are empty on this machine
   → operator should run npm run meta:deps:install:all-runtimes (or npm run meta:deps:install for Claude-only), then npm run discover:global again
 
-Read .claude/capability-index/meta-kim-capabilities.json
-Search for agents declaring the needed capability
+Read config/capability-index/meta-kim-capabilities.json first
+Then read the current runtime mirror
+Then read .meta-kim/state/{profile}/capability-index/global-capabilities.json
+Search for agents/skills declaring the needed capability
 Score match
 
 IF globalProjectRegistry is available (~/.meta-kim/global/project-registry.sqlite)
@@ -456,7 +453,7 @@ Mark capabilityGap: "no agent declares Own [capability]"
 IF gap is durable / recurring / project-specific
   → trigger Type B creation pipeline before execution
 ELSE
-  → invoke Agent(subagent_type="generalPurpose") as a TEMPORARY owner
+  → invoke Agent(subagent_type="generalPurpose") or Codex default subagent as a TEMPORARY owner
   → record justification + require Evolution follow-up
 ```
 
@@ -1122,7 +1119,7 @@ Evolution outputs must be persisted to specific locations — not left floating 
 
 | Artifact Type | Storage Location | Lifecycle |
 |--------------|-----------------|-----------|
-| **Agent Boundary / CT / DR Adjustments** | `canonical/agents/{agent}.md` (direct edit) | Immediate; primary evolution target — triggers `npm run sync:runtimes` |
+| **Agent Boundary / CT / DR Adjustments** | `canonical/agents/{agent}.md` (direct edit) | Immediate; primary evolution target — triggers `npm run meta:sync` |
 | **New Skills** (extracted) | `.claude/skills/{skill-name}/SKILL.md` | Permanent; created via skill-creator, validated via Type D Review |
 | **Rhythm Optimizations** | Recorded in `config/contracts/workflow-contract.json` or Conductor's card-deck defaults | Immediate; affects next run's dispatch board |
 | **Capability Gap Records** | `canonical/capability-gaps.md` | Until resolved; Scout monitors and closes when filled |
@@ -1162,7 +1159,7 @@ If any one of these is false, the run may produce internal notes, but it must no
 | Iteration | Acceptance not closed within agreed rounds | Loop with explicit gate; max 3 iterations, then escalate to Warden |
 | **Rollback** | Risk exceeded original scope OR impact scope expanded beyond acceptance | Revert to last stable state; re-enter Stage 3 Thinking to re-decompose |
 
-**Card naming note**: English names are canonical in this repository. `docs/meta.md` uses Chinese labels for the same cards; align wording with your audience and locale.
+**Card naming note**: English names are canonical in this repository. Use `canonical/skills/meta-theory/references/meta-theory.md` as the theory source and align wording with your audience and locale.
 
 Spine coverage reference (what each stage is for — not separate “card” names):
 

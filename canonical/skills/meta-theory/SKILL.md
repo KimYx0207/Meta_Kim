@@ -10,7 +10,7 @@ tools:
   - browser
   - memory
 description: |
-  Meta Arsenal — governance and development orchestration skill. ALWAYS invoke this skill when the user explicitly calls /meta-theory, regardless of the task type. This skill handles far more than just agent governance — it is the structured entry point for ANY non-trivial development task: debugging build/startup failures (npm, pnpm, tauri, cargo, vite, webpack), analyzing project errors, multi-file refactors, cross-module changes, feature implementation, code quality audits, security reviews, architecture decisions, agent design and review, capability discovery, intent amplification, and rhythm/card-deck orchestration. The skill uses an 8-stage execution spine (Critical → Fetch → Thinking → Execution → Review → Meta-Review → Verification → Evolution) that routes work to specialist agents internally. Use this skill whenever the task involves: errors, debugging, startup problems, build failures, complex features, agent creation, organizational design, knowledge graphs, code quality, or any task where structured governance adds value. When in doubt, invoke — the skill will classify and route appropriately. Do NOT skip invocation when the user explicitly requests /meta-theory.
+  Meta Arsenal — governance and development orchestration skill. Always invoke when the user explicitly calls /meta-theory, meta theory, or equivalent wording. Handles non-trivial development and governance work: debugging, startup/build failures, project error analysis, multi-file refactors, feature implementation, quality/security reviews, architecture decisions, agent design/review, capability discovery, intent amplification, and rhythm/card-deck orchestration. Uses the 8-stage spine (Critical → Fetch → Thinking → Execution → Review → Meta-Review → Verification → Evolution) and routes work to specialist agents. When in doubt, invoke; the skill classifies and routes.
 ---
 
 # Meta Arsenal — Dispatcher
@@ -113,19 +113,27 @@ Step 1: Keyword scan (run FIRST, before any other action)
     → capability = the task's core capability need (state it explicitly)
 
 Step 2: Search for owner
-  → Search .claude/agents/*.md → score "Own" boundaries (3=perfect/1-2=partial/0=none)
-  → Search .claude/capability-index/meta-kim-capabilities.json → match by keyword
-  → Search .claude/capability-index/global-capabilities.json → match by keyword
+  → Search config/capability-index/meta-kim-capabilities.json (repo canonical) → match by keyword
+  → Search the current runtime mirror, e.g. .claude/.codex/.cursor/openclaw capability-index/meta-kim-capabilities.json
+  → Search .meta-kim/state/{profile}/capability-index/global-capabilities.json (local global inventory)
+  → Search canonical/agents/*.md and canonical/skills/meta-theory/ for declared "Own" boundaries
 
 Step 3: Score and invoke
   → Score all matches: governance meta agents = governance priority / execution agents = capability priority
   → If governance task (analyze/audit/design/review) → prefer meta-agent
   → If execution task (build/write/fix/test) → prefer execution agent from capability index
   → Invoke the best match
-  → If no match found → trigger Type B creation pipeline OR use generalPurpose with explicit justification
+  → If no match found → trigger Type B creation pipeline OR use generalPurpose/default subagent with explicit justification and capability-gap record
 ```
 
 **Hardcoded agent names are FORBIDDEN.** Do NOT write `meta-prism` or `meta-warden` or `meta-conductor` as dispatch targets. Always go through the 3-step discovery above.
+
+The capability index is layered, not runtime-owned:
+
+1. `config/capability-index/meta-kim-capabilities.json` is the neutral repo canonical capability index.
+2. `.claude/capability-index/`, `.codex/capability-index/`, `.cursor/capability-index/`, and `openclaw/capability-index/` are mirrors only.
+3. `.meta-kim/state/{profile}/capability-index/global-capabilities.json` is local-only machine inventory from `npm run discover:global`.
+4. If Codex cannot invoke a discovered global agent profile directly, use Codex `spawn_agent` with `agent_type: "default"` plus the discovered profile prompt as an explicit degradation, and state that degradation in Preflight.
 
 ## Parallelism Discipline
 
@@ -226,7 +234,7 @@ The `prompt` must contain everything the agent needs — files, context, user re
 
 When this skill runs inside Codex, `Agent(...)` maps to Codex `spawn_agent`, not to a literal CLI command.
 
-Treat a Codex `/meta-theory` invocation as explicit authorization for Codex sub-agent delegation and parallel agent work. For every non-trivial Type A/B/C/D/E task:
+Treat a Codex `/meta-theory` invocation as explicit authorization for read-only capability discovery, Codex sub-agent analysis, and parallel agent work. This is the first authorization tier. The second tier is required before writing files, installing skills, changing runtime configuration, invoking external side effects, or mutating durable state. For every non-trivial Type A/B/C/D/E task:
 
 1. Apply `agent-teams-playbook` first from the first available skill root:
    - `~/.codex/skills/agent-teams-playbook/SKILL.md`
@@ -238,6 +246,19 @@ Treat a Codex `/meta-theory` invocation as explicit authorization for Codex sub-
 5. Keep the main Codex thread limited to clarification, routing, verification, and final synthesis.
 
 Do not complete a non-trivial `/meta-theory` request only in the main Codex thread unless the user explicitly says not to use agents.
+
+**Read-only is still delegable.** User phrases such as `仅分析`, `只读`, `别修改`, `do not modify`, `analysis only`, or `read-only` restrict filesystem writes and side effects; they do **not** revoke the `/meta-theory` authorization for `agent-teams-playbook`, capability discovery, or Codex `spawn_agent`. For non-trivial Type A/B/C/D/E analysis, dispatch read-only subagents and state the write boundary in each prompt. In read-only mode, apply the playbook with an inline or temporary plan instead of creating planning files, installing skills, or writing durable artifacts. Only skip subagents when the user explicitly says `不要调用 agent`, `no subagents`, `主线程完成`, or equivalent.
+
+**Codex Preflight proof is mandatory before substantive work.** Before analysis or edits, output a short Preflight block containing:
+- Loaded skills: resolved `meta-theory` path and resolved `agent-teams-playbook` path
+- Type: A/B/C/D/E
+- Agent Teams scenario and collaboration mode
+- Read/write scope
+- Authorization tier: read-only delegation only, or write/external-side-effect approval granted
+- Capability lookup path used: repo canonical index → runtime mirror → local global inventory → fallback
+- Planned agents or a concrete blocked reason
+
+If `agent-teams-playbook` cannot be loaded, or `spawn_agent` is unavailable despite authorization, record the exact blocked reason and follow the playbook's degraded path. Do not silently continue as ordinary main-thread analysis.
 
 ## Type Routing
 

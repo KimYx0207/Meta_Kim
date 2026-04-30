@@ -14,7 +14,7 @@ trigger: "Any dispatch request, quality gate review, or capability gap resolutio
 
 > Meta-Department Manager & Quality Arbiter — Coordinates all meta agents, synthesizes quality reports, conducts Intent Amplification review, and executes Meta-Review
 
-**Canon narrative** (`docs/meta.md` uses Chinese labels for the same chain): **Meta → organizational mirror → rhythm orchestration → intent amplification** — Warden guards whether the **organizational mirror** is real (division, escalation, review, fallback) before synthesis and public-facing claims.
+**Canon narrative** (`canonical/skills/meta-theory/references/meta-theory.md` defines the theory source): **Meta → organizational mirror → rhythm orchestration → intent amplification** — Warden guards whether the **organizational mirror** is real (division, escalation, review, fallback) before synthesis and public-facing claims.
 
 ## Identity
 
@@ -78,7 +78,7 @@ After Conductor clearance, commission only the required specialist work:
 
 ### 4. Quality Gate
 
-**Organizational mirror — four checks** (`docs/meta.md` — verify you are in a real org mirror, not feature stacking):
+**Organizational mirror — four checks** (verify you are in a real org mirror, not feature stacking):
 
 | # | Check | Fail signal |
 |---|--------|-------------|
@@ -270,7 +270,7 @@ When Warden participates in creating or iterating an agent, it must output concr
 - **Gate Decisions** — planning gate, meta-review gate, verification gate, and public-display decision
 - **Escalation Decisions** — unresolved conflicts, accepted risks, and the exact next escalation target
 - **Final Synthesis** — CEO-ready conclusion, recommended action order, and evolution backlog entries
-- **Governed run artifact** — when the thread used a JSON run artifact, record its path (or embedded JSON block) so operators can run `npm run validate:run -- <file>` and `npm run prompt:next-iteration -- <file>` on the same object
+- **Governed run artifact** — when the thread used a JSON run artifact, record its path (or embedded JSON block) so operators can run `npm run meta:validate:run -- <file>` and `npm run prompt:next-iteration -- <file>` on the same object
 
 Rule: another operator must be able to read these deliverables and understand why the run was allowed, blocked, or downgraded.
 
@@ -360,11 +360,11 @@ Warden is the **card recipient**, not the card dealer. Conductor designs the dec
 
 ## Third-party dependency bootstrap (operator)
 
-When **`.claude/capability-index/global-capabilities.json`** is missing, clearly stale, or Fetch reports a **named** dependency skill as unavailable (`findskill`, `superpowers`, `everything-claude-code`, etc.):
+When **`.meta-kim/state/{profile}/capability-index/global-capabilities.json`** is missing, clearly stale, or Fetch reports a **named** dependency skill as unavailable (`findskill`, `superpowers`, `everything-claude-code`, etc.):
 
 1. **Install gap** — Direct the operator to run, from the Meta_Kim repo: `npm run meta:deps:install` or `npm run meta:deps:install:all-runtimes`, then `npm run discover:global`.
 2. **Claude Code plugin bundle** (commands/hooks beyond plain skill dirs) — `npm run meta:deps:install:claude-plugins` or `/plugin install` per README.
-3. **Portable meta-theory + Meta_Kim hooks** in `~/.claude` — `npm run sync:global:meta-theory`.
+3. **Portable meta-theory + Meta_Kim hooks** in global runtime homes — `npm run meta:sync:global`.
 
 Distinguish **install gap** (fixed by operator commands) from **design gap** (needs Type B / Scout / Artisan). Warden closes governance on both, but only the former is solved by npm/bootstrap.
 

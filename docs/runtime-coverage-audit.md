@@ -45,7 +45,7 @@
 
 | 能力面 | Claude Code | Codex | OpenClaw | Cursor | Meta_Kim 当前状态 |
 | --- | --- | --- | --- | --- | --- |
-| 理论总源 | 原生可读项目文档 | 原生可读项目文档 | 原生 workspace 文档 | 原生可读项目文档 | 已覆盖，主源为 `docs/meta.md` |
+| 理论 / skill 入口 | `.claude/skills/meta-theory/` mirror | `.codex/skills/meta-theory/` mirror | `openclaw/skills/meta-theory/` + workspace mirror | `.cursor/skills/meta-theory/` mirror | 已覆盖，由项目治理层同步 |
 | 角色入口 | `CLAUDE.md` + `.claude/agents/` | `AGENTS.md` + `.codex/agents/` | `workspaces/<agent>/SOUL.md` 等 | `.cursor/agents/*.md`（项目级） | 已覆盖 |
 | 子代理 / 自定义代理 | 原生 subagents | 原生 custom agents / subagents | 原生多 agent workspace | Cursor 原生 agent rules | 已覆盖 |
 | 项目级 Skill | `.claude/skills/` | `.agents/skills/` | workspace skill + installable skill | `.agents/skills/`（通用路径） | 已覆盖 |
@@ -55,23 +55,32 @@
 | 启动文件 | `CLAUDE.md` / agent prompt | `AGENTS.md` / custom agent prompt | `BOOT.md` / `BOOTSTRAP.md` / `IDENTITY.md` | `.cursorrules` / agent prompt | 已覆盖 |
 | 记忆入口 | SessionStart + Stop MCP Memory hooks | SessionStart / UserPromptSubmit / Stop MCP Memory hooks | `MEMORY.md` + `session-memory` + MCP Memory managed hook | beforeSubmitPrompt / stop MCP Memory hooks | 已覆盖 |
 | 多代理路由 | Claude 原生委派 | Codex subagents | OpenClaw agent-to-agent | Cursor 原生 agent 委派 | 已覆盖 |
+| 能力索引 | `.claude/capability-index/` mirror | `.codex/capability-index/` mirror | `openclaw/capability-index/` mirror | `.cursor/capability-index/` mirror | 已覆盖；Fetch 顺序为 repo source -> mirror -> local inventory -> fallback |
 | Sandbox / Approval | Claude 原生 permission / tool control | `sandbox_mode` / `approval_policy` | 宿主网关与工具约束 | Cursor 原生 approval | 已覆盖到仓库配置入口 |
 | 本地验证 | `claude agents` + schema eval | `codex exec --json` smoke | `openclaw config validate` + 本地 agent smoke | `.cursor/agents/` 存在性检查 | 已覆盖 |
 
 ## 四、仓库内对应位置
 
+- Canonical:
+  - `canonical/agents/*.md`
+  - `canonical/skills/meta-theory/SKILL.md`
+  - `canonical/skills/meta-theory/references/*.md`
+  - `config/contracts/`
+  - `config/capability-index/`
 - Claude Code:
   - `CLAUDE.md`
   - `.claude/agents/*.md`
   - `.claude/skills/meta-theory/SKILL.md`
   - `.claude/settings.json`
+  - `.claude/capability-index/`
   - `.mcp.json`
 - Codex:
   - `AGENTS.md`
   - `.codex/agents/*.toml`
   - `.agents/skills/meta-theory/SKILL.md`
   - `.agents/skills/meta-theory/agents/openai.yaml`
-  - `.codex/skills/meta-theory.md`
+  - `.codex/skills/meta-theory/SKILL.md`
+  - `.codex/capability-index/`
   - `codex/config.toml.example`
 - OpenClaw:
   - `openclaw/openclaw.template.json`
@@ -83,10 +92,14 @@
   - `openclaw/workspaces/*/AGENTS.md`
   - `openclaw/workspaces/*/TOOLS.md`
   - `openclaw/workspaces/*/skills/meta-theory/SKILL.md`
+  - `openclaw/capability-index/`
 - Cursor:
   - `.cursor/agents/*.md`
   - `.cursor/skills/meta-theory/SKILL.md`
   - `.cursor/mcp.json`
+  - `.cursor/capability-index/`
+
+这些运行时位置是镜像 / 投影。涉及行为、理论、契约或能力索引的长期改动，应先落在 canonical/config 主源，再同步到运行时目录。
 
 ## 五、最终判断
 

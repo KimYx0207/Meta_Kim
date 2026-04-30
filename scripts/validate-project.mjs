@@ -1,11 +1,13 @@
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
   canonicalAgentsDir,
+  canonicalCapabilityIndexDir,
   canonicalRuntimeAssetsDir,
   canonicalSkillPath,
   canonicalSkillReferencesDir,
@@ -72,6 +74,20 @@ const EXPECTED_CLAUDE_HOOK_COMMANDS = [
   "node .claude/hooks/stop-console-log-audit.mjs",
   "node .claude/hooks/stop-completion-guard.mjs",
 ];
+
+const GRAPHIFY_MAX_REPORT_AGE_DAYS = 14;
+const GRAPHIFY_MAX_INFERRED_EDGE_RATIO = 0.5;
+const GRAPHIFY_MAX_ISOLATED_NODE_RATIO = 0.25;
+const GRAPHIFY_MAX_HELPER_GOD_NODE_EDGE_RATIO = 0.25;
+const GRAPHIFY_HELPER_GOD_NODE_LABELS = new Set([
+  "log()",
+  "readFile()",
+  "main()",
+]);
+const CANONICAL_CAPABILITY_INDEX_RELATIVE =
+  "config/capability-index/meta-kim-capabilities.json";
+const LOCAL_GLOBAL_CAPABILITY_INVENTORY_PATTERN =
+  ".meta-kim/state/{profile}/capability-index/global-capabilities.json";
 
 const forbiddenRuntimeMarkers = [
   "AskUserQuestion",
@@ -198,6 +214,55 @@ async function walkFiles(rootDir, extension, bucket = []) {
   return bucket;
 }
 
+async function walkFilesByExtensions(rootDir, extensions, bucket = []) {
+  const entries = await fs.readdir(rootDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      if (
+        entry.name === "node_modules" ||
+        entry.name === ".git" ||
+        entry.name === "graphify-out" ||
+        entry.name === ".meta-kim" ||
+        entry.name === ".backup" ||
+        entry.name === ".claude" ||
+        entry.name === ".codex" ||
+        entry.name === ".cursor" ||
+        entry.name === ".agents" ||
+        entry.name === "openclaw" ||
+        entry.name === "memory"
+      ) {
+        continue;
+      }
+      await walkFilesByExtensions(entryPath, extensions, bucket);
+    } else if (
+      entry.isFile() &&
+      extensions.some((extension) => entry.name.endsWith(extension))
+    ) {
+      bucket.push(entryPath);
+    }
+  }
+  return bucket;
+}
+
+function toRepoRelative(filePath) {
+  return path.relative(repoRoot, filePath).replace(/\\/g, "/");
+}
+
+function getNpmScriptReferences(raw) {
+  const references = new Set();
+  const regex = /\bnpm\s+run\s+(?!run\b)([A-Za-z0-9:_-]+)/g;
+  let match;
+  while ((match = regex.exec(raw)) !== null) {
+    references.add(match[1]);
+  }
+  return [...references].sort();
+}
+
+function labelForNodeId(nodesById, id) {
+  return nodesById.get(id)?.label ?? "";
+}
+
 async function listCanonicalSkillReferences() {
   const entries = await fs.readdir(canonicalSkillReferencesDir, {
     withFileTypes: true,
@@ -294,6 +359,7 @@ async function validateRequiredFiles() {
     "config/contracts/sync-manifest.schema.json",
     "config/contracts/runtime-profile.schema.json",
     "config/contracts/workflow-contract.json",
+    CANONICAL_CAPABILITY_INDEX_RELATIVE,
     "docs/runtime-capability-matrix.md",
     "scripts/mcp/meta-runtime-server.mjs",
     "scripts/eval-meta-agents.mjs",
@@ -1096,6 +1162,213 @@ async function validateRuntimeParityMatrix() {
   }
 }
 
+async function validateCapabilityIndex() {
+  const indexPath = path.join(
+    canonicalCapabilityIndexDir,
+    "meta-kim-capabilities.json",
+  );
+  const index = JSON.parse(await fs.readFile(indexPath, "utf8"));
+  assert(
+    index.scope === "repo-canonical",
+    "config/capability-index/meta-kim-capabilities.json must be a repo-canonical index.",
+  );
+  assert(
+    index.canonicalProjection === CANONICAL_CAPABILITY_INDEX_RELATIVE,
+    "capability index must identify config/capability-index/meta-kim-capabilities.json as canonicalProjection.",
+  );
+  assert(
+    index.localGlobalInventory === LOCAL_GLOBAL_CAPABILITY_INVENTORY_PATTERN,
+    "capability index must point global inventory to .meta-kim/state/{profile}/capability-index/global-capabilities.json.",
+  );
+  assert(
+    Array.isArray(index.fetchOrder) &&
+      index.fetchOrder.join(" -> ") ===
+        "repo canonical capability index -> runtime mirror -> local global inventory -> fallback general agent with capability gap record",
+    "capability index fetchOrder must be canonical -> mirror -> local inventory -> fallback.",
+  );
+
+  const serialized = JSON.stringify(index);
+  const homeDir = os.homedir().replace(/\\/g, "\\\\");
+  assert(
+    !serialized.includes(homeDir),
+    "repo-canonical capability index must not contain machine-specific home paths.",
+  );
+
+  for (const mirror of index.mirroredTo ?? []) {
+    const mirrorPath = path.join(repoRoot, mirror);
+    if (await exists(mirrorPath)) {
+      const mirrored = JSON.parse(await fs.readFile(mirrorPath, "utf8"));
+      assert(
+        mirrored.canonicalProjection === CANONICAL_CAPABILITY_INDEX_RELATIVE,
+        `${mirror} must point back to ${CANONICAL_CAPABILITY_INDEX_RELATIVE}.`,
+      );
+    }
+  }
+}
+
+async function validateGraphifyGate() {
+  const graphifyCli = path.join(repoRoot, "scripts", "graphify-cli.mjs");
+  await execFileAsync("node", [graphifyCli, "check"], {
+    cwd: repoRoot,
+    timeout: 30_000,
+  });
+
+  const reportPath = path.join(repoRoot, "graphify-out", "GRAPH_REPORT.md");
+  const graphPath = path.join(repoRoot, "graphify-out", "graph.json");
+  assert(await exists(reportPath), "graphify-out/GRAPH_REPORT.md is required.");
+  assert(await exists(graphPath), "graphify-out/graph.json is required.");
+
+  const [reportStat, graphStat] = await Promise.all([
+    fs.stat(reportPath),
+    fs.stat(graphPath),
+  ]);
+  assert(graphStat.size > 0, "graphify-out/graph.json must be non-empty.");
+  assert(
+    reportStat.mtimeMs >= graphStat.mtimeMs - 1000,
+    "graphify-out/GRAPH_REPORT.md must not be older than graph.json.",
+  );
+  const reportAgeDays = (Date.now() - reportStat.mtimeMs) / 86_400_000;
+  assert(
+    reportAgeDays <= GRAPHIFY_MAX_REPORT_AGE_DAYS,
+    `graphify report is stale (${reportAgeDays.toFixed(1)} days old).`,
+  );
+
+  const graph = JSON.parse(await fs.readFile(graphPath, "utf8"));
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const links = Array.isArray(graph.links)
+    ? graph.links
+    : Array.isArray(graph.edges)
+      ? graph.edges
+      : [];
+  assert(nodes.length > 0, "graphify graph must contain nodes.");
+  assert(links.length > 0, "graphify graph must contain edges/links.");
+
+  const inferredEdges = links.filter(
+    (edge) => String(edge.confidence ?? "").toUpperCase() === "INFERRED",
+  ).length;
+  const inferredRatio = inferredEdges / links.length;
+  assert(
+    inferredRatio <= GRAPHIFY_MAX_INFERRED_EDGE_RATIO,
+    `graphify inferred edge ratio is too high (${inferredRatio.toFixed(2)}).`,
+  );
+
+  const degree = new Map(nodes.map((node) => [node.id, 0]));
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  let helperGodNodeEdges = 0;
+  for (const edge of links) {
+    const source = edge.source ?? edge._src;
+    const target = edge.target ?? edge._tgt;
+    degree.set(source, (degree.get(source) ?? 0) + 1);
+    degree.set(target, (degree.get(target) ?? 0) + 1);
+    if (
+      GRAPHIFY_HELPER_GOD_NODE_LABELS.has(labelForNodeId(nodesById, source)) ||
+      GRAPHIFY_HELPER_GOD_NODE_LABELS.has(labelForNodeId(nodesById, target))
+    ) {
+      helperGodNodeEdges += 1;
+    }
+  }
+
+  const isolatedNodes = [...degree.values()].filter((value) => value === 0);
+  const isolatedRatio = isolatedNodes.length / nodes.length;
+  assert(
+    isolatedRatio <= GRAPHIFY_MAX_ISOLATED_NODE_RATIO,
+    `graphify isolated node ratio is too high (${isolatedRatio.toFixed(2)}).`,
+  );
+
+  const helperRatio = helperGodNodeEdges / links.length;
+  assert(
+    helperRatio <= GRAPHIFY_MAX_HELPER_GOD_NODE_EDGE_RATIO,
+    `graphify helper god-node edge ratio is too high (${helperRatio.toFixed(2)}).`,
+  );
+
+  const pollutedNodes = nodes.filter((node) =>
+    /(^|[\\/])(node_modules|\.git|dist|build|graphify-out)([\\/]|$)/i.test(
+      String(node.source_file ?? node.path ?? node.label ?? ""),
+    ),
+  );
+  assert(
+    pollutedNodes.length / nodes.length <= 0.05,
+    "graphify graph contains too many generated/dependency pollution nodes.",
+  );
+}
+
+async function validateDocumentationFacts() {
+  const docs = await walkFilesByExtensions(repoRoot, [".md"]);
+  const packageJson = JSON.parse(
+    await fs.readFile(path.join(repoRoot, "package.json"), "utf8"),
+  );
+  const scripts = packageJson.scripts ?? {};
+
+  for (const docPath of docs) {
+    const relativePath = toRepoRelative(docPath);
+    const raw = await fs.readFile(docPath, "utf8");
+    assert(
+      !raw.includes("docs/meta.md"),
+      `${relativePath} must not reference docs/meta.md as a theory source.`,
+    );
+    assert(
+      !/\.claude\/(?:agents|skills|capability-index)[^\n]*(?:canonical|主源|source of truth|source layer)/i.test(
+        raw,
+      ),
+      `${relativePath} must not describe .claude projections as canonical sources.`,
+    );
+    assert(
+      !/(?:canonical|主源|source of truth|source layer)[^\n]*\.claude\/(?:agents|skills|capability-index)/i.test(
+        raw,
+      ),
+      `${relativePath} must not describe .claude projections as canonical sources.`,
+    );
+
+    for (const scriptName of getNpmScriptReferences(raw)) {
+      assert(
+        scripts[scriptName],
+        `${relativePath} references missing npm script: ${scriptName}`,
+      );
+    }
+  }
+
+  for (const relativePath of [
+    "canonical/skills/meta-theory/SKILL.md",
+    "canonical/skills/meta-theory/references/meta-theory.md",
+    ".codex/skills/meta-theory/SKILL.md",
+    ".cursor/skills/meta-theory/SKILL.md",
+    "openclaw/skills/meta-theory/SKILL.md",
+  ]) {
+    assert(
+      await exists(path.join(repoRoot, relativePath)),
+      `Documented runtime skill path is missing: ${relativePath}`,
+    );
+  }
+
+  const testFiles = await walkFilesByExtensions(path.join(repoRoot, "tests"), [
+    ".mjs",
+  ]);
+  const knownGapsPath = path.join(repoRoot, "tests", "fixtures", "known-doc-gaps.json");
+  const knownDocGaps = (await exists(knownGapsPath))
+    ? JSON.parse(await fs.readFile(knownGapsPath, "utf8"))
+    : [];
+  for (const filePath of testFiles) {
+    const raw = await fs.readFile(filePath, "utf8");
+    const relativePath = toRepoRelative(filePath);
+    const docGapWarnings = [...raw.matchAll(/console\.warn\(([\s\S]*?DOC GAP[\s\S]*?)\);/g)];
+    for (const warning of docGapWarnings) {
+      const message = warning[1];
+      const allowed = knownDocGaps.some(
+        (entry) =>
+          entry.path === relativePath &&
+          message.includes(entry.messageContains) &&
+          entry.owner &&
+          entry.expiry &&
+          entry.closeCondition,
+      );
+      assert(
+        allowed,
+        `${relativePath} has an untracked DOC GAP warning; add owner, expiry, and closeCondition to tests/fixtures/known-doc-gaps.json or convert it to a failing assertion.`,
+      );
+    }
+  }
+}
+
 async function validateRunArtifactFixtures() {
   const validFixture = path.join(
     repoRoot,
@@ -1320,6 +1593,7 @@ async function validateSyncConfiguration() {
   const defaultTargets = manifest.defaultTargets ?? supportedTargets;
   const availableTargets = manifest.availableTargets ?? Object.keys(profiles);
   const generatedTargets = manifest.generatedTargets ?? {};
+  const canonicalRoots = manifest.canonicalRoots ?? {};
 
   assert(
     supportedTargets.length >= 1,
@@ -1347,6 +1621,14 @@ async function validateSyncConfiguration() {
         generatedTargets[target].length > 0,
     ),
     "config/sync.json must declare generatedTargets for every supported target.",
+  );
+  assert(
+    canonicalRoots.contracts === "config/contracts",
+    "config/sync.json canonicalRoots.contracts must be config/contracts.",
+  );
+  assert(
+    canonicalRoots.capabilityIndex === "config/capability-index",
+    "config/sync.json canonicalRoots.capabilityIndex must be config/capability-index.",
   );
 }
 
@@ -1436,8 +1718,18 @@ async function validatePackageJson() {
     "package.json meta:verify:all must include npm run meta:test:setup.",
   );
   assert(
+    pkg.scripts?.["meta:verify:all"]?.includes("npm run meta:graphify:check"),
+    "package.json meta:verify:all must include npm run meta:graphify:check.",
+  );
+  assert(
     pkg.scripts?.["meta:verify:all:live"]?.includes("npm run meta:test:setup"),
     "package.json meta:verify:all:live must include npm run meta:test:setup.",
+  );
+  assert(
+    pkg.scripts?.["meta:verify:all:live"]?.includes(
+      "npm run meta:graphify:check",
+    ),
+    "package.json meta:verify:all:live must include npm run meta:graphify:check.",
   );
   assert(
     pkg.dependencies?.["@modelcontextprotocol/sdk"],
@@ -1876,7 +2168,7 @@ function fail(msg) {
 }
 
 async function main() {
-  const TOTAL = 15;
+  const TOTAL = 18;
   let current = 1;
 
   console.log("\n========================================");
@@ -1923,37 +2215,52 @@ async function main() {
   await validateRuntimeParityMatrix();
   pass(t.val.step08Pass);
 
-  // 9. Run artifact fixtures
+  // 9. Canonical capability index
+  step(current++, TOTAL, "Canonical capability index");
+  await validateCapabilityIndex();
+  pass("capability index source and mirrors are valid.");
+
+  // 10. Graphify governance gate
+  step(current++, TOTAL, "Graphify governance gate");
+  await validateGraphifyGate();
+  pass("graphify CLI, report, graph, and health gates are valid.");
+
+  // 11. Documentation fact checks
+  step(current++, TOTAL, "Documentation fact checks");
+  await validateDocumentationFacts();
+  pass("documentation references are aligned with repo facts.");
+
+  // 12. Run artifact fixtures
   step(current++, TOTAL, t.val.step09, t.val.step09Detail);
   await validateRunArtifactFixtures();
   pass(t.val.step09Pass);
 
-  // 10. npm scripts
+  // 13. npm scripts
   step(current++, TOTAL, t.val.step10, t.val.step10Detail);
   await validatePackageJson();
   pass(t.val.step10Pass);
 
-  // 11. .gitignore
+  // 14. .gitignore
   step(current++, TOTAL, t.val.step11, t.val.step11Detail);
   await validateGitignore();
   pass(t.val.step11Pass);
 
-  // 12. Canonical Claude settings
+  // 15. Canonical Claude settings
   step(current++, TOTAL, t.val.step12, t.val.step12Detail);
   await validateClaudeSettings();
   pass(t.val.step12Pass);
 
-  // 13. Canonical MCP config
+  // 16. Canonical MCP config
   step(current++, TOTAL, t.val.step13, t.val.step13Detail);
   await validateMcpConfig();
   pass(t.val.step13Pass);
 
-  // 14. MCP self-test
+  // 17. MCP self-test
   step(current++, TOTAL, t.val.step14, t.val.step14Detail);
   await validateMcpSelfTest();
   pass(t.val.step14Pass);
 
-  // 15. Factory release artifacts (skipped if factory/ not in public repo)
+  // 18. Factory release artifacts (skipped if factory/ not in public repo)
   step(current++, TOTAL, t.val.step15, t.val.step15Detail);
   await validateFactoryRelease();
   pass(t.val.step15Pass);

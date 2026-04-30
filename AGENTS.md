@@ -9,7 +9,7 @@ If you only remember four things:
 - Meta_Kim is one cross-runtime governance system, not a pile of unrelated prompt folders (Claude Code, Codex, OpenClaw, and Cursor are projections of the same layer).
 - `meta-warden` is the default public front door.
 - `meta-conductor` orchestrates rhythm; the execution stack is grounded in `meta-genesis`, `meta-artisan`, `meta-scout`, `meta-sentinel`, and `meta-librarian` (capability-first dispatch still beats hardcoded names).
-- Long-term edits belong in `canonical/` and `config/contracts/workflow-contract.json`; runtime-facing trees under `.codex/`, `.agents/`, `.claude/`, `openclaw/`, and `.cursor/` are generated or mirrored — sync instead of hand-forking.
+- Long-term edits belong in `canonical/agents/`, `canonical/skills/meta-theory/`, `config/contracts/`, and `config/capability-index/`; runtime-facing trees under `.codex/`, `.agents/`, `.claude/`, `openclaw/`, and `.cursor/` are generated mirrors/projections — sync instead of hand-forking.
 
 ## Read This Repository Correctly
 
@@ -46,9 +46,10 @@ When this repository is opened in Codex:
 
 Important maintenance rule:
 
-- `canonical/agents/*.md` and `canonical/skills/meta-theory/SKILL.md` are the canonical sources
-- `config/contracts/workflow-contract.json` is the canonical run-discipline and gate contract (not overwritten by agent/skill sync)
-- `.codex/agents/*`, `.codex/skills/*`, and Cursor/OpenClaw projection trees are derived runtime assets unless explicitly stated otherwise
+- `canonical/agents/*.md` and `canonical/skills/meta-theory/SKILL.md` are the canonical agent and skill sources
+- `config/contracts/` is the canonical run-discipline and gate-contract source (not overwritten by agent/skill sync)
+- `config/capability-index/` is the canonical repository capability-index source; runtime capability indexes are mirrors
+- `.claude/`, `.codex/`, `.cursor/`, and `openclaw/` projection trees are derived runtime assets unless explicitly stated otherwise
 
 ## Capability-First Rule
 
@@ -68,6 +69,15 @@ Need capability X
 -> Search agents / skills / capability index
 -> Match by ownership boundary
 -> Dispatch the best fit
+```
+
+Capability-index fetch order is:
+
+```text
+repo canonical config/capability-index/
+-> runtime mirror (.claude/.codex/.cursor/openclaw capability-index)
+-> local runtime inventory
+-> explicit fallback
 ```
 
 Hardcoding a specific agent name without a search step is a design shortcut, not the canonical method.
@@ -137,7 +147,7 @@ For those tasks:
 7. `Verification`: confirm the change actually landed
 8. `Evolution`: capture patterns and failure lessons
 
-## The 8-Stage Spine vs. The Business Workflow Contract
+## The 8-Stage Spine vs. The 11-Phase Business Workflow Contract
 
 Meta_Kim uses two workflow layers that should not be merged mentally.
 
@@ -240,7 +250,8 @@ Preferred long-term edit targets:
 - `canonical/skills/meta-theory/SKILL.md`
 - `canonical/skills/meta-theory/references/*.md`
 - `canonical/runtime-assets/*`
-- `config/contracts/workflow-contract.json`
+- `config/contracts/`
+- `config/capability-index/`
 
 Files that should usually be treated as mirrors or adapters:
 
@@ -249,13 +260,16 @@ Files that should usually be treated as mirrors or adapters:
 - `.claude/hooks/`
 - `.claude/settings.json`
 - `.mcp.json`
-- `.claude/capability-index/` (including `meta-kim-capabilities.json` and `global-capabilities.json` from `discover:global`)
+- `.claude/capability-index/` (runtime mirror for `meta-kim-capabilities.json`; local global inventory lives under `.meta-kim/state/{profile}/capability-index/`)
 - `.codex/agents/*.toml`
 - `.codex/skills/` (e.g. `meta-theory/SKILL.md` and `references/` when present)
+- `.codex/capability-index/`
 - `.cursor/agents/*.md`
 - `.cursor/skills/meta-theory/`
 - `.cursor/mcp.json`
+- `.cursor/capability-index/`
 - `openclaw/skills/` and `openclaw/workspaces/*`
+- `openclaw/capability-index/`
 - `openclaw/openclaw.template.json` (from `canonical/runtime-assets/openclaw/`)
 
 ## Code graph (`graphify-out/`) — Platform Automation
@@ -278,7 +292,7 @@ For multi-platform setups, run `node setup.mjs` — it loops through all selecte
 
 **When `graphify-out/graph.json` exists in the repo root** (this repo or a target project): for complex or multi-file work, follow Fetch Step 0.5 and **prefer reading `graphify-out/GRAPH_REPORT.md` first** when present, then `graph.json` or subgraph queries as needed.
 
-**Refreshing the graph**: per-repo git hooks from `python -m graphify hook install` (also run from `node setup.mjs` optional Python step and `npm run graphify:install`). Optional: in a **non–Meta_Kim target repo**, `python -m graphify codex install` or `python -m graphify claw install` can add graphify sections per upstream graphify CLI — do not run those blindly on Meta_Kim’s canonical `AGENTS.md` without reviewing merge impact.
+**Refreshing the graph**: per-repo git hooks from `python -m graphify hook install` (also run from `node setup.mjs` optional Python step and `npm run meta:graphify:install`). Optional: in a **non–Meta_Kim target repo**, `python -m graphify codex install` or `python -m graphify claw install` can add graphify sections per upstream graphify CLI — do not run those blindly on Meta_Kim’s source `AGENTS.md` without reviewing merge impact.
 
 ## Recommended Maintenance Loop
 

@@ -93,19 +93,26 @@ async function readUtf8IfExists(filePath, fallbackText) {
   }
 }
 
-const FALLBACK_META_THEORY = `# Meta theory (checkout without private manuscript)
+const FALLBACK_META_THEORY = `# Meta theory
 
-The long-form research transcript \`docs/meta.md\` is not present in this working tree (common in public or minimal clones). Use **CLAUDE.md**, **AGENTS.md**, and \`canonical/skills/meta-theory/SKILL.md\` as the canonical Meta_Kim context.
+Use **CLAUDE.md**, **AGENTS.md**, \`canonical/skills/meta-theory/SKILL.md\`, and \`canonical/skills/meta-theory/references/meta-theory.md\` as the canonical Meta_Kim context.
 `;
 
 const FALLBACK_RUNTIME_MATRIX = `# Runtime capability matrix (stub)
 
-\`docs/runtime-capability-matrix.md\` is not present in this working tree. See **AGENTS.md** for Codex/OpenClaw mirrors and runtime sync commands (\`npm run sync:runtimes\`, \`npm run validate\`).
+\`docs/runtime-capability-matrix.md\` is not present in this working tree. See **AGENTS.md** for Codex/OpenClaw mirrors and runtime sync commands (\`npm run meta:sync\`, \`npm run meta:validate\`).
 `;
 
 async function loadRuntimeData() {
   const agents = await loadAgents();
-  const metaTheoryPath = path.join(repoRoot, "docs", "meta.md");
+  const metaTheoryPath = path.join(
+    repoRoot,
+    "canonical",
+    "skills",
+    "meta-theory",
+    "references",
+    "meta-theory.md",
+  );
   const matrixPath = path.join(
     repoRoot,
     "docs",

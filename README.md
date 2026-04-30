@@ -51,7 +51,7 @@ node setup.mjs
 
 > 💡 **After install**: `setup.mjs` prints where every artifact lives. To revisit that summary anytime (or diff vs. the previous install), run `npm run meta:status` in the directory where you installed.
 
-If you plan to maintain the repository, edit `canonical/` and `config/contracts/workflow-contract.json` first, then run (requires Node.js >= 22.13.0):
+If you plan to maintain the repository, edit the canonical sources first: `canonical/agents/`, `canonical/skills/meta-theory/`, `config/contracts/`, and `config/capability-index/`. Then run (requires Node.js >= 22.13.0):
 
 ```bash
 npm run meta:sync
@@ -109,7 +109,7 @@ This is the core design idea of Meta_Kim. If you only read one section, read thi
 | --- | --- | --- |
 | **Hidden skeleton** | The backend framework that always exists under the visible workflow | A fixed list of responsibilities written in advance |
 | **8-stage workflow** | The human-readable execution spine exposed by the hidden skeleton | The whole governance logic |
-| **10-stage workflow** | A more complex progression layered on top of the 8 stages after classification | A replacement for the 8 stages |
+| **11-phase business workflow** | A run-packaging progression layered on top of the 8 stages after classification | A replacement for the 8 stages |
 | **Dealing** | Dynamic control built around the 8-stage workflow and agent units | Simple task assignment |
 | **Gate** | A pass/fail condition | The stage itself |
 | **Contract** | The structured output a node must produce | Slogans or abstract values |
@@ -150,7 +150,7 @@ When the request is vague, ask clarifying questions instead of guessing. This st
 
 **Fetch - search existing capabilities before inventing new ones**
 
-Search whether existing agents, skills, tools, or MCP integrations already cover the need. The core idea here is **capability-first**: define the capability first, then search for the owner that declares it, then dispatch to the best match. Do not start by hardcoding a specific agent name.
+Search whether existing agents, skills, tools, or MCP integrations already cover the need. The core idea here is **capability-first**: define the capability first, then search for the owner that declares it, then dispatch to the best match. Capability-index lookup goes `config/capability-index/` -> runtime mirror -> local inventory -> fallback. Do not start by hardcoding a specific agent name.
 
 **Thinking - define boundaries, owners, sequence, deliverables, risks, and stop conditions**
 
@@ -182,18 +182,18 @@ The 8 stages together form the execution spine.
 
 Why are they only "relatively" fixed? Because some stages can be skipped in simple cases - but the system must explicitly record why they were skipped. Nothing is skipped silently.
 
-### 10 stages = a progression workflow built on the skeleton
+### 11 phases = a business workflow built on the skeleton
 
-If the 8-stage workflow is the skeleton, then the 10-stage workflow is the **more complex progression** that grows on top of it:
+If the 8-stage workflow is the skeleton, then the 11-phase business workflow is the **run-packaging progression** that grows on top of it:
 
 ```text
-direction -> planning -> execution -> review -> meta_review -> revision -> verify -> summary -> feedback -> evolve
+direction -> planning -> execution -> review -> meta_review -> revision -> verify -> summary -> feedback -> evolve -> mirror
 ```
 
 It is not a second system. It is derived from the 8-stage skeleton. The difference is:
 
 - **The 8 stages** focus on execution logic - "what order should work happen in"
-- **The 10 stages** focus on governance - "what each stage must deliver and how completion is defined"
+- **The 11 phases** focus on business governance - "what each phase must deliver, how completion is defined, and when mirrors must be refreshed"
 
 ```mermaid
 flowchart TB
@@ -202,9 +202,9 @@ flowchart TB
         C1[Critical] --> F1[Fetch] --> T1[Thinking] --> E1[Execution] --> R1[Review] --> MR1[Meta-Review] --> V1[Verification] --> EV1[Evolution]
     end
 
-    subgraph workflow["10-stage workflow (progression)"]
+    subgraph workflow["11-phase business workflow"]
         direction LR
-        D2[direction] --> P2[planning] --> EX2[execution] --> RE2[review] --> MET2[meta_review] --> REV2[revision] --> VER2[verify] --> SUM2[summary] --> FB2[feedback] --> EVO2[evolve]
+        D2[direction] --> P2[planning] --> EX2[execution] --> RE2[review] --> MET2[meta_review] --> REV2[revision] --> VER2[verify] --> SUM2[summary] --> FB2[feedback] --> EVO2[evolve] --> MIR2[mirror]
     end
 
     C1 -.-> D2
@@ -220,7 +220,7 @@ flowchart TB
     style workflow fill:#14532d,stroke:#22c55e,color:#dcfce7
 ```
 
-The 10-stage workflow adds `revision`, `summary`, and `feedback`, so the process is not only about "getting it done" but also about getting it done well and closing the loop correctly.
+The 11-phase business workflow adds `revision`, `summary`, `feedback`, and `mirror`, so the process is not only about "getting it done" but also about getting it done well, closing the loop correctly, and keeping runtime projections aligned.
 
 ### Contracts = what each node must deliver
 
@@ -473,11 +473,11 @@ Meta_Kim currently maps to four platforms:
 | **OpenClaw** | Fully supported | `openclaw/` directory structure + workspaces + hooks |
 | **Cursor** | Fully supported | `.cursor/agents/*.md` + skills + hooks + MCP |
 
-The core logic is the same (`canonical/`), and the repository projects it into different platform-specific file structures through `npm run meta:sync`.
+The canonical source layer is `canonical/agents/`, `canonical/skills/meta-theory/`, `config/contracts/`, and `config/capability-index/`. The repository mirrors that layer into platform-specific projections through `npm run meta:sync`.
 
 ```mermaid
 flowchart TB
-    CANONICAL["canonical/<br/>(single source layer)"]
+    CANONICAL["canonical/ + config/<br/>(single source layer)"]
 
     CANONICAL --> |npm run meta:sync| CLAUDE[".claude/<br/>Claude Code<br/>agents + skills + hooks"]
     CANONICAL --> |npm run meta:sync| CODEX[".codex/<br/>Codex<br/>agents.toml + skills + hooks"]
@@ -512,8 +512,8 @@ The reason is not sentiment. Claude Code natively supports agents, skills, refer
 
 | Layer | Location | Purpose |
 | --- | --- | --- |
-| **Canonical source** | `canonical/`, `config/contracts/workflow-contract.json` | Preferred place for long-term edits |
-| **Runtime projections** | `.claude/`, `.codex/`, `openclaw/`, `.cursor/` | Same capability projected into different runtimes |
+| **Canonical source** | `canonical/agents/`, `canonical/skills/meta-theory/`, `config/contracts/`, `config/capability-index/` | Preferred place for long-term edits |
+| **Runtime projections** | `.claude/`, `.codex/`, `openclaw/`, `.cursor/` | Mirrors of the same capabilities for different runtimes |
 | **Local state** | `.meta-kim/state/{profile}/`, `.meta-kim/local.overrides.json` | Profile-level state, run index, continuity |
 | **Scripts and checks** | `scripts/`, `npm run *` | Sync, validate, discover, and accept |
 
@@ -523,7 +523,7 @@ These three layers are easy to mix up, so they must stay separate:
 
 | Layer | Storage location | What it decides |
 | --- | --- | --- |
-| **Project-level** | Current repository `canonical/`, contracts, runtime projections, docs, scripts | What this project itself defines |
+| **Project-level** | Current repository `canonical/`, `config/contracts/`, `config/capability-index/`, runtime projections, docs, scripts | What this project itself defines |
 | **Global-level** | `~/.claude/`, `~/.codex/`, `~/.openclaw/`, `~/.cursor/`, `~/.meta-kim/global/` | What can still be discovered on this machine |
 | **Local-level** | `.meta-kim/state/{profile}/run-index.sqlite`, `compaction/`, `profile.json` | What a run left behind for this profile |
 
@@ -742,7 +742,7 @@ The extracted tree lands in `~/.<runtime>/skills/<id>/`. Run `npm run meta:deps:
 | `npm run meta:validate:run -- <file.json>` | Validate governed run artifacts |
 | `npm run meta:eval:agents` | Lightweight runtime smoke test |
 | `npm run meta:eval:agents:live` | Live prompt-backed acceptance |
-| `npm run probe:clis` | Probe local CLI tools |
+| `npm run meta:probe:clis` | Probe local CLI tools |
 | `npm run meta:test:mcp` | MCP self-test |
 | `npm run meta:index:runs -- <dir>` | Index validated run artifacts |
 | `npm run meta:query:runs -- --owner <agent>` | Query the run index |
@@ -770,9 +770,9 @@ A normal AI coding assistant does what you ask, with no governance layer in betw
 
 **No.** Meta_Kim is for cross-file, cross-module, and multi-capability tasks. If you are only changing one function inside one file, plain Claude Code is enough. Do not use a cannon to hit a mosquito.
 
-### Q: What is the relationship between the 8-stage workflow and the 10-stage workflow?
+### Q: What is the relationship between the 8-stage workflow and the 11-phase business workflow?
 
-The 8-stage workflow is the **execution skeleton** (`Critical -> Fetch -> Thinking -> Execution -> Review -> Meta-Review -> Verification -> Evolution`) and stays relatively fixed. The 10-stage workflow is a **governance workflow** derived from that skeleton (`direction -> planning -> execution -> review -> meta_review -> revision -> verify -> summary -> feedback -> evolve`) and focuses more on deliverable flow and closure. It does not replace the 8 stages; it adds governance depth on top.
+The 8-stage workflow is the **execution skeleton** (`Critical -> Fetch -> Thinking -> Execution -> Review -> Meta-Review -> Verification -> Evolution`) and stays relatively fixed. The 11-phase business workflow is a **run-packaging workflow** defined in `config/contracts/workflow-contract.json` (`direction -> planning -> execution -> review -> meta_review -> revision -> verify -> summary -> feedback -> evolve -> mirror`) and focuses on deliverable flow, closure, and runtime mirroring. It does not replace the 8 stages; it adds governance discipline on top.
 
 ### Q: What does dynamic dealing mean?
 

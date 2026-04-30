@@ -1,6 +1,6 @@
 # Rhythm orchestration — full reference
 
-> Distilled from `docs/meta.md`; aligns with the Meta_Kim methodology.
+> Distilled into the canonical meta-theory reference set; aligns with the Meta_Kim methodology.
 
 ## Core proposition
 
@@ -64,7 +64,7 @@ card:
   max_iterations: number   # for iteration cards (default 3)
 ```
 
-### Ten cards (aligned with `docs/meta.md`)
+### Ten cards (aligned with the canonical theory reference)
 
 | Card | Original name | Trigger | Action | Attention | Philosophy |
 |------|---------------|---------|--------|-----------|------------|

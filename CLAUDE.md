@@ -7,14 +7,14 @@ Claude Code is one runtime projection of Meta_Kim, not the canonical source laye
 If you only remember three things:
 
 - `meta-warden` is the default public front door.
-- `canonical/agents/*.md`, `canonical/skills/meta-theory/SKILL.md`, and `config/contracts/workflow-contract.json` are the long-term source of truth.
+- `canonical/agents/`, `canonical/skills/meta-theory/`, `config/contracts/`, and `config/capability-index/` are the long-term source of truth.
 - After editing canonical files, resync and validate before trusting the result.
 
 ## Third-party meta-skills (canonical install)
 
 Packs such as **findskill** are installed by **`node setup.mjs`** from **`KimYx0207/*`** repos declared in `setup.mjs`. These are **maintained and optimized for Meta_Kim** on top of public-ecosystem baselines.
 
-**Canonical path:** install and document through **this repository** — do not parallel-install duplicate marketplace copies under different folder names unless you explicitly need both. **In this repo, call it `findskill` everywhere** (agents, skills, mirrors) so it matches `~/.claude/skills/findskill/` and `setup.mjs`.
+**Install path:** install and document through **this repository** — do not parallel-install duplicate marketplace copies under different folder names unless you explicitly need both. **In this repo, call it `findskill` everywhere** (agents, skills, mirrors) so it matches `~/.claude/skills/findskill/` and `setup.mjs`.
 
 ## Read This Repository Correctly
 
@@ -49,14 +49,15 @@ Claude Code is a first-class projection. Separate **what sync generates** from *
 - `.claude/hooks/*.mjs`
 - `.claude/settings.json`
 - `.mcp.json`
-- `.claude/capability-index/` (`npm run discover:global` writes `meta-kim-capabilities.json` and `global-capabilities.json` here)
+- `.claude/capability-index/` (runtime mirror for `meta-kim-capabilities.json`; local global inventory is stored under `.meta-kim/state/{profile}/capability-index/`)
 
 **Canonical sources you edit for behavior and contracts:**
 
 - `canonical/agents/*.md`
 - `canonical/skills/meta-theory/SKILL.md` and `canonical/skills/meta-theory/references/*.md`
 - `canonical/runtime-assets/claude/*`
-- `config/contracts/workflow-contract.json` (run discipline and gates; not overwritten by agent/skill sync)
+- `config/contracts/` (run discipline and gates; not overwritten by agent/skill sync)
+- `config/capability-index/` (canonical repository capability-index source; runtime indexes mirror it)
 
 Cursor, Codex, and OpenClaw get their own projections from the same neutral layer; see `config/sync.json` → `generatedTargets`.
 
@@ -68,7 +69,7 @@ That means:
 
 - do not begin from a hardcoded agent name
 - define the capability needed first
-- search local agents, mirrored capabilities, and indexed/global capabilities
+- search in order: repo canonical `config/capability-index/`, runtime capability-index mirrors, local runtime inventory, then explicit fallback
 - dispatch the best ownership match
 
 The intended pattern is:
@@ -120,7 +121,7 @@ The 8-stage spine is:
 7. `Verification`
 8. `Evolution`
 
-## The 8-Stage Spine vs. The Business Workflow Contract
+## The 8-Stage Spine vs. The 11-Phase Business Workflow Contract
 
 Meta_Kim uses two workflow layers that should not be collapsed into one.
 
@@ -236,7 +237,8 @@ Preferred long-term edit targets:
 - `canonical/skills/meta-theory/SKILL.md`
 - `canonical/skills/meta-theory/references/*.md`
 - `canonical/runtime-assets/*`
-- `config/contracts/workflow-contract.json`
+- `config/contracts/`
+- `config/capability-index/`
 
 Files that should usually remain derived or runtime-specific:
 
@@ -245,21 +247,25 @@ Files that should usually remain derived or runtime-specific:
 - `.claude/hooks/`
 - `.claude/settings.json`
 - `.mcp.json`
+- `.claude/capability-index/`
 - `.codex/agents/*.toml`
 - `.agents/skills/meta-theory/`
 - `.codex/skills/meta-theory/SKILL.md` and `.codex/skills/meta-theory/references/*`
+- `.codex/capability-index/`
 - `openclaw/skills/meta-theory/SKILL.md` and `openclaw/skills/meta-theory/references/*`
 - `openclaw/workspaces/*`
+- `openclaw/capability-index/`
 - `.cursor/agents/*.md`
 - `.cursor/skills/meta-theory/`
 - `.cursor/mcp.json`
+- `.cursor/capability-index/`
 
-`npm run meta:sync` writes the **same** portable `meta-theory` skill (main file + `references/`) into `.claude/skills/meta-theory/`, `openclaw/skills/meta-theory/`, `.codex/skills/meta-theory/`, `.agents/skills/meta-theory/`, and **`.cursor/skills/meta-theory/`**. It also refreshes agents, hooks, settings, MCP templates, and the Codex `/meta-theory` command per target (including **`.cursor/agents/`** and **`.cursor/mcp.json`**). Default targets are `config/sync.json` → `supportedTargets`; machine overrides live in `.meta-kim/local.overrides.json` → `activeTargets`. If trees disagree, re-run sync from `canonical/` — do not hand-edit projections as a second source of truth.
+`npm run meta:sync` writes the **same** portable `meta-theory` skill (main file + `references/`) into `.claude/skills/meta-theory/`, `openclaw/skills/meta-theory/`, `.codex/skills/meta-theory/`, `.agents/skills/meta-theory/`, and **`.cursor/skills/meta-theory/`**. It also refreshes agents, hooks, settings, MCP templates, and the Codex `/meta-theory` command per target (including **`.cursor/agents/`** and **`.cursor/mcp.json`**). Default targets are `config/sync.json` → `supportedTargets`; machine overrides live in `.meta-kim/local.overrides.json` → `activeTargets`. If trees disagree, re-run sync from the source tree — do not hand-edit projections as independent truth.
 
 ### meta-theory reference language
 
-- **`SKILL.md` and all `references/*.md`**: English, model-facing (kept in sync across runtimes via `meta:sync`).
-- **`docs/meta.md`**: optional long-form narrative; may include Chinese historical sections. Not mirrored into the portable skill; cite it when depth matters.
+- **`canonical/skills/meta-theory/SKILL.md` and `canonical/skills/meta-theory/references/*.md`**: canonical, model-facing theory and operating references.
+- Runtime copies under `.claude/`, `.codex/`, `.cursor/`, and `openclaw/` are mirrors/projections; do not treat docs narrative files as theory sources.
 - **Evolution writeback:** when persistence is configured, gaps and patterns may be recorded under `memory/` per canonical `meta-theory` `SKILL.md`.
 
 ## Code Knowledge Graph Support (graphify)
@@ -268,7 +274,7 @@ Meta_Kim can leverage [graphify](https://github.com/safishamsi/graphify) (`pip i
 
 ### Three different things (do not confuse them)
 
-1. **Refreshing `graphify-out/` (data)** — `python -m graphify hook install` registers **per-repo** git hooks (post-commit / post-checkout) so the graph rebuilds when you commit or checkout. `npm run graphify:install` / `node setup.mjs` runs pip install + `hook install` + `graphify <platform> install` **idempotently** for all selected platforms — pip success no longer skips skill registration.
+1. **Refreshing `graphify-out/` (data)** — `python -m graphify hook install` registers **per-repo** git hooks (post-commit / post-checkout) so the graph rebuilds when you commit or checkout. `npm run meta:graphify:install` / `node setup.mjs` runs pip install + `hook install` + `graphify <platform> install` **idempotently** for all selected platforms — pip success no longer skips skill registration.
 2. **Using the graph in governance (behavior)** — `canonical/skills/meta-theory/references/dev-governance.md` Fetch **Step 0.5** tells the model to check `graphify-out/graph.json` and quality gates; this is **not** a background daemon — the skill must be followed.
 3. **Claude Code subagents (hint only)** — `subagent-context.mjs` injects a short rule to prefer `GRAPH_REPORT.md` then `graph.json`; it does **not** embed those files into context automatically.
 
@@ -310,13 +316,13 @@ node setup.mjs
 bash install-deps.sh
 
 # Repo helper (pip install graphifyy + claude install + hook install for cwd)
-npm run graphify:install
+npm run meta:graphify:install
 
 # Manual
 pip install graphifyy && python -m graphify claude install && python -m graphify hook install
 
 # Check status
-npm run graphify:check
+npm run meta:graphify:check
 ```
 
 ### Quality Gate

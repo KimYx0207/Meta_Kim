@@ -1,0 +1,280 @@
+{
+  "generatedAt": "2026-04-30T05:58:31.319Z",
+  "registryName": "meta-kim-capabilities",
+  "scope": "repo-canonical",
+  "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
+  "canonicalSource": "config/capability-index/meta-kim-capabilities.json",
+  "localGlobalInventory": ".meta-kim/state/{profile}/capability-index/global-capabilities.json",
+  "mirroredTo": [
+    ".claude/capability-index/meta-kim-capabilities.json",
+    ".codex/capability-index/meta-kim-capabilities.json",
+    "openclaw/capability-index/meta-kim-capabilities.json",
+    ".cursor/capability-index/meta-kim-capabilities.json"
+  ],
+  "fetchOrder": [
+    "repo canonical capability index",
+    "runtime mirror",
+    "local global inventory",
+    "fallback general agent with capability gap record"
+  ],
+  "summary": {
+    "totalAgents": 8,
+    "totalSkills": 7,
+    "totalHooks": 13,
+    "totalPlugins": 0,
+    "totalCommands": 0
+  },
+  "byCapabilityType": {
+    "agents": {
+      "repo:canonical:meta-artisan": {
+        "id": "meta-artisan",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-artisan.md",
+        "size": 14128,
+        "modified": "2026-04-20T05:16:57.092Z"
+      },
+      "repo:canonical:meta-conductor": {
+        "id": "meta-conductor",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-conductor.md",
+        "size": 40723,
+        "modified": "2026-04-30T04:59:30.922Z"
+      },
+      "repo:canonical:meta-genesis": {
+        "id": "meta-genesis",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-genesis.md",
+        "size": 17505,
+        "modified": "2026-04-20T05:16:57.094Z"
+      },
+      "repo:canonical:meta-librarian": {
+        "id": "meta-librarian",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-librarian.md",
+        "size": 18368,
+        "modified": "2026-04-20T05:16:57.096Z"
+      },
+      "repo:canonical:meta-prism": {
+        "id": "meta-prism",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-prism.md",
+        "size": 24012,
+        "modified": "2026-04-20T05:16:57.097Z"
+      },
+      "repo:canonical:meta-scout": {
+        "id": "meta-scout",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-scout.md",
+        "size": 16065,
+        "modified": "2026-04-20T05:16:57.099Z"
+      },
+      "repo:canonical:meta-sentinel": {
+        "id": "meta-sentinel",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-sentinel.md",
+        "size": 15977,
+        "modified": "2026-04-20T05:16:57.100Z"
+      },
+      "repo:canonical:meta-warden": {
+        "id": "meta-warden",
+        "type": "agents",
+        "namespace": "canonical",
+        "path": "canonical/agents/meta-warden.md",
+        "size": 28223,
+        "modified": "2026-04-30T05:01:35.710Z"
+      }
+    },
+    "skills": {
+      "repo:canonical:meta-theory": {
+        "id": "meta-theory",
+        "type": "skills",
+        "namespace": "canonical",
+        "path": "canonical/skills/meta-theory/SKILL.md",
+        "size": 35229,
+        "modified": "2026-04-30T04:38:46.560Z"
+      },
+      "repo:canonical-reference:create-agent": {
+        "id": "create-agent",
+        "type": "skills",
+        "namespace": "canonical-reference",
+        "path": "canonical/skills/meta-theory/references/create-agent.md",
+        "relativePath": "create-agent.md",
+        "size": 13282,
+        "modified": "2026-04-13T13:35:56.023Z"
+      },
+      "repo:canonical-reference:dev-governance": {
+        "id": "dev-governance",
+        "type": "skills",
+        "namespace": "canonical-reference",
+        "path": "canonical/skills/meta-theory/references/dev-governance.md",
+        "relativePath": "dev-governance.md",
+        "size": 53712,
+        "modified": "2026-04-30T05:03:26.513Z"
+      },
+      "repo:canonical-reference:intent-amplification": {
+        "id": "intent-amplification",
+        "type": "skills",
+        "namespace": "canonical-reference",
+        "path": "canonical/skills/meta-theory/references/intent-amplification.md",
+        "relativePath": "intent-amplification.md",
+        "size": 6660,
+        "modified": "2026-04-30T04:49:01.616Z"
+      },
+      "repo:canonical-reference:meta-theory": {
+        "id": "meta-theory",
+        "type": "skills",
+        "namespace": "canonical-reference",
+        "path": "canonical/skills/meta-theory/references/meta-theory.md",
+        "relativePath": "meta-theory.md",
+        "size": 16458,
+        "modified": "2026-04-13T13:35:56.024Z"
+      },
+      "repo:canonical-reference:rhythm-orchestration": {
+        "id": "rhythm-orchestration",
+        "type": "skills",
+        "namespace": "canonical-reference",
+        "path": "canonical/skills/meta-theory/references/rhythm-orchestration.md",
+        "relativePath": "rhythm-orchestration.md",
+        "size": 8165,
+        "modified": "2026-04-30T04:49:18.900Z"
+      },
+      "repo:canonical-reference:ten-step-governance": {
+        "id": "ten-step-governance",
+        "type": "skills",
+        "namespace": "canonical-reference",
+        "path": "canonical/skills/meta-theory/references/ten-step-governance.md",
+        "relativePath": "ten-step-governance.md",
+        "size": 9212,
+        "modified": "2026-04-30T04:49:35.460Z"
+      }
+    },
+    "hooks": {
+      "repo:canonical-runtime-assets:meta-kim-memory-save.mjs": {
+        "id": "meta-kim-memory-save.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/shared/hooks/meta-kim-memory-save.mjs",
+        "relativePath": "meta-kim-memory-save.mjs",
+        "size": 11964,
+        "modified": "2026-04-28T12:39:57.300Z"
+      },
+      "repo:canonical-runtime-assets:block-dangerous-bash.mjs": {
+        "id": "block-dangerous-bash.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/block-dangerous-bash.mjs",
+        "relativePath": "block-dangerous-bash.mjs",
+        "size": 773,
+        "modified": "2026-04-18T14:43:40.662Z"
+      },
+      "repo:canonical-runtime-assets:post-console-log-warn.mjs": {
+        "id": "post-console-log-warn.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/post-console-log-warn.mjs",
+        "relativePath": "post-console-log-warn.mjs",
+        "size": 988,
+        "modified": "2026-04-18T14:43:47.394Z"
+      },
+      "repo:canonical-runtime-assets:post-format.mjs": {
+        "id": "post-format.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/post-format.mjs",
+        "relativePath": "post-format.mjs",
+        "size": 882,
+        "modified": "2026-04-18T14:43:51.077Z"
+      },
+      "repo:canonical-runtime-assets:post-typecheck.mjs": {
+        "id": "post-typecheck.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/post-typecheck.mjs",
+        "relativePath": "post-typecheck.mjs",
+        "size": 947,
+        "modified": "2026-04-18T14:43:54.623Z"
+      },
+      "repo:canonical-runtime-assets:pre-git-push-confirm.mjs": {
+        "id": "pre-git-push-confirm.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/pre-git-push-confirm.mjs",
+        "relativePath": "pre-git-push-confirm.mjs",
+        "size": 839,
+        "modified": "2026-04-18T14:43:54.818Z"
+      },
+      "repo:canonical-runtime-assets:stop-compaction.mjs": {
+        "id": "stop-compaction.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/stop-compaction.mjs",
+        "relativePath": "stop-compaction.mjs",
+        "size": 8076,
+        "modified": "2026-04-17T04:13:20.514Z"
+      },
+      "repo:canonical-runtime-assets:stop-completion-guard.mjs": {
+        "id": "stop-completion-guard.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/stop-completion-guard.mjs",
+        "relativePath": "stop-completion-guard.mjs",
+        "size": 5003,
+        "modified": "2026-04-13T13:35:56.019Z"
+      },
+      "repo:canonical-runtime-assets:stop-console-log-audit.mjs": {
+        "id": "stop-console-log-audit.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/stop-console-log-audit.mjs",
+        "relativePath": "stop-console-log-audit.mjs",
+        "size": 1090,
+        "modified": "2026-04-13T13:35:56.019Z"
+      },
+      "repo:canonical-runtime-assets:stop-memory-save.mjs": {
+        "id": "stop-memory-save.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/stop-memory-save.mjs",
+        "relativePath": "stop-memory-save.mjs",
+        "size": 7533,
+        "modified": "2026-04-21T03:38:08.730Z"
+      },
+      "repo:canonical-runtime-assets:stop-save-progress.mjs": {
+        "id": "stop-save-progress.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/stop-save-progress.mjs",
+        "relativePath": "stop-save-progress.mjs",
+        "size": 6742,
+        "modified": "2026-04-20T11:25:58.732Z"
+      },
+      "repo:canonical-runtime-assets:subagent-context.mjs": {
+        "id": "subagent-context.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/subagent-context.mjs",
+        "relativePath": "subagent-context.mjs",
+        "size": 1199,
+        "modified": "2026-04-30T05:38:52.531Z"
+      },
+      "repo:canonical-runtime-assets:utils.mjs": {
+        "id": "utils.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/claude/hooks/utils.mjs",
+        "relativePath": "utils.mjs",
+        "size": 1269,
+        "modified": "2026-04-18T14:43:12.667Z"
+      }
+    },
+    "plugins": {},
+    "commands": {}
+  }
+}
