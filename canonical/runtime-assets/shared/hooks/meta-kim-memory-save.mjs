@@ -231,13 +231,6 @@ function buildContent(payload, runtime, cwd, event) {
   return content.length > 4000 ? content.slice(0, 3997) + "..." : content;
 }
 
-function memoryTypeForEvent(event) {
-  if (event === "stop") return "session-summary";
-  if (event === "session-start") return "session-start";
-  if (event === "user-prompt") return "turn-checkpoint";
-  return "runtime-checkpoint";
-}
-
 function postJson(endpoint, apiPath, body) {
   return new Promise((resolve) => {
     const data = JSON.stringify(body);
@@ -287,9 +280,9 @@ async function postMemory(endpoint, body) {
 
 async function searchMemories(endpoint, query, project) {
   if (!query) return [];
-  const result = await postJson(endpoint, "/api/memories/search", {
+  const result = await postJson(endpoint, "/api/search", {
     query,
-    limit: 8,
+    n_results: 8,
   });
   if (!result.ok) return [];
 
@@ -304,8 +297,18 @@ async function searchMemories(endpoint, query, project) {
     const content = String(memory.content || "").trim();
     if (!content) continue;
     const tags = Array.isArray(memory.tags) ? memory.tags : [];
+    const similarityScore =
+      resultEntry && typeof resultEntry === "object"
+        ? resultEntry.similarity_score || resultEntry.relevance_score
+        : undefined;
     const projectHit = tags.includes(project) || content.includes(project);
-    memories.push({ ...memory, content, tags, projectHit });
+    memories.push({
+      ...memory,
+      content,
+      tags,
+      similarity_score: similarityScore,
+      projectHit,
+    });
   }
   return memories
     .sort((left, right) => Number(right.projectHit) - Number(left.projectHit))
@@ -355,7 +358,7 @@ async function main() {
     await postMemory(endpoint, {
       content,
       tags: [runtime, event, "meta_kim", project].filter(Boolean),
-      memory_type: memoryTypeForEvent(event),
+      memory_type: "observation",
       conversation_id:
         payload.session_id ||
         payload.sessionId ||

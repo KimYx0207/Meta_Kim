@@ -294,9 +294,9 @@ def _new_state():
 def load_filtered_project_memories(project_tag, limit=5):
     """L2: Load project memories filtered by relevance (threshold lowered for Chinese)."""
     try:
-        data = _api_post("/api/memories/search", {
+        data = _api_post("/api/search", {
             "query": project_tag,
-            "limit": 20,
+            "n_results": 20,
         })
         results = data.get("memories", data.get("results", []))
         memories = []
@@ -304,7 +304,7 @@ def load_filtered_project_memories(project_tag, limit=5):
             memory = result.get("memory", result) if isinstance(result, dict) else None
             if not isinstance(memory, dict):
                 continue
-            score = memory.get("similarity_score", result.get("similarity_score", 0))
+            score = result.get("similarity_score", memory.get("similarity_score", 0))
             if score >= MIN_RELEVANCE:
                 memories.append(memory)
         return memories[:limit]
@@ -328,7 +328,7 @@ def format_memories(mems, header, max_len):
 
 # ─── SessionStart (layered) ────────────────────────────────────────────────
 
-def _write_session_start_note():
+def _write_session_start_observation():
     """Write a session-start record to MCP Memory."""
     try:
         project_name = detect_project_name()
@@ -342,7 +342,7 @@ def _write_session_start_note():
         _api_post("/api/memories", {
             "content": content,
             "tags": tags,
-            "memory_type": "note",
+            "memory_type": "observation",
             "metadata": {
                 "generated_by": "meta-kim-session-start",
                 "project_dir": cwd,
@@ -358,7 +358,7 @@ def main_session_start():
 
     # Write session-start record first
     if check_service_health():
-        _write_session_start_note()
+        _write_session_start_observation()
 
     ts = load_task_state()
     if ts:

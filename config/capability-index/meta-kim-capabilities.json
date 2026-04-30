@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-30T09:00:47.938Z",
+  "generatedAt": "2026-04-30T16:49:10.107Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -162,8 +162,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/meta-kim-memory-save.mjs",
         "relativePath": "meta-kim-memory-save.mjs",
-        "size": 11964,
-        "modified": "2026-04-28T12:39:57.300Z"
+        "size": 11954,
+        "modified": "2026-04-30T16:40:32.637Z"
       },
       "repo:canonical-runtime-assets:block-dangerous-bash.mjs": {
         "id": "block-dangerous-bash.mjs",
@@ -243,8 +243,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/claude/hooks/stop-memory-save.mjs",
         "relativePath": "stop-memory-save.mjs",
-        "size": 7533,
-        "modified": "2026-04-21T03:38:08.730Z"
+        "size": 7529,
+        "modified": "2026-04-30T16:29:51.613Z"
       },
       "repo:canonical-runtime-assets:stop-save-progress.mjs": {
         "id": "stop-save-progress.mjs",

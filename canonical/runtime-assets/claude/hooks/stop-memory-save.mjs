@@ -232,7 +232,7 @@ async function main() {
   await postMemory(endpoint, {
     content,
     tags,
-    memory_type: "session-summary",
+    memory_type: "observation",
     metadata: {
       generated_by: "meta-kim-stop-memory-save",
       project_dir: cwd,

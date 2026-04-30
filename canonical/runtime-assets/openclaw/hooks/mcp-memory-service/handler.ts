@@ -44,14 +44,6 @@ function eventName(event: OpenClawEvent): string {
   return [asString(event.type), asString(event.action)].filter(Boolean).join(":");
 }
 
-function memoryType(event: OpenClawEvent): string {
-  const name = eventName(event);
-  if (name === "command:new") return "session-start";
-  if (name === "command:stop") return "session-summary";
-  if (name === "session:compact:after") return "session-summary";
-  return "runtime-checkpoint";
-}
-
 function buildContent(event: OpenClawEvent): {
   content: string;
   project: string;
@@ -107,7 +99,7 @@ async function saveMemory(event: OpenClawEvent): Promise<void> {
     body: JSON.stringify({
       content,
       tags: ["openclaw", eventName(event), "meta_kim", project],
-      memory_type: memoryType(event),
+      memory_type: "observation",
       conversation_id: `openclaw-${project}-${Date.now()}`,
       metadata: {
         generated_by: "meta-kim-openclaw-mcp-memory-hook",

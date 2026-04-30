@@ -30,6 +30,11 @@ const canonicalClaudeMcpPath = path.join(
   "claude",
   "mcp.json",
 );
+const canonicalClaudeHooksDir = path.join(
+  canonicalRuntimeAssetsDir,
+  "claude",
+  "hooks",
+);
 const canonicalCodexConfigExamplePath = path.join(
   canonicalRuntimeAssetsDir,
   "codex",
@@ -1524,10 +1529,36 @@ async function validateOpenClawArtifacts(agentIds) {
     canonicalSharedMemoryHookPath,
     "utf8",
   );
+  const claudeStopMemoryHook = await fs.readFile(
+    path.join(canonicalClaudeHooksDir, "stop-memory-save.mjs"),
+    "utf8",
+  );
+  const openClawMemoryHook = await fs.readFile(
+    path.join(canonicalOpenClawMemoryHookDir, "handler.ts"),
+    "utf8",
+  );
   assert(
     sharedMemoryHook.includes("--event") &&
-      sharedMemoryHook.includes("/api/memories/search"),
-    "canonical shared memory hook must support lifecycle events and MCP memory search.",
+      sharedMemoryHook.includes("/api/search") &&
+      sharedMemoryHook.includes("n_results") &&
+      sharedMemoryHook.includes('memory_type: "observation"') &&
+      !sharedMemoryHook.includes("memoryTypeForEvent") &&
+      !sharedMemoryHook.includes("legacy_memory_type"),
+    "canonical shared memory hook must support lifecycle events, MCP memory search, and correct memory_type=observation without legacy compatibility fields.",
+  );
+  assert(
+    claudeStopMemoryHook.includes('memory_type: "observation"') &&
+      !claudeStopMemoryHook.includes("legacy_memory_type") &&
+      !claudeStopMemoryHook.includes('memory_type: "session-summary"'),
+    "canonical Claude stop memory hook must write correct memory_type=observation without legacy compatibility fields.",
+  );
+  assert(
+    openClawMemoryHook.includes('memory_type: "observation"') &&
+      !openClawMemoryHook.includes("memoryType") &&
+      !openClawMemoryHook.includes("legacyMemoryType") &&
+      !openClawMemoryHook.includes("legacy_memory_type") &&
+      !openClawMemoryHook.includes('return "session-summary"'),
+    "canonical OpenClaw memory hook must write correct memory_type=observation without legacy compatibility fields.",
   );
 }
 

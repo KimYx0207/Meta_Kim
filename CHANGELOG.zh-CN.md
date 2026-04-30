@@ -6,6 +6,18 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 发布新版本时，请在顶部（旧版本之前）添加新的 **`## [版本号] - YYYY-MM-DD`** 部分。
 
+## [2.0.22] - 2026-05-01
+
+### 修复
+
+- **MCP Memory Service API 兼容性** — Claude、Codex、Cursor、OpenClaw 的 memory hooks 现在使用 `POST /api/search` + `n_results` 查询记忆，并且只写入受支持的 `memory_type: "observation"`。
+- **Memory hook 升级清理** — 删除旧的 event-to-memory-type 映射代码，并清理生成的 bytecode cache 残留，避免已安装过的环境继续保留旧 hook 行为。
+
+### 测试
+
+- 新增 setup 测试与项目校验闸门，禁止 legacy memory search endpoint、legacy memory type 和兼容字段残留回归。
+- 发布前已验证 runtime sync、hook syntax、MCP memory hook 定向测试、Graphify health，以及完整 `npm run meta:check`。
+
 ## [2.0.20] - 2026-04-30
 
 ### 修复

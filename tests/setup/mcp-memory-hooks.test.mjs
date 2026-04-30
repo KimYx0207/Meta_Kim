@@ -26,11 +26,29 @@ describe("MCP memory cross-runtime hooks", () => {
 
     assert.match(source, /session-start/);
     assert.match(source, /user-prompt/);
-    assert.match(source, /memoryTypeForEvent/);
-    assert.match(source, /\/api\/memories\/search/);
+    assert.match(source, /\/api\/search/);
+    assert.match(source, /n_results/);
+    assert.match(source, /memory_type:\s*"observation"/);
+    assert.doesNotMatch(source, /memoryTypeForEvent/);
+    assert.doesNotMatch(source, /legacy_memory_type/);
+    assert.doesNotMatch(source, /\/api\/memories\/search/);
     assert.match(source, /systemMessage/);
     assert.match(source, /node:https/);
     assert.match(source, /url\.protocol === "https:" \? https : http/);
+  });
+
+  test("Claude stop memory hook writes correct memory type", () => {
+    const source = readRepoFile(
+      "canonical",
+      "runtime-assets",
+      "claude",
+      "hooks",
+      "stop-memory-save.mjs",
+    );
+
+    assert.match(source, /memory_type:\s*"observation"/);
+    assert.doesNotMatch(source, /legacy_memory_type/);
+    assert.doesNotMatch(source, /memory_type:\s*"session-summary"/);
   });
 
   test("installer registers Codex and Cursor lifecycle events", () => {
@@ -64,6 +82,10 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.match(hookMd, /command:new/);
     assert.match(hookMd, /command:stop/);
     assert.match(handler, /\/api\/memories/);
-    assert.match(handler, /session-summary/);
+    assert.match(handler, /memory_type:\s*"observation"/);
+    assert.doesNotMatch(handler, /memoryType/);
+    assert.doesNotMatch(handler, /legacyMemoryType/);
+    assert.doesNotMatch(handler, /legacy_memory_type/);
+    assert.doesNotMatch(handler, /return "session-summary"/);
   });
 });
