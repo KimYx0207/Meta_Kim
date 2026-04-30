@@ -1,6 +1,8 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
+export const CODEX_SKILL_DESCRIPTION_MAX_CHARS = 1024;
+
 const BLOCK_SCALAR_TOKENS = new Set(["|", "|-", "|+", ">", ">-", ">+"]);
 
 export function extractFrontmatter(raw) {
@@ -10,6 +12,77 @@ export function extractFrontmatter(raw) {
   }
 
   return match[1];
+}
+
+function unquoteScalar(value) {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function stripBlockIndent(lines) {
+  const nonEmptyIndents = lines
+    .filter((line) => line.trim())
+    .map((line) => line.match(/^[ \t]*/)?.[0]?.length ?? 0);
+  const indent = Math.min(...nonEmptyIndents, Infinity);
+  if (!Number.isFinite(indent) || indent <= 0) {
+    return lines;
+  }
+  return lines.map((line) => (line.trim() ? line.slice(indent) : ""));
+}
+
+function extractFrontmatterField(raw, fieldName) {
+  const frontmatter = extractFrontmatter(raw);
+  if (!frontmatter) {
+    return null;
+  }
+
+  const lines = frontmatter.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^[ \t]+/.test(line)) {
+      continue;
+    }
+
+    const match = line.match(/^([A-Za-z0-9_.-]+):(.*)$/);
+    if (!match || match[1] !== fieldName) {
+      continue;
+    }
+
+    const value = match[2].trim();
+    if (!BLOCK_SCALAR_TOKENS.has(value)) {
+      return unquoteScalar(value);
+    }
+
+    const blockLines = [];
+    for (let blockIndex = index + 1; blockIndex < lines.length; blockIndex += 1) {
+      const blockLine = lines[blockIndex];
+      if (blockLine.trim() && !/^[ \t]+/.test(blockLine)) {
+        break;
+      }
+      blockLines.push(blockLine);
+    }
+
+    const stripped = stripBlockIndent(blockLines);
+    const joined = value.startsWith(">")
+      ? stripped.join(" ").replace(/[ \t]+/g, " ")
+      : stripped.join("\n");
+    return value.endsWith("-") ? joined.trimEnd() : joined;
+  }
+
+  return null;
+}
+
+export function getSkillDescriptionLength(raw) {
+  const description = extractFrontmatterField(raw, "description");
+  if (description == null) {
+    return null;
+  }
+  return Array.from(description).length;
 }
 
 export function validateSkillFrontmatter(raw) {
@@ -79,6 +152,20 @@ export function validateSkillFrontmatter(raw) {
           "invalid YAML: unquoted scalar contains ': ' and will break frontmatter parsing",
       };
     }
+  }
+
+  const descriptionLength = getSkillDescriptionLength(raw);
+  if (
+    descriptionLength !== null &&
+    descriptionLength > CODEX_SKILL_DESCRIPTION_MAX_CHARS
+  ) {
+    return {
+      ok: false,
+      code: "description_too_long",
+      message:
+        `description is ${descriptionLength} characters; Codex supports at most ` +
+        `${CODEX_SKILL_DESCRIPTION_MAX_CHARS}`,
+    };
   }
 
   return { ok: true, code: "ok", message: "frontmatter valid" };

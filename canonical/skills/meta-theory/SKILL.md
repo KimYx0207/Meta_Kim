@@ -47,6 +47,23 @@ Use the sections **Type A:** through **Type E:** below:
 - **Type D:** review of external proposals or articles
 - **Type E:** rhythm / card-deck orchestration
 
+## Cross-Platform Planning Visibility (Mandatory)
+
+**Stage 3 (Thinking) across ALL Types (A/B/C/D/E) and ALL runtimes MUST invoke `planning-with-files`.**
+
+Create persistent, human-readable planning files at Stage 3:
+- `task_plan.md` — what will be done, in what order, by whom
+- `findings.md` — what was discovered during Fetch and Thinking
+- `progress.md` — ongoing status tracking
+
+Two purposes:
+1. **Human observability** — without these files the user has zero visibility into multi-agent orchestration. The user is human, not an agent; they need to see what the system is planning and track execution progress.
+2. **Agent coordination** — in runtimes with isolated agent contexts (Codex `spawn_agent`), these files are the coordination bridge between sub-agents.
+
+This applies to Claude Code, Codex, OpenClaw, and Cursor equally. Even when the runtime shares agent context (e.g., Claude Code Agent tool), planning files MUST still be created for human transparency. The Conductor agent is the sole writer of these files.
+
+When `planning-with-files` is not installed, fall back to creating these files manually. File-based planning discipline is not optional.
+
 ## Gates (dispatcher discipline)
 
 **Gate 1: Clarity Check** — run the Clarity Gate before committing to a heavy dispatch plan.
@@ -404,7 +421,7 @@ Conductor executes the 8-stage spine. Read `canonical/skills/meta-theory/referen
 |---|---|---|
 | 1 | Critical | Clarify scope, ask if ambiguous |
 | 2 | Fetch | **3-STEP CAPABILITY DISCOVERY** (keyword scan → search agents → search capability index) |
-| 3 | Thinking | Plan sub-tasks with owners and dependencies |
+| 3 | Thinking | Plan sub-tasks with owners and dependencies; **invoke `planning-with-files`** to create human-visible planning artifacts (see Cross-Platform Planning Visibility) |
 | 4 | **Execution** | **Dispatch to agents via `Agent()` tool, capability-matched** |
 | 5 | Review | Inspect agent outputs via capability-matched reviewer |
 | 6 | Meta-Review | Check review standards |
@@ -433,6 +450,8 @@ Stage 4 rules:
 - You MUST NOT write code yourself — only dispatch and synthesize
 
 **Option Exploration is MANDATORY in Stage 3 (Thinking):** explore **≥2 solution paths** (at least 2 solution paths). Capture a Pros/Cons table or a **Decision Record** with rejected alternatives. **Stage 4 may not start** until **Protocol-first** artifacts exist (`runHeader`, `dispatchBoard`, `workerTaskPackets` with `dependsOn`, `parallelGroup`, and `mergeOwner`, `evolutionWritebackPlan`, etc.) — see `dev-governance.md`.
+
+**Planning files are MANDATORY in Stage 3 (all runtimes):** invoke `planning-with-files` to write `task_plan.md`, `findings.md`, and `progress.md`. These files give the human user visibility into what the system is doing. See "Cross-Platform Planning Visibility" above.
 
 ### Hidden skeleton: invocation + capability gaps
 

@@ -15,6 +15,7 @@ import {
   loadSyncManifest,
 } from "./meta-kim-sync-config.mjs";
 import { t } from "./meta-kim-i18n.mjs";
+import { validateSkillFrontmatter } from "./install-skill-sanitizer.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -1559,16 +1560,11 @@ async function validatePortableSkill() {
     );
   }
   assertNoForbiddenMarkers(skillSource, skillSourcePath, ["AskUserQuestion"]);
-  const descriptionMatch = skillSource.match(
-    /description:\s*\|\r?\n([\s\S]*?)\r?\n---/,
+  const frontmatterValidation = validateSkillFrontmatter(skillSource);
+  assert(
+    frontmatterValidation.ok,
+    `Canonical meta-theory skill frontmatter is invalid: ${frontmatterValidation.message}.`,
   );
-  if (descriptionMatch) {
-    const descriptionLength = descriptionMatch[1].trim().length;
-    assert(
-      descriptionLength <= 1024,
-      `Canonical meta-theory skill description is too long for Codex compatibility (${descriptionLength} > 1024).`,
-    );
-  }
 
   for (const referenceFile of referenceFiles) {
     const canonicalReferencePath = path.join(

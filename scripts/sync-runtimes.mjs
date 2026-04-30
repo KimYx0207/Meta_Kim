@@ -20,6 +20,7 @@ import {
 } from "./meta-kim-sync-config.mjs";
 import { t } from "./meta-kim-i18n.mjs";
 import { CATEGORIES, openRecorder } from "./install-manifest.mjs";
+import { validateSkillFrontmatter } from "./install-skill-sanitizer.mjs";
 
 const cliArgs = process.argv.slice(2);
 const checkOnly = process.argv.includes("--check");
@@ -578,6 +579,15 @@ async function loadSkillReferences() {
   );
 }
 
+function assertPortableSkillFrontmatter(raw, filePath) {
+  const validation = validateSkillFrontmatter(raw);
+  if (!validation.ok) {
+    throw new Error(
+      `Invalid canonical skill frontmatter in ${filePath}: ${validation.message}`,
+    );
+  }
+}
+
 function escapeTomlBasicMultiline(value) {
   return value.replace(/\\/g, "\\\\").replace(/"""/g, '\\"\\"\\"');
 }
@@ -1123,6 +1133,7 @@ Examples:
   const teamDirectory = buildWorkspaceDirectory(agents);
   const portableSkill = await tryReadCanonical(canonicalSkillPath);
   if (!portableSkill) return [];
+  assertPortableSkillFrontmatter(portableSkill, canonicalSkillPath);
   const skillReferences = await loadSkillReferences();
   const changedFiles = [];
 

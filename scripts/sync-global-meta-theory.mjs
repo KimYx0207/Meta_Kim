@@ -20,6 +20,7 @@ import {
   resolveRuntimeHomeInfo,
 } from "./meta-kim-sync-config.mjs";
 import { CATEGORIES, openRecorder } from "./install-manifest.mjs";
+import { validateSkillFrontmatter } from "./install-skill-sanitizer.mjs";
 
 // Recorder is lazily opened in runSync(); helpers record through this holder
 // so we do not have to thread recorder arg through every sync function.
@@ -184,6 +185,16 @@ async function copyCanonicalSkill(targetDir, targetId) {
   );
 }
 
+async function assertCanonicalSkillFrontmatter() {
+  const raw = await fs.readFile(sourceSkillFile, "utf8");
+  const validation = validateSkillFrontmatter(raw);
+  if (!validation.ok) {
+    throw new Error(
+      `Invalid canonical skill frontmatter in ${sourceSkillFile}: ${validation.message}`,
+    );
+  }
+}
+
 async function copyCodexMetaTheoryCommand() {
   const commandsDir = path.join(runtimeHomes.codex.dir, "commands");
   const targetPath = path.join(commandsDir, "meta-theory.md");
@@ -320,6 +331,7 @@ async function syncClaudeGlobalSettingsHooks() {
 }
 
 async function runCheck() {
+  await assertCanonicalSkillFrontmatter();
   const sourceFingerprint = await fingerprintDir(sourceDir);
   let failed = false;
 
@@ -393,6 +405,7 @@ async function runSync() {
   if (!(await pathExists(sourceSkillFile))) {
     throw new Error(`Missing canonical skill source: ${sourceSkillFile}`);
   }
+  await assertCanonicalSkillFrontmatter();
   manifestRecorder = openRecorder({
     scope: "global",
     metaKimVersion: process.env.META_KIM_VERSION ?? null,

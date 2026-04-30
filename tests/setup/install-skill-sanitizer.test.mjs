@@ -5,7 +5,9 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import {
+  CODEX_SKILL_DESCRIPTION_MAX_CHARS,
   detectLegacySubdirInstall,
+  getSkillDescriptionLength,
   sanitizeInstalledSkillTree,
   shouldSkipBundledRuntimePath,
   shouldSkipDocsSkillDoc,
@@ -55,6 +57,30 @@ description: >-
 `;
 
     assert.equal(validateSkillFrontmatter(raw).ok, true);
+  });
+
+  test("reports folded block description length for Codex compatibility", () => {
+    const raw = `---
+name: meta-theory
+description: >-
+  First line
+  second line
+---
+`;
+
+    assert.equal(getSkillDescriptionLength(raw), "First line second line".length);
+  });
+
+  test("rejects descriptions longer than the Codex skill limit", () => {
+    const raw = `---
+name: too-long
+description: "${"x".repeat(CODEX_SKILL_DESCRIPTION_MAX_CHARS + 1)}"
+---
+`;
+
+    const result = validateSkillFrontmatter(raw);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "description_too_long");
   });
 
   test("rejects missing frontmatter", () => {
