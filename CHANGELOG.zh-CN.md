@@ -6,6 +6,20 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 发布新版本时，请在顶部（旧版本之前）添加新的 **`## [版本号] - YYYY-MM-DD`** 部分。
 
+## [2.0.23] - 2026-05-05
+
+### 新增
+
+- **吸收 Karpathy 原子级执行模式** — 从 `forrestchang/andrej-karpathy-skills` 项目中提取四个高信号模式，融入 Meta_Kim 治理骨架：
+  - **`verifySteps` 字段** 加入 `workerTaskPacket`（workflow-contract）：原子级步骤验证清单（`[步骤] → verify: [检查条件]` 格式），用于 Verification 阶段逐条检查，取代主观的"看着做完了"判断。
+  - **简洁性 Push-Back 规则** 加入 Critical 阶段（dev-governance）：agent 在执行复杂方案前必须主动提出更简单的替代方案；自检标准："资深工程师会说太复杂吗？"
+  - **精准变更卫生约束** 加入 Execution 阶段（dev-governance）：四条约束 — 只改该改的、只清理自己造成的孤立代码、每行变更必须可追溯到用户需求、存在更简方案时主动 push back。
+  - **Agent 自检模式（"The Test" 模式）** 加入 Evolution 阶段（dev-governance）：每个 agent 的 SOUL 应包含简洁可检查的自检声明，Review 和 Meta-Review 阶段将其作为显式验证标准。
+
+### 变更
+
+- 更新 `valid-run.json` fixture，在示例 `workerTaskPacket` 中加入 `verifySteps` 字段。
+
 ## [2.0.22] - 2026-05-01
 
 ### 修复
