@@ -6,6 +6,20 @@ All notable changes to Meta_Kim are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 When you tag a release, add a new **`## [version] - YYYY-MM-DD`** section at the top (above older entries) and list changes there.
 
+## [2.0.23] - 2026-05-05
+
+### Added
+
+- **Karpathy-inspired atomic execution patterns** — Absorbed four high-signal patterns from `forrestchang/andrej-karpathy-skills` into Meta_Kim's governance spine:
+  - **`verifySteps` field** in `workerTaskPacket` (workflow-contract): atomic step-level verification checklist (`[Step] → verify: [check]` format) for the Verification stage, replacing subjective "looks done" judgments.
+  - **Simplicity Push-Back Rule** in Critical stage (dev-governance): agents must state simpler alternatives before executing complex plans; self-test: "Would a senior engineer say this is overcomplicated?"
+  - **Surgical Change Hygiene** in Execution stage (dev-governance): four constraints — touch only what you must, clean up only your own mess, every changed line must trace to user request, push back when simpler approaches exist.
+  - **Agent Self-Test ("The Test" Pattern)** in Evolution stage (dev-governance): every agent's SOUL should include a concise, checkable self-test that Review and Meta-Review use as explicit verification criteria.
+
+### Changed
+
+- Updated `valid-run.json` fixture to include `verifySteps` in the sample `workerTaskPacket`.
+
 ## [2.0.22] - 2026-05-01
 
 ### Fixed

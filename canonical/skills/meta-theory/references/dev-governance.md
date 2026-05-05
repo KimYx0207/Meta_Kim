@@ -334,6 +334,14 @@ On receiving an escalation signal: re-enter Fetch (Stage 2) to find a more capab
 - Round 2: Ask about **priorities** — "If time is tight, which parts can be cut?"
 - Early Exit: Round 1 already specifies file paths OR ≥2 deliverables → skip Round 2
 
+### Simplicity Push-Back Rule
+
+Before proceeding from Critical to Fetch, check:
+
+- If a simpler approach exists than what the user described, **state it explicitly and recommend it** — do not silently execute a complex plan when a simple one would do.
+- No abstractions for single-use code, no error handling for impossible scenarios, no "flexibility" that wasn't requested.
+- Self-test: "Would a senior engineer say this is overcomplicated?" If yes, simplify before dispatching.
+
 ### Complexity Routing
 
 | File Changes | Complexity | Executed Path | Upgrade to 10-Step? |
@@ -804,6 +812,15 @@ Execution must respect the Stage 3 **`cardDeck`** (stage-card sequence / control
 - Any sub-task failures → handle via fault protocol
 - Every result returns through a `WorkerResultPacket`, not free-form orphan output
 
+### Surgical Change Hygiene (Karpathy-inspired)
+
+Every execution agent must obey these constraints:
+
+- **Touch only what you must.** Don't "improve" adjacent code, comments, or formatting. Don't refactor things that aren't broken. Match existing style, even if you'd do it differently.
+- **Clean up only your own mess.** If your changes make imports/variables/functions unused, remove them. Do NOT remove pre-existing dead code unless explicitly asked — mention it instead.
+- **Traceability test:** Every changed line must trace directly to the user's request. If a line cannot be traced, it should not be in the diff.
+- **Push back when warranted:** If a simpler approach exists than the one planned, say so before executing.
+
 ---
 
 ## STAGE 5: Review — Validate the Result (Detailed)
@@ -1057,6 +1074,19 @@ Use the **5+1 evolution model** after every task: the canonical 5 structural dim
 | Process bottlenecks | Which step is slowest/error-prone? | Adjust orchestration |
 | Capability coverage | Any new gaps discovered? | Trigger Scout or Type B |
 | **Scars codification** | Skip-Level/Boundary Violation/Process Gap? | Record structured Scar → prevention rule |
+
+### Agent Self-Test ("The Test" Pattern)
+
+Every agent (governance meta-agent and execution agent) should include a **self-test** in its SOUL definition — a concise, checkable statement that defines when the agent is working correctly:
+
+```markdown
+## The Test
+[this agent] is working correctly when:
+- [specific, observable condition 1]
+- [specific, observable condition 2]
+```
+
+Review (Stage 5) and Meta-Review (Stage 6) use each agent's self-test as an explicit verification checklist, replacing subjective "looks OK" judgments with structured pass/fail criteria. This pattern is inspired by Karpathy's Goal-Driven Execution principle — transforming qualitative standards into declarative, verifiable goals.
 
 ### Amplification Operations
 

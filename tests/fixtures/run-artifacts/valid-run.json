@@ -250,7 +250,11 @@
       "visualOrAssetPlan": "none",
       "dependsOn": [],
       "parallelGroup": "auth-core",
-      "mergeOwner": "meta-warden"
+      "mergeOwner": "meta-warden",
+      "verifySteps": [
+        { "step": "replace inline secret fallback with env lookup", "verify": "no hardcoded secret in refresh.ts" },
+        { "step": "update refresh.test.ts for new env-based path", "verify": "test suite passes" }
+      ]
     }
   ],
   "workerResultPackets": [

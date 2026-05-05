@@ -830,9 +830,10 @@
         "visualOrAssetPlan",
         "dependsOn",
         "parallelGroup",
-        "mergeOwner"
+        "mergeOwner",
+        "verifySteps"
       ],
-      "description": "派发给worker agent的执行任务包。三大编排核心字段：dependsOn（前置依赖，见dependencyContract）/ parallelGroup（并行分组）/ mergeOwner（合并负责人）。",
+      "description": "派发给worker agent的执行任务包。三大编排核心字段：dependsOn（前置依赖，见dependencyContract）/ parallelGroup（并行分组）/ mergeOwner（合并负责人）。verifySteps 提供原子级完成标准，用于 Verification 阶段的逐条检查。",
       "dependsOnField": {
         "type": "array",
         "items": {
@@ -883,6 +884,18 @@
       "mergeOwnerField": {
         "type": "string",
         "description": "并行组的合并负责人，负责汇总同组所有worker的结果后再推进后续依赖链"
+      },
+      "verifyStepsField": {
+        "type": "array",
+        "description": "原子级步骤验证清单。每步定义具体完成标准，Verification 阶段逐条检查。源自 Karpathy Goal-Driven Execution 的 [Step] → verify: [check] 格式。",
+        "items": {
+          "type": "object",
+          "required": ["step", "verify"],
+          "properties": {
+            "step": { "type": "string", "description": "具体执行步骤" },
+            "verify": { "type": "string", "description": "可检查的完成条件" }
+          }
+        }
       }
     },
     "workerResultPacket": {
