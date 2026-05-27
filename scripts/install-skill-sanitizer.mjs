@@ -59,7 +59,11 @@ function extractFrontmatterField(raw, fieldName) {
     }
 
     const blockLines = [];
-    for (let blockIndex = index + 1; blockIndex < lines.length; blockIndex += 1) {
+    for (
+      let blockIndex = index + 1;
+      blockIndex < lines.length;
+      blockIndex += 1
+    ) {
       const blockLine = lines[blockIndex];
       if (blockLine.trim() && !/^[ \t]+/.test(blockLine)) {
         break;
@@ -425,6 +429,50 @@ function buildDisabledSkillPath(filePath) {
   return path.join(path.dirname(filePath), "SKILL.invalid.md");
 }
 
+/**
+ * Auto-quote top-level YAML frontmatter scalars whose unquoted value contains ": ",
+ * which would otherwise break YAML parsing. Upstream skills (gstack, ecc) commonly
+ * ship `description: Foo: bar` style values without quoting; this self-heal keeps
+ * them installable without modifying upstream.
+ * Returns {patched: string, applied: boolean}. Only top-level scalars are touched;
+ * indented lines, list items, block scalars, and already-quoted values are left alone.
+ */
+function autoQuoteUnquotedColons(raw) {
+  const fm = extractFrontmatter(raw);
+  if (!fm) return { patched: raw, applied: false };
+
+  const lines = fm.split(/\r?\n/);
+  let changed = false;
+  const patchedLines = lines.map((line) => {
+    if (/^[ \t]/.test(line) || line.trim().startsWith("- ")) return line;
+    const m = line.match(/^([A-Za-z0-9_.-]+):(\s*)(.*)$/);
+    if (!m) return line;
+    const [, key, gap, rawValue] = m;
+    const value = rawValue.trim();
+    if (!value) return line;
+    if (BLOCK_SCALAR_TOKENS.has(value)) return line;
+    if (
+      value.startsWith('"') ||
+      value.startsWith("'") ||
+      value.startsWith("[") ||
+      value.startsWith("{")
+    )
+      return line;
+    if (!/: /.test(value)) return line;
+    changed = true;
+    const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `${key}:${gap || " "}"${escaped}"`;
+  });
+
+  if (!changed) return { patched: raw, applied: false };
+  const patchedFm = patchedLines.join("\n");
+  const patched = raw.replace(
+    /^---\r?\n[\s\S]*?\r?\n---/,
+    `---\n${patchedFm}\n---`,
+  );
+  return { patched, applied: true };
+}
+
 export async function sanitizeInstalledSkillTree(
   targetDir,
   { dryRun = false } = {},
@@ -439,18 +487,36 @@ export async function sanitizeInstalledSkillTree(
       shouldSkipHarnessPackageSkillDoc(relToTarget);
 
     const raw = await fs.readFile(filePath, "utf8");
-    const validation = validateSkillFrontmatter(raw);
+    let effectiveRaw = raw;
+    let validation = validateSkillFrontmatter(raw);
+    let autoQuoteApplied = false;
+
+    // Self-heal: upstream skills (gstack, ecc) ship unquoted descriptions with
+    // colons; auto-quote them and re-validate before falling through to quarantine.
+    if (!validation.ok && validation.code === "invalid_unquoted_colon") {
+      const { patched, applied } = autoQuoteUnquotedColons(raw);
+      if (applied) {
+        const revalidation = validateSkillFrontmatter(patched);
+        if (revalidation.ok) {
+          effectiveRaw = patched;
+          validation = revalidation;
+          autoQuoteApplied = true;
+        }
+      }
+    }
+
     if (validation.ok) {
       // Valid YAML: check for known broken hook command paths and patch in-place.
-      const { content: patched, fixes } = applyHookPathFixes(raw);
+      const { content: patched, fixes } = applyHookPathFixes(effectiveRaw);
+      const needsWrite = autoQuoteApplied || fixes.length > 0;
       if (fixes.length > 0) {
         hookPathFixes.push({
           filePath,
           fixes,
         });
-        if (!dryRun) {
-          await fs.writeFile(filePath, patched, "utf8");
-        }
+      }
+      if (needsWrite && !dryRun) {
+        await fs.writeFile(filePath, patched, "utf8");
       }
       continue;
     }
