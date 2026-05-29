@@ -87,6 +87,25 @@ Execution may start only when all are true:
 - Dependency is not `reference_only`, not `external_reference`, not missing invocation path, and not missing verification method when used for execution.
 - Verification owner, verification method, rollback/risk boundary, and expected evidence are known.
 
+## Dynamic Workflow routing
+
+Two engines with different objective functions — orthogonal, not interchangeable.
+
+- **Dynamic Workflow** = breadth engine. Parallel fan-out for coverage + adversarial convergence. Optimizes speed and breadth. Up to 16 concurrent agents, built-in adversarial verification.
+- **8-stage spine** = depth engine. Governance-first with independent review. Optimizes judgment depth and fault tolerance.
+
+**Use Dynamic Workflow when** all three hold: (1) homogeneous batch × N independent objects, (2) each unit is read-only or writes to its own isolated path, (3) coverage > correctness per unit. Examples: bulk audit (N docs through auditor), bulk scan (N files for same issue class), read-only fan-out to assess current state, batch tagging or summarization.
+
+**Do not use Dynamic Workflow — fall back to serial + independent review — when** any of these hold: (1) modifying governance canonical (each merge requires judgment: upstream upgrade vs. local customization), (2) strong dependency chain (Wave 1→2→3 ordering), (3) high-judgment-density writes where concurrent execution dilutes audit coverage, (4) fault tolerance is low and errors are hard to detect across 16 parallel streams.
+
+**One-line decision rule**: coverage > speed AND each unit is independent → workflow; high judgment density OR dependency chain OR governance mutation → serial + independent review.
+
+**Verified usage constraints** (validated in downstream production campaign):
+- Read-only fan-out: verified safe — hooks do not block read-only execution subagents.
+- Write-class subagents writing to isolated paths: safe. Meta-agent caller writing directly to a shared file: blocked by `enforce-agent-dispatch`.
+- 16 concurrent writes to the same file: race condition risk — write to separate paths only.
+- Workflow output still requires independent review via the 8-stage spine. Built-in adversarial verification replaces manual fan-out review; it does not replace the independent review mandate.
+
 ## Review gate
 
 Review must check upstream chain before output polish:
