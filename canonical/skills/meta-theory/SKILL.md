@@ -94,16 +94,21 @@ Two engines with different objective functions — orthogonal, not interchangeab
 - **Dynamic Workflow** = breadth engine. Parallel fan-out for coverage + adversarial convergence. Optimizes speed and breadth. Up to 16 concurrent agents, built-in adversarial verification.
 - **8-stage spine** = depth engine. Governance-first with independent review. Optimizes judgment depth and fault tolerance.
 
-**Use Dynamic Workflow when** all three hold: (1) homogeneous batch × N independent objects, (2) each unit is read-only or writes to its own isolated path, (3) coverage > correctness per unit. Examples: bulk audit (N docs through auditor), bulk scan (N files for same issue class), read-only fan-out to assess current state, batch tagging or summarization.
+A workflow is a parallel-execution capability chosen *after* Fetch/Thinking, not a substitute for the spine's owner/weapon/verification routing or the independent-review mandate. It plugs into the spine's Execution stage as a parallel-execution weapon — it is not a new process running parallel to the spine.
+
+**One-line decision rule**: when breadth/coverage matters more than per-task judgment density AND each unit is independent → workflow; high judgment density OR dependency chain OR governance mutation → serial + independent review.
+
+> The subsections below apply only after the decision rule above selects a workflow. If serial + independent review wins, skip this entire block.
+
+**Use Dynamic Workflow when** all three hold: (1) homogeneous batch × N independent objects, (2) each unit is read-only or writes to its own isolated path, (3) breadth of coverage matters more than per-unit judgment depth. Examples: bulk audit (N docs through auditor), bulk scan (N files for same issue class), read-only fan-out to assess current state, batch tagging or summarization.
 
 **Do not use Dynamic Workflow — fall back to serial + independent review — when** any of these hold: (1) modifying governance canonical (each merge requires judgment: upstream upgrade vs. local customization), (2) strong dependency chain (Wave 1→2→3 ordering), (3) high-judgment-density writes where concurrent execution dilutes audit coverage, (4) fault tolerance is low and errors are hard to detect across 16 parallel streams.
 
-**One-line decision rule**: coverage > speed AND each unit is independent → workflow; high judgment density OR dependency chain OR governance mutation → serial + independent review.
-
-**Verified usage constraints** (validated in downstream production campaign):
-- Read-only fan-out: verified safe — hooks do not block read-only execution subagents.
-- Write-class subagents writing to isolated paths: safe. Meta-agent caller writing directly to a shared file: blocked by `enforce-agent-dispatch`.
-- 16 concurrent writes to the same file: race condition risk — write to separate paths only.
+**Per-run operational constraints** (re-verify against current hooks before each large write-class run):
+- Read-only fan-out: hooks do not block read-only execution subagents.
+- Write-class fan-out: each worker must write to an isolated path (never concurrent writes to shared canonical). Workers writing in parallel must declare `parallelGroup`, `mergeOwner`, and `collisionPolicy` (enum: `no_overlap` / `merge_by_owner` / `lock_required` / `sequentialize`) per the workerTaskPacket schema. Parallel instances of the same owner additionally require `shardKey` / `shardScope`, `workspaceIsolation`, `artifactNamespace`, and one unified `mergeOwner`; repeated owner entries lacking these are pseudo-parallelism, not safe parallel writes. These are existing schema fields, not new concepts.
+- A meta-* caller writing directly to a shared file is blocked by `enforce-agent-dispatch`.
+- Concurrent writes to the same file: race condition risk — write to separate paths only.
 - Workflow output still requires independent review via the 8-stage spine. Built-in adversarial verification replaces manual fan-out review; it does not replace the independent review mandate.
 
 ## Review gate
