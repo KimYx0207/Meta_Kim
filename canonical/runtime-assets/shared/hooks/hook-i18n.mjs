@@ -47,7 +47,6 @@ const STRINGS = {
       'Set META_KIM_HOOK_SKIP=empty or disable simple mode',
     // Skip reasons
     skipReasonEnvVar: "META_KIM_HOOK_SKIP environment variable set",
-    skipReasonSimpleMode: "Simple mode enabled in spine state",
     skipReasonKeyword: "Prompt indicates simple/query task",
     skipReasonGovernanceFlow: (detail) => `Governance flow: ${detail}`,
     skipReasonUnknown: (source) => `Unknown reason: ${source}`,
@@ -75,7 +74,6 @@ const STRINGS = {
     restoreInstructions: "设置 META_KIM_HOOK_SKIP=empty 或禁用简单模式",
     // Skip reasons
     skipReasonEnvVar: "已设置 META_KIM_HOOK_SKIP 环境变量",
-    skipReasonSimpleMode: "在脊柱状态中启用了简单模式",
     skipReasonKeyword: "提示词表示简单/查询任务",
     skipReasonGovernanceFlow: (detail) => `治理流程: ${detail}`,
     skipReasonUnknown: (source) => `未知原因: ${source}`,
@@ -99,7 +97,6 @@ const STRINGS = {
       "META_KIM_HOOK_SKIP=empty を設定するか、シンプルモードを無効にします",
     // Skip reasons
     skipReasonEnvVar: "META_KIM_HOOK_SKIP 環境変数が設定されました",
-    skipReasonSimpleMode: "スパイン状態でシンプルモードが有効になっています",
     skipReasonKeyword: "プロンプトがシンプル/クエリタスクを示しています",
     skipReasonGovernanceFlow: (detail) => `ガバナンスフロー: ${detail}`,
     skipReasonUnknown: (source) => `未知の理由: ${source}`,
@@ -128,7 +125,6 @@ const STRINGS = {
       "META_KIM_HOOK_SKIP=empty을 설정하거나 심플 모드를 비활성화합니다",
     // Skip reasons
     skipReasonEnvVar: "META_KIM_HOOK_SKIP 환경변수가 설정됨",
-    skipReasonSimpleMode: "스파인 상태에서 심플 모드가 활성화됨",
     skipReasonKeyword: "프롬프트가 심플/쿼리 작업을 나타냄",
     skipReasonGovernanceFlow: (detail) => `거버넌스 흐름: ${detail}`,
     skipReasonUnknown: (source) => `알 수 없는 이유: ${source}`,

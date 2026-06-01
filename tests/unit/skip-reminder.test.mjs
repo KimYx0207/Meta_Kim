@@ -132,7 +132,6 @@ describe("formatSkipReason function (i18n)", () => {
   test("should format reasons with i18n", async () => {
     const { formatSkipReason } = await import("../../canonical/runtime-assets/shared/hooks/skip-reminder.mjs");
     assert.ok(formatSkipReason("env_var"));
-    assert.ok(formatSkipReason("simple_mode"));
     assert.ok(formatSkipReason("keyword"));
     assert.ok(formatSkipReason("governance_flow", "query"));
   });

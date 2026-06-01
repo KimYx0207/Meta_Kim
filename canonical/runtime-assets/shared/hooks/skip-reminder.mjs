@@ -177,14 +177,13 @@ export function recordSkip(hookName, reason, impact = "") {
 
 /**
  * Get skip reason based on source
- * @param {string} source - Source of skip decision ("env_var", "simple_mode", "keyword", "governance_flow")
+ * @param {string} source - Source of skip decision ("env_var", "keyword", "governance_flow")
  * @param {string} detail - Additional detail (e.g., specific governance flow)
  * @returns {string} - Human-readable reason
  */
 export function formatSkipReason(source, detail = "") {
   const reasons = {
     env_var: t.skipReasonEnvVar,
-    simple_mode: t.skipReasonSimpleMode,
     keyword: t.skipReasonKeyword,
     governance_flow: t.skipReasonGovernanceFlow(detail),
   };
