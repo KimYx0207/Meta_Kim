@@ -772,6 +772,13 @@ if (isReadOnlyTool(toolName)) {
 
 // Query bypass skips orchestration confirmation only. It remains read-only.
 if (state.queryBypass) {
+  // Deadlock breaker: the spine-state file itself must always be writable.
+  // Otherwise clearing queryBypass (which requires writing spine-state.json)
+  // becomes impossible once queryBypass is on. Scoped strictly to
+  // spine-state.json / the spine/ dir via isSpineStateWrite().
+  if (isSpineStateWrite()) {
+    process.exit(0);
+  }
   if (toolName === "Bash" && isReadOnlyBash((toolInput?.command || "").trim())) {
     process.exit(0);
   }
