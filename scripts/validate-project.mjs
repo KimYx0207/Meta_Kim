@@ -1436,6 +1436,18 @@ async function validateCapabilityIndexSchema(index) {
   );
 }
 
+async function readProjectProjectionMode() {
+  try {
+    const overridesPath = path.join(repoRoot, ".meta-kim", "local.overrides.json");
+    const overrides = JSON.parse(await fs.readFile(overridesPath, "utf8"));
+    return typeof overrides.projectProjectionMode === "string"
+      ? overrides.projectProjectionMode
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function validateCapabilityIndex() {
   const indexPath = path.join(
     canonicalCapabilityIndexDir,
@@ -1497,6 +1509,16 @@ async function validateCapabilityIndex() {
   );
 
   const canonicalContent = await fs.readFile(indexPath, "utf8");
+  // In "global_only" project projection mode, sync-runtimes.mjs intentionally
+  // does not maintain project-local capability-index mirrors (selectedTargets
+  // is forced to [] when projectProjectionMode === "global_only"), so the
+  // mirrors drift from the canonical generatedAt timestamp after any upstream
+  // rebuild. Requiring byte-identity here contradicts that mode and produces a
+  // false failure, so skip the mirror byte-check in global_only projects.
+  const projectProjectionMode = await readProjectProjectionMode();
+  if (projectProjectionMode === "global_only") {
+    return;
+  }
   for (const mirror of index.mirroredTo ?? []) {
     const mirrorPath = path.join(repoRoot, mirror);
     assert(await exists(mirrorPath), `Missing capability index mirror: ${mirror}.`);
