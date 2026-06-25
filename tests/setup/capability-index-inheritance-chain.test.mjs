@@ -30,6 +30,17 @@ async function readJson(relativePath) {
   return JSON.parse(await fs.readFile(path.join(repoRoot, relativePath), "utf8"));
 }
 
+async function readProjectProjectionMode() {
+  try {
+    const overrides = await readJson(".meta-kim/local.overrides.json");
+    return typeof overrides.projectProjectionMode === "string"
+      ? overrides.projectProjectionMode
+      : "project";
+  } catch {
+    return "project";
+  }
+}
+
 async function listCanonicalSkillIds() {
   const skillsRoot = path.join(repoRoot, "canonical", "skills");
   const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
@@ -199,7 +210,11 @@ describe("capability index inheritance chain", () => {
     );
   });
 
-  test("runtime mirror capability indexes are optional in clean checkout but exact when present", async () => {
+  test("runtime mirror capability indexes are optional in clean checkout but exact when project projections are active", async () => {
+    if ((await readProjectProjectionMode()) === "global_only") {
+      return;
+    }
+
     const canonical = await fs.readFile(canonicalIndexPath, "utf8");
     for (const mirrorPath of mirrorIndexPaths) {
       try {
@@ -489,6 +504,36 @@ describe("capability index inheritance chain", () => {
     assert.match(source, /capability-index\.schema\.json/);
     assert.match(source, /validateCapabilityIndexSchema/);
     assert.match(source, /schemaNode\.required/);
+  });
+
+  test("project validator skips project-local capability mirror validation only in global_only mode", async () => {
+    const source = await fs.readFile(
+      path.join(repoRoot, "scripts", "validate-project.mjs"),
+      "utf8",
+    );
+
+    const schemaCheckIndex = source.indexOf("await validateCapabilityIndexSchema(index);");
+    const canonicalReadIndex = source.indexOf(
+      'const canonicalContent = await fs.readFile(indexPath, "utf8");',
+    );
+    const globalOnlySkipIndex = source.indexOf(
+      'if (projectProjectionMode === "global_only")',
+    );
+    const mirrorLoopIndex = source.indexOf(
+      "for (const mirror of index.mirroredTo ?? [])",
+    );
+
+    assert.notEqual(schemaCheckIndex, -1);
+    assert.notEqual(canonicalReadIndex, -1);
+    assert.notEqual(globalOnlySkipIndex, -1);
+    assert.notEqual(mirrorLoopIndex, -1);
+    assert.ok(
+      schemaCheckIndex < globalOnlySkipIndex &&
+        canonicalReadIndex < globalOnlySkipIndex &&
+        globalOnlySkipIndex < mirrorLoopIndex,
+      "global_only skip must happen after canonical checks and before project-local mirror validation",
+    );
+    assert.match(source, /skip project-local mirror validation/);
   });
 
   test("capability index declares abstract slots and run-only runtime skill selections", async () => {

@@ -1511,10 +1511,9 @@ async function validateCapabilityIndex() {
   const canonicalContent = await fs.readFile(indexPath, "utf8");
   // In "global_only" project projection mode, sync-runtimes.mjs intentionally
   // does not maintain project-local capability-index mirrors (selectedTargets
-  // is forced to [] when projectProjectionMode === "global_only"), so the
-  // mirrors drift from the canonical generatedAt timestamp after any upstream
-  // rebuild. Requiring byte-identity here contradicts that mode and produces a
-  // false failure, so skip the mirror byte-check in global_only projects.
+  // is forced to [] when projectProjectionMode === "global_only"). Requiring
+  // project-local mirror presence or byte identity contradicts that mode and
+  // produces false failures, so skip project-local mirror validation there.
   const projectProjectionMode = await readProjectProjectionMode();
   if (projectProjectionMode === "global_only") {
     return;
