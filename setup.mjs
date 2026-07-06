@@ -5377,6 +5377,17 @@ function findMemoryBinPath(resolved) {
   const plat = platform();
   const binName = plat === "win32" ? "memory.exe" : "memory";
 
+  // Strategy 0: prefer the dedicated meta-kim memory venv that setup provisions
+  // for this service. Resolving via resolved.python can land on an unrelated
+  // system interpreter whose memory build lacks required native extensions
+  // (e.g. SQLite-vec loadable extension support), which then fails to start
+  // under --http. Always try the purpose-built venv first.
+  const venvMemoryBin =
+    plat === "win32"
+      ? join(homedir(), ".meta-kim", "memory-venv", "Scripts", binName)
+      : join(homedir(), ".meta-kim", "memory-venv", "bin", binName);
+  if (existsSync(venvMemoryBin)) return venvMemoryBin;
+
   // Strategy 1: resolve python executable, then check nearby directories
   let pythonCmd = resolved.python.command || resolved.python;
   if (
@@ -5655,7 +5666,7 @@ function configureBootAutoStart(memoryBin) {
           `TITLE=${shellQuote(failureTitle)}\n` +
           `MSG=${shellQuote(failureMessage)}\n` +
           `check_health() {\n` +
-          `  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 http://127.0.0.1:8000/api/health 2>/dev/null | grep -q healthy\n` +
+          `  command -v curl >/dev/null 2>&1 && curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:8000/api/health 2>/dev/null | grep -q healthy\n` +
           `}\n` +
           `notify_failure() {\n` +
           `  osascript -e "display dialog \\"$MSG\\" with title \\"$TITLE\\" buttons {\\"OK\\"} with icon caution" >/dev/null 2>&1 || true\n` +
@@ -5711,7 +5722,7 @@ function configureBootAutoStart(memoryBin) {
         `TITLE=${shellQuote(failureTitle)}\n` +
         `MSG=${shellQuote(failureMessage)}\n` +
         `check_health() {\n` +
-        `  command -v curl >/dev/null 2>&1 && curl -fsS --max-time 3 http://127.0.0.1:8000/api/health 2>/dev/null | grep -q healthy\n` +
+        `  command -v curl >/dev/null 2>&1 && curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:8000/api/health 2>/dev/null | grep -q healthy\n` +
         `}\n` +
         `notify_failure() {\n` +
         `  if command -v notify-send >/dev/null 2>&1; then notify-send "$TITLE" "$MSG"; return; fi\n` +

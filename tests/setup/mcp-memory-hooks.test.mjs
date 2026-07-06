@@ -1622,7 +1622,7 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.doesNotMatch(source, /const cmdPath = join\(startupDir, "mcp-memory-start\.cmd"\)/);
 
     assert.match(source, /const scriptPath = join\(metaKimDir, "mcp-memory-start\.sh"\)/);
-    assert.match(source, /curl -fsS --max-time 3 http:\/\/127\.0\.0\.1:8000\/api\/health/);
+    assert.match(source, /curl -fsS --noproxy '\*' --max-time 3 http:\/\/127\.0\.0\.1:8000\/api\/health/);
     assert.match(source, /TITLE=\$\{shellQuote\(failureTitle\)\}/);
     assert.match(source, /MSG=\$\{shellQuote\(failureMessage\)\}/);
     assert.match(source, /osascript -e "display dialog/);
