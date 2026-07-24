@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { readCodexSessionEvidence } from "../../scripts/live-acceptance/read-codex-session-evidence.mjs";
 import {
   extractMetaKimBinding,
   observeClaudeAssistantMessages,
@@ -22,6 +33,96 @@ const binding = Object.freeze({
   evidenceKind: "spawn_agent_result",
 });
 const marker = `<metaKimBinding>${JSON.stringify(binding)}</metaKimBinding>`;
+
+function codexSessionRecords({
+  parentId = "11111111-1111-4111-8111-111111111111",
+  childId = "22222222-2222-4222-8222-222222222222",
+  childParentId = parentId,
+  finalText = "private child result must remain hashed",
+} = {}) {
+  const parent = [
+    {
+      timestamp: "2026-07-24T09:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: parentId,
+        source: "exec",
+        originator: "codex_exec",
+        cli_version: "0.111.0",
+      },
+    },
+    {
+      timestamp: "2026-07-24T09:00:01.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "spawn_agent",
+        namespace: "collaboration",
+        call_id: "host-spawn",
+        arguments: JSON.stringify({ task_name: "test", message: "bounded work" }),
+      },
+    },
+    {
+      timestamp: "2026-07-24T09:00:02.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "host-spawn",
+        output: "accepted",
+      },
+    },
+    {
+      timestamp: "2026-07-24T09:00:03.000Z",
+      type: "event_msg",
+      payload: {
+        type: "sub_agent_activity",
+        event_id: "host-spawn",
+        kind: "started",
+        agent_thread_id: childId,
+        agent_path: "/root/test",
+      },
+    },
+    {
+      timestamp: "2026-07-24T09:00:04.000Z",
+      type: "response_item",
+      payload: {
+        type: "agent_message",
+        author: "/root/test",
+        recipient: "/root",
+        content: [{ type: "input_text", text: finalText }],
+      },
+    },
+  ];
+  const child = [
+    {
+      timestamp: "2026-07-24T09:00:03.000Z",
+      type: "session_meta",
+      payload: {
+        id: childId,
+        source: {
+          subagent: {
+            thread_spawn: { parent_thread_id: childParentId },
+          },
+        },
+        originator: "codex_exec",
+        cli_version: "0.111.0",
+      },
+    },
+  ];
+  return { parent, child, finalText };
+}
+
+function writeCodexSessionPair(codexHome, records, suffix = "") {
+  const sessionDir = path.join(codexHome, "sessions", "2026", "07", "24");
+  mkdirSync(sessionDir, { recursive: true });
+  const parentId = records.parent[0].payload.id;
+  const childId = records.child[0].payload.id;
+  const parentPath = path.join(sessionDir, `rollout-parent${suffix}-${parentId}.jsonl`);
+  const childPath = path.join(sessionDir, `rollout-child${suffix}-${childId}.jsonl`);
+  writeFileSync(parentPath, `${jsonl(records.parent)}\n`, "utf8");
+  writeFileSync(childPath, `${jsonl(records.child)}\n`, "utf8");
+  return { parentPath, childPath, sessionDir };
+}
 
 function codexRunScopedEnvelope(metaKimBinding, ownerAgent) {
   return {
@@ -140,6 +241,355 @@ test("Claude system/config records and incomplete assistant messages never count
     { type: "assistant", session_id: "s1", message: { id: "tools-only", stop_reason: "tool_use", content: [{ type: "tool_use", id: "t1", name: "Bash" }] } },
   ]);
   assert.deepEqual(observeClaudeAssistantMessages(raw), []);
+});
+
+test("Claude Task result without a real child id cannot become successful agent evidence", () => {
+  const raw = jsonl([
+    {
+      type: "assistant",
+      session_id: "claude-parent",
+      message: {
+        id: "batch-no-child",
+        content: [{ type: "tool_use", id: "task-no-child", name: "Task", input: { prompt: "review" } }],
+      },
+    },
+    {
+      type: "user",
+      session_id: "claude-parent",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: "task-no-child", content: "looks successful" }],
+      },
+      tool_use_result: {},
+    },
+  ]);
+  assert.deepEqual(observeClaudeJsonl(raw), []);
+});
+
+test("Codex CLI collab_tool_call with receiver child and exact agent_type is native spawn evidence", () => {
+  const raw = jsonl([
+    { type: "thread.started", thread_id: "codex-cli-parent" },
+    {
+      type: "item.started",
+      item: {
+        id: "collab-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        agent_type: "meta-prism",
+        receiver: { thread_id: "codex-cli-child" },
+      },
+    },
+    {
+      type: "item.completed",
+      item: {
+        id: "collab-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        status: "completed",
+        agent_type: "meta-prism",
+        receiver: { thread_id: "codex-cli-child" },
+        result: "child completed",
+      },
+    },
+  ]);
+  const [event] = observeCodexJsonl(raw);
+  assert.equal(event.family, "agent_subagent");
+  assert.equal(event.hostSurface, "codex_cli.spawn_agent");
+  assert.equal(event.childSessionId, "codex-cli-child");
+  assert.equal(event.nativeAgentType, "meta-prism");
+  assert.equal(event.resultStatus, "completed");
+});
+
+test("Codex CLI spawn without agent_type is runtime invocation evidence but never custom-owner proof", () => {
+  const raw = jsonl([
+    { type: "thread.started", thread_id: "run-scoped-parent" },
+    {
+      type: "item.started",
+      item: {
+        id: "run-scoped-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        task_name: "meta-prism",
+        receiver_thread_id: "run-scoped-child",
+      },
+    },
+    {
+      type: "item.completed",
+      item: {
+        id: "run-scoped-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        task_name: "meta-prism",
+        status: "completed",
+        receiver_thread_id: "run-scoped-child",
+        result: "completed",
+      },
+    },
+  ]);
+  const [event] = observeCodexJsonl(raw);
+  assert.equal(event.hostSurface, "codex_cli.spawn_agent");
+  assert.equal(event.childSessionId, "run-scoped-child");
+  assert.equal(event.ownerBindingMode, "run_scoped_owner_contract");
+  assert.equal(event.nativeAgentType, null);
+  assert.notEqual(event.providerId, "meta-prism");
+  assert.equal(event.activityCompletionObserved, true);
+});
+
+test("run-scoped Codex spawn returned by child final is complete fuse evidence without activity completion", () => {
+  const finalText = "run-scoped child final";
+  const records = [
+    { type: "session_meta", payload: { id: "returned-parent" } },
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "spawn_agent",
+        namespace: "collaboration",
+        call_id: "returned-spawn",
+        arguments: JSON.stringify({
+          task_name: "meta-prism",
+          message: "review without a host agent_type field",
+        }),
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "returned-spawn",
+        output: "accepted",
+      },
+    },
+    {
+      type: "event_msg",
+      payload: {
+        type: "sub_agent_activity",
+        event_id: "returned-spawn",
+        kind: "started",
+        agent_thread_id: "returned-child",
+        agent_path: "/root/returned-child",
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "agent_message",
+        author: "/root/returned-child",
+        recipient: "/root",
+        content: [{ type: "input_text", text: finalText }],
+      },
+    },
+  ];
+  const [event] = observeCodexJsonl(jsonl(records));
+  assert.equal(event.hostSurface, "collaboration.spawn_agent");
+  assert.equal(event.ownerBindingMode, "run_scoped_owner_contract");
+  assert.equal(event.nativeAgentType, null);
+  assert.equal(event.childSessionId, "returned-child");
+  assert.equal(event.completionBoundary, "returned_child_final");
+  assert.equal(event.activityCompletionObserved, false);
+  assert.match(event.resultMessageId, /^message-[a-f0-9]{24}$/u);
+  assert.equal(event.resultTextSha256, sha256(finalText));
+
+  for (const omittedIndex of [1, 2, 3]) {
+    const incomplete = records.filter((_, index) => index !== omittedIndex);
+    assert.deepEqual(
+      observeCodexJsonl(jsonl(incomplete)),
+      [],
+      `accepted output, child start, and returned final are each mandatory (omitted ${omittedIndex})`,
+    );
+  }
+});
+
+test("Codex timeout stdout can contain a valid final JSON and one exact completed native spawn chain", () => {
+  const finalPayload = {
+    runtime: "codex",
+    governed_entry: "meta-theory",
+    warden_entry_gate: true,
+    conductor_orchestration: true,
+    orchestrationTaskBoardPacket: {
+      synthesisOwner: "meta-conductor",
+      route: "Warden -> Conductor -> board -> workerTaskPackets",
+    },
+    workerTaskPackets: [{
+      owner: "meta-prism",
+      deliverable: "review",
+      verificationOwner: "meta-warden",
+    }],
+  };
+  const raw = jsonl([
+    { type: "thread.started", thread_id: "timed-out-wrapper-thread" },
+    {
+      type: "item.started",
+      item: {
+        id: "timeout-exact-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        agent_type: "meta-prism",
+        receiver_thread_id: "timeout-exact-child",
+      },
+    },
+    {
+      type: "item.completed",
+      item: {
+        id: "timeout-exact-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        status: "completed",
+        agent_type: "meta-prism",
+        receiver_thread_id: "timeout-exact-child",
+        result: "child completed before wrapper timeout",
+      },
+    },
+    {
+      type: "item.completed",
+      item: {
+        id: "timeout-final-json",
+        type: "agent_message",
+        status: "completed",
+        text: JSON.stringify(finalPayload),
+      },
+    },
+  ]);
+  const nativeEvents = observeCodexJsonl(raw).filter(
+    (event) =>
+      event.hostSurface === "codex_cli.spawn_agent" &&
+      event.nativeAgentType === "meta-prism" &&
+      event.childSessionId === "timeout-exact-child" &&
+      event.resultStatus === "completed",
+  );
+  assert.equal(nativeEvents.length, 1);
+  const encodedFinal = JSON.parse(raw.split("\n").at(-1)).item.text;
+  assert.equal(JSON.parse(encodedFinal).runtime, "codex");
+});
+
+test("valid final JSON cannot repair missing or wrong native Codex spawn evidence", () => {
+  const finalRecord = {
+    type: "item.completed",
+    item: {
+      id: "valid-final",
+      type: "agent_message",
+      status: "completed",
+      text: JSON.stringify({
+        runtime: "codex",
+        governed_entry: "meta-theory",
+        warden_entry_gate: true,
+        conductor_orchestration: true,
+        orchestrationTaskBoardPacket: { synthesisOwner: "meta-conductor" },
+        workerTaskPackets: [{ owner: "meta-prism" }],
+      }),
+    },
+  };
+  assert.deepEqual(
+    observeCodexJsonl(jsonl([
+      { type: "thread.started", thread_id: "missing-spawn" },
+      finalRecord,
+    ])),
+    [],
+  );
+
+  const [wrongOwner] = observeCodexJsonl(jsonl([
+    { type: "thread.started", thread_id: "wrong-owner-parent" },
+    {
+      type: "item.started",
+      item: {
+        id: "wrong-owner-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        agent_type: "meta-scout",
+        child_thread_id: "wrong-owner-child",
+      },
+    },
+    {
+      type: "item.completed",
+      item: {
+        id: "wrong-owner-spawn",
+        type: "collab_tool_call",
+        tool: "spawn_agent",
+        status: "completed",
+        agent_type: "meta-scout",
+        child_thread_id: "wrong-owner-child",
+      },
+    },
+    finalRecord,
+  ]));
+  assert.equal(wrongOwner.nativeAgentType, "meta-scout");
+  assert.notEqual(wrongOwner.nativeAgentType, "meta-prism");
+});
+
+test("Codex observer cannot join the same call id across parent sessions", () => {
+  const raw = jsonl([
+    { type: "thread.started", thread_id: "parent-a" },
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "spawn_agent",
+        namespace: "collaboration",
+        call_id: "reused-call",
+        arguments: JSON.stringify({ agent_type: "meta-prism", message: "review" }),
+      },
+    },
+    { type: "thread.started", thread_id: "parent-b" },
+    {
+      type: "response_item",
+      payload: { type: "function_call_output", call_id: "reused-call", output: "accepted" },
+    },
+    {
+      type: "event_msg",
+      payload: {
+        type: "sub_agent_activity",
+        event_id: "reused-call",
+        kind: "completed",
+        status: "success",
+        agent_thread_id: "wrong-session-child",
+      },
+    },
+  ]);
+  assert.deepEqual(observeCodexJsonl(raw), []);
+});
+
+test("one returned child result cannot satisfy two Codex collaboration calls", () => {
+  const taskPath = "/root/shared-child";
+  const records = [{ type: "session_meta", payload: { id: "single-parent" } }];
+  for (const callId of ["call-one", "call-two"]) {
+    records.push(
+      {
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "spawn_agent",
+          namespace: "collaboration",
+          call_id: callId,
+          arguments: JSON.stringify({ message: "review" }),
+        },
+      },
+      {
+        type: "response_item",
+        payload: { type: "function_call_output", call_id: callId, output: "accepted" },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          type: "sub_agent_activity",
+          event_id: callId,
+          kind: "started",
+          agent_thread_id: "same-child",
+          agent_path: taskPath,
+        },
+      },
+    );
+  }
+  records.push({
+    type: "response_item",
+    payload: {
+      type: "agent_message",
+      author: taskPath,
+      recipient: "/root",
+      content: [{ type: "input_text", text: "only one final" }],
+    },
+  });
+  const events = observeCodexJsonl(jsonl(records));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].resultTextSha256, sha256("only one final"));
 });
 
 for (const requestName of ["spawn_agent", "followup_task"]) {
@@ -355,6 +805,8 @@ test("Codex followup_task without a binding is host activity, not proof of a pro
   assert.equal(event.providerId, "collaboration.followup_task");
   assert.equal(event.taskPath, reusedTaskPath);
   assert.equal(event.metaKimBinding ?? null, null);
+  assert.equal(event.nativeAgentType ?? null, null);
+  assert.notEqual(event.hostSurface, "collaboration.spawn_agent");
   assert.notEqual(event.providerId, "global:test-automator");
 });
 
@@ -894,4 +1346,239 @@ test("Fernet-like encrypted message payload is diagnosed without attempting decr
   ]);
   const [event] = observeCodexJsonl(raw);
   assert.equal(event.bindingUnavailableReason, "encrypted_payload_without_host_binding_metadata");
+});
+
+test("Codex session reader binds one fresh exec parent to one exact child backlink", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-session-"));
+  try {
+    const codexHome = path.join(tempRoot, "codex-home");
+    const records = codexSessionRecords();
+    writeCodexSessionPair(codexHome, records);
+
+    const evidence = await readCodexSessionEvidence({
+      codexHome,
+      threadId: records.parent[0].payload.id,
+      sinceMs: Date.now() - 60_000,
+    });
+
+    assert.ok(evidence);
+    assert.equal(evidence.threadId, records.parent[0].payload.id);
+    assert.equal(evidence.childSessionId, records.child[0].payload.id);
+    assert.equal(evidence.sourceCategory, "codex_home_sessions");
+    assert.equal(evidence.cliVersion, "0.111.0");
+    assert.match(evidence.sessionDigest, /^[a-f0-9]{64}$/u);
+    assert.match(evidence.childSessionDigest, /^[a-f0-9]{64}$/u);
+    assert.equal(evidence.parentSessionText, `${jsonl(records.parent)}\n`);
+    assert.equal("parentSessionPath" in evidence, false);
+    assert.equal("childSessionPath" in evidence, false);
+
+    const publicEvidence = {
+      threadId: evidence.threadId,
+      childSessionId: evidence.childSessionId,
+      sessionDigest: evidence.sessionDigest,
+      childSessionDigest: evidence.childSessionDigest,
+      sourceCategory: evidence.sourceCategory,
+      cliVersion: evidence.cliVersion,
+    };
+    const serialized = JSON.stringify(publicEvidence);
+    assert.doesNotMatch(serialized, new RegExp(tempRoot.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+    assert.doesNotMatch(serialized, new RegExp(records.finalText, "u"));
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("Codex session reader collapses parent event frames only when they bind the same child", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-session-frames-"));
+  try {
+    const codexHome = path.join(tempRoot, "codex-home");
+    const records = codexSessionRecords();
+    records.parent.splice(4, 0,
+      {
+        timestamp: "2026-07-24T09:00:03.100Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "spawn_agent",
+          namespace: "collaboration",
+          call_id: "host-spawn-frame-two",
+          arguments: JSON.stringify({ message: "same logical child frame" }),
+        },
+      },
+      {
+        timestamp: "2026-07-24T09:00:03.200Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "host-spawn-frame-two",
+          output: "accepted",
+        },
+      },
+      {
+        timestamp: "2026-07-24T09:00:03.300Z",
+        type: "event_msg",
+        payload: {
+          type: "sub_agent_activity",
+          event_id: "host-spawn-frame-two",
+          kind: "started",
+          agent_thread_id: records.child[0].payload.id,
+          agent_path: "/root/test-frame-two",
+        },
+      },
+      {
+        timestamp: "2026-07-24T09:00:03.400Z",
+        type: "response_item",
+        payload: {
+          type: "agent_message",
+          author: "/root/test-frame-two",
+          recipient: "/root",
+          content: [{ type: "input_text", text: "second frame result" }],
+        },
+      },
+    );
+    assert.equal(
+      observeCodexJsonl(jsonl(records.parent)).filter(
+        (event) => event.family === "agent_subagent",
+      ).length,
+      2,
+    );
+    const paths = writeCodexSessionPair(codexHome, records);
+
+    const evidence = await readCodexSessionEvidence({
+      codexHome,
+      threadId: records.parent[0].payload.id,
+      sinceMs: Date.now() - 60_000,
+    });
+    assert.equal(evidence.childSessionId, records.child[0].payload.id);
+
+    const differentChildId = "33333333-3333-4333-8333-333333333333";
+    const differentFrame = records.parent.find(
+      (record) => record.payload?.event_id === "host-spawn-frame-two",
+    );
+    differentFrame.payload.agent_thread_id = differentChildId;
+    writeFileSync(paths.parentPath, `${jsonl(records.parent)}\n`, "utf8");
+    await assert.rejects(
+      readCodexSessionEvidence({
+        codexHome,
+        threadId: records.parent[0].payload.id,
+        sinceMs: Date.now() - 60_000,
+      }),
+      (error) => error instanceof Error &&
+        error.code === "codex_parent_spawn_event_not_unique",
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("Codex session reader refuses mismatched, stale, ambiguous, linked, and oversized evidence", async (t) => {
+  async function expectNoEvidence(options, expectedCode) {
+    await assert.rejects(
+      readCodexSessionEvidence(options),
+      (error) => error instanceof Error && error.code === expectedCode,
+    );
+  }
+
+  async function withFixture(name, setup, assertion) {
+    await t.test(name, async () => {
+      const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-negative-"));
+      try {
+        const codexHome = path.join(tempRoot, "codex-home");
+        const records = codexSessionRecords();
+        const paths = writeCodexSessionPair(codexHome, records);
+        await setup({ tempRoot, codexHome, records, paths });
+        await assertion({ tempRoot, codexHome, records, paths });
+      } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await withFixture("wrong requested thread", async () => {}, async ({ codexHome }) => {
+    await expectNoEvidence(
+      {
+        codexHome,
+        threadId: "33333333-3333-4333-8333-333333333333",
+        sinceMs: Date.now() - 60_000,
+      },
+      "codex_parent_session_not_unique",
+    );
+  });
+
+  await withFixture("stale mtimes", async ({ paths }) => {
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(paths.parentPath, old, old);
+    utimesSync(paths.childPath, old, old);
+  }, async ({ codexHome, records }) => {
+    await expectNoEvidence(
+      { codexHome, threadId: records.parent[0].payload.id, sinceMs: Date.now() - 30_000 },
+      "codex_parent_session_stale",
+    );
+  });
+
+  await withFixture("multiple matching parents", async ({ paths, records }) => {
+    const parentId = records.parent[0].payload.id;
+    writeFileSync(path.join(paths.sessionDir, `duplicate-${parentId}.jsonl`), `${jsonl(records.parent)}\n`, "utf8");
+  }, async ({ codexHome, records }) => {
+    await expectNoEvidence(
+      { codexHome, threadId: records.parent[0].payload.id, sinceMs: Date.now() - 60_000 },
+      "codex_parent_session_not_unique",
+    );
+  });
+
+  await withFixture("multiple matching children", async ({ paths, records }) => {
+    writeFileSync(path.join(paths.sessionDir, "duplicate-child.jsonl"), `${jsonl(records.child)}\n`, "utf8");
+  }, async ({ codexHome, records }) => {
+    await expectNoEvidence(
+      { codexHome, threadId: records.parent[0].payload.id, sinceMs: Date.now() - 60_000 },
+      "codex_child_session_not_unique",
+    );
+  });
+
+  await withFixture("wrong child backlink", async ({ paths, records }) => {
+    const wrongChild = codexSessionRecords({
+      childParentId: "33333333-3333-4333-8333-333333333333",
+    }).child;
+    writeFileSync(paths.childPath, `${jsonl(wrongChild)}\n`, "utf8");
+    assert.notDeepEqual(wrongChild, records.child);
+  }, async ({ codexHome, records }) => {
+    await expectNoEvidence(
+      { codexHome, threadId: records.parent[0].payload.id, sinceMs: Date.now() - 60_000 },
+      "codex_child_session_mismatch",
+    );
+  });
+
+  await withFixture("oversized session files", async () => {}, async ({ codexHome, records }) => {
+    await expectNoEvidence(
+      {
+        codexHome,
+        threadId: records.parent[0].payload.id,
+        sinceMs: Date.now() - 60_000,
+        maxBytes: 64,
+      },
+      "codex_parent_session_too_large",
+    );
+  });
+
+  await t.test("symlinked sessions root", async () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-symlink-"));
+    try {
+      const codexHome = path.join(tempRoot, "codex-home");
+      const externalHome = path.join(tempRoot, "external-home");
+      const records = codexSessionRecords();
+      const { sessionDir } = writeCodexSessionPair(externalHome, records);
+      mkdirSync(codexHome, { recursive: true });
+      symlinkSync(sessionDir, path.join(codexHome, "sessions"), "junction");
+      await expectNoEvidence(
+        {
+          codexHome,
+          threadId: records.parent[0].payload.id,
+          sinceMs: Date.now() - 60_000,
+        },
+        "codex_sessions_symlink_rejected",
+      );
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });

@@ -499,6 +499,42 @@ function parentAgentPathFor(taskPath) {
   return `/${parts.slice(0, -1).join("/")}`;
 }
 
+function firstBoundedIdentity(...values) {
+  for (const value of values.flat(Infinity)) {
+    const identity = boundedCodexIdentity(value);
+    if (identity) return identity;
+  }
+  return null;
+}
+
+function codexCollaborationChildId(item) {
+  return firstBoundedIdentity(
+    item?.child_thread_id,
+    item?.agent_thread_id,
+    item?.new_thread_id,
+    item?.receiver_thread_id,
+    item?.receiver_thread_ids,
+    item?.receiver?.thread_id,
+    item?.receivers?.map((receiver) => receiver?.thread_id),
+  );
+}
+
+function codexCollaborationArguments(item) {
+  const raw = item?.arguments ?? item?.input ?? item?.tool_input;
+  const parsed = boundedJsonObject(raw);
+  const synthesized = parsed ? { ...parsed } : {};
+  for (const key of ["agent_type", "task_name", "message", "fork_turns"]) {
+    if (synthesized[key] == null && item?.[key] != null) synthesized[key] = item[key];
+  }
+  return Object.keys(synthesized).length > 0 ? synthesized : raw ?? {};
+}
+
+function codexCollaborationName(item) {
+  const raw = item?.tool ?? item?.name ?? item?.tool_name ?? item?.action;
+  const normalized = String(raw ?? "").replace(/^collaboration[.:]/iu, "");
+  return normalized || (item?.type === "collab_tool_call" ? "spawn_agent" : item?.type);
+}
+
 function classifyTool(name, namespace = "") {
   const normalized = `${namespace}:${name}`.toLowerCase();
   if (["spawn_agent", "followup_task", "agent", "task"].includes(String(name).toLowerCase())) {
@@ -700,13 +736,26 @@ export function observeCodexJsonl(text) {
   const agentMessages = new Map();
   const childAuthoredMessages = [];
   let threadId = null;
+  let crossSessionCorrelationDetected = false;
+  const rootSessionIds = new Set();
+  const callSessions = new Map();
+  const registerCallSession = (callId, sessionId) => {
+    if (!callId || !sessionId) return;
+    const prior = callSessions.get(callId);
+    if (prior && prior !== sessionId) crossSessionCorrelationDetected = true;
+    callSessions.set(callId, sessionId);
+  };
   for (const record of records) {
     const payload = payloadOf(record.value);
     if (record.value?.type === "session_meta") {
       threadId = record.value?.payload?.id ?? record.value?.payload?.session_id ?? threadId;
+      if (threadId) rootSessionIds.add(threadId);
       continue;
     }
-    if (record.value?.type === "thread.started") threadId = record.value.thread_id ?? null;
+    if (record.value?.type === "thread.started") {
+      threadId = record.value.thread_id ?? null;
+      if (threadId) rootSessionIds.add(threadId);
+    }
     if (
       record.value?.type === "response_item" &&
       payload?.type === "agent_message" &&
@@ -737,7 +786,13 @@ export function observeCodexJsonl(text) {
       const item = record.value.item;
       const mappedName = item.type === "command_execution"
         ? "shell_command"
-        : item.name ?? item.tool_name ?? item.type;
+        : item.type === "collab_tool_call"
+          ? codexCollaborationName(item)
+          : item.name ?? item.tool_name ?? item.type;
+      const collabChildId = item.type === "collab_tool_call"
+        ? codexCollaborationChildId(item)
+        : null;
+      registerCallSession(item.id, threadId);
       calls.set(item.id, {
         line: record.line,
         observedAt: rawHostTimestamp(record.value, item),
@@ -746,14 +801,30 @@ export function observeCodexJsonl(text) {
           call_id: item.id,
           name: mappedName,
           namespace: item.namespace ?? "codex_cli",
-          arguments: item.command ?? item.arguments ?? item.input ?? "",
+          arguments: item.type === "collab_tool_call"
+            ? codexCollaborationArguments(item)
+            : item.command ?? item.arguments ?? item.input ?? "",
           session_id: threadId,
           itemType: item.type,
         },
       });
+      if (collabChildId) {
+        const activity = {
+          line: record.line,
+          observedAt: rawHostTimestamp(record.value, item),
+          payload: {
+            ...item,
+            kind: "started",
+            child_thread_id: collabChildId,
+          },
+        };
+        agentStarts.set(item.id, activity);
+        agentStarts.set(`child:${collabChildId}`, activity);
+      }
     }
     if (record.value?.type === "item.completed" && record.value?.item?.id) {
       const item = record.value.item;
+      registerCallSession(item.id, threadId);
       if (item.type === "agent_message") {
         const messageText = textFromCodexAgentMessage(item);
         const childId = item.agent_thread_id ?? item.child_thread_id ?? null;
@@ -778,7 +849,12 @@ export function observeCodexJsonl(text) {
       const commandCompletedSuccessfully =
         item.type !== "command_execution" ||
         (Number.isInteger(item.exit_code) && item.exit_code === 0);
-      if (["completed", "success"].includes(item.status) && commandCompletedSuccessfully) {
+      const itemCompletedSuccessfully =
+        completedStatus(item.status) &&
+        item.error == null &&
+        item.is_error !== true &&
+        commandCompletedSuccessfully;
+      if (itemCompletedSuccessfully) {
         outputs.set(item.id, {
           line: record.line,
           observedAt: rawHostTimestamp(record.value, item),
@@ -790,10 +866,44 @@ export function observeCodexJsonl(text) {
             exit_code: item.exit_code,
           },
         });
+        if (item.type === "collab_tool_call") {
+          const childId = codexCollaborationChildId(item);
+          if (childId) {
+            const started = agentStarts.get(item.id) ?? {
+              line: calls.get(item.id)?.line ?? record.line,
+              observedAt: calls.get(item.id)?.observedAt ?? rawHostTimestamp(record.value, item),
+              payload: {
+                kind: "started",
+              },
+            };
+            const startWithChild = {
+              ...started,
+              payload: {
+                ...started.payload,
+                child_thread_id: childId,
+              },
+            };
+            agentStarts.set(item.id, startWithChild);
+            agentStarts.set(`child:${childId}`, startWithChild);
+            const completion = {
+              line: record.line,
+              observedAt: rawHostTimestamp(record.value, item),
+              payload: {
+                ...item,
+                kind: "completed",
+                child_thread_id: childId,
+                success: true,
+              },
+            };
+            agentCompletions.set(item.id, completion);
+            agentCompletions.set(`child:${childId}`, completion);
+          }
+        }
       }
     }
     if (payload?.type === "function_call") {
       const callId = payload.call_id ?? payload.callId;
+      registerCallSession(callId, payload.session_id ?? payload.sessionId ?? threadId);
       if (callId) {
         calls.set(callId, {
           line: record.line,
@@ -804,6 +914,7 @@ export function observeCodexJsonl(text) {
     }
     if (payload?.type === "function_call_output") {
       const callId = payload.call_id ?? payload.callId;
+      registerCallSession(callId, payload.session_id ?? payload.sessionId ?? threadId);
       const outputText = typeof payload.output === "string"
         ? payload.output
         : JSON.stringify(payload.output ?? payload.result ?? "");
@@ -873,11 +984,13 @@ export function observeCodexJsonl(text) {
       if (taskPath) agentCompletions.set(`path:${taskPath}`, completion);
     }
   }
+  if (rootSessionIds.size > 1 || crossSessionCorrelationDetected) return [];
   const events = [];
+  const consumedResultKeys = new Set();
   for (const [callId, call] of calls) {
     const output = outputs.get(callId);
     if (!output) continue;
-    const name = call.payload.name ?? "unknown";
+    const name = String(call.payload.name ?? "unknown").toLowerCase();
     const namespace = call.payload.namespace ?? "";
     const family = call.payload.itemType === "mcp_tool_call"
       ? "mcp"
@@ -907,14 +1020,16 @@ export function observeCodexJsonl(text) {
             entry.line > afterLine &&
             entry.author === taskPath &&
             parentAgentPath != null &&
-            entry.recipient === parentAgentPath,
+            entry.recipient === parentAgentPath &&
+            !consumedResultKeys.has(`message:${entry.messageId}`),
         )
       : null;
     const storedResultMatches =
       storedAgentMessage &&
       storedAgentMessage.line > afterLine &&
       (storedAgentMessage.item?.agent_thread_id ?? storedAgentMessage.item?.child_thread_id) === childSessionId &&
-      (storedAgentMessage.item?.agent_path ?? storedAgentMessage.item?.task_path ?? storedAgentMessage.item?.path) === taskPath;
+      (storedAgentMessage.item?.agent_path ?? storedAgentMessage.item?.task_path ?? storedAgentMessage.item?.path) === taskPath &&
+      !consumedResultKeys.has(`line:${storedAgentMessage.line}`);
     const desktopReturnedMessage = childAuthoredResult ?? (storedResultMatches ? storedAgentMessage : null);
     const returnedAgentMessage = desktopReturnedMessage ?? storedAgentMessage;
     if (family === "agent_subagent" && !childSessionId) continue;
@@ -928,6 +1043,9 @@ export function observeCodexJsonl(text) {
       !desktopCollaborationLifecycle &&
       !agentCompletion
     ) continue;
+    const callSessionId = call.payload.session_id ?? null;
+    const outputSessionId = output.payload.session_id ?? callSessionId;
+    if (callSessionId && outputSessionId && callSessionId !== outputSessionId) continue;
     const resultOutput = returnedAgentMessage?.text ?? output.payload.output ?? output.payload.result ?? "";
     const toolInput = call.payload.arguments ?? call.payload.input ?? null;
     const ownerBindingObservation = family === "agent_subagent"
@@ -970,6 +1088,12 @@ export function observeCodexJsonl(text) {
       toolInput,
       returnedAgentMessage?.observedAt ?? agentCompletion?.observedAt ?? output.observedAt ?? null,
     ));
+    if (returnedAgentMessage?.messageId) {
+      consumedResultKeys.add(`message:${returnedAgentMessage.messageId}`);
+    }
+    if (returnedAgentMessage?.line) {
+      consumedResultKeys.add(`line:${returnedAgentMessage.line}`);
+    }
   }
   return events;
 }
@@ -1028,6 +1152,7 @@ export function observeClaudeJsonl(text) {
       sessionId: call.payload?.session_id ?? output.payload?.session_id ?? null,
       sourceLines: [call.line, output.line],
     };
+    if (baseEvent.family === "agent_subagent" && !baseEvent.childSessionId) continue;
     const callInput = call.item.input ?? null;
     const callMarker = extractMetaKimBinding(callInput);
     events.push(normalizeObservedEventBinding(

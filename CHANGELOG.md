@@ -8,6 +8,26 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.8.92] - 2026-07-24
+
+### Solved Problem
+
+The standard release path could report success after a smoke evaluator exited cleanly even when its own evidence said the runtime was projection-only and not release-grade. Claude discovery also confused the Agent View command with custom-agent definitions, while Codex could satisfy the live evaluator with model-authored JSON or timeout recovery without proving that a real child Agent completed. This made the release claim stronger than the underlying Claude Code and Codex evidence.
+
+### Fixed
+
+- **Standard releases now have one dual-primary runtime fuse.** The release evaluator fixes its scope to Claude Code and Codex, requires the complete nine-agent structural inventory, and permits release-grade only after one real host invocation succeeds in each primary runtime. Smoke, canonical fallback, fixtures, model-authored JSON, and projection-only evidence remain diagnostic and cannot open the fuse.
+- **Runtime identity is reported at the level the host actually proves.** Claude custom agents are discovered from declared project/global definitions and verified through a real `claude --agent` main-session binding. Codex definitions are discovered from TOML `name` fields; when the active `spawn_agent` schema has no `agent_type`, a completed child is recorded truthfully as a run-scoped invocation rather than being mislabeled as a loaded custom agent.
+- **Codex completion evidence survives incomplete CLI forwarding without trusting arbitrary files.** The evaluator first consumes native JSONL events. If Codex 0.144.x persists the completed collaboration but omits it from `exec --json`, the fallback accepts only the exact fresh exec thread and its unique child backlink from the bounded local session store. Wrong, stale, duplicate, oversized, linked, or fixture evidence fails closed, and public reports retain only IDs and digests.
+- **Global updates preserve ownership truth across host normalization and regeneration.** A Claude-managed durable MCP command may be migrated after Claude wraps it with an exact Windows `cmd` launcher only when the unwrapped definition matches the recorded manifest fingerprint. Codex TOML journals now collapse exact host-restored replays and rebase regenerated host values only when the managed result is unchanged; altered commands or different results still fail closed.
+
+### Verification
+
+- Focused evaluator, observer, release-chain, session-correlation, path-safety, and privacy regressions passed with 77 tests and 0 failures; an independent P0/P1 review found no release-truth or disclosure blocker.
+- A real primary-runtime fuse completed with both Claude Code and Codex marked `strictReleasePass=true`; Codex proved `spawn_agent -> returned_child_final` while preserving the truthful run-scoped binding boundary.
+- Focused global MCP ownership, durable bundle lifecycle, Codex TOML journal, and manifest regressions passed, including real v2.8.91-to-v2.8.92 global sync and post-sync checks.
+- The final release candidate is required to pass the complete packed-product, four-runtime projection/install, Graphify, setup, Meta-Theory, integration, and dual-primary runtime release suite before publication.
+
 ## [2.8.91] - 2026-07-21
 
 ### Solved Problem

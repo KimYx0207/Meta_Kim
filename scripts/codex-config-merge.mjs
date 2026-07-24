@@ -1061,7 +1061,16 @@ export function normalizeCodexConfigMutations(mutations = []) {
     }
     const previous = normalized[previousIndex];
     let chained = null;
-    if (previous.kind === "insert" && next.kind === "replace") {
+    if (
+      previous.kind === next.kind &&
+      previous.beforeFragment === next.beforeFragment &&
+      previous.afterFragment === next.afterFragment
+    ) {
+      // A host may restore the pre-merge value between runs. Reapplying the
+      // exact same mutation does not create a second ownership layer; retain
+      // the original reversible journal entry.
+      chained = previous;
+    } else if (previous.kind === "insert" && next.kind === "replace") {
       const at = previous.afterFragment.indexOf(next.beforeFragment);
       if (at >= 0 && previous.afterFragment.indexOf(next.beforeFragment, at + next.beforeFragment.length) < 0) {
         chained = {
@@ -1071,6 +1080,15 @@ export function normalizeCodexConfigMutations(mutations = []) {
       }
     } else if (previous.kind === "replace" && next.kind === "replace" && previous.afterFragment === next.beforeFragment) {
       chained = { ...previous, afterFragment: next.afterFragment };
+    } else if (
+      previous.kind === "replace" &&
+      next.kind === "replace" &&
+      previous.afterFragment === next.afterFragment
+    ) {
+      // The host restored or regenerated the unmanaged baseline while the
+      // desired managed result stayed exact. Rebase the reversible journal to
+      // the latest baseline so cleanup restores current host state.
+      chained = next;
     } else if (previous.kind === "replace" && next.kind === "remove" && previous.afterFragment === next.beforeFragment) {
       chained = { ...previous, kind: "remove", afterFragment: "" };
     } else if (previous.kind === "remove" && next.kind === "insert") {

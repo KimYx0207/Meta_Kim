@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-14T20:16:47.176Z",
+  "generatedAt": "2026-07-24T06:40:52.427Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -44,8 +44,8 @@
       },
       "codex": {
         "projectionPresent": true,
-        "hookCommandEntries": 0,
-        "hookFiles": 17,
+        "hookCommandEntries": 2,
+        "hookFiles": 18,
         "commandFiles": 0
       },
       "cursor": {
@@ -172,8 +172,8 @@
         "type": "agents",
         "namespace": "canonical",
         "path": "canonical/agents/meta-conductor.md",
-        "size": 62925,
-        "modified": "2026-06-15T18:37:39.386Z",
+        "size": 62843,
+        "modified": "2026-07-15T21:51:26.809Z",
         "layer": "meta",
         "executionBlock": true
       },
@@ -244,8 +244,8 @@
         "type": "skills",
         "namespace": "canonical",
         "path": "canonical/skills/meta-theory/SKILL.md",
-        "size": 82188,
-        "modified": "2026-07-14T07:53:13.200Z"
+        "size": 82519,
+        "modified": "2026-07-15T19:41:46.129Z"
       },
       "repo:canonical:same-set-reusable-flow-for-project-file-inventor": {
         "id": "same-set-reusable-flow-for-project-file-inventor",
@@ -270,8 +270,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/dev-governance.md",
         "relativePath": "dev-governance.md",
-        "size": 41532,
-        "modified": "2026-07-14T05:57:46.913Z"
+        "size": 34077,
+        "modified": "2026-07-15T19:47:52.268Z"
       },
       "repo:canonical-reference:evolution-writeback": {
         "id": "evolution-writeback",
@@ -279,8 +279,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/evolution-writeback.md",
         "relativePath": "evolution-writeback.md",
-        "size": 3869,
-        "modified": "2026-06-28T23:17:31.172Z"
+        "size": 4117,
+        "modified": "2026-07-15T19:47:38.591Z"
       },
       "repo:canonical-reference:global-owner-discovery": {
         "id": "global-owner-discovery",
@@ -288,8 +288,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/global-owner-discovery.md",
         "relativePath": "global-owner-discovery.md",
-        "size": 8320,
-        "modified": "2026-07-10T15:45:56.338Z"
+        "size": 8333,
+        "modified": "2026-07-15T21:29:35.672Z"
       },
       "repo:canonical-reference:intent-amplification": {
         "id": "intent-amplification",
@@ -315,8 +315,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/owner-resolution.md",
         "relativePath": "owner-resolution.md",
-        "size": 7052,
-        "modified": "2026-06-20T16:22:02.001Z"
+        "size": 6998,
+        "modified": "2026-07-15T21:50:17.268Z"
       },
       "repo:canonical-reference:path-selection": {
         "id": "path-selection",
@@ -360,8 +360,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/runtime-codex.md",
         "relativePath": "runtime-codex.md",
-        "size": 30392,
-        "modified": "2026-07-14T07:59:28.019Z"
+        "size": 30366,
+        "modified": "2026-07-15T21:50:17.269Z"
       },
       "repo:canonical-reference:spine-state": {
         "id": "spine-state",
@@ -502,8 +502,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/claude/hooks/enforce-agent-dispatch.mjs",
         "relativePath": "enforce-agent-dispatch.mjs",
-        "size": 69258,
-        "modified": "2026-07-14T07:53:59.498Z",
+        "size": 61208,
+        "modified": "2026-07-15T15:39:20.358Z",
         "canonicalPath": "canonical/runtime-assets/claude/hooks/enforce-agent-dispatch.mjs"
       },
       "repo:canonical-runtime-assets:graphify-context.mjs": {
@@ -777,8 +777,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/codex/commands/meta-theory.md",
         "relativePath": "meta-theory.md",
-        "size": 7893,
-        "modified": "2026-07-14T07:53:13.202Z"
+        "size": 7907,
+        "modified": "2026-07-15T21:50:17.265Z"
       },
       "repo:canonical-runtime-assets:save-progress": {
         "id": "save-progress",

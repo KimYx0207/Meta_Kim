@@ -35,6 +35,7 @@ const gitignore = readFileSync(".gitignore", "utf8");
 const scriptsReadme = readFileSync("scripts/README.md", "utf8");
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const verifyRunnerSource = readFileSync("scripts/run-verify-all.mjs", "utf8");
+const evalMetaAgentsSource = readFileSync("scripts/eval-meta-agents.mjs", "utf8");
 
 function completePackedProductProof() {
   return {
@@ -170,7 +171,7 @@ test("release verification path includes governance tests", () => {
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:open-source-boundary:validate/);
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:test:integration/);
   assert.match(verifyRunnerSource, /npm run meta:graphify:check/);
-  assert.match(verifyRunnerSource, /node scripts\/eval-meta-agents\.mjs --require-all-runtimes/);
+  assert.match(verifyRunnerSource, /node scripts\/eval-meta-agents\.mjs --primary-release-fuse/);
   assert.match(verifyRunnerSource, /npm run meta:acceptance:clean-room:require/);
   assert.doesNotMatch(
     packageJson.scripts["meta:verify:all:chain"],
@@ -198,6 +199,22 @@ test("release verification path includes governance tests", () => {
     assert.equal(STAGES.some((stage) => stage.name === requiredStage), true, requiredStage);
   }
   assert.equal(STAGES.some((stage) => stage.name === LIVE_CERTIFIED_STAGE.name), false);
+  const runtimeFuseStages = STAGES.filter((stage) =>
+    stage.cmd.includes("scripts/eval-meta-agents.mjs"),
+  );
+  assert.deepEqual(
+    runtimeFuseStages.map(({ name, cmd }) => ({ name, cmd })),
+    [{
+      name: "eval-meta-agents",
+      cmd: "node scripts/eval-meta-agents.mjs --primary-release-fuse",
+    }],
+    "standard verification must own one fixed Claude+Codex native release fuse",
+  );
+  assert.equal(
+    STAGES.some((stage) => /--runtime=|--agent=|FIXTURE/u.test(stage.cmd)),
+    false,
+    "standard release stages must not narrow or fixture the primary runtime fuse",
+  );
   assert.match(verifyRunnerSource, /releaseGrade/);
   assert.match(verifyRunnerSource, /续跑诊断通过/);
   assert.match(verifyRunnerSource, /--live-certified.*--from/);
@@ -213,6 +230,28 @@ test("release stages derive runtime targets and timeout budgets from canonical p
   const setupStage = STAGES.find((stage) => stage.name === "meta:test:setup");
   assert.equal(setupStage?.cmd, "npm run meta:test:setup");
   assert.ok(setupStage.timeoutMs > 0);
+  const primaryRuntimeFuseStage = STAGES.find(
+    (stage) => stage.name === "eval-meta-agents",
+  );
+  assert.ok(primaryRuntimeFuseStage);
+  assert.ok(
+    primaryRuntimeFuseStage.timeoutMs >= 600_000,
+    "outer release timeout must cover the dual-primary live probe worst-case budget",
+  );
+  assert.match(evalMetaAgentsSource, /attempt <= 2/u);
+  assert.match(evalMetaAgentsSource, /timeout:\s*150_000/u);
+  assert.match(
+    evalMetaAgentsSource,
+    /const CODEX_LIVE_TIMEOUT_MS\s*=\s*180_000/u,
+  );
+  const claudeWorstCaseMs = 2 * 150_000;
+  const codexWorstCaseMs = 180_000;
+  const processAndDiscoveryAllowanceMs = 60_000;
+  assert.ok(
+    claudeWorstCaseMs + codexWorstCaseMs + processAndDiscoveryAllowanceMs <
+      primaryRuntimeFuseStage.timeoutMs,
+    "the 600s outer stage must leave positive headroom after both primary live probes",
+  );
   assert.equal(
     STAGES.some((stage) => stage.name === "meta:test:setup:packed"),
     false,

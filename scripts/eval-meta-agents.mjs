@@ -11,20 +11,25 @@ import {
   canonicalAgentsDir,
   canonicalRuntimeAssetsDir,
 } from "./meta-kim-sync-config.mjs";
+import { observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
+import { readCodexSessionEvidence } from "./live-acceptance/read-codex-session-evidence.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const rawArgs = process.argv.slice(2);
 const requireAllRuntimes = process.argv.includes("--require-all-runtimes");
+const primaryReleaseFuse = rawArgs.includes("--primary-release-fuse");
 const evalMode =
-  rawArgs.includes("--live") || rawArgs.includes("--mode=live")
+  primaryReleaseFuse || rawArgs.includes("--live") || rawArgs.includes("--mode=live")
     ? "live"
     : "smoke";
 const runtimeArg = rawArgs.find((arg) => arg.startsWith("--runtime="));
 const agentArg = rawArgs.find((arg) => arg.startsWith("--agent="));
 const selectedRuntimes = new Set(
-  runtimeArg
+  primaryReleaseFuse
+    ? ["claude", "codex"]
+    : runtimeArg
     ? runtimeArg
         .slice("--runtime=".length)
         .split(",")
@@ -64,6 +69,9 @@ const cursorLiveHarnessContractPath = path.join(
 );
 const activeChildren = new Map();
 let cleanupInFlight = false;
+const CODEX_LIVE_TIMEOUT_MS = 180_000;
+const CODEX_SESSION_SETTLE_TIMEOUT_MS = 10_000;
+const CODEX_SESSION_SETTLE_INTERVAL_MS = 250;
 
 const RUNTIME_FAILURE_TAXONOMY = Object.freeze({
   pass: "pass",
@@ -122,19 +130,47 @@ async function readCanonicalAgentIds() {
     .sort();
 }
 
-async function readRuntimeAgentIdsOrCanonical(runtimeAgentsDir, extension) {
-  if (await fileExists(runtimeAgentsDir)) {
-    return {
-      source: path.relative(repoRoot, runtimeAgentsDir).replace(/\\/g, "/"),
-      ids: (await fs.readdir(runtimeAgentsDir))
-        .filter((file) => file.endsWith(extension))
-        .map((file) => file.slice(0, -extension.length))
-        .sort(),
-    };
+function declaredAgentName(text, extension) {
+  const match = extension === ".toml"
+    ? String(text).match(/^\s*name\s*=\s*["']([^"']+)["']/mu)
+    : String(text).match(/^\s*name\s*:\s*["']?([^\s"']+)["']?\s*$/mu);
+  return match?.[1]?.trim() || null;
+}
+
+async function readRuntimeAgentDefinitions(runtimeAgentsDirs, extension) {
+  const definitions = new Map();
+  const sources = [];
+  for (const [index, runtimeAgentsDir] of runtimeAgentsDirs.entries()) {
+    if (!(await fileExists(runtimeAgentsDir))) continue;
+    const sourceCategory = index === 0 ? "project" : "global";
+    sources.push(sourceCategory);
+    for (const file of (await fs.readdir(runtimeAgentsDir)).filter((entry) => entry.endsWith(extension)).sort()) {
+      const filePath = path.join(runtimeAgentsDir, file);
+      const sourceText = await fs.readFile(filePath, "utf8");
+      const name = declaredAgentName(sourceText, extension);
+      if (!name || definitions.has(name)) continue;
+      definitions.set(name, {
+        name,
+        sourceCategory,
+        sourceDigest: crypto.createHash("sha256").update(sourceText).digest("hex"),
+      });
+    }
   }
   return {
-    source: "canonical/agents",
-    ids: await readCanonicalAgentIds(),
+    source: sources.length > 0 ? sources.join("+") : "runtime-agent-definitions-missing",
+    sources,
+    definitions: [...definitions.values()],
+    ids: [...definitions.keys()].sort(),
+  };
+}
+
+function publicRuntimeAgentInventory(discoveredAgents, expectedAgentIds) {
+  const required = new Set(expectedAgentIds);
+  return {
+    ids: discoveredAgents.ids.filter((agentId) => required.has(agentId)),
+    definitions: discoveredAgents.definitions.filter((definition) =>
+      required.has(definition.name)
+    ),
   };
 }
 
@@ -1393,10 +1429,13 @@ function tryExtractCodexReply(raw) {
 
 function extractCodexThreadId(raw) {
   const events = parseJsonLines(raw);
-  const started = events.find(
-    (event) => event.type === "thread.started" && event.thread_id,
+  const started = events.filter(
+    (event) =>
+      event.type === "thread.started" &&
+      typeof event.thread_id === "string" &&
+      event.thread_id.length > 0,
   );
-  return typeof started?.thread_id === "string" ? started.thread_id : null;
+  return started.length === 1 ? started[0].thread_id : null;
 }
 
 async function resolveOpenClawCommand() {
@@ -1841,6 +1880,10 @@ function tailText(value, maxChars = 2_000) {
   return text.slice(-maxChars);
 }
 
+function diagnosticSha256(value) {
+  return crypto.createHash("sha256").update(String(value ?? "")).digest("hex");
+}
+
 function shouldForceCodexLiveTimeoutFixture() {
   return process.env.META_KIM_CODEX_LIVE_TIMEOUT_FIXTURE === "1";
 }
@@ -1953,6 +1996,17 @@ function summarizeClaudeRuntime(discovery, results) {
   return {
     status: "passed",
     ok: true,
+    nativeInvocationObserved:
+      results.length > 0 &&
+      results.every(
+        (result) => result.ok === true && result.nativeInvocationObserved === true,
+      ),
+    releaseFuseInvocationObserved:
+      results.length > 0 &&
+      results.every(
+        (result) => result.ok === true && result.nativeInvocationObserved === true,
+      ),
+    nativeInvocationKind: "claude_main_session_custom_agent_binding",
     discovery,
     results,
   };
@@ -1997,9 +2051,12 @@ function classifyRuntimeFailure(runtimeName, report, mode) {
   }
 
   if (status === "passed") {
-    return mode === "live"
+    if (mode !== "live") return RUNTIME_FAILURE_TAXONOMY.projectionOnly;
+    return report?.releaseFuseInvocationObserved === true &&
+        report?.fixture !== true &&
+        report?.recoveredFromTimeout !== true
       ? RUNTIME_FAILURE_TAXONOMY.pass
-      : RUNTIME_FAILURE_TAXONOMY.projectionOnly;
+      : RUNTIME_FAILURE_TAXONOMY.liveIncomplete;
   }
   if (reason.includes("timeout")) {
     return RUNTIME_FAILURE_TAXONOMY.timeout;
@@ -2086,7 +2143,10 @@ function buildRuntimeEvidenceRecord(runtimeName, report, mode) {
   const strictReleasePass =
     status === "passed" &&
     mode === "live" &&
-    failureClass === RUNTIME_FAILURE_TAXONOMY.pass;
+    failureClass === RUNTIME_FAILURE_TAXONOMY.pass &&
+    report?.releaseFuseInvocationObserved === true &&
+    report?.fixture !== true &&
+    report?.recoveredFromTimeout !== true;
   return {
     runtime: runtimeName,
     mode,
@@ -2120,7 +2180,7 @@ function buildRuntimeEvidencePacket(report, runtimeStatuses) {
     schemaVersion: "runtime-evidence-v0.1",
     generatedAt: report.timestamp,
     mode: report.mode,
-    strictRuntimesRequired: requireAllRuntimes,
+    strictRuntimesRequired: requireAllRuntimes || primaryReleaseFuse,
     records,
     failureClasses,
     summary: {
@@ -2157,6 +2217,129 @@ function codexLivePayloadOk(structuralOk, runtimePayload) {
     typeof runtimePayload?.verificationOwner === "string" &&
     runtimePayload.verificationOwner.trim().length > 0
   );
+}
+
+function inspectCodexLiveEvidence(
+  stdout,
+  {
+    structuralOk,
+    representativeAgentId,
+    fixture = false,
+    hostEventText = stdout,
+    sessionEvidence = null,
+    sessionLookupFailure = null,
+  },
+) {
+  const runtimePayload = tryExtractCodexReply(stdout);
+  const behaviorDiagnosticOk = codexLivePayloadOk(structuralOk, runtimePayload);
+  const observedEvents = fixture ? [] : observeCodexJsonl(hostEventText);
+  const rootSessionIds = new Set(
+    observedEvents.map((event) => event.sessionId).filter(Boolean),
+  );
+  const matchingNativeInvocations = observedEvents.filter(
+    (event) =>
+      event.family === "agent_subagent" &&
+      /(?:^|\.)spawn_agent$/u.test(String(event.hostSurface ?? "")) &&
+      (event.nativeAgentType == null ||
+        event.nativeAgentType === representativeAgentId) &&
+      (event.nativeAgentType === representativeAgentId
+        ? event.ownerBindingMode === "native_custom_agent"
+        : event.ownerBindingMode === "run_scoped_owner_contract") &&
+      typeof event.childSessionId === "string" &&
+      event.childSessionId.length > 0 &&
+      typeof event.sessionId === "string" &&
+      event.sessionId.length > 0 &&
+      ["completed", "returned"].includes(event.resultStatus) &&
+      ((event.completionBoundary === "completed_activity_observed" &&
+        event.activityCompletionObserved === true) ||
+        (event.completionBoundary === "returned_child_final" &&
+          typeof event.resultMessageId === "string" &&
+          event.resultMessageId.length > 0 &&
+          typeof event.resultTextSha256 === "string" &&
+          event.resultTextSha256.length > 0)) &&
+      typeof event.outputDigest === "string" &&
+      event.outputDigest.length > 0,
+  );
+  const nativeInvocation =
+    !fixture &&
+    structuralOk &&
+    behaviorDiagnosticOk &&
+    rootSessionIds.size === 1 &&
+    matchingNativeInvocations.length === 1
+      ? matchingNativeInvocations[0]
+      : null;
+  return {
+    runtimePayload,
+    behaviorDiagnosticOk,
+    nativeInvocation,
+    nativeInvocationObserved: nativeInvocation != null,
+    customAgentInvocationObserved:
+      nativeInvocation?.nativeAgentType === representativeAgentId,
+    releaseFuseInvocationObserved: nativeInvocation != null,
+    sessionEvidence,
+    sessionLookupFailure,
+  };
+}
+
+function publicCodexSessionEvidence(evidence) {
+  if (!evidence) return null;
+  return {
+    threadId: evidence.threadId,
+    childSessionId: evidence.childSessionId,
+    sessionDigest: evidence.sessionDigest,
+    childSessionDigest: evidence.childSessionDigest,
+    sourceCategory: evidence.sourceCategory,
+    cliVersion: evidence.cliVersion,
+  };
+}
+
+async function inspectCodexLiveEvidenceWithSessionFallback(
+  stdout,
+  {
+    structuralOk,
+    representativeAgentId,
+    fixture = false,
+    sinceMs,
+    sessionSettleTimeoutMs = 0,
+  },
+) {
+  const directEvidence = inspectCodexLiveEvidence(stdout, {
+    structuralOk,
+    representativeAgentId,
+    fixture,
+  });
+  if (fixture || directEvidence.nativeInvocationObserved) return directEvidence;
+
+  const threadId = extractCodexThreadId(stdout);
+  if (!threadId) return directEvidence;
+  const settleDeadline = Date.now() + Math.max(0, sessionSettleTimeoutMs);
+  let latestEvidence = directEvidence;
+  do {
+    try {
+      const sessionEvidence = await readCodexSessionEvidence({
+        codexHome: process.env.CODEX_HOME,
+        threadId,
+        sinceMs,
+      });
+      latestEvidence = inspectCodexLiveEvidence(stdout, {
+        structuralOk,
+        representativeAgentId,
+        hostEventText: sessionEvidence.parentSessionText,
+        sessionEvidence: publicCodexSessionEvidence(sessionEvidence),
+      });
+      if (latestEvidence.nativeInvocationObserved) return latestEvidence;
+    } catch (error) {
+      latestEvidence = {
+        ...directEvidence,
+        sessionLookupFailure:
+          typeof error?.code === "string"
+            ? error.code
+            : "codex_session_lookup_failed",
+      };
+    }
+    if (Date.now() >= settleDeadline) return latestEvidence;
+    await delay(CODEX_SESSION_SETTLE_INTERVAL_MS);
+  } while (true);
 }
 
 async function runCommandWithIgnoredStdin(file, args, options = {}) {
@@ -2825,74 +3008,26 @@ async function runClaudeDiscovery(agentIds) {
   logProgress(
     `Claude discovery: checking ${agentIds.length} registered agent(s)`,
   );
-  const cmd = await getResolvedClaudeCommand();
-  const help = await runCommandWithIgnoredStdin(
-    cmd.file,
-    cmd.toArgs(["--help"]),
-    {
-      cwd: repoRoot,
-      timeout: 30_000,
-      env: { ...process.env, CI: "1", NO_COLOR: "1" },
-    },
-  );
-  const supportsAgentsCommand = /^\s{2}agents\s/m.test(help.stdout);
-
-  async function discoverFromProjectFiles(extra = {}) {
-    const discoveredAgents = await readRuntimeAgentIdsOrCanonical(
+  const discoveredAgents = await readRuntimeAgentDefinitions(
+    [
       path.join(repoRoot, ".claude", "agents"),
-      ".md",
-    );
-    const projectAgents = new Set(discoveredAgents.ids);
-    const missing = agentIds.filter((agentId) => !projectAgents.has(agentId));
-    return {
-      ok: missing.length === 0,
-      missing,
-      source: discoveredAgents.source,
-      cliSupportsAgentsCommand: false,
-      ...extra,
-    };
-  }
-
-  if (!supportsAgentsCommand) {
-    return discoverFromProjectFiles();
-  }
-
-  let stdout;
-  try {
-    ({ stdout } = await runCommandWithIgnoredStdin(
-      cmd.file,
-      cmd.toArgs(["agents"]),
-      {
-        cwd: repoRoot,
-        timeout: 120_000,
-        env: { ...process.env, NO_COLOR: "1" },
-      },
-    ));
-  } catch (error) {
-    const message = String(error.message);
-    if (message.includes("'claude agents' is not available")) {
-      return discoverFromProjectFiles({
-        cliSupportsAgentsCommand: true,
-        fallbackReason: "claude-agents-command-unavailable",
-        fallbackError: error.message,
-      });
-    }
-    if (message.includes("requires an interactive terminal")) {
-      return discoverFromProjectFiles({
-        cliSupportsAgentsCommand: true,
-        fallbackReason: "claude-agents-command-non-tty",
-        fallbackError: error.message,
-      });
-    }
-    throw error;
-  }
-
-  const missing = agentIds.filter((agentId) => !stdout.includes(agentId));
+      path.join(os.homedir(), ".claude", "agents"),
+    ],
+    ".md",
+  );
+  const installedAgents = new Set(discoveredAgents.ids);
+  const missing = agentIds.filter((agentId) => !installedAgents.has(agentId));
+  const publicInventory = publicRuntimeAgentInventory(discoveredAgents, agentIds);
   return {
     ok: missing.length === 0,
     missing,
-    source: "claude-agents-command",
-    cliSupportsAgentsCommand: true,
+    ids: publicInventory.ids,
+    definitions: publicInventory.definitions,
+    source: discoveredAgents.source,
+    sources: discoveredAgents.sources,
+    expectedInventorySource: "canonical/agents",
+    discoveryKind: "declared_runtime_agent_definitions",
+    diagnosticOnlyCommand: "claude agents",
   };
 }
 
@@ -2968,6 +3103,9 @@ async function runClaudeCases(agentIds) {
         finalResult = {
           agentId,
           ok: payload.agent === agentId && score >= 0.8 && !scoutDrift,
+          nativeInvocationObserved: true,
+          nativeInvocationKind: "claude_main_session_custom_agent_binding",
+          nativeInvocationCommand: `claude -p --agent ${agentId}`,
           score,
           matchedGroups,
           missedGroups,
@@ -3014,13 +3152,13 @@ async function runClaudeCases(agentIds) {
   return results;
 }
 
-async function runClaudeLive(agentIds) {
-  const discovery = await runClaudeDiscovery(agentIds);
-  const results = await runClaudeCases(agentIds);
+async function runClaudeLive(expectedAgentIds, probeAgentIds = expectedAgentIds) {
+  const discovery = await runClaudeDiscovery(expectedAgentIds);
+  const results = await runClaudeCases(probeAgentIds);
   return summarizeClaudeRuntime(discovery, results);
 }
 
-async function runCodexSmoke() {
+async function runCodexSmoke(expectedAgentIds) {
   const codexCmd = await getResolvedCodexCommand();
   let versionStdout;
   try {
@@ -3049,9 +3187,16 @@ async function runCodexSmoke() {
 
   const configExamplePath = path.join(repoRoot, "codex", "config.toml.example");
   const configExample = await fs.readFile(configExamplePath, "utf8");
-  const codexAgents = await readRuntimeAgentIdsOrCanonical(
-    path.join(repoRoot, ".codex", "agents"),
+  const codexAgents = await readRuntimeAgentDefinitions(
+    [
+      path.join(repoRoot, ".codex", "agents"),
+      path.join(os.homedir(), ".codex", "agents"),
+    ],
     ".toml",
+  );
+  const publicCodexAgents = publicRuntimeAgentInventory(
+    codexAgents,
+    expectedAgentIds,
   );
   const payload = {
     runtime: "codex",
@@ -3059,8 +3204,11 @@ async function runCodexSmoke() {
     entrypoint: "AGENTS.md",
     canonical_skill_root: "canonical/skills/meta-theory",
     sync_manifest: "config/sync.json",
-    custom_agents: codexAgents.ids,
+    custom_agents: publicCodexAgents.ids,
     custom_agents_source: codexAgents.source,
+    custom_agent_definitions: publicCodexAgents.definitions,
+    expected_inventory_source: "canonical/agents",
+    custom_agent_inventory_kind: "definitions_only_not_live_loaded",
     mcp_supported: configExample.includes("[mcp_servers.meta_kim_runtime]"),
     sandbox_configurable: configExample.includes("sandbox_mode"),
     approvals_configurable: configExample.includes("approval_policy"),
@@ -3077,7 +3225,7 @@ async function runCodexSmoke() {
     payload.entrypoint === "AGENTS.md" &&
     payload.canonical_skill_root === "canonical/skills/meta-theory" &&
     payload.sync_manifest === "config/sync.json" &&
-    payload.custom_agents.includes("meta-warden") &&
+    expectedAgentIds.every((agentId) => payload.custom_agents.includes(agentId)) &&
     payload.mcp_supported === true &&
     payload.sandbox_configurable === true &&
     payload.approvals_configurable === true &&
@@ -3092,7 +3240,7 @@ async function runCodexSmoke() {
   };
 }
 
-async function runCodexLive() {
+async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-prism") {
   const forceTimeoutFixture = shouldForceCodexLiveTimeoutFixture();
   const codexCmd = forceTimeoutFixture
     ? { file: "codex-fixture", toArgs: (args) => args.map(String) }
@@ -3128,9 +3276,16 @@ async function runCodexLive() {
 
   const configExamplePath = path.join(repoRoot, "codex", "config.toml.example");
   const configExample = await fs.readFile(configExamplePath, "utf8");
-  const codexAgents = await readRuntimeAgentIdsOrCanonical(
-    path.join(repoRoot, ".codex", "agents"),
+  const codexAgents = await readRuntimeAgentDefinitions(
+    [
+      path.join(repoRoot, ".codex", "agents"),
+      path.join(os.homedir(), ".codex", "agents"),
+    ],
     ".toml",
+  );
+  const publicCodexAgents = publicRuntimeAgentInventory(
+    codexAgents,
+    expectedAgentIds,
   );
   const payload = {
     runtime: "codex",
@@ -3138,8 +3293,11 @@ async function runCodexLive() {
     entrypoint: "AGENTS.md",
     canonical_skill_root: "canonical/skills/meta-theory",
     sync_manifest: "config/sync.json",
-    custom_agents: codexAgents.ids,
+    custom_agents: publicCodexAgents.ids,
     custom_agents_source: codexAgents.source,
+    custom_agent_definitions: publicCodexAgents.definitions,
+    expected_inventory_source: "canonical/agents",
+    custom_agent_inventory_kind: "definitions_only_not_live_loaded",
     mcp_supported: configExample.includes("[mcp_servers.meta_kim_runtime]"),
     sandbox_configurable: configExample.includes("sandbox_mode"),
     approvals_configurable: configExample.includes("approval_policy"),
@@ -3156,7 +3314,7 @@ async function runCodexLive() {
     payload.entrypoint === "AGENTS.md" &&
     payload.canonical_skill_root === "canonical/skills/meta-theory" &&
     payload.sync_manifest === "config/sync.json" &&
-    payload.custom_agents.includes("meta-warden") &&
+    expectedAgentIds.every((agentId) => payload.custom_agents.includes(agentId)) &&
     payload.mcp_supported === true &&
     payload.sandbox_configurable === true &&
     payload.approvals_configurable === true &&
@@ -3167,11 +3325,14 @@ async function runCodexLive() {
   const schemaPath = path.join(schemaDir, "codex-live-orchestration.schema.json");
   await fs.writeFile(schemaPath, codexLiveOrchestrationSchema, "utf8");
 
-  let runtimePayload = null;
+  let liveEvidence = null;
+  let commandStartedAtMs = null;
   try {
     const prompt =
-      "Return JSON only. Prove the governed Meta_Kim Codex route for one tiny task: " +
-      "identify whether a reusable skill should be created for repeated release report formatting. " +
+      `Use the native spawn_agent collaboration tool exactly once. If its active schema exposes agent_type, set it to ${representativeAgentId}; otherwise omit the selector and use a run-scoped owner contract. ` +
+      "Never use task_name or a nickname as proof of owner identity. " +
+      "Ask that child to review whether the words primary runtime evidence are precise, wait for the child result, then return JSON only. " +
+      "Do not claim the child ran unless the tool call completed. " +
       'Set runtime to "codex" and governed_entry to "meta-theory". ' +
       "Set warden_entry_gate and conductor_orchestration true only if the route is Warden -> Conductor. " +
       'orchestrationTaskBoardPacket.synthesisOwner must be "meta-conductor" and route must mention Warden -> Conductor -> board -> workerTaskPackets. ' +
@@ -3190,6 +3351,7 @@ async function runCodexLive() {
       repoRoot,
       prompt,
     ]);
+    commandStartedAtMs = Date.now();
     if (forceTimeoutFixture) {
       throw buildCodexLiveTimeoutFixtureError();
     }
@@ -3198,35 +3360,92 @@ async function runCodexLive() {
       codexExecArgs,
       {
         cwd: repoRoot,
-        timeout: 120_000,
+        timeout: CODEX_LIVE_TIMEOUT_MS,
         env: { ...process.env, NO_COLOR: "1" },
       },
     );
 
-    runtimePayload = extractCodexReply(stdout);
+    liveEvidence = await inspectCodexLiveEvidenceWithSessionFallback(stdout, {
+      structuralOk,
+      representativeAgentId,
+      fixture: forceTimeoutFixture,
+      sinceMs: commandStartedAtMs,
+    });
   } catch (error) {
     if (isCommandTimeoutFailure(error)) {
-      const recoveredPayload = tryExtractCodexReply(error.stdout);
-      const recoveredOk = codexLivePayloadOk(structuralOk, recoveredPayload);
-      if (recoveredOk) {
+      const timeoutEvidence = await inspectCodexLiveEvidenceWithSessionFallback(
+        error.stdout,
+        {
+          structuralOk,
+          representativeAgentId,
+          fixture: forceTimeoutFixture,
+          sinceMs: commandStartedAtMs,
+          sessionSettleTimeoutMs: CODEX_SESSION_SETTLE_TIMEOUT_MS,
+        },
+      );
+      if (timeoutEvidence.nativeInvocationObserved) {
         return {
           status: "passed",
           ok: true,
+          releaseFuseInvocationObserved: true,
+          nativeInvocationObserved:
+            timeoutEvidence.customAgentInvocationObserved === true,
+          customAgentInvocationObserved:
+            timeoutEvidence.customAgentInvocationObserved === true,
+          nativeInvocationKind: "codex_spawn_agent_child_completion",
+          ownerBindingMode: timeoutEvidence.nativeInvocation.ownerBindingMode,
+          nativeAgentType: timeoutEvidence.nativeInvocation.nativeAgentType,
+          wrapperTimedOutAfterCompletedInvocation: true,
+          sample: {
+            ...payload,
+            runtime_smoke: timeoutEvidence.runtimePayload,
+            runtime_native_invocation: timeoutEvidence.nativeInvocation,
+            runtime_session_evidence: timeoutEvidence.sessionEvidence,
+            runtime_recovery: {
+              wrapperTimedOutAfterCompletedInvocation: true,
+              reason: "codex_wrapper_timeout_after_completed_native_invocation",
+              errorClass: "codex_wrapper_timeout_after_completed_invocation",
+              stage: "codex_exec_orchestration_prompt",
+              timeoutMs: error.timeoutMs ?? CODEX_LIVE_TIMEOUT_MS,
+              threadId: extractCodexThreadId(error.stdout),
+              stdoutSha256: diagnosticSha256(error.stdout),
+              stderrSha256: diagnosticSha256(error.stderr),
+              sessionLookupFailure:
+                timeoutEvidence.sessionLookupFailure ?? null,
+            },
+          },
+        };
+      }
+      const recoveredPayload = timeoutEvidence.runtimePayload;
+      const recoveredDiagnosticOk = timeoutEvidence.behaviorDiagnosticOk;
+      if (recoveredDiagnosticOk) {
+        return {
+          status: "skipped",
+          ok: false,
+          skipped: true,
+          retryable: true,
+          reason: "codex_live_timeout_recovered_diagnostic_only",
           recoveredFromTimeout: true,
+          nativeInvocationObserved: false,
           sample: {
             ...payload,
             runtime_smoke: recoveredPayload,
+            runtime_session_evidence: timeoutEvidence.sessionEvidence,
             runtime_recovery: {
               recoveredFromTimeout: true,
               reason: "codex_live_timeout_recovered",
               stage: "codex_exec_orchestration_prompt",
-              timeoutMs: error.timeoutMs ?? 120_000,
+              timeoutMs: error.timeoutMs ?? CODEX_LIVE_TIMEOUT_MS,
               threadId: extractCodexThreadId(error.stdout),
               retryCommand:
                 "node scripts/eval-meta-agents.mjs --runtime=codex --live",
               promptContract:
                 "Warden -> Conductor -> orchestrationTaskBoardPacket -> workerTaskPackets",
-              stderrTail: tailText(error.stderr),
+              errorClass: "command_timeout",
+              stdoutSha256: diagnosticSha256(error.stdout),
+              stderrSha256: diagnosticSha256(error.stderr),
+              sessionLookupFailure:
+                timeoutEvidence.sessionLookupFailure ?? null,
             },
           },
         };
@@ -3243,7 +3462,7 @@ async function runCodexLive() {
             skipped: true,
             reason: "codex_live_timeout",
             stage: "codex_exec_orchestration_prompt",
-            timeoutMs: error.timeoutMs ?? 120_000,
+            timeoutMs: error.timeoutMs ?? CODEX_LIVE_TIMEOUT_MS,
             threadId: extractCodexThreadId(error.stdout),
             retryCommand:
               "node scripts/eval-meta-agents.mjs --runtime=codex --live",
@@ -3251,8 +3470,11 @@ async function runCodexLive() {
               "Use the Codex session record for threadId when stdout contains a thread.started event.",
             promptContract:
               "Warden -> Conductor -> orchestrationTaskBoardPacket -> workerTaskPackets",
-            stdoutTail: tailText(error.stdout),
-            stderrTail: tailText(error.stderr),
+            errorClass: "command_timeout",
+            stdoutSha256: diagnosticSha256(error.stdout),
+            stderrSha256: diagnosticSha256(error.stderr),
+            sessionLookupFailure:
+              timeoutEvidence.sessionLookupFailure ?? null,
           },
         },
       };
@@ -3279,14 +3501,32 @@ async function runCodexLive() {
     await fs.rm(schemaDir, { recursive: true, force: true });
   }
 
-  const ok = codexLivePayloadOk(structuralOk, runtimePayload);
+  const runtimePayload = liveEvidence?.runtimePayload ?? null;
+  const nativeInvocation = liveEvidence?.nativeInvocation ?? null;
+  const releaseFuseInvocationObserved =
+    liveEvidence?.releaseFuseInvocationObserved === true;
+  const customAgentInvocationObserved =
+    liveEvidence?.customAgentInvocationObserved === true;
+  const liveOk =
+    liveEvidence?.behaviorDiagnosticOk === true && releaseFuseInvocationObserved;
 
   return {
-    status: ok ? "passed" : "failed",
-    ok,
+    status: liveOk ? "passed" : "failed",
+    ok: liveOk,
+    reason: liveOk ? null : "codex_release_fuse_spawn_not_observed",
+    releaseFuseInvocationObserved,
+    nativeInvocationObserved: customAgentInvocationObserved,
+    customAgentInvocationObserved: customAgentInvocationObserved,
+    nativeInvocationKind: "codex_spawn_agent_child_completion",
+    ownerBindingMode: nativeInvocation?.ownerBindingMode ?? null,
+    nativeAgentType: nativeInvocation?.nativeAgentType ?? null,
     sample: {
       ...payload,
       runtime_smoke: runtimePayload,
+      runtime_native_invocation: nativeInvocation,
+      runtime_session_evidence: liveEvidence?.sessionEvidence ?? null,
+      runtime_session_lookup_failure:
+        liveEvidence?.sessionLookupFailure ?? null,
     },
   };
 }
@@ -3303,7 +3543,10 @@ async function runCursorSmoke() {
   );
   const cursorHooksPath = path.join(repoRoot, ".cursor", "hooks.json");
   const cursorRulesDir = path.join(repoRoot, ".cursor", "rules");
-  const cursorAgents = await readRuntimeAgentIdsOrCanonical(cursorAgentsDir, ".md");
+  const cursorAgents = await readRuntimeAgentDefinitions(
+    [cursorAgentsDir, path.join(os.homedir(), ".cursor", "agents")],
+    ".md",
+  );
   const skill = await readTextOrCanonical(
     cursorSkillPath,
     path.join(canonicalAgentsDir, "..", "skills", "meta-theory", "SKILL.md"),
@@ -4016,6 +4259,16 @@ async function runOpenClawLive() {
 
 async function main() {
   installSignalCleanup();
+  if (primaryReleaseFuse && (runtimeArg || agentArg)) {
+    throw new Error(
+      "--primary-release-fuse fixes runtime scope to claude,codex and forbids --runtime/--agent filters.",
+    );
+  }
+  if (primaryReleaseFuse && shouldForceCodexLiveTimeoutFixture()) {
+    throw new Error(
+      "--primary-release-fuse forbids META_KIM_CODEX_LIVE_TIMEOUT_FIXTURE.",
+    );
+  }
   for (const runtimeName of selectedRuntimes) {
     if (!["claude", "codex", "openclaw", "cursor"].includes(runtimeName)) {
       throw new Error(`Unknown runtime filter: ${runtimeName}`);
@@ -4033,9 +4286,13 @@ async function main() {
     throw new Error(`Unknown agent filter(s): ${unknownAgentIds.join(", ")}`);
   }
   const agentIds = filterSelectedAgentIds(allAgentIds);
+  const representativeAgentId = allAgentIds.includes("meta-prism")
+    ? "meta-prism"
+    : allAgentIds[0];
   const report = {
     timestamp: new Date().toISOString(),
     mode: evalMode,
+    primaryReleaseFuse,
     requestedRuntimes: [...selectedRuntimes],
     requestedAgents: selectedAgentIds.size > 0 ? [...selectedAgentIds] : "all",
     claude: null,
@@ -4049,7 +4306,10 @@ async function main() {
       try {
         report.claude =
           evalMode === "live"
-            ? await runClaudeLive(agentIds)
+            ? await runClaudeLive(
+                primaryReleaseFuse ? allAgentIds : agentIds,
+                primaryReleaseFuse ? [representativeAgentId] : agentIds,
+              )
             : await runClaudeSmoke(agentIds);
       } catch (error) {
         report.claude = isOptionalRuntimeUnavailable(error.message)
@@ -4073,7 +4333,12 @@ async function main() {
     if (isRuntimeSelected("codex")) {
       try {
         report.codex =
-          evalMode === "live" ? await runCodexLive() : await runCodexSmoke();
+          evalMode === "live"
+            ? await runCodexLive(
+                primaryReleaseFuse ? allAgentIds : agentIds,
+                representativeAgentId,
+              )
+            : await runCodexSmoke(agentIds);
       } catch (error) {
         report.codex = isOptionalRuntimeUnavailable(error.message)
           ? {
@@ -4168,7 +4433,7 @@ async function main() {
     blocked: runtimeStatuses
       .filter((item) => !["passed", "skipped", "failed"].includes(item.status))
       .map((item) => item.runtime),
-    strictRuntimesRequired: requireAllRuntimes,
+    strictRuntimesRequired: requireAllRuntimes || primaryReleaseFuse,
     releaseGrade: report.runtimeEvidencePacket.summary.releaseGrade,
     failureClasses: report.runtimeEvidencePacket.failureClasses,
   };
@@ -4176,7 +4441,12 @@ async function main() {
   const overallOk =
     report.summary.failed.length === 0 &&
     report.summary.blocked.length === 0 &&
-    (!requireAllRuntimes || report.summary.skipped.length === 0);
+    (!requireAllRuntimes || report.summary.skipped.length === 0) &&
+    (!primaryReleaseFuse ||
+      (report.requestedRuntimes.length === 2 &&
+        report.requestedRuntimes.includes("claude") &&
+        report.requestedRuntimes.includes("codex") &&
+        report.runtimeEvidencePacket.summary.releaseGrade === true));
 
   console.log(JSON.stringify(report, null, 2));
   if (!overallOk) {

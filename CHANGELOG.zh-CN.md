@@ -8,6 +8,26 @@
 
 ## Unreleased
 
+## [2.8.92] - 2026-07-24
+
+### 解决的问题
+
+标准发布链此前可能在 smoke evaluator 进程正常退出后报告成功，即使 evaluator 自己的证据已经标明运行时只有 projection、并不具备 release-grade。Claude 发现逻辑还把 Agent View 命令误当成自定义 Agent 定义来源；Codex 则可能仅凭模型生成的 JSON 或超时恢复结果通过 live evaluator，而没有证明真实子 Agent 已完成。最终导致发布声明强于 Claude Code 和 Codex 的底层证据。
+
+### 修复内容
+
+- **标准发布现在只有一道双主运行时保险丝。** release evaluator 固定检查 Claude Code 与 Codex，先验证完整的九个治理 Agent 结构清单，再要求两个主运行时各有一次真实宿主调用成功。smoke、canonical fallback、fixture、模型自述 JSON 和 projection-only 证据仍可诊断，但不能打开发布保险丝。
+- **运行时身份只按宿主实际证明的层级报告。** Claude 自定义 Agent 从真实的项目/全局声明中发现，并通过 `claude --agent` 主会话绑定实测；Codex 从 TOML 的 `name` 字段发现定义。当活动 `spawn_agent` schema 没有 `agent_type` 时，完成的 child 会诚实记录为 run-scoped 调用，不会被误报成已经加载某个 custom Agent。
+- **Codex CLI 未完整转发事件时，仍能安全验证完成链。** evaluator 优先消费原生 JSONL；如果 Codex 0.144.x 已持久化完成的协作事件、但 `exec --json` 没有转发，则只接受本轮精确且新鲜的 exec thread 及其唯一 child 回链。错误、陈旧、重复、超大小、链接路径或 fixture 证据全部 fail closed；公开报告只保留 ID 与摘要。
+- **全局更新在宿主规范化和动态重建后仍保持真实归属。** Claude 只有在解包后的 Windows `cmd` 启动定义精确命中 manifest 指纹时，才允许迁移受管的持久化 MCP；Codex TOML 日志只会折叠宿主恢复后的完全相同重放，或在受管结果不变时重基到最新宿主值。命令被追加参数或目标结果变化时仍然 fail closed。
+
+### 验证
+
+- evaluator、observer、发布链、session 关联、路径安全和隐私聚焦回归 77 个全部通过；独立 P0/P1 Review 未发现发布真相或信息泄漏阻断项。
+- 真实双主运行时保险丝通过：Claude Code 与 Codex 均为 `strictReleasePass=true`；Codex 证明了 `spawn_agent -> returned_child_final`，同时保持诚实的 run-scoped 绑定边界。
+- 全局 MCP 归属、持久化 bundle 生命周期、Codex TOML 日志与 manifest 聚焦回归全部通过，并完成真实 v2.8.91 到 v2.8.92 的全局同步及同步后检查。
+- 正式发布前，最终候选必须继续通过完整 packed-product、四运行时投影/安装、Graphify、setup、Meta-Theory、integration 与双主运行时发布套件。
+
 ## [2.8.91] - 2026-07-21
 
 ### 解决的问题

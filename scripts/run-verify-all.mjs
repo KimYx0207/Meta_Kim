@@ -97,7 +97,7 @@ const STANDARD_STAGE_COMMANDS = Object.freeze([
   ["meta:verify:governance:core", "npm run meta:verify:governance:core"],
   ["meta:graphify:check", "npm run meta:graphify:check"],
   ["meta:check:global:release", "npm run meta:check:global:release"],
-  ["eval-meta-agents", "node scripts/eval-meta-agents.mjs --require-all-runtimes"],
+  ["eval-meta-agents", "node scripts/eval-meta-agents.mjs --primary-release-fuse"],
   ["meta:test:inventory", "npm run meta:test:inventory"],
   ["meta:test:unit", "npm run meta:test:unit"],
   ["meta:test:setup", "npm run meta:test:setup"],

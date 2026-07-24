@@ -198,6 +198,51 @@ test("MCP merge migrates proven legacy entry and preserves unrelated config", ()
     wrappedCurrentDefinition,
   );
 
+  const priorManaged = buildDurableMetaKimMcpServer(
+    process.execPath,
+    path.join(path.parse(process.execPath).root, "managed", "prior", "meta-kim.mjs"),
+  );
+  const wrappedPriorManaged = {
+    ...priorManaged,
+    command: "cmd.exe",
+    args: ["/d", "/s", "/c", priorManaged.command, ...priorManaged.args],
+  };
+  const migratedManagedWrapper = mergeClaudeUserMcpConfig({
+    mcpServers: { "meta-kim-runtime": wrappedPriorManaged },
+  }, {
+    canonicalName: "meta-kim-runtime",
+    portableDefinition: portable,
+    identity: PACKAGE_IDENTITY,
+    legacyScriptSuffix: LEGACY_MCP_SUFFIX,
+    managedFingerprints: new Set([mcpDefinitionFingerprint(priorManaged)]),
+  });
+  assert.deepEqual(migratedManagedWrapper.collisions, []);
+  assert.equal(migratedManagedWrapper.canonicalEquivalent, false);
+  assert.deepEqual(migratedManagedWrapper.config.mcpServers["meta-kim-runtime"], portable);
+
+  const unownedManagedWrapper = mergeClaudeUserMcpConfig({
+    mcpServers: { "meta-kim-runtime": wrappedPriorManaged },
+  }, {
+    canonicalName: "meta-kim-runtime",
+    portableDefinition: portable,
+    identity: PACKAGE_IDENTITY,
+    legacyScriptSuffix: LEGACY_MCP_SUFFIX,
+  });
+  assert.deepEqual(unownedManagedWrapper.collisions, ["meta-kim-runtime"]);
+
+  const driftedManagedWrapper = structuredClone(wrappedPriorManaged);
+  driftedManagedWrapper.args.push("--user-change");
+  const blockedDriftedManagedWrapper = mergeClaudeUserMcpConfig({
+    mcpServers: { "meta-kim-runtime": driftedManagedWrapper },
+  }, {
+    canonicalName: "meta-kim-runtime",
+    portableDefinition: portable,
+    identity: PACKAGE_IDENTITY,
+    legacyScriptSuffix: LEGACY_MCP_SUFFIX,
+    managedFingerprints: new Set([mcpDefinitionFingerprint(priorManaged)]),
+  });
+  assert.deepEqual(blockedDriftedManagedWrapper.collisions, ["meta-kim-runtime"]);
+
   const fingerprint = mcpDefinitionFingerprint(portable);
   const removed = removeExactManagedMcpFragment(result.config, "meta-kim-runtime", fingerprint);
   assert.equal(removed.removed, true);

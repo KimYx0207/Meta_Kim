@@ -164,30 +164,36 @@ function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
   return isAbsolute && normalizedArg.endsWith(`/${normalizedSuffix}`);
 }
 
-function isExactWindowsCmdWrapperOf(definition, expectedDefinition) {
-  if (!isPlainObject(definition) || !isPlainObject(expectedDefinition)) return false;
-  if (definition.type !== undefined && definition.type !== expectedDefinition.type) return false;
-  if (!isPlainObject(definition.env) || !isPlainObject(expectedDefinition.env)) return false;
-  if (mcpDefinitionFingerprint(definition.env) !== mcpDefinitionFingerprint(expectedDefinition.env)) {
-    return false;
+function unwrapExactWindowsCmdWrapper(definition) {
+  if (!isPlainObject(definition) || !isPlainObject(definition.env) || !Array.isArray(definition.args)) {
+    return null;
   }
-  if (!Array.isArray(definition.args) || !Array.isArray(expectedDefinition.args)) return false;
-
   const commandBase = path.win32.basename(String(definition.command ?? "")).toLowerCase();
-  if (commandBase !== "cmd" && commandBase !== "cmd.exe") return false;
+  if (commandBase !== "cmd" && commandBase !== "cmd.exe") return null;
 
   const args = [...definition.args];
   const seenFlags = new Set();
   while (/^\/(?:d|s)$/iu.test(args[0] ?? "")) {
     const flag = args.shift().toLowerCase();
-    if (seenFlags.has(flag)) return false;
+    if (seenFlags.has(flag)) return null;
     seenFlags.add(flag);
   }
-  if (!/^\/c$/iu.test(args.shift() ?? "")) return false;
+  if (!/^\/c$/iu.test(args.shift() ?? "") || args.length < 1) return null;
 
-  return args.length === expectedDefinition.args.length + 1 &&
-    args[0] === expectedDefinition.command &&
-    args.slice(1).every((value, index) => value === expectedDefinition.args[index]);
+  const unwrapped = {
+    command: args.shift(),
+    args,
+    env: structuredClone(definition.env),
+  };
+  if (definition.type !== undefined) unwrapped.type = definition.type;
+  return unwrapped;
+}
+
+function isExactWindowsCmdWrapperOf(definition, expectedDefinition) {
+  if (!isPlainObject(expectedDefinition)) return false;
+  const unwrapped = unwrapExactWindowsCmdWrapper(definition);
+  return unwrapped !== null &&
+    mcpDefinitionFingerprint(unwrapped) === mcpDefinitionFingerprint(expectedDefinition);
 }
 
 export function mergeClaudeUserMcpConfig(base, {
@@ -209,11 +215,17 @@ export function mergeClaudeUserMcpConfig(base, {
     if (!Object.hasOwn(next.mcpServers, alias)) continue;
     const existing = next.mcpServers[alias];
     const fingerprint = isPlainObject(existing) ? mcpDefinitionFingerprint(existing) : null;
+    const unwrapped = alias === canonicalName
+      ? unwrapExactWindowsCmdWrapper(existing)
+      : null;
+    const managedUnwrapped = unwrapped !== null &&
+      managedFingerprints.has(mcpDefinitionFingerprint(unwrapped));
     const exactWindowsWrapper = alias === canonicalName &&
       isExactWindowsCmdWrapperOf(existing, portableDefinition);
     const proven = alias === canonicalName
       ? fingerprint === mcpDefinitionFingerprint(portableDefinition) ||
         managedFingerprints.has(fingerprint) ||
+        managedUnwrapped ||
         exactWindowsWrapper
       : isStrictLegacyMetaKimMcpDefinition(existing, legacyScriptSuffix);
     if (!proven) {

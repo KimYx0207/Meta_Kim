@@ -1,10 +1,31 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+
+function isolatedHomeEnvironment(homeDir, extra = {}) {
+  const root = path.parse(homeDir).root;
+  return {
+    ...process.env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    HOMEDRIVE: root.replace(/[\\/]$/u, ""),
+    HOMEPATH: homeDir.slice(root.length - 1),
+    CODEX_HOME: path.join(homeDir, ".codex"),
+    NO_COLOR: "1",
+    ...extra,
+  };
+}
 
 describe("eval-meta-agents Claude smoke", () => {
   test("Windows CLI search includes npm-style ~/.local shims before native bin", () => {
@@ -23,7 +44,7 @@ describe("eval-meta-agents Claude smoke", () => {
     );
   });
 
-  test("Claude discovery falls back to project agent files or canonical agents when CLI lacks agents command", () => {
+  test("Claude discovery reads declared runtime definitions and treats `claude agents` as diagnostic only", () => {
     const source = readFileSync(
       path.join(repoRoot, "scripts", "eval-meta-agents.mjs"),
       "utf8",
@@ -33,14 +54,80 @@ describe("eval-meta-agents Claude smoke", () => {
     )?.[0];
 
     assert.ok(discovery);
-    assert.match(discovery, /cmd\.toArgs\(\["--help"\]\)/);
-    assert.match(discovery, /supportsAgentsCommand/);
-    assert.match(discovery, /readRuntimeAgentIdsOrCanonical/);
+    assert.match(discovery, /readRuntimeAgentDefinitions/);
     assert.match(discovery, /\.claude", "agents"/);
     assert.match(discovery, /source: discoveredAgents\.source/);
-    assert.match(discovery, /source: "claude-agents-command"/);
-    assert.match(discovery, /claude-agents-command-unavailable/);
-    assert.match(discovery, /claude-agents-command-non-tty/);
+    assert.match(discovery, /expectedInventorySource: "canonical\/agents"/);
+    assert.match(discovery, /discoveryKind: "declared_runtime_agent_definitions"/);
+    assert.match(discovery, /diagnosticOnlyCommand: "claude agents"/);
+    assert.doesNotMatch(discovery, /readRuntimeAgentIdsOrCanonical/);
+  });
+
+  test("canonical inventory never substitutes for missing Claude or Codex runtime definitions", () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-empty-runtime-home-"));
+    try {
+      for (const runtime of ["claude", "codex"]) {
+        const result = spawnSync(
+          process.execPath,
+          ["scripts/eval-meta-agents.mjs", `--runtime=${runtime}`, "--agent=meta-prism"],
+          {
+            cwd: repoRoot,
+            env: isolatedHomeEnvironment(tempHome),
+            encoding: "utf8",
+            timeout: 30_000,
+          },
+        );
+        assert.equal(result.status, 1, `${runtime}: ${result.stderr || result.stdout}`);
+        const report = JSON.parse(result.stdout);
+        const runtimeReport = report[runtime];
+        assert.equal(runtimeReport.status, "failed");
+        const discovery = runtime === "claude" ? runtimeReport.discovery : runtimeReport.sample;
+        const ids = runtime === "claude" ? discovery.ids : discovery.custom_agents;
+        assert.deepEqual(ids, []);
+        assert.equal(
+          runtime === "claude" ? discovery.expectedInventorySource : discovery.expected_inventory_source,
+          "canonical/agents",
+        );
+        assert.doesNotMatch(JSON.stringify(discovery), /canonical-agent-fallback/u);
+      }
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test("Codex runtime identity comes from declared name and public evidence hides the absolute user home", () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-declared-agent-home-"));
+    try {
+      const agentsDir = path.join(tempHome, ".codex", "agents");
+      mkdirSync(agentsDir, { recursive: true });
+      writeFileSync(
+        path.join(agentsDir, "misleading-filename.toml"),
+        [
+          'name = "meta-prism"',
+          'description = "fixture"',
+          'developer_instructions = "fixture"',
+          "",
+        ].join("\n"),
+      );
+      const result = spawnSync(
+        process.execPath,
+        ["scripts/eval-meta-agents.mjs", "--runtime=codex", "--agent=meta-prism"],
+        {
+          cwd: repoRoot,
+          env: isolatedHomeEnvironment(tempHome),
+          encoding: "utf8",
+          timeout: 30_000,
+        },
+      );
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const report = JSON.parse(result.stdout);
+      assert.deepEqual(report.codex.sample.custom_agents, ["meta-prism"]);
+      assert.equal(report.codex.sample.custom_agent_definitions[0].name, "meta-prism");
+      assert.doesNotMatch(result.stdout, new RegExp(tempHome.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&"), "iu"));
+      assert.doesNotMatch(result.stdout, /misleading-filename\.toml/u);
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 
   test("OpenClaw smoke can structurally validate without local auth secrets", () => {
@@ -341,7 +428,7 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.equal(report.summary.releaseGrade, false);
   });
 
-  test("Cursor live success fixture promotes harness evidence to release-grade pass", () => {
+  test("Cursor live success fixture remains diagnostic and cannot promote release-grade evidence", () => {
     const result = spawnSync(
       process.execPath,
       ["scripts/eval-meta-agents.mjs", "--runtime=cursor", "--live"],
@@ -366,9 +453,9 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.equal(report.cursor.localProbe.selectedHarness, "cursor-agent-success-fixture");
     assert.equal(report.runtimeEvidencePacket.records[0].runtime, "cursor");
     assert.equal(report.runtimeEvidencePacket.records[0].evidenceKind, "live");
-    assert.equal(report.runtimeEvidencePacket.records[0].failureClass, "pass");
-    assert.equal(report.runtimeEvidencePacket.records[0].strictReleasePass, true);
-    assert.equal(report.runtimeEvidencePacket.summary.releaseGrade, true);
+    assert.equal(report.runtimeEvidencePacket.records[0].failureClass, "live_incomplete");
+    assert.equal(report.runtimeEvidencePacket.records[0].strictReleasePass, false);
+    assert.equal(report.runtimeEvidencePacket.summary.releaseGrade, false);
   });
 
   test("Runtime evidence aggregator uses fixed failure taxonomy", () => {
@@ -392,6 +479,11 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /runtimeEvidencePacket/);
     assert.match(source, /remainingAction/);
     assert.match(source, /strictReleasePass/);
+    const evidenceRecordBuilder = source.match(
+      /function buildRuntimeEvidenceRecord\([\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(evidenceRecordBuilder);
+    assert.match(evidenceRecordBuilder, /report\?\.releaseFuseInvocationObserved === true/u);
     assert.match(source, /releaseGrade/);
     assert.match(source, /blockedFromRelease/);
   });
@@ -426,14 +518,93 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /retryCommand/);
     assert.match(source, /stdoutTail/);
     assert.match(source, /stderrTail/);
-    assert.match(source, /120_000/);
+    assert.match(
+      source,
+      /const CODEX_LIVE_TIMEOUT_MS\s*=\s*180_000/u,
+    );
+    assert.match(source, /timeout:\s*CODEX_LIVE_TIMEOUT_MS/u);
+    assert.match(
+      source,
+      /timeoutMs:\s*error\.timeoutMs\s*\?\?\s*CODEX_LIVE_TIMEOUT_MS/u,
+    );
+    const evidenceHelper = source.match(
+      /function inspectCodexLiveEvidence\([\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(evidenceHelper);
+    assert.match(evidenceHelper, /observeCodexJsonl\(hostEventText\)/u);
+    assert.match(evidenceHelper, /spawn_agent/u);
+    assert.match(evidenceHelper, /event\.childSessionId/u);
+    assert.match(evidenceHelper, /releaseFuseInvocationObserved/u);
+    assert.match(evidenceHelper, /customAgentInvocationObserved/u);
+    assert.match(evidenceHelper, /run_scoped_owner_contract/u);
+    assert.match(evidenceHelper, /native_custom_agent/u);
+    assert.match(evidenceHelper, /returned_child_final/u);
+    assert.match(source, /CODEX_SESSION_SETTLE_TIMEOUT_MS/u);
+    assert.match(source, /sessionSettleTimeoutMs:\s*CODEX_SESSION_SETTLE_TIMEOUT_MS/u);
+    assert.match(evidenceHelper, /event\.resultMessageId/u);
+    assert.match(evidenceHelper, /event\.resultTextSha256/u);
+    assert.match(
+      evidenceHelper,
+      /event\.activityCompletionObserved === true[\s\S]*?\|\|[\s\S]*?returned_child_final/u,
+    );
+    const sessionFallbackHelper = source.match(
+      /async function inspectCodexLiveEvidenceWithSessionFallback\([\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(sessionFallbackHelper);
+    assert.match(sessionFallbackHelper, /inspectCodexLiveEvidence\(stdout,/u);
+    assert.match(
+      sessionFallbackHelper,
+      /if \(fixture \|\| directEvidence\.nativeInvocationObserved\) return directEvidence;[\s\S]*?readCodexSessionEvidence\(/u,
+      "fixture evidence must short-circuit before any CODEX_HOME session lookup",
+    );
+    assert.match(sessionFallbackHelper, /hostEventText: sessionEvidence\.parentSessionText/u);
+    assert.match(sessionFallbackHelper, /sessionEvidence: publicCodexSessionEvidence\(sessionEvidence\)/u);
+    assert.match(
+      source,
+      /liveEvidence = await inspectCodexLiveEvidenceWithSessionFallback\(stdout,/u,
+    );
+    assert.match(
+      source,
+      /timeoutEvidence = await inspectCodexLiveEvidenceWithSessionFallback\([\s\S]*?error\.stdout,/u,
+      "timeout behavior JSON and validated session host events must use the same inspector",
+    );
+    const publicSessionEvidence = source.match(
+      /function publicCodexSessionEvidence\(evidence\) \{[\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(publicSessionEvidence);
+    for (const safeField of [
+      "threadId",
+      "childSessionId",
+      "sessionDigest",
+      "childSessionDigest",
+      "sourceCategory",
+      "cliVersion",
+    ]) {
+      assert.match(publicSessionEvidence, new RegExp(`${safeField}: evidence\\.${safeField}`, "u"));
+    }
+    assert.doesNotMatch(publicSessionEvidence, /parentSessionText|SessionPath|filePath|codexHome/u);
+    assert.match(source, /wrapperTimedOutAfterCompletedInvocation:\s*true/u);
+    assert.match(source, /releaseFuseInvocationObserved:\s*true/u);
+    assert.match(source, /customAgentInvocationObserved/u);
+    assert.match(
+      source,
+      /nativeInvocationObserved:\s*customAgentInvocationObserved,[\s\S]*?customAgentInvocationObserved,/u,
+      "public report must not alias custom-agent proof to run-scoped invocation proof",
+    );
+    const completedTimeoutPass = source.match(
+      /if \(timeoutEvidence\.nativeInvocationObserved\) \{[\s\S]*?\n\s*\}/u,
+    )?.[0];
+    assert.ok(completedTimeoutPass);
+    assert.doesNotMatch(completedTimeoutPass, /stderrTail/u);
+    assert.match(completedTimeoutPass, /stderrSha256/u);
+    assert.match(completedTimeoutPass, /errorClass/u);
     assert.match(
       source,
       /Warden -> Conductor -> orchestrationTaskBoardPacket -> workerTaskPackets/,
     );
   });
 
-  test("Codex live timeout fixture recovers orchestration payload as pass", () => {
+  test("Codex timeout recovery with structurally valid model JSON stays diagnostic-only", () => {
     const result = spawnSync(
       process.execPath,
       ["scripts/eval-meta-agents.mjs", "--runtime=codex", "--live"],
@@ -451,9 +622,11 @@ describe("eval-meta-agents Claude smoke", () => {
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const report = JSON.parse(result.stdout);
-    assert.deepEqual(report.summary.passed, ["codex"]);
-    assert.equal(report.codex.status, "passed");
+    assert.deepEqual(report.summary.passed, []);
+    assert.deepEqual(report.summary.skipped, ["codex"]);
+    assert.equal(report.codex.status, "skipped");
     assert.equal(report.codex.recoveredFromTimeout, true);
+    assert.equal(report.codex.nativeInvocationObserved, false);
     assert.equal(
       report.codex.sample.runtime_smoke.orchestrationTaskBoardPacket
         .synthesisOwner,
@@ -472,8 +645,50 @@ describe("eval-meta-agents Claude smoke", () => {
       "codex-live-timeout-fixture-thread",
     );
     assert.equal(report.runtimeEvidencePacket.records[0].runtime, "codex");
-    assert.equal(report.runtimeEvidencePacket.records[0].evidenceKind, "live");
-    assert.equal(report.runtimeEvidencePacket.records[0].failureClass, "pass");
-    assert.equal(report.runtimeEvidencePacket.summary.releaseGrade, true);
+    assert.equal(report.runtimeEvidencePacket.records[0].evidenceKind, "skipped");
+    assert.equal(report.runtimeEvidencePacket.records[0].failureClass, "timeout");
+    assert.equal(report.runtimeEvidencePacket.records[0].strictReleasePass, false);
+    assert.equal(report.runtimeEvidencePacket.summary.releaseGrade, false);
+    assert.equal("stderrTail" in report.codex.sample.runtime_recovery, false);
+    assert.match(
+      report.codex.sample.runtime_recovery.stderrSha256,
+      /^[a-f0-9]{64}$/u,
+    );
+    assert.match(
+      report.codex.sample.runtime_recovery.errorClass,
+      /timeout/u,
+    );
+    assert.doesNotMatch(
+      result.stdout,
+      /(?:[A-Za-z]:[\\/](?:Users|home)[\\/]|Bearer\s+\S+|sk-[A-Za-z0-9_-]{12,})/iu,
+      "public evaluator JSON must not expose home paths or credential-shaped tokens",
+    );
+  });
+
+  test("primary release fuse fixes Claude plus Codex scope and forbids filters or fixtures", () => {
+    const filtered = spawnSync(
+      process.execPath,
+      ["scripts/eval-meta-agents.mjs", "--primary-release-fuse", "--runtime=claude"],
+      { cwd: repoRoot, encoding: "utf8", timeout: 30_000 },
+    );
+    assert.equal(filtered.status, 1);
+    assert.match(filtered.stderr, /fixes runtime scope to claude,codex.*forbids --runtime\/--agent/iu);
+
+    const fixture = spawnSync(
+      process.execPath,
+      ["scripts/eval-meta-agents.mjs", "--primary-release-fuse"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          META_KIM_CODEX_LIVE_TIMEOUT_FIXTURE: "1",
+          NO_COLOR: "1",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
+    assert.equal(fixture.status, 1);
+    assert.match(fixture.stderr, /forbids META_KIM_CODEX_LIVE_TIMEOUT_FIXTURE/u);
   });
 });

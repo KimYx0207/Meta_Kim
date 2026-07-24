@@ -17,7 +17,7 @@
     "meta:verify:governance:core": 300000,
     "meta:graphify:check": 60000,
     "meta:check:global:release": 120000,
-    "eval-meta-agents": 300000,
+    "eval-meta-agents": 600000,
     "meta:test:inventory": 30000,
     "meta:test:unit": 120000,
     "meta:test:setup": 300000,

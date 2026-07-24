@@ -114,6 +114,50 @@ describe("Codex config merge", () => {
     }]);
   });
 
+  test("mutation normalization treats an exact host-restored replay as one ownership layer", () => {
+    const replayed = {
+      kind: "replace",
+      locator: { table: "features", key: "js_repl" },
+      beforeFragment: "js_repl = false",
+      afterFragment: "js_repl = true",
+    };
+    assert.deepEqual(
+      normalizeCodexConfigMutations([replayed, structuredClone(replayed)]),
+      [replayed],
+    );
+    assert.throws(
+      () => normalizeCodexConfigMutations([
+        replayed,
+        { ...replayed, afterFragment: "js_repl = false # changed" },
+      ]),
+      /Non-contiguous Codex config mutation chain/u,
+    );
+  });
+
+  test("mutation normalization rebases a regenerated host value only when the managed result is unchanged", () => {
+    const previous = {
+      kind: "replace",
+      locator: { table: "marketplaces.openai-bundled", key: "source" },
+      beforeFragment: "source = 'host-a'",
+      afterFragment: "# disabled source",
+    };
+    const rebased = {
+      ...previous,
+      beforeFragment: "source = 'host-b'",
+    };
+    assert.deepEqual(
+      normalizeCodexConfigMutations([previous, rebased]),
+      [rebased],
+    );
+    assert.throws(
+      () => normalizeCodexConfigMutations([
+        previous,
+        { ...rebased, afterFragment: "# different managed result" },
+      ]),
+      /Non-contiguous Codex config mutation chain/u,
+    );
+  });
+
   test("Windows planner journals notify marketplace and MCP semantic changes", () => {
     const source = "C:\\Program Files\\WindowsApps\\OpenAI.Codex_test\\app\\resources\\plugins\\openai-bundled";
     const input = [
