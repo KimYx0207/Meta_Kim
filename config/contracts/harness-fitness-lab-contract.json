@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "harness-fitness-lab-contract-v0.1",
+  "prdTaskId": "P-116",
+  "status": "accepted_with_negative_fitness_result",
+  "primaryRuntime": "codex",
+  "purpose": "Measure whether Meta_Kim governance improves real task outcomes instead of only increasing packet or schema completeness.",
+  "experiment": {
+    "taskClasses": [
+      "simple_modification",
+      "fuzzy_product_task",
+      "cross_file_high_risk"
+    ],
+    "groups": [
+      {
+        "id": "baseline",
+        "label": "No Meta_Kim baseline",
+        "governance": "none"
+      },
+      {
+        "id": "full",
+        "label": "Full Meta_Kim governance",
+        "governance": "critical_fetch_thinking_execution_review_meta_review_verification_evolution"
+      },
+      {
+        "id": "without_review",
+        "label": "Review-layer ablation",
+        "governance": "full_except_review",
+        "ablationLayer": "Review"
+      }
+    ],
+    "trialsPerTaskGroup": 3,
+    "expectedLiveTrialCount": 27,
+    "executionOrder": "seeded_interleaving",
+    "workspaceIsolation": "one external OS-temp workspace per trial, with trial-scoped AGENTS.md instructions, an independent Git root, and an immutable starter commit",
+    "codexBackend": "the project's native Codex CLI runtime; no Docker, WSL, or alternate provider",
+    "codexPermissionProfile": ":workspace",
+    "codexApprovalReviewer": "auto_review, the native Codex headless path that preserves on-request approval instead of forcing approval_policy=never",
+    "codexWritableRootBinding": "--cd points to an external per-trial Git repository with an immutable starter commit; it is the single runtime workspace root and receives no duplicate --add-dir or repository-wide extra writable root",
+    "liveHostRequirement": "run from a standalone PowerShell outside Codex Desktop; managed CODEX_THREAD_ID or CODEX_PERMISSION_PROFILE markers fail closed before any trial workspace is created",
+    "nativeWindowsRetestPolicy": "An independent scheduled-task baseline passed on native Windows after selecting default_permissions=:workspace, approvals_reviewer=auto_review, an external committed trial repository, and a single --cd workspace root; legacy --sandbox or headless approval_policy=never results are not admissible substitutes",
+    "hostParityPolicy": "all experiment groups use the same native Codex binary, auth, model, OS sandbox, and controlled capability inventory; only the assigned governance scaffold changes",
+    "controlledRuntimeLoadout": "ignore user config and exec rules; disable user/project hooks, plugin hooks, plugins, apps, and tool search for every group so the user's unrelated global automation cannot contaminate the baseline or ablation; the installed skill inventory remains visible and is recorded as shared host context",
+    "resumePolicy": "completed trial result files are immutable and reused only when contract and scenario digests match"
+  },
+  "metrics": [
+    "environmentOutcomeSuccess",
+    "blindQualityScore0To5",
+    "reworkCount",
+    "toolCallCount",
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "wallClockMs",
+    "failureType",
+    "trajectoryDigest"
+  ],
+  "blindEvaluation": {
+    "groupIdentityVisibleToEvaluator": false,
+    "method": "held_out_tests_plus_anonymized_declarative_rubric",
+    "modelJudgeRequired": false,
+    "reason": "The first lab must avoid circular self-grading and remain exactly replayable."
+  },
+  "passCriteria": {
+    "minimumImprovedTaskClasses": 2,
+    "successRateImprovementPoints": 0.15,
+    "blindQualityImprovement": 0.5,
+    "maximumMedianTokenRatio": 1.5,
+    "maximumMedianWallClockRatio": 1.5,
+    "highCostErrorException": "Efficiency overage is allowed only when the full group prevents a held-out cross-file high-risk failure that occurs in baseline.",
+    "componentFindingRequired": {
+      "positive": 1,
+      "ineffectiveOrNegative": 1
+    }
+  },
+  "latestFormalResult": {
+    "runId": "p116-formal-native-windows-20260724",
+    "generatedAt": "2026-07-24T14:41:29.635Z",
+    "evidenceReportSha256": "a0f9cbb9e4f8b828044b661916fd96d6f3714ae70f153bc38991521c315cbba8",
+    "executedContractDigest": "b8f483df866b15e09ed2d4bcecea74d9fe7f0ba35b96e55bc14b4ad39d836ae7",
+    "scenarioDigest": "8121890e73d64fd62fbb889a48ae3e863a82f2d64ba489e9a3064bf308b87aba",
+    "completedLiveTrials": 27,
+    "labDeliveryAccepted": true,
+    "governanceFitnessPassed": false,
+    "fullSuccessRate": 1,
+    "baselineSuccessRate": 0.8888888888888888,
+    "withoutReviewSuccessRate": 0.8888888888888888,
+    "fullBlindQualityMean": 4.333333333333333,
+    "baselineBlindQualityMean": 4.222222222222222,
+    "withoutReviewBlindQualityMean": 4.333333333333333,
+    "improvedTaskClasses": 1,
+    "requiredImprovedTaskClasses": 2,
+    "medianTokenRatio": 1.3882940443383476,
+    "medianWallClockRatio": 1.297101551780233,
+    "reviewFinding": "ineffective",
+    "decision": "The Fitness Lab itself is accepted because it produced complete promotable evidence. The current full governance bundle is not accepted as generally beneficial: it improved only the fuzzy product task, while simple and high-risk scenarios saturated, and the Review ablation showed no independent benefit."
+  },
+  "truthBoundary": {
+    "fixtureRunsCountAsProductEvidence": false,
+    "dockerRunsCountAsProductEvidence": false,
+    "plannedRunsCountAsProductEvidence": false,
+    "liveRunsRequireCodexJsonl": true,
+    "missingUsageMustRemainNull": true,
+    "failedOrTimedOutTrialsRemainInDenominator": true,
+    "sharedHostCapabilitiesMustBeRecordedNotRemoved": true,
+    "partialMatricesArePilotIncomplete": true,
+    "mustNotClaim": [
+      "all-runtime harness fitness",
+      "LangGraph runtime execution",
+      "durable resume",
+      "governance effectiveness before the full live matrix completes"
+    ]
+  }
+}

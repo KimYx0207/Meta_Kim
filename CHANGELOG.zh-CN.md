@@ -8,6 +8,24 @@
 
 ## Unreleased
 
+## [2.8.93] - 2026-07-24
+
+### 解决的问题
+
+Meta_Kim 已经有大量治理结构，但此前没有受控实验能证明这些结构是否真的改善任务结果。Windows Codex 试跑还曾把 headless 审批策略覆盖误判成整个平台只读，既阻塞真实产品证据，也容易把 Docker 诊断错当成用户路径验收。
+
+### 修复内容
+
+- **Harness Fitness Lab 开始测量真实结果，而不是 packet 完整度。** Codex 原生 runner 按固定随机顺序执行 3 类任务 × 3 组 × 3 次试验，使用隔离且已有初始提交的工作区、held-out 环境测试、匿名质量评分、完整 JSONL trajectory、token/工具/返工/墙钟指标、不可变可续跑结果，并明确区分诊断证据和产品证据。
+- **Windows 原生试验改用 Codex 支持的权限路径。** 独立宿主把 `:workspace`、`on-request` 与原生 auto-reviewer 绑定，只使用一个外部 Git 工作区根，并拒绝嵌套在 Codex Desktop managed session 中运行。Docker、fixture、计划结果、提权和绕过 sandbox 都不能满足产品验收。
+- **首轮负结论被如实保留。** 27 次原生试验全部完成：完整治理 9/9，基线与去掉 Review 均为 8/9，成本在 1.5 倍预算内；但只有模糊产品任务显著提升，因此通用 2/3 fitness 门槛仍失败，Review 也没有证明独立收益。下一项是消除基准天花板并做治理瘦身，而不是继续堆框架。
+
+### 验证
+
+- 独立 Windows 原生 pilot 在不使用 Docker、不提权、不绕过 sandbox 的条件下完成真实文件修改、公开测试和 held-out 测试。
+- 正式矩阵完成 27/27 个 live Codex trial，并保留 `criteriaPass=false`，没有为了发布而篡改结论。
+- 发布前必须通过合同、计划器、provider 参数安全、评分、失败分母、partial pilot、package surface、唯一 PRD、Graphify、投影、setup、Meta-Theory、integration 和 packed release 验证。
+
 ## [2.8.92] - 2026-07-24
 
 ### 解决的问题

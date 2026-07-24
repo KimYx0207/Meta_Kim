@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "harness-fitness-lab-scenarios-v0.1",
+  "tasks": [
+    {
+      "id": "simple-normalize-tags",
+      "taskClass": "simple_modification",
+      "prompt": "Update normalizeTags so it accepts a comma-separated string or an array, trims entries, lowercases them, removes empty values, and preserves first-seen order while removing duplicates. Keep the public API small and run the tests.",
+      "publicTestCommand": "node --test",
+      "starterFiles": {
+        "package.json": "{\n  \"name\": \"fitness-simple\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": { \"test\": \"node --test\" }\n}\n",
+        "src/normalize-tags.mjs": "export function normalizeTags(input) {\n  return String(input).split(',').map((value) => value.trim()).filter(Boolean);\n}\n",
+        "test/normalize-tags.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { normalizeTags } from '../src/normalize-tags.mjs';\n\ntest('normalizes a basic comma-separated list', () => {\n  assert.deepEqual(normalizeTags(' Alpha, beta '), ['alpha', 'beta']);\n});\n"
+      },
+      "fixtureSolutionFiles": {
+        "src/normalize-tags.mjs": "export function normalizeTags(input) {\n  const values = Array.isArray(input) ? input : String(input).split(',');\n  const seen = new Set();\n  const result = [];\n  for (const raw of values) {\n    const value = String(raw).trim().toLowerCase();\n    if (!value || seen.has(value)) continue;\n    seen.add(value);\n    result.push(value);\n  }\n  return result;\n}\n"
+      },
+      "hiddenFiles": {
+        ".fitness-hidden/normalize-tags.hidden.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { normalizeTags } from '../src/normalize-tags.mjs';\n\ntest('accepts arrays and removes duplicates stably', () => {\n  assert.deepEqual(normalizeTags([' Alpha ', 'beta', 'ALPHA', '', 'Gamma']), ['alpha', 'beta', 'gamma']);\n});\n\ntest('handles repeated comma entries', () => {\n  assert.deepEqual(normalizeTags('A, a, B, ,b'), ['a', 'b']);\n});\n"
+      },
+      "hiddenTestCommand": "node --test .fitness-hidden/normalize-tags.hidden.test.mjs",
+      "rubricChecks": [
+        { "id": "array-input", "file": "src/normalize-tags.mjs", "pattern": "Array\\.isArray" },
+        { "id": "lowercase", "file": "src/normalize-tags.mjs", "pattern": "toLowerCase" },
+        { "id": "dedupe", "file": "src/normalize-tags.mjs", "pattern": "Set" },
+        { "id": "stable-result", "file": "src/normalize-tags.mjs", "pattern": "push" },
+        { "id": "no-dependency", "file": "package.json", "forbidPattern": "dependencies" }
+      ]
+    },
+    {
+      "id": "fuzzy-invite-onboarding",
+      "taskClass": "fuzzy_product_task",
+      "prompt": "Improve this invite onboarding page so a first-time team member can understand what will happen, enter an email confidently, and recover from mistakes. Aim for a calm professional feel, preserve a lightweight static implementation, and make the experience accessible. Decide the exact copy and layout, then verify the result.",
+      "publicTestCommand": "node --test",
+      "starterFiles": {
+        "package.json": "{\n  \"name\": \"fitness-fuzzy\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": { \"test\": \"node --test\" }\n}\n",
+        "index.html": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Invite</title><link rel=\"stylesheet\" href=\"styles.css\"></head><body><main><h1>Invite user</h1><input type=\"email\"><button>Submit</button></main></body></html>\n",
+        "styles.css": "body { font-family: sans-serif; }\n",
+        "test/page.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\n\ntest('keeps a static page', () => {\n  assert.match(readFileSync('index.html', 'utf8'), /<main/);\n});\n"
+      },
+      "fixtureSolutionFiles": {
+        "index.html": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Invite a teammate</title><link rel=\"stylesheet\" href=\"styles.css\"></head><body><main class=\"card\"><p class=\"eyebrow\">Team access</p><h1>Invite a teammate</h1><p id=\"invite-help\">They will receive a secure email link and can join when ready.</p><form><label for=\"email\">Work email</label><input id=\"email\" name=\"email\" type=\"email\" autocomplete=\"email\" aria-describedby=\"invite-help email-error\" required><p id=\"email-error\" role=\"alert\" aria-live=\"polite\"></p><button type=\"submit\">Send invitation</button></form><p class=\"privacy\">You can revoke the invitation before it is accepted.</p></main></body></html>\n",
+        "styles.css": ":root { color-scheme: light; font-family: Inter, system-ui, sans-serif; background: #f4f6f8; color: #182230; }\nbody { min-height: 100vh; display: grid; place-items: center; margin: 0; }\n.card { width: min(92vw, 34rem); padding: 2.5rem; border-radius: 1rem; background: white; box-shadow: 0 1rem 3rem rgba(24,34,48,.10); }\nlabel { display: block; margin: 1.5rem 0 .5rem; font-weight: 650; }\ninput, button { box-sizing: border-box; width: 100%; min-height: 2.75rem; border-radius: .6rem; }\ninput { border: 1px solid #8a96a6; padding: .75rem; }\ninput:focus-visible, button:focus-visible { outline: 3px solid #8ab4ff; outline-offset: 2px; }\nbutton { margin-top: 1rem; border: 0; background: #2458a6; color: white; font-weight: 700; }\n.eyebrow, .privacy { color: #526174; }\n"
+      },
+      "hiddenFiles": {
+        ".fitness-hidden/page.hidden.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nconst html = readFileSync('index.html', 'utf8');\nconst css = readFileSync('styles.css', 'utf8');\n\ntest('has an accessible labeled email flow', () => {\n  assert.match(html, /<label[^>]+for=[\"']email[\"']/i);\n  assert.match(html, /id=[\"']email[\"'][^>]+type=[\"']email[\"']/i);\n  assert.match(html, /required/i);\n});\n\ntest('explains the outcome and exposes recoverable feedback', () => {\n  assert.match(html, /receive|email link|invitation/i);\n  assert.match(html, /role=[\"']alert[\"']|aria-live/i);\n});\n\ntest('keeps visible keyboard focus', () => {\n  assert.match(css, /focus-visible/i);\n});\n"
+      },
+      "hiddenTestCommand": "node --test .fitness-hidden/page.hidden.test.mjs",
+      "rubricChecks": [
+        { "id": "label", "file": "index.html", "pattern": "<label" },
+        { "id": "help-copy", "file": "index.html", "pattern": "receive|invitation", "flags": "i" },
+        { "id": "error-surface", "file": "index.html", "pattern": "role=[\\\"']alert|aria-live", "flags": "i" },
+        { "id": "focus", "file": "styles.css", "pattern": "focus-visible", "flags": "i" },
+        { "id": "responsive", "file": "styles.css", "pattern": "min\\(|max-width|vw", "flags": "i" }
+      ]
+    },
+    {
+      "id": "risk-secret-redaction",
+      "taskClass": "cross_file_high_risk",
+      "prompt": "Harden secret handling across this small service. Production must fail closed when API_TOKEN is absent, development may use an explicit non-secret local placeholder, and logs must never reveal the token. Keep configuration, logging, and app behavior separated, update tests where appropriate, and avoid broad rewrites.",
+      "publicTestCommand": "node --test",
+      "starterFiles": {
+        "package.json": "{\n  \"name\": \"fitness-risk\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": { \"test\": \"node --test\" }\n}\n",
+        "src/config.mjs": "export function loadConfig(env = process.env) {\n  return { mode: env.NODE_ENV || 'development', apiToken: env.API_TOKEN || 'prod-secret-default' };\n}\n",
+        "src/logger.mjs": "export function connectionMessage(config) {\n  return `connecting with token ${config.apiToken}`;\n}\n",
+        "src/app.mjs": "import { loadConfig } from './config.mjs';\nimport { connectionMessage } from './logger.mjs';\nexport function start(env) { const config = loadConfig(env); return connectionMessage(config); }\n",
+        "test/app.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { start } from '../src/app.mjs';\n\ntest('starts in development', () => { assert.match(start({ NODE_ENV: 'development' }), /connecting/); });\n"
+      },
+      "fixtureSolutionFiles": {
+        "src/config.mjs": "export function loadConfig(env = process.env) {\n  const mode = env.NODE_ENV || 'development';\n  const apiToken = env.API_TOKEN || (mode === 'development' ? 'local-development-token' : null);\n  if (!apiToken) throw new Error('API_TOKEN is required in production');\n  return { mode, apiToken };\n}\n",
+        "src/logger.mjs": "export function connectionMessage(config) {\n  return `connecting in ${config.mode} with token [REDACTED]`;\n}\n",
+        "test/app.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { start } from '../src/app.mjs';\n\ntest('starts in development without exposing a token', () => { const message = start({ NODE_ENV: 'development' }); assert.match(message, /connecting/); assert.doesNotMatch(message, /local-development-token/); });\n"
+      },
+      "hiddenFiles": {
+        ".fitness-hidden/risk.hidden.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { loadConfig } from '../src/config.mjs';\nimport { start } from '../src/app.mjs';\n\ntest('production fails closed without API_TOKEN', () => {\n  assert.throws(() => loadConfig({ NODE_ENV: 'production' }), /API_TOKEN|required/i);\n});\n\ntest('logs never expose the real token', () => {\n  const message = start({ NODE_ENV: 'production', API_TOKEN: 'super-secret-123' });\n  assert.doesNotMatch(message, /super-secret-123/);\n  assert.match(message, /redact|connecting/i);\n});\n\ntest('development has an explicit local path', () => {\n  assert.doesNotThrow(() => loadConfig({ NODE_ENV: 'development' }));\n});\n"
+      },
+      "hiddenTestCommand": "node --test .fitness-hidden/risk.hidden.test.mjs",
+      "rubricChecks": [
+        { "id": "production-guard", "file": "src/config.mjs", "pattern": "production" },
+        { "id": "explicit-error", "file": "src/config.mjs", "pattern": "throw new Error" },
+        { "id": "redaction", "file": "src/logger.mjs", "pattern": "REDACTED", "flags": "i" },
+        { "id": "no-secret-default", "file": "src/config.mjs", "forbidPattern": "prod-secret-default" },
+        { "id": "separation", "file": "src/app.mjs", "pattern": "loadConfig.*connectionMessage", "flags": "s" }
+      ]
+    }
+  ]
+}

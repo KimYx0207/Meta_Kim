@@ -8,6 +8,24 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.8.93] - 2026-07-24
+
+### Solved Problem
+
+Meta_Kim had extensive governance structure but no controlled experiment showing whether that structure improved real outcomes. Its earlier Windows Codex pilot also mistook a headless approval-policy override for a platform-wide read-only limitation, which blocked real product evidence and encouraged an invalid Docker substitute.
+
+### Fixed
+
+- **Harness Fitness Lab now measures outcome truth instead of packet completeness.** A Codex-native runner executes a seeded 3-task × 3-group × 3-trial matrix with isolated committed workspaces, held-out environment tests, anonymized quality scoring, complete JSONL trajectories, token/tool/rework/wall-clock metrics, immutable resumable trial results, and explicit diagnostic-versus-product evidence boundaries.
+- **Native Windows trials use Codex's supported permission path.** Standalone runs bind `:workspace` permissions to `on-request` plus the native auto-reviewer, use one external Git workspace root, and reject managed Codex Desktop nesting. Docker, fixtures, planned runs, elevated access, and sandbox bypasses cannot satisfy product acceptance.
+- **The first result is preserved as a real negative fitness decision.** All 27 native trials completed: full governance succeeded 9/9 versus 8/9 for baseline and Review ablation, within the 1.5× cost budget, but only fuzzy product work improved materially. The general 2-of-3 fitness gate therefore remains failed, Review has no demonstrated independent benefit, and the next governed item is benchmark de-ceiling plus governance slimming—not another framework layer.
+
+### Verification
+
+- The standalone native Windows pilot completed real file changes plus public and held-out tests without Docker or unsafe permissions.
+- The formal matrix completed 27/27 live Codex trials with product-evidence eligibility and retained `criteriaPass=false` rather than promoting a convenient result.
+- Contract, planner, provider argument safety, scoring, failure-denominator, partial-pilot, package-surface, unique-PRD, Graphify, projection, setup, Meta-Theory, integration, and packed release paths are required to pass before publication.
+
 ## [2.8.92] - 2026-07-24
 
 ### Solved Problem
