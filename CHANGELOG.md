@@ -8,6 +8,24 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.0] - 2026-07-25
+
+### Solved Problem
+
+Meta_Kim's first Harness Fitness Lab could prove that its benchmark runner was honest, but two task classes hit a quality ceiling and the experiment could not isolate the cost or value of the core governance scaffold, the Review chain, and Evolution. Repeatedly making hidden tests harsher—or imposing an artificial task-time budget—would have manufactured failures instead of measuring user outcomes.
+
+### Fixed
+
+- **The lab now measures components without turning ceiling tasks into traps.** P-135 adds a cumulative `baseline -> slim -> reviewed -> full` ladder, three repetitions for each task/group pair, five visible requirements bound one-to-one to held-out behavior checks, an unbudgeted single-flight concurrency scenario, and a cost-only discrimination branch that is valid only when every group achieves the same perfect outcome. Cost-only evidence can prove overhead, never quality benefit.
+- **Default governance depth now follows measured value.** Critical / Fetch / Thinking stay the canonical ordering and truth boundary but use concise inline records for clear low-risk local work. Review / Meta-Review run conditionally by risk, ambiguity, blast radius, failed verification, or claim strength. Evolution remains a canonical capability but leaves the default execution scaffold; without a durable learning trigger, the run closes inline with `none-with-reason` instead of dispatching Evolution work.
+- **Fitness trials can genuinely resume after a crash.** Trial results now retain a stable provider identity separately from structured provider evidence, legacy results are inferred safely, and the formal-result pointer is excluded from the immutable contract-definition digest. Restarting the same formal run reused all 36 completed trials without another provider invocation.
+
+### Verification
+
+- The native Windows/Codex formal matrix completed 36/36 live trials with complete JSONL trajectories and product-evidence eligibility; all four groups achieved 9/9 and 5/5, so no governance component is credited with a quality gain.
+- Core governance measured 1.201× token and 1.354× wall-clock cost versus baseline and is conditional; Review measured 1.029× token and 0.971× time versus slim and is conditional; Evolution measured 1.525× token and 1.289× time versus reviewed and is removed from the default scaffold.
+- No Docker, WSL, task budget, elevated access, or sandbox bypass contributed to acceptance. Fixture runs and the stopped 2/12 budget experiment remain diagnostic-only and cannot satisfy product evidence.
+
 ## [2.8.93] - 2026-07-24
 
 ### Solved Problem

@@ -19,6 +19,27 @@
     "packageScript": "meta:theory:run",
     "contractIsDefaultPath": true
   },
+  "fitnessInformedDefaultApplicationPolicy": {
+    "evidenceRef": "P-135 p135-formal-native-windows-20260725",
+    "preserveCanonicalSpine": true,
+    "coreGovernance": "conditional_depth",
+    "coreRule": "Critical, Fetch, and Thinking remain the ordering and truth boundary, but a clear low-risk local task uses concise inline records and no extra governance worker, planning artifact, or route ceremony unless ambiguity, capability choice, dependency, risk, or durable planning changes execution.",
+    "reviewChain": "conditional_by_risk_and_claim",
+    "reviewTriggers": [
+      "security, permissions, privacy, auth, payment, dependency, runtime, install, release, public-ready, or cross-platform claim",
+      "multi-file or high-blast-radius mutation",
+      "ambiguous product or UX acceptance",
+      "fresh verification exposes a failure, regression, or unresolved trade-off"
+    ],
+    "evolution": "removed_from_default_scaffold",
+    "evolutionTriggers": [
+      "reusable capability gap or repeated failure scar",
+      "agent, skill, tool, MCP, hook, workflow, runtime, OS, or governance-contract lesson must survive the run",
+      "user explicitly requests durable learning or evolution"
+    ],
+    "noTriggerRule": "When no Evolution trigger exists, close inline with none-with-reason; do not dispatch meta-chrysalis or run candidate-analysis lanes.",
+    "truthBoundary": "Cost-only evidence can justify conditional or default removal policy, but it never proves a quality benefit and never deletes a canonical stage or runtime capability."
+  },
   "parallelExecutionPolicy": {
     "authority": "This contract is the single machine authority for stage order, stage barriers, stage-internal parallelism, and final stage authority. Skills, references, runners, adapters, and hooks are projections or consumers and must not define a competing wave model.",
     "mode": "ordered_stage_barriers_with_maximal_safe_internal_parallelism",
@@ -298,7 +319,10 @@
         "productExperiencePacket.capabilityInvocationTruthGate",
         "productExperiencePacket.noOverclaimGate"
       ],
-      "skipConditions": ["fast_path read-only answer with no durable artifact"],
+      "skipConditions": [
+        "fast_path read-only answer with no durable artifact",
+        "clear low-risk local task with deterministic acceptance, fresh independent verification, no regulated trigger, and a recorded review skip reason"
+      ],
       "gateConditions": [
         "Critical incomplete",
         "Fetch incomplete",
@@ -466,7 +490,9 @@
         "evolutionWritebackPacket.noneWithReason",
         "scarPacket"
       ],
-      "skipConditions": ["no reusable lesson, recorded as none-with-reason"],
+      "skipConditions": [
+        "no reusable lesson or durable evolution trigger; close inline as none-with-reason without dispatching Evolution lanes"
+      ],
       "gateConditions": [
         "reusable capability gap discovered",
         "agent boundary change needed",

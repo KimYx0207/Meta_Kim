@@ -1,0 +1,155 @@
+{
+  "schemaVersion": "harness-fitness-ablation-contract-v0.2",
+  "prdTaskId": "P-135",
+  "status": "design_candidate",
+  "primaryRuntime": "codex",
+  "purpose": "Repair the P-116 ceiling effect and measure the independent outcome and cost contribution of the core governance scaffold, the Review chain, and Evolution before changing default governance policy.",
+  "experiment": {
+    "taskClasses": [
+      "simple_modification",
+      "fuzzy_product_task",
+      "cross_file_high_risk"
+    ],
+    "groups": [
+      {
+        "id": "baseline",
+        "label": "No Meta_Kim baseline",
+        "governance": "none"
+      },
+      {
+        "id": "slim",
+        "label": "Slim outcome core",
+        "governance": "critical_fetch_thinking_execution_verification"
+      },
+      {
+        "id": "reviewed",
+        "label": "Slim core plus Review chain",
+        "governance": "critical_fetch_thinking_execution_review_meta_review_verification"
+      },
+      {
+        "id": "full",
+        "label": "Full Meta_Kim governance",
+        "governance": "critical_fetch_thinking_execution_review_meta_review_verification_evolution"
+      }
+    ],
+    "componentComparisons": [
+      {
+        "id": "core_governance",
+        "label": "Critical + Fetch + Thinking + Verification",
+        "treatmentGroup": "slim",
+        "controlGroup": "baseline",
+        "components": ["Critical", "Fetch", "Thinking", "Verification"],
+        "decisionEligible": true
+      },
+      {
+        "id": "review_chain",
+        "label": "Review + Meta-Review",
+        "treatmentGroup": "reviewed",
+        "controlGroup": "slim",
+        "components": ["Review", "Meta-Review"],
+        "decisionEligible": true
+      },
+      {
+        "id": "evolution",
+        "label": "Evolution",
+        "treatmentGroup": "full",
+        "controlGroup": "reviewed",
+        "components": ["Evolution"],
+        "decisionEligible": true
+      },
+      {
+        "id": "full_vs_slim",
+        "label": "Full bundle versus slim core",
+        "treatmentGroup": "full",
+        "controlGroup": "slim",
+        "components": ["Review", "Meta-Review", "Evolution"],
+        "decisionEligible": false
+      }
+    ],
+    "trialsPerTaskGroup": 3,
+    "expectedLiveTrialCount": 36,
+    "executionOrder": "seeded_interleaving",
+    "workspaceIsolation": "one external OS-temp workspace per trial, with trial-scoped AGENTS.md instructions, an independent Git root, and an immutable starter commit",
+    "codexBackend": "the project's native Codex CLI runtime; no Docker, WSL, or alternate provider",
+    "codexPermissionProfile": ":workspace",
+    "codexApprovalReviewer": "auto_review, the native Codex headless path that preserves on-request approval instead of forcing approval_policy=never",
+    "codexWritableRootBinding": "--cd points to an external per-trial Git repository with an immutable starter commit; it is the single runtime workspace root and receives no duplicate --add-dir or repository-wide extra writable root",
+    "liveHostRequirement": "run from a standalone PowerShell outside Codex Desktop; managed CODEX_THREAD_ID or CODEX_PERMISSION_PROFILE markers fail closed before any trial workspace is created",
+    "hostParityPolicy": "all experiment groups use the same native Codex binary, auth, model, OS sandbox, controlled capability inventory, task, scoring, and budget; only the assigned governance scaffold changes",
+    "controlledRuntimeLoadout": "ignore user config and exec rules; disable user/project hooks, plugin hooks, plugins, apps, and tool search for every group; record unavoidable shared host inventory signals as a validity hazard instead of hiding them",
+    "resumePolicy": "completed trial result files are immutable and reused only when contract, scenario, trial, seed, and provider identity match"
+  },
+  "metrics": [
+    "environmentOutcomeSuccess",
+    "blindQualityScore0To5",
+    "reworkCount",
+    "toolCallCount",
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "wallClockMs",
+    "failureType",
+    "trajectoryDigest"
+  ],
+  "blindEvaluation": {
+    "groupIdentityVisibleToEvaluator": false,
+    "method": "five held-out requirement-linked behavior checks plus a combined held-out outcome command",
+    "modelJudgeRequired": false,
+    "implementationSpecificChecksAllowed": "only when the visible task explicitly requires the security primitive",
+    "reason": "P-135 must increase discrimination without rewarding a preferred patch shape or changing the grader after seeing new trial outputs."
+  },
+  "benchmarkValidity": {
+    "targetNonSaturatedTaskClasses": [
+      "simple_modification",
+      "cross_file_high_risk"
+    ],
+    "minimumSuccessRateSpread": 0.15,
+    "minimumBlindQualitySpread": 0.5,
+    "requireAtLeastOneSuccessAndOneFailure": true,
+    "costOnlyFallback": {
+      "allowedOnlyWhenAllTrialsSucceed": true,
+      "minimumBlindQualityMean": 5,
+      "minimumMedianInputTokenRatioSpread": 1.2,
+      "minimumMedianWallClockRatioSpread": 1.2,
+      "reason": "A ceiling task remains informative when every group reaches the same perfect outcome but governance produces a predeclared material cost spread; this observes cost and imposes no task budget or timeout failure."
+    },
+    "newTasksMustPrecedeLiveCalibration": true,
+    "postHocScoringChangesForbidden": true,
+    "transcriptSampleReviewRequired": true
+  },
+  "componentDecisionPolicy": {
+    "successRateImprovementPoints": 0.15,
+    "blindQualityImprovement": 0.5,
+    "minimumImprovedTaskClassesForKeep": 2,
+    "maximumMedianTokenRatio": 1.5,
+    "maximumMedianWallClockRatio": 1.5,
+    "conditionalCostRatio": 1.1,
+    "negativeSuccessDelta": -0.15,
+    "negativeBlindQualityDelta": -0.5,
+    "decisions": [
+      "keep",
+      "degrade_to_conditional",
+      "remove_from_default_scaffold"
+    ],
+    "preservationBoundary": "remove_from_default_scaffold changes only default application policy; it must not delete a canonical stage, runtime-native ability, skill, tool, validator, or historical evidence",
+    "insufficientEvidenceDecision": "insufficient_evidence"
+  },
+  "latestFormalResult": {"runId":"p135-formal-native-windows-20260725","generatedAt":"2026-07-24T21:22:16.614Z","status":"decision_ready","countsTowardProductEvidence":true,"completedTrialCount":36,"reportSha256":"eee12c0dde2e3ac3e9ec87a074ac5f22f438bacc23aef2d10aab55f2f44cdb72","contractDefinitionDigest":"ae3c50205269898b0b59daa1128f9857229392e0b03631a511e79564d570e170","scenarioDigest":"36687cf3a75f917b0a663f43650735dc7221ca4f90c04b1040be32af9c82bc1b","decisions":{"core_governance":"degrade_to_conditional","review_chain":"degrade_to_conditional","evolution":"remove_from_default_scaffold"}},
+  "truthBoundary": {
+    "fixtureRunsCountAsProductEvidence": false,
+    "dockerRunsCountAsProductEvidence": false,
+    "plannedRunsCountAsProductEvidence": false,
+    "liveRunsRequireCodexJsonl": true,
+    "missingUsageMustRemainNull": true,
+    "failedOrTimedOutTrialsRemainInDenominator": true,
+    "sharedHostCapabilitiesMustBeRecordedNotRemoved": true,
+    "partialMatricesArePilotIncomplete": true,
+    "componentDecisionsRequireCompleteDiscriminativeMatrix": true,
+    "mustNotClaim": [
+      "all-runtime harness fitness",
+      "global removal of an eight-stage spine stage",
+      "component benefit from fixture or partial pilot evidence",
+      "outcome benefit when all groups pass or fail identically; a predeclared all-success cost-only fallback may prove overhead but never quality benefit"
+    ]
+  }
+}

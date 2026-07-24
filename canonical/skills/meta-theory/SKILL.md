@@ -29,7 +29,7 @@ At run start, show a concise human-readable reason for the route. If the 8-stage
 
 ## Path classification
 - `fast_path`: read-only query, no mutation, no durable artifact. Output may be direct, but evidence claims still need source.
-- `standard_path`: ordinary executable work. Use the 8-stage spine and capability-first route.
+- `standard_path`: ordinary executable work. Preserve the 8-stage order and capability-first truth boundary, but use fitness-informed depth: concise inline Critical / Fetch / Thinking for clear low-risk work, conditional Review, required fresh Verification, and no dedicated Evolution dispatch without a durable trigger.
 - `regulated_path`: governance, security, runtime, dependency, release, public-ready, or cross-platform work. Require full spine, Review, Meta-Review, Verification, and Evolution.
 
 ## Canonical spine
@@ -419,7 +419,7 @@ Runtime-live and `live-certified` evidence are stricter than structural checks; 
 
 ## Evolution gate
 
-Every run ends with `writebackDecision = writeback` or `none-with-reason`. Durable failures require a scar with `failurePattern`, `preventionRule`, `test`, and `nextRunReuseKey`. Evolution writeback needs Warden approval; Chrysalis coordinates; target owners update their own sources.
+Every run still records `writebackDecision = writeback` or `none-with-reason`, but Evolution is removed from the default execution scaffold. When no reusable capability gap, repeated failure scar, agent/skill/tool/MCP/hook/workflow/runtime/OS lesson, governance-contract change, or explicit durable-learning request exists, close inline with `none-with-reason` and do not dispatch Chrysalis or candidate-analysis lanes. Durable failures still require a scar with `failurePattern`, `preventionRule`, `test`, and `nextRunReuseKey`. Triggered Evolution writeback needs Warden approval; Chrysalis coordinates; target owners update their own sources.
 
 ## Reference loading
 

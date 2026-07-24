@@ -13,18 +13,36 @@ import { fileURLToPath } from "node:url";
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
-const CONTRACT_PATH = path.join(
-  REPO_ROOT,
-  "config",
-  "contracts",
-  "harness-fitness-lab-contract.json",
-);
-const SCENARIO_PATH = path.join(
-  REPO_ROOT,
-  "config",
-  "evals",
-  "harness-fitness-lab-tasks.json",
-);
+const EXPERIMENT_PROFILES = {
+  p116: {
+    contractPath: path.join(
+      REPO_ROOT,
+      "config",
+      "contracts",
+      "harness-fitness-lab-contract.json",
+    ),
+    scenarioPath: path.join(
+      REPO_ROOT,
+      "config",
+      "evals",
+      "harness-fitness-lab-tasks.json",
+    ),
+  },
+  p135: {
+    contractPath: path.join(
+      REPO_ROOT,
+      "config",
+      "contracts",
+      "harness-fitness-ablation-contract.json",
+    ),
+    scenarioPath: path.join(
+      REPO_ROOT,
+      "config",
+      "evals",
+      "harness-fitness-ablation-tasks.json",
+    ),
+  },
+};
 const DEFAULT_STATE_ROOT = path.join(
   REPO_ROOT,
   ".meta-kim",
@@ -75,12 +93,48 @@ This benchmark arm intentionally does not use Meta_Kim governance. Do not invoke
 Complete the requested task directly in this benchmark workspace. Keep changes scoped and run the public tests before finishing.
 `;
 
+const SLIM_GOVERNANCE_TEMPLATE = `# Fitness Lab slim governance scaffold
+
+This is an isolated benchmark workspace. Solve only the requested task and do not invent external requirements.
+
+## Critical
+State the concrete outcome, acceptance, non-goals, and material ambiguity before editing. Ask no quota questions.
+
+## Fetch
+Inspect the starter files and public tests. Identify the minimum relevant local capability and evidence. Do not assume a feature exists because a schema or comment names it.
+
+## Thinking
+Compare at least two viable routes when the task is materially ambiguous or risky. Select the smallest route that meets acceptance and name the rejected weak path.
+
+## Execution
+Make bounded edits, preserve unrelated behavior, and run the public test command.
+
+## Verification
+Run fresh tests after the final edit. Do not claim success from plans, schemas, or intended commands.
+`;
+
+const REVIEWED_GOVERNANCE_TEMPLATE = `${SLIM_GOVERNANCE_TEMPLATE}
+
+${REVIEW_BLOCK}
+
+## Meta-Review
+Check that the standard used for review matches the user outcome and did not reward packet completeness over task quality.
+`;
+
 function nowIso() {
   return new Date().toISOString();
 }
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function contractDefinitionSource(raw, contract) {
+  if (contract.prdTaskId !== "P-135") return raw;
+  return raw.replace(
+    /("latestFormalResult"\s*:\s*)(?:null|\{[^\r\n]*\})/,
+    "$1null",
+  );
 }
 
 function relativeToRepo(filePath) {
@@ -152,7 +206,8 @@ function parseArgs(argv) {
     mode: "run",
     provider: "fixture",
     trials: null,
-    seed: "meta-kim-p116",
+    experimentId: "p116",
+    seed: null,
     runId: null,
     stateRoot: DEFAULT_STATE_ROOT,
     workspaceRoot: DEFAULT_WORKSPACE_ROOT,
@@ -169,6 +224,8 @@ function parseArgs(argv) {
     else if (arg === "--run") options.mode = "run";
     else if (arg.startsWith("--provider=")) options.provider = arg.slice(11);
     else if (arg === "--provider") options.provider = argv[++index];
+    else if (arg.startsWith("--experiment=")) options.experimentId = arg.slice(13);
+    else if (arg === "--experiment") options.experimentId = argv[++index];
     else if (arg.startsWith("--trials=")) options.trials = Number(arg.slice(9));
     else if (arg === "--trials") options.trials = Number(argv[++index]);
     else if (arg.startsWith("--seed=")) options.seed = arg.slice(7);
@@ -191,23 +248,24 @@ function parseArgs(argv) {
     else if (arg === "--group-id") options.groupId = argv[++index];
     else throw new Error(`Unknown argument: ${arg}`);
   }
+  options.seed ??= `meta-kim-${options.experimentId}`;
   return options;
 }
 
-export function assertStandaloneCodexHost(env = process.env) {
+export function assertStandaloneCodexHost(env = process.env, prdTaskId = "P-116") {
   const managedHostMarkers = ["CODEX_THREAD_ID", "CODEX_PERMISSION_PROFILE"].filter(
     (name) => typeof env[name] === "string" && env[name].trim() !== "",
   );
   if (managedHostMarkers.length > 0) {
     const error = new Error(
       [
-        "P-116 live trials are blocked inside a managed Codex Desktop session.",
+        `${prdTaskId} live trials are blocked inside a managed Codex Desktop session.`,
         `Detected host markers: ${managedHostMarkers.join(", ")}.`,
         "Run the live matrix from a standalone native shell so Codex can own the trial lifecycle without nested Desktop policy.",
         "Do not bypass this preflight or replace the native Codex CLI with Docker, WSL, or another provider.",
       ].join(" "),
     );
-    error.code = "P116_NESTED_CODEX_HOST_BLOCKED";
+    error.code = `${prdTaskId.replace(/[^A-Za-z0-9]/g, "")}_NESTED_CODEX_HOST_BLOCKED`;
     error.managedHostMarkers = managedHostMarkers;
     throw error;
   }
@@ -220,18 +278,69 @@ export function assertStandaloneCodexHost(env = process.env) {
 
 export function validateFitnessLabDefinition(contract, scenarioPack) {
   const errors = [];
-  if (contract?.schemaVersion !== "harness-fitness-lab-contract-v0.1") {
+  const isP116 = contract?.prdTaskId === "P-116";
+  const isP135 = contract?.prdTaskId === "P-135";
+  const expectedSchema = isP135
+    ? "harness-fitness-ablation-contract-v0.2"
+    : "harness-fitness-lab-contract-v0.1";
+  if (contract?.schemaVersion !== expectedSchema) {
     errors.push("wrong contract schemaVersion");
   }
-  if (contract?.prdTaskId !== "P-116") errors.push("P-116 must own the contract");
+  if (!isP116 && !isP135) errors.push("P-116 or P-135 must own the contract");
+  if (scenarioPack?.prdTaskId != null && scenarioPack.prdTaskId !== contract?.prdTaskId) {
+    errors.push("scenario pack prdTaskId must match the contract");
+  }
   if (contract?.primaryRuntime !== "codex") errors.push("first lab must stay Codex-only");
   const groups = contract?.experiment?.groups ?? [];
   const groupIds = groups.map((group) => group.id);
-  for (const expected of ["baseline", "full", "without_review"]) {
+  const expectedGroups = isP135
+    ? ["baseline", "slim", "reviewed", "full"]
+    : ["baseline", "full", "without_review"];
+  for (const expected of expectedGroups) {
     if (!groupIds.includes(expected)) errors.push(`missing group ${expected}`);
   }
-  const ablation = groups.find((group) => group.id === "without_review");
-  if (ablation?.ablationLayer !== "Review") errors.push("ablation must remove Review only");
+  if (isP116) {
+    const ablation = groups.find((group) => group.id === "without_review");
+    if (ablation?.ablationLayer !== "Review") errors.push("ablation must remove Review only");
+  }
+  if (isP135) {
+    const comparisons = contract?.experiment?.componentComparisons ?? [];
+    const expectedLadder = {
+      core_governance: ["baseline", "slim"],
+      review_chain: ["slim", "reviewed"],
+      evolution: ["reviewed", "full"],
+      full_vs_slim: ["slim", "full"],
+    };
+    for (const expected of ["core_governance", "review_chain", "evolution", "full_vs_slim"]) {
+      if (!comparisons.some((comparison) => comparison.id === expected)) {
+        errors.push(`missing component comparison ${expected}`);
+      }
+    }
+    for (const comparison of comparisons) {
+      if (!groupIds.includes(comparison.controlGroup) || !groupIds.includes(comparison.treatmentGroup)) {
+        errors.push(`component comparison ${comparison.id} references an unknown group`);
+      }
+      const expectedEdge = expectedLadder[comparison.id];
+      if (
+        expectedEdge &&
+        (comparison.controlGroup !== expectedEdge[0] || comparison.treatmentGroup !== expectedEdge[1])
+      ) {
+        errors.push(`component comparison ${comparison.id} breaks the cumulative ladder`);
+      }
+    }
+    if (contract.experiment.trialsPerTaskGroup < 3) {
+      errors.push("P-135 requires at least three repetitions per task and group");
+    }
+    const costFallback = contract?.benchmarkValidity?.costOnlyFallback;
+    if (
+      costFallback?.allowedOnlyWhenAllTrialsSucceed !== true ||
+      costFallback?.minimumBlindQualityMean !== 5 ||
+      costFallback?.minimumMedianInputTokenRatioSpread < 1.2 ||
+      costFallback?.minimumMedianWallClockRatioSpread < 1.2
+    ) {
+      errors.push("P-135 cost-only fallback must require perfect outcomes and a material cost spread");
+    }
+  }
   const tasks = scenarioPack?.tasks ?? [];
   const taskClasses = tasks.map((task) => task.taskClass);
   for (const expected of contract?.experiment?.taskClasses ?? []) {
@@ -247,13 +356,33 @@ export function validateFitnessLabDefinition(contract, scenarioPack) {
     if (Object.keys(task.hiddenFiles ?? {}).length < 1) {
       errors.push(`task ${task.id} needs held-out tests`);
     }
-    if ((task.rubricChecks ?? []).length !== 5) {
+    if (isP116 && (task.rubricChecks ?? []).length !== 5) {
       errors.push(`task ${task.id} must have five blind rubric checks`);
+    }
+    if (isP135) {
+      const requirements = task.requirements ?? [];
+      const blindChecks = task.blindChecks ?? [];
+      const requirementIds = new Set(requirements.map((requirement) => requirement.id));
+      if (requirements.length !== 5 || requirementIds.size !== 5) {
+        errors.push(`task ${task.id} must have five unique visible requirements`);
+      }
+      if (blindChecks.length !== 5 || new Set(blindChecks.map((check) => check.id)).size !== 5) {
+        errors.push(`task ${task.id} must have five unique held-out behavior checks`);
+      }
+      for (const check of blindChecks) {
+        if (!requirementIds.has(check.requirementId)) {
+          errors.push(`task ${task.id} blind check ${check.id} lacks a visible requirement mapping`);
+        }
+        if (!/^node --test(?: [A-Za-z0-9_./-]+)+$/.test(check.command ?? "")) {
+          errors.push(`task ${task.id} blind check ${check.id} has an unsafe command`);
+        }
+      }
     }
     for (const relativePath of [
       ...Object.keys(task.starterFiles ?? {}),
       ...Object.keys(task.hiddenFiles ?? {}),
       ...Object.keys(task.fixtureSolutionFiles ?? {}),
+      ...Object.keys(task.fixtureSolutionFileRefs ?? {}),
       ...(task.rubricChecks ?? []).map((check) => check.file),
     ]) {
       try {
@@ -261,6 +390,14 @@ export function validateFitnessLabDefinition(contract, scenarioPack) {
       } catch {
         errors.push(`task ${task.id} contains an unsafe scenario file path`);
         break;
+      }
+    }
+    for (const sourcePath of Object.values(task.fixtureSolutionFileRefs ?? {})) {
+      try {
+        const source = resolveChildPath(REPO_ROOT, sourcePath, "fixture solution source");
+        if (!existsSync(source)) errors.push(`task ${task.id} fixture source is missing: ${sourcePath}`);
+      } catch {
+        errors.push(`task ${task.id} fixture source escapes the repository: ${sourcePath}`);
       }
     }
   }
@@ -319,6 +456,8 @@ export function buildTrialPlan(contract, scenarioPack, options = {}) {
 
 export function governanceInstructionsForGroup(groupId) {
   if (groupId === "baseline") return BASELINE_INSTRUCTIONS;
+  if (groupId === "slim") return SLIM_GOVERNANCE_TEMPLATE;
+  if (groupId === "reviewed") return REVIEWED_GOVERNANCE_TEMPLATE;
   if (groupId === "full") {
     return FULL_GOVERNANCE_TEMPLATE.replace("{{REVIEW_BLOCK}}", REVIEW_BLOCK);
   }
@@ -376,6 +515,10 @@ async function initializeWorkspace(workspace, task, groupId) {
 async function applyFixtureSolution(workspace, task) {
   for (const [relativePath, content] of Object.entries(task.fixtureSolutionFiles ?? {})) {
     await writeTextFile(workspace, relativePath, content);
+  }
+  for (const [relativePath, sourcePath] of Object.entries(task.fixtureSolutionFileRefs ?? {})) {
+    const source = resolveChildPath(REPO_ROOT, sourcePath, "fixture solution source");
+    await writeTextFile(workspace, relativePath, await fs.readFile(source, "utf8"));
   }
   return {
     ok: true,
@@ -643,17 +786,24 @@ async function installHiddenTests(workspace, task) {
 
 export async function evaluateBlindQuality(workspace, task, submissionId) {
   const checks = [];
-  for (const check of task.rubricChecks) {
-    const filePath = path.join(workspace, check.file);
-    let text = "";
-    try {
-      text = await fs.readFile(filePath, "utf8");
-    } catch {}
-    const flags = check.flags ?? "";
-    const passed = check.forbidPattern
-      ? !new RegExp(check.forbidPattern, flags).test(text)
-      : new RegExp(check.pattern, flags).test(text);
-    checks.push({ id: check.id, passed });
+  if ((task.blindChecks ?? []).length > 0) {
+    for (const check of task.blindChecks) {
+      const result = await runKnownNodeCommand(check.command, workspace, 120000);
+      checks.push({ id: check.id, requirementId: check.requirementId, passed: result.ok });
+    }
+  } else {
+    for (const check of task.rubricChecks) {
+      const filePath = path.join(workspace, check.file);
+      let text = "";
+      try {
+        text = await fs.readFile(filePath, "utf8");
+      } catch {}
+      const flags = check.flags ?? "";
+      const passed = check.forbidPattern
+        ? !new RegExp(check.forbidPattern, flags).test(text)
+        : new RegExp(check.pattern, flags).test(text);
+      checks.push({ id: check.id, passed });
+    }
   }
   const passedCount = checks.filter((check) => check.passed).length;
   return {
@@ -688,12 +838,21 @@ async function executeTrial({ runRoot, workspaceRoot, planItem, task, provider, 
   const resultPath = path.join(trialDir, "result.json");
   if (existsSync(resultPath)) {
     const existing = await readJson(resultPath);
+    const existingProviderId =
+      existing.providerId ??
+      (typeof existing.provider === "string"
+        ? existing.provider
+        : existing.evidenceKind === "live_codex_jsonl"
+          ? "codex"
+          : existing.evidenceKind === "fixture_synthetic"
+            ? "fixture"
+            : null);
     if (
       existing.contractDigest !== contractDigest ||
       existing.scenarioDigest !== scenarioDigest ||
       existing.trialId !== planItem.trialId ||
       existing.seed !== planItem.seed ||
-      existing.provider !== provider
+      existingProviderId !== provider
     ) {
       throw new Error(`Cannot resume ${planItem.trialId}: trial identity or definition changed`);
     }
@@ -723,6 +882,7 @@ async function executeTrial({ runRoot, workspaceRoot, planItem, task, provider, 
     groupId: planItem.groupId,
     trial: planItem.trial,
     seed: planItem.seed,
+    providerId: provider,
     provider,
     evidenceKind: provider === "codex" ? "live_codex_jsonl" : "fixture_synthetic",
     countsTowardProductEvidence: provider === "codex" && telemetry.eventCount > 0,
@@ -782,6 +942,12 @@ function ratio(numerator, denominator) {
   return numerator / denominator;
 }
 
+function ratioSpread(values) {
+  const usable = values.filter((value) => Number.isFinite(value) && value > 0);
+  if (usable.length < 2) return null;
+  return Math.max(...usable) / Math.min(...usable);
+}
+
 function summarizeBucket(items) {
   return {
     trialCount: items.length,
@@ -803,7 +969,7 @@ function summarizeBucket(items) {
   };
 }
 
-export function analyzeFitnessResults(contract, plan, results, provider) {
+function analyzeP116FitnessResults(contract, plan, results, provider) {
   const byGroupTask = {};
   for (const group of contract.experiment.groups) {
     byGroupTask[group.id] = {};
@@ -923,7 +1089,253 @@ export function analyzeFitnessResults(contract, plan, results, provider) {
   };
 }
 
+function finiteDelta(left, right) {
+  return Number.isFinite(left) && Number.isFinite(right) ? left - right : null;
+}
+
+function analyzeP135FitnessResults(contract, plan, results, provider) {
+  const groups = contract.experiment.groups;
+  const taskClasses = contract.experiment.taskClasses;
+  const byGroupTask = {};
+  for (const group of groups) {
+    byGroupTask[group.id] = {};
+    for (const taskClass of taskClasses) {
+      byGroupTask[group.id][taskClass] = summarizeBucket(
+        results.filter((item) => item.groupId === group.id && item.taskClass === taskClass),
+      );
+    }
+  }
+  const byGroup = Object.fromEntries(
+    groups.map((group) => [
+      group.id,
+      summarizeBucket(results.filter((item) => item.groupId === group.id)),
+    ]),
+  );
+  const expectedFullTrialCount = contract.experiment.expectedLiveTrialCount;
+  const partialPlan = plan.length < expectedFullTrialCount;
+  const fullMatrixComplete =
+    plan.length === expectedFullTrialCount &&
+    results.length === expectedFullTrialCount &&
+    results.every((item) => item.countsTowardProductEvidence);
+  const validity = contract.benchmarkValidity;
+  const taskClassDiscrimination = validity.targetNonSaturatedTaskClasses.map((taskClass) => {
+    const buckets = groups.map((group) => byGroupTask[group.id][taskClass]);
+    const successRates = buckets.map((bucket) => bucket.successRate);
+    const qualityMeans = buckets.map((bucket) => bucket.blindQualityMean).filter(Number.isFinite);
+    const classResults = results.filter((item) => item.taskClass === taskClass);
+    const groupCoverageComplete = buckets.every(
+      (bucket) => bucket.trialCount === contract.experiment.trialsPerTaskGroup,
+    );
+    const calibrationGroupCoverageComplete = buckets.every((bucket) => bucket.trialCount > 0);
+    const hasSuccess = classResults.some((item) => item.environmentOutcomeSuccess);
+    const hasFailure = classResults.some((item) => !item.environmentOutcomeSuccess);
+    const successRateSpread = Math.max(...successRates) - Math.min(...successRates);
+    const blindQualitySpread = qualityMeans.length
+      ? Math.max(...qualityMeans) - Math.min(...qualityMeans)
+      : 0;
+    const allTrialsSuccessful = classResults.length > 0 && classResults.every(
+      (item) => item.environmentOutcomeSuccess,
+    );
+    const minimumGroupQuality = qualityMeans.length ? Math.min(...qualityMeans) : null;
+    const medianInputTokenRatioSpread = ratioSpread(
+      buckets.map((bucket) => bucket.medianInputTokens),
+    );
+    const medianWallClockRatioSpread = ratioSpread(
+      buckets.map((bucket) => bucket.medianWallClockMs),
+    );
+    const outcomeOrQualityDiscriminative =
+      (!validity.requireAtLeastOneSuccessAndOneFailure || (hasSuccess && hasFailure)) &&
+      (successRateSpread >= validity.minimumSuccessRateSpread ||
+        blindQualitySpread >= validity.minimumBlindQualitySpread);
+    const costFallback = validity.costOnlyFallback;
+    const costDiscriminative =
+      (!costFallback.allowedOnlyWhenAllTrialsSucceed || allTrialsSuccessful) &&
+      minimumGroupQuality >= costFallback.minimumBlindQualityMean &&
+      (medianInputTokenRatioSpread >= costFallback.minimumMedianInputTokenRatioSpread ||
+        medianWallClockRatioSpread >= costFallback.minimumMedianWallClockRatioSpread);
+    return {
+      taskClass,
+      groupCoverageComplete,
+      calibrationGroupCoverageComplete,
+      hasSuccess,
+      hasFailure,
+      successRateSpread,
+      blindQualitySpread,
+      allTrialsSuccessful,
+      minimumGroupQuality,
+      medianInputTokenRatioSpread,
+      medianWallClockRatioSpread,
+      outcomeOrQualityDiscriminative,
+      costDiscriminative,
+      discriminative:
+        groupCoverageComplete && (outcomeOrQualityDiscriminative || costDiscriminative),
+      calibrationDiscriminative:
+        calibrationGroupCoverageComplete && (outcomeOrQualityDiscriminative || costDiscriminative),
+    };
+  });
+  const calibrationDiscriminationPass = taskClassDiscrimination.every(
+    (item) => item.calibrationDiscriminative,
+  );
+  const benchmarkDiscriminationPass =
+    fullMatrixComplete && taskClassDiscrimination.every((item) => item.discriminative);
+  const policy = contract.componentDecisionPolicy;
+  const componentComparisons = contract.experiment.componentComparisons.map((comparison) => {
+    const control = byGroup[comparison.controlGroup];
+    const treatment = byGroup[comparison.treatmentGroup];
+    const byTaskClass = taskClasses.map((taskClass) => {
+      const controlTask = byGroupTask[comparison.controlGroup][taskClass];
+      const treatmentTask = byGroupTask[comparison.treatmentGroup][taskClass];
+      const successDelta = treatmentTask.successRate - controlTask.successRate;
+      const blindQualityDelta = finiteDelta(
+        treatmentTask.blindQualityMean,
+        controlTask.blindQualityMean,
+      );
+      return {
+        taskClass,
+        successDelta,
+        blindQualityDelta,
+        improved:
+          successDelta >= policy.successRateImprovementPoints ||
+          blindQualityDelta >= policy.blindQualityImprovement,
+        negative:
+          successDelta <= policy.negativeSuccessDelta ||
+          blindQualityDelta <= policy.negativeBlindQualityDelta,
+      };
+    });
+    const improvedTaskClasses = byTaskClass.filter((item) => item.improved).length;
+    const negativeTaskClasses = byTaskClass.filter((item) => item.negative).length;
+    const tokenRatio = ratio(treatment.medianInputTokens, control.medianInputTokens);
+    const wallClockRatio = ratio(treatment.medianWallClockMs, control.medianWallClockMs);
+    const highRiskControl = byGroupTask[comparison.controlGroup].cross_file_high_risk;
+    const highRiskTreatment = byGroupTask[comparison.treatmentGroup].cross_file_high_risk;
+    const avoidedHighCostError =
+      highRiskTreatment.successRate > highRiskControl.successRate &&
+      highRiskTreatment.successRate > 0;
+    const efficiencyPass =
+      ((tokenRatio == null || tokenRatio <= policy.maximumMedianTokenRatio) &&
+        (wallClockRatio == null || wallClockRatio <= policy.maximumMedianWallClockRatio)) ||
+      avoidedHighCostError;
+    const conditionalCostExceeded =
+      (tokenRatio != null && tokenRatio > policy.conditionalCostRatio) ||
+      (wallClockRatio != null && wallClockRatio > policy.conditionalCostRatio);
+    let decision = comparison.decisionEligible ? policy.insufficientEvidenceDecision : "comparison_only";
+    if (comparison.decisionEligible && benchmarkDiscriminationPass) {
+      const stableBenefit =
+        improvedTaskClasses >= policy.minimumImprovedTaskClassesForKeep || avoidedHighCostError;
+      const excessiveCost =
+        (tokenRatio != null && tokenRatio > policy.maximumMedianTokenRatio) ||
+        (wallClockRatio != null && wallClockRatio > policy.maximumMedianWallClockRatio);
+      if (stableBenefit && efficiencyPass) decision = "keep";
+      else if (negativeTaskClasses > 0 || excessiveCost) decision = "remove_from_default_scaffold";
+      else decision = "degrade_to_conditional";
+    }
+    return {
+      id: comparison.id,
+      label: comparison.label,
+      components: comparison.components,
+      controlGroup: comparison.controlGroup,
+      treatmentGroup: comparison.treatmentGroup,
+      byTaskClass,
+      improvedTaskClasses,
+      negativeTaskClasses,
+      successDelta: treatment.successRate - control.successRate,
+      blindQualityDelta: finiteDelta(treatment.blindQualityMean, control.blindQualityMean),
+      tokenRatio,
+      wallClockRatio,
+      avoidedHighCostError,
+      efficiencyPass,
+      conditionalCostExceeded,
+      decision,
+    };
+  });
+  const pilotHealth = partialPlan
+    ? results.length === plan.length && results.every((item) => item.countsTowardProductEvidence)
+      ? "recorded"
+      : "fail"
+    : null;
+  return {
+    schemaVersion: "harness-fitness-ablation-report-v0.1",
+    prdTaskId: "P-135",
+    generatedAt: nowIso(),
+    provider,
+    evidenceKind: provider === "codex" ? "live_codex_trials" : "fixture_diagnostic",
+    countsTowardProductEvidence: provider === "codex" && fullMatrixComplete,
+    status:
+      provider !== "codex"
+        ? "diagnostic_only"
+        : partialPlan
+          ? "pilot_incomplete"
+          : !fullMatrixComplete
+            ? "incomplete"
+            : !benchmarkDiscriminationPass
+              ? "invalid_saturation"
+              : "decision_ready",
+    summary: {
+      plannedTrialCount: plan.length,
+      expectedFullTrialCount,
+      completedTrialCount: results.length,
+      pilotHealth,
+      calibrationDiscriminationPass,
+      benchmarkDiscriminationPass,
+      decisionReady: benchmarkDiscriminationPass,
+    },
+    taskClassDiscrimination,
+    componentComparisons,
+    componentFindings: componentComparisons
+      .filter((comparison) => comparison.decision !== "comparison_only")
+      .map((comparison) => ({
+        component: comparison.label,
+        finding: comparison.decision,
+      })),
+    byGroup,
+    byGroupTask,
+    truthBoundary: contract.truthBoundary,
+    results,
+  };
+}
+
+export function analyzeFitnessResults(contract, plan, results, provider) {
+  return contract.prdTaskId === "P-135"
+    ? analyzeP135FitnessResults(contract, plan, results, provider)
+    : analyzeP116FitnessResults(contract, plan, results, provider);
+}
+
 function reportMarkdown(report) {
+  if (report.prdTaskId === "P-135") {
+    const lines = [
+      "# Harness Fitness Ablation Lab",
+      "",
+      `- status: ${report.status}`,
+      `- provider: ${report.provider}`,
+      `- evidenceKind: ${report.evidenceKind}`,
+      `- completed: ${report.summary.completedTrialCount}/${report.summary.plannedTrialCount} (formal matrix: ${report.summary.expectedFullTrialCount})`,
+      `- pilotHealth: ${report.summary.pilotHealth ?? "not_applicable"}`,
+      `- calibrationDiscriminationPass: ${report.summary.calibrationDiscriminationPass}`,
+      `- benchmarkDiscriminationPass: ${report.summary.benchmarkDiscriminationPass}`,
+      `- decisionReady: ${report.summary.decisionReady}`,
+      "",
+      "## Benchmark discrimination",
+      "",
+      "| Task class | Success spread | Quality spread | Token ratio spread | Time ratio spread | Outcome/quality | Cost-only | Discriminative |",
+      "|---|---:|---:|---:|---:|---|---|---|",
+      ...report.taskClassDiscrimination.map(
+        (item) =>
+          `| ${item.taskClass} | ${item.successRateSpread.toFixed(3)} | ${item.blindQualitySpread.toFixed(3)} | ${item.medianInputTokenRatioSpread?.toFixed(3) ?? "missing"} | ${item.medianWallClockRatioSpread?.toFixed(3) ?? "missing"} | ${item.outcomeOrQualityDiscriminative} | ${item.costDiscriminative} | ${item.discriminative} |`,
+      ),
+      "",
+      "## Component decisions",
+      "",
+      "| Component | Control | Treatment | Success delta | Quality delta | Token ratio | Time ratio | Decision |",
+      "|---|---|---|---:|---:|---:|---:|---|",
+      ...report.componentComparisons.map(
+        (item) =>
+          `| ${item.label} | ${item.controlGroup} | ${item.treatmentGroup} | ${item.successDelta.toFixed(3)} | ${item.blindQualityDelta?.toFixed(3) ?? "missing"} | ${item.tokenRatio?.toFixed(3) ?? "missing"} | ${item.wallClockRatio?.toFixed(3) ?? "missing"} | ${item.decision} |`,
+      ),
+      "",
+      "Fixture runs and partial matrices are diagnostic only. A component decision requires a complete discriminative native Codex matrix. Removal means removal from the default scaffold, never deletion of the canonical capability.",
+    ];
+    return `${lines.join("\n")}\n`;
+  }
   const lines = [
     "# Harness Fitness Lab",
     "",
@@ -956,13 +1368,19 @@ function reportMarkdown(report) {
 
 export async function runFitnessLab(options) {
   options = {
+    experimentId: "p116",
     workspaceRoot: DEFAULT_WORKSPACE_ROOT,
     timeoutMs: 8 * 60 * 1000,
     model: null,
     ...options,
   };
-  const contractRaw = await fs.readFile(CONTRACT_PATH, "utf8");
-  const scenarioRaw = await fs.readFile(SCENARIO_PATH, "utf8");
+  const profile = EXPERIMENT_PROFILES[options.experimentId];
+  if (!profile) {
+    throw new Error(`experiment must be one of: ${Object.keys(EXPERIMENT_PROFILES).join(", ")}`);
+  }
+  options.seed ??= `meta-kim-${options.experimentId}`;
+  const contractRaw = await fs.readFile(profile.contractPath, "utf8");
+  const scenarioRaw = await fs.readFile(profile.scenarioPath, "utf8");
   const contract = JSON.parse(contractRaw);
   const scenarioPack = JSON.parse(scenarioRaw);
   const validation = validateFitnessLabDefinition(contract, scenarioPack);
@@ -991,7 +1409,7 @@ export async function runFitnessLab(options) {
   if (!["fixture", "codex"].includes(options.provider)) {
     throw new Error("provider must be fixture or codex");
   }
-  if (options.provider === "codex") assertStandaloneCodexHost();
+  if (options.provider === "codex") assertStandaloneCodexHost(process.env, contract.prdTaskId);
   const runId =
     options.runId ??
     `${options.provider}-${new Date().toISOString().replace(/[:.]/g, "-")}-${sha256(options.seed).slice(0, 8)}`;
@@ -1002,12 +1420,14 @@ export async function runFitnessLab(options) {
   if (options.provider === "codex" && isPathInside(REPO_ROOT, workspaceRoot)) {
     throw new Error("live Codex trial workspaces must stay outside the Meta_Kim repository");
   }
-  const contractDigest = sha256(contractRaw);
+  const contractDigest = sha256(contractDefinitionSource(contractRaw, contract));
   const scenarioDigest = sha256(scenarioRaw);
   await fs.mkdir(runRoot, { recursive: true });
   await writeJsonAtomic(path.join(runRoot, "plan.json"), {
     schemaVersion: "harness-fitness-plan-v0.1",
     runId,
+    prdTaskId: contract.prdTaskId,
+    experimentId: options.experimentId,
     provider: options.provider,
     contractDigest,
     scenarioDigest,
@@ -1073,7 +1493,12 @@ async function main() {
   process.stdout.write(
     `${JSON.stringify(
       {
-        ok: output.report.status === "pass" || output.report.status === "diagnostic_only",
+        ok:
+          output.report.status === "pass" ||
+          output.report.status === "decision_ready" ||
+          output.report.status === "diagnostic_only" ||
+          (output.report.status === "pilot_incomplete" &&
+            ["pass", "recorded"].includes(output.report.summary.pilotHealth)),
         runId: output.report.runId,
         status: output.report.status,
         evidenceKind: output.report.evidenceKind,
@@ -1086,8 +1511,11 @@ async function main() {
   );
   if (
     options.provider === "codex" &&
-    output.report.status !== "pass" &&
-    !(output.report.status === "pilot_incomplete" && output.report.summary.pilotHealth === "pass")
+    !["pass", "decision_ready"].includes(output.report.status) &&
+    !(
+      output.report.status === "pilot_incomplete" &&
+      ["pass", "recorded"].includes(output.report.summary.pilotHealth)
+    )
   ) {
     process.exitCode = 1;
   }

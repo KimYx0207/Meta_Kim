@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "2.8.93",
+  "version": "2.9.0",
   "description": "Governance layer for AI coding: canonical meta agents, workflow contracts, default Claude/Codex projections, non-default OpenClaw/Cursor projections, and source-backed candidate probes.",
   "private": true,
   "type": "module",
@@ -38,6 +38,11 @@
     "meta:fitness:fixture": "node scripts/run-harness-fitness-lab.mjs --run --provider=fixture --trials 1",
     "meta:fitness:pilot": "node scripts/run-harness-fitness-lab.mjs --run --provider=codex --trials 1 --task-id=simple-normalize-tags --group-id=baseline --max-cases 1 --timeout-ms 240000",
     "meta:fitness:run": "node scripts/run-harness-fitness-lab.mjs --run --provider=codex --trials 3",
+    "meta:fitness:ablation:validate": "node scripts/run-harness-fitness-lab.mjs --experiment=p135 --validate",
+    "meta:fitness:ablation:plan": "node scripts/run-harness-fitness-lab.mjs --experiment=p135 --plan --trials 3",
+    "meta:fitness:ablation:fixture": "node scripts/run-harness-fitness-lab.mjs --experiment=p135 --run --provider=fixture --trials 1",
+    "meta:fitness:ablation:pilot": "node scripts/run-harness-fitness-lab.mjs --experiment=p135 --run --provider=codex --trials 1 --task-id=simple-single-flight-cache --group-id=baseline --max-cases 1 --timeout-ms 240000",
+    "meta:fitness:ablation:run": "node scripts/run-harness-fitness-lab.mjs --experiment=p135 --run --provider=codex --trials 3",
     "meta:validate:run": "node scripts/validate-run-artifact.mjs",
     "meta:doctor": "node scripts/doctor-interactive.mjs",
     "meta:doctor:governance": "node scripts/doctor-governance.mjs",
@@ -166,7 +171,7 @@
     "meta:hook:validate": "node scripts/validate-hook-progression.mjs",
     "meta:test:governance": "node scripts/run-node-tests.mjs \"tests/governance/*.test.mjs\"",
     "meta:verify:governance": "npm run meta:verify:governance:core && npm run meta:open-source-boundary:validate && npm run meta:test:integration",
-    "meta:verify:governance:core": "npm run meta:governance:validate && npm run meta:runtime:validate && npm run meta:os:check && npm run meta:deps:check && npm run meta:deps:compat && npm run meta:providers:validate && npm run meta:route:validate && npm run meta:intent:validate && npm run meta:prompt:validate && npm run meta:prd:prompt-first-flow:validate && npm run meta:prd:prompt-first-live:validate && npm run meta:prd:default-execution:validate && npm run meta:prd:product-experience:validate && npm run meta:fitness:validate && npm run meta:prd:stage-runtime-control:validate && npm run meta:prd:asset-sedimentation:validate && npm run meta:prd:research-native:validate && npm run meta:prd:prompt-architecture:validate && npm run meta:prd:smooth-capability:validate && npm run meta:prd:runtime-priority:validate && npm run meta:prd:source-map:validate && npm run meta:prd:all-dossiers:validate && npm run meta:public-assets:validate && npm run meta:foundational:validate && npm run meta:hook:validate && npm run meta:runtime:safety:validate && npm run meta:test:governance"
+    "meta:verify:governance:core": "npm run meta:governance:validate && npm run meta:runtime:validate && npm run meta:os:check && npm run meta:deps:check && npm run meta:deps:compat && npm run meta:providers:validate && npm run meta:route:validate && npm run meta:intent:validate && npm run meta:prompt:validate && npm run meta:prd:prompt-first-flow:validate && npm run meta:prd:prompt-first-live:validate && npm run meta:prd:default-execution:validate && npm run meta:prd:product-experience:validate && npm run meta:fitness:validate && npm run meta:fitness:ablation:validate && npm run meta:prd:stage-runtime-control:validate && npm run meta:prd:asset-sedimentation:validate && npm run meta:prd:research-native:validate && npm run meta:prd:prompt-architecture:validate && npm run meta:prd:smooth-capability:validate && npm run meta:prd:runtime-priority:validate && npm run meta:prd:source-map:validate && npm run meta:prd:all-dossiers:validate && npm run meta:public-assets:validate && npm run meta:foundational:validate && npm run meta:hook:validate && npm run meta:runtime:safety:validate && npm run meta:test:governance"
   },
   "keywords": [
     "claude-code",

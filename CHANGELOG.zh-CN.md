@@ -8,6 +8,24 @@
 
 ## Unreleased
 
+## [2.9.0] - 2026-07-25
+
+### 解决的问题
+
+首版 Harness Fitness Lab 已能证明 runner 会如实报告负结果，但简单任务和高风险任务出现质量天花板，无法分别判断核心治理、Review 链和 Evolution 的价值与成本。继续事后收紧隐藏测试，或人为设置任务耗时预算，只会制造失败，不是在测量用户结果。
+
+### 修复内容
+
+- **实验能拆分组件，又不会把天花板任务改造成陷阱。** P-135 新增 `baseline -> slim -> reviewed -> full` 累积梯子，每个任务/组重复 3 次；每题 5 条可见要求与 5 条 held-out 行为检查一一绑定；简单任务改成无预算的 single-flight 并发语义场景。只有所有组都达到相同满分时，才允许用自然 token/耗时差异证明额外成本；成本证据永远不能冒充质量收益。
+- **默认治理深度按实测价值收敛。** Critical / Fetch / Thinking 仍是 canonical 顺序与真相边界，但明确、低风险的本地任务只需简洁的内联记录。Review / Meta-Review 按风险、歧义、影响范围、验证失败或声明强度触发。Evolution 能力和 canonical 阶段完整保留，但退出默认执行脚手架；没有持久学习触发条件时，直接内联记录 `none-with-reason`，不再派发 Evolution 工作。
+- **Fitness trial 在闪退后可以真正续跑。** provider 身份与结构化 provider 证据分离保存，旧结果可安全推断；正式结果指针不参与不可变合同定义摘要。同一正式 run-id 重启后复用了全部 36 个 trial，没有再次调用 provider。
+
+### 验证
+
+- Windows 原生 Codex 正式矩阵完成 36/36 个 live trial，保留完整 JSONL trajectory 且全部具备产品证据资格；四组均为 9/9、盲评 5/5，因此没有任何治理组件被宣称有质量收益。
+- 核心治理相对 baseline 的 token/墙钟成本为 1.201×/1.354×，改为条件启用；Review 相对 slim 为 1.029×/0.971×，同样条件启用；Evolution 相对 reviewed 为 1.525×/1.289×，从默认脚手架移除。
+- Docker、WSL、任务预算、提权或绕过 sandbox 均未参与验收；fixture 和被用户叫停在 2/12 的预算实验只保留为诊断，不能计产品证据。
+
 ## [2.8.93] - 2026-07-24
 
 ### 解决的问题

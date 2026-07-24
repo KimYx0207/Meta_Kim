@@ -5,7 +5,7 @@ Choose the smallest path that can honestly satisfy the real product problem.
 ## Paths
 
 - `fast_path`: pure read-only query, local evidence enough, no write, no durable artifact, no handoff. It may set `queryBypass: true`, but only for read-only tools. This does not skip a user choice if the analysis reveals materially different routes, scopes, risks, owners, or acceptance standards.
-- `standard_path`: executable work with limited risk. Use Critical -> Fetch -> Thinking -> Execution -> Review -> Verification -> Evolution.
+- `standard_path`: executable work with limited risk. Keep the canonical stage order, but apply fitness-informed depth: Critical / Fetch / Thinking may be concise inline records for a clear local task; Execution and fresh Verification remain required; Review runs only when risk, ambiguity, blast radius, a failed check, or the intended claim justifies it; Evolution is skipped with inline `none-with-reason` unless a durable learning trigger exists.
 - `regulated_path`: security, release, install, cross-runtime, public-ready, governance-contract, or high-blast-radius work. Use all gates, explicit evidence, Meta-Review when review quality matters, and fresh verification.
 
 ## Rules
@@ -15,6 +15,9 @@ Choose the smallest path that can honestly satisfy the real product problem.
 - Smallest path is not automatically the minimal fix. If the real pain suggests a route, product, validation, owner, install, or abstraction change, compare the minimal fix against the ten-x path shift before choosing.
 - Fuzzy user intent is not a fast path just because the requested artifact is small. If the user has not decided the outcome, audience, success standard, or product direction, keep the work in Critical / Thinking until the route is honest.
 - If evidence is missing but cheap to gather, Fetch first.
+- Do not dispatch extra governance workers or create planning artifacts merely to make a clear low-risk local task look governed; concise evidence and a verified result are enough.
+- Review is conditional for standard-path work, but remains required for regulated triggers, ambiguous acceptance, high-blast-radius mutation, or verification failures.
+- Evolution is not part of the default execution scaffold. Dispatch it only for a reusable capability gap, repeated failure scar, durable agent/skill/tool/hook/runtime lesson, governance-contract change, or explicit user request for durable learning.
 - If capability is missing, return to Thinking or create `capabilityGapPacket`; do not invent a fallback owner.
 
 ## Use when
