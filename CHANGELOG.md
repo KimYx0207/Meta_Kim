@@ -8,6 +8,24 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.1] - 2026-07-25
+
+### Solved Problem
+
+Meta_Kim already generated an authoritative stage DAG and Dynamic Workflow worker plan, but the default artifact still stopped at `planned_not_executed`: no native worker process consumed the graph, timing stayed zero, and replay/checkpoint fields could be mistaken for execution. A Codex-only bridge would also have violated the product's dual-primary Claude Code/Codex boundary.
+
+### Fixed
+
+- **One stage graph now drives real read-only work in both primary runtimes.** The explicit `--execute-stage-dag` path consumes `coreLoop.stageDagPacket`, uses the existing safe-ready-set scheduler for sequential and fan-out work, invokes either Codex or Claude Code through thin native adapters, and performs one deterministic local merge. Runtime adapters cannot redefine stages, dependencies, waves, or merge ownership; the normal path remains planned-only.
+- **Execution truth is recorded before the governed artifact is saved.** Worker evidence now carries the actual runtime binding, native session/message identity, start/end timestamps, non-zero duration, terminal result, tool counts, output digests, and failure class. Planned worker rows, Execution timing, and LangGraph-style runtime evidence are replaced only by observed results; Review still owns semantic acceptance, and durable resume is not claimed.
+- **The bridge is safe for normal Claude Code and Codex environments.** Both adapters are shell-free and read-only, strip parent-session markers, inherit only allowlisted system/runtime/authentication variables, reject side-effect work before launch, redact local paths, and use a process timeout only as a safety fuse. Claude Code 2.1.202 streamed results are accepted only when the final text is closed by an exact same-session success record.
+
+### Verification
+
+- Independent-host run `p117-2026-07-25T12-37-33-190Z` passed all four native bridge scenarios and is `releaseEligible=true`: Codex and Claude Code each completed one sequential worker plus one overlapping two-worker fan-out/merge with exact file markers, native session/message IDs, read/search tools, non-zero timing, and a completed local merge.
+- Governed-entry run `p117-governed-2026-07-25T12-39-56-219Z` is also `releaseEligible=true`: the formal `meta:theory:run` path completed the package inspection through Codex and Claude Code and replaced planned execution truth in both saved artifacts.
+- No Docker, WSL, task/token/cost budget, elevated access, project mutation, external side effect, or synthetic provider output can satisfy this release acceptance.
+
 ## [2.9.0] - 2026-07-25
 
 ### Solved Problem

@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -17,6 +17,7 @@ import {
   parseJsonl,
 } from "./observe-host-events.mjs";
 import { buildExactBindingCandidateFromFiles } from "./build-exact-binding-candidate.mjs";
+import { resolveWindowsCliInvocation } from "../runtime-cli-invocation.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -352,78 +353,6 @@ function run(command, args, options = {}) {
     timeout: options.timeoutMs ?? 600_000,
     maxBuffer: 64 * 1024 * 1024,
   });
-}
-
-function resolveWindowsCmdShim(cmdPath) {
-  const source = readFileSync(cmdPath, "utf8");
-  const targetPattern = /"%(?:dp0%|~dp0)[\\/]([^"\r\n]+?\.(?:exe|com|cjs|mjs|js))"\s+%\*/gi;
-  let match;
-  let target = null;
-  while ((match = targetPattern.exec(source)) !== null) {
-    target = path.resolve(path.dirname(cmdPath), match[1]);
-  }
-  if (!target && /^npm(?:\.cmd)?$/i.test(path.basename(cmdPath))) {
-    target = path.join(
-      path.dirname(cmdPath),
-      "node_modules",
-      "npm",
-      "bin",
-      "npm-cli.js",
-    );
-  }
-  if (!target || !existsSync(target)) return null;
-  if (/\.(?:exe|com)$/i.test(target)) {
-    return { command: target, argsPrefix: [] };
-  }
-  return { command: process.execPath, argsPrefix: [target] };
-}
-
-function resolveWindowsCliInvocation(
-  command,
-  args = [],
-  { env = process.env, pathValue = null } = {},
-) {
-  const commandText = String(command);
-  const hasPath =
-    path.win32.isAbsolute(commandText) || /[\\/]/.test(commandText);
-  const searchDirs = hasPath
-    ? [""]
-    : String(pathValue ?? env.PATH ?? env.Path ?? "")
-        .split(";")
-        .map((entry) => entry.replace(/^"|"$/g, "").trim())
-        .filter(Boolean);
-  const extensions = path.win32.extname(commandText)
-    ? [""]
-    : [".exe", ".com", ".cmd", ".bat"];
-  const candidates = [];
-  for (const directory of searchDirs) {
-    for (const extension of extensions) {
-      const candidate = hasPath
-        ? `${commandText}${extension}`
-        : path.join(directory, `${commandText}${extension}`);
-      if (existsSync(candidate)) candidates.push(candidate);
-    }
-  }
-
-  for (const candidate of candidates) {
-    if (/\.(?:exe|com)$/i.test(candidate)) {
-      return { command: candidate, args: [...args], source: "native_executable" };
-    }
-  }
-  for (const candidate of candidates) {
-    if (!/\.(?:cmd|bat)$/i.test(candidate)) continue;
-    const shim = resolveWindowsCmdShim(candidate);
-    if (shim) {
-      return {
-        command: shim.command,
-        args: [...shim.argsPrefix, ...args],
-        source: "node_or_native_shim_without_cmd",
-      };
-    }
-  }
-  throw new Error(
-    `No shell-free Windows executable or supported Node shim found for ${commandText}`,
-  );
 }
 
 function runCli(command, args, options = {}) {

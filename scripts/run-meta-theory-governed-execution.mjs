@@ -56,6 +56,11 @@ import {
   buildStageDagPacket,
   stageLaneNodeId,
 } from "./governed-execution/stage-dag.mjs";
+import {
+  applyStageRunnerBridgeResult,
+  normalizeStageRunnerRuntime,
+  runStageRunnerBridge,
+} from "./governed-execution/stage-runner-bridge.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -8915,6 +8920,7 @@ function buildCoreLoopArtifact({
     dynamicWorkflowRuntimePacket,
     peerAgentMeshPacket,
     stageDagPacket,
+    stageRunnerBridgePacket: null,
     agentTeamsPlaybookPacket,
     runtimeSubagentInvocationPacket,
     runtimeInvocationPlanPacket,
@@ -10746,6 +10752,7 @@ export async function runMetaTheoryGovernedExecution({
   requestedSideEffectActions = [],
   hostDecisionEvidenceVerifier = null,
   previousPlanChallengeRunId = null,
+  stageRunner = null,
 } = {}) {
   const normalizedTask = normalizeTask(task);
   if (!normalizedTask) {
@@ -11114,6 +11121,40 @@ export async function runMetaTheoryGovernedExecution({
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
   }
+  if (stageRunner?.enabled === true) {
+    if (!executionAllowed) {
+      coreLoop = {
+        ...coreLoop,
+        stageRunnerBridgePacket: {
+          schemaVersion: "stage-runner-bridge-v0.1",
+          prdTaskId: "P-117",
+          status: "blocked",
+          mode: "read_only_shadow",
+          runtime: normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime),
+          runId: effectiveRunId,
+          failure: {
+            failureClass: "plan_challenge_execution_not_authorized",
+            reason: "The existing plan-challenge gate did not authorize Execution.",
+          },
+          nodeRecords: [],
+          workerResults: [],
+        },
+      };
+    } else {
+      const bridgeResult = await runStageRunnerBridge({
+        runId: effectiveRunId,
+        runtime: stageRunner.runtime ?? routeRuntime,
+        stageDagPacket: coreLoop.stageDagPacket,
+        workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets,
+        workspaceRoot: path.resolve(projectRoot),
+        requestTask: normalizedTask,
+        capacity: stageRunner.capacity ?? null,
+        timeoutMs: stageRunner.timeoutMs ?? 300_000,
+        invokeWorker: stageRunner.invokeWorker,
+      });
+      coreLoop = applyStageRunnerBridgeResult(coreLoop, bridgeResult);
+    }
+  }
   artifactStatus =
     artifactStatus === "pass" &&
     runtimeEvidence.status === "pass" &&
@@ -11121,7 +11162,8 @@ export async function runMetaTheoryGovernedExecution({
     coreLoop.hostInvocationRequestPacket.status === "pass" &&
     coreLoop.capabilityInvocationTruthPacket.status === "pass" &&
     !["partial", "read_only"].includes(coreLoop.projectCustomizationPacket.status) &&
-    coreLoop.productExperiencePacket.status === "product_experience_pass"
+    coreLoop.productExperiencePacket.status === "product_experience_pass" &&
+    (!coreLoop.stageRunnerBridgePacket || coreLoop.stageRunnerBridgePacket.status === "pass")
       ? "pass"
       : "partial";
   const partialReasons = artifactStatus === "pass"
@@ -11143,6 +11185,9 @@ export async function runMetaTheoryGovernedExecution({
           : null,
         coreLoop.productExperiencePacket.status !== "product_experience_pass"
           ? `product_experience=${coreLoop.productExperiencePacket.status}`
+          : null,
+        coreLoop.stageRunnerBridgePacket && coreLoop.stageRunnerBridgePacket.status !== "pass"
+          ? `stage_runner_bridge=${coreLoop.stageRunnerBridgePacket.status}`
           : null,
       ].filter(Boolean);
   const invokedBindingRefs = new Set(
@@ -11324,6 +11369,7 @@ export async function runMetaTheoryGovernedExecution({
     governanceAgentResultPackets: coreLoop.governanceAgentResultPackets,
     conductorConsumptionEvidence: coreLoop.conductorConsumptionEvidence,
     traceEvalControlPlane: coreLoop.traceEvalControlPlane,
+    stageRunnerBridgePacket: coreLoop.stageRunnerBridgePacket ?? null,
     agUiStageEvents: coreLoop.agUiStageEvents,
     performanceCostBudget: coreLoop.performanceCostBudget,
     contextEngineeringBudget: coreLoop.contextEngineeringBudget,
@@ -11366,6 +11412,7 @@ export async function runMetaTheoryGovernedExecution({
       workerResultPackets: coreLoop.executionResult.workerResultPackets,
       workerExecutionEvidence: coreLoop.executionResult.workerExecutionEvidence,
       traceEvalControlPlane: coreLoop.traceEvalControlPlane,
+      stageRunnerBridgePacket: coreLoop.stageRunnerBridgePacket ?? null,
       agUiStageEvents: coreLoop.agUiStageEvents,
       langGraphRunPacket: coreLoop.langGraphRunPacket,
       dynamicWorkflowRuntimePacket: coreLoop.dynamicWorkflowRuntimePacket,
@@ -11565,6 +11612,9 @@ function positionalTask(fallback = null) {
         "--os",
         "--lang",
         "--output-language",
+        "--stage-runner-runtime",
+        "--stage-runner-timeout-ms",
+        "--stage-runner-capacity",
       ].includes(value)
     ) {
       index += 1;
@@ -11598,6 +11648,9 @@ function rawPositionals() {
         "--os",
         "--lang",
         "--output-language",
+        "--stage-runner-runtime",
+        "--stage-runner-timeout-ms",
+        "--stage-runner-capacity",
       ].includes(value)
     ) {
       index += 1;
@@ -11634,6 +11687,14 @@ async function main() {
     process.argv.includes("--emit-conversation-notice") &&
     !process.argv.includes("--no-emit-conversation-notice");
   const runtime = normalizeRouteRuntime(runtimeArg);
+  const executeStageDag = process.argv.includes("--execute-stage-dag");
+  const stageRunnerRuntime = argValue("--stage-runner-runtime", runtime);
+  const stageRunnerTimeoutMs = Number(argValue("--stage-runner-timeout-ms", "300000"));
+  const stageRunnerCapacity = Number(argValue("--stage-runner-capacity", "0"));
+  if (executeStageDag && (!Number.isFinite(stageRunnerTimeoutMs) || stageRunnerTimeoutMs < 10_000)) {
+    throw new Error("--stage-runner-timeout-ms must be a finite safety timeout >= 10000");
+  }
+  if (executeStageDag) normalizeStageRunnerRuntime(stageRunnerRuntime);
   const osTarget = normalizeOsTarget(osArg);
   const useTemporaryOutput = process.argv.includes("--temp-output");
   const temporaryOutputRoot = useTemporaryOutput ? await createTemporaryOutputRoot() : null;
@@ -11722,11 +11783,19 @@ async function main() {
     invokeCapabilityProbes: process.argv.includes("--invoke-capability-probes"),
     projectRoot: process.env.META_KIM_CALLER_CWD || process.cwd(),
     projectCapabilityMutationMode:
-      process.argv.some((arg) =>
+      executeStageDag || process.argv.some((arg) =>
         ["--dry-run", "--check", "--read-only", "--no-project-capability-writes"].includes(arg),
       )
         ? "read_only"
         : "auto",
+    stageRunner: executeStageDag
+      ? {
+          enabled: true,
+          runtime: stageRunnerRuntime,
+          timeoutMs: stageRunnerTimeoutMs,
+          capacity: stageRunnerCapacity > 0 ? stageRunnerCapacity : null,
+        }
+      : null,
   });
   if (report.conversationNotice.emitted && !report.conversationNotice.progressStreamed) {
     process.stderr.write(`${report.conversationNotice.text}\n`);
@@ -11761,6 +11830,16 @@ async function main() {
         projectCustomization: report.projectCustomizationPacket.status,
         projectCapabilityWrites:
           report.projectCustomizationPacket.execution?.appliedCount ?? 0,
+        stageRunner:
+          report.stageRunnerBridgePacket == null
+            ? null
+            : {
+                status: report.stageRunnerBridgePacket.status,
+                runtime: report.stageRunnerBridgePacket.runtime,
+                mode: report.stageRunnerBridgePacket.mode,
+                workerCount: report.stageRunnerBridgePacket.workerResults?.length ?? 0,
+                observedDurationMs: report.stageRunnerBridgePacket.observedDurationMs ?? null,
+              },
         report: relative(report.paths.markdown),
         temporaryOutput: temporaryOutputRoot
           ? {

@@ -8,6 +8,24 @@
 
 ## Unreleased
 
+## [2.9.1] - 2026-07-25
+
+### 解决的问题
+
+Meta_Kim 已经能生成唯一权威的阶段 DAG 和 Dynamic Workflow worker 计划，但默认产物仍停在 `planned_not_executed`：没有原生 worker 真正消费这张图，耗时始终为零，replay/checkpoint 字段也容易被误解成已经执行。只接 Codex 同样不符合 Claude Code + Codex 双主运行端的产品边界。
+
+### 修复内容
+
+- **同一张阶段图现在能在两个主运行端执行真实只读工作。** 显式 `--execute-stage-dag` 路径直接消费 `coreLoop.stageDagPacket`，复用现有 safe-ready-set 调度器处理串行和 fan-out，通过薄适配器调用 Codex 或 Claude Code，最后只做一次确定性的本地合并。运行端不能重定义阶段、依赖、wave 或 merge owner；默认路径仍然只做计划。
+- **真实执行证据会在 governed artifact 保存前写入。** worker 记录实际运行端绑定、原生 session/message、开始/结束时间、非零耗时、终态结果、工具次数、输出摘要和失败分类；只有观察到真实结果，才会替换计划 worker、Execution 耗时和 LangGraph-style runtime evidence。Review 仍负责判断结果是否真的满足任务，本版本不声称支持耐久恢复。
+- **桥接器适合 Claude Code 与 Codex 的正常安全环境。** 两端都使用无 shell 拼接的只读启动方式，去掉父会话标记，只继承白名单内的系统/运行端/认证变量；副作用任务在启动前拒绝，本机路径默认脱敏，超时只作为失控进程保险。Claude Code 2.1.202 的流式结果只有在同 session 的成功终态记录与最终文本精确一致时才算完成。
+
+### 验证
+
+- 独立宿主 run `p117-2026-07-25T12-37-33-190Z` 四项原生桥接场景全部通过且 `releaseEligible=true`：Codex 与 Claude Code 各完成一个串行 worker 和一个真实区间重叠的双 worker fan-out/merge，并具备精确文件内容、原生 session/message、读取/搜索工具、非零耗时和本地 merge 证据。
+- 正式入口 run `p117-governed-2026-07-25T12-39-56-219Z` 同样为 `releaseEligible=true`：`meta:theory:run` 分别通过 Codex 与 Claude Code 完成 package 检查，并在两个保存产物中把计划执行真相替换成真实结果。
+- Docker、WSL、任务/token/成本预算、提权、项目写入、外部副作用和合成 provider 输出都不能满足本次产品验收。
+
 ## [2.9.0] - 2026-07-25
 
 ### 解决的问题

@@ -68,6 +68,8 @@ npm run meta:delivery:bundle
 - Review 和 Verification 会留下产物证据，而不是只给安慰性结论
 - 兼容证据会保持分层，smoke evidence 不会被冒充成 native live proof
 
+真正执行阶段图目前是显式开启的只读能力。运行 `npm run meta:theory:run -- --execute-stage-dag --stage-runner-runtime codex "<任务>"`，或把 `codex` 换成 `claude`。两个运行端共用同一份 `coreLoop.stageDagPacket`，会记录真实会话、工具调用和耗时，再由本地合并结果。默认仍然只做计划；这个模式不声称支持断点恢复，也不会执行写入或外部副作用。
+
 带着示例看第一遍：[`examples/first-run/README.md`](examples/first-run/README.md)。
 
 ## 快速开始

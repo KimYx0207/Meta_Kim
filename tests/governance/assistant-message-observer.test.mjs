@@ -243,6 +243,44 @@ test("Claude system/config records and incomplete assistant messages never count
   assert.deepEqual(observeClaudeAssistantMessages(raw), []);
 });
 
+test("Claude streamed text with null stop_reason counts only when an exact later success result closes it", () => {
+  const text = "P117_CLAUDE_RAW_CAPTURE";
+  const raw = jsonl([
+    {
+      type: "assistant",
+      session_id: "claude-stream-session",
+      message: {
+        id: "claude-stream-message",
+        stop_reason: null,
+        content: [{ type: "text", text }],
+      },
+    },
+    {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "claude-stream-session",
+      result: text,
+    },
+  ]);
+  const [observation] = observeClaudeAssistantMessages(raw);
+  assert.equal(observation.messageId, "claude-stream-message");
+  assert.equal(observation.stopReason, "result_success");
+  assert.equal(observation.completionBoundary, "result:success");
+  assert.deepEqual(observation.sourceLines, [1, 2]);
+
+  assert.deepEqual(observeClaudeAssistantMessages(jsonl([
+    JSON.parse(raw.split("\n")[0]),
+    {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      session_id: "claude-stream-session",
+      result: "different text",
+    },
+  ])), []);
+});
+
 test("Claude Task result without a real child id cannot become successful agent evidence", () => {
   const raw = jsonl([
     {

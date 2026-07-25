@@ -61,6 +61,17 @@
       "stageOperationPlan"
     ]
   },
+  "stageRunnerBridgePolicy": {
+    "contractRef": "config/contracts/stage-runner-bridge-contract.json",
+    "prdTaskId": "P-117",
+    "defaultMode": "planned_only",
+    "explicitExecutionMode": "read_only_shadow",
+    "primaryRuntimes": ["codex", "claude"],
+    "singleAuthorityPacket": "coreLoop.stageDagPacket",
+    "noRuntimeSpecificGraph": true,
+    "realExecutionEvidencePacket": "coreLoop.stageRunnerBridgePacket",
+    "durabilityClaim": "not_claimed"
+  },
   "stages": [
     {
       "stage": "Critical",

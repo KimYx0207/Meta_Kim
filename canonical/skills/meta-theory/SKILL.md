@@ -15,6 +15,7 @@ description: |
 # Meta-Theory Dispatcher
 ## Purpose
 Run Meta_Kim as an executable governance system, not a theory essay. The main thread locks intent, gathers evidence, chooses route, delegates bounded work, reviews, verifies, and synthesizes. It must not become a generic implementation worker for non-trivial work. Machine contract: `config/contracts/core-loop-contract.json` is the compact default-path contract for this skill. It binds ordinary durable work and explicit meta-theory shortcuts to `npm run meta:theory:run`, requires the eight-stage spine, and defines which gates block, warn, or stay progressive.
+The default governed runner remains planned-only. When the maintainer explicitly supplies `--execute-stage-dag`, the P-117 bridge may execute the existing `coreLoop.stageDagPacket` in read-only shadow mode through either `--stage-runner-runtime codex` or `--stage-runner-runtime claude`. Both runtimes use the same graph and local merge authority. A native terminal result proves invocation, while Review still owns semantic acceptance. Do not claim write execution, external effects, durable resume, or a runtime-specific graph. The process timeout is a safety fuse, never a task/token/cost budget.
 
 ## Global-First Owner Discovery
 

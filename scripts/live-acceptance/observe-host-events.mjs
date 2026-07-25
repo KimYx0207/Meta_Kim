@@ -665,6 +665,22 @@ export function observeCodexAssistantMessages(text, expected = {}) {
 
 export function observeClaudeAssistantMessages(text, expected = {}) {
   const records = parseJsonl(text);
+  const successfulTerminalResults = new Map();
+  for (const record of records) {
+    const payload = payloadOf(record.value);
+    if (
+      record.value?.type !== "result" ||
+      record.value?.subtype !== "success" ||
+      record.value?.is_error === true ||
+      typeof record.value?.result !== "string" ||
+      !record.value.result ||
+      !payload?.session_id
+    ) continue;
+    successfulTerminalResults.set(payload.session_id, {
+      line: record.line,
+      text: record.value.result,
+    });
+  }
   const rootSessionId = records
     .map((record) => {
       const payload = payloadOf(record.value);
@@ -693,6 +709,11 @@ export function observeClaudeAssistantMessages(text, expected = {}) {
     const sessionId = payload.session_id ?? payload.sessionId ?? null;
     const messageId = message.id ?? null;
     const stopReason = message.stop_reason ?? message.stopReason ?? null;
+    const terminalResult = sessionId ? successfulTerminalResults.get(sessionId) : null;
+    const streamedResultCompleted =
+      stopReason == null &&
+      terminalResult?.line > record.line &&
+      terminalResult.text === messageText;
     if (
       !messageText ||
       !sessionId ||
@@ -704,7 +725,10 @@ export function observeClaudeAssistantMessages(text, expected = {}) {
       payload.agent_thread_id != null ||
       payload.child_thread_id != null ||
       payload.parent_tool_use_id != null ||
-      !["end_turn", "tool_use", "stop_sequence", "max_tokens"].includes(stopReason) ||
+      (
+        !streamedResultCompleted &&
+        !["end_turn", "tool_use", "stop_sequence", "max_tokens"].includes(stopReason)
+      ) ||
       payload.error != null ||
       payload.is_error === true
     ) continue;
@@ -719,8 +743,9 @@ export function observeClaudeAssistantMessages(text, expected = {}) {
       textSha256: sha256(messageText),
       resultStatus: "completed",
       mainThreadChat: true,
-      stopReason,
-      sourceLines: [record.line],
+      stopReason: streamedResultCompleted ? "result_success" : stopReason,
+      completionBoundary: streamedResultCompleted ? "result:success" : "assistant_message",
+      sourceLines: streamedResultCompleted ? [record.line, terminalResult.line] : [record.line],
     };
     if (matchesExpectedObservation(observation, expected)) observations.push(observation);
   }

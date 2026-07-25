@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+
+test("formal governed entrypoint replaces planned truth with a real stage-runner result", async (t) => {
+  const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-p117-governed-test-"));
+  t.after(async () => fs.rm(outputRoot, { recursive: true, force: true }));
+  const task = "Read package.json and report the exact package name and version. Do not modify files.";
+  const prompts = [];
+  const report = await runMetaTheoryGovernedExecution({
+    task,
+    runId: "p117-governed-entry-test",
+    runtime: "codex",
+    osTarget: "windows",
+    stateDir: outputRoot,
+    artifactDir: outputRoot,
+    dbPath: path.join(outputRoot, "runs.sqlite"),
+    projectRoot: process.cwd(),
+    projectCapabilityMutationMode: "read_only",
+    emitConversationNotice: false,
+    stageRunner: {
+      enabled: true,
+      runtime: "codex",
+      capacity: 1,
+      timeoutMs: 30_000,
+      invokeWorker: async ({ runtime, prompt, packet }) => {
+        prompts.push(prompt);
+        return {
+          status: "pass",
+          runtime,
+          exitCode: 0,
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          durationMs: 5,
+          sessionId: `session-${packet.taskPacketId}`,
+          messageId: `message-${packet.taskPacketId}`,
+          outputText: "meta-kim 2.9.0",
+          outputSha256: "a".repeat(64),
+          rawOutputSha256: "b".repeat(64),
+          hostEventCount: 1,
+          toolEventCount: 1,
+          stderrTail: "",
+        };
+      },
+    },
+  });
+  assert.equal(report.stageRunnerBridgePacket.status, "pass");
+  assert.equal(report.executionResult.actualWorkerExecution, true);
+  assert.ok(report.executionResult.workerExecutionEvidence.every(
+    (item) => item.status === "executed" && item.liveWorkerExecution === true,
+  ));
+  assert.equal(report.langGraphRunPacket.runtimeExecutionEvidence, "native_stage_runner_bridge");
+  assert.ok(report.traceEvalControlPlane.stageTiming.find(
+    (item) => item.stage === "Execution",
+  ).observedDurationMs > 0);
+  assert.ok(prompts.length > 0);
+  assert.ok(prompts.every((prompt) => prompt.includes(`Original user task: ${task}`)));
+});

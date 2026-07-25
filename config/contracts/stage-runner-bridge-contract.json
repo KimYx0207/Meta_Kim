@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-stage-runner-bridge-contract",
+  "prdTaskId": "P-117",
+  "status": "verified",
+  "purpose": "Let the authoritative stage DAG drive real, observable, read-only execution on both primary runtimes without creating a second graph or claiming durable resume.",
+  "primaryRuntimes": ["codex", "claude"],
+  "mode": "read_only_shadow",
+  "singleAuthority": {
+    "contract": "config/contracts/core-loop-contract.json",
+    "packet": "coreLoop.stageDagPacket",
+    "scheduler": "scripts/governed-execution/stage-dag.mjs",
+    "bridge": "scripts/governed-execution/stage-runner-bridge.mjs",
+    "rule": "Runtime adapters consume the same DAG and may not define runtime-specific stage order, dependencies, waves, or merge authority."
+  },
+  "entry": {
+    "defaultPlannedOnly": true,
+    "explicitFlag": "--execute-stage-dag",
+    "runtimeFlag": "--stage-runner-runtime codex|claude",
+    "packageAcceptanceScript": "meta:stage-runner:acceptance"
+  },
+  "safety": {
+    "codex": "codex exec with ephemeral session, ignored user config/rules, and read-only sandbox",
+    "claude": "claude print mode with safe mode, plan permission mode, explicit read/search tools, and no session persistence",
+    "childEnvironmentBoundary": "Pass only runtime/system/authentication allowlisted variables, remove parent Codex/Claude session markers, and never inherit unrelated project secrets.",
+    "telemetryRedaction": "Persist bounded output plus digests; redact workspace and user-home paths from output, errors, and stderr tails.",
+    "stdinPromptOnly": true,
+    "shellInterpolationForbidden": true,
+    "projectWritesForbidden": true,
+    "externalWritesForbidden": true,
+    "dockerProductEvidenceForbidden": true,
+    "taskBudget": null,
+    "timeoutMeaning": "A process safety fuse only; it is not a token, cost, or task-performance budget."
+  },
+  "requiredNodeEvidence": [
+    "runId",
+    "nodeId",
+    "taskPacketId",
+    "selected runtime",
+    "actual runtime binding",
+    "native session/message identity",
+    "start and end time",
+    "non-zero observed duration",
+    "terminal exit result",
+    "output digest",
+    "completed read/search tool event for file-based acceptance tasks",
+    "failure class when unsuccessful"
+  ],
+  "acceptance": {
+    "requiredRuntimes": ["codex", "claude"],
+    "requiredScenariosPerRuntime": ["sequential", "fanout_merge"],
+    "fanoutWorkerCount": 2,
+    "requiresOverlappingNativeIntervals": true,
+    "requiresLocalMergeNode": true,
+    "requiresRealHostResult": true,
+    "syntheticProviderOrModelOutputCountsAsProductEvidence": false,
+    "deterministicInputFilesAllowed": true,
+    "projectionCountsAsProductEvidence": false,
+    "oneRuntimeMaySubstituteForAnother": false
+  },
+  "nonGoals": [
+    "P-118 durable kill-and-resume",
+    "P-119 LangGraph/OpenAI/Claude provider adapters",
+    "Cursor or OpenClaw execution",
+    "project mutation",
+    "external side effects",
+    "live-certified external attestation"
+  ]
+}
