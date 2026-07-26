@@ -28,6 +28,23 @@ function isolatedHomeEnvironment(homeDir, extra = {}) {
 }
 
 describe("eval-meta-agents Claude smoke", () => {
+  test("Claude live evaluation isolates unrelated user hooks and binds the installed runtime definition inline", () => {
+    const source = readFileSync(
+      path.join(repoRoot, "scripts", "eval-meta-agents.mjs"),
+      "utf8",
+    );
+    assert.match(source, /resolveClaudeLiveAgentOverride/u);
+    assert.match(
+      source,
+      /const inlineAgentsJson = JSON\.stringify\(runtimeAgentOverride\.agents\)[\s\S]*"--safe-mode"[\s\S]*"--agents"[\s\S]*inlineAgentsJson[\s\S]*"--agent"/u,
+    );
+    assert.match(source, /claude_main_session_inline_custom_agent_binding/u);
+    assert.match(source, /customizationIsolation: "safe_mode_cli_inline_agent"/u);
+    assert.match(source, /commandDisplay: `claude --safe-mode/u);
+    assert.match(source, /redactClaudeLiveCommandText\(value, sensitiveCommandValues\)/u);
+    assert.doesNotMatch(source, /nativeInvocationCommand: `claude -p --agent/u);
+  });
+
   test("Windows CLI search includes npm-style ~/.local shims before native bin", () => {
     const source = readFileSync(
       path.join(repoRoot, "scripts", "eval-meta-agents.mjs"),
@@ -176,8 +193,8 @@ describe("eval-meta-agents Claude smoke", () => {
     );
 
     assert.match(source, /const scoutInstruction =/);
-    assert.match(source, /当前 Claude Code 已加载的 agent 定义/);
-    assert.match(source, /frontmatter、AGENTS\/CLAUDE/);
+    assert.match(source, /通过 --agents 显式绑定的已安装 Claude Code agent 定义/);
+    assert.match(source, /description、own、do_not_touch、boundary/);
     assert.match(source, /不要凭通用 agent 印象补写/);
     assert.match(source, /tool-skill-MCP\/ROI/);
     assert.match(source, /不直接执行工具或运行时动作/);

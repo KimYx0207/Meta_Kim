@@ -11,6 +11,10 @@ import {
   canonicalAgentsDir,
   canonicalRuntimeAssetsDir,
 } from "./meta-kim-sync-config.mjs";
+import {
+  buildClaudeSafeModeAgentOverride,
+  redactClaudeLiveCommandText,
+} from "./claude-live-agent-override.mjs";
 import { observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
 import { readCodexSessionEvidence } from "./live-acceptance/read-codex-session-evidence.mjs";
 
@@ -2234,7 +2238,8 @@ function summarizeClaudeRuntime(discovery, results) {
       results.every(
         (result) => result.ok === true && result.nativeInvocationObserved === true,
       ),
-    nativeInvocationKind: "claude_main_session_custom_agent_binding",
+    nativeInvocationKind: "claude_main_session_inline_custom_agent_binding",
+    customizationIsolation: "safe_mode_cli_inline_agent",
     discovery,
     results,
   };
@@ -2570,6 +2575,18 @@ async function inspectCodexLiveEvidenceWithSessionFallback(
 
 async function runCommandWithIgnoredStdin(file, args, options = {}) {
   return new Promise((resolve, reject) => {
+    const commandDisplay =
+      typeof options.commandDisplay === "string" && options.commandDisplay.trim()
+        ? options.commandDisplay.trim()
+        : `${file} ${args.join(" ")}`;
+    const redactText = (value) => {
+      if (typeof options.redactText !== "function") return String(value ?? "");
+      try {
+        return String(options.redactText(String(value ?? "")));
+      } catch {
+        return "<command-output-redaction-failed>";
+      }
+    };
     const child = spawn(file, args, {
       cwd: options.cwd,
       env: options.env,
@@ -2577,7 +2594,7 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    markChildActive(child, `${file} ${args.join(" ")}`);
+    markChildActive(child, commandDisplay);
 
     let stdout = "";
     let stderr = "";
@@ -2603,26 +2620,26 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
       timeoutId = setTimeout(() => {
         void terminateChildTree(child).then(() => {
           const error = new Error(
-            `Command timed out after ${options.timeout}ms: ${file} ${args.join(" ")}`,
+            `Command timed out after ${options.timeout}ms: ${commandDisplay}`,
           );
           error.code = "META_KIM_COMMAND_TIMEOUT";
           error.timeoutMs = options.timeout;
-          error.command = `${file} ${args.join(" ")}`;
-          error.stdout = stdout;
-          error.stderr = stderr;
+          error.command = commandDisplay;
+          error.stdout = redactText(stdout);
+          error.stderr = redactText(stderr);
           settle(error);
         }).catch((cleanupError) => {
           const error = new Error(
-            `Command timed out and process-tree cleanup failed: ${file} ${args.join(" ")}`,
+            `Command timed out and process-tree cleanup failed: ${commandDisplay}`,
             { cause: cleanupError },
           );
           error.code = "META_KIM_COMMAND_TIMEOUT_CLEANUP_FAILED";
           error.processTreeCleanupFailure = true;
           error.processTreeCleanupReason = "timeout_cleanup_failed";
           error.timeoutMs = options.timeout;
-          error.command = `${file} ${args.join(" ")}`;
-          error.stdout = stdout;
-          error.stderr = stderr;
+          error.command = commandDisplay;
+          error.stdout = redactText(stdout);
+          error.stderr = redactText(stderr);
           settle(error);
         });
       }, options.timeout);
@@ -2649,18 +2666,19 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
         return;
       }
 
-      const failureDetails = [stderr.trim(), stdout.trim()]
+      const failureDetails = [redactText(stderr).trim(), redactText(stdout).trim()]
         .filter(Boolean)
         .join("\n");
       const suffix = signal ? ` (signal: ${signal})` : "";
       const error = new Error(
-        `Command failed: ${file} ${args.join(" ")}${suffix}${
+        `Command failed: ${commandDisplay}${suffix}${
           failureDetails ? `\n${failureDetails}` : ""
         }`,
       );
       error.code = "META_KIM_CHILD_COMMAND_FAILED";
-      error.stdout = stdout;
-      error.stderr = stderr;
+      error.command = commandDisplay;
+      error.stdout = redactText(stdout);
+      error.stderr = redactText(stderr);
       settle(error);
     });
   });
@@ -3584,6 +3602,29 @@ async function runClaudeSmoke(agentIds) {
   };
 }
 
+async function resolveClaudeLiveAgentOverride(agentId) {
+  const candidates = [
+    {
+      sourceCategory: "project",
+      filePath: path.join(repoRoot, ".claude", "agents", `${agentId}.md`),
+    },
+    {
+      sourceCategory: "global",
+      filePath: path.join(os.homedir(), ".claude", "agents", `${agentId}.md`),
+    },
+  ];
+  for (const candidate of candidates) {
+    if (!(await fileExists(candidate.filePath))) continue;
+    const sourceText = await fs.readFile(candidate.filePath, "utf8");
+    return {
+      sourceCategory: candidate.sourceCategory,
+      sourceDigest: crypto.createHash("sha256").update(sourceText).digest("hex"),
+      agents: buildClaudeSafeModeAgentOverride(sourceText, agentId),
+    };
+  }
+  throw new Error(`Claude runtime agent definition is missing for ${agentId}`);
+}
+
 async function runClaudeCases(agentIds) {
   const results = [];
 
@@ -3601,6 +3642,7 @@ async function runClaudeCases(agentIds) {
     }
 
     try {
+      const runtimeAgentOverride = await resolveClaudeLiveAgentOverride(agentId);
       let finalResult = null;
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         const scoutInstruction =
@@ -3608,7 +3650,7 @@ async function runClaudeCases(agentIds) {
             ? "meta-scout 的 owns 必须分别覆盖：能力基线/发现，tool-skill-MCP/ROI，外部候选/采纳建议；refuses 必须分别覆盖：不直接执行工具或运行时动作，不负责协调/dispatch/loadout/final approval。"
             : "owns 必须覆盖自身定义里三个不同责任族；refuses 必须覆盖不执行业务任务和跨 owner 边界。";
         const prompt =
-          "你正在做 Meta_Kim 元 agent 角色边界自检。先依据当前 Claude Code 已加载的 agent 定义、frontmatter、AGENTS/CLAUDE 上下文和边界说明，不要凭通用 agent 印象补写。" +
+          "你正在做 Meta_Kim 元 agent 角色边界自检。只依据通过 --agents 显式绑定的已安装 Claude Code agent 定义及其中的 description、own、do_not_touch、boundary，不要凭通用 agent 印象补写。" +
           "只返回符合 schema 的 JSON，不要解释。JSON 必须包含 agent、owns、refuses、artifact、delegates_to。" +
           `agent 字段必须精确写 ${agentId}；` +
           "owns 写 3 个短语，每条必须来自不同责任族；refuses 写 2 个短语，每条必须是明确拒绝边界；" +
@@ -3616,12 +3658,17 @@ async function runClaudeCases(agentIds) {
           "artifact 写你最核心的产物；delegates_to 写跨边界时最常升级/委派的 2 个 agent id。";
 
         const cmd = await getResolvedClaudeCommand();
+        const inlineAgentsJson = JSON.stringify(runtimeAgentOverride.agents);
+        const sensitiveCommandValues = [inlineAgentsJson, claudeSchema, prompt];
         const { stdout } = await runCommandWithIgnoredStdin(
           cmd.file,
           cmd.toArgs([
+            "--safe-mode",
             "-p",
             "--output-format",
             "json",
+            "--agents",
+            inlineAgentsJson,
             "--agent",
             agentId,
             "--json-schema",
@@ -3632,6 +3679,9 @@ async function runClaudeCases(agentIds) {
             cwd: repoRoot,
             timeout: 150_000,
             env: { ...process.env, NO_COLOR: "1" },
+            commandDisplay: `claude --safe-mode -p --agents <runtime-definition> --agent ${agentId} --json-schema <schema> <prompt>`,
+            redactText: (value) =>
+              redactClaudeLiveCommandText(value, sensitiveCommandValues),
           },
         );
 
@@ -3647,8 +3697,11 @@ async function runClaudeCases(agentIds) {
           agentId,
           ok: payload.agent === agentId && score >= 0.8 && !scoutDrift,
           nativeInvocationObserved: true,
-          nativeInvocationKind: "claude_main_session_custom_agent_binding",
-          nativeInvocationCommand: `claude -p --agent ${agentId}`,
+          nativeInvocationKind: "claude_main_session_inline_custom_agent_binding",
+          nativeInvocationCommand: `claude --safe-mode -p --agents <runtime-definition> --agent ${agentId}`,
+          agentDefinitionSourceCategory: runtimeAgentOverride.sourceCategory,
+          agentDefinitionSourceDigest: runtimeAgentOverride.sourceDigest,
+          customizationIsolation: "safe_mode_cli_inline_agent",
           score,
           matchedGroups,
           missedGroups,
