@@ -265,7 +265,8 @@ function startMemoryServiceBackground(endpoint) {
       windowsHide: true,
       env: {
         ...process.env,
-        MCP_ALLOW_ANONYMOUS_ACCESS: "true",
+        MCP_ALLOW_ANONYMOUS_ACCESS:
+          process.env.MCP_ALLOW_ANONYMOUS_ACCESS || "true",
         HF_HUB_OFFLINE: "1",
         TRANSFORMERS_OFFLINE: "1",
       },

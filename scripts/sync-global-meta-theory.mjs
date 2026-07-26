@@ -59,7 +59,7 @@ import {
 import {
   buildCodexHooksJson,
   buildHookPromptAdapterSource,
-  SHARED_RUNTIME_HOOK_FILES,
+  runtimeHookSourceOwner,
 } from "./runtime-hook-mapping.mjs";
 
 // Recorder is lazily opened in runSync(); helpers record through this holder
@@ -165,7 +165,6 @@ const skipDurableMcp = cliOptions?.skipDurableMcp ?? false;
 
 const repoHooksDir = path.join(canonicalRuntimeAssetsDir, "claude", "hooks");
 const sharedHooksDir = path.join(canonicalRuntimeAssetsDir, "shared", "hooks");
-const sharedRuntimeHookFiles = new Set(SHARED_RUNTIME_HOOK_FILES);
 // Files shipped into ~/.claude/hooks/meta-kim/ during global sync.
 // Sources: canonical/runtime-assets/claude/hooks/*.mjs + shared/hooks/*.mjs.
 // This whitelist is the single source of truth for "what belongs to Meta_Kim
@@ -197,10 +196,11 @@ const GLOBAL_HOOK_PACKAGE_FILES = new Set([
   "stop-save-progress.mjs",
   "stop-spine-cleanup.mjs",
   "subagent-context.mjs",
+  // ── runtime-owned source selected per target ──
+  "meta-kim-memory-save.mjs",
   // ── canonical/runtime-assets/shared/hooks/ ──
   "activate-meta-theory-spine.mjs",
   "project-root.mjs",
-  "meta-kim-memory-save.mjs",
   "skip-reminder.mjs",
   "spine-state.mjs",
   "spine-state-utils.mjs",
@@ -1384,8 +1384,10 @@ async function fingerprintSelectedFiles(rootDir, allowedNames) {
   };
 }
 
-async function canonicalHookSourcePath(fileName) {
-  if (sharedRuntimeHookFiles.has(fileName)) {
+async function canonicalHookSourcePath(fileName, runtimeId) {
+  const owner = runtimeHookSourceOwner(runtimeId, fileName);
+  if (!owner) return null;
+  if (owner === "shared") {
     const shared = path.join(sharedHooksDir, fileName);
     return (await pathExists(shared)) ? shared : null;
   }
@@ -1393,19 +1395,17 @@ async function canonicalHookSourcePath(fileName) {
   if (await pathExists(claudeSpecific)) {
     return claudeSpecific;
   }
-  const shared = path.join(sharedHooksDir, fileName);
-  if (await pathExists(shared)) {
-    return shared;
-  }
   return null;
 }
 
-async function fingerprintGlobalHookSources() {
+async function fingerprintGlobalHookSources(runtimeId) {
   const hash = createHash("sha256");
   let fileCount = 0;
   for (const fileName of [...GLOBAL_HOOK_PACKAGE_FILES].sort((left, right) => left.localeCompare(right))) {
-    const filePath = await canonicalHookSourcePath(fileName);
-    if (!filePath) continue;
+    const filePath = await canonicalHookSourcePath(fileName, runtimeId);
+    if (!filePath) {
+      throw new Error(`Missing canonical Hook source for ${runtimeId}:${fileName}`);
+    }
     hash.update(fileName);
     hash.update("\n");
     hash.update(await fs.readFile(filePath));
@@ -1818,9 +1818,9 @@ async function copyCanonicalHooksToGlobal() {
   await fs.rm(dest, { recursive: true, force: true });
   await fs.mkdir(dest, { recursive: true });
   for (const fileName of GLOBAL_HOOK_PACKAGE_FILES) {
-    const sourcePath = await canonicalHookSourcePath(fileName);
+    const sourcePath = await canonicalHookSourcePath(fileName, "claude");
     if (!sourcePath) {
-      continue;
+      throw new Error(`Missing canonical Hook source for claude:${fileName}`);
     }
     const destPath = path.join(dest, fileName);
     await assertRealHomeBound(destPath);
@@ -1897,9 +1897,9 @@ async function copyCanonicalHooksToCodexGlobal() {
   await fs.rm(dest, { recursive: true, force: true });
   await fs.mkdir(dest, { recursive: true });
   for (const fileName of GLOBAL_HOOK_PACKAGE_FILES) {
-    const sourcePath = await canonicalHookSourcePath(fileName);
+    const sourcePath = await canonicalHookSourcePath(fileName, "codex");
     if (!sourcePath) {
-      continue;
+      throw new Error(`Missing canonical Hook source for codex:${fileName}`);
     }
     const destPath = path.join(dest, fileName);
     await assertRealHomeBound(destPath);
@@ -2057,6 +2057,7 @@ function buildCodexGlobalHooksTemplate() {
       "enforce-agent-dispatch.mjs",
     ),
     hookPromptAdapterPath: codexGlobalHookPromptAdapterPath(),
+    stopSpineCleanupHookPath: path.join(absHooks, "stop-spine-cleanup.mjs"),
   });
 }
 
@@ -2369,7 +2370,7 @@ async function runCheck() {
   }
 
   if (selectedTargetIds.includes("claude") && withGlobalHooks) {
-    const repoHooksFp = await fingerprintGlobalHookSources();
+    const repoHooksFp = await fingerprintGlobalHookSources("claude");
     const globalHooksPath = globalMetaKimHooksDir();
     const globalHooksFp = await fingerprintInstalledGlobalHooks(globalHooksPath);
     const hooksInSync =
@@ -2394,7 +2395,7 @@ async function runCheck() {
   }
 
   if (selectedTargetIds.includes("codex") && withGlobalHooks) {
-    const repoHooksFp = await fingerprintGlobalHookSources();
+    const repoHooksFp = await fingerprintGlobalHookSources("codex");
     const codexHooksPath = codexGlobalMetaKimHooksDir();
     const codexHooksFp = await fingerprintInstalledGlobalHooks(codexHooksPath);
     const hooksInSync =

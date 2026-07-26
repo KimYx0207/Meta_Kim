@@ -1,5 +1,4 @@
 import process from "node:process";
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -12,8 +11,10 @@ import {
 import {
   readSpineState,
   readSpineStateIncludingInactive,
-  writeSpineState,
+  activateSpineState,
   createInitialState,
+  createProjectTaskIdentity,
+  readExistingTaskIdentityBinding,
 } from "./spine-state.mjs";
 
 const cwd = process.cwd();
@@ -182,9 +183,18 @@ function detectPromptLanguage(promptText) {
   return "en";
 }
 
-function fingerprintPrompt(promptText) {
-  if (!promptText) return null;
-  return createHash("sha256").update(promptText, "utf8").digest("hex").slice(0, 16);
+function reportTaskIdentityRecoveryBoundary(status, promptText) {
+  const language = detectPromptLanguage(promptText);
+  const reason = status === "existing_key_invalid" ? "invalid" : "missing";
+  const messages = {
+    "zh-CN": `现有运行的任务身份密钥${reason === "invalid" ? "已损坏" : "缺失"}；为避免错误替换，已保持原运行不变。请显式恢复原密钥，或在确认放弃现有运行后重置当前 profile 的治理状态。`,
+    "ja-JP": `既存実行のタスク識別キーが${reason === "invalid" ? "破損しています" : "見つかりません"}。誤った置換を防ぐため既存実行は変更していません。元のキーを明示的に復元するか、既存実行を破棄すると確認した後で現在の profile のガバナンス状態をリセットしてください。`,
+    "ko-KR": `기존 실행의 작업 식별 키가 ${reason === "invalid" ? "손상되었습니다" : "없습니다"}. 잘못된 교체를 막기 위해 기존 실행을 변경하지 않았습니다. 원래 키를 명시적으로 복구하거나 기존 실행을 포기한 뒤 현재 profile의 거버넌스 상태를 재설정하세요.`,
+    en: `The existing run's task identity key is ${reason}. The run was left unchanged to prevent an incorrect replacement. Explicitly restore the original key, or reset this profile's governance state only after confirming that the existing run may be abandoned.`,
+  };
+  process.stderr.write(
+    `[meta-theory][task-identity-key-${reason}] ${messages[language] || messages.en}\n`,
+  );
 }
 
 function staleMinutes() {
@@ -319,10 +329,29 @@ if (!projectRoot) {
 startPostCopyAutoInit(projectRoot);
 
 const rawPromptText = getRawPromptText();
-const promptFingerprint = fingerprintPrompt(rawPromptText);
 const rawExisting = await readSpineStateIncludingInactive(projectRoot);
 const existing = rawExisting?.active === false ? null : rawExisting || (await readSpineState(projectRoot));
+const identityBinding = await readExistingTaskIdentityBinding(projectRoot);
+const taskIdentity = await createProjectTaskIdentity(projectRoot, rawPromptText, {
+  profile: identityBinding.profile,
+  requireExisting: identityBinding.hmacBound,
+});
+if (["existing_key_missing", "existing_key_invalid"].includes(taskIdentity.status)) {
+  reportTaskIdentityRecoveryBoundary(taskIdentity.status, rawPromptText);
+  process.exit(0);
+}
+const promptFingerprint = taskIdentity.taskFingerprint;
 if (existing && existing.active && !shouldReplaceActiveState(existing, promptFingerprint)) {
+  const existingFingerprint =
+    existing?.stageRuntimeControl?.promptFingerprint ||
+    existing?.promptFingerprint ||
+    null;
+  if (existingFingerprint && existingFingerprint === promptFingerprint) {
+    await activateSpineState(projectRoot, existing, {
+      expectedRunId: existing.runId || null,
+      refreshExisting: true,
+    });
+  }
   process.exit(0);
 }
 
@@ -333,6 +362,8 @@ const state = createInitialState({
   driverMode: "hook_observed",
   hookGateMode: "advisory",
   promptFingerprint,
+  taskFingerprint: taskIdentity.taskFingerprint,
+  taskIdentitySource: taskIdentity.taskIdentitySource,
   latestUserInputLanguage: detectPromptLanguage(rawPromptText),
   factGatePolicy: "managed_gate_required_for_public_ready",
   executionLeasePolicy: "advisory_until_managed_stage_driver",
@@ -380,7 +411,10 @@ if (isFanoutActivation) {
         : "meta_theory_trigger_request";
 }
 
-await writeSpineState(projectRoot, state);
+await activateSpineState(projectRoot, state, {
+  replaceActive: existing?.active === true,
+  expectedRunId: existing?.runId || null,
+});
 
 // ── multi-agent helpers ───────────────────────────────────────────────────────
 // 1) runAutoCapabilitySearch：扫 canonical/agents/ + agent-eligibility.json，

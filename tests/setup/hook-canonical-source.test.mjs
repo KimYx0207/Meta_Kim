@@ -1,12 +1,23 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { SHARED_RUNTIME_HOOK_FILES } from "../../scripts/runtime-hook-mapping.mjs";
+import {
+  runtimeHookSourceOwner,
+  SHARED_RUNTIME_HOOK_FILES,
+} from "../../scripts/runtime-hook-mapping.mjs";
 import {
   createInitialState,
   readMetaRunStatus,
@@ -50,7 +61,43 @@ test("cross-runtime hook core has one canonical owner", () => {
   }
 });
 
-test("global hook sync projects the shared core identically to Claude, Codex, and Cursor", () => {
+test("runtime-specific memory hooks keep explicit source owners", () => {
+  const claudeMemory = readFileSync(
+    join(CLAUDE_HOOK_DIR, "meta-kim-memory-save.mjs"),
+    "utf8",
+  );
+  const genericMemory = readFileSync(
+    join(SHARED_HOOK_DIR, "meta-kim-memory-save.mjs"),
+    "utf8",
+  );
+
+  assert.equal(runtimeHookSourceOwner("claude", "meta-kim-memory-save.mjs"), "claude");
+  assert.equal(runtimeHookSourceOwner("codex", "meta-kim-memory-save.mjs"), "shared");
+  assert.equal(runtimeHookSourceOwner("cursor", "meta-kim-memory-save.mjs"), "shared");
+  assert.equal(runtimeHookSourceOwner("claude", "stop-spine-cleanup.mjs"), "claude");
+  assert.equal(runtimeHookSourceOwner("codex", "stop-spine-cleanup.mjs"), "shared");
+  assert.equal(runtimeHookSourceOwner("cursor", "stop-spine-cleanup.mjs"), "shared");
+  assert.equal(runtimeHookSourceOwner("codex", "stop-compaction.mjs"), "claude");
+  assert.equal(runtimeHookSourceOwner("cursor", "stop-compaction.mjs"), "claude");
+  assert.equal(runtimeHookSourceOwner("codex", "unknown-same-name.mjs"), null);
+  assert.match(
+    claudeMemory,
+    /process\.env\.MCP_ALLOW_ANONYMOUS_ACCESS \|\| "true"/u,
+  );
+  assert.match(
+    genericMemory,
+    /process\.env\.MCP_ALLOW_ANONYMOUS_ACCESS \|\| "true"/u,
+  );
+  const setupSource = readFileSync(join(REPO_ROOT, "setup.mjs"), "utf8");
+  assert.match(
+    setupSource,
+    /runtimeHookSourceOwner\(platformId, hookName\)/u,
+  );
+  const syncSource = readFileSync(join(REPO_ROOT, "scripts", "sync-runtimes.mjs"), "utf8");
+  assert.doesNotMatch(syncSource, /codexMemoryHookContent|cursorMemoryHookContent/u);
+});
+
+test("global hook sync projects universal core and runtime-owned memory entrypoints", () => {
   const root = mkdtempSync(join(tmpdir(), "meta-kim-hook-source-"));
   try {
     const homes = {
@@ -61,11 +108,11 @@ test("global hook sync projects the shared core identically to Claude, Codex, an
     const result = spawnSync(
       process.execPath,
       [
-        "scripts/sync-runtimes.mjs",
-        "--scope",
-        "global",
+        "scripts/sync-global-meta-theory.mjs",
         "--targets",
-        "claude,codex,cursor",
+        "claude,codex",
+        "--with-global-hooks",
+        "--skip-durable-mcp",
       ],
       {
         cwd: REPO_ROOT,
@@ -79,6 +126,19 @@ test("global hook sync projects the shared core identically to Claude, Codex, an
       },
     );
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    const cursorResult = spawnSync(
+      process.execPath,
+      ["scripts/sync-runtimes.mjs", "--scope", "global", "--targets", "cursor"],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          META_KIM_CURSOR_HOME: homes.cursor,
+        },
+      },
+    );
+    assert.equal(cursorResult.status, 0, cursorResult.stderr || cursorResult.stdout);
 
     for (const fileName of SHARED_RUNTIME_HOOK_FILES) {
       const canonical = readFileSync(join(SHARED_HOOK_DIR, fileName), "utf8");
@@ -89,6 +149,134 @@ test("global hook sync projects the shared core identically to Claude, Codex, an
         );
         assert.equal(projected, canonical, `${runtime}:${fileName}`);
       }
+    }
+    const claudeMemory = readFileSync(
+      join(homes.claude, "hooks", "meta-kim", "meta-kim-memory-save.mjs"),
+      "utf8",
+    );
+    const codexMemory = readFileSync(
+      join(homes.codex, "hooks", "meta-kim", "meta-kim-memory-save.mjs"),
+      "utf8",
+    );
+    const cursorMemory = readFileSync(
+      join(homes.cursor, "hooks", "meta-kim", "meta-kim-memory-save.mjs"),
+      "utf8",
+    );
+    assert.equal(
+      claudeMemory,
+      readFileSync(join(CLAUDE_HOOK_DIR, "meta-kim-memory-save.mjs"), "utf8"),
+    );
+    assert.equal(
+      codexMemory,
+      readFileSync(join(SHARED_HOOK_DIR, "meta-kim-memory-save.mjs"), "utf8"),
+    );
+    assert.equal(cursorMemory, codexMemory);
+    const claudeStop = readFileSync(
+      join(homes.claude, "hooks", "meta-kim", "stop-spine-cleanup.mjs"),
+      "utf8",
+    );
+    const codexStop = readFileSync(
+      join(homes.codex, "hooks", "meta-kim", "stop-spine-cleanup.mjs"),
+      "utf8",
+    );
+    const cursorStop = readFileSync(
+      join(homes.cursor, "hooks", "meta-kim", "stop-spine-cleanup.mjs"),
+      "utf8",
+    );
+    assert.equal(
+      claudeStop,
+      readFileSync(join(CLAUDE_HOOK_DIR, "stop-spine-cleanup.mjs"), "utf8"),
+    );
+    assert.equal(
+      codexStop,
+      readFileSync(join(SHARED_HOOK_DIR, "stop-spine-cleanup.mjs"), "utf8"),
+    );
+    assert.equal(cursorStop, codexStop);
+    assert.notEqual(claudeStop, codexStop);
+
+    const projectRoot = join(root, "project");
+    mkdirSync(join(projectRoot, ".git"), { recursive: true });
+    for (const [runtime, home] of Object.entries(homes)) {
+      const hooksDir = join(home, "hooks", "meta-kim");
+      const profile = `projected-${runtime}`;
+      const env = {
+        ...process.env,
+        META_KIM_PROFILE: profile,
+        META_KIM_DISABLE_MEMORY_AUTOSTART: "1",
+        META_KIM_POST_COPY_AUTO: "off",
+      };
+      for (const dependency of [
+        "activate-meta-theory-spine.mjs",
+        "project-root.mjs",
+        "spine-state.mjs",
+        "spine-state-utils.mjs",
+        "utils.mjs",
+        "stop-spine-cleanup.mjs",
+      ]) {
+        assert.equal(existsSync(join(hooksDir, dependency)), true, `${runtime}:${dependency}`);
+      }
+
+      const activate = (prompt) => spawnSync(
+        process.execPath,
+        [join(hooksDir, "activate-meta-theory-spine.mjs")],
+        {
+          cwd: projectRoot,
+          encoding: "utf8",
+          env,
+          input: JSON.stringify({ prompt }),
+        },
+      );
+      const firstActivation = activate("critical and fetch thinking and review repair projected lifecycle");
+      assert.equal(firstActivation.status, 0, firstActivation.stderr);
+
+      const spinePath = join(
+        projectRoot,
+        ".meta-kim",
+        "state",
+        profile,
+        "spine",
+        "spine-state.json",
+      );
+      const first = JSON.parse(readFileSync(spinePath, "utf8"));
+      assert.match(first.runId, /^meta-/u);
+      assert.match(first.taskFingerprint, /^hmac-sha256:[a-f0-9]{64}$/u);
+      assert.equal(Object.hasOwn(first, "task"), false);
+
+      const secondActivation = activate("critical and fetch thinking and review update projected replacement");
+      assert.equal(secondActivation.status, 0, secondActivation.stderr);
+      const second = JSON.parse(readFileSync(spinePath, "utf8"));
+      assert.notEqual(second.runId, first.runId);
+      const superseded = JSON.parse(readFileSync(join(
+        projectRoot,
+        ".meta-kim",
+        "state",
+        profile,
+        "runs",
+        first.runId,
+        "status.json",
+      ), "utf8"));
+      assert.equal(superseded.active, false);
+      assert.equal(superseded.lifecycleStatus, "superseded");
+      assert.equal(superseded.supersededByRunId, second.runId);
+
+      const stop = spawnSync(
+        process.execPath,
+        [join(hooksDir, "stop-spine-cleanup.mjs")],
+        { cwd: projectRoot, encoding: "utf8", env, input: "{}" },
+      );
+      assert.equal(stop.status, 0, stop.stderr);
+      const terminal = JSON.parse(readFileSync(join(
+        projectRoot,
+        ".meta-kim",
+        "state",
+        profile,
+        "runs",
+        second.runId,
+        "status.json",
+      ), "utf8"));
+      assert.equal(terminal.active, false);
+      assert.equal(terminal.lifecycleStatus, "session_stopped");
+      assert.equal(terminal.deactivationReason, "session_stop");
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -103,7 +291,7 @@ test("concurrent spine writes remain atomic and keep status paired with state", 
         taskClassification: "concurrency_regression",
         triggerReason: "test",
       }),
-      runId: `concurrent-${index}`,
+      runId: `meta-concurrent-${index}`,
       currentStage: index % 2 === 0 ? "fetch" : "thinking",
       writerMarker: index,
     }));
@@ -141,6 +329,30 @@ test("stale lock owners are reclaimed after a crashed writer", async () => {
   }
 });
 
+test("an old lock owned by a live PID is never reclaimed", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "meta-kim-live-lock-"));
+  const lockPath = join(cwd, "spine-state.json.lock");
+  try {
+    const content = `${JSON.stringify({
+      pid: process.pid,
+      createdAt: "2000-01-01T00:00:00.000Z",
+      nonce: "live-owner",
+    })}\n`;
+    writeFileSync(lockPath, content);
+    const oldTime = new Date("2000-01-01T00:00:00.000Z");
+    utimesSync(lockPath, oldTime, oldTime);
+    let entered = false;
+    await assert.rejects(
+      withFileLock(lockPath, async () => { entered = true; }),
+      /Failed to acquire file lock/u,
+    );
+    assert.equal(entered, false);
+    assert.equal(readFileSync(lockPath, "utf8"), content);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("META_KIM_PROFILE keeps spine and status envelopes in one named profile", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "meta-kim-named-profile-"));
   const previous = process.env.META_KIM_PROFILE;
@@ -148,7 +360,7 @@ test("META_KIM_PROFILE keeps spine and status envelopes in one named profile", a
   try {
     const state = {
       ...createInitialState({ taskClassification: "profile_regression", triggerReason: "test" }),
-      runId: "named-profile-run",
+      runId: "meta-named-profile-run",
       currentStage: "fetch",
     };
     await writeSpineState(cwd, state);
@@ -175,7 +387,7 @@ test("writeSpineState resolves one profile when environment and state disagree",
   try {
     const state = {
       ...createInitialState({ taskClassification: "profile_regression", triggerReason: "test" }),
-      runId: "profile-mismatch-run",
+      runId: "meta-profile-mismatch-run",
       currentStage: "thinking",
       profile: "state-profile",
     };
@@ -197,7 +409,7 @@ test("writeSpineState resolves one profile when environment and state disagree",
           "state",
           "environment-profile",
           "runs",
-          "profile-mismatch-run",
+          "meta-profile-mismatch-run",
           "status.json",
         ),
       ),
@@ -220,7 +432,7 @@ test("custom spine directory routes spine and status through the same profile", 
   try {
     const state = {
       ...createInitialState({ taskClassification: "profile_regression", triggerReason: "test" }),
-      runId: "custom-profile-run",
+      runId: "meta-custom-profile-run",
       currentStage: "review",
     };
     await writeSpineState(cwd, state);
@@ -241,15 +453,15 @@ test("custom spine directory routes spine and status through the same profile", 
           "state",
           "custom-profile",
           "runs",
-          "custom-profile-run",
+          "meta-custom-profile-run",
           "status.json",
         ),
       ),
       true,
     );
     assert.equal(existsSync(join(cwd, ".meta-kim", "state", "environment-profile")), false);
-    assert.equal((await readSpineStateIncludingInactive(cwd))?.runId, "custom-profile-run");
-    assert.equal((await readMetaRunStatus(cwd, "custom-profile"))?.runId, "custom-profile-run");
+    assert.equal((await readSpineStateIncludingInactive(cwd))?.runId, "meta-custom-profile-run");
+    assert.equal((await readMetaRunStatus(cwd, "custom-profile"))?.runId, "meta-custom-profile-run");
   } finally {
     if (previousProfile === undefined) delete process.env.META_KIM_PROFILE;
     else process.env.META_KIM_PROFILE = previousProfile;
@@ -260,18 +472,23 @@ test("custom spine directory routes spine and status through the same profile", 
 });
 
 test("profile sanitization is stable, readable, and collision-resistant", () => {
-  for (const profile of ["default", "tenant-a", "team.one_2", "UPPER.case"]) {
+  for (const profile of ["default", "tenant-a", "team.one_2"]) {
     assert.equal(sanitizeStateProfile(profile), profile);
   }
+  const upper = sanitizeStateProfile("UPPER.case");
+  assert.match(upper, /^derived-upper\.case-[a-f0-9]{12}$/u);
+  assert.notEqual(upper, sanitizeStateProfile("upper.case"));
+  assert.notEqual(sanitizeStateProfile("Team"), sanitizeStateProfile("team"));
+  assert.equal(sanitizeStateProfile("Team"), sanitizeStateProfile("Team"));
 
   const slash = sanitizeStateProfile("tenant/a");
   const space = sanitizeStateProfile("tenant a");
-  assert.match(slash, /^tenant-a-[a-f0-9]{12}$/u);
-  assert.match(space, /^tenant-a-[a-f0-9]{12}$/u);
+  assert.match(slash, /^derived-tenant-a-[a-f0-9]{12}$/u);
+  assert.match(space, /^derived-tenant-a-[a-f0-9]{12}$/u);
   assert.notEqual(slash, space);
 
   const traversal = sanitizeStateProfile("../../customer-a");
-  assert.match(traversal, /^customer-a-[a-f0-9]{12}$/u);
+  assert.match(traversal, /^derived-customer-a-[a-f0-9]{12}$/u);
   assert.doesNotMatch(traversal, /\.\.|[\\/]/u);
 
   const longA = sanitizeStateProfile(`${"tenant".repeat(20)}-a`);
@@ -290,7 +507,7 @@ test("unsafe custom spine profile segment uses the same collision-resistant rout
     const profile = sanitizeStateProfile("tenant a");
     const state = {
       ...createInitialState({ taskClassification: "profile_regression", triggerReason: "test" }),
-      runId: "unsafe-custom-profile-run",
+      runId: "meta-unsafe-custom-profile-run",
     };
     await writeSpineState(cwd, state);
     assert.equal(

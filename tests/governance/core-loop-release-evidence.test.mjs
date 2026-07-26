@@ -230,12 +230,20 @@ test("release stages derive runtime targets and timeout budgets from canonical p
   const setupStage = STAGES.find((stage) => stage.name === "meta:test:setup");
   assert.equal(setupStage?.cmd, "npm run meta:test:setup");
   assert.ok(setupStage.timeoutMs > 0);
+  const metaTheoryStage = STAGES.find(
+    (stage) => stage.name === "meta:test:meta-theory",
+  );
+  assert.equal(metaTheoryStage?.cmd, "npm run meta:test:meta-theory");
+  assert.ok(
+    metaTheoryStage.timeoutMs >= 300_000,
+    "the full meta-theory suite must retain release-sequence load headroom",
+  );
   const primaryRuntimeFuseStage = STAGES.find(
     (stage) => stage.name === "eval-meta-agents",
   );
   assert.ok(primaryRuntimeFuseStage);
   assert.ok(
-    primaryRuntimeFuseStage.timeoutMs >= 600_000,
+    primaryRuntimeFuseStage.timeoutMs >= 900_000,
     "outer release timeout must cover the dual-primary live probe worst-case budget",
   );
   assert.match(evalMetaAgentsSource, /attempt <= 2/u);
@@ -245,12 +253,12 @@ test("release stages derive runtime targets and timeout budgets from canonical p
     /const CODEX_LIVE_TIMEOUT_MS\s*=\s*180_000/u,
   );
   const claudeWorstCaseMs = 2 * 150_000;
-  const codexWorstCaseMs = 180_000;
+  const codexWorstCaseMs = 2 * 240_000;
   const processAndDiscoveryAllowanceMs = 60_000;
   assert.ok(
     claudeWorstCaseMs + codexWorstCaseMs + processAndDiscoveryAllowanceMs <
       primaryRuntimeFuseStage.timeoutMs,
-    "the 600s outer stage must leave positive headroom after both primary live probes",
+    "the 900s outer stage must leave positive headroom after both primary live probes",
   );
   assert.equal(
     STAGES.some((stage) => stage.name === "meta:test:setup:packed"),

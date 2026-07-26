@@ -92,12 +92,75 @@ export const HOOKPROMPT_PLATFORM_SUPPORT = {
 export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
   "activate-meta-theory-spine.mjs",
   "project-root.mjs",
-  "meta-kim-memory-save.mjs",
   "skip-reminder.mjs",
   "spine-state.mjs",
   "spine-state-utils.mjs",
   "utils.mjs",
 ]);
+
+const CLAUDE_COMPATIBLE_HOOK_FILES = Object.freeze([
+  "bash-readonly-whitelist.mjs",
+  "block-dangerous-bash.mjs",
+  "ecc-permission-cache-wrapper.mjs",
+  "enforce-agent-dispatch.mjs",
+  "graphify-context.mjs",
+  "hook-i18n.mjs",
+  "post-console-log-warn.mjs",
+  "post-format.mjs",
+  "post-typecheck.mjs",
+  "stop-compaction.mjs",
+  "stop-completion-guard.mjs",
+  "stop-console-log-audit.mjs",
+  "stop-memory-save.mjs",
+  "stop-save-progress.mjs",
+  "subagent-context.mjs",
+]);
+
+/**
+ * Canonical source ownership for runtime-facing Hook entrypoints.
+ *
+ * A `claude` value for Codex/Cursor is an explicit compatibility declaration:
+ * it never means "fall back to Claude when no owner is known". Runtime-neutral
+ * state helpers remain in SHARED_RUNTIME_HOOK_FILES, while entrypoints that may
+ * diverge keep an explicit per-runtime owner here.
+ */
+export const RUNTIME_HOOK_SOURCE_OWNERS = Object.freeze({
+  ...Object.fromEntries(
+    CLAUDE_COMPATIBLE_HOOK_FILES.map((fileName) => [
+      fileName,
+      Object.freeze({ claude: "claude", codex: "claude", cursor: "claude" }),
+    ]),
+  ),
+  "meta-kim-memory-save.mjs": Object.freeze({
+    claude: "claude",
+    codex: "shared",
+    cursor: "shared",
+  }),
+  "stop-spine-cleanup.mjs": Object.freeze({
+    claude: "claude",
+    codex: "shared",
+    cursor: "shared",
+  }),
+  // OpenClaw currently consumes only this explicitly compatible entrypoint.
+  "stop-save-progress.mjs": Object.freeze({
+    claude: "claude",
+    codex: "claude",
+    cursor: "claude",
+    openclaw: "claude",
+  }),
+});
+
+export function runtimeHookSourceOwner(runtimeId, fileName) {
+  if (SHARED_RUNTIME_HOOK_FILES.includes(fileName)) {
+    if (!["claude", "codex", "cursor"].includes(runtimeId)) {
+      return null;
+    }
+    return "shared";
+  }
+  const owner = RUNTIME_HOOK_SOURCE_OWNERS[fileName]?.[runtimeId];
+  if (owner) return owner;
+  return null;
+}
 
 export function commandToken(value) {
   return /[\s"]/u.test(String(value)) ? JSON.stringify(String(value)) : String(value);
@@ -310,6 +373,7 @@ export function buildCodexHooksJson({
   packageRoot = null,
   enforceAgentDispatchHookPath = ".codex/hooks/enforce-agent-dispatch.mjs",
   hookPromptAdapterPath = null,
+  stopSpineCleanupHookPath = null,
 } = {}) {
   const userPromptHooks = [];
   const spineHookArgs = packageRoot ? ["--package-root", packageRoot] : [];
@@ -367,9 +431,21 @@ export function buildCodexHooksJson({
         ],
       },
     ];
+  }
+  const stopHooks = [];
+  if (memoryHookPath) {
+    stopHooks.push(
+      hookCommand(nodeHookCommand(memoryHookPath, ["--event", "stop"]), 10),
+    );
+  }
+  if (stopSpineCleanupHookPath) {
+    stopHooks.push(hookCommand(nodeHookCommand(stopSpineCleanupHookPath), 10));
+  }
+  if (stopHooks.length > 0) {
     hooks.Stop = [
       {
-        hooks: [hookCommand(nodeHookCommand(memoryHookPath, ["--event", "stop"]), 10)],
+        matcher: "*",
+        hooks: stopHooks,
       },
     ];
   }

@@ -24,6 +24,7 @@ function run(script, args = [], env = {}, cwd = repoRoot) {
     cwd,
     encoding: "utf8",
     env: { ...process.env, ...env },
+    maxBuffer: 32 * 1024 * 1024,
   });
 }
 

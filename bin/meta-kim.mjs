@@ -149,6 +149,7 @@ function runConciseStatus(args, copy) {
     cwd: root,
     encoding: "utf8",
     env: process.env,
+    maxBuffer: 32 * 1024 * 1024,
   });
   if (result.status !== 0) {
     if (result.stderr) process.stderr.write(result.stderr);

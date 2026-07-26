@@ -1,13 +1,9 @@
 import process from "node:process";
 import { readJsonFromStdin } from "./utils.mjs";
-import {
-  readSpineStateIncludingInactive,
-  terminalizeSpineState,
-} from "./spine-state.mjs";
+import { readSpineStateIncludingInactive, terminalizeSpineState } from "./spine-state.mjs";
 
-// Claude Code Stop entrypoint. Keep this runtime-facing adapter independent
-// from the generic Codex/Cursor entrypoint: only the lifecycle implementation
-// in spine-state.mjs is shared across runtimes.
+// Generic Codex/Cursor Stop entrypoint. Runtime-neutral lifecycle transitions
+// live in spine-state.mjs; Claude Code keeps its own independent entrypoint.
 
 await readJsonFromStdin();
 
@@ -29,21 +25,21 @@ try {
   });
   if (!result.terminalized) {
     process.stderr.write(
-      `[spine-cleanup] skipped stale Claude Stop request, reason=${result.reason || "authoritative_state_changed"}\n`,
+      `[spine-cleanup] skipped stale stop request, reason=${result.reason || "authoritative_state_changed"}\n`,
     );
     process.exit(0);
   }
   if (evolutionCompleted) {
     process.stderr.write(
-      `[spine-cleanup] Claude evolution completed, run=${result.runId || "unknown"} terminalized before spine state removal\n`,
+      `[spine-cleanup] evolution completed, run=${result.runId || "unknown"} terminalized before spine state removal\n`,
     );
   } else {
     process.stderr.write(
-      `[spine-cleanup] Claude spine deactivated at stage=${state.currentStage}, agents dispatched=${state.dispatchedAgents?.length || 0}\n`,
+      `[spine-cleanup] spine deactivated at stage=${state.currentStage}, agents dispatched=${state.dispatchedAgents?.length || 0}\n`,
     );
   }
 } catch {
-  // Stop cleanup is advisory and must never prevent Claude Code shutdown.
+  // Non-critical: never block session stop
 }
 
 process.exit(0);

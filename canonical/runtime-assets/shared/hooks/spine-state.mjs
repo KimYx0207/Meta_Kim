@@ -1,5 +1,12 @@
-import { readFile, mkdir } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import {
+  readFile,
+  mkdir,
+  readdir,
+  unlink,
+  lstat,
+  realpath,
+} from "node:fs/promises";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { join, dirname, resolve, relative, isAbsolute } from "node:path";
 import { atomicWriteJson, withFileLock } from "./spine-state-utils.mjs";
 
@@ -8,6 +15,34 @@ const DEFAULT_SPINE_STATE_DIR = ".meta-kim/state/default/spine";
 const SPINE_STATE_FILE = "spine-state.json";
 const ACTIVE_RUN_STATUS_FILE = "active-run.json";
 const RUN_STATUS_FILE = "status.json";
+const RUN_STATUS_LIFECYCLE_MIGRATION = "run-status-lifecycle-v1";
+const RUN_STATUS_LIFECYCLE_COMPLETION_SIDECAR =
+  `${RUN_STATUS_LIFECYCLE_MIGRATION}.managed-completion.json`;
+const RUN_STATUS_SCHEMA_VERSION = 2;
+const MIGRATION_MARKER_SCHEMA = "run-status-lifecycle-marker-v1";
+const HISTORICAL_RUN_ID_RE = /^meta-[A-Za-z0-9](?:[A-Za-z0-9._-]{0,115})$/u;
+const CANONICAL_RUN_ID_RE = /^meta-[a-z0-9](?:[a-z0-9._-]{0,115})$/u;
+const DIRECT_PROFILE_RE = /^[a-z0-9._-]+$/u;
+const DERIVED_PROFILE_PREFIX = "derived-";
+const TASK_FINGERPRINT_RE = /^hmac-sha256:[a-f0-9]{64}$/u;
+const TASK_IDENTITY_KEY_SCHEMA = "task-identity-key-v1";
+const HISTORICAL_MIGRATION_ENVELOPE = Symbol("historical-migration-envelope");
+const taskIdentityKeyInflight = new Map();
+
+export const RUN_LIFECYCLE_STATUSES = [
+  "active",
+  "inactive",
+  "session_stopped",
+  "evolution_completed",
+  "superseded",
+  "archived_legacy",
+];
+
+export const TASK_IDENTITY_SOURCES = [
+  "project_profile_hmac_sha256",
+  "not_available",
+  "unrecoverable_legacy",
+];
 
 export const STAGE_ORDER = [
   "critical",
@@ -168,7 +203,7 @@ const META_AGENT_NAMES = [
 ];
 
 function createRunId(timestamp = new Date().toISOString()) {
-  return `meta-${timestamp.replace(/[:.]/g, "-")}`;
+  return `meta-${timestamp.replace(/[:.]/g, "-").toLowerCase()}-${randomBytes(8).toString("hex")}`;
 }
 
 function isWithin(parent, target) {
@@ -183,20 +218,50 @@ export function sanitizeStateProfile(input) {
     raw !== "." &&
     raw !== ".." &&
     raw.length <= 80 &&
-    /^[A-Za-z0-9._-]+$/u.test(raw)
+    DIRECT_PROFILE_RE.test(raw) &&
+    !raw.startsWith(DERIVED_PROFILE_PREFIX)
   ) {
     return raw;
   }
 
   const normalized = raw
+    .toLowerCase()
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^[._-]+|[._-]+$/g, "");
   const suffix = createHash("sha256").update(raw, "utf8").digest("hex").slice(0, 12);
-  const maxBaseLength = 80 - suffix.length - 1;
+  const maxBaseLength = 80 - DERIVED_PROFILE_PREFIX.length - suffix.length - 1;
   const readableBase = (normalized || "profile")
     .slice(0, maxBaseLength)
     .replace(/[._-]+$/gu, "") || "profile";
-  return `${readableBase}-${suffix}`;
+  return `${DERIVED_PROFILE_PREFIX}${readableBase}-${suffix}`;
+}
+
+function isCanonicalStateProfile(value) {
+  if (typeof value !== "string" || value.length > 80) return false;
+  if (
+    DIRECT_PROFILE_RE.test(value) &&
+    !value.startsWith(DERIVED_PROFILE_PREFIX)
+  ) {
+    return value !== "." && value !== "..";
+  }
+  return /^derived-[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?-[a-f0-9]{12}$/u.test(value);
+}
+
+export function validateCanonicalStateProfile(value) {
+  if (!isCanonicalStateProfile(value)) {
+    throw new TypeError("Invalid canonical Meta_Kim state profile.");
+  }
+  return value;
+}
+
+function resolveCanonicalProfileStateDir(cwd, canonicalProfile, ...segments) {
+  validateCanonicalStateProfile(canonicalProfile);
+  const stateRoot = resolveMetaKimStateRoot(cwd);
+  const candidate = resolve(stateRoot, canonicalProfile, ...segments);
+  if (!isWithin(stateRoot, candidate)) {
+    return resolve(stateRoot, "default", ...segments);
+  }
+  return candidate;
 }
 
 export function resolveMetaKimStateRoot(cwd) {
@@ -222,12 +287,17 @@ export function resolveRepoLocalStateDir(cwd, requestedPath, fallbackPath) {
 
 export function resolveProfileStateDir(cwd, profile, ...segments) {
   const safeProfile = sanitizeStateProfile(profile);
-  const stateRoot = resolveMetaKimStateRoot(cwd);
-  const candidate = resolve(stateRoot, safeProfile, ...segments);
-  if (!isWithin(stateRoot, candidate)) {
-    return resolve(stateRoot, "default", ...segments);
+  return resolveCanonicalProfileStateDir(cwd, safeProfile, ...segments);
+}
+
+function ownEnumerableDataField(value, key) {
+  if (!value || typeof value !== "object") return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!descriptor.enumerable || !Object.hasOwn(descriptor, "value")) {
+    throw jsonBoundaryTypeError(`routing field ${key} must be an own enumerable data property`);
   }
-  return candidate;
+  return descriptor.value;
 }
 
 export function extractMetaAgentName(description, prompt) {
@@ -239,17 +309,23 @@ export function extractMetaAgentName(description, prompt) {
 }
 
 function resolveSpineStateRoute(cwd, state = null) {
+  const stateProfile =
+    ownEnumerableDataField(state, "profile") ||
+    ownEnumerableDataField(state, "stateProfile");
   const fallbackProfile = sanitizeStateProfile(
     process.env.META_KIM_PROFILE ||
       process.env.META_KIM_STATE_PROFILE ||
-      state?.profile ||
-      state?.stateProfile,
+      stateProfile,
   );
+  const requestedStateDir = process.env.META_KIM_SPINE_STATE_DIR;
   let stateDir = resolveRepoLocalStateDir(
     cwd,
-    process.env.META_KIM_SPINE_STATE_DIR,
+    requestedStateDir,
     join(".meta-kim", "state", fallbackProfile, "spine"),
   );
+  if (typeof requestedStateDir !== "string" || !requestedStateDir.trim()) {
+    return { filePath: join(stateDir, SPINE_STATE_FILE), profile: fallbackProfile };
+  }
   const stateRoot = resolveMetaKimStateRoot(cwd);
   const routeSegments = relative(stateRoot, stateDir).split(/[\\/]+/u).filter(Boolean);
   const firstSegment = routeSegments[0];
@@ -272,16 +348,17 @@ function ensureDir(filePath) {
 
 function normalizeStage(stageName) {
   if (typeof stageName !== "string") return "critical";
-  const normalized = stageName.trim().toLowerCase().replace(/-/g, "_");
+  const normalized = stageName.trim().toLowerCase().replace(/_/g, "-");
   return STAGE_ORDER.includes(normalized) ? normalized : "critical";
 }
 
 function profileFromState(state) {
-  return sanitizeStateProfile(
-    state?.profile ||
-      state?.stateProfile ||
+  return (
+    ownEnumerableDataField(state, "profile") ||
+      ownEnumerableDataField(state, "stateProfile") ||
       process.env.META_KIM_PROFILE ||
-      process.env.META_KIM_STATE_PROFILE,
+      process.env.META_KIM_STATE_PROFILE ||
+      "default"
   );
 }
 
@@ -308,49 +385,1073 @@ function resolveOutputLanguage(state, options = {}) {
   return { language: "undetermined", source: "not_resolved" };
 }
 
+export function validateRunId(runId) {
+  if (typeof runId !== "string" || !CANONICAL_RUN_ID_RE.test(runId)) {
+    throw new TypeError(
+      "Invalid Meta_Kim runId: new writes require lowercase meta- plus 1-116 safe ASCII characters (maximum 120 total).",
+    );
+  }
+  return runId;
+}
+
+function validateHistoricalRunId(runId) {
+  if (typeof runId !== "string" || !HISTORICAL_RUN_ID_RE.test(runId)) {
+    throw new TypeError("Invalid historical Meta_Kim runId.");
+  }
+  return runId;
+}
+
+function normalizeTaskFingerprint(value) {
+  return typeof value === "string" && TASK_FINGERPRINT_RE.test(value)
+    ? value
+    : null;
+}
+
 function runStatusPaths(cwd, profile, runId) {
-  const profileDir = resolveProfileStateDir(cwd, profile);
+  const safeRunId = validateRunId(runId);
+  const profileDir = resolveCanonicalProfileStateDir(cwd, profile);
   return {
     activeRun: join(profileDir, ACTIVE_RUN_STATUS_FILE),
-    runStatus: join(profileDir, "runs", runId, RUN_STATUS_FILE),
+    runStatus: join(profileDir, "runs", safeRunId, RUN_STATUS_FILE),
   };
+}
+
+const FORBIDDEN_RAW_PROMPT_FIELD_NAMES = new Set([
+  "task",
+  "tasktext",
+  "rawprompttext",
+  "rawprompt",
+  "userprompt",
+  "prompttext",
+  "taskidentitystatus",
+  "tasktruncation",
+]);
+const FORBIDDEN_STRUCTURAL_FIELD_NAMES = new Set([
+  "__proto__",
+  "prototype",
+  "constructor",
+]);
+
+function normalizedBoundaryFieldName(key) {
+  return String(key).toLowerCase().replace(/[_-]/gu, "");
+}
+
+function jsonBoundaryTypeError(reason) {
+  return new TypeError(`Unsafe Meta_Kim JSON boundary value: ${reason}.`);
+}
+
+function sanitizeJsonBoundary(value, ancestors = new WeakSet()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw jsonBoundaryTypeError("non-finite number");
+    return value;
+  }
+  if (["undefined", "function", "symbol", "bigint"].includes(typeof value)) {
+    throw jsonBoundaryTypeError(typeof value);
+  }
+  if (ancestors.has(value)) {
+    throw new TypeError("Cyclic Meta_Kim state is not serializable at the JSON boundary.");
+  }
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const descriptors = Object.getOwnPropertyDescriptors(value);
+      const length = descriptors.length?.value;
+      if (!Number.isSafeInteger(length) || length < 0) {
+        throw jsonBoundaryTypeError("invalid array length");
+      }
+      const sanitizedArray = new Array(length);
+      for (let index = 0; index < length; index += 1) {
+        if (!Object.hasOwn(descriptors, String(index))) {
+          throw jsonBoundaryTypeError(`sparse array index ${index}`);
+        }
+      }
+      for (const key of Reflect.ownKeys(descriptors)) {
+        if (typeof key === "symbol") throw jsonBoundaryTypeError("symbol array key");
+        if (key === "length") continue;
+        if (!/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= length) {
+          throw jsonBoundaryTypeError(`non-index array property ${key}`);
+        }
+        const descriptor = descriptors[key];
+        if (!Object.hasOwn(descriptor, "value")) {
+          throw jsonBoundaryTypeError(`array accessor ${key}`);
+        }
+        if (!descriptor.enumerable) {
+          throw jsonBoundaryTypeError(`non-enumerable array index ${key}`);
+        }
+        sanitizedArray[Number(key)] = sanitizeJsonBoundary(descriptor.value, ancestors);
+      }
+      return sanitizedArray;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw jsonBoundaryTypeError("custom object prototype");
+    }
+    const sanitized = Object.create(null);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof key === "symbol") throw jsonBoundaryTypeError("symbol object key");
+      const descriptor = descriptors[key];
+      if (!Object.hasOwn(descriptor, "value")) {
+        throw jsonBoundaryTypeError(`accessor property ${key}`);
+      }
+      if (!descriptor.enumerable) {
+        throw jsonBoundaryTypeError(`non-enumerable property ${key}`);
+      }
+      if (FORBIDDEN_STRUCTURAL_FIELD_NAMES.has(key)) {
+        throw jsonBoundaryTypeError(`reserved structural property ${key}`);
+      }
+      if (FORBIDDEN_RAW_PROMPT_FIELD_NAMES.has(normalizedBoundaryFieldName(key))) {
+        continue;
+      }
+      const sanitizedValue = sanitizeJsonBoundary(descriptor.value, ancestors);
+      Object.defineProperty(sanitized, key, {
+        value: sanitizedValue,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return sanitized;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function stripRawPromptFields(value) {
+  const sanitized = sanitizeJsonBoundary(value);
+  if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) {
+    return sanitized;
+  }
+  if (
+    sanitized.stageRuntimeControl &&
+    typeof sanitized.stageRuntimeControl === "object" &&
+    !Array.isArray(sanitized.stageRuntimeControl)
+  ) {
+    sanitized.stageRuntimeControl.promptFingerprint = normalizeTaskFingerprint(
+      sanitized.stageRuntimeControl.promptFingerprint,
+    );
+  }
+  sanitized.taskFingerprint = normalizeTaskFingerprint(sanitized.taskFingerprint);
+  sanitized.taskIdentitySource = TASK_IDENTITY_SOURCES.includes(
+    sanitized.taskIdentitySource,
+  )
+    ? sanitized.taskIdentitySource
+    : sanitized.taskFingerprint
+      ? "project_profile_hmac_sha256"
+      : "not_available";
+  return sanitized;
+}
+
+async function assertSafeStatePath(cwd, targetPath, options = {}) {
+  const repoRoot = resolve(cwd || process.cwd());
+  const stateRoot = resolveMetaKimStateRoot(repoRoot);
+  const resolvedTarget = resolve(targetPath);
+  if (!isWithin(stateRoot, resolvedTarget)) {
+    throw new Error("Refusing Meta_Kim state path outside the repository state root.");
+  }
+
+  const repoReal = await realpath(repoRoot);
+  const parentPath = options.targetIsDirectory
+    ? resolvedTarget
+    : dirname(resolvedTarget);
+  const segments = relative(repoRoot, parentPath).split(/[\\/]+/u).filter(Boolean);
+  let current = repoRoot;
+  for (const segment of segments) {
+    current = join(current, segment);
+    let info;
+    try {
+      info = await lstat(current);
+    } catch (error) {
+      if (error?.code !== "ENOENT" || options.createParents !== true) throw error;
+      await mkdir(current).catch((mkdirError) => {
+        if (mkdirError?.code !== "EEXIST") throw mkdirError;
+      });
+      info = await lstat(current);
+    }
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`Unsafe Meta_Kim state path component: ${segment}`);
+    }
+    const currentReal = await realpath(current);
+    if (!isWithin(repoReal, currentReal)) {
+      throw new Error("Refusing Meta_Kim state path through a reparse escape.");
+    }
+  }
+
+  try {
+    const targetInfo = await lstat(resolvedTarget);
+    if (targetInfo.isSymbolicLink()) {
+      throw new Error("Refusing symlinked Meta_Kim state target.");
+    }
+    const targetReal = await realpath(resolvedTarget);
+    if (!isWithin(repoReal, targetReal)) {
+      throw new Error("Refusing Meta_Kim state target outside the repository.");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return resolvedTarget;
+}
+
+async function safeAtomicWriteJson(cwd, targetPath, payload, options = {}) {
+  await assertSafeStatePath(cwd, targetPath, { createParents: true });
+  await atomicWriteJson(targetPath, payload, options);
+}
+
+async function readJsonObject(cwd, filePath) {
+  try {
+    await assertSafeStatePath(cwd, filePath);
+    const raw = await readFile(filePath, "utf8");
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? { status: "valid", value }
+      : { status: "unknown", value };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { status: "missing", value: null };
+    if (/Unsafe|Refusing|reparse|symlink/iu.test(error?.message || "")) {
+      return { status: "unsafe", value: null };
+    }
+    return { status: "malformed", value: null };
+  }
+}
+
+function decodeTaskIdentityKey(record) {
+  if (
+    record?.schemaVersion !== 1 ||
+    record?.keySchema !== TASK_IDENTITY_KEY_SCHEMA ||
+    typeof record?.key !== "string"
+  ) {
+    return null;
+  }
+  try {
+    const key = Buffer.from(record.key, "base64");
+    return key.length === 32 ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readTaskIdentityKey(cwd, keyPath) {
+  const record = await readJsonObject(cwd, keyPath);
+  if (record.status === "missing") return null;
+  const decoded = record.status === "valid"
+    ? decodeTaskIdentityKey(record.value)
+    : null;
+  if (decoded) return decoded;
+  const error = new Error(
+    "Invalid protected Meta_Kim task identity key; refusing replacement.",
+  );
+  error.code = "META_KIM_TASK_IDENTITY_KEY_INVALID";
+  throw error;
+}
+
+async function initializeTaskIdentityKey(cwd, keyPath, lockPath) {
+  try {
+    return await withFileLock(lockPath, async () => {
+      const existing = await readTaskIdentityKey(cwd, keyPath);
+      if (existing) return existing;
+      const generated = randomBytes(32);
+      await safeAtomicWriteJson(
+        cwd,
+        keyPath,
+        {
+          schemaVersion: 1,
+          keySchema: TASK_IDENTITY_KEY_SCHEMA,
+          key: generated.toString("base64"),
+          createdAt: new Date().toISOString(),
+        },
+        { mode: 0o600 },
+      );
+      return generated;
+    });
+  } catch (error) {
+    if (error?.code !== "META_KIM_LOCK_TIMEOUT") throw error;
+    // A cross-process creator may have completed immediately before our retry
+    // budget expired. Reuse only a fully valid key; a missing or invalid key
+    // preserves the lock failure instead of manufacturing unlocked state.
+    const completed = await readTaskIdentityKey(cwd, keyPath);
+    if (completed) return completed;
+    throw error;
+  }
+}
+
+export async function createProjectTaskIdentity(cwd, promptText, options = {}) {
+  if (typeof promptText !== "string" || !promptText) {
+    return {
+      ready: false,
+      status: "not_available",
+      taskFingerprint: null,
+      taskIdentitySource: "not_available",
+    };
+  }
+  const requestedProfile = ownEnumerableDataField(options, "profile");
+  const profile = requestedProfile
+    ? sanitizeStateProfile(requestedProfile)
+    : resolveSpineStateRoute(cwd).profile;
+  const keyPath = join(
+    resolveCanonicalProfileStateDir(cwd, profile),
+    "private",
+    "task-identity-key.json",
+  );
+  const lockPath = `${keyPath}.lock`;
+  let key;
+  try {
+    key = await readTaskIdentityKey(cwd, keyPath);
+  } catch (error) {
+    if (
+      options.requireExisting === true &&
+      error?.code === "META_KIM_TASK_IDENTITY_KEY_INVALID"
+    ) {
+      return {
+        ready: false,
+        status: "existing_key_invalid",
+        taskFingerprint: null,
+        taskIdentitySource: "project_profile_hmac_sha256",
+      };
+    }
+    throw error;
+  }
+  if (!key && options.requireExisting === true) {
+    return {
+      ready: false,
+      status: "existing_key_missing",
+      taskFingerprint: null,
+      taskIdentitySource: "project_profile_hmac_sha256",
+    };
+  }
+  if (!key) {
+    await assertSafeStatePath(cwd, lockPath, { createParents: true });
+    let pending = taskIdentityKeyInflight.get(keyPath);
+    if (!pending) {
+      pending = initializeTaskIdentityKey(cwd, keyPath, lockPath);
+      taskIdentityKeyInflight.set(keyPath, pending);
+    }
+    try {
+      key = await pending;
+    } finally {
+      if (taskIdentityKeyInflight.get(keyPath) === pending) {
+        taskIdentityKeyInflight.delete(keyPath);
+      }
+    }
+  }
+  return {
+    ready: true,
+    status: "ready",
+    taskFingerprint: `hmac-sha256:${createHmac("sha256", key).update(promptText, "utf8").digest("hex")}`,
+    taskIdentitySource: "project_profile_hmac_sha256",
+  };
+}
+
+function recordHasHmacTaskIdentity(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (
+        value.taskIdentitySource === "project_profile_hmac_sha256" ||
+        normalizeTaskFingerprint(value.taskFingerprint) != null
+      ),
+  );
+}
+
+export async function readExistingTaskIdentityBinding(cwd) {
+  const { profile } = resolveSpineStateRoute(cwd);
+  const profileDir = resolveCanonicalProfileStateDir(cwd, profile);
+  const [spineRecord, statusRecord] = await Promise.all([
+    readJsonObject(cwd, join(profileDir, "spine", SPINE_STATE_FILE)),
+    readJsonObject(cwd, join(profileDir, ACTIVE_RUN_STATUS_FILE)),
+  ]);
+  if (spineRecord.status === "valid" && recordHasHmacTaskIdentity(spineRecord.value)) {
+    return { hmacBound: true, profile, source: "spine" };
+  }
+  if (statusRecord.status === "valid" && recordHasHmacTaskIdentity(statusRecord.value)) {
+    return { hmacBound: true, profile, source: "active_run_status" };
+  }
+  return { hmacBound: false, profile, source: null };
+}
+
+function lifecycleStatusForReason(active, reason) {
+  if (active) return "active";
+  if (reason === "session_stop") return "session_stopped";
+  if (reason === "evolution_completed") return "evolution_completed";
+  if (reason === "superseded_by_new_prompt") return "superseded";
+  if (reason === "legacy_reconciled") return "archived_legacy";
+  return "inactive";
+}
+
+function terminalState(state, reason, details = {}) {
+  return stripRawPromptFields({
+    ...state,
+    active: false,
+    lifecycleStatus: lifecycleStatusForReason(false, reason),
+    deactivatedAt: new Date().toISOString(),
+    deactivationReason: reason,
+    ...details,
+  });
+}
+
+const VALID_STAGE_STATUSES = new Set([
+  "pending",
+  "in_progress",
+  "completed",
+  "skipped",
+  "blocked",
+  "failed",
+]);
+
+function isValidTimestamp(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function hasCompleteStageMap(stages) {
+  return Boolean(
+    stages &&
+      typeof stages === "object" &&
+      !Array.isArray(stages) &&
+      STAGE_ORDER.every(
+        (stage) =>
+          Object.hasOwn(stages, stage) &&
+          stages[stage] &&
+          typeof stages[stage] === "object" &&
+          VALID_STAGE_STATUSES.has(stages[stage].status),
+      ),
+  );
+}
+
+function isValidLifecycleCombination(
+  value,
+  { allowLegacyMissing = false, allowHistoricalRunIds = false } = {},
+) {
+  const runIdValidator = allowHistoricalRunIds
+    ? validateHistoricalRunId
+    : validateRunId;
+  if (allowLegacyMissing && value?.lifecycleStatus == null) {
+    const reason = value?.deactivationReason ?? null;
+    const deactivatedAt = value?.deactivatedAt ?? null;
+    if (value?.active === true) {
+      return reason === null && deactivatedAt === null;
+    }
+    if (value?.active !== false) return false;
+    if (reason === null) {
+      return deactivatedAt === null || isValidTimestamp(deactivatedAt);
+    }
+    if (!isValidTimestamp(deactivatedAt)) return false;
+    if (["session_stop", "evolution_completed"].includes(reason)) return true;
+    if (reason === "superseded_by_new_prompt") {
+      try {
+        return runIdValidator(value.supersededByRunId) !== value.runId;
+      } catch {
+        return false;
+      }
+    }
+    return reason === "legacy_reconciled" && isValidTimestamp(value.archivedAt);
+  }
+  if (!RUN_LIFECYCLE_STATUSES.includes(value?.lifecycleStatus)) return false;
+  const reason = value?.deactivationReason ?? null;
+  if (value.active === true) {
+    return value.lifecycleStatus === "active" && reason === null;
+  }
+  if (value.active !== false) return false;
+  if (value.lifecycleStatus === "inactive") return reason === null;
+  if (value.lifecycleStatus === "session_stopped") return reason === "session_stop";
+  if (value.lifecycleStatus === "evolution_completed") {
+    return reason === "evolution_completed";
+  }
+  if (value.lifecycleStatus === "superseded") {
+    try {
+      return (
+        reason === "superseded_by_new_prompt" &&
+        runIdValidator(value.supersededByRunId) !== value.runId
+      );
+    } catch {
+      return false;
+    }
+  }
+  return (
+    value.lifecycleStatus === "archived_legacy" &&
+    reason === "legacy_reconciled" &&
+    isValidTimestamp(value.archivedAt)
+  );
+}
+
+function isValidSpineState(value) {
+  try {
+    validateRunId(value?.runId);
+  } catch {
+    return false;
+  }
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      value.version === 2 &&
+      typeof value.active === "boolean" &&
+      STAGE_ORDER.includes(value.currentStage) &&
+      hasCompleteStageMap(value.stages) &&
+      isValidLifecycleCombination(value),
+  );
+}
+
+function isSupportedStatusEnvelope(value) {
+  const schemaVersion = value?.schemaVersion;
+  if (![1, RUN_STATUS_SCHEMA_VERSION].includes(schemaVersion)) return false;
+  const historicalRunId = (() => {
+    try {
+      validateHistoricalRunId(value?.runId);
+      return !CANONICAL_RUN_ID_RE.test(value.runId);
+    } catch {
+      return null;
+    }
+  })();
+  if (historicalRunId === null) return false;
+  if (
+    typeof value.active !== "boolean" ||
+    !STAGE_ORDER.includes(value.currentStageKey) ||
+    typeof value.currentStage !== "string" ||
+    value.currentStage.length === 0 ||
+    value.stageIndex !== STAGE_ORDER.indexOf(value.currentStageKey) + 1 ||
+    value.stageTotal !== STAGE_ORDER.length ||
+    !Number.isFinite(value.percent) ||
+    !Array.isArray(value.completed) ||
+    !Object.hasOwn(value, "next") ||
+    !Object.hasOwn(value, "blockedOn") ||
+    typeof value.triggeredBy !== "string" ||
+    value.triggeredBy.length === 0 ||
+    !isValidTimestamp(value.startedAt) ||
+    !isValidTimestamp(value.updatedAt) ||
+    value.surfaceMode !== "public" ||
+    !value.publicSurface ||
+    typeof value.publicSurface !== "object" ||
+    !value.languageResolution ||
+    typeof value.languageResolution !== "object" ||
+    value.stagePurposeKey !== value.currentStageKey
+  ) {
+    return false;
+  }
+  if (
+    value.authorityMode != null &&
+    !["managed_runtime_spine", "hook_observed_advisory"].includes(value.authorityMode)
+  ) {
+    return false;
+  }
+  if (schemaVersion === RUN_STATUS_SCHEMA_VERSION) {
+    const historicalArchivedEnvelope = historicalRunId === true &&
+      value.active === false &&
+      value.lifecycleStatus === "archived_legacy" &&
+      value.deactivationReason === "legacy_reconciled" &&
+      value.archiveReason === "non_authoritative_historical_active_status";
+    if (historicalRunId === true && !historicalArchivedEnvelope) return false;
+    return (
+      value.authorityMode != null &&
+      value.publicReadyAuthority === false &&
+      isValidLifecycleCombination(value, {
+        allowHistoricalRunIds: historicalArchivedEnvelope,
+      }) &&
+      TASK_IDENTITY_SOURCES.includes(value.taskIdentitySource) &&
+      (value.taskFingerprint == null || normalizeTaskFingerprint(value.taskFingerprint) != null)
+    );
+  }
+  return (
+    [undefined, false].includes(value.publicReadyAuthority) &&
+    isValidLifecycleCombination(value, {
+      allowLegacyMissing: true,
+      allowHistoricalRunIds: true,
+    })
+  );
+}
+
+async function writeMetaRunStatusUnlocked(cwd, state, profile, options = {}) {
+  const envelope = createMetaRunStatusEnvelope(state, options);
+  const paths = runStatusPaths(cwd, profile, envelope.runId);
+  await safeAtomicWriteJson(cwd, paths.runStatus, envelope);
+  if (options.skipActivePointer !== true) {
+    await safeAtomicWriteJson(cwd, paths.activeRun, envelope);
+  }
+  return envelope;
+}
+
+async function readProfileAuthority(cwd, profile) {
+  const profileDir = resolveCanonicalProfileStateDir(cwd, profile);
+  const spinePath = join(profileDir, "spine", SPINE_STATE_FILE);
+  const activePath = join(profileDir, ACTIVE_RUN_STATUS_FILE);
+  const [spineRecord, activeRecord] = await Promise.all([
+    readJsonObject(cwd, spinePath),
+    readJsonObject(cwd, activePath),
+  ]);
+  const spine = spineRecord.status === "valid" ? spineRecord.value : null;
+  const active = activeRecord.status === "valid" ? activeRecord.value : null;
+  if (
+    !isValidSpineState(spine) ||
+    spine.active !== true ||
+    !isSupportedStatusEnvelope(active) ||
+    active.active !== true ||
+    active.runId !== spine.runId
+  ) {
+    return { proven: false, spineRecord, activeRecord };
+  }
+  return { proven: true, runId: spine.runId, spine, active };
+}
+
+function archivedLegacyEnvelope(value, archivedAt) {
+  const currentStage = normalizeStage(value.currentStageKey || value.currentStage);
+  const state = {
+    active: false,
+    lifecycleStatus: "archived_legacy",
+    runId: validateHistoricalRunId(value.runId),
+    taskFingerprint: normalizeTaskFingerprint(value.taskFingerprint),
+    taskIdentitySource: normalizeTaskFingerprint(value.taskFingerprint)
+      ? "project_profile_hmac_sha256"
+      : "unrecoverable_legacy",
+    taskClassification:
+      typeof value.taskClassification === "string"
+        ? value.taskClassification
+        : "unrecoverable_legacy",
+    triggerReason: value.triggeredBy || "legacy_reconciliation",
+    currentStage,
+    stages: Object.fromEntries(
+      STAGE_ORDER.map((stage) => [
+        stage,
+        {
+          status:
+            stage === currentStage
+              ? "in_progress"
+              : "pending",
+          completedAt: null,
+        },
+      ]),
+    ),
+    triggeredAt: value.startedAt || archivedAt,
+    deactivatedAt: archivedAt,
+    deactivationReason: "legacy_reconciled",
+    archivedAt,
+    archiveReason: "non_authoritative_historical_active_status",
+  };
+  return createMetaRunStatusEnvelope(state, {
+    historicalMigrationToken: HISTORICAL_MIGRATION_ENVELOPE,
+  });
+}
+
+const MIGRATION_REPORT_COUNT_FIELDS = [
+  "scannedRecords",
+  "authoritativeActivePreserved",
+  "terminalPreserved",
+  "archived",
+  "malformedPreserved",
+  "unknownPreserved",
+  "unsafePreserved",
+];
+
+function isValidMigrationMarker(marker, profile) {
+  try {
+    validateRunId(marker?.authoritativeRunId);
+  } catch {
+    return false;
+  }
+  return Boolean(
+    marker?.schemaVersion === 1 &&
+      marker?.markerSchema === MIGRATION_MARKER_SCHEMA &&
+      marker?.migrationId === RUN_STATUS_LIFECYCLE_MIGRATION &&
+      marker?.profile === profile &&
+      marker?.recordSchemaVersion === RUN_STATUS_SCHEMA_VERSION &&
+      marker?.completed === true &&
+      isValidTimestamp(marker?.completedAt) &&
+      MIGRATION_REPORT_COUNT_FIELDS.every(
+        (field) => Number.isInteger(marker?.[field]) && marker[field] >= 0,
+      ),
+  );
+}
+
+async function reconcileLegacyRunStatusesUnlocked(cwd, { profile } = {}) {
+  if (!isCanonicalStateProfile(profile)) {
+    throw new TypeError("Legacy reconciliation requires a canonical state profile.");
+  }
+  const safeProfile = profile;
+  const authority = await readProfileAuthority(cwd, safeProfile);
+  if (!authority.proven) {
+    return { completed: false, status: "authority_not_proven", profile: safeProfile };
+  }
+
+  const profileDir = resolveCanonicalProfileStateDir(cwd, safeProfile);
+  const migrationPath = join(
+    profileDir,
+    "migrations",
+    `${RUN_STATUS_LIFECYCLE_MIGRATION}.json`,
+  );
+  const completionSidecarPath = join(
+    profileDir,
+    "migrations",
+    RUN_STATUS_LIFECYCLE_COMPLETION_SIDECAR,
+  );
+  const existingMarker = await readJsonObject(cwd, migrationPath);
+  if (
+    existingMarker.status === "valid" &&
+    isValidMigrationMarker(existingMarker.value, safeProfile)
+  ) {
+    return { ...existingMarker.value, alreadyCompleted: true };
+  }
+  const existingCompletionSidecar = await readJsonObject(cwd, completionSidecarPath);
+  if (
+    existingCompletionSidecar.status === "valid" &&
+    isValidMigrationMarker(existingCompletionSidecar.value, safeProfile)
+  ) {
+    return {
+      ...existingCompletionSidecar.value,
+      alreadyCompleted: true,
+      completionSource: "managed_sidecar",
+    };
+  }
+  if (existingCompletionSidecar.status !== "missing") {
+    return {
+      completed: false,
+      status: "invalid_completion_sidecar",
+      profile: safeProfile,
+      invalidCompletionSidecarPreserved: true,
+    };
+  }
+  const invalidMarkerPreserved = existingMarker.status !== "missing";
+
+  const report = {
+    schemaVersion: 1,
+    markerSchema: MIGRATION_MARKER_SCHEMA,
+    recordSchemaVersion: RUN_STATUS_SCHEMA_VERSION,
+    migrationId: RUN_STATUS_LIFECYCLE_MIGRATION,
+    profile: safeProfile,
+    completed: true,
+    completedAt: new Date().toISOString(),
+    authoritativeRunId: authority.runId,
+    scannedRecords: 0,
+    authoritativeActivePreserved: 0,
+    terminalPreserved: 0,
+    archived: 0,
+    malformedPreserved: 0,
+    unknownPreserved: 0,
+    unsafePreserved: 0,
+    invalidMarkerPreserved,
+  };
+  const runsDir = join(profileDir, "runs");
+  let entries = [];
+  try {
+    await assertSafeStatePath(cwd, runsDir, { targetIsDirectory: true });
+    entries = await readdir(runsDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      report.unsafePreserved += 1;
+    }
+  }
+
+  const caseFoldCounts = new Map();
+  for (const entry of entries) {
+    if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
+    try {
+      const historicalRunId = validateHistoricalRunId(entry.name);
+      const folded = historicalRunId.toLowerCase();
+      caseFoldCounts.set(folded, (caseFoldCounts.get(folded) || 0) + 1);
+    } catch {
+      // Count only strongly shaped historical run directory names.
+    }
+  }
+
+  for (const entry of entries) {
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      report.unsafePreserved += 1;
+      continue;
+    }
+    let runId;
+    try {
+      runId = validateHistoricalRunId(entry.name);
+    } catch {
+      report.unknownPreserved += 1;
+      continue;
+    }
+    if (
+      caseFoldCounts.get(runId.toLowerCase()) !== 1 ||
+      (runId !== authority.runId && runId.toLowerCase() === authority.runId.toLowerCase())
+    ) {
+      report.unsafePreserved += 1;
+      continue;
+    }
+    const statusPath = join(runsDir, runId, RUN_STATUS_FILE);
+    const record = await readJsonObject(cwd, statusPath);
+    if (record.status === "missing") continue;
+    report.scannedRecords += 1;
+    if (record.status === "unsafe") {
+      report.unsafePreserved += 1;
+      continue;
+    }
+    if (record.status === "malformed") {
+      report.malformedPreserved += 1;
+      continue;
+    }
+    const value = record.value;
+    if (
+      record.status !== "valid" ||
+      value?.runId !== runId ||
+      !isSupportedStatusEnvelope(value)
+    ) {
+      report.unknownPreserved += 1;
+      continue;
+    }
+    if (value.active === false) {
+      report.terminalPreserved += 1;
+      continue;
+    }
+    if (runId === authority.runId) {
+      report.authoritativeActivePreserved += 1;
+      continue;
+    }
+
+    const archivedAt = new Date().toISOString();
+    await safeAtomicWriteJson(
+      cwd,
+      statusPath,
+      archivedLegacyEnvelope(value, archivedAt),
+    );
+    report.archived += 1;
+  }
+
+  const completionPath = invalidMarkerPreserved
+    ? completionSidecarPath
+    : migrationPath;
+  await safeAtomicWriteJson(cwd, completionPath, report);
+  return invalidMarkerPreserved
+    ? { ...report, completionSource: "managed_sidecar" }
+    : report;
 }
 
 export async function readSpineState(cwd) {
   const filePath = spineStatePath(cwd);
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const status = JSON.parse(raw);
-    return status?.active === false ? null : status;
-  } catch {
-    return null;
-  }
+  const record = await readJsonObject(cwd, filePath);
+  const state = record.status === "valid" ? stripRawPromptFields(record.value) : null;
+  return isValidSpineState(state) && state.active !== false ? state : null;
 }
 
 export async function readSpineStateIncludingInactive(cwd) {
   const filePath = spineStatePath(cwd);
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const status = JSON.parse(raw);
-    return status && typeof status === "object" ? status : null;
-  } catch {
-    return null;
-  }
+  const record = await readJsonObject(cwd, filePath);
+  const state = record.status === "valid" ? stripRawPromptFields(record.value) : null;
+  return isValidSpineState(state) ? state : null;
 }
 
-export async function writeSpineState(cwd, state) {
+export async function writeSpineState(cwd, state, options = {}) {
+  const safeState = stripRawPromptFields(state);
   // Resolve the file and profile together. A legacy custom spine directory is
   // still honored, but its first state-root segment becomes the status profile
   // so spine/status readers cannot be routed to different tenants.
-  const { filePath, profile } = resolveSpineStateRoute(cwd, state);
-  await ensureDir(filePath);
-  // Serialize the state file and its public status envelopes under one lock.
-  // This prevents a concurrent writer from leaving the state from one write
-  // paired with the run-status envelope from another write.
+  // Route only from the already validated null-prototype boundary copy. Reading
+  // routing fields from the caller object first would execute accessors or
+  // inherit Object.prototype pollution before the JSON boundary can reject it.
+  const { filePath, profile } = resolveSpineStateRoute(cwd, safeState);
+  validateRunId(safeState?.runId);
+  if (!isValidSpineState(safeState)) {
+    throw new TypeError("Invalid Meta_Kim spine state schema or stage map.");
+  }
+  await assertSafeStatePath(cwd, filePath, { createParents: true });
   const lockPath = `${filePath}.lock`;
-  await withFileLock(lockPath, async () => {
-    await atomicWriteJson(filePath, state);
-    await writeMetaRunStatus(cwd, state, { profile });
+  await assertSafeStatePath(cwd, lockPath, { createParents: true });
+  return withFileLock(lockPath, async () => {
+    const currentRecord = await readJsonObject(cwd, filePath);
+    const current = currentRecord.status === "valid" && isValidSpineState(currentRecord.value)
+      ? currentRecord.value
+      : null;
+    const expectedRunId = options.expectedRunId || safeState.runId;
+    validateRunId(expectedRunId);
+    if (current && current.runId !== expectedRunId) {
+      return { written: false, reason: "expected_run_changed", runId: current.runId };
+    }
+    await safeAtomicWriteJson(cwd, filePath, safeState);
+    if (options.interruptAfter === "spine") {
+      throw new Error("Injected interruption after authoritative spine write.");
+    }
+    await writeMetaRunStatusUnlocked(cwd, safeState, profile);
+    return { written: true, runId: safeState.runId };
+  });
+}
+
+/**
+ * Reconcile legacy per-run status records once within one sanitized profile.
+ * Unknown or malformed records are reported but never rewritten.
+ */
+async function reconcileLegacyRunStatusesUnderSpineLock(cwd, profile) {
+  const migrationPath = join(
+    resolveCanonicalProfileStateDir(cwd, profile),
+    "migrations",
+    `${RUN_STATUS_LIFECYCLE_MIGRATION}.json`,
+  );
+  await assertSafeStatePath(cwd, `${migrationPath}.lock`, { createParents: true });
+  return withFileLock(`${migrationPath}.lock`, () =>
+    reconcileLegacyRunStatusesUnlocked(cwd, { profile }),
+  );
+}
+
+export async function reconcileLegacyRunStatuses(cwd, options = {}) {
+  const profile = sanitizeStateProfile(
+    ownEnumerableDataField(options, "profile") ||
+      process.env.META_KIM_PROFILE ||
+      process.env.META_KIM_STATE_PROFILE,
+  );
+  const spinePath = join(
+    resolveCanonicalProfileStateDir(cwd, profile),
+    "spine",
+    SPINE_STATE_FILE,
+  );
+  await assertSafeStatePath(cwd, `${spinePath}.lock`, { createParents: true });
+  return withFileLock(`${spinePath}.lock`, () =>
+    reconcileLegacyRunStatusesUnderSpineLock(cwd, profile),
+  );
+}
+
+/**
+ * Publish a new authoritative spine state, terminalizing an eligible prior run first.
+ */
+export async function activateSpineState(cwd, state, options = {}) {
+  const safeState = stripRawPromptFields(state);
+  const { filePath, profile } = resolveSpineStateRoute(cwd, safeState);
+  validateRunId(safeState?.runId);
+  if (!isValidSpineState(safeState)) {
+    throw new TypeError("Invalid Meta_Kim spine state schema or stage map.");
+  }
+  await assertSafeStatePath(cwd, filePath, { createParents: true });
+  await assertSafeStatePath(cwd, `${filePath}.lock`, { createParents: true });
+  return withFileLock(`${filePath}.lock`, async () => {
+    const currentRecord = await readJsonObject(cwd, filePath);
+    const current = currentRecord.status === "valid" && isValidSpineState(currentRecord.value)
+      ? stripRawPromptFields(currentRecord.value)
+      : null;
+    const expectedRunId = options.expectedRunId || null;
+    if (expectedRunId !== null) validateRunId(expectedRunId);
+    if (options.refreshExisting === true) {
+      if (current?.active === true && current.runId === expectedRunId) {
+        await writeMetaRunStatusUnlocked(cwd, current, profile);
+        const migration = await reconcileLegacyRunStatusesUnderSpineLock(cwd, profile);
+        return {
+          activated: false,
+          reason: "same_run_refreshed",
+          runId: current.runId,
+          migration,
+        };
+      }
+      return {
+        activated: false,
+        reason: !current
+          ? "refresh_authority_missing"
+          : current.runId !== expectedRunId
+            ? "refresh_authority_changed"
+            : "refresh_authority_inactive",
+        runId: current?.runId || null,
+      };
+    }
+    if (
+      current?.active === true &&
+      (!options.replaceActive || current.runId !== expectedRunId)
+    ) {
+      return {
+        activated: false,
+        reason: current.runId === expectedRunId
+          ? "active_replacement_not_authorized"
+          : "authoritative_state_changed",
+        runId: current.runId || null,
+      };
+    }
+
+    let supersededRunId = null;
+    if (current?.active === true) {
+      const superseded = terminalState(current, "superseded_by_new_prompt", {
+        supersededByRunId: safeState.runId,
+      });
+      await safeAtomicWriteJson(cwd, filePath, superseded);
+      await writeMetaRunStatusUnlocked(cwd, superseded, profile);
+      supersededRunId = current.runId || null;
+    } else if (current?.active === false) {
+      // Repair the prior terminal projection before publishing a new spine so
+      // migration can never mistake interrupted terminal history for legacy active state.
+      await writeMetaRunStatusUnlocked(cwd, current, profile);
+    }
+
+    const nextState = {
+      ...safeState,
+      profile,
+      lifecycleStatus: "active",
+    };
+    await safeAtomicWriteJson(cwd, filePath, nextState);
+    if (options.interruptAfter === "spine") {
+      throw new Error("Injected interruption after authoritative activation write.");
+    }
+    await writeMetaRunStatusUnlocked(cwd, nextState, profile);
+    const migration = await reconcileLegacyRunStatusesUnderSpineLock(cwd, profile);
+    return {
+      activated: true,
+      runId: nextState.runId,
+      supersededRunId,
+      migration,
+    };
+  });
+}
+
+/**
+ * Persist terminal state/status before optionally removing the live spine file.
+ */
+export async function terminalizeSpineState(cwd, options = {}) {
+  const { filePath, profile } = resolveSpineStateRoute(cwd);
+  const expectedRunId = options.expectedRunId || null;
+  if (!expectedRunId) {
+    return { terminalized: false, reason: "expected_run_required" };
+  }
+  validateRunId(expectedRunId);
+  await assertSafeStatePath(cwd, filePath, { createParents: true });
+  await assertSafeStatePath(cwd, `${filePath}.lock`, { createParents: true });
+  return withFileLock(`${filePath}.lock`, async () => {
+    const currentRecord = await readJsonObject(cwd, filePath);
+    const current = currentRecord.status === "valid" && isValidSpineState(currentRecord.value)
+      ? stripRawPromptFields(currentRecord.value)
+      : null;
+    if (!current) return { terminalized: false, reason: "no_authoritative_state" };
+    if (current.runId !== expectedRunId) {
+      return {
+        terminalized: false,
+        reason: "expected_run_changed",
+        runId: current.runId,
+      };
+    }
+
+    if (current.active === false) {
+      await writeMetaRunStatusUnlocked(cwd, current, profile);
+      const shouldCompleteEvolutionDeletion =
+        options.removeStateFile === true &&
+        current.deactivationReason === "evolution_completed";
+      if (shouldCompleteEvolutionDeletion) {
+        await unlink(filePath).catch((error) => {
+          if (error?.code !== "ENOENT") throw error;
+        });
+      }
+      return {
+        terminalized: true,
+        repaired: true,
+        removed: shouldCompleteEvolutionDeletion,
+        runId: current.runId,
+        reason: current.deactivationReason,
+      };
+    }
+
+    const reason = options.reason === "evolution_completed"
+      ? "evolution_completed"
+      : "session_stop";
+    const terminal = terminalState(current, reason);
+    await safeAtomicWriteJson(cwd, filePath, terminal);
+    if (options.interruptAfter === "spine") {
+      throw new Error("Injected interruption after authoritative terminal write.");
+    }
+    await writeMetaRunStatusUnlocked(cwd, terminal, profile);
+    if (options.removeStateFile === true) {
+      await unlink(filePath).catch((error) => {
+        if (error?.code !== "ENOENT") throw error;
+      });
+    }
+    return {
+      terminalized: true,
+      removed: options.removeStateFile === true,
+      runId: terminal.runId || null,
+      reason,
+    };
   });
 }
 
@@ -364,6 +1465,8 @@ export function createInitialState({
   latestUserInputLanguage = null,
   factGatePolicy = null,
   executionLeasePolicy = null,
+  taskFingerprint = null,
+  taskIdentitySource = null,
 } = {}) {
   const triggeredAt = new Date().toISOString();
   const stageRuntimeControl = {
@@ -384,12 +1487,20 @@ export function createInitialState({
         : "required_for_business_mutation"),
     createdAt: triggeredAt,
   };
+  const normalizedTaskFingerprint = normalizeTaskFingerprint(taskFingerprint);
   return {
     active: true,
     version: 2,
     runId: createRunId(triggeredAt),
     triggeredAt,
     stageRuntimeControl,
+    lifecycleStatus: "active",
+    taskFingerprint: normalizedTaskFingerprint,
+    taskIdentitySource: TASK_IDENTITY_SOURCES.includes(taskIdentitySource)
+      ? taskIdentitySource
+      : normalizedTaskFingerprint
+        ? "project_profile_hmac_sha256"
+        : "not_available",
     currentStage: "critical",
     stages: {
       critical: { status: "in_progress", completedAt: null },
@@ -436,44 +1547,56 @@ export function isHookObservedState(state) {
 }
 
 export function createMetaRunStatusEnvelope(state, options = {}) {
+  const safeState = stripRawPromptFields(state);
   const currentStage = normalizeStage(
-    options.currentStage || state?.currentStage || "critical",
+    options.currentStage || safeState?.currentStage || "critical",
   );
   const stageIndex = STAGE_ORDER.indexOf(currentStage) + 1;
   const stageTotal = STAGE_ORDER.length;
-  const stages = state?.stages || {};
+  const stages = safeState?.stages || {};
   const completed = STAGE_ORDER.filter(
     (stage) => stages?.[stage]?.status === "completed",
   ).map((stage) => STAGE_PUBLIC_LABELS[stage]);
   const nextStage =
     stageIndex < stageTotal ? STAGE_ORDER[stageIndex] : null;
   const startedAt =
-    state?.triggeredAt || state?.startedAt || new Date().toISOString();
+    safeState?.triggeredAt || safeState?.startedAt || new Date().toISOString();
   const updatedAt = new Date().toISOString();
-  const runId = state?.runId || createRunId(startedAt);
-  const languageResolution = resolveOutputLanguage(state, options);
+  const runId = options.historicalMigrationToken === HISTORICAL_MIGRATION_ENVELOPE
+    ? validateHistoricalRunId(safeState?.runId)
+    : validateRunId(safeState?.runId || createRunId(startedAt));
+  const languageResolution = resolveOutputLanguage(safeState, options);
   const stagePurpose =
-    state?.stagePurpose ||
-    state?.stagePurposes?.[languageResolution.language] ||
+    safeState?.stagePurpose ||
+    safeState?.stagePurposes?.[languageResolution.language] ||
     null;
-  const runtimeControl = state?.stageRuntimeControl || {};
-  const hookObserved = isHookObservedState(state);
+  const runtimeControl = safeState?.stageRuntimeControl || {};
+  const hookObserved = isHookObservedState(safeState);
   const driverMode =
     runtimeControl.driverMode ||
-    state?.driverMode ||
+    safeState?.driverMode ||
     (hookObserved ? "hook_observed" : "managed");
   const hookGateMode =
     runtimeControl.hookGateMode ||
-    state?.hookGateMode ||
+    safeState?.hookGateMode ||
     (hookObserved ? "advisory" : "managed");
   const authorityMode = hookObserved
     ? "hook_observed_advisory"
     : "managed_runtime_spine";
-  const active = state?.active !== false;
-  const deactivatedAt = active ? null : state?.deactivatedAt || null;
-  const deactivationReason = active ? null : state?.deactivationReason || null;
+  const active = safeState?.active !== false;
+  const deactivatedAt = active ? null : safeState?.deactivatedAt || null;
+  const deactivationReason = active ? null : safeState?.deactivationReason || null;
+  const lifecycleStatus = lifecycleStatusForReason(active, deactivationReason);
+  const taskFingerprint = normalizeTaskFingerprint(safeState?.taskFingerprint);
+  const taskIdentitySource = TASK_IDENTITY_SOURCES.includes(
+    safeState?.taskIdentitySource,
+  )
+    ? safeState.taskIdentitySource
+    : taskFingerprint
+      ? "project_profile_hmac_sha256"
+      : "not_available";
   const continuationBoundary =
-    state?.continuationBoundary ||
+    safeState?.continuationBoundary ||
     (active
       ? {
           status: "active_run",
@@ -491,11 +1614,15 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
         });
 
   return {
-    schemaVersion: 1,
+    schemaVersion: RUN_STATUS_SCHEMA_VERSION,
     active,
+    lifecycleStatus,
     runId,
+    taskFingerprint,
+    taskIdentitySource,
+    taskClassification: safeState?.taskClassification || null,
     triggeredBy:
-      state?.triggerReason || state?.triggeredBy || "meta-theory",
+      safeState?.triggerReason || safeState?.triggeredBy || "meta-theory",
     currentStage: STAGE_PUBLIC_LABELS[currentStage],
     currentStageKey: currentStage,
     stageIndex,
@@ -503,7 +1630,7 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     percent: STAGE_PROGRESS_PERCENT[currentStage],
     completed,
     next: nextStage ? STAGE_PUBLIC_LABELS[nextStage] : null,
-    blockedOn: state?.blockedOn || null,
+    blockedOn: safeState?.blockedOn || null,
     authorityMode,
     driverMode,
     hookGateMode,
@@ -515,10 +1642,13 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     },
     deactivatedAt,
     deactivationReason,
+    supersededByRunId: safeState?.supersededByRunId || null,
+    archivedAt: safeState?.archivedAt || null,
+    archiveReason: safeState?.archiveReason || null,
     continuationBoundary,
     startedAt,
     updatedAt,
-    lastUserVisibleNotice: state?.lastUserVisibleNotice || null,
+    lastUserVisibleNotice: safeState?.lastUserVisibleNotice || null,
     surfaceMode: "public",
     resolvedOutputLanguage: languageResolution.language,
     languageResolution,
@@ -534,7 +1664,7 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
         "protocol_trace",
       ],
     },
-    publicLabels: state?.publicLabels || null,
+    publicLabels: safeState?.publicLabels || null,
     stagePurpose,
     stagePurposeKey: currentStage,
   };
@@ -542,28 +1672,33 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
 
 export async function writeMetaRunStatus(cwd, state, options = {}) {
   if (!state || typeof state !== "object") return null;
-  const envelope = createMetaRunStatusEnvelope(state, options);
-  const profile = sanitizeStateProfile(options.profile || profileFromState(state));
-  const paths = runStatusPaths(cwd, profile, envelope.runId);
-  await ensureDir(paths.activeRun);
-  await ensureDir(paths.runStatus);
-  await Promise.all([
-    atomicWriteJson(paths.activeRun, envelope),
-    atomicWriteJson(paths.runStatus, envelope),
-  ]);
-  return envelope;
+  const safeState = stripRawPromptFields(state);
+  const profile = sanitizeStateProfile(
+    ownEnumerableDataField(options, "profile") || profileFromState(safeState),
+  );
+  return writeMetaRunStatusUnlocked(cwd, safeState, profile, options);
 }
 
 export async function readMetaRunStatus(cwd, profile) {
-  const filePath = runStatusPaths(cwd, sanitizeStateProfile(profile), "latest")
-    .activeRun;
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const status = JSON.parse(raw);
-    return status && typeof status === "object" ? status : null;
-  } catch {
-    return null;
+  const safeProfile = sanitizeStateProfile(profile);
+  const profileDir = resolveCanonicalProfileStateDir(cwd, safeProfile);
+  const spinePath = join(profileDir, "spine", SPINE_STATE_FILE);
+  const spineRecord = await readJsonObject(cwd, spinePath);
+  if (spineRecord.status === "valid" && isValidSpineState(spineRecord.value)) {
+    return createMetaRunStatusEnvelope(stripRawPromptFields(spineRecord.value));
   }
+
+  const activePath = join(profileDir, ACTIVE_RUN_STATUS_FILE);
+  const activeRecord = await readJsonObject(cwd, activePath);
+  if (
+    activeRecord.status === "valid" &&
+    isSupportedStatusEnvelope(activeRecord.value) &&
+    activeRecord.value.active === false
+  ) {
+    return stripRawPromptFields(activeRecord.value);
+  }
+  // An active projection without a valid live spine has no authority.
+  return null;
 }
 
 export function advanceStage(state, stageName) {

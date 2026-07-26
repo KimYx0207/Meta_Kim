@@ -19,7 +19,10 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { sanitizeStateProfile } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import {
+  createInitialState,
+  sanitizeStateProfile,
+} from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -145,6 +148,9 @@ function seedDelegatedGlobalProjection(tempHome, targets, { registrations = true
         [{ command: "node hooks/meta-kim/meta-kim-memory-save.mjs" }],
       ]),
     );
+    if (runtime === "codex") {
+      hooks.Stop.push({ command: "node hooks/meta-kim/stop-spine-cleanup.mjs" });
+    }
     writeFileSync(settingsPath, `${JSON.stringify({ hooks }, null, 2)}\n`, "utf8");
   }
   return { manifestPath, projected };
@@ -257,6 +263,51 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.match(source, /url\.protocol === "https:" \? https : http/);
     assert.match(source, /META_KIM_MEMORY_PORT/);
     assert.match(source, /endpointFromMemoryPort/);
+  });
+
+  test("generic Codex/Cursor memory autostart honors explicit anonymous-access false", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-memory-auth-"));
+    try {
+      const capturePath = path.join(tempDir, "captured-env.json");
+      const preloadPath = path.join(tempDir, "capture-child.cjs");
+      writeFileSync(
+        preloadPath,
+        [
+          'const fs = require("node:fs");',
+          'const path = require("node:path");',
+          'if (path.basename(process.argv[1] || "") === "server") {',
+          '  fs.writeFileSync(process.env.META_KIM_AUTH_CAPTURE, JSON.stringify({ value: process.env.MCP_ALLOW_ANONYMOUS_ACCESS }));',
+          '}',
+        ].join("\n"),
+        "utf8",
+      );
+      const hookPath = path.join(
+        repoRoot,
+        "canonical",
+        "runtime-assets",
+        "shared",
+        "hooks",
+        "meta-kim-memory-save.mjs",
+      );
+      const result = await spawnNode([hookPath, "--event", "stop"], {
+        input: JSON.stringify({ runtime: "codex", cwd: tempDir }),
+        env: {
+          ...process.env,
+          MCP_MEMORY_URL: "http://127.0.0.1:65534",
+          MCP_MEMORY_BIN: process.execPath,
+          MCP_ALLOW_ANONYMOUS_ACCESS: "false",
+          META_KIM_AUTH_CAPTURE: capturePath,
+          NODE_OPTIONS: `--require=${preloadPath}`,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      for (let attempt = 0; attempt < 100 && !existsSync(capturePath); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(JSON.parse(readFileSync(capturePath, "utf8")).value, "false");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("installer reports configurable endpoints and port owners", () => {
@@ -1457,7 +1508,8 @@ describe("MCP memory cross-runtime hooks", () => {
       );
 
       await spine.writeSpineState(tempDir, {
-        active: true,
+        ...spine.createInitialState(),
+        runId: "meta-outside-state-dir-test",
         currentStage: "critical",
       });
 
@@ -1507,10 +1559,11 @@ describe("MCP memory cross-runtime hooks", () => {
       mkdirSync(outsideSpineDir, { recursive: true });
       mkdirSync(fallbackSpineDir, { recursive: true });
       const completedState = {
-        active: true,
+        ...createInitialState(),
+        runId: "meta-stop-cleanup-test",
         currentStage: "evolution",
-        dispatchedAgents: [],
         stages: {
+          ...createInitialState().stages,
           evolution: { status: "completed" },
         },
       };
@@ -1639,6 +1692,7 @@ describe("MCP memory cross-runtime hooks", () => {
       assert.ok(codexHooks.hooks.SessionStart);
       assert.ok(codexHooks.hooks.UserPromptSubmit);
       assert.ok(codexHooks.hooks.Stop);
+      assert.match(JSON.stringify(codexHooks.hooks.Stop), /stop-spine-cleanup\.mjs/);
       assert.equal(
         existsSync(
           path.join(

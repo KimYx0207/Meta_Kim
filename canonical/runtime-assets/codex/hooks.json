@@ -7,6 +7,24 @@
             "type": "command",
             "command": "node .codex/hooks/activate-meta-theory-spine.mjs --package-root __REPO_ROOT__",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node .codex/hooks/meta-kim-memory-save.mjs --event user-prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .codex/hooks/meta-kim-memory-save.mjs --event session-start",
+            "timeout": 10,
+            "statusMessage": "Loading Meta_Kim memory"
           }
         ]
       }
@@ -78,6 +96,11 @@
       {
         "matcher": "*",
         "hooks": [
+          {
+            "type": "command",
+            "command": "node .codex/hooks/meta-kim-memory-save.mjs --event stop",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "node .codex/hooks/stop-compaction.mjs"

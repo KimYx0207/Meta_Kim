@@ -709,6 +709,12 @@ Critical -> Fetch -> Thinking -> Review
                   ],
                 },
               ],
+              Stop: [
+                {
+                  matcher: "*",
+                  hooks: [{ type: "command", command: "node user-stop-only.js" }],
+                },
+              ],
             },
           },
           null,
@@ -722,8 +728,25 @@ Critical -> Fetch -> Thinking -> Review
       const merged = JSON.parse(await readFile(hooksPath, "utf8"));
       const rendered = JSON.stringify(merged);
       assert.match(rendered, /node user-only\.js/);
+      assert.match(rendered, /node user-stop-only\.js/);
       assert.doesNotMatch(rendered, /old-spine\.mjs/);
       assert.match(rendered, /activate-meta-theory-spine\.mjs/);
+      assert.match(rendered, /stop-spine-cleanup\.mjs/);
+      const stopCommands = (merged.hooks.Stop ?? [])
+        .flatMap((entry) => entry.hooks ?? [])
+        .map((hook) => hook.command);
+      assert.equal(
+        stopCommands.filter((command) => command.includes("meta-kim-memory-save.mjs")).length,
+        1,
+      );
+      assert.equal(
+        stopCommands.filter((command) => command.includes("stop-spine-cleanup.mjs")).length,
+        1,
+      );
+      assert.ok(
+        stopCommands.findIndex((command) => command.includes("meta-kim-memory-save.mjs")) <
+        stopCommands.findIndex((command) => command.includes("stop-spine-cleanup.mjs")),
+      );
       assert.match(rendered, /--package-root/);
 
       await assert.rejects(

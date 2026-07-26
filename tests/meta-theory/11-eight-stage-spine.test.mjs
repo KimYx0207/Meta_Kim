@@ -17,14 +17,16 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   checkCapabilityNodeBindings,
   checkChoiceSurfaceGate,
@@ -449,7 +451,7 @@ function runEnforceHookWithState(state, payload, options = {}) {
 
 function runActivateHook(existingState, payload, options = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "meta-kim-activate-"));
-  const { runtime = "shared", staleMinutes = "360" } = options;
+  const { runtime = "shared", staleMinutes = "360", taskIdentityKey = null } = options;
   try {
     const hookDir = join(cwd, "hooks");
     mkdirSync(hookDir, { recursive: true });
@@ -476,6 +478,18 @@ function runActivateHook(existingState, payload, options = {}) {
     const spineDir = join(cwd, ".meta-kim", "state", "test", "spine");
     mkdirSync(spineDir, { recursive: true });
     const spinePath = join(spineDir, "spine-state.json");
+    const identityKeyPath = join(
+      cwd,
+      ".meta-kim",
+      "state",
+      "test",
+      "private",
+      "task-identity-key.json",
+    );
+    if (taskIdentityKey) {
+      mkdirSync(dirname(identityKeyPath), { recursive: true });
+      writeFileSync(identityKeyPath, taskIdentityKey, "utf8");
+    }
     if (existingState) {
       writeFileSync(spinePath, JSON.stringify(existingState, null, 2), "utf8");
     }
@@ -494,7 +508,26 @@ function runActivateHook(existingState, payload, options = {}) {
       },
     );
     const nextState = JSON.parse(readFileSync(spinePath, "utf8"));
-    return { result, nextState };
+    const statusRoot = join(cwd, ".meta-kim", "state", "test");
+    const readStatus = (filePath) => {
+      try {
+        return JSON.parse(readFileSync(filePath, "utf8"));
+      } catch {
+        return null;
+      }
+    };
+    return {
+      result,
+      nextState,
+      activeRunStatus: readStatus(join(statusRoot, "active-run.json")),
+      previousRunStatus: existingState?.runId
+        ? readStatus(join(statusRoot, "runs", existingState.runId, "status.json"))
+        : null,
+      nextRunStatus: readStatus(
+        join(statusRoot, "runs", nextState.runId, "status.json"),
+      ),
+      taskIdentityKey: readFileSync(identityKeyPath, "utf8"),
+    };
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -1351,9 +1384,8 @@ describe("Part F2: choice surface runtime gate", async () => {
   });
 
   test("auto prompt activation creates observed advisory state instead of managed hard-gate state", () => {
-    const { result, nextState } = runActivateHook(null, {
-      prompt: "critical and fetch thinking and review 帮我修复 hook 反复卡住的问题",
-    });
+    const prompt = "critical and fetch thinking and review 帮我修复 hook 反复卡住的问题";
+    const { result, nextState } = runActivateHook(null, { prompt });
 
     assert.equal(result.status, 0);
     assert.equal(nextState.stageRuntimeControl?.activationMode, "hook_observed");
@@ -1361,6 +1393,10 @@ describe("Part F2: choice surface runtime gate", async () => {
     assert.equal(nextState.stageRuntimeControl?.hookGateMode, "advisory");
     assert.equal(nextState.stageRuntimeControl?.userLanguage, "zh-CN");
     assert.ok(nextState.stageRuntimeControl?.promptFingerprint);
+    assert.equal(nextState.taskFingerprint, nextState.stageRuntimeControl.promptFingerprint);
+    assert.match(nextState.taskFingerprint, /^hmac-sha256:[a-f0-9]{64}$/u);
+    assert.equal(nextState.taskIdentitySource, "project_profile_hmac_sha256");
+    assert.equal("task" in nextState, false);
     assert.equal(nextState.stageRuntimeControl?.factGatePolicy, "managed_gate_required_for_public_ready");
     assert.equal(nextState.stageRuntimeControl?.dispatchMode, "fanout_eligible");
     assert.equal(nextState.currentStage, "critical");
@@ -1409,13 +1445,130 @@ describe("Part F2: choice surface runtime gate", async () => {
     };
     delete legacy.stageRuntimeControl;
 
-    const { result, nextState } = runActivateHook(legacy, {
+    const { result, nextState, activeRunStatus, previousRunStatus } = runActivateHook(legacy, {
       prompt: "critical and fetch thinking and review 请继续修复新的任务",
     });
 
     assert.equal(result.status, 0);
     assert.notEqual(nextState.runId, "meta-stale-legacy");
     assert.equal(nextState.stageRuntimeControl?.hookGateMode, "advisory");
+    assert.equal(previousRunStatus.active, false);
+    assert.equal(previousRunStatus.lifecycleStatus, "superseded");
+    assert.equal(previousRunStatus.deactivationReason, "superseded_by_new_prompt");
+    assert.equal(previousRunStatus.supersededByRunId, nextState.runId);
+    assert.equal(activeRunStatus.runId, nextState.runId);
+    assert.equal(activeRunStatus.active, true);
+  });
+
+  test("same-prompt activation is idempotent and managed replacement stays conservative", () => {
+    const prompt = "critical and fetch thinking and review repair the runtime hook";
+    const observed = createInitialState({
+      taskClassification: "meta_theory_auto",
+      triggerReason: "same-prompt-test",
+      activationMode: "hook_observed",
+      driverMode: "hook_observed",
+      hookGateMode: "advisory",
+      promptFingerprint: "5aeaf6fceca2f9ef",
+      taskFingerprint: `hmac-sha256:${"a".repeat(64)}`,
+      taskIdentitySource: "project_profile_hmac_sha256",
+    });
+    // Use the activator to obtain its exact fingerprint, then replay that state.
+    const first = runActivateHook(null, { prompt });
+    const replay = runActivateHook(first.nextState, { prompt }, {
+      taskIdentityKey: first.taskIdentityKey,
+    });
+    assert.equal(replay.result.status, 0, replay.result.stderr);
+    assert.equal(replay.nextState.runId, first.nextState.runId);
+    assert.equal(replay.previousRunStatus.runId, first.nextState.runId);
+    assert.equal(replay.previousRunStatus.active, true);
+
+    const managed = {
+      ...observed,
+      runId: "meta-managed-authoritative",
+      stageRuntimeControl: {
+        ...observed.stageRuntimeControl,
+        activationMode: "managed_stage_runtime",
+        driverMode: "managed",
+        hookGateMode: "block",
+      },
+    };
+    const conservative = runActivateHook(managed, {
+      prompt: `${prompt} with a different prompt`,
+    }, {
+      taskIdentityKey: first.taskIdentityKey,
+    });
+    assert.equal(conservative.result.status, 0, conservative.result.stderr);
+    assert.equal(conservative.nextState.runId, managed.runId);
+  });
+
+  test("production hook preserves an HMAC-bound run when its identity key is missing or corrupt", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "meta-kim-identity-recovery-"));
+    try {
+      const hookDir = join(cwd, "hooks");
+      mkdirSync(hookDir, { recursive: true });
+      mkdirSync(join(cwd, ".git"), { recursive: true });
+      for (const fileName of [
+        "activate-meta-theory-spine.mjs",
+        "project-root.mjs",
+        "spine-state.mjs",
+        "spine-state-utils.mjs",
+        "utils.mjs",
+      ]) {
+        copyFileSync(
+          join(REPO_ROOT, "canonical/runtime-assets/shared/hooks", fileName),
+          join(hookDir, fileName),
+        );
+      }
+      const prompt = "元理论：继续处理当前任务";
+      const invoke = () => spawnSync(
+        process.execPath,
+        [join(hookDir, "activate-meta-theory-spine.mjs")],
+        {
+          cwd,
+          input: JSON.stringify({ prompt }),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            META_KIM_SPINE_STATE_DIR: ".meta-kim/state/test/spine",
+          },
+        },
+      );
+      const first = invoke();
+      assert.equal(first.status, 0, first.stderr);
+
+      const stateRoot = join(cwd, ".meta-kim", "state", "test");
+      const spinePath = join(stateRoot, "spine", "spine-state.json");
+      const activePath = join(stateRoot, "active-run.json");
+      const keyPath = join(stateRoot, "private", "task-identity-key.json");
+      const originalSpineBytes = readFileSync(spinePath, "utf8");
+      const originalRunId = JSON.parse(originalSpineBytes).runId;
+      const runStatusPath = join(stateRoot, "runs", originalRunId, "status.json");
+      const originalActiveBytes = readFileSync(activePath, "utf8");
+      const originalRunStatusBytes = readFileSync(runStatusPath, "utf8");
+
+      unlinkSync(keyPath);
+      const missing = invoke();
+      assert.equal(missing.status, 0, missing.stderr);
+      assert.match(missing.stderr, /task-identity-key-missing/u);
+      assert.match(missing.stderr, /保持原运行不变/u);
+      assert.equal(readFileSync(spinePath, "utf8"), originalSpineBytes);
+      assert.equal(readFileSync(activePath, "utf8"), originalActiveBytes);
+      assert.equal(readFileSync(runStatusPath, "utf8"), originalRunStatusBytes);
+      assert.equal(existsSync(keyPath), false);
+
+      const corruptKeyBytes = "{broken-key";
+      writeFileSync(keyPath, corruptKeyBytes, "utf8");
+      const corrupt = invoke();
+      assert.equal(corrupt.status, 0, corrupt.stderr);
+      assert.match(corrupt.stderr, /task-identity-key-invalid/u);
+      assert.match(corrupt.stderr, /保持原运行不变/u);
+      assert.equal(readFileSync(spinePath, "utf8"), originalSpineBytes);
+      assert.equal(readFileSync(activePath, "utf8"), originalActiveBytes);
+      assert.equal(readFileSync(runStatusPath, "utf8"), originalRunStatusBytes);
+      assert.equal(readFileSync(keyPath, "utf8"), corruptKeyBytes);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("continuation wording after session_stop records inactive-run boundary", () => {
@@ -1426,6 +1579,7 @@ describe("Part F2: choice surface runtime gate", async () => {
           triggerReason: "previous-test",
         }),
         active: false,
+        lifecycleStatus: "session_stopped",
         runId: "meta-stopped-session",
         currentStage: "critical",
         deactivatedAt: "2026-06-20T18:27:05.423Z",
@@ -1469,6 +1623,7 @@ describe("Part F2: choice surface runtime gate", async () => {
             triggerReason: "previous-test",
           }),
           active: false,
+          lifecycleStatus: "session_stopped",
           runId: "meta-stopped-session",
           currentStage: "critical",
           deactivatedAt: "2026-06-20T18:27:05.423Z",

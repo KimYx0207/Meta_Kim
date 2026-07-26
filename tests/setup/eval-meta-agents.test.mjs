@@ -545,8 +545,9 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(evidenceHelper, /event\.resultTextSha256/u);
     assert.match(
       evidenceHelper,
-      /event\.activityCompletionObserved === true[\s\S]*?\|\|[\s\S]*?returned_child_final/u,
+      /event\.completionBoundary === "returned_child_final"/u,
     );
+    assert.doesNotMatch(evidenceHelper, /completed_activity_observed/u);
     const sessionFallbackHelper = source.match(
       /async function inspectCodexLiveEvidenceWithSessionFallback\([\s\S]*?\n\}/u,
     )?.[0];
@@ -592,7 +593,7 @@ describe("eval-meta-agents Claude smoke", () => {
       "public report must not alias custom-agent proof to run-scoped invocation proof",
     );
     const completedTimeoutPass = source.match(
-      /if \(timeoutEvidence\.nativeInvocationObserved\) \{[\s\S]*?\n\s*\}/u,
+      /if \(codexRecoveryHasReturnedChildFinal\(timeoutEvidence\)\) \{[\s\S]*?\n\s*\}/u,
     )?.[0];
     assert.ok(completedTimeoutPass);
     assert.doesNotMatch(completedTimeoutPass, /stderrTail/u);
@@ -665,7 +666,178 @@ describe("eval-meta-agents Claude smoke", () => {
     );
   });
 
+  test("Codex nonzero wrapper exit recovers only from a completed native invocation", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/eval-meta-agents.mjs", "--runtime=codex", "--live"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          META_KIM_CODEX_LIVE_NONZERO_FIXTURE: "returned",
+          NO_COLOR: "1",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.summary.passed, ["codex"]);
+    assert.equal(report.codex.status, "passed");
+    assert.equal(report.codex.releaseFuseInvocationObserved, true);
+    assert.equal(report.codex.wrapperFailedAfterCompletedInvocation, true);
+    assert.equal(
+      report.codex.sample.runtime_recovery.reason,
+      "codex_wrapper_failed_after_completed_native_invocation",
+    );
+    assert.equal(report.runtimeEvidencePacket.summary.releaseGrade, true);
+    assert.equal("stderrTail" in report.codex.sample.runtime_recovery, false);
+    assert.match(
+      report.codex.sample.runtime_recovery.stderrSha256,
+      /^[a-f0-9]{64}$/u,
+    );
+    assert.equal(
+      report.codex.sample.runtime_native_invocation.completionBoundary,
+      "returned_child_final",
+    );
+    assert.match(
+      report.codex.sample.runtime_native_invocation.resultMessageId,
+      /^message-[a-f0-9]{24}$/u,
+    );
+    assert.match(
+      report.codex.sample.runtime_native_invocation.resultTextSha256,
+      /^[a-f0-9]{64}$/u,
+    );
+  });
+
+  test("Codex nonzero wrapper exit rejects dispatch-only evidence without a child return", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/eval-meta-agents.mjs", "--runtime=codex", "--live"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          META_KIM_CODEX_LIVE_NONZERO_FIXTURE: "weak",
+          NO_COLOR: "1",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
+
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.summary.passed, []);
+    assert.deepEqual(report.summary.failed, ["codex"]);
+    assert.equal(report.codex.status, "failed");
+    assert.equal(report.runtimeEvidencePacket.summary.releaseGrade, false);
+    assert.doesNotMatch(result.stdout, /wrapperFailedAfterCompletedInvocation/u);
+  });
+
+  test("Codex normal wrapper exit still rejects dispatch-only evidence", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/eval-meta-agents.mjs", "--runtime=codex", "--live"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          META_KIM_CODEX_LIVE_WEAK_NORMAL_FIXTURE: "1",
+          NO_COLOR: "1",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
+
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.summary.passed, []);
+    assert.deepEqual(report.summary.failed, ["codex"]);
+    assert.equal(report.codex.status, "failed");
+    assert.equal(report.codex.releaseFuseInvocationObserved, false);
+    assert.equal(report.runtimeEvidencePacket.summary.releaseGrade, false);
+  });
+
   test("primary release fuse fixes Claude plus Codex scope and forbids filters or fixtures", () => {
+    const source = readFileSync(
+      path.join(repoRoot, "scripts", "eval-meta-agents.mjs"),
+      "utf8",
+    );
+    assert.doesNotMatch(
+      source,
+      /runPrimaryReleaseRuntimeIsolated\("claude"\)/u,
+      "Claude must retain its native direct custom-agent probe path",
+    );
+    assert.match(
+      source,
+      /primaryReleaseFuse\s*\?\s*await runPrimaryReleaseRuntimeIsolated\("codex"\)/u,
+    );
+    assert.match(
+      source,
+      /codex:\s*240_000[\s\S]*primaryReleaseProcessIsolation:\s*"runtime_subprocess"/u,
+    );
+    assert.match(
+      source,
+      /runWindowsGuardedCommand[\s\S]*META_KIM_EVAL_START_GATE/u,
+      "Codex must remain gated until the Windows tree guardian is ready",
+    );
+    assert.match(
+      source,
+      /"exec",\s*"--ignore-user-config",\s*"--enable",\s*"multi_agent",\s*"--json"/u,
+      "the release probe must retain auth while isolating itself from unrelated user MCP configuration",
+    );
+    assert.match(
+      source,
+      /META_KIM_CHILD_COMMAND_FAILED[\s\S]*codex_wrapper_failed_after_completed_native_invocation/u,
+      "a nonzero wrapper exit may recover only from the same completed native-invocation evidence",
+    );
+    assert.match(source, /function codexRecoveryHasReturnedChildFinal\(/u);
+    assert.match(source, /completionBoundary === "returned_child_final"/u);
+    assert.match(
+      source,
+      /windows-process-tree-guard\.ps1[\s\S]*processTreeCleanupVerified/u,
+      "Windows release evidence must require verified whole-tree cleanup",
+    );
+    const isolatedRunner = source.match(
+      /async function runPrimaryReleaseRuntimeIsolated\(runtimeName\) \{[\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(isolatedRunner);
+    assert.match(
+      isolatedRunner,
+      /const processTreeCleanupFailure[\s\S]*processTreeCleanupFailure/u,
+      "cleanup failure classification must be defined in the isolated runtime catch",
+    );
+    assert.match(
+      isolatedRunner,
+      /for \(let attempt = 1; attempt <= 2; attempt \+= 1\)/u,
+      "a transient isolated Codex miss may retry once without reusing its evidence",
+    );
+    assert.match(isolatedRunner, /priorAttemptEvidence: attemptEvidence/u);
+    assert.match(isolatedRunner, /META_KIM_CHILD_COMMAND_FAILED/u);
+    assert.match(isolatedRunner, /non_release_grade_child_exit/u);
+    assert.match(isolatedRunner, /processTreeCleanupFailure\) \{\s*break;/u);
+    assert.match(isolatedRunner, /error\?\.processTreeCleanupFailure === true/u);
+    assert.match(
+      isolatedRunner,
+      /META_KIM_COMMAND_TIMEOUT_CLEANUP_FAILED/u,
+    );
+    assert.match(source, /function processTreeCleanupError\(/u);
+    assert.match(source, /finally_child_cleanup_failed/u);
+    assert.match(source, /finally_guardian_cleanup_failed/u);
+    assert.match(
+      source,
+      /let guardDirRemovalError = null;[\s\S]*if \(finalCleanupError\) \{\s*throw finalCleanupError;\s*\}[\s\S]*if \(guardDirRemovalError\)/u,
+      "a temp-directory removal error must never mask an unverified process-tree cleanup",
+    );
+    assert.doesNotMatch(
+      source,
+      /taskkill[\s\S]{0,800}process\.kill\(pid, signal\)/u,
+      "a taskkill provider failure must not be relabeled as successful cleanup after killing only the root",
+    );
     const filtered = spawnSync(
       process.execPath,
       ["scripts/eval-meta-agents.mjs", "--primary-release-fuse", "--runtime=claude"],
@@ -689,6 +861,6 @@ describe("eval-meta-agents Claude smoke", () => {
       },
     );
     assert.equal(fixture.status, 1);
-    assert.match(fixture.stderr, /forbids META_KIM_CODEX_LIVE_TIMEOUT_FIXTURE/u);
+    assert.match(fixture.stderr, /forbids Codex live failure fixtures/u);
   });
 });

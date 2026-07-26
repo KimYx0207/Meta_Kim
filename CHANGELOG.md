@@ -8,6 +8,29 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.2] - 2026-07-26
+
+### Solved Problem
+
+After crashes or interrupted Stop hooks, Meta_Kim could leave hundreds of historical run-status files marked `active=true`. A later prompt could then appear to inherit stale Critical-stage state, while Claude Code and Codex Stop hooks were not yet wired through one lifecycle contract without risking runtime-specific Hook drift.
+
+### Fixed
+
+- **Run continuity now has one authoritative spine and recoverable public projections.** New run IDs are collision-resistant and lowercase, refresh/Stop writes require the expected run ID, active/status files are repaired from the spine instead of becoming separate truth, and strong legacy records are migrated once to `archived_legacy` while unknown or malformed records are preserved.
+- **Task identity no longer stores raw prompts.** Status records keep a protected project/profile HMAC fingerprint, reject unsafe JSON boundaries before writing, fail closed if an existing HMAC key is missing or corrupt, and strip nested raw prompt fields from persisted state.
+- **Claude Code and Codex keep separate runtime Hook ownership where needed.** Shared code is limited to runtime-neutral spine, lock, path, lifecycle, and generic Codex/Cursor behavior. Claude Code keeps its own Stop entrypoint and memory hook source; Codex project/global Stop wiring now preserves user hooks, saves memory first, and runs lifecycle cleanup last.
+- **The full meta-theory release suite now has load-safe verification headroom.** Its release-stage safety timeout matches the other large validation stages, preventing a green 1,269-test suite from being killed only because earlier live runtime checks temporarily increased machine load.
+- **Claude Code and Codex keep runtime-specific release probe paths.** Claude retains its direct custom-agent binding probe. Codex alone runs in a clean child process after Claude finishes, so preceding runtime state cannot delay Codex host-event discovery; the single dual-runtime fuse still makes one combined decision.
+- **A transient Codex host-event miss is retried without reusing evidence.** Each of at most two attempts gets a fresh isolated child and process-tree guardian; the first failure remains as a safe digest, cleanup failure stops immediately, and only one attempt's own strict live evidence can pass. The probe keeps Codex authentication but ignores unrelated user MCP configuration, and a nonzero wrapper exit can recover only from the same fresh session's completed native invocation instead of discarding a task Codex actually finished. The outer release-stage safety timeout now covers both attempts under load.
+- **Windows probe cleanup no longer depends on `taskkill` process-provider health.** A Toolhelp32 guardian is ready before the isolated Codex evaluator starts, tracks the owned descendant tree, drains it on normal exit or timeout, verifies zero survivors, and fails the release gate if cleanup cannot be proven.
+- **Status remains usable with long local verification history.** The concise CLI and its regression harness can carry the full internal footprint payload instead of silently failing at Node's small default child-output buffer.
+
+### Verification
+
+- Focused suites passed for run-status lifecycle, eight-stage spine behavior, hook canonical ownership, data integrity, MCP memory hooks, project bootstrap, runtime sync manifests, global hook policy, W2 transaction safety, and the unique PRD contract.
+- The real local state was backed up, then reconciled: 216 stale active histories were archived, 303 terminal records were preserved, and exactly one current v2 active record remained.
+- The standard packed `meta:verify:all` gate passed all 13 stages with fresh Claude Code/Codex live evidence and global Hook checks. Docker, fixture-only evidence, and projection-only checks were not used as product proof.
+
 ## [2.9.1] - 2026-07-25
 
 ### Solved Problem

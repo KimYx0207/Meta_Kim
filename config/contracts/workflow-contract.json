@@ -1262,23 +1262,32 @@
     },
     "runStatusEnvelope": {
       "enabled": true,
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "purpose": "Give users a stable answer to whether meta-theory governance is active, how far it has progressed, and which stage is current without exposing hidden protocol packets.",
       "stateFiles": {
         "activeRun": ".meta-kim/state/{profile}/active-run.json",
-        "perRunStatus": ".meta-kim/state/{profile}/runs/{runId}/status.json"
+        "perRunStatus": ".meta-kim/state/{profile}/runs/{runId}/status.json",
+        "lifecycleMigrationMarker": ".meta-kim/state/{profile}/migrations/run-status-lifecycle-v1.json",
+        "lifecycleMigrationCompletionSidecar": ".meta-kim/state/{profile}/migrations/run-status-lifecycle-v1.managed-completion.json",
+        "privateTaskIdentityKey": ".meta-kim/state/{profile}/private/task-identity-key.json"
       },
       "writer": "runtime_spine_state_adapter",
+      "supportedReadSchemaVersions": [1, 2],
+      "supportedWriteSchemaVersions": [2],
       "pathPolicy": {
         "crossPlatform": true,
         "useNodePathJoin": true,
         "mustStayWithin": ".meta-kim/state",
-        "profileSanitization": "A-Za-z0-9._- only, fallback default"
+        "profileSanitization": "Lowercase a-z0-9._- names remain readable except for the reserved derived- namespace. Any derived- input, uppercase input, unsafe input, traversal input, or overlong input receives a derived- prefixed lowercase readable base plus a deterministic case-sensitive hash suffix. Reserving derived- means a user-supplied direct safe name cannot collide with a generated profile namespace, while deterministic hashing keeps repeated routing stable and distinct on case-insensitive filesystems. External profile is always raw and normalized exactly once; internal callers that already hold a canonical result must pass it through the explicit canonicalProfile boundary, which validates without normalizing again. Empty input falls back to default."
       },
       "requiredFields": [
         "schemaVersion",
         "active",
+        "lifecycleStatus",
         "runId",
+        "taskFingerprint",
+        "taskIdentitySource",
+        "taskClassification",
         "triggeredBy",
         "currentStage",
         "currentStageKey",
@@ -1295,6 +1304,9 @@
         "publicReadyBoundary",
         "deactivatedAt",
         "deactivationReason",
+        "supersededByRunId",
+        "archivedAt",
+        "archiveReason",
         "continuationBoundary",
         "startedAt",
         "updatedAt",
@@ -1307,6 +1319,46 @@
         "stagePurpose",
         "stagePurposeKey"
       ],
+      "lifecycleStatusEnum": [
+        "active",
+        "inactive",
+        "session_stopped",
+        "evolution_completed",
+        "superseded",
+        "archived_legacy"
+      ],
+      "deactivationReasonEnum": [
+        "session_stop",
+        "evolution_completed",
+        "superseded_by_new_prompt",
+        "legacy_reconciled"
+      ],
+      "lifecycleCombinationRules": {
+        "active": { "active": true, "deactivationReason": null },
+        "inactive": { "active": false },
+        "session_stopped": { "active": false, "deactivationReason": "session_stop" },
+        "evolution_completed": { "active": false, "deactivationReason": "evolution_completed" },
+        "superseded": { "active": false, "deactivationReason": "superseded_by_new_prompt", "supersededByRunIdRequired": true },
+        "archived_legacy": { "active": false, "deactivationReason": "legacy_reconciled", "archivedAtRequired": true }
+      },
+      "taskIdentitySourceEnum": [
+        "project_profile_hmac_sha256",
+        "not_available",
+        "unrecoverable_legacy"
+      ],
+      "privacyPolicy": "Raw prompt/task text and unkeyed prompt digests are forbidden at every nested object or array depth in spine-state.json, active-run.json, per-run status.json, and CLI output. Writers recursively remove forbidden raw prompt/task keys while preserving keyed fingerprints and non-sensitive fields, then copy only JSON-safe primitives, dense arrays, and plain own-data objects into a null-prototype JSON boundary. Undefined, non-finite numbers, function, symbol, bigint, sparse or decorated arrays, accessor properties, custom prototypes, toJSON, reserved structural keys such as __proto__, and cyclic input are rejected before any state mutation; accessors and toJSON are never executed. Exact-same-prompt identity uses HMAC-SHA256 with a random project/profile-local key stored outside public envelopes under a dedicated lock and atomic 0600 write where supported. Public records expose only the HMAC digest, its source, and classification metadata; legacy identity is never guessed.",
+      "taskIdentityRecoveryPolicy": "The activator reads existing spine and active-run identity bindings before identity calculation. If either pointer is HMAC-bound, identity calculation requires the existing project/profile key. A missing or corrupt key fails closed with a localized recovery notice and leaves spine, active-run, per-run status, lifecycle, and key state unchanged. Automatic key creation is allowed only when no HMAC-bound authority/history pointer exists. Recovery requires explicitly restoring the original key; destructive reset is a separate operator action allowed only after confirming abandonment of the existing run.",
+      "runIdPolicy": "Every writer validates runId before path construction. Generated IDs combine a lowercase ISO timestamp with a cryptographically random 64-bit suffix. All new schema-v2 writes must match ^meta-[a-z0-9][a-z0-9._-]{0,115}$ and remain at most 120 characters, so case-insensitive filesystems cannot alias new run directories. Uppercase is accepted only while reading a strongly shaped schema-v1 historical record through the one-time legacy migration; it is migrated in place only when its directory name and embedded runId agree and its case-folded directory name is unique, otherwise it is preserved without mutation.",
+      "replacementPolicy": "A different prompt may replace an observed or otherwise eligible authoritative run only under the profile-scoped spine lock and expectedRunId compare-and-swap. refreshExisting is repair-only: missing, inactive, deleted, or changed authority never falls through to activation. Stop terminalization idempotently repairs the same inactive run without changing its first terminal reason and completes an interrupted Evolution deletion when requested. Managed active runs retain conservative replacement rules.",
+      "legacyReconciliationPolicy": "The one-time versioned profile-local migration acquires locks only in spine-then-migration order and runs only after a strict active spine plus a strong Meta_Kim active-run envelope agree on one safe runId. Strong schema-v1 history may omit authorityMode/publicReadyAuthority but must retain the complete legacy public-envelope provenance shape. A schema-v1 record without lifecycleStatus is valid only when active state, deactivationReason, deactivatedAt, and any reason-specific supersession/archive fields form a supported combination; active history cannot carry terminal reason/time residue. Schema-less, unknown-schema, invalid-lifecycle, malformed, unknown, terminal, and unsafe records remain untouched. Valid non-authoritative active history is normalized to complete schema v2. A marker is accepted only with marker/schema/profile/migration fields, a safe original authoritativeRunId, valid completedAt, and finite nonnegative report counts. The complete primary marker is authoritative first; when an unknown or forged primary marker must be preserved byte-for-byte, the same valid completion report is atomically persisted to the canonical managed completion sidecar and prevents later rescans. An invalid existing sidecar fails closed with completed=false and no migration mutation; a missing primary continues to use the primary marker path.",
+      "authorityAndRecoveryPolicy": {
+        "authority": "live_spine_state",
+        "projections": ["active-run.json", "runs/{runId}/status.json"],
+        "readRule": "When a valid live spine exists, readers derive status from it even if projections are missing, stale, or interrupted. An active projection without a valid live spine is never authoritative.",
+        "writeRule": "Write the authoritative spine first, then recoverable per-run and active-run projections. Multi-file atomicity is not claimed.",
+        "repairRule": "The next exact same-prompt activation refresh repairs projections only when expectedRunId still matches an active spine. Terminalization repairs interrupted inactive projections idempotently, and activation repairs an inactive predecessor projection before publishing a new run.",
+        "lockOrder": "All lifecycle migration paths acquire the profile spine lock before the migration lock; code already holding the spine lock may acquire only the migration lock helper."
+      },
       "stageOrder": [
         "Critical",
         "Fetch",
@@ -1350,7 +1402,7 @@
         ],
         "publicReadyAuthority": false,
         "continuationRule": "Inactive runs must expose deactivatedAt, deactivationReason, and continuationBoundary in active-run.json. A later prompt may preserve the user's continuation wording through HookPrompt, but it must reconcile against runtime state and choose a new governed run or offline audit when the previous run stopped.",
-        "rule": "The run status envelope reports runtime stage progress only. It must not imply summary closure, verification pass, real capability invocation, or public-ready completion. Hook-observed/advisory state is visible as observed state and must not be presented as managed runtime execution."
+        "rule": "The validated live spine is runtime status authority; active-run and per-run files are recoverable projections. The envelope reports runtime stage progress only and must not imply summary closure, verification pass, real capability invocation, or public-ready completion. Hook-observed/advisory state is visible as observed state and must not be presented as managed runtime execution."
       },
       "languagePolicy": "User-facing run status labels and stage purpose text must follow the runtime/tool selected output language first, explicit output-language choice second, and latest user input language only as fallback. The envelope may carry runtime-provided publicLabels and a resolved stagePurpose; canonical stage labels stay English. Fixed labels in any single human language are forbidden as the default public notice shell.",
       "runtimeAdapters": {

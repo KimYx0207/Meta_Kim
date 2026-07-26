@@ -79,6 +79,7 @@ import {
 import {
   buildCodexHooksJson,
   buildCursorHooksJson,
+  runtimeHookSourceOwner,
   stripProjectMetaKimHooksFromHookConfig,
 } from "./scripts/runtime-hook-mapping.mjs";
 import {
@@ -1117,6 +1118,7 @@ const PROJECT_HOOK_SOURCE_CANDIDATES = {
     "bash-readonly-whitelist.mjs",
     "enforce-agent-dispatch.mjs",
     "graphify-context.mjs",
+    "meta-kim-memory-save.mjs",
     "post-console-log-warn.mjs",
     "post-format.mjs",
     "post-typecheck.mjs",
@@ -1161,23 +1163,35 @@ function readProjectHookSource(platformId, hookName) {
   ) {
     return buildCodexGraphifyContextHookSource();
   }
-  const candidates = [];
-  if (platformId === "claude") {
-    candidates.push(
-      join(PROJECT_DIR, "canonical", "runtime-assets", "claude", "hooks", hookName),
+  const owner = runtimeHookSourceOwner(platformId, hookName);
+  if (!owner) {
+    throw new Error(
+      `No canonical Hook source owner for ${platformId}:${hookName}`,
     );
   }
-  candidates.push(
-    join(PROJECT_DIR, "canonical", "runtime-assets", "shared", "hooks", hookName),
+  const sharedPath = join(
+    PROJECT_DIR,
+    "canonical",
+    "runtime-assets",
+    "shared",
+    "hooks",
+    hookName,
   );
-  candidates.push(
-    join(PROJECT_DIR, "canonical", "runtime-assets", "claude", "hooks", hookName),
+  const claudePath = join(
+    PROJECT_DIR,
+    "canonical",
+    "runtime-assets",
+    "claude",
+    "hooks",
+    hookName,
   );
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue;
-    return readFileSync(candidate, "utf8");
+  const sourcePath = owner === "shared" ? sharedPath : claudePath;
+  if (!existsSync(sourcePath)) {
+    throw new Error(
+      `Missing canonical Hook source for ${platformId}:${hookName} (owner=${owner})`,
+    );
   }
-  return null;
+  return readFileSync(sourcePath, "utf8");
 }
 
 function buildCodexGraphifyContextHookSource() {

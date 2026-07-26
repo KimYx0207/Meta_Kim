@@ -9,10 +9,129 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const prdPath = path.join(REPO_ROOT, "docs", "ai-native-capability-gap-mvp-prd.zh-CN.md");
 const prd = existsSync(prdPath) ? readFileSync(prdPath, "utf8") : "";
 
+function markedBlock(startMarker, endMarker) {
+  const start = prd.indexOf(startMarker);
+  const end = prd.indexOf(endMarker);
+  assert.notEqual(start, -1, `missing block start ${startMarker}`);
+  assert.notEqual(end, -1, `missing block end ${endMarker}`);
+  assert.ok(end > start, `${endMarker} must follow ${startMarker}`);
+  return prd.slice(start + startMarker.length, end);
+}
+
 describe(
   "29 — Capability Gap complete product PRD",
   { skip: prd ? false : "local-private PRD is not attached in this workspace" },
   () => {
+  test("machine-enforces one current queue head and one next item across P-122 release closure", () => {
+    const currentQueue = markedBlock("<!-- CURRENT_QUEUE_START -->", "<!-- CURRENT_QUEUE_END -->");
+    const activeRows = currentQueue.match(/^\| ACTIVE \|.*$/gm) ?? [];
+    const nextRows = currentQueue.match(/^\| NEXT \|.*$/gm) ?? [];
+
+    assert.equal(activeRows.length, 1, "current queue must expose exactly one ACTIVE row");
+    assert.equal(nextRows.length, 1, "current queue must expose exactly one NEXT row");
+    const p122Released = /\| P-122 \| 已发布闭合/.test(activeRows[0]);
+    assert.match(activeRows[0], /\| P-122 \|/);
+    if (p122Released) {
+      assert.match(activeRows[0], /release_closed/);
+    } else {
+      assert.match(activeRows[0], /进行中/);
+      assert.match(activeRows[0], /pending_release_candidate/);
+      assert.doesNotMatch(activeRows[0], /已发布|已验收|release_closed/);
+    }
+    assert.match(nextRows[0], /\| P-123 \| 待处理/);
+    assert.match(nextRows[0], /not_started/);
+
+    const serialQueue = prd.match(/### 串行执行队列([\s\S]*?)### v0\.79 历史对话证据吸收记录/)?.[1] ?? "";
+    const queueRows = serialQueue.split(/\r?\n/).filter((line) => /^\| \d+ \| P-\d+ \|/.test(line));
+    const inProgressRows = queueRows.filter((line) => /\| (?:进行中|返工中)/.test(line));
+    assert.equal(
+      inProgressRows.length,
+      p122Released ? 0 : 1,
+      "P-122 release closure must retire the sole in-progress row without starting P-123",
+    );
+    const p122QueueRow = queueRows.find((line) => /\| P-122 \|/.test(line)) ?? "";
+    assert.match(
+      p122QueueRow,
+      p122Released ? /已发布闭合/ : /返工中/,
+    );
+    assert.match(queueRows.find((line) => /\| P-123 \|/.test(line)) ?? "", /待处理（唯一 next/);
+
+    assert.match(prd, /既有公开版本：v2\.9\.1/);
+    assert.match(prd, /该字段只描述 P-122 开始前已经存在的公开基线，不表示 P-122 已发布/);
+  });
+
+  test("requires positive, falsification, and release evidence for completed claims", () => {
+    const completed = markedBlock(
+      "<!-- COMPLETED_EVIDENCE_CHAIN_START -->",
+      "<!-- COMPLETED_EVIDENCE_CHAIN_END -->",
+    );
+    const rows = completed.split(/\r?\n/).filter((line) => /^\| P-\d+ \|/.test(line));
+
+    const completedIds = rows.map((line) => line.match(/^\| (P-\d+) \|/)?.[1]);
+    assert.deepEqual(completedIds.slice(0, 2), ["P-135", "P-117"]);
+    assert.ok(
+      completedIds.length === 2 ||
+        (completedIds.length === 3 && completedIds[2] === "P-122"),
+      "only a fully released P-122 may extend the completed evidence chain",
+    );
+    for (const row of rows) {
+      assert.match(row, /\| P-\d+ \| .+ \| .+ \| .+ \| .+ \|/);
+      assert.match(row, /commit `?[0-9a-f]{40}`?/);
+      assert.match(row, /meta:verify:all/);
+      assert.match(row, /GitHub Release/);
+    }
+    assert.doesNotMatch(completed, /pending/);
+  });
+
+  test("keeps archived unfinished outcomes distinct from completion", () => {
+    const archived = markedBlock("<!-- ARCHIVED_UNFINISHED_START -->", "<!-- ARCHIVED_UNFINISHED_END -->");
+    const rows = archived.split(/\r?\n/).filter((line) => /^\| P-\d+ \|/.test(line));
+
+    assert.deepEqual(rows.map((line) => line.match(/^\| (P-\d+) \|/)?.[1]), ["P-118", "P-119", "P-121"]);
+    assert.equal((archived.match(/historical_deferred_unfinished/g) ?? []).length, 2);
+    assert.equal((archived.match(/historical_cancelled_unfinished/g) ?? []).length, 1);
+    assert.doesNotMatch(archived, /\| (?:已完成|已验收|已发布|release_closed) \|/);
+    assert.match(prd, /归档只表示“不占用当前 `ACTIVE`\/`NEXT` 队列头并保留历史理由”，不表示完成、验收或发布/);
+  });
+
+  test("keeps P-122 candidate slots honest and permits only complete release closure", () => {
+    const acceptance = markedBlock("<!-- P122_ACCEPTANCE_SLOT_START -->", "<!-- P122_ACCEPTANCE_SLOT_END -->");
+    const slotNames = [
+      "正证链",
+      "反证链",
+      "fresh Verification",
+      "用户目标验收",
+      "发布文档与版本",
+      "Git 与发布绑定",
+      "全局 Claude Code/Codex 更新",
+    ];
+    const rows = acceptance
+      .split(/\r?\n/)
+      .filter((line) => slotNames.some((name) => line.startsWith(`| ${name} |`)));
+
+    assert.equal(rows.length, 7, "P-122 must expose all seven final acceptance slots");
+    for (const marker of slotNames) {
+      assert.match(acceptance, new RegExp(marker), `missing P-122 acceptance slot ${marker}`);
+    }
+    const currentQueue = markedBlock("<!-- CURRENT_QUEUE_START -->", "<!-- CURRENT_QUEUE_END -->");
+    const releaseClosed = /^\| ACTIVE \| P-122 \| 已发布闭合 .*release_closed/m.test(currentQueue);
+    if (releaseClosed) {
+      assert.ok(rows.every((line) => /\| closed \|/.test(line)));
+      assert.doesNotMatch(acceptance, /\| (?:pending|candidate_[^| ]*) \|/);
+    } else {
+      assert.match(
+        rows.find((line) => line.startsWith("| Git 与发布绑定 |")) ?? "",
+        /\| pending \|/,
+      );
+      assert.match(
+        rows.find((line) => line.startsWith("| 全局 Claude Code\/Codex 更新 |")) ?? "",
+        /\| pending \|/,
+      );
+      assert.doesNotMatch(currentQueue, /release_closed/);
+    }
+    assert.match(prd, /P-123 从 `NEXT` 提升为 `ACTIVE`/);
+  });
+
     test("marks local complete-product state with live/native release boundary", () => {
     assert.match(prd, /## 当前完成状态/);
     assert.match(prd, /已测通/);

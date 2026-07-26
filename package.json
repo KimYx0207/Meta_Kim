@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "2.9.1",
+  "version": "2.9.2",
   "description": "Governance layer for AI coding: canonical meta agents, workflow contracts, default Claude/Codex projections, non-default OpenClaw/Cursor projections, and source-backed candidate probes.",
   "private": true,
   "type": "module",
@@ -187,6 +187,7 @@
   "files": [
     "canonical/",
     "scripts/**/*.mjs",
+    "scripts/**/*.ps1",
     "bin/",
     "config/",
     "docs/images/",

@@ -499,10 +499,10 @@ describe("sync-runtimes / Codex project hooks", () => {
     assert.match(source, /else \{[\s\S]*mergeGlobalMetaKimHooksIntoSettings/);
   });
 
-  test("project Codex hooks leave global-only packages out", () => {
+  test("project Codex hooks wire memory before lifecycle cleanup without global-only adapters", () => {
     const config = buildCodexProjectHooksJson({ packageRoot: "D:/Meta_Kim" });
 
-    assert.equal(config.hooks.SessionStart, undefined);
+    assert.ok(Array.isArray(config.hooks.SessionStart));
     assert.ok(
       config.hooks.UserPromptSubmit[0].hooks.some((hook) =>
         hook.command.includes("activate-meta-theory-spine.mjs"),
@@ -511,10 +511,18 @@ describe("sync-runtimes / Codex project hooks", () => {
     );
     assert.ok(Array.isArray(config.hooks.Stop));
     assert.match(JSON.stringify(config.hooks.Stop), /stop-compaction\.mjs/);
+    const stopCommands = config.hooks.Stop.flatMap((entry) => entry.hooks ?? [])
+      .map((hook) => hook.command);
+    assert.equal(stopCommands.filter((command) => command.includes("meta-kim-memory-save.mjs")).length, 1);
+    assert.equal(stopCommands.filter((command) => command.includes("stop-spine-cleanup.mjs")).length, 1);
+    assert.ok(
+      stopCommands.findIndex((command) => command.includes("meta-kim-memory-save.mjs")) <
+      stopCommands.findIndex((command) => command.includes("stop-spine-cleanup.mjs")),
+    );
     const allCommands = JSON.stringify(config);
     assert.match(allCommands, /--package-root/);
     assert.match(allCommands, /D:\/Meta_Kim/);
-    assert.doesNotMatch(allCommands, /meta-kim-memory-save\.mjs/);
+    assert.match(allCommands, /meta-kim-memory-save\.mjs/);
     assert.doesNotMatch(allCommands, /stop-save-progress\.mjs/);
     assert.doesNotMatch(allCommands, /hookprompt-adapter\.mjs/);
     assert.doesNotMatch(allCommands, /planning-with-files-adapter\.mjs/);
@@ -533,7 +541,8 @@ describe("sync-runtimes / Codex project hooks", () => {
     assert.match(source, /buildCursorProjectHooksJson\(\{[\s\S]*packageRoot: repoRoot/);
 
     const codexProjectConfig = buildCodexProjectHooksJson({ packageRoot: "D:/Meta_Kim" });
-    assert.doesNotMatch(JSON.stringify(codexProjectConfig), /hookprompt-adapter\.mjs|meta-kim-memory-save\.mjs/);
+    assert.doesNotMatch(JSON.stringify(codexProjectConfig), /hookprompt-adapter\.mjs/);
+    assert.match(JSON.stringify(codexProjectConfig), /meta-kim-memory-save\.mjs/);
 
     const codexGlobalConfig = buildCodexProjectHooksJson({
       hookPromptAdapterPath: "~/.codex/hooks/hookprompt-adapter.mjs",

@@ -158,15 +158,32 @@ test("runtime-family inference reads the real entrypoint, not business argument 
 
   test("profile names cannot escape the repo-local state root", () => {
     const escaped = resolveProfileName("../escape");
-    assert.match(escaped, /^escape-[a-f0-9]{12}$/u);
-    const paths = getProfilePaths({ profile: escaped });
+    assert.match(escaped, /^derived-escape-[a-f0-9]{12}$/u);
+    const paths = getProfilePaths({ canonicalProfile: escaped });
+    assert.equal(paths.profile, escaped);
     assert.ok(paths.profileDir.startsWith(path.dirname(getProfilePaths().profileDir)));
   });
 
   test("unsafe and overlong profile names keep collision-resistant identities", () => {
     assert.notEqual(resolveProfileName("tenant/a"), resolveProfileName("tenant a"));
+    assert.notEqual(
+      resolveProfileName("tenant/a"),
+      resolveProfileName(resolveProfileName("tenant/a")),
+      "derived profile names are a reserved namespace and cannot be impersonated by explicit legal input",
+    );
     assert.notEqual(resolveProfileName("x".repeat(81)), "default");
     assert.equal(resolveProfileName("safe.profile-1"), "safe.profile-1");
+    const generated = resolveProfileName("tenant/a");
+    assert.equal(getProfilePaths({ canonicalProfile: generated }).profile, generated);
+    assert.notEqual(
+      getProfilePaths({ profile: generated }).profile,
+      generated,
+      "raw user input cannot impersonate the reserved generated namespace",
+    );
+    assert.throws(
+      () => getProfilePaths({ profile: "raw", canonicalProfile: generated }),
+      /either raw profile or canonicalProfile/u,
+    );
     for (const value of ["tenant/a", "tenant a", "x".repeat(81), ".", ".."]) {
       assert.ok(resolveProfileName(value).length <= 80);
     }

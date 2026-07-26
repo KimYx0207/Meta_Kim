@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { sanitizeStateProfile } from "../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import {
+  sanitizeStateProfile,
+  validateCanonicalStateProfile,
+} from "../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 import { detectProjectRegistryEntry } from "./project-registry.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -78,11 +81,21 @@ export function buildProfileKey({
 }
 
 export function getProfilePaths({
-  profile = resolveProfileName(),
+  profile,
+  canonicalProfile,
   runtimeFamily = resolveRuntimeFamily(),
   repoPath = repoRoot,
 } = {}) {
-  const safeProfile = resolveProfileName(profile);
+  if (profile !== undefined && canonicalProfile !== undefined) {
+    throw new TypeError("Pass either raw profile or canonicalProfile, not both.");
+  }
+  // `profile` is always raw external input and is normalized exactly once.
+  // Internal code that already owns a canonical result must opt into the
+  // separate canonicalProfile field so the reserved derived-* namespace is
+  // validated rather than mistaken for a new raw user name and re-hashed.
+  const safeProfile = canonicalProfile === undefined
+    ? resolveProfileName(profile)
+    : validateCanonicalStateProfile(canonicalProfile);
   const profileDir = path.join(localStateRoot, safeProfile);
   return {
     profile: safeProfile,

@@ -293,7 +293,7 @@ async function readProfileSpineState(profile) {
   const safeProfile = sanitizeStateProfile(profile);
   const spinePath = resolveProfileStateDir(
     REPO_ROOT,
-    safeProfile,
+    profile,
     "spine",
     "spine-state.json",
   );
@@ -304,7 +304,7 @@ async function readProfileSpineState(profile) {
 
 async function readAuthoritativeSpineState(profile) {
   const safeProfile = sanitizeStateProfile(profile);
-  const profileState = await readProfileSpineState(safeProfile);
+  const profileState = await readProfileSpineState(profile);
   if (profileState) return profileState;
 
   const active = await readSpineState(REPO_ROOT);
@@ -375,7 +375,7 @@ async function writeCompaction({
   const safeProfile = sanitizeStateProfile(profile);
   const compactionDir = resolveProfileStateDir(
     REPO_ROOT,
-    safeProfile,
+    profile,
     "compaction",
   );
   await fs.mkdir(compactionDir, { recursive: true });
@@ -464,7 +464,7 @@ async function main() {
   // Only run on actual interruptions (not active=true stops)
   if (INPUT.stop_hook_active === true) return;
 
-  const profile = sanitizeStateProfile(process.env.META_KIM_PROFILE);
+  const profile = process.env.META_KIM_PROFILE;
   const spineState = await readAuthoritativeSpineState(profile);
   const transcriptPath = INPUT.transcript_path || INPUT.transcriptPath;
   if (!transcriptPath) return;

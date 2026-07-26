@@ -61,6 +61,11 @@ const prepareOpenClawScriptPath = path.join(
   "scripts",
   "prepare-openclaw-local.mjs",
 );
+const windowsProcessTreeGuardPath = path.join(
+  repoRoot,
+  "scripts",
+  "windows-process-tree-guard.ps1",
+);
 const cursorLiveHarnessContractPath = path.join(
   repoRoot,
   "config",
@@ -72,6 +77,11 @@ let cleanupInFlight = false;
 const CODEX_LIVE_TIMEOUT_MS = 180_000;
 const CODEX_SESSION_SETTLE_TIMEOUT_MS = 10_000;
 const CODEX_SESSION_SETTLE_INTERVAL_MS = 250;
+const PRIMARY_RELEASE_RUNTIME_PROCESS_TIMEOUT_MS = Object.freeze({
+  codex: 240_000,
+});
+const WINDOWS_PROCESS_TREE_GUARD_READY_TIMEOUT_MS = 15_000;
+const WINDOWS_PROCESS_TREE_GUARD_EXIT_TIMEOUT_MS = 30_000;
 
 const RUNTIME_FAILURE_TAXONOMY = Object.freeze({
   pass: "pass",
@@ -342,6 +352,22 @@ function markChildActive(child, label) {
   });
 }
 
+function processTreeCleanupError(error, code, details = {}) {
+  const wrapped = new Error("Process-tree cleanup could not be verified", {
+    cause: error,
+  });
+  wrapped.code = code;
+  wrapped.processTreeCleanupFailure = true;
+  wrapped.processTreeCleanupReason =
+    details.reason ?? error?.processTreeCleanupReason ?? "cleanup_unverified";
+  wrapped.processTreeSurvivorCount = Number.isSafeInteger(details.survivorCount)
+    ? details.survivorCount
+    : Number.isSafeInteger(error?.processTreeSurvivorCount)
+    ? error.processTreeSurvivorCount
+    : null;
+  return wrapped;
+}
+
 async function killProcessTree(pid, options = {}) {
   const signal = options.signal ?? "SIGTERM";
   if (!pid) {
@@ -349,14 +375,57 @@ async function killProcessTree(pid, options = {}) {
   }
 
   if (process.platform === "win32") {
+    const guardDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "meta-kim-process-tree-stop-"),
+    );
+    const readyPath = path.join(guardDir, "ready");
+    const stopPath = path.join(guardDir, "stop");
+    const resultPath = path.join(guardDir, "result.json");
     try {
-      await execFileAsync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      await fs.writeFile(stopPath, "stop", "utf8");
+      await execFileAsync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        windowsProcessTreeGuardPath,
+        "-RootPid",
+        String(pid),
+        "-ReadyPath",
+        readyPath,
+        "-StopPath",
+        stopPath,
+        "-ResultPath",
+        resultPath,
+      ], {
         cwd: repoRoot,
-        timeout: 15_000,
+        timeout: WINDOWS_PROCESS_TREE_GUARD_EXIT_TIMEOUT_MS,
         windowsHide: true,
       });
-    } catch {
-      // Best-effort cleanup; process may already be gone.
+      const result = JSON.parse(await fs.readFile(resultPath, "utf8"));
+      if (result?.verified !== true) {
+        throw new Error("Windows process-tree guard did not verify cleanup");
+      }
+    } catch (guardError) {
+      // Retain taskkill only as a best-effort emergency action. It cannot prove
+      // provider-independent tree cleanup, so callers still receive a failure.
+      try {
+        await execFileAsync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+          cwd: repoRoot,
+          timeout: 15_000,
+          windowsHide: true,
+        });
+      } catch {
+        // The verified Toolhelp32 result remains the release boundary.
+      }
+      throw processTreeCleanupError(
+        guardError,
+        "META_KIM_WINDOWS_PROCESS_TREE_CLEANUP_FAILED",
+        { reason: "toolhelp_guard_failed" },
+      );
+    } finally {
+      await fs.rm(guardDir, { recursive: true, force: true });
     }
     return;
   }
@@ -405,6 +474,27 @@ async function cleanupActiveChildren(reason) {
   await Promise.allSettled(
     entries.map(({ child }) => terminateChildTree(child)),
   );
+}
+
+async function waitForEvaluatorStartGate() {
+  const gatePath = process.env.META_KIM_EVAL_START_GATE;
+  if (!gatePath) {
+    return;
+  }
+  delete process.env.META_KIM_EVAL_START_GATE;
+  if (!path.isAbsolute(gatePath)) {
+    throw new Error("META_KIM_EVAL_START_GATE must be an absolute path");
+  }
+  const deadline = Date.now() + WINDOWS_PROCESS_TREE_GUARD_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      await fs.access(gatePath);
+      return;
+    } catch {
+      await delay(25);
+    }
+  }
+  throw new Error("Evaluator start gate was not released by the process-tree guard");
 }
 
 function installSignalCleanup() {
@@ -1888,6 +1978,16 @@ function shouldForceCodexLiveTimeoutFixture() {
   return process.env.META_KIM_CODEX_LIVE_TIMEOUT_FIXTURE === "1";
 }
 
+function shouldForceCodexLiveNonzeroFixture() {
+  return ["returned", "weak"].includes(
+    process.env.META_KIM_CODEX_LIVE_NONZERO_FIXTURE,
+  );
+}
+
+function shouldForceCodexLiveWeakNormalFixture() {
+  return process.env.META_KIM_CODEX_LIVE_WEAK_NORMAL_FIXTURE === "1";
+}
+
 function buildCodexLiveTimeoutFixtureStdout() {
   return [
     JSON.stringify({
@@ -1935,6 +2035,134 @@ function buildCodexLiveTimeoutFixtureError() {
   error.stdout = buildCodexLiveTimeoutFixtureStdout();
   error.stderr = "fixture stderr tail";
   return error;
+}
+
+function buildCodexLiveNonzeroFixtureError(
+  fixtureShape = process.env.META_KIM_CODEX_LIVE_NONZERO_FIXTURE,
+) {
+  const runtimePayload = {
+    runtime: "codex",
+    governed_entry: "meta-theory",
+    warden_entry_gate: true,
+    conductor_orchestration: true,
+    orchestrationTaskBoardPacket: {
+      synthesisOwner: "meta-conductor",
+      route: "Warden -> Conductor -> board -> workerTaskPackets",
+    },
+    workerTaskPackets: [
+      {
+        owner: "meta-prism",
+        roleDisplayName: "review",
+        deliverable: "Verify completed work after a nonzero wrapper exit.",
+        verificationOwner: "meta-warden",
+      },
+    ],
+    verificationOwner: "meta-warden",
+  };
+  const childSessionId = "nonzero-fixture-child";
+  const taskPath = "/root/nonzero-fixture-child";
+  const callId = "nonzero-fixture-spawn";
+  const weakCall = {
+    id: callId,
+    type: "collab_tool_call",
+    tool: "spawn_agent",
+    receiver_thread_id: childSessionId,
+  };
+  const returnedChildRecords = [
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "spawn_agent",
+        namespace: "collaboration",
+        call_id: callId,
+        arguments: JSON.stringify({
+          message: "review through a run-scoped owner contract",
+        }),
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: callId,
+        output: "accepted",
+      },
+    },
+    {
+      type: "event_msg",
+      payload: {
+        type: "sub_agent_activity",
+        event_id: callId,
+        kind: "started",
+        agent_thread_id: childSessionId,
+        agent_path: taskPath,
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "agent_message",
+        author: taskPath,
+        recipient: "/root",
+        content: [
+          {
+            type: "input_text",
+            text: "The child returned its completed review.",
+          },
+        ],
+      },
+    },
+  ];
+  const weakDispatchOnlyRecords = [
+    { type: "item.started", item: weakCall },
+    {
+      type: "item.completed",
+      item: {
+        ...weakCall,
+        status: "completed",
+        result: "dispatch accepted but child return is absent",
+      },
+    },
+  ];
+  const error = new Error(
+    "Command failed after completed Codex fixture invocation",
+  );
+  error.code = "META_KIM_CHILD_COMMAND_FAILED";
+  error.stdout = [
+    JSON.stringify({
+      type: "thread.started",
+      thread_id: "codex-live-nonzero-fixture-thread",
+    }),
+    ...(fixtureShape === "returned"
+      ? returnedChildRecords
+      : weakDispatchOnlyRecords
+    ).map((record) => JSON.stringify(record)),
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "nonzero-fixture-final-json",
+        type: "agent_message",
+        status: "completed",
+        text: JSON.stringify(runtimePayload),
+      },
+    }),
+  ].join("\n");
+  error.stderr = "fixture wrapper exited nonzero";
+  return error;
+}
+
+function codexRecoveryHasReturnedChildFinal(evidence) {
+  const invocation = evidence?.nativeInvocation;
+  return (
+    evidence?.behaviorDiagnosticOk === true &&
+    evidence?.nativeInvocationObserved === true &&
+    invocation?.completionBoundary === "returned_child_final" &&
+    typeof invocation?.resultMessageId === "string" &&
+    invocation.resultMessageId.length > 0 &&
+    typeof invocation?.resultTextSha256 === "string" &&
+    invocation.resultTextSha256.length > 0
+  );
 }
 
 function isOptionalRuntimeUnavailable(message) {
@@ -2250,13 +2478,11 @@ function inspectCodexLiveEvidence(
       typeof event.sessionId === "string" &&
       event.sessionId.length > 0 &&
       ["completed", "returned"].includes(event.resultStatus) &&
-      ((event.completionBoundary === "completed_activity_observed" &&
-        event.activityCompletionObserved === true) ||
-        (event.completionBoundary === "returned_child_final" &&
-          typeof event.resultMessageId === "string" &&
-          event.resultMessageId.length > 0 &&
-          typeof event.resultTextSha256 === "string" &&
-          event.resultTextSha256.length > 0)) &&
+      event.completionBoundary === "returned_child_final" &&
+      typeof event.resultMessageId === "string" &&
+      event.resultMessageId.length > 0 &&
+      typeof event.resultTextSha256 === "string" &&
+      event.resultTextSha256.length > 0 &&
       typeof event.outputDigest === "string" &&
       event.outputDigest.length > 0,
   );
@@ -2375,11 +2601,24 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
 
     if (typeof options.timeout === "number" && options.timeout > 0) {
       timeoutId = setTimeout(() => {
-        void terminateChildTree(child).finally(() => {
+        void terminateChildTree(child).then(() => {
           const error = new Error(
             `Command timed out after ${options.timeout}ms: ${file} ${args.join(" ")}`,
           );
           error.code = "META_KIM_COMMAND_TIMEOUT";
+          error.timeoutMs = options.timeout;
+          error.command = `${file} ${args.join(" ")}`;
+          error.stdout = stdout;
+          error.stderr = stderr;
+          settle(error);
+        }).catch((cleanupError) => {
+          const error = new Error(
+            `Command timed out and process-tree cleanup failed: ${file} ${args.join(" ")}`,
+            { cause: cleanupError },
+          );
+          error.code = "META_KIM_COMMAND_TIMEOUT_CLEANUP_FAILED";
+          error.processTreeCleanupFailure = true;
+          error.processTreeCleanupReason = "timeout_cleanup_failed";
           error.timeoutMs = options.timeout;
           error.command = `${file} ${args.join(" ")}`;
           error.stdout = stdout;
@@ -2414,15 +2653,319 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
         .filter(Boolean)
         .join("\n");
       const suffix = signal ? ` (signal: ${signal})` : "";
-      settle(
-        new Error(
-          `Command failed: ${file} ${args.join(" ")}${suffix}${
-            failureDetails ? `\n${failureDetails}` : ""
-          }`,
-        ),
+      const error = new Error(
+        `Command failed: ${file} ${args.join(" ")}${suffix}${
+          failureDetails ? `\n${failureDetails}` : ""
+        }`,
       );
+      error.code = "META_KIM_CHILD_COMMAND_FAILED";
+      error.stdout = stdout;
+      error.stderr = stderr;
+      settle(error);
     });
   });
+}
+
+async function runWindowsGuardedCommand(file, args, options = {}) {
+  const guardDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meta-kim-process-tree-guard-"),
+  );
+  const gatePath = path.join(guardDir, "start");
+  const readyPath = path.join(guardDir, "ready");
+  const stopPath = path.join(guardDir, "stop");
+  const resultPath = path.join(guardDir, "result.json");
+  let child;
+  let guardian;
+  let childClosed = false;
+  let guardianClosed = false;
+  let childStdout = "";
+  let childStderr = "";
+  let guardianStdout = "";
+  let guardianStderr = "";
+  let childOutcome;
+  let guardianOutcome;
+
+  try {
+    child = spawn(file, args, {
+      cwd: options.cwd,
+      env: {
+        ...options.env,
+        META_KIM_EVAL_START_GATE: gatePath,
+      },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    markChildActive(child, `${file} ${args.join(" ")}`);
+    child.stdout.on("data", (chunk) => {
+      childStdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      childStderr += chunk.toString();
+    });
+
+    childOutcome = new Promise((resolve) => {
+      child.once("error", (error) => {
+        childClosed = true;
+        resolve({ error, code: null, signal: null });
+      });
+      child.once("close", (code, signal) => {
+        childClosed = true;
+        resolve({ error: null, code, signal });
+      });
+    });
+
+    guardian = spawn(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        windowsProcessTreeGuardPath,
+        "-RootPid",
+        String(child.pid),
+        "-ReadyPath",
+        readyPath,
+        "-StopPath",
+        stopPath,
+        "-ResultPath",
+        resultPath,
+      ],
+      {
+        cwd: repoRoot,
+        env: process.env,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    guardian.stdout.on("data", (chunk) => {
+      guardianStdout += chunk.toString();
+    });
+    guardian.stderr.on("data", (chunk) => {
+      guardianStderr += chunk.toString();
+    });
+    guardianOutcome = new Promise((resolve) => {
+      guardian.once("error", (error) => {
+        guardianClosed = true;
+        resolve({ error, code: null, signal: null });
+      });
+      guardian.once("close", (code, signal) => {
+        guardianClosed = true;
+        resolve({ error: null, code, signal });
+      });
+    });
+
+    const readyDeadline = Date.now() + WINDOWS_PROCESS_TREE_GUARD_READY_TIMEOUT_MS;
+    while (Date.now() < readyDeadline) {
+      try {
+        await fs.access(readyPath);
+        break;
+      } catch {
+        if (childClosed || guardianClosed) {
+          throw new Error("Windows process-tree guard exited before readiness");
+        }
+        await delay(25);
+      }
+    }
+    try {
+      await fs.access(readyPath);
+    } catch {
+      throw new Error("Windows process-tree guard readiness timed out");
+    }
+    await fs.writeFile(gatePath, "start", "utf8");
+
+    let timeoutId;
+    const firstOutcome = await Promise.race([
+      childOutcome.then((outcome) => ({ kind: "child", outcome })),
+      guardianOutcome.then((outcome) => ({ kind: "guardian", outcome })),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(
+          () => resolve({ kind: "timeout", outcome: null }),
+          options.timeout,
+        );
+      }),
+    ]);
+    clearTimeout(timeoutId);
+    const timedOut = firstOutcome.kind === "timeout";
+    if (timedOut || firstOutcome.kind === "guardian") {
+      await fs.writeFile(stopPath, "stop", "utf8");
+    }
+
+    if (
+      firstOutcome.kind === "guardian" &&
+      (firstOutcome.outcome.error || firstOutcome.outcome.code !== 0) &&
+      !childClosed
+    ) {
+      await terminateChildTree(child, { graceMs: 1_000 });
+    }
+
+    let drainOutcome = await Promise.race([
+      Promise.all([childOutcome, guardianOutcome]).then(
+        ([settledChild, settledGuardian]) => ({
+          timedOut: false,
+          child: settledChild,
+          guardian: settledGuardian,
+        }),
+      ),
+      delay(WINDOWS_PROCESS_TREE_GUARD_EXIT_TIMEOUT_MS).then(() => ({
+        timedOut: true,
+      })),
+    ]);
+    if (drainOutcome.timedOut) {
+      if (!guardianClosed) {
+        guardian.kill();
+        await Promise.race([guardianOutcome, delay(5_000)]);
+      }
+      if (!childClosed) {
+        await terminateChildTree(child, { graceMs: 1_000 });
+      }
+      drainOutcome = await Promise.race([
+        Promise.all([childOutcome, guardianOutcome]).then(
+          ([settledChild, settledGuardian]) => ({
+            timedOut: false,
+            child: settledChild,
+            guardian: settledGuardian,
+          }),
+        ),
+        delay(5_000).then(() => ({ timedOut: true })),
+      ]);
+      if (drainOutcome.timedOut || !childClosed || !guardianClosed) {
+        const error = processTreeCleanupError(
+          null,
+          "META_KIM_WINDOWS_PROCESS_TREE_DRAIN_FAILED",
+          { reason: "child_or_guardian_exit_unverified" },
+        );
+        throw error;
+      }
+    }
+
+    const outcome = drainOutcome.child;
+    const guardOutcome = drainOutcome.guardian;
+    if (guardOutcome.error || guardOutcome.code !== 0) {
+      let failedGuardResult = null;
+      try {
+        failedGuardResult = JSON.parse(await fs.readFile(resultPath, "utf8"));
+      } catch {
+        // Absence is itself a fail-closed diagnostic, never pass evidence.
+      }
+      const error = new Error(
+        `Windows process-tree guard failed${
+          guardianStderr.trim() || guardianStdout.trim()
+            ? `: ${guardianStderr.trim() || guardianStdout.trim()}`
+            : ""
+        }`,
+      );
+      error.code = "META_KIM_WINDOWS_PROCESS_TREE_GUARD_FAILED";
+      error.processTreeCleanupFailure = true;
+      error.processTreeCleanupReason =
+        failedGuardResult?.reason ?? "guard_result_unavailable";
+      error.processTreeSurvivorCount = Number.isSafeInteger(
+        failedGuardResult?.survivorCount,
+      )
+        ? failedGuardResult.survivorCount
+        : null;
+      throw error;
+    }
+    const guardResult = JSON.parse(await fs.readFile(resultPath, "utf8"));
+    if (guardResult?.verified !== true) {
+      const error = new Error("Windows process-tree guard did not verify cleanup");
+      error.code = "META_KIM_WINDOWS_PROCESS_TREE_GUARD_UNVERIFIED";
+      error.processTreeCleanupFailure = true;
+      error.processTreeCleanupReason =
+        guardResult?.reason ?? "guard_result_unverified";
+      error.processTreeSurvivorCount = Number.isSafeInteger(
+        guardResult?.survivorCount,
+      )
+        ? guardResult.survivorCount
+        : null;
+      throw error;
+    }
+
+    if (timedOut) {
+      const error = new Error(
+        `Command timed out after ${options.timeout}ms: ${file} ${args.join(" ")}`,
+      );
+      error.code = "META_KIM_COMMAND_TIMEOUT";
+      error.timeoutMs = options.timeout;
+      error.command = `${file} ${args.join(" ")}`;
+      error.stdout = childStdout;
+      error.stderr = childStderr;
+      error.processTreeCleanupVerified = true;
+      throw error;
+    }
+    if (outcome.error) {
+      throw outcome.error;
+    }
+    if (outcome.code !== 0) {
+      const suffix = outcome.signal ? ` (signal: ${outcome.signal})` : "";
+      const details = [childStderr.trim(), childStdout.trim()]
+        .filter(Boolean)
+        .join("\n");
+      const error = new Error(
+        `Command failed: ${file} ${args.join(" ")}${suffix}${
+          details ? `\n${details}` : ""
+        }`,
+      );
+      error.code = "META_KIM_CHILD_COMMAND_FAILED";
+      error.stdout = childStdout;
+      error.stderr = childStderr;
+      error.processTreeCleanupVerified = true;
+      throw error;
+    }
+    return {
+      stdout: childStdout,
+      stderr: childStderr,
+      processTreeCleanupVerified: true,
+    };
+  } finally {
+    let finalCleanupError = null;
+    if (child && !childClosed) {
+      try {
+        await fs.writeFile(stopPath, "stop", "utf8");
+      } catch {
+        // The guarded cleanup attempt below remains authoritative.
+      }
+      try {
+        await terminateChildTree(child, { graceMs: 1_000 });
+      } catch (error) {
+        finalCleanupError = processTreeCleanupError(
+          error,
+          "META_KIM_WINDOWS_PROCESS_TREE_FINAL_CLEANUP_FAILED",
+          { reason: "finally_child_cleanup_failed" },
+        );
+      }
+    }
+    if (guardian && !guardianClosed) {
+      try {
+        guardian.kill();
+        if (guardianOutcome) {
+          await Promise.race([guardianOutcome, delay(5_000)]);
+        }
+        if (!guardianClosed) {
+          throw new Error("guardian exit was not observed");
+        }
+      } catch (error) {
+        finalCleanupError ??= processTreeCleanupError(
+          error,
+          "META_KIM_WINDOWS_PROCESS_TREE_FINAL_CLEANUP_FAILED",
+          { reason: "finally_guardian_cleanup_failed" },
+        );
+      }
+    }
+    let guardDirRemovalError = null;
+    try {
+      await fs.rm(guardDir, { recursive: true, force: true });
+    } catch (error) {
+      guardDirRemovalError = error;
+    }
+    if (finalCleanupError) {
+      throw finalCleanupError;
+    }
+    if (guardDirRemovalError) {
+      throw guardDirRemovalError;
+    }
+  }
 }
 
 function openClawStructuredPayloadLooksReal(agentId, payload) {
@@ -3242,14 +3785,25 @@ async function runCodexSmoke(expectedAgentIds) {
 
 async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-prism") {
   const forceTimeoutFixture = shouldForceCodexLiveTimeoutFixture();
-  const codexCmd = forceTimeoutFixture
+  const forceNonzeroFixture = shouldForceCodexLiveNonzeroFixture();
+  const forceWeakNormalFixture = shouldForceCodexLiveWeakNormalFixture();
+  const codexCmd =
+    forceTimeoutFixture || forceNonzeroFixture || forceWeakNormalFixture
     ? { file: "codex-fixture", toArgs: (args) => args.map(String) }
     : await getResolvedCodexCommand();
   let versionStdout;
   try {
     logProgress("Codex live: probing CLI and running repository smoke prompt");
-    if (forceTimeoutFixture) {
-      versionStdout = "codex-cli timeout-fixture";
+    if (
+      forceTimeoutFixture ||
+      forceNonzeroFixture ||
+      forceWeakNormalFixture
+    ) {
+      versionStdout = forceTimeoutFixture
+        ? "codex-cli timeout-fixture"
+        : forceNonzeroFixture
+        ? "codex-cli nonzero-fixture"
+        : "codex-cli weak-normal-fixture";
     } else {
       ({ stdout: versionStdout } = await runCommandWithIgnoredStdin(
         codexCmd.file,
@@ -3341,6 +3895,9 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
 
     const codexExecArgs = codexCmd.toArgs([
       "exec",
+      "--ignore-user-config",
+      "--enable",
+      "multi_agent",
       "--json",
       "--skip-git-repo-check",
       "--sandbox",
@@ -3355,15 +3912,23 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
     if (forceTimeoutFixture) {
       throw buildCodexLiveTimeoutFixtureError();
     }
-    const { stdout } = await runCommandWithIgnoredStdin(
-      codexCmd.file,
-      codexExecArgs,
-      {
-        cwd: repoRoot,
-        timeout: CODEX_LIVE_TIMEOUT_MS,
-        env: { ...process.env, NO_COLOR: "1" },
-      },
-    );
+    if (forceNonzeroFixture) {
+      throw buildCodexLiveNonzeroFixtureError();
+    }
+    let stdout;
+    if (forceWeakNormalFixture) {
+      stdout = buildCodexLiveNonzeroFixtureError("weak").stdout;
+    } else {
+      ({ stdout } = await runCommandWithIgnoredStdin(
+        codexCmd.file,
+        codexExecArgs,
+        {
+          cwd: repoRoot,
+          timeout: CODEX_LIVE_TIMEOUT_MS,
+          env: { ...process.env, NO_COLOR: "1" },
+        },
+      ));
+    }
 
     liveEvidence = await inspectCodexLiveEvidenceWithSessionFallback(stdout, {
       structuralOk,
@@ -3383,7 +3948,7 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
           sessionSettleTimeoutMs: CODEX_SESSION_SETTLE_TIMEOUT_MS,
         },
       );
-      if (timeoutEvidence.nativeInvocationObserved) {
+      if (codexRecoveryHasReturnedChildFinal(timeoutEvidence)) {
         return {
           status: "passed",
           ok: true,
@@ -3479,6 +4044,54 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
         },
       };
     }
+    if (
+      error?.code === "META_KIM_CHILD_COMMAND_FAILED" &&
+      typeof error?.stdout === "string"
+    ) {
+      const completedEvidence =
+        await inspectCodexLiveEvidenceWithSessionFallback(error.stdout, {
+          structuralOk,
+          representativeAgentId,
+          fixture: false,
+          sinceMs: commandStartedAtMs,
+          sessionSettleTimeoutMs: CODEX_SESSION_SETTLE_TIMEOUT_MS,
+        });
+      if (codexRecoveryHasReturnedChildFinal(completedEvidence)) {
+        return {
+          status: "passed",
+          ok: true,
+          releaseFuseInvocationObserved: true,
+          nativeInvocationObserved:
+            completedEvidence.customAgentInvocationObserved === true,
+          customAgentInvocationObserved:
+            completedEvidence.customAgentInvocationObserved === true,
+          nativeInvocationKind: "codex_spawn_agent_child_completion",
+          ownerBindingMode:
+            completedEvidence.nativeInvocation.ownerBindingMode,
+          nativeAgentType: completedEvidence.nativeInvocation.nativeAgentType,
+          wrapperFailedAfterCompletedInvocation: true,
+          sample: {
+            ...payload,
+            runtime_smoke: completedEvidence.runtimePayload,
+            runtime_native_invocation: completedEvidence.nativeInvocation,
+            runtime_session_evidence: completedEvidence.sessionEvidence,
+            runtime_recovery: {
+              wrapperFailedAfterCompletedInvocation: true,
+              reason:
+                "codex_wrapper_failed_after_completed_native_invocation",
+              errorClass:
+                "codex_wrapper_nonzero_after_completed_invocation",
+              stage: "codex_exec_orchestration_prompt",
+              threadId: extractCodexThreadId(error.stdout),
+              stdoutSha256: diagnosticSha256(error.stdout),
+              stderrSha256: diagnosticSha256(error.stderr),
+              sessionLookupFailure:
+                completedEvidence.sessionLookupFailure ?? null,
+            },
+          },
+        };
+      }
+    }
     if (isRetryableCodexFailure(error.message)) {
       return {
         status: "skipped",
@@ -3491,7 +4104,9 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
           runtime_smoke: {
             skipped: true,
             reason: "codex_runtime_unavailable",
-            error: error.message,
+            errorClass: error?.code ?? "codex_runtime_unavailable",
+            stdoutSha256: diagnosticSha256(error?.stdout),
+            stderrSha256: diagnosticSha256(error?.stderr),
           },
         },
       };
@@ -4257,6 +4872,179 @@ async function runOpenClawLive() {
   }
 }
 
+async function runPrimaryReleaseRuntimeIsolated(runtimeName) {
+  const timeout = PRIMARY_RELEASE_RUNTIME_PROCESS_TIMEOUT_MS[runtimeName];
+  if (!Number.isSafeInteger(timeout) || timeout <= 0) {
+    throw new Error(`Unsupported primary release runtime: ${runtimeName}`);
+  }
+
+  const runner =
+    process.platform === "win32"
+      ? runWindowsGuardedCommand
+      : runCommandWithIgnoredStdin;
+  const attemptEvidence = [];
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    logProgress(
+      `${runtimeName} primary fuse: starting isolated runtime process attempt ${attempt}/2`,
+    );
+    try {
+      const { stdout, processTreeCleanupVerified } = await runner(
+        process.execPath,
+        [
+          fileURLToPath(import.meta.url),
+          `--runtime=${runtimeName}`,
+          "--live",
+        ],
+        {
+          cwd: repoRoot,
+          env: process.env,
+          timeout,
+        },
+      );
+      const childReport = JSON.parse(stdout);
+      const runtimeReport = childReport?.[runtimeName];
+      const exactRuntimeScope =
+        Array.isArray(childReport?.requestedRuntimes) &&
+        childReport.requestedRuntimes.length === 1 &&
+        childReport.requestedRuntimes[0] === runtimeName;
+      const releaseGrade =
+        childReport?.mode === "live" &&
+        exactRuntimeScope &&
+        runtimeReport?.status === "passed" &&
+        childReport?.runtimeEvidencePacket?.summary?.releaseGrade === true;
+      if (releaseGrade) {
+        return {
+          ...runtimeReport,
+          primaryReleaseProcessIsolation: "runtime_subprocess",
+          primaryReleaseProcessAttempts: attempt,
+          priorAttemptEvidence: attemptEvidence,
+          processTreeCleanupVerified:
+            process.platform === "win32"
+              ? processTreeCleanupVerified === true
+              : "posix_process_group",
+        };
+      }
+
+      const runtimeStatus = ["failed", "skipped", "blocked"].includes(
+        runtimeReport?.status,
+      )
+        ? runtimeReport.status
+        : "invalid";
+      attemptEvidence.push({
+        attempt,
+        outcome: "non_release_grade_report",
+        runtimeStatus,
+        failureClass:
+          childReport?.runtimeEvidencePacket?.records?.find(
+            (record) => record?.runtime === runtimeName,
+          )?.failureClass ?? "unknown_failure",
+        reasonDigest: diagnosticSha256(runtimeReport?.reason ?? "missing_reason"),
+        processTreeCleanupVerified:
+          process.platform === "win32"
+            ? processTreeCleanupVerified === true
+            : "posix_process_group",
+      });
+    } catch (error) {
+      if (
+        error?.code === "META_KIM_CHILD_COMMAND_FAILED" &&
+        (process.platform !== "win32" ||
+          error?.processTreeCleanupVerified === true)
+      ) {
+        let childReport = null;
+        try {
+          childReport = JSON.parse(error.stdout);
+        } catch {
+          // A non-JSON child failure falls through to the generic safe digest below.
+        }
+        const runtimeReport = childReport?.[runtimeName];
+        const exactRuntimeScope =
+          childReport?.mode === "live" &&
+          Array.isArray(childReport?.requestedRuntimes) &&
+          childReport.requestedRuntimes.length === 1 &&
+          childReport.requestedRuntimes[0] === runtimeName;
+        if (exactRuntimeScope && runtimeReport) {
+          attemptEvidence.push({
+            attempt,
+            outcome: "non_release_grade_child_exit",
+            runtimeStatus: ["failed", "skipped", "blocked"].includes(
+              runtimeReport.status,
+            )
+              ? runtimeReport.status
+              : "invalid",
+            failureClass:
+              childReport?.runtimeEvidencePacket?.records?.find(
+                (record) => record?.runtime === runtimeName,
+              )?.failureClass ?? "unknown_failure",
+            reasonDigest: diagnosticSha256(
+              runtimeReport?.reason ?? "missing_reason",
+            ),
+            processTreeCleanupVerified:
+              process.platform === "win32"
+                ? true
+                : "posix_process_group",
+          });
+          continue;
+        }
+      }
+      const processTreeCleanupFailure =
+        error?.processTreeCleanupFailure === true ||
+        String(error?.code ?? "").startsWith(
+          "META_KIM_WINDOWS_PROCESS_TREE_",
+        ) ||
+        error?.code === "META_KIM_COMMAND_TIMEOUT_CLEANUP_FAILED";
+      const errorClass =
+        error?.code === "META_KIM_COMMAND_TIMEOUT"
+          ? "runtime_process_timeout"
+          : processTreeCleanupFailure
+          ? "process_tree_cleanup_failure"
+          : "runtime_process_failure";
+      attemptEvidence.push({
+        attempt,
+        outcome: "runtime_process_error",
+        errorClass,
+        errorDigest: diagnosticSha256(error?.message ?? error),
+        ...(processTreeCleanupFailure
+          ? {
+              processTreeCleanupVerified: false,
+              processTreeCleanupReason:
+                error?.processTreeCleanupReason ?? "cleanup_unverified",
+              processTreeSurvivorCount: Number.isSafeInteger(
+                error?.processTreeSurvivorCount,
+              )
+                ? error.processTreeSurvivorCount
+                : null,
+            }
+          : {}),
+      });
+      if (processTreeCleanupFailure) {
+        break;
+      }
+    }
+  }
+
+  const lastAttempt = attemptEvidence.at(-1) ?? null;
+  return {
+    status: "failed",
+    ok: false,
+    reason: "isolated_primary_runtime_probe_failed",
+    errorClass:
+      lastAttempt?.errorClass ?? "runtime_report_not_release_grade",
+    errorDigest: diagnosticSha256(JSON.stringify(attemptEvidence)),
+    primaryReleaseProcessIsolation: "runtime_subprocess",
+    primaryReleaseProcessAttempts: attemptEvidence.length,
+    attemptEvidence,
+    ...(lastAttempt?.processTreeCleanupVerified === false
+      ? {
+          processTreeCleanupVerified: false,
+          processTreeCleanupReason:
+            lastAttempt.processTreeCleanupReason ?? "cleanup_unverified",
+          processTreeSurvivorCount: lastAttempt.processTreeSurvivorCount ?? null,
+        }
+      : {}),
+  };
+}
+
 async function main() {
   installSignalCleanup();
   if (primaryReleaseFuse && (runtimeArg || agentArg)) {
@@ -4264,9 +5052,14 @@ async function main() {
       "--primary-release-fuse fixes runtime scope to claude,codex and forbids --runtime/--agent filters.",
     );
   }
-  if (primaryReleaseFuse && shouldForceCodexLiveTimeoutFixture()) {
+  if (
+    primaryReleaseFuse &&
+    (shouldForceCodexLiveTimeoutFixture() ||
+      shouldForceCodexLiveNonzeroFixture() ||
+      shouldForceCodexLiveWeakNormalFixture())
+  ) {
     throw new Error(
-      "--primary-release-fuse forbids META_KIM_CODEX_LIVE_TIMEOUT_FIXTURE.",
+      "--primary-release-fuse forbids Codex live failure fixtures.",
     );
   }
   for (const runtimeName of selectedRuntimes) {
@@ -4333,9 +5126,11 @@ async function main() {
     if (isRuntimeSelected("codex")) {
       try {
         report.codex =
-          evalMode === "live"
+          primaryReleaseFuse
+            ? await runPrimaryReleaseRuntimeIsolated("codex")
+            : evalMode === "live"
             ? await runCodexLive(
-                primaryReleaseFuse ? allAgentIds : agentIds,
+                agentIds,
                 representativeAgentId,
               )
             : await runCodexSmoke(agentIds);
@@ -4455,7 +5250,9 @@ async function main() {
 }
 
 if (process.argv.includes("--probe-clis-only")) {
+  await waitForEvaluatorStartGate();
   await probeClisOnly();
 } else {
+  await waitForEvaluatorStartGate();
   await main();
 }

@@ -13,6 +13,7 @@ import {
   buildHookPromptAdapterSource,
   hookCommand,
   nodeHookCommand,
+  runtimeHookSourceOwner,
   SHARED_RUNTIME_HOOK_FILES,
 } from "./runtime-hook-mapping.mjs";
 import { ensureCodexAppNativeControls } from "./codex-config-merge.mjs";
@@ -569,28 +570,31 @@ async function tryReadCanonical(filePath) {
   }
 }
 
-async function canonicalGlobalHookSource(fileName) {
+async function canonicalGlobalHookSource(fileName, runtimeId) {
   const sharedHooksDir = path.join(canonicalRuntimeAssetsDir, "shared", "hooks");
   const claudeHooksDir = path.join(canonicalRuntimeAssetsDir, "claude", "hooks");
-  const sourceDirs = SHARED_RUNTIME_HOOK_FILES.includes(fileName)
-    ? [sharedHooksDir]
-    : [claudeHooksDir, sharedHooksDir];
-  for (const baseDir of sourceDirs) {
-    const sourcePath = path.join(baseDir, fileName);
-    try {
-      await fs.access(sourcePath);
-      return sourcePath;
-    } catch {
-      // try the next canonical hook source dir
-    }
+  const owner = runtimeHookSourceOwner(runtimeId, fileName);
+  if (!owner) return null;
+  const sourcePath = path.join(
+    owner === "shared" ? sharedHooksDir : claudeHooksDir,
+    fileName,
+  );
+  try {
+    await fs.access(sourcePath);
+    return sourcePath;
+  } catch {
+    return null;
   }
-  return null;
 }
 
-async function syncGlobalHookPackage(targetDir, displayDir, changedFiles) {
+async function syncGlobalHookPackage(targetDir, displayDir, changedFiles, runtimeId) {
   for (const fileName of GLOBAL_META_KIM_HOOK_PACKAGE_FILES) {
-    const sourcePath = await canonicalGlobalHookSource(fileName);
-    if (!sourcePath) continue;
+    const sourcePath = await canonicalGlobalHookSource(fileName, runtimeId);
+    if (!sourcePath) {
+      throw new Error(
+        `Missing canonical Hook source for ${runtimeId}:${fileName}`,
+      );
+    }
     const content = await fs.readFile(sourcePath, "utf8");
     if (
       (
@@ -1244,12 +1248,6 @@ const canonicalOpenClawStopSaveProgressHookPath = path.join(
   "claude",
   "hooks",
   "stop-save-progress.mjs",
-);
-const canonicalSharedMemorySaveHookPath = path.join(
-  canonicalRuntimeAssetsDir,
-  "shared",
-  "hooks",
-  "meta-kim-memory-save.mjs",
 );
 const GLOBAL_META_KIM_HOOK_PACKAGE_FILES = new Set([
   "activate-meta-theory-spine.mjs",
@@ -2652,10 +2650,11 @@ export function buildCodexGraphifyContextHook() {
 
 export function buildCodexProjectHooksJson({
   graphifyHookPath = ".codex/hooks/graphify-context.mjs",
-  memoryHookPath = null,
+  memoryHookPath = ".codex/hooks/meta-kim-memory-save.mjs",
   spineHookPath = ".codex/hooks/activate-meta-theory-spine.mjs",
   enforceAgentDispatchHookPath = ".codex/hooks/enforce-agent-dispatch.mjs",
   hookPromptAdapterPath = null,
+  stopSpineCleanupHookPath = ".codex/hooks/stop-spine-cleanup.mjs",
   packageRoot = null,
 } = {}) {
   const config = buildCodexHooksJson({
@@ -2664,6 +2663,7 @@ export function buildCodexProjectHooksJson({
     spineHookPath,
     enforceAgentDispatchHookPath,
     hookPromptAdapterPath,
+    stopSpineCleanupHookPath,
     packageRoot,
   });
   config.hooks.PostToolUse = [
@@ -2682,18 +2682,29 @@ export function buildCodexProjectHooksJson({
       hooks: [hookCommand(nodeHookCommand(".codex/hooks/subagent-context.mjs"))],
     },
   ];
-  config.hooks.Stop = [
-    ...(config.hooks.Stop ?? []),
-    {
-      matcher: "*",
-      hooks: [
-        hookCommand(nodeHookCommand(".codex/hooks/stop-compaction.mjs")),
-        hookCommand(nodeHookCommand(".codex/hooks/stop-console-log-audit.mjs")),
-        hookCommand(nodeHookCommand(".codex/hooks/stop-completion-guard.mjs")),
-        hookCommand(nodeHookCommand(".codex/hooks/stop-spine-cleanup.mjs")),
-      ],
-    },
+  const baseStopHooks = (config.hooks.Stop ?? [])
+    .flatMap((entry) => entry.hooks ?? []);
+  const lifecycleCleanupHooks = baseStopHooks.filter((hook) =>
+    hook.command?.includes("stop-spine-cleanup.mjs"),
+  );
+  const orderedStopHooks = [
+    ...baseStopHooks.filter((hook) =>
+      !hook.command?.includes("stop-spine-cleanup.mjs"),
+    ),
+    hookCommand(nodeHookCommand(".codex/hooks/stop-compaction.mjs")),
+    hookCommand(nodeHookCommand(".codex/hooks/stop-console-log-audit.mjs")),
+    hookCommand(nodeHookCommand(".codex/hooks/stop-completion-guard.mjs")),
+    ...lifecycleCleanupHooks,
   ];
+  const seenStopCommands = new Set();
+  config.hooks.Stop = [{
+    matcher: "*",
+    hooks: orderedStopHooks.filter((hook) => {
+      if (!hook?.command || seenStopCommands.has(hook.command)) return false;
+      seenStopCommands.add(hook.command);
+      return true;
+    }),
+  }];
   return config;
 }
 
@@ -2880,6 +2891,7 @@ const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
+  "meta-kim-memory-save.mjs",
   "post-console-log-warn.mjs",
   "post-format.mjs",
   "post-typecheck.mjs",
@@ -3016,6 +3028,7 @@ async function syncClaudeProjection(
       claudeHooksProjectionDir,
       displayPaths.claudeHooks,
       changedFiles,
+      "claude",
     );
   }
 
@@ -3350,9 +3363,15 @@ Examples:
 
     for (const target of runtimeHookTargets) {
       for (const hookName of target.activeFiles) {
-        const hookSource = SHARED_RUNTIME_HOOK_FILES.includes(hookName)
-          ? path.join(canonicalRuntimeAssetsDir, "shared", "hooks", hookName)
-          : path.join(canonicalClaudeHooksDir, hookName);
+        const hookSource = await canonicalGlobalHookSource(
+          hookName,
+          target.runtime,
+        );
+        if (!hookSource) {
+          throw new Error(
+            `Missing canonical Hook source owner for ${target.runtime}:${hookName}`,
+          );
+        }
         const hookContent = await tryReadCanonical(hookSource);
         if (
           hookContent &&
@@ -3790,20 +3809,25 @@ Examples:
       ) {
         changedFiles.push(`${dp.codexHooks}/skip-reminder.mjs`);
       }
-      const codexMemoryHookContent =
-        scope === "global"
-          ? await tryReadCanonical(canonicalSharedMemorySaveHookPath)
-          : null;
-      if (
-        codexMemoryHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.codexHooksDir, "meta-kim-memory-save.mjs"),
-            codexMemoryHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.codexHooks}/meta-kim-memory-save.mjs`);
+      for (const hookName of [
+        "meta-kim-memory-save.mjs",
+        "stop-spine-cleanup.mjs",
+      ]) {
+        const sourcePath = await canonicalGlobalHookSource(hookName, "codex");
+        if (!sourcePath) {
+          throw new Error(`Missing canonical Hook source for codex:${hookName}`);
+        }
+        const hookContent = await fs.readFile(sourcePath, "utf8");
+        if (
+          (
+            await writeGeneratedFile(
+              path.join(dirs.codexHooksDir, hookName),
+              hookContent,
+            )
+          ).changed
+        ) {
+          changedFiles.push(`${dp.codexHooks}/${hookName}`);
+        }
       }
       if (scope === "global") {
         const codexHookPromptAdapterPath = path.join(
@@ -3824,7 +3848,6 @@ Examples:
       const staleCodexHooks = [
         "hookprompt-adapter.mjs",
         "planning-with-files-adapter.mjs",
-        ...(scope === "global" ? [] : ["meta-kim-memory-save.mjs"]),
       ];
       for (const staleHook of staleCodexHooks) {
         if (
@@ -3835,7 +3858,7 @@ Examples:
         }
       }
       if (scope === "global") {
-        await syncGlobalHookPackage(dirs.codexHooksDir, dp.codexHooks, changedFiles);
+        await syncGlobalHookPackage(dirs.codexHooksDir, dp.codexHooks, changedFiles, "codex");
       }
       const graphifyHookPath =
         scope === "global"
@@ -3852,11 +3875,15 @@ Examples:
       const codexMemoryHookPath =
         scope === "global"
           ? path.join(dirs.codexHooksDir, "meta-kim-memory-save.mjs")
-          : null;
+          : ".codex/hooks/meta-kim-memory-save.mjs";
       const codexHookPromptAdapterPath =
         scope === "global"
           ? path.join(path.dirname(dirs.codexHooksDir), "hookprompt-adapter.mjs")
           : null;
+      const codexStopSpineCleanupHookPath =
+        scope === "global"
+          ? path.join(dirs.codexHooksDir, "stop-spine-cleanup.mjs")
+          : ".codex/hooks/stop-spine-cleanup.mjs";
       if (
         (
           await writeGeneratedJson(
@@ -3867,6 +3894,7 @@ Examples:
               spineHookPath,
               enforceAgentDispatchHookPath,
               hookPromptAdapterPath: codexHookPromptAdapterPath,
+              stopSpineCleanupHookPath: codexStopSpineCleanupHookPath,
               packageRoot: repoRoot,
             }),
           )
@@ -4118,21 +4146,6 @@ Examples:
       ) {
         changedFiles.push(`${dp.cursorHooks}/skip-reminder.mjs`);
       }
-      const cursorMemoryHookContent =
-        scope === "global"
-          ? await tryReadCanonical(canonicalSharedMemorySaveHookPath)
-          : null;
-      if (
-        cursorMemoryHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.cursorHooksDir, "meta-kim-memory-save.mjs"),
-            cursorMemoryHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.cursorHooks}/meta-kim-memory-save.mjs`);
-      }
       if (scope === "global") {
         const cursorHookPromptAdapterPath = path.join(
           path.dirname(dirs.cursorHooksDir),
@@ -4163,7 +4176,7 @@ Examples:
         }
       }
       if (scope === "global") {
-        await syncGlobalHookPackage(dirs.cursorHooksDir, dp.cursorHooks, changedFiles);
+        await syncGlobalHookPackage(dirs.cursorHooksDir, dp.cursorHooks, changedFiles, "cursor");
       }
       const graphifyHookPath =
         scope === "global"

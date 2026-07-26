@@ -313,6 +313,7 @@ test("lazy project bootstrap dry-run previews backup and rollback without writin
         {
           hooks: {
             UserPromptSubmit: [{ hooks: [{ command: "node user-hook.mjs" }] }],
+            Stop: [{ matcher: "*", hooks: [{ command: "node user-stop-hook.mjs" }] }],
           },
         },
         null,
@@ -397,6 +398,7 @@ test("lazy project bootstrap apply preserves user text/config, skips Codex proje
         {
           hooks: {
             UserPromptSubmit: [{ hooks: [{ command: "node user-hook.mjs" }] }],
+            Stop: [{ matcher: "*", hooks: [{ command: "node user-stop-hook.mjs" }] }],
           },
         },
         null,
@@ -420,13 +422,26 @@ test("lazy project bootstrap apply preserves user text/config, skips Codex proje
 
     const codexHooks = readJson(path.join(projectDir, ".codex", "hooks.json"));
     assert.match(JSON.stringify(codexHooks), /node user-hook\.mjs/);
+    assert.match(JSON.stringify(codexHooks), /node user-stop-hook\.mjs/);
     assert.match(
       JSON.stringify(codexHooks),
-      /enforce-agent-dispatch|graphify-context|activate-meta-theory-spine/,
+      /enforce-agent-dispatch|graphify-context|activate-meta-theory-spine|meta-kim-memory-save/,
     );
-    assert.doesNotMatch(
-      JSON.stringify(codexHooks),
-      /hookprompt-adapter|meta-kim-memory-save/,
+    assert.doesNotMatch(JSON.stringify(codexHooks), /hookprompt-adapter/);
+    const codexStopCommands = codexHooks.hooks.Stop
+      .flatMap((entry) => entry.hooks ?? [])
+      .map((hook) => hook.command);
+    assert.equal(
+      codexStopCommands.filter((command) => command.includes("meta-kim-memory-save.mjs")).length,
+      1,
+    );
+    assert.equal(
+      codexStopCommands.filter((command) => command.includes("stop-spine-cleanup.mjs")).length,
+      1,
+    );
+    assert.ok(
+      codexStopCommands.findIndex((command) => command.includes("meta-kim-memory-save.mjs")) <
+      codexStopCommands.findIndex((command) => command.includes("stop-spine-cleanup.mjs")),
     );
     assert.equal(
       existsSync(path.join(projectDir, ".codex", "hooks", "activate-meta-theory-spine.mjs")),
@@ -439,6 +454,34 @@ test("lazy project bootstrap apply preserves user text/config, skips Codex proje
     assert.equal(
       existsSync(path.join(projectDir, ".codex", "hooks", "enforce-agent-dispatch.mjs")),
       true,
+    );
+    assert.equal(
+      readFileSync(path.join(projectDir, ".claude", "hooks", "meta-kim-memory-save.mjs"), "utf8"),
+      readFileSync(
+        path.join(
+          REPO_ROOT,
+          "canonical",
+          "runtime-assets",
+          "claude",
+          "hooks",
+          "meta-kim-memory-save.mjs",
+        ),
+        "utf8",
+      ),
+    );
+    assert.equal(
+      readFileSync(path.join(projectDir, ".codex", "hooks", "meta-kim-memory-save.mjs"), "utf8"),
+      readFileSync(
+        path.join(
+          REPO_ROOT,
+          "canonical",
+          "runtime-assets",
+          "shared",
+          "hooks",
+          "meta-kim-memory-save.mjs",
+        ),
+        "utf8",
+      ),
     );
     assert.equal(
       readFileSync(path.join(projectDir, ".codex", "hooks", "user-custom-hook.mjs"), "utf8"),
@@ -466,6 +509,15 @@ test("lazy project bootstrap apply preserves user text/config, skips Codex proje
     assert.equal(manifest.sourceChain.setupEntrypoint, "setup.mjs --project-bootstrap");
     assert.equal(manifest.protectedMergeDecisions.protectedMerge.includes(".codex/config.toml"), true);
     assert.equal(manifest.backup.created, true);
+    assert.deepEqual(
+      manifest.managedFiles
+        .map((entry) => entry.relPath)
+        .filter((relPath) => relPath.endsWith("meta-kim-memory-save.mjs")),
+      [
+        ".claude/hooks/meta-kim-memory-save.mjs",
+        ".codex/hooks/meta-kim-memory-save.mjs",
+      ],
+    );
     assert.ok(manifest.backup.entries.some((entry) => entry.relPath === "AGENTS.md"));
     assert.equal(
       manifest.backup.entries.some((entry) => entry.relPath === ".codex/hooks.json"),

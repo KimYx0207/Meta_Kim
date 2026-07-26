@@ -8,6 +8,29 @@
 
 ## Unreleased
 
+## [2.9.2] - 2026-07-26
+
+### 解决的问题
+
+闪退或 Stop Hook 中断后，Meta_Kim 可能留下大量 `active=true` 的历史 run-status。后续新提示词看起来会继承旧的 Critical 阶段状态；同时 Claude Code 与 Codex 的 Stop Hook 还没有在同一生命周期合同下收口，又不能把两个运行端的 Hook 强行合并成同一份实现。
+
+### 修复内容
+
+- **run continuity 改为 spine 唯一权威，公开 status 只是可修复投影。** 新 run ID 小写且带随机后缀；refresh/Stop 写入必须匹配 expected run；active/status 可以从 spine 修复；强验证的旧记录只迁移一次为 `archived_legacy`，unknown/malformed 原样保留。
+- **任务身份不再保存原始提示词。** 状态里只保存项目/profile 本地 HMAC fingerprint；不安全 JSON 边界在首写前拒绝；已有 HMAC-bound run 但 key 丢失/损坏时 fail closed；嵌套 raw prompt 字段会从持久化状态中剥离。
+- **Claude Code 与 Codex 保持必要的 Hook 来源分离。** 共享层只放 spine、锁、路径、生命周期和 Codex/Cursor 通用逻辑；Claude Code 保留自己的 Stop 入口和 memory hook 来源。Codex 项目/全局 Stop 现在会保留用户 Hook，先保存 memory，再执行生命周期 cleanup。
+- **完整 meta-theory 发布测试获得与大型验证阶段一致的安全余量。** 已通过的 1,269 项测试不会再仅因前序真实运行端检查造成的临时机器负载而被 180 秒门限误杀。
+- **Claude Code 与 Codex 保留各自适合的发布探针路径。** Claude 继续直接验证自定义 Agent 绑定；只有 Codex 在 Claude 完成后进入干净子进程，避免前一运行端状态拖慢 Codex 宿主事件发现；双运行时仍由一个发布熔断器统一判定。
+- **Codex 宿主事件偶发漏收时会重试，但不复用证据。** 最多两次尝试各自使用全新的隔离子进程和进程树守护；首败保留安全摘要，清理失败立即停止，只有某一次自身的严格 live 证据可以通过。探针保留 Codex 登录信息，但忽略无关的用户 MCP 配置；外壳非零退出时，也只能依据同一新鲜 session 中已经完成的原生派发恢复，不会再丢掉 Codex 实际做完的任务。外层发布阶段的安全超时也覆盖负载下的两次尝试。
+- **Windows 探针清理不再依赖 `taskkill` 进程提供器是否健康。** 隔离 Codex evaluator 启动前，Toolhelp32 守护器必须先 ready；正常结束或超时都会清理完整后代树、验证零存活，无法证明清理完成就让发布门失败。
+- **本地验收历史很长时，status 仍可正常使用。** 简洁 CLI 与其回归测试可承载完整内部 footprint 数据，不再因为 Node 较小的默认子进程输出缓冲而静默失败。
+
+### 验证
+
+- run-status lifecycle、八阶段 spine、Hook canonical ownership、data integrity、MCP memory hooks、project bootstrap、runtime sync manifest、global hook policy、W2 transaction safety 和唯一 PRD 合同的聚焦测试均通过。
+- 真实本地状态先备份再迁移：216 条陈旧 active 历史被归档，303 条已终止记录保留，最后只剩 1 条当前 v2 active。
+- 标准 packed `meta:verify:all` 已 13/13 通过，并包含 fresh Claude Code/Codex live evidence 与全局 Hook 检查。Docker、fixture-only、projection-only 没有被当作产品正证。
+
 ## [2.9.1] - 2026-07-25
 
 ### 解决的问题
