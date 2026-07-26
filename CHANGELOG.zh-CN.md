@@ -15,7 +15,7 @@
 - **LangGraph 现在可以进入真实 Dynamic Workflow，但不会变成第二套工作流引擎。** 可选 ready-set adapter 只消费 `coreLoop.stageDagPacket` 已经选好的精确节点，用 LangGraph Functional API 的 `entrypoint` 和 `task` 包裹执行；流程图、checkpoint、lease、恢复和 merge 权威仍在 Meta_Kim。
 - **普通安装完全不变。** 默认仍用原生执行；只有显式选择 `--stage-runner-orchestrator langgraph` 才动态加载维护者自己安装的 `@langchain/langgraph`；包缺失或接口不兼容会明确失败，不会静默退回原生路径。
 - **真实打包外部消费者验收证明了边界。** 普通候选包没有 LangGraph 依赖，显式选择时会明确失败且不回退原生路径；单独安装 `@langchain/langgraph@1.4.8` 后，A 节点耐久提交时故意结束进程，再启动只执行 B，最终 merge 一次。验收中的确定性 worker 明确标成 test-only，不能冒充原生运行端正证。没有凭证支持的 OpenAI Agents 与 Claude Agent SDK 适配器仍如实标记为未实现、未做 live 证明。
-- **Claude Code 的 live 发布验收不再被无关的用户提示词 Hook 改写结构化证据。** 验收器读取真实已安装的运行端 Agent 定义，校验声明身份和边界字段、记录完整文件摘要，再通过 Claude 原生 `--safe-mode --agents --agent` 路径绑定紧凑投影。用户 Hook 不会被修改，OAuth/provider 仍由宿主管理，报告也会把这种 inline binding 与普通加载的自定义 Agent 明确区分。
+- **Claude Code 的 live 发布验收不再被无关的用户提示词 Hook 改写结构化证据。** 验收器读取真实已安装的运行端 Agent 定义，校验声明身份和边界字段、记录完整文件摘要，再通过 Claude 原生 `--setting-sources "" --agents --agent` 路径绑定紧凑投影。空设置源只排除无关的用户/项目 Hook，不会禁用显式内联 Agent，也不切断宿主管理的登录凭据。用户 Hook 不会被修改，报告也会把这种 inline binding 与普通加载的自定义 Agent 明确区分。
 
 ## [2.9.3] - 2026-07-26
 

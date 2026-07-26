@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, test } from "node:test";
 
 import {
-  buildClaudeSafeModeAgentOverride,
+  buildClaudeSettingsIsolatedAgentOverride,
   parseClaudeAgentFrontmatter,
   redactClaudeLiveCommandText,
 } from "../../scripts/claude-live-agent-override.mjs";
@@ -15,14 +15,14 @@ const metaPrismSource = readFileSync(
   "utf8",
 );
 
-describe("Claude safe-mode runtime agent override", () => {
+describe("Claude settings-isolated runtime agent override", () => {
   test("extracts the installed definition fields needed for a bounded inline agent", () => {
     const fields = parseClaudeAgentFrontmatter(metaPrismSource);
     assert.equal(fields.name, "meta-prism");
     assert.match(fields.own, /Quality forensics/u);
     assert.match(fields.do_not_touch, /Tool discovery/u);
 
-    const override = buildClaudeSafeModeAgentOverride(metaPrismSource, "meta-prism");
+    const override = buildClaudeSettingsIsolatedAgentOverride(metaPrismSource, "meta-prism");
     assert.deepEqual(Object.keys(override), ["meta-prism"]);
     assert.match(override["meta-prism"].prompt, /Do not perform business implementation or execution work/u);
     assert.match(override["meta-prism"].prompt, /Quality forensics/u);
@@ -32,11 +32,11 @@ describe("Claude safe-mode runtime agent override", () => {
 
   test("rejects name substitution and incomplete runtime definitions", () => {
     assert.throws(
-      () => buildClaudeSafeModeAgentOverride(metaPrismSource, "meta-scout"),
+      () => buildClaudeSettingsIsolatedAgentOverride(metaPrismSource, "meta-scout"),
       /name mismatch/u,
     );
     assert.throws(
-      () => buildClaudeSafeModeAgentOverride("---\nname: meta-prism\n---\n", "meta-prism"),
+      () => buildClaudeSettingsIsolatedAgentOverride("---\nname: meta-prism\n---\n", "meta-prism"),
       /missing description, own, do_not_touch, or boundary/u,
     );
   });

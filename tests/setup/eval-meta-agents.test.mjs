@@ -36,11 +36,12 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /resolveClaudeLiveAgentOverride/u);
     assert.match(
       source,
-      /const inlineAgentsJson = JSON\.stringify\(runtimeAgentOverride\.agents\)[\s\S]*"--safe-mode"[\s\S]*"--agents"[\s\S]*inlineAgentsJson[\s\S]*"--agent"/u,
+      /const inlineAgentsJson = JSON\.stringify\(runtimeAgentOverride\.agents\)[\s\S]*"--setting-sources"[\s\S]*""[\s\S]*"--agents"[\s\S]*inlineAgentsJson[\s\S]*"--agent"/u,
     );
     assert.match(source, /claude_main_session_inline_custom_agent_binding/u);
-    assert.match(source, /customizationIsolation: "safe_mode_cli_inline_agent"/u);
-    assert.match(source, /commandDisplay: `claude --safe-mode/u);
+    assert.match(source, /customizationIsolation: "empty_setting_sources_cli_inline_agent"/u);
+    assert.match(source, /commandDisplay: `claude --setting-sources <none>/u);
+    assert.doesNotMatch(source, /"--safe-mode"[\s\S]*inlineAgentsJson/u);
     assert.match(source, /redactClaudeLiveCommandText\(value, sensitiveCommandValues\)/u);
     assert.doesNotMatch(source, /nativeInvocationCommand: `claude -p --agent/u);
   });
@@ -523,6 +524,11 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /roleDisplayName/);
     assert.match(source, /isCommandTimeoutFailure/);
     assert.match(source, /META_KIM_COMMAND_TIMEOUT/);
+    assert.match(
+      source,
+      /timeoutTriggered = true;[\s\S]*child\.on\("close"[\s\S]*finished \|\| timeoutTriggered/u,
+      "the timeout path must win its race with the killed child close event",
+    );
     assert.match(source, /codex_live_timeout/);
     assert.match(source, /codex_exec_orchestration_prompt/);
     assert.match(source, /function extractCodexThreadId/);

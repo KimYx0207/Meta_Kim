@@ -12,7 +12,7 @@ import {
   canonicalRuntimeAssetsDir,
 } from "./meta-kim-sync-config.mjs";
 import {
-  buildClaudeSafeModeAgentOverride,
+  buildClaudeSettingsIsolatedAgentOverride,
   redactClaudeLiveCommandText,
 } from "./claude-live-agent-override.mjs";
 import { observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
@@ -2239,7 +2239,7 @@ function summarizeClaudeRuntime(discovery, results) {
         (result) => result.ok === true && result.nativeInvocationObserved === true,
       ),
     nativeInvocationKind: "claude_main_session_inline_custom_agent_binding",
-    customizationIsolation: "safe_mode_cli_inline_agent",
+    customizationIsolation: "empty_setting_sources_cli_inline_agent",
     discovery,
     results,
   };
@@ -2599,6 +2599,7 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
     let stdout = "";
     let stderr = "";
     let finished = false;
+    let timeoutTriggered = false;
     let timeoutId = null;
 
     function settle(error, result) {
@@ -2618,6 +2619,7 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
 
     if (typeof options.timeout === "number" && options.timeout > 0) {
       timeoutId = setTimeout(() => {
+        timeoutTriggered = true;
         void terminateChildTree(child).then(() => {
           const error = new Error(
             `Command timed out after ${options.timeout}ms: ${commandDisplay}`,
@@ -2654,11 +2656,14 @@ async function runCommandWithIgnoredStdin(file, args, options = {}) {
     });
 
     child.on("error", (error) => {
+      if (timeoutTriggered) {
+        return;
+      }
       settle(error);
     });
 
     child.on("close", (code, signal) => {
-      if (finished) {
+      if (finished || timeoutTriggered) {
         return;
       }
       if (code === 0) {
@@ -3619,7 +3624,7 @@ async function resolveClaudeLiveAgentOverride(agentId) {
     return {
       sourceCategory: candidate.sourceCategory,
       sourceDigest: crypto.createHash("sha256").update(sourceText).digest("hex"),
-      agents: buildClaudeSafeModeAgentOverride(sourceText, agentId),
+      agents: buildClaudeSettingsIsolatedAgentOverride(sourceText, agentId),
     };
   }
   throw new Error(`Claude runtime agent definition is missing for ${agentId}`);
@@ -3663,7 +3668,8 @@ async function runClaudeCases(agentIds) {
         const { stdout } = await runCommandWithIgnoredStdin(
           cmd.file,
           cmd.toArgs([
-            "--safe-mode",
+            "--setting-sources",
+            "",
             "-p",
             "--output-format",
             "json",
@@ -3679,7 +3685,7 @@ async function runClaudeCases(agentIds) {
             cwd: repoRoot,
             timeout: 150_000,
             env: { ...process.env, NO_COLOR: "1" },
-            commandDisplay: `claude --safe-mode -p --agents <runtime-definition> --agent ${agentId} --json-schema <schema> <prompt>`,
+            commandDisplay: `claude --setting-sources <none> -p --agents <runtime-definition> --agent ${agentId} --json-schema <schema> <prompt>`,
             redactText: (value) =>
               redactClaudeLiveCommandText(value, sensitiveCommandValues),
           },
@@ -3698,10 +3704,10 @@ async function runClaudeCases(agentIds) {
           ok: payload.agent === agentId && score >= 0.8 && !scoutDrift,
           nativeInvocationObserved: true,
           nativeInvocationKind: "claude_main_session_inline_custom_agent_binding",
-          nativeInvocationCommand: `claude --safe-mode -p --agents <runtime-definition> --agent ${agentId}`,
+          nativeInvocationCommand: `claude --setting-sources <none> -p --agents <runtime-definition> --agent ${agentId}`,
           agentDefinitionSourceCategory: runtimeAgentOverride.sourceCategory,
           agentDefinitionSourceDigest: runtimeAgentOverride.sourceDigest,
-          customizationIsolation: "safe_mode_cli_inline_agent",
+          customizationIsolation: "empty_setting_sources_cli_inline_agent",
           score,
           matchedGroups,
           missedGroups,

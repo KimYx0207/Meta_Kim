@@ -26,7 +26,7 @@ export function parseClaudeAgentFrontmatter(sourceText) {
   return fields;
 }
 
-export function buildClaudeSafeModeAgentOverride(sourceText, expectedAgentId) {
+export function buildClaudeSettingsIsolatedAgentOverride(sourceText, expectedAgentId) {
   const fields = parseClaudeAgentFrontmatter(sourceText);
   const agentId = String(fields.name ?? "").trim();
   if (!agentId || agentId !== expectedAgentId) {
