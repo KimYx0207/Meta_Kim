@@ -983,6 +983,50 @@ function planCodexSettingRemoval(configText, table, key) {
   };
 }
 
+function planCodexStaleDisabledCommentCleanup(configText, table, key) {
+  const parsed = parseCodexConfigLocators(configText);
+  if (table) assertSinglePlanningTable(parsed, table);
+  const locator = { table, key };
+  const assignments = parsed.assignments.get(mutationLocatorKey(locator)) ?? [];
+  if (assignments.length !== 1) return { text: configText, mutation: null };
+  const assignment = expandedAssignment(configText, assignments[0]);
+  const disabledPrefix = `# Meta_Kim disabled conflicting ${table ? `[${table}].` : ""}${key}:`;
+  const comments = parsed.records.filter((record) => record.body.startsWith(disabledPrefix));
+  if (comments.length === 0) return { text: configText, mutation: null };
+  if (comments.length !== 1) {
+    throw new Error(`Codex config managed disabled comment is ambiguous: ${table}.${key}`);
+  }
+  const comment = comments[0];
+  const adjacentLine = (value) => /^[\t ]*(?:\r\n|\n|\r)[\t ]*$/u.test(value);
+  let replaceStart;
+  let replaceEnd;
+  if (
+    comment.start >= assignment.bodyEnd &&
+    adjacentLine(configText.slice(assignment.bodyEnd, comment.start))
+  ) {
+    replaceStart = assignment.start;
+    replaceEnd = comment.bodyEnd;
+  } else if (
+    comment.bodyEnd <= assignment.start &&
+    adjacentLine(configText.slice(comment.bodyEnd, assignment.start))
+  ) {
+    replaceStart = comment.start;
+    replaceEnd = assignment.bodyEnd;
+  } else {
+    throw new Error(`Codex config managed disabled comment drifted: ${table}.${key}`);
+  }
+  const beforeFragment = configText.slice(replaceStart, replaceEnd);
+  return {
+    text: `${configText.slice(0, replaceStart)}${assignment.body}${configText.slice(replaceEnd)}`,
+    mutation: {
+      kind: "replace",
+      locator,
+      beforeFragment,
+      afterFragment: assignment.body,
+    },
+  };
+}
+
 function planCodexNotifyMutation(configText, platformName, options) {
   if (platformName !== "win32" || !/terminal-notifier/u.test(configText)) {
     return { text: configText, mutation: null };
@@ -1070,6 +1114,39 @@ export function normalizeCodexConfigMutations(mutations = []) {
       // exact same mutation does not create a second ownership layer; retain
       // the original reversible journal entry.
       chained = previous;
+    } else if (
+      previous.kind === "replace" &&
+      next.kind === "replace" &&
+      (() => {
+        const managedIndex = next.beforeFragment.indexOf(previous.afterFragment);
+        if (
+          managedIndex < 0 ||
+          next.beforeFragment.indexOf(
+            previous.afterFragment,
+            managedIndex + previous.afterFragment.length,
+          ) >= 0
+        ) return false;
+        const before = next.beforeFragment.slice(0, managedIndex);
+        const after = next.beforeFragment.slice(managedIndex + previous.afterFragment.length);
+        const separator = /^[\t ]*(?:\r\n|\n|\r)[\t ]*$/u;
+        return (
+          managedIndex === 0 &&
+          after.endsWith(next.afterFragment) &&
+          separator.test(after.slice(0, -next.afterFragment.length))
+        ) || (
+          managedIndex + previous.afterFragment.length === next.beforeFragment.length &&
+          before.startsWith(next.afterFragment) &&
+          separator.test(before.slice(next.afterFragment.length))
+        );
+      })()
+    ) {
+      // The host restored a current active value next to Meta_Kim's prior
+      // disabled fragment. Removing that stale managed fragment closes this
+      // locator's ownership; uninstall must leave the host value in place.
+      normalized.splice(previousIndex, 1);
+      indexes.clear();
+      normalized.forEach((item, itemIndex) => indexes.set(mutationLocatorKey(item.locator), itemIndex));
+      continue;
     } else if (previous.kind === "insert" && next.kind === "replace") {
       const at = previous.afterFragment.indexOf(next.beforeFragment);
       if (at >= 0 && previous.afterFragment.indexOf(next.beforeFragment, at + next.beforeFragment.length) < 0) {
@@ -1169,6 +1246,16 @@ export function planCodexAppNativeControls(configText = "", options = {}) {
       : planCodexSettingRemoval(text, "marketplaces.openai-bundled", "source");
     text = sourcePlan.text;
     if (sourcePlan.mutation) mutations.push(sourcePlan.mutation);
+
+    if (sourceToKeep) {
+      const cleanupPlan = planCodexStaleDisabledCommentCleanup(
+        text,
+        "marketplaces.openai-bundled",
+        "source",
+      );
+      text = cleanupPlan.text;
+      if (cleanupPlan.mutation) mutations.push(cleanupPlan.mutation);
+    }
 
     const notifyPlan = planCodexNotifyMutation(text, platformName, options);
     text = notifyPlan.text;

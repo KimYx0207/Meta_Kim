@@ -3,7 +3,7 @@
   "contractId": "meta-kim-stage-runner-bridge-contract",
   "prdTaskId": "P-117",
   "status": "verified",
-  "purpose": "Let the authoritative stage DAG drive real, observable, read-only execution on both primary runtimes without creating a second graph or claiming durable resume.",
+  "purpose": "Let the authoritative stage DAG drive real, observable, read-only execution on both primary runtimes without creating a second graph, with an optional P-118 durable resume boundary.",
   "primaryRuntimes": ["codex", "claude"],
   "mode": "read_only_shadow",
   "singleAuthority": {
@@ -19,15 +19,39 @@
     "runtimeFlag": "--stage-runner-runtime codex|claude",
     "packageAcceptanceScript": "meta:stage-runner:acceptance"
   },
+  "durableExtension": {
+    "prdTaskId": "P-118",
+    "optional": true,
+    "defaultEnabled": false,
+    "defaultMode": "create",
+    "kernel": "scripts/governed-execution/durable-run-kernel.mjs#openDurableRunKernel",
+    "requireGraphDigest": true,
+    "runBinding": ["runId", "coreLoop.stageDagPacket.graphDigest", "taskFingerprint"],
+    "claimBoundary": "Every ready node, including the local merge node, is claimed before execution.",
+    "terminalCommit": "per-node before ready batch settlement",
+    "terminalCommitFailure": "A rejected complete/fail commit becomes a structured durable_terminal_commit_failed node result; it may not escape as a raw batch rejection or remain bridge-completed.",
+    "leaseBoundary": "Claims carry owner, expiry, attempt identity, heartbeat, and monotonically increasing fencing token.",
+    "activeLeaseResume": "Resume detects every unexpired active claim before invoking work and returns blocked_until_lease_expiry with the blocking lease identity.",
+    "heartbeatFailure": "Heartbeat errors are captured on the node record; stopping heartbeat never skips the terminal commit, whose active owner/attempt/fence/lease check remains authoritative.",
+    "resumeBoundary": "Restore completed node outputs into bridge nodeRecords and workerResults, then schedule only incomplete nodes.",
+    "traversedEdgeBoundary": "Every completed node atomically commits its actual DAG dependsOn edges with stable traversal and condition digests; resumed completed nodes do not write those edges again.",
+    "mergeBoundary": "The local merge node consumes only its direct DAG dependency results.",
+    "authorityProjection": "coreLoop.stageDagPacket remains immutable",
+    "executionProjection": "stageRunnerBridgePacket.executionProjection",
+    "compatibilityView": "stageRunnerBridgePacket.compatibilityView",
+    "externalEffects": "Still forbidden by this read-only bridge; durable effect reconciliation remains owned by the kernel."
+  },
   "safety": {
     "codex": "codex exec with ephemeral session, ignored user config/rules, and read-only sandbox",
     "claude": "claude print mode with safe mode, plan permission mode, explicit read/search tools, and no session persistence",
-    "childEnvironmentBoundary": "Pass only runtime/system/authentication allowlisted variables, remove parent Codex/Claude session markers, and never inherit unrelated project secrets.",
-    "telemetryRedaction": "Persist bounded output plus digests; redact workspace and user-home paths from output, errors, and stderr tails.",
+    "childEnvironmentBoundary": "Pass system variables plus an exact runtime allowlist: Codex receives only CODEX_HOME and named OPENAI endpoint/auth selectors; Claude receives only CLAUDE_CONFIG_DIR and named ANTHROPIC/Claude auth selectors. Prefix-matching is forbidden, parent session markers are removed, and unrelated project or cloud credentials are not inherited.",
+    "filesystemReadBoundary": "Provider sandbox/permission mode is read-only. Workspace-only reads are requested by prompt but are not claimed as mechanically confined by this bridge.",
+    "telemetryRedaction": "Before any durable retention, bound output and redact workspace/user-home paths, known secret environment values, and common KEY/TOKEN/PASSWORD/SECRET/CREDENTIAL fields from output, stderr, and failure text for built-in and custom invokers.",
     "stdinPromptOnly": true,
     "shellInterpolationForbidden": true,
     "projectWritesForbidden": true,
     "externalWritesForbidden": true,
+    "nodeEffectBoundary": "A worker node must itself declare read_only*, merge_only, or stage_control. Task-packet side-effect flags cannot downgrade a mutating node into read-only execution.",
     "dockerProductEvidenceForbidden": true,
     "taskBudget": null,
     "timeoutMeaning": "A process safety fuse only; it is not a token, cost, or task-performance budget."
@@ -59,7 +83,6 @@
     "oneRuntimeMaySubstituteForAnother": false
   },
   "nonGoals": [
-    "P-118 durable kill-and-resume",
     "P-119 LangGraph/OpenAI/Claude provider adapters",
     "Cursor or OpenClaw execution",
     "project mutation",

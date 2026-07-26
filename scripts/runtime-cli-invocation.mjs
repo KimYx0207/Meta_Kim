@@ -39,30 +39,25 @@ export function resolveWindowsCliInvocation(
   const extensions = path.win32.extname(commandText)
     ? [""]
     : [".exe", ".com", ".cmd", ".bat"];
-  const candidates = [];
   for (const directory of searchDirs) {
     for (const extension of extensions) {
       const candidate = hasPath
         ? `${commandText}${extension}`
         : path.join(directory, `${commandText}${extension}`);
-      if (existsSync(candidate)) candidates.push(candidate);
-    }
-  }
-
-  for (const candidate of candidates) {
-    if (/\.(?:exe|com)$/iu.test(candidate)) {
-      return { command: candidate, args: [...args], source: "native_executable" };
-    }
-  }
-  for (const candidate of candidates) {
-    if (!/\.(?:cmd|bat)$/iu.test(candidate)) continue;
-    const shim = resolveWindowsCmdShim(candidate);
-    if (shim) {
-      return {
-        command: shim.command,
-        args: [...shim.argsPrefix, ...args],
-        source: "node_or_native_shim_without_cmd",
-      };
+      if (!existsSync(candidate)) continue;
+      if (/\.(?:exe|com)$/iu.test(candidate)) {
+        return { command: candidate, args: [...args], source: "native_executable" };
+      }
+      if (/\.(?:cmd|bat)$/iu.test(candidate)) {
+        const shim = resolveWindowsCmdShim(candidate);
+        if (shim) {
+          return {
+            command: shim.command,
+            args: [...shim.argsPrefix, ...args],
+            source: "node_or_native_shim_without_cmd",
+          };
+        }
+      }
     }
   }
   throw new Error(`No shell-free Windows executable or supported Node shim found for ${commandText}`);

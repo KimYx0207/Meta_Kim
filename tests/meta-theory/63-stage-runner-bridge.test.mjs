@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import os from "node:os";
 import test from "node:test";
 import {
   applyStageRunnerBridgeResult,
@@ -97,6 +98,10 @@ test("P-117 contract requires Codex and Claude Code with one DAG authority", () 
   assert.equal(CONTRACT.acceptance.oneRuntimeMaySubstituteForAnother, false);
   assert.equal(CONTRACT.acceptance.syntheticProviderOrModelOutputCountsAsProductEvidence, false);
   assert.equal(CONTRACT.acceptance.deterministicInputFilesAllowed, true);
+  assert.match(CONTRACT.safety.childEnvironmentBoundary, /exact runtime allowlist/u);
+  assert.match(CONTRACT.safety.childEnvironmentBoundary, /Prefix-matching is forbidden/u);
+  assert.match(CONTRACT.safety.filesystemReadBoundary, /not claimed as mechanically confined/u);
+  assert.match(CONTRACT.safety.telemetryRedaction, /built-in and custom invokers/u);
   assert.match(PACKAGE.scripts["meta:stage-runner:acceptance"], /--runtime both/u);
   assert.match(PACKAGE.scripts["meta:stage-runner:codex"], /--runtime codex/u);
   assert.match(PACKAGE.scripts["meta:stage-runner:claude"], /--runtime claude/u);
@@ -117,25 +122,97 @@ test("read-only worker prompt retains the original governed user task", () => {
   }
 });
 
-test("runtime child environment removes nested host markers without dropping authentication", () => {
-  const { childEnv, removedManagedHostMarkers } = buildRuntimeChildEnv({
+test("runtime child environment is provider-specific and drops unrelated cloud credentials", () => {
+  const parentEnv = {
     PATH: "runtime-path",
-    ANTHROPIC_API_KEY: "kept-secret",
+    OPENAI_API_KEY: "codex-secret",
+    OPENAI_BASE_URL: "https://codex.example.invalid",
+    CODEX_HOME: "codex-home",
+    OPENAI_INTERNAL_DB_PASSWORD: "must-not-leak",
+    CODEX_PROJECT_SECRET: "must-not-leak",
+    ANTHROPIC_API_KEY: "claude-secret",
+    ANTHROPIC_BASE_URL: "https://claude.example.invalid",
+    CLAUDE_CONFIG_DIR: "claude-home",
+    CLAUDE_PROJECT_SECRET: "must-not-leak",
+    AWS_SECRET_ACCESS_KEY: "aws-secret",
+    AZURE_CLIENT_SECRET: "azure-secret",
+    GOOGLE_APPLICATION_CREDENTIALS: "google-secret-path",
+    CLOUD_ML_TOKEN: "cloud-ml-secret",
     DATABASE_URL: "must-not-leak",
     CLAUDECODE: "1",
+    CLAUDE_CODE_ENTRYPOINT: "parent-claude",
     CODEX_THREAD_ID: "parent-thread",
     CODEX_PERMISSION_PROFILE: "managed",
-  });
-  assert.deepEqual(removedManagedHostMarkers, [
+  };
+  const codex = buildRuntimeChildEnv("codex", parentEnv);
+  assert.deepEqual(codex.removedManagedHostMarkers, [
     "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
     "CODEX_THREAD_ID",
     "CODEX_PERMISSION_PROFILE",
   ]);
-  assert.equal(childEnv.ANTHROPIC_API_KEY, "kept-secret");
-  assert.equal(childEnv.PATH, "runtime-path");
-  assert.equal(childEnv.CLAUDECODE, undefined);
-  assert.equal(childEnv.CODEX_THREAD_ID, undefined);
-  assert.equal(childEnv.DATABASE_URL, undefined);
+  assert.equal(codex.childEnv.OPENAI_API_KEY, "codex-secret");
+  assert.equal(codex.childEnv.OPENAI_BASE_URL, "https://codex.example.invalid");
+  assert.equal(codex.childEnv.CODEX_HOME, "codex-home");
+  assert.equal(codex.childEnv.OPENAI_INTERNAL_DB_PASSWORD, undefined);
+  assert.equal(codex.childEnv.CODEX_PROJECT_SECRET, undefined);
+  assert.equal(codex.childEnv.ANTHROPIC_API_KEY, undefined);
+  assert.equal(codex.childEnv.CLAUDE_CONFIG_DIR, undefined);
+
+  const claude = buildRuntimeChildEnv("claude", parentEnv);
+  assert.equal(claude.childEnv.ANTHROPIC_API_KEY, "claude-secret");
+  assert.equal(claude.childEnv.ANTHROPIC_BASE_URL, "https://claude.example.invalid");
+  assert.equal(claude.childEnv.CLAUDE_CONFIG_DIR, "claude-home");
+  assert.equal(claude.childEnv.CLAUDE_PROJECT_SECRET, undefined);
+  assert.equal(claude.childEnv.OPENAI_API_KEY, undefined);
+  assert.equal(claude.childEnv.CODEX_HOME, undefined);
+
+  for (const childEnv of [codex.childEnv, claude.childEnv]) {
+    assert.equal(childEnv.PATH, "runtime-path");
+    assert.equal(childEnv.AWS_SECRET_ACCESS_KEY, undefined);
+    assert.equal(childEnv.AZURE_CLIENT_SECRET, undefined);
+    assert.equal(childEnv.GOOGLE_APPLICATION_CREDENTIALS, undefined);
+    assert.equal(childEnv.CLOUD_ML_TOKEN, undefined);
+    assert.equal(childEnv.DATABASE_URL, undefined);
+    assert.equal(childEnv.CLAUDECODE, undefined);
+    assert.equal(childEnv.CODEX_THREAD_ID, undefined);
+  }
+});
+
+test("bridge sanitizes custom worker output, stderr, and failure fields before retention", async () => {
+  const secret = "bridge-secret-value-93841";
+  const literalPassword = "literal-password-71592";
+  const result = await runStageRunnerBridge({
+    runId: "p118-custom-redaction",
+    runtime: "codex",
+    stageDagPacket: dagFor(["one"]),
+    workerTaskPackets: [packet("one")],
+    workspaceRoot: process.cwd(),
+    redactionEnv: { OPENAI_API_KEY: secret },
+    evidenceKind: "custom_test_double",
+    invokeWorker: async () => ({
+      status: "failed",
+      durationMs: 1,
+      outputText: `${process.cwd()} ${process.cwd().toUpperCase()} OPENAI_API_KEY=${secret} password=\"${literalPassword}\"`,
+      outputSha256: "a".repeat(64),
+      stderrTail: `${os.homedir()} ACCESS_TOKEN=${secret}`,
+      failureClass: "custom_failure",
+      failureMessage: `API_KEY=${secret}; PASSWORD=${literalPassword}; ${process.cwd()}`,
+    }),
+  });
+
+  const retained = JSON.stringify({ nodeRecords: result.nodeRecords, failure: result.failure });
+  assert.equal(retained.includes(secret), false);
+  assert.equal(retained.includes(literalPassword), false);
+  assert.equal(result.nodeRecords[0].outputText.includes(process.cwd()), false);
+  assert.equal(result.nodeRecords[0].outputText.includes(process.cwd().toUpperCase()), false);
+  assert.equal(result.nodeRecords[0].stderrTail.includes(os.homedir()), false);
+  assert.equal(retained.includes(os.homedir()), false);
+  assert.match(result.nodeRecords[0].outputText, /<workspace>/u);
+  assert.match(result.nodeRecords[0].outputText, /<redacted-secret>/u);
+  assert.match(result.nodeRecords[0].stderrTail, /<user-home>/u);
+  assert.notEqual(result.nodeRecords[0].outputSha256, "a".repeat(64));
+  assert.match(result.failure.reason, /<redacted-secret>/u);
 });
 
 test("sequential bridge executes one native-bound worker and the local merge node", async () => {
@@ -150,10 +227,12 @@ test("sequential bridge executes one native-bound worker and the local merge nod
     evidenceKind: "test_double",
   });
   assert.equal(result.status, "pass");
-  assert.equal(result.stageDagPacket.status, "executed");
+  assert.equal(result.stageDagPacket.status, "planned_not_invoked");
+  assert.equal(result.executionProjection.status, "executed");
   assert.equal(result.workerResults.length, 1);
   assert.ok(result.workerResults[0].observedDurationMs > 0);
   assert.equal(result.workerResults[0].actualBinding.runtime, "codex");
+  assert.match(result.workspaceBoundary, /filesystem read confinement is not claimed/u);
   assert.equal(result.nodeRecords.at(-1).laneKind, "stage_merge");
   assert.equal(result.nodeRecords.at(-1).status, "completed");
 });
@@ -198,6 +277,27 @@ test("read-only bridge rejects side-effect worker tasks before invoking a runtim
   assert.equal(result.workerResults.length, 0);
 });
 
+test("read-only bridge rejects a mutating DAG node even when its packet denies side effects", async () => {
+  let invoked = false;
+  const result = await runStageRunnerBridge({
+    runId: "p117-node-effect-test",
+    runtime: "codex",
+    stageDagPacket: dagFor(["write"], {
+      laneOverrides: { write: { effectClass: "external_write" } },
+    }),
+    workerTaskPackets: [packet("write", { externalWriteBoundary: false })],
+    workspaceRoot: process.cwd(),
+    invokeWorker: async () => {
+      invoked = true;
+      throw new Error("must not run");
+    },
+    evidenceKind: "test_double",
+  });
+  assert.equal(invoked, false);
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure.failureClass, "read_only_bridge_rejected_node_effect");
+});
+
 test("bridge application replaces planned execution truth before artifact persistence", async () => {
   const bridge = await runStageRunnerBridge({
     runId: "p117-apply-test",
@@ -236,6 +336,8 @@ test("bridge application replaces planned execution truth before artifact persis
     visibleMetaTheorySurfacePacket: { langGraph: {} },
   };
   const applied = applyStageRunnerBridgeResult(coreLoop, bridge);
+  assert.equal(applied.stageDagPacket.status, "planned_not_invoked");
+  assert.equal(applied.stageDagPacket.graphDigest, coreLoop.stageDagPacket.graphDigest);
   assert.equal(applied.stageRunnerBridgePacket.status, "pass");
   assert.equal(applied.executionResult.actualWorkerExecution, true);
   assert.equal(applied.executionResult.workerResultPackets[0].status, "executed");
@@ -243,4 +345,11 @@ test("bridge application replaces planned execution truth before artifact persis
   assert.ok(applied.traceEvalControlPlane.stageTiming[0].observedDurationMs > 0);
   assert.equal(applied.langGraphRunPacket.runtimeExecutionEvidence, "native_stage_runner_bridge");
   assert.equal(applied.langGraphRunPacket.eventLog[0].eventType, "WorkerFinished");
+
+  const missingBridgeDigest = structuredClone(bridge);
+  delete missingBridgeDigest.stageDagPacket.graphDigest;
+  assert.throws(
+    () => applyStageRunnerBridgeResult(coreLoop, missingBridgeDigest),
+    /bridge graph digest is missing/iu,
+  );
 });

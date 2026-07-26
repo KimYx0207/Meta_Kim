@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 5,
+  "contractId": "meta-kim-durable-run-kernel-contract",
+  "prdTaskId": "P-118",
+  "status": "implementation_candidate",
+  "purpose": "Persist the governed stage DAG as an immutable, resumable event history without introducing a second graph authority or a provider adapter.",
+  "authority": {
+    "graph": "config/contracts/core-loop-contract.json via coreLoop.stageDagPacket",
+    "kernel": "scripts/governed-execution/durable-run-kernel.mjs",
+    "rule": "The kernel stores execution truth and projections; it does not choose stages, edges, owners, providers, or business routes."
+  },
+  "runtimeBoundary": {
+    "node": ">=22.13.0",
+    "database": "built-in node:sqlite",
+    "supportedPrimaryRuntimes": ["codex", "claude"],
+    "cursorOutOfScope": true,
+    "firstSliceExecutionMode": "read_only",
+    "providerAdaptersOutOfScope": true
+  },
+  "storage": {
+    "database": "independent durable-runs.sqlite or governed_* tables in a caller-selected SQLite file",
+    "legacyTables": ["runs", "run_events"],
+    "legacyRule": "Legacy tables are preserved and are never treated as resumable attempt or effect evidence.",
+    "journalMode": "WAL",
+    "synchronous": "FULL",
+    "foreignKeys": true,
+    "busyTimeoutMs": 5000,
+    "transactionMode": "IMMEDIATE"
+  },
+  "tables": [
+    "governed_schema_migrations",
+    "governed_runs",
+    "governed_run_heads",
+    "governed_run_coordinators",
+    "governed_events",
+    "governed_node_attempts",
+    "governed_node_attempt_transitions",
+    "governed_node_claims",
+    "governed_effects",
+    "governed_effect_transitions",
+    "governed_effect_reuses",
+    "governed_effect_reuse_requirements",
+    "governed_checkpoints",
+    "governed_checkpoint_nodes",
+    "governed_edge_traversals"
+  ],
+  "eventRules": {
+    "appendOnly": true,
+    "updatesForbidden": true,
+    "deletesForbidden": true,
+    "perRunCursorCas": true,
+    "exactDuplicateIsIdempotent": true,
+    "sameIdDifferentContentFailsClosed": true,
+    "insertOrReplaceForbidden": true,
+    "hashChain": true,
+    "payloadHashRecomputedOnVerify": true,
+    "sequenceContinuityVerified": true,
+    "headCursorAndHashVerified": true,
+    "migrationHashesMustMatchExactly": true
+  },
+  "projectionIntegrityRules": {
+    "attemptsAndTransitionsImmutable": true,
+    "effectsAndTransitionsImmutable": true,
+    "effectReusesImmutable": true,
+    "edgeTraversalsImmutable": true,
+    "transitionAndProjectionEventsMustBindExactly": true,
+    "checkpointOutputBindsCompletionEventHash": true,
+    "checkpointAndReuseProjectionsAreImmutable": true,
+    "headClaimCoordinatorAndReuseRequirementAreBidirectionalWithEvents": true,
+    "everyMutationVerifiesCurrentProjectionIntegrity": true,
+    "resumeFailsClosedOnProjectionTamper": true
+  },
+  "coordinatorRules": {
+    "oneActiveCoordinatorPerRun": true,
+    "leaseRequired": true,
+    "fenceIncrementsOnEveryClaimOrTakeover": true,
+    "expiredLeaseMayBeTakenOver": true,
+    "staleFenceCannotHeartbeat": true,
+    "staleFenceCannotRelease": true,
+    "releasePreservesFenceHistory": true,
+    "reservationFileIsIdentityEvidenceNotCoordinatorLock": true
+  },
+  "attemptStates": ["claimed", "running", "completed", "failed", "abandoned", "in_doubt"],
+  "nodeMutationRules": {
+    "activeUnexpiredClaimRequired": true,
+    "leaseOwnerAttemptAndFenceMustMatch": true,
+    "historicalFenceNeverResets": true,
+    "heartbeatCannotReviveExpiredLease": true,
+    "oldAttemptCannotPrepareOrDispatchEffect": true
+  },
+  "effectStates": [
+    "prepared",
+    "dispatch_started",
+    "in_doubt",
+    "reconciled_completed",
+    "reconciled_absent"
+  ],
+  "effectRules": {
+    "rootLineageIdempotency": true,
+    "dispatchStartedWithoutOutcomeBecomesInDoubt": true,
+    "inDoubtBlocksNodeCompletion": true,
+    "unresolvedSiblingEffectBlocksEntireRoot": true,
+    "automaticRetryWhileInDoubtForbidden": true,
+    "completedEffectReuseMustBeExplicit": true,
+    "completedEffectReuseRequiresEvidenceAndIdentity": true,
+    "completedEffectConflictPersistsPendingReuseRequirement": true,
+    "pendingReuseRequirementBlocksNodeCompletion": true,
+    "explicitReuseSatisfiesPendingRequirement": true,
+    "preparedEffectMayReconcileAbsentAfterLeaseExpiry": true,
+    "reconciliationRequiresEvidenceAndIdentity": true,
+    "firstSlicePerformsExternalEffects": false
+  },
+  "resumeRules": {
+    "graphDigestMustMatch": true,
+    "taskFingerprintMustMatch": true,
+    "completedNodeReuseRequiresCheckpointEvidence": true,
+    "checkpointStateOutputParentGraphAndEventBindingsVerified": true,
+    "resumeFailsClosedOnIntegrityFailure": true,
+    "staleFenceCannotFinalize": true,
+    "artifactProjectionCanBeRebuiltWithoutExecution": true,
+    "forkReferencesExactParentCheckpoint": true
+  },
+  "requiredApi": [
+    "createRun",
+    "forkRun",
+    "appendEvent",
+    "claimRunCoordinator",
+    "heartbeatRunCoordinator",
+    "releaseRunCoordinator",
+    "setRunTerminalStatus",
+    "claimNode",
+    "heartbeatNode",
+    "completeNode",
+    "failNode",
+    "resumeRun",
+    "prepareEffect",
+    "markEffectDispatchStarted",
+    "markUnresolvedEffectsInDoubt",
+    "reconcileEffect",
+    "reuseCompletedEffect",
+    "recordTraversedEdge",
+    "getCheckpointLineage",
+    "getEvents",
+    "projectRun",
+    "replayRun",
+    "verifyEventChain",
+    "close"
+  ],
+  "terminalRunRules": {
+    "statuses": ["completed", "failed", "blocked"],
+    "liveCoordinatorOwnerAndFenceRequired": true,
+    "activeNodeClaimBlocksTerminalStatus": true,
+    "unresolvedRootEffectBlocksTerminalStatus": true,
+    "terminalStatusRejectsLaterMutation": true,
+    "terminalRunsAreNotResumable": true,
+    "terminalRunsRejectNewNodeClaims": true
+  },
+  "atomicCompletionRules": {
+    "completeNodeAcceptsTraversedEdges": true,
+    "completionCheckpointAndEdgesShareOneTransaction": true,
+    "edgeFailureRollsBackNodeCompletion": true,
+    "retryDoesNotDuplicateTraversal": true
+  },
+  "materializationRecoveryRules": {
+    "reservationPhases": [
+      "reserved",
+      "staged",
+      "artifacts_committed",
+      "kernel_terminal",
+      "materialized"
+    ],
+    "pairedJsonAndMarkdownDigestsRequired": true,
+    "stagingRefsAreBoundedRelativeNames": true,
+    "missingKernelRunMayBeCreatedOnBoundResume": true,
+    "trustedStageMayRepairOneSidedArtifact": true,
+    "activeKernelMayResumeAfterArtifactCommit": true,
+    "terminalKernelMayFinalizeMissingArtifact": true,
+    "userDeletionWithoutTrustedStageFailsClosed": true,
+    "alreadyMaterializedRejectsDigestTamper": true
+  },
+  "apiBoundary": {
+    "rawDatabaseIsNotPublic": true,
+    "explicitOptInTestHookMayExposeDatabase": true
+  },
+  "nonGoals": [
+    "P-119 LangGraph, OpenAI, or Claude provider adapters",
+    "runtime-specific graph definitions",
+    "Cursor execution",
+    "external side-effect execution in the first slice",
+    "universal power-loss durability claims"
+  ]
+}

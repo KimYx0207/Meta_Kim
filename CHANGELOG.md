@@ -8,6 +8,27 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.3] - 2026-07-26
+
+### Solved Problem
+
+Meta_Kim could execute its Dynamic Workflow stage graph through Claude Code and Codex, but an interrupted process still recovered by rerunning the original request. A completed worker could therefore be repeated after a crash, generated artifacts could disagree with runtime state, and the existing checkpoint/replay labels did not provide durable node-level recovery.
+
+### Fixed
+
+- **Governed runs now resume from an append-only SQLite kernel.** Each run binds the exact task and canonical graph digest, records hash-chained events, node attempts, checkpoints, leases, fencing tokens, coordinator ownership, fork lineage, and actual traversed edges. Completion and edge traversal commit atomically, while corrupted events, mutable projections, checkpoints, claims, or materialization digests fail closed.
+- **A crash resumes unfinished work instead of replaying completed workers.** The formal runner exposes separate fresh and resume modes, blocks active-lease takeover, repairs only identity-bound staging/final artifact states, and materializes one JSON/Markdown pair without worker replay. A child-process kill test proves that worker A remains committed, only unfinished worker B runs after lease expiry, and merge runs once.
+- **The same durable boundary serves both primary runtimes without becoming a second graph.** Claude Code and Codex still consume `coreLoop.stageDagPacket`; the bridge stores execution as a projection and cannot redefine stages, dependencies, or merge ownership. External side effects remain forbidden in this read-only release; effect reconciliation is retained as a future adapter safety boundary, not claimed as live external-effect proof.
+- **Runtime launch and retained evidence are narrowed.** Windows CLI resolution respects PATH directory order, runtime children inherit exact named authentication/config variables instead of prefix wildcards, and built-in or custom worker output is bounded and redacted before durable persistence.
+- **Global update closes a Codex App regeneration edge without taking over user config.** When Codex restores a new valid bundled-marketplace path next to Meta_Kim's exact prior disabled-conflict comment, the merge removes only that stale managed comment and closes its journal ownership. Unknown, duplicated, non-adjacent, or user-authored changes still fail closed.
+
+### Verification
+
+- Targeted durable-kernel, runner, bridge, graph, CLI, PRD, tamper, crash/resume, artifact-repair, credential-boundary, and traversal tests passed with 126 tests and 0 failures; independent architecture, persistence, bridge, security, and final reviews found no P1/P2 blocker.
+- Native run `p117-2026-07-26T05-36-46-515Z` passed all four product scenarios: Claude Code and Codex each completed one sequential worker and one overlapping two-worker fan-out/merge after the final environment-boundary changes.
+- Durable governed-entry run `p117-governed-2026-07-26T05-39-25-380Z` passed through both Codex and Claude Code with `releaseEligible=true`, proving the formal kernel-backed execution/materialization path separately from the four-scenario bridge acceptance.
+- The standard `meta:verify:all` gate passed all 13 stages in one uninterrupted run, including four-target isolated install/update proof, packed user/project install-update proof, global Hook checks, Graphify, setup, 1,342 Meta-Theory tests with zero failures, integration, and fresh Claude Code/Codex live release-fuse evidence. Docker, Cursor product execution, synthetic provider output, task/token budgets, project mutation, and external side effects are outside this acceptance.
+
 ## [2.9.2] - 2026-07-26
 
 ### Solved Problem

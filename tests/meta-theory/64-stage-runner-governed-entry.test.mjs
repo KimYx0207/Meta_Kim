@@ -24,6 +24,8 @@ test("formal governed entrypoint replaces planned truth with a real stage-runner
     stageRunner: {
       enabled: true,
       runtime: "codex",
+      durableMode: "fresh",
+      durableDbPath: path.join(outputRoot, "durable-runs.sqlite"),
       capacity: 1,
       timeoutMs: 30_000,
       invokeWorker: async ({ runtime, prompt, packet }) => {
@@ -48,6 +50,19 @@ test("formal governed entrypoint replaces planned truth with a real stage-runner
     },
   });
   assert.equal(report.stageRunnerBridgePacket.status, "pass");
+  assert.equal(report.stageRunnerBridgePacket.executionProjection.durable.enabled, true);
+  assert.equal(report.stageRunnerBridgePacket.executionProjection.durable.resumed, false);
+  assert.ok(report.stageRunnerBridgePacket.stageDagPacket.nodes
+    .filter((node) => node.stage === "Execution" && node.laneKind === "execution_worker")
+    .every((node) => node.effectClass === "read_only_worker"));
+  assert.equal(report.durableExecution.mode, "fresh");
+  assert.equal(report.durableExecution.status, "materialized");
+  assert.equal(report.durableExecution.fenceToken, 1);
+  assert.ok(Number.isInteger(report.durableExecution.cursor));
+  assert.ok(report.durableExecution.headCheckpointId);
+  assert.equal(JSON.stringify(report.durableExecution).includes(outputRoot), false);
+  assert.equal((await fs.stat(path.join(outputRoot, "p117-governed-entry-test.reservation.json"))).isFile(), true);
+  assert.equal((await fs.stat(path.join(outputRoot, "durable-runs.sqlite"))).isFile(), true);
   assert.equal(report.executionResult.actualWorkerExecution, true);
   assert.ok(report.executionResult.workerExecutionEvidence.every(
     (item) => item.status === "executed" && item.liveWorkerExecution === true,

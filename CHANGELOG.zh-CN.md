@@ -8,6 +8,27 @@
 
 ## Unreleased
 
+## [2.9.3] - 2026-07-26
+
+### 解决的问题
+
+Meta_Kim 已能让 Claude Code 和 Codex 执行 Dynamic Workflow 阶段图，但进程中断后仍接近“重新运行原请求”。闪退可能让已完成 worker 再做一次，生成产物也可能与运行状态不一致；原有 checkpoint/replay 字段并不等于可耐久恢复到具体节点。
+
+### 修复内容
+
+- **governed run 现在从 append-only SQLite kernel 恢复。** 每个 run 精确绑定任务与 canonical graph digest，记录哈希事件链、节点 attempt、checkpoint、lease、fencing token、coordinator、fork lineage 和真实 traversed edge。节点完成与边遍历原子提交；事件、投影、checkpoint、claim 或物化摘要被篡改时 fail closed。
+- **闪退后只继续没做完的工作。** 正式 runner 把新执行和恢复入口分开；活跃 lease 不能被抢占；只有身份绑定的 staging/final artifact 状态可修复；最终只物化一对 JSON/Markdown，不重跑 worker。子进程强制退出测试证明：A 已完成就保留，只在 lease 到期后继续 B，merge 只执行一次。
+- **Claude Code 与 Codex 共用同一耐久接口，但不会多出第二张图。** 两端仍只消费 `coreLoop.stageDagPacket`；bridge 只保存 execution projection，不能重定义阶段、依赖或 merge owner。本版本仍禁止外部副作用；effect reconciliation 只是以后适配器启用副作用前的安全边界，不冒充真实外部 effect 证明。
+- **运行端启动和留存证据进一步收紧。** Windows CLI 按 PATH 目录先后选择可用入口；子进程只继承精确列出的登录/配置变量，不再按前缀通配；内置和自定义 worker 输出都会在耐久保存前限长、脱敏。
+- **全局更新能收口 Codex App 的路径再生成，但不会接管用户配置。** Codex 生成新的有效内置 marketplace 路径、旁边又留着 Meta_Kim 旧的精确冲突注释时，合并器只删除这条旧受管注释并结束对应 journal ownership；未知、重复、不相邻或用户自写内容仍 fail closed。
+
+### 验证
+
+- durable kernel、runner、bridge、graph、CLI、唯一 PRD、篡改、闪退恢复、artifact 修复、凭证边界和遍历边的针对性测试为 126/126；独立架构、持久化、bridge、安全与最终 Review 均未发现 P1/P2 阻塞。
+- 原生 run `p117-2026-07-26T05-36-46-515Z` 四项产品场景全部通过：最终环境边界修复后，Claude Code 与 Codex 各完成一次串行 worker 和一次真实重叠的双 worker fan-out/merge。
+- 耐久正式入口 run `p117-governed-2026-07-26T05-39-25-380Z` 在 Codex 与 Claude Code 两端均通过且 `releaseEligible=true`，单独证明了 kernel-backed 执行与物化路径，不拿四场景 bridge 验收替代耐久证据。
+- 标准 `meta:verify:all` 在同一次不中断运行中 13/13 全过，覆盖四目标隔离 install/update、packed 用户/项目 install-update、全局 Hook、Graphify、setup、Meta-Theory 1342 项 0 失败、integration 以及 fresh Claude Code/Codex live release fuse。Docker、Cursor 产品执行、合成 provider 输出、任务/token 预算、项目修改和外部副作用均不属于本次验收。
+
 ## [2.9.2] - 2026-07-26
 
 ### 解决的问题

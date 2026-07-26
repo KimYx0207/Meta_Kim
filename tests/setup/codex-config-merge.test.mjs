@@ -288,6 +288,45 @@ describe("Codex config merge", () => {
     assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
   });
 
+  test("planner closes prior ownership when Codex regenerates a new valid bundled source", () => {
+    const staleSource = String.raw`\\?\C:\Users\Kim\.codex\.tmp\bundled-marketplaces\openai-bundled`;
+    const currentSource = String.raw`C:\Program Files\WindowsApps\OpenAI.Codex_current\app\resources\plugins\openai-bundled`;
+    const original = [
+      "[marketplaces.openai-bundled]",
+      'source_type = "local"',
+      `source = '${staleSource}'`,
+      "",
+    ].join("\n");
+    const first = planCodexAppNativeControls(original, {
+      platformName: "win32",
+      windowsAppsRoots: [],
+      pathExists: () => false,
+    });
+    const disabled = first.mutations.find(({ locator }) =>
+      locator.table === "marketplaces.openai-bundled" && locator.key === "source"
+    )?.afterFragment;
+    assert.ok(disabled);
+
+    const hostRegenerated = first.text.replace(
+      disabled,
+      `source = '\\\\?\\${currentSource}'\n${disabled}`,
+    );
+    const second = planCodexAppNativeControls(hostRegenerated, {
+      platformName: "win32",
+      bundledMarketplaceSource: currentSource,
+      pathExists: (candidate) => candidate.replace(/^\\\\\?\\/u, "") === currentSource,
+    });
+
+    assert.ok(second.text.includes(`source = '\\\\?\\${currentSource}'`));
+    assert.doesNotMatch(second.text, /Meta_Kim disabled conflicting \[marketplaces\.openai-bundled\]\.source/u);
+    assert.deepEqual(
+      normalizeCodexConfigMutations([...first.mutations, ...second.mutations]),
+      first.mutations.filter(({ locator }) =>
+        !(locator.table === "marketplaces.openai-bundled" && locator.key === "source")
+      ),
+    );
+  });
+
   test("planner fails closed on a managed multiline scalar it cannot replace", () => {
     const input = "[features]\njs_repl = [\n  false\n]\n";
     assert.throws(

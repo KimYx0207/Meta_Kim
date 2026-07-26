@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 const DEFAULT_STAGE_ORDER = Object.freeze([
   "Critical",
   "Fetch",
@@ -21,6 +23,177 @@ function slug(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, "-")
     .replace(/^-+|-+$/gu, "") || "stage";
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function canonicalStringSet(value) {
+  return uniqueStrings(value).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+}
+
+function canonicalGraphPayload(stageDagPacket) {
+  return {
+    schemaVersion: stageDagPacket?.schemaVersion ?? null,
+    authority: stageDagPacket?.authority ?? null,
+    stageOrder: Array.isArray(stageDagPacket?.stageOrder)
+      ? [...stageDagPacket.stageOrder]
+      : [],
+    nodes: (Array.isArray(stageDagPacket?.nodes) ? stageDagPacket.nodes : []).map((node) => ({
+      nodeId: node?.nodeId ?? null,
+      stage: node?.stage ?? null,
+      laneKind: node?.laneKind ?? null,
+      ownerBindingRef: node?.ownerBindingRef ?? null,
+      capabilityBindingRef: node?.capabilityBindingRef ?? null,
+      description: node?.description ?? null,
+      dependsOn: canonicalStringSet(node?.dependsOn),
+      effectClass: node?.effectClass ?? null,
+      resourceScopes: canonicalStringSet(node?.resourceScopes),
+      isolation: node?.isolation ?? null,
+      mergeNodeId: node?.mergeNodeId ?? null,
+    })),
+  };
+}
+
+export function stageDagGraphDigest(stageDagPacket) {
+  return createHash("sha256")
+    .update(canonicalJson(canonicalGraphPayload(stageDagPacket)), "utf8")
+    .digest("hex");
+}
+
+function assertNoStageSlugCollisions(stageOrder) {
+  const stagesBySlug = new Map();
+  for (const stage of stageOrder) {
+    const normalizedSlug = slug(stage);
+    const stages = stagesBySlug.get(normalizedSlug) ?? [];
+    stages.push(stage);
+    stagesBySlug.set(normalizedSlug, stages);
+  }
+  const collisions = [...stagesBySlug.entries()].filter(([, stages]) => stages.length > 1);
+  if (collisions.length > 0) {
+    throw new TypeError(
+      `stage slug collision: ${collisions
+        .map(([normalizedSlug, stages]) => `${normalizedSlug} <= ${stages.join(", ")}`)
+        .join("; ")}`,
+    );
+  }
+}
+
+export function validateStageDagPacket(stageDagPacket, { requireDigest = false } = {}) {
+  if (!stageDagPacket || typeof stageDagPacket !== "object" || Array.isArray(stageDagPacket)) {
+    throw new TypeError("stage DAG packet must be an object");
+  }
+  if (!Array.isArray(stageDagPacket.stageOrder) || stageDagPacket.stageOrder.length === 0) {
+    throw new TypeError("stage DAG stageOrder must contain at least one stage");
+  }
+  if (stageDagPacket.stageOrder.some((stage) => typeof stage !== "string" || !stage.trim())) {
+    throw new TypeError("stage DAG stageOrder must contain non-empty strings");
+  }
+  assertNoStageSlugCollisions(stageDagPacket.stageOrder);
+  if (!Array.isArray(stageDagPacket.nodes) || stageDagPacket.nodes.length === 0) {
+    throw new TypeError("stage DAG nodes must contain at least one node");
+  }
+
+  const stageNames = new Set(stageDagPacket.stageOrder);
+  const nodeIdCounts = new Map();
+  for (const node of stageDagPacket.nodes) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      throw new TypeError("stage DAG nodes must be objects");
+    }
+    if (typeof node.nodeId !== "string" || !node.nodeId.trim()) {
+      throw new TypeError("stage DAG nodeId must be a non-empty string");
+    }
+    if (!stageNames.has(node.stage)) {
+      throw new TypeError(`stage DAG node ${node.nodeId} has unknown stage: ${node.stage}`);
+    }
+    if (!Array.isArray(node.dependsOn) || node.dependsOn.some(
+      (dependencyId) => typeof dependencyId !== "string" || !dependencyId.trim()
+    )) {
+      throw new TypeError(`stage DAG node ${node.nodeId} dependsOn must contain strings`);
+    }
+    if (!Array.isArray(node.resourceScopes)) {
+      throw new TypeError(`stage DAG node ${node.nodeId} resourceScopes must be an array`);
+    }
+    nodeIdCounts.set(node.nodeId, (nodeIdCounts.get(node.nodeId) ?? 0) + 1);
+  }
+
+  const duplicateNodeIds = [...nodeIdCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([nodeId]) => nodeId);
+  if (duplicateNodeIds.length > 0) {
+    throw new TypeError(`duplicate stage DAG node ids: ${duplicateNodeIds.join(", ")}`);
+  }
+
+  const nodeIds = new Set(nodeIdCounts.keys());
+  const selfDependencies = stageDagPacket.nodes
+    .filter((node) => node.dependsOn.includes(node.nodeId))
+    .map((node) => node.nodeId);
+  if (selfDependencies.length > 0) {
+    throw new TypeError(`stage DAG contains self dependency: ${selfDependencies.join(", ")}`);
+  }
+  const missingDependencies = stageDagPacket.nodes.flatMap((node) =>
+    node.dependsOn
+      .filter((dependencyId) => !nodeIds.has(dependencyId))
+      .map((dependencyId) => ({ nodeId: node.nodeId, dependencyId }))
+  );
+  if (missingDependencies.length > 0) {
+    throw new TypeError(
+      `stage DAG contains missing dependencies: ${missingDependencies
+        .map((item) => `${item.nodeId}->${item.dependencyId}`)
+        .join(", ")}`,
+    );
+  }
+
+  const remainingDependencyCounts = new Map(
+    stageDagPacket.nodes.map((node) => [node.nodeId, new Set(node.dependsOn).size]),
+  );
+  const dependentsByNodeId = new Map(stageDagPacket.nodes.map((node) => [node.nodeId, []]));
+  for (const node of stageDagPacket.nodes) {
+    for (const dependencyId of new Set(node.dependsOn)) {
+      dependentsByNodeId.get(dependencyId).push(node.nodeId);
+    }
+  }
+  const ready = stageDagPacket.nodes
+    .filter((node) => remainingDependencyCounts.get(node.nodeId) === 0)
+    .map((node) => node.nodeId);
+  let visitedCount = 0;
+  while (ready.length > 0) {
+    const nodeId = ready.shift();
+    visitedCount += 1;
+    for (const dependentId of dependentsByNodeId.get(nodeId)) {
+      const remaining = remainingDependencyCounts.get(dependentId) - 1;
+      remainingDependencyCounts.set(dependentId, remaining);
+      if (remaining === 0) ready.push(dependentId);
+    }
+  }
+  if (visitedCount !== stageDagPacket.nodes.length) {
+    const cycleNodeIds = stageDagPacket.nodes
+      .map((node) => node.nodeId)
+      .filter((nodeId) => remainingDependencyCounts.get(nodeId) > 0);
+    throw new TypeError(`stage DAG contains a cycle involving: ${cycleNodeIds.join(", ")}`);
+  }
+
+  const computedDigest = stageDagGraphDigest(stageDagPacket);
+  if (requireDigest && typeof stageDagPacket.graphDigest !== "string") {
+    throw new TypeError("stage DAG graphDigest is required");
+  }
+  if (
+    typeof stageDagPacket.graphDigest === "string" &&
+    stageDagPacket.graphDigest !== computedDigest
+  ) {
+    throw new TypeError(
+      `stage DAG graph digest mismatch: expected ${stageDagPacket.graphDigest}, computed ${computedDigest}`,
+    );
+  }
+  return stageDagPacket;
 }
 
 function isReadOnlyEffect(effectClass) {
@@ -66,7 +239,11 @@ export function buildStageDagPacket({
   stageAuthorities = {},
   runtimeCapacity = null,
 } = {}) {
-  const orderedStages = uniqueStrings(stageOrder);
+  const requestedStages = (Array.isArray(stageOrder) ? stageOrder : []).filter(
+    (stage) => typeof stage === "string" && stage.trim(),
+  );
+  assertNoStageSlugCollisions(requestedStages);
+  const orderedStages = uniqueStrings(requestedStages);
   if (orderedStages.length === 0) {
     throw new TypeError("stageOrder must contain at least one stage");
   }
@@ -90,13 +267,6 @@ export function buildStageDagPacket({
     const laneNodes = sourceLanes.map((lane, index) =>
       normalizeLane(stage, lane, index, previousMergeNodeId, mergeNodeId)
     );
-    const duplicateNodeIds = laneNodes
-      .map((node) => node.nodeId)
-      .filter((nodeId, index, array) => array.indexOf(nodeId) !== index);
-    if (duplicateNodeIds.length > 0) {
-      throw new TypeError(`duplicate stage DAG node ids: ${uniqueStrings(duplicateNodeIds).join(", ")}`);
-    }
-
     nodes.push(...laneNodes);
     nodes.push({
       nodeId: mergeNodeId,
@@ -121,21 +291,7 @@ export function buildStageDagPacket({
     previousMergeNodeId = mergeNodeId;
   }
 
-  const nodeIds = new Set(nodes.map((node) => node.nodeId));
-  const missingDependencies = nodes.flatMap((node) =>
-    node.dependsOn
-      .filter((dependencyId) => !nodeIds.has(dependencyId))
-      .map((dependencyId) => ({ nodeId: node.nodeId, dependencyId }))
-  );
-  if (missingDependencies.length > 0) {
-    throw new TypeError(
-      `stage DAG contains missing dependencies: ${missingDependencies
-        .map((item) => `${item.nodeId}->${item.dependencyId}`)
-        .join(", ")}`,
-    );
-  }
-
-  return {
+  const packet = {
     schemaVersion: "stage-dag-v0.1",
     authority: "config/contracts/core-loop-contract.json",
     status: "planned_not_invoked",
@@ -161,6 +317,9 @@ export function buildStageDagPacket({
       requiredEvidence: "exact runId + nodeId + native tool call + successful terminal result",
     },
   };
+  validateStageDagPacket(packet);
+  packet.graphDigest = stageDagGraphDigest(packet);
+  return packet;
 }
 
 function nodeHasUnknownMutationScope(node) {
@@ -269,6 +428,7 @@ export function selectMaximalSafeReadySet(
   stageDagPacket,
   { completedNodeIds = [], capacity = null, stage = null } = {},
 ) {
+  validateStageDagPacket(stageDagPacket);
   const completed = new Set(uniqueStrings(completedNodeIds));
   const limit = Math.max(
     1,

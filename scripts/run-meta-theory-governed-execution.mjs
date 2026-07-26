@@ -61,12 +61,14 @@ import {
   normalizeStageRunnerRuntime,
   runStageRunnerBridge,
 } from "./governed-execution/stage-runner-bridge.mjs";
+import { openDurableRunKernel } from "./governed-execution/durable-run-kernel.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
 const DEFAULT_PROFILE_DIR = getProfilePaths({ repoPath: REPO_ROOT }).profileDir;
 const DEFAULT_STATE_DIR = path.join(DEFAULT_PROFILE_DIR, "governed-executions");
 const DEFAULT_DB_PATH = path.join(DEFAULT_PROFILE_DIR, "governed-execution.sqlite");
+const DURABLE_RESERVATION_SCHEMA = "governed-run-reservation-v0.1";
 const RUN_REPORT_PANEL_CONTRACT_PATH = path.join(
   REPO_ROOT,
   "config",
@@ -938,18 +940,23 @@ async function atomicWriteFile(filePath, content) {
   }
 }
 
-async function reserveExplicitRunId(reservationPath, { runId, taskFingerprint }) {
+async function reserveExplicitRunId(reservationPath, { runId, taskFingerprint, stagingRefs = null }) {
   let handle;
   try {
     handle = await fs.open(reservationPath, "wx");
     await handle.writeFile(
       `${JSON.stringify(
         {
-          schemaVersion: "governed-run-reservation-v0.1",
+          schemaVersion: DURABLE_RESERVATION_SCHEMA,
           runId,
           taskFingerprint,
           status: "reserved_or_incomplete",
+          phase: "reserved",
+          jsonSha256: null,
+          markdownSha256: null,
+          stagingRefs,
           reservedAt: nowIso(),
+          updatedAt: nowIso(),
         },
         null,
         2,
@@ -965,6 +972,274 @@ async function reserveExplicitRunId(reservationPath, { runId, taskFingerprint })
   } finally {
     await handle?.close().catch(() => {});
   }
+}
+
+function validateStagingRef(value, label) {
+  if (
+    typeof value !== "string" || !value || value !== path.basename(value) ||
+    value === "." || value === ".." || !/^[A-Za-z0-9._-]+$/u.test(value)
+  ) {
+    throw new Error(`Durable reservation ${label} must be a bounded relative staging filename.`);
+  }
+  return value;
+}
+
+async function updateDurableReservation(reservationPath, reservation, patch) {
+  const updated = {
+    ...reservation,
+    ...patch,
+    updatedAt: nowIso(),
+  };
+  await atomicWriteFile(reservationPath, `${JSON.stringify(updated, null, 2)}\n`);
+  return updated;
+}
+
+async function readDurableReservation(reservationPath, { runId, taskFingerprint }) {
+  let reservation;
+  try {
+    reservation = JSON.parse(await fs.readFile(reservationPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(`Durable resume requires identity reservation for run '${runId}'.`);
+    }
+    throw new Error(`Durable reservation is unreadable or invalid JSON: ${error.message}`);
+  }
+  if (reservation?.schemaVersion !== DURABLE_RESERVATION_SCHEMA) {
+    throw new Error(`Durable reservation schema mismatch for run '${runId}'.`);
+  }
+  if (reservation.runId !== runId || reservation.taskFingerprint !== taskFingerprint) {
+    throw new Error(`Durable reservation identity or task fingerprint mismatch for run '${runId}'.`);
+  }
+  if (!reservation.stagingRefs) {
+    throw new Error(`Durable reservation staging refs are missing for run '${runId}'.`);
+  }
+  validateStagingRef(reservation.stagingRefs.json, "stagingRefs.json");
+  validateStagingRef(reservation.stagingRefs.markdown, "stagingRefs.markdown");
+  return reservation;
+}
+
+function durableDatabaseLabel(durableDbPath, stateDir) {
+  return path.resolve(durableDbPath) === path.resolve(stateDir, "durable-runs.sqlite")
+    ? "state_dir/durable-runs.sqlite"
+    : "caller_supplied";
+}
+
+async function fileDigestIfExists(filePath) {
+  try {
+    return textSha256(await fs.readFile(filePath));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function commitStagedArtifact(stagePath, finalPath, expectedDigest) {
+  const content = await fs.readFile(stagePath);
+  if (textSha256(content) !== expectedDigest) {
+    throw new Error(`Durable staging digest mismatch for ${path.basename(stagePath)}.`);
+  }
+  await atomicWriteFile(finalPath, content);
+}
+
+async function loadAlreadyMaterializedDurableRun({
+  runId,
+  task,
+  taskFingerprint,
+  reservation,
+  reservationPath,
+  jsonPath,
+  markdownPath,
+  latestPath,
+  dbPath,
+  durableDbPath,
+}) {
+  const outputDir = path.dirname(jsonPath);
+  const jsonStagePath = resolveOutputFile(
+    outputDir,
+    validateStagingRef(reservation.stagingRefs.json, "stagingRefs.json"),
+  );
+  const markdownStagePath = resolveOutputFile(
+    outputDir,
+    validateStagingRef(reservation.stagingRefs.markdown, "stagingRefs.markdown"),
+  );
+  let jsonDigest = await fileDigestIfExists(jsonPath);
+  let markdownDigest = await fileDigestIfExists(markdownPath);
+  const jsonStageDigest = await fileDigestIfExists(jsonStagePath);
+  const markdownStageDigest = await fileDigestIfExists(markdownStagePath);
+  const expectedJsonDigest = reservation.jsonSha256 ?? null;
+  const expectedMarkdownDigest = reservation.markdownSha256 ?? null;
+
+  if (jsonDigest && expectedJsonDigest && jsonDigest !== expectedJsonDigest) {
+    throw new Error(`Durable JSON digest mismatch or tamper detected for '${runId}'.`);
+  }
+  if (markdownDigest && expectedMarkdownDigest && markdownDigest !== expectedMarkdownDigest) {
+    throw new Error(`Durable Markdown digest mismatch or tamper detected for '${runId}'.`);
+  }
+  if (!jsonDigest && markdownDigest) {
+    if (!expectedJsonDigest || jsonStageDigest !== expectedJsonDigest) {
+      throw new Error(`Durable JSON artifact was deleted and no trusted staging pair remains for '${runId}'.`);
+    }
+    await commitStagedArtifact(jsonStagePath, jsonPath, expectedJsonDigest);
+    jsonDigest = expectedJsonDigest;
+  }
+  if (jsonDigest && !markdownDigest) {
+    if (!expectedMarkdownDigest || markdownStageDigest !== expectedMarkdownDigest) {
+      throw new Error(`Durable artifact set is incomplete: Markdown was deleted and no trusted staging pair remains for '${runId}'.`);
+    }
+    await commitStagedArtifact(markdownStagePath, markdownPath, expectedMarkdownDigest);
+    markdownDigest = expectedMarkdownDigest;
+  }
+  if (!jsonDigest && !markdownDigest) return null;
+  if (!jsonDigest || !markdownDigest || !expectedJsonDigest || !expectedMarkdownDigest) {
+    throw new Error(`Durable artifact pair is incomplete or lacks paired digests for '${runId}'.`);
+  }
+  let artifact;
+  try {
+    artifact = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+  } catch (error) {
+    throw new Error(`Durable JSON artifact is invalid for '${runId}': ${error.message}`);
+  }
+  if (
+    artifact?.runId !== runId || artifact?.taskFingerprint !== taskFingerprint ||
+    normalizeTask(artifact?.task) !== task
+  ) {
+    throw new Error(`Durable artifact identity or task fingerprint mismatch for run '${runId}'.`);
+  }
+  if (!existsSync(durableDbPath)) {
+    if (reservation.phase === "reserved") return null;
+    throw new Error(`Durable database is missing for staged or committed run '${runId}'.`);
+  }
+  const kernel = await openDurableRunKernel(durableDbPath);
+  try {
+    let projection;
+    try {
+      projection = kernel.projectRun(runId);
+    } catch (error) {
+      if (/Unknown governed run/iu.test(error.message) && reservation.phase === "reserved") return null;
+      throw error;
+    }
+    if (projection.run.status === "active") return null;
+    if (projection.run.status !== "completed") {
+      throw new Error(`Durable kernel run '${runId}' is terminal with status ${projection.run.status}.`);
+    }
+    if (reservation.phase !== "materialized") {
+      artifact.durableExecution = {
+        ...(artifact.durableExecution ?? {}),
+        status: "materialized",
+        terminalStatus: "completed",
+        cursor: projection.cursor,
+        headCheckpointId: projection.headCheckpointId,
+      };
+      const finalizedJson = `${JSON.stringify(artifact, null, 2)}\n`;
+      const finalizedJsonSha256 = textSha256(finalizedJson);
+      await atomicWriteFile(jsonStagePath, finalizedJson);
+      await commitStagedArtifact(jsonStagePath, jsonPath, finalizedJsonSha256);
+      jsonDigest = finalizedJsonSha256;
+      reservation = await updateDurableReservation(reservationPath, reservation, {
+        phase: "materialized",
+        status: "materialized",
+        jsonSha256: jsonDigest,
+        markdownSha256: markdownDigest,
+      });
+    }
+  } finally {
+    kernel.close();
+  }
+  return {
+    ...artifact,
+    durableExecution: {
+      ...(artifact.durableExecution ?? {}),
+      mode: "resume",
+      status: "already_materialized",
+      workerCount: 0,
+    },
+    paths: {
+      json: jsonPath,
+      markdown: markdownPath,
+      latest: latestPath,
+      db: dbPath,
+    },
+  };
+}
+
+async function openRunnerDurableCoordinator({
+  durableDbPath,
+  mode,
+  runId,
+  graphDigest,
+  taskFingerprint,
+  ownerId,
+  leaseMs,
+  heartbeatIntervalMs,
+}) {
+  const kernel = await openDurableRunKernel(durableDbPath);
+  let claim = null;
+  let heartbeatTimer = null;
+  let heartbeatError = null;
+  const startHeartbeat = () => {
+    if (!claim || heartbeatTimer) return;
+    heartbeatTimer = setInterval(() => {
+      try {
+        kernel.heartbeatRunCoordinator({
+          runId,
+          ownerId,
+          fenceToken: claim.fenceToken,
+          leaseMs,
+        });
+      } catch (error) {
+        heartbeatError = error;
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }, heartbeatIntervalMs);
+    heartbeatTimer.unref?.();
+  };
+  const claimCoordinator = () => {
+    claim = kernel.claimRunCoordinator({ runId, ownerId, leaseMs });
+    startHeartbeat();
+    return claim;
+  };
+  try {
+    if (mode === "resume") {
+      try {
+        kernel.resumeRun({ runId, graphDigest, taskFingerprint });
+      } catch (error) {
+        if (!/Unknown governed run/iu.test(error.message)) throw error;
+        kernel.createRun({ runId, graphDigest, taskFingerprint });
+      }
+      claimCoordinator();
+    }
+  } catch (error) {
+    kernel.close();
+    throw error;
+  }
+  const bridgeKernel = {
+    ...kernel,
+    createRun(args) {
+      const created = kernel.createRun(args);
+      claimCoordinator();
+      return created;
+    },
+  };
+  return {
+    kernel,
+    bridgeKernel,
+    mode,
+    ownerId,
+    leaseMs,
+    get claim() {
+      return claim;
+    },
+    assertHealthy() {
+      if (heartbeatError) throw heartbeatError;
+      if (!claim) throw new Error("Durable run coordinator was not claimed");
+    },
+    stopHeartbeat() {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+      if (heartbeatError) throw heartbeatError;
+    },
+  };
 }
 
 function textSha256(text) {
@@ -3805,7 +4080,7 @@ function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket) 
         ? "external_write"
         : packet.executionMode === "approval_gate"
           ? "approval_gate"
-          : "bounded_execution",
+          : "read_only_worker",
       resourceScopes,
       isolation: packet.workspaceIsolation ?? "unspecified",
       status: "planned_not_invoked",
@@ -10759,6 +11034,14 @@ export async function runMetaTheoryGovernedExecution({
     throw new Error("Missing task for governed meta-theory execution.");
   }
   const taskFingerprint = stableId("task", normalizedTask);
+  const durableStageRunnerEnabled = stageRunner?.enabled === true;
+  const durableMode = durableStageRunnerEnabled ? (stageRunner.durableMode ?? "fresh") : null;
+  if (durableStageRunnerEnabled && !["fresh", "resume"].includes(durableMode)) {
+    throw new TypeError(`Unsupported durable stage-runner mode: ${durableMode}`);
+  }
+  if (durableStageRunnerEnabled && allowOverwrite === true) {
+    throw new Error("Durable stage-runner execution forbids overwrite; use resume with the exact run identity.");
+  }
   const languageResolution = resolveOutputLanguage({
     explicitLanguage: outputLanguage,
     cliLanguage: cliOutputLanguage,
@@ -10846,6 +11129,9 @@ export async function runMetaTheoryGovernedExecution({
       ? "read_only"
       : requestedProjectCapabilityMutationMode;
   const requestedRunId = runId == null ? null : String(runId);
+  if (durableMode === "resume" && requestedRunId == null) {
+    throw new Error("Durable resume requires an explicit runId and task.");
+  }
   const effectiveRunId = validateRunId(
     requestedRunId ?? uniqueRunId(taskFingerprint),
     requestedRunId == null ? "generated runId" : "requested runId",
@@ -10856,19 +11142,60 @@ export async function runMetaTheoryGovernedExecution({
   const jsonPath = resolveOutputFile(outputDir, `${effectiveRunId}.json`);
   const markdownFileName = `${effectiveRunId}.${resolvedOutputLanguage}.md`;
   const markdownPath = resolveOutputFile(outputDir, markdownFileName);
+  const stagingRefs = {
+    json: `.${effectiveRunId}.json.staging`,
+    markdown: `.${markdownFileName}.staging`,
+  };
+  const jsonStagingPath = resolveOutputFile(outputDir, stagingRefs.json);
+  const markdownStagingPath = resolveOutputFile(outputDir, stagingRefs.markdown);
   const latestPath = resolveOutputFile(outputDir, "latest.json");
   const reservationPath = resolveOutputFile(
     outputDir,
     `${effectiveRunId}.reservation.json`,
   );
-  if (requestedRunId != null && allowOverwrite !== true) {
-    await reserveExplicitRunId(reservationPath, {
+  const durableDbPath = durableStageRunnerEnabled
+    ? path.resolve(stageRunner.durableDbPath ?? path.join(stateDir, "durable-runs.sqlite"))
+    : null;
+  if (durableMode === "resume") {
+    const reservation = await readDurableReservation(reservationPath, {
       runId: effectiveRunId,
       taskFingerprint,
     });
+    if (
+      reservation.stagingRefs.json !== stagingRefs.json ||
+      reservation.stagingRefs.markdown !== stagingRefs.markdown
+    ) {
+      throw new Error(`Durable reservation staging identity mismatch for run '${effectiveRunId}'.`);
+    }
+    const materialized = await loadAlreadyMaterializedDurableRun({
+      runId: effectiveRunId,
+      task: normalizedTask,
+      taskFingerprint,
+      reservation,
+      reservationPath,
+      jsonPath,
+      markdownPath,
+      latestPath,
+      dbPath,
+      durableDbPath,
+    });
+    if (materialized) return materialized;
+  } else if (durableMode === "fresh") {
+    await reserveExplicitRunId(reservationPath, {
+      runId: effectiveRunId,
+      taskFingerprint,
+      stagingRefs,
+    });
+  } else if (requestedRunId != null && allowOverwrite !== true) {
+    await reserveExplicitRunId(reservationPath, {
+      runId: effectiveRunId,
+      taskFingerprint,
+      stagingRefs,
+    });
   }
   if (
-    requestedRunId != null &&
+    (requestedRunId != null || durableMode === "fresh") &&
+    durableMode !== "resume" &&
     allowOverwrite !== true &&
     (existsSync(jsonPath) || existsSync(markdownPath))
   ) {
@@ -11121,6 +11448,10 @@ export async function runMetaTheoryGovernedExecution({
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
   }
+  let durableCoordinator = null;
+  let durableExecution = null;
+  let durableBodyError = null;
+  try {
   if (stageRunner?.enabled === true) {
     if (!executionAllowed) {
       coreLoop = {
@@ -11140,7 +11471,45 @@ export async function runMetaTheoryGovernedExecution({
           workerResults: [],
         },
       };
+      if (durableStageRunnerEnabled) {
+        durableExecution = {
+          schemaVersion: "durable-governed-entry-v0.1",
+          mode: durableMode,
+          status: "blocked",
+          database: durableDatabaseLabel(durableDbPath, stateDir),
+          cursor: null,
+          headCheckpointId: null,
+          fenceToken: null,
+          workerCount: 0,
+        };
+      }
     } else {
+      const coordinatorLeaseMs = Math.max(
+        1_000,
+        Number.parseInt(String(stageRunner.durableLeaseMs ?? 30_000), 10) || 30_000,
+      );
+      const coordinatorHeartbeatIntervalMs = Math.max(
+        100,
+        Math.min(
+          Math.floor(coordinatorLeaseMs / 2),
+          Number.parseInt(
+            String(stageRunner.durableHeartbeatIntervalMs ?? Math.floor(coordinatorLeaseMs / 3)),
+            10,
+          ) || 10_000,
+        ),
+      );
+      if (durableStageRunnerEnabled) {
+        durableCoordinator = await openRunnerDurableCoordinator({
+          durableDbPath,
+          mode: durableMode,
+          runId: effectiveRunId,
+          graphDigest: coreLoop.stageDagPacket.graphDigest,
+          taskFingerprint,
+          ownerId: `governed-entry:${process.pid}:${effectiveRunId}`,
+          leaseMs: coordinatorLeaseMs,
+          heartbeatIntervalMs: coordinatorHeartbeatIntervalMs,
+        });
+      }
       const bridgeResult = await runStageRunnerBridge({
         runId: effectiveRunId,
         runtime: stageRunner.runtime ?? routeRuntime,
@@ -11151,8 +11520,35 @@ export async function runMetaTheoryGovernedExecution({
         capacity: stageRunner.capacity ?? null,
         timeoutMs: stageRunner.timeoutMs ?? 300_000,
         invokeWorker: stageRunner.invokeWorker,
+        durable: durableCoordinator
+          ? {
+              enabled: true,
+              kernel: durableCoordinator.bridgeKernel,
+              mode: durableMode === "fresh" ? "create" : "resume",
+              taskFingerprint,
+              ownerId: durableCoordinator.ownerId,
+              leaseMs: coordinatorLeaseMs,
+              heartbeatIntervalMs: coordinatorHeartbeatIntervalMs,
+            }
+          : null,
       });
       coreLoop = applyStageRunnerBridgeResult(coreLoop, bridgeResult);
+      if (durableCoordinator) {
+        durableCoordinator.assertHealthy();
+        const projection = bridgeResult.executionProjection.durable.projection;
+        durableExecution = {
+          schemaVersion: "durable-governed-entry-v0.1",
+          mode: durableMode,
+          status: "materializing",
+          database: durableDatabaseLabel(durableDbPath, stateDir),
+          cursor: projection.cursor,
+          headCheckpointId: projection.headCheckpointId,
+          fenceToken: durableCoordinator.claim.fenceToken,
+          coordinatorLeaseMs,
+          workerCount: bridgeResult.workerResults?.length ?? 0,
+          terminalStatus: bridgeResult.status === "pass" ? "completed" : "failed",
+        };
+      }
     }
   }
   artifactStatus =
@@ -11348,13 +11744,19 @@ export async function runMetaTheoryGovernedExecution({
     runId: effectiveRunId,
     requestedRunId,
     overwriteAuthorized: allowOverwrite === true,
-    reservation: requestedRunId == null
+    reservation: durableStageRunnerEnabled
+      ? {
+          path: path.basename(reservationPath),
+          mode: durableMode === "resume" ? "verified_resume" : "exclusive_wx",
+        }
+      : requestedRunId == null
       ? null
       : {
           path: path.basename(reservationPath),
           mode: allowOverwrite === true ? "explicit_overwrite" : "exclusive_wx",
         },
     taskFingerprint,
+    ...(durableExecution ? { durableExecution } : {}),
     resolvedOutputLanguage,
     languageResolution,
     status: artifactStatus,
@@ -11498,8 +11900,80 @@ export async function runMetaTheoryGovernedExecution({
     },
     ...workflowContractPackets,
   };
-  await atomicWriteFile(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`);
-  await atomicWriteFile(markdownPath, userReportMarkdown);
+  if (durableCoordinator) {
+    let materializationReservation = await readDurableReservation(reservationPath, {
+      runId: effectiveRunId,
+      taskFingerprint,
+    });
+    Object.assign(durableExecution, { status: "artifacts_committing" });
+    const stagedJson = `${JSON.stringify(artifact, null, 2)}\n`;
+    await atomicWriteFile(jsonStagingPath, stagedJson);
+    await atomicWriteFile(markdownStagingPath, userReportMarkdown);
+    const stagedJsonSha256 = textSha256(stagedJson);
+    const stagedMarkdownSha256 = textSha256(userReportMarkdown);
+    materializationReservation = await updateDurableReservation(
+      reservationPath,
+      materializationReservation,
+      {
+        phase: "staged",
+        status: "reserved_or_incomplete",
+        jsonSha256: stagedJsonSha256,
+        markdownSha256: stagedMarkdownSha256,
+        stagingRefs,
+      },
+    );
+    await commitStagedArtifact(jsonStagingPath, jsonPath, stagedJsonSha256);
+    await commitStagedArtifact(markdownStagingPath, markdownPath, stagedMarkdownSha256);
+    materializationReservation = await updateDurableReservation(
+      reservationPath,
+      materializationReservation,
+      { phase: "artifacts_committed" },
+    );
+    await stageRunner.materializationFaultInjector?.("artifacts_committed");
+    durableCoordinator.assertHealthy();
+    const terminalStatus = coreLoop.stageRunnerBridgePacket?.status === "pass"
+      ? "completed"
+      : "failed";
+    durableCoordinator.kernel.setRunTerminalStatus({
+      runId: effectiveRunId,
+      status: terminalStatus,
+      ownerId: durableCoordinator.ownerId,
+      fenceToken: durableCoordinator.claim.fenceToken,
+    });
+    const terminalProjection = durableCoordinator.kernel.projectRun(effectiveRunId);
+    Object.assign(durableExecution, {
+      status: "materialized",
+      terminalStatus,
+      cursor: terminalProjection.cursor,
+      headCheckpointId: terminalProjection.headCheckpointId,
+    });
+    materializationReservation = await updateDurableReservation(
+      reservationPath,
+      materializationReservation,
+      { phase: "kernel_terminal" },
+    );
+    await stageRunner.materializationFaultInjector?.("kernel_terminal");
+    const finalJson = `${JSON.stringify(artifact, null, 2)}\n`;
+    const finalJsonSha256 = textSha256(finalJson);
+    await atomicWriteFile(jsonStagingPath, finalJson);
+    await commitStagedArtifact(jsonStagingPath, jsonPath, finalJsonSha256);
+    materializationReservation = await updateDurableReservation(
+      reservationPath,
+      materializationReservation,
+      {
+        phase: "materialized",
+        status: "materialized",
+        jsonSha256: finalJsonSha256,
+        markdownSha256: stagedMarkdownSha256,
+      },
+    );
+    await stageRunner.materializationFaultInjector?.("materialized");
+    await fs.rm(jsonStagingPath, { force: true });
+    await fs.rm(markdownStagingPath, { force: true });
+  } else {
+    await atomicWriteFile(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`);
+    await atomicWriteFile(markdownPath, userReportMarkdown);
+  }
   await atomicWriteFile(
     latestPath,
     `${JSON.stringify(
@@ -11524,6 +11998,47 @@ export async function runMetaTheoryGovernedExecution({
       db: dbPath,
     },
   };
+  } catch (error) {
+    durableBodyError = error;
+    if (durableCoordinator?.claim && error?.simulatedProcessCrash !== true) {
+      try {
+        const projection = durableCoordinator.kernel.projectRun(effectiveRunId);
+        if (projection.run.status === "active") {
+          durableCoordinator.kernel.setRunTerminalStatus({
+            runId: effectiveRunId,
+            status: "failed",
+            ownerId: durableCoordinator.ownerId,
+            fenceToken: durableCoordinator.claim.fenceToken,
+          });
+        }
+      } catch {
+        // Preserve the primary failure; unresolved claims/effects intentionally keep the run resumable.
+      }
+    }
+    throw error;
+  } finally {
+    if (durableCoordinator) {
+      let cleanupError = null;
+      try {
+        durableCoordinator.stopHeartbeat();
+      } catch (error) {
+        cleanupError = error;
+      }
+      if (durableCoordinator.claim) {
+        try {
+          durableCoordinator.kernel.releaseRunCoordinator({
+            runId: effectiveRunId,
+            ownerId: durableCoordinator.ownerId,
+            fenceToken: durableCoordinator.claim.fenceToken,
+          });
+        } catch (error) {
+          cleanupError ??= error;
+        }
+      }
+      durableCoordinator.kernel.close();
+      if (cleanupError && !durableBodyError) throw cleanupError;
+    }
+  }
 }
 
 export async function readGovernedExecutionRun({
@@ -11615,6 +12130,7 @@ function positionalTask(fallback = null) {
         "--stage-runner-runtime",
         "--stage-runner-timeout-ms",
         "--stage-runner-capacity",
+        "--durable-db",
       ].includes(value)
     ) {
       index += 1;
@@ -11651,6 +12167,7 @@ function rawPositionals() {
         "--stage-runner-runtime",
         "--stage-runner-timeout-ms",
         "--stage-runner-capacity",
+        "--durable-db",
       ].includes(value)
     ) {
       index += 1;
@@ -11677,6 +12194,7 @@ async function main() {
   const stateDirArg = argValue("--state-dir", null);
   const artifactDirArg = argValue("--artifact-dir", null);
   const dbArg = argValue("--db", null);
+  const durableDbArg = argValue("--durable-db", null);
   const runtimeArg = argValue("--runtime", process.env.META_KIM_RUNTIME ?? "codex");
   const osArg = argValue("--os", process.env.META_KIM_OS ?? "windows");
   const cliOutputLanguage = argValue(
@@ -11688,13 +12206,23 @@ async function main() {
     !process.argv.includes("--no-emit-conversation-notice");
   const runtime = normalizeRouteRuntime(runtimeArg);
   const executeStageDag = process.argv.includes("--execute-stage-dag");
+  const resumeStageDag = process.argv.includes("--resume-stage-dag");
+  if (executeStageDag && resumeStageDag) {
+    throw new Error("--execute-stage-dag and --resume-stage-dag are mutually exclusive");
+  }
+  if ((executeStageDag || resumeStageDag) && process.argv.includes("--overwrite-run")) {
+    throw new Error("Durable stage-DAG execution forbids --overwrite-run");
+  }
+  if (resumeStageDag && (!runIdArg || !taskArg)) {
+    throw new Error("--resume-stage-dag requires explicit --run-id and --task");
+  }
   const stageRunnerRuntime = argValue("--stage-runner-runtime", runtime);
   const stageRunnerTimeoutMs = Number(argValue("--stage-runner-timeout-ms", "300000"));
   const stageRunnerCapacity = Number(argValue("--stage-runner-capacity", "0"));
-  if (executeStageDag && (!Number.isFinite(stageRunnerTimeoutMs) || stageRunnerTimeoutMs < 10_000)) {
+  if ((executeStageDag || resumeStageDag) && (!Number.isFinite(stageRunnerTimeoutMs) || stageRunnerTimeoutMs < 10_000)) {
     throw new Error("--stage-runner-timeout-ms must be a finite safety timeout >= 10000");
   }
-  if (executeStageDag) normalizeStageRunnerRuntime(stageRunnerRuntime);
+  if (executeStageDag || resumeStageDag) normalizeStageRunnerRuntime(stageRunnerRuntime);
   const osTarget = normalizeOsTarget(osArg);
   const useTemporaryOutput = process.argv.includes("--temp-output");
   const temporaryOutputRoot = useTemporaryOutput ? await createTemporaryOutputRoot() : null;
@@ -11783,15 +12311,17 @@ async function main() {
     invokeCapabilityProbes: process.argv.includes("--invoke-capability-probes"),
     projectRoot: process.env.META_KIM_CALLER_CWD || process.cwd(),
     projectCapabilityMutationMode:
-      executeStageDag || process.argv.some((arg) =>
+      executeStageDag || resumeStageDag || process.argv.some((arg) =>
         ["--dry-run", "--check", "--read-only", "--no-project-capability-writes"].includes(arg),
       )
         ? "read_only"
         : "auto",
-    stageRunner: executeStageDag
+    stageRunner: executeStageDag || resumeStageDag
       ? {
           enabled: true,
           runtime: stageRunnerRuntime,
+          durableMode: resumeStageDag ? "resume" : "fresh",
+          durableDbPath: durableDbArg ? path.resolve(durableDbArg) : undefined,
           timeoutMs: stageRunnerTimeoutMs,
           capacity: stageRunnerCapacity > 0 ? stageRunnerCapacity : null,
         }
@@ -11840,6 +12370,18 @@ async function main() {
                 workerCount: report.stageRunnerBridgePacket.workerResults?.length ?? 0,
                 observedDurationMs: report.stageRunnerBridgePacket.observedDurationMs ?? null,
               },
+        durableExecution: report.durableExecution
+          ? {
+              mode: report.durableExecution.mode,
+              status: report.durableExecution.status,
+              terminalStatus: report.durableExecution.terminalStatus ?? null,
+              cursor: report.durableExecution.cursor ?? null,
+              headCheckpointId: report.durableExecution.headCheckpointId ?? null,
+              fenceToken: report.durableExecution.fenceToken ?? null,
+              database: report.durableExecution.database ?? null,
+              workerCount: report.durableExecution.workerCount ?? 0,
+            }
+          : null,
         report: relative(report.paths.markdown),
         temporaryOutput: temporaryOutputRoot
           ? {

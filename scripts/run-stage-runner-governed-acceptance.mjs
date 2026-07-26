@@ -27,6 +27,17 @@ function validateGovernedReport(report, runtime, expectedPackage) {
   const bridge = report.stageRunnerBridgePacket;
   if (bridge?.status !== "pass") failures.push(`bridge_status:${bridge?.status ?? "missing"}`);
   if (bridge?.runtime !== runtime) failures.push(`runtime:${bridge?.runtime ?? "missing"}`);
+  if (bridge?.executionProjection?.durable?.enabled !== true) failures.push("durable_disabled");
+  if (bridge?.executionProjection?.durable?.resumed !== false) failures.push("durable_not_fresh");
+  if (report.durableExecution?.mode !== "fresh") failures.push("durable_mode");
+  if (report.durableExecution?.status !== "materialized") failures.push("durable_materialization");
+  if (report.durableExecution?.terminalStatus !== "completed") failures.push("durable_terminal_status");
+  if (!Number.isInteger(report.durableExecution?.fenceToken)) failures.push("durable_fence");
+  if (!Number.isInteger(report.durableExecution?.cursor)) failures.push("durable_cursor");
+  if (!report.durableExecution?.headCheckpointId) failures.push("durable_checkpoint");
+  if (JSON.stringify(report.durableExecution ?? {}).includes(path.resolve(report.paths.json, ".."))) {
+    failures.push("durable_absolute_path_leak");
+  }
   if (bridge?.graphAuthority !== "config/contracts/core-loop-contract.json") {
     failures.push("graph_authority");
   }
@@ -89,6 +100,8 @@ async function main() {
       stageRunner: {
         enabled: true,
         runtime,
+        durableMode: "fresh",
+        durableDbPath: path.join(runtimeRoot, "durable-runs.sqlite"),
         capacity: 1,
         timeoutMs: safetyTimeoutMs,
       },
@@ -104,14 +117,14 @@ async function main() {
   }
   const summary = {
     schemaVersion: "stage-runner-governed-acceptance-v0.1",
-    prdTaskId: "P-117",
+    prdTaskId: "P-117/P-118",
     runId: acceptanceRunId,
     status: results.every((result) => result.status === "pass") ? "pass" : "failed",
     requiredRuntimes: ["codex", "claude"],
     requestedRuntimes: runtimes,
     entrypoint: "runMetaTheoryGovernedExecution / meta:theory:run",
     graphAuthority: "config/contracts/core-loop-contract.json",
-    mode: "read_only_shadow",
+    mode: "durable_read_only_shadow_fresh",
     taskBudget: null,
     timeoutMeaning: "process safety fuse only",
     dockerUsed: false,

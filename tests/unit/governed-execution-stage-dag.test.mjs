@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   buildStageDagPacket,
   selectMaximalSafeReadySet,
+  stageDagGraphDigest,
   stageLaneNodeId,
   stageMergeNodeId,
+  validateStageDagPacket,
 } from "../../scripts/governed-execution/stage-dag.mjs";
 
 function lane(laneId, overrides = {}) {
@@ -175,4 +177,112 @@ test("runtime capacity bounds the maximal safe ready set", () => {
   const ready = selectMaximalSafeReadySet(packet, { stage: "Execution" });
   assert.equal(ready.readyNodeIds.length, 2);
   assert.equal(ready.deferredNodeIds.length, 1);
+});
+
+test("canonical graph digest ignores runtime projections but binds graph semantics", () => {
+  const packet = buildStageDagPacket({
+    stageOrder: ["Execution"],
+    stageLanes: { Execution: [lane("a"), lane("b")] },
+    runtimeCapacity: 2,
+  });
+  const runtimeProjection = structuredClone(packet);
+  runtimeProjection.status = "executed";
+  runtimeProjection.runtimeCapacity = 99;
+  runtimeProjection.nodes[0].status = "completed";
+  runtimeProjection.nodes[0].observedDurationMs = 42;
+  runtimeProjection.invocationTruth = {
+    plannedIsInvoked: true,
+    evidenceRef: "runtime-only",
+  };
+  assert.equal(stageDagGraphDigest(runtimeProjection), packet.graphDigest);
+
+  const graphMutation = structuredClone(packet);
+  graphMutation.nodes[1].dependsOn = [graphMutation.nodes[0].nodeId];
+  assert.notEqual(stageDagGraphDigest(graphMutation), packet.graphDigest);
+  assert.throws(() => validateStageDagPacket(graphMutation), /graph digest mismatch/iu);
+});
+
+test("build rejects stage slug collisions", () => {
+  assert.throws(
+    () => buildStageDagPacket({ stageOrder: ["Meta Review", "Meta-Review"] }),
+    /stage slug collision.*meta-review/iu,
+  );
+});
+
+test("build rejects duplicate node ids across the full graph", () => {
+  assert.throws(
+    () => buildStageDagPacket({
+      stageOrder: ["Critical", "Fetch"],
+      stageLanes: {
+        Critical: [lane("critical", { nodeId: "shared-node" })],
+        Fetch: [lane("fetch", { nodeId: "shared-node" })],
+      },
+    }),
+    /duplicate stage DAG node ids.*shared-node/iu,
+  );
+});
+
+test("build rejects a lane colliding with its stage merge node", () => {
+  assert.throws(
+    () => buildStageDagPacket({
+      stageOrder: ["Execution"],
+      stageLanes: {
+        Execution: [lane("worker", { nodeId: stageMergeNodeId("Execution") })],
+      },
+    }),
+    /duplicate stage DAG node ids.*stage:execution:merge/iu,
+  );
+});
+
+test("build rejects self dependencies, missing dependencies, and cycles", () => {
+  const selfId = stageLaneNodeId("Execution", "self");
+  assert.throws(
+    () => buildStageDagPacket({
+      stageOrder: ["Execution"],
+      stageLanes: { Execution: [lane("self", { dependsOn: [selfId] })] },
+    }),
+    /self dependency.*stage:execution:lane:self/iu,
+  );
+  assert.throws(
+    () => buildStageDagPacket({
+      stageOrder: ["Execution"],
+      stageLanes: { Execution: [lane("missing", { dependsOn: ["unknown-node"] })] },
+    }),
+    /missing dependencies.*unknown-node/iu,
+  );
+
+  const leftId = stageLaneNodeId("Execution", "left");
+  const rightId = stageLaneNodeId("Execution", "right");
+  assert.throws(
+    () => buildStageDagPacket({
+      stageOrder: ["Execution"],
+      stageLanes: {
+        Execution: [
+          lane("left", { dependsOn: [rightId] }),
+          lane("right", { dependsOn: [leftId] }),
+        ],
+      },
+    }),
+    /cycle.*stage:execution:lane:/iu,
+  );
+});
+
+test("import validation and scheduler reject corrupted external DAG packets", () => {
+  const packet = buildStageDagPacket({
+    stageOrder: ["Execution"],
+    stageLanes: { Execution: [lane("left"), lane("right")] },
+  });
+  const duplicate = structuredClone(packet);
+  duplicate.nodes[1].nodeId = duplicate.nodes[0].nodeId;
+  assert.throws(() => validateStageDagPacket(duplicate), /duplicate stage DAG node ids/iu);
+  assert.throws(
+    () => selectMaximalSafeReadySet(duplicate, { stage: "Execution" }),
+    /duplicate stage DAG node ids/iu,
+  );
+
+  const cycle = structuredClone(packet);
+  const workers = cycle.nodes.filter((node) => node.laneKind === "execution_worker");
+  workers[0].dependsOn = [workers[1].nodeId];
+  workers[1].dependsOn = [workers[0].nodeId];
+  assert.throws(() => validateStageDagPacket(cycle), /cycle/iu);
 });
