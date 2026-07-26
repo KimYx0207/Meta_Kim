@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "2.9.3",
+  "version": "2.9.4",
   "description": "Governance layer for AI coding: canonical meta agents, workflow contracts, default Claude/Codex projections, non-default OpenClaw/Cursor projections, and source-backed candidate probes.",
   "private": true,
   "type": "module",
@@ -34,6 +34,7 @@
     "meta:stage-runner:codex": "node scripts/run-stage-runner-bridge-acceptance.mjs --runtime codex --scenario all",
     "meta:stage-runner:claude": "node scripts/run-stage-runner-bridge-acceptance.mjs --runtime claude --scenario all",
     "meta:stage-runner:governed": "node scripts/run-stage-runner-governed-acceptance.mjs --runtime both",
+    "meta:ready-set-adapter:acceptance": "node scripts/run-ready-set-adapter-acceptance.mjs",
     "prepare:openclaw-local": "node scripts/prepare-openclaw-local.mjs",
     "meta:eval:agents": "node scripts/eval-meta-agents.mjs",
     "meta:eval:agents:live": "node scripts/eval-meta-agents.mjs --live",

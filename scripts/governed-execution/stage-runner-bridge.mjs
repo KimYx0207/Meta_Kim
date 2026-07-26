@@ -11,6 +11,10 @@ import {
 import { spawnCli } from "../runtime-cli-invocation.mjs";
 import { openDurableRunKernel } from "./durable-run-kernel.mjs";
 import {
+  executeNativeReadySet,
+  validateReadySetAdapterResult,
+} from "./ready-set-adapters.mjs";
+import {
   selectMaximalSafeReadySet,
   stageLaneNodeId,
   validateStageDagPacket,
@@ -268,6 +272,7 @@ export async function invokeReadOnlyRuntimeWorker({
   requestTask = null,
   timeoutMs = 300_000,
   env = process.env,
+  signal = null,
 }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
   const invocation = runtimeInvocation(normalizedRuntime, path.resolve(workspaceRoot));
@@ -278,6 +283,7 @@ export async function invokeReadOnlyRuntimeWorker({
     env: childEnv,
     input: prompt,
     timeoutMs,
+    signal,
   });
   let messages = [];
   let events = [];
@@ -630,6 +636,8 @@ export async function runStageRunnerBridge({
   capacity = null,
   timeoutMs = 300_000,
   invokeWorker = invokeReadOnlyRuntimeWorker,
+  executeReadySet = executeNativeReadySet,
+  readySetTimeoutMs = null,
   evidenceKind = "native_read_only_stage_runner",
   durable = null,
   redactionEnv = process.env,
@@ -641,6 +649,7 @@ export async function runStageRunnerBridge({
   if (stageDagPacket?.authority !== "config/contracts/core-loop-contract.json") {
     throw new TypeError("stageDagPacket must retain the core-loop contract as its authority");
   }
+  validateStageDagPacket(stageDagPacket, { requireDigest: true });
   const durableContext = await prepareDurableBridgeContext({ durable, runId, stageDagPacket });
   try {
   const resolvedWorkspace = path.resolve(workspaceRoot);
@@ -661,6 +670,8 @@ export async function runStageRunnerBridge({
   const startedAt = new Date();
   const startedHr = process.hrtime.bigint();
   let failure = null;
+  const readySetAdapterBatches = [];
+  let readySetBatchIndex = 0;
 
   while (!failure && executionNodes.some((node) => !completedNodeIds.has(node.nodeId))) {
     const ready = selectMaximalSafeReadySet(stageDagPacket, {
@@ -675,7 +686,7 @@ export async function runStageRunnerBridge({
       };
       break;
     }
-    const batchResults = await Promise.all(ready.readyNodes.map(async (node) => {
+    const executeNode = async (node, signal = null) => {
       const nodeStartedAt = new Date();
       const nodeStartedHr = process.hrtime.bigint();
       const dependencyResults = node.dependsOn
@@ -770,6 +781,7 @@ export async function runStageRunnerBridge({
               timeoutMs,
               node,
               packet,
+              signal,
             });
           } catch (error) {
             result = {
@@ -827,7 +839,211 @@ export async function runStageRunnerBridge({
         }
       }
       return normalizedResult;
-    }));
+    };
+    const canonicalReadyNodes = new Map(ready.readyNodes.map((node) => [node.nodeId, node]));
+    const adapterReadyNodes = Object.freeze(
+      ready.readyNodes.map((node) => Object.freeze({ nodeId: node.nodeId })),
+    );
+    const controllerInvocationCounts = new Map();
+    const controllerPromises = new Map();
+    const controllerSettlements = new Map();
+    const controllerNodeResults = new Map();
+    let controllerViolation = null;
+    let controllerOpen = true;
+    let controllerSignal = null;
+    const observedRejection = (error) => {
+      const rejected = Promise.reject(error);
+      void rejected.catch(() => {});
+      return rejected;
+    };
+    const guardedExecuteNode = (candidateNodeId) => {
+      const nodeId = String(candidateNodeId ?? "");
+      const canonicalNode = canonicalReadyNodes.get(nodeId);
+      if (!controllerOpen) {
+        const error = new Error(`Ready-set callback arrived after the batch was closed: ${nodeId || "missing"}`);
+        error.code = "ready_set_callback_after_close";
+        controllerViolation ??= error;
+        return observedRejection(error);
+      }
+      if (!canonicalNode) {
+        const error = new Error(`Ready-set adapter attempted a node outside the scheduler selection: ${nodeId || "missing"}`);
+        error.code = "adapter_unknown_node";
+        controllerViolation ??= error;
+        return observedRejection(error);
+      }
+      const nextCount = (controllerInvocationCounts.get(nodeId) ?? 0) + 1;
+      controllerInvocationCounts.set(nodeId, nextCount);
+      if (nextCount !== 1) {
+        const error = new Error(`Ready-set adapter attempted to invoke a node more than once: ${nodeId}`);
+        error.code = "adapter_duplicate_node_invocation";
+        controllerViolation ??= error;
+        return observedRejection(error);
+      }
+      try {
+        validateStageDagPacket(stageDagPacket, { requireDigest: true });
+      } catch (error) {
+        error.code ??= "stage_dag_integrity_failed";
+        controllerViolation ??= error;
+        return observedRejection(error);
+      }
+      const controllerPromise = (async () => {
+        try {
+          const value = await executeNode(canonicalNode, controllerSignal);
+          if (value?.nodeId !== nodeId) {
+            const error = new Error(`Controller callback result identity changed for ${nodeId}`);
+            error.code = "controller_result_identity_mismatch";
+            throw error;
+          }
+          controllerSettlements.set(nodeId, { nodeId, status: "fulfilled", value });
+          controllerNodeResults.set(nodeId, value);
+          return value;
+        } catch (error) {
+          const safeFailureMessage = redactSensitiveText(error.message, redactionContext);
+          const safeFailureClass = /^[a-z0-9_:-]{1,120}$/iu.test(String(error.code ?? ""))
+            ? String(error.code)
+            : "ready_set_node_rejected";
+          const failedResult = {
+            nodeId,
+            status: "failed",
+            failureClass: safeFailureClass,
+            failureMessage: safeFailureMessage,
+          };
+          controllerSettlements.set(nodeId, {
+            nodeId,
+            status: "rejected",
+            error: { code: safeFailureClass, message: safeFailureMessage },
+          });
+          controllerNodeResults.set(nodeId, failedResult);
+          throw error;
+        }
+      })();
+      void controllerPromise.catch(() => {});
+      controllerPromises.set(nodeId, controllerPromise);
+      return controllerPromise;
+    };
+    let batchResults;
+    let adapterTimeout;
+    let adapterAbortController;
+    try {
+      adapterAbortController = new AbortController();
+      controllerSignal = adapterAbortController.signal;
+      const effectiveReadySetTimeoutMs = Math.max(
+        1,
+        Number.parseInt(String(readySetTimeoutMs ?? (timeoutMs + 5_000)), 10) || (timeoutMs + 5_000),
+      );
+      const adapterTimeoutPromise = new Promise((_, reject) => {
+        adapterTimeout = setTimeout(() => {
+          adapterAbortController.abort("ready_set_adapter_safety_timeout");
+          const error = new Error(
+            `Ready-set adapter exceeded the ${effectiveReadySetTimeoutMs}ms process safety timeout`,
+          );
+          error.code = "ready_set_adapter_safety_timeout";
+          reject(error);
+        }, effectiveReadySetTimeoutMs);
+      });
+      const adapterResult = await Promise.race([
+        Promise.resolve().then(() => executeReadySet({
+          runId,
+          graphDigest: stageDagPacket.graphDigest,
+          readyNodes: adapterReadyNodes,
+          executeNode: guardedExecuteNode,
+          batchIndex: readySetBatchIndex,
+          signal: adapterAbortController.signal,
+        })),
+        adapterTimeoutPromise,
+      ]);
+      if (controllerViolation) throw controllerViolation;
+      for (const node of ready.readyNodes) {
+        if (controllerInvocationCounts.get(node.nodeId) !== 1) {
+          const error = new Error(`Bridge did not observe exactly one callback for ${node.nodeId}`);
+          error.code = "adapter_controller_invocation_mismatch";
+          throw error;
+        }
+      }
+      await Promise.race([
+        Promise.allSettled([...controllerPromises.values()]),
+        adapterTimeoutPromise,
+      ]);
+      if (controllerViolation) throw controllerViolation;
+      for (const node of ready.readyNodes) {
+        if (controllerInvocationCounts.get(node.nodeId) !== 1) {
+          const error = new Error(`Bridge callback count changed after settlement for ${node.nodeId}`);
+          error.code = "adapter_controller_invocation_mismatch";
+          throw error;
+        }
+      }
+      clearTimeout(adapterTimeout);
+      adapterTimeout = null;
+      const validatedAdapterResult = validateReadySetAdapterResult(adapterResult, {
+        runId,
+        graphDigest: stageDagPacket.graphDigest,
+        readyNodes: adapterReadyNodes,
+        batchIndex: readySetBatchIndex,
+      });
+      for (const node of ready.readyNodes) {
+        const adapterSettlement = validatedAdapterResult.results.find(
+          (result) => result.nodeId === node.nodeId,
+        );
+        const controllerSettlement = controllerSettlements.get(node.nodeId);
+        if (
+          !controllerSettlement ||
+          adapterSettlement?.status !== controllerSettlement.status ||
+          (
+            controllerSettlement.status === "fulfilled" &&
+            JSON.stringify(adapterSettlement.value) !== JSON.stringify(controllerSettlement.value)
+          )
+        ) {
+          const error = new Error(`Adapter substituted controller-owned result truth for ${node.nodeId}`);
+          error.code = "adapter_result_substitution";
+          throw error;
+        }
+      }
+      readySetAdapterBatches.push({
+        ...validatedAdapterResult,
+        controllerInvocationEvidence: ready.readyNodes.map((node) => ({
+          nodeId: node.nodeId,
+          invocationCount: controllerInvocationCounts.get(node.nodeId),
+        })),
+        results: validatedAdapterResult.results.map((result) => ({
+          nodeId: result.nodeId,
+          status: result.status,
+        })),
+      });
+      batchResults = ready.readyNodes.map((node) => controllerNodeResults.get(node.nodeId));
+      readySetBatchIndex += 1;
+    } catch (error) {
+      clearTimeout(adapterTimeout);
+      adapterTimeout = null;
+      controllerOpen = false;
+      if (adapterAbortController && !adapterAbortController.signal.aborted) {
+        adapterAbortController.abort(error.code ?? "ready_set_adapter_failed");
+      }
+      if (controllerPromises.size > 0) {
+        await Promise.allSettled([...controllerPromises.values()]);
+      }
+      const safeFailureMessage = redactSensitiveText(error.message, redactionContext);
+      const safeFailureClass = /^[a-z0-9_:-]{1,120}$/iu.test(String(error.code ?? ""))
+        ? String(error.code)
+        : "ready_set_executor_failed";
+      failure = {
+        failureClass: safeFailureClass,
+        reason: safeFailureMessage,
+      };
+      readySetAdapterBatches.push({
+        schemaVersion: "meta-kim-ready-set-adapter-result-v0.1",
+        prdTaskId: "P-119",
+        status: "failed",
+        runId,
+        graphDigest: stageDagPacket.graphDigest,
+        batchIndex: readySetBatchIndex,
+        selectedNodeIds: ready.readyNodes.map((node) => node.nodeId),
+        failureClass: failure.failureClass,
+        failureMessage: safeFailureMessage,
+      });
+      break;
+    } finally {
+      controllerOpen = false;
+    }
     const failed = batchResults.find((result) => result.status !== "completed");
     if (failed) {
       failure = {
@@ -895,6 +1111,16 @@ export async function runStageRunnerBridge({
     })),
     stageDagPacket,
     executionProjection,
+    readySetAdapterPacket: {
+      schemaVersion: "meta-kim-ready-set-adapter-packet-v0.1",
+      prdTaskId: "P-119",
+      status: failure ? "failed" : "pass",
+      authorityPacketRef: "coreLoop.stageDagPacket",
+      graphDigest: stageDagPacket.graphDigest ?? null,
+      checkpointAuthority: "p118_durable_run_kernel_only",
+      adapterIds: [...new Set(readySetAdapterBatches.map((batch) => batch.adapterId).filter(Boolean))],
+      batches: readySetAdapterBatches,
+    },
     compatibilityView: {
       stageDagStatus: executionProjection.status,
       nodeStatuses: executionProjection.nodeStatuses,

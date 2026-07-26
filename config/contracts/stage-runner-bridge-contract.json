@@ -3,7 +3,7 @@
   "contractId": "meta-kim-stage-runner-bridge-contract",
   "prdTaskId": "P-117",
   "status": "verified",
-  "purpose": "Let the authoritative stage DAG drive real, observable, read-only execution on both primary runtimes without creating a second graph, with an optional P-118 durable resume boundary.",
+  "purpose": "Let the authoritative stage DAG drive real, observable, read-only execution on both primary runtimes without creating a second graph, with an optional P-118 durable resume boundary and optional P-119 ready-set execution adapters.",
   "primaryRuntimes": ["codex", "claude"],
   "mode": "read_only_shadow",
   "singleAuthority": {
@@ -17,7 +17,27 @@
     "defaultPlannedOnly": true,
     "explicitFlag": "--execute-stage-dag",
     "runtimeFlag": "--stage-runner-runtime codex|claude",
-    "packageAcceptanceScript": "meta:stage-runner:acceptance"
+    "packageAcceptanceScript": "meta:stage-runner:acceptance",
+    "adapterAcceptanceScript": "meta:ready-set-adapter:acceptance"
+  },
+  "readySetAdapterExtension": {
+    "prdTaskId": "P-119",
+    "optional": true,
+    "defaultOrchestrator": "native",
+    "explicitFlag": "--stage-runner-orchestrator native|langgraph",
+    "adapterModule": "scripts/governed-execution/ready-set-adapters.mjs",
+    "singleTopologyAuthority": "coreLoop.stageDagPacket",
+    "schedulerBoundary": "The adapter receives a frozen node-id-only snapshot of exactly one ready set already selected by stage-dag.mjs. The bridge resolves canonical nodes, revalidates the graph digest before each invocation, owns exact-once callback counts, and rejects additions, omissions, duplicates, reordering, or graph mutation.",
+    "checkpointBoundary": "The P-118 durable run kernel remains the only checkpoint, lease, resume, event, and effect authority. LangGraph persistence/checkpointers are disabled.",
+    "langGraphApi": "Functional API entrypoint plus task only; StateGraph is not used because it would create a second topology authority.",
+    "dependencyPolicy": "@langchain/langgraph is dynamically imported only when explicitly selected. It is not a dependency, optionalDependency, or default install payload.",
+    "missingDependencyPolicy": "Fail explicitly as optional_dependency_missing; no silent native fallback.",
+    "safetyTimeout": "Every adapter batch has a process safety timeout and cooperative abort signal. On adapter failure or timeout the bridge closes new callbacks, signals built-in runtime processes, and drains every already-started controller callback before reporting or closing the durable kernel. Custom invokers must honor the supplied signal or their process timeout. This is not a task, token, or cost budget.",
+    "failureRetention": "Adapter errors are bounded and path/secret-redacted before entering bridge or adapter packets.",
+    "deferredAdapters": {
+      "openaiAgents": "deferred_not_implemented_no_credentials",
+      "claudeAgent": "deferred_not_implemented_no_credentials"
+    }
   },
   "durableExtension": {
     "prdTaskId": "P-118",
@@ -83,7 +103,7 @@
     "oneRuntimeMaySubstituteForAnother": false
   },
   "nonGoals": [
-    "P-119 LangGraph/OpenAI/Claude provider adapters",
+    "OpenAI Agents and Claude Agent SDK live adapters without credential-backed provider evidence",
     "Cursor or OpenClaw execution",
     "project mutation",
     "external side effects",

@@ -68,7 +68,7 @@ npm run meta:delivery:bundle
 - Review 和 Verification 会留下产物证据，而不是只给安慰性结论
 - 兼容证据会保持分层，smoke evidence 不会被冒充成 native live proof
 
-真正执行阶段图目前是显式开启的只读能力。运行 `npm run meta:theory:run -- --execute-stage-dag --stage-runner-runtime codex "<任务>"`，或把 `codex` 换成 `claude`。两个运行端共用同一份 `coreLoop.stageDagPacket`，会记录真实会话、工具调用和耗时，再由本地合并结果。默认仍然只做计划；这个模式不声称支持断点恢复，也不会执行写入或外部副作用。
+真正执行阶段图是显式开启的只读能力。运行 `npm run meta:theory:run -- --execute-stage-dag --stage-runner-runtime codex "<任务>"`，或把 `codex` 换成 `claude`；进程中断后，用 `--resume-stage-dag --run-id <原运行编号> --task "<同一任务>"` 只继续没完成的节点。两个运行端共用同一份 `coreLoop.stageDagPacket`，记录真实会话、工具调用和耗时，由耐久内核保存已完成节点，再在本地合并。默认仍然只做计划。ready set 默认由原生并行执行；维护者也可以自己安装当前已实测的 `@langchain/langgraph@1.4.8`，再加 `--stage-runner-orchestrator langgraph`，让 LangGraph Functional API 只负责包裹这一批执行。LangGraph 不接管流程图或 checkpoint，这个模式也不会执行写入或外部副作用。
 
 带着示例看第一遍：[`examples/first-run/README.md`](examples/first-run/README.md)。
 

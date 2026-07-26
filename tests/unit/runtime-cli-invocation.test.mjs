@@ -5,7 +5,10 @@ import path from "node:path";
 import process from "node:process";
 import test from "node:test";
 
-import { resolveWindowsCliInvocation } from "../../scripts/runtime-cli-invocation.mjs";
+import {
+  resolveWindowsCliInvocation,
+  spawnCli,
+} from "../../scripts/runtime-cli-invocation.mjs";
 
 async function writeNodeCmdShim(directory, command) {
   const target = path.join(directory, `${command}.js`);
@@ -48,4 +51,26 @@ test("Windows CLI resolution keeps native executable priority within one PATH di
   assert.equal(invocation.command, native);
   assert.deepEqual(invocation.args, ["--version"]);
   assert.equal(invocation.source, "native_executable");
+});
+
+test("spawnCli abort waits for child close and prevents late child work", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-cli-abort-"));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+  const marker = path.join(root, "late-marker.txt");
+  const controller = new AbortController();
+  const invocation = spawnCli(process.execPath, [
+    "-e",
+    "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'late'), 300)",
+    marker,
+  ], {
+    cwd: root,
+    timeoutMs: 5_000,
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort("test_abort"), 30);
+  const result = await invocation;
+  assert.equal(result.error?.name, "AbortError");
+  assert.notEqual(result.signal, null);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await assert.rejects(fs.access(marker));
 });

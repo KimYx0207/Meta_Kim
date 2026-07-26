@@ -2,7 +2,7 @@
   "schemaVersion": 5,
   "contractId": "meta-kim-durable-run-kernel-contract",
   "prdTaskId": "P-118",
-  "status": "implementation_candidate",
+  "status": "verified",
   "purpose": "Persist the governed stage DAG as an immutable, resumable event history without introducing a second graph authority or a provider adapter.",
   "authority": {
     "graph": "config/contracts/core-loop-contract.json via coreLoop.stageDagPacket",
@@ -183,7 +183,7 @@
     "explicitOptInTestHookMayExposeDatabase": true
   },
   "nonGoals": [
-    "P-119 LangGraph, OpenAI, or Claude provider adapters",
+    "provider adapter topology, scheduling, or persistence authority inside the kernel",
     "runtime-specific graph definitions",
     "Cursor execution",
     "external side-effect execution in the first slice",

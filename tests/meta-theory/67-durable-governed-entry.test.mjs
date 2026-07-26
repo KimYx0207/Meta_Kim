@@ -83,6 +83,19 @@ test("67 — CLI keeps planned-only default and validates durable fresh/resume f
     ], { cwd: process.cwd(), timeout: 10_000 }),
     /durable.*overwrite|overwrite.*durable/iu,
   );
+  await assert.rejects(
+    execFileAsync(process.execPath, [
+      ENTRY,
+      "--execute-stage-dag",
+      "--stage-runner-orchestrator",
+      "stategraph",
+      "--task",
+      TASK,
+      "--state-dir",
+      root,
+    ], { cwd: process.cwd(), timeout: 10_000 }),
+    /unsupported stage-runner orchestrator|stategraph/iu,
+  );
 
   const planned = await runMetaTheoryGovernedExecution({
     task: TASK,
@@ -95,6 +108,41 @@ test("67 — CLI keeps planned-only default and validates durable fresh/resume f
   assert.equal(planned.stageRunnerBridgePacket, null);
   assert.equal(planned.executionResult.actualWorkerExecution, false);
   assert.equal(planned.durableExecution, undefined);
+});
+
+test("67 — governed entry can explicitly select the LangGraph Functional API ready-set adapter", async (t) => {
+  const root = await tempRoot(t);
+  const counter = { count: 0 };
+  const report = await runMetaTheoryGovernedExecution({
+    task: TASK,
+    runId: "p119-governed-langgraph-adapter",
+    stateDir: root,
+    artifactDir: root,
+    dbPath: path.join(root, "analytics.sqlite"),
+    projectRoot: process.cwd(),
+    projectCapabilityMutationMode: "read_only",
+    stageRunner: {
+      ...durableStageRunner(root, counter),
+      orchestrator: "langgraph",
+      orchestratorOptions: {
+        langgraph: {
+          loadRuntime: async () => ({
+            task: (_name, callback) => async (input) => callback(input),
+            entrypoint: (_options, callback) => ({ invoke: callback }),
+          }),
+        },
+      },
+    },
+  });
+  assert.ok(counter.count > 0);
+  assert.equal(report.stageRunnerBridgePacket.status, "pass");
+  assert.deepEqual(
+    report.stageRunnerBridgePacket.readySetAdapterPacket.adapterIds,
+    ["langgraph_functional_ready_set"],
+  );
+  assert.ok(report.stageRunnerBridgePacket.readySetAdapterPacket.batches.every(
+    (batch) => batch.checkpointAuthority === "p118_durable_run_kernel_only",
+  ));
 });
 
 test("67 — fresh durable auto-run reserves identity, uses the stateDir database, and closes coordinator", async (t) => {

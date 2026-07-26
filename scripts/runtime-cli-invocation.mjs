@@ -79,6 +79,7 @@ export async function spawnCli(
     input = "",
     timeoutMs = 300_000,
     maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
+    signal = null,
   } = {},
 ) {
   const invocation = resolveCliInvocation(command, args, { env });
@@ -91,6 +92,7 @@ export async function spawnCli(
     let timedOut = false;
     let outputLimitExceeded = false;
     let timer = null;
+    let childError = null;
     const finish = (status, signal, error = null) => {
       if (settled) return;
       settled = true;
@@ -121,6 +123,7 @@ export async function spawnCli(
       child = spawn(invocation.command, invocation.args, {
         cwd,
         env,
+        signal: signal ?? undefined,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -143,8 +146,11 @@ export async function spawnCli(
     child.stderr.on("data", (chunk) => {
       stderr = append(stderr, chunk);
     });
-    child.on("error", (error) => finish(null, null, error));
-    child.on("close", (status, signal) => finish(status, signal));
+    child.on("error", (error) => {
+      childError = error;
+      if (!child.pid) finish(null, null, error);
+    });
+    child.on("close", (status, signal) => finish(status, signal, childError));
     child.stdin.on("error", () => {});
     child.stdin.end(String(input ?? ""));
     timer = setTimeout(() => {

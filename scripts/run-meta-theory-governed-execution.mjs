@@ -62,6 +62,7 @@ import {
   runStageRunnerBridge,
 } from "./governed-execution/stage-runner-bridge.mjs";
 import { openDurableRunKernel } from "./governed-execution/durable-run-kernel.mjs";
+import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -11520,6 +11521,11 @@ export async function runMetaTheoryGovernedExecution({
         capacity: stageRunner.capacity ?? null,
         timeoutMs: stageRunner.timeoutMs ?? 300_000,
         invokeWorker: stageRunner.invokeWorker,
+        executeReadySet: stageRunner.executeReadySet ?? resolveReadySetExecutor(
+          stageRunner.orchestrator ?? "native",
+          stageRunner.orchestratorOptions,
+        ),
+        readySetTimeoutMs: stageRunner.readySetTimeoutMs ?? null,
         durable: durableCoordinator
           ? {
               enabled: true,
@@ -12128,6 +12134,7 @@ function positionalTask(fallback = null) {
         "--lang",
         "--output-language",
         "--stage-runner-runtime",
+        "--stage-runner-orchestrator",
         "--stage-runner-timeout-ms",
         "--stage-runner-capacity",
         "--durable-db",
@@ -12165,6 +12172,7 @@ function rawPositionals() {
         "--lang",
         "--output-language",
         "--stage-runner-runtime",
+        "--stage-runner-orchestrator",
         "--stage-runner-timeout-ms",
         "--stage-runner-capacity",
         "--durable-db",
@@ -12217,12 +12225,16 @@ async function main() {
     throw new Error("--resume-stage-dag requires explicit --run-id and --task");
   }
   const stageRunnerRuntime = argValue("--stage-runner-runtime", runtime);
+  const stageRunnerOrchestrator = argValue("--stage-runner-orchestrator", "native");
   const stageRunnerTimeoutMs = Number(argValue("--stage-runner-timeout-ms", "300000"));
   const stageRunnerCapacity = Number(argValue("--stage-runner-capacity", "0"));
   if ((executeStageDag || resumeStageDag) && (!Number.isFinite(stageRunnerTimeoutMs) || stageRunnerTimeoutMs < 10_000)) {
     throw new Error("--stage-runner-timeout-ms must be a finite safety timeout >= 10000");
   }
-  if (executeStageDag || resumeStageDag) normalizeStageRunnerRuntime(stageRunnerRuntime);
+  if (executeStageDag || resumeStageDag) {
+    normalizeStageRunnerRuntime(stageRunnerRuntime);
+    resolveReadySetExecutor(stageRunnerOrchestrator);
+  }
   const osTarget = normalizeOsTarget(osArg);
   const useTemporaryOutput = process.argv.includes("--temp-output");
   const temporaryOutputRoot = useTemporaryOutput ? await createTemporaryOutputRoot() : null;
@@ -12320,6 +12332,7 @@ async function main() {
       ? {
           enabled: true,
           runtime: stageRunnerRuntime,
+          orchestrator: stageRunnerOrchestrator,
           durableMode: resumeStageDag ? "resume" : "fresh",
           durableDbPath: durableDbArg ? path.resolve(durableDbArg) : undefined,
           timeoutMs: stageRunnerTimeoutMs,
@@ -12369,6 +12382,10 @@ async function main() {
                 mode: report.stageRunnerBridgePacket.mode,
                 workerCount: report.stageRunnerBridgePacket.workerResults?.length ?? 0,
                 observedDurationMs: report.stageRunnerBridgePacket.observedDurationMs ?? null,
+                failureClass:
+                  report.stageRunnerBridgePacket.failure?.failureClass ?? null,
+                readySetAdapters:
+                  report.stageRunnerBridgePacket.readySetAdapterPacket?.adapterIds ?? [],
               },
         durableExecution: report.durableExecution
           ? {

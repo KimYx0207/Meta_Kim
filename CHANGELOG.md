@@ -8,6 +8,14 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.4] - 2026-07-26
+
+### Fixed
+
+- **LangGraph can now enter the real Dynamic Workflow path without becoming a second workflow engine.** An optional ready-set adapter consumes only the exact nodes already selected from `coreLoop.stageDagPacket`, invokes LangGraph's Functional API `entrypoint` and `task`, and leaves graph topology, checkpointing, leases, resume, and merge authority with Meta_Kim.
+- **The default install remains unchanged.** Native execution is still the default, `@langchain/langgraph` is dynamically imported only after explicit `--stage-runner-orchestrator langgraph` selection, and missing or incompatible packages fail explicitly instead of silently falling back.
+- **Packed external-consumer acceptance proves the boundary.** A normal packed install contains no LangGraph dependency and explicit selection fails without native fallback; after an explicit `@langchain/langgraph@1.4.8` install, a deliberate process exit after worker A's durable commit resumed only worker B and merged once. The deterministic worker is labeled test-only and cannot count as native provider proof. OpenAI Agents and Claude Agent SDK adapters remain truthfully deferred and unimplemented without credential-backed live evidence.
+
 ## [2.9.3] - 2026-07-26
 
 ### Solved Problem

@@ -70,7 +70,7 @@ The proof path shows five things:
 
 The executable core-loop contract is `config/contracts/core-loop-contract.json`; it binds the default path to `npm run meta:theory:run -- "<task>"` and keeps Critical -> Fetch -> Thinking -> Execution -> Review -> Meta-Review -> Verification -> Evolution testable. `npm run meta:theory:demo` is the zero-argument replay entry for the 3-minute proof.
 
-Real stage execution is opt-in and read-only in the first slice. Use `npm run meta:theory:run -- --execute-stage-dag --stage-runner-runtime codex "<task>"` or replace `codex` with `claude`. Both adapters consume the same `coreLoop.stageDagPacket`, record native session/tool/timing evidence, and merge locally. The default remains planned-only, and this mode does not claim durable resume or side-effect execution.
+Real stage execution is opt-in and read-only. Use `npm run meta:theory:run -- --execute-stage-dag --stage-runner-runtime codex "<task>"` or replace `codex` with `claude`; resume the exact interrupted run with `--resume-stage-dag --run-id <id> --task "<same task>"`. Both runtimes consume the same `coreLoop.stageDagPacket`, record native session/tool/timing evidence, persist completed nodes through the durable kernel, and merge locally. The default remains planned-only. Ready sets use native concurrency by default; maintainers may explicitly install the currently tested `@langchain/langgraph@1.4.8` and add `--stage-runner-orchestrator langgraph` to use its Functional API as an execution wrapper. LangGraph does not own topology or checkpoints, and this mode still does not execute writes or external side effects.
 
 For a guided walk-through, start with [examples/first-run/README.md](examples/first-run/README.md).
 
