@@ -16,6 +16,8 @@
 - **普通安装完全不变。** 默认仍用原生执行；只有显式选择 `--stage-runner-orchestrator langgraph` 才动态加载维护者自己安装的 `@langchain/langgraph`；包缺失或接口不兼容会明确失败，不会静默退回原生路径。
 - **真实打包外部消费者验收证明了边界。** 普通候选包没有 LangGraph 依赖，显式选择时会明确失败且不回退原生路径；单独安装 `@langchain/langgraph@1.4.8` 后，A 节点耐久提交时故意结束进程，再启动只执行 B，最终 merge 一次。验收中的确定性 worker 明确标成 test-only，不能冒充原生运行端正证。没有凭证支持的 OpenAI Agents 与 Claude Agent SDK 适配器仍如实标记为未实现、未做 live 证明。
 - **Claude Code 的 live 发布验收不再被无关的用户提示词 Hook 改写结构化证据。** 验收器读取真实已安装的运行端 Agent 定义，校验声明身份和边界字段、记录完整文件摘要，再通过 Claude 原生 `--setting-sources "" --agents --agent` 路径绑定紧凑投影。空设置源只排除无关的用户/项目 Hook，不会禁用显式内联 Agent，也不切断宿主管理的登录凭据。用户 Hook 不会被修改，报告也会把这种 inline binding 与普通加载的自定义 Agent 明确区分。
+- **MCP Memory 的安装、更新和开机启动现在可恢复且安静。** 安装路径固定为 `mcp-memory-service[sqlite]==11.5.5`，强制使用 ONNX 并禁止 hash embedding。更新先构建并行候选环境、证明联网与开机离线两种真实 ONNX 向量，再取得 endpoint 事务锁；随后只停止 PID、启动身份、可执行文件/launcher、host、port 与 argv 全部匹配的 listener，对已静止的 SQLite 数据库执行 backup 与 `quick_check`，并在候选服务健康且监听进程身份匹配后，才依次更新 MCP 配置、boot 文件和 active 状态。由目标 runtime 验证的绝对数据库路径会同时写进 MCP 配置、live env、全部 boot launcher、active state 和 recovery journal，自定义数据库不会在重启后静默退回默认路径。崩溃恢复先取得同一 endpoint 锁，在 restore 前精确停止旧或候选 writer，遇到未知 listener 则 fail closed。恢复材料只保存 MCP Memory 条目与必要状态，使用私有权限；commit 后立即删除敏感 backup/recovery，失败材料也只按受控命名保守过期。setup 与 boot 共用 owner-aware endpoint mkdir 锁，不再使用名称级广泛杀进程或 GUI 通知。
+- **Windows C++ 运行库代际混装时，不再退回 hash 或只给一个模糊的安装失败。** 包安装成功但 ONNX 依赖探针失败时，setup 只允许从本机 Visual Studio 官方 Redist 树中发现完整、同版本的 x64 CRT bundle，把允许列表 DLL 放到候选 ONNX 模块旁并重试一次。非 Windows、文件不完整或混版、符号链接/路径逃逸、缺少官方资产都会 fail closed；setup 不写 System32、不下载任意 DLL，也不借用其他应用私带的运行库。
 
 ## [2.9.3] - 2026-07-26
 

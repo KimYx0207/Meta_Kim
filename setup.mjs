@@ -26,10 +26,13 @@
 
 import { execSync, spawnSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import http from "node:http";
 import {
+  appendFileSync,
+  chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   rmSync,
   readdirSync,
   cpSync,
@@ -102,6 +105,44 @@ import {
   memoryServerHttpArgs,
   resolveMemoryEndpoint,
 } from "./scripts/memory-endpoint.mjs";
+import {
+  PYTHON_MEMORY_HEALTH_PROBE,
+  buildBootMemoryServiceEnv,
+  buildInitialMemoryServiceEnv,
+  acquireEndpointStartLock,
+  endpointStartLockName,
+  executeMcpMemoryReconciliation,
+  firstStartLogPaths,
+  observeMemoryServiceChild,
+  planMcpMemoryReconciliation,
+  probeMcpMemoryHealth,
+  repairWindowsCandidateOnnxRuntime,
+  releaseEndpointStartLock,
+  withEndpointStartLock,
+  waitForMcpMemoryHealth,
+  verifyPrivateRecoveryRoot,
+} from "./scripts/mcp-memory-service-lifecycle.mjs";
+import {
+  inspectEndpointListener,
+  isEndpointNotListening,
+  resolveWindowsVenvProcessExpectation,
+  stopVerifiedEndpointProcess,
+  verifyMemoryListenerIdentity,
+} from "./scripts/mcp-memory-process-control.mjs";
+import {
+  cleanupExpiredMcpMemoryRecoveryArtifacts,
+  preparePrivateTransactionRoot,
+  runCandidateOnnxSentinel,
+  runMcpMemoryRecoveryProtocol,
+  runMcpMemoryUpgradeTransaction,
+  sqliteBackupWithQuickCheck,
+  sqliteQuickCheck,
+  sqliteRestoreWithQuickCheck,
+  MCP_MEMORY_NO_DATABASE_DIGEST,
+  MCP_MEMORY_TRANSACTION_ID_PATTERN,
+  validateMcpMemoryRecoveryMaterial,
+  writeJsonAtomic,
+} from "./scripts/mcp-memory-upgrade-transaction.mjs";
 import {
   executeSafeManagedFileTransaction,
   withSafeManagedFileLock,
@@ -6158,21 +6199,48 @@ function checkMcpMemoryService(python) {
   };
 }
 
-function findMemoryBinPath(resolved) {
+function activeMemoryRuntimeStatePath() {
+  return join(homedir(), ".meta-kim", "mcp-memory-active-runtime.json");
+}
+
+function readActiveMemoryRuntimeState() {
+  try {
+    return JSON.parse(readFileSync(activeMemoryRuntimeStatePath(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeActiveMemoryRuntimeState({ resolved, memoryBin, databasePath }) {
+  writeJsonAtomic(activeMemoryRuntimeStatePath(), {
+    schemaVersion: "meta-kim-mcp-memory-active-runtime-v1",
+    runtimeDir: resolved.venvDir ?? dirname(dirname(memoryBin)),
+    pythonPath: resolved.python?.command ?? resolved.python,
+    memoryBin,
+    databasePath,
+    activatedAt: new Date().toISOString(),
+  });
+  return true;
+}
+
+function findMemoryBinPath(resolved, { preferActive = true } = {}) {
   const plat = platform();
   const binName = plat === "win32" ? "memory.exe" : "memory";
+
+  if (preferActive) {
+    const active = readActiveMemoryRuntimeState();
+    if (active?.memoryBin && isAbsolute(active.memoryBin) && existsSync(active.memoryBin)) {
+      try {
+        return realpathSync(active.memoryBin);
+      } catch {}
+    }
+  }
 
   // Strategy 0: prefer the dedicated meta-kim memory venv that setup provisions
   // for this service. Resolving via resolved.python can land on an unrelated
   // system interpreter whose memory build lacks required native extensions
   // (e.g. SQLite-vec loadable extension support), which then fails to start
   // under --http. Always try the purpose-built venv first.
-  const venvMemoryBin =
-    plat === "win32"
-      ? join(homedir(), ".meta-kim", "memory-venv", "Scripts", binName)
-      : join(homedir(), ".meta-kim", "memory-venv", "bin", binName);
-  if (existsSync(venvMemoryBin)) return venvMemoryBin;
-
   // Strategy 1: resolve python executable, then check nearby directories
   let pythonCmd = resolved.python.command || resolved.python;
   if (
@@ -6205,6 +6273,12 @@ function findMemoryBinPath(resolved) {
   const binDir = join(pythonDir, "..", "bin", binName);
   if (existsSync(binDir)) return resolve(binDir);
 
+  const venvMemoryBin =
+    plat === "win32"
+      ? join(homedir(), ".meta-kim", "memory-venv", "Scripts", binName)
+      : join(homedir(), ".meta-kim", "memory-venv", "bin", binName);
+  if (existsSync(venvMemoryBin)) return venvMemoryBin;
+
   // Strategy 2: search system PATH (handles cross-install pip --user case)
   const whichCmd = plat === "win32" ? "where" : "which";
   try {
@@ -6220,18 +6294,31 @@ function findMemoryBinPath(resolved) {
   return null;
 }
 
-function buildMcpMemoryServerConfig(resolved) {
-  const memoryBin = findMemoryBinPath(resolved);
+function buildMcpMemoryServerConfig(
+  resolved,
+  {
+    memoryBinOverride = null,
+    preferActive = true,
+    databasePathOverride = null,
+  } = {},
+) {
+  const memoryBin = memoryBinOverride ?? findMemoryBinPath(resolved, { preferActive });
+  const databasePath = resolveMcpMemoryDatabasePathWithRuntime(resolved.python, {
+    preferredPath: databasePathOverride ?? readActiveMemoryRuntimeState()?.databasePath ?? null,
+  });
+  if (!databasePath) throw new Error("MCP Memory database path could not be runtime-verified");
   if (memoryBin) {
     return {
       command: memoryBin,
       args: ["server"],
+      env: { MCP_MEMORY_SQLITE_PATH: databasePath },
     };
   }
   const python = resolved.python;
   return {
     command: python.command,
     args: [...python.args, "-m", "mcp_memory_service.server"],
+    env: { MCP_MEMORY_SQLITE_PATH: databasePath },
   };
 }
 
@@ -6257,9 +6344,12 @@ function registerMcpMemoryServer({
   try {
     if (fileExists(mcpPath)) {
       const mcpConfig = JSON.parse(readText(mcpPath, "utf8"));
-      if (mcpConfig.mcpServers?.["mcp-memory-service"] && !isLegacy(
-        mcpConfig.mcpServers["mcp-memory-service"],
-      )) {
+      const existingMemoryConfig = mcpConfig.mcpServers?.["mcp-memory-service"];
+      if (
+        existingMemoryConfig &&
+        !isLegacy(existingMemoryConfig) &&
+        JSON.stringify(existingMemoryConfig) === JSON.stringify(memoryServerConfig)
+      ) {
         onExisting();
         return true;
       }
@@ -6289,142 +6379,178 @@ function registerMcpMemoryServer({
   }
 }
 
-function stopMcpMemoryService() {
-  const plat = platform();
-  try {
-    if (plat === "win32") {
-      execSync("taskkill /F /IM memory.exe", { stdio: "pipe" });
-    } else if (plat === "darwin") {
-      try {
-        execSync(
-          "launchctl unload ~/Library/LaunchAgents/com.meta-kim.mcp-memory-service.plist 2>/dev/null",
-          { stdio: "pipe" },
-        );
-      } catch {}
-      execSync("pkill -f 'memory server --http'", { stdio: "pipe" });
-    } else {
-      execSync("pkill -f 'memory server --http'", { stdio: "pipe" });
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isMcpMemoryProcessRunning() {
-  if (platform() !== "win32") return false;
-  try {
-    const result = spawnSync(
-      "pwsh.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        "if (Get-Process -Name memory -ErrorAction SilentlyContinue) { 'running' }",
-      ],
-      { encoding: "utf8", windowsHide: true },
-    );
-    if (result.status === 0 && result.stdout.includes("running")) return true;
-  } catch {}
-
-  try {
-    const result = spawnSync("tasklist", ["/FI", "IMAGENAME eq memory.exe"], {
-      encoding: "utf8",
-      windowsHide: true,
-    });
-    return result.status === 0 && /\bmemory\.exe\b/iu.test(result.stdout);
-  } catch {
-    return false;
-  }
-}
-
-async function startMcpMemoryServiceBackground(resolved, endpoint = resolveMemoryEndpoint()) {
+async function startMcpMemoryServiceBackground(
+  resolved,
+  endpoint = resolveMemoryEndpoint(),
+  {
+    memoryBinOverride = null,
+    databasePathOverride = null,
+    lockAlreadyHeld = false,
+    configureBootOnHealthy = true,
+    writeActiveStateOnHealthy = true,
+    extraEnv = {},
+  } = {},
+) {
   if (!endpoint.canAutoStart) {
     info(t.mcpMemoryRemoteEndpointNoAutoStart(endpoint.endpointUrl));
     return true;
   }
-  const memoryBin = findMemoryBinPath(resolved);
+  const memoryBin = memoryBinOverride ?? findMemoryBinPath(resolved);
   if (!memoryBin) {
     warn(t.mcpMemoryAutoStartFailed);
     info(t.mcpMemoryAutoStartManual);
     return false;
   }
+  const activeDatabasePath = readActiveMemoryRuntimeState()?.databasePath;
+  const databasePath = resolveMcpMemoryDatabasePathWithRuntime(resolved.python, {
+    preferredPath: databasePathOverride ?? activeDatabasePath ?? null,
+  });
+  if (!databasePath) {
+    warn(t.mcpMemoryAutoStartFailed);
+    return false;
+  }
 
   info(t.mcpMemoryAutoStarting);
-  const env = memoryServiceEnv(endpoint, {
-    ...process.env,
-    MCP_ALLOW_ANONYMOUS_ACCESS: "true",
-    HF_HUB_OFFLINE: "1",
-    TRANSFORMERS_OFFLINE: "1",
-  });
-
-  try {
-    const child = spawn(memoryBin, memoryServerHttpArgs(endpoint), {
-      env,
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.unref();
-  } catch {
-    // Background start may report errors but still succeed
-  }
-
-  // Poll health endpoint — service may need several seconds to initialize
-  const POLL_INTERVAL = 1500;
-  const POLL_MAX_MS = 10000;
-  const pollStart = Date.now();
-  let healthy = false;
-
-  while (Date.now() - pollStart < POLL_MAX_MS) {
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-    healthy = await new Promise((resolve) => {
-      const req = http.get(
-        endpoint.healthUrl,
-        { timeout: 3000 },
-        (res) => {
-          let body = "";
-          res.on("data", (c) => (body += c));
-          res.on("end", () => {
-            if ((res.statusCode ?? 500) < 200 || (res.statusCode ?? 500) >= 300) {
-              resolve(false);
-              return;
-            }
-            try {
-              resolve(JSON.parse(body)?.status === "healthy");
-            } catch {
-              resolve(false);
-            }
-          });
-        },
-      );
-      req.on("error", () => resolve(false));
-      req.on("timeout", () => {
-        req.destroy();
-        resolve(false);
+  const env = memoryServiceEnv(
+    endpoint,
+    buildInitialMemoryServiceEnv({
+      ...process.env,
+      ...extraEnv,
+      MCP_MEMORY_SQLITE_PATH: databasePath,
+    }),
+  );
+  const { logDir, stdoutLog, stderrLog } = firstStartLogPaths(homedir());
+  mkdirSync(logDir, { recursive: true });
+  const start = async () => {
+      let childState = {
+        spawnError: null,
+        exited: false,
+        exitCode: null,
+        signal: null,
+      };
+      let stdoutFd;
+      let stderrFd;
+      try {
+        stdoutFd = openSync(stdoutLog, "a");
+        stderrFd = openSync(stderrLog, "a");
+        const child = spawn(memoryBin, memoryServerHttpArgs(endpoint), {
+          env,
+          detached: true,
+          stdio: ["ignore", stdoutFd, stderrFd],
+          windowsHide: true,
+        });
+        childState = observeMemoryServiceChild(child);
+        child.unref();
+      } catch (error) {
+        childState.spawnError = error;
+      } finally {
+        if (stdoutFd !== undefined) closeSync(stdoutFd);
+        if (stderrFd !== undefined) closeSync(stderrFd);
+      }
+      const healthResult = await waitForMcpMemoryHealth({
+        probeHealth: () => probeMcpMemoryHealth(endpoint.healthUrl),
+        childState,
+        allowLauncherExit: true,
       });
+      return { ok: healthResult.healthy, started: true, healthResult };
+  };
+  const lockResult = lockAlreadyHeld
+    ? await start()
+    : await withEndpointStartLock({
+      endpoint,
+      lockRoot: join(homedir(), ".meta-kim", "locks"),
+      probeHealth: () => probeMcpMemoryHealth(endpoint.healthUrl),
+      start,
     });
-    if (healthy) break;
-  }
+  const healthResult = lockResult.reason === "already_healthy_after_lock"
+    ? { healthy: true, reason: lockResult.reason }
+    : lockResult.healthResult ?? { healthy: false, reason: lockResult.reason };
 
-  if (healthy) {
+  if (healthResult.healthy) {
     ok(t.mcpMemoryAutoStarted(endpoint.endpointUrl));
-    const bootOk = configureBootAutoStart(memoryBin, endpoint);
-    if (bootOk) ok(t.mcpMemoryAutoStartBoot);
-    else warn(t.mcpMemoryAutoStartBootFailed);
+    if (configureBootOnHealthy) {
+      const bootOk = configureBootAutoStart(memoryBin, endpoint, { databasePath });
+      if (bootOk) ok(t.mcpMemoryAutoStartBoot);
+      else warn(t.mcpMemoryAutoStartBootFailed);
+    }
+    if (writeActiveStateOnHealthy) {
+      writeActiveMemoryRuntimeState({ resolved, memoryBin, databasePath });
+    }
     return true;
-  }
-
-  if (isMcpMemoryProcessRunning()) {
-    warn(t.mcpMemoryAutoStartUnverified);
   }
 
   warn(t.mcpMemoryAutoStartFailed);
   info(t.mcpMemoryAutoStartManual);
+  info(`  ${stdoutLog}`);
+  info(`  ${stderrLog}`);
+  try {
+    appendFileSync(
+      stderrLog,
+      `[${new Date().toISOString()}] ${t.mcpMemoryAutoStartFailureMessage(endpoint.healthUrl)}\nreason=${healthResult.reason}\n`,
+      "utf8",
+    );
+  } catch {}
   return false;
 }
 
-function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
+function findMemoryHealthProbePython(memoryBin) {
+  if (platform() === "win32") return null;
+  for (const candidate of [
+    join(dirname(memoryBin), "python"),
+    join(dirname(memoryBin), "python3"),
+  ]) {
+    if (isAbsolute(candidate) && existsSync(candidate)) {
+      try {
+        return realpathSync(candidate);
+      } catch {}
+    }
+  }
+  try {
+    const firstLine = readFileSync(memoryBin, "utf8").split(/\r?\n/, 1)[0];
+    const shebang = firstLine.match(/^#!\s*(\/\S*python(?:\d+(?:\.\d+)*)?)\s*$/u)?.[1];
+    if (shebang && existsSync(shebang)) return realpathSync(shebang);
+  } catch {}
+  return null;
+}
+
+function memoryProcessIdentityExpectation(memoryBin) {
+  if (platform() === "win32") {
+    const expected = resolveWindowsVenvProcessExpectation(memoryBin);
+    return {
+      platformName: "win32",
+      expectedExecutablePath: expected?.expectedExecutablePath ?? null,
+      expectedExecutablePaths: expected?.expectedExecutablePaths ?? [],
+      expectedLauncherPath: expected?.expectedLauncherPath ?? null,
+    };
+  }
+  return {
+    platformName: platform(),
+    expectedExecutablePath: findMemoryHealthProbePython(memoryBin),
+    expectedLauncherPath: memoryBin,
+  };
+}
+
+function verifyEndpointRuntimeIdentity(endpoint, memoryBin) {
+  const expected = memoryProcessIdentityExpectation(memoryBin);
+  if (!expected.expectedExecutablePath) return false;
+  const identity = inspectEndpointListener(endpoint);
+  return verifyMemoryListenerIdentity(identity, {
+    platform: expected.platformName,
+    executablePath: expected.expectedExecutablePath,
+    executablePaths: expected.expectedExecutablePaths,
+    launcherPath: expected.expectedLauncherPath,
+    host: endpoint.hostname,
+    port: endpoint.port,
+  }).verified;
+}
+
+function configureBootAutoStart(
+  memoryBin,
+  endpoint = resolveMemoryEndpoint(),
+  { databasePath = readActiveMemoryRuntimeState()?.databasePath ?? null } = {},
+) {
   if (!endpoint.canAutoStart) return false;
+  if (!databasePath || !isAbsolute(databasePath)) return false;
   const plat = platform();
   const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
   const psSingleQuote = (value) => `'${String(value).replace(/'/g, "''")}'`;
@@ -6434,8 +6560,61 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
-  const failureTitle = t.mcpMemoryAutoStartFailureTitle;
+  const bootEnv = buildBootMemoryServiceEnv();
+  const startLockPath = join(
+    homedir(),
+    ".meta-kim",
+    "locks",
+    endpointStartLockName(endpoint),
+  );
+  mkdirSync(dirname(startLockPath), { recursive: true });
+  const pythonProbeBin = plat === "win32"
+    ? null
+    : findMemoryHealthProbePython(memoryBin);
+  if (plat !== "win32" && !pythonProbeBin) return false;
   const failureMessage = t.mcpMemoryAutoStartFailureMessage(endpoint.healthUrl);
+  const posixOwnerReadProbe = shellQuote(
+    "import json,sys; o=json.load(open(sys.argv[1],encoding='utf-8-sig')); print(str(o.get('ownerPid',''))+'\\t'+str(o.get('ownerStartIdentity',''))+'\\t'+str(o.get('expiresAt','')))",
+  );
+  const posixOwnerTokenProbe = shellQuote(
+    "import json,sys; o=json.load(open(sys.argv[1],encoding='utf-8-sig')); print(str(o.get('token','')))",
+  );
+  const posixLockAcquire =
+    `LOCK_DIR=${shellQuote(startLockPath)}\n` +
+    `LOCK_TOKEN="$$-$(date +%s)-\${RANDOM:-0}"\n` +
+    `LOCK_ACQUIRED=0\n` +
+    `read_start_identity() {\n` +
+    `  if [ -r "/proc/$1/stat" ]; then sed 's/^[^)]*) //' "/proc/$1/stat" | awk '{print $20}'; else ps -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//'; fi\n` +
+    `}\n` +
+    `if mkdir "$LOCK_DIR" 2>/dev/null; then LOCK_ACQUIRED=1; else\n` +
+    `  check_health && exit 0\n` +
+    `LOCK_NOW=$(( $(date +%s) * 1000 ))\n` +
+    `  OWNER_PID=; OWNER_START=; OWNER_EXPIRES=\n` +
+    `  if [ -f "$LOCK_DIR/owner.json" ]; then\n` +
+    `    OWNER_FIELDS=$("$PYTHON_BIN" -c ${posixOwnerReadProbe} "$LOCK_DIR/owner.json" 2>/dev/null || true)\n` +
+    `    OWNER_PID=$(printf '%s' "$OWNER_FIELDS" | cut -f1); OWNER_START=$(printf '%s' "$OWNER_FIELDS" | cut -f2); OWNER_EXPIRES=$(printf '%s' "$OWNER_FIELDS" | cut -f3)\n` +
+    `  fi\n` +
+    `  OWNER_ALIVE=0\n` +
+    `  if [ -n "$OWNER_PID" ] && kill -0 "$OWNER_PID" 2>/dev/null && [ "$(read_start_identity "$OWNER_PID")" = "$OWNER_START" ]; then OWNER_ALIVE=1; fi\n` +
+    `  OWNER_EXPIRED=0\n` +
+    `  if [ -n "$OWNER_EXPIRES" ]; then [ "$OWNER_EXPIRES" -le "$LOCK_NOW" ] 2>/dev/null && OWNER_EXPIRED=1; else\n` +
+    `    LOCK_MTIME=$(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)\n` +
+    `    [ $(( LOCK_NOW - LOCK_MTIME * 1000 )) -ge 360000 ] && OWNER_EXPIRED=1\n` +
+    `  fi\n` +
+    `  if [ "$OWNER_ALIVE" -eq 0 ] && [ "$OWNER_EXPIRED" -eq 1 ]; then\n` +
+    `    STALE_DIR="$LOCK_DIR.stale.$LOCK_TOKEN"\n` +
+    `    if mv "$LOCK_DIR" "$STALE_DIR" 2>/dev/null && mkdir "$LOCK_DIR" 2>/dev/null; then LOCK_ACQUIRED=1; rm -rf -- "$STALE_DIR"; fi\n` +
+    `  fi\n` +
+    `  if [ "$LOCK_ACQUIRED" -ne 1 ]; then printf '%s\\n' "$MSG" >>"$LOG_PATH"; exit 1; fi\n` +
+    `fi\n` +
+    `LOCK_START_IDENTITY=$(read_start_identity $$)\n` +
+    `LOCK_NOW=$(( $(date +%s) * 1000 ))\n` +
+    `LOCK_EXPIRES=$(( LOCK_NOW + 360000 ))\n` +
+    `printf '{"schemaVersion":"meta-kim-mcp-memory-start-lock-v1","token":"%s","ownerPid":%s,"ownerStartIdentity":"%s","acquiredAt":%s,"expiresAt":%s}\\n' "$LOCK_TOKEN" "$$" "$LOCK_START_IDENTITY" "$LOCK_NOW" "$LOCK_EXPIRES" >"$LOCK_DIR/owner.json"\n` +
+    `if check_health; then LOCK_OWNER_TOKEN=$("$PYTHON_BIN" -c ${posixOwnerTokenProbe} "$LOCK_DIR/owner.json" 2>/dev/null || true); [ "$LOCK_OWNER_TOKEN" = "$LOCK_TOKEN" ] && rm -rf -- "$LOCK_DIR"; exit 0; fi\n`;
+  const posixLockRelease =
+    `LOCK_OWNER_TOKEN=$("$PYTHON_BIN" -c ${posixOwnerTokenProbe} "$LOCK_DIR/owner.json" 2>/dev/null || true)\n` +
+    `[ "$LOCK_OWNER_TOKEN" = "$LOCK_TOKEN" ] && rm -rf -- "$LOCK_DIR"\n`;
   try {
     if (plat === "win32") {
       const startupDir = join(
@@ -6463,19 +6642,25 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
       writeUtf8BomFileSync(
         psPath,
         `$ErrorActionPreference = "SilentlyContinue"\r\n` +
-          `$env:MCP_ALLOW_ANONYMOUS_ACCESS = "true"\r\n` +
-          `$env:HF_HUB_OFFLINE = "1"\r\n` +
-          `$env:TRANSFORMERS_OFFLINE = "1"\r\n` +
+          `$env:MCP_ALLOW_ANONYMOUS_ACCESS = "${bootEnv.MCP_ALLOW_ANONYMOUS_ACCESS}"\r\n` +
+          `$env:HF_HUB_OFFLINE = "${bootEnv.HF_HUB_OFFLINE}"\r\n` +
+          `$env:TRANSFORMERS_OFFLINE = "${bootEnv.TRANSFORMERS_OFFLINE}"\r\n` +
+          `$env:MCP_MEMORY_ONNX_ALLOW_DOWNLOAD = "${bootEnv.MCP_MEMORY_ONNX_ALLOW_DOWNLOAD}"\r\n` +
+          `$env:MCP_MEMORY_ALLOW_HASH_EMBEDDINGS = "${bootEnv.MCP_MEMORY_ALLOW_HASH_EMBEDDINGS}"\r\n` +
+          `$env:MCP_MEMORY_USE_ONNX = "${bootEnv.MCP_MEMORY_USE_ONNX}"\r\n` +
+          `$env:MCP_MEMORY_SQLITE_PATH = ${psSingleQuote(databasePath)}\r\n` +
           `$env:MCP_MEMORY_URL = ${psEndpointUrl}\r\n` +
           `$env:META_KIM_MEMORY_PORT = ${psPort}\r\n` +
           `$env:MCP_HTTP_HOST = ${psSingleQuote(endpoint.hostname)}\r\n` +
           `$env:MCP_HTTP_PORT = ${psPort}\r\n` +
           `$memoryBin = '${escapedMemoryBin}'\r\n` +
-          `$failureTitle = ${psSingleQuote(failureTitle)}\r\n` +
           `$failureMessage = ${psSingleQuote(failureMessage)}\r\n` +
           `$logDir = Join-Path $env:USERPROFILE ".meta-kim"\r\n` +
           `$stdoutLog = Join-Path $logDir "mcp-memory.out.log"\r\n` +
           `$stderrLog = Join-Path $logDir "mcp-memory.err.log"\r\n` +
+          `$lockDir = ${psSingleQuote(startLockPath)}\r\n` +
+          `$lockAcquired = $false\r\n` +
+          `$lockToken = [guid]::NewGuid().ToString("n")\r\n` +
           `function Test-MetaKimMemoryHealth {\r\n` +
           `  try {\r\n` +
           `    $response = Invoke-WebRequest -Uri ${psHealthUrl} -UseBasicParsing -TimeoutSec 3\r\n` +
@@ -6483,7 +6668,53 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
           `    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
           `  } catch { return $false }\r\n` +
           `}\r\n` +
-          `if (Test-MetaKimMemoryHealth) { exit 0 }\r\n` +
+          `function Remove-MetaKimOwnedLock {\r\n` +
+          `  try {\r\n` +
+          `    $owner = Get-Content -LiteralPath (Join-Path $lockDir "owner.json") -Raw | ConvertFrom-Json\r\n` +
+          `    if ([string]$owner.token -eq $lockToken) { Remove-Item -LiteralPath $lockDir -Recurse -Force }\r\n` +
+          `  } catch {}\r\n` +
+          `}\r\n` +
+          `try {\r\n` +
+          `  New-Item -ItemType Directory -Path $lockDir -ErrorAction Stop | Out-Null\r\n` +
+          `  $lockAcquired = $true\r\n` +
+          `  $owner = @{ schemaVersion = "meta-kim-mcp-memory-start-lock-v1"; token = $lockToken; ownerPid = $PID; ownerStartIdentity = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o"); acquiredAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(6).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress\r\n` +
+          `  Set-Content -LiteralPath (Join-Path $lockDir "owner.json") -Value $owner -Encoding UTF8\r\n` +
+          `} catch {\r\n` +
+          `  try {\r\n` +
+          `    $existingOwner = Get-Content -LiteralPath (Join-Path $lockDir "owner.json") -Raw | ConvertFrom-Json\r\n` +
+          `    $ownerAlive = $false\r\n` +
+          `    try { $ownerProcess = Get-Process -Id ([int]$existingOwner.ownerPid) -ErrorAction Stop; $ownerAlive = ($ownerProcess.StartTime.ToUniversalTime().ToString("o") -eq [string]$existingOwner.ownerStartIdentity) } catch {}\r\n` +
+          `    if (-not $ownerAlive -and [int64]$existingOwner.expiresAt -le [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) {\r\n` +
+          `      $staleDir = "$lockDir.stale.$PID"\r\n` +
+          `      Move-Item -LiteralPath $lockDir -Destination $staleDir -ErrorAction Stop\r\n` +
+          `      New-Item -ItemType Directory -Path $lockDir -ErrorAction Stop | Out-Null\r\n` +
+          `      Remove-Item -LiteralPath $staleDir -Recurse -Force\r\n` +
+          `      $lockAcquired = $true\r\n` +
+          `      $owner = @{ schemaVersion = "meta-kim-mcp-memory-start-lock-v1"; token = $lockToken; ownerPid = $PID; ownerStartIdentity = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o"); acquiredAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(6).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress\r\n` +
+          `      Set-Content -LiteralPath (Join-Path $lockDir "owner.json") -Value $owner -Encoding UTF8\r\n` +
+          `    }\r\n` +
+          `  } catch {\r\n` +
+          `    try {\r\n` +
+          `      $lockMtime = [DateTimeOffset]((Get-Item -LiteralPath $lockDir).LastWriteTimeUtc)\r\n` +
+          `      $lockAge = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $lockMtime.ToUnixTimeMilliseconds()\r\n` +
+          `      if ($lockAge -ge 360000) {\r\n` +
+          `        $staleDir = "$lockDir.stale.$PID"\r\n` +
+          `        Move-Item -LiteralPath $lockDir -Destination $staleDir -ErrorAction Stop\r\n` +
+          `        New-Item -ItemType Directory -Path $lockDir -ErrorAction Stop | Out-Null\r\n` +
+          `        Remove-Item -LiteralPath $staleDir -Recurse -Force\r\n` +
+          `        $lockAcquired = $true\r\n` +
+          `        $owner = @{ schemaVersion = "meta-kim-mcp-memory-start-lock-v1"; token = $lockToken; ownerPid = $PID; ownerStartIdentity = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o"); acquiredAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(6).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress\r\n` +
+          `        Set-Content -LiteralPath (Join-Path $lockDir "owner.json") -Value $owner -Encoding UTF8\r\n` +
+          `      }\r\n` +
+          `    } catch {}\r\n` +
+          `  }\r\n` +
+          `  if (-not $lockAcquired) {\r\n` +
+          `    if (Test-MetaKimMemoryHealth) { exit 0 }\r\n` +
+          `    Add-Content -LiteralPath $stderrLog -Value $failureMessage -Encoding UTF8\r\n` +
+          `    exit 1\r\n` +
+          `  }\r\n` +
+          `}\r\n` +
+          `if (Test-MetaKimMemoryHealth) { Remove-MetaKimOwnedLock; exit 0 }\r\n` +
           `try {\r\n` +
           `  Start-Process -FilePath $memoryBin -ArgumentList @("server", "--http", "--http-host", ${psSingleQuote(endpoint.hostname)}, "--http-port", ${psPort}) -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog\r\n` +
           `} catch {}\r\n` +
@@ -6493,9 +6724,9 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
           `  if (Test-MetaKimMemoryHealth) { $healthy = $true; break }\r\n` +
           `}\r\n` +
           `if (-not $healthy) {\r\n` +
-          `  Add-Type -AssemblyName PresentationFramework\r\n` +
-          `  [System.Windows.MessageBox]::Show($failureMessage, $failureTitle, "OK", "Warning") | Out-Null\r\n` +
-          `}\r\n`,
+          `  Add-Content -LiteralPath $stderrLog -Value $failureMessage -Encoding UTF8\r\n` +
+          `}\r\n` +
+          `if ($lockAcquired) { Remove-MetaKimOwnedLock }\r\n`,
       );
       writeFileSync(
         cmdPath,
@@ -6517,25 +6748,26 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
       writeFileSync(
         scriptPath,
         `#!/bin/sh\n` +
-          `export MCP_ALLOW_ANONYMOUS_ACCESS=true\n` +
-          `export HF_HUB_OFFLINE=1\n` +
-          `export TRANSFORMERS_OFFLINE=1\n` +
+          `export MCP_ALLOW_ANONYMOUS_ACCESS=${bootEnv.MCP_ALLOW_ANONYMOUS_ACCESS}\n` +
+          `export HF_HUB_OFFLINE=${bootEnv.HF_HUB_OFFLINE}\n` +
+          `export TRANSFORMERS_OFFLINE=${bootEnv.TRANSFORMERS_OFFLINE}\n` +
+          `export MCP_MEMORY_ONNX_ALLOW_DOWNLOAD=${bootEnv.MCP_MEMORY_ONNX_ALLOW_DOWNLOAD}\n` +
+          `export MCP_MEMORY_ALLOW_HASH_EMBEDDINGS=${bootEnv.MCP_MEMORY_ALLOW_HASH_EMBEDDINGS}\n` +
+          `export MCP_MEMORY_USE_ONNX=${bootEnv.MCP_MEMORY_USE_ONNX}\n` +
+          `export MCP_MEMORY_SQLITE_PATH=${shellQuote(databasePath)}\n` +
           `export MCP_MEMORY_URL=${shellQuote(endpoint.endpointUrl)}\n` +
           `export META_KIM_MEMORY_PORT=${shellQuote(endpoint.port)}\n` +
           `export MCP_HTTP_HOST=${shellQuote(endpoint.hostname)}\n` +
           `export MCP_HTTP_PORT=${shellQuote(endpoint.port)}\n` +
           `MEMORY_BIN=${shellQuote(memoryBin)}\n` +
+          `PYTHON_BIN=${shellQuote(pythonProbeBin)}\n` +
           `LOG_PATH=${shellQuote(logPath)}\n` +
-          `TITLE=${shellQuote(failureTitle)}\n` +
           `MSG=${shellQuote(failureMessage)}\n` +
           `HEALTH_URL=${shellQuote(endpoint.healthUrl)}\n` +
           `check_health() {\n` +
-          `  command -v node >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && curl -fsS --noproxy '*' --max-time 3 "$HEALTH_URL" 2>/dev/null | node -e 'let b="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{try{process.exit(JSON.parse(b).status==="healthy"?0:1)}catch{process.exit(1)}})'\n` +
+          `  "$PYTHON_BIN" -c ${shellQuote(PYTHON_MEMORY_HEALTH_PROBE)} "$HEALTH_URL"\n` +
           `}\n` +
-          `notify_failure() {\n` +
-          `  osascript -e "display dialog \\"$MSG\\" with title \\"$TITLE\\" buttons {\\"OK\\"} with icon caution" >/dev/null 2>&1 || true\n` +
-          `}\n` +
-          `check_health && exit 0\n` +
+          posixLockAcquire +
           `"$MEMORY_BIN" server --http --http-host ${shellQuote(endpoint.hostname)} --http-port ${shellQuote(endpoint.port)} >>"$LOG_PATH" 2>&1 &\n` +
           `healthy=0\n` +
           `i=0\n` +
@@ -6544,7 +6776,8 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
           `  if check_health; then healthy=1; break; fi\n` +
           `  i=$((i + 1))\n` +
           `done\n` +
-          `[ "$healthy" -eq 1 ] || notify_failure\n`,
+          `[ "$healthy" -eq 1 ] || printf '%s\\n' "$MSG" >>"$LOG_PATH"\n` +
+          posixLockRelease,
         { mode: 0o755 },
       );
       writeFileSync(
@@ -6558,8 +6791,12 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>MCP_ALLOW_ANONYMOUS_ACCESS</key><string>true</string>
-    <key>HF_HUB_OFFLINE</key><string>1</string>
-    <key>TRANSFORMERS_OFFLINE</key><string>1</string>
+    <key>HF_HUB_OFFLINE</key><string>${bootEnv.HF_HUB_OFFLINE}</string>
+    <key>TRANSFORMERS_OFFLINE</key><string>${bootEnv.TRANSFORMERS_OFFLINE}</string>
+    <key>MCP_MEMORY_ONNX_ALLOW_DOWNLOAD</key><string>${bootEnv.MCP_MEMORY_ONNX_ALLOW_DOWNLOAD}</string>
+    <key>MCP_MEMORY_ALLOW_HASH_EMBEDDINGS</key><string>${bootEnv.MCP_MEMORY_ALLOW_HASH_EMBEDDINGS}</string>
+    <key>MCP_MEMORY_USE_ONNX</key><string>${bootEnv.MCP_MEMORY_USE_ONNX}</string>
+    <key>MCP_MEMORY_SQLITE_PATH</key><string>${xmlEscape(databasePath)}</string>
     <key>MCP_MEMORY_URL</key><string>${xmlEscape(endpoint.endpointUrl)}</string>
     <key>META_KIM_MEMORY_PORT</key><string>${xmlEscape(endpoint.port)}</string>
     <key>MCP_HTTP_HOST</key><string>${xmlEscape(endpoint.hostname)}</string>
@@ -6582,29 +6819,26 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
     writeFileSync(
       scriptPath,
       `#!/bin/sh\n` +
-        `export MCP_ALLOW_ANONYMOUS_ACCESS=true\n` +
-        `export HF_HUB_OFFLINE=1\n` +
-        `export TRANSFORMERS_OFFLINE=1\n` +
+        `export MCP_ALLOW_ANONYMOUS_ACCESS=${bootEnv.MCP_ALLOW_ANONYMOUS_ACCESS}\n` +
+        `export HF_HUB_OFFLINE=${bootEnv.HF_HUB_OFFLINE}\n` +
+        `export TRANSFORMERS_OFFLINE=${bootEnv.TRANSFORMERS_OFFLINE}\n` +
+        `export MCP_MEMORY_ONNX_ALLOW_DOWNLOAD=${bootEnv.MCP_MEMORY_ONNX_ALLOW_DOWNLOAD}\n` +
+        `export MCP_MEMORY_ALLOW_HASH_EMBEDDINGS=${bootEnv.MCP_MEMORY_ALLOW_HASH_EMBEDDINGS}\n` +
+        `export MCP_MEMORY_USE_ONNX=${bootEnv.MCP_MEMORY_USE_ONNX}\n` +
+        `export MCP_MEMORY_SQLITE_PATH=${shellQuote(databasePath)}\n` +
         `export MCP_MEMORY_URL=${shellQuote(endpoint.endpointUrl)}\n` +
         `export META_KIM_MEMORY_PORT=${shellQuote(endpoint.port)}\n` +
         `export MCP_HTTP_HOST=${shellQuote(endpoint.hostname)}\n` +
         `export MCP_HTTP_PORT=${shellQuote(endpoint.port)}\n` +
         `MEMORY_BIN=${shellQuote(memoryBin)}\n` +
+        `PYTHON_BIN=${shellQuote(pythonProbeBin)}\n` +
         `LOG_PATH=${shellQuote(logPath)}\n` +
-        `TITLE=${shellQuote(failureTitle)}\n` +
         `MSG=${shellQuote(failureMessage)}\n` +
         `HEALTH_URL=${shellQuote(endpoint.healthUrl)}\n` +
         `check_health() {\n` +
-        `  command -v node >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && curl -fsS --noproxy '*' --max-time 3 "$HEALTH_URL" 2>/dev/null | node -e 'let b="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{try{process.exit(JSON.parse(b).status==="healthy"?0:1)}catch{process.exit(1)}})'\n` +
+        `  "$PYTHON_BIN" -c ${shellQuote(PYTHON_MEMORY_HEALTH_PROBE)} "$HEALTH_URL"\n` +
         `}\n` +
-        `notify_failure() {\n` +
-        `  if command -v notify-send >/dev/null 2>&1; then notify-send "$TITLE" "$MSG"; return; fi\n` +
-        `  if command -v zenity >/dev/null 2>&1; then zenity --warning --title="$TITLE" --text="$MSG"; return; fi\n` +
-        `  if command -v kdialog >/dev/null 2>&1; then kdialog --sorry "$MSG" --title "$TITLE"; return; fi\n` +
-        `  if command -v xmessage >/dev/null 2>&1; then xmessage -center "$MSG"; return; fi\n` +
-        `  printf '%s\\n' "$MSG" >>"$LOG_PATH"\n` +
-        `}\n` +
-        `check_health && exit 0\n` +
+        posixLockAcquire +
         `"$MEMORY_BIN" server --http --http-host ${shellQuote(endpoint.hostname)} --http-port ${shellQuote(endpoint.port)} >>"$LOG_PATH" 2>&1 &\n` +
         `healthy=0\n` +
         `i=0\n` +
@@ -6613,7 +6847,8 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
         `  if check_health; then healthy=1; break; fi\n` +
         `  i=$((i + 1))\n` +
         `done\n` +
-        `[ "$healthy" -eq 1 ] || notify_failure\n`,
+        `[ "$healthy" -eq 1 ] || printf '%s\\n' "$MSG" >>"$LOG_PATH"\n` +
+        posixLockRelease,
       { mode: 0o755 },
     );
     writeFileSync(
@@ -6624,6 +6859,661 @@ function configureBootAutoStart(memoryBin, endpoint = resolveMemoryEndpoint()) {
   } catch {
     return false;
   }
+}
+
+function resolveMcpMemoryDatabasePathWithRuntime(python, { preferredPath = null } = {}) {
+  const script = [
+    "import json",
+    "from mcp_memory_service.config import SQLITE_VEC_PATH",
+    "print(json.dumps({'path': str(SQLITE_VEC_PATH)}))",
+  ].join("\n");
+  const databaseEnv = { ...process.env };
+  delete databaseEnv.MCP_MEMORY_SQLITE_PATH;
+  const result = runPythonModule(python, ["-c", script], undefined, {
+    cwd: PROJECT_DIR,
+    env: {
+      ...databaseEnv,
+      ...(preferredPath ? { MCP_MEMORY_SQLITE_PATH: preferredPath } : {}),
+    },
+    windowsHide: true,
+  });
+  if (result.status !== 0) return null;
+  try {
+    const line = result.stdout.trim().split(/\r?\n/u).filter(Boolean).at(-1);
+    const databasePath = JSON.parse(line || "{}").path;
+    if (!databasePath || !isAbsolute(databasePath)) return null;
+    const confirmedPath = resolve(databasePath);
+    const pathKey = (value) => platform() === "win32"
+      ? resolve(value).replace(/\\/g, "/").toLowerCase()
+      : resolve(value);
+    if (preferredPath && pathKey(confirmedPath) !== pathKey(preferredPath)) return null;
+    return confirmedPath;
+  } catch {
+    return null;
+  }
+}
+
+function snapshotManagedFile(filePath) {
+  const existed = existsSync(filePath);
+  return {
+    filePath,
+    existed,
+    content: existed ? readFileSync(filePath) : null,
+    mode: existed ? statSync(filePath).mode & 0o777 : null,
+  };
+}
+
+function restoreManagedFile(snapshot) {
+  if (snapshot.existed) {
+    mkdirSync(dirname(snapshot.filePath), { recursive: true });
+    const tempPath = `${snapshot.filePath}.restore-${process.pid}-${Date.now()}.tmp`;
+    writeFileSync(tempPath, snapshot.content);
+    renameSync(tempPath, snapshot.filePath);
+    if (Number.isInteger(snapshot.mode)) {
+      try { chmodSync(snapshot.filePath, snapshot.mode); } catch {}
+    }
+  } else {
+    rmSync(snapshot.filePath, { force: true });
+  }
+  return true;
+}
+
+function restoreMcpMemoryServerEntry(mcpPath, snapshot) {
+  let current = {};
+  if (existsSync(mcpPath)) current = JSON.parse(readFileSync(mcpPath, "utf8"));
+  const mcpServers = { ...(current.mcpServers ?? {}) };
+  if (snapshot.existed) mcpServers["mcp-memory-service"] = snapshot.entry;
+  else delete mcpServers["mcp-memory-service"];
+  const next = { ...current };
+  if (Object.keys(mcpServers).length > 0) next.mcpServers = mcpServers;
+  else delete next.mcpServers;
+  if (!snapshot.fileExisted && Object.keys(next).length === 0) {
+    rmSync(mcpPath, { force: true });
+  } else {
+    writeJsonAtomic(mcpPath, next);
+  }
+  return true;
+}
+
+function memoryBootArtifactPaths() {
+  const metaKimDir = join(homedir(), ".meta-kim");
+  if (platform() === "win32") {
+    return [
+      join(metaKimDir, "mcp-memory-start.ps1"),
+      join(metaKimDir, "mcp-memory-start.cmd"),
+      join(homedir(), "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "mcp-memory-silent.vbs"),
+      join(homedir(), "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "mcp-memory-start.cmd"),
+    ];
+  }
+  if (platform() === "darwin") {
+    return [
+      join(metaKimDir, "mcp-memory-start.sh"),
+      join(homedir(), "Library", "LaunchAgents", "com.meta-kim.mcp-memory-service.plist"),
+    ];
+  }
+  return [
+    join(metaKimDir, "mcp-memory-start.sh"),
+    join(homedir(), ".config", "autostart", "mcp-memory-service.desktop"),
+  ];
+}
+
+function pathKeyForRecovery(value) {
+  const normalized = resolve(value).replace(/\\/gu, "/");
+  return platform() === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isPathInsideRecoveryRoot(root, candidate) {
+  const rel = relative(resolve(root), resolve(candidate));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function mcpMemoryRecoveryDigest(payload) {
+  const canonical = {
+    schemaVersion: payload.schemaVersion,
+    transactionId: payload.transactionId,
+    oldMemoryBin: pathKeyForRecovery(payload.oldMemoryBin),
+    oldPython: payload.oldPython,
+    candidateMemoryBin: pathKeyForRecovery(payload.candidateMemoryBin),
+    databasePath: pathKeyForRecovery(payload.databasePath),
+    databaseExistedBefore: payload.databaseExistedBefore === true,
+    mcpPath: pathKeyForRecovery(payload.mcpPath),
+    mcpMemoryEntrySnapshot: payload.mcpMemoryEntrySnapshot,
+    stateSnapshot: payload.stateSnapshot,
+    bootSnapshots: payload.bootSnapshots,
+  };
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function persistMcpMemoryRecoverySnapshots({
+  transactionRoot,
+  transactionId,
+  oldMemoryBin,
+  oldPython,
+  candidateMemoryBin,
+  databasePath,
+  databaseExistedBefore,
+  mcpPath,
+  mcpMemoryEntrySnapshot,
+  stateSnapshot,
+  bootSnapshots,
+}) {
+  if (!MCP_MEMORY_TRANSACTION_ID_PATTERN.test(transactionId)) return { ok: false };
+  let trustedTransactionRoot;
+  try {
+    const metadata = lstatSync(transactionRoot);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) return { ok: false };
+    trustedTransactionRoot = realpathSync(transactionRoot);
+  } catch { return { ok: false }; }
+  const recoveryPath = resolve(trustedTransactionRoot, `${transactionId}-recovery.json`);
+  if (!isPathInsideRecoveryRoot(trustedTransactionRoot, recoveryPath)) return { ok: false };
+  const payload = {
+    schemaVersion: "meta-kim-mcp-memory-recovery-v1",
+    transactionId,
+    oldMemoryBin,
+    oldPython: typeof oldPython === "string"
+      ? { command: oldPython, args: [] }
+      : { command: oldPython.command, args: oldPython.args ?? [] },
+    candidateMemoryBin,
+    databasePath,
+    databaseExistedBefore,
+    mcpPath,
+    mcpMemoryEntrySnapshot,
+    createdAt: new Date().toISOString(),
+    stateSnapshot: {
+      filePath: stateSnapshot.filePath,
+      existed: stateSnapshot.existed,
+      contentBase64: stateSnapshot.content ? stateSnapshot.content.toString("base64") : null,
+      mode: stateSnapshot.mode,
+    },
+    bootSnapshots: bootSnapshots.map((snapshot) => ({
+      filePath: snapshot.filePath,
+      existed: snapshot.existed,
+      contentBase64: snapshot.content ? snapshot.content.toString("base64") : null,
+      mode: snapshot.mode,
+    })),
+  };
+  const recoveryDigest = mcpMemoryRecoveryDigest(payload);
+  writeJsonAtomic(recoveryPath, { ...payload, recoveryDigest });
+  return { ok: true, identity: recoveryPath, recoveryDigest };
+}
+
+async function recoverIncompleteMcpMemoryTransaction({ transactionRoot, endpoint, resolved }) {
+  if (!existsSync(transactionRoot)) return true;
+  let trustedTransactionRoot;
+  try {
+    const metadata = lstatSync(transactionRoot);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) return false;
+    trustedTransactionRoot = realpathSync(transactionRoot);
+  } catch { return false; }
+  const rootTrust = verifyPrivateRecoveryRoot({ directoryPath: trustedTransactionRoot });
+  if (!rootTrust.ok) return false;
+  const evidenceFiles = readdirSync(trustedTransactionRoot)
+    .filter((name) => /^update-\d{13}-\d{1,10}\.json$/u.test(name))
+    .sort()
+    .reverse();
+  const incomplete = [];
+  for (const evidenceName of evidenceFiles) {
+    let evidence;
+    try {
+      const evidencePath = resolve(trustedTransactionRoot, evidenceName);
+      const evidenceMetadata = lstatSync(evidencePath);
+      if (
+        !isPathInsideRecoveryRoot(trustedTransactionRoot, evidencePath) ||
+        !evidenceMetadata.isFile() || evidenceMetadata.isSymbolicLink() || evidenceMetadata.nlink !== 1
+      ) continue;
+      evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+    } catch {
+      continue;
+    }
+    if (
+      evidence?.schemaVersion !== "meta-kim-mcp-memory-upgrade-v1" ||
+      !MCP_MEMORY_TRANSACTION_ID_PATTERN.test(evidence.transactionId ?? "") ||
+      evidenceName !== `${evidence.transactionId}.json` ||
+      !["running", "rollback_failed"].includes(evidence.status)
+    ) continue;
+    const recoveryPath = resolve(trustedTransactionRoot, `${evidence.transactionId}-recovery.json`);
+    if (!isPathInsideRecoveryRoot(trustedTransactionRoot, recoveryPath) || !existsSync(recoveryPath)) continue;
+    try {
+      const recoveryMetadata = lstatSync(recoveryPath);
+      if (!recoveryMetadata.isFile() || recoveryMetadata.isSymbolicLink() || recoveryMetadata.nlink !== 1) continue;
+    } catch { continue; }
+    incomplete.push({ evidenceName, evidence, recoveryPath });
+  }
+  if (incomplete.length === 0) return true;
+
+  const { evidenceName, evidence, recoveryPath } = incomplete[0];
+  let recovery;
+  try { recovery = JSON.parse(readFileSync(recoveryPath, "utf8")); } catch { return false; }
+  if (
+    !Array.isArray(evidence.events) ||
+    !recovery || typeof recovery !== "object" || Array.isArray(recovery) ||
+    !Array.isArray(recovery.bootSnapshots) ||
+    !recovery.stateSnapshot || typeof recovery.stateSnapshot !== "object" ||
+    Array.isArray(recovery.stateSnapshot) ||
+    !recovery.oldPython || typeof recovery.oldPython !== "object" ||
+    !Array.isArray(recovery.oldPython.args)
+  ) return false;
+  const expectedSnapshotPaths = new Set([
+    activeMemoryRuntimeStatePath(),
+    ...memoryBootArtifactPaths(),
+  ].map(pathKeyForRecovery));
+  const isAbsoluteRecoveryPath = (value) => typeof value === "string" && isAbsolute(value);
+  const recoveryEvents = evidence.events.filter(({ stage }) => stage === "recovery_snapshots_persisted");
+  const recoveryEvent = recoveryEvents[0];
+  let calculatedRecoveryDigest;
+  try { calculatedRecoveryDigest = mcpMemoryRecoveryDigest(recovery); } catch { return false; }
+  const trustedOldMemoryBin = findMemoryBinPath(resolved, { preferActive: false });
+  const trustedDatabasePath = resolveMcpMemoryDatabasePathWithRuntime(resolved.python);
+  const expectedCandidateRoot = resolve(homedir(), ".meta-kim", "memory-runtimes", evidence.transactionId);
+  let trustedCandidateMemoryBin;
+  try {
+    trustedCandidateMemoryBin = realpathSync(recovery.candidateMemoryBin);
+  } catch { return false; }
+  const resolvedPython = typeof resolved.python === "string"
+    ? { command: resolved.python, args: [] }
+    : { command: resolved.python.command, args: resolved.python.args ?? [] };
+  const recoveryPython = recovery.oldPython;
+  const materialValidation = validateMcpMemoryRecoveryMaterial({
+    transactionRoot: trustedTransactionRoot,
+    evidenceName,
+    transactionId: evidence.transactionId,
+    recovery,
+    expectedOldMemoryBin: trustedOldMemoryBin,
+    expectedPython: resolved.python,
+    expectedDatabasePath: trustedDatabasePath,
+    expectedCandidateRoot,
+    expectedMcpPath: join(PROJECT_DIR, ".mcp.json"),
+    expectedSnapshotPaths: [...expectedSnapshotPaths],
+    platformName: platform(),
+  });
+  if (!materialValidation.ok) return false;
+  if (
+    recovery?.schemaVersion !== "meta-kim-mcp-memory-recovery-v1" ||
+    recoveryEvents.length !== 1 ||
+    recovery.transactionId !== evidence.transactionId ||
+    recovery.recoveryDigest !== calculatedRecoveryDigest ||
+    recoveryEvent?.recoveryDigest !== calculatedRecoveryDigest ||
+    !isAbsoluteRecoveryPath(recovery.databasePath) ||
+    !isAbsoluteRecoveryPath(recovery.oldMemoryBin) ||
+    !isAbsoluteRecoveryPath(recovery.candidateMemoryBin) ||
+    !isAbsoluteRecoveryPath(recovery.mcpPath) ||
+    pathKeyForRecovery(recovery.mcpPath) !== pathKeyForRecovery(join(PROJECT_DIR, ".mcp.json")) ||
+    !trustedOldMemoryBin ||
+    pathKeyForRecovery(recovery.oldMemoryBin) !== pathKeyForRecovery(realpathSync(trustedOldMemoryBin)) ||
+    !trustedDatabasePath ||
+    pathKeyForRecovery(recovery.databasePath) !== pathKeyForRecovery(trustedDatabasePath) ||
+    !recoveryPython ||
+    pathKeyForRecovery(recoveryPython.command) !== pathKeyForRecovery(realpathSync(resolvedPython.command)) ||
+    JSON.stringify(recoveryPython.args ?? []) !== JSON.stringify(resolvedPython.args ?? []) ||
+    !isPathInsideRecoveryRoot(expectedCandidateRoot, trustedCandidateMemoryBin) ||
+    !/[/\\]Scripts[/\\]memory\.exe$/iu.test(trustedCandidateMemoryBin) ||
+    ![recovery.stateSnapshot, ...(recovery.bootSnapshots ?? [])]
+      .filter(Boolean)
+      .every(({ filePath }) => isAbsoluteRecoveryPath(filePath) && expectedSnapshotPaths.has(pathKeyForRecovery(filePath)))
+  ) return false;
+
+  const trustedBackupPath = resolve(trustedTransactionRoot, `${evidence.transactionId}-sqlite-backup.db`);
+  if (!isPathInsideRecoveryRoot(trustedTransactionRoot, trustedBackupPath)) return false;
+  const snapshots = [recovery.stateSnapshot, ...recovery.bootSnapshots];
+  const canonicalBase64 = (value) => {
+    if (typeof value !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) return false;
+    return Buffer.from(value, "base64").toString("base64") === value;
+  };
+  if (
+    !snapshots.every((snapshot) => (
+      snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) &&
+      typeof snapshot.existed === "boolean" &&
+      (snapshot.existed ? canonicalBase64(snapshot.contentBase64) : snapshot.contentBase64 === null) &&
+      (snapshot.mode === null || (Number.isInteger(snapshot.mode) && snapshot.mode >= 0 && snapshot.mode <= 0o777))
+    )) ||
+    !recovery.mcpMemoryEntrySnapshot || typeof recovery.mcpMemoryEntrySnapshot !== "object" ||
+    typeof recovery.mcpMemoryEntrySnapshot.fileExisted !== "boolean" ||
+    typeof recovery.mcpMemoryEntrySnapshot.existed !== "boolean"
+  ) return false;
+
+  const backupEvents = evidence.events.filter(({ stage }) => stage === "database_backup_verified");
+  if (backupEvents.length !== 1 || !/^[a-f0-9]{64}$/u.test(backupEvents[0].backupContentDigest ?? "")) return false;
+  const expectedBackupDigest = backupEvents[0].backupContentDigest;
+  if (recovery.databaseExistedBefore === true) {
+    let backupMetadata;
+    let trustedExistingBackupPath;
+    try {
+      backupMetadata = lstatSync(trustedBackupPath);
+      trustedExistingBackupPath = realpathSync(trustedBackupPath);
+    } catch { return false; }
+    if (
+      !backupMetadata.isFile() || backupMetadata.isSymbolicLink() || backupMetadata.nlink !== 1 ||
+      pathKeyForRecovery(trustedExistingBackupPath) !== pathKeyForRecovery(trustedBackupPath) ||
+      createHash("sha256").update(readFileSync(trustedExistingBackupPath)).digest("hex") !== expectedBackupDigest ||
+      !sqliteQuickCheck({ python: resolved.python, databasePath: trustedExistingBackupPath }).ok
+    ) return false;
+  } else if (
+    recovery.databaseExistedBefore !== false ||
+    expectedBackupDigest !== MCP_MEMORY_NO_DATABASE_DIGEST ||
+    existsSync(trustedBackupPath)
+  ) return false;
+
+  const identityMatches = (listener, memoryBin) => {
+    const expected = memoryProcessIdentityExpectation(memoryBin);
+    return verifyMemoryListenerIdentity(listener, {
+      platform: expected.platformName,
+      executablePath: expected.expectedExecutablePath,
+      executablePaths: expected.expectedExecutablePaths,
+      launcherPath: expected.expectedLauncherPath,
+      host: endpoint.hostname,
+      port: endpoint.port,
+    }).verified;
+  };
+  const protocol = await runMcpMemoryRecoveryProtocol({
+    preflight: async () => ({ ok: true }),
+    adapters: {
+      acquireTransactionLock: async () => acquireEndpointStartLock({
+        endpoint,
+        lockRoot: join(homedir(), ".meta-kim", "locks"),
+      }),
+      releaseTransactionLock: async (lock) => releaseEndpointStartLock(lock),
+      inspectWriter: async () => {
+        const listener = inspectEndpointListener(endpoint);
+        if (isEndpointNotListening(listener)) return { kind: "none" };
+        if (listener?.kind !== "listening") return { kind: "unknown" };
+        if (identityMatches(listener, trustedCandidateMemoryBin)) return { kind: "candidate" };
+        if (identityMatches(listener, trustedOldMemoryBin)) return { kind: "old" };
+        return { kind: "unknown" };
+      },
+      stopWriter: ({ kind }) => stopVerifiedEndpointProcess({
+        endpoint,
+        ...memoryProcessIdentityExpectation(
+          kind === "candidate" ? trustedCandidateMemoryBin : trustedOldMemoryBin,
+        ),
+      }),
+      verifyNoWriter: async () => isEndpointNotListening(inspectEndpointListener(endpoint)),
+      restoreDatabase: async () => {
+        const backupPath = trustedBackupPath;
+        if (existsSync(backupPath)) {
+          const actualBackupDigest = createHash("sha256").update(readFileSync(backupPath)).digest("hex");
+          if (!expectedBackupDigest || actualBackupDigest !== expectedBackupDigest) return false;
+          return sqliteRestoreWithQuickCheck({
+            python: resolved.python,
+            backupPath,
+            targetPath: recovery.databasePath,
+          }).ok;
+        }
+        if (recovery.databaseExistedBefore === false) return !existsSync(recovery.databasePath);
+        return !evidence.events.some(({ stage }) => stage === "database_backup_verified");
+      },
+      restoreMcpEntry: async () => restoreMcpMemoryServerEntry(
+        recovery.mcpPath,
+        recovery.mcpMemoryEntrySnapshot,
+      ),
+      restoreBootAndActiveState: async () => {
+        const snapshots = [recovery.stateSnapshot, ...(recovery.bootSnapshots ?? [])].filter(Boolean);
+        return snapshots.every((snapshot) => restoreManagedFile({
+          filePath: snapshot.filePath,
+          existed: snapshot.existed === true,
+          content: snapshot.contentBase64 ? Buffer.from(snapshot.contentBase64, "base64") : null,
+          mode: snapshot.mode,
+        }));
+      },
+      startOldRuntime: async () => ({
+        ok: await startMcpMemoryServiceBackground(
+          { ...resolved, python: resolved.python },
+          endpoint,
+          {
+            memoryBinOverride: trustedOldMemoryBin,
+            databasePathOverride: recovery.databasePath,
+            lockAlreadyHeld: true,
+            configureBootOnHealthy: false,
+            writeActiveStateOnHealthy: false,
+            extraEnv: { MCP_MEMORY_SQLITE_PATH: recovery.databasePath },
+          },
+        ),
+      }),
+      verifyOldRuntime: async () => verifyEndpointRuntimeIdentity(endpoint, trustedOldMemoryBin),
+      markRecovered: async () => {
+        evidence.status = "recovered_on_next_setup";
+        evidence.stage = "recovered_on_next_setup";
+        writeJsonAtomic(resolve(trustedTransactionRoot, evidenceName), evidence);
+        return true;
+      },
+    },
+  });
+  return protocol.ok;
+}
+
+async function runTransactionalMcpMemoryUpdate({
+  resolved,
+  endpoint,
+  mcpPath,
+}) {
+  const oldMemoryBin = findMemoryBinPath(resolved);
+  const transactionRoot = join(homedir(), ".meta-kim", "transactions", "mcp-memory");
+  preparePrivateTransactionRoot(transactionRoot);
+  cleanupExpiredMcpMemoryRecoveryArtifacts({ transactionRoot });
+  if (!await recoverIncompleteMcpMemoryTransaction({ transactionRoot, endpoint, resolved })) {
+    return { ok: false, status: "incomplete_transaction_recovery_failed" };
+  }
+  const recoveredOldMemoryBin = findMemoryBinPath(resolved);
+  if (!recoveredOldMemoryBin && !oldMemoryBin) return { ok: false, status: "old_runtime_missing" };
+  const effectiveOldMemoryBin = recoveredOldMemoryBin ?? oldMemoryBin;
+  const activeOldRuntime = readActiveMemoryRuntimeState();
+  const effectiveOldPython = (
+    activeOldRuntime?.pythonPath &&
+    isAbsolute(activeOldRuntime.pythonPath) &&
+    existsSync(activeOldRuntime.pythonPath)
+  )
+    ? { command: activeOldRuntime.pythonPath, args: [] }
+    : resolved.python;
+  const transactionId = `update-${Date.now()}-${process.pid}`;
+  const candidateDir = join(homedir(), ".meta-kim", "memory-runtimes", transactionId);
+  const sentinelRoot = join(transactionRoot, `${transactionId}-sentinel`);
+  const stateSnapshot = snapshotManagedFile(activeMemoryRuntimeStatePath());
+  const existingMcpConfig = existsSync(mcpPath)
+    ? JSON.parse(readFileSync(mcpPath, "utf8"))
+    : {};
+  const mcpMemoryEntrySnapshot = {
+    fileExisted: existsSync(mcpPath),
+    existed: Object.hasOwn(existingMcpConfig.mcpServers ?? {}, "mcp-memory-service"),
+    entry: existingMcpConfig.mcpServers?.["mcp-memory-service"] ?? null,
+  };
+  const bootSnapshots = memoryBootArtifactPaths().map(snapshotManagedFile);
+  const databasePath = resolveMcpMemoryDatabasePathWithRuntime(effectiveOldPython, {
+    preferredPath: activeOldRuntime?.databasePath ?? null,
+  });
+  if (!databasePath) return { ok: false, status: "database_path_resolution_failed" };
+  const databaseExistedBefore = existsSync(databasePath);
+  const backupPath = join(transactionRoot, `${transactionId}-sqlite-backup.db`);
+  const recoveryPath = join(transactionRoot, `${transactionId}-recovery.json`);
+  let candidateResolved = null;
+  let candidateMemoryBin = null;
+
+  const transaction = await runMcpMemoryUpgradeTransaction({
+    transactionRoot,
+    transactionId,
+    adapters: {
+      prepareCandidate: async () => {
+        const launcher = createMemoryServiceVenv(effectiveOldPython, candidateDir);
+        if (!launcher) return { ok: false };
+        candidateResolved = { python: launcher, venvDir: candidateDir, venvCreated: true };
+        const plan = planMcpMemoryReconciliation({
+          existingInstalled: false,
+          inUpdateMode: true,
+        });
+        const installed = executeMcpMemoryReconciliation({
+          python: launcher,
+          plan,
+          runPython: runPythonModule,
+          repairDependencyProbe: ({ python, verifyArgs }) => repairWindowsCandidateOnnxRuntime({
+            python,
+            candidateDir,
+            verifyArgs,
+            runPython: runPythonModule,
+          }),
+        });
+        if (!installed.ok) {
+          return {
+            ok: false,
+            code: installed.code,
+            stage: installed.stage,
+            processResult: installed.processResult,
+            repairEvidence: installed.repairEvidence,
+            repairReason: installed.repairReason,
+          };
+        }
+        candidateMemoryBin = findMemoryBinPath(candidateResolved, { preferActive: false });
+        if (!candidateMemoryBin) return { ok: false };
+        return {
+          ok: true,
+          identity: candidateDir,
+          resolved: candidateResolved,
+          memoryBin: candidateMemoryBin,
+          pythonPath: launcher.command,
+          reconciliationStage: installed.stage,
+          reconciliationCode: installed.code,
+          repairEvidence: installed.repairEvidence,
+        };
+      },
+      validateCandidateOnline: (candidate) => runCandidateOnnxSentinel({
+        pythonPath: candidate.resolved.python,
+        workDir: join(sentinelRoot, "online"),
+        offline: false,
+      }),
+      validateCandidateBootOffline: (candidate) => runCandidateOnnxSentinel({
+        pythonPath: candidate.resolved.python,
+        workDir: join(sentinelRoot, "offline"),
+        offline: true,
+      }),
+      persistRecoverySnapshots: async () => persistMcpMemoryRecoverySnapshots({
+        transactionRoot,
+        transactionId,
+        oldMemoryBin: effectiveOldMemoryBin,
+        oldPython: effectiveOldPython,
+        candidateMemoryBin,
+        databasePath,
+        databaseExistedBefore,
+        mcpPath,
+        mcpMemoryEntrySnapshot,
+        stateSnapshot,
+        bootSnapshots,
+      }),
+      acquireTransactionLock: async () => acquireEndpointStartLock({
+        endpoint,
+        lockRoot: join(homedir(), ".meta-kim", "locks"),
+      }),
+      releaseTransactionLock: async (lock) => releaseEndpointStartLock(lock),
+      stopOldRuntime: () => stopVerifiedEndpointProcess({
+        endpoint,
+        ...memoryProcessIdentityExpectation(effectiveOldMemoryBin),
+      }),
+      backupDatabase: async () => {
+        if (!existsSync(databasePath)) {
+          return {
+            ok: true,
+            quickCheck: "ok",
+            identity: "no_database",
+            contentSha256: MCP_MEMORY_NO_DATABASE_DIGEST,
+          };
+        }
+        return sqliteBackupWithQuickCheck({
+          python: effectiveOldPython,
+          sourcePath: databasePath,
+          backupPath,
+        });
+      },
+      startCandidate: async (candidate) => ({
+        ok: await startMcpMemoryServiceBackground(candidate.resolved, endpoint, {
+          memoryBinOverride: candidate.memoryBin,
+          databasePathOverride: databasePath,
+          lockAlreadyHeld: true,
+          configureBootOnHealthy: false,
+          writeActiveStateOnHealthy: false,
+          extraEnv: { MCP_MEMORY_SQLITE_PATH: databasePath },
+        }),
+      }),
+      verifyCandidateHealthy: async (candidate) => (
+        await probeMcpMemoryHealth(endpoint.healthUrl) &&
+        verifyEndpointRuntimeIdentity(endpoint, candidate.memoryBin)
+      ),
+      updateMcpConfig: async (candidate) => {
+        let mcpConfig = {};
+        if (existsSync(mcpPath)) mcpConfig = JSON.parse(readFileSync(mcpPath, "utf8"));
+        writeJsonAtomic(mcpPath, {
+          ...mcpConfig,
+          mcpServers: {
+            ...(mcpConfig.mcpServers ?? {}),
+            "mcp-memory-service": buildMcpMemoryServerConfig(candidate.resolved, {
+              memoryBinOverride: candidate.memoryBin,
+              preferActive: false,
+              databasePathOverride: databasePath,
+            }),
+          },
+        });
+        return true;
+      },
+      configureCandidateBoot: (candidate) => configureBootAutoStart(candidate.memoryBin, endpoint, {
+        databasePath,
+      }),
+      writeActiveState: async (candidate) => {
+        writeActiveMemoryRuntimeState({
+          resolved: candidate.resolved,
+          memoryBin: candidate.memoryBin,
+          databasePath,
+        });
+        return true;
+      },
+      commit: async () => true,
+      cleanupSensitiveArtifacts: async () => {
+        rmSync(backupPath, { force: true });
+        rmSync(recoveryPath, { force: true });
+        return true;
+      },
+      cleanupCandidate: async () => {
+        rmSync(candidateDir, { recursive: true, force: true });
+        return true;
+      },
+      stopCandidate: () => stopVerifiedEndpointProcess({
+        endpoint,
+        ...memoryProcessIdentityExpectation(candidateMemoryBin),
+      }),
+      verifyNoWriter: async () => isEndpointNotListening(inspectEndpointListener(endpoint)),
+      restoreDatabase: async (backup) => {
+        if (!backup) return true;
+        if (backup?.identity === "no_database") {
+          rmSync(databasePath, { force: true });
+          return true;
+        }
+        return sqliteRestoreWithQuickCheck({
+          python: effectiveOldPython,
+          backupPath,
+          targetPath: databasePath,
+        });
+      },
+      restoreBoot: async () => bootSnapshots.every(restoreManagedFile),
+      restoreState: async () => {
+        restoreManagedFile(stateSnapshot);
+        restoreMcpMemoryServerEntry(mcpPath, mcpMemoryEntrySnapshot);
+        return true;
+      },
+      startOldRuntime: async () => ({
+        ok: await startMcpMemoryServiceBackground({ ...resolved, python: effectiveOldPython }, endpoint, {
+          memoryBinOverride: effectiveOldMemoryBin,
+          databasePathOverride: databasePath,
+          lockAlreadyHeld: true,
+          configureBootOnHealthy: false,
+          writeActiveStateOnHealthy: false,
+          extraEnv: { MCP_MEMORY_SQLITE_PATH: databasePath },
+        }),
+      }),
+      verifyOldRuntimeHealthy: async () => (
+        await probeMcpMemoryHealth(endpoint.healthUrl) &&
+        verifyEndpointRuntimeIdentity(endpoint, effectiveOldMemoryBin)
+      ),
+    },
+  });
+  return {
+    ...transaction,
+    resolved: transaction.ok ? candidateResolved : resolved,
+    registrationOk: transaction.ok,
+  };
 }
 
 async function installMcpMemoryServiceStep(
@@ -6658,78 +7548,71 @@ async function installMcpMemoryServiceStep(
   // Resolve Python for mcp-memory-service (safetensors prefers 3.11/3.12).
   // When the detected Python is outside that range, try to build/reuse a venv
   // locked to 3.12. Falls back to the detected Python with a warning.
-  const resolved = resolvePythonForMemoryService(detected);
-  const python = resolved.python;
+  let resolved = resolvePythonForMemoryService(detected);
+  let python = resolved.python;
+  const mcpPath = join(PROJECT_DIR, ".mcp.json");
 
   // Check if already installed
   const existing = checkMcpMemoryService(python);
-  if (existing.installed) {
-    if (inUpdateMode) {
-      // Stop running service before upgrading (Windows locks the binary)
-      info(t.mcpMemoryStopping);
-      const stopped = stopMcpMemoryService();
-      if (stopped) {
-        ok(t.mcpMemoryStopped);
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      // Upgrade in update mode
-      info(t.mcpMemoryUpgrading);
-      const upgradeResult = runPythonModule(python, [
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-        "mcp-memory-service",
-      ]);
-      if (upgradeResult.status !== 0) {
-        const stderr = readProcessText(upgradeResult);
-        warn(t.mcpMemoryUpgradeFailed);
-        if (stderr) {
-          console.log(`${C.dim}${t.pipErrorDetail(stderr)}${C.reset}`);
-        }
-        return false;
-      }
-      const newVersion = checkMcpMemoryService(python).version ?? "latest";
-      ok(t.mcpMemoryUpgraded(newVersion));
-    } else {
-      ok(t.mcpMemoryAlreadyInstalled(existing.version ?? "unknown"));
-    }
-  } else {
-    // Install via pip (use resolved Python for cross-platform compatibility)
-    info(t.mcpMemoryInstalling);
-    const installResult = runPythonModule(python, [
-      "-m",
-      "pip",
-      "install",
-      "mcp-memory-service",
-    ]);
-    if (installResult.status !== 0) {
-      const stderr = readProcessText(installResult);
-      warn(t.mcpMemoryInstallFailed);
-      if (stderr) {
-        console.log(`${C.dim}${t.pipErrorDetail(stderr)}${C.reset}`);
-      }
+  let registrationOk = false;
+  let backgroundOk = false;
+  if (inUpdateMode && existing.installed) {
+    info(t.mcpMemoryUpgrading);
+    const transaction = await runTransactionalMcpMemoryUpdate({
+      resolved,
+      endpoint: memoryEndpoint,
+      mcpPath,
+    });
+    if (!transaction.ok) {
+      warn(t.mcpMemoryUpgradeFailed);
+      info(`  ${transaction.status}: code=${transaction.code ?? "unknown"}; ${transaction.evidencePath || "no evidence"}`);
       return false;
-    } else {
-      ok(t.mcpMemoryInstalled);
     }
+    resolved = transaction.resolved;
+    python = resolved.python;
+    registrationOk = transaction.registrationOk;
+    backgroundOk = true;
+    ok(t.mcpMemoryUpgraded(checkMcpMemoryService(python).version ?? "latest"));
+  } else {
+    const reconciliationPlan = planMcpMemoryReconciliation({
+      existingInstalled: existing.installed,
+      inUpdateMode,
+    });
+    info(inUpdateMode ? t.mcpMemoryUpgrading : t.mcpMemoryInstalling);
+    const reconciliation = executeMcpMemoryReconciliation({
+      python,
+      plan: reconciliationPlan,
+      runPython: runPythonModule,
+    });
+    if (!reconciliation.ok) {
+      const stderr = readProcessText(reconciliation.processResult);
+      warn(inUpdateMode ? t.mcpMemoryUpgradeFailed : t.mcpMemoryInstallFailed);
+      info(`  code=${reconciliation.code ?? "unknown"}; stage=${reconciliation.stage ?? "unknown"}`);
+      if (stderr) console.log(`${C.dim}${t.pipErrorDetail(stderr)}${C.reset}`);
+      return false;
+    }
+    const reconciledVersion = checkMcpMemoryService(python).version ?? "latest";
+    if (existing.installed) ok(t.mcpMemoryAlreadyInstalled(reconciledVersion));
+    else ok(t.mcpMemoryInstalled);
+
+    let memoryServerConfig;
+    try {
+      memoryServerConfig = buildMcpMemoryServerConfig(resolved);
+    } catch (error) {
+      warn(`${t.setupError} MCP Memory server registration: ${error.message}`);
+      return false;
+    }
+    registrationOk = registerMcpMemoryServer({
+      mcpPath,
+      memoryServerConfig,
+      onRegistered: () => ok(t.mcpMemoryServerRegistered),
+      onExisting: () => ok(t.mcpMemoryServerExists),
+      onFailure: (error) =>
+        warn(`${t.setupError} MCP Memory server registration: ${error.message}`),
+    });
+    if (!registrationOk) return false;
+    backgroundOk = await startMcpMemoryServiceBackground(resolved, memoryEndpoint);
   }
-
-  // Register in project .mcp.json. When running inside a venv we write the
-  // absolute python path so Claude Code can launch it without shell PATH setup.
-  // `python` here is a launcher descriptor { command, args, version, ... }.
-  const memoryServerConfig = buildMcpMemoryServerConfig(resolved);
-
-  const mcpPath = join(PROJECT_DIR, ".mcp.json");
-  const registrationOk = registerMcpMemoryServer({
-    mcpPath,
-    memoryServerConfig,
-    onRegistered: () => ok(t.mcpMemoryServerRegistered),
-    onExisting: () => ok(t.mcpMemoryServerExists),
-    onFailure: (error) =>
-      warn(`${t.setupError} MCP Memory server registration: ${error.message}`),
-  });
-  if (!registrationOk) return false;
 
   info(t.mcpMemoryServerStartHint);
 
@@ -6740,11 +7623,6 @@ async function installMcpMemoryServiceStep(
     allowClaudeGlobalSettings: want && activeTargets.includes("claude"),
   });
 
-  // Step 4.8 — start the HTTP server in background and configure boot auto-start
-  const backgroundOk = await startMcpMemoryServiceBackground(
-    resolved,
-    memoryEndpoint,
-  );
   return registrationOk && hooksOk && backgroundOk;
 }
 

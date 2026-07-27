@@ -21,7 +21,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 function loadRegisterMcpMemoryServer() {
   const source = readFileSync(resolve(repoRoot, "setup.mjs"), "utf8");
   const start = source.indexOf("function registerMcpMemoryServer(");
-  const end = source.indexOf("\nfunction stopMcpMemoryService", start);
+  const end = source.indexOf("\nasync function startMcpMemoryServiceBackground", start);
   assert.ok(start >= 0 && end > start, "registerMcpMemoryServer source not found");
   return vm.runInNewContext(`(${source.slice(start, end)})`, {});
 }
@@ -170,7 +170,11 @@ describe("install result aggregation", () => {
     assert.match(source, /return registrationOk && hooksOk && backgroundOk;/);
     assert.match(
       source,
-      /const bootOk = configureBootAutoStart\(memoryBin, endpoint\);\s*if \(bootOk\) ok\(t\.mcpMemoryAutoStartBoot\);\s*else warn\(t\.mcpMemoryAutoStartBootFailed\);\s*return true;/,
+      /configureCandidateBoot: \(candidate\) => configureBootAutoStart\(candidate\.memoryBin, endpoint, \{\s*databasePath,\s*\}\)/,
+    );
+    assert.match(
+      source,
+      /if \(!transaction\.ok\) \{[\s\S]*?return false;[\s\S]*?registrationOk = transaction\.registrationOk;\s*backgroundOk = true;/,
     );
     assert.match(source, /wiringOk = false;\s*warn\(t\.graphifyHookFailed\)/);
     assert.match(source, /wiringOk = false;\s*warn\(t\.graphifySkillFailed\(platform\)\)/);

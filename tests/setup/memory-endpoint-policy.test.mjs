@@ -1,5 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,10 @@ import {
   memoryServerHttpArgs,
   resolveMemoryEndpoint,
 } from "../../scripts/memory-endpoint.mjs";
+import {
+  probeMcpMemoryHealth,
+  pythonMemoryHealthProbeArgs,
+} from "../../scripts/mcp-memory-service-lifecycle.mjs";
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -67,8 +72,47 @@ describe("MCP Memory endpoint policy", () => {
     assert.equal(localTls.canAutoStart, false);
   });
 
+  test("health policy parses the selected endpoint response instead of matching text", async () => {
+    const endpoint = resolveMemoryEndpoint({ META_KIM_MEMORY_PORT: "8123" });
+    const getForBody = (body) => (url, options, callback) => {
+      assert.equal(url, endpoint.healthUrl);
+      assert.equal(options.timeout, 3000);
+      const request = new EventEmitter();
+      request.destroy = () => {};
+      queueMicrotask(() => {
+        const response = new EventEmitter();
+        response.statusCode = 200;
+        callback(response);
+        response.emit("data", body);
+        response.emit("end");
+      });
+      return request;
+    };
+
+    assert.equal(
+      await probeMcpMemoryHealth(endpoint.healthUrl, {
+        get: getForBody('{"status":"healthy"}'),
+      }),
+      true,
+    );
+    assert.equal(
+      await probeMcpMemoryHealth(endpoint.healthUrl, {
+        get: getForBody('{"message":"not healthy"}'),
+      }),
+      false,
+    );
+    assert.equal(
+      pythonMemoryHealthProbeArgs(endpoint.healthUrl).at(-1),
+      endpoint.healthUrl,
+    );
+  });
+
   test("setup and installer share the endpoint policy", () => {
     const setup = readFileSync(path.join(repoRoot, "setup.mjs"), "utf8");
+    const lifecycle = readFileSync(
+      path.join(repoRoot, "scripts", "mcp-memory-service-lifecycle.mjs"),
+      "utf8",
+    );
     const installer = readFileSync(
       path.join(repoRoot, "scripts", "install-mcp-memory-hooks.mjs"),
       "utf8",
@@ -80,13 +124,14 @@ describe("MCP Memory endpoint policy", () => {
 
     assert.match(setup, /from "\.\/scripts\/memory-endpoint\.mjs"/);
     assert.match(installer, /from "\.\/memory-endpoint\.mjs"/);
+    assert.match(setup, /from "\.\/scripts\/mcp-memory-service-lifecycle\.mjs"/);
     assert.match(autoStart, /if \(!endpoint\.canAutoStart\)/);
     assert.match(autoStart, /endpoint\.healthUrl/);
-    assert.match(autoStart, /JSON\.parse\(body\)\?\.status === "healthy"/);
-    assert.doesNotMatch(autoStart, /includes\("healthy"\)/);
-    assert.match(autoStart, /JSON\.parse\(b\)\.status===\"healthy\"/);
-    assert.doesNotMatch(autoStart, /grep -E/);
-    assert.match(autoStart, /memoryServiceEnv\(endpoint/);
+    assert.match(autoStart, /probeMcpMemoryHealth\(endpoint\.healthUrl\)/);
+    assert.match(lifecycle, /JSON\.parse\(body\)\?\.status === "healthy"/);
+    assert.doesNotMatch(lifecycle, /includes\("healthy"\)|grep -E|node -e/);
+    assert.match(autoStart, /PYTHON_MEMORY_HEALTH_PROBE/);
+    assert.match(autoStart, /memoryServiceEnv\(\s*endpoint/);
     assert.match(autoStart, /MCP_MEMORY_URL/);
     assert.match(autoStart, /META_KIM_MEMORY_PORT/);
     assert.doesNotMatch(autoStart, /127\.0\.0\.1:8000/);

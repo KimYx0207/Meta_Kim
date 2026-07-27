@@ -2869,18 +2869,33 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.doesNotMatch(handler, /return "session-summary"/);
   });
 
-  test("boot autostart uses health-checked launchers with user-visible failure notices", () => {
+  test("setup delegates MCP memory reconciliation and cold-start policy", () => {
     const source = readRepoFile("setup.mjs");
+
+    assert.match(source, /planMcpMemoryReconciliation/);
+    assert.match(source, /executeMcpMemoryReconciliation/);
+    assert.match(source, /buildInitialMemoryServiceEnv\(\{[\s\S]*\.\.\.process\.env,[\s\S]*\.\.\.extraEnv,[\s\S]*MCP_MEMORY_SQLITE_PATH: databasePath/);
+    assert.match(source, /waitForMcpMemoryHealth/);
+    assert.match(source, /observeMemoryServiceChild/);
+    assert.match(source, /mcp-memory-first-start\.out\.log|firstStartLogPaths/);
+  });
+
+  test("boot autostart uses absolute-Python health probes with log-only failures", () => {
+    const source = readRepoFile("setup.mjs");
+    const startStart = source.indexOf("async function startMcpMemoryServiceBackground");
+    const configureStart = source.indexOf("function configureBootAutoStart", startStart);
+    const configureEnd = source.indexOf("async function installMcpMemoryServiceStep", configureStart);
+    const firstStart = source.slice(startStart, configureStart);
+    const autostart = source.slice(configureStart, configureEnd);
 
     assert.match(source, /const shellQuote = \(value\) =>/);
     assert.match(source, /const psSingleQuote = \(value\) =>/);
     assert.match(source, /function writeUtf8BomFileSync/);
     assert.match(source, /Buffer\.from\(\[0xef, 0xbb, 0xbf\]\)/);
-    assert.match(source, /mcpMemoryAutoStartFailureTitle/);
     assert.match(source, /mcpMemoryAutoStartFailureMessage/);
-    assert.match(source, /else warn\(t\.mcpMemoryAutoStartBootFailed\);\s*return true;/);
-    assert.match(source, /HF_HUB_OFFLINE/);
-    assert.match(source, /TRANSFORMERS_OFFLINE/);
+    assert.match(source, /if \(configureBootOnHealthy\)[\s\S]*else warn\(t\.mcpMemoryAutoStartBootFailed\);/);
+    assert.match(autostart, /buildBootMemoryServiceEnv/);
+    assert.match(autostart, /MCP_MEMORY_ONNX_ALLOW_DOWNLOAD/);
     const autostartI18nSource = readRepoFile("config", "i18n", "setup-strings.mjs");
     assert.match(autostartI18nSource, /启动失败/);
     assert.match(autostartI18nSource, /起動に失敗/);
@@ -2898,24 +2913,27 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.match(source, /\$env:META_KIM_MEMORY_PORT/);
     assert.match(source, /Start-Process -FilePath \$memoryBin/);
     assert.match(source, /for \(\$i = 0; \$i -lt 150; \$i\+\+\)/);
-    assert.match(source, /System\.Windows\.MessageBox/);
-    assert.match(source, /\[System\.Windows\.MessageBox\]::Show\(\$failureMessage, \$failureTitle/);
+    assert.match(source, /Add-Content -LiteralPath \$stderrLog -Value \$failureMessage -Encoding UTF8/);
     assert.doesNotMatch(source, /const cmdPath = join\(startupDir, "mcp-memory-start\.cmd"\)/);
 
     assert.match(source, /const scriptPath = join\(metaKimDir, "mcp-memory-start\.sh"\)/);
     assert.match(source, /HEALTH_URL=\$\{shellQuote\(endpoint\.healthUrl\)\}/);
-    assert.match(source, /curl -fsS --noproxy '\*' --max-time 3 "\$HEALTH_URL"/);
-    assert.match(source, /TITLE=\$\{shellQuote\(failureTitle\)\}/);
+    assert.match(source, /PYTHON_BIN=\$\{shellQuote\(pythonProbeBin\)\}/);
+    assert.match(source, /PYTHON_MEMORY_HEALTH_PROBE/);
     assert.match(source, /MSG=\$\{shellQuote\(failureMessage\)\}/);
-    assert.match(source, /osascript -e "display dialog/);
     assert.match(source, /while \[ "\$i" -lt 150 \]/);
-    assert.match(source, /notify-send "\$TITLE" "\$MSG"/);
-    assert.match(source, /zenity --warning/);
-    assert.match(source, /kdialog --sorry/);
-    assert.match(source, /xmessage -center/);
+    assert.match(autostart, /printf '%s\\\\n' "\$MSG" >>"\$LOG_PATH"/);
+    assert.doesNotMatch(
+      autostart,
+      /MessageBox|display dialog|notify-send|zenity|kdialog|xmessage/,
+    );
     assert.match(source, /Exec=\/bin\/sh "\$\{scriptPath\}"/);
     assert.match(source, /<string>\/bin\/sh<\/string><string>\$\{xmlEscape\(scriptPath\)\}<\/string>/);
     assert.match(source, /<key>StandardOutPath<\/key><string>\$\{xmlEscape\(logPath\)\}<\/string>/);
+    assert.ok(
+      firstStart.indexOf("if (healthResult.healthy)") < firstStart.indexOf("configureBootAutoStart("),
+      "boot autostart must only be configured after the first healthy response",
+    );
   });
 
   test("setup registers MCP memory server with supported entrypoints", () => {
@@ -2932,7 +2950,7 @@ describe("MCP memory cross-runtime hooks", () => {
     const setupSource = readRepoFile("setup.mjs");
     const installerSource = readRepoFile("scripts", "install-mcp-memory-hooks.mjs");
 
-    assert.match(setupSource, /memory server --http/);
+    assert.match(setupSource, /mcpMemoryAutoStartManual/);
     assert.match(installerSource, /memory server --http/);
     const manualHintI18n = readRepoFile("config", "i18n", "setup-strings.mjs");
     assert.match(manualHintI18n, /MCP_ALLOW_ANONYMOUS_ACCESS=true memory server --http/);
