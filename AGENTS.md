@@ -314,6 +314,8 @@ Do not infer that `planning-with-files` is missing only because it is absent fro
 
 These files supplement protocol packets. They do not replace `businessFlowBlueprintPacket`, `dispatchEnvelopePacket`, or verification evidence. The Conductor or the main thread acting as Conductor is the sole writer.
 
+For a release-backed local work queue, do not publish these files or the private PRD and do not invent a public backlog mirror. After the exact Release audit and the final Claude Code/Codex global check have passed, run `meta-kim release close --issue <P-NNN> --prd <repo-relative-private-prd>`. The command verifies the current tag/audit/global state, then appends one idempotent release-fact block to each existing planning file. The PRD remains the only queue authority; planning blocks are recoverable local projections only.
+
 ## The Nine Meta Agents
 
 - `meta-warden`: coordination, arbitration, final synthesis, Warden gate
@@ -422,6 +424,8 @@ Standard full-release work is stricter than a local green check. Before commit, 
 - runtime evaluation/probe results for the targets declared by the standard release
 
 After a standard full release is published, upload the exact npm tgz and run `meta-kim release audit --tag <tag> --verification-report <report> --package-file <tgz> --require-exact`. Attach the successful `published_bound` audit record to the GitHub Release. The audit must bind the clean report to the annotated tag object, peeled commit/tree, Release URL, GitHub asset digest, and the byte-exact npm tgz candidate that the clean full gate actually installed and tested; package name, version, or `package.json` alone are insufficient. Attempts are append-only; a dirty or unavailable historical report remains explicitly unbound and cannot be promoted.
+
+If the run uses local planning files and a local-private PRD, finish the stable Claude Code/Codex global update and read-only global check, then run `meta-kim release close --issue <P-NNN> --prd <repo-relative-private-prd>`. This explicit final step refuses a dirty tracked tree, a public/mismatched PRD, a non-exact audit, or stale global projections. It repairs only missing local planning projections after interruption and never creates a public queue.
 
 The optional highest-assurance mode is `npm run meta:verify:live-certified`. It appends a private-attested external observer gate that must join successful host request/result events to every exact Thinking-selected binding in a clean-room run. Missing or failed external attestation means only `liveCertified=false`: do not claim `live-certified`, exact-binding live coverage, or externally signed runtime proof. It does **not** invalidate a separately complete `meta:verify:all` run and does not block an ordinary standard release.
 

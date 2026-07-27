@@ -54,6 +54,14 @@ function codedError(code, message) {
   return error;
 }
 
+function gitEvidenceEnvironment(environment) {
+  const clean = { ...environment };
+  for (const key of Object.keys(clean)) {
+    if (key.toUpperCase().startsWith("GIT_")) delete clean[key];
+  }
+  return clean;
+}
+
 function assertSafeTag(tag) {
   if (!TAG_PATTERN.test(tag) || tag.includes("..") || tag.includes("@{")) {
     throw codedError("invalid_tag", "tag must be a simple release tag");
@@ -61,10 +69,15 @@ function assertSafeTag(tag) {
   return tag;
 }
 
-function git(repoRoot, args, { encoding = "utf8", allowFailure = false } = {}) {
+function git(repoRoot, args, {
+  encoding = "utf8",
+  allowFailure = false,
+  environment = process.env,
+} = {}) {
   const result = spawnSync("git", args, {
     cwd: repoRoot,
     encoding,
+    env: environment,
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -91,8 +104,11 @@ function parseGitHubOrigin(originUrl) {
   return { owner: match[1], repo: match[2] };
 }
 
-function readTagPackageManifest(repoRoot, tagRef) {
-  const result = git(repoRoot, ["show", `${tagRef}:package.json`], { encoding: null });
+function readTagPackageManifest(repoRoot, tagRef, environment) {
+  const result = git(repoRoot, ["show", `${tagRef}:package.json`], {
+    encoding: null,
+    environment,
+  });
   const bytes = Buffer.from(result.stdout);
   let manifest;
   try {
@@ -109,19 +125,22 @@ function readTagPackageManifest(repoRoot, tagRef) {
   return { bytes, manifest, sha256: sha256(bytes) };
 }
 
-export function collectGitReleaseFacts(repoRoot, tagName) {
+export function collectGitReleaseFacts(repoRoot, tagName, {
+  environment = process.env,
+} = {}) {
+  environment = gitEvidenceEnvironment(environment);
   const tag = assertSafeTag(tagName);
   const tagRef = `refs/tags/${tag}`;
-  const tagType = git(repoRoot, ["cat-file", "-t", tagRef]).stdout.trim();
+  const tagType = git(repoRoot, ["cat-file", "-t", tagRef], { environment }).stdout.trim();
   if (tagType !== "tag") {
     throw codedError("annotated_tag_required", "release audit requires an annotated tag");
   }
-  const tagObjectSha = git(repoRoot, ["rev-parse", tagRef]).stdout.trim();
-  const peeledCommitSha = git(repoRoot, ["rev-parse", `${tagRef}^{}`]).stdout.trim();
-  const peeledTreeSha = git(repoRoot, ["rev-parse", `${tagRef}^{tree}`]).stdout.trim();
-  const originUrl = git(repoRoot, ["remote", "get-url", "origin"]).stdout.trim();
+  const tagObjectSha = git(repoRoot, ["rev-parse", tagRef], { environment }).stdout.trim();
+  const peeledCommitSha = git(repoRoot, ["rev-parse", `${tagRef}^{}`], { environment }).stdout.trim();
+  const peeledTreeSha = git(repoRoot, ["rev-parse", `${tagRef}^{tree}`], { environment }).stdout.trim();
+  const originUrl = git(repoRoot, ["remote", "get-url", "origin"], { environment }).stdout.trim();
   const repository = parseGitHubOrigin(originUrl);
-  const packageManifest = readTagPackageManifest(repoRoot, tagRef);
+  const packageManifest = readTagPackageManifest(repoRoot, tagRef, environment);
   const expectedVersion = tag.startsWith("v") ? tag.slice(1) : tag;
   if (packageManifest.manifest.version !== expectedVersion) {
     throw codedError(
@@ -132,6 +151,7 @@ export function collectGitReleaseFacts(repoRoot, tagName) {
 
   const remoteMainResult = git(repoRoot, ["rev-parse", "refs/remotes/origin/main"], {
     allowFailure: true,
+    environment,
   });
   const remoteMainSha = remoteMainResult.status === 0
     ? remoteMainResult.stdout.trim()
@@ -143,7 +163,7 @@ export function collectGitReleaseFacts(repoRoot, tagName) {
     const ancestor = git(
       repoRoot,
       ["merge-base", "--is-ancestor", peeledCommitSha, remoteMainSha],
-      { allowFailure: true },
+      { allowFailure: true, environment },
     );
     remoteMainRelation = ancestor.status === 0 ? "tag_commit_is_ancestor" : "diverged";
   }
@@ -667,7 +687,7 @@ function validateAttemptChain(outputDir, headRecord) {
   }
 }
 
-function validatePointer(outputDir, pointerPath) {
+export function validatePointer(outputDir, pointerPath) {
   if (!existsSync(pointerPath)) return null;
   const pointer = safeJsonRead(pointerPath);
   if (

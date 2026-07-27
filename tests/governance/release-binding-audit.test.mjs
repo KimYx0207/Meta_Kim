@@ -188,6 +188,24 @@ test("release audit accepts an exact immutable v2 verification attempt", () => {
   }
 });
 
+test("release Git facts ignore inherited GIT_DIR and GIT_WORK_TREE redirection", () => {
+  const root = createReleaseRepo();
+  try {
+    const gitFacts = collectGitReleaseFacts(root, "v9.9.9", {
+      environment: {
+        ...process.env,
+        git_dir: path.join(root, "missing-attacker.git"),
+        git_work_tree: path.join(root, "attacker-worktree"),
+        git_config_count: "1",
+      },
+    });
+    assert.equal(gitFacts.packageVersion, "9.9.9");
+    assert.equal(gitFacts.peeledCommitSha, git(root, "rev-parse", "HEAD"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function linkDirectoryOrSkip(t, target, linkPath) {
   try {
     symlinkSync(target, linkPath, DIR_LINK_TYPE);

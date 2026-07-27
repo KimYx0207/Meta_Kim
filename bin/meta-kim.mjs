@@ -43,6 +43,7 @@ ${status.usageHeading}:
   meta-kim doctor
   meta-kim doctor hooks [--fix] [--project|--all] [--project-root <dir>]
   meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--json]
+  meta-kim release close --issue <P-NNN> --prd <repo-relative-file> [--profile default] [--json]
   meta-kim mcp serve
   meta-kim uninstall [--yes] [--deep] [--scope=global|project|both]
   meta-kim project bootstrap [--project-dir <dir>] [--dry-run|--apply] [--json]
@@ -252,10 +253,13 @@ switch (command) {
     );
     break;
   case "release":
-    if (commandArgs[0] !== "audit") {
-      fail("release subcommand must be 'audit'");
+    if (commandArgs[0] === "audit") {
+      run("scripts/audit-release-binding.mjs", commandArgs.slice(1));
     }
-    run("scripts/audit-release-binding.mjs", commandArgs.slice(1));
+    if (commandArgs[0] === "close") {
+      run("scripts/record-release-planning-closure.mjs", commandArgs.slice(1));
+    }
+    fail("release subcommand must be 'audit' or 'close'");
     break;
   case "uninstall":
     if (commandArgs.some((arg) => !["--yes", "--deep"].includes(arg) && !arg.startsWith("--scope="))) {

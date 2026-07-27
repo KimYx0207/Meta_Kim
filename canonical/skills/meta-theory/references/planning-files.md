@@ -68,6 +68,18 @@ These files are supplemental. Packets in `config/contracts/workflow-contract.jso
 
 Only the conductor/main coordinator writes these planning files unless the run explicitly delegates ownership.
 
+## Release Closure Projection
+
+Planning files and a local-private PRD stay outside Git and must not be copied into a public backlog. Public release continuity already belongs to the tracked changelog, annotated tag, GitHub Release, exact package asset, and immutable release-binding audit.
+
+After those public facts and the final Claude Code/Codex global update are complete, the maintainer runs:
+
+```text
+meta-kim release close --issue <P-NNN> --prd <repo-relative-private-prd>
+```
+
+The command verifies the PRD and planning files are ignored, the PRD owns the one matching `ACTIVE` row, and the tracked tree is clean. It then replays the exact proof against the live GitHub annotated tag, Release, downloaded tgz, matching clean verification report, current remote main, and latest chained `published_bound` audit; checks the real default Claude Code/Codex global projections; and rechecks local release facts immediately before writing. Only then does it append one marked block to each planning file that already exists. It never creates missing planning files, publishes the PRD, or turns a planning block into queue authority. A retry after interruption keeps an existing correct block and adds only missing projections; a partial or conflicting marker fails closed.
+
 
 ## Use when
 

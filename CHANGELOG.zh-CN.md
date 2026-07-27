@@ -8,6 +8,18 @@
 
 ## Unreleased
 
+## [2.9.9] - 2026-07-27
+
+### 修复内容
+
+- **私有工作队列现在可以收尾公开发布，但不会因此被公开。** 打包后的 `meta-kim release close` 读取唯一被 ignore 的 PRD `ACTIVE` 行，只向已经存在且同样被 ignore 的 planning 文件追加一段人话、幂等的发布事实。它不会创建公共 backlog 镜像、公开 PRD，也不会把 planning 段落变成第二个队列权威。
+- **发布收尾会重新证明当前公开事实和全局状态，不再相信本地“成功”标签。** 写入前，命令会把哈希串联的 `published_bound` 证据与 GitHub 上真实的 annotated tag、Release、重新下载的 tgz、精确 clean verification report 和 remote main 再做一次绑定；随后检查系统账户真实默认目录里的 Claude Code/Codex 全局投影，并在投影和 record 发布前后紧邻复核 PRD、tracked tree、tag、audit、planning presence 与 marker。
+- **闪退恢复和恶意本地路径重定向都会 fail closed。** 不可变备份、逐文件原子替换、完整内容 hash 的 closure record 与稳定 marker，使重跑可以保留正确结果、只补缺项。被跟踪或不私有的 planning、畸形 marker、脱链/伪造 audit、篡改 record、symlink/junction、并发修改队列或文件、runtime/source/Node preload 重定向，以及 Windows 大小写不敏感的 `GIT_*` 假仓库重定向都会被拒绝，不能冒充 `release_closed`。
+
+### 验证
+
+- correctness、反例和 security 三路独立 Review 把实际攻击反例转成回归后，最终均为 P0/P1 归零。正式验收覆盖 release-close 与 release-audit 定向测试、CLI UX、完整 governance 回归、打包边界、项目同步/检查、标准全量发布门禁、发布后的精确包审计，以及 Claude Code/Codex 最终全局 setup 回读。Docker、任务预算和 Cursor 产品执行不作为验收证据。
+
 ## [2.9.8] - 2026-07-27
 
 ### 修复内容

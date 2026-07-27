@@ -8,6 +8,18 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.9] - 2026-07-27
+
+### Fixed
+
+- **A private work queue can now close a public release without becoming public itself.** The packed `meta-kim release close` command reads the one ignored PRD `ACTIVE` row and appends one human-readable, idempotent release-fact block to each existing ignored planning file. It never creates a public backlog mirror, publishes the PRD, or treats a planning block as queue authority.
+- **Release closure now proves current public and global truth instead of trusting a local success label.** Before writing, the command replays the chained `published_bound` evidence against the live GitHub annotated tag, Release, downloaded tgz, exact clean verification report, and remote main; it checks the real default Claude Code and Codex global homes, then revalidates the PRD, tracked tree, tag, audit, planning-file presence, and markers immediately around projection and record publication.
+- **Interruptions and hostile local path redirection fail closed.** Immutable backups, atomic per-file replacement, a fully hashed closure record, and stable release markers let a retry keep correct work and add only missing projections. Dirty or tracked planning files, malformed markers, detached or forged audits, tampered records, symlink/junction paths, concurrent queue/file changes, runtime/source/Node preload overrides, and case-insensitive `GIT_*` repository redirection are rejected without claiming `release_closed`.
+
+### Verification
+
+- Independent correctness, adversarial, and security reviews ended with no P0/P1 findings after their counterexamples were converted into regressions. Focused closure and release-audit tests, CLI UX, the complete governance suite, packed-package boundary checks, project sync/checks, the standard full release gate, exact post-publication package audit, and final Claude Code/Codex global setup readback cover this release. Docker, task budgets, and Cursor product execution are not acceptance evidence.
+
 ## [2.9.8] - 2026-07-27
 
 ### Fixed
