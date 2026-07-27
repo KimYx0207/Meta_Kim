@@ -76,6 +76,10 @@ tmp/
 pwsh.*.omp.cache
 pip/
 
+# Windows CEF applications can inherit the repository cwd and emit this
+# machine-local log while release verification is running.
+/debug.log
+
 
 # ========== Root-level images ==========
 /images/

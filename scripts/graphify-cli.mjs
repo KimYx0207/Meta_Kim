@@ -2,7 +2,18 @@
 
 import process from "node:process";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import {
   detectPython310,
@@ -15,19 +26,83 @@ import {
   runPythonModule,
 } from "./graphify-runtime.mjs";
 import { enrichMetaKimGraph } from "./graphify-enrichment.mjs";
+import {
+  sanitizeGraphifyAnalysisSidecar,
+  sanitizeGraphifyOutput,
+} from "./graphify-output-sanitize.mjs";
+import {
+  createGraphifyRuntimeNormalizer,
+  GRAPHIFY_NODE_ID_NORMALIZATION,
+} from "./graphify-unicode-normalize.mjs";
+import {
+  applyGraphNodeIdentityProof,
+  analyzeGraphNodeIdentity,
+  disambiguateGraphFileNodeLabels,
+  GRAPH_NODE_IDENTITY_SCHEMA,
+  validateGraphNodeIdentity,
+} from "./graphify-node-identity.mjs";
 import { homedir } from "node:os";
 import { sanitizeGraphifyWindowsHooks } from "./graphify-hook-sanitize.mjs";
 
 const command = process.argv[2] || "check";
+const GRAPHIFY_MIGRATION_STATE_SCHEMA = "meta-kim-graphify-migration-state-v2";
 
 function graphifyLauncher() {
+  if (process.env.META_KIM_GRAPHIFY_BIN) {
+    return {
+      command: process.env.META_KIM_GRAPHIFY_BIN,
+      args: (process.env.META_KIM_GRAPHIFY_BIN_ARGS || "")
+        .trim()
+        .split(/\s+/u)
+        .filter(Boolean),
+      normalizerPython: null,
+    };
+  }
+  const primaryPython = detectPython310(spawnSync, process.platform, {
+    requirePip: true,
+    bootstrapPip: false,
+  });
+  const located = primaryPython
+    ? locateGraphifyInstallation(primaryPython)
+    : null;
+  if (located) {
+    return {
+      command: located.python.command,
+      args: [...located.python.args, "-m", "graphify"],
+      normalizerPython: {
+        command: located.python.command,
+        args: [...located.python.args],
+      },
+    };
+  }
   return {
-    command: process.env.META_KIM_GRAPHIFY_BIN || "graphify",
-    args: (process.env.META_KIM_GRAPHIFY_BIN_ARGS || "")
-      .trim()
-      .split(/\s+/u)
-      .filter(Boolean),
+    command: "graphify",
+    args: [],
+    normalizerPython: null,
   };
+}
+
+const GRAPHIFY_API_KEY_NAMES = Object.freeze([
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "MOONSHOT_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "OLLAMA_API_KEY",
+]);
+
+function graphifyMigrationBackendArgs() {
+  const explicit = String(process.env.META_KIM_GRAPHIFY_MIGRATION_BACKEND ?? "").trim();
+  if (explicit) return ["--backend", explicit];
+  if (GRAPHIFY_API_KEY_NAMES.some((name) => String(process.env[name] ?? "").trim())) {
+    return [];
+  }
+  const claude = spawnSync("claude", ["--version"], {
+    encoding: "utf8",
+    shell: false,
+  });
+  return claude.status === 0 && !claude.error ? ["--backend", "claude-cli"] : [];
 }
 
 function fail(message) {
@@ -121,35 +196,363 @@ function locateGraphifyInstallation(primaryPython) {
 }
 
 function extractReportCommit(reportRaw) {
-  const match = reportRaw.match(/Built from commit:\s*`?([0-9a-f]{7,40})`?/i);
+  const metadataLines = reportRaw
+    .split(/\r?\n/u)
+    .filter((line) => /Built from commit:/iu.test(line));
+  if (metadataLines.length !== 1) return null;
+  const match = metadataLines[0].match(
+    /Built from commit:\s*`?([0-9a-f]{40})`?\s*$/iu,
+  );
   return match?.[1] ?? null;
 }
 
-function commitsMatch(left, right) {
-  if (!left || !right) {
-    return false;
-  }
-  const a = left.toLowerCase();
-  const b = right.toLowerCase();
-  return a === b || a.startsWith(b) || b.startsWith(a);
+function renderGraphIdentityReportLine(proof) {
+  const fileCount = Number(proof.fileIdentityCount ?? proof.fileNodeCount ?? 0);
+  return `- Meta_Kim node identity: \`${proof.schemaVersion}\` (${proof.status}; ${fileCount} file nodes; evidence ${proof.evidenceSha256})`;
 }
 
-function readCurrentHead(cwd) {
-  const result = spawnSync("git", ["rev-parse", "HEAD"], {
+function reportGraphCounts(reportRaw) {
+  const matches = [
+    ...reportRaw.matchAll(
+      /^- ([\d,]+) nodes · ([\d,]+) edges · ([\d,]+) communities\b/gmu,
+    ),
+  ];
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  return {
+    nodes: Number(match[1].replaceAll(",", "")),
+    links: Number(match[2].replaceAll(",", "")),
+    communities: Number(match[3].replaceAll(",", "")),
+  };
+}
+
+function commitsMatch(left, right) {
+  return /^[0-9a-f]{40}$/iu.test(String(left ?? "")) &&
+    /^[0-9a-f]{40}$/iu.test(String(right ?? "")) &&
+    String(left).toLowerCase() === String(right).toLowerCase();
+}
+
+function pathIdentity(value) {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function isContained(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+function sanitizedGitEnvironment(environment = process.env) {
+  const clean = { ...environment };
+  for (const key of Object.keys(clean)) {
+    if (key.toUpperCase().startsWith("GIT_")) delete clean[key];
+  }
+  return clean;
+}
+
+function gitText(cwd, args) {
+  const result = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
     shell: false,
+    env: sanitizedGitEnvironment(),
   });
-  if (result.status !== 0 || result.error) {
-    return null;
+  if (result.status !== 0 || result.error) return null;
+  return String(result.stdout ?? "");
+}
+
+function isKnownUntrackedGraphifyAttributes(repoRoot, repositoryFile) {
+  if (repositoryFile !== ".gitattributes") return false;
+  const tracked = gitText(repoRoot, [
+    "ls-files",
+    "--error-unmatch",
+    "--",
+    ".gitattributes",
+  ]);
+  if (tracked) return false;
+  const candidate = path.join(repoRoot, ".gitattributes");
+  if (!existsSync(candidate)) return false;
+  const stats = lstatSync(candidate);
+  if (!stats.isFile() || stats.isSymbolicLink()) return false;
+  return readFileSync(candidate, "utf8").trim() ===
+    "graphify-out/graph.json merge=graphify";
+}
+
+function readRepositoryContext(cwd) {
+  const requested = path.resolve(cwd);
+  if (!existsSync(requested)) return null;
+  const cwdStats = lstatSync(requested);
+  if (!cwdStats.isDirectory() || cwdStats.isSymbolicLink()) return null;
+  const realCwd = realpathSync.native(requested);
+  if (pathIdentity(realCwd) !== pathIdentity(requested)) return null;
+  const topLevelRaw = gitText(realCwd, ["rev-parse", "--show-toplevel"]);
+  if (!topLevelRaw) return null;
+  const topLevel = realpathSync.native(topLevelRaw.split(/\r?\n/u)[0].trim());
+  if (pathIdentity(topLevel) !== pathIdentity(realCwd)) return null;
+  const headRaw = gitText(topLevel, ["rev-parse", "HEAD"]);
+  const currentHead = headRaw?.split(/\r?\n/u)[0]?.trim() ?? "";
+  if (!/^[0-9a-f]{40}$/iu.test(currentHead)) return null;
+  const filesRaw = gitText(topLevel, [
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "-z",
+  ]);
+  if (filesRaw == null) return null;
+  const repositoryFiles = filesRaw
+    .split("\0")
+    .filter((value) => value.length > 0)
+    .map((value) => value.replaceAll("\\", "/"))
+    .filter((value) => !isKnownUntrackedGraphifyAttributes(topLevel, value));
+  return {
+    repoRoot: topLevel,
+    currentHead,
+    repositoryFiles,
+    repositoryStateSha256: repositoryStateDigest(topLevel, repositoryFiles),
+  };
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function repositoryStateDigest(repoRoot, repositoryFiles) {
+  const digest = createHash("sha256");
+  for (const repositoryFile of [...repositoryFiles].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  )) {
+    const target = path.join(repoRoot, ...repositoryFile.split("/"));
+    const stats = lstatSync(target);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error("repository inventory contains a non-plain file");
+    }
+    digest.update(repositoryFile);
+    digest.update("\0");
+    digest.update(sha256(readFileSync(target)));
+    digest.update("\0");
   }
-  return readProcessText(result).split(/\r?\n/u)[0]?.trim() || null;
+  return digest.digest("hex");
+}
+
+function hasPrivateLocalPath(value) {
+  return typeof value === "string" &&
+    /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
+      value,
+    );
+}
+
+function refreshRepositorySnapshot(expected, boundary) {
+  const current = readRepositoryContext(expected.repoRoot);
+  if (
+    !current ||
+    pathIdentity(current.repoRoot) !== pathIdentity(expected.repoRoot) ||
+    !commitsMatch(current.currentHead, expected.currentHead) ||
+    repositoryFilesDigest(current.repositoryFiles) !==
+      repositoryFilesDigest(expected.repositoryFiles) ||
+    current.repositoryStateSha256 !== expected.repositoryStateSha256
+  ) {
+    throw new Error(
+      `repository changed during Graphify ${boundary}; rerun from a stable source snapshot`,
+    );
+  }
+  return current;
+}
+
+function graphNormalizationValues(
+  graph,
+  repositoryFiles,
+  analysisSidecar = null,
+) {
+  const values = new Set();
+  const add = (value) => {
+    if (typeof value === "string") values.add(value);
+  };
+  for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) add(node?.id);
+  for (const link of Array.isArray(graph?.links) ? graph.links : []) {
+    add(link?.source);
+    add(link?.target);
+  }
+  for (const surface of [
+    Array.isArray(graph?.hyperedges) ? graph.hyperedges : [],
+    Array.isArray(graph?.graph?.hyperedges) ? graph.graph.hyperedges : [],
+  ]) {
+    for (const hyperedge of surface) {
+      add(hyperedge?.id);
+      for (const nodeId of Array.isArray(hyperedge?.nodes) ? hyperedge.nodes : []) {
+        add(nodeId);
+      }
+    }
+  }
+  for (const source of repositoryFiles) {
+    add(source);
+    const extension = path.posix.extname(source);
+    add(extension ? source.slice(0, -extension.length) : source);
+  }
+  if (
+    analysisSidecar?.communities &&
+    typeof analysisSidecar.communities === "object"
+  ) {
+    for (const nodeIds of Object.values(analysisSidecar.communities)) {
+      for (const nodeId of Array.isArray(nodeIds) ? nodeIds : []) add(nodeId);
+    }
+  }
+  for (const god of Array.isArray(analysisSidecar?.gods)
+    ? analysisSidecar.gods
+    : []) {
+    add(god?.id);
+  }
+  return [...values];
+}
+
+function graphRuntimeNormalizer(
+  graph,
+  repository,
+  { honorStoredAscii = false, analysisSidecar = null } = {},
+) {
+  const storedDescriptor =
+    graph?.meta_kim_enrichment?.nodeIdentity?.nodeIdNormalization;
+  const launcher = graphifyLauncher();
+  return createGraphifyRuntimeNormalizer(
+    graphNormalizationValues(
+      graph,
+      repository.repositoryFiles,
+      analysisSidecar,
+    ),
+    {
+      launcherCommand: launcher.command,
+      pythonCandidate: launcher.normalizerPython,
+      environment: sanitizedGitEnvironment(),
+      forceAsciiInvariant:
+        honorStoredAscii &&
+        storedDescriptor === GRAPHIFY_NODE_ID_NORMALIZATION,
+    },
+  );
+}
+
+function assertPlainGraphifyPaths(cwd, { requireArtifacts = false } = {}) {
+  const repo = realpathSync.native(path.resolve(cwd));
+  const output = path.join(repo, "graphify-out");
+  if (!existsSync(output)) {
+    if (requireArtifacts) throw new Error("graphify output is missing");
+    return {
+      output,
+      graphPath: path.join(output, "graph.json"),
+      reportPath: path.join(output, "GRAPH_REPORT.md"),
+      analysisPath: path.join(output, ".graphify_analysis.json"),
+    };
+  }
+  const outputStats = lstatSync(output);
+  if (!outputStats.isDirectory() || outputStats.isSymbolicLink()) {
+    throw new Error("graphify output must be a plain repository directory");
+  }
+  const realOutput = realpathSync.native(output);
+  if (!isContained(repo, realOutput) || pathIdentity(realOutput) !== pathIdentity(output)) {
+    throw new Error("graphify output resolves outside the repository");
+  }
+  const result = {
+    output,
+    graphPath: path.join(output, "graph.json"),
+    reportPath: path.join(output, "GRAPH_REPORT.md"),
+    analysisPath: path.join(output, ".graphify_analysis.json"),
+  };
+  for (const [label, target] of [["graph", result.graphPath], ["report", result.reportPath]]) {
+    if (!existsSync(target)) {
+      if (requireArtifacts) throw new Error(`graphify ${label} is missing`);
+      continue;
+    }
+    const stats = lstatSync(target);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error(`graphify ${label} must be a plain file`);
+    }
+    const realTarget = realpathSync.native(target);
+    if (!isContained(realOutput, realTarget) || pathIdentity(realTarget) !== pathIdentity(target)) {
+      throw new Error(`graphify ${label} resolves outside the repository`);
+    }
+  }
+  return result;
+}
+
+function atomicWritePlainFile(filePath, contents) {
+  const parent = path.dirname(filePath);
+  const tempPath = path.join(parent, `.meta-kim-${path.basename(filePath)}-${randomUUID()}.tmp`);
+  let fd;
+  try {
+    fd = openSync(tempPath, "wx", 0o600);
+    writeFileSync(fd, contents, "utf8");
+    closeSync(fd);
+    fd = undefined;
+    if (existsSync(filePath)) {
+      const stats = lstatSync(filePath);
+      if (!stats.isFile() || stats.isSymbolicLink()) throw new Error("target is not a plain file");
+    }
+    renameSync(tempPath, filePath);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+  }
+}
+
+function readGraphifyAnalysisSidecar(paths) {
+  if (!existsSync(paths.analysisPath)) return null;
+  const stats = lstatSync(paths.analysisPath);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error("Graphify analysis sidecar must be a plain file");
+  }
+  const realOutput = realpathSync.native(paths.output);
+  const realAnalysis = realpathSync.native(paths.analysisPath);
+  if (
+    !isContained(realOutput, realAnalysis) ||
+    pathIdentity(realAnalysis) !== pathIdentity(paths.analysisPath)
+  ) {
+    throw new Error("Graphify analysis sidecar resolves outside graphify-out");
+  }
+  return JSON.parse(readFileSync(paths.analysisPath, "utf8"));
+}
+
+function sanitizeGraphifyAnalysisFile(
+  paths,
+  graph,
+  nodeIdMap,
+  repositoryFiles,
+  { requireComplete = true } = {},
+) {
+  const analysis = readGraphifyAnalysisSidecar(paths);
+  if (!analysis) {
+    return {
+      analysis: null,
+      sanitization: { changed: false, rewrittenNodeReferences: 0 },
+    };
+  }
+  const sanitization = sanitizeGraphifyAnalysisSidecar(analysis, {
+    nodeIdMap,
+    graphNodeIds: new Set(graph.nodes.map((node) => node.id)),
+    repositoryFiles,
+    requireComplete,
+  });
+  if (sanitization.changed) {
+    atomicWritePlainFile(
+      paths.analysisPath,
+      `${JSON.stringify(analysis, null, 2)}\n`,
+    );
+  }
+  return { analysis, sanitization };
 }
 
 function checkGraphFreshness(cwd = process.cwd()) {
-  const reportPath = path.join(cwd, "graphify-out", "GRAPH_REPORT.md");
-  const graphPath = path.join(cwd, "graphify-out", "graph.json");
-
+  const repository = readRepositoryContext(cwd);
+  if (!repository) {
+    fail("Graphify check must run from the real Git repository root");
+    return false;
+  }
+  let paths;
+  try {
+    paths = assertPlainGraphifyPaths(repository.repoRoot, { requireArtifacts: true });
+  } catch (error) {
+    fail(`Graphify artifacts are unsafe: ${error.message}`);
+    return false;
+  }
+  const { reportPath, graphPath } = paths;
   if (!existsSync(reportPath) || !existsSync(graphPath)) {
     fail(
       "graphify-out/GRAPH_REPORT.md and graphify-out/graph.json are required; run npm run meta:graphify:rebuild",
@@ -164,72 +567,593 @@ function checkGraphFreshness(cwd = process.cwd()) {
     fail(`graphify-out/graph.json is not valid JSON: ${error.message}`);
     return false;
   }
+  let nodeNormalizer;
+  let analysisSidecar;
+  try {
+    analysisSidecar = readGraphifyAnalysisSidecar(paths);
+    nodeNormalizer = graphRuntimeNormalizer(graph, repository, {
+      honorStoredAscii: true,
+      analysisSidecar,
+    });
+  } catch (error) {
+    fail(`Graphify Python node-ID normalizer is unavailable: ${error.message}`);
+    return false;
+  }
 
   const reportRaw = readFileSync(reportPath, "utf8");
-  const builtCommit = graph.built_at_commit ?? extractReportCommit(reportRaw);
-  if (!builtCommit) {
+  if (hasPrivateLocalPath(reportRaw)) {
+    fail("GRAPH_REPORT.md exposes a private local path; rebuild after sanitizing upstream output.");
+    return false;
+  }
+  const graphCommit = String(graph.built_at_commit ?? "");
+  const reportCommit = extractReportCommit(reportRaw);
+  if (!graphCommit || !reportCommit) {
     fail(
-      "GRAPH_REPORT.md is missing graph freshness commit metadata; run npm run meta:graphify:rebuild",
+      "Graphify graph/report freshness metadata is incomplete; run npm run meta:graphify:rebuild",
     );
     return false;
   }
 
-  const currentHead = readCurrentHead(cwd);
-  if (!currentHead) {
-    fail("Unable to read current git HEAD for graphify freshness check");
-    return false;
-  }
-
-  if (!commitsMatch(String(builtCommit), currentHead)) {
+  if (
+    !commitsMatch(graphCommit, repository.currentHead) ||
+    !commitsMatch(reportCommit, repository.currentHead)
+  ) {
     fail(
-      `GRAPH_REPORT.md is stale: built from ${String(builtCommit).slice(0, 12)}, current HEAD is ${currentHead.slice(0, 12)}. Run npm run meta:graphify:rebuild.`,
+      `Graphify graph/report is stale or inconsistent with current HEAD ${repository.currentHead.slice(0, 12)}. Run npm run meta:graphify:rebuild.`,
     );
     return false;
   }
 
-  console.log(`graphify graph matches HEAD ${currentHead.slice(0, 8)}`);
+  const identity = validateGraphNodeIdentity(graph, {
+    repositoryFiles: repository.repositoryFiles,
+    repositoryStateSha256: repository.repositoryStateSha256,
+    builtCommit: repository.currentHead,
+    requireStored: true,
+    normalizeNodeId: nodeNormalizer.normalize,
+    nodeIdNormalization: nodeNormalizer.descriptor,
+    analysisSidecar,
+    requireAnalysisSidecar:
+      nodeNormalizer.descriptor !== GRAPHIFY_NODE_ID_NORMALIZATION,
+  });
+  if (!identity.ok) {
+    fail(
+      `Graphify node identity is not release-safe: ${identity.reason}. Run npm run meta:graphify:rebuild.`,
+    );
+    return false;
+  }
+  const expectedIdentityLine = renderGraphIdentityReportLine(identity.expected);
+  const identityLines = reportRaw
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("- Meta_Kim node identity:"));
+  if (identityLines.length !== 1 || identityLines[0] !== expectedIdentityLine) {
+    fail("GRAPH_REPORT.md is not bound to the verified graph identity proof; run npm run meta:graphify:rebuild.");
+    return false;
+  }
+  const counts = reportGraphCounts(reportRaw);
+  const actualCounts = {
+    nodes: Array.isArray(graph.nodes) ? graph.nodes.length : 0,
+    links: Array.isArray(graph.links) ? graph.links.length : 0,
+    communities:
+      analysisSidecar?.communities &&
+      typeof analysisSidecar.communities === "object" &&
+      !Array.isArray(analysisSidecar.communities)
+        ? Object.keys(analysisSidecar.communities).length
+        : 0,
+  };
+  if (
+    !counts ||
+    counts.nodes !== actualCounts.nodes ||
+    counts.links !== actualCounts.links ||
+    counts.communities !== actualCounts.communities
+  ) {
+    fail("GRAPH_REPORT.md node/edge/community counts do not match graph and analysis artifacts; run npm run meta:graphify:rebuild.");
+    return false;
+  }
+
+  console.log(
+    `graphify graph and report match HEAD ${repository.currentHead.slice(0, 8)} with ${identity.expected.schemaVersion}`,
+  );
   return true;
 }
 
 function stampGraphFreshness(cwd = process.cwd()) {
-  const currentHead = readCurrentHead(cwd);
-  if (!currentHead) {
+  const repository = readRepositoryContext(cwd);
+  if (!repository) {
+    fail("Graphify stamping must run from the real Git repository root");
     return false;
   }
-
-  const reportPath = path.join(cwd, "graphify-out", "GRAPH_REPORT.md");
-  const graphPath = path.join(cwd, "graphify-out", "graph.json");
+  let paths;
+  try {
+    paths = assertPlainGraphifyPaths(repository.repoRoot, { requireArtifacts: true });
+  } catch (error) {
+    fail(`Graphify artifacts are unsafe: ${error.message}`);
+    return false;
+  }
+  const { reportPath, graphPath } = paths;
   let changed = false;
+  let identityProof = null;
+  let finalGraphStats = null;
 
   if (existsSync(graphPath)) {
     const graph = JSON.parse(readFileSync(graphPath, "utf8"));
+    const previousSanitization =
+      graph?.meta_kim_enrichment?.outputSanitization ?? null;
+    let upstreamNormalizer;
+    try {
+      upstreamNormalizer = graphRuntimeNormalizer(graph, repository);
+    } catch (error) {
+      fail(`Graphify Python node-ID normalizer is unavailable: ${error.message}`);
+      return false;
+    }
+    const outputSanitization = sanitizeGraphifyOutput(graph, {
+      repositoryFiles: repository.repositoryFiles,
+      normalizeNodeId: upstreamNormalizer.normalize,
+    });
     const enrichment = enrichMetaKimGraph(graph);
+    graph.meta_kim_enrichment.outputSanitization =
+      outputSanitization.changed || !previousSanitization
+        ? outputSanitization
+        : previousSanitization;
+    let analysisSidecar;
+    try {
+      analysisSidecar = readGraphifyAnalysisSidecar(paths);
+    } catch (error) {
+      fail(`Sanitized Graphify node IDs could not be rebound: ${error.message}`);
+      return false;
+    }
+    const fileIdentities = disambiguateGraphFileNodeLabels(graph, {
+      repositoryFiles: repository.repositoryFiles,
+    });
+    let analysisSanitization;
+    try {
+      analysisSanitization = sanitizeGraphifyAnalysisFile(
+        paths,
+        graph,
+        outputSanitization.nodeIdMap,
+        repository.repositoryFiles,
+      );
+      analysisSidecar = analysisSanitization.analysis;
+    } catch (error) {
+      fail(`Graphify analysis sidecar could not be rebound: ${error.message}`);
+      return false;
+    }
+    let proofNormalizer;
+    try {
+      proofNormalizer = graphRuntimeNormalizer(graph, repository, {
+        analysisSidecar,
+      });
+    } catch (error) {
+      fail(`Sanitized Graphify node IDs could not be rebound: ${error.message}`);
+      return false;
+    }
+    const commitChanged =
+      !commitsMatch(String(graph.built_at_commit ?? ""), repository.currentHead);
+    graph.built_at_commit = repository.currentHead;
+    const identity = applyGraphNodeIdentityProof(graph, {
+      repositoryFiles: repository.repositoryFiles,
+      repositoryStateSha256: repository.repositoryStateSha256,
+      builtCommit: repository.currentHead,
+      normalizeNodeId: proofNormalizer.normalize,
+      nodeIdNormalization: proofNormalizer.descriptor,
+      analysisSidecar,
+      requireAnalysisSidecar:
+        proofNormalizer.descriptor !== GRAPHIFY_NODE_ID_NORMALIZATION,
+    });
+    identityProof = identity.proof;
+    if (identityProof.status !== "verified_graph_file_identity") {
+      fail(
+        `Graphify rebuild still has unsafe node identity: ${validateGraphNodeIdentity(graph, {
+          repositoryFiles: repository.repositoryFiles,
+          repositoryStateSha256: repository.repositoryStateSha256,
+          builtCommit: repository.currentHead,
+          requireStored: false,
+          normalizeNodeId: proofNormalizer.normalize,
+          nodeIdNormalization: proofNormalizer.descriptor,
+          analysisSidecar,
+          requireAnalysisSidecar:
+            proofNormalizer.descriptor !== GRAPHIFY_NODE_ID_NORMALIZATION,
+        }).reason}`,
+      );
+      return false;
+    }
     if (
       enrichment.changed ||
-      !commitsMatch(String(graph.built_at_commit ?? ""), currentHead)
+      outputSanitization.changed ||
+      analysisSanitization.sanitization.changed ||
+      fileIdentities.changed ||
+      identity.changed ||
+      commitChanged
     ) {
-      graph.built_at_commit = currentHead;
-      writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+      atomicWritePlainFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`);
       changed = true;
     }
+    finalGraphStats = {
+      nodes: Array.isArray(graph.nodes) ? graph.nodes.length : 0,
+      links: Array.isArray(graph.links) ? graph.links.length : 0,
+    };
   }
 
   if (existsSync(reportPath)) {
     const reportRaw = readFileSync(reportPath, "utf8");
-    const nextReport = reportRaw.replace(
+    if (hasPrivateLocalPath(reportRaw)) {
+      fail("GRAPH_REPORT.md exposes a private local path; refusing to stamp unsafe output.");
+      return false;
+    }
+    let nextReport = reportRaw.replace(
       /Built from commit:\s*`?([0-9a-f]{7,40})`?/i,
-      `Built from commit: \`${currentHead}\``,
+      `Built from commit: \`${repository.currentHead}\``,
     );
+    if (identityProof) {
+      const identityLine = renderGraphIdentityReportLine(identityProof);
+      if (/^- Meta_Kim node identity:.*$/mu.test(nextReport)) {
+        nextReport = nextReport.replace(/^- Meta_Kim node identity:.*$/mu, identityLine);
+      } else {
+        nextReport = nextReport.replace(
+          /(Built from commit:\s*`?[0-9a-f]{7,40}`?[^\r\n]*\r?\n)/iu,
+          `$1${identityLine}\n`,
+        );
+      }
+    }
+    if (finalGraphStats) {
+      nextReport = nextReport.replace(
+        /^- \d[\d,]* nodes · \d[\d,]* edges ·/mu,
+        `- ${finalGraphStats.nodes.toLocaleString("en-US")} nodes · ${finalGraphStats.links.toLocaleString("en-US")} edges ·`,
+      );
+    }
     if (nextReport !== reportRaw) {
-      writeFileSync(reportPath, nextReport, "utf8");
+      atomicWritePlainFile(reportPath, nextReport);
       changed = true;
     }
   }
 
   if (changed) {
-    console.log(`graphify freshness stamped to HEAD ${currentHead.slice(0, 8)}`);
+    console.log(`graphify freshness stamped to HEAD ${repository.currentHead.slice(0, 8)}`);
   }
-  return true;
+  return checkGraphFreshness(repository.repoRoot);
+}
+
+function migrationStatePath(output) {
+  return path.join(output, ".meta-kim-node-identity-migration.json");
+}
+
+function sanitizeGraphForClustering(paths, repository) {
+  const graph = JSON.parse(readFileSync(paths.graphPath, "utf8"));
+  const previousSanitization =
+    graph?.meta_kim_enrichment?.outputSanitization ?? null;
+  const normalizer = graphRuntimeNormalizer(graph, repository);
+  const outputSanitization = sanitizeGraphifyOutput(graph, {
+    repositoryFiles: repository.repositoryFiles,
+    normalizeNodeId: normalizer.normalize,
+  });
+  const enrichment = enrichMetaKimGraph(graph);
+  const fileIdentities = disambiguateGraphFileNodeLabels(graph, {
+    repositoryFiles: repository.repositoryFiles,
+  });
+  const clusteringInputWasBound =
+    previousSanitization?.clusteringInputBound === true;
+  let requiresRecluster =
+    outputSanitization.changed ||
+    fileIdentities.changed ||
+    enrichment.changed ||
+    !clusteringInputWasBound;
+  graph.meta_kim_enrichment.outputSanitization = {
+    ...(outputSanitization.changed || !previousSanitization
+      ? outputSanitization
+      : previousSanitization),
+    clusteringInputBound: true,
+  };
+  let analysisSanitization;
+  try {
+    ({ sanitization: analysisSanitization } =
+      sanitizeGraphifyAnalysisFile(
+        paths,
+        graph,
+        outputSanitization.nodeIdMap,
+        repository.repositoryFiles,
+        { requireComplete: false },
+      ));
+  } catch (error) {
+    if (
+      !/dangling node reference|partition every graph node exactly once/u.test(
+        String(error?.message ?? ""),
+      )
+    ) {
+      throw error;
+    }
+    if (existsSync(paths.analysisPath)) {
+      containedPlainFileDigest(
+        paths.output,
+        paths.analysisPath,
+        "Graphify analysis sidecar",
+      );
+      rmSync(paths.analysisPath, { force: true });
+    }
+    analysisSanitization = {
+      changed: true,
+      rewrittenNodeReferences: 0,
+      communityCoverageComplete: false,
+      resetForRecluster: true,
+    };
+  }
+  requiresRecluster =
+    requiresRecluster ||
+    analysisSanitization.communityCoverageComplete === false;
+  if (requiresRecluster) {
+    atomicWritePlainFile(paths.graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+  }
+  return {
+    requiresRecluster,
+    analysisSanitization,
+  };
+}
+
+function repositoryFilesDigest(repositoryFiles) {
+  return sha256([...repositoryFiles].sort((left, right) => left.localeCompare(right, "en")).join("\0"));
+}
+
+function graphFileDigest(graphPath) {
+  return sha256(readFileSync(graphPath));
+}
+
+function containedPlainFileDigest(output, filePath, label) {
+  if (!existsSync(filePath)) return null;
+  const stats = lstatSync(filePath);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error(`${label} must be a plain file`);
+  }
+  const realOutput = realpathSync.native(output);
+  const realFile = realpathSync.native(filePath);
+  if (
+    !isContained(realOutput, realFile) ||
+    pathIdentity(realFile) !== pathIdentity(filePath)
+  ) {
+    throw new Error(`${label} resolves outside graphify-out`);
+  }
+  return sha256(readFileSync(filePath));
+}
+
+function migrationSnapshotPaths(output) {
+  return {
+    graph: path.join(output, ".meta-kim-extract-graph.json"),
+    analysis: path.join(output, ".meta-kim-extract-analysis.json"),
+  };
+}
+
+function inspectMigrationState(paths, repository) {
+  const statePath = migrationStatePath(paths.output);
+  if (!existsSync(statePath) || !existsSync(paths.graphPath)) {
+    return { status: "missing", state: null };
+  }
+  const stats = lstatSync(statePath);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error("Graphify migration state is not a plain file");
+  }
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    if (
+      state.schemaVersion !== GRAPHIFY_MIGRATION_STATE_SCHEMA ||
+      !["extract_complete", "cluster_complete"].includes(state.stage) ||
+      !commitsMatch(state.builtCommit, repository.currentHead) ||
+      state.repositoryFilesSha256 !== repositoryFilesDigest(repository.repositoryFiles) ||
+      state.repositoryStateSha256 !== repository.repositoryStateSha256
+    ) {
+      return { status: "stale", state };
+    }
+    const snapshots = migrationSnapshotPaths(paths.output);
+    if (
+      state.extractGraphSha256 !==
+        containedPlainFileDigest(
+          paths.output,
+          snapshots.graph,
+          "Graphify extract graph snapshot",
+        ) ||
+      state.extractAnalysisSha256 !==
+        containedPlainFileDigest(
+          paths.output,
+          snapshots.analysis,
+          "Graphify extract analysis snapshot",
+        )
+    ) {
+      return { status: "invalid", state };
+    }
+    if (
+      state.graphSha256 !== graphFileDigest(paths.graphPath) ||
+      state.analysisSha256 !==
+        containedPlainFileDigest(
+          paths.output,
+          paths.analysisPath,
+          "Graphify analysis sidecar",
+        ) ||
+      (state.stage === "cluster_complete" &&
+        state.reportSha256 !==
+          containedPlainFileDigest(
+            paths.output,
+            paths.reportPath,
+            "Graphify report",
+          ))
+    ) {
+      return { status: "in_doubt", state };
+    }
+    return { status: "valid", state };
+  } catch {
+    return { status: "invalid", state: null };
+  }
+}
+
+function writeMigrationState(paths, repository, stage) {
+  assertPlainGraphifyPaths(repository.repoRoot, { requireArtifacts: true });
+  const snapshots = migrationSnapshotPaths(paths.output);
+  if (stage === "extract_complete") {
+    containedPlainFileDigest(
+      paths.output,
+      snapshots.graph,
+      "Graphify extract graph snapshot",
+    );
+    containedPlainFileDigest(
+      paths.output,
+      snapshots.analysis,
+      "Graphify extract analysis snapshot",
+    );
+    atomicWritePlainFile(snapshots.graph, readFileSync(paths.graphPath, "utf8"));
+    if (existsSync(paths.analysisPath)) {
+      atomicWritePlainFile(
+        snapshots.analysis,
+        readFileSync(paths.analysisPath, "utf8"),
+      );
+    } else if (existsSync(snapshots.analysis)) {
+      rmSync(snapshots.analysis, { force: true });
+    }
+  }
+  const state = {
+    schemaVersion: GRAPHIFY_MIGRATION_STATE_SCHEMA,
+    stage,
+    builtCommit: repository.currentHead,
+    repositoryFilesSha256: repositoryFilesDigest(repository.repositoryFiles),
+    repositoryStateSha256: repository.repositoryStateSha256,
+    graphSha256: graphFileDigest(paths.graphPath),
+    analysisSha256: containedPlainFileDigest(
+      paths.output,
+      paths.analysisPath,
+      "Graphify analysis sidecar",
+    ),
+    reportSha256:
+      stage === "cluster_complete"
+        ? containedPlainFileDigest(
+            paths.output,
+            paths.reportPath,
+            "Graphify report",
+          )
+        : null,
+    extractGraphSha256: containedPlainFileDigest(
+      paths.output,
+      snapshots.graph,
+      "Graphify extract graph snapshot",
+    ),
+    extractAnalysisSha256: containedPlainFileDigest(
+      paths.output,
+      snapshots.analysis,
+      "Graphify extract analysis snapshot",
+    ),
+  };
+  atomicWritePlainFile(migrationStatePath(paths.output), `${JSON.stringify(state, null, 2)}\n`);
+}
+
+function restoreMigrationInput(paths, state) {
+  const snapshots = migrationSnapshotPaths(paths.output);
+  if (
+    state.extractGraphSha256 !==
+      containedPlainFileDigest(
+        paths.output,
+        snapshots.graph,
+        "Graphify extract graph snapshot",
+      ) ||
+    state.extractAnalysisSha256 !==
+      containedPlainFileDigest(
+        paths.output,
+        snapshots.analysis,
+        "Graphify extract analysis snapshot",
+      )
+  ) {
+    throw new Error("Graphify extract snapshot is missing or inconsistent");
+  }
+  atomicWritePlainFile(paths.graphPath, readFileSync(snapshots.graph, "utf8"));
+  if (state.extractAnalysisSha256) {
+    atomicWritePlainFile(
+      paths.analysisPath,
+      readFileSync(snapshots.analysis, "utf8"),
+    );
+  } else if (existsSync(paths.analysisPath)) {
+    rmSync(paths.analysisPath, { force: true });
+  }
+}
+
+function clearMigrationState(paths) {
+  const statePath = migrationStatePath(paths.output);
+  if (existsSync(statePath)) {
+    const stats = lstatSync(statePath);
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error("Graphify migration state is not a plain file");
+    }
+    rmSync(statePath, { force: true });
+  }
+  const snapshots = migrationSnapshotPaths(paths.output);
+  for (const snapshot of Object.values(snapshots)) {
+    if (existsSync(snapshot)) {
+      containedPlainFileDigest(
+        paths.output,
+        snapshot,
+        "Graphify extract snapshot",
+      );
+      rmSync(snapshot, { force: true });
+    }
+  }
+}
+
+function graphIdentityMigrationPlan(cwd = process.cwd()) {
+  const repository = readRepositoryContext(cwd);
+  if (!repository) throw new Error("Graphify rebuild must run from the real Git repository root");
+  const paths = assertPlainGraphifyPaths(repository.repoRoot, { requireArtifacts: false });
+  if (!existsSync(paths.graphPath)) {
+    return { repository, paths, fullExtract: true };
+  }
+  const graph = JSON.parse(readFileSync(paths.graphPath, "utf8"));
+  const analysisSidecar = readGraphifyAnalysisSidecar(paths);
+  const nodeNormalizer = graphRuntimeNormalizer(graph, repository, {
+    honorStoredAscii: true,
+    analysisSidecar,
+  });
+  const stored = graph?.meta_kim_enrichment?.nodeIdentity;
+  const analysis = analyzeGraphNodeIdentity(graph, {
+    repositoryFiles: repository.repositoryFiles,
+    repositoryStateSha256:
+      stored &&
+      Object.prototype.hasOwnProperty.call(stored, "repositoryStateSha256")
+        ? stored.repositoryStateSha256
+        : repository.repositoryStateSha256,
+    normalizeNodeId: nodeNormalizer.normalize,
+    nodeIdNormalization: nodeNormalizer.descriptor,
+    analysisSidecar,
+    requireAnalysisSidecar:
+      nodeNormalizer.descriptor !== GRAPHIFY_NODE_ID_NORMALIZATION,
+  });
+  const legacyV2ProofUpgrade =
+    stored?.schemaVersion === GRAPH_NODE_IDENTITY_SCHEMA &&
+    (
+      typeof stored?.graphContentSha256 !== "string" ||
+      !stored?.analysisCommunityCoverageIssues ||
+      !Object.prototype.hasOwnProperty.call(
+        stored,
+        "repositoryStateSha256",
+      )
+    );
+  const trustedStoredBaseline =
+    stored?.schemaVersion === GRAPH_NODE_IDENTITY_SCHEMA &&
+    stored?.status === "verified_graph_file_identity" &&
+    stored?.repositoryFilesSha256 === analysis.repositoryFilesSha256 &&
+    stored?.repositoryPathPolicy === analysis.repositoryPathPolicy &&
+    stored?.nodeIdNormalization === analysis.nodeIdNormalization &&
+    stored?.fileNodeBindingsSha256 === analysis.fileNodeBindingsSha256 &&
+    stored?.nodeIdsSha256 === analysis.nodeIdsSha256 &&
+    stored?.linkEndpointsSha256 === analysis.linkEndpointsSha256 &&
+    stored?.hyperedgeReferencesSha256 === analysis.hyperedgeReferencesSha256 &&
+    stored?.analysisSidecarSha256 === analysis.analysisSidecarSha256 &&
+    stored?.nodeProvenanceSha256 === analysis.nodeProvenanceSha256 &&
+    stored?.outputSanitizationSha256 === analysis.outputSanitizationSha256 &&
+    (
+      legacyV2ProofUpgrade ||
+      (
+        stored?.graphContentSha256 === analysis.graphContentSha256 &&
+        stored?.evidenceSha256 === analysis.evidenceSha256
+      )
+    ) &&
+    JSON.stringify(stored?.fileNodeBindings ?? null) ===
+      JSON.stringify(analysis.fileNodeBindings);
+  return {
+    repository,
+    paths,
+    fullExtract:
+      analysis.requiresUpstreamReextract === true || !trustedStoredBaseline,
+  };
 }
 
 function processOutputText(result) {
@@ -246,6 +1170,7 @@ function runGraphifyUpdate(graphifyArgs, options = {}) {
     stdio: options.stdio ?? "inherit",
     encoding: options.encoding,
     shell: false,
+    env: sanitizedGitEnvironment(),
   });
   if (!direct.error) {
     return { result: direct, usedDirect: true };
@@ -260,7 +1185,11 @@ function runGraphifyUpdate(graphifyArgs, options = {}) {
     python,
     ["-m", "graphify", ...graphifyArgs],
     undefined,
-    { stdio: options.stdio ?? "inherit", encoding: options.encoding },
+    {
+      stdio: options.stdio ?? "inherit",
+      encoding: options.encoding,
+      env: sanitizedGitEnvironment(),
+    },
   );
   return { result, usedDirect: false };
 }
@@ -387,14 +1316,227 @@ function sanitizeGraphifyHookSettings() {
 }
 
 function runRebuild() {
-  const graphifyArgs = ["update", "."];
-  if (process.argv.includes("--force")) {
-    graphifyArgs.push("--force");
+  const initialRepository = readRepositoryContext(process.cwd());
+  if (!initialRepository) {
+    fail("Graphify rebuild must run from the real Git repository root");
+    return;
   }
-  const result = runGraphifyUpdateForRebuild(graphifyArgs);
-  process.exitCode = result.status || 0;
-  if ((result.status || 0) === 0) {
-    stampGraphFreshness();
+  let initialPaths;
+  try {
+    initialPaths = assertPlainGraphifyPaths(initialRepository.repoRoot, {
+      requireArtifacts: false,
+    });
+  } catch (error) {
+    fail(`Graphify rebuild refused unsafe repository state: ${error.message}`);
+    return;
+  }
+  let migrationInspection;
+  try {
+    migrationInspection = inspectMigrationState(initialPaths, initialRepository);
+  } catch (error) {
+    fail(`Graphify migration state is unsafe: ${error.message}`);
+    return;
+  }
+  let migrationState =
+    migrationInspection.status === "valid"
+      ? migrationInspection.state
+      : migrationInspection.status === "in_doubt"
+        ? { ...migrationInspection.state, stage: "extract_complete" }
+        : null;
+  if (migrationInspection.status === "in_doubt") {
+    console.warn(
+      "Graphify migration checkpoint is in_doubt after a graph change; rerunning cluster before any release-safe stamp.",
+    );
+    try {
+      restoreMigrationInput(initialPaths, migrationInspection.state);
+      writeMigrationState(
+        initialPaths,
+        initialRepository,
+        "extract_complete",
+      );
+      migrationState = inspectMigrationState(
+        initialPaths,
+        initialRepository,
+      ).state;
+    } catch (error) {
+      fail(`Graphify migration checkpoint could not restore its extract snapshot: ${error.message}`);
+      return;
+    }
+  }
+  let plan;
+  try {
+    plan = graphIdentityMigrationPlan();
+  } catch (error) {
+    fail(`Graphify rebuild refused unsafe repository state: ${error.message}`);
+    return;
+  }
+  const migrationInProgress = plan.fullExtract || migrationState !== null;
+  const migrationBackendArgs = migrationInProgress ? graphifyMigrationBackendArgs() : [];
+
+  if (migrationInProgress && !migrationState) {
+    console.log(
+      "Graphify has real legacy/unsafe file-node identities; running one resumable upstream extract --force migration.",
+    );
+    const extracted = runGraphifyUpdateForRebuild([
+      "extract",
+      ".",
+      "--force",
+      ...migrationBackendArgs,
+    ]);
+    process.exitCode = extracted.status || 0;
+    if ((extracted.status || 0) !== 0) return;
+    try {
+      plan.repository = refreshRepositorySnapshot(
+        plan.repository,
+        "extract",
+      );
+      plan.paths = assertPlainGraphifyPaths(plan.repository.repoRoot, { requireArtifacts: true });
+      writeMigrationState(plan.paths, plan.repository, "extract_complete");
+      const checkpoint = inspectMigrationState(plan.paths, plan.repository);
+      migrationState = checkpoint.status === "valid" ? checkpoint.state : null;
+      if (!migrationState) throw new Error("extract checkpoint could not be verified");
+    } catch (error) {
+      fail(`Graphify extract completed but its resume checkpoint is unsafe: ${error.message}`);
+      return;
+    }
+  }
+
+  if (migrationInProgress && migrationState) {
+    try {
+      const sanitized = sanitizeGraphForClustering(plan.paths, plan.repository);
+      if (
+        sanitized.requiresRecluster ||
+        migrationState.stage === "extract_complete"
+      ) {
+        writeMigrationState(plan.paths, plan.repository, "extract_complete");
+        const checkpoint = inspectMigrationState(plan.paths, plan.repository);
+        migrationState = checkpoint.status === "valid" ? checkpoint.state : null;
+        if (migrationState?.stage !== "extract_complete") {
+          throw new Error("sanitized clustering input checkpoint could not be verified");
+        }
+      }
+    } catch (error) {
+      fail(`Graphify output could not be normalized before clustering: ${error.message}`);
+      return;
+    }
+  }
+
+  if (migrationInProgress && migrationState?.stage === "extract_complete") {
+    try {
+      plan.repository = refreshRepositorySnapshot(
+        plan.repository,
+        "pre-cluster",
+      );
+    } catch (error) {
+      fail(`Graphify clustering refused a mixed repository snapshot: ${error.message}`);
+      return;
+    }
+    console.log("Resuming Graphify identity migration from the completed extract checkpoint.");
+    const clustered = runGraphifyUpdate(
+      ["cluster-only", ".", ...migrationBackendArgs],
+      { stdio: "inherit" },
+    ).result;
+    process.exitCode = clustered.status || 0;
+    if ((clustered.status || 0) !== 0) return;
+    try {
+      plan.repository = refreshRepositorySnapshot(
+        plan.repository,
+        "cluster",
+      );
+      plan.paths = assertPlainGraphifyPaths(plan.repository.repoRoot, { requireArtifacts: true });
+      writeMigrationState(plan.paths, plan.repository, "cluster_complete");
+      const checkpoint = inspectMigrationState(plan.paths, plan.repository);
+      migrationState = checkpoint.status === "valid" ? checkpoint.state : null;
+      if (migrationState?.stage !== "cluster_complete") {
+        throw new Error("cluster checkpoint could not be verified");
+      }
+    } catch (error) {
+      fail(`Graphify clustering completed but its resume checkpoint is unsafe: ${error.message}`);
+      return;
+    }
+  }
+
+  if (!migrationInProgress) {
+    const graphifyArgs = ["update", "."];
+    if (process.argv.includes("--force")) graphifyArgs.push("--force");
+    const updated = runGraphifyUpdateForRebuild(graphifyArgs);
+    process.exitCode = updated.status || 0;
+    if ((updated.status || 0) !== 0) return;
+    try {
+      plan.repository = refreshRepositorySnapshot(
+        plan.repository,
+        "update",
+      );
+      plan.paths = assertPlainGraphifyPaths(plan.repository.repoRoot, { requireArtifacts: true });
+      const sanitized = sanitizeGraphForClustering(
+        plan.paths,
+        plan.repository,
+      );
+      if (sanitized.requiresRecluster) {
+        writeMigrationState(
+          plan.paths,
+          plan.repository,
+          "extract_complete",
+        );
+        migrationState = inspectMigrationState(
+          plan.paths,
+          plan.repository,
+        ).state;
+        const clusterBackendArgs = graphifyMigrationBackendArgs();
+        const clustered = runGraphifyUpdate(
+          ["cluster-only", ".", ...clusterBackendArgs],
+          { stdio: "inherit" },
+        ).result;
+        process.exitCode = clustered.status || 0;
+        if ((clustered.status || 0) !== 0) return;
+        plan.repository = refreshRepositorySnapshot(
+          plan.repository,
+          "post-update cluster",
+        );
+        plan.paths = assertPlainGraphifyPaths(
+          plan.repository.repoRoot,
+          { requireArtifacts: true },
+        );
+        writeMigrationState(
+          plan.paths,
+          plan.repository,
+          "cluster_complete",
+        );
+        const checkpoint = inspectMigrationState(
+          plan.paths,
+          plan.repository,
+        );
+        migrationState =
+          checkpoint.status === "valid" ? checkpoint.state : null;
+        if (migrationState?.stage !== "cluster_complete") {
+          throw new Error(
+            "post-update cluster checkpoint could not be verified",
+          );
+        }
+      }
+    } catch (error) {
+      fail(`Graphify update produced unsafe artifacts: ${error.message}`);
+      return;
+    }
+  }
+
+  try {
+    plan.repository = refreshRepositorySnapshot(
+      plan.repository,
+      "pre-stamp",
+    );
+  } catch (error) {
+    fail(`Graphify stamping refused a mixed repository snapshot: ${error.message}`);
+    return;
+  }
+  if (!stampGraphFreshness(plan.repository.repoRoot)) {
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    clearMigrationState(plan.paths);
+  } catch (error) {
+    fail(`Graphify migration state could not be closed safely: ${error.message}`);
   }
 }
 
@@ -404,6 +1546,7 @@ function runGraphifyPassthrough() {
   const direct = spawnSync(launcher.command, [...launcher.args, ...graphifyArgs], {
     stdio: "inherit",
     shell: false,
+    env: sanitizedGitEnvironment(),
   });
   if (!direct.error) {
     process.exitCode = direct.status ?? 1;
@@ -419,7 +1562,7 @@ function runGraphifyPassthrough() {
     python,
     ["-m", "graphify", ...graphifyArgs],
     undefined,
-    { stdio: "inherit" },
+    { stdio: "inherit", env: sanitizedGitEnvironment() },
   );
   process.exitCode = result.status ?? 1;
 }

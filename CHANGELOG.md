@@ -8,6 +8,19 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.10] - 2026-07-28
+
+### Fixed
+
+- **A fresh Graphify graph now proves its identity schema and repository contents, not only its Git commit.** Every real upstream file node uses the installed Graphify 0.9.28 Unicode normalizer and a full source-path identity. The proof binds the exact repository inventory and file contents, all node and link data, both hyperedge surfaces, analysis, provenance, sanitization, and report counts. Same-name Claude adapter and shared implementation nodes remain distinct and queryable.
+- **Incremental updates and interrupted clustering now resume from a coherent snapshot.** Extract checkpoints preserve bound graph and analysis inputs; cluster checkpoints additionally bind the final report. A truncated sidecar, partial graph, changed report, source mutation during an upstream command, stale community membership, or an orphan snapshot cannot be stamped as current. Incremental updates automatically re-cluster when new or renamed nodes are absent from the analysis, and every graph node must appear in exactly one community.
+- **Generated Graphify evidence no longer exposes or follows private local paths.** Graph, analysis keys and values, report text, and recovery snapshots reject Windows, UNC, Unix home, and delimiter-prefixed `~/` paths without echoing them. Graphify output, state, and snapshots must be plain files contained in the real repository output directory; mixed `GIT_*` redirection and junction or symlink escapes fail closed.
+- **Cross-runtime release evaluation now uses the target Claude Code provider instead of inheriting the caller's provider.** Hook isolation still uses empty setting sources, while a strict allowlist hydrates only Claude's provider, model, and timeout environment from its global settings. A Codex-launched release check can therefore call the user's configured `MiniMax-M3` without sending that model name to an unrelated ambient GLM endpoint, and arbitrary settings environment keys remain excluded.
+
+### Verification
+
+- Independent correctness, adversarial, and security reviews all ended with P0/P1/P2 at zero after their crash, stale-proof, TOCTOU, path-leak, symlink, incomplete-community, and orphan-snapshot counterexamples became regressions. Focused Graphify tests pass 69/69; Claude provider-environment tests pass 24/24; the private PRD contract passes 56/56; a real Python 3.14.6 / Graphify 0.9.28 rebuild and independent check bind every represented node, exact link, community reference, and real file identity with no open checkpoint. Release verification also excludes the root `debug.log` that Windows CEF applications can emit when they inherit the repository working directory, with a regression proving that this machine-local file cannot stale the graph proof. The primary release fuse then completed real Claude Code `MiniMax-M3` and Codex calls with release-grade evidence. The 88 upstream zero-node sources and semantic-collision completeness remain explicitly deferred to P-149. Docker, task budgets, and Cursor product execution are not acceptance evidence.
+
 ## [2.9.9] - 2026-07-27
 
 ### Fixed

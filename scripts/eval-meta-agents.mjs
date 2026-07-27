@@ -15,6 +15,7 @@ import {
   buildClaudeSettingsIsolatedAgentOverride,
   redactClaudeLiveCommandText,
 } from "./claude-live-agent-override.mjs";
+import { resolveClaudeLiveProviderEnvironment } from "./claude-live-provider-env.mjs";
 import { observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
 import { readCodexSessionEvidence } from "./live-acceptance/read-codex-session-evidence.mjs";
 
@@ -3632,6 +3633,8 @@ async function resolveClaudeLiveAgentOverride(agentId) {
 
 async function runClaudeCases(agentIds) {
   const results = [];
+  const claudeLiveProviderEnv =
+    await resolveClaudeLiveProviderEnvironment();
 
   for (let index = 0; index < agentIds.length; index += 1) {
     const agentId = agentIds[index];
@@ -3684,7 +3687,7 @@ async function runClaudeCases(agentIds) {
           {
             cwd: repoRoot,
             timeout: 150_000,
-            env: { ...process.env, NO_COLOR: "1" },
+            env: claudeLiveProviderEnv,
             commandDisplay: `claude --setting-sources <none> -p --agents <runtime-definition> --agent ${agentId} --json-schema <schema> <prompt>`,
             redactText: (value) =>
               redactClaudeLiveCommandText(value, sensitiveCommandValues),
@@ -3708,6 +3711,8 @@ async function runClaudeCases(agentIds) {
           agentDefinitionSourceCategory: runtimeAgentOverride.sourceCategory,
           agentDefinitionSourceDigest: runtimeAgentOverride.sourceDigest,
           customizationIsolation: "empty_setting_sources_cli_inline_agent",
+          providerEnvironmentSource:
+            "claude_global_settings_allowlist_then_process_fallback",
           score,
           matchedGroups,
           missedGroups,

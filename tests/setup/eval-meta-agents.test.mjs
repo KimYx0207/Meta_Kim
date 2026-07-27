@@ -10,6 +10,10 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  resolveClaudeLiveProviderEnvironment,
+  selectClaudeLiveProviderEnv,
+} from "../../scripts/claude-live-provider-env.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 
@@ -43,7 +47,72 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /commandDisplay: `claude --setting-sources <none>/u);
     assert.doesNotMatch(source, /"--safe-mode"[\s\S]*inlineAgentsJson/u);
     assert.match(source, /redactClaudeLiveCommandText\(value, sensitiveCommandValues\)/u);
+    assert.match(source, /resolveClaudeLiveProviderEnvironment/u);
+    assert.match(
+      source,
+      /providerEnvironmentSource:\s*"claude_global_settings_allowlist_then_process_fallback"/u,
+    );
     assert.doesNotMatch(source, /nativeInvocationCommand: `claude -p --agent/u);
+  });
+
+  test("Claude live evaluation uses the Claude provider settings without importing arbitrary settings env", async () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-claude-provider-env-"));
+    try {
+      const settingsDir = path.join(tempHome, ".claude");
+      mkdirSync(settingsDir, { recursive: true });
+      writeFileSync(
+        path.join(settingsDir, "settings.json"),
+        JSON.stringify({
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.minimaxi.example/anthropic",
+            ANTHROPIC_AUTH_TOKEN: "configured-token",
+            ANTHROPIC_MODEL: "MiniMax-M3",
+            ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3",
+            NODE_OPTIONS: "--require=untrusted-settings-entry",
+          },
+        }),
+      );
+
+      const resolved = await resolveClaudeLiveProviderEnvironment({
+        homeDir: tempHome,
+        ambientEnv: {
+          PATH: "fixture-path",
+          ANTHROPIC_BASE_URL: "https://api.z.example/anthropic",
+          ANTHROPIC_AUTH_TOKEN: "ambient-token",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2[1m]",
+        },
+      });
+
+      assert.equal(
+        resolved.ANTHROPIC_BASE_URL,
+        "https://api.minimaxi.example/anthropic",
+      );
+      assert.equal(resolved.ANTHROPIC_AUTH_TOKEN, "configured-token");
+      assert.equal(resolved.ANTHROPIC_MODEL, "MiniMax-M3");
+      assert.equal(resolved.ANTHROPIC_DEFAULT_SONNET_MODEL, "MiniMax-M3");
+      assert.equal(resolved.PATH, "fixture-path");
+      assert.equal(resolved.NO_COLOR, "1");
+      assert.equal(resolved.NODE_OPTIONS, undefined);
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test("Claude provider environment selector accepts only the live-provider allowlist", () => {
+    assert.deepEqual(
+      selectClaudeLiveProviderEnv({
+        env: {
+          ANTHROPIC_MODEL: "MiniMax-M3",
+          API_TIMEOUT_MS: "1200000",
+          EMPTY_VALUE: "",
+          NODE_OPTIONS: "--inspect",
+        },
+      }),
+      {
+        ANTHROPIC_MODEL: "MiniMax-M3",
+        API_TIMEOUT_MS: "1200000",
+      },
+    );
   });
 
   test("Windows CLI search includes npm-style ~/.local shims before native bin", () => {

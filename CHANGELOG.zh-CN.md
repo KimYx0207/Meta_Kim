@@ -8,6 +8,19 @@
 
 ## Unreleased
 
+## [2.9.10] - 2026-07-28
+
+### 修复内容
+
+- **Graphify 的“最新”现在证明身份规则和仓库内容，不再只比较 Git 提交号。** 所有真实 upstream file node 都使用已安装 Graphify 0.9.28 的 Unicode normalizer 和完整 source path 身份；proof 精确绑定仓库文件清单与内容、全部节点与关系、两份 hyperedge 表面、analysis、provenance、sanitization 和报告数量。同名的 Claude 适配器与共享实现保持两个真实、可分别查询的节点。
+- **增量更新和聚类中断现在从一致快照恢复。** Extract checkpoint 保存内容绑定的 graph/analysis 输入，cluster checkpoint 再绑定最终 report；sidecar 截断、graph 部分写入、report 被改、上游命令运行期间源码变化、community 仍引用旧节点或孤儿 snapshot，都不能冒充 current。增量更新发现新节点或改名节点尚未进入 analysis 时会自动重新聚类，且每个 graph node 必须恰好属于一个 community。
+- **Graphify 生成证据不再泄露或跟随私有本机路径。** Graph、analysis 的键和值、report 正文和恢复 snapshot 都拒绝 Windows、UNC、Unix home 及分隔符后的 `~/` 路径，错误不会回显秘密。Graphify output、state 和 snapshot 必须是位于真实仓库输出目录内的普通文件；混合大小写 `GIT_*` 错仓、junction 和 symlink 外跳都会 fail closed。
+- **跨运行时发布验收现在使用目标 Claude Code 自己的 provider，不再误继承调用方 provider。** Hook 隔离仍使用空 setting sources，同时只从 Claude 全局设置中白名单读取 provider、模型和 timeout 环境。这样从 Codex 发起的发布检查会调用用户配置的 `MiniMax-M3`，不会再把这个模型名发给调用进程里残留的 GLM 接口；其他任意 settings 环境项仍不会进入验收子进程。
+
+### 验证
+
+- correctness、反例和 security 三路独立 Review 把闪退、旧 proof、TOCTOU、路径泄漏、symlink、community 漏项/重复和孤儿 snapshot 反例转成回归后，最终 P0/P1/P2 均为 0。Graphify 聚焦测试 69/69，Claude provider 环境测试 24/24，唯一私有 PRD 合约 56/56；真实 Python 3.14.6 / Graphify 0.9.28 重建和独立检查已绑定每个实际表示的节点、精确 link、community 引用和真实 file identity，且没有开放 checkpoint。发布验收还明确排除了 Windows CEF 继承仓库工作目录时可能生成的根目录 `debug.log`，并用回归测试证明这种机器日志不会再让知识图证明过期；双主运行时发布保险丝随后以真实 `MiniMax-M3` Claude Code 调用和 Codex 调用共同得到 release-grade 证据。上游 88 个零节点来源和 semantic collision 完整性明确留在 P-149。Docker、任务预算和 Cursor 产品执行不作为验收证据。
+
 ## [2.9.9] - 2026-07-27
 
 ### 修复内容
