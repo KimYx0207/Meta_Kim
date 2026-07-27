@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "2.9.5",
+  "version": "2.9.6",
   "description": "Governance layer for AI coding: canonical meta agents, workflow contracts, default Claude/Codex projections, non-default OpenClaw/Cursor projections, and source-backed candidate probes.",
   "private": true,
   "type": "module",
@@ -76,6 +76,7 @@
     "meta:inventory": "node scripts/project-inventory.mjs",
     "meta:test:integration": "node scripts/run-node-tests.mjs \"tests/integration/*.test.mjs\"",
     "meta:release:smoke": "npm run meta:sync && npm run meta:agents:migration-catalog:check && npm run meta:capabilities:smoke && npm run meta:test:inventory && npm run meta:test:unit && npm run meta:test:meta-theory && npm run meta:test:integration",
+    "meta:release:audit": "node scripts/audit-release-binding.mjs",
     "meta:graphify:check": "node scripts/graphify-cli.mjs check",
     "meta:graphify:install": "node scripts/graphify-cli.mjs install",
     "meta:graphify:update": "node scripts/graphify-cli.mjs update",

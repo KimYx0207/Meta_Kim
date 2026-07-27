@@ -8,6 +8,18 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.6] - 2026-07-27
+
+### Fixed
+
+- **Published release evidence can now be audited instead of reconstructed from memory.** The packed `meta-kim release audit` command joins the local and GitHub annotated tag, peeled commit/tree, clean full-verification report, public Release, and uploaded npm package into an immutable, hash-chained attempt record. Historical releases whose clean report no longer exists remain explicitly verification-unbound and cannot be promoted.
+- **A package with substituted code cannot inherit a clean release result.** Exact promotion requires the local tgz and GitHub asset to be byte-identical to the npm candidate that the same clean `meta:verify:all` report installed and tested; matching only package name, version, or `package.json` is rejected.
+- **Audit evidence stays inside the repository-owned state tree.** The output root and its `attempts` and `stale-locks` children reject symlink/junction redirection before lock, record, pointer, or stale-lock writes. Failed attempts remain append-only and never replace the latest successful binding.
+
+### Verification
+
+- Release acceptance covers the focused audit and junction counterexamples, the complete governance regression, a dirty-candidate and clean-commit standard `meta:verify:all`, packed CLI execution, an exact post-publication `published_bound` record attached to the GitHub Release, and final Claude Code/Codex global setup readback. Docker, task budgets, and Cursor product execution are not acceptance evidence.
+
 ## [2.9.5] - 2026-07-27
 
 ### Fixed

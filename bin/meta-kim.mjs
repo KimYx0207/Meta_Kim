@@ -42,6 +42,7 @@ ${status.usageHeading}:
   ${status.usage}
   meta-kim doctor
   meta-kim doctor hooks [--fix] [--project|--all] [--project-root <dir>]
+  meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--json]
   meta-kim mcp serve
   meta-kim uninstall [--yes] [--deep] [--scope=global|project|both]
   meta-kim project bootstrap [--project-dir <dir>] [--dry-run|--apply] [--json]
@@ -55,7 +56,7 @@ ${status.optionsHeading}:
 `;
 }
 
-const commands = new Set(["install", "update", "check", "status", "doctor", "uninstall", "project", "mcp"]);
+const commands = new Set(["install", "update", "check", "status", "doctor", "release", "uninstall", "project", "mcp"]);
 
 function fail(message, copy = statusCopy()) {
   console.error(`meta-kim: ${message}`);
@@ -249,6 +250,12 @@ switch (command) {
         ? commandArgs.slice(1)
         : ["--project", ...commandArgs.slice(1)],
     );
+    break;
+  case "release":
+    if (commandArgs[0] !== "audit") {
+      fail("release subcommand must be 'audit'");
+    }
+    run("scripts/audit-release-binding.mjs", commandArgs.slice(1));
     break;
   case "uninstall":
     if (commandArgs.some((arg) => !["--yes", "--deep"].includes(arg) && !arg.startsWith("--scope="))) {

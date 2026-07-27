@@ -8,6 +8,18 @@
 
 ## Unreleased
 
+## [2.9.6] - 2026-07-27
+
+### 修复内容
+
+- **发布证据现在可以被审计，不再靠事后回忆拼接。** 打包后的 `meta-kim release audit` 会把本地与 GitHub annotated tag、peeled commit/tree、干净全量验证报告、公开 Release 和上传的 npm 包写入不可变、哈希串联的 attempt 记录。旧版本如果已经找不到当时的干净报告，只能明确记为 verification unbound，不能补写成 exact。
+- **被替换过代码的包不能继承干净发布结论。** exact 升级要求本地 tgz 与 GitHub asset 都逐字节等于同一份干净 `meta:verify:all` 实际安装并测试过的 npm 候选包；只有包名、版本号或 `package.json` 相同会被拒绝。
+- **审计证据只能写进仓库拥有的状态目录。** 输出根目录及其 `attempts`、`stale-locks` 子目录会在 lock、record、pointer 或 stale-lock 写入前拒绝 symlink/junction 跳转。失败 attempt 继续追加保存，不会覆盖最近一次成功绑定。
+
+### 验证
+
+- 发布验收覆盖审计与 junction 反例、完整 governance 回归、脏候选与干净提交两轮标准 `meta:verify:all`、packed CLI、发布后附加到 GitHub Release 的 exact `published_bound` 记录，以及 Claude Code/Codex 最终全局 setup 回读。Docker、任务预算与 Cursor 产品执行不作为验收正证。
+
 ## [2.9.5] - 2026-07-27
 
 ### 修复内容
