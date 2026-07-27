@@ -8,6 +8,18 @@
 
 ## Unreleased
 
+## [2.9.7] - 2026-07-27
+
+### 修复内容
+
+- **运行端专用 provider 不再冒充其他运行端也支持。** Claude Code、Codex、Cursor、OpenClaw 及 HookPrompt adapter 只在声明的目标运行端保留正向 claim；所有非目标 adapter 都明确阻塞、安装层与系统层为 unsupported，且不再复制目标运行端的激活事件。
+- **Provider claim 现在只有一个长期事实源。** `providers[*].support` 负责可用性真值，显式 runtime target 负责适用范围，`runtimeAdapters` 只是由 schema 和 validator 双重校验的投影。静态 registry 不得声称 provider 已被选择、调用、完成或现场运行；这些只能来自本次运行证据。
+- **Validator 会拒绝“看起来完整”的假记录。** 负例覆盖跨运行端 `verified`、用 support override 伪扩目标、adapter/source mapping 漂移、自相矛盾的 state/status、激活事件泄漏和私有运行状态字段。Claude Code 与 Codex 的目标能力保持 verified；本版没有把 Cursor 产品执行包装成已处理。
+
+### 验证
+
+- 本次由 provider 定向测试、完整 governance 回归、真实 schema 校验、项目同步/检查、标准发布门禁、精确发布绑定以及 Claude Code/Codex 全局 setup 回读共同验收。Docker、任务预算和 Cursor 产品执行不作为验收证据。
+
 ## [2.9.6] - 2026-07-27
 
 ### 修复内容

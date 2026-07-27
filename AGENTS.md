@@ -139,6 +139,8 @@ config/capability-index/
 
 Hardcoding a specific agent name before discovery is a shortcut, not the canonical method.
 
+Provider claim truth is also capability-first. In `config/capability-index/provider-registry.json`, `providers[*].support` is the single durable authority and `runtimeAdapters` is only its validated projection. Keep selection run-scoped, distinguish availability from native support, and require fresh verification evidence for live claims. A runtime-specific provider must remain blocked and have no activation event outside its declared target runtime; a generated projection never makes a Claude provider native to Codex, Cursor, or OpenClaw, or vice versa.
+
 For a real execution demand, the default path must prove the whole provider chain before mutation: capability discovery, execution-agent search and selection, execution-agent creation capability search, skill search and selection, skill creation capability search, MCP provider search, command/runtime tool selection, and verification owner/path selection. This must happen as the natural Fetch -> Thinking route, not as a validator or hook rescue after the route is already weak.
 
 ### Mechanical Enforcement (Cross-Runtime)

@@ -191,11 +191,19 @@ describe("SKILL.md structural integrity", async () => {
   });
 
   describe("Progressive disclosure boundaries", () => {
-    test("SKILL.md stays lean and delegates details to references", () => {
-      const lineCount = raw.split(/\r?\n/).length;
-      assert.ok(
-        lineCount <= 500,
-        `SKILL.md should stay <= 500 lines after progressive disclosure; got ${lineCount}`,
+    test("SKILL.md delegates specialized detail through the reference index", () => {
+      const referenceSection = extractSecondLevelSection(raw, "Reference loading");
+      assert.ok(referenceSection, "SKILL.md must keep one explicit reference-loading boundary");
+      for (const file of REFERENCE_FILES) {
+        assert.ok(
+          referenceSection.includes(`\`${file}\``),
+          `Reference loading must route specialized detail to ${file}`,
+        );
+      }
+      assert.doesNotMatch(
+        raw,
+        /```json\s*\{\s*"\$schema"/,
+        "SKILL.md must not inline machine schemas instead of delegating to contracts/references",
       );
     });
 

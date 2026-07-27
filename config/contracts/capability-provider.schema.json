@@ -6,6 +6,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "$schema",
     "schemaVersion",
     "providerTypes",
     "stateModel",
@@ -16,6 +17,7 @@
     "providers"
   ],
   "properties": {
+    "$schema": { "const": "../contracts/capability-provider.schema.json" },
     "schemaVersion": { "type": "integer", "minimum": 1 },
     "providerTypes": {
       "type": "array",
@@ -116,13 +118,15 @@
         "skillsManifest",
         "dependencyProjectRegistry",
         "runtimeCapabilityMatrix",
-        "weaponRegistry"
+        "weaponRegistry",
+        "providerRuntimeClaims"
       ],
       "properties": {
         "skillsManifest": { "$ref": "#/$defs/sourceMapping" },
         "dependencyProjectRegistry": { "$ref": "#/$defs/sourceMapping" },
         "runtimeCapabilityMatrix": { "$ref": "#/$defs/sourceMapping" },
-        "weaponRegistry": { "$ref": "#/$defs/sourceMapping" }
+        "weaponRegistry": { "$ref": "#/$defs/sourceMapping" },
+        "providerRuntimeClaims": { "$ref": "#/$defs/runtimeClaimPolicy" }
       }
     },
     "providers": {
@@ -140,6 +144,28 @@
         "sourceRef": { "type": "string" },
         "required": { "type": "boolean" },
         "notes": { "type": "string" }
+      }
+    },
+    "runtimeClaimPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceRef",
+        "required",
+        "runtimeAdapters",
+        "selection",
+        "availability",
+        "nativeSupport",
+        "liveEvidence"
+      ],
+      "properties": {
+        "sourceRef": { "const": "providers[*].support" },
+        "required": { "const": true },
+        "runtimeAdapters": { "const": "derived_projection" },
+        "selection": { "const": "run_scoped_only" },
+        "availability": { "const": "support_state_and_install_layers" },
+        "nativeSupport": { "const": "runtime_native_target_only" },
+        "liveEvidence": { "const": "verification_artifact_required" }
       }
     },
     "provider": {
@@ -202,9 +228,10 @@
         "installMethod": { "type": "string" },
         "runtimeAdapters": {
           "type": "object",
+          "propertyNames": { "enum": ["claude_code", "codex", "cursor", "openclaw"] },
           "additionalProperties": {
             "type": "object",
-            "additionalProperties": true,
+            "additionalProperties": false,
             "required": ["state", "status", "installLayers", "outputContract"],
             "properties": {
               "state": { "type": "string" },
@@ -259,6 +286,7 @@
             "skillsJsonIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
             "dependencyProjectIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
             "runtimeMatrixPlatforms": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+            "runtimeTargets": { "type": "array", "items": { "enum": ["claude_code", "codex", "cursor", "openclaw"] }, "uniqueItems": true },
             "weaponRegistryIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
             "capabilityInventoryTypes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
           }
@@ -315,6 +343,7 @@
             "default": { "$ref": "#/$defs/supportState" },
             "runtimes": {
               "type": "object",
+              "propertyNames": { "enum": ["claude_code", "codex", "cursor", "openclaw"] },
               "additionalProperties": { "$ref": "#/$defs/supportState" }
             }
           }

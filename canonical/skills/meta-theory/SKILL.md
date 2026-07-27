@@ -366,6 +366,8 @@ Hardcode capability families and conflict rules in prompts; discover concrete pr
 
 Governance may add trigger, evidence, trust review, approval, sandbox, fallback, verification, and risk boundaries. It must not delete, downgrade, or replace runtime-native abilities for Claude Code, Codex, Cursor, or OpenClaw. Unknown or partial native abilities stay `unknown` or `partial` until verified; they are not removed.
 
+Provider-registry truth has four separate layers. `providers[*].support` is the only durable runtime-claim authority, while `runtimeAdapters` is a mechanically checked projection of it. Provider selection is run-scoped and must never be persisted as a registry fact. Availability comes only from the target runtime's support state and install-layer evidence; a projection file does not prove availability. Native support belongs only to a provider's declared target runtime, and live execution requires a fresh verification artifact. Runtime-specific providers must be `blocked` with `unsupported` layers and no activation event on every non-target runtime; never copy a Claude, Codex, Cursor, or OpenClaw trigger or `verified` label across runtimes.
+
 ## Foundational capability preservation
 
 Do not delete or hide existing Skills, WebSearch, web search, browser, online research, fetch, filesystem, shell, command, apply_patch, edit, MCP, memory, Graphify, graph, hooks, scripts, validators, commands, rules, agents, subagents, approval, sandbox, permission mode, runtime tools, setup, uninstall, status, doctor, sync, install, or verification capability. If a capability is risky or unavailable, mark `needs_probe`, `unknown`, `partial`, `requires_approval`, `requires_trust_review`, `reference_only`, or `not_for_execution_route`.

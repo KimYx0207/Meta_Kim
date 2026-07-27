@@ -8,6 +8,18 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.7] - 2026-07-27
+
+### Fixed
+
+- **Runtime-specific providers no longer impersonate support in other runtimes.** Claude Code, Codex, Cursor, OpenClaw, and HookPrompt adapter records keep their positive claim only on the declared target runtime. Every non-target adapter is explicitly blocked, has unsupported install and OS layers, and carries no copied activation event.
+- **Provider claims now have one durable authority.** `providers[*].support` owns availability truth, explicit runtime targets own applicability, and `runtimeAdapters` is a schema- and validator-checked projection. Static registry data cannot claim that a provider was selected, invoked, completed, or live; those remain run-scoped evidence.
+- **The validator now rejects believable false records.** Negative controls cover cross-runtime `verified` claims, support overrides that try to invent a target, adapter/source mapping drift, contradictory state/status pairs, activation leakage, and private run-state fields. Claude Code and Codex retain their verified target capability; Cursor product execution remains outside this release.
+
+### Verification
+
+- Focused provider tests, the complete governance regression, schema validation, project sync/checks, the standard release gate, exact release binding, and final Claude Code/Codex global setup readback cover this change. Docker, task budgets, and Cursor product execution are not acceptance evidence.
+
 ## [2.9.6] - 2026-07-27
 
 ### Fixed

@@ -175,10 +175,145 @@ function uniqueMappedIds(providers, field) {
 }
 
 function expandedSupport(provider, runtimeId) {
-  return {
+  const override = provider.support.runtimes?.[runtimeId];
+  const expanded = {
     ...provider.support.default,
-    ...(provider.support.runtimes?.[runtimeId] ?? {}),
+    ...(override ?? {}),
   };
+  if (override && !Object.hasOwn(override, "reason")) delete expanded.reason;
+  return expanded;
+}
+
+function equalStringRecord(left, right) {
+  const leftEntries = Object.entries(left ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const rightEntries = Object.entries(right ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+}
+
+function runtimeClaimProjectionMatches(adapter, support) {
+  return (
+    adapter?.state === support?.state &&
+    adapter?.status === support?.status &&
+    (adapter?.reason ?? null) === (support?.reason ?? null) &&
+    equalStringRecord(adapter?.installLayers, support?.installLayers)
+  );
+}
+
+function runtimeClaimTargets(provider) {
+  if (["runtime_native", "hook_script"].includes(provider.providerType)) {
+    return new Set(provider.mappings?.runtimeTargets ?? []);
+  }
+  return null;
+}
+
+function validateRuntimeClaimTruth(provider, issues) {
+  const targets = runtimeClaimTargets(provider);
+  if (targets && targets.size === 0) {
+    issues.push(
+      issue({
+        code: "missing_runtime_claim_target",
+        providerId: provider.id,
+        providerType: provider.providerType,
+        message: `${provider.id} must declare mappings.runtimeTargets`,
+      }),
+    );
+  }
+  if (
+    provider.providerType === "runtime_native" &&
+    JSON.stringify([...(targets ?? [])].sort()) !==
+      JSON.stringify([...(provider.mappings?.runtimeMatrixPlatforms ?? [])].sort())
+  ) {
+    issues.push(
+      issue({
+        code: "runtime_native_target_mismatch",
+        providerId: provider.id,
+        providerType: provider.providerType,
+        message: `${provider.id} runtimeTargets must equal runtimeMatrixPlatforms`,
+      }),
+    );
+  }
+  for (const runtimeId of RUNTIMES) {
+    const support = expandedSupport(provider, runtimeId);
+    const adapter = provider.runtimeAdapters?.[runtimeId];
+    if (adapter && !runtimeClaimProjectionMatches(adapter, support)) {
+      issues.push(
+        issue({
+          code: "runtime_claim_projection_mismatch",
+          providerId: provider.id,
+          providerType: provider.providerType,
+          runtimeId,
+          state: adapter.state,
+          message:
+            `${provider.id} runtimeAdapters.${runtimeId} must be a projection of ` +
+            "support, which is the single runtime-claim authority",
+        }),
+      );
+    }
+    const forbiddenRunClaims = ["selected", "invoked", "completed", "live"].filter(
+      (field) => adapter && Object.hasOwn(adapter, field),
+    );
+    if (forbiddenRunClaims.length > 0) {
+      issues.push(
+        issue({
+          code: "static_selected_claim_forbidden",
+          providerId: provider.id,
+          providerType: provider.providerType,
+          runtimeId,
+          state: forbiddenRunClaims.join(","),
+          message:
+            `${provider.id} cannot persist ${forbiddenRunClaims.join(", ")} in the registry; ` +
+            "selection and execution are run-scoped evidence",
+        }),
+      );
+    }
+    if (!targets || targets.has(runtimeId)) continue;
+    const layerClaims = Object.values(support.installLayers ?? {});
+    const osClaims = Object.values(support.os ?? {});
+    const falselyPositive =
+      support.status !== "blocked" ||
+      support.state !== "blocked_for_execution" ||
+      layerClaims.some((claim) => claim !== "unsupported") ||
+      osClaims.some((claim) => claim !== "unsupported");
+    if (falselyPositive) {
+      issues.push(
+        issue({
+          code: "cross_runtime_claim_without_target",
+          providerId: provider.id,
+          providerType: provider.providerType,
+          runtimeId,
+          state: support.status,
+          message:
+            `${provider.id} is runtime-scoped but claims support for non-target ${runtimeId}; ` +
+            "projection presence cannot prove availability, native support, or live execution",
+        }),
+      );
+    }
+    if (adapter?.activationEvent) {
+      issues.push(
+        issue({
+          code: "cross_runtime_activation_leak",
+          providerId: provider.id,
+          providerType: provider.providerType,
+          runtimeId,
+          state: adapter.state,
+          message: `${provider.id} leaks its target activation event into non-target ${runtimeId}`,
+        }),
+      );
+    }
+  }
+  if (
+    provider.source?.mappings &&
+    JSON.stringify(provider.source.mappings) !== JSON.stringify(provider.mappings)
+  ) {
+    issues.push(
+      issue({
+        code: "source_mapping_projection_mismatch",
+        providerId: provider.id,
+        providerType: provider.providerType,
+        message: `${provider.id} source.mappings must project the canonical mappings block`,
+      }),
+    );
+  }
 }
 
 function validateSupport(provider, issues) {
@@ -205,6 +340,27 @@ function validateSupport(provider, issues) {
           runtimeId,
           state: support.status,
           message: `${provider.id} has invalid status ${support.status} for ${runtimeId}`,
+        }),
+      );
+    }
+    const invalidStateStatusPair =
+      (support.state === "blocked_for_execution" && support.status !== "blocked") ||
+      (support.status === "blocked" && support.state !== "blocked_for_execution") ||
+      (support.state === "degraded" && support.status !== "degraded") ||
+      (support.status === "degraded" && support.state !== "degraded") ||
+      (support.state === "verified" && support.status !== "verified") ||
+      (["runtime_native", "hook_script"].includes(provider.providerType) &&
+        support.status === "verified" &&
+        support.state !== "verified");
+    if (invalidStateStatusPair) {
+      issues.push(
+        issue({
+          code: "inconsistent_state_status",
+          providerId: provider.id,
+          providerType: provider.providerType,
+          runtimeId,
+          state: `${support.state}/${support.status}`,
+          message: `${provider.id} has contradictory state/status for ${runtimeId}`,
         }),
       );
     }
@@ -419,6 +575,26 @@ async function addHookPromptAdapter(filePath, hooksJson, eventName, runtimeId) {
 }
 
 function validateRegistryShape(registry, issues) {
+  const runtimeClaimPolicy = registry.mappingPolicy?.providerRuntimeClaims;
+  const requiredClaimPolicy = {
+    sourceRef: "providers[*].support",
+    required: true,
+    runtimeAdapters: "derived_projection",
+    selection: "run_scoped_only",
+    availability: "support_state_and_install_layers",
+    nativeSupport: "runtime_native_target_only",
+    liveEvidence: "verification_artifact_required",
+  };
+  if (JSON.stringify(runtimeClaimPolicy) !== JSON.stringify(requiredClaimPolicy)) {
+    issues.push(
+      issue({
+        code: "invalid_runtime_claim_policy",
+        message:
+          "provider runtime claims must keep support as the single authority and separate " +
+          "run-scoped selection, availability, native support, and live evidence",
+      }),
+    );
+  }
   for (const type of REQUIRED_PROVIDER_TYPES) {
     if (!registry.providerTypes?.includes(type)) {
       issues.push(issue({ code: "missing_provider_type", message: `providerTypes missing ${type}` }));
@@ -445,6 +621,24 @@ function validateRegistryShape(registry, issues) {
       issues.push(issue({ code: "duplicate_provider", providerId: provider.id, message: `Duplicate provider id ${provider.id}` }));
     }
     ids.add(provider.id);
+    for (const [field, runtimeMap] of [
+      ["runtimeAdapters", provider.runtimeAdapters],
+      ["support.runtimes", provider.support?.runtimes],
+    ]) {
+      for (const runtimeId of Object.keys(runtimeMap ?? {})) {
+        if (!RUNTIMES.includes(runtimeId)) {
+          issues.push(
+            issue({
+              code: "unknown_runtime_claim_key",
+              providerId: provider.id,
+              providerType: provider.providerType,
+              runtimeId,
+              message: `${provider.id} ${field} contains undeclared runtime ${runtimeId}`,
+            }),
+          );
+        }
+      }
+    }
     for (const field of ["sourceOfTruth", "activation", "verification", "risk", "support"]) {
       if (!provider[field]) {
         issues.push(issue({ code: "missing_provider_field", providerId: provider.id, providerType: provider.providerType, message: `${provider.id} missing ${field}` }));
@@ -515,6 +709,7 @@ function validateRegistryShape(registry, issues) {
         );
       }
     }
+    validateRuntimeClaimTruth(provider, issues);
     validateSupport(provider, issues);
   }
 }
