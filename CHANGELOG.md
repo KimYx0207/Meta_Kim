@@ -8,6 +8,18 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.8] - 2026-07-27
+
+### Fixed
+
+- **Full-verification failures no longer erase the evidence that came before them.** Every `meta:verify:all` completion now writes an immutable attempt before updating the compatible `verification-report.json` latest projection. A separate latest-release-grade pointer keeps the exact clean attempt available for release audit even after a later diagnostic or failed run.
+- **Interrupted report writes recover instead of poisoning every later verification.** Attempt and lock ownership become visible only after a complete atomic write. Legacy clean reports are imported on first use, while half-written projections, corrupt attempts, dead locks, and stale locks with a reused PID are preserved as recovery evidence and no longer block the next report.
+- **Concurrent and custom outputs cannot cross-contaminate verification history.** Latest selection uses completion time plus attempt ID instead of lock order, custom report paths own separate histories, Windows path-case aliases and traversal IDs cannot overwrite immutable attempts, and existing release-audit readers remain compatible with the enriched report schema.
+
+### Verification
+
+- Focused crash, migration, concurrency, custom-path, Windows alias, traversal, and exact release-audit regressions cover the storage boundary. Standard release verification, exact package binding, and Claude Code/Codex global setup readback are required before this version is published. Docker, task budgets, and Cursor product execution are not acceptance evidence.
+
 ## [2.9.7] - 2026-07-27
 
 ### Fixed

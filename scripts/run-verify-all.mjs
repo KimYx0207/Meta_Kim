@@ -17,7 +17,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -25,6 +24,10 @@ import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createReportContext } from "./report-context.mjs";
+import {
+  createVerificationAttemptId,
+  writeVerificationReportAttempt,
+} from "./verification-report-history.mjs";
 import {
   PACKED_USER_ACCEPTANCE_EXPECTED_DURATION_MS,
   runPackedUserInstallUpdateAcceptance,
@@ -674,6 +677,7 @@ const reportPath =
   reportIdx >= 0 && args[reportIdx + 1] && !args[reportIdx + 1].startsWith("--")
     ? args[reportIdx + 1]
     : reportContext.resolveStatePath("verification-report.json");
+const verificationAttemptId = createVerificationAttemptId();
 
 if (args.includes("--probe-all-runtime-global-targets")) {
   const probe = runAllRuntimeGlobalInstallUpdateProbe({
@@ -684,9 +688,19 @@ if (args.includes("--probe-all-runtime-global-targets")) {
 }
 
 function writeReport(report) {
-  if (noReport) return;
-  mkdirSync(path.dirname(reportPath), { recursive: true });
-  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  if (noReport) {
+    return {
+      report,
+      recordPath: null,
+      latestReportPath: null,
+      latestReleaseGradePath: null,
+    };
+  }
+  return writeVerificationReportAttempt({
+    report,
+    reportPath,
+    attemptId: verificationAttemptId,
+  });
 }
 
 if (args.includes("--list")) {
@@ -845,7 +859,7 @@ const verificationClaims = computeVerificationClaims({
   packedUserProof,
 });
 const { releaseGrade, liveCertified, liveCertificationStatus } = verificationClaims;
-const report = {
+let report = {
   ok: !failedStage && sourceIntegrity.stable,
   releaseGrade,
   liveCertified,
@@ -892,16 +906,25 @@ const report = {
   failedStage: failedStage?.name ?? null,
   stages: results,
 };
-writeReport(report);
+const reportWrite = writeReport(report);
+report = reportWrite.report;
 
 if (failedStage) {
-  console.error(`  报告：${reportPath}`);
+  console.error(`  本次报告：${reportWrite.recordPath ?? "--no-report"}`);
+  console.error(`  最新报告：${reportWrite.latestReportPath ?? "--no-report"}`);
+  if (reportWrite.latestReleaseGradePath) {
+    console.error(`  最近发布级报告：${reportWrite.latestReleaseGradePath}`);
+  }
   if (jsonMode) console.log(JSON.stringify(report, null, 2));
   console.error(`\n=== verify-all 停在 ${failedStage.name} ===`);
   process.exit(1);
 }
 if (!sourceIntegrity.stable) {
-  console.error(`  报告：${reportPath}`);
+  console.error(`  本次报告：${reportWrite.recordPath ?? "--no-report"}`);
+  console.error(`  最新报告：${reportWrite.latestReportPath ?? "--no-report"}`);
+  if (reportWrite.latestReleaseGradePath) {
+    console.error(`  最近发布级报告：${reportWrite.latestReleaseGradePath}`);
+  }
   if (jsonMode) console.log(JSON.stringify(report, null, 2));
   console.error("\n=== verify-all 源码在验证期间发生变化，不构成 release-grade ===");
   process.exit(1);
@@ -923,7 +946,11 @@ if (startIndex > 0) {
     );
   }
 }
-console.log(`报告：${reportPath}`);
+console.log(`本次报告：${reportWrite.recordPath ?? "--no-report"}`);
+console.log(`最新报告：${reportWrite.latestReportPath ?? "--no-report"}`);
+if (reportWrite.latestReleaseGradePath) {
+  console.log(`最近发布级报告：${reportWrite.latestReleaseGradePath}`);
+}
 }
 
 const isMain = process.argv[1] &&

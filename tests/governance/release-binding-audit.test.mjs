@@ -26,6 +26,7 @@ import {
   sha256,
   writeReleaseBindingAttempt,
 } from "../../scripts/audit-release-binding.mjs";
+import { writeVerificationReportAttempt } from "../../scripts/verification-report-history.mjs";
 
 const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
@@ -163,6 +164,29 @@ function githubPayload(gitFacts, assetSha, assetSize) {
     }],
   };
 }
+
+test("release audit accepts an exact immutable v2 verification attempt", () => {
+  const root = createReleaseRepo();
+  const outputRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-v2-verification-audit-"));
+  try {
+    const gitFacts = collectGitReleaseFacts(root, "v9.9.9");
+    const report = JSON.parse(exactReport(gitFacts).toString("utf8"));
+    const written = writeVerificationReportAttempt({
+      reportPath: path.join(outputRoot, "verification-report.json"),
+      attemptId: "exact-v2-attempt",
+      report,
+    });
+    const verification = readVerificationEvidence(
+      readFileSync(written.recordPath),
+      gitFacts,
+    );
+    assert.equal(verification.exact, true);
+    assert.equal(verification.bindingStatus, "exact_commit_tree");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outputRoot, { recursive: true, force: true });
+  }
+});
 
 function linkDirectoryOrSkip(t, target, linkPath) {
   try {
