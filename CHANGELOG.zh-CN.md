@@ -8,6 +8,18 @@
 
 ## Unreleased
 
+## [2.9.5] - 2026-07-27
+
+### 修复内容
+
+- **`meta:theory:report latest` 现在会说清楚自己选的是哪一种 “latest”。** 命令仍然读取最后一次 committed governed report，合法的 `partial` 报告也会正常打开；但 JSON 摘要新增稳定的 `selection` 区块，明确区分 committed report 指针和当前 active lifecycle run。
+- **当前运行状态不能再静默改写报告读取结果。** active 关系只通过 Meta_Kim canonical status reader 判断；弱格式或坏掉的 `active-run.json` 投影不被信任，自定义报告目录保持隔离，显式 runId 仍精确读取指定的 committed artifact。
+- **Claude Code 和 Codex 的命令说明保持同一边界。** 两端投影都会提示操作者报告 selected run、artifact claim status、active-run relation 与继续命令，同时不得输出任务原文或 task fingerprint。
+
+### 验证
+
+- 标准 `meta:verify:all` 在一次不中断运行中 13/13 全过，覆盖四运行端隔离 install/update、packed 用户与项目 install/update/re-update、全局 Hook、Meta-Theory 1,366 项 0 失败（3 项按设计跳过）、integration，以及 fresh Claude Code/Codex live release fuse。Docker、任务预算和 Cursor 产品执行没有被当作验收正证。
+
 ## [2.9.4] - 2026-07-26
 
 ### 修复内容

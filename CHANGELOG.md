@@ -8,6 +8,18 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.5] - 2026-07-27
+
+### Fixed
+
+- **`meta:theory:report latest` now explains exactly which "latest" it selected.** The command still opens the newest committed governed report, including valid `partial` reports, but the JSON summary now includes a stable `selection` block that distinguishes the committed report pointer from the current active lifecycle run.
+- **Current-run status can no longer silently rewrite report readback.** Repository lifecycle relation is read through the canonical Meta_Kim status reader; weak or invalid `active-run.json` projections stay untrusted, custom report directories remain isolated, and explicit run IDs continue to read the requested committed artifact.
+- **Claude Code and Codex command help now carries the same boundary.** Both projections tell the operator to report the selected run, artifact claim status, active-run relation, and continuation command without exposing task text or task fingerprints.
+
+### Verification
+
+- The standard `meta:verify:all` gate passed all 13 stages in one uninterrupted run, including four-runtime isolated install/update probes, packed user and project install/update/re-update, global Hook checks, 1,366 Meta-Theory tests with zero failures and three declared skips, integration, and fresh Claude Code/Codex live release-fuse evidence. Docker, task budgets, and Cursor product execution were not used as acceptance evidence.
+
 ## [2.9.4] - 2026-07-26
 
 ### Fixed

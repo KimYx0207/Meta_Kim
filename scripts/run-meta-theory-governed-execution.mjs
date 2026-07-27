@@ -63,6 +63,10 @@ import {
 } from "./governed-execution/stage-runner-bridge.mjs";
 import { openDurableRunKernel } from "./governed-execution/durable-run-kernel.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
+import {
+  readMetaRunStatus,
+  sanitizeStateProfile,
+} from "../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -10420,11 +10424,105 @@ async function persistRuntimeEvidenceEvents({ dbPath, runId, runtimeEvidence, wr
   return analytics;
 }
 
+async function readLatestSelectionJsonIfExists(filePath) {
+  const raw = await readTextIfExists(filePath);
+  return raw ? JSON.parse(raw) : null;
+}
+
+function governedExecutionRepoProfile(stateDir) {
+  const relativePath = path.relative(REPO_ROOT, path.resolve(stateDir));
+  if (!relativePath || path.isAbsolute(relativePath)) return null;
+  const segments = relativePath.split(path.sep);
+  if (
+    segments.length !== 4 ||
+    segments[0] !== ".meta-kim" ||
+    segments[1] !== "state" ||
+    segments[3] !== "governed-executions"
+  ) {
+    return null;
+  }
+  const profile = segments[2];
+  return sanitizeStateProfile(profile) === profile ? profile : null;
+}
+
+function activeRunStatusCommand(profile) {
+  return profile !== "default"
+    ? `npm run meta:run-status -- --profile=${profile}`
+    : "npm run meta:run-status";
+}
+
+async function readActiveLifecycleRelation(outputDir, selectedRunId) {
+  const profile = governedExecutionRepoProfile(outputDir);
+  if (!profile) {
+    return {
+      activeRunRelation: "not_checked_custom_output",
+      activeRunId: null,
+      warning: null,
+      continuationMode: "report_only",
+      nextCommand: null,
+    };
+  }
+
+  const activePath = path.join(REPO_ROOT, ".meta-kim", "state", profile, "active-run.json");
+  let currentLifecycle;
+  try {
+    currentLifecycle = await readMetaRunStatus(REPO_ROOT, profile);
+  } catch {
+    return {
+      activeRunRelation: "unknown_invalid_projection",
+      activeRunId: null,
+      warning: "The current lifecycle state could not be validated, so it was not used to relate or replace the selected governed report.",
+      continuationMode: "status_projection_untrusted",
+      nextCommand: activeRunStatusCommand(profile),
+    };
+  }
+
+  if (!currentLifecycle) {
+    const projectionExists = existsSync(activePath);
+    return {
+      activeRunRelation: projectionExists ? "unknown_invalid_projection" : "none",
+      activeRunId: null,
+      warning: projectionExists
+        ? "The current lifecycle state could not be validated, so it was not used to relate or replace the selected governed report."
+        : null,
+      continuationMode: projectionExists ? "status_projection_untrusted" : "no_active_projection",
+      nextCommand: projectionExists ? activeRunStatusCommand(profile) : null,
+    };
+  }
+
+  if (currentLifecycle.active !== true || currentLifecycle.lifecycleStatus !== "active") {
+    return {
+      activeRunRelation: "none",
+      activeRunId: null,
+      warning: null,
+      continuationMode: "no_active_projection",
+      nextCommand: null,
+    };
+  }
+
+  const safeActiveRunId = currentLifecycle.runId;
+  const linked = safeActiveRunId === selectedRunId;
+  return {
+    activeRunRelation: linked ? "same_active_run" : "different_active_run",
+    activeRunId: safeActiveRunId,
+    warning: linked
+      ? null
+      : "The selected governed report is a committed artifact, not the current active lifecycle run. No governed report was fabricated for the active run.",
+    continuationMode: linked ? "selected_report_matches_active" : "inspect_active_lifecycle",
+    nextCommand: activeRunStatusCommand(profile),
+  };
+}
+
+function reportArtifactClaimStatus(artifact) {
+  const status = String(artifact?.status ?? "").trim();
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/u.test(status) ? status : "not_claimed";
+}
+
 async function readLatestRunId(stateDir) {
   const latestPath = path.join(stateDir, "latest.json");
-  const raw = await readTextIfExists(latestPath);
-  if (!raw) return null;
-  const latestRunId = JSON.parse(raw).runId ?? null;
+  const latestRecord = await readLatestSelectionJsonIfExists(latestPath);
+  if (!latestRecord) return null;
+  const latestRunId = latestRecord.runId ?? null;
   return latestRunId == null ? null : validateRunId(latestRunId, "latest.json runId");
 }
 
@@ -12053,7 +12151,12 @@ export async function readGovernedExecutionRun({
   artifactDir = null,
 } = {}) {
   const outputDir = artifactDir ? path.resolve(artifactDir) : stateDir;
-  const effectiveRunId = runId === "latest" || !runId ? await readLatestRunId(outputDir) : runId;
+  const selectionMode = runId === "latest" || !runId
+    ? "latest_committed_governed_report"
+    : "explicit_run";
+  const effectiveRunId = selectionMode === "latest_committed_governed_report"
+    ? await readLatestRunId(outputDir)
+    : runId;
   if (!effectiveRunId) {
     throw new Error("No governed execution run found.");
   }
@@ -12090,11 +12193,28 @@ export async function readGovernedExecutionRun({
     resolveOutputFile(outputDir, `${safeRunId}.zh-CN.md`),
   ].filter(Boolean);
   const markdownPath = candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
+  const activeLifecycleRelation = await readActiveLifecycleRelation(outputDir, safeRunId);
+  const selection = {
+    schemaVersion: "governed-report-selection-v1",
+    selectionSource: selectionMode === "latest_committed_governed_report"
+      ? "latest_committed_pointer"
+      : "explicit_run_id",
+    selectionReason: selectionMode === "latest_committed_governed_report"
+      ? "last_committed_governed_report"
+      : "explicit_committed_run_id",
+    selectionExplanation: selectionMode === "latest_committed_governed_report"
+      ? "latest.json is the atomic pointer to the newest committed governed report; it does not claim to identify the active host run."
+      : "The explicit runId selects that committed governed report directly; it does not claim to identify the active host run.",
+    selectedRunId: safeRunId,
+    artifactClaimStatus: reportArtifactClaimStatus(artifact),
+    ...activeLifecycleRelation,
+  };
   return {
     runId: safeRunId,
     artifact,
     markdown: await fs.readFile(markdownPath, "utf8"),
     paths: { json: jsonPath, markdown: markdownPath },
+    selection,
   };
 }
 
@@ -12265,6 +12385,7 @@ async function main() {
           status: run.artifact.status,
           runId: run.runId,
           report: relative(run.paths.markdown),
+          selection: run.selection,
         },
         null,
         2

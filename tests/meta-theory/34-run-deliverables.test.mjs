@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -1038,6 +1038,110 @@ describe("34 — Meta-theory run deliverables", () => {
       assert.equal(manifest.runId, "test-run-deliverables-cli");
       assert.equal(manifest.files.panelHtml.endsWith("run-panel.html"), true);
       assert.equal(hasLocalAbsolutePath(manifest), false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("report latest never treats an external lookalike state tree as the repository lifecycle", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-report-latest-"));
+    try {
+      const profileDir = path.join(tempDir, ".meta-kim", "state", "default");
+      const executionDir = path.join(profileDir, "governed-executions");
+      await mkdir(executionDir, { recursive: true });
+
+      const committedRunId = "meta-latest-committed-demo";
+      const jsonPath = path.join(executionDir, `${committedRunId}.json`);
+      const markdownPath = path.join(executionDir, `${committedRunId}.zh-CN.md`);
+      await writeFile(
+        jsonPath,
+        `${JSON.stringify(
+          {
+            runId: committedRunId,
+            status: "partial",
+            runReport: {
+              language: "zh-CN",
+              markdownPath: `.meta-kim/state/default/governed-executions/${committedRunId}.zh-CN.md`,
+            },
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      await writeFile(markdownPath, "# committed report\n", "utf8");
+      await writeFile(
+        path.join(executionDir, "latest.json"),
+        `${JSON.stringify(
+          {
+            runId: committedRunId,
+            jsonPath: `.meta-kim/state/default/governed-executions/${committedRunId}.json`,
+            markdownPath: `.meta-kim/state/default/governed-executions/${committedRunId}.zh-CN.md`,
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      await writeFile(
+        path.join(profileDir, "active-run.json"),
+        `${JSON.stringify(
+          {
+            schemaVersion: 2,
+            active: true,
+            runId: "meta-2999-01-01t00-00-00-000z-active-demo",
+            lifecycleStatus: "active",
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+
+      const latestCommitted = spawnSync(
+        process.execPath,
+        [
+          "scripts/run-meta-theory-governed-execution.mjs",
+          "--read",
+          "latest",
+          "--state-dir",
+          executionDir,
+        ],
+        { cwd: process.cwd(), encoding: "utf8" },
+      );
+      assert.equal(latestCommitted.status, 0, latestCommitted.stderr);
+      const latestSummary = JSON.parse(latestCommitted.stdout);
+      assert.equal(latestSummary.runId, committedRunId);
+      assert.equal(latestSummary.status, "partial");
+      assert.equal(latestSummary.selection.selectionSource, "latest_committed_pointer");
+      assert.equal(
+        latestSummary.selection.selectionReason,
+        "last_committed_governed_report",
+      );
+      assert.match(latestSummary.selection.selectionExplanation, /latest\.json/u);
+      assert.equal(latestSummary.selection.activeRunRelation, "not_checked_custom_output");
+      assert.equal(latestSummary.selection.activeRunId, null);
+      assert.equal(latestSummary.selection.continuationMode, "report_only");
+      assert.equal(latestSummary.selection.nextCommand, null);
+
+      const explicitHistoricalReport = spawnSync(
+        process.execPath,
+        [
+          "scripts/run-meta-theory-governed-execution.mjs",
+          "--read",
+          committedRunId,
+          "--state-dir",
+          executionDir,
+        ],
+        { cwd: process.cwd(), encoding: "utf8" },
+      );
+      assert.equal(explicitHistoricalReport.status, 0, explicitHistoricalReport.stderr);
+      const summary = JSON.parse(explicitHistoricalReport.stdout);
+      assert.equal(summary.runId, committedRunId);
+      assert.equal(summary.status, "partial");
+      assert.equal(summary.selection.selectionSource, "explicit_run_id");
+      assert.equal(summary.selection.selectionReason, "explicit_committed_run_id");
+      assert.match(summary.selection.selectionExplanation, /explicit runId/u);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

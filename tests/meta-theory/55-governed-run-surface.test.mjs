@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -15,6 +15,18 @@ import {
   getGovernedRunSurfaceLabels,
   resolveOutputLanguage,
 } from "../../scripts/meta-kim-i18n.mjs";
+import {
+  createInitialState,
+  createMetaRunStatusEnvelope,
+  writeSpineState,
+} from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+
+let reportProfileSequence = 0;
+
+function createRepoReportProfile(label) {
+  reportProfileSequence += 1;
+  return `report-${label}-${process.pid}-${reportProfileSequence}`;
+}
 
 function loadPrivatePresentationClassifier() {
   const source = readFileSync(
@@ -29,6 +41,37 @@ function loadPrivatePresentationClassifier() {
     "getGovernedRunSurfaceLabels",
     `${functionSource}; return buildCapabilityInvocationPresentation;`,
   )(getGovernedRunSurfaceLabels);
+}
+
+async function writeGovernedReportFixture(outputDir, {
+  runId,
+  status = "partial",
+  language = "en",
+  task = "fixture task that must not appear in report selection metadata",
+  taskFingerprint = "fixture-fingerprint-that-must-not-appear",
+  latest = false,
+} = {}) {
+  await mkdir(outputDir, { recursive: true });
+  const markdownName = `${runId}.${language}.md`;
+  await writeFile(
+    path.join(outputDir, `${runId}.json`),
+    `${JSON.stringify({
+      runId,
+      status,
+      task,
+      taskFingerprint,
+      runReport: { language, markdownPath: markdownName },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(path.join(outputDir, markdownName), `# ${runId}\n`, "utf8");
+  if (latest) {
+    await writeFile(
+      path.join(outputDir, "latest.json"),
+      `${JSON.stringify({ runId, jsonPath: `${runId}.json`, markdownPath: markdownName }, null, 2)}\n`,
+      "utf8",
+    );
+  }
 }
 
 describe("55 - governed run identity, language, and chat surface", () => {
@@ -758,6 +801,229 @@ describe("55 - governed run identity, language, and chat surface", () => {
       );
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("report selection distinguishes the newest committed pointer, partial claim, and explicit run", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-report-selection-"));
+    try {
+      await writeGovernedReportFixture(tempDir, {
+        runId: "older-committed-run",
+        status: "pass",
+      });
+      await writeGovernedReportFixture(tempDir, {
+        runId: "newest-committed-run",
+        status: "partial",
+        latest: true,
+      });
+
+      const latest = await readGovernedExecutionRun({ runId: "latest", stateDir: tempDir });
+      assert.equal(latest.runId, "newest-committed-run");
+      assert.equal(latest.artifact.status, "partial");
+      assert.deepEqual(latest.selection, {
+        schemaVersion: "governed-report-selection-v1",
+        selectionSource: "latest_committed_pointer",
+        selectionReason: "last_committed_governed_report",
+        selectionExplanation: "latest.json is the atomic pointer to the newest committed governed report; it does not claim to identify the active host run.",
+        selectedRunId: "newest-committed-run",
+        artifactClaimStatus: "partial",
+        activeRunRelation: "not_checked_custom_output",
+        activeRunId: null,
+        warning: null,
+        continuationMode: "report_only",
+        nextCommand: null,
+      });
+
+      const explicit = await readGovernedExecutionRun({
+        runId: "older-committed-run",
+        stateDir: tempDir,
+      });
+      assert.equal(explicit.runId, "older-committed-run");
+      assert.equal(explicit.selection.selectionSource, "explicit_run_id");
+      assert.equal(explicit.selection.selectionReason, "explicit_committed_run_id");
+      assert.match(explicit.selection.selectionExplanation, /explicit runId/u);
+      assert.equal(explicit.selection.artifactClaimStatus, "pass");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("latest returns an unlinked active lifecycle warning without disclosing task identity", async () => {
+    const profile = createRepoReportProfile("active-relation");
+    const profileDir = path.join(process.cwd(), ".meta-kim", "state", profile);
+    try {
+      const executionDir = path.join(profileDir, "governed-executions");
+      const committedSecret = "committed task secret must remain private";
+      const fingerprintSecret = `hmac-sha256:${"a".repeat(64)}`;
+      await writeGovernedReportFixture(executionDir, {
+        runId: "committed-report-run",
+        status: "partial",
+        task: committedSecret,
+        taskFingerprint: "private-committed-fingerprint",
+        latest: true,
+      });
+      const activeState = createInitialState({
+        taskFingerprint: fingerprintSecret,
+        taskIdentitySource: "project_profile_hmac_sha256",
+        taskClassification: "report_selection_fixture",
+        triggerReason: "test_fixture",
+      });
+      activeState.stateProfile = profile;
+      await writeSpineState(process.cwd(), activeState);
+
+      const run = await readGovernedExecutionRun({ runId: "latest", stateDir: executionDir });
+      assert.equal(run.runId, "committed-report-run");
+      assert.equal(run.selection.activeRunRelation, "different_active_run");
+      assert.equal(run.selection.activeRunId, activeState.runId);
+      assert.match(run.selection.warning, /committed artifact/u);
+      assert.equal(
+        run.selection.nextCommand,
+        `npm run meta:run-status -- --profile=${profile}`,
+      );
+      assert.equal(run.selection.continuationMode, "inspect_active_lifecycle");
+
+      const cli = spawnSync(
+        process.execPath,
+        [
+          "scripts/run-meta-theory-governed-execution.mjs",
+          "--read",
+          "latest",
+          "--state-dir",
+          executionDir,
+        ],
+        { cwd: process.cwd(), encoding: "utf8" },
+      );
+      assert.equal(cli.status, 0, cli.stderr);
+      const summary = JSON.parse(cli.stdout);
+      assert.equal(summary.status, "partial");
+      assert.equal(summary.selection.activeRunRelation, "different_active_run");
+      const publicSelection = JSON.stringify(summary.selection);
+      assert.doesNotMatch(publicSelection, new RegExp(committedSecret));
+      assert.doesNotMatch(publicSelection, new RegExp(fingerprintSecret));
+      assert.equal("task" in summary.selection, false);
+      assert.equal("taskFingerprint" in summary.selection, false);
+    } finally {
+      await rm(profileDir, { recursive: true, force: true });
+    }
+  });
+
+  test("artifact-dir remains authoritative and does not consult state-dir active lifecycle state", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-report-artifact-authority-"));
+    try {
+      const profileDir = path.join(tempDir, ".meta-kim", "state", "default");
+      const stateDir = path.join(profileDir, "governed-executions");
+      const artifactDir = path.join(tempDir, "custom-artifacts");
+      await mkdir(profileDir, { recursive: true });
+      await writeFile(
+        path.join(profileDir, "active-run.json"),
+        `${JSON.stringify({ active: true, runId: "unrelated-default-active-run" })}\n`,
+        "utf8",
+      );
+      await writeGovernedReportFixture(artifactDir, {
+        runId: "custom-artifact-run",
+        latest: true,
+      });
+
+      const run = await readGovernedExecutionRun({
+        runId: "latest",
+        stateDir,
+        artifactDir,
+      });
+      assert.equal(run.runId, "custom-artifact-run");
+      assert.equal(run.selection.activeRunRelation, "not_checked_custom_output");
+      assert.equal(run.selection.activeRunId, null);
+      assert.doesNotMatch(JSON.stringify(run.selection), /unrelated-default-active-run/u);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("missing or invalid active lifecycle state cannot block a valid committed report", async () => {
+    const profile = createRepoReportProfile("active-failsafe");
+    const profileDir = path.join(process.cwd(), ".meta-kim", "state", profile);
+    try {
+      const executionDir = path.join(profileDir, "governed-executions");
+      await writeGovernedReportFixture(executionDir, {
+        runId: "failsafe-committed-run",
+        latest: true,
+      });
+
+      const missing = await readGovernedExecutionRun({ runId: "latest", stateDir: executionDir });
+      assert.equal(missing.runId, "failsafe-committed-run");
+      assert.equal(missing.selection.activeRunRelation, "none");
+      assert.equal(missing.selection.continuationMode, "no_active_projection");
+      assert.equal(missing.selection.nextCommand, null);
+
+      await writeFile(path.join(profileDir, "active-run.json"), "{not-json\n", "utf8");
+      const invalid = await readGovernedExecutionRun({ runId: "latest", stateDir: executionDir });
+      assert.equal(invalid.runId, "failsafe-committed-run");
+      assert.equal(invalid.selection.activeRunRelation, "unknown_invalid_projection");
+      assert.equal(invalid.selection.activeRunId, null);
+      assert.match(invalid.selection.warning, /could not be validated/u);
+      assert.equal(
+        invalid.selection.nextCommand,
+        `npm run meta:run-status -- --profile=${profile}`,
+      );
+    } finally {
+      await rm(profileDir, { recursive: true, force: true });
+    }
+  });
+
+  test("weak or lifecycle-inconsistent active projections stay untrusted and never block partial reports", async () => {
+    const profile = createRepoReportProfile("active-weak");
+    const profileDir = path.join(process.cwd(), ".meta-kim", "state", profile);
+    try {
+      const executionDir = path.join(profileDir, "governed-executions");
+      await writeGovernedReportFixture(executionDir, {
+        runId: "weak-projection-committed-run",
+        status: "partial",
+        latest: true,
+      });
+
+      await writeFile(
+        path.join(profileDir, "active-run.json"),
+        `${JSON.stringify({ active: true, runId: "meta-weak-active-run" })}\n`,
+        "utf8",
+      );
+      const weak = await readGovernedExecutionRun({ runId: "latest", stateDir: executionDir });
+      assert.equal(weak.runId, "weak-projection-committed-run");
+      assert.equal(weak.artifact.status, "partial");
+      assert.equal(weak.selection.activeRunRelation, "unknown_invalid_projection");
+      assert.equal(weak.selection.activeRunId, null);
+
+      const inconsistent = createMetaRunStatusEnvelope({
+        active: true,
+        runId: "meta-inconsistent-active-run",
+        taskClassification: "report_selection_fixture",
+        triggerReason: "test_fixture",
+        currentStage: "execution",
+      });
+      inconsistent.lifecycleStatus = "session_stopped";
+      await writeFile(
+        path.join(profileDir, "active-run.json"),
+        `${JSON.stringify(inconsistent)}\n`,
+        "utf8",
+      );
+      const cli = spawnSync(
+        process.execPath,
+        [
+          "scripts/run-meta-theory-governed-execution.mjs",
+          "--read",
+          "latest",
+          "--state-dir",
+          executionDir,
+        ],
+        { cwd: process.cwd(), encoding: "utf8" },
+      );
+      assert.equal(cli.status, 0, cli.stderr);
+      const summary = JSON.parse(cli.stdout);
+      assert.equal(summary.status, "partial");
+      assert.equal(summary.runId, "weak-projection-committed-run");
+      assert.equal(summary.selection.activeRunRelation, "unknown_invalid_projection");
+      assert.equal(summary.selection.activeRunId, null);
+      assert.doesNotMatch(JSON.stringify(summary.selection), /meta-inconsistent-active-run/u);
+    } finally {
+      await rm(profileDir, { recursive: true, force: true });
     }
   });
 
