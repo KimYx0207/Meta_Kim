@@ -710,6 +710,20 @@ const projectRuntimeCapabilityProviders = [
   const bPs = typeof b?.id === "string" && b.id.startsWith("package-script:") ? 0 : 1;
   return aPs - bPs;
 });
+
+function selectProjectRuntimeCapabilityEvidence(providers, limit = 80) {
+  const evidencePriority = (provider) => {
+    if (provider?.source === "project_runtime_hook_config_inventory") return 0;
+    if (provider?.source === "project_runtime_mcp_inventory") return 1;
+    if (["rules", "prompts", "skills"].includes(provider?.type)) return 2;
+    if (provider?.type === "hooks") return 3;
+    if (typeof provider?.id === "string" && provider.id.startsWith("package-script:")) return 5;
+    return 4;
+  };
+  return [...providers]
+    .sort((a, b) => evidencePriority(a) - evidencePriority(b))
+    .slice(0, limit);
+}
 const localGlobalCapabilityProvidersAll = ["skills", "commands", "hooks", "plugins", "mcpServers", "mcpTools", "rules", "prompts"].flatMap((type) =>
   capabilityEntries(globalCapabilityInventory, type)
     .map((entry) => compactCapabilityProvider(entry, `local_global_${type}_inventory`, type)),
@@ -963,7 +977,10 @@ const ownerDiscoveryPacket = {
   projectRuntimeSkillProviders: projectRuntimeSkillProviders.slice(0, 40),
   localGlobalSkillProviders,
   repoCanonicalCapabilityProviders: repoCanonicalCapabilityProviders.slice(0, 60),
-  projectRuntimeCapabilityProviders: projectRuntimeCapabilityProviders.slice(0, 80),
+  projectRuntimeCapabilityProviders: selectProjectRuntimeCapabilityEvidence(
+    projectRuntimeCapabilityProviders,
+    80,
+  ),
   localGlobalCapabilityProviders,
   runtimeToolProviders: runtimeToolProviders.slice(0, 40),
   capabilityProviderCoverage,
