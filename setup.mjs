@@ -53,7 +53,10 @@ import {
   resolveProfileName,
   toRepoRelative,
 } from "./scripts/meta-kim-local-state.mjs";
-import { recordSetupRuntimeExecutableBindings } from "./scripts/runtime-executable-binding.mjs";
+import {
+  recordSetupRuntimeExecutableBindings,
+  resolveSetupRuntimeLaunchInventoryRoots,
+} from "./scripts/runtime-executable-binding.mjs";
 import {
   detectPython310,
   extractPipShowVersion,
@@ -5346,10 +5349,13 @@ function refreshGlobalCapabilityInventory(activeTargets = []) {
 function refreshRuntimeExecutableBindings(activeTargets, installScope, deployDirs = []) {
   const selected = activeTargets.filter((target) => ["claude", "codex"].includes(target));
   if (selected.length === 0) return true;
-  const roots = installScope === "global"
-    ? [homedir(), ...deployDirs]
-    : (deployDirs.length > 0 ? deployDirs : [CALLER_CWD]);
   try {
+    const roots = resolveSetupRuntimeLaunchInventoryRoots({
+      installScope,
+      deployments: deployDirs,
+      homeRoot: homedir(),
+      callerCwd: CALLER_CWD,
+    });
     recordSetupRuntimeExecutableBindings({
       roots,
       profile: resolveProfileName(process.env.META_KIM_PROFILE),

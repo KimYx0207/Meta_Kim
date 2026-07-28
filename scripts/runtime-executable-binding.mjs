@@ -228,6 +228,36 @@ function atomicWriteJson(filePath, value) {
   renameSync(temporary, filePath);
 }
 
+export function resolveSetupRuntimeLaunchInventoryRoots({
+  installScope,
+  deployments = [],
+  homeRoot = os.homedir(),
+  callerCwd = process.cwd(),
+} = {}) {
+  if (!["global", "project"].includes(installScope)) {
+    throw new Error("runtime launch inventory install scope is invalid");
+  }
+  const deploymentRoots = deployments.map((candidate) =>
+    typeof candidate === "string" ? candidate : candidate?.targetDir,
+  );
+  const candidates = installScope === "global"
+    ? [homeRoot, ...deploymentRoots]
+    : (deploymentRoots.length > 0 ? deploymentRoots : [callerCwd]);
+  const seen = new Set();
+  const roots = [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !path.isAbsolute(candidate)) {
+      throw new Error("runtime launch inventory root must be absolute");
+    }
+    const resolved = path.resolve(candidate);
+    const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    roots.push(resolved);
+  }
+  return roots;
+}
+
 export function recordSetupRuntimeExecutableBindings({
   roots,
   profile = "default",

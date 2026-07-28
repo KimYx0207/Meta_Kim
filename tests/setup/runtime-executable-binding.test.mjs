@@ -8,6 +8,7 @@ import {
   loadSetupBoundRuntimeExecutable,
   readSetupRuntimeLaunchInventory,
   recordSetupRuntimeExecutableBindings,
+  resolveSetupRuntimeLaunchInventoryRoots,
 } from "../../scripts/runtime-executable-binding.mjs";
 import { installStep, summarizeInstallStatus } from "../../scripts/install-status-semantics.mjs";
 
@@ -96,6 +97,45 @@ test("fresh install/update binding recorder refreshes selected runtimes and pres
     const updated = JSON.parse(readFileSync(manifestPath, "utf8"));
     assert.deepEqual(updated.bindings.claude_code, retainedClaude);
     assert.notEqual(updated.bindings.codex.launchDescriptor.launcher.sha256, installed.bindings.codex.launchDescriptor.launcher.sha256);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("setup binding roots accept managed deployment records and remain absolute", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-binding-roots-"));
+  const homeRoot = path.join(root, "home");
+  const projectRoot = path.join(root, "project");
+  mkdirSync(homeRoot);
+  mkdirSync(projectRoot);
+  try {
+    assert.deepEqual(
+      resolveSetupRuntimeLaunchInventoryRoots({
+        installScope: "global",
+        deployments: [{ targetDir: projectRoot, activeTargets: ["claude", "codex"] }],
+        homeRoot,
+        callerCwd: projectRoot,
+      }),
+      [homeRoot, projectRoot],
+    );
+    assert.deepEqual(
+      resolveSetupRuntimeLaunchInventoryRoots({
+        installScope: "project",
+        deployments: [],
+        homeRoot,
+        callerCwd: projectRoot,
+      }),
+      [projectRoot],
+    );
+    assert.throws(
+      () => resolveSetupRuntimeLaunchInventoryRoots({
+        installScope: "global",
+        deployments: [{ targetDir: "relative-project" }],
+        homeRoot,
+        callerCwd: projectRoot,
+      }),
+      /root must be absolute/u,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
