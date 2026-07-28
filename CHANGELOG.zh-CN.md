@@ -8,6 +8,17 @@
 
 ## Unreleased
 
+## [2.9.12] - 2026-07-28
+
+### 修复内容
+
+- **上下文工程预算不再在宿主尚未观察和测量时提前通过。** 默认 governed run 会保持 `partial`，直到 runtime 证明实际加载的固定/可变上下文、给出有限非负的输入 token 数、完成重复/冲突/遗漏检查，并把每条已观察 source 绑定到证据。缺失测量现在会形成明确 blocker，不再被硬编码成 `pass`。
+- **所有 public-ready 验证入口现在消费同一份上下文真值。** 通用 run-artifact validator 与 strict intent validator 都会拒绝缺包、partial、blocked、未测量、未观察或缺少证据引用的 context budget。top-level 与 `coreLoop` 副本必须一致，成功的嵌套包不能遮蔽失败副本；非 public-ready 运行仍可省略该包。
+
+### 验证
+
+- 定向 public-ready/context-budget 回归覆盖通用 validator、strict validator、governed runner、产品目标路径、有效 fixtures 和 top-level/`coreLoop` 遮蔽反例；correctness、completeness、collision 三路独立 Review 已接受最终隔离 diff。只有标准完整发布门和发布后的精确包绑定都通过后才发布本版本；Graphify、Docker、任务预算、Cursor 产品执行和可选 live certification 不从定向检查中推断。
+
 ## [2.9.11] - 2026-07-28
 
 ### 修复内容

@@ -8,6 +8,17 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.12] - 2026-07-28
+
+### Fixed
+
+- **Context-engineering budgets no longer pass before the host has observed or measured them.** The default governed run stays partial until the runtime proves the loaded fixed and variable context, reports a finite nonnegative input-token count, completes duplicate/conflict/omission checks, and binds every observed source to evidence. Missing measurements now become explicit blockers instead of a hard-coded pass.
+- **Every public-ready validation path now consumes the same context truth.** The generic run-artifact validator and strict intent validator reject missing, partial, blocked, unmeasured, unobserved, or evidence-free context budgets. Top-level and `coreLoop` copies must agree, so a successful nested packet cannot hide a failing peer. Non-public-ready runs remain allowed to omit the packet.
+
+### Verification
+
+- Targeted public-ready and context-budget regressions cover the generic validator, strict validator, governed runner, product-goal flow, valid fixtures, and top-level/`coreLoop` masking counterexamples. Three independent correctness, completeness, and collision reviews accepted the final isolated diff. Standard full release verification and exact post-publication package binding are required before this version is published; Graphify, Docker, task budgets, Cursor product execution, and optional live certification are not inferred from the targeted checks.
+
 ## [2.9.11] - 2026-07-28
 
 ### Fixed
