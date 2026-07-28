@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-28T10:56:47.724Z",
+  "generatedAt": "2026-07-28T11:19:23.763Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -22,7 +22,7 @@
     "totalSkills": 17,
     "totalHooks": 24,
     "totalMcpServers": 1,
-    "totalMcpTools": 1,
+    "totalMcpTools": 6,
     "totalPlugins": 4,
     "totalCommands": 7,
     "countSemantics": {
@@ -648,8 +648,48 @@
       }
     },
     "mcpTools": {
-      "repo:repo-mcp:meta-kim-runtime:tools-unlisted": {
-        "id": "meta-kim-runtime:tools-unlisted",
+      "repo:repo-mcp:meta-kim-runtime:list_meta_agents": {
+        "id": "meta-kim-runtime:list_meta_agents",
+        "type": "mcpTools",
+        "namespace": "repo-mcp",
+        "path": "canonical/runtime-assets/claude/mcp.json",
+        "size": 207,
+        "modified": "2026-07-28T09:36:32.525Z"
+      },
+      "repo:repo-mcp:meta-kim-runtime:get_meta_agent": {
+        "id": "meta-kim-runtime:get_meta_agent",
+        "type": "mcpTools",
+        "namespace": "repo-mcp",
+        "path": "canonical/runtime-assets/claude/mcp.json",
+        "size": 207,
+        "modified": "2026-07-28T09:36:32.525Z"
+      },
+      "repo:repo-mcp:meta-kim-runtime:get_meta_runtime_capabilities": {
+        "id": "meta-kim-runtime:get_meta_runtime_capabilities",
+        "type": "mcpTools",
+        "namespace": "repo-mcp",
+        "path": "canonical/runtime-assets/claude/mcp.json",
+        "size": 207,
+        "modified": "2026-07-28T09:36:32.525Z"
+      },
+      "repo:repo-mcp:meta-kim-runtime:get_meta_runtime_evidence": {
+        "id": "meta-kim-runtime:get_meta_runtime_evidence",
+        "type": "mcpTools",
+        "namespace": "repo-mcp",
+        "path": "canonical/runtime-assets/claude/mcp.json",
+        "size": 207,
+        "modified": "2026-07-28T09:36:32.525Z"
+      },
+      "repo:repo-mcp:meta-kim-runtime:get_meta_effective_runtime_capabilities": {
+        "id": "meta-kim-runtime:get_meta_effective_runtime_capabilities",
+        "type": "mcpTools",
+        "namespace": "repo-mcp",
+        "path": "canonical/runtime-assets/claude/mcp.json",
+        "size": 207,
+        "modified": "2026-07-28T09:36:32.525Z"
+      },
+      "repo:repo-mcp:meta-kim-runtime:dispatch_meta_agent": {
+        "id": "meta-kim-runtime:dispatch_meta_agent",
         "type": "mcpTools",
         "namespace": "repo-mcp",
         "path": "canonical/runtime-assets/claude/mcp.json",
