@@ -921,6 +921,19 @@ export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, ta
   return { evidenceClass: "read_only_advisory_snapshot", observedInCurrentRun: false, executionAuthority: false, count: copied.length, bindings: copied };
 }
 
+export function assertPackedAdvisoryEffectiveMatrix(actualMatrix, expectedMatrix, effectiveState) {
+  assertExactRuntimeCapabilityMatrix(
+    effectiveState.baselineMatrix,
+    expectedMatrix,
+    "packed MCP advisory baseline matrix",
+  );
+  return assertExactRuntimeCapabilityMatrix(
+    actualMatrix,
+    effectiveState.effectiveMatrix,
+    "packed MCP advisory effective matrix",
+  );
+}
+
 function probePackedMcpTransport(server, context, timeoutMs, { projectCwd = context.roots.ordinaryCwd, expectedObservationCount = 10 } = {}) {
   const requests = [
     {
@@ -1015,7 +1028,16 @@ function probePackedMcpTransport(server, context, timeoutMs, { projectCwd = cont
   if (effectivePayload.executionAuthority !== false || effectivePayload.observedInCurrentRun !== false || effectivePayload.currentHostAdapter !== "unavailable_over_mcp_resource_read") {
     throw new Error("packed MCP advisory readback incorrectly exposed current-run execution authority");
   }
-  assertExactRuntimeCapabilityMatrix(effectivePayload.matrix, expectedMatrix, "packed MCP advisory effective matrix");
+  const expectedEffectiveState = loadEffectiveRuntimeCapabilityClaims({
+    packageRoot: context.descriptor.installedPackageRoot,
+    projectRoot: projectCwd,
+    profile: "default",
+  });
+  assertPackedAdvisoryEffectiveMatrix(
+    effectivePayload.matrix,
+    expectedMatrix,
+    expectedEffectiveState,
+  );
   if (!Array.isArray(effectivePayload.results) || !Array.isArray(effectivePayload.missing) || effectivePayload.results.length !== expectedObservationCount || effectivePayload.missing.length !== 10 - expectedObservationCount) {
     throw new Error("packed MCP effective status did not return the exact results/missing partition");
   }

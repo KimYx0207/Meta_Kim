@@ -15,6 +15,7 @@ import test from "node:test";
 import {
   PACKED_GLOBAL_AGENT_TARGETS,
   PACKED_USER_TARGETS,
+  assertPackedAdvisoryEffectiveMatrix,
   durableMcpDefinitionMatches,
   runInstalledPublicCli,
   selectHistoricalUpdateRef,
@@ -43,6 +44,46 @@ const coreLoopReleaseEvidenceSource = readFileSync(
   "utf8",
 );
 const setupSource = readFileSync("setup.mjs", "utf8");
+
+test("packed advisory MCP compares the effective overlay without weakening canonical baseline truth", () => {
+  const baselineMatrix = JSON.parse(
+    readFileSync("config/runtime-capability-matrix.json", "utf8"),
+  );
+  const effectiveMatrix = structuredClone(baselineMatrix);
+  effectiveMatrix.platforms[0].capabilities[0].claimsByMode.interactive_host.acceptanceState =
+    "observed_advisory";
+  const state = { baselineMatrix, effectiveMatrix };
+
+  assert.equal(
+    assertPackedAdvisoryEffectiveMatrix(
+      effectiveMatrix,
+      baselineMatrix,
+      state,
+    ),
+    effectiveMatrix,
+  );
+  assert.throws(
+    () =>
+      assertPackedAdvisoryEffectiveMatrix(
+        baselineMatrix,
+        baselineMatrix,
+        state,
+      ),
+    /packed MCP advisory effective matrix does not exactly match/u,
+  );
+
+  const driftedBaseline = structuredClone(baselineMatrix);
+  driftedBaseline.version = `${baselineMatrix.version}-drift`;
+  assert.throws(
+    () =>
+      assertPackedAdvisoryEffectiveMatrix(
+        effectiveMatrix,
+        driftedBaseline,
+        state,
+      ),
+    /packed MCP advisory baseline matrix does not exactly match/u,
+  );
+});
 const syncManifest = JSON.parse(readFileSync("config/sync.json", "utf8"));
 const runtimeProfiles = resolveRuntimeProfilesFromManifest(syncManifest);
 
