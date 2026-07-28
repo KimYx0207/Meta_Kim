@@ -663,6 +663,164 @@ describe("validate-run-artifact.mjs", () => {
     );
   });
 
+  test("rejects any public-ready claim without contextEngineeringBudget", async (t) => {
+    const tempFixture = await writeTempFixture(t, (artifact) => {
+      delete artifact.contextEngineeringBudget;
+    });
+    await assert.rejects(
+      execFileAsync(
+        "node",
+        ["scripts/validate-run-artifact.mjs", tempFixture],
+        { cwd: REPO_ROOT },
+      ),
+      /requires contextEngineeringBudget/,
+    );
+  });
+
+  test("allows non-public-ready runs to omit contextEngineeringBudget", async (t) => {
+    const tempFixture = await writeTempFixture(t, (artifact) => {
+      delete artifact.contextEngineeringBudget;
+      artifact.runHeader.publicReady = false;
+      artifact.summaryPacket.publicReady = false;
+      artifact.summaryPacket.blockedBy = ["context engineering evidence not attached"];
+      artifact.publicReadyDecision.publicReady = false;
+      artifact.publicReadyDecision.status = "partial";
+      artifact.compactionPacket.summaryDelta.publicReady = false;
+      artifact.compactionPacket.summaryDelta.blockedBy = [
+        "context engineering evidence not attached",
+      ];
+    });
+    const result = await validateFixture(tempFixture);
+    assert.equal(result.ok, true);
+    assert.equal(
+      result.validatedPackets.includes("contextEngineeringBudget"),
+      false,
+      "context budget must remain outside protocolFirst.requiredPackets",
+    );
+  });
+
+  test("rejects public-ready context budgets with non-pass status or blockers", async (t) => {
+    for (const testCase of [
+      {
+        name: "non-pass status",
+        mutate: (context) => {
+          context.status = "partial";
+        },
+        expected: /contextEngineeringBudget\.status=pass/,
+      },
+      {
+        name: "nonempty blockedBy",
+        mutate: (context) => {
+          context.blockedBy = ["host_context_load_not_observed"];
+        },
+        expected: /contextEngineeringBudget\.blockedBy to be empty/,
+      },
+    ]) {
+      const tempFixture = await writeTempFixture(t, (artifact) => {
+        testCase.mutate(artifact.contextEngineeringBudget);
+      });
+      await assert.rejects(
+        execFileAsync(
+          "node",
+          ["scripts/validate-run-artifact.mjs", tempFixture],
+          { cwd: REPO_ROOT },
+        ),
+        testCase.expected,
+        testCase.name,
+      );
+    }
+  });
+
+  test("rejects every incomplete public-ready context measurement", async (t) => {
+    for (const testCase of [
+      {
+        field: "hostObservedContextLoad",
+        value: false,
+        expected: /hostObservedContextLoad=true/,
+      },
+      {
+        field: "actualInputTokens",
+        value: -1,
+        expected: /actualInputTokens.*finite nonnegative number/,
+      },
+      {
+        field: "duplicateRuleScanStatus",
+        value: "not_run",
+        expected: /duplicateRuleScanStatus=pass/,
+      },
+      {
+        field: "conflictingRuleScanStatus",
+        value: "not_run",
+        expected: /conflictingRuleScanStatus=pass/,
+      },
+      {
+        field: "omissionVerificationStatus",
+        value: "not_verified",
+        expected: /omissionVerificationStatus=pass/,
+      },
+    ]) {
+      const tempFixture = await writeTempFixture(t, (artifact) => {
+        artifact.contextEngineeringBudget.measurement[testCase.field] =
+          testCase.value;
+      });
+      await assert.rejects(
+        execFileAsync(
+          "node",
+          ["scripts/validate-run-artifact.mjs", tempFixture],
+          { cwd: REPO_ROOT },
+        ),
+        testCase.expected,
+        testCase.field,
+      );
+    }
+  });
+
+  test("rejects unobserved or unbound public-ready context sources", async (t) => {
+    for (const testCase of [
+      {
+        name: "unobserved evidence state",
+        mutate: (context) => {
+          context.fixedContext[0].evidenceState = "declared_not_host_observed";
+        },
+        expected: /evidenceState.*host_observed_as_model_context/,
+      },
+      {
+        name: "missing evidence ref",
+        mutate: (context) => {
+          delete context.variableContext[0].evidenceRef;
+        },
+        expected: /evidenceRef/,
+      },
+    ]) {
+      const tempFixture = await writeTempFixture(t, (artifact) => {
+        testCase.mutate(artifact.contextEngineeringBudget);
+      });
+      await assert.rejects(
+        execFileAsync(
+          "node",
+          ["scripts/validate-run-artifact.mjs", tempFixture],
+          { cwd: REPO_ROOT },
+        ),
+        testCase.expected,
+        testCase.name,
+      );
+    }
+  });
+
+  test("rejects public-ready decisions without matching context fields", async (t) => {
+    const tempFixture = await writeTempFixture(t, (artifact) => {
+      delete artifact.publicReadyDecision.contextEngineeringBudgetStatus;
+    });
+    await assert.rejects(
+      execFileAsync(
+        "node",
+        ["scripts/validate-run-artifact.mjs", tempFixture],
+        { cwd: REPO_ROOT },
+      ),
+      /publicReadyDecision\.contextEngineeringBudgetStatus must match/,
+    );
+  });
+
   test("rejects compaction packets that drop open findings", async () => {
     await assert.rejects(
       execFileAsync(

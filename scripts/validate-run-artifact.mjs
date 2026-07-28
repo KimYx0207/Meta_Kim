@@ -4598,12 +4598,112 @@ function validateNestedPacketConsistency(artifact, packetName) {
   );
 }
 
-function validateCoreLoopPublicReadyConsistency(artifact) {
+function validateContextEngineeringBudgetForPublicReady(contract, artifact, claims) {
+  const policy =
+    contract.runDiscipline?.runArtifactValidation
+      ?.contextEngineeringBudgetPublicReadyPolicy;
+  ensure(
+    policy?.enabled === true,
+    "runArtifactValidation.contextEngineeringBudgetPublicReadyPolicy must be enabled.",
+  );
+
+  const claimNames = claims.map(([name]) => name).join(", ");
+  const packetName = policy.packet;
+  const contextBudget = nestedPacket(artifact, packetName);
+  ensure(
+    contextBudget && typeof contextBudget === "object",
+    `${claimNames} requires ${packetName}.`,
+  );
+  ensure(
+    contextBudget[policy.statusField] === policy.requiredStatus,
+    `${claimNames} requires ${packetName}.${policy.statusField}=${policy.requiredStatus}.`,
+  );
+
+  const blockedBy = contextBudget[policy.blockedByField];
+  ensureArray(blockedBy, `${packetName}.${policy.blockedByField}`);
+  ensure(
+    blockedBy.length === 0,
+    `${claimNames} requires ${packetName}.${policy.blockedByField} to be empty.`,
+  );
+
+  const measurement = contextBudget[policy.measurementField];
+  ensure(
+    measurement && typeof measurement === "object",
+    `${claimNames} requires ${packetName}.${policy.measurementField}.`,
+  );
+  const measurementPolicy = policy.measurementRequirements;
+  const hostObservedField = measurementPolicy.hostObservedContextLoadField;
+  ensure(
+    measurement[hostObservedField] ===
+      measurementPolicy.hostObservedContextLoadRequiredValue,
+    `${claimNames} requires ${packetName}.${policy.measurementField}.${hostObservedField}=true.`,
+  );
+  const inputTokensField = measurementPolicy.actualInputTokensField;
+  ensure(
+    Number.isFinite(measurement[inputTokensField]) &&
+      measurement[inputTokensField] >= measurementPolicy.actualInputTokensMinimum,
+    `${claimNames} requires ${packetName}.${policy.measurementField}.${inputTokensField} to be a finite nonnegative number.`,
+  );
+  for (const check of measurementPolicy.completedChecks) {
+    ensure(
+      measurement[check.field] === check.requiredValue,
+      `${claimNames} requires ${packetName}.${policy.measurementField}.${check.field}=${check.requiredValue}.`,
+    );
+  }
+
+  for (const collectionField of policy.sourceCollectionFields) {
+    const records = contextBudget[collectionField];
+    ensureArray(records, `${packetName}.${collectionField}`);
+    ensure(
+      records.length >= policy.minimumSourceRecordsPerCollection,
+      `${claimNames} requires at least ${policy.minimumSourceRecordsPerCollection} ${packetName}.${collectionField} record(s).`,
+    );
+    for (const [index, source] of records.entries()) {
+      const sourcePath = `${packetName}.${collectionField}[${index}]`;
+      ensure(
+        source && typeof source === "object",
+        `${sourcePath} must be an object.`,
+      );
+      ensureEnum(
+        source[policy.sourceEvidenceStateField],
+        policy.observedSourceEvidenceStates,
+        `${sourcePath}.${policy.sourceEvidenceStateField}`,
+      );
+      ensureString(
+        source[policy.sourceEvidenceRefField],
+        `${sourcePath}.${policy.sourceEvidenceRefField}`,
+      );
+    }
+  }
+
+  const publicReadyDecision = nestedPacket(artifact, "publicReadyDecision");
+  ensure(
+    publicReadyDecision && typeof publicReadyDecision === "object",
+    `${claimNames} requires publicReadyDecision.`,
+  );
+  ensure(
+    publicReadyDecision[policy.publicReadyDecisionStatusField] ===
+      contextBudget[policy.statusField],
+    `publicReadyDecision.${policy.publicReadyDecisionStatusField} must match ${packetName}.${policy.statusField}.`,
+  );
+  ensureArray(
+    publicReadyDecision[policy.publicReadyDecisionBlockedByField],
+    `publicReadyDecision.${policy.publicReadyDecisionBlockedByField}`,
+  );
+  ensure(
+    canonicalJson(publicReadyDecision[policy.publicReadyDecisionBlockedByField]) ===
+      canonicalJson(blockedBy),
+    `publicReadyDecision.${policy.publicReadyDecisionBlockedByField} must match ${packetName}.${policy.blockedByField}.`,
+  );
+}
+
+function validateCoreLoopPublicReadyConsistency(contract, artifact) {
   for (const packetName of [
     "runtimeInvocationPlanPacket",
     "hostInvocationRequestPacket",
     "capabilityInvocationTruthPacket",
     "productExperiencePacket",
+    "contextEngineeringBudget",
     "publicReadyDecision",
   ]) {
     validateNestedPacketConsistency(artifact, packetName);
@@ -4611,6 +4711,8 @@ function validateCoreLoopPublicReadyConsistency(artifact) {
 
   const claims = publicReadyClaims(artifact);
   if (claims.length === 0) return;
+
+  validateContextEngineeringBudgetForPublicReady(contract, artifact, claims);
 
   const readinessSignals = publicReadySignals(artifact);
   const falseSignals = readinessSignals.filter(([, value]) => value === false);
@@ -4899,7 +5001,7 @@ export function validateArtifact(contract, artifact) {
   validateWorkerPackets(contract, artifact);
   validateFindingChain(contract, artifact);
   validateSummaryAndEvolution(contract, artifact);
-  validateCoreLoopPublicReadyConsistency(artifact);
+  validateCoreLoopPublicReadyConsistency(contract, artifact);
   validateCompactionPacket(contract, artifact);
   validateHardPublicReadyTodoGate(contract, artifact);
   validateHardCommentReviewGate(contract, artifact);

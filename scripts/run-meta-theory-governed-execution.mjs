@@ -8641,45 +8641,72 @@ function buildContextEngineeringBudget({
   capabilitySearchLog,
   stageOperationPlan,
 }) {
+  const fixedContext = [
+    {
+      source: "AGENTS.md",
+      freshness: "repo-current",
+      reasonIncluded: "declared project governance entrypoint",
+      reasonOmitted: null,
+      evidenceState: "declared_not_host_observed",
+    },
+    {
+      source: "canonical/skills/meta-theory/SKILL.md",
+      freshness: "repo-current",
+      reasonIncluded: "declared canonical meta-theory prompt contract",
+      reasonOmitted: null,
+      evidenceState: "declared_not_host_observed",
+    },
+    {
+      source: "config/contracts/core-loop-contract.json",
+      freshness: "repo-current",
+      reasonIncluded: "declared machine-readable core loop contract",
+      reasonOmitted: null,
+      evidenceState: "declared_not_host_observed",
+    },
+  ];
+  const variableContext = [
+    ...capabilitySearchLog.slice(0, 12).map((item) => ({
+      source: item.source,
+      freshness: "run-current",
+      reasonIncluded: "selected route-changing capability or evidence source",
+      reasonOmitted: null,
+      evidenceState: "selected_not_host_observed_as_model_context",
+    })),
+    ...(stageOperationPlan?.stages ?? []).map((stage) => ({
+      source: `stageOperationPlan.${stage.stage}`,
+      freshness: "run-current",
+      reasonIncluded: "generated visible stage event and report shaping data",
+      reasonOmitted: null,
+      evidenceState: "generated_not_host_observed_as_model_context",
+    })),
+  ];
+  const measurement = {
+    hostObservedContextLoad: false,
+    actualInputTokens: null,
+    duplicateRuleScanStatus: "not_run",
+    conflictingRuleScanStatus: "not_run",
+    omissionVerificationStatus: "not_verified",
+  };
+  const blockedBy = [
+    ...(measurement.hostObservedContextLoad ? [] : ["host_context_load_not_observed"]),
+    ...(Number.isFinite(measurement.actualInputTokens) ? [] : ["actual_input_tokens_not_measured"]),
+    ...(measurement.duplicateRuleScanStatus === "pass" ? [] : ["duplicate_rule_scan_not_run"]),
+    ...(measurement.conflictingRuleScanStatus === "pass" ? [] : ["conflicting_rule_scan_not_run"]),
+    ...(measurement.omissionVerificationStatus === "pass" ? [] : ["omission_not_verified"]),
+  ];
   return {
     schemaVersion: "context-engineering-budget-v0.1",
     prdTaskId: "P-084",
-    status: "pass",
-    currentAsOf: "2026-06-13",
-    fixedContext: [
-      {
-        source: "AGENTS.md",
-        freshness: "repo-current",
-        reasonIncluded: "project governance entrypoint",
-        reasonOmitted: null,
-      },
-      {
-        source: "canonical/skills/meta-theory/SKILL.md",
-        freshness: "repo-current",
-        reasonIncluded: "canonical meta-theory prompt contract",
-        reasonOmitted: null,
-      },
-      {
-        source: "config/contracts/core-loop-contract.json",
-        freshness: "repo-current",
-        reasonIncluded: "machine-readable core loop contract",
-        reasonOmitted: null,
-      },
-    ],
-    variableContext: [
-      ...capabilitySearchLog.slice(0, 12).map((item) => ({
-        source: item.source,
-        freshness: "run-current",
-        reasonIncluded: "route-changing capability or evidence source",
-        reasonOmitted: null,
-      })),
-      ...(stageOperationPlan?.stages ?? []).map((stage) => ({
-        source: `stageOperationPlan.${stage.stage}`,
-        freshness: "run-current",
-        reasonIncluded: "visible stage event and report shaping",
-        reasonOmitted: null,
-      })),
-    ],
+    status: blockedBy.length === 0 ? "pass" : "partial",
+    statusReason:
+      blockedBy.length === 0
+        ? "host-observed context load and all budget checks passed"
+        : "declared and selected sources are not proof of host-loaded model context",
+    currentAsOf: "2026-07-28",
+    fixedContext,
+    variableContext,
+    measurement,
+    blockedBy,
     omissionPolicy: [
       {
         sourceClass: "duplicate_rule",
@@ -9165,8 +9192,21 @@ function buildCoreLoopArtifact({
         ["selected_not_invoked", "unavailable", "blocked"].includes(row.state),
     )
     .map((row) => `${row.family}:${row.state}`);
+  const performanceCostBudget = buildPerformanceCostBudget();
+  const contextEngineeringBudget = buildContextEngineeringBudget({
+    capabilitySearchLog,
+    stageOperationPlan,
+  });
   publicReadyBlockedBy = [
     ...(artifactStatus === "pass" ? [] : ["artifactStatus is not pass before coreLoop gate closure."]),
+    ...(contextEngineeringBudget.status === "pass"
+      ? []
+      : [
+          `contextEngineeringBudget.status=${contextEngineeringBudget.status}.`,
+          ...contextEngineeringBudget.blockedBy.map(
+            (blocker) => `contextEngineeringBudget blocked by ${blocker}.`,
+          ),
+        ]),
     ...(liveReleaseEvidenceReady ? [] : ["live release/runtime evidence is not release-grade ready."]),
     ...(runtimeInvocationPlanPacket.status === "pass" ? [] : ["runtimeInvocationPlanPacket.status is not pass."]),
     ...(hostInvocationRequestPacket.status === "pass" ? [] : ["hostInvocationRequestPacket.status is not pass."]),
@@ -9184,11 +9224,6 @@ function buildCoreLoopArtifact({
     ),
   ];
   publicReady = publicReadyBlockedBy.length === 0;
-  const performanceCostBudget = buildPerformanceCostBudget();
-  const contextEngineeringBudget = buildContextEngineeringBudget({
-    capabilitySearchLog,
-    stageOperationPlan,
-  });
   return {
     schemaVersion: "core-loop-run-v0.1",
     contractRef: "config/contracts/core-loop-contract.json",
@@ -9520,6 +9555,8 @@ function buildCoreLoopArtifact({
       realInvocationCoverageStatus:
         capabilityInvocationTruthPacket.realInvocationCoverage?.status ?? "missing",
       productExperienceStatus: productExperiencePacket.status,
+      contextEngineeringBudgetStatus: contextEngineeringBudget.status,
+      contextEngineeringBudgetBlockedBy: [...contextEngineeringBudget.blockedBy],
       selectedExecutableTruthGaps,
       blockedBy: publicReady ? [] : publicReadyBlockedBy,
     },
@@ -11724,6 +11761,7 @@ export async function runMetaTheoryGovernedExecution({
     coreLoop.capabilityInvocationTruthPacket.status === "pass" &&
     !["partial", "read_only"].includes(coreLoop.projectCustomizationPacket.status) &&
     coreLoop.productExperiencePacket.status === "product_experience_pass" &&
+    coreLoop.contextEngineeringBudget.status === "pass" &&
     (!coreLoop.stageRunnerBridgePacket || coreLoop.stageRunnerBridgePacket.status === "pass")
       ? "pass"
       : "partial";
@@ -11747,6 +11785,14 @@ export async function runMetaTheoryGovernedExecution({
         coreLoop.productExperiencePacket.status !== "product_experience_pass"
           ? `product_experience=${coreLoop.productExperiencePacket.status}`
           : null,
+        coreLoop.contextEngineeringBudget.status !== "pass"
+          ? `context_engineering_budget=${coreLoop.contextEngineeringBudget.status}`
+          : null,
+        ...(coreLoop.contextEngineeringBudget.status === "pass"
+          ? []
+          : coreLoop.contextEngineeringBudget.blockedBy.map(
+              (blocker) => `context_engineering_budget_blocked_by=${blocker}`,
+            )),
         coreLoop.stageRunnerBridgePacket && coreLoop.stageRunnerBridgePacket.status !== "pass"
           ? `stage_runner_bridge=${coreLoop.stageRunnerBridgePacket.status}`
           : null,
@@ -11920,6 +11966,7 @@ export async function runMetaTheoryGovernedExecution({
     resolvedOutputLanguage,
     languageResolution,
     status: artifactStatus,
+    partialReasons,
     task: normalizedTask,
     coreLoop,
     requestRecord: coreLoop.requestRecord,

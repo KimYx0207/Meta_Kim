@@ -61,6 +61,46 @@
   "publicReadyScore": 91,
   "userGoalDone": true,
   "publicReady": true,
+  "contextEngineeringBudget": {
+    "schemaVersion": "context-engineering-budget-v0.1",
+    "status": "pass",
+    "statusReason": "host-observed context load and all budget checks passed",
+    "fixedContext": [
+      {
+        "source": "AGENTS.md",
+        "freshness": "fixture-current",
+        "reasonIncluded": "host-observed project governance context",
+        "reasonOmitted": null,
+        "evidenceState": "host_observed_as_model_context",
+        "evidenceRef": "fixture:valid-strict-governance:host-context:fixed-1"
+      }
+    ],
+    "variableContext": [
+      {
+        "source": "strict governance verification evidence",
+        "freshness": "run-current",
+        "reasonIncluded": "host-observed strict governance evidence",
+        "reasonOmitted": null,
+        "evidenceState": "host_observed_as_model_context",
+        "evidenceRef": "fixture:valid-strict-governance:host-context:variable-1"
+      }
+    ],
+    "measurement": {
+      "hostObservedContextLoad": true,
+      "actualInputTokens": 1792,
+      "duplicateRuleScanStatus": "pass",
+      "conflictingRuleScanStatus": "pass",
+      "omissionVerificationStatus": "pass"
+    },
+    "blockedBy": []
+  },
+  "publicReadyDecision": {
+    "publicReady": true,
+    "status": "pass",
+    "contextEngineeringBudgetStatus": "pass",
+    "contextEngineeringBudgetBlockedBy": [],
+    "blockedBy": []
+  },
   "writebackDecision": "writeback",
   "routeScore": 92,
   "reviewFindings": []

@@ -26,6 +26,112 @@ function evidenceBound(item) {
   return Boolean(item?.command || item?.log || item?.artifact || item?.artifactRef || item?.humanAcceptance || item?.manualAcceptanceRecord);
 }
 
+function strictPacket(artifact, packetName) {
+  return artifact.coreLoop?.[packetName] ?? artifact[packetName] ?? null;
+}
+
+function validateStrictNestedPacketConsistency(artifact, packetName) {
+  const topLevel = artifact[packetName];
+  const coreLoop = artifact.coreLoop?.[packetName];
+  if (topLevel === undefined || coreLoop === undefined) return;
+  assert(
+    JSON.stringify(topLevel) === JSON.stringify(coreLoop),
+    `${packetName} must match coreLoop.${packetName}; nested packets cannot mask top-level truth`,
+  );
+}
+
+function validateStrictPublicReadyContext(artifact, normalizedIntent, policy) {
+  const publicReadyClaim =
+    normalizedIntent.publicReady === true ||
+    normalizedIntent.publicReadyScore >= 90 ||
+    artifact.publicReady === true ||
+    artifact.runHeader?.publicReady === true ||
+    artifact.summaryPacket?.publicReady === true ||
+    artifact.publicReadyDecision?.publicReady === true ||
+    artifact.coreLoop?.publicReadyDecision?.publicReady === true;
+  if (!publicReadyClaim) return;
+
+  assert(
+    policy?.enabled === true,
+    "runArtifactValidation.contextEngineeringBudgetPublicReadyPolicy must be enabled",
+  );
+  const packetName = policy.packet;
+  validateStrictNestedPacketConsistency(artifact, packetName);
+  validateStrictNestedPacketConsistency(artifact, "publicReadyDecision");
+  const contextBudget = strictPacket(artifact, packetName);
+  assert(contextBudget && typeof contextBudget === "object", `public-ready requires ${packetName}`);
+  assert(
+    contextBudget[policy.statusField] === policy.requiredStatus,
+    `public-ready requires ${packetName}.${policy.statusField}=${policy.requiredStatus}`,
+  );
+
+  const blockedBy = contextBudget[policy.blockedByField];
+  assert(Array.isArray(blockedBy), `${packetName}.${policy.blockedByField} must be an array`);
+  assert(blockedBy.length === 0, `public-ready requires ${packetName}.${policy.blockedByField} to be empty`);
+
+  const measurement = contextBudget[policy.measurementField];
+  assert(measurement && typeof measurement === "object", `public-ready requires ${packetName}.${policy.measurementField}`);
+  const measurementPolicy = policy.measurementRequirements;
+  const hostObservedField = measurementPolicy.hostObservedContextLoadField;
+  assert(
+    measurement[hostObservedField] === measurementPolicy.hostObservedContextLoadRequiredValue,
+    `public-ready requires ${packetName}.${policy.measurementField}.${hostObservedField}=true`,
+  );
+  const inputTokensField = measurementPolicy.actualInputTokensField;
+  assert(
+    Number.isFinite(measurement[inputTokensField]) &&
+      measurement[inputTokensField] >= measurementPolicy.actualInputTokensMinimum,
+    `public-ready requires ${packetName}.${policy.measurementField}.${inputTokensField} to be a finite nonnegative number`,
+  );
+  for (const check of measurementPolicy.completedChecks) {
+    assert(
+      measurement[check.field] === check.requiredValue,
+      `public-ready requires ${packetName}.${policy.measurementField}.${check.field}=${check.requiredValue}`,
+    );
+  }
+
+  for (const collectionField of policy.sourceCollectionFields) {
+    const records = contextBudget[collectionField];
+    assert(Array.isArray(records), `${packetName}.${collectionField} must be an array`);
+    assert(
+      records.length >= policy.minimumSourceRecordsPerCollection,
+      `public-ready requires at least ${policy.minimumSourceRecordsPerCollection} ${packetName}.${collectionField} record(s)`,
+    );
+    for (const [index, source] of records.entries()) {
+      const sourcePath = `${packetName}.${collectionField}[${index}]`;
+      assert(source && typeof source === "object", `${sourcePath} must be an object`);
+      assert(
+        policy.observedSourceEvidenceStates.includes(
+          source[policy.sourceEvidenceStateField],
+        ),
+        `${sourcePath}.${policy.sourceEvidenceStateField} must be observed`,
+      );
+      assert(
+        nonEmpty(source[policy.sourceEvidenceRefField]),
+        `${sourcePath}.${policy.sourceEvidenceRefField} must be a non-empty string`,
+      );
+    }
+  }
+
+  const publicReadyDecision = strictPacket(artifact, "publicReadyDecision");
+  assert(publicReadyDecision && typeof publicReadyDecision === "object", "public-ready requires publicReadyDecision");
+  assert(
+    publicReadyDecision[policy.publicReadyDecisionStatusField] ===
+      contextBudget[policy.statusField],
+    `publicReadyDecision.${policy.publicReadyDecisionStatusField} must match ${packetName}.${policy.statusField}`,
+  );
+  const decisionBlockedBy =
+    publicReadyDecision[policy.publicReadyDecisionBlockedByField];
+  assert(
+    Array.isArray(decisionBlockedBy),
+    `publicReadyDecision.${policy.publicReadyDecisionBlockedByField} must be an array`,
+  );
+  assert(
+    JSON.stringify(decisionBlockedBy) === JSON.stringify(blockedBy),
+    `publicReadyDecision.${policy.publicReadyDecisionBlockedByField} must match ${packetName}.${policy.blockedByField}`,
+  );
+}
+
 function validateIntent(value, { allowTemplate }) {
   const required = ["realIntent", "subject", "currentState", "targetState", "selectedPath", "whyThisPath", "doneCondition"];
   if (!allowTemplate) {
@@ -132,8 +238,18 @@ const target = inputPath
   ? JSON.parse(await fs.readFile(path.isAbsolute(inputPath) ? inputPath : repoPath(inputPath), "utf8"))
   : await readJson("config/governance/intent-amplification-contract.json");
 
-validateIntent(normalizeRunArtifact(target), {
+const normalizedTarget = normalizeRunArtifact(target);
+validateIntent(normalizedTarget, {
   allowTemplate: templateMode && !strictMode,
 });
+if (strictMode) {
+  const workflowContract = await readJson("config/contracts/workflow-contract.json");
+  validateStrictPublicReadyContext(
+    target,
+    normalizedTarget,
+    workflowContract.runDiscipline?.runArtifactValidation
+      ?.contextEngineeringBudgetPublicReadyPolicy,
+  );
+}
 
 console.log(inputPath ? "strict intent run artifact valid" : "intent amplification contract valid");

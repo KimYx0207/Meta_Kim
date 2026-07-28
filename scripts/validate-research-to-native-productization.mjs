@@ -18,6 +18,12 @@ const CONTRACT_PATH = path.join(
   "contracts",
   "research-to-native-productization-contract.json",
 );
+const FRAMEWORK_PROMPT_CONTRACT_PATH = path.join(
+  REPO_ROOT,
+  "config",
+  "contracts",
+  "framework-prompt-architecture-contract.json",
+);
 const PRD_PATH = path.join(REPO_ROOT, "docs", "ai-native-capability-gap-mvp-prd.zh-CN.md");
 const REQUIRED_TASK_IDS = [
   "P-071",
@@ -161,11 +167,14 @@ function validateContractShape(contract, pkg) {
   assert.ok(`${pkg.scripts?.["meta:verify:governance"] ?? ""} ${pkg.scripts?.["meta:verify:governance:core"] ?? ""}`.includes("meta:prd:research-native:validate"));
 }
 
-function validateDefaultArtifact(report) {
+function validateDefaultArtifact(report, frameworkPromptContract) {
   const trace = report.coreLoop.traceEvalControlPlane;
   const events = report.coreLoop.agUiStageEvents;
   const perf = report.coreLoop.performanceCostBudget;
   const context = report.coreLoop.contextEngineeringBudget;
+  const allowedEvidenceStates = new Set(
+    frameworkPromptContract.contextEngineeringBudget.sourceRecordEvidenceStateEnum,
+  );
 
   for (const packetName of [
     "traceEvalControlPlane",
@@ -223,12 +232,36 @@ function validateDefaultArtifact(report) {
     assert.equal(item.costBudgetPolicy.externalPaidCostWithoutApprovalUsd, 0);
   }
 
+  assert.equal(
+    context.status,
+    "partial",
+    "context budget must remain partial until host-observed context evidence exists",
+  );
+  assert.match(context.statusReason, /not proof of host-loaded model context/);
+  assert.equal(context.measurement.hostObservedContextLoad, false);
+  assert.equal(context.measurement.actualInputTokens, null);
+  assert.equal(context.measurement.duplicateRuleScanStatus, "not_run");
+  assert.equal(context.measurement.conflictingRuleScanStatus, "not_run");
+  assert.equal(context.measurement.omissionVerificationStatus, "not_verified");
+  for (const blocker of [
+    "host_context_load_not_observed",
+    "actual_input_tokens_not_measured",
+    "duplicate_rule_scan_not_run",
+    "conflicting_rule_scan_not_run",
+    "omission_not_verified",
+  ]) {
+    assert.ok(context.blockedBy.includes(blocker), `context budget missing blocker ${blocker}`);
+  }
   assert.ok(context.fixedContext.length >= 3);
   assert.ok(context.variableContext.length > 0);
   for (const item of [...context.fixedContext, ...context.variableContext]) {
-    for (const field of ["source", "freshness", "reasonIncluded"]) {
+    for (const field of ["source", "freshness", "reasonIncluded", "evidenceState"]) {
       assertNonEmpty(item[field], `context source missing ${field}`);
     }
+    assert.ok(
+      allowedEvidenceStates.has(item.evidenceState),
+      `context source ${item.source} has invalid evidenceState ${item.evidenceState}`,
+    );
     assert.ok(Object.hasOwn(item, "reasonOmitted"), "context source must declare reasonOmitted");
   }
   assert.equal(context.budgetRules.fixedVariableContextSeparated, true);
@@ -284,6 +317,7 @@ function validateDefaultRunStatus(report) {
 
 async function main() {
   const contract = readJson(CONTRACT_PATH);
+  const frameworkPromptContract = readJson(FRAMEWORK_PROMPT_CONTRACT_PATH);
   const pkg = readJson(path.join(REPO_ROOT, "package.json"));
   validateI18nParity();
   validateContractShape(contract, pkg);
@@ -303,7 +337,7 @@ async function main() {
       dbPath: path.join(tempDir, "runs.sqlite"),
     });
     validateDefaultRunStatus(report);
-    validateDefaultArtifact(report);
+    validateDefaultArtifact(report, frameworkPromptContract);
     governedExecutionStatus = report.status;
   } finally {
     await rm(tempDir, { recursive: true, force: true });

@@ -658,6 +658,39 @@
     "status": "product_experience_pass",
     "evidenceTier": "runtime_live_pass"
   },
+  "contextEngineeringBudget": {
+    "schemaVersion": "context-engineering-budget-v0.1",
+    "status": "pass",
+    "statusReason": "host-observed context load and all budget checks passed",
+    "fixedContext": [
+      {
+        "source": "AGENTS.md",
+        "freshness": "fixture-current",
+        "reasonIncluded": "host-observed project governance context",
+        "reasonOmitted": null,
+        "evidenceState": "host_observed_as_model_context",
+        "evidenceRef": "fixture:valid-cross-project:host-context:fixed-1"
+      }
+    ],
+    "variableContext": [
+      {
+        "source": "cross-project route evidence",
+        "freshness": "run-current",
+        "reasonIncluded": "host-observed cross-project route-changing evidence",
+        "reasonOmitted": null,
+        "evidenceState": "host_observed_as_model_context",
+        "evidenceRef": "fixture:valid-cross-project:host-context:variable-1"
+      }
+    ],
+    "measurement": {
+      "hostObservedContextLoad": true,
+      "actualInputTokens": 2560,
+      "duplicateRuleScanStatus": "pass",
+      "conflictingRuleScanStatus": "pass",
+      "omissionVerificationStatus": "pass"
+    },
+    "blockedBy": []
+  },
   "publicReadyDecision": {
     "publicReady": true,
     "status": "pass",
@@ -665,6 +698,8 @@
     "hostInvocationRequestStatus": "pass",
     "realInvocationCoverageStatus": "pass",
     "productExperienceStatus": "product_experience_pass",
+    "contextEngineeringBudgetStatus": "pass",
+    "contextEngineeringBudgetBlockedBy": [],
     "selectedExecutableTruthGaps": [],
     "blockedBy": []
   },

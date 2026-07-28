@@ -49,6 +49,12 @@ const REQUIRED_DIMENSIONS = [
   "performance",
 ];
 const REQUIRED_FIXTURE_TYPES = ["positive", "boundary", "regression"];
+const REQUIRED_CONTEXT_EVIDENCE_STATES = [
+  "declared_not_host_observed",
+  "selected_not_host_observed_as_model_context",
+  "generated_not_host_observed_as_model_context",
+  "host_observed_as_model_context",
+];
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
@@ -115,11 +121,13 @@ function validateContractShape(contract, pkg) {
   const context = contract.contextEngineeringBudget;
   for (const field of [
     "sourceRecordsRequiredFields",
+    "sourceRecordEvidenceStateEnum",
     "fixedContextKinds",
     "variableContextKinds",
     "longContextRule",
     "returnToThinkingTriggers",
     "promptSprawlBudget",
+    "runtimeTruthRequirements",
   ]) {
     assertNonEmpty(context[field], `contextEngineeringBudget missing ${field}`);
   }
@@ -128,23 +136,70 @@ function validateContractShape(contract, pkg) {
   }
   assert.equal(context.promptSprawlBudget.duplicateRuleTarget, 0);
   assert.equal(context.promptSprawlBudget.runtimeOnlyLeakTarget, 0);
+  assert.ok(context.sourceRecordsRequiredFields.includes("evidenceState"));
+  assert.deepEqual(
+    context.sourceRecordEvidenceStateEnum,
+    REQUIRED_CONTEXT_EVIDENCE_STATES,
+    "context source evidence states must use the contract enum",
+  );
+  assert.equal(context.runtimeTruthRequirements.declaredOrSelectedSourceIsNotLoadedEvidence, true);
+  assert.equal(context.runtimeTruthRequirements.hostObservedContextLoadRequiredForPass, true);
+  assert.equal(context.runtimeTruthRequirements.actualInputTokensRequiredForPass, true);
+  assert.deepEqual(context.runtimeTruthRequirements.completedChecksRequiredForPass, [
+    "duplicate_rule_scan",
+    "conflicting_rule_scan",
+    "omission_verification",
+  ]);
 
   assert.ok(pkg.scripts?.["meta:prd:prompt-architecture:validate"]?.includes("validate-framework-prompt-architecture.mjs"));
   assert.ok(`${pkg.scripts?.["meta:verify:governance"] ?? ""} ${pkg.scripts?.["meta:verify:governance:core"] ?? ""}`.includes("meta:prd:prompt-architecture:validate"));
 }
 
-function validateDefaultArtifact(report) {
+function validateDefaultArtifact(report, contract) {
   const context = report.coreLoop.contextEngineeringBudget;
+  const allowedEvidenceStates = new Set(
+    contract.contextEngineeringBudget.sourceRecordEvidenceStateEnum,
+  );
   assert.equal(context.prdTaskId, "P-084");
-  assert.equal(context.status, "pass");
+  assert.equal(
+    context.status,
+    "partial",
+    "context budget cannot pass without host-observed loading and completed budget scans",
+  );
+  assert.match(context.statusReason, /not proof of host-loaded model context/);
+  assert.equal(context.measurement.hostObservedContextLoad, false);
+  assert.equal(context.measurement.actualInputTokens, null);
+  assert.equal(context.measurement.duplicateRuleScanStatus, "not_run");
+  assert.equal(context.measurement.conflictingRuleScanStatus, "not_run");
+  assert.equal(context.measurement.omissionVerificationStatus, "not_verified");
+  for (const blocker of [
+    "host_context_load_not_observed",
+    "actual_input_tokens_not_measured",
+    "duplicate_rule_scan_not_run",
+    "conflicting_rule_scan_not_run",
+    "omission_not_verified",
+  ]) {
+    assert.ok(context.blockedBy.includes(blocker), `context budget missing blocker ${blocker}`);
+  }
   assert.ok(context.fixedContext.length >= 3);
   assert.ok(context.variableContext.length > 0);
   for (const source of [...context.fixedContext, ...context.variableContext]) {
-    for (const field of ["source", "freshness", "reasonIncluded"]) {
+    for (const field of ["source", "freshness", "reasonIncluded", "evidenceState"]) {
       assertNonEmpty(source[field], `context source missing ${field}`);
     }
+    assert.ok(
+      allowedEvidenceStates.has(source.evidenceState),
+      `context source ${source.source} has invalid evidenceState ${source.evidenceState}`,
+    );
     assert.ok(Object.hasOwn(source, "reasonOmitted"), "context source must include reasonOmitted");
   }
+  assert.equal(
+    [...context.fixedContext, ...context.variableContext].some(
+      (source) => source.evidenceState === "host_observed_as_model_context",
+    ),
+    false,
+    "default partial artifact must not claim host-observed context evidence",
+  );
   assert.equal(context.budgetRules.longContextOnlyForRouteChangingEvidence, true);
   assert.equal(context.budgetRules.duplicateRulesReturnToThinking, true);
   assert.equal(context.budgetRules.runtimeOnlyLeakReturnsToThinking, true);
@@ -226,7 +281,7 @@ async function main() {
       dbPath: path.join(tempDir, "runs.sqlite"),
     });
     validateDefaultRunStatus(report);
-    validateDefaultArtifact(report);
+    validateDefaultArtifact(report, contract);
     governedExecutionStatus = report.status;
   } finally {
     await rm(tempDir, { recursive: true, force: true });

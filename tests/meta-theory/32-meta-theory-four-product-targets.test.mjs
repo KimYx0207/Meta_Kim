@@ -128,7 +128,86 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       assert.equal(report.defaultRuntimePath.traceEvalControlPlane.stageTiming.length, 8);
       assert.equal(report.defaultRuntimePath.agUiStageEvents.eventCount, 8);
       assert.ok(report.defaultRuntimePath.performanceCostBudget.highUsePaths.length >= 6);
-      assert.equal(report.defaultRuntimePath.contextEngineeringBudget.status, "pass");
+      assert.equal(report.defaultRuntimePath.contextEngineeringBudget.status, "partial");
+      assert.equal(
+        report.defaultRuntimePath.contextEngineeringBudget.measurement.hostObservedContextLoad,
+        false,
+      );
+      assert.equal(
+        report.defaultRuntimePath.contextEngineeringBudget.measurement.actualInputTokens,
+        null,
+      );
+      assert.ok(
+        report.defaultRuntimePath.contextEngineeringBudget.blockedBy.includes(
+          "host_context_load_not_observed",
+        ),
+      );
+      assert.ok(
+        report.defaultRuntimePath.contextEngineeringBudget.blockedBy.includes(
+          "duplicate_rule_scan_not_run",
+        ),
+      );
+      const frameworkPromptContract = JSON.parse(
+        await readFile(
+          new URL(
+            "../../config/contracts/framework-prompt-architecture-contract.json",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      );
+      const allowedContextEvidenceStates = new Set(
+        frameworkPromptContract.contextEngineeringBudget.sourceRecordEvidenceStateEnum,
+      );
+      const contextSources = [
+        ...report.defaultRuntimePath.contextEngineeringBudget.fixedContext,
+        ...report.defaultRuntimePath.contextEngineeringBudget.variableContext,
+      ];
+      assert.equal(
+        contextSources.every((source) =>
+          allowedContextEvidenceStates.has(source.evidenceState),
+        ),
+        true,
+        "context source evidenceState must be constrained by the framework contract enum",
+      );
+      assert.ok(
+        allowedContextEvidenceStates.has("host_observed_as_model_context"),
+        "the contract must define the observed state used by truthful public-ready fixtures",
+      );
+      assert.equal(
+        contextSources.some(
+          (source) => source.evidenceState === "host_observed_as_model_context",
+        ),
+        false,
+        "the default partial artifact must not exercise the host-observed evidence state",
+      );
+      assert.equal(report.publicReadyDecision.publicReady, false);
+      assert.equal(
+        report.publicReadyDecision.contextEngineeringBudgetStatus,
+        "partial",
+      );
+      assert.deepEqual(
+        report.publicReadyDecision.contextEngineeringBudgetBlockedBy,
+        report.contextEngineeringBudget.blockedBy,
+      );
+      assert.ok(
+        report.publicReadyDecision.blockedBy.includes(
+          "contextEngineeringBudget.status=partial.",
+        ),
+        "public-ready must be blocked by a non-pass context budget",
+      );
+      assert.equal(report.status, "partial");
+      assert.equal(report.defaultRuntimePath.status, "partial");
+      assert.ok(
+        report.partialReasons.includes("context_engineering_budget=partial"),
+        "final artifact partialReasons must include the context budget status",
+      );
+      for (const blocker of report.contextEngineeringBudget.blockedBy) {
+        assert.ok(
+          report.partialReasons.includes(`context_engineering_budget_blocked_by=${blocker}`),
+          `final artifact partialReasons missing context blocker ${blocker}`,
+        );
+      }
       assert.equal(report.defaultRuntimePath.langGraphRunPacket.status, "pass");
       assert.equal(report.defaultRuntimePath.peerAgentMeshPacket.status, "pass");
       assert.equal(report.defaultRuntimePath.agentTeamsPlaybookPacket.status, "pass");

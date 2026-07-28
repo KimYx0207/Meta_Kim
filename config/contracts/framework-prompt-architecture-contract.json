@@ -218,7 +218,13 @@
     "manualAcceptanceCanSupplementButNotReplaceFixtures": true
   },
   "contextEngineeringBudget": {
-    "sourceRecordsRequiredFields": ["source", "freshness", "reasonIncluded", "reasonOmitted"],
+    "sourceRecordsRequiredFields": ["source", "freshness", "reasonIncluded", "reasonOmitted", "evidenceState"],
+    "sourceRecordEvidenceStateEnum": [
+      "declared_not_host_observed",
+      "selected_not_host_observed_as_model_context",
+      "generated_not_host_observed_as_model_context",
+      "host_observed_as_model_context"
+    ],
     "fixedContextKinds": ["system-developer", "project-rules", "canonical-contract"],
     "variableContextKinds": ["user-request", "source-evidence", "repo-read", "tool-output", "run-state"],
     "longContextRule": "Only include route-changing evidence, active source files, and acceptance-critical prior decisions.",
@@ -228,6 +234,16 @@
       "runtimeOnlyLeakTarget": 0,
       "missingReasonIncludedTarget": 0,
       "missingReasonOmittedTarget": 0
+    },
+    "runtimeTruthRequirements": {
+      "declaredOrSelectedSourceIsNotLoadedEvidence": true,
+      "hostObservedContextLoadRequiredForPass": true,
+      "actualInputTokensRequiredForPass": true,
+      "completedChecksRequiredForPass": [
+        "duplicate_rule_scan",
+        "conflicting_rule_scan",
+        "omission_verification"
+      ]
     }
   },
   "validator": {

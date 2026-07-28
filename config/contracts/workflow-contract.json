@@ -2078,6 +2078,42 @@
         ],
         "description": "Hard public-ready gate for design-time packets. blocked and partial statuses cannot be published as ready; not_applicable_with_reason is allowed only for explicitly non-applicable experience or rollback contexts."
       },
+      "contextEngineeringBudgetPublicReadyPolicy": {
+        "enabled": true,
+        "packet": "contextEngineeringBudget",
+        "statusField": "status",
+        "requiredStatus": "pass",
+        "blockedByField": "blockedBy",
+        "measurementField": "measurement",
+        "measurementRequirements": {
+          "hostObservedContextLoadField": "hostObservedContextLoad",
+          "hostObservedContextLoadRequiredValue": true,
+          "actualInputTokensField": "actualInputTokens",
+          "actualInputTokensMinimum": 0,
+          "completedChecks": [
+            {
+              "field": "duplicateRuleScanStatus",
+              "requiredValue": "pass"
+            },
+            {
+              "field": "conflictingRuleScanStatus",
+              "requiredValue": "pass"
+            },
+            {
+              "field": "omissionVerificationStatus",
+              "requiredValue": "pass"
+            }
+          ]
+        },
+        "sourceCollectionFields": ["fixedContext", "variableContext"],
+        "minimumSourceRecordsPerCollection": 1,
+        "sourceEvidenceStateField": "evidenceState",
+        "observedSourceEvidenceStates": ["host_observed_as_model_context"],
+        "sourceEvidenceRefField": "evidenceRef",
+        "publicReadyDecisionStatusField": "contextEngineeringBudgetStatus",
+        "publicReadyDecisionBlockedByField": "contextEngineeringBudgetBlockedBy",
+        "description": "Public-ready requires a host-observed context budget with measured nonnegative input tokens, completed duplicate/conflict/omission checks, no blockers, and evidence-bound observed source records. This packet remains optional for runs that make no public-ready claim."
+      },
       "compactionPacketOptional": true,
       "compactionPacketLocalOnly": true,
       "compactionPacketMustPreserveOpenFindings": true,
