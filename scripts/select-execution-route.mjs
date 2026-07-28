@@ -3662,5 +3662,5 @@ const printableOutput =
     ? compactRouteOutput(output)
     : output;
 
-if (json) console.log(JSON.stringify(printableOutput, null, 2));
+if (json) console.log(JSON.stringify(printableOutput));
 else console.log(JSON.stringify(printableOutput, null, 2));

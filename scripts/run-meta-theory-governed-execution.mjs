@@ -10702,16 +10702,44 @@ function providerListFromRoute(routeResult) {
           .map((provider) => [provider.type, provider]),
         ...(routeResult.ownerDiscoveryPacket?.runtimeToolProviders ?? []).slice(0, 3).map((provider) => ["runtime_tool", provider]),
       ];
-  return [...selected, ...fallback].map(([slot, provider]) => ({
+  const baseProviders = [...selected, ...fallback];
+  const selectedTypes = new Set(
+    baseProviders.map(([, provider]) => provider.type ?? provider.providerType),
+  );
+  const supplemental = [
+    !selectedTypes.has("runtimeTools")
+      ? ["runtimeToolDiscovery", (routeResult.ownerDiscoveryPacket?.runtimeToolProviders ?? [])[0]]
+      : null,
+    !selectedTypes.has("hooks")
+      ? [
+          "hookDiscovery",
+          [
+            ...(routeResult.ownerDiscoveryPacket?.projectRuntimeCapabilityProviders ?? []),
+            ...(routeResult.ownerDiscoveryPacket?.repoCanonicalCapabilityProviders ?? []),
+          ].find((provider) => provider.type === "hooks"),
+        ]
+      : null,
+  ].filter((entry) => entry?.[1]?.id);
+  return [...baseProviders, ...supplemental].map(([slot, provider]) => ({
     slot,
     id: provider.id,
     type: provider.type ?? provider.providerType ?? "capability",
     capabilityType: provider.type ?? provider.providerType ?? "capability",
-    coverageStatus: "selected",
+    coverageStatus: supplemental.some(
+      ([supplementalSlot, supplementalProvider]) =>
+        supplementalSlot === slot && supplementalProvider.id === provider.id,
+    )
+      ? "discovered"
+      : "selected",
     source: provider.source ?? "selected_execution_route",
     sourceRef: provider.sourceRef ?? provider.id,
     platformId: provider.platformId ?? provider.runtime ?? null,
-    routeImpact: `${slot} provider selected for route-driven execution`,
+    routeImpact: supplemental.some(
+      ([supplementalSlot, supplementalProvider]) =>
+        supplementalSlot === slot && supplementalProvider.id === provider.id,
+    )
+      ? `${slot} provider retained as capability-chain discovery evidence`
+      : `${slot} provider selected for route-driven execution`,
   }));
 }
 
@@ -11384,7 +11412,7 @@ export async function runMetaTheoryGovernedExecution({
     decisionResults,
     approvalEvidence,
     approvalPacket,
-    applyWriteback: applyWriteback && executionAllowed,
+    applyWriteback: applyWriteback && planChallengeHandoffReady,
     canonicalRoot,
   });
   await publishProgress(
