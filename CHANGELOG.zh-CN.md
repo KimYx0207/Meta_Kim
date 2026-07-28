@@ -16,6 +16,7 @@
 - **Runtime 观察从一张报告矩阵变成可恢复、按能力绑定的正式产品路径。** 打包后的 CLI 可记录和读取 Claude Code/Codex 共十项精确能力，绑定真实 producer 事件与发布 lineage，保留失败证据用于诊断，MCP 明确输出 populated 10/0 与 empty 0/10，同时所有持久化结果都不能反向开启执行。
 - **安装与发布证明现在验证用户真正运行的包。** Windows 启动清单绑定发现入口、shim、launcher 和 JavaScript 入口，但不虚构同用户信任根，也不声称彻底消除 TOCTOU。带项目刷新的全局更新会先把 managed deployment 记录规范成绝对清单根目录，不会在项目能力复制后误判失败。当前、项目、历史三条安装/升级路径必须精确覆盖 canonical 四目标；Verification、Release audit、release close 和只读观察入口复算同一个原始证明，旧格式、缺目标、只报数量或自报成功都会失败。
 - **Packed MCP 验收现在会把只读观察与它真实产生的有效矩阵比较。** 包内 canonical 原始矩阵仍必须完全一致；MCP 回读则必须与同一已安装包、同一隔离只读快照重新计算出的有效矩阵完全一致。预期的 advisory 叠加不再误报发布失败，同时原始矩阵漂移或有效状态漂移仍会被拒绝。
+- **治理验收现在读取当前按运行模式拆分的 runtime claim 格式。** 每个声明的 runtime mode 都必须有非空 `evidenceRefs` 和完整 `claimsByMode` 事实，不再错误要求已经废弃的顶层 `evidence` 占位字段；旧结构或缺字段记录仍会 fail closed。
 - **Graphify 现在能在子目录存在同名文件时，为仓库根目录文件生成稳定且唯一的标签。** 根文件使用真实的显式相对写法，例如 `./README.md`；普通文件和子目录的最短唯一路径保持不变，并由回归测试保护可重放的身份校验。
 
 ### 验证

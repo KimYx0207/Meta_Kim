@@ -106,13 +106,48 @@ assert(decisionPatterns.stagePatterns?.some((pattern) => pattern.stage === "fetc
 assert(decisionPatterns.stagePatterns?.some((pattern) => pattern.stage === "thinking"), "decision patterns must include Thinking data");
 assert(decisionPatterns.stagePatterns?.some((pattern) => pattern.stage === "review"), "decision patterns must include Review data");
 
-for (const platform of runtimeMatrix.platforms ?? []) {
-  const records = [...(platform.capabilities ?? [])];
-  for (const record of records) {
-    assert(record.support && record.confidence && record.trigger && record.evidence, `${platform.platform}.${record.capability} missing support/confidence/trigger/evidence`);
-    assert(!(record.support === "native" && record.confidence === "unverified"), `${platform.platform}.${record.capability} native cannot be unverified`);
+export function assertRuntimeMatrixGovernanceShape(matrix) {
+  const modeFields = [
+    "hostSupport",
+    "hostConfidence",
+    "metaKimIntegration",
+    "acceptanceRequirement",
+    "acceptanceState",
+    "routeEligibility",
+  ];
+  for (const platform of matrix.platforms ?? []) {
+    const records = [...(platform.capabilities ?? [])];
+    for (const record of records) {
+      const context = `${platform.platform}.${record.capability}`;
+      assert(
+        record.support &&
+          record.confidence &&
+          record.trigger &&
+          Array.isArray(record.evidenceRefs) &&
+          record.evidenceRefs.length > 0 &&
+          record.claimsByMode &&
+          Object.keys(record.claimsByMode).length > 0,
+        `${context} missing support/confidence/trigger/evidenceRefs/claimsByMode`,
+      );
+      assert(
+        !(record.support === "native" && record.confidence === "unverified"),
+        `${context} native cannot be unverified`,
+      );
+      for (const mode of record.runtimeModes ?? []) {
+        const claim = record.claimsByMode[mode];
+        assert(claim, `${context}.${mode} missing mode claim`);
+        for (const field of modeFields) {
+          assert(claim[field] !== undefined, `${context}.${mode} missing ${field}`);
+        }
+        assert(
+          Array.isArray(claim.evidenceRefs) && claim.evidenceRefs.length > 0,
+          `${context}.${mode} missing evidenceRefs`,
+        );
+      }
+    }
   }
 }
+assertRuntimeMatrixGovernanceShape(runtimeMatrix);
 assert(osMatrix.operatingSystems?.some((entry) => entry.id === "macos"), "OS matrix missing macOS");
 assert(osMatrix.operatingSystems?.some((entry) => entry.id === "windows"), "OS matrix missing Windows");
 assert(osMatrix.operatingSystems?.some((entry) => entry.id === "linux"), "OS matrix missing Linux");
