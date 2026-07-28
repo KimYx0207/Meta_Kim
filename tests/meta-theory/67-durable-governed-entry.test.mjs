@@ -11,7 +11,7 @@ import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-go
 
 const execFileAsync = promisify(execFile);
 const ENTRY = path.resolve("scripts/run-meta-theory-governed-execution.mjs");
-const TASK = "Read package.json and report the exact package name and version. Do not modify files.";
+const TASK = "Run meta-theory: inspect package.json and produce a durable verification report of the exact package name and version. Do not modify files.";
 
 async function tempRoot(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-p118-entry-"));
@@ -52,6 +52,7 @@ function durableStageRunner(root, counter, mode = "fresh") {
     capacity: 1,
     timeoutMs: 30_000,
     invokeWorker: workerCounter(counter),
+    evidenceKind: "durable_kernel_test_double",
   };
 }
 
@@ -136,6 +137,17 @@ test("67 — governed entry can explicitly select the LangGraph Functional API r
   });
   assert.ok(counter.count > 0);
   assert.equal(report.stageRunnerBridgePacket.status, "pass");
+  assert.equal(
+    report.stageRunnerBridgePacket.routeHandoffEvidence.handoffStatus,
+    "ready_for_host_handoff",
+  );
+  assert.equal(report.stageRunnerBridgePacket.routeHandoffEvidence.executionAuthorized, false);
+  assert.equal(
+    report.stageRunnerBridgePacket.workerResults[0].evidenceKind,
+    "durable_kernel_test_double",
+  );
+  assert.equal(report.coreLoop.executionResult.executionAllowed, false);
+  assert.equal(report.coreLoop.executionResult.actualWorkerExecution, false);
   assert.deepEqual(
     report.stageRunnerBridgePacket.readySetAdapterPacket.adapterIds,
     ["langgraph_functional_ready_set"],

@@ -21,6 +21,7 @@ import {
 } from "./stage-dag.mjs";
 
 const SUPPORTED_RUNTIMES = new Set(["codex", "claude"]);
+const nativeRuntimeBridgeAttestations = new WeakSet();
 const MAX_RESULT_TEXT = 16_000;
 const MANAGED_PARENT_MARKERS = Object.freeze([
   "CLAUDECODE",
@@ -643,6 +644,12 @@ export async function runStageRunnerBridge({
   redactionEnv = process.env,
 }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
+  const nativeRuntimeInvokerSelected = invokeWorker === invokeReadOnlyRuntimeWorker;
+  const resolvedEvidenceKind = nativeRuntimeInvokerSelected
+    ? "native_read_only_stage_runner"
+    : evidenceKind === "native_read_only_stage_runner"
+      ? "injected_stage_runner_callback"
+      : evidenceKind;
   if (!SUPPORTED_RUNTIMES.has(normalizedRuntime)) {
     throw new TypeError(`Unsupported stage-runner runtime: ${runtime}`);
   }
@@ -722,7 +729,7 @@ export async function runStageRunnerBridge({
           normalizedResult = bridgeNodeRecord(node, {
             status: "failed",
             runtime: normalizedRuntime,
-            evidenceKind,
+            evidenceKind: resolvedEvidenceKind,
             taskPacketId: packet?.taskPacketId ?? null,
             failureClass: "read_only_bridge_rejected_node_effect",
             failureMessage: `Node effectClass is not read-only: ${node.effectClass ?? "missing"}`,
@@ -737,7 +744,7 @@ export async function runStageRunnerBridge({
           normalizedResult = bridgeNodeRecord(node, {
             status: "failed",
             runtime: normalizedRuntime,
-            evidenceKind,
+            evidenceKind: resolvedEvidenceKind,
             failureClass: "worker_task_packet_missing",
             startedAt: nodeStartedAt.toISOString(),
             endedAt: new Date().toISOString(),
@@ -750,7 +757,7 @@ export async function runStageRunnerBridge({
           normalizedResult = bridgeNodeRecord(node, {
             status: "failed",
             runtime: normalizedRuntime,
-            evidenceKind,
+            evidenceKind: resolvedEvidenceKind,
             taskPacketId: packet.taskPacketId,
             failureClass: "read_only_bridge_rejected_side_effect_task",
             startedAt: nodeStartedAt.toISOString(),
@@ -793,7 +800,7 @@ export async function runStageRunnerBridge({
           normalizedResult = bridgeNodeRecord(node, {
             status: result.status === "pass" ? "completed" : "failed",
             runtime: normalizedRuntime,
-            evidenceKind,
+            evidenceKind: resolvedEvidenceKind,
             taskPacketId: packet.taskPacketId,
             actualBinding: {
               runtime: normalizedRuntime,
@@ -1063,6 +1070,13 @@ export async function runStageRunnerBridge({
   const workerResults = executionNodes
     .map((node) => workerResultsByNodeId.get(node.nodeId))
     .filter(Boolean);
+  const bridgeCallbackCompleted = !failure && workerResults.length > 0;
+  const nativeRuntimeInvoked =
+    bridgeCallbackCompleted &&
+    nativeRuntimeInvokerSelected &&
+    workerResults.every(
+      (result) => result.evidenceKind === "native_read_only_stage_runner",
+    );
   const executionProjection = {
     schemaVersion: "stage-dag-execution-projection-v0.1",
     authorityPacketRef: "coreLoop.stageDagPacket",
@@ -1073,7 +1087,9 @@ export async function runStageRunnerBridge({
       status: nodeRecordsById.get(node.nodeId)?.status ?? "planned_not_invoked",
     })),
     invocationTruth: {
-      plannedIsInvoked: !failure,
+      plannedIsInvoked: nativeRuntimeInvoked,
+      bridgeCallbackCompleted,
+      nativeRuntimeInvoked,
       requiredEvidence: "runId + nodeId + native runtime process + terminal result",
       evidenceRef: "coreLoop.stageRunnerBridgePacket.nodeRecords",
     },
@@ -1093,6 +1109,9 @@ export async function runStageRunnerBridge({
     status: failure ? "failed" : "pass",
     mode: "read_only_shadow",
     runtime: normalizedRuntime,
+    invocationAuthority: nativeRuntimeInvokerSelected
+      ? "built_in_native_read_only_subprocess"
+      : "injected_callback",
     runId,
     graphAuthority: stageDagPacket.authority,
     workspaceBoundary: "provider sandbox/permission mode is read-only; prompt and retained telemetry redact workspace/home paths, but filesystem read confinement is not claimed",
@@ -1127,6 +1146,7 @@ export async function runStageRunnerBridge({
       invocationTruth: executionProjection.invocationTruth,
     },
   };
+  if (nativeRuntimeInvokerSelected) nativeRuntimeBridgeAttestations.add(bridge);
   return bridge;
   } finally {
     if (durableContext?.ownsKernel) durableContext.kernel.close();
@@ -1145,13 +1165,24 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
   const resultsByTask = new Map(
     bridge.workerResults.map((result) => [result.taskPacketId, result]),
   );
+  const bridgeCompleted = bridge.status === "pass" && bridge.workerResults.length > 0;
+  const nativeExecutionObserved =
+    bridgeCompleted &&
+    nativeRuntimeBridgeAttestations.has(bridge) &&
+    bridge.invocationAuthority === "built_in_native_read_only_subprocess" &&
+    bridge.executionProjection?.invocationTruth?.nativeRuntimeInvoked === true &&
+    bridge.workerResults.every(
+      (result) => result.evidenceKind === "native_read_only_stage_runner",
+    );
   const workerResultPackets = coreLoop.executionResult.workerResultPackets.map((planned) => {
     const result = resultsByTask.get(planned.taskPacketId);
     if (!result) return planned;
     return {
       ...planned,
       status: "executed",
-      resultKind: "native_read_only_worker_result",
+      resultKind: nativeExecutionObserved
+        ? "native_read_only_worker_result"
+        : "synthetic_read_only_worker_result",
       evidenceKind: result.evidenceKind,
       output: {
         producedBy: `${bridge.runtime}_stage_runner_bridge`,
@@ -1160,7 +1191,9 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
         text: result.outputText,
         textSha256: result.outputSha256,
       },
-      note: "A native runtime process returned a terminal result for this bounded read-only worker task; Review still owns semantic acceptance.",
+      note: nativeExecutionObserved
+        ? "A native runtime process returned a terminal result for this bounded read-only worker task; Review still owns semantic acceptance."
+        : "A synthetic callback returned a terminal result for this bounded read-only worker task; this proves bridge and recovery behavior, not native runtime execution.",
     };
   });
   const workerExecutionEvidence = coreLoop.executionResult.workerExecutionEvidence.map((planned) => {
@@ -1171,9 +1204,9 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
       evidenceKind: result.evidenceKind,
       status: "executed",
       artifactRef: "coreLoop.stageRunnerBridgePacket",
-      liveWorkerExecution: true,
+      liveWorkerExecution: nativeExecutionObserved,
       externalAgentSpawned: false,
-      runtimeProcessInvoked: true,
+      runtimeProcessInvoked: nativeExecutionObserved,
       runtime: bridge.runtime,
       sessionId: result.sessionId,
       messageId: result.messageId,
@@ -1181,27 +1214,35 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
       outputSha256: result.outputSha256,
       hostEventCount: result.hostEventCount,
       toolEventCount: result.toolEventCount,
-      reason: "A native read-only runtime result was observed and merged; this proves invocation, while Review owns semantic acceptance.",
+      reason: nativeExecutionObserved
+        ? "A native read-only runtime result was observed and merged; this proves invocation, while Review owns semantic acceptance."
+        : "A synthetic read-only callback result was merged for bridge and recovery verification; native runtime invocation is not claimed.",
     };
   });
   const stageTiming = coreLoop.traceEvalControlPlane.stageTiming.map((timing) =>
     timing.stage === "Execution"
       ? {
           ...timing,
-          timingRecordStatus: "native_runtime_observed",
+          timingRecordStatus: nativeExecutionObserved
+            ? "native_runtime_observed"
+            : "synthetic_callback_observed",
           observedDurationMs: bridge.observedDurationMs,
-          durationMeasurementNote: "Measured from the native stage-runner bridge start/end boundaries.",
+          durationMeasurementNote: nativeExecutionObserved
+            ? "Measured from the native stage-runner bridge start/end boundaries."
+            : "Measured from synthetic bridge callback boundaries; native runtime timing is not claimed.",
         }
       : timing
   );
-  const liveExecution = bridge.status === "pass" && bridge.workerResults.length > 0;
   const langGraphRunPacket = {
     ...coreLoop.langGraphRunPacket,
-    runtimeExecutionEvidence: liveExecution
+    runtimeExecutionEvidence: nativeExecutionObserved
       ? "native_stage_runner_bridge"
-      : "native_stage_runner_bridge_failed",
-    runtimeBoundary:
-      `The authoritative stage DAG was executed in ${bridge.runtime} read-only shadow mode; this does not claim LangGraph runtime usage.`,
+      : bridgeCompleted
+        ? "synthetic_stage_runner_bridge"
+        : "stage_runner_bridge_failed",
+    runtimeBoundary: nativeExecutionObserved
+      ? `The authoritative stage DAG was executed in ${bridge.runtime} read-only shadow mode; this does not claim LangGraph runtime usage.`
+      : "The authoritative stage DAG was exercised by a synthetic callback; this proves bridge and recovery behavior but not native runtime or LangGraph execution.",
     eventLog: coreLoop.langGraphRunPacket.eventLog.map((event) => {
       const taskPacketId = String(event.nodeId ?? "").replace(/^worker:/u, "");
       return resultsByTask.has(taskPacketId)
@@ -1231,16 +1272,18 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
     },
     executionResult: {
       ...coreLoop.executionResult,
-      actualWorkerExecution: liveExecution,
-      executionClosure: liveExecution
+      actualWorkerExecution: nativeExecutionObserved,
+      executionClosure: nativeExecutionObserved
         ? "run_scoped_worker_executed"
-        : "worker_execution_failed",
+        : bridgeCompleted
+          ? "synthetic_worker_result_observed"
+          : "worker_execution_failed",
       workerResultPackets,
       workerExecutionEvidence,
       mergeResult: {
         ...coreLoop.executionResult.mergeResult,
-        status: liveExecution ? "worker_results_merged" : "worker_merge_failed",
-        liveExecutionMerged: liveExecution,
+        status: bridgeCompleted ? "worker_results_merged" : "worker_merge_failed",
+        liveExecutionMerged: nativeExecutionObserved,
         bridgeEvidenceRef: "coreLoop.stageRunnerBridgePacket",
       },
     },

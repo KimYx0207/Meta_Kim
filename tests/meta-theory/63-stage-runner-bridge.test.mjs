@@ -298,7 +298,7 @@ test("read-only bridge rejects a mutating DAG node even when its packet denies s
   assert.equal(result.failure.failureClass, "read_only_bridge_rejected_node_effect");
 });
 
-test("bridge application replaces planned execution truth before artifact persistence", async () => {
+test("bridge application cannot promote an injected callback to native execution truth", async () => {
   const bridge = await runStageRunnerBridge({
     runId: "p117-apply-test",
     runtime: "claude",
@@ -307,7 +307,7 @@ test("bridge application replaces planned execution truth before artifact persis
     workspaceRoot: process.cwd(),
     capacity: 1,
     invokeWorker: passingInvoker(),
-    evidenceKind: "test_double",
+    evidenceKind: "native_read_only_stage_runner",
   });
   const coreLoop = {
     stageDagPacket: dagFor(["one"], { capacity: 1 }),
@@ -339,12 +339,44 @@ test("bridge application replaces planned execution truth before artifact persis
   assert.equal(applied.stageDagPacket.status, "planned_not_invoked");
   assert.equal(applied.stageDagPacket.graphDigest, coreLoop.stageDagPacket.graphDigest);
   assert.equal(applied.stageRunnerBridgePacket.status, "pass");
-  assert.equal(applied.executionResult.actualWorkerExecution, true);
+  assert.equal(bridge.invocationAuthority, "injected_callback");
+  assert.equal(bridge.workerResults[0].evidenceKind, "injected_stage_runner_callback");
+  assert.equal(bridge.executionProjection.invocationTruth.bridgeCallbackCompleted, true);
+  assert.equal(bridge.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
+  assert.equal(bridge.executionProjection.invocationTruth.plannedIsInvoked, false);
+  assert.equal(applied.executionResult.actualWorkerExecution, false);
   assert.equal(applied.executionResult.workerResultPackets[0].status, "executed");
-  assert.equal(applied.executionResult.workerExecutionEvidence[0].liveWorkerExecution, true);
+  assert.equal(applied.executionResult.workerExecutionEvidence[0].liveWorkerExecution, false);
   assert.ok(applied.traceEvalControlPlane.stageTiming[0].observedDurationMs > 0);
-  assert.equal(applied.langGraphRunPacket.runtimeExecutionEvidence, "native_stage_runner_bridge");
+  assert.equal(applied.langGraphRunPacket.runtimeExecutionEvidence, "synthetic_stage_runner_bridge");
   assert.equal(applied.langGraphRunPacket.eventLog[0].eventType, "WorkerFinished");
+
+  const syntheticBridge = structuredClone(bridge);
+  syntheticBridge.workerResults[0].evidenceKind = "test_double";
+  const syntheticApplied = applyStageRunnerBridgeResult(coreLoop, syntheticBridge);
+  assert.equal(syntheticApplied.executionResult.actualWorkerExecution, false);
+  assert.equal(
+    syntheticApplied.executionResult.workerResultPackets[0].resultKind,
+    "synthetic_read_only_worker_result",
+  );
+  assert.equal(
+    syntheticApplied.executionResult.workerExecutionEvidence[0].runtimeProcessInvoked,
+    false,
+  );
+  assert.equal(
+    syntheticApplied.langGraphRunPacket.runtimeExecutionEvidence,
+    "synthetic_stage_runner_bridge",
+  );
+
+  const nativeBridge = structuredClone(bridge);
+  nativeBridge.invocationAuthority = "built_in_native_read_only_subprocess";
+  nativeBridge.workerResults[0].evidenceKind = "native_read_only_stage_runner";
+  const nativeApplied = applyStageRunnerBridgeResult(coreLoop, nativeBridge);
+  assert.equal(nativeApplied.executionResult.actualWorkerExecution, false);
+  assert.equal(
+    nativeApplied.langGraphRunPacket.runtimeExecutionEvidence,
+    "synthetic_stage_runner_bridge",
+  );
 
   const missingBridgeDigest = structuredClone(bridge);
   delete missingBridgeDigest.stageDagPacket.graphDigest;

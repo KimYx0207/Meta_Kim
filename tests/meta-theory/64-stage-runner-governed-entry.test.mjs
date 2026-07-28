@@ -5,10 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
 
-test("formal governed entrypoint replaces planned truth with a real stage-runner result", async (t) => {
+test("formal governed entrypoint records a synthetic bridge result without claiming native execution", async (t) => {
   const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-p117-governed-test-"));
   t.after(async () => fs.rm(outputRoot, { recursive: true, force: true }));
-  const task = "Read package.json and report the exact package name and version. Do not modify files.";
+  const task = "Run meta-theory: inspect package.json and produce a durable verification report of the exact package name and version. Do not modify files.";
   const prompts = [];
   const report = await runMetaTheoryGovernedExecution({
     task,
@@ -28,6 +28,7 @@ test("formal governed entrypoint replaces planned truth with a real stage-runner
       durableDbPath: path.join(outputRoot, "durable-runs.sqlite"),
       capacity: 1,
       timeoutMs: 30_000,
+      evidenceKind: "governed_entry_test_double",
       invokeWorker: async ({ runtime, prompt, packet }) => {
         prompts.push(prompt);
         return {
@@ -52,6 +53,14 @@ test("formal governed entrypoint replaces planned truth with a real stage-runner
   assert.equal(report.stageRunnerBridgePacket.status, "pass");
   assert.equal(report.stageRunnerBridgePacket.executionProjection.durable.enabled, true);
   assert.equal(report.stageRunnerBridgePacket.executionProjection.durable.resumed, false);
+  assert.equal(
+    report.stageRunnerBridgePacket.executionProjection.invocationTruth.bridgeCallbackCompleted,
+    true,
+  );
+  assert.equal(
+    report.stageRunnerBridgePacket.executionProjection.invocationTruth.nativeRuntimeInvoked,
+    false,
+  );
   assert.ok(report.stageRunnerBridgePacket.stageDagPacket.nodes
     .filter((node) => node.stage === "Execution" && node.laneKind === "execution_worker")
     .every((node) => node.effectClass === "read_only_worker"));
@@ -63,11 +72,14 @@ test("formal governed entrypoint replaces planned truth with a real stage-runner
   assert.equal(JSON.stringify(report.durableExecution).includes(outputRoot), false);
   assert.equal((await fs.stat(path.join(outputRoot, "p117-governed-entry-test.reservation.json"))).isFile(), true);
   assert.equal((await fs.stat(path.join(outputRoot, "durable-runs.sqlite"))).isFile(), true);
-  assert.equal(report.executionResult.actualWorkerExecution, true);
+  assert.equal(report.executionResult.actualWorkerExecution, false);
   assert.ok(report.executionResult.workerExecutionEvidence.every(
-    (item) => item.status === "executed" && item.liveWorkerExecution === true,
+    (item) =>
+      item.status === "executed" &&
+      item.liveWorkerExecution === false &&
+      item.runtimeProcessInvoked === false,
   ));
-  assert.equal(report.langGraphRunPacket.runtimeExecutionEvidence, "native_stage_runner_bridge");
+  assert.equal(report.langGraphRunPacket.runtimeExecutionEvidence, "synthetic_stage_runner_bridge");
   assert.ok(report.traceEvalControlPlane.stageTiming.find(
     (item) => item.stage === "Execution",
   ).observedDurationMs > 0);

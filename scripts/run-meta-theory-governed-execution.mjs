@@ -11566,8 +11566,9 @@ export async function runMetaTheoryGovernedExecution({
     const routeExecutionGate = orchestrationReport.selectedExecutionRoute?.routeExecutionGate ?? {};
     const routeGateAllowsBridge =
       routeExecutionGate.routeCompatible === true &&
-      routeExecutionGate.canEnterExecution === true &&
-      routeExecutionGate.handoffStatus === "host_execution_observed";
+      routeExecutionGate.canHandoffToHost === true &&
+      routeExecutionGate.handoffStatus === "ready_for_host_handoff" &&
+      routeExecutionGate.hostAction === "host_action_required";
     if (!planChallengeHandoffReady || !routeGateAllowsBridge) {
       const planChallengeBlocked = !planChallengeHandoffReady;
       coreLoop = {
@@ -11587,7 +11588,7 @@ export async function runMetaTheoryGovernedExecution({
               : "route_gate_host_native_execution_required",
             reason: planChallengeBlocked
               ? "The plan challenge is still awaiting a real host-native decision."
-              : "The route gate has not observed host-native execution and cannot enter the local bridge.",
+              : "The route gate is not ready for the explicitly requested read-only host bridge handoff.",
           },
           nodeRecords: [],
           workerResults: [],
@@ -11647,6 +11648,7 @@ export async function runMetaTheoryGovernedExecution({
           stageRunner.orchestratorOptions,
         ),
         readySetTimeoutMs: stageRunner.readySetTimeoutMs ?? null,
+        evidenceKind: stageRunner.evidenceKind ?? "native_read_only_stage_runner",
         durable: durableCoordinator
           ? {
               enabled: true,
@@ -11659,6 +11661,14 @@ export async function runMetaTheoryGovernedExecution({
             }
           : null,
       });
+      bridgeResult.routeHandoffEvidence = {
+        routeCompatible: routeExecutionGate.routeCompatible === true,
+        canHandoffToHost: routeExecutionGate.canHandoffToHost === true,
+        handoffStatus: routeExecutionGate.handoffStatus,
+        hostAction: routeExecutionGate.hostAction,
+        executionAuthorized: false,
+        authority: routeExecutionGate.authorizationOwner ?? "current_host_native_surfaces_and_permissions",
+      };
       coreLoop = applyStageRunnerBridgeResult(coreLoop, bridgeResult);
       if (durableCoordinator) {
         durableCoordinator.assertHealthy();
