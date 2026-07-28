@@ -114,6 +114,9 @@ test("governed run materializes confirmed Agent, Skill, and Command with project
     );
     assert.equal(artifact.projectCustomizationPacket.status, "completed");
     assert.equal(artifact.projectCustomizationPacket.execution.appliedCount, 3);
+    assert.equal(artifact.coreLoop.executionResult.executionAllowed, false);
+    assert.equal(artifact.coreLoop.executionResult.actualWorkerExecution, false);
+    assert.equal(artifact.coreLoop.executionResult.actualProjectCapabilityMutation, true);
     assert.match(artifact.projectCustomizationPacket.userSummary, /已将 agent/u);
     assert.match(artifact.projectCustomizationPacket.userSummary, /\.codex\/agents/u);
     const leakedCandidates = readdirSync(os.tmpdir()).filter(
@@ -257,6 +260,7 @@ test("query-only and underspecified create requests never produce placeholder ca
   const queryFixture = makeFixture("query");
   const vagueFixture = makeFixture("vague");
   const chineseAgentFixture = makeFixture("chinese-agent");
+  const descriptiveFixture = makeFixture("descriptive-agent");
   try {
     const query = runGoverned(queryFixture, {
       runId: "governed-materialize-query",
@@ -289,9 +293,49 @@ test("query-only and underspecified create requests never produce placeholder ca
     assert.equal(chineseAgents.projectCustomizationPacket.execution.appliedCount, 2);
     assert.equal(existsSync(path.join(chineseAgentFixture.projectDir, ".codex", "agents", "governed-cn-agent.toml")), true);
     assert.equal(existsSync(path.join(chineseAgentFixture.projectDir, ".codex", "agents", "governed-cn-proxy.toml")), true);
+
+    const descriptive = runGoverned(descriptiveFixture, {
+      runId: "governed-materialize-descriptive-agent",
+      task: [
+        "agent governed-background-observer 长期负责生成运行报告并拒绝修改用户文件。",
+        "skill governed-report-helper is a recurring capability responsible for generating release reports and refuses to modify user files.",
+        "agent governed-planner 长期负责生成 skill weekly-report 的计划。",
+        "请审查需要升级的 agent governed-auditor，负责发布检查并拒绝修改用户文件。",
+      ].join("\n"),
+    });
+    assert.equal(descriptive.projectCustomizationPacket.requestedCapabilityCount, 4);
+    assert.equal(descriptive.projectCustomizationPacket.status, "read_only");
+    assert.equal(descriptive.projectCustomizationPacket.execution.appliedCount, 0);
+    assert.equal(descriptive.projectCustomizationPacket.execution.authorizationMissingCount, 4);
+    assert.ok(
+      descriptive.projectCustomizationPacket.execution.results.every(
+        (result) => result.reason === "explicit_project_capability_mutation_authorization_required",
+      ),
+    );
+    assert.equal(
+      existsSync(path.join(descriptiveFixture.projectDir, ".codex", "agents", "governed-background-observer.toml")),
+      false,
+    );
+    assert.equal(
+      existsSync(path.join(descriptiveFixture.projectDir, ".agents", "skills", "governed-report-helper", "SKILL.md")),
+      false,
+    );
+    assert.equal(
+      existsSync(path.join(descriptiveFixture.projectDir, ".codex", "agents", "governed-planner.toml")),
+      false,
+    );
+    assert.equal(
+      existsSync(path.join(descriptiveFixture.projectDir, ".codex", "agents", "governed-auditor.toml")),
+      false,
+    );
+    assert.equal(
+      existsSync(path.join(descriptiveFixture.projectDir, ".meta-kim", "state", "default", "project-capabilities.json")),
+      false,
+    );
   } finally {
     rmSync(queryFixture.root, { recursive: true, force: true });
     rmSync(vagueFixture.root, { recursive: true, force: true });
     rmSync(chineseAgentFixture.root, { recursive: true, force: true });
+    rmSync(descriptiveFixture.root, { recursive: true, force: true });
   }
 });

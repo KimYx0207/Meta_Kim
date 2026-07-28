@@ -4384,6 +4384,38 @@ function durableCapabilitySpecificationReady(line, explicitCapabilityId) {
   );
 }
 
+function explicitlyRequestsDurableCapabilityAction(line, decision) {
+  const text = String(line ?? "")
+    .replace(
+      /(?:不要|不需要|无需|不应|禁止|拒绝)\s*(?:再|进行|执行)?\s*(?:新建|创建|生成|固化|沉淀|写入|安装|新增|添加|复制|迭代|修改|升级|定制|复用)/giu,
+      "",
+    )
+    .replace(
+      /(?:do\s+not|don't|without|no\s+need\s+to|refuse\s+to)\s*(?:create|add|persist|generate|install|copy|iterate|modify|upgrade|customize|reuse)/giu,
+      "",
+    );
+  const chineseAction = "新建|创建|固化|沉淀|写入|安装|新增|添加|复制|迭代|修改|升级|定制|复用";
+  const capabilityType = decision === "create_agent"
+    ? "agent|智能体|代理"
+    : decision === "create_skill"
+      ? "skill|技能"
+      : decision === "create_command"
+        ? "command|命令"
+        : decision === "create_hook"
+          ? "hook|钩子"
+          : decision === "create_mcp_provider"
+            ? "mcp(?:\\s+provider)?|mcp服务|mcp工具"
+            : "script|脚本";
+  const chineseContext = "(?:(?:在|于|把|将|对|为|当前|本|这个|该|全局|项目|仓库)\\s*){0,6}";
+  const englishContext = "(?:(?:the|this|a|an|global|project|repository|repo)\\s+){0,5}";
+  return (
+    new RegExp(`(?:请|需要|需|应当|应该|务必|直接|立即|马上|帮我)\\s*${chineseContext}(?:${chineseAction}|生成)\\s*${chineseContext}(?:${capabilityType})`, "iu").test(text) ||
+    new RegExp(`(?:^|[。；;\\n])\\s*(?:${chineseAction}|生成)\\s*(?:一个|新的?)?\\s*(?:${capabilityType})`, "iu").test(text) ||
+    new RegExp(`(?:please|need\\s+to|should|must|help\\s+me)\\s+${englishContext}(?:create|add|persist|generate|install|copy|iterate|modify|upgrade|customize|reuse)\\s+${englishContext}(?:${capabilityType})`, "iu").test(text) ||
+    new RegExp(`(?:^|[.;\\n])\\s*(?:create|add|persist|generate|install|copy|iterate|modify|upgrade|customize|reuse)\\s+(?:an?\\s+|the\\s+)?(?:${capabilityType})`, "iu").test(text)
+  );
+}
+
 function durableCapabilityRequestsFromTask(task, runId = "meta-run") {
   const lines = String(task ?? "")
     .split(/\r?\n|。|；|;/u)
@@ -4427,6 +4459,7 @@ function durableCapabilityRequestsFromTask(task, runId = "meta-run") {
       requestedCapability,
       explicitCapabilityId,
       specificationReady: durableCapabilitySpecificationReady(line, explicitCapabilityId),
+      mutationAuthorized: explicitlyRequestsDurableCapabilityAction(line, decision),
       decision,
       requestedAction:
         /迭代|修改|升级|定制|iterate|modify|upgrade|customize/i.test(line)
@@ -7230,6 +7263,7 @@ export function buildProjectCustomizationPacket({
       requestedCapability: request.requestedCapability,
       requestText: request.sourceText,
       creationSpecificationReady: request.specificationReady,
+      mutationAuthorized: request.mutationAuthorized === true,
       decision,
       reason,
       targetPath,
@@ -7485,6 +7519,10 @@ function projectCustomizationUserLine({ decision, result, outputLanguage }) {
     if (language === "zh-CN") return `只读模式：未复制 ${label}；计划位置：${decision.targetPath}。`;
     return `Read-only mode: ${label} was not copied; planned target: ${decision.targetPath}.`;
   }
+  if (result.status === "not_applied_missing_authorization") {
+    if (language === "zh-CN") return `未写入 ${label}：这句话描述了能力需要，但没有明确要求创建、复制或迭代。`;
+    return `${label} was not written because the request did not explicitly authorize create, copy, or iteration.`;
+  }
   if (language === "zh-CN") return `未能落盘 ${label}，不会假称完成；原因：${result.reason}`;
   return `Failed to materialize ${label}; completion is not claimed. Reason: ${result.reason}`;
 }
@@ -7531,6 +7569,18 @@ export function executeProjectCustomizationPacket({
         applied: false,
         targetPaths: [],
         reason: "project capability mutation is disabled for read-only, check, dry-run, or fast-path execution",
+      };
+      results.push(result);
+      return { ...decision, executionStatus: result.status, actualTargetPaths: [] };
+    }
+
+    if (decision.mutationAuthorized !== true) {
+      const result = {
+        requestId: decision.requestId,
+        status: "not_applied_missing_authorization",
+        applied: false,
+        targetPaths: [],
+        reason: "explicit_project_capability_mutation_authorization_required",
       };
       results.push(result);
       return { ...decision, executionStatus: result.status, actualTargetPaths: [] };
@@ -7640,7 +7690,13 @@ export function executeProjectCustomizationPacket({
 
   const mutationRequired = decisions.some((decision) => decision.copyPolicy !== "use_global_directly");
   const failedCount = results.filter((result) => result.status === "failed").length;
-  const readOnlyCount = results.filter((result) => result.status === "not_applied_read_only").length;
+  const readOnlyCount = results.filter((result) => [
+    "not_applied_read_only",
+    "not_applied_missing_authorization",
+  ].includes(result.status)).length;
+  const authorizationMissingCount = results.filter(
+    (result) => result.status === "not_applied_missing_authorization",
+  ).length;
   const appliedCount = results.filter((result) => result.status === "applied").length;
   const noCopyCount = results.filter((result) => result.status === "reused_without_copy").length;
   const status = failedCount > 0
@@ -7675,6 +7731,7 @@ export function executeProjectCustomizationPacket({
       appliedCount,
       noCopyCount,
       readOnlyCount,
+      authorizationMissingCount,
       failedCount,
       results,
       manifest: appliedCount > 0
@@ -7685,7 +7742,7 @@ export function executeProjectCustomizationPacket({
       status === "partial"
         ? "At least one required project capability mutation failed; the run must remain partial and must not claim completion."
         : status === "read_only"
-          ? "Project capability mutation was intentionally not applied in read-only/check/dry-run mode."
+          ? "Project capability mutation was not applied because the run was read-only/check/dry-run or the request did not explicitly authorize create, copy, or iteration."
           : "Project capability write claims are backed by project-capability-copy transaction results; global reuse claims mean no project copy was created.",
   };
   if (ownsCandidateRoot) {
@@ -11174,10 +11231,14 @@ export async function runMetaTheoryGovernedExecution({
   const executionAllowed = false;
   const requestedProjectCapabilityMutationMode =
     normalizedProjectCapabilityMutationMode(projectCapabilityMutationMode);
-  const resolvedProjectCapabilityMutationMode =
-    !executionAllowed
-      ? "read_only"
-      : requestedProjectCapabilityMutationMode;
+  // Host-native worker execution authority and explicit project capability
+  // sedimentation are separate effects. The latter is already constrained by
+  // the entry classification, durable specification, route, and transactional
+  // project-copy checks, so a missing host execution receipt must not silently
+  // downgrade an explicitly requested local capability write to read-only.
+  const resolvedProjectCapabilityMutationMode = planChallengeHandoffReady
+    ? requestedProjectCapabilityMutationMode
+    : "read_only";
   const requestedRunId = runId == null ? null : String(runId);
   if (durableMode === "resume" && requestedRunId == null) {
     throw new Error("Durable resume requires an explicit runId and task.");
