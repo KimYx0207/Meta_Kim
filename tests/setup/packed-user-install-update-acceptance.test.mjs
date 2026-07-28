@@ -32,6 +32,16 @@ const acceptanceSource = readFileSync(
   "utf8",
 );
 const verifyAllSource = readFileSync("scripts/run-verify-all.mjs", "utf8");
+const packedProofSource = readFileSync("scripts/packed-product-proof.mjs", "utf8");
+const auditReleaseSource = readFileSync("scripts/audit-release-binding.mjs", "utf8");
+const runtimeAcceptanceSource = readFileSync(
+  "scripts/runtime-capability-acceptance.mjs",
+  "utf8",
+);
+const coreLoopReleaseEvidenceSource = readFileSync(
+  "tests/governance/core-loop-release-evidence.test.mjs",
+  "utf8",
+);
 const setupSource = readFileSync("setup.mjs", "utf8");
 const syncManifest = JSON.parse(readFileSync("config/sync.json", "utf8"));
 const runtimeProfiles = resolveRuntimeProfilesFromManifest(syncManifest);
@@ -66,9 +76,9 @@ test("packed user acceptance runs public install and update from an npm-packed c
   assert.match(acceptanceSource, /runInstalledPublicCli\(descriptor/u);
   assert.doesNotMatch(
     acceptanceSource,
-    /installed packed CLI public check after source deletion/u,
+    /installed packed CLI public check after candidate removal/u,
   );
-  assert.match(acceptanceSource, /installedPackageChecksAfterSourceDeletion: true/u);
+  assert.match(acceptanceSource, /installedPackageChecksAfterCandidateRemoval: true/u);
   assert.match(acceptanceSource, /global-only CLI polluted ordinary cwd/u);
   assert.match(acceptanceSource, /second packed user update changed managed artifacts/u);
   assert.match(acceptanceSource, /global install manifest is missing required entries/u);
@@ -332,6 +342,20 @@ test("packed release proof migrates durable Claude MCP registration and proves t
   assert.match(acceptanceSource, /stubFree: true/u);
   assert.match(acceptanceSource, /evidenceTier: "packed_isolated_transport"/u);
   assert.match(acceptanceSource, /liveHostInvocation: false/u);
+  assert.match(acceptanceSource, /copyRuntimeCapabilityObservationSnapshot/u);
+  assert.match(acceptanceSource, /runtime", "status", "--require-fresh"/u);
+  assert.match(acceptanceSource, /assertExactStandardRuntimeObservationSet\(populatedPayload\.results\)/u);
+  assert.match(acceptanceSource, /assertExactStandardRuntimeObservationSet\(emptyPayload\.missing\)/u);
+  assert.match(acceptanceSource, /executionAuthority !== false/u);
+  assert.match(acceptanceSource, /expectedObservationCount: 0/u);
+  assert.match(acceptanceSource, /candidateExtractionUnavailable: true/u);
+  assert.match(acceptanceSource, /candidateTarballUnavailable: true/u);
+  assert.match(acceptanceSource, /repoIndependentCwd: true/u);
+  assert.match(acceptanceSource, /repoIndependentEnvironment: true/u);
+  assert.match(acceptanceSource, /installedPackageChecksAfterCandidateRemoval: true/u);
+  assert.match(acceptanceSource, /effectivePayload\.results/u);
+  assert.match(acceptanceSource, /effectivePayload\.missing/u);
+  assert.doesNotMatch(acceptanceSource, /seedPackedReferenceOnlyOverlay/u);
   assert.doesNotMatch(
     portablePreparation,
     /originalHomes|environment\.HOME|environment\.USERPROFILE/u,
@@ -342,6 +366,31 @@ test("packed release proof migrates durable Claude MCP registration and proves t
     /const forbiddenRoots = \[\s*packageInfo\.sourceRoot,\s*packageInfo\.workspace,\s*seeded\.legacyPackageRoot,\s*\]/u,
     "portability must still reject source, deleted pack, and retired package roots",
   );
+  assert.match(acceptanceSource, /missingCount: effectivePayload\.missing\.length/u);
+  assert.match(acceptanceSource, /executionAuthority: effectivePayload\.executionAuthority/u);
+  assert.match(acceptanceSource, /observedInCurrentRun: effectivePayload\.observedInCurrentRun/u);
+  assert.match(acceptanceSource, /currentHostAdapter: effectivePayload\.currentHostAdapter/u);
+  assert.match(verifyAllSource, /from "\.\/packed-product-proof\.mjs"/u);
+  assert.match(verifyAllSource, /packedProductProofComplete\(packedUserProof\)/u);
+  assert.match(auditReleaseSource, /from "\.\/packed-product-proof\.mjs"/u);
+  assert.match(auditReleaseSource, /packedProductProofComplete\(packedUserProof\)/u);
+  assert.match(runtimeAcceptanceSource, /from "\.\/packed-product-proof\.mjs"/u);
+  assert.match(runtimeAcceptanceSource, /packedProductProofComplete\(proof\)/u);
+  assert.match(packedProofSource, /portableRuntime\.populatedMcpTransport/u);
+  assert.match(packedProofSource, /portableRuntime\.emptyMcpTransport/u);
+  assert.match(packedProofSource, /populatedMcpTransport\?\.missingCount === 0/u);
+  assert.match(packedProofSource, /emptyMcpTransport\?\.missingCount === 10/u);
+  assert.match(packedProofSource, /currentHostAdapter ===\s*"unavailable_over_mcp_resource_read"/u);
+  assert.match(packedProofSource, /portableRuntime\.advisorySnapshot/u);
+  assert.match(packedProofSource, /candidateExtractionUnavailable/u);
+  assert.match(packedProofSource, /candidateTarballUnavailable/u);
+  assert.match(packedProofSource, /repoIndependentCwd/u);
+  assert.match(packedProofSource, /repoIndependentEnvironment/u);
+  assert.match(packedProofSource, /installedPackageChecksAfterCandidateRemoval/u);
+  assert.doesNotMatch(packedProofSource, /installedPackageChecksAfterSourceDeletion/u);
+  assert.match(coreLoopReleaseEvidenceSource, /legacyCountOnly/u);
+  assert.match(coreLoopReleaseEvidenceSource, /missingExactFact/u);
+  assert.match(coreLoopReleaseEvidenceSource, /onePlatform/u);
 });
 
 test("packed MCP acceptance follows the shared durable strategy across supported path shapes", () => {

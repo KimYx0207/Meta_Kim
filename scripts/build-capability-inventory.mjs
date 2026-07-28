@@ -5,6 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OS_TARGETS, RUNTIMES, exists, listFiles, readJson, repoPath, stateDir, toPosix, writeJson } from "./governance-lib.mjs";
 import { getProfilePaths, toRepoRelative } from "./meta-kim-local-state.mjs";
+import {
+  claimIsExecutable,
+  runtimeCapabilityNameForTool,
+  runtimeRouteEligibility,
+  runtimeSupportForCapability,
+} from "./runtime-capability-claims.mjs";
 
 const outputPath = path.join(stateDir, "capability-inventory.json");
 const profileStatePath = toRepoRelative(getProfilePaths().profileDir);
@@ -26,6 +32,35 @@ function supportForOs(osName, support = "native", fallback = "unknown") {
   return Object.fromEntries(
     OS_TARGETS.map((name) => [name, name === osName ? support : fallback])
   );
+}
+
+function matrixCapabilityForRecord(record) {
+  if (record.type === "agent") return "agent";
+  if (record.type === "skill") return "skill";
+  if (record.type === "hook") return "hook";
+  if (record.type === "command") return "command";
+  if (["mcp_config", "mcp_server"].includes(record.type)) return "MCP";
+  if (record.type === "runtime_tool") return runtimeCapabilityNameForTool(record.id);
+  return null;
+}
+
+function applyRuntimeClaimBoundary(record, runtimeMatrix) {
+  const matrixCapability = matrixCapabilityForRecord(record);
+  if (!record.runtime || !matrixCapability) return record;
+  const resolvedRoute = runtimeRouteEligibility(
+    runtimeMatrix,
+    matrixCapability,
+    record.runtime,
+  );
+  return {
+    ...record,
+    runtimeSupport: runtimeSupportForCapability(runtimeMatrix, matrixCapability),
+    routeEligibility:
+      record.routeEligibility === "callable" && resolvedRoute === "callable"
+        ? "callable"
+        : "reference",
+    runtimeClaimMode: "interactive_host",
+  };
 }
 
 const PROVIDER_TYPE_BY_TYPE = {
@@ -400,6 +435,8 @@ export async function buildCapabilityInventory() {
     ...(await packageScripts()),
   ];
   for (const platform of runtimeMatrix.platforms ?? []) {
+    const hasExecutableCapability = (platform.capabilities ?? []).some((capability) =>
+      Object.values(capability.claimsByMode ?? {}).some(claimIsExecutable));
     records.push({
       id: `runtime:${platform.platform}`,
       type: "runtime_tool",
@@ -409,12 +446,12 @@ export async function buildCapabilityInventory() {
       ownerCandidates: ["meta-sentinel", "meta-artisan"],
       weaponCandidates: [],
       dependencyCandidates: [],
-      runtimeSupport: supportForRuntime(platform.platform, "native", "unknown"),
+      runtimeSupport: supportForRuntime(platform.platform, hasExecutableCapability ? "native" : "partial", "unknown"),
       osSupport: defaultSupport("partial", "partial").osSupport,
       verificationMethod: "npm run meta:runtime:validate",
       risk: { runtimeBoundary: true },
       mustPreserve: true,
-      routeEligibility: "callable",
+      routeEligibility: hasExecutableCapability ? "callable" : "reference",
       missingFields: [],
       evidence: { source: "local_file", sourceRef: "config/runtime-capability-matrix.json", confidence: "repo_claim" },
       confidence: "repo_claim",
@@ -446,6 +483,10 @@ export async function buildCapabilityInventory() {
     });
   }
   for (const tool of ["shell", "filesystem", "apply_patch", "browser", "web_search", "online_research", "MCP", "memory", "graph", "graphify", "hook", "command", "subagent", "approval", "sandbox"]) {
+    const matrixCapability = runtimeCapabilityNameForTool(tool);
+    const runtimeSupport = runtimeSupportForCapability(runtimeMatrix, matrixCapability);
+    const callableSomewhere = RUNTIMES.some((runtime) =>
+      runtimeRouteEligibility(runtimeMatrix, matrixCapability, runtime) === "callable");
     records.push({
       id: tool,
       type: "runtime_tool",
@@ -454,12 +495,12 @@ export async function buildCapabilityInventory() {
       ownerCandidates: ["meta-artisan", "meta-sentinel", "meta-scout"],
       weaponCandidates: [tool],
       dependencyCandidates: [],
-      runtimeSupport: defaultSupport("partial", "partial").runtimeSupport,
+      runtimeSupport,
       osSupport: defaultSupport("partial", "partial").osSupport,
       verificationMethod: "npm run meta:runtime:validate",
       risk: { requiresApproval: ["shell", "filesystem", "apply_patch"].includes(tool) },
       mustPreserve: true,
-      routeEligibility: "callable",
+      routeEligibility: callableSomewhere ? "callable" : "reference",
       missingFields: [],
       evidence: { source: "local_file", sourceRef: "config/runtime-capability-matrix.json", confidence: "repo_claim" },
       confidence: "repo_claim",
@@ -564,7 +605,9 @@ export async function buildCapabilityInventory() {
       reason: "External or dependency project capability candidate from the dependency registry.",
     });
   }
-  const normalizedRecords = records.map(withUnifiedCapabilityFields);
+  const normalizedRecords = records
+    .map((record) => applyRuntimeClaimBoundary(record, runtimeMatrix))
+    .map(withUnifiedCapabilityFields);
   const byProviderType = normalizedRecords.reduce((counts, record) => {
     counts[record.providerType] = (counts[record.providerType] ?? 0) + 1;
     return counts;

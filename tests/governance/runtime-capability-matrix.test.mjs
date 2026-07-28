@@ -9,6 +9,10 @@ test("runtime matrix covers platforms and critical constraints", async () => {
     assert.ok(platforms.has(runtime), `missing ${runtime}`);
   }
   const raw = JSON.stringify(matrix);
+  assert.equal(matrix.evidenceLedger, "config/runtime-capability-evidence.json");
+  assert.equal(matrix.schemaVersion, 2);
+  assert.equal(Object.hasOwn(matrix, "lastVerifiedAt"), false);
+  assert.equal(matrix.lastReviewedAt, "2026-07-28");
   for (const osName of ["macos", "windows", "wsl2"]) assert.match(raw, new RegExp(osName));
   for (const platform of matrix.platforms) {
     for (const capability of platform.capabilities ?? []) {
@@ -18,20 +22,36 @@ test("runtime matrix covers platforms and critical constraints", async () => {
   const capabilityMap = (platform) =>
     new Map((platform.capabilities ?? []).map((capability) => [capability.capability, capability]));
   const claudeCode = capabilityMap(platforms.get("claude_code"));
-  assert.equal(claudeCode.get("agent")?.support, "native");
-  assert.equal(claudeCode.get("subagent")?.support, "native");
-  assert.equal(claudeCode.get("custom agent")?.support, "native");
+  assert.equal(claudeCode.get("agent")?.hostSupport, "native");
+  assert.equal(claudeCode.get("agent")?.support, "partial");
+  assert.equal(claudeCode.get("native choice surface")?.hostSupport, "native");
+  assert.equal(claudeCode.get("native choice surface")?.hostConfidence, "verified_docs");
+  assert.equal(claudeCode.get("native choice surface")?.claimsByMode.interactive_host.acceptanceState, "not_run");
+  assert.equal(claudeCode.get("native choice surface")?.claimsByMode.interactive_host.routeEligibility, "host_handoff_eligible");
+  assert.equal(claudeCode.get("agent")?.claimsByMode.interactive_host.routeEligibility, "host_handoff_eligible");
   const cursor = capabilityMap(platforms.get("cursor"));
-  assert.equal(cursor.get("hook")?.support, "native");
-  assert.equal(cursor.get("hook")?.confidence, "verified_docs");
-  assert.equal(cursor.get("subagent")?.support, "native");
-  assert.equal(cursor.get("subagent")?.confidence, "verified_docs");
-  assert.notEqual(cursor.get("native choice surface")?.support, "native");
+  assert.equal(cursor.get("hook")?.hostSupport, "native");
+  assert.equal(cursor.get("hook")?.hostConfidence, "verified_docs");
+  assert.equal(cursor.get("subagent")?.hostSupport, "native");
+  assert.equal(cursor.get("subagent")?.support, "partial");
+  assert.equal(cursor.get("native choice surface")?.hostSupport, "native");
+  assert.equal(cursor.get("native choice surface")?.hostConfidence, "verified_docs");
+  assert.equal(cursor.get("native choice surface")?.claimsByMode.interactive_host.acceptanceState, "not_run");
+  assert.equal(cursor.get("agent")?.claimsByMode.interactive_host.routeEligibility, "not_executable");
   const openclaw = capabilityMap(platforms.get("openclaw"));
   assert.notEqual(openclaw.get("popup / overlay / approval UI")?.support, "native");
   assert.match(JSON.stringify(platforms.get("codex")), /explicitly requested/);
   assert.match(JSON.stringify(platforms.get("codex")), /trust review/);
+  assert.equal(
+    capabilityMap(platforms.get("codex")).get("subagent")?.claimsByMode.interactive_host.routeEligibility,
+    "host_handoff_eligible",
+  );
+  assert.equal(
+    capabilityMap(platforms.get("codex")).get("native choice surface")?.claimsByMode.interactive_host.routeEligibility,
+    "not_executable",
+  );
   assert.match(JSON.stringify(platforms.get("openclaw")), /Third-party skills/);
   assert.match(JSON.stringify(platforms.get("openclaw")), /typed plugin hooks/);
   assert.match(JSON.stringify(platforms.get("openclaw")), /not a hard sandbox/);
+  assert.equal(openclaw.get("hook")?.claimsByMode.interactive_host.metaKimIntegration, "declarative_only");
 });

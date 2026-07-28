@@ -1,6 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import {
+  HOST_SUPPORT_VALUES,
+  ROUTE_ELIGIBILITY_VALUES,
+  RUNTIME_CAPABILITY_MODES,
+  aggregateLegacyCapabilitySummary,
+} from "../runtime-capability-claims.mjs";
+import { validateRuntimeEvidenceLedger } from "../runtime-capability-evidence.mjs";
 
 function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -46,16 +53,32 @@ export async function readRequiredPackagedText(filePath, {
   packageRoot,
   label = "MCP resource",
 } = {}) {
-  const absolutePath = assertInsideRoot(filePath, packageRoot);
-  const stat = await fs.lstat(absolutePath);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error(`${label} must be a regular packaged file: ${absolutePath}`);
+  try {
+    const absoluteRoot = path.resolve(packageRoot);
+    const rootStat = await fs.lstat(absoluteRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error("unsafe package root");
+    const realRoot = await fs.realpath(absoluteRoot);
+    if (realRoot !== absoluteRoot) throw new Error("package root resolves through a link");
+    const absolutePath = assertInsideRoot(filePath, realRoot);
+    const stat = await fs.lstat(absolutePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("resource is not a regular file");
+    const realFile = await fs.realpath(absolutePath);
+    if (realFile !== absolutePath || !assertInsideRoot(realFile, realRoot)) throw new Error("resource parent chain resolves outside package root");
+    const handle = await fs.open(realFile, "r");
+    try {
+      const before = await handle.stat();
+      const text = await handle.readFile("utf8");
+      const after = await handle.stat();
+      if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after.ino || before.dev !== after.dev) throw new Error("resource changed while read");
+      if (!text.trim() || text.includes("\0")) throw new Error("resource is empty or invalid");
+      return text;
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    const code = typeof error?.code === "string" ? ` (${error.code})` : "";
+    throw new Error(`${label} could not be read safely${code}.`);
   }
-  const text = await fs.readFile(absolutePath, "utf8");
-  if (!text.trim() || text.includes("\0")) {
-    throw new Error(`${label} is empty or invalid: ${absolutePath}`);
-  }
-  return text;
 }
 
 export function validateRequiredMarkdown(text, {
@@ -85,12 +108,15 @@ export function validateRuntimeCapabilityMatrix(matrix, sourceLabel = "runtime c
   assertNoUnsafeObjectKeys(matrix, sourceLabel);
   if (
     !isPlainObject(matrix) ||
-    !Number.isInteger(matrix.schemaVersion) ||
-    matrix.schemaVersion < 1 ||
+    matrix.schemaVersion !== 2 ||
+    matrix.claimSchemaVersion !== 2 ||
     !Array.isArray(matrix.generatedFrom) ||
     matrix.generatedFrom.length === 0 ||
     matrix.generatedFrom.some((entry) => !nonEmptyString(entry)) ||
-    !nonEmptyString(matrix.lastVerifiedAt) ||
+    !nonEmptyString(matrix.lastReviewedAt) ||
+    Object.hasOwn(matrix, "lastVerifiedAt") ||
+    matrix.evidenceLedger !== "config/runtime-capability-evidence.json" ||
+    !isPlainObject(matrix.claimSemantics) ||
     !Array.isArray(matrix.capabilityNames) ||
     matrix.capabilityNames.length === 0 ||
     matrix.capabilityNames.some((entry) => !nonEmptyString(entry)) ||
@@ -124,16 +150,44 @@ export function validateRuntimeCapabilityMatrix(matrix, sourceLabel = "runtime c
         seenCapabilities.has(capability.capability) ||
         !nonEmptyString(capability.support) ||
         !nonEmptyString(capability.confidence) ||
+        !HOST_SUPPORT_VALUES.includes(capability.hostSupport) ||
+        !nonEmptyString(capability.hostConfidence) ||
+        !Array.isArray(capability.runtimeModes) ||
+        capability.runtimeModes.length === 0 ||
+        capability.runtimeModes.some((mode) => !RUNTIME_CAPABILITY_MODES.includes(mode)) ||
+        !Array.isArray(capability.requiredModes) ||
+        capability.requiredModes.some((mode) => !capability.runtimeModes.includes(mode)) ||
+        !isPlainObject(capability.claimsByMode) ||
+        Object.keys(capability.claimsByMode).length !== capability.runtimeModes.length ||
+        capability.runtimeModes.some((mode) => {
+          const claim = capability.claimsByMode[mode];
+          return !isPlainObject(claim) ||
+            !HOST_SUPPORT_VALUES.includes(claim.hostSupport) ||
+            !nonEmptyString(claim.hostConfidence) ||
+            !nonEmptyString(claim.metaKimIntegration) ||
+            !nonEmptyString(claim.acceptanceRequirement) ||
+            !nonEmptyString(claim.acceptanceState) ||
+            !ROUTE_ELIGIBILITY_VALUES.includes(claim.routeEligibility) ||
+            !Array.isArray(claim.evidenceRefs) ||
+            claim.evidenceRefs.length === 0;
+        }) ||
+        !isPlainObject(capability.reviewState) ||
+        !nonEmptyString(capability.reviewState.lastReviewedAt) ||
+        !Array.isArray(capability.reviewState.evidenceRefs) ||
+        capability.reviewState.evidenceRefs.length === 0 ||
         !isPlainObject(capability.trigger) ||
         !isPlainObject(capability.configLocations) ||
         !isPlainObject(capability.installLocations) ||
         !isPlainObject(capability.osSupport) ||
-        !isPlainObject(capability.automationBoundary) ||
-        !isPlainObject(capability.evidence)
+        !isPlainObject(capability.automationBoundary)
       ) {
         throw new Error(
           `${sourceLabel} contains an invalid or duplicate capability for ${platform.platform}.`,
         );
+      }
+      const aggregate = aggregateLegacyCapabilitySummary(capability);
+      if (capability.support !== aggregate.support || capability.confidence !== aggregate.confidence) {
+        throw new Error(`${sourceLabel} contains a non-conservative legacy capability summary for ${platform.platform}.`);
       }
       seenCapabilities.add(capability.capability);
     }
@@ -157,6 +211,19 @@ export function parseRuntimeCapabilityMatrix(text, sourceLabel) {
     throw new Error(`${sourceLabel} is not valid JSON: ${error.message}`);
   }
   return validateRuntimeCapabilityMatrix(matrix, sourceLabel);
+}
+
+export function parseRuntimeCapabilityEvidenceLedger(text, sourceLabel) {
+  let ledger;
+  try {
+    ledger = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${sourceLabel} is not valid JSON: ${error.message}`);
+  }
+  assertNoUnsafeObjectKeys(ledger, sourceLabel);
+  const { issues } = validateRuntimeEvidenceLedger(ledger);
+  if (issues.length > 0) throw new Error(`${sourceLabel} is invalid:\n- ${issues.join("\n- ")}`);
+  return ledger;
 }
 
 export function assertExactRuntimeCapabilityMatrix(actual, expected, label = "runtime capability matrix") {

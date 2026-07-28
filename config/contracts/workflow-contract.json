@@ -2528,6 +2528,7 @@
       "planChallengeState": {
         "requiredFields": [
           "active",
+          "planChallengeSatisfied",
           "authorizationRequired",
           "sideEffectActions",
           "executionAllowed",
@@ -2552,6 +2553,7 @@
           "awaiting_user_answer",
           "awaiting_understanding_confirmation",
           "awaiting_execution_authorization",
+          "plan_challenge_satisfied",
           "ready_for_execution",
           "execution_denied",
           "stopped_by_user"

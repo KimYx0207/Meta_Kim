@@ -33,6 +33,9 @@ import {
   runPackedUserInstallUpdateAcceptance,
 } from "./verify-packed-user-install-update.mjs";
 import { resolveRuntimeProfilesFromManifest } from "./meta-kim-sync-config.mjs";
+import { packedProductProofComplete } from "./packed-product-proof.mjs";
+
+export { packedProductProofComplete } from "./packed-product-proof.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const RELEASE_SYNC_MANIFEST = JSON.parse(
@@ -101,6 +104,7 @@ const STANDARD_STAGE_COMMANDS = Object.freeze([
   ["meta:graphify:check", "npm run meta:graphify:check"],
   ["meta:check:global:release", "npm run meta:check:global:release"],
   ["eval-meta-agents", "node scripts/eval-meta-agents.mjs --primary-release-fuse"],
+  ["meta:runtime:produce", "node scripts/run-runtime-capability-producers.mjs --status --require-fresh"],
   ["meta:test:inventory", "npm run meta:test:inventory"],
   ["meta:test:unit", "npm run meta:test:unit"],
   ["meta:test:setup", "npm run meta:test:setup"],
@@ -510,64 +514,6 @@ export function computeReleaseGrade({
   );
 }
 
-export function packedProductProofComplete(packedUserProof) {
-  const currentPackage = packedUserProof?.currentPackage;
-  const portableRuntime = currentPackage?.portableRuntime;
-  const historicalUpdate = packedUserProof?.historicalUpdate;
-  const currentModes = currentPackage?.modes ?? [];
-  const projectModes = currentPackage?.projectPackage?.modes ?? [];
-  return (
-    packedUserProof?.status === "passed" &&
-    packedUserProof?.releaseGradeEligible === true &&
-    packedUserProof?.sourcePolicy === "npm_pack_installed_public_cli" &&
-    currentPackage?.status === "passed" &&
-    currentPackage?.installedCliEntrypoints === true &&
-    JSON.stringify(currentModes.map(({ mode, status }) => ({ mode, status }))) ===
-      JSON.stringify([
-        { mode: "install", status: "passed" },
-        { mode: "update", status: "passed" },
-        { mode: "update", status: "passed" },
-      ]) &&
-    currentPackage?.projectPackage?.status === "passed" &&
-    JSON.stringify(projectModes.map(({ mode, status }) => ({ mode, status }))) ===
-      JSON.stringify([
-        { mode: "install", status: "passed" },
-        { mode: "update", status: "passed" },
-      ]) &&
-    currentPackage?.runtimeSedimentation?.status === "passed" &&
-    historicalUpdate?.status === "passed" &&
-    historicalUpdate?.completed === true &&
-    historicalUpdate?.resolution?.ref === historicalUpdate?.historicalRef &&
-    ["highest_prior_stable_semver_tag", "validated_env_override"].includes(
-      historicalUpdate?.resolution?.source,
-    ) &&
-    typeof historicalUpdate?.beforeVersion === "string" &&
-    typeof historicalUpdate?.afterVersion === "string" &&
-    historicalUpdate.beforeVersion !== historicalUpdate.afterVersion &&
-    historicalUpdate?.seedMethod === "historical_tarball_installed_cli" &&
-    historicalUpdate?.updateMethod === "current_tarball_installed_cli" &&
-    historicalUpdate?.checkMethod ===
-      "current_update_internal_global_check_plus_exact_artifact_manifest_validation" &&
-    portableRuntime?.status === "passed" &&
-    portableRuntime.agentProjection?.status === "passed" &&
-    portableRuntime.ownershipManifest?.status === "passed" &&
-    portableRuntime.ownershipManifest?.overlappingWriterPathCount === 0 &&
-    portableRuntime.hookProjection?.status === "passed" &&
-    portableRuntime.mcpRegistration?.status === "passed" &&
-    portableRuntime.mcpTransport?.status === "passed" &&
-    portableRuntime.mcpTransport?.evidenceTier === "packed_isolated_transport" &&
-    portableRuntime.mcpTransport?.liveHostInvocation === false &&
-    portableRuntime.mcpTransport?.semanticMatrixMatched === true &&
-    Number.isSafeInteger(portableRuntime.mcpTransport?.platformCount) &&
-    portableRuntime.mcpTransport.platformCount > 0 &&
-    portableRuntime.mcpTransport?.stubFree === true &&
-    portableRuntime.portability?.status === "passed" &&
-    portableRuntime.portability?.packExtractionDeletedBeforeTransport === true &&
-    portableRuntime.portability?.tarballDeletedBeforeInstalledChecks === true &&
-    portableRuntime.portability?.installedPackageChecksAfterSourceDeletion === true
-  );
-}
-
 export function computeLiveCertified({
   requested,
   releaseGrade,
@@ -749,12 +695,12 @@ function parseStageCommand(cmd) {
   return { command: "sh", args: ["-lc", cmd] };
 }
 
-function runWithTimeout(cmd, timeoutMs) {
+function runWithTimeout(cmd, timeoutMs, { captureStdout = false } = {}) {
   const { command, args: commandArgs } = parseStageCommand(cmd);
   const result = spawnSync(command, commandArgs, {
     cwd: process.cwd(),
     shell: false,
-    stdio: "inherit",
+    ...(captureStdout ? { encoding: "utf8", stdio: ["inherit", "pipe", "inherit"] } : { stdio: "inherit" }),
     timeout: timeoutMs,
   });
   const timedOut = result.error?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
@@ -765,6 +711,7 @@ function runWithTimeout(cmd, timeoutMs) {
     exitCode,
     signal: result.signal ?? null,
     error: result.error?.message ?? null,
+    stdout: captureStdout ? result.stdout ?? "" : null,
   };
 }
 
@@ -810,10 +757,16 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
   const label = `[${i + 1}/${selectedStages.length}] ${stage.name}`;
   const t0 = Date.now();
   console.log(`\n=== ${label} ===\n> ${stage.cmd}`);
-  const result = runWithTimeout(stage.cmd, stage.timeoutMs);
+  const result = runWithTimeout(stage.cmd, stage.timeoutMs, { captureStdout: stage.name === "meta:runtime:produce" });
   const ms = Date.now() - t0;
   if (result.ok) {
     console.log(`\n✓ ${label} 通过 (${ms}ms)`);
+    let controlledProducerEvidence = null;
+    if (stage.name === "meta:runtime:produce") {
+      try { controlledProducerEvidence = JSON.parse(result.stdout); }
+      catch (error) { throw new Error(`controlled producer stage returned invalid JSON: ${error.message}`); }
+      process.stdout.write(result.stdout);
+    }
     results.push({
       name: stage.name,
       cmd: stage.cmd,
@@ -821,6 +774,7 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
       durationMs: ms,
       exitCode: 0,
       timedOut: false,
+      ...(controlledProducerEvidence ? { controlledProducerEvidence } : {}),
     });
   } else {
     const reason = result.timedOut ? `超时 (>${stage.timeoutMs}ms)` : `exit ${result.exitCode ?? "?"}`;

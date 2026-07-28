@@ -45,6 +45,9 @@ ${status.usageHeading}:
   meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--json]
   meta-kim release close --issue <P-NNN> --prd <repo-relative-file> [--profile default] [--json]
   meta-kim mcp serve
+  meta-kim runtime accept --report <file> --source-kind <kind> --runtime <runtime> --capability <capability> [--mode interactive_host]  # reference-only import
+  meta-kim runtime produce --source <source> --runtimes <list> --capabilities <list> [source options]
+  meta-kim runtime status [--runtimes <list>] [--capabilities <list>] [--require-fresh]
   meta-kim uninstall [--yes] [--deep] [--scope=global|project|both]
   meta-kim project bootstrap [--project-dir <dir>] [--dry-run|--apply] [--json]
   meta-kim project capability copy --project-dir <dir> --runtime <runtime> --type <agent|skill|command> --id <id> --source <path> --mode <create|iterate> [--apply] [--json]
@@ -57,7 +60,7 @@ ${status.optionsHeading}:
 `;
 }
 
-const commands = new Set(["install", "update", "check", "status", "doctor", "release", "uninstall", "project", "mcp"]);
+const commands = new Set(["install", "update", "check", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime"]);
 
 function fail(message, copy = statusCopy()) {
   console.error(`meta-kim: ${message}`);
@@ -283,5 +286,11 @@ switch (command) {
       fail("mcp subcommand must be 'serve' or 'self-test'");
     }
     run("scripts/mcp/meta-runtime-server.mjs", commandArgs[0] === "self-test" ? ["--self-test"] : []);
+    break;
+  case "runtime":
+    if (commandArgs[0] === "accept") run("scripts/attest-runtime-capability-acceptance.mjs", commandArgs.slice(1));
+    if (commandArgs[0] === "produce") run("scripts/run-runtime-capability-producers.mjs", commandArgs.slice(1));
+    if (commandArgs[0] === "status") run("scripts/run-runtime-capability-producers.mjs", ["--status", ...commandArgs.slice(1)]);
+    fail("runtime subcommand must be 'accept', 'produce', or 'status'");
     break;
 }

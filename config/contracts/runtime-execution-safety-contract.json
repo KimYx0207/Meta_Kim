@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "meta-kim-runtime-execution-safety-v1",
+  "claimSchemaVersion": 2,
+  "authority": "current_host_current_run_observer",
+  "persistentAcceptanceClass": "advisory_observation_only",
+  "persistentAcceptanceCanAuthorizeExecution": false,
+  "routeEligibilityPolicy": {
+    "hostHandoffEligible": ["executable", "host_handoff_eligible"],
+    "hardBlocked": ["not_executable", "reference_only", "policy_only", "install_only", "compatibility_only"],
+    "missingAcceptanceAffectsHostHandoff": false,
+    "missingAcceptanceAffectsExecutableClaim": true
+  },
+  "defaultMode": "interactive_host",
+  "acceptanceFreshnessMs": 86400000,
+  "releaseAcceptanceFreshnessMs": 604800000,
+  "standardObservationSet": [
+    { "runtime": "claude_code", "capability": "agent", "mode": "interactive_host" },
+    { "runtime": "claude_code", "capability": "subagent", "mode": "interactive_host" },
+    { "runtime": "claude_code", "capability": "shell", "mode": "interactive_host" },
+    { "runtime": "claude_code", "capability": "filesystem", "mode": "interactive_host" },
+    { "runtime": "claude_code", "capability": "apply_patch / edit", "mode": "interactive_host" },
+    { "runtime": "codex", "capability": "agent", "mode": "interactive_host" },
+    { "runtime": "codex", "capability": "subagent", "mode": "interactive_host" },
+    { "runtime": "codex", "capability": "shell", "mode": "interactive_host" },
+    { "runtime": "codex", "capability": "filesystem", "mode": "interactive_host" },
+    { "runtime": "codex", "capability": "apply_patch / edit", "mode": "interactive_host" }
+  ],
+  "executionClassPolicies": {
+    "shell": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "filesystem": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "apply_patch / edit": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "agent": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "subagent": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "custom agent": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "hook": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "MCP": { "requiredModes": ["interactive_host"], "acceptanceRequired": true },
+    "native choice surface": { "requiredModes": ["interactive_host"], "acceptanceRequired": true }
+  },
+  "routePolicies": {
+    "engineering_execution": [
+      { "capability": "shell", "mode": "interactive_host" },
+      { "capability": "filesystem", "mode": "interactive_host" },
+      { "capability": "apply_patch / edit", "mode": "interactive_host" }
+    ],
+    "product_build": [
+      { "capability": "agent", "mode": "interactive_host" },
+      { "capability": "subagent", "mode": "interactive_host" }
+    ],
+    "governed_dispatch": [
+      { "capability": "agent", "mode": "interactive_host" }
+    ],
+    "choice_required": [
+      { "capability": "native choice surface", "mode": "interactive_host" }
+    ],
+    "default_executable": [
+      { "capability": "shell", "mode": "interactive_host" }
+    ]
+  },
+  "runtimeBlocks": {
+    "cursor": {
+      "productExecution": true,
+      "reason": "P-130 keeps Cursor documentation-only until product/live acceptance exists."
+    }
+  },
+  "integrationBlocks": ["declarative_only", "projected_unaccepted", "not_integrated", "unknown"],
+  "setupLaunchInventory": {
+    "purpose": "setup_inventory_and_drift_detection",
+    "executionAuthority": false,
+    "sameUserTrustRoot": false,
+    "eliminatesTOCTOU": false,
+    "requiredDescriptorComponents": ["discoveredEntry", "shim", "launcher", "jsEntry", "argsPrefix"],
+    "requiredFileIdentityFields": ["realpath", "sha256", "size"],
+    "boundary": "The same-user writable inventory keeps version probes and controlled producer launches consistent and detects drift. It cannot authorize the current host, establish a same-user trust root, or eliminate the kernel-open TOCTOU window."
+  },
+  "releasePolicy": {
+    "releaseResolutionRequiresReleaseGrade": true,
+    "requiredBindings": [
+      "runtimeVersion",
+      "commit",
+      "packageDigest",
+      "releaseAuditAttemptId",
+      "verificationAttemptId"
+    ]
+  }
+}

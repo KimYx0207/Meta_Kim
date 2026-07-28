@@ -8,6 +8,19 @@
 
 ## Unreleased
 
+## [2.9.11] - 2026-07-28
+
+### 修复内容
+
+- **Claude Code 与 Codex 的能力证据现在只说明“当前宿主可以尝试接手”，不再冒充 Meta_Kim 已授权或已执行。** 兼容的宿主能力进入明确交接状态；历史观察始终只是参考，明确不支持、仅供参考、错误 runtime 和未证实的原生选择能力继续阻断。独立 runner 只生成有边界的宿主请求，callback、环境变量、JSON、receipt 或自哈希都不能制造当前执行权限。
+- **Runtime 观察从一张报告矩阵变成可恢复、按能力绑定的正式产品路径。** 打包后的 CLI 可记录和读取 Claude Code/Codex 共十项精确能力，绑定真实 producer 事件与发布 lineage，保留失败证据用于诊断，MCP 明确输出 populated 10/0 与 empty 0/10，同时所有持久化结果都不能反向开启执行。
+- **安装与发布证明现在验证用户真正运行的包。** Windows 启动清单绑定发现入口、shim、launcher 和 JavaScript 入口，但不虚构同用户信任根，也不声称彻底消除 TOCTOU。当前、项目、历史三条安装/升级路径必须精确覆盖 canonical 四目标；Verification、Release audit、release close 和只读观察入口复算同一个原始证明，旧格式、缺目标、只报数量或自报成功都会失败。
+- **Graphify 现在能在子目录存在同名文件时，为仓库根目录文件生成稳定且唯一的标签。** 根文件使用真实的显式相对写法，例如 `./README.md`；普通文件和子目录的最短唯一路径保持不变，并由回归测试保护可重放的身份校验。
+
+### 验证
+
+- 十一轮反证与返工依次关闭了伪授权、路由死锁、原生选择歧义、Stage Runner 绕过、启动身份漂移、packed 源泄漏、目标集合不完整、发布审计误信、worker 错误归因和连续发布 lineage 问题。最终 correctness、security、product-completeness 三路独立 Review 均无 P0/P1/P2，Meta-Review 已授权进入标准发布门。已有 Claude Code 5/5、Codex 5/5 的生产观察只读复用，没有重复调用模型。Cursor 产品执行、Docker、任务预算和可选 live-certified 外部签名均不是本版验收证据。
+
 ## [2.9.10] - 2026-07-28
 
 ### 修复内容

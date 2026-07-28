@@ -5,6 +5,11 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createReportContext } from "./report-context.mjs";
+import {
+  runtimeCapabilityNameForTool,
+  runtimeRouteEligibility,
+  runtimeSupportForCapability,
+} from "./runtime-capability-claims.mjs";
 
 const reportContext = createReportContext();
 const REPO_ROOT = reportContext.repoRoot;
@@ -103,6 +108,8 @@ function candidate(id, sourceRef, extra = {}) {
     owner: extra.owner ?? null,
     invocationPath: extra.invocationPath ?? null,
     risk: extra.risk ?? [],
+    runtimeSupport: extra.runtimeSupport ?? null,
+    executionEligible: extra.executionEligible ?? null,
   };
 }
 
@@ -234,14 +241,20 @@ function mcpCandidates(mcpJson, providerRegistry, dependencyRegistry) {
   return [...servers, ...providers, ...dependencies];
 }
 
-function runtimeToolCandidates() {
-  return RUNTIME_TOOLS.map((id) =>
-    candidate(id, "config/runtime-capability-matrix.json", {
-      routeEligibility: "host_dependent",
+export function runtimeToolCandidates(runtimeMatrix) {
+  return RUNTIME_TOOLS.map((id) => {
+    const matrixCapability = runtimeCapabilityNameForTool(id);
+    const runtimeSupport = runtimeSupportForCapability(runtimeMatrix, matrixCapability);
+    const executionEligible = Object.keys(runtimeSupport).some((runtime) =>
+      runtimeRouteEligibility(runtimeMatrix, matrixCapability, runtime) === "callable");
+    return candidate(id, "config/runtime-capability-matrix.json", {
+      routeEligibility: executionEligible ? "callable" : "reference",
       owner: "meta-artisan",
       invocationPath: id,
-    }),
-  );
+      runtimeSupport,
+      executionEligible,
+    });
+  });
 }
 
 function pluginCandidates(skillsManifest) {
@@ -353,6 +366,7 @@ async function main() {
     dependencyRegistry,
     outputContract,
     graphContract,
+    runtimeMatrix,
   ] = await Promise.all([
     readJson("package.json", { scripts: {} }),
     readJson("config/skills.json", { skills: [] }),
@@ -361,6 +375,7 @@ async function main() {
     readJson("config/capability-index/dependency-project-registry.json", { projects: [] }),
     readJson("config/contracts/capability-gap-output-contract.json", {}),
     readJson("config/contracts/capability-gap-executable-graph-contract.json", { nodes: [] }),
+    readJson("config/runtime-capability-matrix.json", { platforms: [] }),
   ]);
 
   const categories = [
@@ -369,7 +384,7 @@ async function main() {
     category("script", "Repeatable local scripts", await scriptCandidates()),
     category("command", "Package commands and local CLIs", commandCandidates(packageJson)),
     category("mcp_provider_tool", "MCP servers and provider tools", mcpCandidates(mcpJson, providerRegistry, dependencyRegistry)),
-    category("runtime_tool", "Host runtime tools", runtimeToolCandidates()),
+    category("runtime_tool", "Host runtime tools", runtimeToolCandidates(runtimeMatrix)),
     category("plugin_connector", "Plugins and connectors", pluginCandidates(skillsManifest)),
     category("retrieval_capability", "Research and evidence retrieval", retrievalCandidates()),
     category("dependency_external_package", "Dependency projects and external packages", dependencyCandidates(dependencyRegistry)),
@@ -430,7 +445,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}

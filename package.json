@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "2.9.10",
+  "version": "2.9.11",
   "description": "Governance layer for AI coding: canonical meta agents, workflow contracts, default Claude/Codex projections, non-default OpenClaw/Cursor projections, and source-backed candidate probes.",
   "private": true,
   "type": "module",
@@ -101,6 +101,8 @@
     "meta:project-cache:verify": "node scripts/verify-project-cache-generation.mjs",
     "meta:runtime:probe": "node scripts/probe-runtime-capabilities.mjs",
     "meta:runtime:check": "node scripts/probe-runtime-capabilities.mjs --check",
+    "meta:runtime:accept": "node scripts/attest-runtime-capability-acceptance.mjs",
+    "meta:runtime:produce": "node scripts/run-runtime-capability-producers.mjs",
     "meta:os:probe": "node scripts/probe-os-compatibility.mjs",
     "meta:os:check": "node scripts/probe-os-compatibility.mjs --check",
     "meta:deps:discover": "node scripts/discover-dependency-capabilities.mjs",

@@ -279,7 +279,7 @@
         "selected worker cannot execute",
         "unsafe mutation",
         "missing approval for external write or global install"
-        ,"active plan challenge is not ready_for_execution or executionAllowed is false"
+        ,"pre-host plan challenge may be satisfied, but host execution has not occurred and executionAllowed remains false"
       ],
       "blockingGates": ["unsafe_mutation", "external_write_without_approval", "global_write_without_approval", "plan_challenge_not_ready"],
       "warningGates": ["low-risk local wording edit"],

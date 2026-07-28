@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -41,13 +42,21 @@ import {
 } from "./meta-kim-sync-config.mjs";
 import {
   assertExactRuntimeCapabilityMatrix,
+  parseRuntimeCapabilityEvidenceLedger,
   validateRuntimeCapabilityMatrix,
 } from "./mcp/runtime-resource-contract.mjs";
 import { renderGlobalAgentProjection } from "./sync-runtimes.mjs";
+import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
+import { loadRuntimeCapabilityAcceptanceAttempts } from "./runtime-capability-acceptance.mjs";
+import { assertExactStandardRuntimeObservationSet } from "./runtime-execution-gate.mjs";
+import { resolveWindowsCliInvocation } from "./runtime-cli-invocation.mjs";
+import {
+  PACKED_SYNC_MANIFEST,
+  PACKED_USER_TARGETS,
+} from "./packed-user-targets.mjs";
 
-const PACKED_SYNC_MANIFEST = JSON.parse(
-  readFileSync(path.join(import.meta.dirname, "..", "config", "sync.json"), "utf8"),
-);
+export { PACKED_USER_TARGETS } from "./packed-user-targets.mjs";
+
 const PACKED_RUNTIME_PROFILES = resolveRuntimeProfilesFromManifest(
   PACKED_SYNC_MANIFEST,
 );
@@ -63,9 +72,6 @@ const PACKED_RELEASE_POLICY = JSON.parse(
     "utf8",
   ),
 );
-export const PACKED_USER_TARGETS = Object.freeze([
-  ...PACKED_SYNC_MANIFEST.supportedTargets,
-]);
 export const PACKED_GLOBAL_AGENT_TARGETS = Object.freeze(
   resolveGlobalAgentProjectionTargets(
     PACKED_RUNTIME_PROFILES,
@@ -163,54 +169,9 @@ function run(command, args, options = {}) {
   });
 }
 
-function resolveWindowsCmdShim(cmdPath) {
-  const source = readFileSync(cmdPath, "utf8");
-  const targetPattern = /"%(?:dp0%|~dp0)[\\/]([^"\r\n]+?\.(?:exe|com|cjs|mjs|js))"\s+%\*/giu;
-  let match;
-  let target = null;
-  while ((match = targetPattern.exec(source)) !== null) {
-    target = path.resolve(path.dirname(cmdPath), match[1]);
-  }
-  if (!target && /^npm(?:\.cmd)?$/iu.test(path.basename(cmdPath))) {
-    target = path.join(path.dirname(cmdPath), "node_modules", "npm", "bin", "npm-cli.js");
-  }
-  if (!target || !existsSync(target)) return null;
-  return /\.(?:exe|com)$/iu.test(target)
-    ? { command: target, argsPrefix: [] }
-    : { command: process.execPath, argsPrefix: [target] };
-}
-
-function resolveWindowsCli(command, args, env) {
-  const text = String(command);
-  const hasPath = path.win32.isAbsolute(text) || /[\\/]/u.test(text);
-  const searchDirs = hasPath
-    ? [""]
-    : String(env.PATH ?? env.Path ?? "")
-        .split(";")
-        .map((entry) => entry.replace(/^"|"$/gu, "").trim())
-        .filter(Boolean);
-  const extensions = path.win32.extname(text) ? [""] : [".exe", ".com", ".cmd", ".bat"];
-  const candidates = [];
-  for (const directory of searchDirs) {
-    for (const extension of extensions) {
-      const candidate = hasPath ? `${text}${extension}` : path.join(directory, `${text}${extension}`);
-      if (existsSync(candidate)) candidates.push(candidate);
-    }
-  }
-  for (const candidate of candidates) {
-    if (/\.(?:exe|com)$/iu.test(candidate)) return { command: candidate, args };
-  }
-  for (const candidate of candidates) {
-    if (!/\.(?:cmd|bat)$/iu.test(candidate)) continue;
-    const shim = resolveWindowsCmdShim(candidate);
-    if (shim) return { command: shim.command, args: [...shim.argsPrefix, ...args] };
-  }
-  throw new Error(`No shell-free Windows invocation found for ${text}`);
-}
-
 function runCli(command, args, options = {}) {
   if (process.platform !== "win32") return run(command, args, options);
-  const invocation = resolveWindowsCli(command, args, options.env ?? process.env);
+  const invocation = resolveWindowsCliInvocation(command, args, { env: options.env ?? process.env });
   return run(invocation.command, invocation.args, options);
 }
 
@@ -732,6 +693,31 @@ function isPathWithin(root, candidate) {
     !path.isAbsolute(relative);
 }
 
+function valueReferencesRoot(value, root) {
+  const normalizedValue = String(value ?? "").replaceAll("\\", "/").toLowerCase();
+  const normalizedRoot = path.resolve(root).replaceAll("\\", "/").toLowerCase();
+  return normalizedValue.includes(normalizedRoot);
+}
+
+function repositoryIndependentEnvironment(environment, forbiddenRoots) {
+  const portable = { ...environment };
+  for (const key of ["PATH", "Path"]) {
+    if (typeof portable[key] !== "string") continue;
+    portable[key] = portable[key]
+      .split(path.delimiter)
+      .filter((entry) => !forbiddenRoots.some((root) => valueReferencesRoot(entry, root)))
+      .join(path.delimiter);
+  }
+  for (const [key, value] of Object.entries(portable)) {
+    if (["PATH", "Path"].includes(key)) continue;
+    if (forbiddenRoots.some((root) => valueReferencesRoot(value, root))) delete portable[key];
+  }
+  if (Object.values(portable).some((value) => forbiddenRoots.some((root) => valueReferencesRoot(value, root)))) {
+    throw new Error("installed-product environment still references the repository or candidate workspace");
+  }
+  return portable;
+}
+
 function requireDurableMcpServer(
   config,
   seeded,
@@ -894,7 +880,48 @@ function runPortableRuntimePreparation({ packageInfo, descriptor, roots, env, ti
   };
 }
 
-function probePackedMcpTransport(server, context, timeoutMs) {
+function copyPreservingPath(source, target) {
+  mkdirSync(path.dirname(target), { recursive: true });
+  copyFileSync(source, target);
+}
+
+export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, targetProjectRoot, sourceUserHome = os.homedir(), targetUserHome, profile = "default" } = {}) {
+  const effective = loadEffectiveRuntimeCapabilityClaims({ projectRoot: sourceProjectRoot, profile });
+  assertExactStandardRuntimeObservationSet(effective.overlayStatus.applied);
+  const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot: sourceProjectRoot, profile });
+  const sourceProfile = store.paths.profileRoot;
+  const targetProfile = path.join(targetProjectRoot, ".meta-kim", "state", profile);
+  mkdirSync(targetProfile, { recursive: true });
+  writeFileSync(path.join(targetProfile, "project-bootstrap.json"), "{}\n", "utf8");
+  const copied = [];
+  for (const binding of effective.overlayStatus.applied) {
+    const attempt = store.attempts.find((entry) => entry.attemptId === binding.attemptId);
+    if (!attempt || attempt.releaseGrade === true) throw new Error("packed snapshot requires original non-releaseGrade host observations");
+    const attemptSource = path.join(store.paths.attemptsDir, `${attempt.attemptId}.json`);
+    const attemptTarget = path.join(targetProfile, "runtime-capability-acceptance", "attempts", `${attempt.attemptId}.json`);
+    copyPreservingPath(attemptSource, attemptTarget);
+    const receiptSource = path.resolve(sourceProfile, attempt.sourceReport.path);
+    const receiptTarget = path.resolve(targetProfile, attempt.sourceReport.path);
+    copyPreservingPath(receiptSource, receiptTarget);
+    const receipt = JSON.parse(readFileSync(receiptSource, "utf8"));
+    copyPreservingPath(path.resolve(sourceProfile, receipt.rawArtifact.path), path.resolve(targetProfile, receipt.rawArtifact.path));
+    for (const ref of [receipt.compositeLifecycle?.parentSessionRef, receipt.compositeLifecycle?.childSessionRef].filter(Boolean)) {
+      copyPreservingPath(path.join(sourceUserHome, ".codex", "sessions", ref), path.join(targetUserHome, ".codex", "sessions", ref));
+    }
+    copied.push({ runtime: attempt.runtime, capability: attempt.capability, mode: attempt.mode, attemptId: attempt.attemptId, receiptSha256: attempt.sourceReport.sha256 });
+  }
+  assertExactStandardRuntimeObservationSet(copied);
+  writeFileSync(path.join(targetProfile, "runtime-capability-acceptance", "advisory-snapshot.json"), `${JSON.stringify({
+    schemaVersion: "meta-kim-runtime-advisory-snapshot-v1",
+    evidenceClass: "read_only_advisory_snapshot",
+    observedInCurrentRun: false,
+    executionAuthority: false,
+    bindings: copied,
+  }, null, 2)}\n`, "utf8");
+  return { evidenceClass: "read_only_advisory_snapshot", observedInCurrentRun: false, executionAuthority: false, count: copied.length, bindings: copied };
+}
+
+function probePackedMcpTransport(server, context, timeoutMs, { projectCwd = context.roots.ordinaryCwd, expectedObservationCount = 10 } = {}) {
   const requests = [
     {
       jsonrpc: "2.0",
@@ -914,9 +941,11 @@ function probePackedMcpTransport(server, context, timeoutMs) {
       method: "tools/call",
       params: { name: "get_meta_runtime_capabilities", arguments: {} },
     },
+    { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_meta_runtime_evidence", arguments: {} } },
+    { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "get_meta_effective_runtime_capabilities", arguments: {} } },
   ];
   const result = runCli(server.command, server.args, {
-    cwd: context.roots.userHome,
+    cwd: projectCwd,
     env: { ...context.hookEnv, ...(server.env ?? {}) },
     timeoutMs,
     input: `${requests.map((request) => JSON.stringify(request)).join("\n")}\n`,
@@ -928,6 +957,13 @@ function probePackedMcpTransport(server, context, timeoutMs) {
     .map((line) => JSON.parse(line));
   const tools = responses.find((response) => response.id === 2)?.result?.tools ?? [];
   const call = responses.find((response) => response.id === 3);
+  const evidenceCall = responses.find((response) => response.id === 4);
+  const effectiveCall = responses.find((response) => response.id === 5);
+  for (const requiredTool of ["get_meta_runtime_capabilities", "get_meta_runtime_evidence", "get_meta_effective_runtime_capabilities"]) {
+    if (!tools.some((tool) => tool.name === requiredTool)) {
+      throw new Error(`packed durable CLI MCP transport did not expose ${requiredTool}`);
+    }
+  }
   if (!tools.some((tool) => tool.name === "get_meta_runtime_capabilities")) {
     throw new Error("packed durable CLI MCP transport did not expose Meta_Kim tools");
   }
@@ -969,6 +1005,29 @@ function probePackedMcpTransport(server, context, timeoutMs) {
     expectedMatrix,
     "packed durable CLI MCP capability matrix",
   );
+  const evidenceText = evidenceCall?.result?.content?.find((entry) => entry?.type === "text")?.text;
+  const expectedLedgerPath = path.join(context.descriptor.installedPackageRoot, "config", "runtime-capability-evidence.json");
+  const evidencePayload = parseRuntimeCapabilityEvidenceLedger(evidenceText, "packed MCP evidence response");
+  const expectedLedger = parseRuntimeCapabilityEvidenceLedger(readFileSync(expectedLedgerPath, "utf8"), expectedLedgerPath);
+  if (JSON.stringify(evidencePayload) !== JSON.stringify(expectedLedger)) throw new Error("packed MCP evidence ledger does not match packaged source");
+  const effectiveText = effectiveCall?.result?.content?.find((entry) => entry?.type === "text")?.text;
+  const effectivePayload = JSON.parse(effectiveText);
+  if (effectivePayload.executionAuthority !== false || effectivePayload.observedInCurrentRun !== false || effectivePayload.currentHostAdapter !== "unavailable_over_mcp_resource_read") {
+    throw new Error("packed MCP advisory readback incorrectly exposed current-run execution authority");
+  }
+  assertExactRuntimeCapabilityMatrix(effectivePayload.matrix, expectedMatrix, "packed MCP advisory effective matrix");
+  if (!Array.isArray(effectivePayload.results) || !Array.isArray(effectivePayload.missing) || effectivePayload.results.length !== expectedObservationCount || effectivePayload.missing.length !== 10 - expectedObservationCount) {
+    throw new Error("packed MCP effective status did not return the exact results/missing partition");
+  }
+  if (expectedObservationCount === 10) {
+    assertExactStandardRuntimeObservationSet(effectivePayload.results);
+  } else if (expectedObservationCount === 0) {
+    assertExactStandardRuntimeObservationSet(effectivePayload.missing);
+  }
+  if ((effectivePayload.overlayStatus?.applied?.length ?? 0) !== expectedObservationCount || effectivePayload.overlayStatus?.applied?.some((entry) => entry.executionAuthority !== false || entry.observedInCurrentRun !== false)) {
+    throw new Error("packed MCP effective matrix did not expose the expected advisory observation snapshot");
+  }
+  if (JSON.stringify(effectivePayload.matrix).includes('"routeEligibility":"executable"')) throw new Error("packed MCP advisory observations became executable");
   const serializedCapabilities = JSON.stringify(capabilityPayload).toLowerCase();
   if (
     serializedCapabilities.includes("stub") ||
@@ -983,6 +1042,14 @@ function probePackedMcpTransport(server, context, timeoutMs) {
     toolListed: "get_meta_runtime_capabilities",
     toolCallSucceeded: true,
     semanticMatrixMatched: true,
+    staticEvidenceMatched: true,
+    projectOverlayObserved: expectedObservationCount > 0,
+    observationCount: effectivePayload.results.length,
+    missingCount: effectivePayload.missing.length,
+    executionAuthority: effectivePayload.executionAuthority,
+    observedInCurrentRun: effectivePayload.observedInCurrentRun,
+    currentHostAdapter: effectivePayload.currentHostAdapter,
+    externalOverlayStayedNonExecutable: true,
     platformCount: capabilityPayload.platforms.length,
     stubFree: true,
   };
@@ -998,8 +1065,14 @@ function finalizePortableRuntimeProof(prepared, packageInfo, timeoutMs) {
     throw new Error("packed tarball still exists before installed-product checks");
   }
   const { descriptor, hookEnv, roots, runtimeTargetIds } = prepared.context;
+  const forbiddenExecutionRoots = [packageInfo.sourceRoot, packageInfo.workspace, packageInfo.extractDir, path.dirname(packageInfo.tarball)];
+  if (forbiddenExecutionRoots.some((root) => valueReferencesRoot(roots.ordinaryCwd, root))) {
+    throw new Error("installed-product working directory still depends on the repository or candidate workspace");
+  }
+  const portableHookEnv = repositoryIndependentEnvironment(hookEnv, forbiddenExecutionRoots);
+  prepared.context.hookEnv = portableHookEnv;
   requireSuccess(
-    "installed packed global runtime exact projection check after source deletion",
+    "installed packed global runtime exact projection check after candidate removal",
     run(process.execPath, [
       path.join(descriptor.installedPackageRoot, "scripts", "sync-runtimes.mjs"),
       "--check",
@@ -1008,17 +1081,17 @@ function finalizePortableRuntimeProof(prepared, packageInfo, timeoutMs) {
       "--targets",
       runtimeTargetIds.join(","),
       "--json",
-    ], { cwd: roots.ordinaryCwd, env: hookEnv, timeoutMs }),
+    ], { cwd: roots.ordinaryCwd, env: portableHookEnv, timeoutMs }),
   );
   requireSuccess(
-    "installed packed global Hook release check after source deletion",
+    "installed packed global Hook release check after candidate removal",
     run(process.execPath, [
       path.join(descriptor.installedPackageRoot, "scripts", "sync-global-meta-theory.mjs"),
       "--check",
       "--targets",
       runtimeTargetIds.join(","),
       "--with-global-hooks",
-    ], { cwd: roots.ordinaryCwd, env: hookEnv, timeoutMs }),
+    ], { cwd: roots.ordinaryCwd, env: portableHookEnv, timeoutMs }),
   );
   const config = JSON.parse(readFileSync(prepared.context.seeded.claudeUserConfigPath, "utf8"));
   const forbiddenRoots = [packageInfo.workspace, ...prepared.context.forbiddenRoots];
@@ -1028,16 +1101,35 @@ function finalizePortableRuntimeProof(prepared, packageInfo, timeoutMs) {
     forbiddenRoots,
     prepared.context.descriptor,
   );
-  const mcpTransport = probePackedMcpTransport(server, prepared.context, timeoutMs);
+  const populatedStatus = requireSuccess("installed packed CLI advisory observation status", runCli(descriptor.command, ["runtime", "status", "--require-fresh"], { cwd: roots.ordinaryCwd, env: portableHookEnv, timeoutMs }));
+  const populatedPayload = JSON.parse(populatedStatus.stdout);
+  assertExactStandardRuntimeObservationSet(populatedPayload.results);
+  if (populatedPayload.results.length !== 10 || populatedPayload.executionAuthority !== false || populatedPayload.observedInCurrentRun !== false) throw new Error("installed packed CLI did not preserve exactly 10 advisory observations");
+  const emptyProject = path.join(roots.userHome, "empty-runtime-observation-project");
+  mkdirSync(path.join(emptyProject, ".meta-kim", "state", "default"), { recursive: true });
+  writeFileSync(path.join(emptyProject, ".meta-kim", "state", "default", "project-bootstrap.json"), "{}\n", "utf8");
+  const emptyStatus = runCli(descriptor.command, ["runtime", "status", "--require-fresh"], { cwd: emptyProject, env: portableHookEnv, timeoutMs });
+  if (emptyStatus.status === 0) throw new Error("empty packed project runtime status unexpectedly succeeded");
+  const emptyPayload = JSON.parse(emptyStatus.stdout);
+  assertExactStandardRuntimeObservationSet(emptyPayload.missing);
+  if (emptyPayload.missing.length !== 10 || JSON.stringify(emptyPayload).includes(packageInfo.sourceRoot)) throw new Error("empty packed project status did not report exact sanitized 10-item absence");
+  const populatedMcpTransport = probePackedMcpTransport(server, prepared.context, timeoutMs, { expectedObservationCount: 10 });
+  const emptyMcpTransport = probePackedMcpTransport(server, prepared.context, timeoutMs, { projectCwd: emptyProject, expectedObservationCount: 0 });
   return {
     ...prepared.proof,
     status: "passed",
-    mcpTransport,
+    populatedMcpTransport,
+    emptyMcpTransport,
+    advisorySnapshot: prepared.context.advisorySnapshot,
     portability: {
       status: "passed",
       packExtractionDeletedBeforeTransport: true,
       tarballDeletedBeforeInstalledChecks: true,
-      installedPackageChecksAfterSourceDeletion: true,
+      candidateExtractionUnavailable: true,
+      candidateTarballUnavailable: true,
+      repoIndependentCwd: true,
+      repoIndependentEnvironment: true,
+      installedPackageChecksAfterCandidateRemoval: true,
       unresolvedPlaceholderCount: 0,
       forbiddenRootReferenceCount: 0,
     },
@@ -1943,6 +2035,12 @@ function runCurrentPackageLane({
     roots,
     env,
     timeoutMs,
+  });
+  portableRuntimePrepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot({
+    sourceProjectRoot: packageInfo.sourceRoot,
+    targetProjectRoot: roots.ordinaryCwd,
+    sourceUserHome: os.homedir(),
+    targetUserHome: roots.userHome,
   });
   return {
     status: "passed",

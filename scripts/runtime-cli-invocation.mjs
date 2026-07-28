@@ -18,9 +18,74 @@ function resolveWindowsCmdShim(cmdPath) {
   }
   if (!target || !existsSync(target)) return null;
   if (/\.(?:exe|com)$/iu.test(target)) {
-    return { command: target, argsPrefix: [] };
+    return { launcher: target, jsEntry: null, argsPrefix: [] };
   }
-  return { command: process.execPath, argsPrefix: [target] };
+  const localNode = path.join(path.dirname(cmdPath), "node.exe");
+  const launcher = existsSync(localNode) ? localNode : process.execPath;
+  return { launcher, jsEntry: target, argsPrefix: [target] };
+}
+
+function windowsSearchDirectories(commandText, pathValue) {
+  const hasPath = path.win32.isAbsolute(commandText) || /[\\/]/u.test(commandText);
+  return {
+    hasPath,
+    directories: hasPath
+      ? [""]
+      : String(pathValue ?? "")
+          .split(";")
+          .map((entry) => entry.replace(/^"|"$/gu, "").trim())
+          .filter(Boolean),
+  };
+}
+
+export function resolveWindowsCliLaunchDescriptor(
+  command,
+  { env = process.env, pathValue = null } = {},
+) {
+  const commandText = String(command);
+  const { hasPath, directories } = windowsSearchDirectories(
+    commandText,
+    pathValue ?? env.PATH ?? env.Path ?? "",
+  );
+  const extensions = path.win32.extname(commandText)
+    ? [""]
+    : ["", ".exe", ".com", ".cmd", ".bat"];
+  for (const directory of directories) {
+    const candidates = extensions
+      .map((extension) => hasPath
+        ? `${commandText}${extension}`
+        : path.join(directory, `${commandText}${extension}`))
+      .filter((candidate) => existsSync(candidate));
+    if (candidates.length === 0) continue;
+    const discoveredEntry = candidates[0];
+    const native = candidates.find((candidate) => /\.(?:exe|com)$/iu.test(candidate));
+    if (native) {
+      return {
+        platform: "win32",
+        source: "native_executable",
+        discoveredEntry,
+        shim: null,
+        launcher: native,
+        jsEntry: null,
+        argsPrefix: [],
+      };
+    }
+    for (const candidate of candidates) {
+      if (!/\.(?:cmd|bat)$/iu.test(candidate)) continue;
+      const shim = resolveWindowsCmdShim(candidate);
+      if (!shim) continue;
+      return {
+        platform: "win32",
+        source: "node_or_native_shim_without_cmd",
+        discoveredEntry,
+        shim: candidate,
+        launcher: shim.launcher,
+        jsEntry: shim.jsEntry,
+        argsPrefix: [...shim.argsPrefix],
+      };
+    }
+  }
+  throw new Error(`No shell-free Windows executable or supported Node shim found for ${commandText}`);
 }
 
 export function resolveWindowsCliInvocation(
@@ -28,46 +93,33 @@ export function resolveWindowsCliInvocation(
   args = [],
   { env = process.env, pathValue = null } = {},
 ) {
-  const commandText = String(command);
-  const hasPath = path.win32.isAbsolute(commandText) || /[\\/]/u.test(commandText);
-  const searchDirs = hasPath
-    ? [""]
-    : String(pathValue ?? env.PATH ?? env.Path ?? "")
-        .split(";")
-        .map((entry) => entry.replace(/^"|"$/gu, "").trim())
-        .filter(Boolean);
-  const extensions = path.win32.extname(commandText)
-    ? [""]
-    : [".exe", ".com", ".cmd", ".bat"];
-  for (const directory of searchDirs) {
-    for (const extension of extensions) {
-      const candidate = hasPath
-        ? `${commandText}${extension}`
-        : path.join(directory, `${commandText}${extension}`);
-      if (!existsSync(candidate)) continue;
-      if (/\.(?:exe|com)$/iu.test(candidate)) {
-        return { command: candidate, args: [...args], source: "native_executable" };
-      }
-      if (/\.(?:cmd|bat)$/iu.test(candidate)) {
-        const shim = resolveWindowsCmdShim(candidate);
-        if (shim) {
-          return {
-            command: shim.command,
-            args: [...shim.argsPrefix, ...args],
-            source: "node_or_native_shim_without_cmd",
-          };
-        }
-      }
-    }
-  }
-  throw new Error(`No shell-free Windows executable or supported Node shim found for ${commandText}`);
+  const launchDescriptor = resolveWindowsCliLaunchDescriptor(command, { env, pathValue });
+  return {
+    command: launchDescriptor.launcher,
+    args: [...launchDescriptor.argsPrefix, ...args],
+    source: launchDescriptor.source,
+    launchDescriptor,
+  };
 }
 
 export function resolveCliInvocation(command, args = [], options = {}) {
   if (process.platform === "win32") {
     return resolveWindowsCliInvocation(command, args, options);
   }
-  return { command, args: [...args], source: "path_executable" };
+  return {
+    command,
+    args: [...args],
+    source: "path_executable",
+    launchDescriptor: {
+      platform: process.platform,
+      source: "path_executable",
+      discoveredEntry: command,
+      shim: null,
+      launcher: command,
+      jsEntry: null,
+      argsPrefix: [],
+    },
+  };
 }
 
 export async function spawnCli(

@@ -503,13 +503,17 @@ describe("57 - risk-adaptive plan challenge", () => {
     assert.equal(mismatched.planChallengeState.executionAllowed, false);
     assert.notEqual(mismatched.planChallengeState.executionAuthorization.state, "authorized");
 
-    const authorized = answerEveryOpenQuestion(task, {
+    const callerClaimedAuthorization = answerEveryOpenQuestion(task, {
       requestedSideEffectActions: actions,
       sharedUnderstandingConfirmed: trustedUnderstanding(),
       executionAuthorization: trustedAuthorization(actions),
     });
-    assert.equal(authorized.planChallengeState.executionAllowed, true);
-    assert.equal(authorized.planChallengeState.executionAuthorization.state, "authorized");
+    assert.equal(callerClaimedAuthorization.planChallengeState.planChallengeSatisfied, true);
+    assert.equal(callerClaimedAuthorization.planChallengeState.executionAllowed, false);
+    assert.notEqual(
+      callerClaimedAuthorization.planChallengeState.executionAuthorization.state,
+      "authorized",
+    );
   });
 
   test("understanding confirmation never grants execution authorization", () => {
@@ -521,7 +525,9 @@ describe("57 - risk-adaptive plan challenge", () => {
     assert.equal(result.planChallengeState.sharedUnderstandingConfirmed, true);
     assert.equal(result.planChallengeState.authorizationRequired, true);
     assert.notEqual(result.planChallengeState.executionAuthorization.state, "authorized");
-    assert.equal(result.planChallengeState.phase, "awaiting_execution_authorization");
+    assert.equal(result.planChallengeState.phase, "plan_challenge_satisfied");
+    assert.equal(result.planChallengeState.planChallengeSatisfied, true);
+    assert.equal(result.planChallengeState.executionAllowed, false);
   });
 
   test("a naked understanding boolean is ignored and phase controls stay actionable", () => {
@@ -537,7 +543,7 @@ describe("57 - risk-adaptive plan challenge", () => {
     );
   });
 
-  test("explicit authorization denial is terminal and does not ask again", () => {
+  test("caller authorization denial remains non-authorizing planning input", () => {
     const task = "先帮我拷问这个方案，确认后将版本发布到生产环境。";
     const answered = answerEveryOpenQuestion(task, {
       sharedUnderstandingConfirmed: trustedUnderstanding(),
@@ -549,7 +555,9 @@ describe("57 - risk-adaptive plan challenge", () => {
         state: "denied",
       },
     });
-    assert.equal(denied.planChallengeState.phase, "execution_denied");
+    assert.equal(denied.planChallengeState.phase, "plan_challenge_satisfied");
+    assert.equal(denied.planChallengeState.planChallengeSatisfied, true);
+    assert.equal(denied.planChallengeState.executionAuthorization.state, "not_requested");
     assert.equal(denied.planChallengeState.executionAllowed, false);
     assert.equal(denied.planChallengeState.pendingUserChoice.status, "not_required");
     assert.deepEqual(denied.planChallengeState.pendingUserChoice.controls, []);
@@ -564,7 +572,9 @@ describe("57 - risk-adaptive plan challenge", () => {
     assert.equal(result.planChallengeState.active, true);
     assert.equal(result.planChallengeState.authorizationRequired, false);
     assert.equal(result.planChallengeState.executionAuthorization.state, "not_required");
-    assert.equal(result.planChallengeState.phase, "ready_for_execution");
+    assert.equal(result.planChallengeState.phase, "plan_challenge_satisfied");
+    assert.equal(result.planChallengeState.planChallengeSatisfied, true);
+    assert.equal(result.planChallengeState.executionAllowed, false);
   });
 
   test("read-only classification removes caller-requested side-effect actions", () => {
@@ -737,98 +747,43 @@ describe("57 - risk-adaptive plan challenge", () => {
     }
   });
 
-  test("verified host continuation advances one decision per run without repeating questions", async () => {
+  test("public host verifier cannot advance a plan challenge continuation", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-plan-challenge-continuation-"));
     const projectRoot = path.join(tempDir, "project");
     const stateDir = path.join(tempDir, "state");
     await mkdir(path.join(projectRoot, ".git"), { recursive: true });
     await writeFile(path.join(projectRoot, "package.json"), '{"name":"challenge-continuation"}\n');
     const task = "请先压力测试这个生产发布方案，确认后发布到生产环境。";
-    const seenQuestionIds = [];
     try {
-      let report = await runMetaTheoryGovernedExecution({
+      const first = await runMetaTheoryGovernedExecution({
         task,
         runId: "plan-challenge-continuation-0",
         stateDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
         projectRoot,
       });
-      assert.equal(report.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
-      await validateArtifactFile(report.paths.json);
-
-      for (let turn = 1; turn <= 12; turn += 1) {
-        const previousRunId = report.runId;
-        report = await runMetaTheoryGovernedExecution({
-          task,
-          runId: `plan-challenge-continuation-${turn}`,
-          previousPlanChallengeRunId: previousRunId,
-          stateDir,
-          dbPath: path.join(tempDir, "runs.sqlite"),
-          projectRoot,
-          hostDecisionEvidenceVerifier: async ({ currentPhase, pendingUserChoice }) => {
-            const evidenceRefs = [`host-event:continuation-${turn}`];
-            if (currentPhase === "awaiting_user_answer") {
-              const questionId = pendingUserChoice.question.binding.replace(
-                "plan-challenge-response:",
-                "",
-              );
-              seenQuestionIds.push(questionId);
-              return {
-                verified: true,
-                adapterId: "test-host-adapter",
-                currentRunOnly: true,
-                continuationRunId: previousRunId,
-                evidenceRefs,
-                decision: {
-                  type: "question_response",
-                  status: "answered",
-                  userAnswer: `第 ${turn} 轮用户答复`,
-                },
-              };
-            }
-            if (currentPhase === "awaiting_understanding_confirmation") {
-              return {
-                verified: true,
-                adapterId: "test-host-adapter",
-                currentRunOnly: true,
-                continuationRunId: previousRunId,
-                evidenceRefs,
-                decision: {
-                  type: "shared_understanding_confirmation",
-                  confirmed: true,
-                },
-              };
-            }
-            assert.equal(currentPhase, "awaiting_execution_authorization");
-            return {
-              verified: true,
-              adapterId: "test-host-adapter",
-              currentRunOnly: true,
-              continuationRunId: previousRunId,
-              evidenceRefs,
-              decision: {
-                type: "execution_authorization",
-                state: "authorized",
-                scopeActions: ["external_release"],
-              },
-            };
-          },
-        });
-        await validateArtifactFile(report.paths.json);
-        if (report.preDecisionOptionFrame.planChallengeState.phase === "ready_for_execution") break;
-      }
-
-      const challenge = report.preDecisionOptionFrame.planChallengeState;
-      assert.equal(challenge.phase, "ready_for_execution");
-      assert.equal(challenge.executionAllowed, true);
-      assert.equal(challenge.sharedUnderstandingConfirmed, true);
-      assert.equal(challenge.executionAuthorization.state, "authorized");
-      assert.equal(new Set(seenQuestionIds).size, seenQuestionIds.length);
-      assert.ok(seenQuestionIds.length > 0);
-      const sequences = challenge.decisionEvidence
-        .filter((item) => item.kind === "question_response")
-        .map((item) => item.sequence);
-      assert.deepEqual(sequences, sequences.map((_, index) => index + 1));
+      assert.equal(first.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
+      await validateArtifactFile(first.paths.json);
+      let verifierCalls = 0;
+      const second = await runMetaTheoryGovernedExecution({
+        task,
+        runId: "plan-challenge-continuation-1",
+        previousPlanChallengeRunId: first.runId,
+        stateDir,
+        dbPath: path.join(tempDir, "runs.sqlite"),
+        projectRoot,
+        hostDecisionEvidenceVerifier: async () => {
+          verifierCalls += 1;
+          return {
+            verified: true,
+            decision: { type: "control", action: "skip" },
+          };
+        },
+      });
+      await validateArtifactFile(second.paths.json);
+      assert.equal(verifierCalls, 0);
+      assert.equal(second.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
+      assert.equal(second.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -867,8 +822,7 @@ describe("57 - risk-adaptive plan challenge", () => {
         }),
         /different task/iu,
       );
-      await assert.rejects(
-        runMetaTheoryGovernedExecution({
+      const ignoredBinding = await runMetaTheoryGovernedExecution({
           task,
           runId: "plan-challenge-wrong-chain-binding",
           previousPlanChallengeRunId: first.runId,
@@ -882,15 +836,18 @@ describe("57 - risk-adaptive plan challenge", () => {
             continuationRunId: "some-other-run",
             evidenceRefs: ["host-event:wrong-binding"],
           }),
-        }),
-        /continuation_run_not_verified/iu,
+        });
+      assert.equal(
+        ignoredBinding.preDecisionOptionFrame.planChallengeState.phase,
+        "awaiting_user_answer",
       );
+      assert.equal(ignoredBinding.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  test("a host question control remains valid after the next continuation", async () => {
+  test("public host controls remain inert across continuations", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-plan-challenge-control-chain-"));
     const projectRoot = path.join(tempDir, "project");
     const stateDir = path.join(tempDir, "state");
@@ -922,10 +879,11 @@ describe("57 - risk-adaptive plan challenge", () => {
         }),
       });
       await validateArtifactFile(second.paths.json);
-      const answeredIds = second.preDecisionOptionFrame.unresolvedQuestions
-        .filter((question) => question.status === "skipped")
-        .map((question) => question.questionId);
-      assert.ok(answeredIds.length > 0);
+      assert.equal(second.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
+      assert.equal(
+        second.preDecisionOptionFrame.unresolvedQuestions.some((question) => question.status === "skipped"),
+        false,
+      );
 
       const third = await runMetaTheoryGovernedExecution({
         task,
@@ -943,9 +901,8 @@ describe("57 - risk-adaptive plan challenge", () => {
         }),
       });
       await validateArtifactFile(third.paths.json);
-      for (const questionId of answeredIds) {
-        assert.notEqual(third.preDecisionOptionFrame.planChallengeState.selectedQuestionId, questionId);
-      }
+      assert.equal(third.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
+      assert.equal(third.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -963,7 +920,9 @@ describe("57 - risk-adaptive plan challenge", () => {
       ),
     });
 
-    assert.equal(result.planChallengeState.phase, "ready_for_execution");
+    assert.equal(result.planChallengeState.phase, "plan_challenge_satisfied");
+    assert.equal(result.planChallengeState.planChallengeSatisfied, true);
+    assert.equal(result.planChallengeState.executionAllowed, false);
     assert.ok(Array.isArray(result.summaryData.confirmedDecisions));
     assert.ok(Array.isArray(result.summaryData.openRisks));
     assert.equal(typeof result.summaryData.nextStep, "string");
@@ -1000,49 +959,14 @@ describe("57 - risk-adaptive plan challenge", () => {
       await writeFile(forgedPath, `${JSON.stringify(forged, null, 2)}\n`, "utf8");
       await assert.rejects(
         validateArtifactFile(forgedPath),
-        /executionAllowed must fail closed/iu,
+        /executionAllowed must remain false/iu,
       );
 
       const impossibleReady = JSON.parse(readFileSync(report.paths.json, "utf8"));
       const challenge = impossibleReady.preDecisionOptionFrame.planChallengeState;
-      const understandingIndex = challenge.decisionEvidence.length;
-      challenge.decisionEvidence.push({
-        evidenceId: "synthetic-understanding",
-        kind: "shared_understanding_confirmation",
-        binding: "plan-challenge-understanding-confirmation",
-        sourceRefs: ["host-event:synthetic-understanding"],
-        sequence: null,
-        historical: null,
-        trusted: true,
-      });
-      const authorizationIndex = challenge.decisionEvidence.length;
-      challenge.decisionEvidence.push({
-        evidenceId: "synthetic-authorization",
-        kind: "execution_authorization",
-        binding: challenge.executionAuthorization.binding,
-        sourceRefs: ["host-event:synthetic-authorization"],
-        sequence: null,
-        historical: null,
-        trusted: true,
-      });
-      challenge.sharedUnderstandingConfirmed = true;
-      challenge.sharedUnderstandingEvidenceRefs = [
-        `preDecisionOptionFrame.planChallengeState.decisionEvidence[${understandingIndex}]`,
-      ];
-      challenge.executionAuthorization = {
-        ...challenge.executionAuthorization,
-        state: "authorized",
-        source: "synthetic_host_event",
-        scope: challenge.sideEffectActions.join(", "),
-        scopeActions: [...challenge.sideEffectActions],
-        trusted: true,
-        evidenceRefs: [
-          `preDecisionOptionFrame.planChallengeState.decisionEvidence[${authorizationIndex}]`,
-        ],
-        scopeCoversActions: true,
-      };
       challenge.phase = "ready_for_execution";
       challenge.executionAllowed = true;
+      challenge.planChallengeSatisfied = false;
       challenge.pendingUserChoice = { status: "not_required", question: null, controls: [] };
       impossibleReady.preDecisionOptionFrame.requiresUserChoice = false;
       impossibleReady.preDecisionOptionFrame.solutionChoiceState = "confirmed";
@@ -1059,7 +983,7 @@ describe("57 - risk-adaptive plan challenge", () => {
       );
       await assert.rejects(
         validateArtifactFile(impossibleReadyPath),
-        /ready_for_execution requires every challenge question to be closed/iu,
+        /executionAllowed must remain false|cannot claim ready_for_execution/iu,
       );
     } finally {
       await rm(tempDir, { recursive: true, force: true });

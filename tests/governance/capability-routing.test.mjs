@@ -91,6 +91,11 @@ function assertNativeCodexSpawn(
 }
 
 test("routing fixtures recall internal patterns and platform/OS matrices", () => {
+  const pureQuery = route("Meta_Kim 是什么？", "codex", "windows");
+  assert.equal(pureQuery.entryClassification.path, "fast_path");
+  assert.equal(pureQuery.routeExecutionGate?.applies, false);
+  assert.equal(pureQuery.routeExecutionGate?.canEnterExecution, false);
+  assert.equal(pureQuery.routeExecutionGate?.blockedBy.includes("runtime_capability_acceptance_required"), false);
   const fuzzy = route("fuzzy strategy task");
   assert.ok(fuzzy.candidateWeapons.includes("meta-kim-decision-patterns"));
   assert.ok(
@@ -229,6 +234,10 @@ test("routing fixtures recall internal patterns and platform/OS matrices", () =>
   assert.equal(subjectiveQuality.routeExecutionGate?.entryChoiceDecision?.choicePolicy, "must_ask");
   assert.equal(subjectiveQuality.routeExecutionGate?.nativeChoiceSurface?.primarySurface, "request_user_input");
   assert.equal(subjectiveQuality.routeExecutionGate?.canEnterExecution, false);
+  assert.equal(subjectiveQuality.routeExecutionGate?.handoffStatus, "awaiting_native_choice");
+  assert.equal(subjectiveQuality.routeExecutionGate?.hostAction, "invoke_native_choice_surface");
+  assert.equal(subjectiveQuality.routeExecutionGate?.canHandoffToHost, true);
+  assert.equal(subjectiveQuality.routeExecutionGate?.persistentAcceptanceAuthorizesExecution, false);
   assert.equal(subjectiveQuality.recommendedRoute?.id, "subjective-ui-design-orchestration:codex:windows");
   assert.equal(
     subjectiveQuality.autonomousCapabilityDiscovery?.trigger,
@@ -396,8 +405,8 @@ test("routing fixtures recall internal patterns and platform/OS matrices", () =>
       "thinking_route_choice_required_before_execution",
     ),
   );
-  assert.equal(subjectiveQualityConfirmed.routeExecutionGate?.returnToStage, "Thinking");
-  assert.equal(subjectiveQualityConfirmed.routeExecutionGate?.nativeChoiceSurface?.evidence?.trusted, true);
+  assert.equal(subjectiveQualityConfirmed.routeExecutionGate?.returnToStage, "Critical");
+  assert.equal(subjectiveQualityConfirmed.routeExecutionGate?.nativeChoiceSurface?.evidence?.trusted, false);
 
   const subjectiveQualityFullyConfirmed = route(
     "这个页面不好看，帮我弄高级一点",
@@ -422,8 +431,14 @@ test("routing fixtures recall internal patterns and platform/OS matrices", () =>
       }),
     ],
   );
-  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.canEnterExecution, true);
-  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.thinkingChoiceSurface?.evidenceTrusted, true);
+  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.canEnterExecution, false);
+  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.handoffStatus, "awaiting_native_choice");
+  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.hostAction, "invoke_native_choice_surface");
+  assert.ok(subjectiveQualityFullyConfirmed.routeExecutionGate?.blockedBy.includes("native_choice_surface_required_before_execution"));
+  assert.ok(subjectiveQualityFullyConfirmed.routeExecutionGate?.blockedBy.includes("thinking_route_choice_required_before_execution"));
+  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.blockedBy.includes("runtime_capability_acceptance_required"), false);
+  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.persistentAcceptanceAuthorizesExecution, false);
+  assert.equal(subjectiveQualityFullyConfirmed.routeExecutionGate?.thinkingChoiceSurface?.evidenceTrusted, false);
 
   const claudeSubjectiveQuality = route(
     "这个页面不好看，帮我弄高级一点",
@@ -474,7 +489,7 @@ test("routing fixtures recall internal patterns and platform/OS matrices", () =>
   );
   assert.equal(
     claudeNativeChoiceEvidence.routeExecutionGate?.nativeChoiceSurface?.evidence?.trusted,
-    true,
+    false,
   );
 
   for (const highRiskTask of [

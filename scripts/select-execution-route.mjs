@@ -10,6 +10,13 @@ import {
   evaluateChoiceRequirement,
   resolveNativeChoiceSurface,
 } from "./governed-execution/choice-policy.mjs";
+import {
+  resolveRuntimeCapabilityClaim,
+  runtimeCapabilityNameForTool,
+  runtimeSupportForCapability,
+} from "./runtime-capability-claims.mjs";
+import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
+import { evaluateRouteExecutionGate } from "./runtime-execution-gate.mjs";
 
 function argValue(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -135,11 +142,9 @@ function normalizeNativeChoiceEvidence(raw, expectedSurface) {
       status: answerRecorded ? "completed" : (parsed.status ?? parsed.state ?? "present"),
       surface,
       answerRecorded,
-      trusted:
-        answerRecorded &&
-        completedStages.length > 0 &&
-        evidenceRefs.length > 0 &&
-        surface === expectedSurface,
+      trusted: false,
+      trustBoundary: "reference_only_cli_or_environment",
+      expectedSurface,
       evidenceRef: parsed.evidenceRef ?? parsed.answerRef ?? null,
       evidenceRefs,
       completedStages,
@@ -169,6 +174,23 @@ const capabilityInventory = await readStateJson("capability-inventory.json", { c
 const globalCapabilityInventory = await readStateJson(path.join("capability-index", "global-capabilities.json"), { byCapabilityType: { agents: {} }, byPlatform: {} });
 const dependencyIndex = await readStateJson("dependency-capability-index.json", { discoveredDependencyProjects: [] });
 const intentContract = await readJson("config/governance/intent-amplification-contract.json");
+const runtimeCapabilityState = loadEffectiveRuntimeCapabilityClaims({
+  projectRoot: process.env.META_KIM_CALLER_CWD || repoPath("."),
+});
+const runtimeMatrix = runtimeCapabilityState.effectiveMatrix;
+function activeRuntimeSupport() {
+  const platform = runtimeMatrix.platforms?.find((entry) => entry.platform === runtime);
+  const claims = (platform?.capabilities ?? []).map((capability) =>
+    resolveRuntimeCapabilityClaim(runtimeMatrix, {
+      runtime,
+      capability: capability.capability,
+      mode: "interactive_host",
+    }));
+  if (claims.some((claim) => claim.executable && claim.hostSupport === "native")) return "native";
+  if (claims.some((claim) => claim.executable)) return "partial";
+  if (claims.some((claim) => ["native", "partial"].includes(claim.hostSupport))) return "partial";
+  return claims.some((claim) => claim.hostSupport === "unsupported") ? "unsupported" : "unknown";
+}
 const localOverrides = (await exists(repoPath(".meta-kim/local.overrides.json")))
   ? await readJson(".meta-kim/local.overrides.json")
   : {};
@@ -699,6 +721,28 @@ const localGlobalSkillProviders = localGlobalCapabilityProvidersAll
 const discoveredRuntimeToolProviders = (capabilityInventory.capabilities ?? [])
   .filter((capability) => capability.type === "runtime_tool")
   .map((entry) => compactCapabilityProvider(entry, "local_runtime_capability_inventory", "runtimeTools"));
+function bindRuntimeToolClaim(provider) {
+  const matrixCapability = runtimeCapabilityNameForTool(provider.id);
+  const claim = resolveRuntimeCapabilityClaim(runtimeMatrix, {
+    runtime,
+    capability: matrixCapability,
+    mode: "interactive_host",
+  });
+  return {
+    ...provider,
+    runtimeSupport: runtimeSupportForCapability(runtimeMatrix, matrixCapability),
+    runtimeCapability: matrixCapability,
+    runtimeMode: "interactive_host",
+    executionEligible: claim.executable,
+    routeEligibility: claim.executable ? "callable" : "reference",
+    capabilityClaim: {
+      hostSupport: claim.hostSupport,
+      hostConfidence: claim.hostConfidence,
+      acceptanceState: claim.acceptanceState,
+    },
+  };
+}
+
 const runtimeToolProviders = uniqueById([
   ...discoveredRuntimeToolProviders,
   ...[
@@ -724,7 +768,7 @@ const runtimeToolProviders = uniqueById([
       sourceRef: `${runtime}:filesystem`,
     },
   ],
-]);
+]).map(bindRuntimeToolClaim);
 const capabilityProviderCoverage = {
   repoCanonical: Object.fromEntries(["skills", "commands", "hooks", "mcpServers", "mcpTools", "plugins", "rules", "prompts", "runtimeTools"].map((type) => [type, capabilityEntries(repoCapabilityIndex, type).length])),
   projectRuntimeLightScan: Object.fromEntries(["skills", "commands", "hooks", "mcpServers", "rules", "prompts", "runtimeTools"].map((type) => [type, type === "runtimeTools" ? runtimeToolProviders.length : projectRuntimeCapabilityProviders.filter((provider) => provider.type === type).length])),
@@ -1217,7 +1261,8 @@ const reusableProviders = uniqueById(sortProvidersForRuntime([
 ]));
 
 function selectProvider(type, preferredIds = []) {
-  const providers = sortProvidersForRuntime(reusableProviders.filter((provider) => provider.type === type));
+  const providers = sortProvidersForRuntime(reusableProviders.filter((provider) =>
+    provider.type === type && !(type === "runtimeTools" && provider.executionEligible !== true)));
   for (const preferredId of preferredIds) {
     const match = providers.find((provider) => provider.id === preferredId) ??
       providers.find((provider) => provider.id?.includes(preferredId));
@@ -1231,7 +1276,7 @@ function selectAnyProvider(preferredIds = [], allowedTypes = null) {
     allowedTypes
       ? reusableProviders.filter((provider) => allowedTypes.includes(provider.type))
       : reusableProviders,
-  );
+  ).filter((provider) => provider.type !== "runtimeTools" || provider.executionEligible === true);
   for (const preferredId of preferredIds) {
     const match = providers.find((provider) => provider.id === preferredId) ??
       providers.find((provider) => provider.id?.includes(preferredId));
@@ -2239,6 +2284,8 @@ function executionCapabilityDiscoveryRoute() {
   if (!selectedOwner) blockedReasons.push("execution owner missing");
   if (!selectedSkill) blockedReasons.push("skill provider missing");
   if (!selectedMcpServer && !selectedMcpTool) blockedReasons.push("MCP provider missing");
+  // Missing accepted runtime-tool evidence blocks Execution in the independent
+  // capability gate below; it must not erase the correct design-time route.
   const routeScore = blockedReasons.length ? 49 : explicitDiscoveryRoute ? 92 : 88;
   return {
     id: `execution-capability-discovery:${runtime}:${osTarget}`,
@@ -2266,7 +2313,7 @@ function executionCapabilityDiscoveryRoute() {
       osSupportWeight: 10,
       verificationStrengthWeight: 10,
       riskRollbackClarityWeight: 5,
-      runtimeSupport: "native",
+      runtimeSupport: activeRuntimeSupport(),
       osSupport: "supported",
       dependencyFit: selectedSkill ? 85 : 0,
     },
@@ -2331,7 +2378,7 @@ function goalProContractRoute() {
       osSupportWeight: 10,
       verificationStrengthWeight: 10,
       riskRollbackClarityWeight: 5,
-      runtimeSupport: "native",
+      runtimeSupport: activeRuntimeSupport(),
       osSupport: "supported",
       dependencyFit: dependency ? 95 : 0,
     },
@@ -2389,7 +2436,7 @@ function kimDecisionExperienceRoute() {
       osSupportWeight: 10,
       verificationStrengthWeight: 10,
       riskRollbackClarityWeight: 5,
-      runtimeSupport: "native",
+      runtimeSupport: activeRuntimeSupport(),
       osSupport: "supported",
       dependencyFit: dependency ? 90 : 0,
     },
@@ -2552,7 +2599,7 @@ function subjectiveUiDesignRoute() {
       osSupportWeight: 10,
       verificationStrengthWeight: 10,
       riskRollbackClarityWeight: 5,
-      runtimeSupport: "native",
+      runtimeSupport: activeRuntimeSupport(),
       osSupport: "supported",
       dependencyFit: missing.length ? 60 : 92,
     },
@@ -2854,7 +2901,7 @@ function productBuildOrchestrationRoute() {
       osSupportWeight: 10,
       verificationStrengthWeight: 10,
       riskRollbackClarityWeight: 5,
-      runtimeSupport: "native",
+      runtimeSupport: activeRuntimeSupport(),
       osSupport: "supported",
       dependencyFit: missing.length ? 60 : 90,
     },
@@ -2904,7 +2951,36 @@ const syntheticRoutes = [
   subjectiveUiDesignRoute(),
   executionCapabilityDiscoveryRoute(),
 ].filter(Boolean);
-const rankedRoutes = [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes].sort((a, b) => b.score - a.score);
+const independentTaskShape = subjectiveRouteChoice
+  ? "governed_dispatch"
+  : entryClassification.path === "fast_path"
+    ? "fast_path"
+  : entrySignals.productBuildIntent === true
+    ? "product_build"
+    : taskShape === "engineering_execution"
+      ? "engineering_execution"
+      : entrySignals.explicitMetaTheory === true
+        ? "governed_dispatch"
+        : "default_executable";
+const rankedRoutes = [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes]
+  .map((route) => {
+    const executionCapabilityGate = evaluateRouteExecutionGate({
+      route,
+      runtime,
+      taskShape: independentTaskShape,
+      choiceRequired: subjectiveRouteChoice,
+      effectiveMatrix: runtimeMatrix,
+    });
+    return {
+      ...route,
+      requiredRuntimeCapabilities: executionCapabilityGate.requirements,
+      executionCapabilityGate: { ...executionCapabilityGate, applies: independentTaskShape !== "fast_path" },
+      executionPolicy: independentTaskShape,
+      executionEligible: false,
+      hostHandoffEligible: independentTaskShape !== "fast_path" && executionCapabilityGate.routeCompatible,
+    };
+  })
+  .sort((a, b) => b.score - a.score);
 const recommendedRoute = rankedRoutes.find((route) => route.score >= 85) ?? rankedRoutes.find((route) => route.score >= 70) ?? null;
 const capabilityGapPacket = recommendedRoute ? null : {
   gap: "No route has enough owner + weapon + dependency + runtime + OS + verification support.",
@@ -3206,15 +3282,46 @@ const unprovenMultiLaneExecution =
   Array.isArray(recommendedRoute?.parallelExecutionLanes) &&
   recommendedRoute.parallelExecutionLanes.length >= 2 &&
   !safeFanoutReady;
+const nativeChoicePending = criticalChoiceBlocksExecution || thinkingChoiceBlocksExecution;
+const fastPathNativeChoicePending =
+  entryClassification.path === "fast_path" && nativeChoicePending;
+const executionGateApplies = entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
+const routeCompatibilityBlocked =
+  executionGateApplies &&
+  recommendedRoute &&
+  recommendedRoute.executionCapabilityGate?.routeCompatible !== true;
+const routePreparationBlocked =
+  !recommendedRoute ||
+  !routeScoreReady ||
+  globalInventoryFreshness.refreshRequiredBeforeExecution ||
+  capabilityGapBlocksExecution ||
+  unprovenMultiLaneExecution;
+const handoffStatus = !executionGateApplies
+  ? "not_applicable"
+  : fastPathNativeChoicePending
+    ? "awaiting_native_choice"
+  : routeCompatibilityBlocked || routePreparationBlocked
+    ? "blocked"
+    : nativeChoicePending
+      ? "awaiting_native_choice"
+      : "ready_for_host_handoff";
+const hostAction = handoffStatus === "ready_for_host_handoff"
+  ? "host_action_required"
+  : handoffStatus === "awaiting_native_choice"
+    ? "invoke_native_choice_surface"
+    : "none";
 const routeExecutionGate = {
+  applies: executionGateApplies,
   canPreviewRoute: true,
-  canEnterExecution:
-    routeScoreReady &&
-    !globalInventoryFreshness.refreshRequiredBeforeExecution &&
-    !capabilityGapBlocksExecution &&
-    !criticalChoiceBlocksExecution &&
-    !thinkingChoiceBlocksExecution &&
-    !unprovenMultiLaneExecution,
+  routeCompatible: !routeCompatibilityBlocked,
+  handoffStatus,
+  hostAction,
+  canHandoffToHost: ["ready_for_host_handoff", "awaiting_native_choice"].includes(handoffStatus),
+  canEnterExecution: false,
+  canEnterExecutionMeaning: "host_native_execution_has_not_occurred",
+  executionAuthorized: false,
+  authorizationOwner: "current_host_native_surfaces_and_permissions",
+  persistentAcceptanceAuthorizesExecution: false,
   blockedBy: [
     ...(!recommendedRoute ? ["missing_recommended_route"] : []),
     ...(recommendedRoute && !routeScoreReady ? ["route_requires_confirmation_or_more_fetch"] : []),
@@ -3223,8 +3330,11 @@ const routeExecutionGate = {
     ...(criticalChoiceBlocksExecution ? ["native_choice_surface_required_before_execution"] : []),
     ...(thinkingChoiceBlocksExecution ? ["thinking_route_choice_required_before_execution"] : []),
     ...(unprovenMultiLaneExecution ? ["parallel_lane_safety_not_proven"] : []),
+    ...(routeCompatibilityBlocked ? ["runtime_capability_known_unsupported"] : []),
   ],
-  returnToStage: !recommendedRoute
+  returnToStage: !executionGateApplies
+    ? null
+    : !recommendedRoute
     ? "Thinking"
     : capabilityGapBlocksExecution
       ? "Thinking"
@@ -3232,13 +3342,17 @@ const routeExecutionGate = {
       ? "Critical"
     : thinkingChoiceBlocksExecution
       ? "Thinking"
-    : unprovenMultiLaneExecution
+      : unprovenMultiLaneExecution
       ? "Thinking"
+    : routeCompatibilityBlocked
+      ? "Verification"
     : !routeScoreReady || globalInventoryFreshness.refreshRequiredBeforeExecution
       ? "Fetch"
       : null,
   refreshCommand: globalInventoryFreshness.refreshRequiredBeforeExecution ? globalInventoryFreshness.refreshCommand : null,
-  reason: !recommendedRoute
+  reason: !executionGateApplies
+    ? "Pure read-only fast-path query does not enter Execution and therefore does not require a runtime execution capability gate."
+    : !recommendedRoute
     ? "No executable route is available; Execution must not start until owner, provider, runtime, OS, and verification binding are resolved."
     : !routeScoreReady
       ? "Route preview is available, but Execution needs confirmation or stronger provider evidence before starting."
@@ -3252,7 +3366,11 @@ const routeExecutionGate = {
         ? "Multiple execution lanes were drafted, but shard scope, workspace isolation, or collision boundaries are still unproven; return to Thinking instead of presenting the route as execution-ready."
       : globalInventoryFreshness.refreshRequiredBeforeExecution
         ? "Cached provider evidence is missing or older than 14 days; route preview is allowed, but Execution must refresh capability discovery first."
-        : "Cached provider evidence is fresh enough and the route has execution-grade owner/provider/verification binding.",
+      : routeCompatibilityBlocked
+        ? `Route design is available, but current ${runtime} has a known unsupported runtime capability: ${recommendedRoute?.executionCapabilityGate?.blockers?.join("; ") ?? "required runtime capabilities"}.`
+      : nativeChoicePending
+        ? `Route compatibility is ready; the ${runtime} host must invoke its native choice surface before execution.`
+        : "Route compatibility is ready; the current host must perform the selected native tool/Agent actions under its own permissions.",
   entryClassification,
   entryChoiceDecision,
   choicePolicy,
@@ -3265,6 +3383,13 @@ const routeExecutionGate = {
     evidence: nativeChoiceEvidence,
     rule:
       "Branch-changing choices must be answered through the native host surface before Execution; artifact-only cards or chat text do not satisfy this gate.",
+  },
+  runtimeCapabilityEvidence: {
+    profile: runtimeCapabilityState.overlayStatus.profile,
+    state: runtimeCapabilityState.overlayStatus.state,
+    applied: runtimeCapabilityState.overlayStatus.applied,
+    rejected: runtimeCapabilityState.overlayStatus.rejected,
+    issues: runtimeCapabilityState.issues,
   },
   thinkingChoiceSurface: {
     required: thinkingChoiceDecision.required,
@@ -3284,6 +3409,7 @@ const output = {
     reason: "Route may change based on real intent, success criteria, and userGoalDone evidence.",
   },
   entryClassification,
+  entryChoiceDecision,
   typeFirstRoutePolicy,
   routeTypeClassification,
   ownerDiscoveryPacket,

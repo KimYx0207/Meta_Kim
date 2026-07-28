@@ -8,9 +8,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   parseRuntimeCapabilityMatrix,
+  parseRuntimeCapabilityEvidenceLedger,
   readRequiredPackagedText,
   validateRequiredMarkdown,
 } from "./runtime-resource-contract.mjs";
+import { loadEffectiveRuntimeCapabilityClaims } from "../effective-runtime-capability-claims.mjs";
+import { standardRuntimeObservationSet } from "../runtime-execution-gate.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -103,6 +106,58 @@ async function loadRuntimeCapabilityMatrix(filePath) {
   return JSON.stringify(matrix, null, 2);
 }
 
+async function loadRuntimeCapabilityEvidence(filePath) {
+  const raw = await readRequiredPackagedText(filePath, {
+    packageRoot: repoRoot,
+    label: "Meta_Kim runtime capability evidence ledger",
+  });
+  return JSON.stringify(parseRuntimeCapabilityEvidenceLedger(raw, filePath), null, 2);
+}
+
+function currentEffectiveRuntimeCapabilities() {
+  const redact = (message) => String(message)
+    .replaceAll(repoRoot, "<package>")
+    .replaceAll(process.cwd(), "<cwd>")
+    .replace(/[A-Za-z]:[\\/][^\r\n;]+/gu, "<absolute>");
+  try {
+    const state = loadEffectiveRuntimeCapabilityClaims({
+      packageRoot: repoRoot,
+      projectRoot: process.env.META_KIM_CALLER_CWD || undefined,
+    });
+    const results = (state.overlayStatus?.applied ?? []).map((entry) => ({
+      ...entry,
+      evidenceClass: "advisory_persisted_observation",
+      observedInCurrentRun: false,
+      executionAuthority: false,
+    }));
+    const observed = new Set(results.map((entry) => `${entry.runtime}:${entry.capability}:${entry.mode}`));
+    const missing = standardRuntimeObservationSet().filter((entry) => !observed.has(`${entry.runtime}:${entry.capability}:${entry.mode}`));
+    return JSON.stringify({
+      matrix: state.effectiveMatrix,
+      overlayStatus: state.overlayStatus,
+      results,
+      missing,
+      evidenceClass: "advisory_persisted_observation",
+      observedInCurrentRun: false,
+      executionAuthority: false,
+      currentHostAdapter: "unavailable_over_mcp_resource_read",
+      issues: state.issues.map(redact),
+    }, null, 2);
+  } catch {
+    return JSON.stringify({
+      matrix: null,
+      overlayStatus: { state: "blocked", applied: [], rejected: [] },
+      results: [],
+      missing: standardRuntimeObservationSet(),
+      evidenceClass: "advisory_persisted_observation",
+      observedInCurrentRun: false,
+      executionAuthority: false,
+      currentHostAdapter: "unavailable_over_mcp_resource_read",
+      issues: ["effective runtime overlay could not be read safely"],
+    }, null, 2);
+  }
+}
+
 async function loadRuntimeData() {
   const agents = await loadAgents();
   const metaTheoryPath = path.join(
@@ -118,6 +173,7 @@ async function loadRuntimeData() {
     "config",
     "runtime-capability-matrix.json",
   );
+  const evidencePath = path.join(repoRoot, "config", "runtime-capability-evidence.json");
   const metaTheorySkillPath = path.join(
     repoRoot,
     "canonical",
@@ -126,12 +182,13 @@ async function loadRuntimeData() {
     "SKILL.md",
   );
 
-  const [metaTheoryRaw, runtimeMatrix, metaTheorySkillRaw] = await Promise.all([
+  const [metaTheoryRaw, runtimeMatrix, runtimeEvidence, metaTheorySkillRaw] = await Promise.all([
     readRequiredPackagedText(metaTheoryPath, {
       packageRoot: repoRoot,
       label: "Meta_Kim theory reference",
     }),
     loadRuntimeCapabilityMatrix(matrixPath),
+    loadRuntimeCapabilityEvidence(evidencePath),
     readRequiredPackagedText(metaTheorySkillPath, {
       packageRoot: repoRoot,
       label: "Meta_Kim skill definition",
@@ -146,7 +203,7 @@ async function loadRuntimeData() {
     requireFrontmatter: true,
     expectedFrontmatterName: "meta-theory",
   });
-  return { agents, metaTheory, runtimeMatrix, metaTheorySkill };
+  return { agents, metaTheory, runtimeMatrix, runtimeEvidence, metaTheorySkill };
 }
 
 function jsonText(payload) {
@@ -237,6 +294,11 @@ async function runGovernedDispatch({ agent, scope, payload }) {
 
 const runtimeData = await loadRuntimeData();
 
+if (process.argv.includes("--effective-runtime-self-test")) {
+  process.stdout.write(`${currentEffectiveRuntimeCapabilities()}\n`);
+  process.exit(0);
+}
+
 if (process.argv.includes("--self-test")) {
   process.stdout.write(
     `${JSON.stringify(
@@ -248,12 +310,16 @@ if (process.argv.includes("--self-test")) {
         resources: [
           "meta://theory",
           "meta://runtime-matrix",
+          "meta://runtime-evidence",
+          "meta://runtime-effective",
           "meta://skill/meta-theory",
         ],
         tools: [
           "list_meta_agents",
           "get_meta_agent",
           "get_meta_runtime_capabilities",
+          "get_meta_runtime_evidence",
+          "get_meta_effective_runtime_capabilities",
           "dispatch_meta_agent",
         ],
       },
@@ -321,6 +387,20 @@ server.registerResource(
       },
     ],
   }),
+);
+
+server.registerResource(
+  "runtime-evidence",
+  "meta://runtime-evidence",
+  { description: "Canonical static runtime observation ledger", mimeType: "application/json" },
+  async () => ({ contents: [{ uri: "meta://runtime-evidence", mimeType: "application/json", text: runtimeData.runtimeEvidence }] }),
+);
+
+server.registerResource(
+  "runtime-effective",
+  "meta://runtime-effective",
+  { description: "Profile-local effective runtime capability status", mimeType: "application/json" },
+  async () => ({ contents: [{ uri: "meta://runtime-effective", mimeType: "application/json", text: currentEffectiveRuntimeCapabilities() }] }),
 );
 
 server.registerTool(
@@ -414,6 +494,18 @@ server.registerTool(
       },
     ],
   }),
+);
+
+server.registerTool(
+  "get_meta_runtime_evidence",
+  { description: "Return the canonical static runtime observation ledger.", inputSchema: {} },
+  async () => ({ content: [{ type: "text", text: runtimeData.runtimeEvidence }] }),
+);
+
+server.registerTool(
+  "get_meta_effective_runtime_capabilities",
+  { description: "Return profile-local advisory runtime observations. This read-only MCP result never grants current-run execution authority.", inputSchema: {} },
+  async () => ({ content: [{ type: "text", text: currentEffectiveRuntimeCapabilities() }] }),
 );
 
 server.registerTool(

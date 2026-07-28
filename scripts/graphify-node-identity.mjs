@@ -155,6 +155,9 @@ function shortestUniqueLabels(files) {
         break;
       }
     }
+    if (!result.has(file) && parts.length === 1) {
+      result.set(file, `./${file}`);
+    }
   }
   return result;
 }

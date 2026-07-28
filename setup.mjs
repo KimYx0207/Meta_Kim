@@ -50,8 +50,10 @@ import { createInterface } from "node:readline";
 import {
   getProfilePaths,
   readProfileMetadata,
+  resolveProfileName,
   toRepoRelative,
 } from "./scripts/meta-kim-local-state.mjs";
+import { recordSetupRuntimeExecutableBindings } from "./scripts/runtime-executable-binding.mjs";
 import {
   detectPython310,
   extractPipShowVersion,
@@ -5341,6 +5343,25 @@ function refreshGlobalCapabilityInventory(activeTargets = []) {
   return false;
 }
 
+function refreshRuntimeExecutableBindings(activeTargets, installScope, deployDirs = []) {
+  const selected = activeTargets.filter((target) => ["claude", "codex"].includes(target));
+  if (selected.length === 0) return true;
+  const roots = installScope === "global"
+    ? [homedir(), ...deployDirs]
+    : (deployDirs.length > 0 ? deployDirs : [CALLER_CWD]);
+  try {
+    recordSetupRuntimeExecutableBindings({
+      roots,
+      profile: resolveProfileName(process.env.META_KIM_PROFILE),
+      targets: selected,
+    });
+    return true;
+  } catch (error) {
+    warn(`Runtime executable binding failed: ${error.message}`);
+    return false;
+  }
+}
+
 function metaTheoryGlobalSyncArgs(targets, withGlobalHooks = false) {
   return buildGlobalMetaTheorySyncArgs({ targets, withGlobalHooks });
 }
@@ -7673,12 +7694,15 @@ async function validateInstalledArtifacts({
 }) {
   heading(t.stepValidate);
   if (installScope === "global") {
+    // The final global check receives the selected runtimes independently of
+    // the hooks opt-in so it can read back each setup launch descriptor.
+    const globalValidationTargets = [...new Set(activeTargets)];
     const projectReady = projectDeployResults.every(
       (result) => result.status === "ok" && result.stateStatus === "ready",
     );
     const checkResult = runNodeScript(
       SETUP_NODE_CHILD.GLOBAL_META_THEORY_SYNC,
-      [...metaTheoryGlobalSyncArgs(activeTargets, setupWithGlobalHooks), "--check"],
+      [...metaTheoryGlobalSyncArgs(globalValidationTargets, setupWithGlobalHooks), "--check"],
     );
     if (checkResult.status === 0 && projectReady) {
       ok(t.validationPassed);
@@ -8548,6 +8572,13 @@ async function runInstall() {
     );
   }
 
+  stepNum++;
+  const runtimeBindingsOk = await withProgress(
+    t.stepLabel(stepNum, "runtime executable bindings"),
+    async () => refreshRuntimeExecutableBindings(activeTargets, installScope, deployDirs),
+  );
+  stepResults.push(installStep("runtime executable bindings", runtimeBindingsOk));
+
   // Validate the installed global/project artifacts. Public package installs
   // must not depend on maintainer-only repository files such as .gitignore.
   stepNum++;
@@ -8780,6 +8811,9 @@ async function runUpdate() {
       ),
     );
   }
+
+  const runtimeBindingsOk = refreshRuntimeExecutableBindings(activeTargets, updateScope, deployDirs);
+  stepResults.push(installStep("runtime executable bindings", runtimeBindingsOk));
 
   // ── 6. Validate installed artifacts, not the package source tree ───
   if (needGlobal) {

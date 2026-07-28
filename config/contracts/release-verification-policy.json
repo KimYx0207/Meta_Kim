@@ -18,6 +18,7 @@
     "meta:graphify:check": 60000,
     "meta:check:global:release": 120000,
     "eval-meta-agents": 900000,
+    "meta:runtime:produce": 1800000,
     "meta:test:inventory": 30000,
     "meta:test:unit": 120000,
     "meta:test:setup": 300000,

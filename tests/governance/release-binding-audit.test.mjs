@@ -29,6 +29,9 @@ import {
 import { writeVerificationReportAttempt } from "../../scripts/verification-report-history.mjs";
 
 const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
+const CANONICAL_PACKED_TARGETS = JSON.parse(
+  readFileSync("config/sync.json", "utf8"),
+).supportedTargets;
 
 function octalField(value, length) {
   return `${value.toString(8).padStart(length - 1, "0")}\0`;
@@ -86,7 +89,102 @@ function createReleaseRepo(version = "9.9.9") {
   return root;
 }
 
-function exactReport(gitFacts, { dirty = false, packageSha256 = "a".repeat(64) } = {}) {
+function completePackedUserProof(packageSha256) {
+  const transport = ({ observationCount, missingCount, populated }) => ({
+    status: "passed",
+    evidenceTier: "packed_isolated_transport",
+    liveHostInvocation: false,
+    semanticMatrixMatched: true,
+    staticEvidenceMatched: true,
+    projectOverlayObserved: populated,
+    observationCount,
+    missingCount,
+    executionAuthority: false,
+    observedInCurrentRun: false,
+    currentHostAdapter: "unavailable_over_mcp_resource_read",
+    externalOverlayStayedNonExecutable: true,
+    platformCount: CANONICAL_PACKED_TARGETS.length,
+    stubFree: true,
+  });
+  return {
+    status: "passed",
+    releaseGradeEligible: true,
+    sourcePolicy: "npm_pack_installed_public_cli",
+    currentPackage: {
+      status: "passed",
+      installedCliEntrypoints: true,
+      packageSha256,
+      targets: [...CANONICAL_PACKED_TARGETS],
+      modes: [
+        { mode: "install", status: "passed" },
+        { mode: "update", status: "passed" },
+        { mode: "update", status: "passed" },
+      ],
+      projectPackage: {
+        status: "passed",
+        targets: [...CANONICAL_PACKED_TARGETS],
+        modes: [
+          { mode: "install", status: "passed" },
+          { mode: "update", status: "passed" },
+        ],
+      },
+      runtimeSedimentation: { status: "passed" },
+      portableRuntime: {
+        status: "passed",
+        agentProjection: { status: "passed" },
+        ownershipManifest: { status: "passed", overlappingWriterPathCount: 0 },
+        hookProjection: { status: "passed" },
+        mcpRegistration: { status: "passed" },
+        populatedMcpTransport: transport({
+          observationCount: 10,
+          missingCount: 0,
+          populated: true,
+        }),
+        emptyMcpTransport: transport({
+          observationCount: 0,
+          missingCount: 10,
+          populated: false,
+        }),
+        advisorySnapshot: {
+          evidenceClass: "read_only_advisory_snapshot",
+          observedInCurrentRun: false,
+          executionAuthority: false,
+          count: 10,
+          bindings: Array.from({ length: 10 }, (_, index) => ({ index })),
+        },
+        portability: {
+          status: "passed",
+          packExtractionDeletedBeforeTransport: true,
+          tarballDeletedBeforeInstalledChecks: true,
+          candidateExtractionUnavailable: true,
+          candidateTarballUnavailable: true,
+          repoIndependentCwd: true,
+          repoIndependentEnvironment: true,
+          installedPackageChecksAfterCandidateRemoval: true,
+        },
+      },
+    },
+    historicalUpdate: {
+      status: "passed",
+      targets: [...CANONICAL_PACKED_TARGETS],
+      completed: true,
+      historicalRef: "v9.9.8",
+      resolution: { ref: "v9.9.8", source: "highest_prior_stable_semver_tag" },
+      beforeVersion: "9.9.8",
+      afterVersion: "9.9.9",
+      seedMethod: "historical_tarball_installed_cli",
+      updateMethod: "current_tarball_installed_cli",
+      checkMethod:
+        "current_update_internal_global_check_plus_exact_artifact_manifest_validation",
+    },
+  };
+}
+
+function exactReport(gitFacts, {
+  dirty = false,
+  packageSha256 = "a".repeat(64),
+  reportedPackedProductProofComplete = true,
+} = {}) {
   const snapshot = {
     captureOk: true,
     head: gitFacts.peeledCommitSha,
@@ -98,25 +196,11 @@ function exactReport(gitFacts, { dirty = false, packageSha256 = "a".repeat(64) }
   return Buffer.from(JSON.stringify({
     ok: true,
     releaseGrade: true,
-    packedProductProofComplete: true,
+    packedProductProofComplete: reportedPackedProductProofComplete,
     startedAt: "2026-01-01T00:00:00.000Z",
     completedAt: "2026-01-01T00:01:00.000Z",
     releasePreflight: {
-      packedUserProof: {
-        status: "passed",
-        releaseGradeEligible: true,
-        sourcePolicy: "npm_pack_installed_public_cli",
-        currentPackage: {
-          status: "passed",
-          installedCliEntrypoints: true,
-          packageSha256,
-          modes: [
-            { mode: "install", status: "passed" },
-            { mode: "update", status: "passed" },
-            { mode: "update", status: "passed" },
-          ],
-        },
-      },
+      packedUserProof: completePackedUserProof(packageSha256),
       sourceSnapshot: {
         invocation: snapshot,
         postProbe: snapshot,
@@ -286,6 +370,73 @@ test("dirty historical verification remains explicitly unbound", () => {
   );
   assert.equal(weakPackedProof.bindingStatus, "verification_package_candidate_unproven");
   assert.equal(weakPackedProof.exact, false);
+});
+
+test("release audit recomputes packed completeness and rejects legacy or partial proof shapes", () => {
+  const gitFacts = {
+    peeledCommitSha: "a".repeat(40),
+    peeledTreeSha: "b".repeat(40),
+    tagPackageJsonSha256: "c".repeat(64),
+  };
+  const reportWithFalseSummary = exactReport(gitFacts, {
+    reportedPackedProductProofComplete: false,
+  });
+  assert.equal(readVerificationEvidence(reportWithFalseSummary, gitFacts).exact, true);
+
+  const reject = (mutate, label) => {
+    const report = JSON.parse(exactReport(gitFacts).toString("utf8"));
+    mutate(report.releasePreflight.packedUserProof);
+    report.packedProductProofComplete = true;
+    const verification = readVerificationEvidence(
+      Buffer.from(JSON.stringify(report)),
+      gitFacts,
+    );
+    assert.equal(verification.packedCandidateProofComplete, false, label);
+    assert.equal(verification.bindingStatus, "verification_package_candidate_unproven", label);
+    assert.equal(verification.exact, false, label);
+  };
+
+  reject((proof) => {
+    proof.currentPackage = {
+      status: "passed",
+      installedCliEntrypoints: true,
+      packageSha256: "a".repeat(64),
+      modes: [
+        { mode: "install", status: "passed" },
+        { mode: "update", status: "passed" },
+        { mode: "update", status: "passed" },
+      ],
+    };
+  }, "minimal legacy proof");
+  reject((proof) => {
+    const portable = proof.currentPackage.portableRuntime;
+    portable.mcpTransport = portable.populatedMcpTransport;
+    delete portable.populatedMcpTransport;
+  }, "legacy mcpTransport name");
+  reject((proof) => {
+    for (const transport of [
+      proof.currentPackage.portableRuntime.populatedMcpTransport,
+      proof.currentPackage.portableRuntime.emptyMcpTransport,
+    ]) {
+      delete transport.missingCount;
+      delete transport.executionAuthority;
+      delete transport.observedInCurrentRun;
+      delete transport.currentHostAdapter;
+    }
+  }, "count-only proof");
+  reject((proof) => {
+    delete proof.currentPackage.portableRuntime.emptyMcpTransport.missingCount;
+  }, "missing exact partition fact");
+  reject((proof) => {
+    delete proof.currentPackage.targets;
+  }, "missing current package targets");
+  reject((proof) => {
+    proof.currentPackage.projectPackage.targets = [CANONICAL_PACKED_TARGETS[0]];
+  }, "one-target project proof");
+  reject((proof) => {
+    proof.currentPackage.portableRuntime.populatedMcpTransport.platformCount = 1;
+    proof.currentPackage.portableRuntime.emptyMcpTransport.platformCount = 1;
+  }, "one-platform MCP proof");
 });
 
 test("published-bound requires exact clean verification and the uploaded local package", () => {

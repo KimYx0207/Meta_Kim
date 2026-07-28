@@ -21,6 +21,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
+import { packedProductProofComplete } from "./packed-product-proof.mjs";
 
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_MAX_ASSET_BYTES = 64 * 1024 * 1024;
@@ -435,19 +436,7 @@ export function readVerificationEvidence(reportBytes, gitFacts) {
   const currentPackage = packedUserProof?.currentPackage;
   const verifiedPackageSha256 =
     currentPackage?.packageSha256 ?? null;
-  const packedCandidateProofComplete =
-    report?.packedProductProofComplete === true &&
-    packedUserProof?.status === "passed" &&
-    packedUserProof?.releaseGradeEligible === true &&
-    packedUserProof?.sourcePolicy === "npm_pack_installed_public_cli" &&
-    currentPackage?.status === "passed" &&
-    currentPackage?.installedCliEntrypoints === true &&
-    JSON.stringify((currentPackage?.modes ?? []).map(({ mode, status }) => ({ mode, status }))) ===
-      JSON.stringify([
-        { mode: "install", status: "passed" },
-        { mode: "update", status: "passed" },
-        { mode: "update", status: "passed" },
-      ]);
+  const packedCandidateProofComplete = packedProductProofComplete(packedUserProof);
   const requiredSnapshots = [source?.invocation, source?.postProbe, source?.end];
   const allSnapshots = [source?.invocation, source?.postProbe, source?.start, source?.end]
     .filter(Boolean);
@@ -949,7 +938,27 @@ export async function runReleaseBindingAudit({
       error: safeError,
     };
   }
-  return writeReleaseBindingAttempt(outputDir, recordInput);
+  const written = writeReleaseBindingAttempt(outputDir, recordInput);
+  if (
+    written.record.status === "published_bound" &&
+    verificationReportPath &&
+    path.basename(path.resolve(outputDir)) === "release-binding-audit" &&
+    path.basename(path.dirname(path.resolve(outputDir)))
+  ) {
+    const profileRoot = path.dirname(path.resolve(outputDir));
+    const stateRoot = path.dirname(profileRoot);
+    const metaKimRoot = path.dirname(stateRoot);
+    if (path.basename(stateRoot) === "state" && path.basename(metaKimRoot) === ".meta-kim") {
+      const projectRoot = path.dirname(metaKimRoot);
+      const { promoteControlledRuntimeCapabilityAcceptancesForPublishedRelease } = await import("./runtime-capability-acceptance.mjs");
+      written.acceptancePromotion = promoteControlledRuntimeCapabilityAcceptancesForPublishedRelease({
+        projectRoot,
+        profile: path.basename(profileRoot),
+        auditRecordPath: written.recordPath,
+      });
+    }
+  }
+  return written;
 }
 
 function optionValue(args, name) {

@@ -45,6 +45,7 @@ function completePackedProductProof() {
     currentPackage: {
       status: "passed",
       installedCliEntrypoints: true,
+      targets: [...RELEASE_RUNTIME_TARGETS],
       modes: [
         { mode: "install", status: "passed" },
         { mode: "update", status: "passed" },
@@ -52,6 +53,7 @@ function completePackedProductProof() {
       ],
       projectPackage: {
         status: "passed",
+        targets: [...RELEASE_RUNTIME_TARGETS],
         modes: [
           { mode: "install", status: "passed" },
           { mode: "update", status: "passed" },
@@ -67,24 +69,60 @@ function completePackedProductProof() {
         },
         hookProjection: { status: "passed" },
         mcpRegistration: { status: "passed" },
-        mcpTransport: {
+        populatedMcpTransport: {
           status: "passed",
           evidenceTier: "packed_isolated_transport",
           liveHostInvocation: false,
           semanticMatrixMatched: true,
+          staticEvidenceMatched: true,
+          projectOverlayObserved: true,
+          observationCount: 10,
+          missingCount: 0,
+          executionAuthority: false,
+          observedInCurrentRun: false,
+          currentHostAdapter: "unavailable_over_mcp_resource_read",
+          externalOverlayStayedNonExecutable: true,
           platformCount: RELEASE_RUNTIME_TARGETS.length,
           stubFree: true,
+        },
+        emptyMcpTransport: {
+          status: "passed",
+          evidenceTier: "packed_isolated_transport",
+          liveHostInvocation: false,
+          semanticMatrixMatched: true,
+          staticEvidenceMatched: true,
+          projectOverlayObserved: false,
+          observationCount: 0,
+          missingCount: 10,
+          executionAuthority: false,
+          observedInCurrentRun: false,
+          currentHostAdapter: "unavailable_over_mcp_resource_read",
+          externalOverlayStayedNonExecutable: true,
+          platformCount: RELEASE_RUNTIME_TARGETS.length,
+          stubFree: true,
+        },
+        advisorySnapshot: {
+          evidenceClass: "read_only_advisory_snapshot",
+          observedInCurrentRun: false,
+          executionAuthority: false,
+          count: 10,
+          bindings: Array.from({ length: 10 }, (_, index) => ({ index })),
         },
         portability: {
           status: "passed",
           packExtractionDeletedBeforeTransport: true,
           tarballDeletedBeforeInstalledChecks: true,
-          installedPackageChecksAfterSourceDeletion: true,
+          candidateExtractionUnavailable: true,
+          candidateTarballUnavailable: true,
+          repoIndependentCwd: true,
+          repoIndependentEnvironment: true,
+          installedPackageChecksAfterCandidateRemoval: true,
         },
       },
     },
     historicalUpdate: {
       status: "passed",
+      targets: [...RELEASE_RUNTIME_TARGETS],
       completed: true,
       historicalRef: "v4.1.9",
       resolution: {
@@ -466,7 +504,9 @@ test("packed product proof requires every portable runtime subproof", () => {
     "ownershipManifest",
     "hookProjection",
     "mcpRegistration",
-    "mcpTransport",
+    "populatedMcpTransport",
+    "emptyMcpTransport",
+    "advisorySnapshot",
     "portability",
   ]) {
     const incomplete = structuredClone(complete);
@@ -479,8 +519,118 @@ test("packed product proof requires every portable runtime subproof", () => {
   }
 
   const falselyLive = structuredClone(complete);
-  falselyLive.currentPackage.portableRuntime.mcpTransport.liveHostInvocation = true;
+  falselyLive.currentPackage.portableRuntime.populatedMcpTransport.liveHostInvocation = true;
   assert.equal(packedProductProofComplete(falselyLive), false);
+
+  for (const targetOwner of ["currentPackage", "projectPackage", "historicalUpdate"]) {
+    const missingTargets = structuredClone(complete);
+    const owner = targetOwner === "projectPackage"
+      ? missingTargets.currentPackage.projectPackage
+      : missingTargets[targetOwner];
+    delete owner.targets;
+    assert.equal(
+      packedProductProofComplete(missingTargets),
+      false,
+      `${targetOwner}.targets must be required`,
+    );
+
+    const oneTarget = structuredClone(complete);
+    const oneTargetOwner = targetOwner === "projectPackage"
+      ? oneTarget.currentPackage.projectPackage
+      : oneTarget[targetOwner];
+    oneTargetOwner.targets = [RELEASE_RUNTIME_TARGETS[0]];
+    assert.equal(
+      packedProductProofComplete(oneTarget),
+      false,
+      `${targetOwner}.targets must match every canonical packed target`,
+    );
+  }
+
+  for (const transportKey of ["populatedMcpTransport", "emptyMcpTransport"]) {
+    const onePlatform = structuredClone(complete);
+    onePlatform.currentPackage.portableRuntime[transportKey].platformCount = 1;
+    assert.equal(
+      packedProductProofComplete(onePlatform),
+      false,
+      `${transportKey}.platformCount must match the canonical supported platform count`,
+    );
+  }
+
+  const legacyCountOnly = structuredClone(complete);
+  for (const transport of [
+    legacyCountOnly.currentPackage.portableRuntime.populatedMcpTransport,
+    legacyCountOnly.currentPackage.portableRuntime.emptyMcpTransport,
+  ]) {
+    delete transport.missingCount;
+    delete transport.executionAuthority;
+    delete transport.observedInCurrentRun;
+    delete transport.currentHostAdapter;
+  }
+  assert.equal(
+    packedProductProofComplete(legacyCountOnly),
+    false,
+    "observation counts alone must not substitute for exact partition and advisory facts",
+  );
+
+  for (const [transportKey, expectedObservationCount, expectedMissingCount] of [
+    ["populatedMcpTransport", 10, 0],
+    ["emptyMcpTransport", 0, 10],
+  ]) {
+    for (const key of [
+      "missingCount",
+      "executionAuthority",
+      "observedInCurrentRun",
+      "currentHostAdapter",
+    ]) {
+      const missingExactFact = structuredClone(complete);
+      delete missingExactFact.currentPackage.portableRuntime[transportKey][key];
+      assert.equal(
+        packedProductProofComplete(missingExactFact),
+        false,
+        `${transportKey}.${key} must be required`,
+      );
+    }
+    const wrongPartition = structuredClone(complete);
+    wrongPartition.currentPackage.portableRuntime[transportKey].observationCount =
+      expectedObservationCount + 1;
+    wrongPartition.currentPackage.portableRuntime[transportKey].missingCount =
+      expectedMissingCount - 1;
+    assert.equal(packedProductProofComplete(wrongPartition), false);
+  }
+
+  const legacySourceDeletionOnly = structuredClone(complete);
+  const legacyPortability = legacySourceDeletionOnly.currentPackage.portableRuntime.portability;
+  for (const key of [
+    "candidateExtractionUnavailable",
+    "candidateTarballUnavailable",
+    "repoIndependentCwd",
+    "repoIndependentEnvironment",
+    "installedPackageChecksAfterCandidateRemoval",
+  ]) {
+    delete legacyPortability[key];
+  }
+  legacyPortability.installedPackageChecksAfterSourceDeletion = true;
+  assert.equal(
+    packedProductProofComplete(legacySourceDeletionOnly),
+    false,
+    "the retired source-deletion field must not substitute for candidate-removal proof",
+  );
+
+  for (const key of [
+    "candidateExtractionUnavailable",
+    "candidateTarballUnavailable",
+    "repoIndependentCwd",
+    "repoIndependentEnvironment",
+    "installedPackageChecksAfterCandidateRemoval",
+  ]) {
+    const missingCandidateRemovalProof = structuredClone(complete);
+    delete missingCandidateRemovalProof.currentPackage.portableRuntime.portability[key];
+    assert.equal(
+      packedProductProofComplete(missingCandidateRemovalProof),
+      false,
+      `${key} must be required for packed candidate-removal proof`,
+    );
+  }
 
   for (const key of ["seedMethod", "updateMethod", "checkMethod"]) {
     const missingHistoryProof = structuredClone(complete);

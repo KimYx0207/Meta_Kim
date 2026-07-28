@@ -10,6 +10,9 @@ import {
   readJson,
   repoPath,
 } from "./governance-lib.mjs";
+import {
+  resolveRuntimeCapabilityClaim,
+} from "./runtime-capability-claims.mjs";
 
 const REQUIRED_SKILLS = [
   "agent-teams-playbook",
@@ -119,8 +122,23 @@ for (const runtime of RUNTIMES) {
     assert(record, `${runtime} missing foundational capability ${capability}`);
     assert(record.support !== "unsupported", `${runtime}.${capability} must not be removed or hard-unsupported`);
     assert(!(record.support === "native" && record.confidence === "unverified"), `${runtime}.${capability} native requires evidence`);
+    const interactiveClaim = resolveRuntimeCapabilityClaim(runtimeMatrix, {
+      runtime,
+      capability,
+      mode: "interactive_host",
+    });
+    assert(interactiveClaim.claim, `${runtime}.${capability} missing interactive_host claim`);
+    assert(interactiveClaim.hostSupport !== "unsupported", `${runtime}.${capability} host capability must be preserved`);
   }
 }
+
+const cursorChoice = resolveRuntimeCapabilityClaim(runtimeMatrix, {
+  runtime: "cursor",
+  capability: "native choice surface",
+  mode: "interactive_host",
+});
+assert(cursorChoice.hostSupport === "native", "Cursor host choice surface must remain documented as native");
+assert(cursorChoice.executable === false, "Cursor docs-only choice surface must not become executable before acceptance");
 
 const osIds = new Set((osMatrix.operatingSystems ?? []).map((entry) => entry.id));
 for (const osName of OS_TARGETS) {

@@ -31,6 +31,11 @@ npm run meta:theory:run:notice -- --runtime codex "$ARGUMENTS"
 
 Relay every localized stderr progress snapshot into normal assistant chat at its natural transition point, without shortening away owner, result, risk, verification, or next-action guidance. Treat stdout as the single final machine-readable JSON summary; read its returned report path and include that path in the chat closure. Use `node "__META_KIM_PACKAGE_ROOT__/scripts/run-meta-theory-governed-execution.mjs" --read latest` from the rendered package root, or `npm run meta:theory:report -- latest` in the source checkout, to reopen the user-readable report when more detail is needed. This is the default artifact path for `/meta-theory` governed execution: Warden entry gate -> Conductor orchestration -> CapabilityGap decisions -> workerTaskPackets -> runtime projection evidence -> Warden writeback decision -> visible run report. The `:notice` fallback keeps `--emit-conversation-notice` inside `package.json` because some Windows/npm paths strip forwarded flags. Keep the user request as the first positional argument; do not switch to `--task` unless calling the Node script directly.
 
+Two host-native phases are mandatory:
+
+- **Phase 1 — route and handoff:** run the governed Node command only to produce route compatibility and a handoff state. `ready_for_host_handoff` means Codex must perform the next native action; `awaiting_native_choice` means it must call `request_user_input`; `blocked` means it must stop. The runner never authorizes task execution.
+- **Phase 2 — current-host action:** after any required `request_user_input` answer, use the active Codex host's real `spawn_agent`, runtime tools, and permission surface. Persistent acceptance records are advisory compatibility evidence only. No callback, environment value, or JSON can complete the native choice or authorize this task.
+
 Codex execution rule:
 
 **HOST-NATIVE FAN-OUT PREFERRED.** The main thread is the dispatcher, never the executor. Use Codex's native `spawn_agent` directly to fan out independent worker lanes — the governed runner only records evidence, discovers capabilities, and suggests lanes; it does not enforce dispatch.

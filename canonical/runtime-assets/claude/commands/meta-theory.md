@@ -45,6 +45,19 @@ Minimum route:
 4. Use the run artifact and report as the evidence surface. Do not replace the
    machine route with a short manual summary.
 
+Two host-native phases are mandatory:
+
+- **Phase 1 — route and handoff:** run the governed Node command only to
+  produce route compatibility and a handoff state. `ready_for_host_handoff`
+  means Claude Code must perform the next native action;
+  `awaiting_native_choice` means it must call `AskUserQuestion`; `blocked`
+  means it must stop. The runner never authorizes task execution.
+- **Phase 2 — current-host action:** after any required `AskUserQuestion`
+  answer, use the active Claude Code host's real `Agent` / Task, tools, and
+  permission surface. Persistent acceptance records are advisory compatibility
+  evidence only. No callback, environment value, or JSON can complete the
+  native choice or authorize this task.
+
 Claude Code execution rule:
 
 **HOST-NATIVE FAN-OUT PREFERRED.** The main thread is the dispatcher, never

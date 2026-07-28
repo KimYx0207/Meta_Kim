@@ -469,7 +469,7 @@ export function buildPlanChallengeState({
       sourceRefs: [...sourceRefs],
       sequence,
       historical,
-      trusted: true,
+      trusted: false,
     });
     return `preDecisionOptionFrame.planChallengeState.decisionEvidence[${index}]`;
   };
@@ -506,15 +506,16 @@ export function buildPlanChallengeState({
       }
     }
   };
-  const trustedPriorState =
+  const reusablePriorState =
     priorChallengeState?.trusted === true &&
     priorChallengeState?.planChallengeState?.active === true &&
     Array.isArray(priorChallengeState?.unresolvedQuestions) &&
     Array.isArray(priorChallengeState?.planChallengeState?.decisionEvidence);
-  if (trustedPriorState) {
+  if (reusablePriorState) {
     decisionEvidence.push(
       ...priorChallengeState.planChallengeState.decisionEvidence.map((item) => ({
         ...item,
+        trusted: false,
         sourceRefs: [...(item.sourceRefs ?? [])],
         historical: item.kind === "question_response" ? true : item.historical ?? null,
       })),
@@ -646,20 +647,7 @@ export function buildPlanChallengeState({
     ? selectHighestImpactOpenQuestion(questions)
     : null;
   const requiredAuthorizationBinding = planChallengeAuthorizationBinding(signals.sideEffectActions);
-  const priorChallenge = trustedPriorState ? priorChallengeState.planChallengeState : null;
-  const newAuthorizationProvided =
-    executionAuthorization?.trusted === true &&
-    Array.isArray(executionAuthorization?.evidenceRefs) &&
-    executionAuthorization.evidenceRefs.length > 0;
-  const authorizationCandidate = newAuthorizationProvided
-    ? executionAuthorization
-    : priorChallenge?.executionAuthorization;
-  const trustedAuthorization =
-    authorizationCandidate?.trusted === true &&
-    authorizationCandidate?.binding === requiredAuthorizationBinding &&
-    Array.isArray(authorizationCandidate?.evidenceRefs) &&
-    authorizationCandidate.evidenceRefs.length > 0 &&
-    Array.isArray(authorizationCandidate?.scopeActions);
+  const priorChallenge = reusablePriorState ? priorChallengeState.planChallengeState : null;
   const newUnderstandingProvided =
     sharedUnderstandingConfirmed?.trusted === true &&
     sharedUnderstandingConfirmed?.binding === "plan-challenge-understanding-confirmation" &&
@@ -670,42 +658,17 @@ export function buildPlanChallengeState({
     Array.isArray(priorChallenge?.sharedUnderstandingEvidenceRefs) &&
     priorChallenge.sharedUnderstandingEvidenceRefs.length > 0;
   const trustedUnderstanding = newUnderstandingProvided || priorUnderstandingConfirmed;
-  const scopeActions = trustedAuthorization
-    ? [...new Set(authorizationCandidate.scopeActions.map((action) => String(action).trim()).filter(Boolean))].sort()
-    : [];
-  const authorizationScopeCoversActions =
-    signals.sideEffectActions.every((action) => scopeActions.includes(action));
-  const acceptedAuthorizationState =
-    trustedAuthorization && authorizationCandidate.state === "denied"
-      ? "denied"
-      : trustedAuthorization &&
-          authorizationCandidate.state === "authorized" &&
-          authorizationScopeCoversActions
-        ? "authorized"
-        : "not_requested";
+  const scopeActions = [];
+  const authorizationScopeCoversActions = false;
   const authorization = active && authorizationRequired
     ? {
-        state: acceptedAuthorizationState,
-        source: String(
-          trustedAuthorization
-            ? authorizationCandidate.source ?? "trusted_host_evidence"
-            : "untrusted_or_scope_mismatch",
-        ),
+        state: "not_requested",
+        source: "host_native_authorization_required",
         scope: scopeActions.join(", ") || "none",
         scopeActions,
-        trusted: trustedAuthorization,
+        trusted: false,
         binding: requiredAuthorizationBinding,
-        evidenceRefs: trustedAuthorization && newAuthorizationProvided
-          ? [
-              addDecisionEvidence({
-                kind: "execution_authorization",
-                binding: requiredAuthorizationBinding,
-                sourceRefs: authorizationCandidate.evidenceRefs,
-              }),
-            ]
-          : trustedAuthorization
-            ? [...authorizationCandidate.evidenceRefs]
-            : [],
+        evidenceRefs: [],
         scopeCoversActions: authorizationScopeCoversActions,
       }
     : {
@@ -713,7 +676,7 @@ export function buildPlanChallengeState({
         source: active ? "read_only_or_no_side_effect_challenge" : "plan_challenge_inactive",
         scope: "none",
         scopeActions: [],
-        trusted: true,
+        trusted: false,
         binding: requiredAuthorizationBinding,
         evidenceRefs: [],
         scopeCoversActions: true,
@@ -730,6 +693,8 @@ export function buildPlanChallengeState({
     : priorUnderstandingConfirmed
       ? [...priorChallenge.sharedUnderstandingEvidenceRefs]
       : [];
+  const planChallengeSatisfied =
+    active && !stopRequested && selectedQuestion == null && understandingConfirmed;
   const phase = stopRequested
     ? "stopped_by_user"
     : !active
@@ -738,12 +703,10 @@ export function buildPlanChallengeState({
       ? "awaiting_user_answer"
       : !understandingConfirmed
         ? "awaiting_understanding_confirmation"
-        : authorization.state === "denied"
-          ? "execution_denied"
-          : authorizationRequired && authorization.state !== "authorized"
-            ? "awaiting_execution_authorization"
-          : "ready_for_execution";
-  const executionAllowed = !active || phase === "ready_for_execution";
+        : planChallengeSatisfied
+          ? "plan_challenge_satisfied"
+          : "awaiting_understanding_confirmation";
+  const executionAllowed = false;
   const confirmedDecisions = questions
     .filter((question) => question.status === "answered")
     .map((question) => ({
@@ -786,7 +749,7 @@ export function buildPlanChallengeState({
       ? copy.answerNext(selectedQuestion.question)
       : phase === "awaiting_understanding_confirmation"
         ? copy.understandingNext
-        : phase === "awaiting_execution_authorization"
+        : phase === "plan_challenge_satisfied" && authorizationRequired
           ? copy.authorizationNext
           : phase === "execution_denied"
             ? copy.deniedNext
@@ -882,6 +845,7 @@ export function buildPlanChallengeState({
     unresolvedQuestions: questions,
     planChallengeState: {
       active,
+      planChallengeSatisfied,
       authorizationRequired,
       sideEffectActions: signals.sideEffectActions,
       executionAllowed,
@@ -908,7 +872,7 @@ export function buildPlanChallengeState({
         ? {
             action: parsedControl,
             source: typeof control === "string" ? "explicit_control_text" : "user_request_or_trusted_control",
-            trusted: typeof control === "string" || control?.trusted === true || parsePlanChallengeControl(task) === parsedControl,
+            trusted: false,
           }
         : null,
       sharedUnderstandingConfirmed: understandingConfirmed,

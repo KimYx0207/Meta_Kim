@@ -61,6 +61,7 @@ import {
   buildHookPromptAdapterSource,
   runtimeHookSourceOwner,
 } from "./runtime-hook-mapping.mjs";
+import { readSetupRuntimeLaunchInventory } from "./runtime-executable-binding.mjs";
 
 // Recorder is lazily opened in runSync(); helpers record through this holder
 // so we do not have to thread recorder arg through every sync function.
@@ -2303,6 +2304,58 @@ function isOwnedGlobalMetaKimHookCommand(command) {
   );
 }
 
+function checkSelectedRuntimeLaunchInventories() {
+  const descriptorTargets = [
+    selectedTargetIds.includes("claude")
+      ? {
+          label: "Claude Code",
+          runtime: "claude_code",
+          root: path.dirname(runtimeHomes.claude.dir),
+        }
+      : null,
+    selectedTargetIds.includes("codex")
+      ? {
+          label: "Codex",
+          runtime: "codex",
+          root: path.dirname(runtimeHomes.codex.dir),
+        }
+      : null,
+  ].filter(Boolean);
+  if (descriptorTargets.length === 0) return true;
+
+  const groupsByRoot = new Map();
+  for (const target of descriptorTargets) {
+    const rootKey = path.resolve(target.root);
+    const group = groupsByRoot.get(rootKey) ?? [];
+    group.push(target);
+    groupsByRoot.set(rootKey, group);
+  }
+
+  let allReady = true;
+  for (const [root, group] of groupsByRoot) {
+    let groupReady = false;
+    try {
+      const inventory = readSetupRuntimeLaunchInventory({
+        root,
+        profile: process.env.META_KIM_PROFILE || "default",
+        runtimes: group.map((entry) => entry.runtime),
+      });
+      groupReady = inventory.executionAuthority === false &&
+        group.every(
+          (entry) => inventory.bindings[entry.runtime]?.executionAuthority === false,
+        );
+    } catch (error) {
+      console.error(`Runtime launch inventory readback failed: ${error.message}`);
+    }
+    const labels = group.map((entry) => entry.label).join(" + ");
+    console.log(
+      `${groupReady ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}${labels} setup launch descriptor (read-only, no runtime start)${C.reset}`,
+    );
+    if (!groupReady) allReady = false;
+  }
+  return allReady;
+}
+
 async function runCheck() {
   await assertCanonicalSkillFrontmatter();
   let failed = false;
@@ -2450,6 +2503,8 @@ async function runCheck() {
       failed = true;
     }
   }
+
+  if (!checkSelectedRuntimeLaunchInventories()) failed = true;
 
   process.exitCode = failed ? 1 : 0;
 }

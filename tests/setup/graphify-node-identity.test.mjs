@@ -88,6 +88,28 @@ describe("Graphify node identity proof v2", () => {
     );
   });
 
+  test("uses an explicit repository-root label when a root file shares a basename", () => {
+    const files = ["README.md", "examples/README.md", "scripts/README.md"];
+    const graph = {
+      nodes: files.map((source) =>
+        fileNode(source, normalizeGraphifyNodeId(source)),
+      ),
+      links: [],
+    };
+
+    disambiguateGraphFileNodeLabels(graph, { repositoryFiles: files });
+
+    assert.deepEqual(graph.nodes.map((node) => node.label), [
+      "./README.md",
+      "examples/README.md",
+      "scripts/README.md",
+    ]);
+    assert.equal(
+      analyzeGraphNodeIdentity(graph, { repositoryFiles: files }).status,
+      "verified_graph_file_identity",
+    );
+  });
+
   test("removes legacy identityOnly placeholders and never manufactures semantic coverage", () => {
     const graph = {
       nodes: [
