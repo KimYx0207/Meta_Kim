@@ -25,6 +25,17 @@ const readmeEn = readFileSync(path.join(repoRoot, "README.md"), "utf8");
 const readmeZh = readFileSync(path.join(repoRoot, "README.zh-CN.md"), "utf8");
 
 describe("setup update default flow", () => {
+  test("default meta:test:setup includes the core Graphify runtime unit tests", () => {
+    const runtimeTest = readFileSync(
+      path.join(repoRoot, "tests", "setup", "graphify-runtime.test.mjs"),
+      "utf8",
+    );
+    assert.match(packageJson.scripts["meta:test:setup"], /tests\/setup\/\*\.test\.mjs/);
+    assert.match(packageJson.scripts["meta:test:setup"], /--exclude-import "node:child_process"/);
+    assert.doesNotMatch(runtimeTest, /["']node:child_process["']/);
+    assert.match(runtimeTest, /does not fall back to a stale PATH Graphify/);
+  });
+
   test("update does not add a redundant final confirmation or map cancellation to complete", () => {
     assert.doesNotMatch(source, /updateConfirmCopy/);
     assert.doesNotMatch(source, /return summarizeInstallStatus\(\[\]\)/);
@@ -642,7 +653,7 @@ describe("setup update default flow", () => {
     assert.doesNotMatch(source, /updateSyncProjectSkipped/);
   });
 
-  test("global-only install/update does not run project Graphify wiring", () => {
+  test("global-only install/update reconciles existing Graphify hooks before skipping project wiring", () => {
     assert.match(
       source,
       /installPythonTools\(activeTargets,\s*false,\s*PROJECT_DIR,\s*\{\s*projectWiring: needProject,\s*\}\)/,
@@ -655,6 +666,12 @@ describe("setup update default flow", () => {
       source,
       /const projectWiring = options\.projectWiring !== false;/,
     );
+    const start = source.indexOf("async function installPythonTools(");
+    const end = source.indexOf("// ── Step 4.6:", start);
+    const body = source.slice(start, end);
+    assert.ok(body.indexOf("resolveGraphifyExecutable(python") < body.indexOf("if (!projectWiring)"));
+    assert.match(body, /join\(homedir\(\), "\.claude", "settings\.json"\)/);
+    assert.match(body, /reconcileExistingGraphifyWindowsHooks\(/);
     assert.match(
       source,
       /if \(!projectWiring\) \{\s*skip\(t\.graphifyProjectWiringSkipped\);\s*return true;\s*\}/,

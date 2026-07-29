@@ -45,6 +45,9 @@ describe("graphify idempotent wiring (contract)", () => {
     assert.notEqual(claudeIdx, -1);
     assert.notEqual(hookIdx, -1);
     assert.ok(hookIdx > claudeIdx, "hook install must follow claude install");
+    assert.match(src, /sanitizeGraphifyHookSettings\(resolveGraphifyExecutable\(python\)\)/);
+    assert.match(src, /path\.join\(homedir\(\), "\.claude", "settings\.json"\)/);
+    assert.match(src, /sanitizeGraphifyWindowsHooks\(target, \{ graphifyExecutable \}\)/);
   });
 
   test("graphify-cli.mjs uses full extract for identity migration and update afterwards", () => {
@@ -353,7 +356,7 @@ console.log("forced rebuild ok");
     );
     assert.match(src, /const graphifyDir = resolve\(targetDir\)/);
     assert.match(src, /join\(graphifyDir, "\.git"\)/);
-    assert.match(src, /guideAlreadyHasGraphifySection\(platform, graphifyDir\)/);
+    assert.doesNotMatch(src, /guideAlreadyHasGraphifySection\(platform, graphifyDir\)/);
     assert.match(
       src,
       /runPythonModule\(\s*python,\s*\["-m", "graphify", "hook", "install"\],[\s\S]*?\{ cwd: graphifyDir, stdio: "pipe" \}/,
@@ -650,17 +653,11 @@ console.log("forced rebuild ok");
     }
   });
 
-  test("setup.mjs skips guide-mutating graphify platform install when guide section exists", () => {
+  test("setup.mjs always lets upstream platform install refresh its Graphify hook", () => {
     const src = readFileSync(path.join(root, "setup.mjs"), "utf8");
 
-    assert.match(src, /const GRAPHIFY_GUIDE_TARGETS = \{/);
-    assert.match(
-      src,
-      /function guideAlreadyHasGraphifySection\(platform, baseDir = PROJECT_DIR\)/,
-    );
-    assert.match(src, /\^##\\s\+graphify\\b\/im/);
-    assert.match(src, /if \(guideAlreadyHasGraphifySection\(platform, graphifyDir\)\)/);
-    assert.match(src, /continue;/);
+    assert.doesNotMatch(src, /guideAlreadyHasGraphifySection/);
+    assert.match(src, /\["-m", "graphify", platform, "install"\]/);
   });
 
   test("install validates deployed artifacts while release validation keeps graphify check", () => {

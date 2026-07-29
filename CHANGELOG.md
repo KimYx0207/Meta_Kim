@@ -8,6 +8,18 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.13] - 2026-07-29
+
+### Fixed
+
+- **Claude Code no longer keeps calling a Graphify executable from an obsolete Windows Python installation.** Install and update resolve the console script from the Python interpreter Meta_Kim actually selected, including versioned Windows user-script directories, then migrate only recognized existing `hook-guard read/search` entries to shell-free `command` + `args` form. The resolver never trusts an unrelated `graphify` from `PATH`.
+- **Global-only updates can repair an existing user Hook without creating new project or user wiring.** Existing guide text no longer suppresses the upstream Graphify refresh, unknown and bare commands remain untouched, backups and atomic replacement protect settings, and Doctor reports a missing Graphify executable without deleting or rewriting the stale Hook when no verified replacement is available.
+- **Graphify rebuilds no longer leave a private local path in a node `source_url`.** The output sanitizer removes only recognized Windows, UNC, macOS, Linux, and home-relative local paths from that field, reports the exact redaction count, and preserves HTTP(S) and repository-relative sources.
+
+### Verification
+
+- Focused parser, sanitizer, Doctor, runtime-resolver, setup-flow, Graphify CLI safety, output privacy, and Windows integration regressions cover the original forward-slash Python 3.11 command, the current Python 3.14 user-script location, selected-interpreter binding, `PATH` rejection, idempotence, unknown-Hook preservation, backup/atomic-write failures, global-only no-creation behavior, private `source_url` redaction, and byte-identical Doctor diagnostics. Independent release-fit and Hook-safety reviews closed all P0-P2 findings. Standard full release verification and exact post-publication package binding are required before this version is published; Docker, Cursor product execution, task budgets, and optional live certification are not inferred from these focused checks.
+
 ## [2.9.12] - 2026-07-28
 
 ### Fixed

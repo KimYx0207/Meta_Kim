@@ -8,6 +8,18 @@
 
 ## Unreleased
 
+## [2.9.13] - 2026-07-29
+
+### 修复内容
+
+- **Claude Code 不再持续调用已经失效的 Windows 旧 Python 目录中的 Graphify。** 安装与更新会从 Meta_Kim 实际选中的 Python 解释器解析 console script，包括带版本号的 Windows 用户脚本目录，再只把已确认的 `hook-guard read/search` 旧项迁移为无 shell 的 `command` + `args` 形式；解析过程不会信任 `PATH` 中另一个同名 `graphify`。
+- **纯全局更新现在能修复已有用户 Hook，但不会擅自创建项目或用户接线。** 已有 guide 内容不再阻止上游 Graphify 刷新；未知命令与裸命令保持不变；settings 写入先备份并原子替换；Doctor 在没有已验证新路径时只报告缺失 executable，不删除也不改写旧 Hook。
+- **Graphify 重建不再把本机私有路径留在节点 `source_url` 中。** 输出清洗只移除该字段内已识别的 Windows、UNC、macOS、Linux 与 home-relative 本机路径，记录精确脱敏数量，同时保留 HTTP(S) 与仓库相对来源。
+
+### 验证
+
+- 定向回归覆盖 parser、sanitizer、Doctor、runtime resolver、setup flow、Graphify CLI safety、输出隐私与 Windows integration，包括原始 Python 3.11 正斜杠命令、当前 Python 3.14 用户脚本目录、selected-interpreter 绑定、拒绝 `PATH` 回退、幂等、未知 Hook 保留、备份/原子写失败、global-only 不创建配置、私有 `source_url` 脱敏，以及 Doctor 诊断前后原始字节不变。独立 release-fit 与 Hook-safety Review 已关闭全部 P0-P2。只有标准完整发布验证与发布后的精确包绑定都通过后才发布本版本；Docker、Cursor 产品执行、任务预算与可选 live certification 不从这些定向检查推断。
+
 ## [2.9.12] - 2026-07-28
 
 ### 修复内容

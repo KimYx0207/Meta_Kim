@@ -23,6 +23,7 @@ import {
   formatPythonLauncher,
   parsePythonVersion,
   readProcessText,
+  resolveGraphifyExecutable,
   runPythonModule,
 } from "./graphify-runtime.mjs";
 import { enrichMetaKimGraph } from "./graphify-enrichment.mjs";
@@ -1293,20 +1294,20 @@ function installGraphify({ upgrade = false } = {}) {
     process.exitCode = hookResult.status || 1;
   }
 
-  sanitizeGraphifyHookSettings();
+  sanitizeGraphifyHookSettings(resolveGraphifyExecutable(python));
 }
 
 // graphify's upstream `hook install` writes Windows shell-form commands
 // (`C:\...\graphify.EXE hook-guard read`) that Git Bash mangles. Rewrite them
 // into direct-spawn `command` + `args` form so the path survives verbatim.
-function sanitizeGraphifyHookSettings() {
+function sanitizeGraphifyHookSettings(graphifyExecutable) {
   if (process.platform !== "win32") return;
   const targets = [
     path.join(process.cwd(), ".claude", "settings.json"),
     path.join(homedir(), ".claude", "settings.json"),
   ];
   for (const target of targets) {
-    const result = sanitizeGraphifyWindowsHooks(target);
+    const result = sanitizeGraphifyWindowsHooks(target, { graphifyExecutable });
     if (result.changed) {
       console.log(
         `Rewrote ${result.count} graphify hook command(s) in ${target} to direct-spawn form (backup: ${result.backup})`,

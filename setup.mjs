@@ -63,8 +63,12 @@ import {
   readProcessText,
   runPythonModule,
   checkNetworkx,
+  resolveGraphifyExecutable,
 } from "./scripts/graphify-runtime.mjs";
-import { sanitizeGraphifyWindowsHooks } from "./scripts/graphify-hook-sanitize.mjs";
+import {
+  reconcileExistingGraphifyWindowsHooks,
+  sanitizeGraphifyWindowsHooks,
+} from "./scripts/graphify-hook-sanitize.mjs";
 import { resolveManifestSkillSubdir } from "./scripts/install-platform-config.mjs";
 import {
   SETUP_NODE_CHILD,
@@ -5733,26 +5737,6 @@ const GRAPHIFY_PLATFORM_MAP = {
   cursor: "cursor",
 };
 
-const GRAPHIFY_GUIDE_TARGETS = {
-  claude: "CLAUDE.md",
-  codex: "AGENTS.md",
-  claw: "AGENTS.md",
-  opencode: "AGENTS.md",
-  aider: "AGENTS.md",
-  droid: "AGENTS.md",
-  trae: "AGENTS.md",
-  "trae-cn": "AGENTS.md",
-};
-
-function guideAlreadyHasGraphifySection(platform, baseDir = PROJECT_DIR) {
-  const target = GRAPHIFY_GUIDE_TARGETS[platform];
-  if (!target) return false;
-  const filePath = join(baseDir, target);
-  if (!existsSync(filePath)) return false;
-  const content = readFileSync(filePath, "utf8");
-  return /^##\s+graphify\b/im.test(content);
-}
-
 function expandGraphifyTargets(activeTargets) {
   const targets = Array.isArray(activeTargets) ? activeTargets : [activeTargets];
   if (targets.includes("all")) return Object.keys(GRAPHIFY_PLATFORM_MAP);
@@ -5903,6 +5887,27 @@ async function installPythonTools(
   // Ensure networkx >= 3.4 for louvain_communities(max_level) compatibility
   ensureNetworkxCompatibility(python);
 
+  // Relocate only Graphify hooks that already exist. This also repairs a
+  // stale user-level Claude hook during global-only install/update without
+  // creating a new global hook.
+  const graphifyExecutable = resolveGraphifyExecutable(python, spawnSync);
+  if (platform() === "win32" && graphifyExecutable) {
+    const reconciliation = reconcileExistingGraphifyWindowsHooks(
+      [
+        join(graphifyDir, ".claude", "settings.json"),
+        join(homedir(), ".claude", "settings.json"),
+      ],
+      graphifyExecutable,
+    );
+    for (const sanitized of reconciliation) {
+      if (sanitized.changed) {
+        ok(
+          `Rewrote ${sanitized.count} graphify hook command(s) to direct-spawn form (backup: ${sanitized.backup})`,
+        );
+      }
+    }
+  }
+
   if (!projectWiring) {
     skip(t.graphifyProjectWiringSkipped);
     return true;
@@ -5951,10 +5956,6 @@ async function installPythonTools(
   for (const target of expandGraphifyTargets(activeTargets)) {
     const platform = GRAPHIFY_PLATFORM_MAP[target];
     if (!platform) continue;
-    if (guideAlreadyHasGraphifySection(platform, graphifyDir)) {
-      skip(t.graphifySkillSkippedGuideExists(platform));
-      continue;
-    }
     info(t.graphifySkillRegistering(platform));
     const skillResult = runPythonModule(
       python,
@@ -5973,9 +5974,10 @@ async function installPythonTools(
   // graphify's upstream installer writes Windows shell-form hook commands that
   // Git Bash mangles; rewrite them to direct-spawn form after every graphify
   // install/upgrade so the hook is executable on Windows.
-  if (platform() === "win32") {
+  if (platform() === "win32" && graphifyExecutable) {
     const sanitized = sanitizeGraphifyWindowsHooks(
       join(graphifyDir, ".claude", "settings.json"),
+      { graphifyExecutable },
     );
     if (sanitized.changed) {
       ok(

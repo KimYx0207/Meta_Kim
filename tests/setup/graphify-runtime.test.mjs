@@ -14,6 +14,7 @@ import {
   checkNetworkx,
   ensurePip,
   discoverWindowsPythonPathCommands,
+  resolveGraphifyExecutable,
 } from "../../scripts/graphify-runtime.mjs";
 
 const repoRoot = join(import.meta.dirname, "..", "..");
@@ -227,6 +228,45 @@ describe("runPythonModule()", () => {
 });
 
 describe("graphify helpers", () => {
+  test("resolves the installed Graphify executable through the selected Python launcher", () => {
+    const calls = [];
+    const executable = resolveGraphifyExecutable(
+      { command: "py", args: ["-3.11"] },
+      (command, args, options) => {
+        calls.push({ command, args, options });
+        return {
+          status: 0,
+          stdout: "C:\\Users\\Kim\\AppData\\Roaming\\Python\\Python311\\Scripts\\graphify.EXE\n",
+          stderr: "",
+        };
+      },
+    );
+    assert.equal(executable, String.raw`C:\Users\Kim\AppData\Roaming\Python\Python311\Scripts\graphify.EXE`);
+    assert.equal(calls[0].command, "py");
+    assert.deepEqual(calls[0].args.slice(0, 2), ["-3.11", "-c"]);
+    assert.doesNotMatch(calls[0].args[2], /shutil\.which/);
+    assert.match(calls[0].args[2], /sysconfig\.get_path/);
+    assert.match(calls[0].args[2], /sysconfig\.get_preferred_scheme\("user"\)/);
+    assert.match(calls[0].args[2], /site\.USER_BASE/);
+    assert.deepEqual(calls[0].options, { encoding: "utf8", shell: false });
+  });
+
+  test("does not fall back to a stale PATH Graphify when selected-Python candidates are missing", () => {
+    let resolverSource = "";
+    const executable = resolveGraphifyExecutable(
+      { command: "C:/Python313/python.exe", args: [] },
+      (_command, args) => {
+        resolverSource = args.at(-1);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    assert.equal(executable, null);
+    assert.doesNotMatch(resolverSource, /shutil\.which|\bPATH\b/u);
+    assert.match(resolverSource, /sys\.executable/);
+    assert.match(resolverSource, /sysconfig\.get_path\("scripts"\)/);
+  });
+
   test("extractPipShowVersion reads version from pip show output", () => {
     assert.equal(
       extractPipShowVersion("Name: graphifyy\nVersion: 1.2.3\nSummary: test"),

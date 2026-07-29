@@ -195,6 +195,49 @@ function customBasename(p) {
   return p.slice(lastSlash + 1);
 }
 
+function isAbsoluteGraphifyExecutable(value) {
+  return (
+    typeof value === "string" &&
+    path.win32.isAbsolute(value) &&
+    ["graphify", "graphify.exe"].includes(customBasename(value).toLowerCase())
+  );
+}
+
+/** Parse only Graphify's documented Claude hook-guard command contract. */
+export function parseGraphifyHookCommand(hook) {
+  if (!hook || typeof hook !== "object" || typeof hook.command !== "string") {
+    return null;
+  }
+  if (Object.hasOwn(hook, "type") && hook.type !== "command") return null;
+  if (Object.hasOwn(hook, "args")) {
+    if (!Array.isArray(hook.args) || !hook.args.every((arg) => typeof arg === "string")) {
+      return null;
+    }
+    const executable = hook.command.trim();
+    if (!isAbsoluteGraphifyExecutable(executable)) return null;
+    const [guard, action, strict, ...extra] = hook.args;
+    if (guard !== "hook-guard" || !["read", "search"].includes(action) || extra.length > 0) {
+      return null;
+    }
+    if (strict !== undefined && (action !== "read" || strict !== "--strict")) return null;
+    return { executable, action, strict: strict === "--strict", form: "exec" };
+  }
+
+  const match = hook.command.trim().match(
+    /^(?:"([^"]+)"|'([^']+)'|((?:[A-Za-z]:[\\/]|\\\\|\/\/).+?))\s+hook-guard\s+(read|search)(?:\s+(--strict))?\s*$/iu,
+  );
+  if (!match) return null;
+  const executable = match[1] ?? match[2] ?? match[3];
+  const action = match[4].toLowerCase();
+  const strict = match[5] === "--strict";
+  if (
+    !isAbsoluteGraphifyExecutable(executable) ||
+    /[\r\n;&|]/u.test(executable) ||
+    (strict && action !== "read")
+  ) return null;
+  return { executable, action, strict, form: "shell" };
+}
+
 function trimShellPunctuation(token) {
   return token.replace(/^[;&|]+|[;&|]+$/g, "");
 }
@@ -348,6 +391,8 @@ function extractDirectSpawnArgsTarget(runner, args) {
  */
 export function extractHookTargetPath(hook) {
   if (!hook || typeof hook !== "object") return null;
+  const graphify = parseGraphifyHookCommand(hook);
+  if (graphify) return graphify.executable;
   const command = typeof hook.command === "string" ? hook.command : "";
   if (Object.hasOwn(hook, "args")) {
     if (!Array.isArray(hook.args) || !hook.args.every((arg) => typeof arg === "string")) {
@@ -410,28 +455,36 @@ export function detectHookCommandIncompatibility(
  * Returns the rewritten hook object, or null when the hook is not a graphify
  * Windows shell-form command that needs rewriting.
  */
-export function rewriteHookToDirectSpawn(hook, runtimePlatform = platform()) {
+export function rewriteHookToDirectSpawn(
+  hook,
+  runtimePlatform = platform(),
+  graphifyExecutable = null,
+) {
   if (
     runtimePlatform !== "win32" ||
     !hook ||
     typeof hook !== "object" ||
-    typeof hook.command !== "string" ||
-    Object.hasOwn(hook, "args")
+    typeof hook.command !== "string"
   ) {
     return null;
   }
-  if (!detectHookCommandIncompatibility(hook, runtimePlatform)) return null;
-  const match = hook.command
-    .trim()
-    .match(/^((?:[A-Za-z]:\\|\\\\).+?graphify(?:\.exe)?)\s+(hook-guard)\s+(read|search)\s*$/iu);
-  if (!match || !["graphify", "graphify.exe"].includes(customBasename(match[1]).toLowerCase())) {
-    return null;
-  }
+  const parsed = parseGraphifyHookCommand(hook);
+  if (!parsed) return null;
+  const executable = graphifyExecutable ?? parsed.executable;
+  if (!isAbsoluteGraphifyExecutable(executable)) return null;
+  const args = ["hook-guard", parsed.action, ...(parsed.strict ? ["--strict"] : [])];
+  if (
+    parsed.form === "exec" &&
+    hook.command === executable &&
+    hook.args.length === args.length &&
+    hook.args.every((arg, index) => arg === args[index])
+  ) return null;
+  const { command: _command, args: _args, ...metadata } = hook;
   return {
-    ...hook,
+    ...metadata,
     type: hook.type ?? "command",
-    command: match[1],
-    args: [match[2], match[3]],
+    command: executable,
+    args,
   };
 }
 
@@ -529,6 +582,7 @@ export function scanSettingsFile(settingsPath) {
   for (const [event, blocks] of Object.entries(hooks)) {
     for (const block of blocks || []) {
       for (const hook of block.hooks || []) {
+        const graphify = parseGraphifyHookCommand(hook);
         const commandIssue = detectHookCommandIncompatibility(hook);
         const rawTarget = extractHookTargetPath(hook);
         const target = resolveHookTargetPath(rawTarget, settingsPath);
@@ -540,6 +594,16 @@ export function scanSettingsFile(settingsPath) {
           rawPath: rawTarget,
           command: hook.command,
         };
+        if (graphify && !exists) {
+          incompatible.push({
+            ...entry,
+            code: "missing_graphify_executable",
+            reason:
+              `The recognized Graphify executable no longer exists at ${target}. ` +
+              "Run Meta_Kim setup/update to relocate this hook; doctor preserves it until a verified replacement is available.",
+          });
+          continue;
+        }
         if (commandIssue) {
           incompatible.push({ ...entry, ...commandIssue });
           continue;
@@ -572,6 +636,7 @@ export function removeZombies(settings, settingsPath) {
     const keptBlocks = (blocks || [])
       .map((block) => {
         const keptHooks = (block.hooks || []).filter((hook) => {
+          if (parseGraphifyHookCommand(hook)) return true;
           const target = resolveHookTargetPath(
             extractHookTargetPath(hook),
             settingsPath,

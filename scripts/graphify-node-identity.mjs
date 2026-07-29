@@ -61,6 +61,80 @@ function hasPrivateLocalPath(value) {
     );
 }
 
+const MAX_URL_SOURCE_LENGTH = 8192;
+const MAX_URL_DECODE_PASSES = 4;
+
+function decodedUrlSurfaces(value) {
+  if (value.length > MAX_URL_SOURCE_LENGTH) {
+    return { surfaces: [value], unsafe: true };
+  }
+  const surfaces = [value];
+  let current = value;
+  for (let pass = 0; pass < MAX_URL_DECODE_PASSES; pass += 1) {
+    let next;
+    try {
+      next = decodeURIComponent(current);
+    } catch {
+      return { surfaces, unsafe: true };
+    }
+    if (next === current) return { surfaces, unsafe: false };
+    surfaces.push(next);
+    current = next;
+  }
+  try {
+    return {
+      surfaces,
+      unsafe: decodeURIComponent(current) !== current,
+    };
+  } catch {
+    return { surfaces, unsafe: true };
+  }
+}
+
+function classifyHttpNodeSourceUrl(value) {
+  if (typeof value !== "string" || !/^https?:\/\//iu.test(value)) {
+    return "not_http";
+  }
+  if (value.length > MAX_URL_SOURCE_LENGTH) return "private";
+  const decodedValue = decodedUrlSurfaces(value);
+  if (
+    value !== value.trim() ||
+    /[\\\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    return decodedValue.unsafe ||
+        decodedValue.surfaces.some((surface) => hasPrivateLocalPath(surface))
+      ? "private"
+      : "not_http";
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return decodedValue.unsafe ||
+        decodedValue.surfaces.some((surface) => hasPrivateLocalPath(surface))
+      ? "private"
+      : "not_http";
+  }
+  if (
+    !["http:", "https:"].includes(parsed.protocol) ||
+    !parsed.hostname
+  ) {
+    return "not_http";
+  }
+  const protectedSurfaces = [
+    parsed.username,
+    parsed.password,
+    parsed.search,
+    parsed.hash,
+  ].map((surface) => decodedUrlSurfaces(surface));
+  const privateNonPathSurface = protectedSurfaces.some(
+    (result) =>
+      result.unsafe ||
+      result.surfaces.some((surface) => hasPrivateLocalPath(surface)),
+  );
+  return privateNonPathSurface ? "private" : "safe";
+}
+
 function isSafeRuntimeSourceRef(value) {
   return typeof value === "string" &&
     !value.includes("\\") &&
@@ -90,19 +164,43 @@ function graphProofSurface(graph) {
   };
 }
 
-function privatePathIssues(value, pointer = "$", issues = []) {
+function privatePathIssues(
+  value,
+  pointer = "$",
+  issues = [],
+  context = { graphRoot: true, graphNodesArray: false, graphNode: false },
+) {
   if (typeof value === "string") {
     if (hasPrivateLocalPath(value)) issues.push(pointer);
     return issues;
   }
   if (Array.isArray(value)) {
-    value.forEach((item) => privatePathIssues(item, `${pointer}[]`, issues));
+    value.forEach((item) =>
+      privatePathIssues(item, `${pointer}[]`, issues, {
+        graphRoot: false,
+        graphNodesArray: false,
+        graphNode: context.graphNodesArray === true,
+      })
+    );
     return issues;
   }
   if (value && typeof value === "object") {
     for (const [key, item] of Object.entries(value)) {
       if (hasPrivateLocalPath(key)) issues.push(`${pointer}.[key]`);
-      privatePathIssues(item, `${pointer}.[value]`, issues);
+      const sourceUrlStatus =
+        context.graphNode === true && key === "source_url"
+          ? classifyHttpNodeSourceUrl(item)
+          : "not_http";
+      if (sourceUrlStatus === "safe") continue;
+      if (sourceUrlStatus === "private") {
+        issues.push(`${pointer}.[value]`);
+        continue;
+      }
+      privatePathIssues(item, `${pointer}.[value]`, issues, {
+        graphRoot: false,
+        graphNodesArray: context.graphRoot === true && key === "nodes",
+        graphNode: false,
+      });
     }
   }
   return issues;

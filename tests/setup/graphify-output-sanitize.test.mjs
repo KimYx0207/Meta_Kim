@@ -82,6 +82,71 @@ describe("Graphify upstream output sanitizer", () => {
     assert.ok(graph.nodes.every((node) => node.source_file === undefined || node.id === "tracked"));
   });
 
+  test("redacts only private local node source URLs with an auditable idempotent count", () => {
+    const privateSourceUrls = [
+      "C:/Users/Kim/private/source.mjs",
+      "C:\\Users\\Kim\\private\\source.mjs",
+      "\\\\server\\share\\private\\source.mjs",
+      "/Users/kim/private/source.mjs",
+      "/home/kim/private/source.mjs",
+      "/root/private/source.mjs",
+      "~/private/source.mjs",
+      "~\\private\\source.mjs",
+    ];
+    const graph = {
+      nodes: [
+        ...privateSourceUrls.map((source_url, index) => ({
+          id: `private-${index}`,
+          source_url,
+        })),
+        { id: "http", source_url: "http://example.test/source.mjs" },
+        { id: "https", source_url: "https://example.test/Users/guide" },
+        { id: "relative", source_url: "scripts/source.mjs" },
+        {
+          id: "unknown-surface",
+          source_url: "docs/source.mjs",
+          metadata: { localPath: "C:\\Users\\Kim\\must-remain-visible-to-validator" },
+        },
+      ],
+      links: [],
+    };
+
+    const first = sanitizeGraphifyOutput(graph);
+    assert.equal(
+      first.schemaVersion,
+      "meta-kim-graphify-output-sanitize-v2",
+    );
+    assert.equal(first.changed, true);
+    assert.equal(first.redactedPrivateSourceUrls, privateSourceUrls.length);
+    assert.ok(
+      graph.nodes
+        .slice(0, privateSourceUrls.length)
+        .every((node) => !Object.hasOwn(node, "source_url")),
+    );
+    assert.equal(
+      graph.nodes[privateSourceUrls.length].source_url,
+      "http://example.test/source.mjs",
+    );
+    assert.equal(
+      graph.nodes[privateSourceUrls.length + 1].source_url,
+      "https://example.test/Users/guide",
+    );
+    assert.equal(
+      graph.nodes[privateSourceUrls.length + 2].source_url,
+      "scripts/source.mjs",
+    );
+    assert.equal(
+      graph.nodes[privateSourceUrls.length + 3].metadata.localPath,
+      "C:\\Users\\Kim\\must-remain-visible-to-validator",
+    );
+
+    const afterFirst = structuredClone(graph);
+    const second = sanitizeGraphifyOutput(graph);
+    assert.equal(second.changed, false);
+    assert.equal(second.redactedPrivateSourceUrls, 0);
+    assert.deepEqual(graph, afterFirst);
+  });
+
   test("rewrites both Graphify hyperedge reference surfaces", () => {
     const hyperedge = {
       id: "Team-Group",

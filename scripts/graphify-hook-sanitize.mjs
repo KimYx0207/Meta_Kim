@@ -6,7 +6,10 @@ import {
   writeFileSync,
 } from "node:fs";
 
-import { rewriteHookToDirectSpawn } from "./doctor-hooks.mjs";
+import {
+  parseGraphifyHookCommand,
+  rewriteHookToDirectSpawn,
+} from "./doctor-hooks.mjs";
 
 function isoStamp(now = new Date()) {
   return now.toISOString().replace(/[:.]/g, "-");
@@ -31,6 +34,7 @@ function isoStamp(now = new Date()) {
  *   renameFile?: typeof renameSync,
  *   removeFile?: typeof unlinkSync,
  *   now?: Date,
+ *   graphifyExecutable?: string | null,
  * }} [options]
  * @returns {{ changed: boolean, count: number, path: string | null, backup?: string }}
  */
@@ -68,7 +72,19 @@ export function sanitizeGraphifyWindowsHooks(settingsPath, options = {}) {
     nextHooks[event] = (blocks || []).map((block) => ({
       ...block,
       hooks: (block.hooks || []).map((hook) => {
-        const rewritten = rewriteHookToDirectSpawn(hook, runtimePlatform);
+        const parsed = parseGraphifyHookCommand(hook);
+        if (
+          !options.graphifyExecutable &&
+          parsed?.form === "shell" &&
+          !fileExists(parsed.executable)
+        ) {
+          return hook;
+        }
+        const rewritten = rewriteHookToDirectSpawn(
+          hook,
+          runtimePlatform,
+          options.graphifyExecutable ?? null,
+        );
         if (rewritten) {
           count += 1;
           return rewritten;
@@ -108,4 +124,18 @@ export function sanitizeGraphifyWindowsHooks(settingsPath, options = {}) {
     });
   }
   return { changed: true, count, path: settingsPath, backup };
+}
+
+/** Reconcile only settings files that already contain recognized Graphify hooks. */
+export function reconcileExistingGraphifyWindowsHooks(
+  settingsPaths,
+  graphifyExecutable,
+  options = {},
+) {
+  return [...new Set(settingsPaths || [])].map((settingsPath) =>
+    sanitizeGraphifyWindowsHooks(settingsPath, {
+      ...options,
+      graphifyExecutable,
+    })
+  );
 }

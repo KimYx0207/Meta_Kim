@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { normalizeGraphifyNodeId } from "./graphify-unicode-normalize.mjs";
 
 export const GRAPHIFY_OUTPUT_SANITIZE_SCHEMA =
-  "meta-kim-graphify-output-sanitize-v1";
+  "meta-kim-graphify-output-sanitize-v2";
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -39,6 +39,12 @@ function hasPrivateLocalPath(value) {
     /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
       value,
     );
+}
+
+function isPrivateNodeSourceUrl(value) {
+  return typeof value === "string" &&
+    !/^https?:\/\//iu.test(value) &&
+    hasPrivateLocalPath(value);
 }
 
 function classifyNonRepositorySource(node, repositoryFiles) {
@@ -109,7 +115,12 @@ export function sanitizeGraphifyOutput(
     runtimeHomeRefs: 0,
     redactedExternalRefs: 0,
   };
+  let redactedPrivateSourceUrls = 0;
   for (const node of graph.nodes) {
+    if (isPrivateNodeSourceUrl(node.source_url)) {
+      delete node.source_url;
+      redactedPrivateSourceUrls += 1;
+    }
     if (
       node.source_file !== undefined &&
       node.source_file !== null &&
@@ -237,10 +248,12 @@ export function sanitizeGraphifyOutput(
     schemaVersion: GRAPHIFY_OUTPUT_SANITIZE_SCHEMA,
     changed:
       Object.values(sourceReclassifications).some((count) => count > 0) ||
+      redactedPrivateSourceUrls > 0 ||
       canonicalizedNodeIds > 0 ||
       canonicalizedHyperedgeIds > 0 ||
       rewrittenHyperedgeReferences > 0,
     ...sourceReclassifications,
+    redactedPrivateSourceUrls,
     canonicalizedNodeIds,
     resolvedCanonicalCollisions,
     canonicalizedHyperedgeIds,

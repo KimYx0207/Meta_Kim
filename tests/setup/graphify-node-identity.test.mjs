@@ -574,6 +574,46 @@ describe("Graphify node identity proof v2", () => {
     );
   });
 
+  test("allows HTTP node source URLs without weakening private-path checks elsewhere", () => {
+    const graph = prepare(safeGraph());
+    graph.nodes[0].source_url = "https://example.test/home/project/source.mjs";
+    const safeHttpSource = analyzeGraphNodeIdentity(graph, {
+      repositoryFiles,
+      builtCommit: graph.built_at_commit,
+    });
+    assert.equal(safeHttpSource.graphPrivatePathIssues.length, 0);
+
+    const rejectedMutations = [
+      ["description", "https://example.test/home/project/source.mjs"],
+      ["source_url", "file:///home/kim/private/source.mjs"],
+      ["source_url", "https://example.test/home/project\\C:\\Users\\Kim"],
+      ["source_url", "https://example.test/home/project\nC:\\Users\\Kim"],
+      ["source_url", "https://example.test/home/project?next=/home/kim/private"],
+      ["source_url", "https://example.test/home/project?next=%2Fhome%2Fkim%2Fprivate"],
+      ["source_url", "https://example.test/home/project?next=%252Fhome%252Fkim%252Fprivate"],
+      ["source_url", "https://example.test/home/project?next=%252Fhome%2Fkim%252Fprivate"],
+      ["source_url", "https://example.test/home/project#C:/Users/Kim/private"],
+      ["source_url", "https://example.test/home/project#C%253A%252FUsers%252FKim%252Fprivate"],
+      ["source_url", "https://user%2Fhome%2Fkim@example.test/project"],
+      ["source_url", "https://user%252Fhome%252Fkim@example.test/project"],
+      ["source_url", `https://example.test/${"a".repeat(8200)}`],
+      ["source_url", `https://example.test/home/project?value=${"a".repeat(8200)}`],
+      ["source_url", "https:// invalid/home/kim/private"],
+    ];
+    for (const [field, value] of rejectedMutations) {
+      const candidate = prepare(safeGraph());
+      candidate.nodes[0][field] = value;
+      const result = analyzeGraphNodeIdentity(candidate, {
+        repositoryFiles,
+        builtCommit: candidate.built_at_commit,
+      });
+      assert.ok(
+        result.graphPrivatePathIssues.length > 0,
+        `${field} mutation should remain private`,
+      );
+    }
+  });
+
   test("binds sanitized provenance and refuses private analysis paths", () => {
     const graph = prepare(safeGraph());
     graph.meta_kim_enrichment = {
