@@ -931,14 +931,14 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-07-31",
       "sourceRefs": [
         "canonical/runtime-assets/openclaw",
         "scripts/sync-runtimes.mjs",
         "setup.mjs"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/openclaw", "digestKind": "sha256", "sha256": "cd564bfc83809fc9a5fe8486087d39ddeab7ab0b57a39f66f432461542b7fd73" },
+        { "path": "canonical/runtime-assets/openclaw", "digestKind": "sha256", "sha256": "ca04424ae285491a8284b1af7bd19375df3e281d75818c48aa25ee27b1fc3287" },
         { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "983eba0684beaeF8A77C6657D356CA5D5F9F50FBC82E196ED7CB019632EDD1FD" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "9c13807d8ca70ab4df2dc22231e8f31cdab96405d0ce299e3cb4d38b40361a5e" }
       ],

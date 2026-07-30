@@ -23,7 +23,7 @@ The only Meta_Kim hook shipped into OpenClaw is `canonical/runtime-assets/opencl
 Meta_Kim does **not** ship `enforce-agent-dispatch.mjs` to OpenClaw for four reasons:
 
 1. **No tool-deny payload surface in OpenClaw's current plugin model.** A PreToolUse hook that returns `permissionDecision: "deny"` is a Claude/Codex/Cursor concept. OpenClaw's typed plugin hooks block by raising or by short-circuiting the policy graph, not by emitting the harness-specific deny payload.
-2. **Capability-gate enforcement is declarative in OpenClaw.** `executionBlock=true` plus refusal prose is the live enforcement today. Adding a script that calls `process.exit(2)` on every `Agent` dispatch would duplicate work and could fight OpenClaw's own policy graph.
+2. **Capability-gate policy is declarative in OpenClaw.** `executionBlock=true` plus refusal prose is policy and refusal guidance, not a mechanical tool-call security boundary. Adding a script that calls `process.exit(2)` on every `Agent` dispatch would not create a valid typed-plugin adapter and could fight OpenClaw's own policy graph.
 3. **No Bash/Edit matcher registry.** Claude's `enforce-agent-dispatch.mjs` keys off `Bash|apply_patch|Edit|Write|MultiEdit|...`. OpenClaw's typed plugin hooks fire on `command:*` / `session:*` / `tool:*` events with different semantics; copying the matcher would create false negatives.
 4. **Trust review cost.** `AGENTS.md` flags OpenClaw skills/hooks as needing third-party risk and sandbox review. Projecting our Claude hook tree without that review would skip a declared gate.
 

@@ -8,6 +8,16 @@
 
 ## Unreleased
 
+## [2.9.15] - 2026-07-31
+
+### 修复内容
+
+- **不再把 OpenClaw 的声明式 `executionBlock` 策略描述成机械工具调用拦截。** canonical 运行端边界现在明确：拒绝说明只是策略指导，真正阻断或改写工具调用需要 OpenClaw typed plugin Hook。Meta_Kim 仍不声称已经安装该 adapter，也不会把 Claude Code 或 Codex 的 deny-payload 语义直接复制到 OpenClaw。
+
+### 验证
+
+- correctness、security/truth、completeness 三路独立 Review 已关闭全部 P0/P1。私有 capability-gap PRD 测试 56/56 通过，五分类严格验收通过，运行端投影同步与 `git diff --check` 通过；发布前只执行一次的全局 fresh readback 已确认 Claude Code/Codex 的治理 Agent、Meta-Theory Skill、Hooks、Commands、MCP 与 choice 配置均为当前版本。
+
 ## [2.9.14] - 2026-07-30
 
 ### 修复内容

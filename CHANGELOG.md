@@ -8,6 +8,16 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.15] - 2026-07-31
+
+### Fixed
+
+- **OpenClaw's declarative `executionBlock` policy is no longer described as mechanical tool-call enforcement.** The canonical runtime boundary now states that refusal prose is policy guidance, while actual blocking or parameter rewriting requires an OpenClaw typed plugin hook. Meta_Kim still does not claim that such an adapter is installed, and it does not copy Claude Code or Codex deny-payload semantics into OpenClaw.
+
+### Verification
+
+- Independent correctness, security/truth, and completeness reviews closed all P0/P1 findings. The private capability-gap PRD test passes 56/56, its strict five-classification acceptance check passes, runtime projections sync cleanly, and `git diff --check` passes. A single post-repair global readback confirms current Claude Code and Codex governance agents, Meta-Theory skills, Hooks, commands, MCP, and choice configuration before publication.
+
 ## [2.9.14] - 2026-07-30
 
 ### Fixed
