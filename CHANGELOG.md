@@ -8,6 +8,16 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.14] - 2026-07-30
+
+### Fixed
+
+- **GitHub source downloads and Windows Git checkouts no longer fail repository-evidence validation solely because text files use LF or CRLF line endings.** Repository source bindings now hash a canonical LF representation for UTF-8 text while preserving byte-exact hashing for non-text files, so the same tracked content verifies consistently in source archives, npm packages, and local checkouts.
+
+### Verification
+
+- Repository-evidence regressions verify equivalent LF and CRLF distributions and retain byte-sensitive hashing for non-UTF-8 files. The GitHub source-archive shape and the packed npm-product shape both validate without SHA-256 mismatches. Standard full release verification and exact post-publication package binding remain required before publication.
+
 ## [2.9.13] - 2026-07-29
 
 ### Fixed

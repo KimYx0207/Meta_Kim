@@ -8,7 +8,10 @@ import {
   aggregateLegacyCapabilitySummary,
   resolveRuntimeCapabilityClaim,
 } from "../../scripts/runtime-capability-claims.mjs";
-import { validateRuntimeCapabilityClaims } from "../../scripts/runtime-capability-evidence.mjs";
+import {
+  digestRepositorySource,
+  validateRuntimeCapabilityClaims,
+} from "../../scripts/runtime-capability-evidence.mjs";
 
 const matrixPath = new URL("../../config/runtime-capability-matrix.json", import.meta.url);
 const ledgerPath = new URL("../../config/runtime-capability-evidence.json", import.meta.url);
@@ -87,6 +90,23 @@ function attachAcceptance({ matrix, ledger, root, runtime = "codex", capability 
   setLegacySummary(record);
   return { observation, artifactPath, acceptance, record };
 }
+
+test("P-130 repository evidence digest is stable across LF and CRLF distributions", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-p130-eol-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sourcePath = path.join(root, "runtime-hook.mjs");
+
+  writeFileSync(sourcePath, "const first = 1;\nconst second = 2;\n", "utf8");
+  const lfDigest = digestRepositorySource(root);
+
+  writeFileSync(sourcePath, "const first = 1;\r\nconst second = 2;\r\n", "utf8");
+  assert.equal(digestRepositorySource(root), lfDigest);
+
+  writeFileSync(sourcePath, Buffer.from([0xff, 0xfe, 0xfd]));
+  const firstBinaryDigest = digestRepositorySource(root);
+  writeFileSync(sourcePath, Buffer.from([0xff, 0xfe, 0xfc]));
+  assert.notEqual(digestRepositorySource(root), firstBinaryDigest);
+});
 
 test("P-130 v2 baseline separates host, integration, acceptance, and legacy summaries", () => {
   const { matrix, ledger } = fixtures();

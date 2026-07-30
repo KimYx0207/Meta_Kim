@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isUtf8 } from "node:buffer";
 import {
   existsSync,
   lstatSync,
@@ -147,6 +148,14 @@ function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+function digestRepositoryFile(filePath) {
+  const bytes = readFileSync(filePath);
+  if (!isUtf8(bytes)) return sha256(bytes);
+  // Git archives and npm packages may carry the same tracked text with LF or
+  // CRLF endings. Bind the repository content, not the checkout convention.
+  return sha256(Buffer.from(bytes.toString("utf8").replace(/\r\n?/gu, "\n"), "utf8"));
+}
+
 function repositorySourcePath(ref) {
   const normalized = String(ref ?? "").replaceAll("\\", "/").replace(/^\.\//u, "");
   if (!REPOSITORY_EVIDENCE_FILES.has(normalized) && !REPOSITORY_EVIDENCE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return null;
@@ -156,10 +165,10 @@ function repositorySourcePath(ref) {
   return insideRoot(real, realpathSync(repoRoot)) ? real : null;
 }
 
-function digestRepositorySource(sourcePath) {
+export function digestRepositorySource(sourcePath) {
   const stat = lstatSync(sourcePath);
   if (stat.isSymbolicLink()) throw new Error("repository evidence cannot be a symlink");
-  if (stat.isFile()) return sha256(readFileSync(sourcePath));
+  if (stat.isFile()) return digestRepositoryFile(sourcePath);
   if (!stat.isDirectory()) throw new Error("repository evidence must be a regular file or directory");
   const files = [];
   const walk = (directory) => {
@@ -172,7 +181,7 @@ function digestRepositorySource(sourcePath) {
   };
   walk(sourcePath);
   files.sort((left, right) => left.localeCompare(right));
-  return sha256(files.map((file) => `${path.relative(sourcePath, file).replaceAll("\\", "/")}\0${sha256(readFileSync(file))}\n`).join(""));
+  return sha256(files.map((file) => `${path.relative(sourcePath, file).replaceAll("\\", "/")}\0${digestRepositoryFile(file)}\n`).join(""));
 }
 
 function resolveObservationRefs(refs, observations, issues, context) {
