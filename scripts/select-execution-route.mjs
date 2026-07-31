@@ -874,6 +874,12 @@ const projectRuntimeCapabilityProviders = [
 });
 
 function selectProjectRuntimeCapabilityEvidence(providers, limit = 80) {
+  const requiredConfigIds = new Set([
+    "codex-hooks-json",
+    "claude-settings-json",
+    "cursor-hooks-json",
+    "openclaw-template-json",
+  ]);
   const evidencePriority = (provider) => {
     if (provider?.source === "project_runtime_hook_config_inventory") return 0;
     if (provider?.source === "project_runtime_mcp_inventory") return 1;
@@ -882,9 +888,17 @@ function selectProjectRuntimeCapabilityEvidence(providers, limit = 80) {
     if (typeof provider?.id === "string" && provider.id.startsWith("package-script:")) return 5;
     return 4;
   };
-  return [...providers]
-    .sort((a, b) => evidencePriority(a) - evidencePriority(b))
-    .slice(0, limit);
+  const ordered = [...providers].sort((a, b) => evidencePriority(a) - evidencePriority(b));
+  const requiredEvidence = [
+    ...ordered.filter((provider) => requiredConfigIds.has(provider?.id)),
+    ...ordered.filter(
+      (provider) => typeof provider?.id === "string" && provider.id.startsWith("package-script:"),
+    ).slice(0, 1),
+    ...["skills", "commands", "hooks", "mcpServers", "rules", "prompts"]
+      .map((type) => ordered.find((provider) => provider?.type === type))
+      .filter(Boolean),
+  ];
+  return uniqueById([...requiredEvidence, ...ordered]).slice(0, limit);
 }
 const localGlobalCapabilityProvidersAll = ["skills", "commands", "hooks", "plugins", "mcpServers", "mcpTools", "rules", "prompts"].flatMap((type) =>
   capabilityEntries(globalCapabilityInventory, type)
@@ -3709,6 +3723,7 @@ function compactProvider(provider) {
       ["contentDigest", provider.contentDigest],
       ["nativeIdentity", provider.nativeIdentity],
       ["provenance", provider.provenance],
+      ["metadata", provider.metadata],
       ["collision", provider.collision],
       ["routeEligible", provider.routeEligible],
       ["sourceSelectedExplicitly", provider.sourceSelectedExplicitly],
@@ -3823,12 +3838,20 @@ function compactOwnerDiscoveryPacket(packet) {
       packet.repoCanonicalSkillProviders ?? [],
       30,
     ),
+    projectRuntimeSkillProviders: compactProviderCollection(
+      packet.projectRuntimeSkillProviders ?? [],
+      30,
+    ),
+    localGlobalSkillProviders: compactProviderCollection(
+      packet.localGlobalSkillProviders ?? [],
+      40,
+    ),
     repoCanonicalCapabilityProviders: compactProviderCollection(
       packet.repoCanonicalCapabilityProviders ?? [],
       40,
     ),
     projectRuntimeCapabilityProviders: compactProviderCollection(
-      packet.projectRuntimeCapabilityProviders ?? [],
+      selectProjectRuntimeCapabilityEvidence(packet.projectRuntimeCapabilityProviders ?? [], 30),
       30,
     ),
     localGlobalCapabilityProviders: compactProviderCollection(
@@ -3836,6 +3859,10 @@ function compactOwnerDiscoveryPacket(packet) {
       40,
     ),
     runtimeToolProviders: compactProviderCollection(packet.runtimeToolProviders ?? [], 20),
+    capabilityProviderCoverage: packet.capabilityProviderCoverage,
+    projectProjectionPolicy: packet.projectProjectionPolicy,
+    globalInventoryFreshness: packet.globalInventoryFreshness,
+    capabilityDiscoverySearchLog: (packet.capabilityDiscoverySearchLog ?? []).slice(0, 80),
     candidateExistingExecutionOwners: (
       packet.candidateExistingExecutionOwners ?? []
     ).slice(0, 80),
