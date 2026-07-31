@@ -3947,7 +3947,7 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
   let commandStartedAtMs = null;
   try {
     const prompt =
-      `Use the native spawn_agent collaboration tool exactly once. If its active schema exposes agent_type, set it to ${representativeAgentId}; otherwise omit the selector and use a run-scoped owner contract. ` +
+      `Use the native spawn_agent collaboration tool exactly once. If its active schema exposes agent_type, set it to ${representativeAgentId} and set fork_turns to "none" because the bounded child task below is self-contained; otherwise omit the selector and use a run-scoped owner contract. ` +
       "Never use task_name or a nickname as proof of owner identity. " +
       "Ask that child to review whether the words primary runtime evidence are precise, wait for the child result, then return JSON only. " +
       "Do not claim the child ran unless the tool call completed. " +

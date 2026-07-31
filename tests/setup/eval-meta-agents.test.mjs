@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -154,6 +155,13 @@ describe("eval-meta-agents Claude smoke", () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-empty-runtime-home-"));
     try {
       for (const runtime of ["claude", "codex"]) {
+        const projectDefinitionPath = path.join(
+          repoRoot,
+          runtime === "claude" ? ".claude" : ".codex",
+          "agents",
+          runtime === "claude" ? "meta-prism.md" : "meta-prism.toml",
+        );
+        const hasProjectDefinition = existsSync(projectDefinitionPath);
         const result = spawnSync(
           process.execPath,
           ["scripts/eval-meta-agents.mjs", `--runtime=${runtime}`, "--agent=meta-prism"],
@@ -164,13 +172,20 @@ describe("eval-meta-agents Claude smoke", () => {
             timeout: 30_000,
           },
         );
-        assert.equal(result.status, 1, `${runtime}: ${result.stderr || result.stdout}`);
+        assert.equal(
+          result.status,
+          hasProjectDefinition ? 0 : 1,
+          `${runtime}: ${result.stderr || result.stdout}`,
+        );
         const report = JSON.parse(result.stdout);
         const runtimeReport = report[runtime];
-        assert.equal(runtimeReport.status, "failed");
+        assert.equal(
+          runtimeReport.status,
+          hasProjectDefinition ? "passed" : "failed",
+        );
         const discovery = runtime === "claude" ? runtimeReport.discovery : runtimeReport.sample;
         const ids = runtime === "claude" ? discovery.ids : discovery.custom_agents;
-        assert.deepEqual(ids, []);
+        assert.deepEqual(ids, hasProjectDefinition ? ["meta-prism"] : []);
         assert.equal(
           runtime === "claude" ? discovery.expectedInventorySource : discovery.expected_inventory_source,
           "canonical/agents",
@@ -591,6 +606,11 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /workerTaskPackets/);
     assert.match(source, /synthesisOwner/);
     assert.match(source, /roleDisplayName/);
+    assert.match(
+      source,
+      /set fork_turns to "none" because the bounded child task below is self-contained/u,
+      "Codex 0.146 rejects an explicit agent_type when spawn_agent keeps the default full-history fork",
+    );
     assert.match(source, /isCommandTimeoutFailure/);
     assert.match(source, /META_KIM_COMMAND_TIMEOUT/);
     assert.match(

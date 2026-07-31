@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -117,6 +118,55 @@ function writeValidArtifacts(repo) {
     `# Graph Report\n\n## Summary\n- 1 nodes · 0 edges · 0 communities\n\n## Graph Freshness\n- Built from commit: \`${head}\`\n${proofLine(proof)}\n`,
   );
   return { head, graph, proof };
+}
+
+function writeRawExtractArtifacts(repo, {
+  builtCommit = git(repo, ["rev-parse", "HEAD"]),
+  reportSuffix = "",
+} = {}) {
+  const repositoryFiles = spawnSync("git", ["ls-files", "-z"], {
+    cwd: repo,
+    encoding: "utf8",
+  }).stdout.split("\0").filter(Boolean);
+  const oldTime = new Date(Date.now() - 5_000);
+  for (const repositoryFile of repositoryFiles) {
+    utimesSync(
+      path.join(repo, ...repositoryFile.split("/")),
+      oldTime,
+      oldTime,
+    );
+  }
+  const output = path.join(repo, "graphify-out");
+  mkdirSync(output, { recursive: true });
+  const graph = {
+    nodes: [{
+      id: "tracked_txt",
+      label: "tracked.txt",
+      source_file: "tracked.txt",
+      source_location: "L1",
+      file_type: "document",
+      type: "document",
+      _origin: "ast",
+    }],
+    links: [],
+    built_at_commit: builtCommit,
+  };
+  writeFileSync(path.join(output, "graph.json"), `${JSON.stringify(graph)}\n`);
+  writeFileSync(
+    path.join(output, ".graphify_analysis.json"),
+    `${JSON.stringify({
+      communities: { 0: ["tracked_txt"] },
+      cohesion: { 0: 1 },
+      gods: [],
+      surprises: [],
+      questions: [],
+    })}\n`,
+  );
+  writeFileSync(
+    path.join(output, "GRAPH_REPORT.md"),
+    `# Graph Report\n\n## Summary\n- 1 nodes · 0 edges · 1 communities\n\n## Graph Freshness\n- Built from commit: \`${builtCommit}\`\n\nNodes: ~/.meta-kim/install-manifest.json${reportSuffix}\n`,
+  );
+  return { output, builtCommit };
 }
 
 function runCheck(repo, bin, env = {}) {
@@ -269,6 +319,181 @@ test("graphify check rejects private local paths in the report without echoing t
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /private local path/u);
     assert.doesNotMatch(result.stderr, /~\/\.ssh/u);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify rebuild safely adopts a complete raw extract without rerunning extract", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-adopt-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    const { output } = writeRawExtractArtifacts(repo);
+    const statePath = path.join(temp, "calls.json");
+    writeFileSync(statePath, JSON.stringify({ extract: 0, cluster: 0, update: 0 }));
+    const fake = path.join(temp, "fake-graphify.mjs");
+    writeFileSync(fake, `
+import { readFileSync, writeFileSync } from "node:fs";
+const statePath = process.env.FAKE_GRAPHIFY_STATE;
+const state = JSON.parse(readFileSync(statePath, "utf8"));
+const command = process.argv[2];
+if (command === "extract") state.extract += 1;
+if (command === "cluster-only") state.cluster += 1;
+if (command === "update") state.update += 1;
+writeFileSync(statePath, JSON.stringify(state));
+`);
+    const result = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          META_KIM_GRAPHIFY_BIN: process.execPath,
+          META_KIM_GRAPHIFY_BIN_ARGS: fake,
+          META_KIM_GRAPHIFY_MIGRATION_BACKEND: "claude-cli",
+          FAKE_GRAPHIFY_STATE: statePath,
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(
+      JSON.parse(readFileSync(statePath, "utf8")),
+      { extract: 0, cluster: 1, update: 0 },
+    );
+    const report = readFileSync(path.join(output, "GRAPH_REPORT.md"), "utf8");
+    assert.match(report, /<meta-kim-home>\/install-manifest\.json/u);
+    assert.doesNotMatch(report, /~\/\.meta-kim/u);
+    const graph = JSON.parse(readFileSync(path.join(output, "graph.json"), "utf8"));
+    assert.equal(
+      graph.meta_kim_enrichment.existingExtractAdoption.status,
+      "verified_existing_extract_snapshot",
+    );
+    assert.match(
+      graph.meta_kim_enrichment.existingExtractAdoption.rawGraphSha256,
+      /^[0-9a-f]{64}$/u,
+    );
+    assert.equal(
+      existsSync(path.join(output, ".meta-kim-node-identity-migration.json")),
+      false,
+    );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify existing-extract adoption rejects the wrong HEAD and post-extract source changes", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-adopt-stale-"));
+  try {
+    const wrongHeadRepo = initRepo(temp, "wrong-head");
+    writeRawExtractArtifacts(wrongHeadRepo, { builtCommit: "0".repeat(40) });
+    const wrongHead = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      { cwd: wrongHeadRepo, encoding: "utf8", env: process.env },
+    );
+    assert.notEqual(wrongHead.status, 0);
+    assert.match(wrongHead.stderr, /not bound to the current HEAD/u);
+
+    const changedRepo = initRepo(temp, "changed-source");
+    writeRawExtractArtifacts(changedRepo);
+    writeFileSync(path.join(changedRepo, "tracked.txt"), "changed after extract\n");
+    const changed = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      { cwd: changedRepo, encoding: "utf8", env: process.env },
+    );
+    assert.notEqual(changed.status, 0);
+    assert.match(
+      changed.stderr,
+      /repository content changed after the existing extract/u,
+    );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify existing-extract adoption keeps unknown home aliases fail closed", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-adopt-private-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    writeRawExtractArtifacts(repo, {
+      reportSuffix: "\nPrivate: ~/.ssh/id_rsa",
+    });
+    const result = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      { cwd: repo, encoding: "utf8", env: process.env },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /still contains a private local path/u);
+    assert.doesNotMatch(result.stderr, /~\/\.ssh/u);
+
+    const traversalRepo = initRepo(temp, "traversal");
+    writeRawExtractArtifacts(traversalRepo, {
+      reportSuffix: "/../../.ssh/id_rsa",
+    });
+    const traversal = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      { cwd: traversalRepo, encoding: "utf8", env: process.env },
+    );
+    assert.notEqual(traversal.status, 0);
+    assert.match(traversal.stderr, /still contains a private local path/u);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify existing-extract adoption rolls back every artifact when identity binding fails", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-adopt-rollback-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    const { output } = writeRawExtractArtifacts(repo);
+    const graphPath = path.join(output, "graph.json");
+    const analysisPath = path.join(output, ".graphify_analysis.json");
+    const reportPath = path.join(output, "GRAPH_REPORT.md");
+    const graph = JSON.parse(readFileSync(graphPath, "utf8"));
+    graph.nodes[0].source_file = "missing.txt";
+    graph.nodes[0].label = "missing.txt";
+    writeFileSync(graphPath, `${JSON.stringify(graph)}\n`);
+    const original = {
+      graph: readFileSync(graphPath),
+      analysis: readFileSync(analysisPath),
+      report: readFileSync(reportPath),
+    };
+    const fake = path.join(temp, "fake-graphify.mjs");
+    writeFileSync(fake, "process.exit(0);\n");
+    const result = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          META_KIM_GRAPHIFY_BIN: process.execPath,
+          META_KIM_GRAPHIFY_BIN_ARGS: fake,
+        },
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(readFileSync(graphPath), original.graph);
+    assert.deepEqual(readFileSync(analysisPath), original.analysis);
+    assert.deepEqual(readFileSync(reportPath), original.report);
+    assert.equal(
+      existsSync(path.join(output, ".meta-kim-node-identity-migration.json")),
+      false,
+    );
+    assert.equal(
+      existsSync(path.join(output, ".meta-kim-extract-graph.json")),
+      false,
+    );
+    assert.equal(
+      existsSync(path.join(output, ".meta-kim-extract-analysis.json")),
+      false,
+    );
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

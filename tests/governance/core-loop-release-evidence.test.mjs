@@ -151,6 +151,19 @@ test("verify checks discovery read-only before the sole runtime mirror writer", 
   assert.ok(catalogIndex > discoveryIndex, "release verification must check the migration catalog");
   assert.ok(catalogIndex < syncIndex, "the catalog check must remain a read-only source gate");
   assert.ok(syncIndex > discoveryIndex, "runtime projection sync must follow discovery");
+  assert.equal(
+    STAGES[syncIndex].cmd,
+    `npm run meta:sync -- --targets ${RELEASE_RUNTIME_TARGETS.join(",")}`,
+    "full release verification must not collapse the project projection back to machine-local default runtimes",
+  );
+  assert.match(
+    STAGES[checkIndex].cmd,
+    new RegExp(
+      `meta:check:runtimes -- --targets ${RELEASE_RUNTIME_TARGETS.join(",")}`,
+      "u",
+    ),
+    "the release readback must check the same explicit target set that the release sync generated",
+  );
   assert.ok(checkIndex > syncIndex, "runtime check must follow the sole mirror writer");
 });
 

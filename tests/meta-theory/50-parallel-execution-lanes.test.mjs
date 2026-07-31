@@ -34,7 +34,10 @@ describe("50 — Parallel execution lanes (engineering fan-out)", () => {
       ...result.ownerDiscoveryPacket.projectRuntimeCapabilityProviders,
       ...result.ownerDiscoveryPacket.localGlobalCapabilityProviders,
     ];
-    const nonAgentIds = new Set(nonAgentProviders.map((p) => p.id));
+    const nonAgentIds = new Set([
+      ...nonAgentProviders.map((p) => p.id),
+      ...result.ownerDiscoveryPacket.candidateReusableCapabilityProviders,
+    ]);
     for (const draft of result.workerTaskPacketDrafts) {
       const kind = draft.ownerKind ?? "agent";
       const pool = kind === "agent" ? agentAvailable : nonAgentIds;
@@ -56,7 +59,10 @@ describe("50 — Parallel execution lanes (engineering fan-out)", () => {
       ...result.ownerDiscoveryPacket.projectRuntimeCapabilityProviders,
       ...result.ownerDiscoveryPacket.localGlobalCapabilityProviders,
     ];
-    const nonAgentIds = new Set(nonAgentProviders.map((p) => p.id));
+    const nonAgentIds = new Set([
+      ...nonAgentProviders.map((p) => p.id),
+      ...result.ownerDiscoveryPacket.candidateReusableCapabilityProviders,
+    ]);
     for (const lane of lanes) {
       const kind = lane.ownerKind ?? "agent";
       const pool = kind === "agent" ? agentAvailable : nonAgentIds;

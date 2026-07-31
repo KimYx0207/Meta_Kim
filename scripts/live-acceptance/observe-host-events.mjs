@@ -1072,6 +1072,7 @@ export function observeCodexJsonl(text) {
     const outputSessionId = output.payload.session_id ?? callSessionId;
     if (callSessionId && outputSessionId && callSessionId !== outputSessionId) continue;
     const resultOutput = returnedAgentMessage?.text ?? output.payload.output ?? output.payload.result ?? "";
+    const exactResultText = String(resultOutput).trim();
     const toolInput = call.payload.arguments ?? call.payload.input ?? null;
     const ownerBindingObservation = family === "agent_subagent"
       ? observeCodexOwnerBinding(toolInput)
@@ -1091,7 +1092,12 @@ export function observeCodexJsonl(text) {
       parentAgentPath,
       sessionId: call.payload.session_id ?? output.payload.session_id ?? null,
       resultMessageId: returnedAgentMessage?.messageId ?? returnedAgentMessage?.item?.id ?? null,
-      resultTextSha256: returnedAgentMessage ? sha256(returnedAgentMessage.text) : null,
+      resultTextSha256: family === "agent_subagent" && exactResultText
+        ? sha256(exactResultText)
+        : null,
+      resultSourceLines: family === "agent_subagent"
+        ? [returnedAgentMessage?.line ?? output.line].filter(Boolean)
+        : [],
       sourceLines: [
         call.line,
         output.line,
@@ -1141,41 +1147,279 @@ function claudeContentRecords(records) {
   return result;
 }
 
+function textFromClaudeContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((item) => item?.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("");
+}
+
+function claudeSessionId(payload) {
+  return payload?.session_id ?? payload?.sessionId ?? null;
+}
+
+function claudeToolCorrelationKey(payload, toolUseId) {
+  const sessionId = claudeSessionId(payload);
+  return sessionId && toolUseId ? `${sessionId}\u0000${toolUseId}` : null;
+}
+
+const CLAUDE_FAILED_LIFECYCLE_STATUSES = new Set([
+  "failed",
+  "error",
+  "cancelled",
+  "canceled",
+  "declined",
+]);
+
+function claudeLifecycleFailed(status) {
+  return CLAUDE_FAILED_LIFECYCLE_STATUSES.has(String(status ?? "").toLowerCase());
+}
+
+function claudeToolUseResultFailed(result) {
+  return claudeLifecycleFailed(result?.status) ||
+    result?.is_error === true ||
+    result?.isError === true ||
+    result?.success === false ||
+    result?.error != null;
+}
+
+function registerUniqueClaudeCorrelation(entries, ambiguous, key, entry) {
+  if (!key || ambiguous.has(key)) return;
+  if (entries.has(key)) {
+    entries.delete(key);
+    ambiguous.add(key);
+    return;
+  }
+  entries.set(key, entry);
+}
+
+function claudeTaskLifecycleHasFailure(records, { callId, agentId, sessionId, afterLine }) {
+  if (!callId || !agentId || !sessionId) return false;
+  return records.some((record) => {
+    const payload = payloadOf(record.value);
+    if (
+      record.line <= afterLine ||
+      record.value?.type !== "system" ||
+      !String(record.value?.subtype ?? "").startsWith("task_") ||
+      payload?.task_id !== agentId ||
+      claudeSessionId(payload) !== sessionId
+    ) return false;
+    if (payload?.tool_use_id != null && payload.tool_use_id !== callId) return false;
+    return claudeLifecycleFailed(payload?.patch?.status ?? payload?.status);
+  });
+}
+
+function claudeAsyncChildMessages(records) {
+  const messages = new Map();
+  for (const record of records) {
+    const payload = payloadOf(record.value);
+    const parentToolUseId = payload?.parent_tool_use_id ?? payload?.parentToolUseId ?? null;
+    const messageId = payload?.message?.id ?? null;
+    const text = textFromClaudeContent(payload?.message?.content);
+    if (record.value?.type !== "assistant" || !parentToolUseId || !messageId || !text) continue;
+    const sessionId = claudeSessionId(payload);
+    if (!sessionId) continue;
+    const key = `${sessionId}\u0000${parentToolUseId}\u0000${messageId}`;
+    const existing = messages.get(key);
+    if (existing) {
+      existing.text += text;
+      existing.lines.push(record.line);
+      existing.lastLine = record.line;
+      existing.observedAt = rawHostTimestamp(record.value, payload) ?? existing.observedAt;
+      continue;
+    }
+    messages.set(key, {
+      parentToolUseId,
+      messageId,
+      sessionId,
+      text,
+      lines: [record.line],
+      firstLine: record.line,
+      lastLine: record.line,
+      observedAt: rawHostTimestamp(record.value, payload),
+    });
+  }
+  return [...messages.values()];
+}
+
+function completedClaudeAsyncAgentLifecycle(records, childMessages, callId, call, output) {
+  const launch = output.payload?.tool_use_result ?? output.item?.tool_use_result ?? null;
+  const launchedAsync = launch?.status === "async_launched" && launch?.isAsync !== false;
+  const agentId = firstBoundedIdentity(launch?.agentId, launch?.agent_id);
+  const sessionId = claudeSessionId(call.payload);
+  if (!launchedAsync || !agentId || !sessionId) return null;
+  if (claudeSessionId(output.payload) !== sessionId || output.line <= call.line) return null;
+  const sameSession = (payload) => claudeSessionId(payload) === sessionId;
+  const taskStarted = records.find((record) => {
+    const payload = payloadOf(record.value);
+    return record.line > call.line &&
+      record.value?.type === "system" &&
+      record.value?.subtype === "task_started" &&
+      payload?.task_id === agentId &&
+      payload?.tool_use_id === callId &&
+      sameSession(payload);
+  });
+  if (!taskStarted) return null;
+  const taskUpdates = records.filter((record) => {
+    const payload = payloadOf(record.value);
+    return record.line > call.line &&
+      record.value?.type === "system" &&
+      record.value?.subtype === "task_updated" &&
+      payload?.task_id === agentId &&
+      sameSession(payload);
+  });
+  const taskNotifications = records.filter((record) => {
+    const payload = payloadOf(record.value);
+    return record.line > call.line &&
+      record.value?.type === "system" &&
+      record.value?.subtype === "task_notification" &&
+      payload?.task_id === agentId &&
+      payload?.tool_use_id === callId &&
+      sameSession(payload);
+  });
+  if (
+    taskUpdates.some((record) => {
+      const payload = payloadOf(record.value);
+      return claudeLifecycleFailed(payload?.patch?.status ?? payload?.status);
+    }) ||
+    taskNotifications.some((record) => claudeLifecycleFailed(payloadOf(record.value)?.status))
+  ) return null;
+  const taskUpdated = taskUpdates.find((record) =>
+    record.line > Math.max(taskStarted.line, output.line) &&
+    (payloadOf(record.value)?.patch?.status ?? payloadOf(record.value)?.status) === "completed"
+  );
+  if (!taskUpdated) return null;
+  const childResult = childMessages
+    .filter((message) =>
+      message.parentToolUseId === callId &&
+      message.sessionId === sessionId &&
+      message.firstLine > Math.max(taskStarted.line, output.line) &&
+      message.lastLine < taskUpdated.line,
+    )
+    .sort((left, right) => left.lastLine - right.lastLine)
+    .at(-1);
+  if (!childResult) return null;
+  const taskNotification = taskNotifications.find((record) =>
+    record.line > taskUpdated.line &&
+    payloadOf(record.value)?.status === "completed"
+  );
+  if (!taskNotification) return null;
+  return { agentId, sessionId, taskStarted, childResult, taskUpdated, taskNotification };
+}
+
 export function observeClaudeJsonl(text) {
   const records = parseJsonl(text);
   const content = claudeContentRecords(records);
+  const asyncChildMessages = claudeAsyncChildMessages(records);
   const calls = new Map();
   const results = new Map();
+  const ambiguousCalls = new Set();
+  const ambiguousResults = new Set();
   const events = [];
   for (const entry of content) {
-    if (entry.item?.type === "tool_use" && entry.item?.id) calls.set(entry.item.id, entry);
+    if (entry.item?.type === "tool_use" && entry.item?.id) {
+      const key = claudeToolCorrelationKey(entry.payload, entry.item.id);
+      registerUniqueClaudeCorrelation(calls, ambiguousCalls, key, entry);
+    }
     if (entry.item?.type === "tool_result" && entry.item?.tool_use_id) {
-      results.set(entry.item.tool_use_id, entry);
+      const key = claudeToolCorrelationKey(entry.payload, entry.item.tool_use_id);
+      registerUniqueClaudeCorrelation(results, ambiguousResults, key, entry);
     }
   }
-  for (const [callId, call] of calls) {
-    const output = results.get(callId);
-    if (!output || output.item?.is_error === true) continue;
+  for (const [correlationKey, call] of calls) {
+    const callId = call.item.id;
+    const output = results.get(correlationKey);
+    const callSessionId = claudeSessionId(call.payload);
+    const outputSessionId = claudeSessionId(output?.payload);
+    if (
+      !output ||
+      output.item?.is_error === true ||
+      !callSessionId ||
+      outputSessionId !== callSessionId ||
+      output.line <= call.line
+    ) continue;
     const name = call.item.name ?? "unknown";
+    const family = classifyTool(name);
+    const launch = output.payload?.tool_use_result ?? output.item?.tool_use_result ?? null;
+    if (claudeToolUseResultFailed(launch) || claudeLifecycleFailed(output.item?.status)) continue;
+    const envelopeAgentId = firstBoundedIdentity(
+      launch?.agentId,
+      launch?.agent_id,
+      output.item?.agentId,
+      output.item?.agent_id,
+    );
+    if (
+      family === "agent_subagent" &&
+      claudeTaskLifecycleHasFailure(records, {
+        callId,
+        agentId: envelopeAgentId,
+        sessionId: callSessionId,
+        afterLine: call.line,
+      })
+    ) continue;
+    const isAsyncLaunch = launch?.status === "async_launched" || launch?.isAsync === true;
+    const asyncLifecycle = family === "agent_subagent" && isAsyncLaunch
+      ? completedClaudeAsyncAgentLifecycle(records, asyncChildMessages, callId, call, output)
+      : null;
+    if (isAsyncLaunch && !asyncLifecycle) continue;
+    const nestedResultContentPresent = launch != null && Object.hasOwn(launch, "content");
+    const synchronousResultText = family === "agent_subagent" && nestedResultContentPresent
+      ? textFromClaudeContent(launch.content).trim()
+      : textFromClaudeContent(output.item?.content).trim();
+    const resultText = asyncLifecycle?.childResult.text.trim() ?? synchronousResultText;
+    const sourceLines = asyncLifecycle
+      ? [
+          call.line,
+          asyncLifecycle.taskStarted.line,
+          output.line,
+          ...asyncLifecycle.childResult.lines,
+          asyncLifecycle.taskUpdated.line,
+          asyncLifecycle.taskNotification.line,
+        ].filter(Boolean).sort((left, right) => left - right)
+      : [call.line, output.line];
     const baseEvent = {
       observerFormat: "claude_stream_json_v1",
-      family: classifyTool(name),
+      family,
       eventId: callId,
       parentEventId: null,
       hostSurface: name,
       providerId: name,
       resultStatus: "completed",
       inputDigest: sha256(JSON.stringify(call.item.input ?? {})),
-      outputDigest: sha256(JSON.stringify(output.item.content ?? output.item)),
-      childSessionId:
-        output.payload?.tool_use_result?.agentId ??
-        output.payload?.tool_use_result?.agent_id ??
-        output.item?.agentId ??
-        output.item?.agent_id ??
-        null,
+      outputDigest: asyncLifecycle
+        ? sha256(JSON.stringify({
+            launch: output.item.content ?? output.item,
+            childResult: asyncLifecycle.childResult.text,
+            taskUpdated: asyncLifecycle.taskUpdated.value,
+            taskNotification: asyncLifecycle.taskNotification.value,
+          }))
+        : sha256(JSON.stringify(output.item.content ?? output.item)),
+      childSessionId: firstBoundedIdentity(
+        asyncLifecycle?.agentId,
+        launch?.agentId,
+        launch?.agent_id,
+        output.item?.agentId,
+        output.item?.agent_id,
+      ),
       batchId: call.payload?.message?.id ?? null,
-      sessionId: call.payload?.session_id ?? output.payload?.session_id ?? null,
-      sourceLines: [call.line, output.line],
+      sessionId: asyncLifecycle?.sessionId ?? callSessionId,
+      resultMessageId: asyncLifecycle?.childResult.messageId ?? null,
+      resultTextSha256: resultText ? sha256(resultText) : null,
+      resultSourceLines: asyncLifecycle?.childResult.lines ?? [output.line],
+      sourceLines,
+      lifecycleEvidence: asyncLifecycle
+        ? "claude_async_agent_task_lifecycle"
+        : family === "agent_subagent"
+          ? "claude_synchronous_agent_tool_result"
+          : "claude_tool_result",
+      completionBoundary: asyncLifecycle
+        ? "task_notification_completed"
+        : family === "agent_subagent"
+          ? "synchronous_child_tool_result"
+          : "tool_result",
+      activityCompletionObserved: family === "agent_subagent",
     };
     if (baseEvent.family === "agent_subagent" && !baseEvent.childSessionId) continue;
     const callInput = call.item.input ?? null;
@@ -1183,7 +1427,11 @@ export function observeClaudeJsonl(text) {
     events.push(normalizeObservedEventBinding(
       baseEvent,
       callMarker?.family === "hook" ? null : callInput,
-      output.observedAt ?? call.observedAt ?? null,
+      asyncLifecycle?.taskNotification.observedAt ??
+        asyncLifecycle?.childResult.observedAt ??
+        output.observedAt ??
+        call.observedAt ??
+        null,
     ));
   }
   const hookStarts = new Map();
@@ -1224,7 +1472,10 @@ export function observeClaudeJsonl(text) {
         sourceLines: [started.line, record.line],
         correlationScope: parentEventId ? "tool_call" : "session",
       };
-      const parentCallInput = parentEventId ? calls.get(parentEventId)?.item?.input ?? null : null;
+      const parentCallKey = parentEventId
+        ? claudeToolCorrelationKey(payload, parentEventId)
+        : null;
+      const parentCallInput = parentCallKey ? calls.get(parentCallKey)?.item?.input ?? null : null;
       events.push(normalizeObservedEventBinding(
         baseHookEvent,
         parentCallInput,
@@ -1250,7 +1501,8 @@ export function observeClaudeJsonl(text) {
       sessionId: payload?.session_id ?? null,
       sourceLines: [record.line],
     };
-    const parentCallInput = calls.get(eventId)?.item?.input ?? null;
+    const parentCallKey = claudeToolCorrelationKey(payload, eventId);
+    const parentCallInput = parentCallKey ? calls.get(parentCallKey)?.item?.input ?? null : null;
     events.push(normalizeObservedEventBinding(
       baseHookEvent,
       parentCallInput,

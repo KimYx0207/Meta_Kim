@@ -303,6 +303,224 @@ test("Claude Task result without a real child id cannot become successful agent 
   assert.deepEqual(observeClaudeJsonl(raw), []);
 });
 
+function claudeAsyncAgentRecords({
+  agentId = "claude-async-child",
+  launchAgentId = agentId,
+  childText = "META_KIM_CAPABILITY_AGENT_async-marker",
+  includeTaskUpdated = true,
+  includeTaskNotification = true,
+} = {}) {
+  const callId = "claude-async-call";
+  const sessionId = "claude-async-parent";
+  const records = [
+    {
+      timestamp: "2026-07-30T20:07:05.000Z",
+      type: "assistant",
+      session_id: sessionId,
+      message: {
+        id: "claude-async-batch",
+        content: [{ type: "tool_use", id: callId, name: "Agent", input: { prompt: childText } }],
+      },
+    },
+    {
+      timestamp: "2026-07-30T20:07:06.000Z",
+      type: "system",
+      subtype: "task_started",
+      task_id: agentId,
+      tool_use_id: callId,
+      session_id: sessionId,
+    },
+    {
+      timestamp: "2026-07-30T20:07:06.100Z",
+      type: "user",
+      session_id: sessionId,
+      tool_use_result: { isAsync: true, status: "async_launched", agentId: launchAgentId },
+      message: {
+        content: [{ type: "tool_result", tool_use_id: callId, content: "Async agent launched successfully." }],
+      },
+    },
+    {
+      timestamp: "2026-07-30T20:07:07.000Z",
+      type: "assistant",
+      parent_tool_use_id: callId,
+      session_id: sessionId,
+      message: {
+        id: "claude-async-child-result",
+        stop_reason: null,
+        content: [{ type: "text", text: childText }],
+      },
+    },
+  ];
+  if (includeTaskUpdated) {
+    records.push({
+      timestamp: "2026-07-30T20:07:08.000Z",
+      type: "system",
+      subtype: "task_updated",
+      task_id: agentId,
+      patch: { status: "completed" },
+      session_id: sessionId,
+    });
+  }
+  if (includeTaskNotification) {
+    records.push({
+      timestamp: "2026-07-30T20:07:08.100Z",
+      type: "system",
+      subtype: "task_notification",
+      task_id: agentId,
+      tool_use_id: callId,
+      status: "completed",
+      summary: childText,
+      session_id: sessionId,
+    });
+  }
+  return records;
+}
+
+test("Claude async Agent requires the exact closed task lifecycle and child return", () => {
+  const childText = "META_KIM_CAPABILITY_AGENT_11111111-1111-4111-8111-111111111111";
+  const [event] = observeClaudeJsonl(jsonl(claudeAsyncAgentRecords({ childText })));
+  assert.equal(event.family, "agent_subagent");
+  assert.equal(event.childSessionId, "claude-async-child");
+  assert.equal(event.resultStatus, "completed");
+  assert.equal(event.lifecycleEvidence, "claude_async_agent_task_lifecycle");
+  assert.equal(event.completionBoundary, "task_notification_completed");
+  assert.equal(event.resultTextSha256, sha256(childText));
+  assert.deepEqual(event.resultSourceLines, [4]);
+  assert.deepEqual(event.sourceLines, [1, 2, 3, 4, 5, 6]);
+});
+
+test("Claude legacy synchronous Agent remains valid only for an ordered same-session exact child result", () => {
+  const childText = "META_KIM_CAPABILITY_AGENT_22222222-2222-4222-8222-222222222222";
+  const raw = jsonl([
+    { type: "assistant", session_id: "legacy-sync-session", message: { id: "legacy-sync-message", content: [{ type: "tool_use", id: "legacy-sync-call", name: "Agent", input: { prompt: childText } }] } },
+    { type: "user", session_id: "legacy-sync-session", tool_use_result: { agentId: "legacy-sync-child" }, message: { content: [{ type: "tool_result", tool_use_id: "legacy-sync-call", content: childText }] } },
+  ]);
+  const [event] = observeClaudeJsonl(raw);
+  assert.equal(event.childSessionId, "legacy-sync-child");
+  assert.equal(event.resultTextSha256, sha256(childText));
+  assert.equal(event.lifecycleEvidence, "claude_synchronous_agent_tool_result");
+  assert.equal(event.completionBoundary, "synchronous_child_tool_result");
+  assert.equal(event.activityCompletionObserved, true);
+});
+
+test("Claude synchronous Agent rejects every explicit failed tool-result status", () => {
+  for (const status of ["failed", "error", "cancelled", "canceled", "declined"]) {
+    const raw = jsonl([
+      { type: "assistant", session_id: `sync-${status}`, message: { id: `sync-${status}-message`, content: [{ type: "tool_use", id: `sync-${status}-call`, name: "Agent", input: { prompt: "EXACT_MARKER" } }] } },
+      { type: "user", session_id: `sync-${status}`, tool_use_result: { agentId: `sync-${status}-child`, status }, message: { content: [{ type: "tool_result", tool_use_id: `sync-${status}-call`, content: "EXACT_MARKER" }] } },
+    ]);
+    assert.deepEqual(observeClaudeJsonl(raw), [], status);
+  }
+});
+
+test("Claude synchronous Agent rejects nested tool-result failure flags without a status", () => {
+  const failures = [
+    { label: "is_error true", value: { is_error: true } },
+    { label: "success false", value: { success: false } },
+    { label: "error present", value: { error: "explicit launch failure" } },
+  ];
+  for (const { label, value } of failures) {
+    const raw = jsonl([
+      { type: "assistant", session_id: `sync-${label}`, message: { id: `sync-${label}-message`, content: [{ type: "tool_use", id: `sync-${label}-call`, name: "Agent", input: { prompt: "EXACT_MARKER" } }] } },
+      { type: "user", session_id: `sync-${label}`, tool_use_result: { agentId: `sync-${label}-child`, ...value }, message: { content: [{ type: "tool_result", tool_use_id: `sync-${label}-call`, content: "EXACT_MARKER" }] } },
+    ]);
+    assert.deepEqual(observeClaudeJsonl(raw), [], label);
+  }
+});
+
+test("Claude async Agent launch cannot pass without task completion or with a mismatched agent id", () => {
+  const launchOnly = claudeAsyncAgentRecords().slice(0, 3);
+  assert.deepEqual(observeClaudeJsonl(jsonl(launchOnly)), []);
+  assert.deepEqual(observeClaudeJsonl(jsonl(claudeAsyncAgentRecords({ includeTaskUpdated: false }))), []);
+  assert.deepEqual(observeClaudeJsonl(jsonl(claudeAsyncAgentRecords({ includeTaskNotification: false }))), []);
+  assert.deepEqual(observeClaudeJsonl(jsonl(claudeAsyncAgentRecords({ launchAgentId: "different-child" }))), []);
+});
+
+test("Claude tool results bind to an ordered session and tool-use pair", () => {
+  const crossSession = claudeAsyncAgentRecords();
+  crossSession[2].session_id = "different-session";
+  assert.deepEqual(observeClaudeJsonl(jsonl(crossSession)), []);
+
+  const ordered = claudeAsyncAgentRecords();
+  const resultBeforeCall = [ordered[2], ordered[0], ordered[1], ...ordered.slice(3)];
+  assert.deepEqual(observeClaudeJsonl(jsonl(resultBeforeCall)), []);
+
+  const synchronousCrossSession = [
+    { type: "assistant", session_id: "call-session", message: { id: "same-id-call", content: [{ type: "tool_use", id: "same-tool-id", name: "Agent", input: { prompt: "marker" } }] } },
+    { type: "user", session_id: "result-session", tool_use_result: { agentId: "child" }, message: { content: [{ type: "tool_result", tool_use_id: "same-tool-id", content: "marker" }] } },
+  ];
+  assert.deepEqual(observeClaudeJsonl(jsonl(synchronousCrossSession)), []);
+});
+
+test("Claude async child text cannot join across sessions and the latest child output wins", () => {
+  const markerText = "META_KIM_CAPABILITY_AGENT_33333333-3333-4333-8333-333333333333";
+  const splitAt = Math.floor(markerText.length / 2);
+  const splitRecords = claudeAsyncAgentRecords({ childText: markerText.slice(0, splitAt) });
+  splitRecords[0].message.content[0].input.prompt = markerText;
+  splitRecords.at(-1).summary = markerText;
+  splitRecords.splice(4, 0, {
+    type: "assistant",
+    parent_tool_use_id: "claude-async-call",
+    session_id: "different-session",
+    message: {
+      id: "claude-async-child-result",
+      stop_reason: null,
+      content: [{ type: "text", text: markerText.slice(splitAt) }],
+    },
+  });
+  const [splitEvent] = observeClaudeJsonl(jsonl(splitRecords));
+  assert.equal(splitEvent.resultTextSha256, sha256(markerText.slice(0, splitAt)));
+  assert.notEqual(splitEvent.resultTextSha256, sha256(markerText));
+
+  const laterWrong = claudeAsyncAgentRecords({ childText: markerText });
+  laterWrong.splice(4, 0, {
+    type: "assistant",
+    parent_tool_use_id: "claude-async-call",
+    session_id: "claude-async-parent",
+    message: {
+      id: "claude-async-later-result",
+      stop_reason: null,
+      content: [{ type: "text", text: "WRONG_LATER_RESULT" }],
+    },
+  });
+  const [latestEvent] = observeClaudeJsonl(jsonl(laterWrong));
+  assert.equal(latestEvent.resultTextSha256, sha256("WRONG_LATER_RESULT"));
+  assert.deepEqual(latestEvent.resultSourceLines, [5]);
+});
+
+test("Claude async Agent failure terminals cannot be washed by later completion", () => {
+  const failedUpdate = claudeAsyncAgentRecords();
+  failedUpdate.splice(4, 0, {
+    type: "system",
+    subtype: "task_updated",
+    task_id: "claude-async-child",
+    patch: { status: "failed" },
+    session_id: "claude-async-parent",
+  });
+  assert.deepEqual(observeClaudeJsonl(jsonl(failedUpdate)), []);
+
+  const failedNotification = claudeAsyncAgentRecords();
+  failedNotification.splice(5, 0, {
+    type: "system",
+    subtype: "task_notification",
+    task_id: "claude-async-child",
+    tool_use_id: "claude-async-call",
+    status: "failed",
+    session_id: "claude-async-parent",
+  });
+  assert.deepEqual(observeClaudeJsonl(jsonl(failedNotification)), []);
+});
+
+test("Claude duplicate call or result correlation keys are ambiguous and produce no event", () => {
+  const duplicateCall = claudeAsyncAgentRecords();
+  duplicateCall.splice(1, 0, structuredClone(duplicateCall[0]));
+  assert.deepEqual(observeClaudeJsonl(jsonl(duplicateCall)), []);
+
+  const duplicateResult = claudeAsyncAgentRecords();
+  duplicateResult.splice(3, 0, structuredClone(duplicateResult[2]));
+  assert.deepEqual(observeClaudeJsonl(jsonl(duplicateResult)), []);
+});
+
 test("Codex CLI collab_tool_call with receiver child and exact agent_type is native spawn evidence", () => {
   const raw = jsonl([
     { type: "thread.started", thread_id: "codex-cli-parent" },

@@ -395,7 +395,24 @@ export async function readCodexDesktopSessionEvidence({
 }
 
 function outputText(payload) {
-  return (payload?.output ?? []).map((entry) => entry?.text ?? "").join("\n");
+  const output = payload?.output;
+  if (typeof output === "string") return output;
+  if (!Array.isArray(output)) return "";
+  return output
+    .filter((entry) =>
+      entry &&
+      typeof entry === "object" &&
+      ["input_text", "output_text", "text"].includes(entry.type) &&
+      typeof entry.text === "string")
+    .map((entry) => entry.text)
+    .join("\n");
+}
+
+function completedShellOutput(payload) {
+  if (!Array.isArray(payload?.output)) return false;
+  const text = outputText(payload);
+  return !/\bScript running with cell ID\b/iu.test(text) &&
+    /(?:^|\r?\n)Exit code:\s*0(?:\r?\n|$)/iu.test(text);
 }
 
 /** Parses the bounded Desktop engineering fragment, never a whole rollout. */
@@ -410,7 +427,7 @@ export function observeCodexDesktopEngineeringSlice(text, { marker, workspacePat
   const outputs = new Map(records.filter(({ value }) => value?.type === "response_item" && value?.payload?.type === "custom_tool_call_output" && value?.payload?.call_id).map((entry) => [entry.value.payload.call_id, entry]));
   const patchEnds = records.filter(({ value }) => value?.type === "event_msg" && value?.payload?.type === "patch_apply_end" && value?.payload?.success === true && value?.payload?.status === "completed");
   const normalizedInput = (entry) => normalizePathText(entry.value.payload.input ?? "");
-  const successfulShell = calls.map((call) => ({ call, output: outputs.get(call.value.payload.call_id), input: normalizedInput(call) })).filter(({ output }) => output && /exit code:\s*0/iu.test(outputText(output.value.payload)));
+  const successfulShell = calls.map((call) => ({ call, output: outputs.get(call.value.payload.call_id), input: normalizedInput(call) })).filter(({ output }) => output && completedShellOutput(output.value.payload));
   const directory = successfulShell.filter(({ input }) => input.includes("tools.shell_command") && input.includes("new-item") && input.includes(normalizedWorkspace) && !input.includes("get-content"));
   const reads = successfulShell.filter(({ input }) => input.includes("tools.shell_command") && input.includes("get-content") && input.includes(filePath));
   const beforeReads = reads.filter(({ output }) => outputText(output.value.payload).includes(`before-${marker}`) && !outputText(output.value.payload).includes(`after-${marker}`));

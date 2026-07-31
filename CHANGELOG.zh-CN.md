@@ -8,6 +8,21 @@
 
 ## Unreleased
 
+## [2.9.16] - 2026-07-31
+
+### 修复内容
+
+- **Codex CLI 0.146 现在能收到合法的自定义 Agent 发布熔断请求。** 自包含的子任务验收在显式指定 `agent_type` 时同步使用 `fork_turns: "none"`，避免宿主拒绝“指定 Agent + 默认继承完整对话”的参数组合。
+- **完整发布验收现在会在同一次运行中持续保留并核对同一组声明运行端投影。** 同步与读回阶段都从规范 `sync` 清单明确选择 Claude Code、Codex、OpenClaw、Cursor，不再在跨端 smoke 前退回本机默认目标，或把刚生成的四端文件误判为过期。
+- **Claude Code 2.1.202 的异步 Agent 只有在精确子任务结果和完整任务生命周期都结束后，才会成为有效证据。** Agent 与 subagent 观察现在同时绑定 session、tool call、task、子任务结果、完成边界和 marker digest；失败、重复、乱序、跨 session 或只有装饰文本的结果都会 fail closed，不再被误判成成功的子任务。
+- **当独立 Codex CLI 无法调用时，Codex Desktop 可以从当前原生任务提供新鲜发布证据。** 读取器兼容当前结构化输出块，忽略外层仍在运行的字符串输出，同时继续要求命令、文件读取与补丁操作按精确顺序完成；普通字符串或自报的 `Exit code: 0` 不能制造成功 capability receipt。
+- **已完成的 Graphify extract 现在可以显式、安全接管，不必重复提取。** 接管前必须同时绑定精确 HEAD、仓库文件清单与内容、普通文件产物哈希、图身份、报告计数和“源码未晚于提取产物”的时间证据；随后只能从 cluster/stamp 接续。rebuild 还会把规范的 `~/.meta-kim/...` 文档示例确定性改写为非本地展示标记，真实 home 路径、未知 alias 和路径穿越形式仍然 fail closed。
+- **runtime-capability 证据回归的冻结时钟已与仓库证据日期同步。** 基线不再把现有的 2026-07-31 OpenClaw 投影观察误判为未来证据，同时负例仍会拒绝真正更晚的观察日期。
+
+### 验证
+
+- 定向 observer、producer、原始记录重放、acceptance 与 Graphify 安全回归覆盖 Claude 同步/异步 Agent 生命周期、精确子任务结果哈希、重复与失败终态、跨 session/call 拼接、Codex Desktop 字符串输出反证、合法结构化桌面证据、安全接管现有 extract、错 HEAD/源码变化拒绝以及私有路径/穿越拒绝。Graphify 门禁修复加入前，correctness、security/truth、completeness 三路独立 Review 均未发现剩余 P0/P1/P2；新增修复仍需通过标准完整发布验证和发布后的精确包绑定。当前生产观察已精确覆盖 Claude Code 5/5 与 Codex 5/5。
+
 ## [2.9.15] - 2026-07-31
 
 ### 修复内容

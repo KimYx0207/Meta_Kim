@@ -8,6 +8,21 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.16] - 2026-07-31
+
+### Fixed
+
+- **Codex CLI 0.146 now receives a valid custom-agent release-fuse request.** The self-contained child review pairs its explicit `agent_type` with `fork_turns: "none"`, avoiding the host-rejected custom-agent plus default full-history combination.
+- **Full release verification now keeps all declared runtime projections present and checks the same set throughout one run.** Its sync and readback stages derive the explicit Claude Code, Codex, OpenClaw, and Cursor targets from the canonical sync manifest instead of collapsing back to machine-local defaults before cross-runtime smoke checks.
+- **Claude Code 2.1.202 asynchronous Agent runs now become evidence only after the exact child result and the full task lifecycle are complete.** Agent and subagent observations bind the same session, tool call, task, child result, completion boundary, and marker digest. Failed, duplicated, reordered, cross-session, or decorated-only results fail closed instead of being mistaken for a successful child run.
+- **Codex Desktop can provide fresh release evidence from the current native task when a separate Codex CLI invocation is unavailable.** The reader accepts the current structured output-block form, ignores outer in-progress string outputs, and still requires the exact ordered shell, file-read, and patch chain. A plain string or self-declared `Exit code: 0` cannot mint a successful capability receipt.
+- **A completed Graphify extract can now be adopted without repeating extraction, but only through an explicit, fail-closed takeover.** The takeover binds the exact HEAD, repository inventory and contents, plain-file artifact hashes, graph identity, report counts, and source-versus-artifact timestamps before it can resume clustering. The rebuild path also rewrites only the canonical `~/.meta-kim/...` documentation alias to a non-local display token while real home paths, unknown aliases, and traversal forms remain blocked.
+- **The runtime-capability evidence regression clock now matches the repository evidence date.** The baseline no longer misclassifies the existing 2026-07-31 OpenClaw projection observation as future evidence, while the negative fixture still proves that a genuinely later observation is rejected.
+
+### Verification
+
+- Focused observer, producer, raw-replay, acceptance, and Graphify safety regressions cover synchronous and asynchronous Claude Agent lifecycles, exact child-result hashing, duplicate and failed terminals, cross-session/call splicing, Codex Desktop string-output falsification, valid structured desktop evidence, safe existing-extract takeover, wrong-HEAD/source-change rejection, and private-path/traversal refusal. Independent correctness, security/truth, and completeness reviews found no remaining P0/P1/P2 before the Graphify gate fix; that additional fix still requires the standard full release verification and exact post-publication package binding before this version is declared released. Fresh production observations cover the exact Claude Code 5/5 and Codex 5/5 capability set.
+
 ## [2.9.15] - 2026-07-31
 
 ### Fixed

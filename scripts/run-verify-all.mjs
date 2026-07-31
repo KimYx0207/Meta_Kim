@@ -98,8 +98,14 @@ export function resolveReleaseOperationTimeout(operationName, environment = proc
 const STANDARD_STAGE_COMMANDS = Object.freeze([
   ["discover:global", "npm run discover:global -- --check"],
   ["meta:agents:migration-catalog:check", "npm run meta:agents:migration-catalog:check"],
-  ["meta:sync", "npm run meta:sync"],
-  ["meta:check", "npm run meta:check"],
+  [
+    "meta:sync",
+    `npm run meta:sync -- --targets ${RELEASE_RUNTIME_TARGETS.join(",")}`,
+  ],
+  [
+    "meta:check",
+    `npm run meta:check:runtimes -- --targets ${RELEASE_RUNTIME_TARGETS.join(",")} && npm run meta:check:sync-coverage && npm run meta:open-source-boundary:validate && npm run meta:validate`,
+  ],
   ["meta:verify:governance:core", "npm run meta:verify:governance:core"],
   ["meta:graphify:check", "npm run meta:graphify:check"],
   ["meta:check:global:release", "npm run meta:check:global:release"],

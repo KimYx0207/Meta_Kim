@@ -416,6 +416,13 @@ function validateControlledProducerReceipt(receipt, runtime, capability, mode) {
   if (!Array.isArray(receipt.eventEvidence) || receipt.eventEvidence.length === 0 || receipt.eventEvidence.some((entry) => !entry.eventId || !entry.inputDigest || !entry.outputDigest || !["accepted", "completed", "returned"].includes(entry.resultStatus) || !Array.isArray(entry.sourceLines))) {
     throw new Error("controlled producer receipt lacks completed capability-specific event evidence");
   }
+  if (!composite && receipt.eventEvidence.some((entry) =>
+    !(entry.resultTextSha256 === null || /^[a-f0-9]{64}$/u.test(String(entry.resultTextSha256 ?? ""))) ||
+    !Array.isArray(entry.resultSourceLines) ||
+    typeof entry.lifecycleEvidence !== "string" || !entry.lifecycleEvidence ||
+    typeof entry.completionBoundary !== "string" || !entry.completionBoundary ||
+    typeof entry.activityCompletionObserved !== "boolean"
+  )) throw new Error("controlled producer receipt lacks replay-complete event evidence");
   if (!receipt.rawArtifact?.path || !/^[a-f0-9]{64}$/iu.test(String(receipt.rawArtifact?.sha256 ?? ""))) throw new Error("controlled producer receipt lacks raw artifact binding");
   if (!/^[0-9a-f-]{36}$/iu.test(String(receipt.capabilityNonce ?? ""))) throw new Error("controlled producer receipt lacks capability nonce");
   const expectedMarker = receipt.producer?.id === CODEX_DESKTOP_COMPOSITE_PRODUCER_ID
@@ -426,7 +433,14 @@ function validateControlledProducerReceipt(receipt, runtime, capability, mode) {
   if (receipt.capabilityMarker !== expectedMarker) throw new Error("controlled producer capability marker mismatch");
   if (digest(JSON.stringify(receipt.hostInvocation.request)) !== receipt.hostInvocation.requestDigest || digest(JSON.stringify(receipt.hostInvocation.result)) !== receipt.hostInvocation.resultDigest) throw new Error("controlled producer host invocation digest mismatch");
   if (receipt.hostInvocation.result.stdoutSha256 !== receipt.rawArtifact.sha256) throw new Error("controlled producer stdout/raw artifact binding mismatch");
-  if (["agent", "subagent"].includes(capability) && receipt.eventEvidence.some((entry) => !entry.childSessionId || !entry.sessionId)) throw new Error("agent/subagent producer receipt lacks parent/child session binding");
+  if (["agent", "subagent"].includes(capability) && receipt.eventEvidence.some((entry) =>
+    typeof entry.childSessionId !== "string" || !entry.childSessionId || entry.childSessionId.length > 256 || /[\u0000-\u001f\u007f]/u.test(entry.childSessionId) ||
+    typeof entry.sessionId !== "string" || !entry.sessionId || entry.sessionId.length > 256 || /[\u0000-\u001f\u007f]/u.test(entry.sessionId)
+  )) throw new Error("agent/subagent producer receipt lacks valid parent/child session binding");
+  if (!composite && ["agent", "subagent"].includes(capability) && receipt.eventEvidence.some((entry) =>
+    entry.resultTextSha256 !== digest(receipt.capabilityMarker) ||
+    entry.resultSourceLines.length === 0
+  )) throw new Error("agent/subagent producer receipt result is not the exact capability marker");
   if (receipt.producer?.id === CODEX_DESKTOP_COMPOSITE_PRODUCER_ID) validateCodexDesktopCompositeReceipt(receipt, runtime, capability);
   if (receipt.producer?.id === CODEX_ENGINEERING_COMPOSITE_PRODUCER_ID) validateCodexEngineeringCompositeReceipt(receipt, runtime, capability);
   if (receipt.producer?.id === CODEX_DESKTOP_ENGINEERING_PRODUCER_ID) validateCodexDesktopEngineeringReceipt(receipt, runtime, capability);
@@ -533,9 +547,12 @@ function validateCodexDesktopEngineeringReceipt(receipt, runtime, capability) {
   ) throw new Error("Codex Desktop engineering composite producer lifecycle is invalid");
 }
 
-function rawEventProvesCapability(runtime, capability, event, sourceText) {
+function rawEventProvesCapability(runtime, capability, event, sourceText, marker) {
   const surface = String(event?.hostSurface ?? "").toLowerCase();
-  if (["agent", "subagent"].includes(capability)) return event?.family === "agent_subagent" && /agent|task|spawn/u.test(surface) && Boolean(event.childSessionId);
+  if (["agent", "subagent"].includes(capability)) return event?.family === "agent_subagent" &&
+    /agent|task|spawn/u.test(surface) &&
+    Boolean(event.childSessionId) &&
+    event.resultTextSha256 === digest(marker);
   if (capability === "shell") return event?.family === "runtime_tool" && /bash|shell|command/u.test(surface);
   if (capability === "filesystem") {
     if (runtime === "claude_code") return event?.family === "runtime_tool" && /^(read|glob|grep)$/u.test(surface);
@@ -1058,12 +1075,32 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
         assertExactMarkerEventLifecycles(rawText, source.value.capabilityMarker);
         for (const expected of source.value.eventEvidence) {
           const actual = observedEvents.find((entry) => entry.eventId === expected.eventId);
-          if (!actual || actual.family !== expected.family || actual.hostSurface !== expected.hostSurface || actual.inputDigest !== expected.inputDigest || actual.outputDigest !== expected.outputDigest || actual.resultStatus !== expected.resultStatus || (expected.sessionId && actual.sessionId !== expected.sessionId) || (expected.childSessionId && actual.childSessionId !== expected.childSessionId)) {
+          const arraysMatch = (left, right) => JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+          if (
+            !actual ||
+            actual.family !== expected.family ||
+            actual.hostSurface !== expected.hostSurface ||
+            actual.providerId !== expected.providerId ||
+            actual.inputDigest !== expected.inputDigest ||
+            actual.outputDigest !== expected.outputDigest ||
+            actual.resultStatus !== expected.resultStatus ||
+            actual.sessionId !== expected.sessionId ||
+            actual.childSessionId !== expected.childSessionId ||
+            !arraysMatch(actual.sourceLines, expected.sourceLines) ||
+            (Object.hasOwn(expected, "resultTextSha256") && actual.resultTextSha256 !== expected.resultTextSha256) ||
+            (Object.hasOwn(expected, "resultSourceLines") && !arraysMatch(actual.resultSourceLines, expected.resultSourceLines)) ||
+            (Object.hasOwn(expected, "lifecycleEvidence") && actual.lifecycleEvidence !== expected.lifecycleEvidence) ||
+            (Object.hasOwn(expected, "completionBoundary") && actual.completionBoundary !== expected.completionBoundary) ||
+            (Object.hasOwn(expected, "activityCompletionObserved") && actual.activityCompletionObserved !== expected.activityCompletionObserved)
+          ) {
             issues.push(`controlled producer event ${expected.eventId} does not match raw host evidence`);
+          }
+          if (["agent", "subagent"].includes(attempt.capability) && actual?.resultTextSha256 !== digest(source.value.capabilityMarker)) {
+            issues.push(`controlled producer event ${expected.eventId} child result is not the exact capability marker`);
           }
           const sourceLines = expected.sourceLines.map((line) => rawText.split(/\r?\n/u)[line - 1] ?? "").join("\n");
           if (!sourceLines.includes(source.value.capabilityMarker)) issues.push(`controlled producer event ${expected.eventId} is not capability-marker-bound`);
-          if (!rawEventProvesCapability(attempt.runtime, attempt.capability, actual, sourceLines)) issues.push(`controlled producer event ${expected.eventId} does not prove ${attempt.capability}`);
+          if (!rawEventProvesCapability(attempt.runtime, attempt.capability, actual, sourceLines, source.value.capabilityMarker)) issues.push(`controlled producer event ${expected.eventId} does not prove ${attempt.capability}`);
         }
       }
       if (source.value.producer?.id === CODEX_ENGINEERING_COMPOSITE_PRODUCER_ID) validateCodexEngineeringCompositeRaw(source.value, observedEvents, rawText);

@@ -31,7 +31,7 @@ function row(matrix, runtime, capability) {
 
 function issuesFor(matrix, ledger, allowedEvidenceRoots = undefined) {
   return validateRuntimeCapabilityClaims(matrix, ledger, {
-    now: "2026-07-28T12:00:00.000Z",
+    now: "2026-07-31T12:00:00.000Z",
     staleAfterDays: 30,
     timeZone: "Asia/Shanghai",
     allowedEvidenceRoots,
@@ -236,7 +236,7 @@ test("P-130 rejects arbitrary HTTPS official sources and future evidence", () =>
   assert.match(issuesFor(matrix, ledger).join("\n"), /non-allowlisted official documentation URL/u);
 
   const second = fixtures();
-  second.ledger.observations[0].observedAt = "2026-07-29";
+  second.ledger.observations[0].observedAt = "2026-08-01";
   assert.match(issuesFor(second.matrix, second.ledger).join("\n"), /future-dated/u);
 
   for (const invalidUrl of [

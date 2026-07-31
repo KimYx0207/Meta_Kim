@@ -89,8 +89,8 @@ function acceptanceWriterFor(testOnly, internalWriter) {
 
 function promptFor(capability, runtime, nonce, marker) {
   const common = `This is a bounded Meta_Kim runtime capability probe ${nonce}. Capability marker: ${marker}. Do only the requested action inside the current temporary workspace and then stop.`;
-  if (capability === "agent") return `${common} Use the runtime's native agent/subagent tool exactly once, wait for its successful result, and ask it to return the token ${nonce}.`;
-  if (capability === "subagent") return `${common} Spawn exactly one native child subagent, wait for completion, and require the child to return the token ${nonce}.`;
+  if (capability === "agent") return `${common} Use the runtime's native agent/subagent tool exactly once and wait for its successful completion. Require the child to return exactly the complete capability marker ${marker} as its entire final response; the nonce alone is not sufficient.`;
+  if (capability === "subagent") return `${common} Spawn exactly one native child subagent and wait for its successful completion. Require the child to return exactly the complete capability marker ${marker} as its entire final response; the nonce alone is not sufficient.`;
   if (capability === "shell") return `${common} Use the native shell tool to create meta-kim-probe.txt containing exactly shell-${marker}.`;
   if (capability === "filesystem") return `${common} Use the runtime's native file-reading capability to read meta-kim-probe.txt and report its exact existing content ${marker}; do not edit it.`;
   if (capability === "apply_patch / edit") return `${common} First use the native file-reading capability to read meta-kim-probe.txt, then use the runtime's native edit/apply-patch capability to replace the entire content from before-${marker} to after-${marker}.`;
@@ -179,8 +179,14 @@ function eventMatches(runtime, capability, event, rawText, marker) {
   const surface = String(event.hostSurface ?? event.providerId ?? "").toLowerCase();
   const lines = String(rawText).split(/\r?\n/u);
   const sourceText = (event.sourceLines ?? []).map((line) => lines[line - 1] ?? "").join("\n");
+  if (["agent", "subagent"].includes(capability)) {
+    const exactMarkerDigest = sha256(marker);
+    return event.family === "agent_subagent" &&
+      /agent|task|spawn/u.test(surface) &&
+      Boolean(event.childSessionId) &&
+      event.resultTextSha256 === exactMarkerDigest;
+  }
   if (!sourceText.includes(marker)) return false;
-  if (["agent", "subagent"].includes(capability)) return event.family === "agent_subagent" && /agent|task|spawn/u.test(surface) && Boolean(event.childSessionId);
   if (capability === "shell") return event.family === "runtime_tool" && /bash|shell|command/u.test(surface);
   if (capability === "filesystem") {
     return event.family === "runtime_tool" && (runtime === "codex"
@@ -754,6 +760,11 @@ export function runControlledRuntimeCapabilityProducer({
         outputDigest: event.outputDigest,
         sessionId: event.sessionId ?? null,
         childSessionId: event.childSessionId ?? null,
+        resultTextSha256: event.resultTextSha256 ?? null,
+        resultSourceLines: event.resultSourceLines ?? [],
+        lifecycleEvidence: event.lifecycleEvidence ?? null,
+        completionBoundary: event.completionBoundary ?? null,
+        activityCompletionObserved: event.activityCompletionObserved === true,
         sourceLines: event.sourceLines ?? [],
       })),
       rawArtifact: {

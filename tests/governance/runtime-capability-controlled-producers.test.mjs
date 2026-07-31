@@ -12,6 +12,7 @@ import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate
 import { selectVerificationBoundControlledAttempts, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
 import { parseRuntimeAcceptanceCliArgs } from "../../scripts/attest-runtime-capability-acceptance.mjs";
 import { loadSetupBoundRuntimeExecutable, recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
+import { observeClaudeJsonl } from "../../scripts/live-acceptance/observe-host-events.mjs";
 
 const packageRoot = path.resolve(import.meta.dirname, "../..");
 const temporaryRoots = new Set();
@@ -150,6 +151,99 @@ function injectedExecutor(request) {
   return { status: 0, signal: null, stdout, stderr: "", runtimeVersion: `${request.runtime}-test-1.0.0` };
 }
 
+function injectedClaudeAsyncAgentExecutor({
+  launchOnly = false,
+  includeTaskUpdated = true,
+  includeTaskNotification = true,
+  mismatchedAgentId = false,
+  mismatchedMarker = false,
+  laterMismatchedMarker = false,
+  failedUpdateBeforeCompleted = false,
+  failedNotificationBeforeCompleted = false,
+  duplicateCall = false,
+  duplicateResult = false,
+} = {}) {
+  return (request) => {
+    assert.equal(request.runtime, "claude_code");
+    assert.ok(["agent", "subagent"].includes(request.capability));
+    const nonce = request.prompt.match(/[0-9a-f]{8}-[0-9a-f-]{27,}/iu)?.[0];
+    const marker = request.prompt.match(/META_KIM_CAPABILITY_[A-Z0-9_]+_[0-9a-f-]{36}/u)?.[0];
+    assert.match(request.prompt, /entire final response; the nonce alone is not sufficient/u);
+    const callId = `async-call-${nonce}`;
+    const agentId = `async-agent-${nonce}`;
+    const sessionId = `async-session-${nonce}`;
+    const records = [
+      { type: "assistant", session_id: sessionId, message: { id: `async-message-${nonce}`, content: [{ type: "tool_use", id: callId, name: "Agent", input: { prompt: marker } }] } },
+      { type: "system", subtype: "task_started", task_id: agentId, tool_use_id: callId, session_id: sessionId },
+      { type: "user", session_id: sessionId, tool_use_result: { isAsync: true, status: "async_launched", agentId: mismatchedAgentId ? `wrong-${agentId}` : agentId }, message: { content: [{ type: "tool_result", tool_use_id: callId, content: "Async agent launched successfully." }] } },
+    ];
+    if (duplicateCall) records.splice(1, 0, structuredClone(records[0]));
+    if (duplicateResult) records.push(structuredClone(records.at(-1)));
+    if (!launchOnly) {
+      records.push({ type: "assistant", parent_tool_use_id: callId, session_id: sessionId, message: { id: `async-result-${nonce}`, stop_reason: null, content: [{ type: "text", text: mismatchedMarker ? `WRONG_${nonce}` : marker }] } });
+      if (laterMismatchedMarker) {
+        records.push({ type: "assistant", parent_tool_use_id: callId, session_id: sessionId, message: { id: `async-later-result-${nonce}`, stop_reason: null, content: [{ type: "text", text: `WRONG_LATER_${nonce}` }] } });
+      }
+      if (failedUpdateBeforeCompleted) {
+        records.push({ type: "system", subtype: "task_updated", task_id: agentId, patch: { status: "failed" }, session_id: sessionId });
+      }
+      if (includeTaskUpdated) {
+        records.push({ type: "system", subtype: "task_updated", task_id: agentId, patch: { status: "completed" }, session_id: sessionId });
+      }
+      if (failedNotificationBeforeCompleted) {
+        records.push({ type: "system", subtype: "task_notification", task_id: agentId, tool_use_id: callId, status: "failed", session_id: sessionId });
+      }
+      if (includeTaskNotification) {
+        records.push({ type: "system", subtype: "task_notification", task_id: agentId, tool_use_id: callId, status: "completed", summary: marker, session_id: sessionId });
+      }
+    }
+    return { status: 0, signal: null, stdout: jsonl(records), stderr: "", runtimeVersion: "claude-code-2.1.202" };
+  };
+}
+
+function injectedClaudeCompletedEnvelopeExecutor({ nestedWrong = false, failedLifecycle = false } = {}) {
+  return (request) => {
+    assert.equal(request.runtime, "claude_code");
+    assert.ok(["agent", "subagent"].includes(request.capability));
+    const nonce = request.prompt.match(/[0-9a-f]{8}-[0-9a-f-]{27,}/iu)?.[0];
+    const marker = request.prompt.match(/META_KIM_CAPABILITY_[A-Z0-9_]+_[0-9a-f-]{36}/u)?.[0];
+    const callId = `completed-call-${nonce}`;
+    const agentId = `completed-agent-${nonce}`;
+    const sessionId = `completed-session-${nonce}`;
+    const records = [
+      { type: "assistant", session_id: sessionId, message: { id: `completed-message-${nonce}`, content: [{ type: "tool_use", id: callId, name: "Agent", input: { prompt: marker, run_in_background: false } }] } },
+      { type: "system", subtype: "task_started", task_id: agentId, tool_use_id: callId, session_id: sessionId },
+    ];
+    if (failedLifecycle) {
+      records.push({ type: "system", subtype: "task_updated", task_id: agentId, patch: { status: "failed" }, session_id: sessionId });
+    }
+    records.push(
+      { type: "system", subtype: "task_updated", task_id: agentId, patch: { status: "completed" }, session_id: sessionId },
+      { type: "system", subtype: "task_notification", task_id: agentId, tool_use_id: callId, status: "completed", session_id: sessionId },
+      {
+        type: "user",
+        session_id: sessionId,
+        tool_use_result: {
+          status: "completed",
+          agentId,
+          content: [{ type: "text", text: nestedWrong ? `WRONG_${nonce}` : marker }],
+        },
+        message: {
+          content: [{
+            type: "tool_result",
+            tool_use_id: callId,
+            content: [
+              { type: "text", text: marker },
+              { type: "text", text: `agentId: ${agentId}\n<usage>subagent_tokens: 123</usage>` },
+            ],
+          }],
+        },
+      },
+    );
+    return { status: 0, signal: null, stdout: jsonl(records), stderr: "", runtimeVersion: "claude-code-2.1.202" };
+  };
+}
+
 function injectedCodexEngineeringExecutor(request) {
   assert.equal(request.runtime, "codex");
   assert.equal(request.capability, "engineering_composite");
@@ -182,6 +276,168 @@ test("controlled receipts stay advisory while compatible routes hand off to the 
     assertHostHandoffOnly(evaluateRouteExecutionGate({ runtime, taskShape: "product_build", effectiveMatrix: testAware.effectiveMatrix }));
     assertHostHandoffOnly(evaluateRouteExecutionGate({ runtime, taskShape: "engineering_execution", effectiveMatrix: testAware.effectiveMatrix }));
   }
+});
+
+test("Claude 2.1.202 async Agent and subagent producers accept only marker-bound closed child lifecycles", () => {
+  const projectRoot = fixtureProject();
+  for (const capability of ["agent", "subagent"]) {
+    const produced = runControlledRuntimeCapabilityProducer({
+      projectRoot,
+      runtime: "claude_code",
+      capability,
+      executor: injectedClaudeAsyncAgentExecutor(),
+    });
+    const [event] = produced.receipt.eventEvidence;
+    assert.equal(produced.receipt.eventEvidence.length, 1);
+    assert.equal(event.resultStatus, "completed");
+    assert.equal(event.sourceLines.length, 6);
+    assert.equal(event.resultTextSha256, createHash("sha256").update(produced.receipt.capabilityMarker).digest("hex"));
+    assert.deepEqual(event.resultSourceLines, [4]);
+    assert.equal(event.lifecycleEvidence, "claude_async_agent_task_lifecycle");
+    assert.equal(event.completionBoundary, "task_notification_completed");
+    assert.equal(event.activityCompletionObserved, true);
+  }
+});
+
+test("Claude 2.1.202 completed Agent envelope trusts nested child final over decorated outer content", () => {
+  const produced = runControlledRuntimeCapabilityProducer({
+    projectRoot: fixtureProject(),
+    runtime: "claude_code",
+    capability: "agent",
+    executor: injectedClaudeCompletedEnvelopeExecutor(),
+  });
+  assert.equal(
+    produced.receipt.eventEvidence[0].resultTextSha256,
+    createHash("sha256").update(produced.receipt.capabilityMarker).digest("hex"),
+  );
+  assert.throws(() => runControlledRuntimeCapabilityProducer({
+    projectRoot: fixtureProject(),
+    runtime: "claude_code",
+    capability: "agent",
+    executor: injectedClaudeCompletedEnvelopeExecutor({ nestedWrong: true }),
+  }), /did not observe a capability-specific completed host event/u);
+  assert.throws(() => runControlledRuntimeCapabilityProducer({
+    projectRoot: fixtureProject(),
+    runtime: "claude_code",
+    capability: "agent",
+    executor: injectedClaudeCompletedEnvelopeExecutor({ failedLifecycle: true }),
+  }), /did not observe a capability-specific completed host event/u);
+});
+
+test("Claude 2.1.202 async Agent producer rejects launch-only, incomplete, mismatched-id, and mismatched-marker evidence", () => {
+  const cases = [
+    injectedClaudeAsyncAgentExecutor({ launchOnly: true }),
+    injectedClaudeAsyncAgentExecutor({ includeTaskUpdated: false }),
+    injectedClaudeAsyncAgentExecutor({ includeTaskNotification: false }),
+    injectedClaudeAsyncAgentExecutor({ mismatchedAgentId: true }),
+    injectedClaudeAsyncAgentExecutor({ mismatchedMarker: true }),
+    injectedClaudeAsyncAgentExecutor({ laterMismatchedMarker: true }),
+    injectedClaudeAsyncAgentExecutor({ failedUpdateBeforeCompleted: true }),
+    injectedClaudeAsyncAgentExecutor({ failedNotificationBeforeCompleted: true }),
+    injectedClaudeAsyncAgentExecutor({ duplicateCall: true }),
+    injectedClaudeAsyncAgentExecutor({ duplicateResult: true }),
+  ];
+  for (const [index, executor] of cases.entries()) {
+    assert.throws(() => runControlledRuntimeCapabilityProducer({
+      projectRoot: fixtureProject(),
+      runtime: "claude_code",
+      capability: "agent",
+      attemptId: `claude-async-negative-${index}`,
+      executor,
+    }), /did not observe a capability-specific completed host event|marker lifecycle .* terminated as declined, failed, cancelled, or nonzero/u);
+  }
+});
+
+test("rehashed Claude async receipt and raw artifact cannot accept a wrong child marker", () => {
+  const projectRoot = fixtureProject();
+  const produced = runControlledRuntimeCapabilityProducer({
+    projectRoot,
+    runtime: "claude_code",
+    capability: "agent",
+    executor: injectedClaudeAsyncAgentExecutor(),
+  });
+  const rawRecords = readFileSync(produced.rawPath, "utf8").split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line));
+  const child = rawRecords.find((record) => record.type === "assistant" && record.parent_tool_use_id);
+  child.message.content[0].text = `WRONG_${produced.receipt.capabilityNonce}`;
+  const rawText = jsonl(rawRecords);
+  writeFileSync(produced.rawPath, rawText, "utf8");
+  const rawSha256 = createHash("sha256").update(rawText).digest("hex");
+  const [actual] = observeClaudeJsonl(rawText).filter((event) => event.family === "agent_subagent");
+
+  const receipt = JSON.parse(readFileSync(produced.receiptPath, "utf8"));
+  receipt.eventEvidence[0].outputDigest = actual.outputDigest;
+  receipt.rawArtifact.sha256 = rawSha256;
+  receipt.hostInvocation.result.stdoutSha256 = rawSha256;
+  receipt.hostInvocation.resultDigest = createHash("sha256").update(JSON.stringify(receipt.hostInvocation.result)).digest("hex");
+  const { recordHash: _receiptHash, ...receiptBody } = receipt;
+  receipt.recordHash = createHash("sha256").update(JSON.stringify(receiptBody)).digest("hex");
+  const receiptBytes = `${JSON.stringify(receipt, null, 2)}\n`;
+  writeFileSync(produced.receiptPath, receiptBytes, "utf8");
+
+  const attempt = JSON.parse(readFileSync(produced.acceptance.recordPath, "utf8"));
+  attempt.sourceReport.sha256 = createHash("sha256").update(receiptBytes).digest("hex");
+  attempt.rawArtifactSha256 = rawSha256;
+  const { recordHash: _attemptHash, ...attemptBody } = attempt;
+  attempt.recordHash = createHash("sha256").update(JSON.stringify(attemptBody)).digest("hex");
+  writeFileSync(produced.acceptance.recordPath, `${JSON.stringify(attempt, null, 2)}\n`, "utf8");
+
+  const index = JSON.parse(readFileSync(produced.acceptance.indexPath, "utf8"));
+  index.latestByClaim["claude_code:agent:interactive_host"].recordHash = attempt.recordHash;
+  writeFileSync(produced.acceptance.indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+
+  const state = loadEffectiveRuntimeCapabilityClaims({ packageRoot, projectRoot, allowTestReceipts: true });
+  assert.equal(state.overlayStatus.applied.length, 0);
+  assert.ok(["invalid", "rejected"].includes(state.overlayStatus.state));
+  assert.match(state.issues.join("\n"), /child result is not the exact capability marker|does not match raw host evidence/u);
+});
+
+test("rehashed Claude async raw evidence cannot hide a later failed task terminal", () => {
+  const projectRoot = fixtureProject();
+  const produced = runControlledRuntimeCapabilityProducer({
+    projectRoot,
+    runtime: "claude_code",
+    capability: "agent",
+    executor: injectedClaudeAsyncAgentExecutor(),
+  });
+  const rawRecords = readFileSync(produced.rawPath, "utf8").split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line));
+  const launch = rawRecords.find((record) => record.tool_use_result?.status === "async_launched");
+  const call = rawRecords.find((record) => record.type === "assistant" && record.message?.content?.some((item) => item.type === "tool_use"));
+  rawRecords.push({
+    type: "system",
+    subtype: "task_updated",
+    task_id: launch.tool_use_result.agentId,
+    patch: { status: "failed" },
+    session_id: launch.session_id,
+    tool_use_id: call.message.content.find((item) => item.type === "tool_use").id,
+  });
+  const rawText = jsonl(rawRecords);
+  writeFileSync(produced.rawPath, rawText, "utf8");
+  const rawSha256 = createHash("sha256").update(rawText).digest("hex");
+
+  const receipt = JSON.parse(readFileSync(produced.receiptPath, "utf8"));
+  receipt.rawArtifact.sha256 = rawSha256;
+  receipt.hostInvocation.result.stdoutSha256 = rawSha256;
+  receipt.hostInvocation.resultDigest = createHash("sha256").update(JSON.stringify(receipt.hostInvocation.result)).digest("hex");
+  const { recordHash: _receiptHash, ...receiptBody } = receipt;
+  receipt.recordHash = createHash("sha256").update(JSON.stringify(receiptBody)).digest("hex");
+  const receiptBytes = `${JSON.stringify(receipt, null, 2)}\n`;
+  writeFileSync(produced.receiptPath, receiptBytes, "utf8");
+
+  const attempt = JSON.parse(readFileSync(produced.acceptance.recordPath, "utf8"));
+  attempt.sourceReport.sha256 = createHash("sha256").update(receiptBytes).digest("hex");
+  attempt.rawArtifactSha256 = rawSha256;
+  const { recordHash: _attemptHash, ...attemptBody } = attempt;
+  attempt.recordHash = createHash("sha256").update(JSON.stringify(attemptBody)).digest("hex");
+  writeFileSync(produced.acceptance.recordPath, `${JSON.stringify(attempt, null, 2)}\n`, "utf8");
+
+  const index = JSON.parse(readFileSync(produced.acceptance.indexPath, "utf8"));
+  index.latestByClaim["claude_code:agent:interactive_host"].recordHash = attempt.recordHash;
+  writeFileSync(produced.acceptance.indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+
+  const state = loadEffectiveRuntimeCapabilityClaims({ packageRoot, projectRoot, allowTestReceipts: true });
+  assert.equal(state.overlayStatus.applied.length, 0);
+  assert.ok(["invalid", "rejected"].includes(state.overlayStatus.state));
+  assert.match(state.issues.join("\n"), /does not match raw host evidence|does not prove agent/u);
 });
 
 test("one Codex engineering invocation emits three facet-specific advisory receipts", () => {
@@ -381,6 +637,83 @@ test("one Codex Desktop session chain produces three engineering receipts from f
     rmSync(fixture.codexHome, { recursive: true, force: true });
     rmSync(fixture.workspacePath, { recursive: true, force: true });
   }
+});
+
+test("Codex Desktop engineering reader ignores string-output outer exec calls without hiding the valid array chain", async () => {
+  const projectRoot = fixtureProject();
+  const fixture = codexDesktopEngineeringFixture(projectRoot);
+  const parentPath = path.join(
+    fixture.codexHome,
+    "sessions",
+    "2026",
+    "07",
+    "28",
+    `rollout-desktop-${fixture.threadId}.jsonl`,
+  );
+  const records = readFileSync(parentPath, "utf8")
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const validDirectoryCall = records.find((record) => record?.payload?.call_id === "desktop-shell");
+  records.splice(1, 0,
+    {
+      timestamp: new Date().toISOString(),
+      type: "response_item",
+      payload: { type: "custom_tool_call", name: "exec", status: "completed", call_id: "outer-unrelated", input: "const r=await tools.shell_command({command:\"Write-Output unrelated\"});" },
+    },
+    {
+      timestamp: new Date().toISOString(),
+      type: "response_item",
+      payload: { type: "custom_tool_call_output", call_id: "outer-unrelated", output: "Script running with cell ID outer-unrelated" },
+    },
+    {
+      timestamp: new Date().toISOString(),
+      type: "response_item",
+      payload: { type: "custom_tool_call", name: "exec", status: "completed", call_id: "outer-matching", input: validDirectoryCall.payload.input },
+    },
+    {
+      timestamp: new Date().toISOString(),
+      type: "response_item",
+      payload: { type: "custom_tool_call_output", call_id: "outer-matching", output: `Exit code: 0\n${fixture.workspacePath}` },
+    },
+    {
+      timestamp: new Date().toISOString(),
+      type: "response_item",
+      payload: { type: "custom_tool_call", name: "exec", status: "completed", call_id: "outer-running", input: validDirectoryCall.payload.input },
+    },
+    {
+      timestamp: new Date().toISOString(),
+      type: "response_item",
+      payload: { type: "custom_tool_call_output", call_id: "outer-running", output: "Script running with cell ID outer-running" },
+    },
+  );
+  writeFileSync(parentPath, `${jsonl(records)}\n`, "utf8");
+
+  const evidence = await readCodexDesktopEngineeringEvidence(fixture);
+  assert.equal(evidence.sourceCategory, "codex_desktop_sessions");
+  assert.deepEqual(Object.keys(evidence.events).sort(), ["filesystemAfter", "filesystemBefore", "patchAdd", "patchUpdate", "shell"]);
+
+  const stringOnlyFixture = codexDesktopEngineeringFixture(projectRoot);
+  const stringOnlyParentPath = path.join(
+    stringOnlyFixture.codexHome,
+    "sessions",
+    "2026",
+    "07",
+    "28",
+    `rollout-desktop-${stringOnlyFixture.threadId}.jsonl`,
+  );
+  const stringOnlyRecords = readFileSync(stringOnlyParentPath, "utf8")
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const stringOnlyDirectoryOutput = stringOnlyRecords.find((record) => record?.payload?.call_id === "desktop-shell" && record?.payload?.type === "custom_tool_call_output");
+  stringOnlyDirectoryOutput.payload.output = `Exit code: 0\n${stringOnlyFixture.workspacePath}`;
+  writeFileSync(stringOnlyParentPath, `${jsonl(stringOnlyRecords)}\n`, "utf8");
+
+  await assert.rejects(
+    readCodexDesktopEngineeringEvidence(stringOnlyFixture),
+    /codex_desktop_engineering_chain_invalid/u,
+  );
 });
 
 test("Codex Desktop session producer rejects a mismatched child backlink", async () => {

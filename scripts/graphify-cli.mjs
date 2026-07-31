@@ -12,6 +12,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -47,6 +48,8 @@ import { sanitizeGraphifyWindowsHooks } from "./graphify-hook-sanitize.mjs";
 
 const command = process.argv[2] || "check";
 const GRAPHIFY_MIGRATION_STATE_SCHEMA = "meta-kim-graphify-migration-state-v2";
+const GRAPHIFY_EXISTING_EXTRACT_ADOPTION_SCHEMA =
+  "meta-kim-graphify-existing-extract-adoption-v1";
 
 function graphifyLauncher() {
   if (process.env.META_KIM_GRAPHIFY_BIN) {
@@ -341,6 +344,20 @@ function hasPrivateLocalPath(value) {
     /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
       value,
     );
+}
+
+function sanitizeKnownGraphifyReportAliases(value) {
+  if (typeof value !== "string" || !value.includes("~/.meta-kim")) return value;
+  return value.replace(
+    /~\/\.meta-kim[^\s,;:)\]}>'"`]*/gu,
+    (candidate) => {
+      const segments = candidate.split("/").slice(2);
+      return /^~\/\.meta-kim(?:\/[A-Za-z0-9._-]+)*$/u.test(candidate) &&
+        segments.every((segment) => segment !== "." && segment !== "..")
+        ? candidate.replace(/^~\/\.meta-kim/u, "<meta-kim-home>")
+        : candidate;
+    },
+  );
 }
 
 function refreshRepositorySnapshot(expected, boundary) {
@@ -679,6 +696,8 @@ function stampGraphFreshness(cwd = process.cwd()) {
     const graph = JSON.parse(readFileSync(graphPath, "utf8"));
     const previousSanitization =
       graph?.meta_kim_enrichment?.outputSanitization ?? null;
+    const previousExistingExtractAdoption =
+      graph?.meta_kim_enrichment?.existingExtractAdoption ?? null;
     let upstreamNormalizer;
     try {
       upstreamNormalizer = graphRuntimeNormalizer(graph, repository);
@@ -695,6 +714,10 @@ function stampGraphFreshness(cwd = process.cwd()) {
       outputSanitization.changed || !previousSanitization
         ? outputSanitization
         : previousSanitization;
+    if (previousExistingExtractAdoption) {
+      graph.meta_kim_enrichment.existingExtractAdoption =
+        previousExistingExtractAdoption;
+    }
     let analysisSidecar;
     try {
       analysisSidecar = readGraphifyAnalysisSidecar(paths);
@@ -776,11 +799,12 @@ function stampGraphFreshness(cwd = process.cwd()) {
 
   if (existsSync(reportPath)) {
     const reportRaw = readFileSync(reportPath, "utf8");
-    if (hasPrivateLocalPath(reportRaw)) {
+    const sanitizedReport = sanitizeKnownGraphifyReportAliases(reportRaw);
+    if (hasPrivateLocalPath(sanitizedReport)) {
       fail("GRAPH_REPORT.md exposes a private local path; refusing to stamp unsafe output.");
       return false;
     }
-    let nextReport = reportRaw.replace(
+    let nextReport = sanitizedReport.replace(
       /Built from commit:\s*`?([0-9a-f]{7,40})`?/i,
       `Built from commit: \`${repository.currentHead}\``,
     );
@@ -821,6 +845,8 @@ function sanitizeGraphForClustering(paths, repository) {
   const graph = JSON.parse(readFileSync(paths.graphPath, "utf8"));
   const previousSanitization =
     graph?.meta_kim_enrichment?.outputSanitization ?? null;
+  const previousExistingExtractAdoption =
+    graph?.meta_kim_enrichment?.existingExtractAdoption ?? null;
   const normalizer = graphRuntimeNormalizer(graph, repository);
   const outputSanitization = sanitizeGraphifyOutput(graph, {
     repositoryFiles: repository.repositoryFiles,
@@ -843,6 +869,10 @@ function sanitizeGraphForClustering(paths, repository) {
       : previousSanitization),
     clusteringInputBound: true,
   };
+  if (previousExistingExtractAdoption) {
+    graph.meta_kim_enrichment.existingExtractAdoption =
+      previousExistingExtractAdoption;
+  }
   let analysisSanitization;
   try {
     ({ sanitization: analysisSanitization } =
@@ -911,6 +941,165 @@ function containedPlainFileDigest(output, filePath, label) {
     throw new Error(`${label} resolves outside graphify-out`);
   }
   return sha256(readFileSync(filePath));
+}
+
+function existingExtractCounts(graph, analysisSidecar) {
+  return {
+    nodes: Array.isArray(graph?.nodes) ? graph.nodes.length : 0,
+    links: Array.isArray(graph?.links) ? graph.links.length : 0,
+    communities:
+      analysisSidecar?.communities &&
+      typeof analysisSidecar.communities === "object" &&
+      !Array.isArray(analysisSidecar.communities)
+        ? Object.keys(analysisSidecar.communities).length
+        : 0,
+  };
+}
+
+function inspectExistingExtractSnapshot(paths, repository) {
+  const rawGraphSha256 = containedPlainFileDigest(
+    paths.output,
+    paths.graphPath,
+    "Graphify existing extract graph",
+  );
+  const rawAnalysisSha256 = containedPlainFileDigest(
+    paths.output,
+    paths.analysisPath,
+    "Graphify existing extract analysis",
+  );
+  const rawReportSha256 = containedPlainFileDigest(
+    paths.output,
+    paths.reportPath,
+    "Graphify existing extract report",
+  );
+  if (!rawGraphSha256 || !rawAnalysisSha256 || !rawReportSha256) {
+    throw new Error(
+      "existing extract adoption requires graph, analysis, and report plain files",
+    );
+  }
+
+  const graph = JSON.parse(readFileSync(paths.graphPath, "utf8"));
+  const analysisSidecar = readGraphifyAnalysisSidecar(paths);
+  const reportRaw = readFileSync(paths.reportPath, "utf8");
+  if (
+    !commitsMatch(graph?.built_at_commit, repository.currentHead) ||
+    !commitsMatch(extractReportCommit(reportRaw), repository.currentHead)
+  ) {
+    throw new Error(
+      "existing extract graph/report is not bound to the current HEAD",
+    );
+  }
+  const sanitizedReport = sanitizeKnownGraphifyReportAliases(reportRaw);
+  if (hasPrivateLocalPath(sanitizedReport)) {
+    throw new Error("existing extract report still contains a private local path");
+  }
+  const reportedCounts = reportGraphCounts(reportRaw);
+  const actualCounts = existingExtractCounts(graph, analysisSidecar);
+  if (
+    !reportedCounts ||
+    reportedCounts.nodes !== actualCounts.nodes ||
+    reportedCounts.links !== actualCounts.links ||
+    reportedCounts.communities !== actualCounts.communities
+  ) {
+    throw new Error(
+      "existing extract report counts do not match graph and analysis artifacts",
+    );
+  }
+
+  const oldestArtifactMtimeMs = Math.min(
+    statSync(paths.graphPath).mtimeMs,
+    statSync(paths.analysisPath).mtimeMs,
+    statSync(paths.reportPath).mtimeMs,
+  );
+  let latestRepositoryMtimeMs = 0;
+  for (const repositoryFile of repository.repositoryFiles) {
+    latestRepositoryMtimeMs = Math.max(
+      latestRepositoryMtimeMs,
+      statSync(
+        path.join(repository.repoRoot, ...repositoryFile.split("/")),
+      ).mtimeMs,
+    );
+  }
+  if (latestRepositoryMtimeMs > oldestArtifactMtimeMs) {
+    throw new Error(
+      "repository content changed after the existing extract artifacts were written",
+    );
+  }
+
+  return {
+    graph,
+    analysisSidecar,
+    reportRaw,
+    sanitizedReport,
+    evidence: {
+      schemaVersion: GRAPHIFY_EXISTING_EXTRACT_ADOPTION_SCHEMA,
+      status: "verified_existing_extract_snapshot",
+      builtCommit: repository.currentHead,
+      repositoryFilesSha256: repositoryFilesDigest(
+        repository.repositoryFiles,
+      ),
+      repositoryStateSha256: repository.repositoryStateSha256,
+      rawGraphSha256,
+      rawAnalysisSha256,
+      rawReportSha256,
+      latestRepositoryMtimeMs,
+      oldestArtifactMtimeMs,
+    },
+  };
+}
+
+function adoptExistingExtract(paths, repository) {
+  const inspected = inspectExistingExtractSnapshot(paths, repository);
+  const original = {
+    graph: readFileSync(paths.graphPath),
+    analysis: readFileSync(paths.analysisPath),
+    report: readFileSync(paths.reportPath),
+  };
+  try {
+    if (inspected.sanitizedReport !== inspected.reportRaw) {
+      atomicWritePlainFile(paths.reportPath, inspected.sanitizedReport);
+    }
+
+    const sanitization = sanitizeGraphForClustering(paths, repository);
+    const graph = JSON.parse(readFileSync(paths.graphPath, "utf8"));
+    const analysisSidecar = readGraphifyAnalysisSidecar(paths);
+    const proofNormalizer = graphRuntimeNormalizer(graph, repository, {
+      analysisSidecar,
+    });
+    graph.meta_kim_enrichment.existingExtractAdoption = inspected.evidence;
+    const identity = applyGraphNodeIdentityProof(graph, {
+      repositoryFiles: repository.repositoryFiles,
+      repositoryStateSha256: repository.repositoryStateSha256,
+      builtCommit: repository.currentHead,
+      normalizeNodeId: proofNormalizer.normalize,
+      nodeIdNormalization: proofNormalizer.descriptor,
+      analysisSidecar,
+      requireAnalysisSidecar:
+        proofNormalizer.descriptor !== GRAPHIFY_NODE_ID_NORMALIZATION,
+    });
+    if (identity.proof.status !== "verified_graph_file_identity") {
+      throw new Error("existing extract does not cover the current repository identity");
+    }
+    atomicWritePlainFile(paths.graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+
+    refreshRepositorySnapshot(repository, "existing-extract adoption");
+    writeMigrationState(
+      paths,
+      repository,
+      sanitization.requiresRecluster ? "extract_complete" : "cluster_complete",
+    );
+    const checkpoint = inspectMigrationState(paths, repository);
+    if (checkpoint.status !== "valid") {
+      throw new Error("existing extract adoption checkpoint could not be verified");
+    }
+    return checkpoint.state;
+  } catch (error) {
+    atomicWritePlainFile(paths.graphPath, original.graph);
+    atomicWritePlainFile(paths.analysisPath, original.analysis);
+    atomicWritePlainFile(paths.reportPath, original.report);
+    clearMigrationState(paths);
+    throw error;
+  }
 }
 
 function migrationSnapshotPaths(output) {
@@ -1337,6 +1526,27 @@ function runRebuild() {
   } catch (error) {
     fail(`Graphify migration state is unsafe: ${error.message}`);
     return;
+  }
+  if (process.argv.includes("--adopt-existing-extract")) {
+    if (migrationInspection.status !== "missing") {
+      fail(
+        "Graphify existing-extract adoption requires uncheckpointed raw artifacts",
+      );
+      return;
+    }
+    try {
+      adoptExistingExtract(initialPaths, initialRepository);
+      migrationInspection = inspectMigrationState(
+        initialPaths,
+        initialRepository,
+      );
+      console.log(
+        "Adopted the existing Graphify extract after binding HEAD, repository content, artifact hashes, graph identity, and report counts.",
+      );
+    } catch (error) {
+      fail(`Graphify existing extract could not be adopted safely: ${error.message}`);
+      return;
+    }
   }
   let migrationState =
     migrationInspection.status === "valid"
