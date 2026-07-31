@@ -51,6 +51,64 @@ export function toPosix(filePath) {
   return String(filePath).replace(/\\/g, "/");
 }
 
+export function annotateCrossScopeAgentCollisions(agents, runtime) {
+  if (runtime !== "codex") return agents;
+  const groups = new Map();
+  for (const agent of agents) {
+    const group = groups.get(agent.id) ?? [];
+    group.push(agent);
+    groups.set(agent.id, group);
+  }
+  return agents.map((agent) => {
+    const group = groups.get(agent.id) ?? [agent];
+    const provenance = group.flatMap((candidate) =>
+      Array.isArray(candidate.provenance) && candidate.provenance.length > 0
+        ? candidate.provenance
+        : [{
+            id: candidate.id,
+            inventoryId: candidate.inventoryId ?? candidate.id,
+            sourceClass: candidate.sourceClass ?? "unknown",
+            sourceRef: candidate.sourceRef ?? null,
+            contentDigest: candidate.contentDigest ?? null,
+            nativeIdentity: candidate.nativeIdentity ?? candidate.id,
+            sourcePriority: candidate.sourcePriority ?? null,
+            sourceKey: candidate.sourceKey ?? null,
+            sourceValid: candidate.validCustomAgentDefinition !== false,
+          }],
+    );
+    const uniqueSources = [...new Map(
+      provenance.map((entry) => [entry.sourceKey ?? `${entry.sourceRef}:${entry.contentDigest}`, entry]),
+    ).values()];
+    const distinctDigests = [...new Set(uniqueSources.map((entry) => entry.contentDigest).filter(Boolean))];
+    const conflicting = distinctDigests.length > 1;
+    const explicitlySelected = agent.sourceSelectedExplicitly === true;
+    const routeEligible = (!conflicting || explicitlySelected) &&
+      agent.validCustomAgentDefinition !== false;
+    if (uniqueSources.length <= 1 && agent.collision == null) return agent;
+    const collision = {
+      detected: uniqueSources.length > 1,
+      kind: uniqueSources.length <= 1
+        ? "none"
+        : conflicting
+          ? "conflicting_definitions"
+          : "exact_duplicate",
+      candidateCount: uniqueSources.length,
+      distinctContentDigests: distinctDigests,
+      exactDuplicate: uniqueSources.length > 1 && !conflicting,
+      ambiguous: conflicting,
+      routeEligible,
+      evidenceSource: "live_project_and_global_filesystem",
+    };
+    return {
+      ...agent,
+      provenance: uniqueSources,
+      collision,
+      routeEligible,
+      ambiguousNativeIdentity: conflicting,
+    };
+  });
+}
+
 export async function exists(filePath) {
   try {
     await fs.access(filePath);

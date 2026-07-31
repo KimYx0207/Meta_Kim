@@ -1,0 +1,2 @@
+{"type":"item.completed","item":{"type":"error","message":"event stream lagged behind; dropped 2 events"}}
+{"type":"turn.completed"}

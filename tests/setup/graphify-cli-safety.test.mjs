@@ -122,6 +122,7 @@ function writeValidArtifacts(repo) {
 
 function writeRawExtractArtifacts(repo, {
   builtCommit = git(repo, ["rev-parse", "HEAD"]),
+  reportCommit = builtCommit,
   reportSuffix = "",
 } = {}) {
   const repositoryFiles = spawnSync("git", ["ls-files", "-z"], {
@@ -164,7 +165,7 @@ function writeRawExtractArtifacts(repo, {
   );
   writeFileSync(
     path.join(output, "GRAPH_REPORT.md"),
-    `# Graph Report\n\n## Summary\n- 1 nodes · 0 edges · 1 communities\n\n## Graph Freshness\n- Built from commit: \`${builtCommit}\`\n\nNodes: ~/.meta-kim/install-manifest.json${reportSuffix}\n`,
+    `# Graph Report\n\n## Summary\n- 1 nodes · 0 edges · 1 communities\n\n## Graph Freshness\n- Built from commit: \`${reportCommit}\`\n\nNodes: ~/.meta-kim/install-manifest.json${reportSuffix}\n`,
   );
   return { output, builtCommit };
 }
@@ -378,6 +379,140 @@ writeFileSync(statePath, JSON.stringify(state));
       existsSync(path.join(output, ".meta-kim-node-identity-migration.json")),
       false,
     );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify verified local update rejects executable overrides and a preseeded no-op producer", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-verified-local-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    writeRawExtractArtifacts(repo);
+    const statePath = path.join(temp, "calls.json");
+    writeFileSync(statePath, JSON.stringify({ extract: 0, cluster: 0, update: 0, args: [] }));
+    const fake = path.join(temp, "fake-graphify.mjs");
+    writeFileSync(fake, `
+import { readFileSync, writeFileSync } from "node:fs";
+const statePath = process.env.FAKE_GRAPHIFY_STATE;
+const state = JSON.parse(readFileSync(statePath, "utf8"));
+const command = process.argv[2];
+if (command === "extract") state.extract += 1;
+if (command === "cluster-only") state.cluster += 1;
+if (command === "update") state.update += 1;
+state.args.push(process.argv.slice(2));
+writeFileSync(statePath, JSON.stringify(state));
+`);
+    const result = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--verified-local-update"],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          META_KIM_GRAPHIFY_BIN: process.execPath,
+          META_KIM_GRAPHIFY_BIN_ARGS: fake,
+          FAKE_GRAPHIFY_STATE: statePath,
+        },
+      },
+    );
+    assert.notEqual(result.status, 0);
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    assert.equal(state.extract, 0);
+    assert.equal(state.update, 0);
+    assert.equal(state.cluster, 0);
+    assert.deepEqual(state.args, []);
+    assert.match(result.stderr, /rejects executable and Python overrides/u);
+
+    const pythonOverride = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--verified-local-update"],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          META_KIM_GRAPHIFY_PYTHON: process.execPath,
+        },
+      },
+    );
+    assert.notEqual(pythonOverride.status, 0);
+    assert.match(
+      pythonOverride.stderr,
+      /rejects executable and Python overrides/u,
+    );
+
+    const mixedCaseOverride = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--verified-local-update"],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          mEtA_KiM_gRaPhIfY_pYtHoN: process.execPath,
+        },
+      },
+    );
+    assert.notEqual(mixedCaseOverride.status, 0);
+    assert.match(
+      mixedCaseOverride.stderr,
+      /rejects executable and Python overrides/u,
+    );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify existing-extract adoption accepts an upstream short report commit only when the graph has the exact full HEAD", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-adopt-short-head-"));
+  try {
+    const repo = initRepo(temp, "matching");
+    const head = git(repo, ["rev-parse", "HEAD"]);
+    writeRawExtractArtifacts(repo, { reportCommit: head.slice(0, 8) });
+    const statePath = path.join(temp, "calls.json");
+    writeFileSync(statePath, JSON.stringify({ extract: 0, cluster: 0, update: 0 }));
+    const fake = path.join(temp, "fake-graphify.mjs");
+    writeFileSync(fake, `
+import { readFileSync, writeFileSync } from "node:fs";
+const statePath = process.env.FAKE_GRAPHIFY_STATE;
+const state = JSON.parse(readFileSync(statePath, "utf8"));
+if (process.argv[2] === "extract") state.extract += 1;
+if (process.argv[2] === "cluster-only") state.cluster += 1;
+if (process.argv[2] === "update") state.update += 1;
+writeFileSync(statePath, JSON.stringify(state));
+`);
+    const accepted = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          META_KIM_GRAPHIFY_BIN: process.execPath,
+          META_KIM_GRAPHIFY_BIN_ARGS: fake,
+          META_KIM_GRAPHIFY_MIGRATION_BACKEND: "claude-cli",
+          FAKE_GRAPHIFY_STATE: statePath,
+        },
+      },
+    );
+    assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+    assert.deepEqual(
+      JSON.parse(readFileSync(statePath, "utf8")),
+      { extract: 0, cluster: 1, update: 0 },
+    );
+
+    const mismatching = initRepo(temp, "mismatching");
+    writeRawExtractArtifacts(mismatching, { reportCommit: "deadbeef" });
+    const rejected = spawnSync(
+      process.execPath,
+      [cli, "rebuild", "--adopt-existing-extract"],
+      { cwd: mismatching, encoding: "utf8", env: process.env },
+    );
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /not bound to the current HEAD/u);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

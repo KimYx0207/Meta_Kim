@@ -206,7 +206,7 @@ describe("Graphify node identity proof v2", () => {
     const normalize = runtimeNormalizer.normalize;
     assert.match(
       runtimeNormalizer.descriptor,
-      /^graphify-\d+\.\d+\.\d+-python-unicode-\d+\.\d+\.\d+-live-v1$/u,
+      /^graphify-\d+\.\d+\.\d+-module-[0-9a-f]{12}-python-unicode-\d+\.\d+\.\d+-live-v2$/u,
     );
     assert.equal(normalize("脚本/工具.mjs"), "脚本_工具_mjs");
     assert.equal(normalize("CAFÉ"), "café");

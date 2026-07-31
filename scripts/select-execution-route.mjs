@@ -2,7 +2,7 @@
 import { promises as fs } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { GOVERNANCE_OWNERS, OS_TARGETS, RUNTIMES, classifyTaskShape, exists, readJson, repoPath, scoreRoute, stateDir, supportScore, toPosix } from "./governance-lib.mjs";
+import { GOVERNANCE_OWNERS, OS_TARGETS, RUNTIMES, annotateCrossScopeAgentCollisions, classifyTaskShape, exists, readJson, repoPath, scoreRoute, stateDir, supportScore, toPosix } from "./governance-lib.mjs";
 import { CAPABILITY_GAP_DECISION_CONTRACT, decideCapabilityGap } from "./capability-gap-mvp.mjs";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
 import { loadRuntimeProfiles, resolveRuntimeProjection } from "./meta-kim-sync-config.mjs";
@@ -17,6 +17,10 @@ import {
 } from "./runtime-capability-claims.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "./runtime-execution-gate.mjs";
+import {
+  sanitizeCapabilityPublicationText,
+  sanitizeCapabilityPublicationValue,
+} from "./capability-publication-sanitizer.mjs";
 
 function argValue(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -32,8 +36,13 @@ const task = argValue("--task", "");
 const requestedRouteRunId = argValue("--run-id", null);
 const runtimeArg = argValue("--runtime", "auto");
 const osArg = argValue("--os", "auto");
+const requestedOwnerSourceKey = argValue("--owner-source", null);
+const requestedOwnerSourceRef = argValue("--owner-source-ref", null);
+const requestedOwnerContentDigest = String(
+  argValue("--owner-content-digest", null) ?? "",
+).replace(/^sha256:/iu, "").toLowerCase() || null;
 const json = process.argv.includes("--json");
-const codexHostToolSchemaRaw =
+const rejectedCodexHostToolSchemaRaw =
   argValue("--codex-host-tool-schema", null) ??
   process.env.META_KIM_CODEX_HOST_TOOL_SCHEMA ??
   null;
@@ -44,47 +53,20 @@ const taskText = String(task ?? "").toLowerCase();
 const entryClassification = classifyMetaTheoryEntry(task);
 const choiceSurfacePolicy = await readJson("config/governance/choice-surface-policy.json");
 
-function normalizeCodexHostToolSchema(raw) {
-  if (!raw) {
-    return {
-      status: "not_observed",
-      hostSurface: "spawn_agent",
-      inputProperties: [],
-      ownerSelectorField: null,
-      evidenceSource: null,
-    };
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    const hostSurface = parsed?.hostSurface ?? parsed?.name ?? "spawn_agent";
-    const properties = parsed?.inputSchema?.properties ?? parsed?.parameters?.properties ?? parsed?.properties ?? {};
-    const inputProperties = Array.isArray(parsed?.inputProperties)
-      ? parsed.inputProperties.filter((value) => typeof value === "string")
-      : Object.keys(properties);
-    const ownerSelectorField = inputProperties.includes("agent_type") ? "agent_type" : null;
-    const evidenceSource = parsed?.evidenceSource ?? parsed?.source ?? null;
-    const currentHostSchema =
-      ["active_host_tool_schema", "runtime_adapter_tool_schema"].includes(evidenceSource) &&
-      /spawn_agent$/iu.test(String(hostSurface));
-    return {
-      status: currentHostSchema ? "observed" : "untrusted_or_wrong_surface",
-      hostSurface,
-      inputProperties,
-      ownerSelectorField: currentHostSchema ? ownerSelectorField : null,
-      evidenceSource,
-    };
-  } catch {
-    return {
-      status: "invalid",
-      hostSurface: "spawn_agent",
-      inputProperties: [],
-      ownerSelectorField: null,
-      evidenceSource: null,
-    };
-  }
-}
-
-const codexHostToolSchema = normalizeCodexHostToolSchema(codexHostToolSchemaRaw);
+// An offline CLI process cannot attest the active Codex host's top-level tool
+// schema. Caller-supplied JSON/env is retained only as rejected evidence; the
+// interactive host must perform native binding from its own live tool surface.
+const codexHostToolSchema = {
+  status: "not_observed_in_offline_route_process",
+  hostSurface: "spawn_agent",
+  inputProperties: [],
+  ownerSelectorField: null,
+  evidenceSource: null,
+  suppliedArtifactRejected: Boolean(rejectedCodexHostToolSchemaRaw),
+  rejectedReason: rejectedCodexHostToolSchemaRaw
+    ? "caller_supplied_host_schema_is_not_current_host_attestation"
+    : null,
+};
 const entrySignals = entryClassification.signals ?? {};
 const routeChangingDimensionSignals = entrySignals.routeChangingDimensionSignals ?? [];
 const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true;
@@ -320,6 +302,23 @@ function capabilityEntries(index, type) {
   return Object.values(index?.byCapabilityType?.[type] ?? {});
 }
 
+function rawPlatformCapabilityEntries(index, type) {
+  return Object.values(index?.byPlatform ?? {}).flatMap(
+    (platform) => platform?.capabilities?.[type] ?? [],
+  );
+}
+
+function exactOwnerSourceSelected(entry) {
+  if (!requestedOwnerSourceKey || !requestedOwnerContentDigest) return false;
+  const sourceKeyMatches = String(entry?.sourceKey ?? "") === requestedOwnerSourceKey;
+  const digestMatches = String(entry?.contentDigest ?? "")
+    .replace(/^sha256:/iu, "")
+    .toLowerCase() === requestedOwnerContentDigest;
+  const sourceRefMatches = !requestedOwnerSourceRef ||
+    toPosix(String(entry?.sourceRef ?? "")) === toPosix(String(requestedOwnerSourceRef));
+  return sourceKeyMatches && digestMatches && sourceRefMatches;
+}
+
 function uniqueById(items) {
   const seen = new Set();
   const unique = [];
@@ -335,23 +334,51 @@ function uniqueStrings(items) {
   return [...new Set(items.filter(Boolean).map((item) => String(item)))];
 }
 
+function compactProviderMetadata(value) {
+  if (Array.isArray(value)) return value.map(compactProviderMetadata);
+  if (!value || typeof value !== "object") {
+    if (typeof value !== "string") return value;
+    return sanitizeCapabilityPublicationText(value, {
+      repoRoot: repoPath("."),
+      homeDir: process.env.USERPROFILE ?? process.env.HOME ?? "",
+    });
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !["path", "workspace", "baseDir"].includes(key))
+      .map(([key, nested]) => [key, compactProviderMetadata(nested)]),
+  );
+}
+
 function compactAgent(entry, source) {
   const layer = entry.layer ?? (String(entry.id ?? "").startsWith("meta-") ? "meta" : "execution");
-  const sourceRef = entry.sourcePath ?? entry.relativePath ?? (entry.platformId ? `${entry.platformId}:${entry.id}` : entry.id);
+  const sourceRef = entry.sourceRef ?? entry.sourcePath ?? entry.relativePath ?? (entry.platformId ? `${entry.platformId}:${entry.id}` : entry.id);
   return {
     id: entry.id,
     layer,
     source,
     platformId: entry.platformId ?? null,
-    sourceRef: toPosix(sourceRef),
+    sourceRef: compactProviderMetadata(toPosix(sourceRef)),
     executionBlock: entry.executionBlock ?? layer === "meta",
-    description: entry.description ?? null,
-    own: entry.own ?? null,
-    boundary: entry.boundary ?? null,
-    trigger: entry.trigger ?? null,
-    metadata: entry.metadata ?? null,
+    description: compactProviderMetadata(entry.description ?? null),
+    own: compactProviderMetadata(entry.own ?? null),
+    boundary: compactProviderMetadata(entry.boundary ?? null),
+    trigger: compactProviderMetadata(entry.trigger ?? null),
+    metadata: compactProviderMetadata(entry.metadata ?? null),
     validCustomAgentDefinition: entry.validCustomAgentDefinition ?? entry.metadata?.validCustomAgentDefinition ?? null,
     customAgentDefinitionErrors: entry.customAgentDefinitionErrors ?? entry.metadata?.customAgentDefinitionErrors ?? [],
+    sourceClass: entry.sourceClass ?? null,
+    sourceRoot: compactProviderMetadata(entry.sourceRoot ?? null),
+    sourceKey: compactProviderMetadata(entry.sourceKey ?? null),
+    sourcePriority: entry.sourcePriority ?? null,
+    contentDigest: entry.contentDigest ?? null,
+    nativeIdentity: entry.nativeIdentity ?? entry.nativeAgentName ?? entry.metadata?.nativeAgentName ?? entry.metadata?.name ?? entry.id,
+    provenance: compactProviderMetadata(entry.provenance ?? []),
+    collision: compactProviderMetadata(entry.collision ?? null),
+    routeEligible: entry.routeEligible ?? true,
+    sourceSelectedExplicitly: entry.sourceSelectedExplicitly === true,
+    cacheEvidence: compactProviderMetadata(entry.cacheEvidence ?? null),
+    cacheEvidenceOnly: entry.cacheEvidenceOnly === true,
   };
 }
 
@@ -362,7 +389,16 @@ function compactCapabilityProvider(entry, source, type = entry.type ?? "skills")
     type,
     source,
     platformId: entry.platformId ?? null,
-    sourceRef: toPosix(sourceRef),
+    sourceRef: compactProviderMetadata(toPosix(sourceRef)),
+    sourceClass: entry.sourceClass ?? null,
+    sourceRoot: compactProviderMetadata(entry.sourceRoot ?? null),
+    sourceKey: compactProviderMetadata(entry.sourceKey ?? null),
+    sourcePriority: entry.sourcePriority ?? null,
+    contentDigest: entry.contentDigest ?? null,
+    nativeIdentity: entry.nativeIdentity ?? entry.id,
+    provenance: compactProviderMetadata(entry.provenance ?? []),
+    collision: compactProviderMetadata(entry.collision ?? null),
+    routeEligible: entry.routeEligible ?? true,
   };
 }
 
@@ -416,8 +452,10 @@ async function projectRuntimeAgents() {
       let metadata = null;
       let validCustomAgentDefinition = null;
       let customAgentDefinitionErrors = [];
+      let contentDigest = null;
       if (runtimeName === "codex") {
         const content = await fs.readFile(path.join(absDir, entry.name), "utf8");
+        contentDigest = createHash("sha256").update(content).digest("hex");
         ({ metadata, errors: customAgentDefinitionErrors } = parseCodexAgentDefinition(content));
         validCustomAgentDefinition = customAgentDefinitionErrors.length === 0;
         if (validCustomAgentDefinition) id = metadata.name;
@@ -433,6 +471,11 @@ async function projectRuntimeAgents() {
         validCustomAgentDefinition,
         customAgentDefinitionErrors,
         inventoryId,
+        sourceClass: "project",
+        sourcePriority: 100,
+        nativeIdentity: id,
+        contentDigest,
+        sourceKey: `${runtimeName}:agents:${id}:project:${toPosix(path.join(dir, entry.name))}`,
       });
     }
   }
@@ -492,6 +535,7 @@ async function globalRuntimeAgentProviders() {
   const projection = resolveRuntimeProjection(profileId, "global");
   const agentsDir = projection.agentsDir;
   if (!agentsDir || !(await exists(agentsDir))) return [];
+  const userHome = process.env.USERPROFILE ?? process.env.HOME ?? projection.baseDir;
 
   const providers = [];
   const entries = await fs.readdir(agentsDir, { withFileTypes: true });
@@ -502,28 +546,92 @@ async function globalRuntimeAgentProviders() {
     let metadata = null;
     let customAgentDefinitionErrors = [];
     let validCustomAgentDefinition = null;
+    const agentPath = path.join(agentsDir, entry.name);
+    const content = await fs.readFile(agentPath, "utf8");
     if (agentProjection.format === "codex_toml") {
-      const content = await fs.readFile(path.join(agentsDir, entry.name), "utf8");
       ({ metadata, errors: customAgentDefinitionErrors } = parseCodexAgentDefinition(content));
       validCustomAgentDefinition = customAgentDefinitionErrors.length === 0;
       if (validCustomAgentDefinition) id = metadata.name;
     }
     const layer = id.startsWith("meta-") ? "meta" : "execution";
+    const platformId = runtime === "claude_code" ? "claudeCode" : runtime;
+    const sourceRef = `~/${toPosix(path.relative(userHome, agentPath))}`;
+    const sourceRoot = `~/${toPosix(path.relative(userHome, agentsDir))}`;
+    const contentDigest = createHash("sha256").update(content).digest("hex");
     providers.push({
       id,
       inventoryId,
       layer,
       source: "local_global_agent_inventory",
       runtime,
-      platformId: runtime,
-      sourceRef: `~/${toPosix(path.relative(projection.baseDir, path.join(agentsDir, entry.name)))}`,
+      platformId,
+      sourceClass: "personal",
+      sourceRoot,
+      sourceRef,
+      sourcePriority: 300,
+      nativeIdentity: id,
+      contentDigest,
+      sourceKey: `${platformId}:agents:${id}:personal:${sourceRef}`,
       executionBlock: layer === "meta",
       metadata,
       validCustomAgentDefinition,
       customAgentDefinitionErrors,
     });
   }
-  return providers;
+  const byNativeIdentity = new Map();
+  for (const provider of providers) {
+    const group = byNativeIdentity.get(provider.nativeIdentity) ?? [];
+    group.push(provider);
+    byNativeIdentity.set(provider.nativeIdentity, group);
+  }
+  return [...byNativeIdentity.values()].map((group) => {
+    const candidates = [...group].sort((left, right) =>
+      String(left.sourceRef).localeCompare(String(right.sourceRef)));
+    const winner = candidates[0];
+    const distinctDigests = [...new Set(candidates.map((entry) => entry.contentDigest))];
+    const exactDuplicate = candidates.length > 1 && distinctDigests.length === 1;
+    const ambiguous = runtime === "codex" && candidates.length > 1 && !exactDuplicate;
+    const provenance = candidates.map((entry) => ({
+      id: entry.id,
+      inventoryId: entry.inventoryId,
+      sourceClass: entry.sourceClass,
+      sourceRoot: entry.sourceRoot,
+      sourceRef: entry.sourceRef,
+      contentDigest: entry.contentDigest,
+      nativeIdentity: entry.nativeIdentity,
+      sourcePriority: entry.sourcePriority,
+      sourceKey: entry.sourceKey,
+      sourceValid: entry.validCustomAgentDefinition !== false,
+    }));
+    const collision = {
+      detected: candidates.length > 1,
+      kind: candidates.length <= 1
+        ? "none"
+        : exactDuplicate
+          ? "exact_duplicate"
+          : "conflicting_definitions",
+      candidateCount: candidates.length,
+      distinctContentDigests: distinctDigests,
+      winnerSourceKey: winner.sourceKey,
+      winnerSourceRef: winner.sourceRef,
+      exactDuplicate,
+      ambiguous,
+      routeEligible: !ambiguous && winner.validCustomAgentDefinition !== false,
+      evidenceSource: "live_filesystem",
+    };
+    return {
+      ...winner,
+      sourceCandidates: candidates.map((entry) => ({
+        ...entry,
+        provenance,
+        collision,
+      })),
+      provenance,
+      collision,
+      routeEligible: !ambiguous && winner.validCustomAgentDefinition !== false,
+      ambiguousNativeIdentity: ambiguous,
+    };
+  });
 }
 
 async function projectSkillProviders() {
@@ -681,12 +789,66 @@ async function codexGlobalSkillProviders() {
 }
 
 const repoCanonicalAgents = capabilityEntries(repoCapabilityIndex, "agents").map((entry) => compactAgent(entry, "repo_canonical_capability_index"));
-const cachedLocalGlobalAgents = capabilityEntries(globalCapabilityInventory, "agents")
-  .map((entry) => compactAgent(entry, "local_global_agent_inventory"));
 const filesystemRuntimeAgents = await globalRuntimeAgentProviders();
+const liveFilesystemAgentCandidates = filesystemRuntimeAgents.flatMap(
+  (agent) => agent.sourceCandidates ?? [agent],
+);
+const exactLiveSourceAgents = liveFilesystemAgentCandidates
+  .filter(exactOwnerSourceSelected)
+  .map((entry) => ({
+    ...entry,
+    sourceSelectedExplicitly: true,
+    routeEligible:
+      (entry.validCustomAgentDefinition ?? entry.metadata?.validCustomAgentDefinition) !== false,
+  }));
+const authoritativeFilesystemAgents = exactLiveSourceAgents.length > 0
+  ? exactLiveSourceAgents
+  : filesystemRuntimeAgents;
+const cachedInventoryAgentEntries = capabilityEntries(globalCapabilityInventory, "agents");
+function cacheEvidenceForLiveAgent(liveAgent) {
+  const cached = cachedInventoryAgentEntries.find((entry) => entry.id === liveAgent.id);
+  if (!cached) return { present: false, sourceAware: false, liveMatch: false };
+  const cachedSources = Array.isArray(cached.provenance) && cached.provenance.length > 0
+    ? cached.provenance
+    : [cached];
+  const sourceAware = cachedSources.every(
+    (entry) => entry?.sourceRef && entry?.sourceKey && /^[a-f0-9]{64}$/iu.test(
+      String(entry?.contentDigest ?? "").replace(/^sha256:/iu, ""),
+    ),
+  );
+  const liveMatch = sourceAware && cachedSources.some(
+    (entry) =>
+      toPosix(String(entry.sourceRef)) === toPosix(String(liveAgent.sourceRef)) &&
+      String(entry.contentDigest).replace(/^sha256:/iu, "").toLowerCase() ===
+        String(liveAgent.contentDigest).replace(/^sha256:/iu, "").toLowerCase(),
+  );
+  return {
+    present: true,
+    sourceAware,
+    liveMatch,
+    cachedSourceKey: cached.sourceKey ?? null,
+    cachedContentDigest: cached.contentDigest ?? null,
+    cachedCollision: cached.collision ?? null,
+    disposition: liveMatch
+      ? "cache_correlated_live_filesystem_authoritative"
+      : "cache_evidence_only_live_filesystem_authoritative",
+  };
+}
+const liveGlobalAgents = authoritativeFilesystemAgents.map((agent) => ({
+  ...agent,
+  cacheEvidence: cacheEvidenceForLiveAgent(agent),
+}));
+const liveGlobalAgentIds = new Set(liveGlobalAgents.map((agent) => agent.id));
+const cacheOnlyGlobalAgents = cachedInventoryAgentEntries
+  .filter((entry) => !liveGlobalAgentIds.has(entry.id))
+  .map((entry) => compactAgent({
+    ...entry,
+    routeEligible: false,
+    cacheEvidenceOnly: true,
+  }, "local_global_agent_inventory"));
 const localGlobalAgents = [];
 const localGlobalAgentKeys = new Set();
-for (const agent of [...filesystemRuntimeAgents, ...cachedLocalGlobalAgents]) {
+for (const agent of [...liveGlobalAgents, ...cacheOnlyGlobalAgents]) {
   const key = `${agent.runtime ?? agent.platformId ?? "shared"}:${agent.id}`;
   if (localGlobalAgentKeys.has(key)) continue;
   localGlobalAgentKeys.add(key);
@@ -943,14 +1105,24 @@ function platformMatchesRuntime(agent) {
   return false;
 }
 
-const runtimeScopedProjectExecutionAgents = projectRuntimeAgentCandidates
-  .filter((agent) => agent.runtime === runtime || agent.runtime === "shared");
-const runtimeScopedLocalGlobalAgents = localGlobalAgents.filter(platformMatchesRuntime);
+const runtimeScopedAgents = annotateCrossScopeAgentCollisions([
+  ...projectRuntimeAgentCandidates.filter((agent) => agent.runtime === runtime || agent.runtime === "shared"),
+  ...localGlobalAgents.filter(platformMatchesRuntime),
+], runtime);
+const runtimeScopedProjectExecutionAgents = runtimeScopedAgents
+  .filter((agent) => agent.source === "project_runtime_agent_inventory");
+const runtimeScopedLocalGlobalAgents = runtimeScopedAgents
+  .filter((agent) => agent.source !== "project_runtime_agent_inventory");
 const candidateExecutionAgents = [
   ...runtimeScopedProjectExecutionAgents,
   ...runtimeScopedLocalGlobalAgents,
 ]
-  .filter((agent) => agent.layer !== "meta" && agent.executionBlock !== true);
+  .filter(
+    (agent) =>
+      agent.layer !== "meta" &&
+      agent.executionBlock !== true &&
+      agent.routeEligible !== false,
+  );
 const candidateExistingExecutionOwners = candidateExecutionAgents.map((agent) => agent.id);
 const ownerDiscoveryPacket = {
   discoveryPrinciple: "canonical_index_first_capability_discovery_owner_last_binding",
@@ -1277,9 +1449,15 @@ const reusableProviders = uniqueById(sortProvidersForRuntime([
   ...runtimeToolProviders,
 ]));
 
+function providerEligibleForRoute(provider) {
+  return provider?.routeEligible !== false &&
+    (provider?.type !== "runtimeTools" || provider?.executionEligible === true);
+}
+
 function selectProvider(type, preferredIds = []) {
   const providers = sortProvidersForRuntime(reusableProviders.filter((provider) =>
-    provider.type === type && !(type === "runtimeTools" && provider.executionEligible !== true)));
+    provider.type === type &&
+    providerEligibleForRoute(provider)));
   for (const preferredId of preferredIds) {
     const match = providers.find((provider) => provider.id === preferredId) ??
       providers.find((provider) => provider.id?.includes(preferredId));
@@ -1293,7 +1471,7 @@ function selectAnyProvider(preferredIds = [], allowedTypes = null) {
     allowedTypes
       ? reusableProviders.filter((provider) => allowedTypes.includes(provider.type))
       : reusableProviders,
-  ).filter((provider) => provider.type !== "runtimeTools" || provider.executionEligible === true);
+  ).filter(providerEligibleForRoute);
   for (const preferredId of preferredIds) {
     const match = providers.find((provider) => provider.id === preferredId) ??
       providers.find((provider) => provider.id?.includes(preferredId));
@@ -1377,8 +1555,9 @@ function scoreProviderForCapabilityNeed(provider, capabilityNeed = []) {
 function candidateProvidersForCapabilityNeed(capabilityNeed = [], allowedTypes = null, limit = 6) {
   const pool = sortProvidersForRuntime(
     allowedTypes
-      ? reusableProviders.filter((provider) => allowedTypes.includes(provider.type))
-      : reusableProviders,
+      ? reusableProviders.filter((provider) =>
+          allowedTypes.includes(provider.type) && providerEligibleForRoute(provider))
+      : reusableProviders.filter(providerEligibleForRoute),
   );
   const scored = pool
     .map((provider) => scoreProviderForCapabilityNeed(provider, capabilityNeed))
@@ -1730,20 +1909,42 @@ function codexOwnerDefinition(provider) {
     (field) => typeof metadata?.[field] === "string" && metadata[field].trim().length > 0,
   );
   const nativeNameMatchesInventory = metadata?.name === provider?.id;
+  const sourceRouteEligible =
+    provider?.routeEligible !== false || provider?.sourceSelectedExplicitly === true;
+  const sourceCanBeBoundByNativeHost = !(
+    provider?.collision?.ambiguous === true ||
+    provider?.collision?.kind === "conflicting_definitions"
+  );
   const definitionValidated = provider?.validCustomAgentDefinition === true ||
     (requiredMetadataPresent && nativeNameMatchesInventory);
   const nativeCustomAgentEligible = Boolean(
-    isCodexRuntimeProvider && isToml && definitionValidated && nativeNameMatchesInventory,
+    isCodexRuntimeProvider &&
+      isToml &&
+      definitionValidated &&
+      nativeNameMatchesInventory &&
+      sourceRouteEligible &&
+      sourceCanBeBoundByNativeHost,
   );
   return {
     format: nativeCustomAgentEligible ? "codex_custom_agent_toml" : "non_native_owner_definition",
     sourceRef: codexOwnerSource(provider),
     nativeAgentName: requiredMetadataPresent ? metadata.name : null,
     nativeCustomAgentEligible,
-    validationErrors: provider?.customAgentDefinitionErrors ?? [
+    sourceSelectedExplicitly: provider?.sourceSelectedExplicitly === true,
+    sourceKey: provider?.sourceKey ?? null,
+    contentDigest: provider?.contentDigest ?? null,
+    provenance: provider?.provenance ?? [],
+    collision: provider?.collision ?? null,
+    cacheEvidence: provider?.cacheEvidence ?? null,
+    routeEligible: sourceRouteEligible,
+    sourceCanBeBoundByNativeHost,
+    validationErrors: [
+      ...(provider?.customAgentDefinitionErrors ?? []),
       ...(!isToml ? ["owner_source_is_not_toml"] : []),
       ...(!requiredMetadataPresent ? ["required_codex_agent_fields_missing"] : []),
       ...(metadata?.name && !nativeNameMatchesInventory ? ["native_name_does_not_match_selected_owner"] : []),
+      ...(!sourceRouteEligible ? ["ambiguous_native_owner_source"] : []),
+      ...(!sourceCanBeBoundByNativeHost ? ["native_host_cannot_bind_conflicting_source_definition"] : []),
     ],
     reason: nativeCustomAgentEligible
       ? "Owner was discovered from a Codex TOML custom-agent definition; native binding still requires an active host owner selector and a successful invocation."
@@ -1823,10 +2024,7 @@ function buildCodexWorkerMessage(ownerId, ownerKind, roleInstanceId, taskPacket 
 
 function codexSpawnBindingForOwner(ownerId, ownerKind = "agent", roleInstanceId = null, taskPacket = null) {
   if (runtime !== "codex" || ownerKind !== "agent" || !ownerId) return null;
-  const provider = [
-    ...runtimeScopedProjectExecutionAgents,
-    ...runtimeScopedLocalGlobalAgents,
-  ].find((agent) => agent.id === ownerId);
+  const provider = candidateExecutionAgents.find((agent) => agent.id === ownerId);
   if (!provider) return null;
   const ownerSource = codexOwnerSource(provider);
   const ownerDefinition = codexOwnerDefinition(provider);
@@ -2044,6 +2242,7 @@ function resolveProvider({ kind, terms, runtime: runtimeName = runtime }) {
   const poolFn = PROVIDER_POOL_SOURCES[kind];
   if (!poolFn) return null;
   const pool = poolFn().filter((p) => {
+    if (!providerEligibleForRoute(p)) return false;
     if (kind === "agent") return declared.has(p.id);
     return true;
   });
@@ -3503,6 +3702,18 @@ function compactProvider(provider) {
       ["providerType", provider.providerType],
       ["source", provider.source],
       ["sourceRef", provider.sourceRef],
+      ["sourceClass", provider.sourceClass],
+      ["sourceRoot", provider.sourceRoot],
+      ["sourceKey", provider.sourceKey],
+      ["sourcePriority", provider.sourcePriority],
+      ["contentDigest", provider.contentDigest],
+      ["nativeIdentity", provider.nativeIdentity],
+      ["provenance", provider.provenance],
+      ["collision", provider.collision],
+      ["routeEligible", provider.routeEligible],
+      ["sourceSelectedExplicitly", provider.sourceSelectedExplicitly],
+      ["cacheEvidence", provider.cacheEvidence],
+      ["cacheEvidenceOnly", provider.cacheEvidenceOnly],
       ["platformId", provider.platformId],
       ["runtime", provider.runtime],
       ["score", provider.score],
@@ -3510,7 +3721,9 @@ function compactProvider(provider) {
       ["selected", provider.selected],
       ["reason", provider.reason],
       ["coverageStatus", provider.coverageStatus],
-    ].filter(([, value]) => value !== undefined)
+    ]
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, compactProviderMetadata(value)])
   );
 }
 
@@ -3604,13 +3817,23 @@ function compactOwnerDiscoveryPacket(packet) {
     governanceStages: packet.governanceStages,
     evidenceRefs: (packet.evidenceRefs ?? []).slice(0, 80),
     repoCanonicalAgents: compactProviderCollection(packet.repoCanonicalAgents ?? [], 20),
+    projectRuntimeAgents: compactProviderCollection(packet.projectRuntimeAgents ?? [], 30),
+    localGlobalAgents: compactProviderCollection(packet.localGlobalAgents ?? [], 30),
     repoCanonicalSkillProviders: compactProviderCollection(
       packet.repoCanonicalSkillProviders ?? [],
       30,
     ),
+    repoCanonicalCapabilityProviders: compactProviderCollection(
+      packet.repoCanonicalCapabilityProviders ?? [],
+      40,
+    ),
     projectRuntimeCapabilityProviders: compactProviderCollection(
       packet.projectRuntimeCapabilityProviders ?? [],
       30,
+    ),
+    localGlobalCapabilityProviders: compactProviderCollection(
+      packet.localGlobalCapabilityProviders ?? [],
+      40,
     ),
     runtimeToolProviders: compactProviderCollection(packet.runtimeToolProviders ?? [], 20),
     candidateExistingExecutionOwners: (
@@ -3657,10 +3880,16 @@ function compactRouteOutput(raw) {
   };
 }
 
-const printableOutput =
-  process.argv.includes("--runner-compact") || process.argv.includes("--compact-json")
+const outputForPublication =
+  json ||
+  process.argv.includes("--runner-compact") ||
+  process.argv.includes("--compact-json")
     ? compactRouteOutput(output)
     : output;
+const printableOutput = sanitizeCapabilityPublicationValue(outputForPublication, {
+  repoRoot: repoPath("."),
+  homeDir: process.env.USERPROFILE ?? process.env.HOME ?? "",
+});
 
 if (json) console.log(JSON.stringify(printableOutput));
 else console.log(JSON.stringify(printableOutput, null, 2));

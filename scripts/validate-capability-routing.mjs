@@ -310,11 +310,11 @@ const codexNativeAgentReuse = await route(
   ["--codex-host-tool-schema", codexAgentTypeSchema],
 );
 assert(
-  codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding?.ownerBindingMode === "native_custom_agent" &&
-    codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding?.nativeAgentType === codexNativeAgentReuse.recommendedRoute?.owner &&
-    codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding?.agent_type === codexNativeAgentReuse.recommendedRoute?.owner &&
-    codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding?.ownerSelectorField === "agent_type",
-  "Codex global agent reuse may emit a native custom-agent request only when trusted active host schema exposes agent_type",
+  codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding?.ownerBindingMode === "run_scoped_owner_contract" &&
+    codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding?.nativeAgentType === null &&
+    !Object.hasOwn(codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding ?? {}, "agent_type") &&
+    codexNativeAgentReuse.recommendedRoute?.codexSpawnBinding?.hostToolSchemaEvidence?.suppliedArtifactRejected === true,
+  "Offline Codex routing must reject caller-supplied host schemas and leave native owner binding to the active host",
 );
 assert(
   codexAgentReuseComplaint.workerTaskPacketDrafts?.[0]?.ownerAgent === codexAgentReuseComplaint.recommendedRoute?.owner &&

@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 export const GRAPHIFY_NODE_ID_NORMALIZATION =
@@ -7,16 +15,25 @@ export const GRAPHIFY_NODE_ID_NORMALIZATION =
 
 const PYTHON_BATCH_SCRIPT = String.raw`
 import importlib.metadata
+import hashlib
 import json
+from pathlib import Path
 import sys
 import unicodedata
-from graphify.ids import normalize_id
+from graphify import ids as graphify_ids
+
+distribution = importlib.metadata.distribution("graphifyy")
+distribution_root = Path(distribution.locate_file("")).resolve()
+module_path = Path(graphify_ids.__file__).resolve()
+if not module_path.is_relative_to(distribution_root):
+    raise RuntimeError("graphify.ids was not loaded from the installed distribution")
 
 values = json.load(sys.stdin)
 result = {
     "graphifyVersion": importlib.metadata.version("graphifyy"),
+    "moduleSha256": hashlib.sha256(module_path.read_bytes()).hexdigest(),
     "unicodeVersion": unicodedata.unidata_version,
-    "normalized": [normalize_id(value) for value in values],
+    "normalized": [graphify_ids.normalize_id(value) for value in values],
 }
 json.dump(result, sys.stdout, ensure_ascii=False)
 `;
@@ -118,51 +135,68 @@ export function createGraphifyRuntimeNormalizer(
   const candidates = forceAsciiInvariant
     ? []
     : pythonCandidates({ launcherCommand, environment, pythonCandidate });
-  for (const candidate of candidates) {
-    const result = spawnSync(
-      candidate.command,
-      [...candidate.args, "-c", PYTHON_BATCH_SCRIPT],
-      {
-        input: JSON.stringify(uniqueValues),
-        encoding: "utf8",
-        shell: false,
-        env: {
-          ...environment,
-          PYTHONIOENCODING: "utf-8",
-          PYTHONUTF8: "1",
-        },
-        maxBuffer: 64 * 1024 * 1024,
-      },
-    );
-    if (result.status !== 0 || result.error) continue;
-    try {
-      const parsed = JSON.parse(String(result.stdout ?? ""));
-      if (
-        !Array.isArray(parsed.normalized) ||
-        parsed.normalized.length !== uniqueValues.length ||
-        !/^\d+\.\d+\.\d+$/u.test(String(parsed.graphifyVersion ?? "")) ||
-        !/^\d+\.\d+\.\d+$/u.test(String(parsed.unicodeVersion ?? ""))
-      ) {
-        continue;
-      }
-      const normalizedByValue = new Map(
-        uniqueValues.map((value, index) => [value, parsed.normalized[index]]),
-      );
-      const descriptor =
-        `graphify-${parsed.graphifyVersion}-python-unicode-${parsed.unicodeVersion}-live-v1`;
-      return {
-        descriptor,
-        normalize(value) {
-          const key = String(value ?? "");
-          if (!normalizedByValue.has(key)) {
-            throw new Error("Graphify normalizer received an unbound value");
-          }
-          return normalizedByValue.get(key);
-        },
-      };
-    } catch {
-      // Try the next verified candidate.
+  const isolatedCwd = mkdtempSync(
+    path.join(tmpdir(), "meta-kim-graphify-normalizer-"),
+  );
+  try {
+    const cwdStats = lstatSync(isolatedCwd);
+    if (
+      !cwdStats.isDirectory() ||
+      cwdStats.isSymbolicLink() ||
+      realpathSync.native(isolatedCwd) !== path.resolve(isolatedCwd)
+    ) {
+      throw new Error("Graphify normalizer cwd is not a plain isolated directory");
     }
+    for (const candidate of candidates) {
+      const result = spawnSync(
+        candidate.command,
+        [...candidate.args, "-c", PYTHON_BATCH_SCRIPT],
+        {
+          cwd: isolatedCwd,
+          input: JSON.stringify(uniqueValues),
+          encoding: "utf8",
+          shell: false,
+          env: {
+            ...environment,
+            PYTHONIOENCODING: "utf-8",
+            PYTHONUTF8: "1",
+          },
+          maxBuffer: 64 * 1024 * 1024,
+        },
+      );
+      if (result.status !== 0 || result.error) continue;
+      try {
+        const parsed = JSON.parse(String(result.stdout ?? ""));
+        if (
+          !Array.isArray(parsed.normalized) ||
+          parsed.normalized.length !== uniqueValues.length ||
+          !/^\d+\.\d+\.\d+$/u.test(String(parsed.graphifyVersion ?? "")) ||
+          !/^[0-9a-f]{64}$/u.test(String(parsed.moduleSha256 ?? "")) ||
+          !/^\d+\.\d+\.\d+$/u.test(String(parsed.unicodeVersion ?? ""))
+        ) {
+          continue;
+        }
+        const normalizedByValue = new Map(
+          uniqueValues.map((value, index) => [value, parsed.normalized[index]]),
+        );
+        const descriptor =
+          `graphify-${parsed.graphifyVersion}-module-${parsed.moduleSha256.slice(0, 12)}-python-unicode-${parsed.unicodeVersion}-live-v2`;
+        return {
+          descriptor,
+          normalize(value) {
+            const key = String(value ?? "");
+            if (!normalizedByValue.has(key)) {
+              throw new Error("Graphify normalizer received an unbound value");
+            }
+            return normalizedByValue.get(key);
+          },
+        };
+      } catch {
+        // Try the next verified candidate.
+      }
+    }
+  } finally {
+    rmSync(isolatedCwd, { recursive: true, force: true });
   }
 
   if (uniqueValues.every((value) => /^[\x00-\x7f]*$/u.test(value))) {

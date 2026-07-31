@@ -29,7 +29,6 @@ const REQUIRED_BINDING_COVERAGE = [
   "skill",
   "mcp",
   "command",
-  "tools",
   "hooks",
   "abstractPromptCapability",
   "agentTeamsPlaybook",
@@ -66,7 +65,7 @@ const SYNTHETIC_NEGATIVE_CONTROL = [
 function assertPacketStatus(report) {
   assert.equal(report.coreLoop.goalContractPacket.status, "pass");
   assert.equal(report.coreLoop.langGraphRunPacket.status, "pass");
-  assert.equal(report.coreLoop.dynamicWorkflowRuntimePacket.status, "pass");
+  assert.equal(report.coreLoop.dynamicWorkflowRuntimePacket.status, "partial");
   assert.equal(report.coreLoop.peerAgentMeshPacket.status, "pass");
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.status, "pass");
   assert.equal(report.capabilityInvocationTruthPacket.status, "partial");
@@ -100,6 +99,15 @@ function assertDynamicWorkflow(report) {
       `dynamic workflow missing ${field} coverage`,
     );
   }
+  assert.equal(
+    packet.capabilityBindingCoverage.tools,
+    false,
+    "offline product-experience validation must not manufacture executable runtime-tool evidence",
+  );
+  assert.ok(
+    packet.capabilityBindingRows.every((row) => row.runtimeTools.length === 0),
+    "offline product-experience validation must leave runtime tools unbound without current host evidence",
+  );
   assert.ok(packet.capabilityBindingRows.length > 0);
   assert.ok(
     packet.capabilityBindingRows.some((row) => row.commands.length > 0),
@@ -174,7 +182,7 @@ function assertVisibleMetaTheorySurface(report) {
   assert.ok(packet.requiredVisibleTopics.includes("langgraph_style_control_graph"));
   assert.equal(packet.capabilityInventory.notSkillOnly, true);
   assert.ok(packet.capabilityInventory.nonSkillCapabilityTypeCount > 0);
-  assert.equal(packet.dynamicWorkflow.status, "pass");
+  assert.equal(packet.dynamicWorkflow.status, "partial");
   assert.ok(packet.dynamicWorkflow.visibleRows.length > 0);
   assert.ok(
     [
@@ -270,7 +278,7 @@ function assertCapabilityInvocationTruth(report) {
   assert.equal(byFamily.get("skill").state, "selected_not_invoked");
   assert.equal(byFamily.get("prompt_rule").state, "applied");
   assert.equal(byFamily.get("command_script").state, "selected_not_invoked");
-  assert.equal(byFamily.get("runtime_tool").state, "selected_not_invoked");
+  assert.equal(byFamily.get("runtime_tool").state, "not_required");
   assert.equal(byFamily.get("agent_teams_playbook").state, "selected_not_invoked");
   assert.equal(packet.realInvocationCoverage.status, "partial");
   for (const family of [
@@ -280,7 +288,6 @@ function assertCapabilityInvocationTruth(report) {
     "mcp",
     "hook",
     "command_script",
-    "runtime_tool",
   ]) {
     assert.ok(packet.realInvocationCoverage.missingFamilies.includes(family));
   }
@@ -288,7 +295,10 @@ function assertCapabilityInvocationTruth(report) {
   assert.deepEqual(packet.callableInvocationCoverage.missingFamilies, []);
   assert.ok(packet.callableInvocationCoverage.callableFamilies.includes("mcp"));
   assert.ok(packet.callableInvocationCoverage.callableFamilies.includes("command_script"));
-  assert.ok(packet.callableInvocationCoverage.callableFamilies.includes("runtime_tool"));
+  assert.equal(
+    packet.callableInvocationCoverage.callableFamilies.includes("runtime_tool"),
+    false,
+  );
   assert.equal(packet.truthAssertions.noLiveSubagentOverclaim, true);
   assert.equal(packet.truthAssertions.noHostUiSubagentOverclaim, true);
   assert.equal(packet.truthAssertions.noAgentTeamsPlaybookOverclaim, true);
@@ -328,11 +338,17 @@ function assertInvocationProbes(report) {
   const packet = report.coreLoop.capabilityInvocationProbePacket;
   assert.equal(packet.status, "pass");
   assert.deepEqual(packet.missingFamilies, []);
+  assert.deepEqual(packet.requiredFamilies, ["mcp", "command_script"]);
   const byFamily = new Map(packet.probes.map((probe) => [probe.family, probe]));
-  for (const family of ["mcp", "command_script", "runtime_tool"]) {
+  for (const family of ["mcp", "command_script"]) {
     assert.equal(byFamily.get(family)?.status, "pass", `${family} probe did not pass`);
     assert.equal(byFamily.get(family)?.exitCode, 0, `${family} probe exitCode was not 0`);
   }
+  assert.equal(
+    byFamily.has("runtime_tool"),
+    false,
+    "offline product-experience validation must not probe an unbound runtime tool",
+  );
 }
 
 function assertAgentTeamsPlaybook(report) {

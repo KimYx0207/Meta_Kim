@@ -10,6 +10,7 @@
 
 import { promises as fs } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -26,6 +27,15 @@ import {
   loadSyncManifest,
   resolveRuntimeProjection,
 } from "./meta-kim-sync-config.mjs";
+import {
+  manifestPathFor,
+  readManifest,
+} from "./install-manifest.mjs";
+import { sanitizeCapabilityPublicationText } from "./capability-publication-sanitizer.mjs";
+import {
+  isProtectedProjectCapabilityPath,
+  loadProtectedProjectCapabilityPaths,
+} from "./project-capability-ownership.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -271,6 +281,498 @@ const TARGET_ALIASES = {
   openclaw: "openclaw",
   cursor: "cursor",
 };
+
+const SOURCE_PRIORITY = Object.freeze({
+  project: 400,
+  personal: 300,
+  shared: 200,
+  plugin: 150,
+  legacy: 100,
+});
+
+function toPosixPath(value) {
+  return String(value ?? "").replace(/\\/g, "/");
+}
+
+function pathIsWithin(candidate, root) {
+  if (!candidate || !root) return false;
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function sanitizeSourceReference(value) {
+  if (!value) return null;
+  const raw = String(value);
+  if (!path.isAbsolute(raw)) return toPosixPath(raw).replace(/^\.\//u, "");
+
+  const absolute = path.resolve(raw);
+  if (pathIsWithin(absolute, repoRoot)) {
+    return toPosixPath(path.relative(repoRoot, absolute)) || ".";
+  }
+  const home = os.homedir();
+  if (pathIsWithin(absolute, home)) {
+    const relative = toPosixPath(path.relative(home, absolute));
+    return relative ? `~/${relative}` : "~";
+  }
+
+  const parentLabel = path.basename(path.dirname(absolute)) || "root";
+  const opaqueRoot = createHash("sha256")
+    .update(path.dirname(absolute))
+    .digest("hex")
+    .slice(0, 12);
+  return `external/${parentLabel}-${opaqueRoot}/${path.basename(absolute)}`;
+}
+
+function inferSourceClass(capability) {
+  if (Object.prototype.hasOwnProperty.call(SOURCE_PRIORITY, capability.sourceClass)) {
+    return capability.sourceClass;
+  }
+  const evidence = toPosixPath(
+    [capability.path, capability.sourceRoot, capability.sourceRef, capability.relativePath]
+      .filter(Boolean)
+      .join(" "),
+  ).toLowerCase();
+  if (/(?:^|\/)(?:legacy|\.meta-kim-legacy-backup)(?:\/|$)/u.test(evidence)) {
+    return "legacy";
+  }
+  if (capability.path && pathIsWithin(capability.path, repoRoot)) return "project";
+  if (/(?:^|\/)plugins?(?:\/|$)/u.test(evidence)) return "plugin";
+  if (/(?:^|\/)\.agents\/skills(?:\/|$)/u.test(evidence)) return "shared";
+  if (capability.path && pathIsWithin(capability.path, os.homedir())) return "personal";
+  if (/^(?:project:|canonical\/|\.agents\/|\.codex\/|\.claude\/|\.cursor\/|openclaw\/)/u.test(evidence)) {
+    return evidence.includes("/.agents/skills") || evidence.startsWith(".agents/skills")
+      ? "shared"
+      : "project";
+  }
+  return "personal";
+}
+
+function inferSourceRoot(capability, type) {
+  if (capability.sourceRoot) return capability.sourceRoot;
+  if (!capability.path) return capability.platformId ?? "unknown";
+  if (capability.relativePath) {
+    const relativeParts = String(capability.relativePath).split(/[\\/]/u).filter(Boolean);
+    let root = path.resolve(capability.path);
+    for (let index = 0; index < relativeParts.length; index += 1) {
+      root = path.dirname(root);
+    }
+    return root;
+  }
+  if (type === "skills" && path.basename(capability.path) === "SKILL.md") {
+    return path.dirname(path.dirname(capability.path));
+  }
+  return path.dirname(capability.path);
+}
+
+function effectiveNativeIdentity(capability, type) {
+  if (type === "agents") {
+    return capability.nativeIdentity ??
+      capability.nativeAgentName ??
+      capability.metadata?.nativeAgentName ??
+      capability.metadata?.name ??
+      capability.id;
+  }
+  return capability.nativeIdentity ?? capability.id;
+}
+
+function stableDigestFallback(capability, type, nativeIdentity) {
+  const semanticContent = {
+    type,
+    nativeIdentity,
+    id: capability.id,
+    metadata: capability.metadata ?? null,
+    command: capability.command ?? null,
+    available: capability.available ?? null,
+  };
+  return createHash("sha256").update(JSON.stringify(semanticContent)).digest("hex");
+}
+
+async function capabilityContentDigest(capability, type, nativeIdentity) {
+  const declared = String(capability.contentDigest ?? "").replace(/^sha256:/iu, "");
+  if (/^[a-f0-9]{64}$/iu.test(declared)) return declared.toLowerCase();
+  if (capability.path) {
+    try {
+      const content = await fs.readFile(capability.path);
+      return createHash("sha256").update(content).digest("hex");
+    } catch {}
+  }
+  return stableDigestFallback(capability, type, nativeIdentity);
+}
+
+function sourceValidity(capability, type) {
+  if (type === "skills") {
+    const declared = capability.validSkillDefinition ?? capability.metadata?.validSkillDefinition;
+    return declared !== false && capability.valid !== false;
+  }
+  if (type !== "agents") return capability.valid !== false;
+  const declared = capability.validCustomAgentDefinition ??
+    capability.metadata?.validCustomAgentDefinition;
+  return declared !== false;
+}
+
+function absolutePathKey(value) {
+  if (!value) return null;
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+export async function loadCapabilityOwnershipIndex({
+  projectRoot = repoRoot,
+  globalRoot = os.homedir(),
+  manifestSpecs = null,
+  protectedProjectPaths = null,
+} = {}) {
+  const index = new Map();
+  const add = (absolutePath, evidence) => {
+    const key = absolutePathKey(absolutePath);
+    if (key) index.set(key, evidence);
+  };
+  let projectProtection = protectedProjectPaths;
+  if (!projectProtection) {
+    try {
+      projectProtection = loadProtectedProjectCapabilityPaths(projectRoot, repoRoot);
+    } catch {
+      // Fail closed: without a valid sedimentation manifest, project install
+      // ownership must not supersede unknown/project-owned capabilities.
+      projectProtection = null;
+    }
+  }
+  for (const protectedPath of projectProtection?.absolutePaths ?? []) {
+    index.set(protectedPath, {
+      owner: "project",
+      ownershipClass: "runtime_sedimented_project_copy",
+      manifestRef: ".meta-kim/state/default/project-capabilities.json",
+      manifestDigest: null,
+      validatedProjectCapabilityManifest: true,
+    });
+  }
+
+  const resolvedManifestSpecs = manifestSpecs ?? [
+    {
+      scope: "global",
+      file: manifestPathFor("global"),
+      root: globalRoot,
+    },
+    {
+      scope: "project",
+      file: manifestPathFor("project", projectRoot),
+      root: projectRoot,
+    },
+  ];
+  for (const spec of resolvedManifestSpecs) {
+    const manifest = readManifest(spec.file);
+    if (!manifest || manifest.scope !== spec.scope) continue;
+    if (spec.scope === "project" && !projectProtection) continue;
+    for (const entry of manifest?.entries ?? []) {
+      if (
+        entry?.kind !== "file" ||
+        entry?.ownershipClass !== "install_projection" ||
+        !entry?.path
+      ) continue;
+      const absolutePath = path.isAbsolute(entry.path)
+        ? entry.path
+        : path.resolve(spec.root, entry.path);
+      if (!pathIsWithin(absolutePath, spec.root)) continue;
+      if (
+        spec.scope === "project" &&
+        isProtectedProjectCapabilityPath(absolutePath, projectProtection)
+      ) continue;
+      add(absolutePath, {
+        owner: "meta_kim",
+        ownershipClass: "install_projection",
+        manifestRef: sanitizeSourceReference(spec.file),
+        manifestDigest: entry.sha256 ?? null,
+        validatedInstallManifest: true,
+      });
+    }
+  }
+  return index;
+}
+
+function defaultOwnershipForSourceClass(sourceClass) {
+  switch (sourceClass) {
+    case "project":
+      return { owner: "project", ownershipClass: "project_local_unmanaged" };
+    case "personal":
+      return { owner: "user", ownershipClass: "user_personal_capability" };
+    case "shared":
+      return { owner: "user", ownershipClass: "user_shared_capability" };
+    case "plugin":
+      return { owner: "third_party", ownershipClass: "third_party_plugin" };
+    case "legacy":
+      return { owner: "unknown", ownershipClass: "legacy_unmanaged" };
+    default:
+      return { owner: "unknown", ownershipClass: "unmanaged_unknown" };
+  }
+}
+
+function capabilityOwnership(capability, sourceClass, valid, ownershipIndex) {
+  const manifestEvidence = capability.path
+    ? ownershipIndex.get(absolutePathKey(capability.path))
+    : null;
+  const inherited = capability.owner && capability.ownershipClass
+    ? {
+        owner: capability.owner,
+        ownershipClass: capability.ownershipClass,
+        manifestRef: capability.ownershipManifestRef ?? null,
+        manifestDigest: capability.ownershipManifestDigest ?? null,
+      }
+    : null;
+  const ownership = manifestEvidence ?? inherited ?? defaultOwnershipForSourceClass(sourceClass);
+  const metaKimManifestOwned =
+    ownership.owner === "meta_kim" &&
+    ownership.ownershipClass === "install_projection" &&
+    ownership.validatedInstallManifest === true;
+  return {
+    owner: ownership.owner,
+    ownershipClass: ownership.ownershipClass,
+    ownershipManifestRef: ownership.manifestRef ?? null,
+    ownershipManifestDigest: ownership.manifestDigest ?? null,
+    repairRoute: valid
+      ? "none_required"
+      : metaKimManifestOwned
+        ? "meta_kim_manifest_owned_repair"
+        : "diagnose_only_owner_managed_repair",
+    automaticMutationAllowed: false,
+  };
+}
+
+async function enrichCapabilitySource(capability, scan, type, ownershipIndex) {
+  const nativeIdentity = String(effectiveNativeIdentity(capability, type) ?? capability.id);
+  const sourceClass = inferSourceClass(capability);
+  const sourceRoot = sanitizeSourceReference(inferSourceRoot(capability, type));
+  const sourceRef = sanitizeSourceReference(
+    capability.sourceRef ?? capability.path ?? capability.relativePath ?? capability.id,
+  );
+  const sourcePriority = SOURCE_PRIORITY[sourceClass];
+  const contentDigest = await capabilityContentDigest(capability, type, nativeIdentity);
+  const valid = sourceValidity(capability, type);
+  const ownership = capabilityOwnership(capability, sourceClass, valid, ownershipIndex);
+  const sourceKey = capability.sourceKey ??
+    `${scan.platformId}:${type}:${nativeIdentity}:${sourceClass}:${sourceRef}`;
+  const enriched = publishedCapabilityRecord(capability, {
+    sourceClass,
+    sourceRoot,
+    sourceRef,
+    contentDigest,
+    nativeIdentity,
+    sourcePriority,
+    sourceKey,
+    sourceValid: valid,
+    ...ownership,
+  });
+  if (type === "agents" && valid && nativeIdentity) {
+    enriched.inventoryId ??= capability.id;
+    enriched.id = nativeIdentity;
+  }
+  return enriched;
+}
+
+function compareCapabilitySources(left, right) {
+  return (
+    (right.sourcePriority ?? 0) - (left.sourcePriority ?? 0) ||
+    Number(right.sourceValid === true) - Number(left.sourceValid === true) ||
+    String(left.sourceRef ?? "").localeCompare(String(right.sourceRef ?? "")) ||
+    String(left.sourceKey ?? "").localeCompare(String(right.sourceKey ?? ""))
+  );
+}
+
+function provenanceEntry(capability) {
+  return {
+    id: capability.id,
+    inventoryId: capability.inventoryId ?? null,
+    sourceClass: capability.sourceClass,
+    sourceRoot: capability.sourceRoot,
+    sourceRef: capability.sourceRef,
+    contentDigest: capability.contentDigest,
+    nativeIdentity: capability.nativeIdentity,
+    sourcePriority: capability.sourcePriority,
+    sourceKey: capability.sourceKey,
+    sourceValid: capability.sourceValid,
+    owner: capability.owner,
+    ownershipClass: capability.ownershipClass,
+    ownershipManifestRef: capability.ownershipManifestRef ?? null,
+    ownershipManifestDigest: capability.ownershipManifestDigest ?? null,
+    repairRoute: capability.repairRoute,
+    automaticMutationAllowed: false,
+  };
+}
+
+const PUBLISHED_METADATA_FIELDS = new Set([
+  "name",
+  "version",
+  "description",
+  "title",
+  "_keywords",
+  "trigger",
+  "model",
+  "source",
+  "default",
+  "providerKind",
+  "transport",
+  "command",
+  "args",
+  "envKeys",
+  "permissionStatus",
+  "toolCount",
+  "serverId",
+  "validCustomAgentDefinition",
+  "customAgentDefinitionErrors",
+  "nativeAgentName",
+]);
+
+function sanitizeDiagnosticText(value) {
+  let sanitized = String(value ?? "");
+  for (const [absoluteRoot, replacement] of [
+    [repoRoot, "."],
+    [os.homedir(), "~"],
+  ]) {
+    for (const variant of [absoluteRoot, toPosixPath(absoluteRoot)]) {
+      if (!variant) continue;
+      sanitized = sanitized.replaceAll(variant, replacement);
+    }
+  }
+  sanitized = sanitized.replace(
+    /\\\\[^\\/\s"'`]+\\[^\s"'`]+/gu,
+    (match) => `external/unc-${createHash("sha256").update(match).digest("hex").slice(0, 12)}`,
+  );
+  sanitized = sanitized.replace(
+    /[A-Za-z]:[\\/][^\s"'`]+/gu,
+    (match) => sanitizeSourceReference(match),
+  );
+  sanitized = sanitized.replace(
+    /(^|[\s=(])\/(?!\/)[^\s"'`]+/gu,
+    (match, prefix) => `${prefix}${sanitizeSourceReference(match.slice(prefix.length))}`,
+  );
+  return sanitizeCapabilityPublicationText(sanitized, {
+    repoRoot,
+    homeDir: os.homedir(),
+  });
+}
+
+function isSensitiveArgumentKey(value) {
+  const normalized = String(value ?? "")
+    .replace(/^-+/u, "")
+    .replace(/[^A-Za-z0-9]+/gu, "_")
+    .toUpperCase();
+  return /(?:^|_)(?:API_KEY|ACCESS_TOKEN|REFRESH_TOKEN|CLIENT_SECRET|TOKEN|SECRET|PASSWORD|KEY|CREDENTIALS?|SESSION(?:_ID)?|COOKIE|SIGNATURE|AUTHORIZATION|AUTH|BEARER)(?:_|$)/u.test(
+    normalized,
+  );
+}
+
+function sanitizePublishedValue(value) {
+  if (Array.isArray(value)) return value.map(sanitizePublishedValue);
+  if (value && typeof value === "object") {
+    if (value instanceof Date) return value.toISOString();
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, sanitizePublishedValue(nested)]),
+    );
+  }
+  return typeof value === "string" ? sanitizeDiagnosticText(value) : value;
+}
+
+function sanitizePublishedArgs(value) {
+  if (!Array.isArray(value)) {
+    if (typeof value !== "string") return sanitizePublishedValue(value);
+    const credentialsRedacted = value
+      .replace(/:\/\/[^/@\s]+@/gu, "://[REDACTED_USERINFO]@")
+      .replace(/([?&])([^=&#\s]+)=([^&#\s]+)/gu, (match, separator, key) =>
+        isSensitiveArgumentKey(key) ? `${separator}${key}=[REDACTED_ARGUMENT]` : match)
+      .replace(/(Authorization:\s*(?:Bearer|Basic)\s+)[^\s"']+/giu, "$1[REDACTED_ARGUMENT]")
+      .replace(
+        /(-H|--headers?|--http-header)(=|\s+)(.+?)(?=\s+--?[A-Za-z]|$)/giu,
+        (match, flag, separator) => `${flag}${separator}[REDACTED_ARGUMENT]`,
+      )
+      .replace(/(--?([^=\s]+)(?:=|\s+))([^\s]+)/gu, (match, prefix, key) =>
+        isSensitiveArgumentKey(key) ? `${prefix}[REDACTED_ARGUMENT]` : match)
+      .replace(/\b([A-Za-z0-9_]+)=([^\s]+)/gu, (match, key) =>
+        isSensitiveArgumentKey(key) ? `${key}=[REDACTED_ARGUMENT]` : match);
+    return sanitizePublishedValue(credentialsRedacted);
+  }
+  let redactNext = false;
+  return value.map((rawArg) => {
+    const arg = String(rawArg ?? "");
+    if (redactNext) {
+      redactNext = false;
+      return "[REDACTED_ARGUMENT]";
+    }
+    if (/^-{1,2}[^=]+=/u.test(arg) && isSensitiveArgumentKey(arg.slice(0, arg.indexOf("=")))) {
+      return `${arg.slice(0, arg.indexOf("=") + 1)}[REDACTED_ARGUMENT]`;
+    }
+    if (/^[A-Za-z0-9_]+=.+$/u.test(arg) && isSensitiveArgumentKey(arg.slice(0, arg.indexOf("=")))) {
+      return `${arg.slice(0, arg.indexOf("=") + 1)}[REDACTED_ARGUMENT]`;
+    }
+    if (/^-{1,2}/u.test(arg) && isSensitiveArgumentKey(arg)) {
+      redactNext = true;
+      return sanitizePublishedValue(arg);
+    }
+    if (/^(?:-H|--headers?|--http-header)$/i.test(arg)) {
+      redactNext = true;
+      return sanitizePublishedValue(arg);
+    }
+    return sanitizePublishedArgs(arg);
+  });
+}
+
+function publishedMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object") return null;
+  const entries = Object.entries(metadata)
+    .filter(([key]) => PUBLISHED_METADATA_FIELDS.has(key))
+    .map(([key, value]) => [
+      key,
+      key === "args" || key === "command" ? sanitizePublishedArgs(value) : sanitizePublishedValue(value),
+    ]);
+  if (typeof metadata.developer_instructions === "string") {
+    entries.push(["developerInstructions", {
+      present: metadata.developer_instructions.trim().length > 0,
+      length: metadata.developer_instructions.length,
+      contentDigest: createHash("sha256")
+        .update(metadata.developer_instructions)
+        .digest("hex"),
+    }]);
+  }
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function publishedCapabilityRecord(capability, sourceFields) {
+  const relativePath = capability.relativePath
+    ? toPosixPath(capability.relativePath)
+    : null;
+  const safeRelativePath = relativePath &&
+    !path.isAbsolute(capability.relativePath) &&
+    !relativePath.startsWith("/") &&
+    !relativePath.split("/").includes("..")
+    ? relativePath
+    : undefined;
+  const record = {
+    id: capability.id,
+    type: capability.type,
+    platform: capability.platform,
+    platformId: capability.platformId,
+    size: capability.size,
+    modified: sanitizePublishedValue(capability.modified),
+    relativePath: safeRelativePath,
+    metadata: publishedMetadata(capability.metadata),
+    command: sanitizePublishedArgs(capability.command),
+    args: sanitizePublishedArgs(capability.args),
+    available: capability.available,
+    unavailableReason: sanitizePublishedValue(capability.unavailableReason),
+    fromSkill: capability.fromSkill,
+    hookEvent: capability.hookEvent,
+    layer: capability.layer,
+    executionBlock: capability.executionBlock,
+    inventoryId: capability.inventoryId,
+    nativeAgentName: capability.nativeAgentName,
+    validCustomAgentDefinition: capability.validCustomAgentDefinition,
+    customAgentDefinitionErrors: capability.customAgentDefinitionErrors,
+    validSkillDefinition: capability.validSkillDefinition,
+    skillDefinitionErrors: capability.skillDefinitionErrors,
+    ...sourceFields,
+  };
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined && value !== null),
+  );
+}
 
 function argValue(args, name) {
   const eq = args.find((arg) => arg.startsWith(`${name}=`));
@@ -935,9 +1437,11 @@ function runKnownMcpSelfTest(command, args) {
 
 // ========== Agent 元数据提取 ==========
 
-function parseSimpleYaml(text) {
+export function parseSimpleYaml(text) {
   const metadata = {};
-  for (const line of text.split(/\r?\n/)) {
+  const lines = text.split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const colonIndex = trimmed.indexOf(":");
@@ -950,7 +1454,32 @@ function parseSimpleYaml(text) {
       ) {
         value = value.slice(1, -1);
       }
-      if (value === "|" || value === ">") continue;
+      const blockScalarMatch = value.match(/^([|>])(?:[1-9][+-]?|[+-][1-9]?|)$/u);
+      if (blockScalarMatch) {
+        const baseIndent = line.length - line.trimStart().length;
+        const blockLines = [];
+        let cursor = index + 1;
+        while (cursor < lines.length) {
+          const candidate = lines[cursor];
+          const candidateTrimmed = candidate.trim();
+          const candidateIndent = candidate.length - candidate.trimStart().length;
+          if (candidateTrimmed && candidateIndent <= baseIndent) break;
+          blockLines.push(candidate);
+          cursor += 1;
+        }
+        const nonEmptyIndents = blockLines
+          .filter((candidate) => candidate.trim())
+          .map((candidate) => candidate.length - candidate.trimStart().length);
+        const commonIndent = nonEmptyIndents.length > 0 ? Math.min(...nonEmptyIndents) : 0;
+        const normalizedBlock = blockLines.map((candidate) =>
+          candidate.trim() ? candidate.slice(commonIndent).trimEnd() : "");
+        value = blockScalarMatch[1] === ">"
+          ? normalizedBlock.join(" ").replace(/\s+/gu, " ").trim()
+          : normalizedBlock.join("\n").trim();
+        metadata[key] = value;
+        index = cursor - 1;
+        continue;
+      }
       metadata[key] = value;
     }
   }
@@ -1165,6 +1694,11 @@ async function scanPlatform(platformId, platform) {
               ...capability.metadata,
               ...(await extractSkillMetadata(item.path)),
             };
+            capability.skillDefinitionErrors = [
+              ...(!capability.metadata?.name ? ["missing_name"] : []),
+              ...(!capability.metadata?.description ? ["missing_description"] : []),
+            ];
+            capability.validSkillDefinition = capability.skillDefinitionErrors.length === 0;
           }
 
           result.capabilities[type].push(capability);
@@ -1651,7 +2185,9 @@ export async function buildGlobalCapabilityInventory(
   scannedResults,
   profile,
   previousInventory = null,
+  options = {},
 ) {
+  const ownershipIndex = options.ownershipIndex ?? await loadCapabilityOwnershipIndex();
   const index = {
     generatedAt: new Date().toISOString(),
     registryName: "global-capabilities",
@@ -1693,18 +2229,88 @@ export async function buildGlobalCapabilityInventory(
         )
       : [];
 
-  for (const scan of [...retainedPlatformResults, ...scannedResults]) {
-    index.byPlatform[scan.platformId] = scan;
-
-    for (const [type, capabilities] of Object.entries(scan.capabilities)) {
+  const sourceGroups = new Map();
+  for (const originalScan of [...retainedPlatformResults, ...scannedResults]) {
+    const scan = {
+      platform: originalScan.platform,
+      platformId: originalScan.platformId,
+      capabilities: {},
+      errors: (originalScan.errors ?? []).map(sanitizeDiagnosticText),
+    };
+    for (const [type, capabilities] of Object.entries(originalScan.capabilities ?? {})) {
+      scan.capabilities[type] = await Promise.all(
+        capabilities.map((capability) =>
+          enrichCapabilitySource(capability, originalScan, type, ownershipIndex)),
+      );
       index.summary[`total${type.charAt(0).toUpperCase()}${type.slice(1)}`] +=
         capabilities.length;
-
-      for (const cap of capabilities) {
-        const key = `${scan.platformId}:${cap.id}`;
-        index.byCapabilityType[type][key] = cap;
+      for (const capability of scan.capabilities[type]) {
+        const groupKey = `${scan.platformId}\u0000${type}\u0000${capability.nativeIdentity}`;
+        const group = sourceGroups.get(groupKey) ?? {
+          platformId: scan.platformId,
+          type,
+          nativeIdentity: capability.nativeIdentity,
+          candidates: [],
+        };
+        group.candidates.push(capability);
+        sourceGroups.set(groupKey, group);
       }
     }
+    index.byPlatform[scan.platformId] = scan;
+  }
+
+  for (const group of sourceGroups.values()) {
+    const candidates = [...group.candidates].sort(compareCapabilitySources);
+    const winner = candidates[0];
+    const distinctDigests = [...new Set(candidates.map((entry) => entry.contentDigest))];
+    const exactDuplicate = candidates.length > 1 && distinctDigests.length === 1;
+    const codexAgentCollision =
+      group.type === "agents" &&
+      ["codex", "codexapp"].includes(String(group.platformId).toLowerCase()) &&
+      candidates.length > 1;
+    const ambiguous = codexAgentCollision && !exactDuplicate;
+    const provenance = candidates.map(provenanceEntry);
+    const collision = {
+      detected: candidates.length > 1,
+      kind: candidates.length <= 1
+        ? "none"
+        : exactDuplicate
+          ? "exact_duplicate"
+          : "conflicting_definitions",
+      candidateCount: candidates.length,
+      distinctContentDigests: distinctDigests,
+      winnerSourceKey: winner.sourceKey,
+      winnerSourceRef: winner.sourceRef,
+      deterministicSelectionPolicy:
+        "source_class_project_personal_shared_legacy_then_validity_then_source_ref",
+      exactDuplicate,
+      ambiguous,
+      routeEligible: !ambiguous && winner.sourceValid !== false,
+    };
+
+    for (const candidate of candidates) {
+      const raw = index.byPlatform[group.platformId]?.capabilities?.[group.type]
+        ?.find((entry) => entry.sourceKey === candidate.sourceKey);
+      if (!raw) continue;
+      raw.provenance = provenance;
+      raw.collision = collision;
+      raw.selectedAsWinner = candidate.sourceKey === winner.sourceKey;
+      raw.routeEligible = collision.routeEligible;
+      raw.routesToSourceKey = exactDuplicate ? winner.sourceKey : null;
+    }
+
+    const selected = {
+      ...winner,
+      provenance,
+      collision,
+      collisionAliases: exactDuplicate
+        ? candidates.map((entry) => entry.sourceKey)
+        : [],
+      routeEligible: collision.routeEligible,
+      ambiguousNativeIdentity: ambiguous,
+    };
+    const legacyKey = `${group.platformId}:${group.nativeIdentity}`;
+    index.byCapabilityType[group.type][legacyKey] = selected;
   }
 
   return index;

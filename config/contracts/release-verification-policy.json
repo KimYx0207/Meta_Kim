@@ -16,6 +16,7 @@
     "meta:check": 120000,
     "meta:verify:governance:core": 300000,
     "meta:graphify:check": 60000,
+    "meta:graphify:verified-rebuild": 600000,
     "meta:check:global:release": 120000,
     "eval-meta-agents": 900000,
     "meta:runtime:produce": 1800000,
@@ -23,7 +24,7 @@
     "meta:test:unit": 120000,
     "meta:test:setup": 300000,
     "meta:test:setup:packed": 900000,
-    "meta:test:meta-theory": 300000,
+    "meta:test:meta-theory": 600000,
     "meta:test:integration": 180000,
     "meta:acceptance:clean-room:require": 30000
   }

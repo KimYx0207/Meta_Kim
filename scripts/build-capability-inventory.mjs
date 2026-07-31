@@ -136,6 +136,17 @@ function homeRelativePath(filePath) {
   return toPosix(filePath);
 }
 
+function cachedGlobalSourcePath(entry, fallback) {
+  const sourceRef = toPosix(String(entry?.sourceRef ?? "").trim());
+  if (
+    /^~\/(?:[A-Za-z0-9._-]+)(?:\/[A-Za-z0-9._-]+)*$/u.test(sourceRef) &&
+    sourceRef.split("/").every((segment) => ![".", ".."].includes(segment))
+  ) {
+    return sourceRef;
+  }
+  return homeRelativePath(entry?.path) ?? fallback;
+}
+
 async function readJsonIfExists(relativePath) {
   try {
     return await readJson(relativePath);
@@ -339,9 +350,10 @@ async function globalRuntimeCapabilities(projectProjectionMode) {
         if (capabilityType !== "agents") {
           continue;
         }
-        const sourcePath =
-          homeRelativePath(entry?.path) ??
-          `global:${platformId}:${capabilityType}:${entry?.id ?? "unknown"}`;
+        const sourcePath = cachedGlobalSourcePath(
+          entry,
+          `global:${platformId}:${capabilityType}:${entry?.id ?? "unknown"}`,
+        );
         const id = `global:${platformId}:${capabilityType}:${entry?.id ?? path.basename(sourcePath)}`;
         records.push({
           id,

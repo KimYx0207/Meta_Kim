@@ -1,0 +1,2 @@
+{"type":"turn.completed","usage":{"input_tokens":900,"cached_input_tokens":100,"output_tokens":60}}
+{"type":"process.completed","exit_code":1}

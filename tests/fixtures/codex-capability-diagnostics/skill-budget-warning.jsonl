@@ -1,0 +1,3 @@
+{"type":"warning","message":"skill metadata exceeded the 2% context-window budget","skill_report":{"total":12,"included":9,"omitted_count":3,"truncatedDescriptionCount":2}}
+{"type":"turn.completed","usage":{"input_tokens":2200,"cached_input_tokens":1000,"output_tokens":150}}
+{"type":"process.completed","exit_code":0}

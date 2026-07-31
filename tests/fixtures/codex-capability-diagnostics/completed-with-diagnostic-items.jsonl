@@ -1,0 +1,4 @@
+{"type":"item.completed","item":{"type":"error","message":"Ignoring malformed agent role definition: duplicate agent role name `worker` discovered"}}
+{"type":"item.completed","item":{"type":"error","message":"skill metadata exceeded the 2% context-window budget"}}
+{"type":"item.completed","item":{"type":"error","message":"`[features].codex_hooks` is deprecated"}}
+{"type":"turn.completed","usage":{"input_tokens":2500,"cached_input_tokens":1000,"output_tokens":120}}

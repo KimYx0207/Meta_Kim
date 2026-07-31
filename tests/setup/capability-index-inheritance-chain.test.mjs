@@ -276,6 +276,198 @@ describe("capability index inheritance chain", () => {
     assert.ok(refreshedClaude.byCapabilityType.agents["codexApp:codex-worker"]);
   });
 
+  test("source-aware inventory selects a stable skill winner and preserves every source", async () => {
+    const sourceCandidates = [
+      {
+        id: "same-skill",
+        platformId: "codex",
+        path: "/project/.agents/skills/same-skill/SKILL.md",
+        sourceClass: "project",
+        sourceRoot: "/project/.agents/skills",
+        sourceRef: ".agents/skills/same-skill/SKILL.md",
+        contentDigest: "1".repeat(64),
+      },
+      {
+        id: "same-skill",
+        platformId: "codex",
+        path: "/home/user/.codex/skills/same-skill/SKILL.md",
+        sourceClass: "personal",
+        sourceRoot: "/home/user/.codex/skills",
+        sourceRef: "~/.codex/skills/same-skill/SKILL.md",
+        contentDigest: "2".repeat(64),
+      },
+      {
+        id: "same-skill",
+        platformId: "codex",
+        path: "/home/user/.agents/skills/same-skill/SKILL.md",
+        sourceClass: "shared",
+        sourceRoot: "/home/user/.agents/skills",
+        sourceRef: "~/.agents/skills/same-skill/SKILL.md",
+        contentDigest: "3".repeat(64),
+      },
+      {
+        id: "same-skill",
+        platformId: "codex",
+        path: "/home/user/legacy/same-skill/SKILL.md",
+        sourceClass: "legacy",
+        sourceRoot: "/home/user/legacy",
+        sourceRef: "legacy/same-skill/SKILL.md",
+        contentDigest: "4".repeat(64),
+      },
+    ];
+    const scan = {
+      platformId: "codex",
+      capabilities: {
+        agents: [],
+        skills: sourceCandidates,
+        hooks: [],
+        mcpServers: [],
+        mcpTools: [],
+        plugins: [],
+        commands: [],
+        rules: [],
+        prompts: [],
+      },
+      errors: [],
+    };
+
+    const forward = await buildGlobalCapabilityInventory([scan], "source-aware");
+    const reverse = await buildGlobalCapabilityInventory(
+      [{ ...scan, capabilities: { ...scan.capabilities, skills: [...sourceCandidates].reverse() } }],
+      "source-aware",
+    );
+    const winner = forward.byCapabilityType.skills["codex:same-skill"];
+    const reverseWinner = reverse.byCapabilityType.skills["codex:same-skill"];
+
+    assert.equal(winner.sourceClass, "project");
+    assert.equal(winner.sourcePriority, 400);
+    assert.equal(winner.nativeIdentity, "same-skill");
+    assert.equal(winner.contentDigest, "1".repeat(64));
+    assert.equal(winner.sourceKey, reverseWinner.sourceKey);
+    assert.equal(winner.collision.kind, "conflicting_definitions");
+    assert.equal(winner.collision.routeEligible, true);
+    assert.equal(winner.provenance.length, 4);
+    assert.deepEqual(
+      winner.provenance.map((entry) => entry.sourceClass),
+      ["project", "personal", "shared", "legacy"],
+    );
+    assert.equal(forward.byPlatform.codex.capabilities.skills.length, 4);
+    assert.ok(
+      forward.byPlatform.codex.capabilities.skills.every(
+        (entry) => entry.provenance.length === 4 && entry.collision.candidateCount === 4,
+      ),
+      "raw platform evidence must retain the full collision provenance",
+    );
+  });
+
+  test("published global inventory omits raw absolute paths and workspace metadata", async () => {
+    const tempRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "meta-kim-private-inventory-"),
+    );
+    const skillPath = path.join(tempRoot, "skills", "private-skill", "SKILL.md");
+    await fs.mkdir(path.dirname(skillPath), { recursive: true });
+    await fs.writeFile(skillPath, "# Private skill\n", "utf8");
+    try {
+      const inventory = await buildGlobalCapabilityInventory(
+        [{
+          platform: "Codex",
+          platformId: "codex",
+          baseDir: tempRoot,
+          capabilities: {
+            agents: [],
+            skills: [{
+              id: "private-skill",
+              type: "skills",
+              platform: "Codex",
+              platformId: "codex",
+              path: skillPath,
+              relativePath: path.join("private-skill", "SKILL.md"),
+              metadata: {
+                name: "private-skill",
+                description: `Loaded from ${skillPath} and \\\\private-server\\private-share\\secret`,
+                workspace: tempRoot,
+              },
+            }],
+            hooks: [],
+            mcpServers: [{
+              id: "private-mcp",
+              type: "mcpServers",
+              platform: "Codex",
+              platformId: "codex",
+              relativePath: "../private-mcp.json",
+              command: "node",
+              args: [
+                "server.mjs",
+                "--token",
+                "private-token-value",
+                "--api-key=private-key-value",
+                "--header",
+                "Authorization: Bearer private-bearer-value",
+                "--client-secret",
+                "private-client-secret",
+                "--access-token=private-access-token",
+                "AWS_SECRET_ACCESS_KEY=private-aws-secret",
+                "https://user:pass@example.test/mcp?access_token=private-query-value&safe=visible",
+              ],
+              metadata: {
+                name: "private-mcp",
+                providerKind: "mcp-server",
+                args: "server.mjs --header=X-Api-Key: private-inline-header --http-header Cookie: private-cookie --safe visible",
+              },
+            }],
+            mcpTools: [],
+            plugins: [],
+            commands: [],
+            rules: [],
+            prompts: [],
+          },
+          errors: [`Platform directory not found: ${tempRoot}`],
+        }],
+        "privacy-test",
+      );
+      const serialized = JSON.stringify(inventory);
+      const skill = inventory.byCapabilityType.skills["codex:private-skill"];
+      const mcp = inventory.byCapabilityType.mcpServers["codex:private-mcp"];
+
+      assert.equal("path" in skill, false);
+      assert.equal("workspace" in (skill.metadata ?? {}), false);
+      assert.equal("baseDir" in inventory.byPlatform.codex, false);
+      assert.equal(serialized.includes(tempRoot), false);
+      assert.equal(serialized.includes(tempRoot.replace(/\\/gu, "/")), false);
+      assert.equal(serialized.includes(repoRoot), false);
+      assert.equal(serialized.includes(repoRoot.replace(/\\/gu, "/")), false);
+      assert.equal(serialized.includes("private-server"), false);
+      assert.equal(serialized.includes("private-share"), false);
+      assert.match(skill.sourceRef, /^(?:~\/|external\/)/u);
+      assert.match(skill.contentDigest, /^[a-f0-9]{64}$/u);
+      assert.deepEqual(mcp.args.slice(0, 6), [
+        "server.mjs",
+        "--token",
+        "[REDACTED_ARGUMENT]",
+        "--api-key=[REDACTED_ARGUMENT]",
+        "--header",
+        "[REDACTED_ARGUMENT]",
+      ]);
+      assert.deepEqual(mcp.args.slice(6, 10), [
+        "--client-secret",
+        "[REDACTED_ARGUMENT]",
+        "--access-token=[REDACTED_ARGUMENT]",
+        "AWS_SECRET_ACCESS_KEY=[REDACTED_ARGUMENT]",
+      ]);
+      const urlArg = mcp.args.at(-1);
+      assert.equal(urlArg.includes("user:pass"), false);
+      assert.equal(urlArg.includes("private-query-value"), false);
+      assert.match(urlArg, /REDACTED/);
+      assert.equal("relativePath" in mcp, false);
+      assert.equal(JSON.stringify(mcp.metadata).includes("private-token-value"), false);
+      assert.equal(JSON.stringify(mcp.metadata).includes("private-key-value"), false);
+      assert.equal(JSON.stringify(mcp.metadata).includes("private-inline-header"), false);
+      assert.equal(JSON.stringify(mcp.metadata).includes("private-cookie"), false);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("concurrent targeted refreshes publish complete JSON without losing another runtime", async () => {
     const tempRoot = await fs.mkdtemp(
       path.join(os.tmpdir(), "meta-kim-capability-inventory-race-"),

@@ -706,7 +706,7 @@ describe("34 — Meta-theory run deliverables", () => {
         runArtifact.visibleMetaTheorySurfacePacket.capabilityInvocationPresentation.executionState,
         "not_confirmed"
       );
-      assert.equal(runArtifact.visibleMetaTheorySurfacePacket.dynamicWorkflow.status, "pass");
+      assert.equal(runArtifact.visibleMetaTheorySurfacePacket.dynamicWorkflow.status, "partial");
       assert.equal(runArtifact.visibleMetaTheorySurfacePacket.agentTeamsPlaybook.status, "pass");
       assert.equal(runArtifact.visibleMetaTheorySurfacePacket.peerAgentMesh.status, "pass");
       assert.equal(runArtifact.visibleMetaTheorySurfacePacket.langGraph.status, "pass");

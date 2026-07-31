@@ -1,0 +1,4 @@
+{"type":"turn.started"}
+{"type":"item.completed","item":{"type":"error","message":"event stream lagged behind; dropped 3 events"}}
+{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":400,"output_tokens":80}}
+{"type":"process.completed","exit_code":0}

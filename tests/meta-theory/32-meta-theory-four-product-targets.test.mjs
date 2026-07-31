@@ -811,7 +811,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     assert.equal(output.dynamicWorkflow.skill, true);
     assert.equal(output.dynamicWorkflow.mcp, true);
     assert.equal(output.dynamicWorkflow.command, true);
-    assert.equal(output.dynamicWorkflow.tools, true);
+    assert.equal(output.dynamicWorkflow.tools, false);
     assert.equal(output.dynamicWorkflow.hooks, true);
     assert.ok(output.peers > 0);
     assert.equal(output.defaultBoundaryRun.capabilityInvocationTruth.status, "partial");

@@ -62,7 +62,7 @@ describe("graphify idempotent wiring (contract)", () => {
       /\[\s*"extract",\s*"\.",\s*"--force",\s*\.\.\.migrationBackendArgs,?\s*\]/,
     );
     assert.match(src, /\["update", "\."\]/);
-    assert.match(src, /graphIdentityMigrationPlan\(\)/);
+    assert.match(src, /graphIdentityMigrationPlan\(/);
     assert.match(src, /GRAPHIFY_MIGRATION_STATE_SCHEMA/);
     assert.match(src, /\["--backend", "claude-cli"\]/);
     assert.match(src, /META_KIM_GRAPHIFY_MIGRATION_BACKEND/);
@@ -71,7 +71,7 @@ describe("graphify idempotent wiring (contract)", () => {
     assert.match(src, /finalGraphStats\.nodes\.toLocaleString\("en-US"\)/);
     const prepareIdx = src.lastIndexOf("writeMigrationState(plan.paths, plan.repository, \"extract_complete\")");
     const clusterIdx = src.lastIndexOf('"cluster-only", ".", ...migrationBackendArgs');
-    const stampIdx = src.lastIndexOf("if (!stampGraphFreshness(plan.repository.repoRoot))");
+    const stampIdx = src.lastIndexOf("if (!stampGraphFreshness(");
     assert.ok(prepareIdx > 0 && prepareIdx < clusterIdx);
     assert.ok(clusterIdx < stampIdx);
     assert.match(src, /spawnSync\(launcher\.command, \[\.\.\.launcher\.args, \.\.\.graphifyArgs\]/);
@@ -253,7 +253,10 @@ console.log("forced rebuild ok");
     assert.match(src, /graph\.built_at_commit = repository\.currentHead/);
     assert.match(src, /enrichMetaKimGraph\(graph\)/);
     assert.ok(src.includes("Built from commit:\\s*`?([0-9a-f]{7,40})`?"));
-    assert.match(rebuildBody, /stampGraphFreshness\(plan\.repository\.repoRoot\)/);
+    assert.match(
+      rebuildBody,
+      /stampGraphFreshness\(\s*plan\.repository\.repoRoot,/u,
+    );
   });
 
   test("graphify enrichment adds Meta_Kim agent governance edges and node type aliases", () => {

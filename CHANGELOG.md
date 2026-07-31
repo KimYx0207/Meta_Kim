@@ -8,6 +8,19 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.17] - 2026-07-31
+
+### Fixed
+
+- **Codex Agent and Skill discovery now keeps source provenance instead of flattening same-name definitions into one unverified capability.** Exact duplicates remain aliasable, while conflicting or invalid definitions are published as diagnosis-only and cannot enter normal or dynamic execution routing. Live filesystem definitions outrank stale cache entries, and project/global collisions retain their ownership and repair boundary.
+- **Offline routing can no longer manufacture native Codex custom-agent authority from supplied JSON or environment data.** Only the current interactive host may prove native `agent_type` support; offline selection rejects self-reported host schemas and safely falls back to a run-scoped owner contract.
+- **Capability diagnostics and publication are safer and more honest.** New Codex skill preflight and JSONL replay commands report candidate-set pressure and observed event markers without claiming host completion or causality. Published inventory and route output redact secrets and local paths, summarize developer instructions instead of exposing prompt text, and fail closed when install ownership cannot be validated.
+- **Standard release verification no longer treats a maintainer-adopted Graphify artifact as fresh production evidence.** The gate now launches and observes a deterministic local code-graph update, binds its unchanged repository snapshot, then reclusters without an LLM before the normal identity and freshness checks. Existing-extract adoption remains a recovery aid only.
+
+### Verification
+
+- Focused discovery, routing, YAML metadata, ownership, privacy, and replay regressions pass, including conflicting custom agents, invalid dynamic-lane providers, quoted and delimiter-containing local paths, secret-bearing environment fragments, process-exit failures, and markers without an independently bound host receipt. Three independent correctness, product-fit, and security reviews report no remaining P0/P1/P2. Standard full release verification, packed-product installation, exact Release binding, and final Claude Code/Codex global readback remain required before publication. This release does not claim that Codex host metadata truncation is fixed.
+
 ## [2.9.16] - 2026-07-31
 
 ### Fixed

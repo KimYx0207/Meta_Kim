@@ -703,14 +703,16 @@ test("routing fixtures recall internal patterns and platform/OS matrices", () =>
   assertNativeCodexSpawn(
     codexNativeCustomAgentRoute.recommendedRoute?.codexSpawnBinding,
     codexNativeCustomAgentRoute.recommendedRoute?.owner,
-    null,
-    "native_custom_agent",
   );
   assertNativeCodexSpawn(
     codexNativeCustomAgentRoute.workerTaskPacketDrafts?.[0]?.codexSpawnBinding,
     codexNativeCustomAgentRoute.recommendedRoute?.owner,
     codexNativeCustomAgentRoute.workerTaskPacketDrafts?.[0],
-    "native_custom_agent",
+  );
+  assert.equal(
+    codexNativeCustomAgentRoute.recommendedRoute?.codexSpawnBinding
+      ?.hostToolSchemaEvidence?.suppliedArtifactRejected,
+    true,
   );
   assert.equal(
     codexAgentReuseComplaint.capabilityGapDetected,
