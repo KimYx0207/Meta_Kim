@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-31T03:42:04.687Z",
+  "generatedAt": "2026-07-31T20:00:29.422Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -20,7 +20,7 @@
   "summary": {
     "totalAgents": 9,
     "totalSkills": 17,
-    "totalHooks": 24,
+    "totalHooks": 25,
     "totalMcpServers": 1,
     "totalMcpTools": 6,
     "totalPlugins": 4,
@@ -33,25 +33,25 @@
       "scope": "local_project_projection_when_present",
       "note": "Canonical totals count source inventory entries; runtimeActualCounts counts generated local projection files/settings when those gitignored runtime folders exist.",
       "canonicalInventory": {
-        "hooks": 24,
+        "hooks": 25,
         "commands": 7
       },
       "claude": {
         "projectionPresent": true,
         "hookCommandEntries": 14,
-        "hookFiles": 17,
+        "hookFiles": 18,
         "commandFiles": 3
       },
       "codex": {
         "projectionPresent": true,
         "hookCommandEntries": 15,
-        "hookFiles": 18,
+        "hookFiles": 19,
         "commandFiles": 3
       },
       "cursor": {
         "projectionPresent": true,
         "hookCommandEntries": 11,
-        "hookFiles": 17,
+        "hookFiles": 18,
         "commandFiles": 0
       },
       "openclaw": {
@@ -434,6 +434,16 @@
         "canonicalPath": "canonical/runtime-assets/shared/hooks/skip-reminder.mjs",
         "adapterPath": "canonical/runtime-assets/claude/hooks/skip-reminder.mjs"
       },
+      "repo:canonical-runtime-assets:spine-state-gates.mjs": {
+        "id": "spine-state-gates.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/shared/hooks/spine-state-gates.mjs",
+        "relativePath": "spine-state-gates.mjs",
+        "size": 26002,
+        "modified": "2026-07-31T19:03:27.534Z",
+        "canonicalPath": "canonical/runtime-assets/shared/hooks/spine-state-gates.mjs"
+      },
       "repo:canonical-runtime-assets:spine-state-utils.mjs": {
         "id": "spine-state-utils.mjs",
         "type": "hooks",
@@ -450,8 +460,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "relativePath": "spine-state.mjs",
-        "size": 88213,
-        "modified": "2026-07-25T20:07:03.694Z",
+        "size": 60370,
+        "modified": "2026-07-31T19:03:27.534Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "adapterPath": "canonical/runtime-assets/claude/hooks/spine-state.mjs"
       },

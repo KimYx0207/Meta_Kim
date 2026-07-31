@@ -8,6 +8,18 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.18] - 2026-08-01
+
+### Fixed
+
+- **Governance decisions and transactional run state now have a clear boundary.** `spine-state.mjs` remains the single compatibility entrypoint and state authority; path/profile routing, task identity, HMAC, migration, locks/CAS, activation, and terminalization stay in the original transaction chain. Pure stage, capability, choice-surface, and fan-out policy moved into one shared zero-I/O module, reducing the verification blast radius of policy-only changes.
+- **Claude Code, Codex, and Cursor Hook projection installs dependencies before replacing their consumers.** Project sync, global sync, setup, cleanup ownership sets, and capability discovery all include the new shared dependency. An interrupted update cannot create this release's new “consumer written before dependency exists” window.
+- **In-process importers can no longer mutate shared governance policy.** Stage order, public labels, choice-surface states, and nested stage policy are deeply frozen, while the Meta Agent allowlist remains private. A forged owner cannot enter the primary dispatch chain by changing a shared array.
+
+### Verification
+
+- All 43 historical `spine-state.mjs` exports remain available, and the 14 extracted policy exports retain identity through the compatibility façade. Focused regressions cover state CAS/migration/interruption repair, cold import across three runtime projections, packed/global Hook projection, dependency write order, policy mutation, and forged owners. Independent correctness, security, and projection-completeness reviews end with no P0/P1/P2 findings. Final release evidence still requires the standard full gate, exact Release binding, and formal Claude Code/Codex global readback.
+
 ## [2.9.17] - 2026-07-31
 
 ### Fixed

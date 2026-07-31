@@ -82,6 +82,7 @@ function stageActivateHook(dir) {
   for (const fileName of [
     "activate-meta-theory-spine.mjs",
     "project-root.mjs",
+    "spine-state-gates.mjs",
     "spine-state.mjs",
     "spine-state-utils.mjs",
     "utils.mjs",

@@ -239,6 +239,7 @@ console.log("About to git push");
       for (const fileName of [
         "activate-meta-theory-spine.mjs",
         "block-dangerous-bash.mjs",
+        "spine-state-gates.mjs",
         "spine-state.mjs",
         "spine-state-utils.mjs",
         "stop-save-progress.mjs",

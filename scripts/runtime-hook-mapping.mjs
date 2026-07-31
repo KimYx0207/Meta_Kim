@@ -90,12 +90,13 @@ export const HOOKPROMPT_PLATFORM_SUPPORT = {
 // Cross-runtime hook core. These files have exactly one canonical owner under
 // shared/hooks; runtime sync must never prefer a same-named runtime copy.
 export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
   "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
 ]);
 
 const CLAUDE_COMPATIBLE_HOOK_FILES = Object.freeze([
@@ -180,6 +181,12 @@ export function hookCommand(command, timeout, extra = {}) {
 }
 
 const PROJECT_META_KIM_HOOK_FILES = new Set([
+  "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
@@ -206,9 +213,6 @@ const PROJECT_META_KIM_HOOK_FILES = new Set([
   "resolve-plan-dir.sh",
   "session-start.sh",
   "session_start.py",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
   "stop-compaction.mjs",
   "stop-completion-guard.mjs",
   "stop-console-log-audit.mjs",
@@ -220,7 +224,6 @@ const PROJECT_META_KIM_HOOK_FILES = new Set([
   "subagent-context.mjs",
   "user-prompt-submit.sh",
   "user_prompt_submit.py",
-  "utils.mjs",
 ]);
 
 export function isProjectMetaKimHookCommand(command) {

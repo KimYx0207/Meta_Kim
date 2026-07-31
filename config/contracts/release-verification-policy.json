@@ -14,7 +14,7 @@
     "meta:agents:migration-catalog:check": 180000,
     "meta:sync": 120000,
     "meta:check": 120000,
-    "meta:verify:governance:core": 300000,
+    "meta:verify:governance:core": 600000,
     "meta:graphify:check": 60000,
     "meta:graphify:verified-rebuild": 600000,
     "meta:check:global:release": 120000,

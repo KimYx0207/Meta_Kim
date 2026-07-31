@@ -172,29 +172,39 @@ function assertPrdAndPackage() {
 }
 
 function assertRuntimeSources() {
-  for (const sourcePath of [
-    "canonical/runtime-assets/shared/hooks/spine-state.mjs",
-  ]) {
-    const source = readText(sourcePath);
-    assert(
-      source.includes("requiresFetchRecordOnCommit: true"),
-      `${sourcePath} must use commit-scoped fetchRecord requirement`,
-    );
-    assert(
-      !source.includes("requiresFetchRecord: true"),
-      `${sourcePath} must not require fetchRecord for a stage-in-progress action`,
-    );
-    hasAll(
-      source,
-      ["state.stageTransitionIntent === \"commit\"", "Stage commit requires a fetchRecord"],
-      sourcePath,
-    );
-    hasAll(
-      source,
-      ["stageRuntimeControl", "isHookObservedState", "hookGateMode"],
-      sourcePath,
-    );
-  }
+  const facadePath = "canonical/runtime-assets/shared/hooks/spine-state.mjs";
+  const gatePath = "canonical/runtime-assets/shared/hooks/spine-state-gates.mjs";
+  const facadeSource = readText(facadePath);
+  const gateSource = readText(gatePath);
+
+  hasAll(
+    facadeSource,
+    [
+      'from "./spine-state-gates.mjs"',
+      "checkStageRequirements",
+      "stageRuntimeControl",
+      "isHookObservedState",
+      "hookGateMode",
+    ],
+    facadePath,
+  );
+  assert(
+    !facadeSource.includes("requiresFetchRecordOnCommit: true"),
+    `${facadePath} must not duplicate the shared gate policy source`,
+  );
+  assert(
+    gateSource.includes("requiresFetchRecordOnCommit: true"),
+    `${gatePath} must use commit-scoped fetchRecord requirement`,
+  );
+  assert(
+    !gateSource.includes("requiresFetchRecord: true"),
+    `${gatePath} must not require fetchRecord for a stage-in-progress action`,
+  );
+  hasAll(
+    gateSource,
+    ["state.stageTransitionIntent === \"commit\"", "Stage commit requires a fetchRecord"],
+    gatePath,
+  );
 
   const hook = readText("canonical/runtime-assets/claude/hooks/enforce-agent-dispatch.mjs");
   assert(!/^\s*advanceStage,?$/m.test(hook), "hook must not import advanceStage");

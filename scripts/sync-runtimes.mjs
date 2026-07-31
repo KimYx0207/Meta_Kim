@@ -1250,8 +1250,13 @@ const canonicalOpenClawStopSaveProgressHookPath = path.join(
   "stop-save-progress.mjs",
 );
 const GLOBAL_META_KIM_HOOK_PACKAGE_FILES = new Set([
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
   "ecc-permission-cache-wrapper.mjs",
@@ -1267,29 +1272,26 @@ const GLOBAL_META_KIM_HOOK_PACKAGE_FILES = new Set([
   "stop-save-progress.mjs",
   "stop-spine-cleanup.mjs",
   "subagent-context.mjs",
-  "utils.mjs",
   "meta-kim-memory-save.mjs",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
 ]);
 
 const PROJECT_CLAUDE_HOOK_FILES = new Set([
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
   "post-console-log-warn.mjs",
   "post-format.mjs",
   "post-typecheck.mjs",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
   "stop-compaction.mjs",
   "stop-completion-guard.mjs",
   "stop-console-log-audit.mjs",
   "stop-spine-cleanup.mjs",
   "subagent-context.mjs",
-  "utils.mjs",
 ]);
 
 // These retired basenames may also belong to users. The v1 project install
@@ -2827,8 +2829,13 @@ async function pruneNonProjectedRuntimeSkills(
 // project/global runtime projection. Files NOT on the whitelist
 // (i.e. user-authored files) are never touched.
 const CLAUDE_PROJECT_HOOK_FILES = new Set([
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
   "ecc-permission-cache-wrapper.mjs",
@@ -2839,7 +2846,6 @@ const CLAUDE_PROJECT_HOOK_FILES = new Set([
   "post-format.mjs",
   "post-typecheck.mjs",
   "post-console-log-warn.mjs",
-  "skip-reminder.mjs",
   "subagent-context.mjs",
   "stop-compaction.mjs",
   "stop-memory-save.mjs",
@@ -2847,16 +2853,18 @@ const CLAUDE_PROJECT_HOOK_FILES = new Set([
   "stop-completion-guard.mjs",
   "stop-save-progress.mjs",
   "stop-spine-cleanup.mjs",
-  "utils.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
 ]);
 
 // Codex uses an adapter pattern (.mjs script + .py wrapper). Project-level
 // files match the same basename as global hooks dir.
 const CODEX_PROJECT_HOOK_FILES = new Set([
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "codex_hook_adapter.py",
   "codex_hook_runner.mjs",
@@ -2879,15 +2887,16 @@ const CODEX_PROJECT_HOOK_FILES = new Set([
   "user-prompt-submit.sh",
   "permission_request.py",
   "resolve-plan-dir.sh",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
-  "utils.mjs",
 ]);
 
 const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
@@ -2895,21 +2904,22 @@ const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "post-console-log-warn.mjs",
   "post-format.mjs",
   "post-typecheck.mjs",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
   "stop-compaction.mjs",
   "stop-completion-guard.mjs",
   "stop-console-log-audit.mjs",
   "stop-spine-cleanup.mjs",
   "subagent-context.mjs",
-  "utils.mjs",
 ]);
 
 // Cursor hook files (.ps1/.sh variants under ~/.cursor/hooks/).
 const CURSOR_PROJECT_HOOK_FILES = new Set([
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
@@ -2925,30 +2935,27 @@ const CURSOR_PROJECT_HOOK_FILES = new Set([
   "stop.sh",
   "user-prompt-submit.ps1",
   "user-prompt-submit.sh",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
-  "utils.mjs",
 ]);
 
 const CURSOR_ACTIVE_PROJECT_HOOK_FILES = new Set([
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
   "post-console-log-warn.mjs",
   "post-format.mjs",
   "post-typecheck.mjs",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
   "stop-compaction.mjs",
   "stop-completion-guard.mjs",
   "stop-console-log-audit.mjs",
   "stop-spine-cleanup.mjs",
   "subagent-context.mjs",
-  "utils.mjs",
 ]);
 
 const OPENCLAW_PROJECT_HOOK_FILES = new Set([
@@ -3694,6 +3701,32 @@ Examples:
       ) {
         changedFiles.push(`${dp.codexHooks}/graphify-context.mjs`);
       }
+      for (const hookName of [
+        "project-root.mjs",
+        "utils.mjs",
+        "skip-reminder.mjs",
+        "spine-state-utils.mjs",
+        "spine-state-gates.mjs",
+        "spine-state.mjs",
+      ]) {
+        const sourcePath = await canonicalGlobalHookSource(hookName, "codex");
+        if (!sourcePath) {
+          throw new Error(
+            `Missing canonical Hook source for codex:${hookName}`,
+          );
+        }
+        const hookContent = await fs.readFile(sourcePath, "utf8");
+        if (
+          (
+            await writeGeneratedFile(
+              path.join(dirs.codexHooksDir, hookName),
+              hookContent,
+            )
+          ).changed
+        ) {
+          changedFiles.push(`${dp.codexHooks}/${hookName}`);
+        }
+      }
       const spineHookContent = await tryReadCanonical(canonicalSharedSpineHookPath);
       if (
         spineHookContent &&
@@ -3705,20 +3738,6 @@ Examples:
         ).changed
       ) {
         changedFiles.push(`${dp.codexHooks}/activate-meta-theory-spine.mjs`);
-      }
-      const projectRootHookContent = await tryReadCanonical(
-        canonicalSharedProjectRootHookPath,
-      );
-      if (
-        projectRootHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.codexHooksDir, "project-root.mjs"),
-            projectRootHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.codexHooks}/project-root.mjs`);
       }
       // Sync the dispatch-enforcement gate + its bash-readonly classifier from
       // the Claude canonical hooks directory. These two files implement the
@@ -3751,63 +3770,6 @@ Examples:
         ).changed
       ) {
         changedFiles.push(`${dp.codexHooks}/bash-readonly-whitelist.mjs`);
-      }
-      // Sync shared hook dependencies (utils.mjs, spine-state.mjs, spine-state-utils.mjs, skip-reminder.mjs)
-      const utilsHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "utils.mjs"),
-      );
-      if (
-        utilsHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.codexHooksDir, "utils.mjs"),
-            utilsHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.codexHooks}/utils.mjs`);
-      }
-      const spineStateHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "spine-state.mjs"),
-      );
-      if (
-        spineStateHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.codexHooksDir, "spine-state.mjs"),
-            spineStateHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.codexHooks}/spine-state.mjs`);
-      }
-      const spineStateUtilsHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "spine-state-utils.mjs"),
-      );
-      if (
-        spineStateUtilsHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.codexHooksDir, "spine-state-utils.mjs"),
-            spineStateUtilsHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.codexHooks}/spine-state-utils.mjs`);
-      }
-      const skipReminderHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "skip-reminder.mjs"),
-      );
-      if (
-        skipReminderHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.codexHooksDir, "skip-reminder.mjs"),
-            skipReminderHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.codexHooks}/skip-reminder.mjs`);
       }
       for (const hookName of [
         "meta-kim-memory-save.mjs",
@@ -4028,6 +3990,32 @@ Examples:
       ) {
         changedFiles.push(`${dp.cursorHooks}/graphify-context.mjs`);
       }
+      for (const hookName of [
+        "project-root.mjs",
+        "utils.mjs",
+        "skip-reminder.mjs",
+        "spine-state-utils.mjs",
+        "spine-state-gates.mjs",
+        "spine-state.mjs",
+      ]) {
+        const sourcePath = await canonicalGlobalHookSource(hookName, "cursor");
+        if (!sourcePath) {
+          throw new Error(
+            `Missing canonical Hook source for cursor:${hookName}`,
+          );
+        }
+        const hookContent = await fs.readFile(sourcePath, "utf8");
+        if (
+          (
+            await writeGeneratedFile(
+              path.join(dirs.cursorHooksDir, hookName),
+              hookContent,
+            )
+          ).changed
+        ) {
+          changedFiles.push(`${dp.cursorHooks}/${hookName}`);
+        }
+      }
       const cursorSpineHookContent = await tryReadCanonical(
         canonicalSharedSpineHookPath,
       );
@@ -4041,20 +4029,6 @@ Examples:
         ).changed
       ) {
         changedFiles.push(`${dp.cursorHooks}/activate-meta-theory-spine.mjs`);
-      }
-      const cursorProjectRootHookContent = await tryReadCanonical(
-        canonicalSharedProjectRootHookPath,
-      );
-      if (
-        cursorProjectRootHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.cursorHooksDir, "project-root.mjs"),
-            cursorProjectRootHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.cursorHooks}/project-root.mjs`);
       }
       // Sync the dispatch-enforcement gate + its bash-readonly classifier from
       // the Claude canonical hooks directory. deny() output adapts to Cursor's
@@ -4086,65 +4060,6 @@ Examples:
         ).changed
       ) {
         changedFiles.push(`${dp.cursorHooks}/bash-readonly-whitelist.mjs`);
-      }
-      // Shared dependencies required by enforce-agent-dispatch.mjs: utils.mjs,
-      // spine-state.mjs, spine-state-utils.mjs, and skip-reminder.mjs. Without these the
-      // dispatch gate cannot resolve its imports.
-      const cursorUtilsHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "utils.mjs"),
-      );
-      if (
-        cursorUtilsHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.cursorHooksDir, "utils.mjs"),
-            cursorUtilsHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.cursorHooks}/utils.mjs`);
-      }
-      const cursorSpineStateHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "spine-state.mjs"),
-      );
-      if (
-        cursorSpineStateHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.cursorHooksDir, "spine-state.mjs"),
-            cursorSpineStateHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.cursorHooks}/spine-state.mjs`);
-      }
-      const cursorSpineStateUtilsHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "spine-state-utils.mjs"),
-      );
-      if (
-        cursorSpineStateUtilsHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.cursorHooksDir, "spine-state-utils.mjs"),
-            cursorSpineStateUtilsHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.cursorHooks}/spine-state-utils.mjs`);
-      }
-      const cursorSkipReminderHookContent = await tryReadCanonical(
-        path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "skip-reminder.mjs"),
-      );
-      if (
-        cursorSkipReminderHookContent &&
-        (
-          await writeGeneratedFile(
-            path.join(dirs.cursorHooksDir, "skip-reminder.mjs"),
-            cursorSkipReminderHookContent,
-          )
-        ).changed
-      ) {
-        changedFiles.push(`${dp.cursorHooks}/skip-reminder.mjs`);
       }
       if (scope === "global") {
         const cursorHookPromptAdapterPath = path.join(

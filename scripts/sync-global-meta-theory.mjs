@@ -181,6 +181,14 @@ const CANONICAL_SHARED_HOOKS_DIR = path.join(
   "hooks",
 );
 const GLOBAL_HOOK_PACKAGE_FILES = new Set([
+  // ── canonical/runtime-assets/shared/hooks/ dependency order ──
+  "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   // ── canonical/runtime-assets/claude/hooks/ ──
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
@@ -199,13 +207,6 @@ const GLOBAL_HOOK_PACKAGE_FILES = new Set([
   "subagent-context.mjs",
   // ── runtime-owned source selected per target ──
   "meta-kim-memory-save.mjs",
-  // ── canonical/runtime-assets/shared/hooks/ ──
-  "activate-meta-theory-spine.mjs",
-  "project-root.mjs",
-  "skip-reminder.mjs",
-  "spine-state.mjs",
-  "spine-state-utils.mjs",
-  "utils.mjs",
 ]);
 const GLOBAL_HOOK_PACKAGE_FILES_LEGACY = new Set([
   // Files that were shipped historically but are no longer in canonical.

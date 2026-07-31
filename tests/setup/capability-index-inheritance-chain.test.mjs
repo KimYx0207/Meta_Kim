@@ -681,6 +681,20 @@ describe("capability index inheritance chain", () => {
     );
   });
 
+  test("capability index includes the shared spine gate dependency", async () => {
+    const index = await readJson("config/capability-index/meta-kim-capabilities.json");
+    const entry =
+      index.byCapabilityType?.hooks?.[
+        "repo:canonical-runtime-assets:spine-state-gates.mjs"
+      ];
+
+    assert.equal(
+      entry?.path,
+      "canonical/runtime-assets/shared/hooks/spine-state-gates.mjs",
+      "shared spine gate policy must remain discoverable from the canonical capability index",
+    );
+  });
+
   test("capability index covers canonical runtime commands", async () => {
     const index = await readJson("config/capability-index/meta-kim-capabilities.json");
     const commandPaths = new Set(

@@ -172,8 +172,14 @@ describe("runtime hook sync contract", () => {
         const hooksDir = join(tempRoot, runtimeDir, "hooks");
         const activatorPath = join(hooksDir, "activate-meta-theory-spine.mjs");
         const projectRootPath = join(hooksDir, "project-root.mjs");
+        const spineStateGatesPath = join(hooksDir, "spine-state-gates.mjs");
         assert.equal(existsSync(activatorPath), true, `${runtimeDir} activator missing`);
         assert.equal(existsSync(projectRootPath), true, `${runtimeDir} project-root missing`);
+        assert.equal(
+          existsSync(spineStateGatesPath),
+          true,
+          `${runtimeDir} spine-state gate dependency missing`,
+        );
         assert.match(
           readFileSync(activatorPath, "utf8"),
           /from "\.\/project-root\.mjs"/u,
@@ -294,6 +300,10 @@ describe("runtime hook sync contract", () => {
       source,
       /GLOBAL_HOOK_PACKAGE_FILES = new Set\(\[[\s\S]*"project-root\.mjs"/,
     );
+    assert.match(
+      source,
+      /GLOBAL_HOOK_PACKAGE_FILES = new Set\(\[[\s\S]*"spine-state-gates\.mjs"/,
+    );
   });
 
   test("Codex global sync writes hooks and hook config to the Codex home", () => {
@@ -320,6 +330,10 @@ describe("runtime hook sync contract", () => {
       );
       assert.equal(
         existsSync(join(codexHome, "hooks", "meta-kim", "project-root.mjs")),
+        true,
+      );
+      assert.equal(
+        existsSync(join(codexHome, "hooks", "meta-kim", "spine-state-gates.mjs")),
         true,
       );
       assert.equal(existsSync(join(codexHome, "hooks.json")), true);

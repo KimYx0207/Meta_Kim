@@ -4,6 +4,10 @@ import {
   evaluateFanoutGate,
   validateDegradedDeclaration,
 } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import {
+  evaluateFanoutGate as evaluateFanoutGateFromGates,
+  validateDegradedDeclaration as validateDegradedDeclarationFromGates,
+} from "../../canonical/runtime-assets/shared/hooks/spine-state-gates.mjs";
 
 // Same-type failure fix: SKILL.md Degraded Mode requires capabilityGapPacket,
 // but no hook enforces it. This guard closes the escape hatch so a run cannot
@@ -14,6 +18,11 @@ const baseExecutionState = {
   dispatchedAgents: [],
   workerTaskPackets: [{ id: "w1" }, { id: "w2" }],
 };
+
+test("spine-state facade preserves degraded and fan-out gate exports", () => {
+  assert.equal(validateDegradedDeclaration, validateDegradedDeclarationFromGates);
+  assert.equal(evaluateFanoutGate, evaluateFanoutGateFromGates);
+});
 
 test("validateDegradedDeclaration: rejects degraded=true when capability search never ran", () => {
   const r = validateDegradedDeclaration({

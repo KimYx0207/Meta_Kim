@@ -1085,8 +1085,13 @@ const PROJECT_BOOTSTRAP_MERGED_CONFIG_PATHS = new Set([
 ]);
 
 const GLOBAL_HOOK_PACKAGE_FILES_LIST = [
-  "activate-meta-theory-spine.mjs",
   "project-root.mjs",
+  "utils.mjs",
+  "skip-reminder.mjs",
+  "spine-state-utils.mjs",
+  "spine-state-gates.mjs",
+  "spine-state.mjs",
+  "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
   "ecc-permission-cache-wrapper.mjs",
@@ -1096,7 +1101,6 @@ const GLOBAL_HOOK_PACKAGE_FILES_LIST = [
   "post-console-log-warn.mjs",
   "post-format.mjs",
   "post-typecheck.mjs",
-  "skip-reminder.mjs",
   "stop-compaction.mjs",
   "stop-completion-guard.mjs",
   "stop-console-log-audit.mjs",
@@ -1104,7 +1108,6 @@ const GLOBAL_HOOK_PACKAGE_FILES_LIST = [
   "stop-save-progress.mjs",
   "stop-spine-cleanup.mjs",
   "subagent-context.mjs",
-  "utils.mjs",
 ];
 
 const PROJECT_LOCAL_CAPABILITY_PREFIXES = [
@@ -1158,13 +1161,15 @@ const PROJECT_HOOK_REL_DIRS_BY_PLATFORM = {
 };
 
 const PROJECT_HOOK_SOURCE_CANDIDATES = {
-  claude: [
-    ...GLOBAL_HOOK_PACKAGE_FILES_LIST,
-    "spine-state.mjs",
-  ],
+  claude: [...GLOBAL_HOOK_PACKAGE_FILES_LIST],
   codex: [
-    "activate-meta-theory-spine.mjs",
     "project-root.mjs",
+    "utils.mjs",
+    "skip-reminder.mjs",
+    "spine-state-utils.mjs",
+    "spine-state-gates.mjs",
+    "spine-state.mjs",
+    "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "enforce-agent-dispatch.mjs",
     "graphify-context.mjs",
@@ -1172,34 +1177,31 @@ const PROJECT_HOOK_SOURCE_CANDIDATES = {
     "post-console-log-warn.mjs",
     "post-format.mjs",
     "post-typecheck.mjs",
-    "skip-reminder.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
     "stop-compaction.mjs",
     "stop-completion-guard.mjs",
     "stop-console-log-audit.mjs",
     "stop-spine-cleanup.mjs",
     "subagent-context.mjs",
-    "utils.mjs",
   ],
   cursor: [
-    "activate-meta-theory-spine.mjs",
     "project-root.mjs",
+    "utils.mjs",
+    "skip-reminder.mjs",
+    "spine-state-utils.mjs",
+    "spine-state-gates.mjs",
+    "spine-state.mjs",
+    "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "enforce-agent-dispatch.mjs",
     "graphify-context.mjs",
     "post-console-log-warn.mjs",
     "post-format.mjs",
     "post-typecheck.mjs",
-    "skip-reminder.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
     "stop-compaction.mjs",
     "stop-completion-guard.mjs",
     "stop-console-log-audit.mjs",
     "stop-spine-cleanup.mjs",
     "subagent-context.mjs",
-    "utils.mjs",
   ],
   openclaw: [
     "stop-save-progress.mjs",
@@ -1658,10 +1660,7 @@ function isMetaKimManagedHookRelPath(rel) {
   if (!basename) return false;
   const fileName = basename.split("/").pop();
   if (!fileName || !fileName.endsWith(".mjs")) return false;
-  return (
-    GLOBAL_HOOK_PACKAGE_FILES_LIST.includes(fileName) ||
-    fileName === "spine-state.mjs" // legacy ghost file from older Meta_Kim installs
-  );
+  return GLOBAL_HOOK_PACKAGE_FILES_LIST.includes(fileName);
 }
 
 function isPlainObject(value) {
@@ -3590,8 +3589,13 @@ const PROJECT_HOOK_DIRS_BY_PLATFORM = {
 // whitelist (user-authored) are preserved.
 const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
   claude: new Set([
-    "activate-meta-theory-spine.mjs",
     "project-root.mjs",
+    "utils.mjs",
+    "skip-reminder.mjs",
+    "spine-state-utils.mjs",
+    "spine-state-gates.mjs",
+    "spine-state.mjs",
+    "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "block-dangerous-bash.mjs",
     "ecc-permission-cache-wrapper.mjs",
@@ -3602,7 +3606,6 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "post-format.mjs",
     "post-typecheck.mjs",
     "post-console-log-warn.mjs",
-    "skip-reminder.mjs",
     "subagent-context.mjs",
     "stop-compaction.mjs",
     "stop-memory-save.mjs",
@@ -3610,13 +3613,15 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "stop-completion-guard.mjs",
     "stop-save-progress.mjs",
     "stop-spine-cleanup.mjs",
-    "utils.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
   ]),
   codex: new Set([
-    "activate-meta-theory-spine.mjs",
     "project-root.mjs",
+    "utils.mjs",
+    "skip-reminder.mjs",
+    "spine-state-utils.mjs",
+    "spine-state-gates.mjs",
+    "spine-state.mjs",
+    "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "codex_hook_adapter.py",
     "codex_hook_runner.mjs",
@@ -3642,19 +3647,20 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "user-prompt-submit.sh",
     "permission_request.py",
     "resolve-plan-dir.sh",
-    "skip-reminder.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
     "stop-compaction.mjs",
     "stop-console-log-audit.mjs",
     "stop-completion-guard.mjs",
     "stop-spine-cleanup.mjs",
     "subagent-context.mjs",
-    "utils.mjs",
   ]),
   cursor: new Set([
-    "activate-meta-theory-spine.mjs",
     "project-root.mjs",
+    "utils.mjs",
+    "skip-reminder.mjs",
+    "spine-state-utils.mjs",
+    "spine-state-gates.mjs",
+    "spine-state.mjs",
+    "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "enforce-agent-dispatch.mjs",
     "graphify-context.mjs",
@@ -3673,15 +3679,11 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "stop.sh",
     "user-prompt-submit.ps1",
     "user-prompt-submit.sh",
-    "skip-reminder.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
     "stop-compaction.mjs",
     "stop-console-log-audit.mjs",
     "stop-completion-guard.mjs",
     "stop-spine-cleanup.mjs",
     "subagent-context.mjs",
-    "utils.mjs",
   ]),
   openclaw: new Set([
     "stop-save-progress.mjs",
@@ -5452,8 +5454,7 @@ function checkGlobalHooksCompleteness(hooksDir) {
 }
 
 // Migrate the global Meta_Kim hooks dir: back up + remove files that no
-// longer match the canonical whitelist (e.g. legacy spine-state.mjs), and
-// user-authored files (anything not on the whitelist) are preserved.
+// longer match the canonical whitelist, while preserving user-authored files.
 async function migrateGlobalMetaKimHooksDir(hooksDir) {
   const result = { removed: [], kept: [], backupDir: null, status: "noop" };
   if (!existsSync(hooksDir)) return result;

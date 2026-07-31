@@ -25,6 +25,8 @@ import {
   sanitizeStateProfile,
   writeSpineState,
 } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import * as spineStateFacade from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import * as spineStateGates from "../../canonical/runtime-assets/shared/hooks/spine-state-gates.mjs";
 import { withFileLock } from "../../canonical/runtime-assets/shared/hooks/spine-state-utils.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -39,12 +41,13 @@ const CLAUDE_COMPATIBILITY_ADAPTERS = new Set([
 
 test("cross-runtime hook core has one canonical owner", () => {
   assert.deepEqual(SHARED_RUNTIME_HOOK_FILES, [
-    "activate-meta-theory-spine.mjs",
     "project-root.mjs",
-    "skip-reminder.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
     "utils.mjs",
+    "skip-reminder.mjs",
+    "spine-state-utils.mjs",
+    "spine-state-gates.mjs",
+    "spine-state.mjs",
+    "activate-meta-theory-spine.mjs",
   ]);
 
   for (const fileName of SHARED_RUNTIME_HOOK_FILES) {
@@ -58,6 +61,33 @@ test("cross-runtime hook core has one canonical owner", () => {
     assert.match(adapter, /\.\.\/\.\.\/shared\/hooks\//, fileName);
     assert.ok(adapter.split(/\r?\n/u).filter(Boolean).length <= 2, `${fileName} must stay thin`);
     assert.notEqual(adapter, readFileSync(join(SHARED_HOOK_DIR, fileName), "utf8"));
+  }
+});
+
+test("spine-state keeps its original gate exports as a compatibility facade", () => {
+  const facadeExports = [
+    "STAGE_ORDER",
+    "STAGE_PUBLIC_LABELS",
+    "CHOICE_SURFACE_STATES",
+    "STAGE_META_AGENT_MAP",
+    "extractMetaAgentName",
+    "validateDegradedDeclaration",
+    "evaluateFanoutGate",
+    "checkPreExecutionReadiness",
+    "checkCapabilityNodeBindings",
+    "checkStageRequirements",
+    "checkChoiceSurfaceGate",
+    "isExecutionTool",
+    "isReadOnlyTool",
+    "getGovernanceFlow",
+  ];
+
+  for (const exportName of facadeExports) {
+    assert.equal(
+      spineStateFacade[exportName],
+      spineStateGates[exportName],
+      `${exportName} must remain available through spine-state.mjs`,
+    );
   }
 });
 
@@ -208,6 +238,7 @@ test("global hook sync projects universal core and runtime-owned memory entrypoi
       for (const dependency of [
         "activate-meta-theory-spine.mjs",
         "project-root.mjs",
+        "spine-state-gates.mjs",
         "spine-state.mjs",
         "spine-state-utils.mjs",
         "utils.mjs",
