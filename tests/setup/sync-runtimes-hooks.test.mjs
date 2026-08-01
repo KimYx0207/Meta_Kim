@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -223,6 +224,54 @@ describe("runtime hook sync contract", () => {
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
       rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("global runtime sync rejects a runtime-home junction into the immutable package store", () => {
+    const root = mkdtempSync(join(os.tmpdir(), "meta-kim-global-store-junction-"));
+    try {
+      const storeRoot = join(
+        root,
+        ".meta-kim",
+        "runtime",
+        "projection-packages",
+      );
+      const claudeHome = join(root, "claude");
+      mkdirSync(storeRoot, { recursive: true });
+      symlinkSync(
+        storeRoot,
+        claudeHome,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          "scripts/sync-runtimes.mjs",
+          "--scope",
+          "global",
+          "--targets",
+          "claude",
+          "--global-assets",
+          "hooks",
+        ],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            HOME: root,
+            USERPROFILE: root,
+            META_KIM_CLAUDE_HOME: claudeHome,
+          },
+        },
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr + result.stdout, /immutable package store/u);
+      assert.deepEqual(readdirSync(storeRoot), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

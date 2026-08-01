@@ -305,6 +305,12 @@ const CODEX_LEGACY_SHARED_SKILL_ROOT = path.join(
   ".agents",
   "skills",
 );
+const PROJECTION_PACKAGE_STORE_ROOT = path.join(
+  os.homedir(),
+  ".meta-kim",
+  "runtime",
+  "projection-packages",
+);
 
 let runtimeHomes = {};
 let allowedRoots = [];
@@ -373,6 +379,14 @@ async function assertRealHomeBound(targetPath) {
   assertHomeBound(targetPath);
   const resolved = path.resolve(targetPath);
   const realTarget = await projectedRealPath(resolved);
+  const realProjectionStoreRoot = await projectedRealPath(
+    PROJECTION_PACKAGE_STORE_ROOT,
+  );
+  if (pathIsWithin(realProjectionStoreRoot, realTarget)) {
+    throw new Error(
+      `Refusing to write a runtime projection into the immutable package store: ${resolved}`,
+    );
+  }
   const matched = allowedRoots
     .map((root, index) => ({ root, realRoot: allowedRealRoots[index] }))
     .filter(({ root }) => pathIsWithin(root, resolved));

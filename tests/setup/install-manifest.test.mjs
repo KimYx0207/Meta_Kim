@@ -695,6 +695,101 @@ describe("install-manifest schema + helpers", () => {
     }
   });
 
+  test("rollback restores forgotten entries, removes promoted replacements, and preserves other writers", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "meta-kim-manifest-forget-rollback-"));
+    try {
+      const staleFile = path.join(dir, "stale-authority.mjs");
+      const replacementFile = path.join(dir, "stable-authority.mjs");
+      const concurrentFile = path.join(dir, "concurrent.mjs");
+      const purpose = "projection-package:cli";
+      writeFileSync(staleFile, "stale\n");
+      writeFileSync(replacementFile, "stable\n");
+      writeFileSync(concurrentFile, "concurrent\n");
+
+      const seed = openRecorder({ scope: "project", repoRoot: dir });
+      seed.recordFile(staleFile, {
+        category: CATEGORIES.C,
+        source: "sync-global-meta-theory",
+        purpose,
+      });
+      assert.equal((await seed.flush()).ok, true);
+
+      const replacement = openRecorder({ scope: "project", repoRoot: dir });
+      replacement.forget(staleFile, purpose);
+      replacement.recordFile(replacementFile, {
+        category: CATEGORIES.C,
+        source: "sync-global-meta-theory",
+        purpose,
+      });
+      const promoted = await replacement.flush();
+      assert.equal(promoted.ok, true, promoted.error);
+
+      const otherWriter = openRecorder({ scope: "project", repoRoot: dir });
+      otherWriter.recordFile(concurrentFile, {
+        category: CATEGORIES.E,
+        source: "sync-runtimes",
+        purpose: "concurrent-writer",
+      });
+      assert.equal((await otherWriter.flush()).ok, true);
+
+      const rolledBack = await replacement.rollback();
+      assert.equal(rolledBack.ok, true, rolledBack.error);
+      const restored = readManifest(manifestPathFor("project", dir));
+      assert.equal(restored.entries.some((entry) => entry.path === staleFile), true);
+      assert.equal(
+        restored.entries.some((entry) => entry.path === replacementFile),
+        false,
+      );
+      assert.equal(
+        restored.entries.some((entry) => entry.path === concurrentFile),
+        true,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("forget rollback fails closed when another writer recreates the retired key", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "meta-kim-manifest-forget-rollback-cas-"));
+    try {
+      const staleFile = path.join(dir, "stale-authority.mjs");
+      const purpose = "projection-package:cli";
+      writeFileSync(staleFile, "stale\n");
+
+      const seed = openRecorder({ scope: "project", repoRoot: dir });
+      seed.recordFile(staleFile, {
+        category: CATEGORIES.C,
+        source: "sync-global-meta-theory",
+        purpose,
+      });
+      assert.equal((await seed.flush()).ok, true);
+
+      const retirement = openRecorder({ scope: "project", repoRoot: dir });
+      retirement.forget(staleFile, purpose);
+      assert.equal((await retirement.flush()).ok, true);
+
+      writeFileSync(staleFile, "concurrent replacement\n");
+      const concurrent = openRecorder({ scope: "project", repoRoot: dir });
+      concurrent.recordFile(staleFile, {
+        category: CATEGORIES.C,
+        source: "sync-global-meta-theory",
+        purpose,
+      });
+      assert.equal((await concurrent.flush()).ok, true);
+
+      const rolledBack = await retirement.rollback();
+      assert.equal(rolledBack.ok, false);
+      assert.match(rolledBack.error, /entry changed concurrently/u);
+      const retained = readManifest(manifestPathFor("project", dir));
+      assert.equal(
+        retained.entries.find((entry) => entry.path === staleFile)?.sha256,
+        fileIntegritySync(staleFile).sha256,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("stale same-key TOML appends fail closed and can be retried without losing either journal", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "meta-kim-manifest-toml-cas-"));
     try {

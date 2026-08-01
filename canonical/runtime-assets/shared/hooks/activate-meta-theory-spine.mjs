@@ -22,7 +22,7 @@ const payload = await readJsonFromStdin();
 const toolName = payload?.tool_name ?? "";
 const toolInput = payload?.tool_input ?? {};
 
-// 开源场景：sync/setup 把 canonical 模板 __REPO_ROOT__ 渲染成绝对路径，写到
+// 开源场景：sync/setup 曾把 canonical 仓库根占位标记渲染成绝对路径，写到
 // 全局/项目 settings 后跨机器即死路径。candidate 在用户机器不存在时，从脚本
 // 自身位置往上找含 scripts/project-post-copy-init.mjs 的仓根。
 function resolvePackageRoot(candidate) {

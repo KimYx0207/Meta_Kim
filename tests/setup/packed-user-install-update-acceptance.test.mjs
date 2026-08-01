@@ -17,7 +17,9 @@ import {
   PACKED_USER_TARGETS,
   assertCurrentVersionTagAbsent,
   assertPackedAdvisoryEffectiveMatrix,
+  collectNonPortablePackedReferences,
   durableMcpDefinitionMatches,
+  referencedPersistentRuntimePaths,
   runInstalledPublicCli,
   selectHistoricalUpdateRef,
 } from "../../scripts/verify-packed-user-install-update.mjs";
@@ -45,6 +47,41 @@ const coreLoopReleaseEvidenceSource = readFileSync(
   "utf8",
 );
 const setupSource = readFileSync("setup.mjs", "utf8");
+const canonicalSpineHookSource = readFileSync(
+  "canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs",
+  "utf8",
+);
+
+test("canonical spine Hook does not contain a token that packed readback treats as unresolved", () => {
+  assert.deepEqual(
+    collectNonPortablePackedReferences(canonicalSpineHookSource),
+    [],
+  );
+});
+
+test("packed readback distinguishes persistent bindings from guarded executable candidates", () => {
+  const stableHook = "C:\\Users\\Runtime\\.meta-kim\\stable\\activate.mjs";
+  const guardedCandidate = "C:\\ProgramData\\anaconda3\\python.exe";
+  const transientRoot = "C:\\Users\\Runtime\\npm-cache\\_npx\\disposable";
+  assert.deepEqual(
+    referencedPersistentRuntimePaths({
+      "C:/Users/Runtime/.codex/hooks/meta-kim/codex_hook_runner.mjs":
+        `const candidate = '${guardedCandidate}'; if (existsSync(candidate)) use(candidate);`,
+      "C:/Users/Runtime/.codex/hooks.json": JSON.stringify({
+        command: `node \"${stableHook}\"`,
+      }),
+    }),
+    [stableHook],
+  );
+  assert.deepEqual(
+    collectNonPortablePackedReferences(
+      `const leaked = '${transientRoot}\\node_modules\\meta-kim\\setup.mjs';`,
+      { forbiddenRoots: [transientRoot] },
+    ).map((finding) => finding.reason),
+    ["forbidden_machine_root"],
+    "executable source skips optional-candidate existence checks but still fails portability scanning",
+  );
+});
 
 test("packed advisory MCP compares the effective overlay without weakening canonical baseline truth", () => {
   const baselineMatrix = JSON.parse(
@@ -510,8 +547,20 @@ test("packed release proof survives deletion of an npx-shaped current package ro
     acceptanceSource,
     /cross-runtime-global-projection-package-bundle/u,
   );
+  assert.match(acceptanceSource, /function prepareTransientPackageRoot/u);
   assert.match(acceptanceSource, /function runTransientPackageRootLane/u);
-  assert.match(acceptanceSource, /cpSync\(descriptor\.globalNodeModules, transientNodeModules/u);
+  assert.match(
+    acceptanceSource,
+    /"install",[\s\S]*?"--prefix",[\s\S]*?transientPrefix,[\s\S]*?packageInfo\.tarball/u,
+  );
+  assert.match(
+    acceptanceSource,
+    /fresh transient npx-shaped package unexpectedly contains package-local runtime state/u,
+  );
+  assert.doesNotMatch(
+    acceptanceSource,
+    /cpSync\(descriptor\.globalNodeModules, transientNodeModules/u,
+  );
   assert.match(acceptanceSource, /"_npx"[\s\S]*?"node_modules"/u);
   assert.match(
     acceptanceSource,
@@ -523,11 +572,20 @@ test("packed release proof survives deletion of an npx-shaped current package ro
   assert.match(acceptanceSource, /remainingDisposableOrigins\.length > 0/u);
   assert.match(
     acceptanceSource,
-    /authorityAfterApply\.publicCliPath[\s\S]*?"check"[\s\S]*?"--with-global-hooks"/u,
+    /authorityAfterApply\.publicCliPath[\s\S]*?"check"[\s\S]*?"--scope"[\s\S]*?"global"[\s\S]*?"--with-global-hooks"/u,
+  );
+  assert.match(
+    acceptanceFunctionSource("finalizePortableRuntimeProof", "expectedProjectArtifacts"),
+    /currentProjectionPackageAuthority\([\s\S]*?authority\.packageRoot[\s\S]*?sync-runtimes\.mjs[\s\S]*?authority\.packageRoot[\s\S]*?sync-global-meta-theory\.mjs/u,
+    "post-deletion exact checks must execute from the immutable authority, not the disposable installed origin",
   );
   assert.match(
     acceptanceSource,
-    /currentPackage\.portableRuntime = finalizePortableRuntimeProof[\s\S]*?currentPackage\.transientPackageRoot = runTransientPackageRootLane/u,
+    /path\.join\(roots\.userHome, "\.meta-kim", "install-manifest\.json"\)[\s\S]*?structuredRuntimeReadback\(textByPath\)[\s\S]*?collectNonPortablePackedReferences/u,
+  );
+  assert.match(
+    acceptanceSource,
+    /const transientPackage = prepareTransientPackageRoot[\s\S]*?currentPackage\.portableRuntime = finalizePortableRuntimeProof[\s\S]*?currentPackage\.transientPackageRoot = runTransientPackageRootLane/u,
   );
   assert.match(
     verifyAllSource,

@@ -2796,6 +2796,8 @@ async function main() {
   // or a target value such as `--targets claude,codex`.
   const profileState = await ensureProfileState({
     runtimeFamily: SHARED_RUNTIME_FAMILY,
+    repoPath: os.homedir(),
+    stateRoot: path.join(os.homedir(), ".meta-kim", "state"),
   });
   const canonicalIndexPath = path.join(repoRoot, CANONICAL_CAPABILITY_INDEX);
   const repoCapabilityIndex = writeCanonicalIndex

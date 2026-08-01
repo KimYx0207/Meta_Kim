@@ -193,7 +193,12 @@ test("runtime-family inference reads the real entrypoint, not business argument 
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-profile-attack-"));
     const rawProfile = `../../escape-${process.pid}-${Date.now()}`;
     const safeProfile = resolveProfileName(rawProfile);
-    const profileDir = getProfilePaths({ profile: rawProfile, runtimeFamily: "shared" }).profileDir;
+    const profileDir = getProfilePaths({
+      profile: rawProfile,
+      runtimeFamily: "shared",
+      repoPath: home,
+      stateRoot: path.join(home, ".meta-kim", "state"),
+    }).profileDir;
     const escapedDir = path.resolve(home, ".meta-kim", "state", rawProfile);
     try {
       await execFileAsync(
@@ -235,12 +240,10 @@ test("runtime-family inference reads the real entrypoint, not business argument 
     const paths = getProfilePaths({
       profile,
       runtimeFamily: SHARED_RUNTIME_FAMILY,
+      repoPath: home,
+      stateRoot: path.join(home, ".meta-kim", "state"),
     });
     try {
-      await ensureProfileState({
-        profile,
-        runtimeFamily: SHARED_RUNTIME_FAMILY,
-      });
       await execFileAsync(
         process.execPath,
         [
@@ -268,8 +271,12 @@ test("runtime-family inference reads the real entrypoint, not business argument 
 
       const metadata = JSON.parse(await fs.readFile(paths.profileFile, "utf8"));
       assert.equal(metadata.runtimeFamily, SHARED_RUNTIME_FAMILY);
+      assert.equal(metadata.repoRoot, home);
       await fs.access(
         path.join(paths.profileDir, "capability-index", "global-capabilities.json"),
+      );
+      await assert.rejects(() =>
+        fs.access(getProfilePaths({ profile }).profileFile)
       );
     } finally {
       await fs.rm(paths.profileDir, { recursive: true, force: true });

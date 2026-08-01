@@ -46,6 +46,10 @@ describe("setup update default flow", () => {
     path.join(repoRoot, "scripts", "project-bootstrap-file-safety.mjs"),
     "utf8",
   );
+  const syncConfigSource = readFileSync(
+    path.join(repoRoot, "scripts", "meta-kim-sync-config.mjs"),
+    "utf8",
+  );
 
   test("--update takes precedence over non-TTY silent install mode", () => {
     const mainSource = source.slice(source.indexOf("async function main()"));
@@ -184,10 +188,13 @@ describe("setup update default flow", () => {
   test("repo-local setup checks validate the global-only hook dependency pairs and active targets", () => {
     assert.match(
       source,
-      /function checkProjectRuntimeSync\(runtimes, targetContext\) \{[\s\S]*?projectProjectionMode === "global_only"[\s\S]*?return checkGlobalOnlyProjectHookPairs\(\);[\s\S]*?return checkSync\(runtimes, targetContext\.activeTargets\);/,
+      /function checkProjectRuntimeSync\(runtimes, targetContext\) \{[\s\S]*?executingStableProjectionPackage[\s\S]*?\? CALLER_CWD[\s\S]*?: PROJECT_DIR[\s\S]*?projectProjectionMode === "global_only"[\s\S]*?return checkGlobalOnlyProjectHookPairs\(projectRoot\);[\s\S]*?return checkSync\(runtimes, targetContext\.activeTargets, projectRoot\);/,
       "global_only must validate its project hook dependency set instead of returning true unconditionally",
     );
-    assert.match(source, /function checkGlobalOnlyProjectHookPairs\(\)/);
+    assert.match(
+      source,
+      /function checkGlobalOnlyProjectHookPairs\(projectRoot = PROJECT_DIR\)/,
+    );
     assert.match(source, /\.claude\/hooks[\s\S]*?\.codex\/hooks[\s\S]*?\.cursor\/hooks/);
     assert.match(source, /activate-meta-theory-spine\.mjs/);
     assert.match(source, /project-root\.mjs/);
@@ -206,19 +213,14 @@ describe("setup update default flow", () => {
     );
 
     const checkOnlyStart = source.indexOf("if (checkOnly) {");
-    const checkOnlyEnd = source.indexOf("const localState = getProfilePaths", checkOnlyStart);
+    const checkOnlyEnd = source.indexOf("if (updateMode)", checkOnlyStart);
     const checkOnlySource = source.slice(checkOnlyStart, checkOnlyEnd);
     assert.match(
       checkOnlySource,
-      /const syncOk = checkProjectRuntimeSync\(detectedRuntimes, targetContext\)/,
-      "--check must route through the global-only-aware sync check",
+      /const checkOk = await runCheck\(\)/,
+      "--check must route through the single scope-aware check implementation",
     );
-    const checkOnlyBranch = source.slice(
-      checkOnlyStart,
-      source.indexOf("if (updateMode)", checkOnlyStart),
-    );
-    assert.match(checkOnlyBranch, /reportProjectRuntimeSyncResult\(syncOk\)/);
-    assert.match(checkOnlyBranch, /process\.exit\(syncOk \? 0 : 1\)/);
+    assert.match(checkOnlySource, /process\.exit\(checkOk \? 0 : 1\)/);
     assert.doesNotMatch(
       checkOnlySource,
       /checkSync\(detectedRuntimes, targetContext\.supportedTargets\)/,
@@ -244,15 +246,123 @@ describe("setup update default flow", () => {
     const runCheckSource = source.slice(runCheckStart, runCheckEnd);
     assert.match(
       runCheckSource,
-      /const syncOk = checkProjectRuntimeSync\(runtimes, targetContext\)/,
-      "runCheck() must route through the global-only-aware sync check",
+      /const checkScope = scopeArgIndex >= 0 \? args\[scopeArgIndex \+ 1\] : "project"/,
+      "runCheck() must preserve project as the default scope",
+    );
+    assert.match(
+      runCheckSource,
+      /checkScope === "global"[\s\S]*?checkGlobalRuntimeSync\(targetContext\.activeTargets\)[\s\S]*?: checkProjectRuntimeSync\(runtimes, targetContext\)/,
+      "explicit global check must verify the manifest-bound stable authority while project/default keeps project checks",
     );
     assert.match(runCheckSource, /reportProjectRuntimeSyncResult\(syncOk\)/);
+    assert.match(
+      runCheckSource,
+      /const stateRepoPath = checkScope === "global"[\s\S]*?homedir\(\)[\s\S]*?executingStableProjectionPackage \? CALLER_CWD : PROJECT_DIR[\s\S]*?stateRoot: join\(stateRepoPath, "\.meta-kim", "state"\)[\s\S]*?getProfilePaths\(stateOptions\)[\s\S]*?readProfileMetadata\(stateOptions\)/,
+      "check output must describe the same global or caller-project state it actually checked",
+    );
     assert.match(runCheckSource, /return syncOk;/);
     assert.doesNotMatch(
       runCheckSource,
       /checkSync\(runtimes, targetContext\.supportedTargets\)/,
       "runCheck() must not require every supported runtime projection",
+    );
+  });
+
+  test("global install and update hand off to the immutable package before persistent writes", () => {
+    assert.match(source, /async function handOffGlobalSetupIfNeeded\(/);
+    assert.match(source, /verifyExecutingGlobalProjectionPackage\(/);
+    assert.match(source, /materializeGlobalProjectionPackage\(/);
+    assert.match(source, /sanitizeProjectionPackageEnvironment\(/);
+    assert.match(source, /join\(stablePackage\.packageRoot, "setup\.mjs"\)/);
+    assert.match(source, /childEnv\.META_KIM_CALLER_CWD = CALLER_CWD/);
+    assert.match(
+      source,
+      /childEnv\[STABLE_PROJECT_DEPLOYMENTS_ENV\] = JSON\.stringify\([\s\S]*?targetDir:[\s\S]*?activeTargets:/,
+      "stable handoff must preserve each managed project's path and runtime targets as structured data",
+    );
+    assert.doesNotMatch(
+      source,
+      /deployDirs\.flatMap\(\(targetDir\) => \["--project-dir", targetDir\]\)/,
+      "managed project objects must never be coerced into [object Object] CLI paths",
+    );
+    assert.match(
+      source,
+      /function stableProjectDeploymentHandoff\(\)[\s\S]*?JSON\.parse\(raw\)[\s\S]*?resolveExistingManagedProjectCandidates\([\s\S]*?Stable project deployment targets changed before execution/,
+      "stable child must revalidate the handed-off project manifest and its saved runtime targets",
+    );
+    assert.match(
+      source,
+      /async function detectExecutingStableProjectionPackage\(\)[\s\S]*?verifyExecutingGlobalProjectionPackage\([\s\S]*?projectionPackageWriteBoundaryFindings\([\s\S]*?PROJECT_DIR[\s\S]*?unverified package inside the projection store cannot execute setup/,
+      "an invalid package already inside the immutable store must fail closed",
+    );
+    assert.match(
+      syncConfigSource,
+      /export const localStateRoot = process\.env\.META_KIM_CALLER_CWD[\s\S]*?: path\.resolve\(process\.cwd\(\)\);[\s\S]*?export const localOverridesPath = path\.join\(\s*localStateRoot/,
+      "stable package preferences must be written to the caller project, not the immutable package",
+    );
+    assert.match(
+      source,
+      /async function writeLocalOverrides\(nextOverrides\)[\s\S]*?projectionPackageWriteBoundaryFindings\([\s\S]*?localOverridesPath[\s\S]*?if \(findings\.length > 0\) return false;[\s\S]*?persistLocalOverrides\(nextOverrides\)/,
+      "direct stable setup execution must not persist state into its package or projection store",
+    );
+
+    const mainSource = source.slice(source.indexOf("async function main()"));
+    assert.ok(
+      mainSource.indexOf("executingStableProjectionPackage =") <
+        mainSource.indexOf("if (projectBootstrapMode)"),
+      "stable package execution must be identified before every project mutation shortcut",
+    );
+    assert.match(
+      source,
+      /async function runProjectBootstrapCli\(\)[\s\S]*?if \(applyMode\) \{[\s\S]*?assertProjectPersistentWriteBoundary\(targetDirs, "project bootstrap"\)/,
+    );
+    assert.match(
+      source,
+      /async function runProjectCleanupCli\(\)[\s\S]*?assertProjectPersistentWriteBoundary\(targetDirs, "project cleanup"\)/,
+    );
+
+    const installSource = source.slice(
+      source.indexOf("async function runInstall()"),
+      source.indexOf("async function runUpdate()"),
+    );
+    const installHandoff = installSource.indexOf("handOffGlobalSetupIfNeeded");
+    assert.ok(installHandoff > installSource.indexOf("const confirm = await askYesNo"));
+    assert.ok(installHandoff < installSource.indexOf("// 步骤计数"));
+    assert.match(
+      installSource,
+      /mode: "install"[\s\S]*?skillIds: selectedSkillIds[\s\S]*?deployDirs/,
+    );
+    assert.match(installSource, /assertProjectPersistentWriteBoundary\(deployDirs, "install project target"\)/);
+
+    const updateSource = source.slice(
+      source.indexOf("async function runUpdate()"),
+      source.indexOf("async function runCheck()"),
+    );
+    const updateHandoff = updateSource.indexOf("handOffGlobalSetupIfNeeded");
+    assert.ok(updateHandoff > updateSource.indexOf("const updateSkillIds"));
+    assert.ok(updateHandoff < updateSource.indexOf("// ── 1. npm install"));
+    assert.match(
+      updateSource,
+      /if \(executingStableProjectionPackage\)[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED[\s\S]*?else \{[\s\S]*?spawnCliSync\("npm", \["install"\]/,
+      "a verified immutable package must not mutate its own closure with npm install in any scope",
+    );
+    assert.match(updateSource, /assertProjectPersistentWriteBoundary\(deployDirs, "update project target"\)/);
+    assert.match(
+      updateSource,
+      /if \(needProject\) \{\s*if \(executingStableProjectionPackage\)[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED[\s\S]*?SETUP_NODE_CHILD\.RUNTIME_SYNC/,
+      "project update from the stable public CLI must project directly to targets instead of syncing into the package root",
+    );
+    assert.match(source, /async function stableProjectionPackageIntegrityOk\(\)/);
+    assert.match(source, /mergeDelegatedGlobalSetupResult\([\s\S]*?explicit_project_dirs/);
+    assert.match(
+      source,
+      /async function installPythonTools\([\s\S]*?Graphify project integration[\s\S]*?join\(homedir\(\), "\.claude", "settings\.json"\)[\s\S]*?Graphify user Hook reconciliation/,
+      "Graphify must protect both project and user-level Hook destinations from store junctions",
+    );
+    assert.match(
+      source,
+      /async function refreshRuntimeExecutableBindings\([\s\S]*?host-executable-bindings\.json[\s\S]*?runtime executable inventory/,
+      "runtime inventory must validate its exact descendant write target",
     );
   });
 
@@ -382,8 +492,8 @@ describe("setup update default flow", () => {
   test("global install/update refreshes only existing managed projects and keeps cleanup explicit", () => {
     assert.match(
       source,
-      /const managedProjectResolution = needProject\s*\? \{ deployments: await askDeployDirectory\(\), rejected: \[\] \}\s*:\s*await existingManagedProjectDeployments\(\);[\s\S]*?const deployDirs = managedProjectResolution\.deployments;/,
-      "global install/update must reuse existing managed project targets without a new prompt",
+      /const handedOffProjectResolution = stableProjectDeploymentHandoff\(\);[\s\S]*?const managedProjectResolution = needProject\s*\? \{ deployments: await askDeployDirectory\(\), rejected: \[\] \}\s*:\s*\(handedOffProjectResolution \?\? await existingManagedProjectDeployments\(\)\);[\s\S]*?const deployDirs = managedProjectResolution\.deployments;/,
+      "global install/update must reuse either the verified stable handoff or existing managed projects without a new prompt",
     );
     const installSource = source.slice(
       source.indexOf("async function runInstall()"),
@@ -648,7 +758,10 @@ describe("setup update default flow", () => {
     assert.doesNotMatch(source, /wantMetaTheory/);
     assert.doesNotMatch(source, /askYesNo\(t\.askGlobalSkillsUpdate/);
     assert.doesNotMatch(source, /askYesNo\(t\.askMetaTheoryUpdate/);
-    assert.match(source, /if \(needGlobal\) \{\s*const updateSkillIds = await resolveSelectedSkillDependencyIds\(\);/);
+    assert.match(
+      source,
+      /const updateSkillIds = needGlobal\s*\?\s*await resolveSelectedSkillDependencyIds\(\)\s*:\s*\[\];/,
+    );
     assert.match(source, /if \(needGlobal\) \{\s*const updateSyncResult = runNodeScript/);
     assert.doesNotMatch(source, /updateSyncProjectSkipped/);
   });
@@ -656,11 +769,16 @@ describe("setup update default flow", () => {
   test("global-only install/update reconciles existing Graphify hooks before skipping project wiring", () => {
     assert.match(
       source,
-      /installPythonTools\(activeTargets,\s*false,\s*PROJECT_DIR,\s*\{\s*projectWiring: needProject,\s*\}\)/,
+      /function projectDeploymentTargetDir\(deployment, fallback = CALLER_CWD\)[\s\S]*?deployment\?\.targetDir[\s\S]*?\?\? fallback;/,
+      "stable handoff deployment records must be reduced to their targetDir before path APIs",
     );
     assert.match(
       source,
-      /installPythonTools\(activeTargets,\s*true,\s*PROJECT_DIR,\s*\{\s*projectWiring: needProject,\s*\}\)/,
+      /installPythonTools\(\s*activeTargets,\s*false,[\s\S]*?projectDeploymentTargetDir\(deployDirs\[0\], CALLER_CWD\)[\s\S]*?: PROJECT_DIR,\s*\{\s*projectWiring: needProject,\s*\}/,
+    );
+    assert.match(
+      source,
+      /installPythonTools\(\s*activeTargets,\s*true,[\s\S]*?projectDeploymentTargetDir\(deployDirs\[0\], CALLER_CWD\)[\s\S]*?: PROJECT_DIR,\s*\{ projectWiring: needProject \},/,
     );
     assert.match(
       source,
@@ -687,6 +805,11 @@ describe("setup update default flow", () => {
     for (const flowSource of [installSource, updateSource]) {
       assert.match(flowSource, /skipOptionalTools[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED/);
       assert.match(flowSource, /skipOptionalTools[\s\S]*?t\.mcpMemorySkipped/);
+      assert.match(
+        flowSource,
+        /const mcpMemoryOk = executingStableProjectionPackage[\s\S]*?t\.mcpMemorySkipped[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED/,
+        "the immutable package lifecycle must not absorb live MCP replacement",
+      );
     }
   });
 
@@ -772,7 +895,13 @@ describe("setup update default flow", () => {
     const validationStart = source.indexOf("async function validateInstalledArtifacts");
     const validationEnd = source.indexOf("function printInstallResult", validationStart);
     const validationSource = source.slice(validationStart, validationEnd);
-    assert.match(validationSource, /SETUP_NODE_CHILD\.GLOBAL_META_THEORY_SYNC/);
+    assert.match(validationSource, /checkGlobalRuntimeSync\(globalValidationTargets\)/);
+    const globalCheckStart = source.indexOf("function checkGlobalRuntimeSync");
+    const globalCheckEnd = source.indexOf("function formatRuntimeTargetLabels", globalCheckStart);
+    assert.match(
+      source.slice(globalCheckStart, globalCheckEnd),
+      /SETUP_NODE_CHILD\.GLOBAL_META_THEORY_SYNC[\s\S]*?"--check"/,
+    );
     assert.match(validationSource, /projectDeployResults/);
     assert.match(validationSource, /isSourceCheckout\(\)/);
     assert.doesNotMatch(validationSource, /PROJECT_VALIDATION|validate-project|\.gitignore/);

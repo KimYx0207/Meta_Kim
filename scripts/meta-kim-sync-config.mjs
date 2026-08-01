@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -30,8 +30,11 @@ export const canonicalCapabilityIndexDir = path.join(
   "capability-index",
 );
 export const syncManifestPath = path.join(repoRoot, "config", "sync.json");
+export const localStateRoot = process.env.META_KIM_CALLER_CWD
+  ? path.resolve(process.env.META_KIM_CALLER_CWD)
+  : path.resolve(process.cwd());
 export const localOverridesPath = path.join(
-  repoRoot,
+  localStateRoot,
   ".meta-kim",
   "local.overrides.json",
 );
@@ -838,6 +841,49 @@ export function assertHomeBound(targetPath, allowedRoots) {
   if (!isAllowed) {
     throw new Error(
       `Refusing to write outside configured runtime homes: ${resolved}`,
+    );
+  }
+  const projectedRealPath = (candidate) => {
+    let cursor = path.resolve(candidate);
+    const missing = [];
+    while (true) {
+      try {
+        return path.join(realpathSync.native(cursor), ...missing.reverse());
+      } catch (error) {
+        if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
+        const parent = path.dirname(cursor);
+        if (parent === cursor) throw error;
+        missing.push(path.basename(cursor));
+        cursor = parent;
+      }
+    }
+  };
+  const pathAtOrWithin = (root, candidate) => {
+    const rel = path.relative(root, candidate);
+    return rel === "" || (
+      rel !== ".." &&
+      !rel.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(rel)
+    );
+  };
+  const realTarget = projectedRealPath(resolved);
+  const realAllowed = allowedRoots.some((root) =>
+    pathAtOrWithin(projectedRealPath(root), realTarget)
+  );
+  if (!realAllowed) {
+    throw new Error(
+      `Refusing to follow a symlink or junction outside configured runtime homes: ${resolved}`,
+    );
+  }
+  const projectionStoreRoot = projectedRealPath(path.join(
+    os.homedir(),
+    ".meta-kim",
+    "runtime",
+    "projection-packages",
+  ));
+  if (pathAtOrWithin(projectionStoreRoot, realTarget)) {
+    throw new Error(
+      `Refusing to write a runtime projection into the immutable package store: ${resolved}`,
     );
   }
 }

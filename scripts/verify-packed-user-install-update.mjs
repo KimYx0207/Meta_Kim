@@ -15,7 +15,6 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   copyFileSync,
-  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1140,10 +1139,14 @@ function finalizePortableRuntimeProof(prepared, packageInfo, timeoutMs) {
   }
   const portableHookEnv = repositoryIndependentEnvironment(hookEnv, forbiddenExecutionRoots);
   prepared.context.hookEnv = portableHookEnv;
+  const authority = currentProjectionPackageAuthority(
+    path.join(roots.userHome, ".meta-kim", "install-manifest.json"),
+    descriptor,
+  );
   requireSuccess(
     "installed packed global runtime exact projection check after candidate removal",
     run(process.execPath, [
-      path.join(descriptor.installedPackageRoot, "scripts", "sync-runtimes.mjs"),
+      path.join(authority.packageRoot, "scripts", "sync-runtimes.mjs"),
       "--check",
       "--scope",
       "global",
@@ -1155,7 +1158,7 @@ function finalizePortableRuntimeProof(prepared, packageInfo, timeoutMs) {
   requireSuccess(
     "installed packed global Hook release check after candidate removal",
     run(process.execPath, [
-      path.join(descriptor.installedPackageRoot, "scripts", "sync-global-meta-theory.mjs"),
+      path.join(authority.packageRoot, "scripts", "sync-global-meta-theory.mjs"),
       "--check",
       "--targets",
       runtimeTargetIds.join(","),
@@ -1586,6 +1589,32 @@ function referencedAbsoluteRuntimePaths(text) {
   return [...references].map((entry) => entry.replaceAll("\\\\", "\\"));
 }
 
+const EXECUTABLE_SOURCE_EXTENSIONS = new Set([
+  ".cjs",
+  ".js",
+  ".mjs",
+  ".ps1",
+  ".py",
+  ".sh",
+]);
+
+export function referencedPersistentRuntimePaths(textByPath) {
+  return [...new Set(
+    Object.entries(textByPath).flatMap(([filePath, text]) => {
+      if (EXECUTABLE_SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+        return [];
+      }
+      let corpus = [text];
+      try {
+        corpus = [...corpus, ...stringLeaves(JSON.parse(text))];
+      } catch {
+        // Non-JSON runtime declarations are scanned as plain text.
+      }
+      return corpus.flatMap(referencedAbsoluteRuntimePaths);
+    }),
+  )];
+}
+
 function referencedDeclaredPackageRoots(text) {
   const roots = new Set();
   const pattern = /--package-root\s+(?:"([^"]+)"|'([^']+)'|([^\s"']+))/gu;
@@ -1612,6 +1641,18 @@ function runtimeReadbackCorpus(textByPath) {
       return [text];
     }
   });
+}
+
+function structuredRuntimeReadback(textByPath) {
+  return Object.fromEntries(
+    Object.entries(textByPath).map(([filePath, text]) => {
+      try {
+        return [filePath, JSON.parse(text)];
+      } catch {
+        return [filePath, text];
+      }
+    }),
+  );
 }
 
 function assertTransientRuntimeReadback({
@@ -1678,13 +1719,17 @@ function assertTransientRuntimeReadback({
     }),
   );
   const readbackCorpus = runtimeReadbackCorpus(textByPath);
-  const forbiddenReferences = collectNonPortablePackedReferences(readbackCorpus, {
-    forbiddenRoots,
-  });
+  const forbiddenReferences = collectNonPortablePackedReferences(
+    structuredRuntimeReadback(textByPath),
+    {
+      forbiddenRoots,
+      location: "$readback",
+    },
+  );
   if (forbiddenReferences.length > 0) {
     throw new Error(
-      `transient npm cache leaked into global readback: ${forbiddenReferences
-        .map((finding) => finding.location)
+      `global readback contains non-portable references: ${forbiddenReferences
+        .map((finding) => `${finding.location}:${finding.reason}:${finding.value}`)
         .join(", ")}`,
     );
   }
@@ -1715,9 +1760,7 @@ function assertTransientRuntimeReadback({
       throw new Error(`transient packed manifest reference is missing or stale: ${entry.path}`);
     }
   }
-  const referencedPaths = [...new Set(
-    readbackCorpus.flatMap(referencedAbsoluteRuntimePaths),
-  )];
+  const referencedPaths = referencedPersistentRuntimePaths(textByPath);
   if (referencedPaths.length === 0) {
     throw new Error("transient packed readback exposed no absolute runtime references");
   }
@@ -1760,6 +1803,58 @@ function assertTransientRuntimeReadback({
   };
 }
 
+function prepareTransientPackageRoot({
+  packageInfo,
+  descriptor,
+  roots,
+  env,
+  timeoutMs,
+}) {
+  const transientPrefix = path.join(
+    roots.npmCache,
+    "_npx",
+    "p138-current-version",
+  );
+  requireSuccess(
+    "install exact candidate into transient npx-shaped package root",
+    runCli(
+      "npm",
+      [
+        "install",
+        "--prefix",
+        transientPrefix,
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        packageInfo.tarball,
+      ],
+      { cwd: roots.laneRoot, env, timeoutMs },
+    ),
+  );
+  const transientNodeModules = path.join(transientPrefix, "node_modules");
+  const transientPackageRoot = path.join(
+    transientNodeModules,
+    ...descriptor.identity.packageName.split("/").filter(Boolean),
+  );
+  if (existsSync(path.join(transientPackageRoot, ".meta-kim"))) {
+    throw new Error(
+      "fresh transient npx-shaped package unexpectedly contains package-local runtime state",
+    );
+  }
+  const transientCliPath = path.join(
+    transientPackageRoot,
+    path.relative(descriptor.installedPackageRoot, descriptor.installedCliPath),
+  );
+  if (!existsSync(transientCliPath)) {
+    throw new Error("transient npx-shaped package is missing its packed public CLI");
+  }
+  return {
+    transientPrefix,
+    transientPackageRoot,
+    transientCliPath,
+  };
+}
+
 function runTransientPackageRootLane({
   packageInfo,
   descriptor,
@@ -1767,6 +1862,7 @@ function runTransientPackageRootLane({
   env,
   seeded,
   timeoutMs,
+  transientPackage,
 }) {
   const manifestPath = path.join(roots.userHome, ".meta-kim", "install-manifest.json");
   const authorityBefore = currentProjectionPackageAuthority(manifestPath, descriptor);
@@ -1781,28 +1877,7 @@ function runTransientPackageRootLane({
   const codexHooks = JSON.parse(readFileSync(codexHooksPath, "utf8"));
   codexHooks.userOwnedTransient = { preserve: true };
   writeFileSync(codexHooksPath, `${JSON.stringify(codexHooks, null, 2)}\n`, "utf8");
-  const transientNodeModules = path.join(
-    roots.npmCache,
-    "_npx",
-    "p138-current-version",
-    "node_modules",
-  );
-  cpSync(descriptor.globalNodeModules, transientNodeModules, {
-    recursive: true,
-    errorOnExist: true,
-    preserveTimestamps: true,
-  });
-  const transientPackageRoot = path.join(
-    transientNodeModules,
-    ...descriptor.identity.packageName.split("/").filter(Boolean),
-  );
-  const transientCliPath = path.join(
-    transientPackageRoot,
-    path.relative(descriptor.installedPackageRoot, descriptor.installedCliPath),
-  );
-  if (!existsSync(transientCliPath)) {
-    throw new Error("transient npx-shaped package is missing its packed public CLI");
-  }
+  const { transientCliPath } = transientPackage;
   requireSuccess(
     "transient npx-shaped packed public CLI global update",
     run(
@@ -2690,6 +2765,13 @@ export function runPackedUserInstallUpdateAcceptance({
         proof: currentPackage.portableRuntime,
         context: currentPackage._portableRuntimeContext,
       };
+      const transientPackage = prepareTransientPackageRoot({
+        packageInfo,
+        descriptor: prepared.context.descriptor,
+        roots: prepared.context.roots,
+        env: prepared.context.hookEnv,
+        timeoutMs,
+      });
       currentPackage.portableRuntime = finalizePortableRuntimeProof(
         prepared,
         packageInfo,
@@ -2702,6 +2784,7 @@ export function runPackedUserInstallUpdateAcceptance({
         env: prepared.context.hookEnv,
         seeded: prepared.context.seeded,
         timeoutMs,
+        transientPackage,
       });
       delete currentPackage._portableRuntimeContext;
     }

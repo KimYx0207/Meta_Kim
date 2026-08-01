@@ -691,6 +691,7 @@ export function openRecorder({
   const expectedTouchedEntryStates = new Map();
   const forgetOperations = [];
   let promotedEntries = null;
+  let promotedForgetEntryStates = null;
   try {
     baseManifest =
       readManifest(manifestPathFor(scope, repoRoot)) ??
@@ -990,6 +991,12 @@ export function openRecorder({
             .filter((entry) => touchedEntryKeys.has(entryKey(entry)))
             .map((entry) => [entryKey(entry), entry]),
         );
+        promotedForgetEntryStates = forgetOperations.map((operation) => ({
+          ...operation,
+          promotedEntries: structuredClone(
+            matchingEntries(updated, operation.targetPath, operation.purpose),
+          ),
+        }));
         manifest = updated;
         return { ok: true, path: target, entries: updated.entries.length };
       } catch (e) {
@@ -1001,10 +1008,10 @@ export function openRecorder({
       if (!promotedEntries) {
         return { ok: true, changed: false, reason: "not_flushed" };
       }
-      if (replaceSources.length > 0 || forgetOperations.length > 0) {
+      if (replaceSources.length > 0) {
         return {
           ok: false,
-          error: "recorder rollback does not support replaceSources or forget operations",
+          error: "recorder rollback does not support replaceSources",
         };
       }
       try {
@@ -1023,16 +1030,39 @@ export function openRecorder({
               throw new Error(`install manifest entry changed concurrently: ${key}`);
             }
           }
+          for (const operation of promotedForgetEntryStates ?? []) {
+            const currentForgottenEntries = matchingEntries(
+              current,
+              operation.targetPath,
+              operation.purpose,
+            );
+            if (
+              !sameEntryState(
+                currentForgottenEntries,
+                operation.promotedEntries,
+              )
+            ) {
+              throw new Error(
+                `install manifest entry changed concurrently: ${operation.targetPath}::${operation.purpose ?? "*"}`,
+              );
+            }
+          }
           let next = { ...current, entries: [...current.entries] };
           for (const key of promotedEntries.keys()) {
             next.entries = next.entries.filter((entry) => entryKey(entry) !== key);
             const baseEntry = baseEntries.get(key);
             if (baseEntry) next = record(next, baseEntry);
           }
+          for (const operation of forgetOperations) {
+            for (const entry of operation.expectedEntries) {
+              next = record(next, entry);
+            }
+          }
           return await writeManifestAtomic(target, next);
         });
         manifest = updated;
         promotedEntries = null;
+        promotedForgetEntryStates = null;
         return { ok: true, changed: true, path: target, entries: updated.entries.length };
       } catch (e) {
         return { ok: false, error: e?.message ?? String(e) };

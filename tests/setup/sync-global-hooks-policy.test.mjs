@@ -222,6 +222,30 @@ console.log("About to git push");
     });
   });
 
+  test("runtime-home writes reject a commands junction into the immutable package store", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      const codexHome = path.join(root, "codex");
+      const storeRoot = path.join(
+        root,
+        ".meta-kim",
+        "runtime",
+        "projection-packages",
+      );
+      await mkdir(codexHome, { recursive: true });
+      await mkdir(storeRoot, { recursive: true });
+      await symlink(storeRoot, path.join(codexHome, "commands"), "junction");
+
+      await assert.rejects(
+        () => runScript(["--targets", "codex"], env),
+        (error) => {
+          assert.match(error.stderr, /immutable package store/);
+          return true;
+        },
+      );
+      await assert.rejects(() => readFile(path.join(storeRoot, "meta-theory.md"), "utf8"));
+    });
+  });
+
   test("default global sync/check does not require Claude global hooks", async () => {
     await withTempRuntimeHomes(async ({ env, root }) => {
       const sync = await runScript(["--targets", "claude"], env);

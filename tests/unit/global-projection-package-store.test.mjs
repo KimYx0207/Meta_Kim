@@ -8,6 +8,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -15,17 +17,26 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  assertProjectionPackageWriteBoundary,
   findAuthoritativeGlobalProjectionPackage,
   materializeGlobalProjectionPackage,
   packageContentClosure,
+  projectionPackageWriteBoundaryFindings,
+  recordGlobalProjectionPackage,
   resolveGlobalProjectionPackageLayout,
   runWithCleanup,
   runGlobalProjectionPackageChild,
+  sanitizeProjectionPackageEnvironment,
 } from "../../scripts/global-projection-package-store.mjs";
 import {
   CATEGORIES,
+  createEmpty,
   directoryClosureSync,
   fileIntegritySync,
+  manifestPathFor,
+  openRecorder,
+  readManifest,
+  writeManifest,
 } from "../../scripts/install-manifest.mjs";
 
 const RECEIPT_SCHEMA = "meta-kim-global-projection-package-v1";
@@ -136,6 +147,59 @@ function portableRelative(from, target) {
   return path.relative(from, target).replaceAll("\\", "/");
 }
 
+test("stable projection write boundary resolves missing descendants and directory links", async () => {
+  await withFixture(async ({ root }) => {
+    const storeRoot = path.join(root, "store");
+    const packageRoot = path.join(storeRoot, "meta-kim", "2.9.20", "digest", "bundle");
+    const outsideRoot = path.join(root, "outside");
+    const aliasRoot = path.join(outsideRoot, "package-alias");
+    mkdirSync(packageRoot, { recursive: true });
+    mkdirSync(outsideRoot, { recursive: true });
+    symlinkSync(packageRoot, aliasRoot, process.platform === "win32" ? "junction" : "dir");
+    const verifiedPackage = { packageRoot, storeRoot };
+
+    const findings = await projectionPackageWriteBoundaryFindings(
+      verifiedPackage,
+      [path.join(aliasRoot, "not-created", "state.json"), outsideRoot],
+    );
+    assert.equal(findings.length, 2);
+    assert.deepEqual(
+      findings.map((finding) => finding.kind).sort(),
+      ["package_root", "projection_store"],
+    );
+    assert.equal(findings.every((finding) => finding.targetPath.includes("package-alias")), true);
+
+    await assert.rejects(
+      assertProjectionPackageWriteBoundary(
+        verifiedPackage,
+        [path.join(storeRoot, "future", "write.json")],
+        { operation: "test write" },
+      ),
+      /overlaps projection_store/u,
+    );
+    assert.equal(
+      await assertProjectionPackageWriteBoundary(
+        verifiedPackage,
+        [path.join(outsideRoot, "ordinary-project")],
+      ),
+      true,
+    );
+  });
+});
+
+test("stable child environment drops inherited project deployment handoff data", () => {
+  const sanitized = sanitizeProjectionPackageEnvironment({
+    PATH: process.env.PATH ?? "",
+    MeTa_KiM_StAbLe_PrOjEcT_DePlOyMeNtS_JsOn: "poisoned",
+  });
+  assert.equal(
+    Object.keys(sanitized).some((key) =>
+      key.toLowerCase() === "meta_kim_stable_project_deployments_json"
+    ),
+    false,
+  );
+});
+
 function firstPartySnapshot(packageRoot) {
   const filePaths = [];
   const walk = (currentPath, relativeParent = "") => {
@@ -243,6 +307,92 @@ function manifestFor(verified) {
   };
 }
 
+test("recording a stable package retires only superseded package authority entries", async () => {
+  await withFixture(async ({ root, homeRoot, sourceRoot, env }) => {
+    const verified = await materializeGlobalProjectionPackage({
+      sourceRoot,
+      homeRoot,
+      env,
+    });
+    const staleRoot = path.join(
+      root,
+      "npm-cache",
+      "_npx",
+      "stale-origin",
+      "node_modules",
+      "meta-kim",
+    );
+    const staleEntries = manifestFor(verified).entries.map((entry) => ({
+      ...entry,
+      path: entry.path.replace(verified.digestDir, staleRoot),
+    }));
+    const unrelatedPath = path.join(root, "unrelated-sync-owned.txt");
+    const otherOwnerPath = path.join(root, "other-owner-bundle.txt");
+    writeFileSync(unrelatedPath, "unrelated\n", "utf8");
+    writeFileSync(otherOwnerPath, "other owner\n", "utf8");
+    const seeded = createEmpty({
+      scope: "project",
+      repoRoot: root,
+      metaKimVersion: verified.packageVersion,
+    });
+    seeded.entries = [
+      ...staleEntries,
+      {
+        path: unrelatedPath,
+        category: CATEGORIES.C,
+        source: "sync-global-meta-theory",
+        purpose: "unrelated-global-setting",
+        kind: "file",
+        ownershipClass: "install_projection",
+        ...fileIntegritySync(unrelatedPath),
+      },
+      {
+        path: otherOwnerPath,
+        category: CATEGORIES.C,
+        source: "another-owner",
+        purpose: BUNDLE_PURPOSE,
+        kind: "file",
+        ownershipClass: "install_projection",
+        ...fileIntegritySync(otherOwnerPath),
+      },
+    ];
+    const manifestPath = manifestPathFor("project", root);
+    writeManifest(manifestPath, seeded);
+
+    const recorder = openRecorder({
+      scope: "project",
+      repoRoot: root,
+      metaKimVersion: verified.packageVersion,
+    });
+    await recordGlobalProjectionPackage(recorder, verified);
+    const flushed = await recorder.flush();
+    assert.equal(flushed.ok, true, flushed.error);
+
+    const updated = readManifest(manifestPath);
+    assert.equal(
+      updated.entries.some((entry) => entry.path.startsWith(staleRoot)),
+      false,
+    );
+    for (const expected of manifestFor(verified).entries) {
+      assert.equal(
+        updated.entries.some((entry) =>
+          entry.path === expected.path && entry.purpose === expected.purpose
+        ),
+        true,
+        `missing current authority ${expected.purpose}`,
+      );
+    }
+    assert.equal(
+      updated.entries.some((entry) => entry.path === unrelatedPath),
+      true,
+    );
+    assert.equal(
+      updated.entries.some((entry) => entry.path === otherOwnerPath),
+      true,
+    );
+  });
+});
+
 test("a self-signed pre-existing digest package is rejected and never executed", async () => {
   await withFixture(async ({ root, homeRoot, sourceRoot, packageManifest, env }) => {
     const packageTarballSha256 = packedDigest(sourceRoot, path.join(root, "pack"), env);
@@ -271,6 +421,13 @@ test("a self-signed pre-existing digest package is rejected and never executed",
     }
     assert.ok(materializeError, "pre-existing self-signed digest must not become executable authority");
     assert.equal(existsSync(markerPath), false, "poisoned sync script must never execute");
+    assert.equal(
+      readdirSync(layout.versionRoot).some((name) =>
+        name.startsWith(".projection-package-quarantine-")
+      ),
+      false,
+      "a complete but untrusted digest must fail closed instead of being quarantined and replaced",
+    );
   });
 });
 
@@ -387,6 +544,90 @@ test("an exact same-digest materialization retry reuses the verified staged pack
     assert.equal(second.digestDir, first.digestDir);
     assert.equal(second.packageRoot, first.packageRoot);
     assert.deepEqual(directoryClosureSync(second.digestDir), firstClosure);
+    assert.deepEqual(readdirSync(first.versionRoot), [first.packageTarballSha256]);
+  });
+});
+
+test("an incomplete same-digest directory is quarantined without deleting its evidence", async () => {
+  await withFixture(async ({ homeRoot, sourceRoot, env }) => {
+    const first = await materializeGlobalProjectionPackage({
+      sourceRoot,
+      homeRoot,
+      env,
+    });
+    const sentinelName = "preserve-incomplete-evidence.txt";
+    writeFileSync(path.join(first.digestDir, sentinelName), "preserve me\n", "utf8");
+    rmSync(first.receiptPath, { force: true });
+
+    const repaired = await materializeGlobalProjectionPackage({
+      sourceRoot,
+      homeRoot,
+      env,
+    });
+    assert.equal(repaired.digestDir, first.digestDir);
+    assert.equal(existsSync(repaired.receiptPath), true);
+    const quarantines = readdirSync(repaired.versionRoot).filter((name) =>
+      name.startsWith(`.projection-package-quarantine-${repaired.packageTarballSha256.slice(0, 12)}-`)
+    );
+    assert.equal(quarantines.length, 1);
+    assert.equal(
+      readFileSync(path.join(repaired.versionRoot, quarantines[0], sentinelName), "utf8"),
+      "preserve me\n",
+    );
+  });
+});
+
+test("a stale dead-owner digest lock is quarantined with its evidence", async () => {
+  await withFixture(async ({ root, homeRoot, sourceRoot, packageManifest, env }) => {
+    const digest = packedDigest(sourceRoot, path.join(root, "lock-pack"), env);
+    const layout = resolveGlobalProjectionPackageLayout({
+      homeRoot,
+      packageName: packageManifest.name,
+      packageVersion: packageManifest.version,
+      packageTarballSha256: digest,
+    });
+    const lockName = `.projection-package-lock-${digest.slice(0, 24)}`;
+    const lockDir = path.join(layout.versionRoot, lockName);
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(
+      path.join(lockDir, "owner.json"),
+      `${JSON.stringify({ token: "stale-owner", pid: 2_147_483_647 })}\n`,
+      "utf8",
+    );
+    writeFileSync(path.join(lockDir, "stale-lock-evidence.txt"), "preserve lock\n", "utf8");
+    const oldTime = new Date(Date.now() - 60_000);
+    utimesSync(lockDir, oldTime, oldTime);
+
+    const verified = await materializeGlobalProjectionPackage({
+      sourceRoot,
+      homeRoot,
+      env,
+    });
+    assert.equal(existsSync(verified.receiptPath), true);
+    assert.equal(existsSync(lockDir), false);
+    const quarantines = readdirSync(layout.versionRoot).filter((name) =>
+      name.startsWith(`.projection-package-lock-quarantine-${digest.slice(0, 24)}-`)
+    );
+    assert.equal(quarantines.length, 1);
+    assert.equal(
+      readFileSync(
+        path.join(layout.versionRoot, quarantines[0], "stale-lock-evidence.txt"),
+        "utf8",
+      ),
+      "preserve lock\n",
+    );
+  });
+});
+
+test("concurrent same-digest materialization leaves one complete verified winner", async () => {
+  await withFixture(async ({ homeRoot, sourceRoot, env }) => {
+    const [first, second] = await Promise.all([
+      materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env }),
+      materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env }),
+    ]);
+    assert.equal(second.digestDir, first.digestDir);
+    assert.equal(second.packageRoot, first.packageRoot);
+    assert.equal(existsSync(first.receiptPath), true);
     assert.deepEqual(readdirSync(first.versionRoot), [first.packageTarballSha256]);
   });
 });

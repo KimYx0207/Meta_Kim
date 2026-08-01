@@ -4,6 +4,7 @@ import { constants as fsConstants, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   CATEGORIES,
   directoryClosureSync,
@@ -45,6 +46,15 @@ function pathAtOrWithin(root, candidate) {
   );
 }
 
+async function lstatIfExists(filePath) {
+  try {
+    return await fs.lstat(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 const STRIPPED_ENV_KEYS = new Set([
   "node_options",
   "node_path",
@@ -53,6 +63,7 @@ const STRIPPED_ENV_KEYS = new Set([
   "init_cwd",
   "meta_kim_repo_root",
   "meta_kim_package_root",
+  "meta_kim_stable_project_deployments_json",
 ]);
 
 // This is a lifecycle-isolation boundary for transient origins and accidental
@@ -209,6 +220,163 @@ export async function runWithCleanup(operation, cleanup) {
   }
   if (operationFailed) throw operationError;
   return operationResult;
+}
+
+async function acquireProjectionDigestLock(layout, homeRoot) {
+  const lockKey = layout.packageTarballSha256.slice(0, 24);
+  const lockDir = path.join(
+    layout.versionRoot,
+    `.projection-package-lock-${lockKey}`,
+  );
+  const ownerPath = path.join(lockDir, "owner.json");
+  const token = randomUUID();
+  const candidateDir = path.join(
+    layout.versionRoot,
+    `.projection-package-lock-candidate-${lockKey}-${token}`,
+  );
+  const candidateOwnerPath = path.join(candidateDir, "owner.json");
+  await Promise.all([
+    assertHomeBound(lockDir, homeRoot),
+    assertHomeBound(candidateDir, homeRoot),
+  ]);
+  const processIsAlive = (pid) => {
+    if (!Number.isSafeInteger(pid) || pid < 1) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return error?.code === "EPERM";
+    }
+  };
+  const renameWithWindowsRetry = async (source, target) => {
+    let lastError;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        await fs.rename(source, target);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (
+          !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+          attempt === 3
+        ) throw error;
+        await delay(25 * (attempt + 1));
+      }
+    }
+    throw lastError;
+  };
+  const removeOwnedLockPath = async (ownedPath, expectedToken, label) => {
+    const ownedOwnerPath = path.join(ownedPath, "owner.json");
+    const [entries, owner] = await Promise.all([
+      fs.readdir(ownedPath),
+      readJson(ownedOwnerPath, label),
+    ]);
+    if (
+      entries.length !== 1 ||
+      entries[0] !== "owner.json" ||
+      owner.token !== expectedToken
+    ) {
+      throw new Error("Projection package digest lock changed before cleanup");
+    }
+    let lastError;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        await fs.rm(ownedPath, { recursive: true, force: false });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (
+          !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+          attempt === 3
+        ) throw error;
+        await delay(25 * (attempt + 1));
+      }
+    }
+    throw lastError;
+  };
+  await fs.mkdir(candidateDir);
+  try {
+    await fs.writeFile(
+      candidateOwnerPath,
+      `${JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() })}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+  } catch (error) {
+    const entries = await fs.readdir(candidateDir).catch(() => []);
+    if (entries.length === 0) await fs.rmdir(candidateDir);
+    throw error;
+  }
+
+  let published = false;
+  try {
+    for (let attempt = 0; attempt < 1_200; attempt += 1) {
+      try {
+        await fs.rename(candidateDir, lockDir);
+        published = true;
+        return async () => {
+          const releasePath = path.join(
+            layout.versionRoot,
+            `.projection-package-lock-release-${lockKey}-${token}`,
+          );
+          await assertHomeBound(releasePath, homeRoot);
+          await renameWithWindowsRetry(lockDir, releasePath);
+          await removeOwnedLockPath(
+            releasePath,
+            token,
+            "projection package lock release owner",
+          );
+        };
+      } catch (error) {
+        const stat = await lstatIfExists(lockDir);
+        if (!stat) {
+          if (
+            !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+            attempt === 1_199
+          ) throw error;
+          await delay(50);
+          continue;
+        }
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          throw new Error("Projection package digest lock is not a plain directory");
+        }
+        let owner = null;
+        try {
+          owner = await readJson(ownerPath, "projection package lock owner");
+        } catch {
+          // Legacy or interrupted locks without an owner remain protected until stale.
+        }
+        if (
+          Date.now() - stat.mtimeMs > 30_000 &&
+          !processIsAlive(owner?.pid)
+        ) {
+          const staleLockPath = path.join(
+            layout.versionRoot,
+            `.projection-package-lock-quarantine-${lockKey}-${process.pid}-${randomUUID()}`,
+          );
+          try {
+            await renameWithWindowsRetry(lockDir, staleLockPath);
+            continue;
+          } catch (renameError) {
+            if (!["EEXIST", "ENOENT"].includes(renameError?.code)) {
+              throw renameError;
+            }
+          }
+        }
+        await delay(50);
+      }
+    }
+    throw new Error(
+      `Projection package digest lock remained busy: ${lockDir}`,
+    );
+  } finally {
+    if (!published && await lstatIfExists(candidateDir)) {
+      await removeOwnedLockPath(
+        candidateDir,
+        token,
+        "projection package lock candidate owner",
+      );
+    }
+  }
 }
 
 async function createPrivateNpmRuntime({ npmRunner, sourceRoot, storeRoot }) {
@@ -447,6 +615,52 @@ async function projectedRealPath(targetPath) {
       cursor = parent;
     }
   }
+}
+
+export async function projectionPackageWriteBoundaryFindings(
+  verifiedPackage,
+  targetPaths,
+) {
+  if (!verifiedPackage) return [];
+  const protectedRoots = [
+    ["package_root", verifiedPackage.packageRoot],
+    ["projection_store", verifiedPackage.storeRoot],
+  ].filter(([, root]) => typeof root === "string" && root.length > 0);
+  const realProtectedRoots = await Promise.all(
+    protectedRoots.map(async ([kind, root]) => [kind, await projectedRealPath(root)]),
+  );
+  const findings = [];
+  for (const targetPath of targetPaths ?? []) {
+    if (typeof targetPath !== "string" || targetPath.length === 0) continue;
+    const realTarget = await projectedRealPath(targetPath);
+    for (const [kind, realRoot] of realProtectedRoots) {
+      if (pathAtOrWithin(realRoot, realTarget)) {
+        findings.push(Object.freeze({
+          kind,
+          targetPath: path.resolve(targetPath),
+          realTarget,
+          protectedRoot: realRoot,
+        }));
+      }
+    }
+  }
+  return findings;
+}
+
+export async function assertProjectionPackageWriteBoundary(
+  verifiedPackage,
+  targetPaths,
+  { operation = "write" } = {},
+) {
+  const findings = await projectionPackageWriteBoundaryFindings(
+    verifiedPackage,
+    targetPaths,
+  );
+  if (findings.length === 0) return true;
+  const finding = findings[0];
+  throw new Error(
+    `Stable projection package ${operation} target overlaps ${finding.kind}: ${finding.targetPath}`,
+  );
 }
 
 async function assertHomeBound(targetPath, homeRoot) {
@@ -1013,24 +1227,108 @@ export async function materializeGlobalProjectionPackage({
       return winner;
     };
 
-    const existing = await fs.lstat(finalLayout.digestDir).catch(() => null);
-    if (existing) return await verifyExactWinner();
+    const retryableIncompleteWinner = (error) =>
+      /global projection package receipt is unavailable: ENOENT/u
+        .test(error?.message ?? "");
+    const verifyExactWinnerWithRetry = async () => {
+      let lastError;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          return await verifyExactWinner();
+        } catch (error) {
+          lastError = error;
+          if (!retryableIncompleteWinner(error) || attempt === 3) throw error;
+          await delay(25 * (attempt + 1));
+        }
+      }
+      throw lastError;
+    };
+    const existingWinnerHasMissingReceipt = async () => {
+      const digestStat = await lstatIfExists(finalLayout.digestDir);
+      if (!digestStat) return false;
+      if (digestStat.isSymbolicLink() || !digestStat.isDirectory()) {
+        throw new Error("Existing projection package digest is not a plain directory");
+      }
+      const receiptStat = await lstatIfExists(finalLayout.receiptPath);
+      if (!receiptStat) return true;
+      if (receiptStat.isSymbolicLink() || !receiptStat.isFile()) {
+        throw new Error("Existing projection package receipt is not a regular file");
+      }
+      return false;
+    };
+    const promoteStagedCandidate = async () => {
+      let lastError;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          await assertPlainDirectoryChain(homeRoot, finalLayout.versionRoot);
+          await fs.rename(stageDir, finalLayout.digestDir);
+          promoted = true;
+          return null;
+        } catch (error) {
+          lastError = error;
+          if (await lstatIfExists(finalLayout.digestDir)) {
+            return await verifyExactWinnerWithRetry();
+          }
+          if (
+            !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+            attempt === 3
+          ) throw error;
+          await delay(25 * (attempt + 1));
+        }
+      }
+      throw lastError;
+    };
 
-    try {
-      await assertPlainDirectoryChain(homeRoot, finalLayout.versionRoot);
-      await fs.rename(stageDir, finalLayout.digestDir);
-      promoted = true;
-    } catch (error) {
-      if (!["EEXIST", "ENOTEMPTY", "EPERM"].includes(error?.code)) throw error;
-      return await verifyExactWinner();
-    }
-    return await verifyGlobalProjectionPackage(finalLayout.digestDir, {
-      homeRoot,
-      expectedPackageName: sourceManifest.name,
-      expectedPackageVersion: sourceManifest.version,
-      expectedPackageTarballSha256: packageTarballSha256,
-      expectedFirstPartyClosure: sourceSnapshotBeforePack.closure,
-    });
+    const quarantineIncompleteWinner = async (quarantinePath) => {
+      let lastError;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          await fs.rename(finalLayout.digestDir, quarantinePath);
+          return;
+        } catch (error) {
+          lastError = error;
+          if (
+            !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+            attempt === 3
+          ) throw error;
+          await delay(25 * (attempt + 1));
+        }
+      }
+      throw lastError;
+    };
+
+    const releaseDigestLock = await acquireProjectionDigestLock(finalLayout, homeRoot);
+    return await runWithCleanup(async () => {
+      const existing = await lstatIfExists(finalLayout.digestDir);
+      if (existing) {
+        try {
+          return await verifyExactWinnerWithRetry();
+        } catch (error) {
+          if (
+            !retryableIncompleteWinner(error) ||
+            !(await existingWinnerHasMissingReceipt())
+          ) throw error;
+          const quarantinePath = path.join(
+            finalLayout.versionRoot,
+            `.projection-package-quarantine-${finalLayout.packageTarballSha256.slice(0, 12)}-${process.pid}-${randomUUID()}`,
+          );
+          await assertHomeBound(quarantinePath, homeRoot);
+          await quarantineIncompleteWinner(quarantinePath);
+          const winner = await promoteStagedCandidate();
+          if (winner) return winner;
+        }
+      } else {
+        const winner = await promoteStagedCandidate();
+        if (winner) return winner;
+      }
+      return await verifyGlobalProjectionPackage(finalLayout.digestDir, {
+        homeRoot,
+        expectedPackageName: sourceManifest.name,
+        expectedPackageVersion: sourceManifest.version,
+        expectedPackageTarballSha256: packageTarballSha256,
+        expectedFirstPartyClosure: sourceSnapshotBeforePack.closure,
+      });
+    }, releaseDigestLock);
     }, async () => {
       if (!promoted) {
         await fs.rm(stageDir, { recursive: true, force: true });
@@ -1137,6 +1435,22 @@ export async function recordGlobalProjectionPackage(recorder, verifiedPackage) {
     expectedPackageVersion: verifiedPackage.packageVersion,
     expectedPackageTarballSha256: verifiedPackage.packageTarballSha256,
   });
+  const currentEntries = recorder.snapshot()?.entries ?? [];
+  for (const entry of currentEntries) {
+    const isProjectionPackageAuthority =
+      entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
+      entry.category === CATEGORIES.C &&
+      (
+        entry.purpose === PROJECTION_PACKAGE_PURPOSE.bundle ||
+        entry.purpose?.startsWith(`${PROJECTION_PACKAGE_PURPOSE.bundle}:`)
+      );
+    if (
+      isProjectionPackageAuthority &&
+      !pathAtOrWithin(verified.digestDir, entry.path)
+    ) {
+      recorder.forget(entry.path, entry.purpose);
+    }
+  }
   recorder.recordDir(verified.digestDir, {
     source: PROJECTION_PACKAGE_MANIFEST_SOURCE,
     purpose: PROJECTION_PACKAGE_PURPOSE.bundle,
