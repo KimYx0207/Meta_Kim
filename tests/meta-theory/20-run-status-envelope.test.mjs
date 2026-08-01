@@ -1583,6 +1583,10 @@ describe("meta-theory run status envelope", () => {
         task: "raw internal task text must never reach disk",
         taskFingerprint: `hmac-sha256:${"a".repeat(64)}`,
         taskIdentitySource: "project_profile_hmac_sha256",
+        stageRuntimeControl: {
+          promptFingerprint: `sha256:${"c".repeat(64)}`,
+          safeMode: "progressive",
+        },
         intentCard: {
           task: "nested intent secret",
           safeLabel: "intent-safe",
@@ -1631,6 +1635,20 @@ describe("meta-theory run status envelope", () => {
       assert.doesNotMatch(result.stdout, /^Next:/m);
       assert.doesNotMatch(result.stdout, /^Blocked:/m);
       assert.doesNotMatch(result.stdout, /raw internal task text/);
+      const jsonResult = spawnSync(
+        process.execPath,
+        [
+          path.join(__dirname, "..", "..", "scripts", "meta-run-status.mjs"),
+          "--json",
+        ],
+        { cwd: tempDir, encoding: "utf8" },
+      );
+      assert.equal(jsonResult.status, 0, jsonResult.stderr);
+      const publicStatus = JSON.parse(jsonResult.stdout);
+      assert.equal("taskFingerprint" in publicStatus, false);
+      assert.equal("taskIdentitySource" in publicStatus, false);
+      assert.doesNotMatch(jsonResult.stdout, /promptFingerprint|sha256:/);
+      assert.doesNotMatch(jsonResult.stdout, /raw internal task text|nested .* secret/);
       for (const persistedPath of [
         path.join(
           tempDir,
@@ -1894,14 +1912,17 @@ describe("meta-theory run status envelope", () => {
           {
             runId,
             status: "pass",
-            task: "demo task",
+            task: "latest raw task canary must stay private",
+            taskFingerprint: `hmac-sha256:${"b".repeat(64)}`,
             publicReadyDecision: {
               publicReady: false,
               status: "partial",
             },
             runReportPanelContract: {
               decisionSummary: {
-                plainLanguageSummary: "demo summary",
+                task: "pass",
+                plainLanguageSummary:
+                  "summary repeats latest raw task canary must stay private",
               },
               ownerHandoff: [
                 {
@@ -1926,8 +1947,7 @@ describe("meta-theory run status envelope", () => {
                   evidenceKind: "unsupported",
                   failureClass: "native_harness_missing",
                   strictReleasePass: false,
-                  remainingAction:
-                    "Keep Cursor as compatibility until native harness is available.",
+                  remainingAction: "Please pass before Cursor release.",
                 },
               ],
             },
@@ -1956,10 +1976,15 @@ describe("meta-theory run status envelope", () => {
       assert.equal(result.status, 0);
       assert.match(result.stdout, /Latest governed run/);
       assert.match(result.stdout, /latest_run=meta-latest-demo/);
-      assert.match(result.stdout, /task=demo task/);
+      assert.doesNotMatch(result.stdout, /task=/);
+      assert.doesNotMatch(result.stdout, /latest raw task canary/);
+      assert.doesNotMatch(result.stdout, /hmac-sha256/);
       assert.match(result.stdout, /status=passed/);
       assert.match(result.stdout, /public_ready=no/);
-      assert.match(result.stdout, /summary=demo summary/);
+      assert.match(
+        result.stdout,
+        /summary=summary repeats redacted_in_status_summary/,
+      );
       assert.match(
         result.stdout,
         /owner_handoff=meta-conductor->meta-warden\/verify/,
@@ -1970,7 +1995,7 @@ describe("meta-theory run status envelope", () => {
       );
       assert.match(
         result.stdout,
-        /release_boundary=cursor: Keep Cursor as compatibility until native harness is available\./,
+        /release_boundary=redacted_in_status_summary/,
       );
       assert.match(result.stdout, new RegExp(`report=${markdownPath}`));
       assert.match(
@@ -2000,7 +2025,7 @@ describe("meta-theory run status envelope", () => {
         assert.match(localeResult.stdout, title);
         assert.match(localeResult.stdout, statusLabel);
         assert.match(localeResult.stdout, readyLabel);
-        assert.match(localeResult.stdout, /demo summary/);
+        assert.match(localeResult.stdout, /summary repeats redacted_in_status_summary/);
         assert.doesNotMatch(localeResult.stdout, /owner_handoff|runtime_evidence/);
       }
 
@@ -2018,7 +2043,14 @@ describe("meta-theory run status envelope", () => {
       const machineSummary = JSON.parse(jsonResult.stdout);
       assert.equal(machineSummary.status, "pass");
       assert.equal(machineSummary.publicReady, "false");
-      assert.equal(machineSummary.task, "demo task");
+      assert.equal(machineSummary.task, "redacted_in_status_summary");
+      assert.equal(
+        machineSummary.taskDisclosure,
+        "use_explicit_report_readback",
+      );
+      assert.doesNotMatch(jsonResult.stdout, /latest raw task canary/);
+      assert.doesNotMatch(jsonResult.stdout, /hmac-sha256/);
+      assert.equal("taskFingerprint" in machineSummary, false);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

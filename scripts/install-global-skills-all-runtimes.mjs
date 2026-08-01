@@ -4881,15 +4881,19 @@ function buildCodexPlanningHookAdapterPy() {
   ].join("\n");
 }
 
-function buildCodexHookRunnerMjs() {
+export function buildCodexHookRunnerMjs(pythonHint = null) {
+  const installTimePythonHint =
+    pythonHint && typeof pythonHint.command === "string"
+      ? { command: pythonHint.command, args: Array.isArray(pythonHint.args) ? pythonHint.args : [] }
+      : null;
   return [
     'import { spawnSync } from "node:child_process";',
     'import { existsSync, readFileSync } from "node:fs";',
-    'import os from "node:os";',
     'import path from "node:path";',
     'import process from "node:process";',
     "",
     "const scriptPath = process.argv[2];",
+    `const INSTALL_TIME_PYTHON_HINT = ${JSON.stringify(installTimePythonHint)};`,
     "",
     "function pathEntries() {",
     "  return String(process.env.PATH || process.env.Path || process.env.path || '')",
@@ -4902,10 +4906,14 @@ function buildCodexHookRunnerMjs() {
     "}",
     "",
     "function commandWorks(command, args = []) {",
-    "  const result = spawnSync(command, [...args, '--version'], {",
+    "  const result = spawnSync(command, [",
+    "    ...args,",
+    "    '-c',",
+    "    'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)',",
+    "  ], {",
     "    encoding: 'utf8',",
     "    windowsHide: true,",
-    "    timeout: 5000,",
+    "    timeout: 750,",
     "  });",
     "  return result.status === 0;",
     "}",
@@ -4916,22 +4924,15 @@ function buildCodexHookRunnerMjs() {
     "    const value = process.env[envKey];",
     "    if (value) candidates.push({ command: value, args: [] });",
     "  }",
+    "  if (INSTALL_TIME_PYTHON_HINT) candidates.push(INSTALL_TIME_PYTHON_HINT);",
     "",
-    "  if (os.platform() === 'win32') {",
+    "  if (process.platform === 'win32') {",
     "    for (const dir of pathEntries()) {",
     "      for (const name of ['python.exe', 'python3.exe']) {",
     "        const filePath = path.join(dir, name);",
     "        if (!existsSync(filePath) || isWindowsApps(filePath)) continue;",
     "        candidates.push({ command: filePath, args: [] });",
     "      }",
-    "    }",
-    "    for (const filePath of [",
-    "      'D:\\\\ProgramData\\\\anaconda3\\\\python.exe',",
-    "      'C:\\\\ProgramData\\\\anaconda3\\\\python.exe',",
-    "      path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'python.exe'),",
-    "      path.join(os.homedir(), '.openclaw', 'skills', 'Python313', 'Python313', 'python.exe'),",
-    "    ]) {",
-    "      if (existsSync(filePath)) candidates.push({ command: filePath, args: [] });",
     "    }",
     "    candidates.push({ command: 'py', args: ['-3'] });",
     "  }",
@@ -5185,7 +5186,7 @@ async function patchCodexPlanningHooksForPlatform(spec, runtimeHome, runtimeId) 
   );
   await fs.writeFile(
     path.join(hooksDir, "codex_hook_runner.mjs"),
-    buildCodexHookRunnerMjs(),
+    buildCodexHookRunnerMjs(detectPython310()),
     "utf8",
   );
   await fs.writeFile(

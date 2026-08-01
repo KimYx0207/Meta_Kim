@@ -60,6 +60,9 @@ npm run meta:theory:report -- --run-id latest
 npm run meta:delivery:bundle
 ```
 
+`meta:run-status:latest` is a minimal redacted status summary. Use the explicit
+`meta:theory:report -- --run-id latest` readback to inspect report content.
+
 The proof path shows five things:
 
 - a fuzzy request is turned into an explicit intent and success standard

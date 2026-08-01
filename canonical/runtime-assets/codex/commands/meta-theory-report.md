@@ -41,3 +41,5 @@ explanation. `selectionSource` is `latest_committed_pointer` or
 
 Never relay task text or task fingerprints from lifecycle state. Do not treat
 the report path itself as verification evidence.
+`meta:run-status --latest --details` and `--json` are redacted status surfaces;
+use this explicit report readback when the user asks to inspect report content.

@@ -67,6 +67,39 @@ function humanValue(value, copy) {
   return copy.values[key] ?? key;
 }
 
+function redactSensitiveText(value, sensitiveValues = []) {
+  let text = String(value ?? "");
+  for (const sensitiveValue of sensitiveValues) {
+    const secret = typeof sensitiveValue === "string" ? sensitiveValue.trim() : "";
+    if (!secret) continue;
+    if (text.includes(secret)) {
+      if (secret.length < 8) return "redacted_in_status_summary";
+      text = text.split(secret).join("redacted_in_status_summary");
+    }
+  }
+  return text;
+}
+
+function toPublicStatusProjection(value, options = {}) {
+  if (Array.isArray(value)) {
+    return value.map((item) => toPublicStatusProjection(item, options));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(
+          ([key]) =>
+            !/fingerprint/iu.test(key) && key !== "taskIdentitySource",
+        )
+        .map(([key, item]) => [key, toPublicStatusProjection(item, options)]),
+    );
+  }
+  if (typeof value === "string") {
+    return redactSensitiveText(value, options.sensitiveValues);
+  }
+  return value;
+}
+
 function localizeEmbeddedEnums(value, copy) {
   return String(value ?? copy.values.none).replace(
     /(?<=[:/])(pass|partial|failed|blocked|pending|unknown)(?=[:/;\s]|$)/gu,
@@ -225,26 +258,36 @@ function summarizeLatestGovernedExecution(cwd, latestExecution) {
     toRepoRelative(cwd, artifact.runReport?.markdownPath) ||
     toRepoRelative(cwd, paths.markdownPath);
 
-  return {
+  const sensitiveValues = [artifact.task, decisionSummary.task];
+  return toPublicStatusProjection({
     runId,
-    task: artifact.task || decisionSummary.task || "unknown",
+    // Keep the legacy key for machine consumers, but status surfaces must never
+    // duplicate the governed artifact's raw task. The explicit report command
+    // remains the user-authorized detail surface.
+    task: "redacted_in_status_summary",
+    taskDisclosure: "use_explicit_report_readback",
     status: artifact.status || decisionSummary.status || "unknown",
     publicReady,
-    summary:
+    summary: redactSensitiveText(
       decisionSummary.plainLanguageSummary ||
-      artifact.userExperienceNotice?.expectation ||
-      "none",
+        artifact.userExperienceNotice?.expectation ||
+        "none",
+      sensitiveValues,
+    ),
     ownerHandoff: summarizeOwnerHandoff(panel.ownerHandoff),
     runtimeEvidence: runtimeRecords.length
       ? runtimeRecords.map(summarizeRuntimeRecord).join(LATEST_LABELS.listSeparator)
       : LATEST_LABELS.none,
-    releaseBoundary: summarizeReleaseBoundaries(runtimeRecords),
+    releaseBoundary: redactSensitiveText(
+      summarizeReleaseBoundaries(runtimeRecords),
+      sensitiveValues,
+    ),
     report: markdownPath || LATEST_LABELS.none,
     nextCommand: `npm run meta:theory:report -- --run-id ${runId}`,
     jsonPath:
       toRepoRelative(cwd, latestRecord.jsonPath) ||
       toRepoRelative(cwd, paths.artifactPath),
-  };
+  });
 }
 
 function renderLatestSummary(summary, copy, showDetails = false) {
@@ -267,7 +310,6 @@ function renderLatestSummary(summary, copy, showDetails = false) {
     `${labels.nextCommand}${separator}${summary.nextCommand}`,
   );
   if (showDetails) {
-    primary.splice(2, 0, `${labels.task}${separator}${summary.task}`);
     primary.push(
       `${labels.ownerHandoff}${separator}${summary.ownerHandoff}`,
       `${labels.runtimeEvidence}${separator}${localizeEmbeddedEnums(summary.runtimeEvidence, copy)}`,
@@ -296,7 +338,8 @@ if (latest) {
 const status = await readMetaRunStatus(process.cwd(), profile);
 
 if (json) {
-  console.log(JSON.stringify(status || null, null, 2));
+  const publicStatus = status ? toPublicStatusProjection(status) : null;
+  console.log(JSON.stringify(publicStatus, null, 2));
   process.exit(0);
 }
 

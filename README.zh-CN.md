@@ -60,6 +60,9 @@ npm run meta:theory:report -- --run-id latest
 npm run meta:delivery:bundle
 ```
 
+`meta:run-status:latest` 只输出最小脱敏状态摘要；需要查看报告内容时，请使用显式的
+`meta:theory:report -- --run-id latest` 回读入口。
+
 这条证明链会展示五件事：
 
 - 模糊需求会先变成明确意图和成功标准

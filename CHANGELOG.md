@@ -6,6 +6,18 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.21] - 2026-08-01
+
+### Fixed
+
+- **Run-status output no longer republishes governed task text or stable fingerprints.** Text, details, and JSON use one redacted public projection; nested fingerprint fields are removed, free-text status fields redact embedded task canaries, and explicit report readback remains the only surface for report content.
+- **Codex planning Hooks no longer carry fixed Python paths from a maintainer machine.** Install/update records only the interpreter descriptor that passed the shared live probe, then the generated runner revalidates Python 3.10+ on every use. Stale environment overrides, stale install hints, missing PATH entries, and fake `--version` launchers are rejected before falling back to a live interpreter.
+- **Stale interpreter failure no longer causes multi-second Hook stalls.** PATH candidates receive an existence precheck and each executable probe has a short bounded timeout.
+
+### Verification
+
+- Focused status, installer, packed-readback, Graphify-runtime, PRD, sync, and project checks pass. Two independent reviews rejected the first candidate, their nested-fingerprint, short-task, non-PATH fallback, stale-hint, and timeout counterexamples were added as regressions, and the corrected candidate uses the low-risk release smoke rather than the unrelated full release suite.
+
 ## [2.9.20] - 2026-08-01
 
 ### Fixed

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T14:48:11.910Z",
+  "generatedAt": "2026-08-01T16:36:13.521Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -795,8 +795,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/codex/commands/meta-theory-report.md",
         "relativePath": "meta-theory-report.md",
-        "size": 1912,
-        "modified": "2026-07-27T04:30:22.895Z"
+        "size": 2072,
+        "modified": "2026-08-01T16:20:34.225Z"
       },
       "repo:canonical-runtime-assets:meta-theory-verify": {
         "id": "meta-theory-verify",

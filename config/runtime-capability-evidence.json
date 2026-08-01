@@ -251,7 +251,7 @@
         "setup.mjs"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "f63643236341458c758ab68ff96472cc3eaf2cbf7997efb5bd07e71ce8c3a1c4" },
+        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "91bc0d98d03d4a13d9924b53575b28fa71b1f3224a6ef32fb361dd10eeed0fe3" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "0edf7e6978c36eee30bb35232d111373155765461a39ba02044eccc876eacb83" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "7b890d5388bd9186213631391ca466af69b5019ad2ace7ebcc4817115406585d" }
       ],
@@ -562,7 +562,7 @@
         "AGENTS.md"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "cfd469fd0e5991e8d1824efdb2d50231e5c9c4c3739388609466f22daf9f9905" },
+        { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "4bc5f4535535d389226436d09a120b4b7bce5d5c5cbc07b33f44f4b1a8c353d9" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "0edf7e6978c36eee30bb35232d111373155765461a39ba02044eccc876eacb83" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "7b890d5388bd9186213631391ca466af69b5019ad2ace7ebcc4817115406585d" },
         { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "36eb3d7306e92dcd7ba0cdb5692a05767755e6aaf9977e8e27a8862902c17dd4" }

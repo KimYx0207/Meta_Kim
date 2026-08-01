@@ -1,7 +1,14 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { pythonCandidates } from "../../scripts/graphify-runtime.mjs";
 import {
@@ -9,6 +16,7 @@ import {
   resolveManifestSkillSubdir,
   shouldUseCliShell,
 } from "../../scripts/install-platform-config.mjs";
+import { buildCodexHookRunnerMjs } from "../../scripts/install-global-skills-all-runtimes.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const skillsManifest = JSON.parse(
@@ -168,6 +176,113 @@ describe("install platform config", () => {
     assert.doesNotMatch(commandFunction, /os\.platform\(\) === "win32"/);
     assert.doesNotMatch(commandFunction, /return `node |return `"\$\{nodePath\}"|python3|2>\/dev\/null|\|\| true/);
   });
+
+  test("Codex hook runner discovers a live Python without fixed machine paths", () => {
+    const source = readFileSync(
+      path.join(repoRoot, "scripts", "install-global-skills-all-runtimes.mjs"),
+      "utf8",
+    );
+    const runnerBuilder = source.match(
+      /(?:export )?function buildCodexHookRunnerMjs\([^)]*\) \{[\s\S]*?\n\}/,
+    )?.[0];
+
+    assert.ok(runnerBuilder);
+    assert.doesNotMatch(runnerBuilder, /ProgramData|anaconda|Python311|Python313|\.openclaw/iu);
+    assert.match(runnerBuilder, /META_KIM_PYTHON/);
+    assert.match(runnerBuilder, /pathEntries\(\)/);
+    assert.match(runnerBuilder, /commandWorks/);
+    assert.match(runnerBuilder, /sys\.version_info >= \(3, 10\)/);
+    assert.doesNotMatch(runnerBuilder, /'--version'/);
+    assert.match(runnerBuilder, /INSTALL_TIME_PYTHON_HINT/);
+    assert.match(runnerBuilder, /timeout: 750/);
+  });
+
+  test(
+    "Codex hook runner rejects a stale explicit interpreter and uses a live fallback",
+    { skip: process.platform !== "win32" },
+    (context) => {
+      const wherePython = spawnSync("where.exe", ["python"], {
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      const pythonCandidates = wherePython.stdout
+        ?.split(/\r?\n/u)
+        .map((value) => value.trim())
+        .filter(Boolean) || [];
+      const actualPython = pythonCandidates.find((candidate) => {
+        const check = spawnSync(
+          candidate,
+          ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
+          { encoding: "utf8", windowsHide: true },
+        );
+        return check.status === 0;
+      });
+      if (!actualPython) {
+        context.skip("Python 3.10+ is not available for the Windows runtime probe");
+        return;
+      }
+
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-python-probe-"));
+      try {
+        const runnerPath = path.join(tempDir, "codex_hook_runner.mjs");
+        const adapterPath = path.join(tempDir, "adapter.py");
+        writeFileSync(
+          runnerPath,
+          buildCodexHookRunnerMjs({ command: actualPython, args: [] }),
+          "utf8",
+        );
+        writeFileSync(adapterPath, 'print("live-python-selected")\n', "utf8");
+
+        const staleInterpreter = path.join(
+          process.env.SystemRoot || "C:\\Windows",
+          "System32",
+          "WindowsPowerShell",
+          "v1.0",
+          "powershell.exe",
+        );
+        const result = spawnSync(process.execPath, [runnerPath, adapterPath], {
+          encoding: "utf8",
+          windowsHide: true,
+          env: {
+            ...process.env,
+            META_KIM_PYTHON: staleInterpreter,
+            PATH: path.join(process.env.SystemRoot || "C:\\Windows", "System32"),
+          },
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /live-python-selected/);
+
+        writeFileSync(
+          runnerPath,
+          buildCodexHookRunnerMjs({ command: staleInterpreter, args: [] }),
+          "utf8",
+        );
+        const staleHintResult = spawnSync(
+          process.execPath,
+          [runnerPath, adapterPath],
+          {
+            encoding: "utf8",
+            windowsHide: true,
+            env: {
+              ...process.env,
+              META_KIM_PYTHON: "",
+              PYTHON: "",
+              PYTHON3: "",
+              PATH: `${path.dirname(actualPython)}${path.delimiter}${path.join(
+                process.env.SystemRoot || "C:\\Windows",
+                "System32",
+              )}`,
+            },
+          },
+        );
+        assert.equal(staleHintResult.status, 0, staleHintResult.stderr);
+        assert.match(staleHintResult.stdout, /live-python-selected/);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("Codex planning hook adapter counts level-2 and level-3 phases", () => {
     const source = readFileSync(
