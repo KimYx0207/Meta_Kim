@@ -48,6 +48,7 @@ import {
 } from "./graphify-node-identity.mjs";
 import { homedir } from "node:os";
 import { sanitizeGraphifyWindowsHooks } from "./graphify-hook-sanitize.mjs";
+import { renameWithTransientRetry } from "./transient-rename.mjs";
 
 const command = process.argv[2] || "check";
 const GRAPHIFY_MIGRATION_STATE_SCHEMA = "meta-kim-graphify-migration-state-v2";
@@ -1128,13 +1129,13 @@ function installVerifiedGraphifyOutput(
       throw new Error("Graphify destination changed during isolated build");
     }
     if (existsSync(current.output)) {
-      renameSync(current.output, previousOutput);
+      renameWithTransientRetry(current.output, previousOutput);
       previousMoved = true;
     }
     if (existsSync(current.output)) {
       throw new Error("Graphify destination was recreated during atomic installation");
     }
-    renameSync(isolatedPaths.output, current.output);
+    renameWithTransientRetry(isolatedPaths.output, current.output);
     nextInstalled = true;
     const installed = assertPlainGraphifyPaths(repository.repoRoot, {
       requireArtifacts: true,
@@ -1155,14 +1156,14 @@ function installVerifiedGraphifyOutput(
         "failed installed Graphify graph",
       );
       if (installedGraph === boundSnapshot?.get("graph.json")) {
-        renameSync(
+        renameWithTransientRetry(
           currentOutput,
           path.join(path.dirname(isolatedPaths.output), "graphify-out-failed"),
         );
       }
     }
     if (previousMoved && !existsSync(currentOutput) && existsSync(previousOutput)) {
-      renameSync(previousOutput, currentOutput);
+      renameWithTransientRetry(previousOutput, currentOutput);
     }
     throw error;
   }
