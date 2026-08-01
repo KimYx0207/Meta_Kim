@@ -56,10 +56,12 @@ function windowsResult(values = {}) {
   return JSON.stringify({
     schemaVersion: "meta-kim-windows-job-process-runner-v1",
     verified: true,
-    reason: "child_exited_and_job_drained",
+    reason: "process_exited_job_drained",
     childExitCode: 0,
     activeProcesses: 0,
     stopRequested: false,
+    failureOperation: null,
+    win32Error: null,
     ...values,
   });
 }
@@ -224,6 +226,178 @@ describe("bounded evaluator output capture", () => {
     }
   });
 
+  test("Windows success requires a consistent verified tuple and clean launcher exit", async () => {
+    const cases = [
+      {
+        name: "out-of-range result counters",
+        result: {
+          childExitCode: -1,
+          activeProcesses: 0x1_0000_0000,
+        },
+        launcherCode: 0,
+        launcherSignal: null,
+        expectedCode: "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_CORRUPT",
+        expectedReason: "launcher_result_schema_invalid",
+        expectedCleanupVerified: false,
+      },
+      {
+        name: "verified failure diagnostics",
+        result: {
+          verified: true,
+          reason: "create_job_failed",
+          childExitCode: 0,
+          activeProcesses: 0,
+          failureOperation: "CreateJobObjectW",
+          win32Error: 5,
+        },
+        launcherCode: 0,
+        launcherSignal: null,
+        expectedCode: "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_UNVERIFIED",
+        expectedReason: "launcher_verified_result_inconsistent",
+        expectedCleanupVerified: false,
+      },
+      {
+        name: "launcher nonzero with child nonzero",
+        result: { childExitCode: 23 },
+        launcherCode: 2,
+        launcherSignal: null,
+        expectedCode: "META_KIM_WINDOWS_JOB_PROCESS_GROUP_LAUNCHER_EARLY_EXIT",
+        expectedReason: "launcher_exit_mismatch_after_verified_result",
+        expectedCleanupVerified: false,
+      },
+      {
+        name: "launcher signal after verified result",
+        result: { childExitCode: 0 },
+        launcherCode: null,
+        launcherSignal: "SIGTERM",
+        expectedCode: "META_KIM_WINDOWS_JOB_PROCESS_GROUP_LAUNCHER_EARLY_EXIT",
+        expectedReason: "launcher_exit_mismatch_after_verified_result",
+        expectedCleanupVerified: false,
+      },
+      {
+        name: "child nonzero with launcher zero",
+        result: { childExitCode: 23 },
+        launcherCode: 0,
+        launcherSignal: null,
+        expectedCode: "META_KIM_CHILD_COMMAND_FAILED",
+        expectedReason: null,
+        expectedCleanupVerified: true,
+        expectedExitCode: 23,
+      },
+    ];
+
+    for (const fixture of cases) {
+      let guardDir = null;
+      const child = createFakeChild();
+      const runner = createWindowsGuardedCommandRunner({
+        launcherPath: "fixture-launcher.ps1",
+        spawn: (_file, args) => {
+          const resultPath = args[args.indexOf("-ResultPath") + 1];
+          void fs
+            .writeFile(resultPath, windowsResult(fixture.result), "utf8")
+            .then(() =>
+              closeFakeChild(
+                child,
+                fixture.launcherCode,
+                fixture.launcherSignal,
+              ),
+            );
+          return child;
+        },
+        fs: {
+          async mkdtemp(prefix) {
+            guardDir = await fs.mkdtemp(prefix);
+            return guardDir;
+          },
+          writeFile: (...args) => fs.writeFile(...args),
+          readFile: (...args) => fs.readFile(...args),
+          rm: (...args) => fs.rm(...args),
+        },
+      });
+
+      try {
+        const error = await expectRejected(runner("fixture.exe", []));
+        assert.equal(error.code, fixture.expectedCode, fixture.name);
+        assert.equal(
+          error.ownedProcessGroupCleanupReason,
+          fixture.expectedReason,
+          fixture.name,
+        );
+        assert.equal(
+          error.ownedProcessGroupCleanupVerified,
+          fixture.expectedCleanupVerified,
+          fixture.name,
+        );
+        assert.equal(error.exitCode, fixture.expectedExitCode, fixture.name);
+        if (fixture.name === "verified failure diagnostics") {
+          assert.equal(Object.hasOwn(error, "launcherFailureOperation"), false);
+          assert.equal(Object.hasOwn(error, "launcherWin32Error"), false);
+        }
+        assertNoWholeTreeClaim(error);
+      } finally {
+        if (guardDir) await fs.rm(guardDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("Windows control winners reject nonzero or signaled launcher outcomes before verified cleanup", async () => {
+    for (const launcherOutcome of [
+      { code: 2, signal: null },
+      { code: null, signal: "SIGTERM" },
+    ]) {
+      let guardDir = null;
+      let resultPath = null;
+      let stopPath = null;
+      const child = createFakeChild();
+      const runner = createWindowsGuardedCommandRunner({
+        launcherPath: "fixture-launcher.ps1",
+        spawn: (_file, args) => {
+          resultPath = args[args.indexOf("-ResultPath") + 1];
+          stopPath = args[args.indexOf("-StopPath") + 1];
+          return child;
+        },
+        fs: {
+          async mkdtemp(prefix) {
+            guardDir = await fs.mkdtemp(prefix);
+            return guardDir;
+          },
+          async writeFile(filePath, ...args) {
+            await fs.writeFile(filePath, ...args);
+            if (filePath === stopPath) {
+              await fs.writeFile(resultPath, windowsResult(), "utf8");
+              closeFakeChild(
+                child,
+                launcherOutcome.code,
+                launcherOutcome.signal,
+              );
+            }
+          },
+          readFile: (...args) => fs.readFile(...args),
+          rm: (...args) => fs.rm(...args),
+        },
+      });
+
+      try {
+        const error = await expectRejected(
+          runner("fixture.exe", [], { timeout: 1 }),
+        );
+        assert.equal(
+          error.code,
+          "META_KIM_WINDOWS_JOB_PROCESS_GROUP_LAUNCHER_EARLY_EXIT",
+        );
+        assert.equal(
+          error.ownedProcessGroupCleanupReason,
+          "launcher_exit_mismatch_after_verified_result",
+        );
+        assert.equal(error.ownedProcessGroupCleanupVerified, false);
+        assert.equal(error.ownedProcessGroupCleanupFailure, true);
+        assertNoWholeTreeClaim(error);
+      } finally {
+        if (guardDir) await fs.rm(guardDir, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("temp cleanup failure preserves the existing owned-group primary error", async () => {
     let guardDir = null;
     const child = createFakeChild();
@@ -277,6 +451,172 @@ describe("bounded evaluator output capture", () => {
       assertNoWholeTreeClaim(error);
     } finally {
       if (guardDir) await fs.rm(guardDir, { recursive: true, force: true });
+    }
+  });
+
+  test("control-directory cleanup failure preserves verified owned-group truth", async () => {
+    let guardDir = null;
+    const child = createFakeChild();
+    const runner = createWindowsGuardedCommandRunner({
+      launcherPath: "fixture-launcher.ps1",
+      spawn: (_file, args) => {
+        const resultPath = args[args.indexOf("-ResultPath") + 1];
+        void fs
+          .writeFile(
+            resultPath,
+            windowsResult({ childExitCode: 23 }),
+            "utf8",
+          )
+          .then(() => closeFakeChild(child, 0));
+        return child;
+      },
+      fs: {
+        async mkdtemp(prefix) {
+          guardDir = await fs.mkdtemp(prefix);
+          return guardDir;
+        },
+        writeFile: (...args) => fs.writeFile(...args),
+        readFile: (...args) => fs.readFile(...args),
+        async rm() {
+          throw new Error("fixture control-directory cleanup denied");
+        },
+      },
+    });
+
+    try {
+      const error = await expectRejected(runner("fixture.exe", []));
+      assert.equal(error.code, "META_KIM_CHILD_COMMAND_FAILED");
+      assert.equal(error.exitCode, 23);
+      assert.equal(error.ownedProcessGroupCleanupVerified, true);
+      assert.equal(error.ownedProcessGroupCleanupFailure, false);
+      assert.equal(error.ownedProcessGroupCleanupReason, null);
+      assert.equal(error.ownedProcessGroupSurvivorCount, null);
+      assert.equal(error.launcherStillAlive, false);
+      assert.equal(error.runnerControlDirectoryRetained, true);
+      assert.deepEqual(error.secondaryCleanupFailures, [
+        {
+          code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+          reason: "runner_temp_cleanup_failed",
+        },
+      ]);
+      assertNoWholeTreeClaim(error);
+    } finally {
+      if (guardDir) await fs.rm(guardDir, { recursive: true, force: true });
+    }
+  });
+
+  test("Windows launcher diagnostics expose only fixed safe classifications", async () => {
+    const privateMarker = "PRIVATE command --token secret C:/private/spec.json";
+    const cases = [
+      {
+        result: {
+          verified: false,
+          reason: "launcher_native_compile_failed",
+          activeProcesses: -1,
+          failureOperation: "compile_native_bridge",
+          win32Error: null,
+          detail: privateMarker,
+          cleanupFailure: privateMarker,
+        },
+        expectedReason: "launcher_native_compile_failed",
+        expectedOperation: "compile_native_bridge",
+        expectedWin32Error: undefined,
+      },
+      {
+        result: {
+          verified: false,
+          reason: "create_job_failed",
+          activeProcesses: -1,
+          failureOperation: "CreateJobObjectW",
+          win32Error: 5,
+          detail: privateMarker,
+          cleanupFailure: privateMarker,
+        },
+        expectedReason: "create_job_failed",
+        expectedOperation: "CreateJobObjectW",
+        expectedWin32Error: 5,
+      },
+      {
+        result: {
+          verified: false,
+          reason: privateMarker,
+          activeProcesses: -1,
+          failureOperation: privateMarker,
+          win32Error: -1,
+          detail: privateMarker,
+          cleanupFailure: privateMarker,
+        },
+        expectedReason: "launcher_result_reason_unrecognized",
+        expectedOperation: undefined,
+        expectedWin32Error: undefined,
+      },
+      ...[
+        "owner_process_exited_job_terminated",
+        "process_exited_job_drained",
+        "stop_requested_job_terminated",
+      ].map((reason) => ({
+        result: {
+          verified: false,
+          reason,
+          activeProcesses: -1,
+          failureOperation: null,
+          win32Error: null,
+        },
+        expectedReason: "launcher_result_reason_unrecognized",
+        expectedOperation: undefined,
+        expectedWin32Error: undefined,
+      })),
+    ];
+
+    for (const fixture of cases) {
+      let guardDir = null;
+      const child = createFakeChild();
+      const runner = createWindowsGuardedCommandRunner({
+        launcherPath: "fixture-launcher.ps1",
+        spawn: (_file, args) => {
+          const resultPath = args[args.indexOf("-ResultPath") + 1];
+          void fs
+            .writeFile(resultPath, windowsResult(fixture.result), "utf8")
+            .then(() => closeFakeChild(child, 2));
+          return child;
+        },
+        fs: {
+          async mkdtemp(prefix) {
+            guardDir = await fs.mkdtemp(prefix);
+            return guardDir;
+          },
+          writeFile: (...args) => fs.writeFile(...args),
+          readFile: (...args) => fs.readFile(...args),
+          rm: (...args) => fs.rm(...args),
+        },
+      });
+
+      try {
+        const error = await expectRejected(
+          runner("PRIVATE command --token secret", ["C:/private/spec.json"]),
+        );
+        assert.equal(
+          error.code,
+          "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_UNVERIFIED",
+        );
+        assert.equal(
+          error.ownedProcessGroupCleanupReason,
+          fixture.expectedReason,
+        );
+        assert.equal(
+          error.launcherFailureOperation,
+          fixture.expectedOperation,
+        );
+        assert.equal(error.launcherWin32Error, fixture.expectedWin32Error);
+        assert.equal(error.ownedProcessGroupSurvivorCount, null);
+        assert.equal(Object.hasOwn(error, "detail"), false);
+        assert.equal(Object.hasOwn(error, "cleanupFailure"), false);
+        assert.equal(Object.hasOwn(error, "result"), false);
+        assertNoWholeTreeClaim(error);
+        assert.doesNotMatch(JSON.stringify(error), /PRIVATE|secret|spec\.json/u);
+      } finally {
+        if (guardDir) await fs.rm(guardDir, { recursive: true, force: true });
+      }
     }
   });
 

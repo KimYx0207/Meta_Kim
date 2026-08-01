@@ -18,6 +18,123 @@ export const PROCESS_TREE_CLEANUP_CLAIM = "not_claimed";
 export const PROCESS_TREE_CLEANUP_BOUNDARY =
   "out_of_job_process_creation_not_covered";
 
+const SAFE_WINDOWS_LAUNCHER_FAILURE_REASONS = new Set([
+  "assign_process_to_job_failed",
+  "command_line_too_long",
+  "create_job_failed",
+  "create_owner_stdin_lease_event_failed",
+  "create_process_failed",
+  "duplicate_owner_stdin_lease_failed",
+  "duplicate_stderr_failed",
+  "duplicate_stdout_failed",
+  "executable_path_invalid",
+  "executable_path_not_found",
+  "get_exit_code_failed",
+  "initialize_attribute_list_failed",
+  "job_drain_timeout",
+  "job_not_empty_after_drain",
+  "launcher_failed",
+  "launcher_initialization_failed",
+  "launcher_internal_failure",
+  "launcher_native_compile_failed",
+  "launcher_native_invocation_failed",
+  "launcher_parameter_validation_failed",
+  "launcher_result_write_failed",
+  "launcher_spec_parse_failed",
+  "launcher_spec_read_failed",
+  "launcher_spec_validation_failed",
+  "open_null_stdin_failed",
+  "open_owner_process_failed",
+  "owner_process_exited_before_child_creation",
+  "owner_process_identity_invalid",
+  "owner_process_identity_mismatch",
+  "owner_process_start_time_invalid",
+  "owner_process_start_time_mismatch",
+  "owner_stdin_lease_closed_before_child_creation",
+  "owner_stdin_lease_not_pipe",
+  "owner_stdin_lease_unavailable",
+  "probe_owner_stdin_lease_failed",
+  "query_job_failed",
+  "query_owner_process_id_failed",
+  "query_owner_process_times_failed",
+  "read_owner_stdin_lease_failed",
+  "resolve_executable_failed",
+  "resolved_executable_invalid",
+  "resume_thread_failed",
+  "resume_thread_unexpected_suspend_count",
+  "safe_executable_search_path_empty",
+  "set_kill_on_job_close_failed",
+  "survivors_detected",
+  "terminate_job_after_owner_exit_failed",
+  "terminate_job_after_stop_failed",
+  "terminate_remaining_job_members_failed",
+  "update_handle_list_failed",
+  "wait_for_owner_process_failed",
+  "wait_for_owner_process_unexpected_status",
+  "wait_for_process_failed",
+  "wait_for_process_unexpected_status",
+  "wait_owner_stdin_lease_failed",
+  "wait_owner_stdin_lease_unexpected_status",
+]);
+
+const SAFE_WINDOWS_LAUNCHER_FAILURE_OPERATIONS = new Set([
+  "AssignProcessToJobObject",
+  "BuildAbsoluteSearchPath",
+  "BuildCommandLine",
+  "CreateEventW",
+  "CreateFileW(NUL)",
+  "CreateJobObjectW",
+  "CreateProcessW",
+  "DuplicateHandle(stderr)",
+  "DuplicateHandle(stdin)",
+  "DuplicateHandle(stdout)",
+  "GetExitCodeProcess",
+  "GetFileType(stdin)",
+  "GetProcessId(owner)",
+  "GetProcessTimes(owner)",
+  "GetStdHandle",
+  "GetStdHandle(stdin)",
+  "InitializeProcThreadAttributeList",
+  "InitializeProcThreadAttributeList(size)",
+  "OpenProcess(owner)",
+  "PeekNamedPipe(ownerStdinLease)",
+  "QueryInformationJobObject",
+  "ReadFile(ownerStdinLease)",
+  "ResolveExecutablePath",
+  "ResumeThread",
+  "SearchPathW",
+  "SetInformationJobObject",
+  "TerminateJobObject",
+  "UpdateProcThreadAttribute",
+  "WaitForSingleObject(owner)",
+  "WaitForSingleObject(ownerStdinLease)",
+  "WaitForSingleObject(process)",
+  "WaitForSingleObject",
+  "compile_native_bridge",
+  "invoke_native_bridge",
+  "launcher_initialization",
+  "managed_launcher",
+  "parse_spec",
+  "read_spec",
+  "validate_launcher_parameters",
+  "validate_spec",
+  "write_result",
+]);
+
+const SAFE_WINDOWS_LAUNCHER_SUCCESS_REASONS = new Set([
+  "owner_process_exited_job_terminated",
+  "process_exited_job_drained",
+  "stop_requested_job_terminated",
+]);
+
+export function isSafeWindowsLauncherFailureReason(value) {
+  return SAFE_WINDOWS_LAUNCHER_FAILURE_REASONS.has(value);
+}
+
+export function isSafeWindowsLauncherFailureOperation(value) {
+  return SAFE_WINDOWS_LAUNCHER_FAILURE_OPERATIONS.has(value);
+}
+
 const defaultWindowsLauncherPath = path.join(
   __dirname,
   "windows-job-process-runner.ps1",
@@ -683,9 +800,17 @@ async function readWindowsResult(resultPath, fileSystem = fs) {
     typeof result?.verified === "boolean" &&
     typeof result?.reason === "string" &&
     (result.childExitCode === null ||
-      Number.isSafeInteger(result.childExitCode)) &&
-    Number.isSafeInteger(result?.activeProcesses) &&
-    typeof result?.stopRequested === "boolean";
+      (Number.isSafeInteger(result.childExitCode) &&
+        result.childExitCode >= 0 &&
+        result.childExitCode <= 0xffff_ffff)) &&
+    (result.activeProcesses === -1 ||
+      (Number.isSafeInteger(result.activeProcesses) &&
+        result.activeProcesses >= 0 &&
+        result.activeProcesses <= 0xffff_ffff)) &&
+    typeof result?.stopRequested === "boolean" &&
+    (result.failureOperation === null ||
+      typeof result.failureOperation === "string") &&
+    (result.win32Error === null || Number.isSafeInteger(result.win32Error));
   if (!shapeValid) {
     throw cleanupFailure(
       null,
@@ -694,14 +819,45 @@ async function readWindowsResult(resultPath, fileSystem = fs) {
       "windows_job_object_owned_process_group",
     );
   }
-  if (result.verified !== true || result.activeProcesses !== 0) {
+  const successTupleValid =
+    result.verified === true &&
+    SAFE_WINDOWS_LAUNCHER_SUCCESS_REASONS.has(result.reason) &&
+    Number.isSafeInteger(result.childExitCode) &&
+    result.activeProcesses === 0 &&
+    result.failureOperation === null &&
+    result.win32Error === null;
+  if (!successTupleValid) {
+    const safeReason =
+      result.verified === true
+        ? "launcher_verified_result_inconsistent"
+        : isSafeWindowsLauncherFailureReason(result.reason)
+          ? result.reason
+          : "launcher_result_reason_unrecognized";
+    const safeOperation = isSafeWindowsLauncherFailureOperation(
+      result.failureOperation,
+    )
+      ? result.failureOperation
+      : null;
+    const safeWin32Error =
+      Number.isSafeInteger(result.win32Error) &&
+      result.win32Error >= 0 &&
+      result.win32Error <= 0xffff_ffff
+        ? result.win32Error
+        : null;
     const error = cleanupFailure(
       null,
       "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_UNVERIFIED",
-      result.reason || "launcher_result_unverified",
+      safeReason,
       "windows_job_object_owned_process_group",
     );
-    error.ownedProcessGroupSurvivorCount = result.activeProcesses;
+    error.ownedProcessGroupSurvivorCount =
+      result.activeProcesses === -1 ? null : result.activeProcesses;
+    if (result.verified !== true && safeOperation !== null) {
+      error.launcherFailureOperation = safeOperation;
+    }
+    if (result.verified !== true && safeWin32Error !== null) {
+      error.launcherWin32Error = safeWin32Error;
+    }
     throw error;
   }
   return result;
@@ -815,8 +971,9 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
 
       const requestStopAndVerify = async () => {
         await fileSystem.writeFile(stopPath, "stop\n", "utf8");
+        let outcome;
         try {
-          await waitForOutcome(
+          outcome = await waitForOutcome(
             outcomePromise,
             cleanupTimeoutMs,
             "META_KIM_WINDOWS_JOB_PROCESS_GROUP_DRAIN_FAILED",
@@ -856,7 +1013,10 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
           });
           throw error;
         }
-        return readWindowsResult(resultPath, fileSystem);
+        return {
+          outcome,
+          result: await readWindowsResult(resultPath, fileSystem),
+        };
       };
       registerActiveChild(launcher, command, requestStopAndVerify);
 
@@ -884,21 +1044,32 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
         let outcome = first.outcome;
         let result;
         if (first.type === "control") {
-          result = await requestStopAndVerify();
-          outcome = await outcomePromise;
+          ({ outcome, result } = await requestStopAndVerify());
         } else {
           result = await readWindowsResult(resultPath, fileSystem);
         }
         const snapshots = outputSnapshots(stdoutCapture, stderrCapture);
 
+        if (outcome?.error || outcome?.code !== 0 || outcome?.signal !== null) {
+          const error = cleanupFailure(
+            outcome?.error ?? null,
+            "META_KIM_WINDOWS_JOB_PROCESS_GROUP_LAUNCHER_EARLY_EXIT",
+            "launcher_exit_mismatch_after_verified_result",
+            "windows_job_object_owned_process_group",
+          );
+          throw attachOutput(error, snapshots, options);
+        }
+
         if (winningControlReason === "output_limit") {
-          throw outputLimitError(
+          const error = outputLimitError(
             command,
             snapshots,
             options,
             true,
             "windows_job_object_owned_process_group",
           );
+          error.launcherStillAlive = false;
+          throw error;
         }
         if (winningControlReason === "timeout") {
           const error = new Error(
@@ -911,6 +1082,7 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
             verified: true,
             scope: "windows_job_object_owned_process_group",
           });
+          error.launcherStillAlive = false;
           throw attachOutput(error, snapshots, options);
         }
         if (winningControlReason === "aborted") {
@@ -921,16 +1093,7 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
             verified: true,
             scope: "windows_job_object_owned_process_group",
           });
-          throw attachOutput(error, snapshots, options);
-        }
-        if (outcome.error) throw outcome.error;
-        if (outcome.code !== 0 && result.childExitCode === 0) {
-          const error = cleanupFailure(
-            null,
-            "META_KIM_WINDOWS_JOB_PROCESS_GROUP_LAUNCHER_EARLY_EXIT",
-            "launcher_nonzero_after_zero_child_exit",
-            "windows_job_object_owned_process_group",
-          );
+          error.launcherStillAlive = false;
           throw attachOutput(error, snapshots, options);
         }
         if (result.childExitCode !== 0) {
@@ -944,6 +1107,7 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
             verified: true,
             scope: "windows_job_object_owned_process_group",
           });
+          error.launcherStillAlive = false;
           throw error;
         }
         returnValue = attachOwnedProcessGroupTruth({
@@ -955,6 +1119,7 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
           verified: true,
           scope: "windows_job_object_owned_process_group",
         });
+        returnValue.launcherStillAlive = false;
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
         options.signal?.removeEventListener("abort", abortHandler);
@@ -1029,7 +1194,26 @@ export function createWindowsGuardedCommandRunner(dependencies = {}) {
             },
           ];
         } else {
-          primaryError = tempCleanupError;
+          if (
+            returnValue?.ownedProcessGroupCleanupVerified === true &&
+            returnValue.ownedProcessGroupCleanupFailure === false &&
+            returnValue.ownedProcessGroupCleanupReason === null &&
+            returnValue.ownedProcessGroupScope ===
+              "windows_job_object_owned_process_group" &&
+            returnValue.launcherStillAlive === false
+          ) {
+            primaryError = attachOwnedProcessGroupTruth(tempCleanupError, {
+              verified: true,
+              failure: false,
+              reason: null,
+              survivorCount:
+                returnValue.ownedProcessGroupSurvivorCount ?? null,
+              scope: returnValue.ownedProcessGroupScope,
+            });
+            primaryError.launcherStillAlive = false;
+          } else {
+            primaryError = tempCleanupError;
+          }
         }
       }
     }

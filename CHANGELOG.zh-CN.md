@@ -15,13 +15,15 @@
 - **Windows runtime 验收不再根据可复用 PID 反推整棵进程树，而是用私有 Job Object 管住自己创建的进程。** 根进程先以 suspended 状态创建，成功加入 Job 后才恢复；kill-on-close、owner 进程 handle 与 supervisor pipe lease 共同覆盖 timeout、launcher 崩溃、Node supervisor 退出和根进程提前结束，确保真正加入 Job 的成员被排空。
 - **runtime 命令输出有界保存，同时保留完整流证据。** 每个输出流只保留有限正文与尾部，但记录完整字节数和 SHA-256；UTF-8 截断不会产生破损字符，仓库路径、用户 home、WSL 路径和凭据默认脱敏，次级临时文件清理失败也不会覆盖主要进程清理结果。
 - **清理声明与真实控制范围一致。** 发布证据只能验证 runner 自己拥有的 Windows Job 或 POSIX detached process group；明确不声称能清理任意完整系统进程树，也不覆盖脱离该进程组创建的进程。标准发布链新增一次串行 process-guard 阶段，避免这些生命周期测试在其他套件中重复执行。
+- **Windows PowerShell 5.1 现在会显式按 UTF-8 读取 evaluator 启动规格。** 无 BOM JSON 交接中的真实中文 Agent 定义、emoji、重音拉丁文、日文和韩文不再损坏；launcher/result 矛盾、越界协议数值和畸形公开失败证据会 fail closed，不会被误报为清理已验证。
+- **主要进程清理真值与次级控制目录清理分开记录。** 临时目录残留会继续作为有界、固定白名单的次级失败显示，但已经自洽证明的 Windows Job 或 POSIX 进程组清理不会被它覆盖。公开报告不会带出原始命令、提示词、路径、环境变量、输出、stack 或 signal。
 - **Graphify 重建现在能正确处理当前工作区中有意删除的受跟踪文件。** 在计算当前仓库快照前会排除 Git 索引里已删除的旧路径，替换旧进程 guardian 不再因 `ENOENT` 让代码图迁移崩溃；若文件在摘要过程中并发消失，验证仍会 fail closed。
 - **Graphify 在 Windows 安装已验证代码图时，只对短暂目录锁做有限重试。** `EPERM`、`EBUSY`、`EACCES` 使用很短且有上限的退避；其他错误立即失败，重试耗尽仍恢复上一份已验证图，不会放宽发布门。
 - **OpenClaw 2026.7.1 的 SQLite 认证存储不再让兼容 smoke 失败，也不会触发旧式凭据复制。** Meta_Kim 识别由 OpenClaw 管理的 per-agent SQLite store，把认证继承继续交给运行端处理，绝不复制凭据数据库；只有不存在当前 store 的旧安装才继续使用固定 JSON 文件兼容镜像。
 
 ### 验证
 
-- 定向回归覆盖 root/child/grandchild timeout 清理、根进程非零退出后的后代排空、launcher 崩溃、Node supervisor 退出、缺失 launcher 结果、残留 timer、stdout/stderr 洪泛、默认脱敏、UTF-8 分片与 POSIX 结果竞争。发布前 correctness、security、completeness 三路独立 Review 必须无未解决问题；最终仍以单一 clean 15/15 标准门、精确 Release 绑定和 Claude Code/Codex 正式全局读回为准。
+- 定向回归覆盖 root/child/grandchild timeout 清理、根进程非零退出后的后代排空、launcher 崩溃、Node supervisor 退出、缺失 launcher 结果、残留 timer、stdout/stderr 洪泛、默认脱敏、UTF-8 分片/规格往返、POSIX 结果竞争、矛盾协议组合及主要/次级清理真值。correctness、security、completeness 三路独立 Review 最终均为 P0/P1/P2=0。最终仍以最终提交上的单一 clean 15/15 标准门、精确 Release 绑定和 Claude Code/Codex 正式全局读回为准；此前第 8 项失败报告和后续 Claude-only 定向诊断都不算发布证据。
 
 ## [2.9.18] - 2026-08-01
 

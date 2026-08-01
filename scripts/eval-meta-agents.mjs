@@ -25,6 +25,8 @@ import {
   PROCESS_TREE_CLEANUP_CLAIM,
   runCommandWithIgnoredStdin,
   runWindowsGuardedCommand,
+  isSafeWindowsLauncherFailureOperation,
+  isSafeWindowsLauncherFailureReason,
 } from "./eval-process-runner.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -36,6 +38,218 @@ const processTreeCleanupNonClaim = Object.freeze({
   processTreeCleanupClaim: PROCESS_TREE_CLEANUP_CLAIM,
   processTreeCleanupBoundary: PROCESS_TREE_CLEANUP_BOUNDARY,
 });
+
+const MAX_PUBLIC_SECONDARY_CLEANUP_FAILURES = 4;
+const MAX_PUBLIC_OUTPUT_LIMIT_STREAM_INPUTS = 8;
+const MAX_PUBLIC_OUTPUT_LIMIT_STREAMS = 2;
+const PUBLIC_PROCESS_FAILURE_CODES = new Set([
+  "META_KIM_ACTIVE_CHILD_CLEANUP_FAILED",
+  "META_KIM_CHILD_COMMAND_FAILED",
+  "META_KIM_CHILD_COMMAND_LAUNCH_FAILED",
+  "META_KIM_COMMAND_ABORTED",
+  "META_KIM_COMMAND_CLEANUP_FAILED",
+  "META_KIM_COMMAND_OUTPUT_LIMIT_EXCEEDED",
+  "META_KIM_COMMAND_TIMEOUT",
+  "META_KIM_POSIX_PROCESS_GROUP_CLEANUP_FAILED",
+  "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+  "META_KIM_WINDOWS_JOB_PROCESS_GROUP_DRAIN_FAILED",
+  "META_KIM_WINDOWS_JOB_PROCESS_GROUP_FINAL_CLEANUP_FAILED",
+  "META_KIM_WINDOWS_JOB_PROCESS_GROUP_LAUNCHER_EARLY_EXIT",
+  "META_KIM_WINDOWS_PROCESS_LAUNCHER_FORCE_STOP_FAILED",
+  "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_CORRUPT",
+  "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_UNVERIFIED",
+]);
+const PUBLIC_PROCESS_SYSTEM_CODES = new Set([
+  "E2BIG",
+  "EACCES",
+  "EAGAIN",
+  "EBADF",
+  "EINVAL",
+  "EMFILE",
+  "ENOENT",
+  "ENOEXEC",
+  "ENOMEM",
+  "ENOTDIR",
+  "EPERM",
+]);
+const PUBLIC_PROCESS_CLEANUP_REASONS = new Set([
+  "aborted_cleanup_failed",
+  "cleanup_evidence_inconsistent",
+  "cleanup_unverified",
+  "finally_launcher_cleanup_failed",
+  "finally_launcher_exit_unverified",
+  "launcher_exit_unverified",
+  "launcher_exit_mismatch_after_verified_result",
+  "launcher_force_stop_exit_unverified",
+  "launcher_force_stop_failed",
+  "launcher_force_stop_rejected",
+  "launcher_force_stopped_after_cleanup_timeout",
+  "launcher_result_corrupt",
+  "launcher_result_missing",
+  "launcher_result_reason_unrecognized",
+  "launcher_result_schema_invalid",
+  "launcher_still_alive_control_directory_retained",
+  "launcher_verified_result_inconsistent",
+  "output_limit_cleanup_failed",
+  "posix_process_group_exit_unverified",
+  "timeout_cleanup_failed",
+]);
+const PUBLIC_SECONDARY_CLEANUP_FAILURE_CODES = new Set([
+  "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+]);
+const PUBLIC_SECONDARY_CLEANUP_FAILURE_REASONS = new Set([
+  "runner_temp_cleanup_failed",
+]);
+const PUBLIC_OWNED_PROCESS_GROUP_SCOPES = new Set([
+  "runner_owned_process_group",
+  "posix_detached_process_group",
+  "windows_job_object_owned_process_group",
+]);
+
+function isPublicProcessCleanupReason(value) {
+  return (
+    isSafeWindowsLauncherFailureReason(value) ||
+    PUBLIC_PROCESS_CLEANUP_REASONS.has(value)
+  );
+}
+
+function publicProcessFailureEvidence(error) {
+  if ((typeof error !== "object" && typeof error !== "function") || error === null) {
+    return {};
+  }
+
+  const evidence = {};
+
+  if (PUBLIC_PROCESS_FAILURE_CODES.has(error.code)) evidence.code = error.code;
+  if (PUBLIC_PROCESS_SYSTEM_CODES.has(error.systemCode)) {
+    evidence.systemCode = error.systemCode;
+  }
+  if (isSafeWindowsLauncherFailureOperation(error.launcherFailureOperation)) {
+    evidence.launcherFailureOperation = error.launcherFailureOperation;
+  }
+  if (
+    Number.isSafeInteger(error.launcherWin32Error) &&
+    error.launcherWin32Error >= 0 &&
+    error.launcherWin32Error <= 0xffff_ffff
+  ) {
+    evidence.launcherWin32Error = error.launcherWin32Error;
+  }
+  if (Number.isSafeInteger(error.timeoutMs) && error.timeoutMs >= 0) {
+    evidence.timeoutMs = error.timeoutMs;
+  }
+  if (
+    error.exitCode === null ||
+    (Number.isSafeInteger(error.exitCode) &&
+      error.exitCode >= 0 &&
+      error.exitCode <= 0xffff_ffff)
+  ) {
+    evidence.exitCode = error.exitCode;
+  }
+  if (Array.isArray(error.outputLimitStreams)) {
+    const outputLimitStreams = [
+      ...new Set(
+        error.outputLimitStreams
+          .slice(0, MAX_PUBLIC_OUTPUT_LIMIT_STREAM_INPUTS)
+          .filter((stream) => stream === "stdout" || stream === "stderr"),
+      ),
+    ].slice(0, MAX_PUBLIC_OUTPUT_LIMIT_STREAMS);
+    if (outputLimitStreams.length > 0) {
+      evidence.outputLimitStreams = outputLimitStreams;
+    }
+  }
+
+  const cleanupEvidenceFields = [
+    "ownedProcessGroupCleanupVerified",
+    "ownedProcessGroupCleanupFailure",
+    "ownedProcessGroupCleanupReason",
+    "ownedProcessGroupSurvivorCount",
+    "ownedProcessGroupScope",
+    "launcherStillAlive",
+    "launcherForcedStop",
+    "runnerControlDirectoryRetained",
+  ];
+  const hasCleanupEvidence = cleanupEvidenceFields.some((field) =>
+    Object.hasOwn(error, field),
+  );
+  const cleanupScopeAllowed = PUBLIC_OWNED_PROCESS_GROUP_SCOPES.has(
+    error.ownedProcessGroupScope,
+  );
+  const survivorCountAllowed =
+    error.ownedProcessGroupSurvivorCount === null ||
+    (Number.isSafeInteger(error.ownedProcessGroupSurvivorCount) &&
+      error.ownedProcessGroupSurvivorCount >= 0 &&
+      error.ownedProcessGroupSurvivorCount <= 0xffff_ffff);
+  const verifiedLauncherStateCoherent =
+    error.ownedProcessGroupScope === "windows_job_object_owned_process_group"
+      ? error.launcherStillAlive === false
+      : error.launcherStillAlive !== true;
+  const verifiedCleanupTuple =
+    error.ownedProcessGroupCleanupVerified === true &&
+    error.ownedProcessGroupCleanupFailure === false &&
+    error.ownedProcessGroupCleanupReason === null &&
+    (error.ownedProcessGroupSurvivorCount === null ||
+      error.ownedProcessGroupSurvivorCount === 0) &&
+    cleanupScopeAllowed &&
+    verifiedLauncherStateCoherent &&
+    error.launcherForcedStop !== true;
+  const failedCleanupTuple =
+    error.ownedProcessGroupCleanupVerified === false &&
+    error.ownedProcessGroupCleanupFailure === true &&
+    isPublicProcessCleanupReason(error.ownedProcessGroupCleanupReason) &&
+    survivorCountAllowed &&
+    cleanupScopeAllowed &&
+    (error.launcherStillAlive === undefined ||
+      typeof error.launcherStillAlive === "boolean") &&
+    (error.launcherForcedStop === undefined ||
+      typeof error.launcherForcedStop === "boolean") &&
+    (error.runnerControlDirectoryRetained === undefined ||
+      typeof error.runnerControlDirectoryRetained === "boolean");
+
+  if (verifiedCleanupTuple || failedCleanupTuple) {
+    evidence.ownedProcessGroupCleanupVerified =
+      error.ownedProcessGroupCleanupVerified;
+    evidence.ownedProcessGroupCleanupFailure =
+      error.ownedProcessGroupCleanupFailure;
+    evidence.ownedProcessGroupCleanupReason =
+      error.ownedProcessGroupCleanupReason;
+    evidence.ownedProcessGroupSurvivorCount =
+      error.ownedProcessGroupSurvivorCount;
+    evidence.ownedProcessGroupScope = error.ownedProcessGroupScope;
+    for (const field of [
+      "launcherStillAlive",
+      "launcherForcedStop",
+      "runnerControlDirectoryRetained",
+    ]) {
+      if (typeof error[field] === "boolean") evidence[field] = error[field];
+    }
+  } else if (hasCleanupEvidence) {
+    evidence.ownedProcessGroupCleanupVerified = false;
+    evidence.ownedProcessGroupCleanupFailure = true;
+    evidence.ownedProcessGroupCleanupReason = "cleanup_evidence_inconsistent";
+  }
+  if (error.processTreeCleanupClaim === PROCESS_TREE_CLEANUP_CLAIM) {
+    evidence.processTreeCleanupClaim = PROCESS_TREE_CLEANUP_CLAIM;
+  }
+  if (error.processTreeCleanupBoundary === PROCESS_TREE_CLEANUP_BOUNDARY) {
+    evidence.processTreeCleanupBoundary = PROCESS_TREE_CLEANUP_BOUNDARY;
+  }
+
+  if (Array.isArray(error.secondaryCleanupFailures)) {
+    const secondaryCleanupFailures = error.secondaryCleanupFailures
+      .slice(0, MAX_PUBLIC_SECONDARY_CLEANUP_FAILURES)
+      .filter(
+        (failure) =>
+          PUBLIC_SECONDARY_CLEANUP_FAILURE_CODES.has(failure?.code) &&
+          PUBLIC_SECONDARY_CLEANUP_FAILURE_REASONS.has(failure?.reason),
+      )
+      .map((failure) => ({ code: failure.code, reason: failure.reason }));
+    if (secondaryCleanupFailures.length > 0) {
+      evidence.secondaryCleanupFailures = secondaryCleanupFailures;
+    }
+  }
+
+  return evidence;
+}
 const primaryReleaseFuse = rawArgs.includes("--primary-release-fuse");
 const evalMode =
   primaryReleaseFuse || rawArgs.includes("--live") || rawArgs.includes("--mode=live")
@@ -3073,6 +3287,7 @@ async function runClaudeCases(agentIds) {
           retryable: true,
           reason: "claude_runtime_unavailable",
           error: error.message,
+          ...publicProcessFailureEvidence(error),
         });
 
         for (const remainingAgentId of agentIds.slice(index + 1)) {
@@ -3092,6 +3307,7 @@ async function runClaudeCases(agentIds) {
         agentId,
         ok: false,
         error: error.message,
+        ...publicProcessFailureEvidence(error),
       });
     }
   }
@@ -4542,11 +4758,13 @@ async function main() {
               retryable: true,
               reason: "claude_runtime_unavailable",
               error: error.message,
+              ...publicProcessFailureEvidence(error),
             }
           : {
               status: "failed",
               ok: false,
               error: error.message,
+              ...publicProcessFailureEvidence(error),
             };
       }
 

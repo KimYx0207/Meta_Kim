@@ -198,8 +198,7 @@ function writeSpec(tempDir, rootScript) {
   return specPath;
 }
 
-function startLauncher(tempDir, rootScript) {
-  const specPath = writeSpec(tempDir, rootScript);
+function startLauncherForSpec(tempDir, specPath) {
   const stopPath = path.join(tempDir, "stop");
   const resultPath = path.join(tempDir, "result.json");
   const child = spawn(
@@ -223,6 +222,10 @@ function startLauncher(tempDir, rootScript) {
     { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
   );
   return { child, resultPath, stopPath };
+}
+
+function startLauncher(tempDir, rootScript) {
+  return startLauncherForSpec(tempDir, writeSpec(tempDir, rootScript));
 }
 
 async function readOwnedTree(pidsPath) {
@@ -258,6 +261,122 @@ describe(
   "Windows Job Object evaluator process runner",
   { skip: process.platform !== "win32" },
   () => {
+    test("classifies outer spec failures without serializing private diagnostics", async () => {
+      const cases = [
+        {
+          name: "read",
+          prepareSpec: (tempDir) => path.join(tempDir, "PRIVATE-missing-spec.json"),
+          reason: "launcher_spec_read_failed",
+          operation: "read_spec",
+        },
+        {
+          name: "parse",
+          prepareSpec: (tempDir) => {
+            const specPath = path.join(tempDir, "PRIVATE-parse-spec.json");
+            writeFileSync(specPath, '{"file":"PRIVATE command --token secret"', "utf8");
+            return specPath;
+          },
+          reason: "launcher_spec_parse_failed",
+          operation: "parse_spec",
+        },
+        {
+          name: "validation",
+          prepareSpec: (tempDir) => {
+            const specPath = path.join(tempDir, "PRIVATE-validation-spec.json");
+            writeFileSync(
+              specPath,
+              JSON.stringify({ file: "PRIVATE command --token secret" }),
+              "utf8",
+            );
+            return specPath;
+          },
+          reason: "launcher_spec_validation_failed",
+          operation: "validate_spec",
+        },
+      ];
+
+      for (const fixture of cases) {
+        const tempDir = mkdtempSync(
+          path.join(os.tmpdir(), `meta-kim-job-${fixture.name}-`),
+        );
+        const specPath = fixture.prepareSpec(tempDir);
+        const launcher = startLauncherForSpec(tempDir, specPath);
+        try {
+          const exit = await waitForChildExit(launcher.child);
+          assert.equal(exit.code, 2);
+          await waitForFile(launcher.resultPath);
+          const raw = readFileSync(launcher.resultPath, "utf8");
+          const result = JSON.parse(raw);
+          assert.equal(result.verified, false);
+          assert.equal(result.reason, fixture.reason);
+          assert.equal(result.failureOperation, fixture.operation);
+          assert.equal(result.win32Error, null);
+          assert.equal(Object.hasOwn(result, "detail"), false);
+          assert.equal(Object.hasOwn(result, "cleanupFailure"), false);
+          assert.doesNotMatch(raw, /PRIVATE|secret|--token|spec\.json/u);
+        } finally {
+          if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+    });
+
+    test("round-trips no-BOM UTF-8 spec arguments through Windows PowerShell 5.1", async () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-job-utf8-"));
+      const observedPath = path.join(tempDir, "observed-arguments.json");
+      const childScript = path.join(tempDir, "observe-arguments.mjs");
+      const specPath = path.join(tempDir, "utf8-spec.json");
+      const expectedArguments = [
+        "中文参数",
+        "emoji-😀",
+        "café-déjà-vu",
+        "日本語と한국어",
+      ];
+      writeFileSync(
+        childScript,
+        [
+          'import { writeFileSync } from "node:fs";',
+          "const [outputPath, ...observed] = process.argv.slice(2);",
+          'writeFileSync(outputPath, JSON.stringify(observed), "utf8");',
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      writeFileSync(
+        specPath,
+        JSON.stringify({
+          file: process.execPath,
+          args: [childScript, observedPath, ...expectedArguments],
+          cwd: tempDir,
+        }),
+        "utf8",
+      );
+      const launcher = startLauncherForSpec(tempDir, specPath);
+
+      try {
+        const exit = await waitForChildExit(launcher.child);
+        assert.equal(exit.code, 0);
+        await waitForFile(observedPath);
+        assert.deepEqual(
+          JSON.parse(readFileSync(observedPath, "utf8")),
+          expectedArguments,
+        );
+        await waitForFile(launcher.resultPath);
+        const raw = readFileSync(launcher.resultPath, "utf8");
+        const result = JSON.parse(raw);
+        assert.equal(result.verified, true);
+        assert.equal(result.reason, "process_exited_job_drained");
+        assert.equal(result.childExitCode, 0);
+        assert.equal(result.activeProcesses, 0);
+        assert.equal(Object.hasOwn(result, "detail"), false);
+        assert.equal(Object.hasOwn(result, "cleanupFailure"), false);
+        assert.doesNotMatch(raw, /中文参数|emoji|café|日本語|한국어|utf8-spec/u);
+      } finally {
+        if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     test("stops root, child, and grandchild and writes verified result truth", async () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-job-stop-"));
       const { pidsPath, rootScript } = writeTreeFixture(tempDir);

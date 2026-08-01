@@ -1,22 +1,30 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  promises as fs,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import {
   resolveClaudeLiveProviderEnvironment,
   selectClaudeLiveProviderEnv,
 } from "../../scripts/claude-live-provider-env.mjs";
+import * as evalProcessRunner from "../../scripts/eval-process-runner.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+const {
+  isSafeWindowsLauncherFailureOperation,
+  isSafeWindowsLauncherFailureReason,
+} = evalProcessRunner;
 
 function isolatedHomeEnvironment(homeDir, extra = {}) {
   const root = path.parse(homeDir).root;
@@ -54,6 +62,458 @@ describe("eval-meta-agents Claude smoke", () => {
       /providerEnvironmentSource:\s*"claude_global_settings_allowlist_then_process_fallback"/u,
     );
     assert.doesNotMatch(source, /nativeInvocationCommand: `claude -p --agent/u);
+  });
+
+  test("Claude failure reports preserve allowlisted cleanup evidence without leaking process inputs", async () => {
+    const source = readFileSync(
+      path.join(repoRoot, "scripts", "eval-meta-agents.mjs"),
+      "utf8",
+    );
+    const policySource = source.match(
+      /const MAX_PUBLIC_SECONDARY_CLEANUP_FAILURES = 4;[\s\S]*?function publicProcessFailureEvidence\(error\) \{[\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(policySource);
+    const helperSource = policySource.match(
+      /function publicProcessFailureEvidence\(error\) \{[\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(helperSource);
+
+    const projectEvidence = Function(
+      "PROCESS_TREE_CLEANUP_CLAIM",
+      "PROCESS_TREE_CLEANUP_BOUNDARY",
+      "isSafeWindowsLauncherFailureOperation",
+      "isSafeWindowsLauncherFailureReason",
+      `"use strict"; ${policySource}; return publicProcessFailureEvidence;`,
+    )(
+      "not_claimed",
+      "out_of_job_process_creation_not_covered",
+      isSafeWindowsLauncherFailureOperation,
+      isSafeWindowsLauncherFailureReason,
+    );
+    assert.equal(isSafeWindowsLauncherFailureOperation.add, undefined);
+    assert.equal(isSafeWindowsLauncherFailureReason.add, undefined);
+    assert.equal(
+      Object.hasOwn(
+        evalProcessRunner,
+        "SAFE_WINDOWS_LAUNCHER_FAILURE_OPERATIONS",
+      ),
+      false,
+    );
+    assert.equal(
+      Object.hasOwn(
+        evalProcessRunner,
+        "SAFE_WINDOWS_LAUNCHER_FAILURE_REASONS",
+      ),
+      false,
+    );
+    assert.equal(
+      isSafeWindowsLauncherFailureOperation("CreateSecretToken"),
+      false,
+    );
+    assert.equal(isSafeWindowsLauncherFailureReason("secret_token"), false);
+    const failure = Object.assign(new Error("redacted public message"), {
+      code: "META_KIM_WINDOWS_JOB_PROCESS_GROUP_DRAIN_FAILED",
+      systemCode: "ENOENT",
+      launcherFailureOperation: "CreateJobObjectW",
+      launcherWin32Error: 5,
+      timeoutMs: 150_000,
+      exitCode: null,
+      signal: "SIGKILL",
+      outputLimitStreams: ["stdout", "stderr", "private-stream"],
+      ownedProcessGroupCleanupVerified: false,
+      ownedProcessGroupCleanupFailure: true,
+      ownedProcessGroupCleanupReason:
+        "launcher_force_stopped_after_cleanup_timeout",
+      ownedProcessGroupSurvivorCount: 2,
+      ownedProcessGroupScope: "windows_job_object_owned_process_group",
+      processTreeCleanupClaim: "not_claimed",
+      processTreeCleanupBoundary: "out_of_job_process_creation_not_covered",
+      launcherStillAlive: false,
+      launcherForcedStop: true,
+      runnerControlDirectoryRetained: true,
+      secondaryCleanupFailures: [
+        {
+          code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+          reason: "runner_temp_cleanup_failed",
+          path: "C:/secret/control-directory",
+          detail: "SECONDARY_PRIVATE_DETAIL",
+        },
+        {
+          code: "INVALID SECRET CODE",
+          reason: "INVALID SECRET REASON",
+        },
+      ],
+      processTreeCleanupVerified: true,
+      command: "COMMAND_SECRET",
+      prompt: "PROMPT_SECRET",
+      agents: "AGENTS_JSON_SECRET",
+      schema: "SCHEMA_SECRET",
+      env: { ANTHROPIC_AUTH_TOKEN: "ENV_SECRET" },
+      stdout: "STDOUT_SECRET",
+      stderr: "STDERR_SECRET",
+      stdoutMetadata: { digest: "STDOUT_DIGEST_SECRET" },
+      stderrMetadata: { digest: "STDERR_DIGEST_SECRET" },
+      cause: new Error("CAUSE_SECRET"),
+      stack: "STACK_SECRET",
+      controlDirectory: "C:/secret/control-directory",
+      arbitrary: "ARBITRARY_SECRET",
+    });
+
+    assert.deepEqual(projectEvidence(failure), {
+      code: "META_KIM_WINDOWS_JOB_PROCESS_GROUP_DRAIN_FAILED",
+      systemCode: "ENOENT",
+      launcherFailureOperation: "CreateJobObjectW",
+      launcherWin32Error: 5,
+      timeoutMs: 150_000,
+      exitCode: null,
+      outputLimitStreams: ["stdout", "stderr"],
+      ownedProcessGroupCleanupVerified: false,
+      ownedProcessGroupCleanupFailure: true,
+      launcherStillAlive: false,
+      launcherForcedStop: true,
+      runnerControlDirectoryRetained: true,
+      ownedProcessGroupCleanupReason:
+        "launcher_force_stopped_after_cleanup_timeout",
+      ownedProcessGroupSurvivorCount: 2,
+      ownedProcessGroupScope: "windows_job_object_owned_process_group",
+      processTreeCleanupClaim: "not_claimed",
+      processTreeCleanupBoundary: "out_of_job_process_creation_not_covered",
+      secondaryCleanupFailures: [
+        {
+          code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+          reason: "runner_temp_cleanup_failed",
+        },
+      ],
+    });
+
+    assert.deepEqual(
+      projectEvidence({
+        code: "META_KIM_SECRET_TOKEN",
+        systemCode: "ESECRET",
+        ownedProcessGroupCleanupReason: "secret_token",
+        launcherFailureOperation: "CreateSecretToken",
+        launcherWin32Error: -1,
+        secondaryCleanupFailures: [
+          {
+            code: "META_KIM_SECRET_TOKEN",
+            reason: "secret_token",
+          },
+        ],
+      }),
+      {
+        ownedProcessGroupCleanupVerified: false,
+        ownedProcessGroupCleanupFailure: true,
+        ownedProcessGroupCleanupReason: "cleanup_evidence_inconsistent",
+      },
+    );
+    assert.deepEqual(
+      projectEvidence({
+        ownedProcessGroupCleanupVerified: true,
+        ownedProcessGroupCleanupFailure: false,
+        ownedProcessGroupCleanupReason: null,
+        ownedProcessGroupSurvivorCount: 0,
+        ownedProcessGroupScope: "windows_job_object_owned_process_group",
+        launcherStillAlive: false,
+      }),
+      {
+        ownedProcessGroupCleanupVerified: true,
+        ownedProcessGroupCleanupFailure: false,
+        ownedProcessGroupCleanupReason: null,
+        ownedProcessGroupSurvivorCount: 0,
+        ownedProcessGroupScope: "windows_job_object_owned_process_group",
+        launcherStillAlive: false,
+      },
+    );
+    assert.deepEqual(
+      projectEvidence({
+        ownedProcessGroupCleanupVerified: true,
+        ownedProcessGroupCleanupFailure: false,
+        ownedProcessGroupCleanupReason: null,
+        ownedProcessGroupSurvivorCount: null,
+        ownedProcessGroupScope: "windows_job_object_owned_process_group",
+        launcherStillAlive: false,
+        runnerControlDirectoryRetained: true,
+        secondaryCleanupFailures: [
+          {
+            code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+            reason: "runner_temp_cleanup_failed",
+          },
+        ],
+      }),
+      {
+        ownedProcessGroupCleanupVerified: true,
+        ownedProcessGroupCleanupFailure: false,
+        ownedProcessGroupCleanupReason: null,
+        ownedProcessGroupSurvivorCount: null,
+        ownedProcessGroupScope: "windows_job_object_owned_process_group",
+        runnerControlDirectoryRetained: true,
+        launcherStillAlive: false,
+        secondaryCleanupFailures: [
+          {
+            code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+            reason: "runner_temp_cleanup_failed",
+          },
+        ],
+      },
+    );
+    assert.deepEqual(
+      projectEvidence({
+        ownedProcessGroupCleanupVerified: true,
+        ownedProcessGroupCleanupFailure: false,
+        ownedProcessGroupCleanupReason: null,
+        ownedProcessGroupSurvivorCount: 0,
+        ownedProcessGroupScope: "posix_detached_process_group",
+      }),
+      {
+        ownedProcessGroupCleanupVerified: true,
+        ownedProcessGroupCleanupFailure: false,
+        ownedProcessGroupCleanupReason: null,
+        ownedProcessGroupSurvivorCount: 0,
+        ownedProcessGroupScope: "posix_detached_process_group",
+      },
+    );
+    assert.deepEqual(
+      projectEvidence({
+        code: "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_UNVERIFIED",
+        launcherFailureOperation: "CreateJobObjectW",
+        launcherWin32Error: 5,
+        ownedProcessGroupCleanupVerified: false,
+        ownedProcessGroupCleanupFailure: true,
+        ownedProcessGroupCleanupReason: "create_job_failed",
+        ownedProcessGroupSurvivorCount: null,
+        ownedProcessGroupScope: "windows_job_object_owned_process_group",
+      }),
+      {
+        code: "META_KIM_WINDOWS_PROCESS_RUNNER_RESULT_UNVERIFIED",
+        launcherFailureOperation: "CreateJobObjectW",
+        launcherWin32Error: 5,
+        ownedProcessGroupCleanupVerified: false,
+        ownedProcessGroupCleanupFailure: true,
+        ownedProcessGroupCleanupReason: "create_job_failed",
+        ownedProcessGroupSurvivorCount: null,
+        ownedProcessGroupScope: "windows_job_object_owned_process_group",
+      },
+    );
+    assert.deepEqual(
+      projectEvidence({
+        ownedProcessGroupCleanupVerified: true,
+        ownedProcessGroupCleanupFailure: true,
+        ownedProcessGroupCleanupReason: "launcher_exit_unverified",
+        ownedProcessGroupSurvivorCount: 0x1_0000_0000,
+        ownedProcessGroupScope: "windows_job_object_owned_process_group",
+        launcherStillAlive: true,
+      }),
+      {
+        ownedProcessGroupCleanupVerified: false,
+        ownedProcessGroupCleanupFailure: true,
+        ownedProcessGroupCleanupReason: "cleanup_evidence_inconsistent",
+      },
+    );
+    assert.deepEqual(
+      projectEvidence({
+        launcherFailureOperation: "CreateJobObjectW;COMMAND_SECRET",
+        launcherWin32Error: 0x1_0000_0000,
+        exitCode: -1,
+      }),
+      {},
+    );
+    assert.deepEqual(projectEvidence({ exitCode: 0x1_0000_0000 }), {});
+    assert.deepEqual(
+      projectEvidence({
+        launcherFailureOperation: "compile_native_bridge",
+        launcherWin32Error: 0xffff_ffff,
+      }),
+      {
+        launcherFailureOperation: "compile_native_bridge",
+        launcherWin32Error: 0xffff_ffff,
+      },
+    );
+
+    const boundedArrays = projectEvidence({
+      outputLimitStreams: Array.from(
+        { length: 64 },
+        (_, index) => (index % 2 === 0 ? "stdout" : "stderr"),
+      ),
+      secondaryCleanupFailures: Array.from({ length: 32 }, () => ({
+        code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+        reason: "runner_temp_cleanup_failed",
+      })),
+    });
+    assert.deepEqual(boundedArrays.outputLimitStreams, ["stdout", "stderr"]);
+    assert.equal(boundedArrays.secondaryCleanupFailures.length, 4);
+    assert.deepEqual(boundedArrays.secondaryCleanupFailures[0], {
+      code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+      reason: "runner_temp_cleanup_failed",
+    });
+    assert.deepEqual(
+      projectEvidence({
+        outputLimitStreams: [
+          ...Array.from({ length: 8 }, () => "PRIVATE_STREAM"),
+          "stdout",
+        ],
+        secondaryCleanupFailures: [
+          ...Array.from({ length: 4 }, () => ({
+            code: "META_KIM_SECRET_TOKEN",
+            reason: "secret_token",
+          })),
+          {
+            code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+            reason: "runner_temp_cleanup_failed",
+          },
+        ],
+      }),
+      {},
+    );
+    assert.equal(Object.hasOwn(projectEvidence(failure), "signal"), false);
+
+    if (process.platform === "win32") {
+      let runnerError = null;
+      try {
+        await evalProcessRunner.runWindowsGuardedCommand(
+          process.execPath,
+          ["-e", "process.exit(23)"],
+          { cwd: repoRoot, timeout: 30_000 },
+        );
+      } catch (error) {
+        runnerError = error;
+      }
+      assert.ok(runnerError);
+      const actualRunnerEvidence = projectEvidence(runnerError);
+      assert.equal(actualRunnerEvidence.exitCode, 23);
+      assert.equal(actualRunnerEvidence.ownedProcessGroupCleanupVerified, true);
+      assert.equal(actualRunnerEvidence.ownedProcessGroupCleanupFailure, false);
+      assert.equal(actualRunnerEvidence.ownedProcessGroupCleanupReason, null);
+      assert.equal(actualRunnerEvidence.ownedProcessGroupSurvivorCount, null);
+      assert.equal(
+        actualRunnerEvidence.ownedProcessGroupScope,
+        "windows_job_object_owned_process_group",
+      );
+      assert.equal(actualRunnerEvidence.launcherStillAlive, false);
+    }
+
+    let retainedGuardDir = null;
+    const fakeLauncher = new EventEmitter();
+    fakeLauncher.pid = 424_242;
+    fakeLauncher.exitCode = null;
+    fakeLauncher.signalCode = null;
+    fakeLauncher.stdin = new PassThrough();
+    fakeLauncher.stdout = new PassThrough();
+    fakeLauncher.stderr = new PassThrough();
+    const retainedDirectoryRunner =
+      evalProcessRunner.createWindowsGuardedCommandRunner({
+        launcherPath: "fixture-launcher.ps1",
+        spawn: (_file, args) => {
+          const resultPath = args[args.indexOf("-ResultPath") + 1];
+          void fs
+            .writeFile(
+              resultPath,
+              JSON.stringify({
+                schemaVersion: "meta-kim-windows-job-process-runner-v1",
+                verified: true,
+                reason: "process_exited_job_drained",
+                childExitCode: 0,
+                activeProcesses: 0,
+                stopRequested: false,
+                failureOperation: null,
+                win32Error: null,
+              }),
+              "utf8",
+            )
+            .then(() => {
+              fakeLauncher.exitCode = 0;
+              fakeLauncher.stdin.destroy();
+              fakeLauncher.stdout.end();
+              fakeLauncher.stderr.end();
+              fakeLauncher.emit("close", 0, null);
+            });
+          return fakeLauncher;
+        },
+        fs: {
+          async mkdtemp(prefix) {
+            retainedGuardDir = await fs.mkdtemp(prefix);
+            return retainedGuardDir;
+          },
+          writeFile: (...args) => fs.writeFile(...args),
+          readFile: (...args) => fs.readFile(...args),
+          async rm() {
+            throw new Error("fixture control-directory cleanup denied");
+          },
+        },
+      });
+    try {
+      let retainedDirectoryError = null;
+      try {
+        await retainedDirectoryRunner("fixture.exe", []);
+      } catch (error) {
+        retainedDirectoryError = error;
+      }
+      assert.ok(retainedDirectoryError);
+      const retainedDirectoryEvidence = projectEvidence(retainedDirectoryError);
+      assert.equal(
+        retainedDirectoryEvidence.code,
+        "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED",
+      );
+      assert.equal(
+        retainedDirectoryEvidence.ownedProcessGroupCleanupVerified,
+        true,
+      );
+      assert.equal(
+        retainedDirectoryEvidence.ownedProcessGroupCleanupFailure,
+        false,
+      );
+      assert.equal(retainedDirectoryEvidence.ownedProcessGroupCleanupReason, null);
+      assert.equal(retainedDirectoryEvidence.ownedProcessGroupSurvivorCount, null);
+      assert.equal(retainedDirectoryEvidence.launcherStillAlive, false);
+      assert.equal(retainedDirectoryEvidence.runnerControlDirectoryRetained, true);
+    } finally {
+      if (retainedGuardDir) {
+        await fs.rm(retainedGuardDir, { recursive: true, force: true });
+      }
+    }
+
+    const serialized = JSON.stringify(projectEvidence(failure));
+    for (const secret of [
+      "COMMAND_SECRET",
+      "PROMPT_SECRET",
+      "AGENTS_JSON_SECRET",
+      "SCHEMA_SECRET",
+      "ENV_SECRET",
+      "STDOUT_SECRET",
+      "STDERR_SECRET",
+      "DIGEST_SECRET",
+      "CAUSE_SECRET",
+      "STACK_SECRET",
+      "control-directory",
+      "PRIVATE_DETAIL",
+      "ARBITRARY_SECRET",
+      "META_KIM_SECRET_TOKEN",
+      "ESECRET",
+      "secret_token",
+      "CreateSecretToken",
+      "processTreeCleanupVerified",
+    ]) {
+      assert.doesNotMatch(serialized, new RegExp(secret, "u"));
+    }
+
+    const claudeCases = source.match(
+      /async function runClaudeCases\(agentIds\) \{[\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(claudeCases);
+    assert.equal(
+      claudeCases.match(/\.\.\.publicProcessFailureEvidence\(error\)/gu)?.length,
+      2,
+    );
+    const claudeReportCatch = source.match(
+      /report\.claude = isOptionalRuntimeUnavailable\(error\.message\)[\s\S]*?\n\s*\};/u,
+    )?.[0];
+    assert.ok(claudeReportCatch);
+    assert.equal(
+      claudeReportCatch.match(/\.\.\.publicProcessFailureEvidence\(error\)/gu)
+        ?.length,
+      2,
+    );
+    assert.doesNotMatch(helperSource, /\.\.\.error\b/u);
+    assert.doesNotMatch(helperSource, /processTreeCleanupVerified/u);
   });
 
   test("Claude live evaluation uses the Claude provider settings without importing arbitrary settings env", async () => {

@@ -20,8 +20,6 @@ function Write-RunnerResult([hashtable]$Values) {
     stopRequested = [bool]$Values.stopRequested
     failureOperation = $Values.failureOperation
     win32Error = $Values.win32Error
-    detail = $Values.detail
-    cleanupFailure = $Values.cleanupFailure
   } | ConvertTo-Json -Compress
 
   [System.IO.File]::WriteAllText($ResultPath, $payload, $utf8NoBom)
@@ -35,8 +33,43 @@ $fallbackResult = @{
   stopRequested = (Test-Path -LiteralPath $StopPath)
   failureOperation = 'launcher_initialization'
   win32Error = $null
-  detail = $null
-  cleanupFailure = $null
+}
+
+$launcherPhase = 'validate_launcher_parameters'
+
+function Get-LauncherFailureClassification([string]$Phase) {
+  switch ($Phase) {
+    'validate_launcher_parameters' {
+      return @{
+        reason = 'launcher_parameter_validation_failed'
+        operation = 'validate_launcher_parameters'
+      }
+    }
+    'read_spec' {
+      return @{ reason = 'launcher_spec_read_failed'; operation = 'read_spec' }
+    }
+    'parse_spec' {
+      return @{ reason = 'launcher_spec_parse_failed'; operation = 'parse_spec' }
+    }
+    'validate_spec' {
+      return @{ reason = 'launcher_spec_validation_failed'; operation = 'validate_spec' }
+    }
+    'compile_native_bridge' {
+      return @{ reason = 'launcher_native_compile_failed'; operation = 'compile_native_bridge' }
+    }
+    'invoke_native_bridge' {
+      return @{ reason = 'launcher_native_invocation_failed'; operation = 'invoke_native_bridge' }
+    }
+    'write_result' {
+      return @{ reason = 'launcher_result_write_failed'; operation = 'write_result' }
+    }
+    default {
+      return @{
+        reason = 'launcher_initialization_failed'
+        operation = 'launcher_initialization'
+      }
+    }
+  }
 }
 
 try {
@@ -47,11 +80,16 @@ try {
     throw 'OwnerStartTimeTicks must be zero or a positive UTC DateTime tick value.'
   }
 
+  $launcherPhase = 'read_spec'
   if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
-    throw "Spec file does not exist: $SpecPath"
+    throw 'Spec file does not exist.'
   }
+  $specText = Get-Content -Raw -Encoding UTF8 -LiteralPath $SpecPath
 
-  $spec = Get-Content -Raw -LiteralPath $SpecPath | ConvertFrom-Json
+  $launcherPhase = 'parse_spec'
+  $spec = $specText | ConvertFrom-Json
+
+  $launcherPhase = 'validate_spec'
   $propertyNames = @($spec.PSObject.Properties.Name)
   if (-not ($propertyNames -contains 'file') -or [string]::IsNullOrWhiteSpace([string]$spec.file)) {
     throw 'Spec property "file" must be a non-empty string.'
@@ -74,7 +112,7 @@ try {
 
   $workingDirectory = [System.IO.Path]::GetFullPath([string]$spec.cwd)
   if (-not [System.IO.Directory]::Exists($workingDirectory)) {
-    throw "Spec working directory does not exist: $workingDirectory"
+    throw 'Spec working directory does not exist.'
   }
 
   $nativeSource = @'
@@ -1537,7 +1575,10 @@ namespace MetaKim
 }
 '@
 
+  $launcherPhase = 'compile_native_bridge'
   Add-Type -TypeDefinition $nativeSource -Language CSharp
+
+  $launcherPhase = 'invoke_native_bridge'
   $nativeResult = [MetaKim.WindowsJobProcessRunner]::Run(
     $file,
     $arguments.ToArray(),
@@ -1555,24 +1596,23 @@ namespace MetaKim
     stopRequested = $nativeResult.StopRequested
     failureOperation = $nativeResult.FailureOperation
     win32Error = $nativeResult.Win32Error
-    detail = $nativeResult.Detail
-    cleanupFailure = $nativeResult.CleanupFailure
   }
+
+  $launcherPhase = 'write_result'
   Write-RunnerResult $result
   if ($nativeResult.Verified) {
     exit 0
   }
   exit 2
 } catch {
-  $fallbackResult.reason = 'launcher_initialization_failed'
-  $fallbackResult.detail = $_.Exception.GetType().FullName + ': ' + $_.Exception.Message
+  $classification = Get-LauncherFailureClassification $launcherPhase
+  $fallbackResult.reason = $classification.reason
+  $fallbackResult.failureOperation = $classification.operation
+  $fallbackResult.win32Error = $null
   try {
     Write-RunnerResult $fallbackResult
   } catch {
-    [Console]::Error.WriteLine(
-      'Meta_Kim Windows Job launcher could not write its failure result: ' +
-      $_.Exception.Message
-    )
+    [Console]::Error.WriteLine('Meta_Kim Windows Job launcher could not write its failure result.')
   }
   exit 2
 }
