@@ -13,6 +13,7 @@
 - **npx 继续作为受支持的全局安装/更新入口，但可回收 cache 不再成为永久运行权威。** 在写入 Claude Code 或 Codex 的 Commands、Hooks、合并配置前，候选实现先把精确安装包物化到由“包版本 + 打包文件 SHA-256”定位的共享不可变目录；所有持久执行引用只从这个稳定根生成。
 - **只读、执行环境和所有权边界保持明确。** help、status、doctor 不会只因调用就物化稳定目录；check 按 npm 的真实打包文件集核对，但不写用户 npm cache。版本探测、真实 pack 与 install 共用一次性私有 cache/temp，稳定 child 会去掉临时执行环境覆盖。卸载先清除持久引用，再删除 receipt、first-party 文件与目录闭包都精确匹配的 manifest-owned bundle。
 - **物化过程被意外中断后可以恢复，但不会信任或删除未知内容。** 同一摘要由带 owner 的锁串行创建；已死亡且缺少 receipt 的残缺目录会连同证据一起原子隔离后再重建，完整但不可信的目录仍然 fail closed。稳定 child 还会先把结构化项目部署记录还原成真实目标目录，再运行 Graphify 工具。
+- **保留的 Hook 备份不再膨胀活跃能力清单。** discovery 只在遍历前剪枝 Meta_Kim 精确命名的非运行态 Hook 备份目录；磁盘上的备份全部保留，名称中只是包含 `backup` 等字样的用户目录仍会被发现。在维护者验收机上，活跃 Hook 记录从 5947 降到 153，可搜索能力条目从 7573 降到 1779。
 - **发布证明会真实覆盖“临时根消失”这一故障。** packed 公共 CLI 从 npx 形状的临时包根更新 Claude Code 与 Codex，删除全部可回收来源，再从精确稳定 authority 执行 check，并回读 Commands、Hooks、合并配置、manifest 完整性和所有引用路径。若当前版本的 Git tag 已存在，发布预检会在昂贵探针前直接阻断，避免未升版本的候选借更旧历史 tag 取得通过。
 
 ### 验证

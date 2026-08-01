@@ -284,6 +284,110 @@ test("runtime-family inference reads the real entrypoint, not business argument 
     }
   });
 
+  test("global Hook discovery excludes exact Meta_Kim backup trees but keeps user directories", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-hook-discovery-"));
+    const profile = `hook-discovery-${process.pid}-${Date.now()}`;
+    const inventoryPath = path.join(
+      home,
+      ".meta-kim",
+      "state",
+      profile,
+      "capability-index",
+      "global-capabilities.json",
+    );
+    try {
+      for (const runtimeHome of [".claude", ".codex"]) {
+        const hooksDir = path.join(home, runtimeHome, "hooks");
+        const hookFiles = [
+          ["active.mjs", "// active hook\n"],
+          [path.join("user-backup-tools", "user-hook.mjs"), "// user hook\n"],
+          [
+            path.join(
+              ".meta-kim-hook-package-backup",
+              "2026-08-01T00-00-00-000Z",
+              "meta-kim",
+              "old.mjs",
+            ),
+            "// retained package backup\n",
+          ],
+          [path.join(".meta-kim-legacy-backup", "old.mjs"), "// retained legacy backup\n"],
+        ];
+        for (const [relativePath, content] of hookFiles) {
+          const targetPath = path.join(hooksDir, relativePath);
+          await fs.mkdir(path.dirname(targetPath), { recursive: true });
+          await fs.writeFile(targetPath, content, "utf8");
+        }
+      }
+
+      const runDiscovery = async () =>
+        execFileAsync(
+          process.execPath,
+          [
+            path.join(REPO_ROOT, "scripts", "discover-global-capabilities.mjs"),
+            "--runtime-inventory-only",
+            "--targets",
+            "claude,codex",
+            "--json",
+          ],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...process.env,
+              HOME: home,
+              USERPROFILE: home,
+              META_KIM_PROFILE: profile,
+              META_KIM_RUNTIME_FAMILY: "shared",
+            },
+            maxBuffer: 1024 * 1024 * 4,
+          },
+        );
+
+      await runDiscovery();
+
+      const inventory = JSON.parse(await fs.readFile(inventoryPath, "utf8"));
+      const hooks = Object.values(inventory.byCapabilityType.hooks);
+      for (const platformId of ["claudeCode", "codex"]) {
+        const hookRefs = hooks
+          .filter((record) => record.platformId === platformId)
+          .map((record) => record.sourceRef);
+        assert.equal(hookRefs.some((ref) => ref.endsWith("/active.mjs")), true);
+        assert.equal(hookRefs.some((ref) => ref.includes("/user-backup-tools/user-hook.mjs")), true);
+      }
+      const hookRefs = hooks.map((record) => record.sourceRef);
+      assert.equal(hookRefs.some((ref) => ref.includes("/.meta-kim-hook-package-backup/")), false);
+      assert.equal(hookRefs.some((ref) => ref.includes("/.meta-kim-legacy-backup/")), false);
+
+      const firstHookRefs = [...hookRefs].sort();
+      const secondBackupFiles = [];
+      for (const runtimeHome of [".claude", ".codex"]) {
+        const backupPath = path.join(
+          home,
+          runtimeHome,
+          "hooks",
+          ".meta-kim-hook-package-backup",
+          "2026-08-01T00-01-00-000Z",
+          "meta-kim",
+          "newer-old.mjs",
+        );
+        await fs.mkdir(path.dirname(backupPath), { recursive: true });
+        await fs.writeFile(backupPath, "// newer retained package backup\n", "utf8");
+        secondBackupFiles.push(backupPath);
+      }
+
+      await runDiscovery();
+      const secondInventory = JSON.parse(await fs.readFile(inventoryPath, "utf8"));
+      const secondHookRefs = Object.values(secondInventory.byCapabilityType.hooks)
+        .map((record) => record.sourceRef)
+        .sort();
+      assert.deepEqual(secondHookRefs, firstHookRefs);
+      for (const backupPath of secondBackupFiles) {
+        assert.equal((await fs.stat(backupPath)).isFile(), true);
+      }
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("application and Hook layers normalize profile names identically", () => {
     const cases = [
       { label: "unset", value: undefined },
