@@ -2,11 +2,11 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { canonicalAgentsDir } from "./meta-kim-sync-config.mjs";
 
-const openclawAgentsRoot = path.join(os.homedir(), ".openclaw", "agents");
-const sourceAgentDir = path.join(openclawAgentsRoot, "main", "agent");
 const filesToMirror = ["auth.json", "auth-profiles.json", "models.json"];
+const currentAuthStoreFile = "openclaw-agent.sqlite";
 const minUsableFileBytes = 3;
 
 async function ensureExists(filePath) {
@@ -32,6 +32,10 @@ async function agentAuthDirLooksUsable(agentDir) {
     filesToMirror.map((fileName) => fileLooksUsable(path.join(agentDir, fileName))),
   );
   return checks.every(Boolean);
+}
+
+async function currentAuthStoreLooksUsable(agentDir) {
+  return fileLooksUsable(path.join(agentDir, currentAuthStoreFile));
 }
 
 async function loadAgentIds() {
@@ -63,15 +67,32 @@ async function copyFileIfChanged(sourcePath, targetPath) {
   return true;
 }
 
-async function main() {
-  const agentIds = await loadAgentIds();
+export async function prepareOpenClawLocal({
+  homeDir = os.homedir(),
+  agentIds = null,
+  log = console.log,
+} = {}) {
+  const resolvedAgentIds = agentIds ?? await loadAgentIds();
+  const openclawAgentsRoot = path.join(homeDir, ".openclaw", "agents");
+  const sourceAgentDir = path.join(openclawAgentsRoot, "main", "agent");
+
+  if (await currentAuthStoreLooksUsable(sourceAgentDir)) {
+    log(
+      `OpenClaw SQLite auth storage detected; ${resolvedAgentIds.length} meta agents keep runtime-managed auth inheritance without copying credential databases.`,
+    );
+    return {
+      storageMode: "sqlite_runtime_managed",
+      changedTargets: [],
+    };
+  }
+
   let effectiveSourceAgentDir = sourceAgentDir;
   let sourceMode = "main";
 
   if (!(await agentAuthDirLooksUsable(sourceAgentDir))) {
     const fallbackAgentId = (
       await Promise.all(
-        agentIds.map(async (agentId) => ({
+        resolvedAgentIds.map(async (agentId) => ({
           agentId,
           agentDir: path.join(openclawAgentsRoot, agentId, "agent"),
           usable: await agentAuthDirLooksUsable(
@@ -91,7 +112,7 @@ async function main() {
 
   const changedTargets = [];
 
-  for (const agentId of agentIds) {
+  for (const agentId of resolvedAgentIds) {
     const targetAgentDir = path.join(openclawAgentsRoot, agentId, "agent");
     await fs.mkdir(path.join(openclawAgentsRoot, agentId, "sessions"), {
       recursive: true,
@@ -114,23 +135,33 @@ async function main() {
   }
 
   if (changedTargets.length === 0) {
-    console.log(`OpenClaw local agent auth is already hydrated for ${agentIds.length} meta agents.`);
-    return;
+    log(`OpenClaw local agent auth is already hydrated for ${resolvedAgentIds.length} meta agents.`);
+    return {
+      storageMode: "legacy_file_mirror",
+      changedTargets,
+    };
   }
 
-  console.log(
+  log(
     sourceMode === "main"
-      ? `Hydrated OpenClaw auth for ${agentIds.length} meta agents from ~/.openclaw/agents/main/agent.`
-      : `Hydrated missing OpenClaw auth files for ${agentIds.length} meta agents from existing ${sourceMode} local agent auth.`,
+      ? `Hydrated OpenClaw auth for ${resolvedAgentIds.length} meta agents from ~/.openclaw/agents/main/agent.`
+      : `Hydrated missing OpenClaw auth files for ${resolvedAgentIds.length} meta agents from existing ${sourceMode} local agent auth.`,
   );
   for (const changed of changedTargets) {
-    console.log(`- ${changed.replace(/\\/g, "/")}`);
+    log(`- ${changed.replace(/\\/g, "/")}`);
   }
+  return {
+    storageMode: "legacy_file_mirror",
+    changedTargets,
+  };
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 1;
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+if (invokedPath === path.resolve(fileURLToPath(import.meta.url))) {
+  try {
+    await prepareOpenClawLocal();
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

@@ -254,6 +254,9 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /fallback:\$\{fallbackAgentId\.agentId\}/);
     assert.match(source, /Hydrated missing OpenClaw auth files/);
     assert.match(source, /fileLooksUsable\(targetPath\)/);
+    assert.match(source, /currentAuthStoreLooksUsable/);
+    assert.match(source, /sqlite_runtime_managed/);
+    assert.match(source, /without copying credential databases/);
   });
 
   test("live evaluation can be sharded by canonical agent id", () => {
