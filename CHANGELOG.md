@@ -6,6 +6,18 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.22] - 2026-08-02
+
+### Fixed
+
+- **Claude Code progress saving now works on modern macOS systems that provide `python3` but no bare `python` command.** macOS and Linux try `python3` first and retain `python` as a compatibility fallback, while every candidate must prove Python 3.10+ before the memory helper runs.
+- **Windows Python Hooks no longer fall back to `py.exe` or open a visible console window.** Claude Code and generated Codex Hooks select a verified interpreter from safe explicit paths, PATH, and standard off-PATH installation directories; stale overrides, WindowsApps aliases, and the `py` launcher are rejected, and child processes use hidden-window spawning.
+- **Hook behavior stays stable across the compatibility repair.** stdin/stdout forwarding, exit-code handling, bounded probes, and execution timeouts remain intact, and the runtime evidence ledger is rebound to the corrected canonical Claude projection.
+
+### Verification
+
+- Focused cross-platform installer and MCP memory Hook regressions pass (83/83), runtime evidence regressions pass (11/11), and the runtime capability matrix validates against the corrected source digest.
+
 ## [2.9.21] - 2026-08-01
 
 ### Fixed
