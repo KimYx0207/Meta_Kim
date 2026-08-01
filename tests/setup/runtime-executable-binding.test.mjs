@@ -237,7 +237,15 @@ test("the final global check reads back every selected Claude Code or Codex laun
     setupSource.indexOf("async function validateInstalledArtifacts"),
     setupSource.indexOf("function printInstallResult"),
   );
-  assert.match(validationSource, /metaTheoryGlobalSyncArgs\(globalValidationTargets, setupWithGlobalHooks\)/u);
+  assert.match(validationSource, /checkGlobalRuntimeSync\(globalValidationTargets\)/u);
+  const globalCheckSource = setupSource.slice(
+    setupSource.indexOf("function checkGlobalRuntimeSync"),
+    setupSource.indexOf("function checkManifestProjectionAuthority"),
+  );
+  assert.match(
+    globalCheckSource,
+    /metaTheoryGlobalSyncArgs\(selectedTargets, setupWithGlobalHooks\)/u,
+  );
   const producerSource = readFileSync(path.resolve(import.meta.dirname, "../../scripts/runtime-capability-producers.mjs"), "utf8");
   assert.match(producerSource, /const argsPrefix = executableIdentity\?\.argsPrefix \?\? \[\]/u);
   assert.match(producerSource, /request\.executableIdentity\?\.argsPrefix \?\? \[\][\s\S]*"--version"/u);

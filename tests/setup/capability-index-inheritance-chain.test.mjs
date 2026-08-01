@@ -243,7 +243,10 @@ describe("capability index inheritance chain", () => {
     assert.match(source, /runtimeInventoryOnly/);
     assert.match(source, /writeRepoIndex = !runtimeInventoryOnly/);
     assert.match(source, /HOME_GLOBAL_INVENTORY/);
-    assert.match(source, /\.meta-kim-legacy-backup\//);
+    assert.match(source, /const nonLiveHookDirectoryNames = new Set\(\[/u);
+    assert.match(source, /"\.meta-kim-hook-package-backup"/u);
+    assert.match(source, /"\.meta-kim-legacy-backup"/u);
+    assert.match(source, /walkDir\(dir, 3, nonLiveHookDirectoryNames\)/u);
     assert.doesNotMatch(
       source,
       /const platformsToScan = filterPlatform/,
