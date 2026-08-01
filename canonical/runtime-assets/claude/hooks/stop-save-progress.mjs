@@ -225,7 +225,7 @@ function runPythonSave(args) {
       resolve({ code: 0, stdout: "", stderr: "memory helper missing", skipped: true });
       return;
     }
-    const proc = spawn("python", [pythonHook, ...args], {
+    const proc = spawn("python3", [pythonHook, ...args], {
       cwd: process.cwd(),
       timeout: 8000,
     });
