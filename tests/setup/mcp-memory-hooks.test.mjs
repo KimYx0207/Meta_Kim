@@ -23,6 +23,11 @@ import {
   createInitialState,
   sanitizeStateProfile,
 } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import {
+  collectWindowsPythonCommandCandidates,
+  isValidPythonCommand,
+  selectPythonCommand,
+} from "../../scripts/install-mcp-memory-hooks.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -2832,13 +2837,117 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.doesNotMatch(source, /\[process\.execPath, hookPath/);
   });
 
-  test("installer avoids WindowsApps python shim for Claude memory hook", () => {
+  test("installer prefers hidden pythonw and avoids the py launcher for Claude SessionStart", () => {
     const source = readRepoFile("scripts", "install-mcp-memory-hooks.mjs");
 
-    assert.match(source, /WindowsApps\[\\\\\/\]\+python/);
-    assert.match(source, /join\(homedir\(\), "AppData", "Local", "Programs"\)/);
-    assert.match(source, /\^Python\\d\+\$/);
-    assert.match(source, /return cmd\.replace/);
+    assert.match(source, /includes\("\/windowsapps\/"\)/);
+    assert.match(source, /"Programs", "Python"/);
+    assert.match(source, /\^Python\\d\+\(\?:-32\)\?\$/);
+    assert.match(source, /windowsPath\.join\(windowsPath\.dirname\(cmd\), "pythonw\.exe"\)/);
+    assert.match(source, /pathExists\(pythonw\)/);
+    assert.match(source, /preferredCandidates\.push\(pythonw\)/);
+    assert.doesNotMatch(source, /candidates\.push\([^\n]*["']py["']/u);
+    const runFunction = source.match(/function run\([^)]*\) \{[\s\S]*?\n}/)?.[0];
+    assert.ok(runFunction);
+    assert.match(runFunction, /windowsHide: true/);
+    assert.match(source, /run\(finder, \[name\], \{ timeout: 750 \}\)/);
+    assert.match(source, /sys\.version_info >= \(3, 10\)/);
+    assert.match(source, /\{ timeout: 750 \}/);
+    assert.doesNotMatch(source, /run\(cmd, \["--version"\]/);
+    assert.match(source, /throw new Error\("Claude SessionStart requires a safe absolute Python interpreter on Windows"\)/);
+    assert.match(source, /command: `\$\{quotedCommandToken\(pythonCmd\)\}/);
+  });
+
+  test("Claude Python helpers reject unsafe tools, prefer env, and discover off-PATH installs", () => {
+    assert.equal(isValidPythonCommand("C:\\Tools\\git.exe", "win32"), false);
+    assert.equal(isValidPythonCommand("C:\\Windows\\py.exe", "win32"), false);
+    assert.equal(
+      isValidPythonCommand("C:\\Users\\Kim\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe", "win32"),
+      false,
+    );
+    assert.equal(isValidPythonCommand("C:\\Python314\\python.exe", "win32"), true);
+    assert.equal(isValidPythonCommand("/usr/bin/git", "linux"), false);
+    assert.equal(isValidPythonCommand("/opt/python/bin/python3.12", "linux"), true);
+    assert.equal(isValidPythonCommand("python3", "darwin"), true);
+    assert.equal(isValidPythonCommand("python", "linux"), true);
+
+    const envPython = "D:\\EnvPython\\python.exe";
+    const locatedPython = "D:\\LocatedPython\\python.exe";
+    const offPathPython = "D:\\Local\\Programs\\Python\\Python314\\python.exe";
+    const offPathPython32 = "D:\\Local\\Programs\\Python\\Python314-32\\python.exe";
+    const existing = new Set(
+      [envPython, locatedPython, offPathPython, offPathPython32]
+        .map((value) => value.toLowerCase()),
+    );
+    const candidates = collectWindowsPythonCommandCandidates({
+      env: {
+        META_KIM_PYTHON: envPython,
+        PYTHON: "C:\\Windows\\py.exe",
+        LOCALAPPDATA: "D:\\Local",
+      },
+      locatedPaths: [locatedPython],
+      pathExists: (candidate) => existing.has(candidate.toLowerCase()),
+      listDirectoryNames: (directory) =>
+        directory.toLowerCase() === "d:\\local\\programs\\python"
+          ? ["Python314", "Python314-32"]
+          : [],
+    });
+    assert.deepEqual(candidates, [envPython, locatedPython, offPathPython, offPathPython32]);
+    assert.equal(
+      selectPythonCommand({
+        candidates,
+        platform: "win32",
+        pathExists: () => false,
+        probe: () => true,
+      }),
+      envPython.replace(/\\/gu, "/"),
+    );
+    assert.equal(
+      selectPythonCommand({
+        candidates: [],
+        platform: "win32",
+        pathExists: () => false,
+        probe: () => false,
+      }),
+      null,
+    );
+    assert.equal(
+      selectPythonCommand({
+        candidates: ["C:\\Renamed\\python.exe"],
+        platform: "win32",
+        pathExists: () => false,
+        probe: () => false,
+      }),
+      null,
+      "a renamed executable is rejected when the Python 3.10+ identity probe fails",
+    );
+  });
+
+  test("Claude Stop resolves explicit Python paths with hidden probe and execution", () => {
+    const source = readRepoFile(
+      "canonical",
+      "runtime-assets",
+      "claude",
+      "hooks",
+      "stop-save-progress.mjs",
+    );
+
+    assert.match(source, /process\.platform !== "win32"[\s\S]*?\["python3", "python"\]/);
+    assert.match(source, /\["python\.exe", "python3\.exe", "pythonw\.exe"\]/);
+    assert.match(source, /path\.isAbsolute\(candidate\)/);
+    assert.match(source, /\/windowsapps\//);
+    assert.doesNotMatch(source, /spawn\(["']python["']/);
+    assert.match(source, /spawn\(pythonCommand,/);
+    assert.equal(source.match(/windowsHide: true/g)?.length, 2);
+    assert.match(source, /timeout: 750/);
+    assert.match(source, /timeout: 8000/);
+    assert.match(source, /"Programs", "Python"/);
+    assert.match(source, /\^Python\\d\+\(\?:-32\)\?\$/);
+    assert.match(source, /scanVersionDirectories\("C:\\\\"\)/);
+    assert.match(source, /let stdout = "";/);
+    assert.match(source, /let stderr = "";/);
+    assert.match(source, /resolve\(\{ code, stdout, stderr \}\)/);
+    assert.match(source, /main\(\)\.catch[\s\S]*?process\.exit\(0\)/);
   });
 
   test("OpenClaw managed hook is packaged", () => {

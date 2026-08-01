@@ -11,8 +11,8 @@
  * Always exits 0 — never blocks session stop.
  */
 
-import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, promises as fs, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -219,15 +219,98 @@ async function resolvePythonHook() {
   return null;
 }
 
+function pythonPathEntries() {
+  return String(process.env.PATH || process.env.Path || process.env.path || "")
+    .split(path.delimiter)
+    .filter(Boolean);
+}
+
+function isSafeWindowsPythonPath(candidate) {
+  if (!candidate || !path.isAbsolute(candidate)) return false;
+  const normalized = candidate.replace(/\\/g, "/").toLowerCase();
+  if (normalized.includes("/windowsapps/")) return false;
+  return /^(?:python|python3|pythonw)\.exe$/iu.test(path.basename(candidate));
+}
+
+function pythonCandidates() {
+  if (process.platform !== "win32") {
+    return ["python3", "python"];
+  }
+
+  const candidates = [];
+  const addDirectory = (directory) => {
+    if (!directory || !path.isAbsolute(directory)) return;
+    for (const name of ["python.exe", "python3.exe", "pythonw.exe"]) {
+      const candidate = path.join(directory, name);
+      if (isSafeWindowsPythonPath(candidate) && existsSync(candidate)) {
+        candidates.push(candidate);
+      }
+    }
+  };
+  const scanVersionDirectories = (root) => {
+    if (!root || !path.isAbsolute(root)) return;
+    let names = [];
+    try {
+      names = readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (/^Python\d+(?:-32)?$/iu.test(name)) addDirectory(path.join(root, name));
+    }
+  };
+  for (const envKey of ["META_KIM_PYTHON", "PYTHON", "PYTHON3"]) {
+    const value = process.env[envKey];
+    if (isSafeWindowsPythonPath(value) && existsSync(value)) candidates.push(value);
+  }
+  for (const dir of pythonPathEntries()) {
+    addDirectory(dir);
+  }
+  if (process.env.LOCALAPPDATA) {
+    scanVersionDirectories(path.join(process.env.LOCALAPPDATA, "Programs", "Python"));
+  }
+  for (const key of ["ProgramFiles", "ProgramFiles(x86)"]) {
+    if (process.env[key]) scanVersionDirectories(process.env[key]);
+  }
+  scanVersionDirectories("C:\\");
+
+  return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+}
+
+function resolvePythonCommand() {
+  for (const candidate of pythonCandidates()) {
+    const probe = spawnSync(
+      candidate,
+      ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 750,
+      },
+    );
+    if (probe.status === 0) return candidate;
+  }
+  return null;
+}
+
 function runPythonSave(args) {
   return resolvePythonHook().then((pythonHook) => new Promise((resolve) => {
     if (!pythonHook) {
       resolve({ code: 0, stdout: "", stderr: "memory helper missing", skipped: true });
       return;
     }
-    const proc = spawn("python", [pythonHook, ...args], {
+    const pythonCommand = resolvePythonCommand();
+    if (!pythonCommand) {
+      resolve({ code: -1, stdout: "", stderr: "no safe Python interpreter found" });
+      return;
+    }
+    const proc = spawn(pythonCommand, [pythonHook, ...args], {
       cwd: process.cwd(),
       timeout: 8000,
+      windowsHide: true,
     });
     let stdout = "";
     let stderr = "";

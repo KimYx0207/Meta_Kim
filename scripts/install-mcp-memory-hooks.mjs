@@ -50,7 +50,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { join, dirname, relative, resolve, isAbsolute, sep as pathSeparator } from "node:path";
+import { join, dirname, relative, resolve, isAbsolute, win32 as windowsPath, posix as posixPath, sep as pathSeparator } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { resolveMemoryEndpoint } from "./memory-endpoint.mjs";
@@ -248,6 +248,7 @@ function run(cmd, args, opts = {}) {
   return spawnSync(cmd, args, {
     encoding: "utf8",
     shell: false,
+    windowsHide: true,
     ...opts,
   });
 }
@@ -356,33 +357,75 @@ function filesEqual(a, b) {
   }
 }
 
-function isValidPythonCommand(cmd) {
-  // Check if the Python command looks like a WindowsApps shim
-  // or is a bare "python" on Windows (which often points to the shim)
-  const isWin = process.platform === "win32";
-  const normalized = cmd?.trim().replace(/\\/g, "/").toLowerCase() || "";
-
-  // Bare "python" or "python3" on Windows is suspicious
-  if (isWin && /^(python|python3)$/i.test(normalized)) {
-    return false;
+export function isValidPythonCommand(cmd, platform = process.platform) {
+  const normalized = cmd?.trim().replace(/\\/gu, "/") || "";
+  if (platform === "win32") {
+    if (!windowsPath.isAbsolute(normalized) || normalized.toLowerCase().includes("/windowsapps/")) {
+      return false;
+    }
+    return /^(?:python|python3|pythonw)\.exe$/iu.test(windowsPath.basename(normalized));
   }
+  if (/^(?:python|python3)$/u.test(normalized)) return true;
+  return (
+    posixPath.isAbsolute(normalized) &&
+    /^(?:python|python3(?:\.\d+)?)$/u.test(posixPath.basename(normalized))
+  );
+}
 
-  // WindowsApps paths are definitely shims
-  if (/windowsapps[\\/]+python/.test(normalized)) {
-    return false;
+export function collectWindowsPythonCommandCandidates({
+  env,
+  locatedPaths = [],
+  pathExists,
+  listDirectoryNames,
+}) {
+  const candidates = [];
+  const scanVersionDirectories = (root) => {
+    if (!root || !windowsPath.isAbsolute(root)) return;
+    for (const name of listDirectoryNames(root)) {
+      if (!/^Python\d+(?:-32)?$/iu.test(name)) continue;
+      candidates.push(windowsPath.join(root, name, "python.exe"));
+      candidates.push(windowsPath.join(root, name, "python3.exe"));
+    }
+  };
+  for (const key of ["META_KIM_PYTHON", "PYTHON", "PYTHON3"]) {
+    if (env[key]) candidates.push(env[key]);
   }
-
-  // Explicit absolute path is good
-  if (/^[a-z]:\/|^\/\//i.test(normalized)) {
-    return true;
+  candidates.push(...locatedPaths);
+  if (env.LOCALAPPDATA) {
+    scanVersionDirectories(windowsPath.join(env.LOCALAPPDATA, "Programs", "Python"));
   }
-
-  // On non-Windows, "python3" is usually safe
-  if (!isWin && /^python3/.test(normalized)) {
-    return true;
+  for (const key of ["ProgramFiles", "ProgramFiles(x86)"]) {
+    if (env[key]) scanVersionDirectories(env[key]);
   }
+  scanVersionDirectories("C:\\");
+  return candidates.filter((candidate) => pathExists(candidate));
+}
 
-  return false;
+export function selectPythonCommand({
+  candidates,
+  platform,
+  pathExists,
+  probe,
+}) {
+  const preferredCandidates = [];
+  for (const cmd of candidates) {
+    if (!isValidPythonCommand(cmd, platform)) continue;
+    if (platform === "win32" && /^(?:python|python3)\.exe$/iu.test(windowsPath.basename(cmd))) {
+      const pythonw = windowsPath.join(windowsPath.dirname(cmd), "pythonw.exe");
+      if (pathExists(pythonw)) preferredCandidates.push(pythonw);
+    }
+    preferredCandidates.push(cmd);
+  }
+  const seen = new Set();
+  for (const cmd of preferredCandidates) {
+    if (!isValidPythonCommand(cmd, platform)) continue;
+    const normalized = cmd.replace(/\\/gu, "/");
+    const key = platform === "win32" ? normalized.toLowerCase() : normalized;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (probe(cmd)) return normalized;
+  }
+  return null;
 }
 
 function pickPythonCommand() {
@@ -390,16 +433,16 @@ function pickPythonCommand() {
   // Windows: the Microsoft Store WindowsApps shim intercepts bare `python`
   // and returns exit code 49 without stderr — must be filtered out at every stage.
   const isWin = process.platform === "win32";
-  const candidates = [];
+  let candidates = [];
 
   // 1. Explicit PYTHON env var (highest priority)
-  if (process.env.PYTHON) candidates.push(process.env.PYTHON);
+  if (!isWin && process.env.PYTHON) candidates.push(process.env.PYTHON);
 
   // 2. System discovery via where/which — finds all versions in PATH
   const finder = isWin ? "where.exe" : "which";
   for (const name of ["python3", "python"]) {
     try {
-      const result = run(finder, [name]);
+      const result = run(finder, [name], { timeout: 750 });
       if (result.status === 0 && result.stdout) {
         const paths = result.stdout
           .trim()
@@ -415,50 +458,38 @@ function pickPythonCommand() {
 
   // 3. Dynamic Windows install paths (no hardcoded version numbers)
   if (isWin) {
-    const programsDir = process.env.LOCALAPPDATA
-      ? join(process.env.LOCALAPPDATA, "Programs")
-      : join(homedir(), "AppData", "Local", "Programs");
-    if (existsSync(programsDir)) {
+    const listDirectoryNames = (directory) => {
       try {
-        const entries = readdirSync(programsDir);
-        const pythonDirs = entries
-          .filter((e) => /^Python\d+$/i.test(e))
-          .sort((a, b) => {
-            const va = parseInt(a.replace(/\D/g, ""), 10);
-            const vb = parseInt(b.replace(/\D/g, ""), 10);
-            return vb - va; // highest version first
-          });
-        for (const dir of pythonDirs) {
-          candidates.push(join(programsDir, dir, "python.exe"));
-        }
+        return readdirSync(directory, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+          .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
       } catch {
-        // can't read directory
+        return [];
       }
-    }
+    };
+    candidates = collectWindowsPythonCommandCandidates({
+      env: process.env,
+      locatedPaths: candidates,
+      pathExists: existsSync,
+      listDirectoryNames,
+    });
   }
 
-  // 4. Validate each candidate (dedup + skip WindowsApps shim + verify --version)
-  const seen = new Set();
-  for (const cmd of candidates) {
-    if (!cmd) continue;
-    const normalized = cmd.replace(/\\/g, "/").toLowerCase();
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-
-    if (isWin && /WindowsApps[\\/]+python(?:3)?\.exe$/iu.test(cmd)) {
-      continue;
-    }
-
-    try {
-      const result = run(cmd, ["--version"]);
-      if (result.status === 0) return cmd.replace(/\\/g, "/");
-    } catch {
-      // try next
-    }
-  }
-
-  warn("No working Python found — hook will likely fail at runtime");
-  return "python3"; // python3 is less likely to be a Store shim on Windows
+  const selected = selectPythonCommand({
+    candidates,
+    platform: process.platform,
+    pathExists: existsSync,
+    probe: (cmd) => run(
+      cmd,
+      ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"],
+      { timeout: 750 },
+    ).status === 0,
+  });
+  if (selected) return selected;
+  if (!isWin) return "python3";
+  warn("No safe working Python found — Claude SessionStart registration is blocked");
+  return null;
 }
 
 function readJsonFile(filePath, fallback = {}) {
@@ -580,6 +611,9 @@ function commandTargetsExactClaudeSessionHook(command, { allowLegacy = false } =
 
 function buildClaudeSessionStartFragment() {
   const pythonCmd = pickPythonCommand();
+  if (!pythonCmd) {
+    throw new Error("Claude SessionStart requires a safe absolute Python interpreter on Windows");
+  }
   return {
     kind: CLAUDE_SESSION_FRAGMENT_KIND,
     settingsRelPath: homeRel(CLAUDE_SETTINGS),
@@ -587,7 +621,7 @@ function buildClaudeSessionStartFragment() {
     matcher: CLAUDE_SESSION_FRAGMENT_MATCHER,
     hook: {
       type: "command",
-      command: `${commandToken(pythonCmd)} ${quotedCommandToken(HOOK_TARGET)} --mode session`,
+      command: `${quotedCommandToken(pythonCmd)} ${quotedCommandToken(HOOK_TARGET)} --mode session`,
     },
   };
 }
@@ -1721,7 +1755,9 @@ async function main() {
   else await install(targets);
 }
 
-main().catch((err) => {
-  console.error(`Installation failed: ${err.message}`);
-  process.exit(1);
-});
+if (resolve(process.argv[1] || "") === resolve(fileURLToPath(import.meta.url))) {
+  main().catch((err) => {
+    console.error(`Installation failed: ${err.message}`);
+    process.exit(1);
+  });
+}

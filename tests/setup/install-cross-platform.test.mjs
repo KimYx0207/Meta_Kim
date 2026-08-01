@@ -16,7 +16,10 @@ import {
   resolveManifestSkillSubdir,
   shouldUseCliShell,
 } from "../../scripts/install-platform-config.mjs";
-import { buildCodexHookRunnerMjs } from "../../scripts/install-global-skills-all-runtimes.mjs";
+import {
+  buildCodexHookRunnerMjs,
+  collectWindowsPythonCandidatePaths,
+} from "../../scripts/install-global-skills-all-runtimes.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const skillsManifest = JSON.parse(
@@ -177,7 +180,7 @@ describe("install platform config", () => {
     assert.doesNotMatch(commandFunction, /return `node |return `"\$\{nodePath\}"|python3|2>\/dev\/null|\|\| true/);
   });
 
-  test("Codex hook runner discovers a live Python without fixed machine paths", () => {
+  test("Codex hook runner uses hidden safe Python probes and preserves fail-open I/O semantics", () => {
     const source = readFileSync(
       path.join(repoRoot, "scripts", "install-global-skills-all-runtimes.mjs"),
       "utf8",
@@ -189,12 +192,66 @@ describe("install platform config", () => {
     assert.ok(runnerBuilder);
     assert.doesNotMatch(runnerBuilder, /ProgramData|anaconda|Python311|Python313|\.openclaw/iu);
     assert.match(runnerBuilder, /META_KIM_PYTHON/);
-    assert.match(runnerBuilder, /pathEntries\(\)/);
+    assert.match(runnerBuilder, /collectWindowsPythonCandidatePaths/);
     assert.match(runnerBuilder, /commandWorks/);
     assert.match(runnerBuilder, /sys\.version_info >= \(3, 10\)/);
     assert.doesNotMatch(runnerBuilder, /'--version'/);
     assert.match(runnerBuilder, /INSTALL_TIME_PYTHON_HINT/);
     assert.match(runnerBuilder, /timeout: 750/);
+
+    const generated = buildCodexHookRunnerMjs({
+      command: "C:/Windows/py.exe",
+      args: ["-3"],
+    });
+    assert.doesNotMatch(generated, /C:\/Windows\/py\.exe|command: ['"]py['"]|args: \[['"]-3['"]\]/iu);
+    assert.equal(generated.match(/windowsHide: true/g)?.length, 2);
+    assert.match(generated, /readFileSync\(0, 'utf8'\)/);
+    assert.match(generated, /input,/);
+    assert.match(generated, /if \(result\.stdout\) process\.stdout\.write\(result\.stdout\)/);
+    assert.match(generated, /timeout: 30000/);
+    assert.match(generated, /const result = spawnSync[\s\S]*?return 0;/);
+    assert.ok(
+      generated.indexOf("command: 'python3'") < generated.indexOf("command: 'python'"),
+      "macOS/Linux fallback order must remain python3 then python",
+    );
+
+    const patchFunction = source.match(
+      /async function patchCodexPlanningHooksForPlatform[\s\S]*?\n}\n/,
+    )?.[0];
+    assert.ok(patchFunction);
+    assert.match(
+      patchFunction,
+      /process\.platform === "win32" \? null : detectPython310\(\)/,
+    );
+  });
+
+  test("Codex Windows Python discovery prefers env and finds off-PATH installs", () => {
+    const envPython = "D:\\EnvPython\\python.exe";
+    const pathPython = "D:\\PathPython\\python.exe";
+    const offPathPython = "D:\\Local\\Programs\\Python\\Python314\\python.exe";
+    const offPathPython32 = "D:\\Local\\Programs\\Python\\Python314-32\\python.exe";
+    const existing = new Set(
+      [envPython, pathPython, offPathPython, offPathPython32]
+        .map((value) => value.toLowerCase()),
+    );
+    const candidates = collectWindowsPythonCandidatePaths({
+      env: {
+        META_KIM_PYTHON: envPython,
+        PYTHON: "C:\\Windows\\py.exe",
+        PATH: "D:\\PathPython",
+        LOCALAPPDATA: "D:\\Local",
+      },
+      installTimeHint: { command: "D:\\HintPython\\python.exe", args: [] },
+      pathApi: path.win32,
+      pathExists: (candidate) => existing.has(candidate.toLowerCase()),
+      listDirectoryNames: (directory) =>
+        directory.toLowerCase() === "d:\\local\\programs\\python"
+          ? ["Python314", "Python314-32"]
+          : [],
+    });
+
+    assert.deepEqual(candidates, [envPython, pathPython, offPathPython, offPathPython32]);
+    assert.equal(candidates.some((candidate) => /(?:^|[\\/])py\.exe$/iu.test(candidate)), false);
   });
 
   test(
@@ -231,7 +288,11 @@ describe("install platform config", () => {
           buildCodexHookRunnerMjs({ command: actualPython, args: [] }),
           "utf8",
         );
-        writeFileSync(adapterPath, 'print("live-python-selected")\n', "utf8");
+        writeFileSync(
+          adapterPath,
+          'import sys\nprint("live-python-selected:" + sys.stdin.read())\n',
+          "utf8",
+        );
 
         const staleInterpreter = path.join(
           process.env.SystemRoot || "C:\\Windows",
@@ -241,6 +302,7 @@ describe("install platform config", () => {
           "powershell.exe",
         );
         const result = spawnSync(process.execPath, [runnerPath, adapterPath], {
+          input: "stdin-forwarded",
           encoding: "utf8",
           windowsHide: true,
           env: {
@@ -251,7 +313,23 @@ describe("install platform config", () => {
         });
 
         assert.equal(result.status, 0, result.stderr);
-        assert.match(result.stdout, /live-python-selected/);
+        assert.match(result.stdout, /live-python-selected:stdin-forwarded/);
+
+        writeFileSync(adapterPath, "raise SystemExit(9)\n", "utf8");
+        const childFailure = spawnSync(process.execPath, [runnerPath, adapterPath], {
+          encoding: "utf8",
+          windowsHide: true,
+          env: {
+            ...process.env,
+            META_KIM_PYTHON: "C:/Windows/py.exe",
+            PYTHON: "py",
+            PYTHON3: actualPython,
+            PATH: path.dirname(actualPython),
+          },
+        });
+        assert.equal(childFailure.status, 0, childFailure.stderr);
+
+        writeFileSync(adapterPath, 'print("live-python-selected")\n', "utf8");
 
         writeFileSync(
           runnerPath,
