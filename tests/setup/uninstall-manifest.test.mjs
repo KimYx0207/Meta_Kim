@@ -55,6 +55,8 @@ function sha256(bytes) {
 }
 
 const REPO_ROOT = path.join(import.meta.dirname, "..", "..");
+const PRIMARY_PROJECTION_BUNDLE_PURPOSE =
+  "primary-runtime-global-projection-package-runtime-bundle";
 
 function runUninstall(userHome, args) {
   return spawnSync(
@@ -126,6 +128,144 @@ function createManagedBundle(repo) {
       })),
     },
   };
+}
+
+function createPrimaryProjectionBundle(repo, { storeRoot = null } = {}) {
+  const digest = "a".repeat(64);
+  const versionRoot = path.join(
+    storeRoot ?? path.join(repo, ".meta-kim", "runtime", "projection-packages"),
+    "meta-kim",
+    "2.0.22",
+  );
+  const digestDir = path.join(versionRoot, digest);
+  const packageRoot = path.join(digestDir, "bundle", "node_modules", "meta-kim");
+  const proofByRole = {
+    receipt: path.join(digestDir, "receipt.json"),
+    "package-manifest": path.join(packageRoot, "package.json"),
+    cli: path.join(packageRoot, "bin", "meta-kim.mjs"),
+    "sync-script": path.join(packageRoot, "scripts", "sync-global-meta-theory.mjs"),
+  };
+  mkdirSync(path.dirname(proofByRole["package-manifest"]), { recursive: true });
+  mkdirSync(path.dirname(proofByRole.cli), { recursive: true });
+  mkdirSync(path.dirname(proofByRole["sync-script"]), { recursive: true });
+  writeFileSync(
+    proofByRole["package-manifest"],
+    `${JSON.stringify({
+      name: "meta-kim",
+      version: "2.0.22",
+      type: "module",
+      bin: { "meta-kim": "bin/meta-kim.mjs" },
+    })}\n`,
+  );
+  writeFileSync(proofByRole.cli, "cli\n");
+  writeFileSync(proofByRole["sync-script"], "sync-script\n");
+  const dependency = path.join(digestDir, "bundle", "node_modules", "dependency", "index.js");
+  mkdirSync(path.dirname(dependency), { recursive: true });
+  writeFileSync(dependency, "dependency\n");
+  const firstPartyFiles = [
+    "bin/meta-kim.mjs",
+    "package.json",
+    "scripts/sync-global-meta-theory.mjs",
+  ];
+  const firstPartyEntries = firstPartyFiles.map((relativePath) => {
+    const bytes = readFileSync(path.join(packageRoot, ...relativePath.split("/")));
+    return { path: relativePath, size: bytes.length, sha256: sha256(bytes) };
+  });
+  const keyFiles = {};
+  for (const [key, filePath] of Object.entries({
+    packageManifest: proofByRole["package-manifest"],
+    publicCli: proofByRole.cli,
+    globalSyncScript: proofByRole["sync-script"],
+  })) {
+    const bytes = readFileSync(filePath);
+    keyFiles[key] = {
+      relativePath: path.relative(digestDir, filePath).replaceAll("\\", "/"),
+      size: bytes.length,
+      sha256: sha256(bytes),
+    };
+  }
+  const receipt = {
+    schemaVersion: "meta-kim-global-projection-package-v1",
+    packageName: "meta-kim",
+    packageVersion: "2.0.22",
+    packageTarballSha256: digest,
+    firstPartyFiles,
+    firstPartyClosure: {
+      entryCount: firstPartyEntries.length,
+      sha256: sha256(Buffer.from(JSON.stringify(firstPartyEntries), "utf8")),
+    },
+    bundleRelativePath: "bundle",
+    packageRootRelative: path.relative(digestDir, packageRoot).replaceAll("\\", "/"),
+    bundleClosure: directoryClosureSync(path.join(digestDir, "bundle")),
+    keyFiles,
+  };
+  writeFileSync(proofByRole.receipt, `${JSON.stringify(receipt, null, 2)}\n`);
+  const closure = directoryClosureSync(digestDir);
+  const proofFiles = Object.entries(proofByRole).map(([role, filePath]) => {
+    const bytes = readFileSync(filePath);
+    return {
+      path: filePath,
+      role,
+      kind: "file",
+      source: "sync-global-meta-theory",
+      size: bytes.length,
+      sha256: sha256(bytes),
+    };
+  });
+  return {
+    digestDir,
+    proofByRole,
+    action: {
+      path: digestDir,
+      manifestManaged: true,
+      source: "sync-global-meta-theory",
+      purpose: PRIMARY_PROJECTION_BUNDLE_PURPOSE,
+      closureSha256: closure.sha256,
+      closureEntryCount: closure.entryCount,
+      proofFiles,
+    },
+  };
+}
+
+function refreshPrimaryBundleAction(bundle, roles = ["receipt"]) {
+  for (const role of roles) {
+    const proof = bundle.action.proofFiles.find((candidate) => candidate.role === role);
+    const bytes = readFileSync(bundle.proofByRole[role]);
+    proof.size = bytes.length;
+    proof.sha256 = sha256(bytes);
+  }
+  const closure = directoryClosureSync(bundle.digestDir);
+  bundle.action.closureSha256 = closure.sha256;
+  bundle.action.closureEntryCount = closure.entryCount;
+  return bundle;
+}
+
+function primaryBundleManifestEntries(bundle) {
+  const installedAt = new Date().toISOString();
+  return [
+    {
+      path: bundle.digestDir,
+      category: CATEGORIES.C,
+      source: bundle.action.source,
+      purpose: bundle.action.purpose,
+      kind: "dir",
+      ownershipClass: "install_projection",
+      directoryClosureSha256: bundle.action.closureSha256,
+      directoryClosureEntryCount: bundle.action.closureEntryCount,
+      installedAt,
+    },
+    ...bundle.action.proofFiles.map((proof) => ({
+      path: proof.path,
+      category: CATEGORIES.C,
+      source: proof.source,
+      purpose: `${bundle.action.purpose}:${proof.role}`,
+      kind: proof.kind,
+      ownershipClass: "install_projection",
+      size: proof.size,
+      sha256: proof.sha256,
+      installedAt,
+    })),
+  ];
 }
 
 describe("uninstall / manifestEntryToFinding", () => {
@@ -413,6 +553,43 @@ describe("uninstall / findingsFromManifest", () => {
       );
     });
   });
+
+  test("groups primary projection receipt and runtime proofs into one bundle action", () => {
+    withTmpRepo((repo) => {
+      const { digestDir, action } = createPrimaryProjectionBundle(repo);
+      let manifest = createEmpty({ scope: "project", repoRoot: repo, metaKimVersion: "test" });
+      manifest = record(manifest, {
+        path: digestDir,
+        category: CATEGORIES.C,
+        source: action.source,
+        purpose: action.purpose,
+        kind: "dir",
+        directoryClosureSha256: action.closureSha256,
+        directoryClosureEntryCount: action.closureEntryCount,
+      });
+      for (const proof of action.proofFiles) {
+        manifest = record(manifest, {
+          path: proof.path,
+          category: CATEGORIES.C,
+          source: proof.source,
+          purpose: `${action.purpose}:${proof.role}`,
+          kind: proof.kind,
+          size: proof.size,
+          sha256: proof.sha256,
+        });
+      }
+      writeManifest(manifestPathFor("project", repo), manifest);
+
+      const findings = findingsFromManifest({ scope: "project", repoRoot: repo });
+      assert.equal(findings.length, 1);
+      assert.equal(findings[0].kind, "dir");
+      assert.equal(findings[0].purpose, PRIMARY_PROJECTION_BUNDLE_PURPOSE);
+      assert.deepEqual(
+        findings[0].bundleProofFiles.map((proof) => proof.role).sort(),
+        ["cli", "package-manifest", "receipt", "sync-script"],
+      );
+    });
+  });
 });
 
 describe("uninstall / manifest fail-closed CLI", () => {
@@ -671,6 +848,54 @@ describe("uninstall / manifest fail-closed CLI", () => {
       assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
       assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /manifest_entry_untrusted/iu);
       assert.equal(readFileSync(settingsPath, "utf8"), original);
+    });
+  });
+
+  test("failed reference cleanup preserves the primary projection bundle and reports the blocker", () => {
+    withTmpRepo((home) => {
+      const bundle = createPrimaryProjectionBundle(home);
+      const hooksPath = path.join(home, ".codex", "hooks.json");
+      mkdirSync(path.dirname(hooksPath), { recursive: true });
+      writeFileSync(hooksPath, "{ invalid json\n", "utf8");
+      const managedCommand = `node "${path.join(
+        home,
+        ".codex",
+        "hooks",
+        "meta-kim",
+        "activate-meta-theory-spine.mjs",
+      )}" --package-root "${path.join(
+        bundle.digestDir,
+        "bundle",
+        "node_modules",
+        "meta-kim",
+      )}"`;
+      writeGlobalManifest(home, [
+        {
+          path: hooksPath,
+          category: CATEGORIES.C,
+          source: "sync-global-meta-theory",
+          purpose: "codex-global-hooks-json-merge",
+          kind: "settings-merge",
+          ownershipClass: "install_projection",
+          mergedHookCommands: [managedCommand],
+          mergedHookFragments: [{
+            event: "UserPromptSubmit",
+            matcher: null,
+            hook: { type: "command", command: managedCommand },
+          }],
+          installedAt: new Date().toISOString(),
+        },
+        ...primaryBundleManifestEntries(bundle),
+      ]);
+
+      const result = runUninstall(home, ["--scope=global", "--yes"]);
+      assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.match(
+        `${result.stdout}\n${result.stderr}`,
+        /projection_reference_cleanup_failed/iu,
+      );
+      assert.equal(existsSync(bundle.digestDir), true);
+      assert.equal(readFileSync(hooksPath, "utf8"), "{ invalid json\n");
     });
   });
 
@@ -1451,5 +1676,170 @@ describe("uninstall / durable runtime bundle ownership", () => {
       "remove-bundle",
       "remove",
     ]);
+  });
+
+  test("orders all projection references before the primary bundle and the primary bundle last", () => {
+    const ordered = orderUninstallActions([
+      {
+        kind: "remove-bundle",
+        purpose: PRIMARY_PROJECTION_BUNDLE_PURPOSE,
+        path: "primary-bundle",
+      },
+      { kind: "remove", path: "unrelated" },
+      {
+        kind: "remove",
+        path: "command",
+        primaryProjectionReferenceCleanup: true,
+      },
+      {
+        kind: "strip-settings",
+        path: "hooks.json",
+        primaryProjectionReferenceCleanup: true,
+      },
+      {
+        kind: "remove-bundle",
+        purpose: "claude-global-mcp-runtime-bundle",
+        path: "mcp-bundle",
+      },
+    ]);
+    assert.deepEqual(ordered.map((action) => action.path), [
+      "command",
+      "hooks.json",
+      "mcp-bundle",
+      "unrelated",
+      "primary-bundle",
+    ]);
+  });
+
+  test("removes an exact primary projection bundle with all four proof roles", () => {
+    withTmpRepo((repo) => {
+      const { digestDir, action } = createPrimaryProjectionBundle(repo);
+      assert.deepEqual(
+        action.proofFiles.map((proof) => proof.role).sort(),
+        ["cli", "package-manifest", "receipt", "sync-script"],
+      );
+      const result = removeExactManagedRuntimeBundle(action);
+      assert.equal(result.success, true);
+      assert.equal(existsSync(digestDir), false);
+    });
+  });
+
+  test("preserves a primary projection bundle when a user file changes its closure", () => {
+    withTmpRepo((repo) => {
+      const { digestDir, action } = createPrimaryProjectionBundle(repo);
+      writeFileSync(path.join(digestDir, "user-owned-note.txt"), "preserve me\n");
+      const result = removeExactManagedRuntimeBundle(action);
+      assert.equal(result.success, false);
+      assert.equal(result.preserved, true);
+      assert.equal(result.reason, "projection_receipt_layout_drift");
+      assert.equal(existsSync(path.join(digestDir, "user-owned-note.txt")), true);
+    });
+  });
+
+  test("a forged receipt preserves a first-party sentinel even when manifest proofs are refreshed", () => {
+    withTmpRepo((repo) => {
+      const bundle = createPrimaryProjectionBundle(repo);
+      const sentinel = path.join(
+        bundle.digestDir,
+        "bundle",
+        "node_modules",
+        "meta-kim",
+        "user-sentinel.txt",
+      );
+      writeFileSync(sentinel, "PRESERVE SENTINEL\n", "utf8");
+      const receipt = JSON.parse(readFileSync(bundle.proofByRole.receipt, "utf8"));
+      receipt.schemaVersion = "forged-receipt-schema";
+      receipt.bundleClosure = directoryClosureSync(path.join(bundle.digestDir, "bundle"));
+      writeFileSync(
+        bundle.proofByRole.receipt,
+        `${JSON.stringify(receipt, null, 2)}\n`,
+        "utf8",
+      );
+      refreshPrimaryBundleAction(bundle);
+
+      const result = removeExactManagedRuntimeBundle(bundle.action);
+      assert.equal(result.success, false);
+      assert.equal(result.preserved, true);
+      assert.equal(result.reason, "projection_receipt_schema_mismatch");
+      assert.equal(readFileSync(sentinel, "utf8"), "PRESERVE SENTINEL\n");
+    });
+  });
+
+  test("receipt first-party drift preserves a sentinel despite refreshed bundle and manifest closures", () => {
+    withTmpRepo((repo) => {
+      const bundle = createPrimaryProjectionBundle(repo);
+      const sentinel = path.join(
+        bundle.digestDir,
+        "bundle",
+        "node_modules",
+        "meta-kim",
+        "user-sentinel.txt",
+      );
+      writeFileSync(sentinel, "PRESERVE SENTINEL\n", "utf8");
+      const receipt = JSON.parse(readFileSync(bundle.proofByRole.receipt, "utf8"));
+      receipt.bundleClosure = directoryClosureSync(path.join(bundle.digestDir, "bundle"));
+      writeFileSync(
+        bundle.proofByRole.receipt,
+        `${JSON.stringify(receipt, null, 2)}\n`,
+        "utf8",
+      );
+      refreshPrimaryBundleAction(bundle);
+
+      const result = removeExactManagedRuntimeBundle(bundle.action);
+      assert.equal(result.success, false);
+      assert.equal(result.preserved, true);
+      assert.equal(result.reason, "projection_receipt_first_party_drift");
+      assert.equal(readFileSync(sentinel, "utf8"), "PRESERVE SENTINEL\n");
+    });
+  });
+
+  test("rejects self-authored primary projection bundle source and purpose identities", () => {
+    withTmpRepo((repo) => {
+      const sourceForged = createPrimaryProjectionBundle(repo);
+      sourceForged.action.source = "user-self-authored";
+      sourceForged.action.proofFiles = sourceForged.action.proofFiles.map((proof) => ({
+        ...proof,
+        source: "user-self-authored",
+      }));
+      const sourceResult = removeExactManagedRuntimeBundle(sourceForged.action);
+      assert.equal(sourceResult.success, false);
+      assert.equal(sourceResult.preserved, true);
+      assert.equal(existsSync(sourceForged.digestDir), true);
+
+      rmSync(sourceForged.digestDir, { recursive: true, force: true });
+      const purposeForged = createPrimaryProjectionBundle(repo);
+      purposeForged.action.purpose = "forged-runtime-bundle";
+      const purposeResult = removeExactManagedRuntimeBundle(purposeForged.action);
+      assert.equal(purposeResult.success, false);
+      assert.equal(purposeResult.preserved, true);
+      assert.equal(existsSync(purposeForged.digestDir), true);
+    });
+  });
+
+  test("preserves a primary projection bundle reached through a linked ancestor", () => {
+    withTmpRepo((repo) => {
+      const physicalStore = path.join(repo, "physical-projection-store");
+      const linkedStore = path.join(repo, "linked-projection-store");
+      mkdirSync(physicalStore, { recursive: true });
+      symlinkSync(
+        physicalStore,
+        linkedStore,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      const { digestDir, action } = createPrimaryProjectionBundle(repo, {
+        storeRoot: linkedStore,
+      });
+      const physicalDigest = path.join(
+        physicalStore,
+        "meta-kim",
+        "2.0.22",
+        "a".repeat(64),
+      );
+      const result = removeExactManagedRuntimeBundle(action);
+      assert.equal(result.success, false);
+      assert.equal(result.preserved, true);
+      assert.equal(existsSync(digestDir), true);
+      assert.equal(existsSync(physicalDigest), true);
+    });
   });
 });

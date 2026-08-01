@@ -1,6 +1,7 @@
 // Pure release-proof predicate shared by verification and post-release audit.
 // It intentionally performs no I/O and trusts no precomputed report boolean.
 import { PACKED_USER_TARGETS } from "./packed-user-targets.mjs";
+import { PROJECTION_PACKAGE_PURPOSE } from "./global-projection-package-store.mjs";
 
 function hasExactPackedTargets(targets) {
   return Array.isArray(targets) &&
@@ -11,6 +12,7 @@ function hasExactPackedTargets(targets) {
 export function packedProductProofComplete(packedUserProof) {
   const currentPackage = packedUserProof?.currentPackage;
   const portableRuntime = currentPackage?.portableRuntime;
+  const transientPackageRoot = currentPackage?.transientPackageRoot;
   const historicalUpdate = packedUserProof?.historicalUpdate;
   const currentModes = currentPackage?.modes ?? [];
   const projectModes = currentPackage?.projectPackage?.modes ?? [];
@@ -18,6 +20,7 @@ export function packedProductProofComplete(packedUserProof) {
     packedUserProof?.status === "passed" &&
     packedUserProof?.releaseGradeEligible === true &&
     packedUserProof?.sourcePolicy === "npm_pack_installed_public_cli" &&
+    packedUserProof?.currentVersionTagAbsent === true &&
     currentPackage?.status === "passed" &&
     currentPackage?.installedCliEntrypoints === true &&
     hasExactPackedTargets(currentPackage?.targets) &&
@@ -35,6 +38,32 @@ export function packedProductProofComplete(packedUserProof) {
         { mode: "update", status: "passed" },
       ]) &&
     currentPackage?.runtimeSedimentation?.status === "passed" &&
+    transientPackageRoot?.status === "passed" &&
+    transientPackageRoot?.publicCliApplied === true &&
+    transientPackageRoot?.originDeletedBeforeCheck === true &&
+    transientPackageRoot?.stablePublicCliCheck === true &&
+    transientPackageRoot?.claudeCodexReadback === true &&
+    transientPackageRoot?.forbiddenRootReferenceCount === 0 &&
+    transientPackageRoot?.authorityReused === true &&
+    transientPackageRoot?.authorityPurpose === PROJECTION_PACKAGE_PURPOSE.bundle &&
+    typeof transientPackageRoot?.stableAuthorityDigest === "string" &&
+    /^[a-f0-9]{64}$/u.test(transientPackageRoot.stableAuthorityDigest) &&
+    typeof transientPackageRoot?.stableAuthorityPath === "string" &&
+    transientPackageRoot.stableAuthorityPath.length > 0 &&
+    typeof transientPackageRoot?.stablePackageRoot === "string" &&
+    transientPackageRoot.stablePackageRoot.length > 0 &&
+    Number.isSafeInteger(transientPackageRoot?.referencedPathCount) &&
+    transientPackageRoot.referencedPathCount > 0 &&
+    Number.isSafeInteger(transientPackageRoot?.stableAuthorityReferenceCount) &&
+    transientPackageRoot.stableAuthorityReferenceCount > 0 &&
+    Number.isSafeInteger(transientPackageRoot?.declaredPackageRootCount) &&
+    transientPackageRoot.declaredPackageRootCount > 0 &&
+    transientPackageRoot?.allPersistentPackageReferencesBound === true &&
+    transientPackageRoot?.allReferencedPathsExist === true &&
+    transientPackageRoot?.manifestAuthorityBound === true &&
+    Number.isSafeInteger(transientPackageRoot?.disposableOriginCount) &&
+    transientPackageRoot.disposableOriginCount > 0 &&
+    transientPackageRoot?.remainingDisposableOriginCount === 0 &&
     historicalUpdate?.status === "passed" &&
     hasExactPackedTargets(historicalUpdate?.targets) &&
     historicalUpdate?.completed === true &&

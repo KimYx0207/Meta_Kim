@@ -7,6 +7,37 @@
     "sourceOwner": "sync-global-meta-theory",
     "purpose": "claude-global-mcp-runtime-bundle"
   },
+  "projectionPackageStore": {
+    "scope": "claude_codex",
+    "category": "C",
+    "sourceOwner": "sync-global-meta-theory",
+    "bundlePurpose": "primary-runtime-global-projection-package-runtime-bundle",
+    "proofRoles": [
+      "receipt",
+      "package-manifest",
+      "cli",
+      "sync-script"
+    ],
+    "base": "home",
+    "path": ".meta-kim/runtime/projection-packages",
+    "layout": "<package-name>/<version>/<tgz-sha256>/bundle/node_modules/<package-name>",
+    "contentAuthority": {
+      "source": "npm_pack_json_actual_and_dry_run_ignore_scripts",
+      "stable": "receipt_paths_plus_recomputed_installed_first_party_closure",
+      "originRequiredAfterMaterialization": false
+    },
+    "integrityBoundary": {
+      "covers": [
+        "lifecycle_origin_disappearance",
+        "accidental_first_party_drift",
+        "transient_package_cache_deletion"
+      ],
+      "doesNotClaim": [
+        "same_user_malicious_concurrency_resistance",
+        "supply_chain_compromise_resistance"
+      ]
+    }
+  },
   "externalEntries": [
     {
       "runtime": "codex",

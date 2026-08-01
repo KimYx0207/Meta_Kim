@@ -89,7 +89,7 @@ npm install
 node setup.mjs
 ```
 
-> 💡 **安装之后**：`setup.mjs` 结尾会打印产物位置。全局安装可在任意目录运行 `meta-kim status`；npx 安装可重新运行 `npx --yes github:KimYx0207/Meta_Kim meta-kim status`。仓库维护者也可继续使用 `npm run meta:status`。
+> 💡 **安装之后**：`setup.mjs` 结尾会打印产物位置。全局安装可在任意目录运行 `meta-kim status`；npx 安装可重新运行 `npx --yes github:KimYx0207/Meta_Kim meta-kim status`。npx 仍是正式支持的入口：在 install/update 写入持久 Claude Code 或 Codex 投影前，Meta_Kim 会把这份精确安装包固定到用户 home 下由“包版本 + 打包文件 SHA-256”定位的不可变目录，Commands、Hooks 和合并配置不会依赖可回收的 npm cache。仓库维护者也可继续使用 `npm run meta:status`。
 
 刚 clone 下来时，先按这三层看，避免把“主源”“生成物”和“本地状态”混在一起：
 
@@ -905,12 +905,13 @@ Meta_Kim 明确区分全局和项目两个作用域；普通全局安装不会�
 
 1. **用户 home** — `~/.claude/`、`~/.codex/`、`~/.cursor/`、`~/.openclaw/` 保存为对应运行时选择的全局复用能力。
 2. **全局清单** — `~/.meta-kim/install-manifest.json` 记录受管全局文件，支持安全更新和回滚。
+3. **稳定执行包** — 会写全局投影的 install/update 先把精确包保存到 `~/.meta-kim/runtime/projection-packages/<package>/<version>/<packed-sha256>/`。Claude Code 与 Codex 的 Commands、Hook 注册和合并后的 settings/config 只引用这个稳定根，不引用 npx cache 或临时解压目录。
 
 项目运行时镜像来自用户明确选择的项目安装/bootstrap，或治理运行中的能力沉淀。在 `global_only` 下，安装本身最多只保留宿主契约要求的最小项目 Hook 依赖闭包；但之后的治理运行只要新建或迭代 Agent、Skill、Command，就会把它复制到当前项目并记录独立 ownership，后续依赖更新不能替换这份项目版本。
 
 有一个刻意保留的特殊场景：如果全局安装/更新检测到某个项目已经有有效的 Meta_Kim bootstrap manifest，它会在更新全局安装的同时，按该项目自己保存的运行时目标和 merge/delta 策略刷新这个既有项目。它不会新建项目投影，也不会覆盖项目沉淀能力或用户文件。
 
-全局安装后，在任意目录运行 `meta-kim status` 即可查看完整足迹。使用 npx 时，重新运行 `npx --yes github:KimYx0207/Meta_Kim meta-kim status`，并可将 `status` 替换为 `check`、`doctor`、`update` 或 `uninstall`。这些命令从安装包解析脚本，不依赖当前目录存在 `package.json`；仓库维护者可继续使用对应的 `npm run meta:*` 命令。
+全局安装后，在任意目录运行 `meta-kim status` 即可查看完整足迹。使用 npx 时，重新运行 `npx --yes github:KimYx0207/Meta_Kim meta-kim status`，并可将 `status` 替换为 `check`、`doctor`、`update` 或 `uninstall`。这些命令从安装包解析脚本，不依赖当前目录存在 `package.json`。help、status、doctor 仍是查询/诊断入口，不会只因调用就创建不可变包目录；check 只读验证当前版本由 manifest 绑定的 package authority；install/update 则可在写全局投影前先物化稳定包。卸载只删除 manifest 能证明为 Meta_Kim 精确拥有且内容未漂移的 bundle，未知内容、已修改内容和用户资产一律保留。仓库维护者可继续使用对应的 `npm run meta:*` 命令。
 
 ### Q：Meta_Kim 和普通的 AI 编码助手有什么区别？
 

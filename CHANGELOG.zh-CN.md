@@ -6,7 +6,17 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
-## Unreleased
+## [2.9.20] - 2026-08-01
+
+### 修复内容
+
+- **npx 继续作为受支持的全局安装/更新入口，但可回收 cache 不再成为永久运行权威。** 在写入 Claude Code 或 Codex 的 Commands、Hooks、合并配置前，候选实现先把精确安装包物化到由“包版本 + 打包文件 SHA-256”定位的共享不可变目录；所有持久执行引用只从这个稳定根生成。
+- **只读、执行环境和所有权边界保持明确。** help、status、doctor 不会只因调用就物化稳定目录；check 按 npm 的真实打包文件集核对，但不写用户 npm cache。版本探测、真实 pack 与 install 共用一次性私有 cache/temp，稳定 child 会去掉临时执行环境覆盖。卸载先清除持久引用，再删除 receipt、first-party 文件与目录闭包都精确匹配的 manifest-owned bundle。
+- **发布证明会真实覆盖“临时根消失”这一故障。** packed 公共 CLI 从 npx 形状的临时包根更新 Claude Code 与 Codex，删除全部可回收来源，再从精确稳定 authority 执行 check，并回读 Commands、Hooks、合并配置、manifest 完整性和所有引用路径。若当前版本的 Git tag 已存在，发布预检会在昂贵探针前直接阻断，避免未升版本的候选借更旧历史 tag 取得通过。
+
+### 验证
+
+- lifecycle、cleanup、Hook 投影、packed proof、tag guard、release binding 与 first-party 漂移定向回归已通过，并完成 correctness、security、completeness 独立反证。安全口径只覆盖正常 cache 删除、意外内容漂移、链接路径拒绝和精确卸载所有权；不声称抵抗同一用户下的恶意进程、被替换的 Node/npm 或供应链攻击。P-141、P-151、P-154、P-156、Cursor live、Docker 验收和已取消的 Claude 上下文删减 A/B 继续保持独立。
 
 ## [2.9.19] - 2026-08-01
 

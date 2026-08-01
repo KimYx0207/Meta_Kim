@@ -30,6 +30,7 @@ import {
 } from "./verification-report-history.mjs";
 import {
   PACKED_USER_ACCEPTANCE_EXPECTED_DURATION_MS,
+  assertCurrentVersionTagAbsent,
   runPackedUserInstallUpdateAcceptance,
 } from "./verify-packed-user-install-update.mjs";
 import { resolveRuntimeProfilesFromManifest } from "./meta-kim-sync-config.mjs";
@@ -455,15 +456,20 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
 }
 
 export function runReleasePreflight({
+  repoRoot = REPO_ROOT,
   environment = process.env,
-  captureSnapshot = () => captureReleaseSourceSnapshot(process.cwd()),
+  captureSnapshot = () => captureReleaseSourceSnapshot(repoRoot),
   runProbe = ({ onProgress: probeProgress } = {}) =>
     runAllRuntimeGlobalInstallUpdateProbe({
       environment,
       onProgress: probeProgress,
     }),
   runPackedProbe = ({ onProgress: probeProgress } = {}) =>
-    runPackedUserInstallUpdateAcceptance({ onProgress: probeProgress }),
+    runPackedUserInstallUpdateAcceptance({
+      repoRoot,
+      environment,
+      onProgress: probeProgress,
+    }),
   onProgress = null,
 } = {}) {
   emitProgress(onProgress, {
@@ -472,6 +478,42 @@ export function runReleasePreflight({
     targets: [...RELEASE_RUNTIME_TARGETS],
   });
   const invocation = captureSnapshot();
+  try {
+    assertCurrentVersionTagAbsent({ repoRoot, environment });
+  } catch (error) {
+    const globalTargetProof = {
+      status: "not_run_after_current_version_tag_collision",
+      targets: [...RELEASE_RUNTIME_TARGETS],
+      modes: [],
+      sourcePolicy: "external_declared_dependency_no_local_fallback",
+      artifactProof: [],
+      error: error.message,
+    };
+    const packedUserProof = {
+      status: "not_run_after_current_version_tag_collision",
+      releaseGradeEligible: false,
+      sourcePolicy: "npm_pack_installed_public_cli",
+      currentVersionTagAbsent: false,
+      error: error.message,
+    };
+    const postProbe = captureSnapshot();
+    const result = {
+      globalTargetProof,
+      packedUserProof,
+      sourceSnapshot: { invocation, postProbe },
+      sourceIntegrity: compareReleaseSourceSnapshotSequence([
+        { label: "invocation", snapshot: invocation },
+        { label: "post_probe", snapshot: postProbe },
+      ]),
+    };
+    emitProgress(onProgress, {
+      event: "release_preflight_complete",
+      status: "failed",
+      error: error.message,
+      nextAction: "Bump package.version, then rerun node scripts/run-verify-all.mjs.",
+    });
+    return result;
+  }
   const globalTargetProof = runProbe({ onProgress });
   const packedUserProof = globalTargetProof.status === "passed"
     ? runPackedProbe({ onProgress })

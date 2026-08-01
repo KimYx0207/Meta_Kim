@@ -9,6 +9,7 @@ import { loadEffectiveRuntimeCapabilityClaims } from "../../scripts/effective-ru
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
 import { canonicalJson } from "../../scripts/audit-release-binding.mjs";
 import { PACKED_USER_TARGETS } from "../../scripts/packed-user-targets.mjs";
+import { PROJECTION_PACKAGE_PURPOSE } from "../../scripts/global-projection-package-store.mjs";
 
 const packageRoot = path.resolve(import.meta.dirname, "../..");
 
@@ -78,6 +79,7 @@ function completePackedUserProof(packageSha256) {
     status: "passed",
     releaseGradeEligible: true,
     sourcePolicy: "npm_pack_installed_public_cli",
+    currentVersionTagAbsent: true,
     currentPackage: {
       status: "passed",
       installedCliEntrypoints: true,
@@ -97,6 +99,29 @@ function completePackedUserProof(packageSha256) {
         ],
       },
       runtimeSedimentation: { status: "passed" },
+      transientPackageRoot: {
+        status: "passed",
+        publicCliApplied: true,
+        originDeletedBeforeCheck: true,
+        stablePublicCliCheck: true,
+        claudeCodexReadback: true,
+        forbiddenRootReferenceCount: 0,
+        authorityReused: true,
+        referencedPathCount: 8,
+        authorityPurpose: PROJECTION_PACKAGE_PURPOSE.bundle,
+        stableAuthorityDigest: "a".repeat(64),
+        stableAuthorityPath:
+          `/isolated/.meta-kim/runtime/projection-packages/meta-kim/1.0.1/${"a".repeat(64)}`,
+        stablePackageRoot:
+          `/isolated/.meta-kim/runtime/projection-packages/meta-kim/1.0.1/${"a".repeat(64)}/bundle/node_modules/meta-kim`,
+        stableAuthorityReferenceCount: 8,
+        declaredPackageRootCount: 4,
+        allPersistentPackageReferencesBound: true,
+        allReferencedPathsExist: true,
+        manifestAuthorityBound: true,
+        disposableOriginCount: 7,
+        remainingDisposableOriginCount: 0,
+      },
       portableRuntime: {
         status: "passed",
         agentProjection: { status: "passed" },

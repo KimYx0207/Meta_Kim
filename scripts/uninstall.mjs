@@ -30,6 +30,7 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmdirSync,
   writeFileSync,
@@ -76,6 +77,28 @@ const GLOBAL_OWNERSHIP_POLICY_PATH = path.join(
   "contracts",
   "global-install-ownership-policy.json",
 );
+const RUNTIME_BUNDLE_PURPOSE_SUFFIX = "-runtime-bundle";
+const DURABLE_MCP_BUNDLE_PURPOSE = "claude-global-mcp-runtime-bundle";
+const PRIMARY_PROJECTION_BUNDLE_PURPOSE =
+  "primary-runtime-global-projection-package-runtime-bundle";
+const PROJECTION_PACKAGE_RECEIPT_SCHEMA =
+  "meta-kim-global-projection-package-v1";
+const REQUIRED_BUNDLE_PROOF_ROLES_BY_PURPOSE = new Map([
+  [
+    DURABLE_MCP_BUNDLE_PURPOSE,
+    new Set(["package-manifest", "cli", "server"]),
+  ],
+  [
+    PRIMARY_PROJECTION_BUNDLE_PURPOSE,
+    new Set(["receipt", "package-manifest", "cli", "sync-script"]),
+  ],
+]);
+const BUNDLE_SOURCE_BY_PURPOSE = new Map([
+  [DURABLE_MCP_BUNDLE_PURPOSE, "sync-global-meta-theory"],
+  [PRIMARY_PROJECTION_BUNDLE_PURPOSE, "sync-global-meta-theory"],
+]);
+const PACKAGE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/u;
+const SHA256_RE = /^[a-f0-9]{64}$/u;
 
 function pathKey(value) {
   const resolved = path.resolve(value);
@@ -254,7 +277,9 @@ function readGlobalOwnershipPolicy() {
     policy?.schemaVersion !== "meta-kim-global-install-ownership-policy-v1" ||
     !Array.isArray(policy.externalEntries) ||
     !policy.durableRuntimeBundle ||
-    typeof policy.durableRuntimeBundle !== "object"
+    typeof policy.durableRuntimeBundle !== "object" ||
+    !policy.projectionPackageStore ||
+    typeof policy.projectionPackageStore !== "object"
   ) {
     throw new Error(`Invalid global install ownership policy: ${GLOBAL_OWNERSHIP_POLICY_PATH}`);
   }
@@ -361,6 +386,36 @@ function buildGlobalRemovalPolicy() {
     packageIdentity,
     packageManifest,
   );
+  const projectionRule = ownershipPolicy.projectionPackageStore;
+  const projectionRelPath = String(projectionRule.path ?? "").replace(/\\/gu, "/");
+  const projectionProofRoles = new Set(
+    Array.isArray(projectionRule.proofRoles) ? projectionRule.proofRoles : [],
+  );
+  const requiredProjectionProofRoles =
+    REQUIRED_BUNDLE_PROOF_ROLES_BY_PURPOSE.get(PRIMARY_PROJECTION_BUNDLE_PURPOSE);
+  const safeProjectionRelPath = projectionRelPath &&
+    !path.isAbsolute(projectionRelPath) &&
+    !projectionRelPath.split("/").some((segment) =>
+      !segment || segment === "." || segment === ".."
+    );
+  if (
+    projectionRule.scope !== "claude_codex" ||
+    projectionRule.category !== CATEGORIES.C ||
+    projectionRule.sourceOwner !== "sync-global-meta-theory" ||
+    projectionRule.bundlePurpose !== PRIMARY_PROJECTION_BUNDLE_PURPOSE ||
+    projectionRule.base !== "home" ||
+    projectionRelPath !== ".meta-kim/runtime/projection-packages" ||
+    projectionRule.layout !==
+      "<package-name>/<version>/<tgz-sha256>/bundle/node_modules/<package-name>" ||
+    !safeProjectionRelPath ||
+    projectionProofRoles.size !== projectionRule.proofRoles?.length ||
+    projectionProofRoles.size !== requiredProjectionProofRoles.size ||
+    [...requiredProjectionProofRoles].some((role) =>
+      !projectionProofRoles.has(role)
+    )
+  ) {
+    throw new Error("Invalid global ownership projectionPackageStore");
+  }
   return {
     profiles,
     descriptors,
@@ -371,6 +426,11 @@ function buildGlobalRemovalPolicy() {
       bundleParent: path.dirname(durableCurrentLayout.bundleDir),
       packageName: packageIdentity.packageName,
       distribution,
+    },
+    projectionPackageStore: {
+      ...projectionRule,
+      rootPath: path.resolve(homedir(), projectionRelPath),
+      packageName: packageIdentity.packageName,
     },
   };
 }
@@ -442,6 +502,97 @@ function trustedDurableRuntimeBundleEntry(entry) {
     }],
     [`${rule.purpose}:cli`, { kind: "file", path: layout.cliPath }],
     [`${rule.purpose}:server`, { kind: "file", path: layout.serverPath }],
+  ]);
+  const identity = exactIdentities.get(entry.purpose);
+  return Boolean(
+    identity &&
+    entry.kind === identity.kind &&
+    pathKey(entry.path) === pathKey(identity.path)
+  );
+}
+
+function resolveProjectionPackageCli(packageManifest) {
+  const bins = packageManifest?.bin;
+  if (!bins || typeof bins !== "object" || Array.isArray(bins)) return null;
+  const preferredName = packageManifest.name?.split("/").at(-1);
+  const relativePath = bins[preferredName] ?? bins["meta-kim"] ??
+    Object.values(bins)[0];
+  if (
+    typeof relativePath !== "string" ||
+    !relativePath ||
+    path.isAbsolute(relativePath) ||
+    relativePath.replaceAll("\\", "/").split("/").some((segment) =>
+      !segment || segment === "." || segment === ".."
+    )
+  ) return null;
+  return relativePath;
+}
+
+function trustedProjectionPackageRuntimeBundleEntry(entry) {
+  const rule = GLOBAL_REMOVAL_POLICY.projectionPackageStore;
+  if (
+    entry.category !== rule.category ||
+    entry.source !== rule.sourceOwner ||
+    entry.runtimeTarget != null ||
+    (entry.ownershipClass != null && entry.ownershipClass !== "install_projection") ||
+    typeof entry.path !== "string" ||
+    !path.isAbsolute(entry.path) ||
+    !pathAtOrWithin(rule.rootPath, entry.path)
+  ) return false;
+
+  const packageBase = path.join(rule.rootPath, ...rule.packageName.split("/"));
+  const relative = path.relative(pathKey(packageBase), pathKey(entry.path));
+  const segments = relative.split(path.sep);
+  const [version, digest] = segments;
+  if (
+    !version ||
+    !PACKAGE_VERSION_RE.test(version) ||
+    !SHA256_RE.test(digest ?? "")
+  ) return false;
+
+  const digestDir = path.join(packageBase, version, digest);
+  const packageRoot = path.join(
+    digestDir,
+    "bundle",
+    "node_modules",
+    ...rule.packageName.split("/"),
+  );
+  const packageManifestPath = path.join(packageRoot, "package.json");
+  let historicalPackageManifest;
+  try {
+    const stats = lstatSync(packageManifestPath);
+    if (stats.isSymbolicLink() || !stats.isFile()) return false;
+    historicalPackageManifest = JSON.parse(
+      readFileSync(packageManifestPath, "utf8"),
+    );
+  } catch {
+    return false;
+  }
+  const cliRelative = resolveProjectionPackageCli(historicalPackageManifest);
+  if (
+    historicalPackageManifest.name !== rule.packageName ||
+    historicalPackageManifest.version !== version ||
+    !cliRelative
+  ) return false;
+
+  const exactIdentities = new Map([
+    [rule.bundlePurpose, { kind: "dir", path: digestDir }],
+    [`${rule.bundlePurpose}:receipt`, {
+      kind: "file",
+      path: path.join(digestDir, "receipt.json"),
+    }],
+    [`${rule.bundlePurpose}:package-manifest`, {
+      kind: "file",
+      path: packageManifestPath,
+    }],
+    [`${rule.bundlePurpose}:cli`, {
+      kind: "file",
+      path: path.resolve(packageRoot, cliRelative),
+    }],
+    [`${rule.bundlePurpose}:sync-script`, {
+      kind: "file",
+      path: path.join(packageRoot, "scripts", "sync-global-meta-theory.mjs"),
+    }],
   ]);
   const identity = exactIdentities.get(entry.purpose);
   return Boolean(
@@ -575,12 +726,8 @@ export function manifestEntryToFinding(entry) {
   };
 }
 
-const RUNTIME_BUNDLE_PURPOSE_SUFFIX = "-runtime-bundle";
-const DURABLE_MCP_BUNDLE_PURPOSE = "claude-global-mcp-runtime-bundle";
-const REQUIRED_BUNDLE_PROOF_ROLES = new Set(["package-manifest", "cli", "server"]);
-
 function isStrictDescendant(parentPath, candidatePath) {
-  const relative = path.relative(parentPath, candidatePath);
+  const relative = path.relative(pathKey(parentPath), pathKey(candidatePath));
   return Boolean(relative) && !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`);
 }
 
@@ -662,6 +809,7 @@ function validateGlobalManifestEntryForRemoval(entry) {
   ) return { ok: false, reason: "missing_or_invalid_global_ownership_identity" };
 
   if (trustedDurableRuntimeBundleEntry(entry)) return { ok: true };
+  if (trustedProjectionPackageRuntimeBundleEntry(entry)) return { ok: true };
 
   if (
     GLOBAL_REMOVAL_POLICY.externalEntries.some((rule) =>
@@ -1033,6 +1181,19 @@ function removalIntegrity(finding) {
   };
 }
 
+function isPrimaryProjectionReferenceFinding(finding) {
+  if (finding.source !== "sync-global-meta-theory") return false;
+  const purpose = String(finding.purpose ?? "");
+  return (
+    /-global-command$/u.test(purpose) ||
+    /-global-hook$/u.test(purpose) ||
+    /-global-hooks-dir$/u.test(purpose) ||
+    /-global-settings-merge$/u.test(purpose) ||
+    /-global-hooks-json-merge$/u.test(purpose) ||
+    /-global-config-choice-surface-and-app-native-controls$/u.test(purpose)
+  );
+}
+
 function scanFindingMatchesCanonical(finding) {
   if (finding.source !== "scan") return true;
   if (finding.kind !== "file") return false;
@@ -1090,6 +1251,8 @@ function planActions({
   const actions = [];
 
   for (const f of findings) {
+    const primaryProjectionReferenceCleanup =
+      isPrimaryProjectionReferenceFinding(f);
     switch (f.category) {
       case CATEGORIES.A: {
         actions.push({
@@ -1097,6 +1260,7 @@ function planActions({
           path: f.path,
           catLabel: "A",
           recursive: f.kind === "dir",
+          primaryProjectionReferenceCleanup,
           ...removalIntegrity(f),
         });
         break;
@@ -1114,6 +1278,7 @@ function planActions({
             path: f.path,
             catLabel: "B",
             recursive: true,
+            primaryProjectionReferenceCleanup,
             ...removalIntegrity(f),
           });
         }
@@ -1126,6 +1291,7 @@ function planActions({
             path: f.path,
             catLabel: "C",
             mutationJournal: f.tomlMutationJournal,
+            primaryProjectionReferenceCleanup,
           });
           break;
         }
@@ -1136,12 +1302,13 @@ function planActions({
             catLabel: "C",
             serverName: f.mcpServerName,
             fingerprint: f.mcpServerFingerprint,
+            primaryProjectionReferenceCleanup,
           });
           break;
         }
         if (
           f.kind === "dir" &&
-          f.purpose === DURABLE_MCP_BUNDLE_PURPOSE
+          REQUIRED_BUNDLE_PROOF_ROLES_BY_PURPOSE.has(f.purpose)
         ) {
           actions.push({
             kind: "remove-bundle",
@@ -1164,6 +1331,7 @@ function planActions({
           expectedCount: f.managedHookCount ?? 0,
           exactFragments: f.manifestManaged ? f.managedHookFragments : null,
           requiresExactFragments: f.manifestManaged === true,
+          primaryProjectionReferenceCleanup,
         });
         break;
       }
@@ -1275,7 +1443,12 @@ function planActions({
 
 export function orderUninstallActions(actions) {
   const priority = (action) => {
+    if (action.primaryProjectionReferenceCleanup === true) return 0;
     if (action.kind === "strip-mcp") return 0;
+    if (
+      action.kind === "remove-bundle" &&
+      action.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE
+    ) return 100;
     if (action.kind === "remove-bundle") return 1;
     if (action.kind === "remove" && action.scanDerived && action.recursive) return 3;
     return 2;
@@ -1814,22 +1987,319 @@ export function removeExactManagedDirectory(action, options) {
   return quarantineAndRemoveExactDirectory(action, inspectManagedDirectoryClosure, options);
 }
 
+function allDirectoryAncestorsArePlain(targetPath) {
+  const resolved = path.resolve(targetPath);
+  const root = path.parse(resolved).root;
+  const relative = path.relative(pathKey(root), pathKey(resolved));
+  const segments = relative ? relative.split(path.sep) : [];
+  let cursor = root;
+  for (const segment of [null, ...segments]) {
+    if (segment) cursor = path.join(cursor, segment);
+    let stats;
+    let real;
+    try {
+      stats = lstatSync(cursor);
+      real = realpathSync.native(cursor);
+    } catch {
+      return false;
+    }
+    if (
+      stats.isSymbolicLink() ||
+      !stats.isDirectory() ||
+      pathKey(real) !== pathKey(cursor)
+    ) return false;
+  }
+  return true;
+}
+
+function portableRelative(fromPath, targetPath) {
+  return path.relative(fromPath, targetPath).replaceAll("\\", "/");
+}
+
+function safeFirstPartyRelativePath(value) {
+  const normalized = String(value ?? "").replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  if (
+    !normalized ||
+    path.posix.isAbsolute(normalized) ||
+    segments.some((segment) => !segment || segment === "." || segment === "..")
+  ) return null;
+  return normalized;
+}
+
+function firstPartyClosureSync(packageRoot, filePaths) {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) return null;
+  const normalizedPaths = filePaths.map(safeFirstPartyRelativePath);
+  if (normalizedPaths.some((entry) => !entry)) return null;
+  const sortedPaths = [...new Set(normalizedPaths)].sort((left, right) =>
+    left.localeCompare(right)
+  );
+  if (
+    sortedPaths.length !== normalizedPaths.length ||
+    JSON.stringify(sortedPaths) !== JSON.stringify(normalizedPaths)
+  ) return null;
+
+  const actualPaths = [];
+  const walk = (currentPath, relativeParent = "") => {
+    for (const entry of readdirSync(currentPath, { withFileTypes: true })) {
+      const absolutePath = path.join(currentPath, entry.name);
+      const relativePath = `${relativeParent}/${entry.name}`.replace(/^\//u, "");
+      const stats = lstatSync(absolutePath);
+      if (stats.isSymbolicLink()) throw new Error("first_party_link");
+      if (stats.isDirectory()) walk(absolutePath, relativePath);
+      else if (stats.isFile()) actualPaths.push(relativePath.replaceAll("\\", "/"));
+      else throw new Error("first_party_unsupported_type");
+    }
+  };
+  try {
+    const packageStats = lstatSync(packageRoot);
+    if (packageStats.isSymbolicLink() || !packageStats.isDirectory()) return null;
+    walk(packageRoot);
+  } catch {
+    return null;
+  }
+  actualPaths.sort((left, right) => left.localeCompare(right));
+  if (JSON.stringify(actualPaths) !== JSON.stringify(sortedPaths)) return null;
+
+  const entries = [];
+  try {
+    for (const relativePath of sortedPaths) {
+      const absolutePath = path.resolve(packageRoot, relativePath);
+      if (!pathAtOrWithin(packageRoot, absolutePath)) return null;
+      let cursor = packageRoot;
+      const segments = relativePath.split("/");
+      for (const [index, segment] of segments.entries()) {
+        cursor = path.join(cursor, segment);
+        const stats = lstatSync(cursor);
+        const isLast = index === segments.length - 1;
+        if (
+          stats.isSymbolicLink() ||
+          (isLast ? !stats.isFile() : !stats.isDirectory())
+        ) return null;
+      }
+      const bytes = readFileSync(absolutePath);
+      entries.push({
+        path: relativePath,
+        size: bytes.length,
+        sha256: sha256Bytes(bytes),
+      });
+    }
+  } catch {
+    return null;
+  }
+  return {
+    entryCount: entries.length,
+    sha256: sha256Bytes(Buffer.from(JSON.stringify(entries), "utf8")),
+  };
+}
+
+function proofCurrentPath(action, rootPath, proof) {
+  const relativePath = path.relative(action.path, proof.path);
+  if (!relativePath || path.isAbsolute(relativePath) || relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`)) return null;
+  return path.join(rootPath, relativePath);
+}
+
+function inspectPrimaryProjectionReceipt(action, rootPath) {
+  let topLevel;
+  try {
+    topLevel = readdirSync(rootPath, { withFileTypes: true })
+      .map((entry) => ({ name: entry.name, dir: entry.isDirectory(), file: entry.isFile() }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  } catch {
+    return { ok: false, reason: "projection_receipt_unreadable" };
+  }
+  if (
+    topLevel.length !== 2 ||
+    topLevel[0]?.name !== "bundle" ||
+    topLevel[0]?.dir !== true ||
+    topLevel[1]?.name !== "receipt.json" ||
+    topLevel[1]?.file !== true
+  ) {
+    return { ok: false, reason: "projection_receipt_layout_drift" };
+  }
+
+  const proofByRole = new Map(action.proofFiles.map((proof) => [proof.role, proof]));
+  const receiptProof = proofByRole.get("receipt");
+  const receiptPath = receiptProof && proofCurrentPath(action, rootPath, receiptProof);
+  let receipt;
+  try {
+    receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  } catch {
+    return { ok: false, reason: "projection_receipt_invalid_json" };
+  }
+  if (receipt?.schemaVersion !== PROJECTION_PACKAGE_RECEIPT_SCHEMA) {
+    return { ok: false, reason: "projection_receipt_schema_mismatch" };
+  }
+  const rule = GLOBAL_REMOVAL_POLICY.projectionPackageStore;
+  const packageName = rule.packageName;
+  const version = path.basename(path.dirname(action.path));
+  const digest = path.basename(action.path);
+  const packageSegments = packageName.split("/");
+  let packageCursor = path.dirname(path.dirname(action.path));
+  for (const segment of [...packageSegments].reverse()) {
+    if (path.basename(packageCursor) !== segment) {
+      return { ok: false, reason: "projection_receipt_layout_mismatch" };
+    }
+    packageCursor = path.dirname(packageCursor);
+  }
+  if (
+    receipt.packageName !== packageName ||
+    receipt.packageVersion !== version ||
+    receipt.packageTarballSha256 !== digest ||
+    !PACKAGE_VERSION_RE.test(version) ||
+    !SHA256_RE.test(digest)
+  ) {
+    return { ok: false, reason: "projection_receipt_identity_mismatch" };
+  }
+
+  const originalBundleDir = path.join(action.path, "bundle");
+  const originalPackageRoot = path.join(
+    originalBundleDir,
+    "node_modules",
+    ...packageSegments,
+  );
+  const currentBundleDir = path.join(rootPath, "bundle");
+  const currentPackageRoot = path.join(
+    currentBundleDir,
+    "node_modules",
+    ...packageSegments,
+  );
+  if (
+    receipt.bundleRelativePath !== "bundle" ||
+    receipt.packageRootRelative !== portableRelative(action.path, originalPackageRoot)
+  ) {
+    return { ok: false, reason: "projection_receipt_layout_mismatch" };
+  }
+
+  let packageManifest;
+  const packageManifestPath = path.join(currentPackageRoot, "package.json");
+  try {
+    packageManifest = JSON.parse(readFileSync(packageManifestPath, "utf8"));
+  } catch {
+    return { ok: false, reason: "projection_package_manifest_invalid" };
+  }
+  const cliRelative = resolveProjectionPackageCli(packageManifest);
+  if (
+    packageManifest.name !== packageName ||
+    packageManifest.version !== version ||
+    !cliRelative
+  ) {
+    return { ok: false, reason: "projection_package_identity_mismatch" };
+  }
+
+  const originalKeyPaths = {
+    packageManifest: path.join(originalPackageRoot, "package.json"),
+    publicCli: path.resolve(originalPackageRoot, cliRelative),
+    globalSyncScript: path.join(
+      originalPackageRoot,
+      "scripts",
+      "sync-global-meta-theory.mjs",
+    ),
+  };
+  const currentKeyPaths = {
+    packageManifest: packageManifestPath,
+    publicCli: path.resolve(currentPackageRoot, cliRelative),
+    globalSyncScript: path.join(
+      currentPackageRoot,
+      "scripts",
+      "sync-global-meta-theory.mjs",
+    ),
+  };
+  const expectedProofPaths = {
+    receipt: path.join(action.path, "receipt.json"),
+    "package-manifest": originalKeyPaths.packageManifest,
+    cli: originalKeyPaths.publicCli,
+    "sync-script": originalKeyPaths.globalSyncScript,
+  };
+  for (const [role, expectedPath] of Object.entries(expectedProofPaths)) {
+    if (pathKey(proofByRole.get(role)?.path ?? "") !== pathKey(expectedPath)) {
+      return { ok: false, reason: "projection_receipt_proof_path_mismatch" };
+    }
+  }
+  for (const [key, originalPath] of Object.entries(originalKeyPaths)) {
+    const recorded = receipt.keyFiles?.[key];
+    let bytes;
+    try {
+      bytes = readFileSync(currentKeyPaths[key]);
+    } catch {
+      return { ok: false, reason: "projection_receipt_key_file_missing" };
+    }
+    if (
+      recorded?.relativePath !== portableRelative(action.path, originalPath) ||
+      recorded.size !== bytes.length ||
+      recorded.sha256 !== sha256Bytes(bytes)
+    ) {
+      return { ok: false, reason: "projection_receipt_key_file_drift" };
+    }
+  }
+
+  const firstPartyClosure = firstPartyClosureSync(
+    currentPackageRoot,
+    receipt.firstPartyFiles,
+  );
+  if (
+    !firstPartyClosure ||
+    !SHA256_RE.test(receipt.firstPartyClosure?.sha256 ?? "") ||
+    !Number.isInteger(receipt.firstPartyClosure?.entryCount) ||
+    receipt.firstPartyClosure.entryCount < 1 ||
+    receipt.firstPartyClosure.sha256 !== firstPartyClosure.sha256 ||
+    receipt.firstPartyClosure.entryCount !== firstPartyClosure.entryCount
+  ) {
+    return { ok: false, reason: "projection_receipt_first_party_drift" };
+  }
+  const bundleClosure = directoryClosureSync(currentBundleDir);
+  if (
+    !bundleClosure ||
+    bundleClosure.sha256 !== receipt.bundleClosure?.sha256 ||
+    bundleClosure.entryCount !== receipt.bundleClosure?.entryCount
+  ) {
+    return { ok: false, reason: "projection_receipt_bundle_drift" };
+  }
+  return { ok: true };
+}
+
 function inspectManagedBundle(action, rootPath = action.path) {
+  const requiredProofRoles = REQUIRED_BUNDLE_PROOF_ROLES_BY_PURPOSE.get(
+    action.purpose,
+  );
+  const requiredSource = BUNDLE_SOURCE_BY_PURPOSE.get(action.purpose);
   if (
     action.manifestManaged !== true ||
-    action.purpose !== DURABLE_MCP_BUNDLE_PURPOSE ||
+    !requiredProofRoles ||
+    action.source !== requiredSource ||
     !action.closureSha256 ||
     !Number.isInteger(action.closureEntryCount)
   ) {
     return { ok: false, reason: "missing_bundle_identity" };
   }
-  if (!Array.isArray(action.proofFiles) || action.proofFiles.length < REQUIRED_BUNDLE_PROOF_ROLES.size) {
+  let rootStats;
+  try {
+    rootStats = lstatSync(rootPath);
+  } catch {
+    return { ok: false, reason: "bundle_missing" };
+  }
+  if (
+    rootStats.isSymbolicLink() ||
+    !rootStats.isDirectory() ||
+    !allDirectoryAncestorsArePlain(rootPath)
+  ) {
+    return { ok: false, reason: "unsafe_bundle_root_type" };
+  }
+  if (
+    !Array.isArray(action.proofFiles) ||
+    action.proofFiles.length < requiredProofRoles.size ||
+    (
+      action.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE &&
+      action.proofFiles.length !== requiredProofRoles.size
+    )
+  ) {
     return { ok: false, reason: "missing_bundle_proof" };
   }
   const roles = new Set(action.proofFiles.map((proof) => proof.role));
   if (
     roles.size !== action.proofFiles.length ||
-    [...REQUIRED_BUNDLE_PROOF_ROLES].some((role) => !roles.has(role))
+    [...requiredProofRoles].some((role) => !roles.has(role))
   ) {
     return { ok: false, reason: "invalid_bundle_proof_roles" };
   }
@@ -1847,6 +2317,19 @@ function inspectManagedBundle(action, rootPath = action.path) {
     const currentPath = path.join(rootPath, relativePath);
     let bytes;
     try {
+      const segments = relativePath.split(path.sep);
+      let cursor = rootPath;
+      for (const [index, segment] of segments.entries()) {
+        cursor = path.join(cursor, segment);
+        const stats = lstatSync(cursor);
+        const isLast = index === segments.length - 1;
+        if (
+          stats.isSymbolicLink() ||
+          (isLast ? !stats.isFile() : !stats.isDirectory())
+        ) {
+          return { ok: false, reason: "unsafe_bundle_proof_type" };
+        }
+      }
       bytes = readFileSync(currentPath);
     } catch {
       return { ok: false, reason: "bundle_proof_missing" };
@@ -1854,6 +2337,10 @@ function inspectManagedBundle(action, rootPath = action.path) {
     if (bytes.length !== proof.size || sha256Bytes(bytes) !== proof.sha256) {
       return { ok: false, reason: "bundle_proof_drift" };
     }
+  }
+  if (action.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE) {
+    const receipt = inspectPrimaryProjectionReceipt(action, rootPath);
+    if (!receipt.ok) return receipt;
   }
   const closure = directoryClosureSync(rootPath);
   if (
@@ -1946,6 +2433,13 @@ async function main() {
   let strippedTotal = 0;
   let hadFailure = false;
   let mcpCleanupFailed = false;
+  const primaryProjectionReferenceCleanupFailures = [];
+  const recordPrimaryReferenceFailure = (action, result) => {
+    if (action.primaryProjectionReferenceCleanup !== true || result.success) return;
+    primaryProjectionReferenceCleanupFailures.push(
+      `${action.kind}:${action.path}:${result.reason ?? "unknown"}`,
+    );
+  };
   for (const a of actions) {
     if (
       a.kind === "strip-settings" ||
@@ -1968,6 +2462,7 @@ async function main() {
           console.log(`${C.dim}${t.backupDone(backupPath)}${C.reset}`);
       } else {
         hadFailure = true;
+        recordPrimaryReferenceFailure(a, result);
         if (a.kind === "strip-mcp") mcpCleanupFailed = true;
         if (result.reason === "invalid_json") {
           console.error(`${C.yellow}${t.settingsParseFailed(a.path)}${C.reset}`);
@@ -1984,14 +2479,25 @@ async function main() {
         }
       }
     } else if (a.kind === "remove-bundle") {
-      const result = mcpCleanupFailed
-        ? { success: false, preserved: true, reason: "mcp_cleanup_failed" }
-        : removeExactManagedRuntimeBundle(a);
+      const result = a.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE &&
+          primaryProjectionReferenceCleanupFailures.length > 0
+        ? {
+            success: false,
+            preserved: true,
+            reason: `projection_reference_cleanup_failed:${primaryProjectionReferenceCleanupFailures.join("|")}`,
+          }
+        : (
+            a.purpose === DURABLE_MCP_BUNDLE_PURPOSE && mcpCleanupFailed
+          )
+          ? { success: false, preserved: true, reason: "mcp_cleanup_failed" }
+          : removeExactManagedRuntimeBundle(a);
       if (result.success) {
         if (!result.missing) removedCount += 1;
       } else {
         hadFailure = true;
-        const message = result.preserved
+        const message = result.reason?.startsWith("projection_reference_cleanup_failed:")
+          ? t.writeFailed(a.path, result.reason)
+          : result.preserved
           ? t.preservedModified(a.path)
           : t.writeFailed(a.path, result.reason);
         console.error(`${C.yellow}${message}${C.reset}`);
@@ -2002,12 +2508,14 @@ async function main() {
         if (!result.missing) removedCount += 1;
       } else if (result.preserved) {
         hadFailure = true;
+        recordPrimaryReferenceFailure(a, result);
         const message = result.reason === "missing_integrity"
           ? t.preservedUnverifiable(a.path)
           : t.preservedModified(a.path);
         console.error(`${C.yellow}${message}${C.reset}`);
       } else {
         hadFailure = true;
+        recordPrimaryReferenceFailure(a, result);
         console.error(`${C.yellow}${t.writeFailed(a.path, result.reason)}${C.reset}`);
       }
     }

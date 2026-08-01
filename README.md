@@ -91,7 +91,7 @@ npm install
 node setup.mjs
 ```
 
-> 💡 **After install**: `setup.mjs` prints where every artifact lives. A global install can use `meta-kim status` from any directory; an npx install can repeat `npx --yes github:KimYx0207/Meta_Kim meta-kim status`. Repository maintainers may also use `npm run meta:status`.
+> 💡 **After install**: `setup.mjs` prints where every artifact lives. A global install can use `meta-kim status` from any directory; an npx install can repeat `npx --yes github:KimYx0207/Meta_Kim meta-kim status`. An npx launch remains a supported entrypoint: before install or update writes persistent Claude Code or Codex projections, Meta_Kim fixes the exact package into an immutable store under the user home, keyed by package version and packed-package SHA-256, so Commands, Hooks, and merged settings never depend on the disposable npm cache. Repository maintainers may also use `npm run meta:status`.
 
 At a fresh clone, Meta_Kim intentionally separates source files, generated projections, and local state:
 
@@ -914,12 +914,13 @@ Meta_Kim uses two distinct scopes; a normal global install does not populate the
 
 1. **Your home** — `~/.claude/`, `~/.codex/`, `~/.cursor/`, and `~/.openclaw/` hold globally reusable assets selected for those runtimes.
 2. **Global manifest** — `~/.meta-kim/install-manifest.json` tracks managed global files for safe update and rollback.
+3. **Stable execution package** — a global-writing install/update first stores the exact package under `~/.meta-kim/runtime/projection-packages/<package>/<version>/<packed-sha256>/`. Claude Code and Codex Commands, Hook registrations, and merged settings/config reference this stable root instead of an npx cache or temporary extraction directory.
 
 Project runtime mirrors are created by an explicit project install/bootstrap or by governed runtime sedimentation. In `global_only`, installation itself may retain only the minimal project Hook dependency closure required by the host contract. If a later governed run creates or iterates an Agent, Skill, or Command, Meta_Kim copies it into the current project with independent ownership so dependency updates cannot replace that project version.
 
 One exception is intentional: if a global install/update detects a project that already has a valid Meta_Kim bootstrap manifest, it refreshes that existing project with the project's own saved runtime targets and merge/delta policy while also updating the global installation. It does not create a new project projection, and it preserves runtime-sedimented capabilities and user-owned files.
 
-From a global install, run `meta-kim status` from any directory to see the full footprint. With npx, repeat `npx --yes github:KimYx0207/Meta_Kim meta-kim status` and replace `status` with `check`, `doctor`, `update`, or `uninstall` as needed. These commands resolve scripts from the package rather than the current directory. Repository maintainers can keep using the equivalent `npm run meta:*` commands.
+From a global install, run `meta-kim status` from any directory to see the full footprint. With npx, repeat `npx --yes github:KimYx0207/Meta_Kim meta-kim status` and replace `status` with `check`, `doctor`, `update`, or `uninstall` as needed. These commands resolve scripts from the package rather than the current directory. Help, status, and doctor remain query/diagnostic entrypoints and do not create the immutable package store merely because they were invoked; check is read-only and validates the current version's manifest-bound package authority. Install/update may materialize the stable package before writing global projections. Uninstall removes a stored bundle only when the manifest proves exact Meta_Kim ownership and the bundle has not drifted; unknown, changed, and user-owned content is preserved. Repository maintainers can keep using the equivalent `npm run meta:*` commands.
 
 ### Q: What is different about Meta_Kim compared with a normal AI coding assistant?
 

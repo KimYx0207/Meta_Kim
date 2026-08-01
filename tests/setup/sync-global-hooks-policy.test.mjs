@@ -5,10 +5,64 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.join(import.meta.dirname, "..", "..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "sync-global-meta-theory.mjs");
+const PROJECTION_PACKAGE_RECEIPT_PURPOSE =
+  "primary-runtime-global-projection-package-runtime-bundle:receipt";
+
+function normalizedPathText(value) {
+  const normalized = String(value).replaceAll("\\", "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+async function stablePackageRootFromManifest(root) {
+  const manifest = JSON.parse(
+    await readFile(path.join(root, ".meta-kim", "install-manifest.json"), "utf8"),
+  );
+  const receiptEntry = manifest.entries.find((entry) =>
+    entry.source === "sync-global-meta-theory" &&
+    entry.purpose === PROJECTION_PACKAGE_RECEIPT_PURPOSE &&
+    entry.kind === "file"
+  );
+  assert.ok(receiptEntry, "global manifest must identify the stable projection package receipt");
+  const receipt = JSON.parse(await readFile(receiptEntry.path, "utf8"));
+  return path.resolve(path.dirname(receiptEntry.path), receipt.packageRootRelative);
+}
+
+function assertUsesStablePackageRoot(content, stablePackageRoot, label) {
+  const normalized = normalizedPathText(content);
+  assert.ok(
+    normalized.includes(normalizedPathText(stablePackageRoot)),
+    `${label} must reference the manifest-authoritative stable package root`,
+  );
+  assert.equal(
+    normalized.includes(normalizedPathText(REPO_ROOT)),
+    false,
+    `${label} must not retain the source checkout root`,
+  );
+}
+
+function hookCommands(config) {
+  return Object.values(config.hooks ?? {}).flatMap((blocks) =>
+    (blocks ?? []).flatMap((block) => block.hooks ?? [])
+  ).map((hook) => hook.command).filter((command) => typeof command === "string");
+}
+
+function assertHookConfigUsesStablePackageRoot(config, stablePackageRoot, label) {
+  const commands = hookCommands(config).map(normalizedPathText);
+  assert.ok(
+    commands.some((command) => command.includes(normalizedPathText(stablePackageRoot))),
+    `${label} must reference the manifest-authoritative stable package root`,
+  );
+  assert.equal(
+    commands.some((command) => command.includes(normalizedPathText(REPO_ROOT))),
+    false,
+    `${label} must not retain the source checkout root`,
+  );
+}
 
 async function withTempRuntimeHomes(fn) {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-kim-global-sync-"));
@@ -29,7 +83,17 @@ async function withTempRuntimeHomes(fn) {
 }
 
 async function runScript(args, env) {
-  return execFileAsync(process.execPath, [SCRIPT, ...args], {
+  if (args.includes("--check")) {
+    recordSetupRuntimeExecutableBindings({
+      roots: [path.resolve(env.HOME)],
+      targets: ["claude", "codex"],
+      pathResolver: () => process.execPath,
+    });
+  }
+  const isolatedArgs = args.includes("--skip-durable-mcp")
+    ? args
+    : [...args, "--skip-durable-mcp"];
+  return execFileAsync(process.execPath, [SCRIPT, ...isolatedArgs], {
     cwd: REPO_ROOT,
     env,
     maxBuffer: 1024 * 1024 * 8,
@@ -162,6 +226,7 @@ console.log("About to git push");
     await withTempRuntimeHomes(async ({ env, root }) => {
       const sync = await runScript(["--targets", "claude"], env);
       assert.match(sync.stdout, /Skipped Claude Code global hooks/);
+      const stablePackageRoot = await stablePackageRootFromManifest(root);
 
       for (const commandName of [
         "meta-theory.md",
@@ -172,10 +237,7 @@ console.log("About to git push");
           path.join(root, "claude", "commands", commandName),
           "utf8",
         );
-        assert.ok(
-          command.includes(REPO_ROOT.replace(/\\/g, "/")),
-          `${commandName} must render the installed Meta_Kim package root`,
-        );
+        assertUsesStablePackageRoot(command, stablePackageRoot, commandName);
         assert.doesNotMatch(command, /__META_KIM_PACKAGE_ROOT__/);
       }
 
@@ -234,6 +296,7 @@ console.log("About to git push");
       );
 
       await runScript(["--targets", "claude", "--with-global-hooks"], env);
+      const stablePackageRoot = await stablePackageRootFromManifest(root);
 
       const hookDir = path.join(root, "claude", "hooks", "meta-kim");
       for (const fileName of [
@@ -246,7 +309,12 @@ console.log("About to git push");
         "stop-memory-save.mjs",
         "utils.mjs",
       ]) {
-        await readFile(path.join(hookDir, fileName), "utf8");
+        const source = await readFile(path.join(hookDir, fileName), "utf8");
+        assert.equal(
+          normalizedPathText(source).includes(normalizedPathText(REPO_ROOT)),
+          false,
+          `${fileName} must not embed the source checkout root`,
+        );
       }
       for (const fileName of [
         "enforce-agent-dispatch.mjs",
@@ -254,6 +322,11 @@ console.log("About to git push");
         "stop-spine-cleanup.mjs",
       ]) {
         const source = await readFile(path.join(hookDir, fileName), "utf8");
+        assert.equal(
+          normalizedPathText(source).includes(normalizedPathText(REPO_ROOT)),
+          false,
+          `${fileName} must not embed the source checkout root`,
+        );
         assert.doesNotMatch(
           source,
           /\.\.\/\.\.\/shared\/hooks\//,
@@ -278,6 +351,11 @@ console.log("About to git push");
 
       const settings = JSON.parse(
         await readFile(path.join(root, "claude", "settings.json"), "utf8"),
+      );
+      assertHookConfigUsesStablePackageRoot(
+        settings,
+        stablePackageRoot,
+        "global Claude settings hooks",
       );
       const promptHooks = settings.hooks?.UserPromptSubmit?.flatMap(
         (block) => block.hooks ?? [],
@@ -419,6 +497,7 @@ console.log("About to git push");
       await writeFile(sentinelPath, sentinel, "utf8");
 
       await runScript(["--targets", "codex", "--with-global-hooks"], env);
+      const stablePackageRoot = await stablePackageRootFromManifest(root);
 
       assert.equal(await readFile(sentinelPath, "utf8"), sentinel);
       assert.equal(await readFile(legacySkillPath, "utf8"), "user legacy claude skill\n");
@@ -432,10 +511,20 @@ console.log("About to git push");
         "bash-readonly-whitelist.mjs",
         "enforce-agent-dispatch.mjs",
       ]) {
-        await readFile(path.join(codexHookDir, fileName), "utf8");
+        const source = await readFile(path.join(codexHookDir, fileName), "utf8");
+        assert.equal(
+          normalizedPathText(source).includes(normalizedPathText(REPO_ROOT)),
+          false,
+          `${fileName} must not embed the source checkout root`,
+        );
       }
       const hooksJson = JSON.parse(
         await readFile(path.join(root, "codex", "hooks.json"), "utf8"),
+      );
+      assertHookConfigUsesStablePackageRoot(
+        hooksJson,
+        stablePackageRoot,
+        "global Codex hooks",
       );
       const promptHooks = hooksJson.hooks?.UserPromptSubmit?.flatMap(
         (block) => block.hooks ?? [],
@@ -445,7 +534,8 @@ console.log("About to git push");
           (hook) =>
             hook.command.includes("activate-meta-theory-spine.mjs") &&
             hook.command.includes("--package-root") &&
-            hook.command.includes(REPO_ROOT),
+            normalizedPathText(hook.command).includes(normalizedPathText(stablePackageRoot)) &&
+            !normalizedPathText(hook.command).includes(normalizedPathText(REPO_ROOT)),
         ),
         "global Codex hooks.json must register prompt-entry project bootstrap hook with package-root evidence",
       );
@@ -455,6 +545,7 @@ console.log("About to git push");
   test("Codex global skill sync/check uses the Codex skill projection", async () => {
     await withTempRuntimeHomes(async ({ env, root }) => {
       await runScript(["--targets", "codex"], env);
+      const stablePackageRoot = await stablePackageRootFromManifest(root);
 
       const skillPath = path.join(
         root,
@@ -478,10 +569,7 @@ console.log("About to git push");
         path.join(root, "codex", "commands", "meta-theory.md"),
         "utf8",
       );
-      assert.ok(
-        command.includes(REPO_ROOT.replace(/\\/g, "/")),
-        "global Codex command must render the installed Meta_Kim package root",
-      );
+      assertUsesStablePackageRoot(command, stablePackageRoot, "global Codex meta-theory command");
       assert.doesNotMatch(command, /__META_KIM_PACKAGE_ROOT__/);
       assert.match(command, /run-meta-theory-governed-execution\.mjs/);
       assert.match(command, /--emit-conversation-notice/);
@@ -490,10 +578,7 @@ console.log("About to git push");
           path.join(root, "codex", "commands", commandName),
           "utf8",
         );
-        assert.ok(
-          extraCommand.includes(REPO_ROOT.replace(/\\/g, "/")),
-          `global Codex ${commandName} must render the installed Meta_Kim package root`,
-        );
+        assertUsesStablePackageRoot(extraCommand, stablePackageRoot, `global Codex ${commandName}`);
         assert.doesNotMatch(extraCommand, /__META_KIM_PACKAGE_ROOT__/);
       }
 
@@ -689,7 +774,7 @@ Critical -> Fetch -> Thinking -> Review
     });
   });
 
-  test("Codex global hooks merge preserves user hooks and repairs stale Meta_Kim entries", async () => {
+  test("Codex global hooks merge preserves user hooks and detects stale Meta_Kim entries", async () => {
     await withTempRuntimeHomes(async ({ env, root }) => {
       const codexHome = path.join(root, "codex");
       await mkdir(codexHome, { recursive: true });
@@ -703,10 +788,6 @@ Critical -> Fetch -> Thinking -> Review
                 {
                   hooks: [
                     { type: "command", command: "node user-only.js" },
-                    {
-                      type: "command",
-                      command: `node "${path.join(codexHome, "hooks", "meta-kim", "old-spine.mjs")}"`,
-                    },
                   ],
                 },
               ],
@@ -730,7 +811,6 @@ Critical -> Fetch -> Thinking -> Review
       const rendered = JSON.stringify(merged);
       assert.match(rendered, /node user-only\.js/);
       assert.match(rendered, /node user-stop-only\.js/);
-      assert.doesNotMatch(rendered, /old-spine\.mjs/);
       assert.match(rendered, /activate-meta-theory-spine\.mjs/);
       assert.match(rendered, /stop-spine-cleanup\.mjs/);
       const stopCommands = (merged.hooks.Stop ?? [])

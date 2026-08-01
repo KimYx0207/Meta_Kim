@@ -15,6 +15,7 @@ import test from "node:test";
 import {
   PACKED_GLOBAL_AGENT_TARGETS,
   PACKED_USER_TARGETS,
+  assertCurrentVersionTagAbsent,
   assertPackedAdvisoryEffectiveMatrix,
   durableMcpDefinitionMatches,
   runInstalledPublicCli,
@@ -171,7 +172,7 @@ test("historical release baseline is the highest prior semver tag and never a fi
   assert.equal(
     selectHistoricalUpdateRef({
       currentVersion: "4.2.1",
-      tags: ["v4.1.9", "v4.2.0"],
+      tags: ["v4.1.9", "v4.2.0", "v4.2.1"],
       overrideRef: "v4.1.9",
     }).tag,
     "v4.1.9",
@@ -181,6 +182,72 @@ test("historical release baseline is the highest prior semver tag and never a fi
     /no prior stable release tag/u,
   );
   assert.match(acceptanceSource, /highest_prior_stable_semver_tag/u);
+});
+
+test("current package version exact tag fails closed before packed and release probes", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-current-tag-guard-"));
+  const git = (...args) =>
+    spawnSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true });
+  try {
+    assert.equal(git("init", "--quiet").status, 0);
+    writeFileSync(
+      path.join(root, "package.json"),
+      '{"name":"tag-guard-fixture","version":"7.8.9"}\n',
+      "utf8",
+    );
+    assert.equal(git("add", "package.json").status, 0);
+    assert.equal(
+      git(
+        "-c",
+        "user.name=Meta Kim Test",
+        "-c",
+        "user.email=meta-kim@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+      ).status,
+      0,
+    );
+
+    const absent = assertCurrentVersionTagAbsent({ repoRoot: root });
+    assert.equal(absent.currentVersionTagAbsent, true);
+    assert.equal(absent.exactRef, "refs/tags/v7.8.9");
+
+    assert.equal(git("tag", "v7.8.9").status, 0);
+    assert.throws(
+      () => assertCurrentVersionTagAbsent({ repoRoot: root }),
+      /current package version tag already exists: v7\.8\.9/u,
+    );
+
+    const packedRunner = acceptanceFunctionSource(
+      "runPackedUserInstallUpdateAcceptance",
+      "main",
+    );
+    assert.ok(
+      packedRunner.indexOf("assertCurrentVersionTagAbsent") <
+        packedRunner.indexOf("mkdtempSync"),
+      "packed acceptance must reject a current-version tag before allocating or packing",
+    );
+    const releasePreflightStart = verifyAllSource.indexOf(
+      "export function runReleasePreflight(",
+    );
+    const releasePreflightEnd = verifyAllSource.indexOf(
+      "export function computeReleaseGrade(",
+      releasePreflightStart,
+    );
+    const releasePreflightSource = verifyAllSource.slice(
+      releasePreflightStart,
+      releasePreflightEnd,
+    );
+    assert.ok(
+      releasePreflightSource.indexOf("assertCurrentVersionTagAbsent") <
+        releasePreflightSource.indexOf("runProbe({ onProgress })"),
+      "release preflight must reject a current-version tag before its first expensive probe",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("every packed CLI install and update lane uses every manifest runtime target", () => {
@@ -432,6 +499,64 @@ test("packed release proof migrates durable Claude MCP registration and proves t
   assert.match(coreLoopReleaseEvidenceSource, /legacyCountOnly/u);
   assert.match(coreLoopReleaseEvidenceSource, /missingExactFact/u);
   assert.match(coreLoopReleaseEvidenceSource, /onePlatform/u);
+});
+
+test("packed release proof survives deletion of an npx-shaped current package root", () => {
+  assert.match(
+    acceptanceSource,
+    /import \{[\s\S]*?PROJECTION_PACKAGE_PURPOSE[\s\S]*?\} from "\.\/global-projection-package-store\.mjs"/u,
+  );
+  assert.doesNotMatch(
+    acceptanceSource,
+    /cross-runtime-global-projection-package-bundle/u,
+  );
+  assert.match(acceptanceSource, /function runTransientPackageRootLane/u);
+  assert.match(acceptanceSource, /cpSync\(descriptor\.globalNodeModules, transientNodeModules/u);
+  assert.match(acceptanceSource, /"_npx"[\s\S]*?"node_modules"/u);
+  assert.match(
+    acceptanceSource,
+    /transientCliPath[\s\S]*?"update"[\s\S]*?TRANSIENT_PACKAGE_TARGETS\.join\(","\)[\s\S]*?"--with-global-hooks"/u,
+  );
+  assert.match(acceptanceSource, /rmSync\(roots\.npmCache, \{ recursive: true, force: true \}\)/u);
+  assert.match(acceptanceSource, /rmSync\(roots\.cliPrefix, \{ recursive: true, force: true \}\)/u);
+  assert.match(acceptanceSource, /packageInfo\.sourceRoot/u);
+  assert.match(acceptanceSource, /remainingDisposableOrigins\.length > 0/u);
+  assert.match(
+    acceptanceSource,
+    /authorityAfterApply\.publicCliPath[\s\S]*?"check"[\s\S]*?"--with-global-hooks"/u,
+  );
+  assert.match(
+    acceptanceSource,
+    /currentPackage\.portableRuntime = finalizePortableRuntimeProof[\s\S]*?currentPackage\.transientPackageRoot = runTransientPackageRootLane/u,
+  );
+  assert.match(
+    verifyAllSource,
+    /runPackedUserInstallUpdateAcceptance\(\{[\s\S]*?repoRoot,[\s\S]*?environment,[\s\S]*?onProgress: probeProgress,[\s\S]*?\}\)/u,
+  );
+  for (const requiredFact of [
+    "publicCliApplied",
+    "originDeletedBeforeCheck",
+    "stablePublicCliCheck",
+    "claudeCodexReadback",
+    "forbiddenRootReferenceCount",
+    "authorityReused",
+    "referencedPathCount",
+    "authorityPurpose",
+    "stableAuthorityDigest",
+    "stableAuthorityPath",
+    "stablePackageRoot",
+    "stableAuthorityReferenceCount",
+    "declaredPackageRootCount",
+    "allPersistentPackageReferencesBound",
+    "allReferencedPathsExist",
+    "manifestAuthorityBound",
+    "disposableOriginCount",
+    "remainingDisposableOriginCount",
+  ]) {
+    assert.match(acceptanceSource, new RegExp(`${requiredFact}:`, "u"));
+    assert.match(packedProofSource, new RegExp(`transientPackageRoot\\?\\.${requiredFact}`, "u"));
+    assert.match(coreLoopReleaseEvidenceSource, new RegExp(requiredFact, "u"));
+  }
 });
 
 test("packed MCP acceptance follows the shared durable strategy across supported path shapes", () => {

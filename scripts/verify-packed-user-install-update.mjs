@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   copyFileSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -54,6 +55,11 @@ import {
   PACKED_SYNC_MANIFEST,
   PACKED_USER_TARGETS,
 } from "./packed-user-targets.mjs";
+import {
+  PROJECTION_PACKAGE_MANIFEST_SOURCE,
+  PROJECTION_PACKAGE_PURPOSE,
+  PROJECTION_PACKAGE_RECEIPT_SCHEMA,
+} from "./global-projection-package-store.mjs";
 
 export { PACKED_USER_TARGETS } from "./packed-user-targets.mjs";
 
@@ -81,6 +87,7 @@ export const PACKED_GLOBAL_AGENT_TARGETS = Object.freeze(
 export const PACKED_USER_ACCEPTANCE_EXPECTED_DURATION_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.expectedDurationMs;
 const ACCEPTANCE_SKILL_FILTER = "planning-with-files";
+const TRANSIENT_PACKAGE_TARGETS = Object.freeze(["claude", "codex"]);
 const DEFAULT_TIMEOUT_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.commandTimeoutMs;
 const HISTORICAL_REF_ENV_KEY =
@@ -264,6 +271,42 @@ export function selectHistoricalUpdateRef({ currentVersion, tags, overrideRef = 
   return candidates[0];
 }
 
+export function assertCurrentVersionTagAbsent({
+  repoRoot = process.cwd(),
+  environment = process.env,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  const currentVersion = JSON.parse(
+    readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+  ).version;
+  if (!parseSemver(currentVersion)) {
+    throw new Error(`current package version is not valid semver: ${currentVersion}`);
+  }
+  const exactTag = `v${currentVersion}`;
+  const exactRef = `refs/tags/${exactTag}`;
+  const result = run("git", ["show-ref", "--verify", "--quiet", exactRef], {
+    cwd: repoRoot,
+    env: environment,
+    timeoutMs,
+  });
+  if (result.error || ![0, 1].includes(result.status)) {
+    throw commandFailure(`check current package version tag ${exactRef}`, result);
+  }
+  if (result.status === 0) {
+    throw new Error(
+      `current package version tag already exists: ${exactTag}; bump package.version before release-grade verification`,
+    );
+  }
+  return {
+    status: "passed",
+    currentVersion,
+    exactTag,
+    exactRef,
+    currentVersionTagAbsent: true,
+    checkMethod: "git_show_ref_verify_quiet_exact_ref",
+  };
+}
+
 function readTaggedPackageVersion(repoRoot, tag, environment, timeoutMs) {
   const result = requireSuccess(
     `read ${tag} package version`,
@@ -407,6 +450,8 @@ function isolatedEnvironment(baseEnvironment, roots) {
     META_KIM_WITH_GLOBAL_HOOKS: "0",
     META_KIM_PREFER_LOCAL_DEPENDENCIES: "1",
     META_KIM_LOCAL_DEPENDENCY_ROOT: roots.localDependencyRoot,
+    NPM_CONFIG_CACHE: roots.npmCache,
+    npm_config_cache: roots.npmCache,
   };
   for (const [targetId, profile] of Object.entries(PACKED_RUNTIME_PROFILES)) {
     const runtimeHome = roots.runtimeHomes[targetId];
@@ -439,6 +484,7 @@ function makeIsolatedRoots(root, name) {
     projectDir: path.join(laneRoot, "governed-project"),
     localDependencyRoot: path.join(laneRoot, "local-dependencies"),
     cliPrefix: path.join(laneRoot, "installed-cli"),
+    npmCache: path.join(laneRoot, "npm-cache"),
   };
   for (const directory of Object.values(roots).filter((value) => typeof value === "string")) {
     mkdirSync(directory, { recursive: true });
@@ -515,6 +561,7 @@ function packedCliDescriptor(packageInfo, roots, globalNodeModules) {
     binName,
     binDir,
     command,
+    globalNodeModules,
     installedPackageRoot,
     installedPackageManifestPath,
     installedCliPath,
@@ -1463,6 +1510,398 @@ export function runInstalledPublicCli(descriptor, roots, env, mode, timeoutMs) {
   });
 }
 
+function filesRecursively(rootPath) {
+  if (!existsSync(rootPath)) return [];
+  const files = [];
+  const visit = (directoryPath) => {
+    for (const entry of readdirSync(directoryPath, { withFileTypes: true })) {
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isDirectory()) visit(entryPath);
+      else if (entry.isFile()) files.push(entryPath);
+    }
+  };
+  visit(rootPath);
+  return files;
+}
+
+function currentProjectionPackageAuthority(manifestPath, descriptor) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const candidates = manifest.entries
+    .filter(
+      (entry) =>
+        entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
+        entry.purpose === PROJECTION_PACKAGE_PURPOSE.bundle &&
+        entry.kind === "dir",
+    )
+    .sort((left, right) =>
+      String(right.installedAt ?? "").localeCompare(String(left.installedAt ?? "")),
+    );
+  for (const candidate of candidates) {
+    try {
+      const receiptPath = path.join(candidate.path, "receipt.json");
+      const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+      if (
+        receipt.schemaVersion !== PROJECTION_PACKAGE_RECEIPT_SCHEMA ||
+        receipt.packageName !== descriptor.identity.packageName ||
+        receipt.packageVersion !== descriptor.identity.packageVersion ||
+        !/^[a-f0-9]{64}$/u.test(receipt.packageTarballSha256 ?? "") ||
+        path.basename(candidate.path) !== receipt.packageTarballSha256
+      ) continue;
+      const publicCli = manifest.entries.find(
+        (entry) =>
+          entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
+          entry.purpose === PROJECTION_PACKAGE_PURPOSE.cli &&
+          entry.kind === "file" &&
+          isPathWithin(candidate.path, entry.path),
+      );
+      if (
+        !publicCli ||
+        !existsSync(publicCli.path) ||
+        statSync(publicCli.path).size !== publicCli.size ||
+        sha256(readFileSync(publicCli.path)) !== publicCli.sha256
+      ) continue;
+      return {
+        digestDir: candidate.path,
+        digest: receipt.packageTarballSha256,
+        packageRoot: path.resolve(candidate.path, receipt.packageRootRelative),
+        publicCliPath: publicCli.path,
+        receiptPath,
+        purpose: candidate.purpose,
+      };
+    } catch {
+      // Historical or incomplete candidates are not current authority.
+    }
+  }
+  throw new Error("current packed version has no exact stable projection package authority");
+}
+
+function referencedAbsoluteRuntimePaths(text) {
+  const references = new Set();
+  const quotedFile = /["']((?:[A-Za-z]:[\\/]|\/)[^"'\r\n]+?\.(?:mjs|cjs|js|exe|cmd|ps1))["']/gu;
+  const packageRoot = /--package-root\s+(?:"([^"]+)"|'([^']+)'|([^\s"']+))/gu;
+  for (const match of text.matchAll(quotedFile)) references.add(match[1]);
+  for (const match of text.matchAll(packageRoot)) {
+    references.add(match[1] ?? match[2] ?? match[3]);
+  }
+  return [...references].map((entry) => entry.replaceAll("\\\\", "\\"));
+}
+
+function referencedDeclaredPackageRoots(text) {
+  const roots = new Set();
+  const pattern = /--package-root\s+(?:"([^"]+)"|'([^']+)'|([^\s"']+))/gu;
+  for (const match of text.matchAll(pattern)) {
+    roots.add((match[1] ?? match[2] ?? match[3]).replaceAll("\\\\", "\\"));
+  }
+  return [...roots];
+}
+
+function stringLeaves(value) {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringLeaves);
+  if (value && typeof value === "object") {
+    return Object.values(value).flatMap(stringLeaves);
+  }
+  return [];
+}
+
+function runtimeReadbackCorpus(textByPath) {
+  return Object.values(textByPath).flatMap((text) => {
+    try {
+      return [text, ...stringLeaves(JSON.parse(text))];
+    } catch {
+      return [text];
+    }
+  });
+}
+
+function assertTransientRuntimeReadback({
+  roots,
+  descriptor,
+  seeded,
+  authority,
+  forbiddenRoots,
+}) {
+  assertOrdinaryCwdUntouched(roots.ordinaryCwd);
+  for (const userAgent of seeded.userAgents) {
+    if (readFileSync(userAgent.path, "utf8") !== userAgent.content) {
+      throw new Error(`transient packed update changed user ${userAgent.targetId} Agent`);
+    }
+  }
+  const settings = JSON.parse(readFileSync(seeded.claudeSettingsPath, "utf8"));
+  if (
+    settings.userPreference?.preserve !== true ||
+    !JSON.stringify(settings.hooks ?? {}).includes(seeded.userHookCommand)
+  ) {
+    throw new Error("transient packed update changed user Claude settings");
+  }
+  const claudeConfig = JSON.parse(readFileSync(seeded.claudeUserConfigPath, "utf8"));
+  requireDurableMcpServer(
+    claudeConfig,
+    seeded,
+    forbiddenRoots,
+    descriptor,
+  );
+  const codexConfigPath = path.join(roots.codexHome, "config.toml");
+  const codexHooksPath = path.join(roots.codexHome, "hooks.json");
+  if (!/\[user_owned_transient\]\s+preserve\s*=\s*true/u.test(
+    readFileSync(codexConfigPath, "utf8"),
+  )) {
+    throw new Error("transient packed update changed user Codex config");
+  }
+  if (
+    JSON.parse(readFileSync(codexHooksPath, "utf8"))
+      .userOwnedTransient?.preserve !== true
+  ) {
+    throw new Error("transient packed update changed user Codex hooks state");
+  }
+
+  const readbackPaths = [
+    path.join(roots.userHome, ".meta-kim", "install-manifest.json"),
+    seeded.claudeSettingsPath,
+    seeded.claudeUserConfigPath,
+    codexConfigPath,
+    codexHooksPath,
+    ...TRANSIENT_PACKAGE_TARGETS.flatMap((runtime) => {
+      const runtimeHome = roots.runtimeHomes[runtime];
+      return [
+        ...filesRecursively(path.join(runtimeHome, "commands")),
+        ...filesRecursively(path.join(runtimeHome, "hooks")),
+      ];
+    }),
+  ];
+  const textByPath = Object.fromEntries(
+    [...new Set(readbackPaths)].map((filePath) => {
+      if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+        throw new Error(`transient packed readback is missing ${filePath}`);
+      }
+      return [filePath, readFileSync(filePath, "utf8")];
+    }),
+  );
+  const readbackCorpus = runtimeReadbackCorpus(textByPath);
+  const forbiddenReferences = collectNonPortablePackedReferences(readbackCorpus, {
+    forbiddenRoots,
+  });
+  if (forbiddenReferences.length > 0) {
+    throw new Error(
+      `transient npm cache leaked into global readback: ${forbiddenReferences
+        .map((finding) => finding.location)
+        .join(", ")}`,
+    );
+  }
+  const manifest = JSON.parse(textByPath[
+    path.join(roots.userHome, ".meta-kim", "install-manifest.json")
+  ]);
+  const authorityEntries = manifest.entries.filter(
+    (entry) =>
+      entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
+      typeof entry.purpose === "string" &&
+      entry.purpose.startsWith(PROJECTION_PACKAGE_PURPOSE.bundle),
+  );
+  if (
+    authorityEntries.length < 5 ||
+    authorityEntries.some((entry) =>
+      path.resolve(entry.path) !== path.resolve(authority.digestDir) &&
+      !isPathWithin(authority.digestDir, entry.path)
+    )
+  ) {
+    throw new Error("transient packed manifest is not bound to one stable authority digest");
+  }
+  for (const entry of manifest.entries.filter((candidate) => candidate.kind === "file")) {
+    if (
+      !existsSync(entry.path) ||
+      statSync(entry.path).size !== entry.size ||
+      sha256(readFileSync(entry.path)) !== entry.sha256
+    ) {
+      throw new Error(`transient packed manifest reference is missing or stale: ${entry.path}`);
+    }
+  }
+  const referencedPaths = [...new Set(
+    readbackCorpus.flatMap(referencedAbsoluteRuntimePaths),
+  )];
+  if (referencedPaths.length === 0) {
+    throw new Error("transient packed readback exposed no absolute runtime references");
+  }
+  const missingReferences = referencedPaths.filter((filePath) => !existsSync(filePath));
+  if (missingReferences.length > 0) {
+    throw new Error(
+      `transient packed readback contains missing runtime references: ${missingReferences.join(", ")}`,
+    );
+  }
+  const authorityReferences = referencedPaths.filter((filePath) =>
+    valueReferencesRoot(filePath, authority.digestDir)
+  );
+  const declaredPackageRoots = [...new Set(
+    readbackCorpus.flatMap(referencedDeclaredPackageRoots),
+  )];
+  const foreignDeclaredPackageRoots = declaredPackageRoots.filter(
+    (packageRoot) =>
+      path.resolve(packageRoot) !== path.resolve(authority.packageRoot) &&
+      !isPathWithin(authority.packageRoot, packageRoot),
+  );
+  const foreignProjectionPackageReferences = referencedPaths.filter((filePath) =>
+    String(filePath).replaceAll("\\", "/").includes("/.meta-kim/runtime/projection-packages/") &&
+    !valueReferencesRoot(filePath, authority.digestDir)
+  );
+  if (
+    authorityReferences.length === 0 ||
+    declaredPackageRoots.length === 0 ||
+    foreignDeclaredPackageRoots.length > 0 ||
+    foreignProjectionPackageReferences.length > 0
+  ) {
+    throw new Error(
+      "transient packed readback is not exclusively bound to the selected stable authority",
+    );
+  }
+  return {
+    forbiddenRootReferenceCount: forbiddenReferences.length,
+    referencedPathCount: referencedPaths.length,
+    stableAuthorityReferenceCount: authorityReferences.length,
+    declaredPackageRootCount: declaredPackageRoots.length,
+  };
+}
+
+function runTransientPackageRootLane({
+  packageInfo,
+  descriptor,
+  roots,
+  env,
+  seeded,
+  timeoutMs,
+}) {
+  const manifestPath = path.join(roots.userHome, ".meta-kim", "install-manifest.json");
+  const authorityBefore = currentProjectionPackageAuthority(manifestPath, descriptor);
+  const codexConfigPath = path.join(roots.codexHome, "config.toml");
+  writeFileSync(
+    codexConfigPath,
+    `${readFileSync(codexConfigPath, "utf8").trimEnd()}\n\n` +
+      "[user_owned_transient]\npreserve = true\n",
+    "utf8",
+  );
+  const codexHooksPath = path.join(roots.codexHome, "hooks.json");
+  const codexHooks = JSON.parse(readFileSync(codexHooksPath, "utf8"));
+  codexHooks.userOwnedTransient = { preserve: true };
+  writeFileSync(codexHooksPath, `${JSON.stringify(codexHooks, null, 2)}\n`, "utf8");
+  const transientNodeModules = path.join(
+    roots.npmCache,
+    "_npx",
+    "p138-current-version",
+    "node_modules",
+  );
+  cpSync(descriptor.globalNodeModules, transientNodeModules, {
+    recursive: true,
+    errorOnExist: true,
+    preserveTimestamps: true,
+  });
+  const transientPackageRoot = path.join(
+    transientNodeModules,
+    ...descriptor.identity.packageName.split("/").filter(Boolean),
+  );
+  const transientCliPath = path.join(
+    transientPackageRoot,
+    path.relative(descriptor.installedPackageRoot, descriptor.installedCliPath),
+  );
+  if (!existsSync(transientCliPath)) {
+    throw new Error("transient npx-shaped package is missing its packed public CLI");
+  }
+  requireSuccess(
+    "transient npx-shaped packed public CLI global update",
+    run(
+      process.execPath,
+      [
+        transientCliPath,
+        "update",
+        "--silent",
+        "--scope",
+        "global",
+        "--targets",
+        TRANSIENT_PACKAGE_TARGETS.join(","),
+        "--skills",
+        ACCEPTANCE_SKILL_FILTER,
+        "--with-global-hooks",
+      ],
+      { cwd: roots.ordinaryCwd, env, timeoutMs },
+    ),
+  );
+  const authorityAfterApply = currentProjectionPackageAuthority(manifestPath, descriptor);
+  if (path.resolve(authorityAfterApply.digestDir) !== path.resolve(authorityBefore.digestDir)) {
+    throw new Error("transient packed update did not reuse the current stable authority");
+  }
+
+  const disposableOrigins = [
+    roots.npmCache,
+    roots.cliPrefix,
+    descriptor.globalNodeModules,
+    descriptor.installedPackageRoot,
+    packageInfo.workspace,
+    packageInfo.extractDir,
+    path.dirname(packageInfo.tarball),
+  ];
+  const forbiddenRoots = [...new Set([
+    ...disposableOrigins,
+    packageInfo.sourceRoot,
+  ].map((entry) => path.resolve(entry)))];
+  rmSync(roots.npmCache, { recursive: true, force: true });
+  rmSync(roots.cliPrefix, { recursive: true, force: true });
+  const remainingDisposableOrigins = disposableOrigins.filter(existsSync);
+  if (remainingDisposableOrigins.length > 0) {
+    throw new Error(
+      `disposable packed origins still exist before stable public CLI check: ${remainingDisposableOrigins.join(", ")}`,
+    );
+  }
+  const stableEnvironment = repositoryIndependentEnvironment(env, forbiddenRoots);
+  requireSuccess(
+    "stable authority packed public CLI check after transient cache deletion",
+    run(
+      process.execPath,
+      [
+        authorityAfterApply.publicCliPath,
+        "check",
+        "--silent",
+        "--scope",
+        "global",
+        "--targets",
+        TRANSIENT_PACKAGE_TARGETS.join(","),
+        "--skills",
+        ACCEPTANCE_SKILL_FILTER,
+        "--with-global-hooks",
+      ],
+      { cwd: roots.ordinaryCwd, env: stableEnvironment, timeoutMs },
+    ),
+  );
+  const authorityAfterCheck = currentProjectionPackageAuthority(manifestPath, descriptor);
+  if (path.resolve(authorityAfterCheck.digestDir) !== path.resolve(authorityAfterApply.digestDir)) {
+    throw new Error("stable public CLI check changed the selected authority digest");
+  }
+  const readback = assertTransientRuntimeReadback({
+    roots,
+    descriptor,
+    seeded,
+    authority: authorityAfterCheck,
+    forbiddenRoots,
+  });
+  return {
+    status: "passed",
+    publicCliApplied: true,
+    originDeletedBeforeCheck: true,
+    stablePublicCliCheck: true,
+    claudeCodexReadback: true,
+    forbiddenRootReferenceCount: readback.forbiddenRootReferenceCount,
+    referencedPathCount: readback.referencedPathCount,
+    authorityReused: true,
+    authorityPurpose: authorityAfterCheck.purpose,
+    stableAuthorityDigest: authorityAfterCheck.digest,
+    stableAuthorityPath: authorityAfterCheck.digestDir,
+    stablePackageRoot: authorityAfterCheck.packageRoot,
+    stableAuthorityReferenceCount: readback.stableAuthorityReferenceCount,
+    declaredPackageRootCount: readback.declaredPackageRootCount,
+    allPersistentPackageReferencesBound: true,
+    allReferencedPathsExist: true,
+    manifestAuthorityBound: true,
+    disposableOriginCount: disposableOrigins.length,
+    remainingDisposableOriginCount: remainingDisposableOrigins.length,
+  };
+}
+
 function runInstalledPublicProjectCli(descriptor, roots, env, mode, timeoutMs) {
   const installed = requireInstalledCliDescriptor(descriptor);
   return runCli(installed.command, [
@@ -2182,9 +2621,16 @@ export function runPackedUserInstallUpdateAcceptance({
   onProgress = null,
   stopAfterGlobalIdempotence = false,
 } = {}) {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-packed-user-"));
+  let currentVersionTagCheck = null;
+  let tempRoot = null;
   emit(onProgress, { event: "packed_user_acceptance_start", targets: [...PACKED_USER_TARGETS] });
   try {
+    currentVersionTagCheck = assertCurrentVersionTagAbsent({
+      repoRoot,
+      environment,
+      timeoutMs,
+    });
+    tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-packed-user-"));
     let historicalResolution = null;
     let historicalResolutionError = null;
     if (!stopAfterGlobalIdempotence && includeHistorical) {
@@ -2244,12 +2690,20 @@ export function runPackedUserInstallUpdateAcceptance({
         proof: currentPackage.portableRuntime,
         context: currentPackage._portableRuntimeContext,
       };
-      delete currentPackage._portableRuntimeContext;
       currentPackage.portableRuntime = finalizePortableRuntimeProof(
         prepared,
         packageInfo,
         timeoutMs,
       );
+      currentPackage.transientPackageRoot = runTransientPackageRootLane({
+        packageInfo,
+        descriptor: prepared.context.descriptor,
+        roots: prepared.context.roots,
+        env: prepared.context.hookEnv,
+        seeded: prepared.context.seeded,
+        timeoutMs,
+      });
+      delete currentPackage._portableRuntimeContext;
     }
     const releaseGradeEligible =
       !stopAfterGlobalIdempotence &&
@@ -2260,6 +2714,8 @@ export function runPackedUserInstallUpdateAcceptance({
       status,
       releaseGradeEligible,
       sourcePolicy: "npm_pack_installed_public_cli",
+      currentVersionTagAbsent: currentVersionTagCheck.currentVersionTagAbsent,
+      currentVersionTagCheck,
       currentPackage,
       historicalUpdate: {
         ...historicalUpdate,
@@ -2274,6 +2730,9 @@ export function runPackedUserInstallUpdateAcceptance({
       status: "failed",
       releaseGradeEligible: false,
       sourcePolicy: "npm_pack_installed_public_cli",
+      currentVersionTagAbsent:
+        currentVersionTagCheck?.currentVersionTagAbsent === true,
+      currentVersionTagCheck,
       currentPackage: null,
       historicalUpdate: null,
       error: error.message,
@@ -2285,13 +2744,15 @@ export function runPackedUserInstallUpdateAcceptance({
     });
     return result;
   } finally {
-    try {
-      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
-    } catch (error) {
-      if (!["EBUSY", "EPERM"].includes(error?.code)) throw error;
-      process.stderr.write(
-        `[packed-user-acceptance] temp cleanup deferred because a child still holds a file: ${tempRoot}\n`,
-      );
+    if (tempRoot) {
+      try {
+        rmSync(tempRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
+      } catch (error) {
+        if (!["EBUSY", "EPERM"].includes(error?.code)) throw error;
+        process.stderr.write(
+          `[packed-user-acceptance] temp cleanup deferred because a child still holds a file: ${tempRoot}\n`,
+        );
+      }
     }
   }
 }

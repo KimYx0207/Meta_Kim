@@ -25,6 +25,7 @@ import {
   runReleasePreflight,
   STAGES,
 } from "../../scripts/run-verify-all.mjs";
+import { PROJECTION_PACKAGE_PURPOSE } from "../../scripts/global-projection-package-store.mjs";
 
 const CORE_LOOP_CONTRACT = JSON.parse(readFileSync("config/contracts/core-loop-contract.json", "utf8"));
 const runFixtureRaw = readFileSync("tests/fixtures/run-artifacts/valid-core-loop-release-run.json", "utf8");
@@ -42,6 +43,7 @@ function completePackedProductProof() {
     status: "passed",
     releaseGradeEligible: true,
     sourcePolicy: "npm_pack_installed_public_cli",
+    currentVersionTagAbsent: true,
     currentPackage: {
       status: "passed",
       installedCliEntrypoints: true,
@@ -60,6 +62,27 @@ function completePackedProductProof() {
         ],
       },
       runtimeSedimentation: { status: "passed" },
+      transientPackageRoot: {
+        status: "passed",
+        publicCliApplied: true,
+        originDeletedBeforeCheck: true,
+        stablePublicCliCheck: true,
+        claudeCodexReadback: true,
+        forbiddenRootReferenceCount: 0,
+        authorityReused: true,
+        referencedPathCount: 8,
+        authorityPurpose: PROJECTION_PACKAGE_PURPOSE.bundle,
+        stableAuthorityDigest: "a".repeat(64),
+        stableAuthorityPath: "/isolated/.meta-kim/runtime/projection-packages/meta-kim/4.2.0/" + "a".repeat(64),
+        stablePackageRoot: "/isolated/.meta-kim/runtime/projection-packages/meta-kim/4.2.0/" + "a".repeat(64) + "/bundle/node_modules/meta-kim",
+        stableAuthorityReferenceCount: 8,
+        declaredPackageRootCount: 4,
+        allPersistentPackageReferencesBound: true,
+        allReferencedPathsExist: true,
+        manifestAuthorityBound: true,
+        disposableOriginCount: 7,
+        remainingDisposableOriginCount: 0,
+      },
       portableRuntime: {
         status: "passed",
         agentProjection: { status: "passed" },
@@ -136,6 +159,30 @@ function completePackedProductProof() {
       checkMethod: "current_update_internal_global_check_plus_exact_artifact_manifest_validation",
     },
   };
+}
+
+function initializeUntaggedReleaseRepo(root, version = "7.8.9") {
+  const git = (...args) =>
+    spawnSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true });
+  assert.equal(git("init", "--quiet").status, 0);
+  writeFileSync(
+    path.join(root, "package.json"),
+    `${JSON.stringify({ name: "release-preflight-fixture", version })}\n`,
+  );
+  assert.equal(git("add", "package.json").status, 0);
+  assert.equal(
+    git(
+      "-c",
+      "user.name=Meta Kim Test",
+      "-c",
+      "user.email=meta-kim@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture",
+    ).status,
+    0,
+  );
 }
 
 test("verify checks discovery read-only before the sole runtime mirror writer", () => {
@@ -522,6 +569,65 @@ test("packed product proof requires every portable runtime subproof", () => {
   assert.equal(packedProductProofComplete(complete), true);
   assert.equal(packedProductProofComplete({ status: "passed" }), false);
 
+  const missingCurrentVersionTagFact = structuredClone(complete);
+  delete missingCurrentVersionTagFact.currentVersionTagAbsent;
+  assert.equal(packedProductProofComplete(missingCurrentVersionTagFact), false);
+  const collidedCurrentVersionTag = structuredClone(complete);
+  collidedCurrentVersionTag.currentVersionTagAbsent = false;
+  assert.equal(packedProductProofComplete(collidedCurrentVersionTag), false);
+
+  for (const key of [
+    "status",
+    "publicCliApplied",
+    "originDeletedBeforeCheck",
+    "stablePublicCliCheck",
+    "claudeCodexReadback",
+    "forbiddenRootReferenceCount",
+    "authorityReused",
+    "referencedPathCount",
+    "authorityPurpose",
+    "stableAuthorityDigest",
+    "stableAuthorityPath",
+    "stablePackageRoot",
+    "stableAuthorityReferenceCount",
+    "declaredPackageRootCount",
+    "allPersistentPackageReferencesBound",
+    "allReferencedPathsExist",
+    "manifestAuthorityBound",
+    "disposableOriginCount",
+    "remainingDisposableOriginCount",
+  ]) {
+    const incomplete = structuredClone(complete);
+    delete incomplete.currentPackage.transientPackageRoot[key];
+    assert.equal(
+      packedProductProofComplete(incomplete),
+      false,
+      `transientPackageRoot.${key} must be required for packed product proof`,
+    );
+  }
+  const leakedTransientRoot = structuredClone(complete);
+  leakedTransientRoot.currentPackage.transientPackageRoot.forbiddenRootReferenceCount = 1;
+  assert.equal(
+    packedProductProofComplete(leakedTransientRoot),
+    false,
+    "transient package-root readback must reject every forbidden root reference",
+  );
+  const legacyAuthorityPurpose = structuredClone(complete);
+  legacyAuthorityPurpose.currentPackage.transientPackageRoot.authorityPurpose =
+    "cross-runtime-global-projection-package-bundle";
+  assert.equal(
+    packedProductProofComplete(legacyAuthorityPurpose),
+    false,
+    "retired projection package purposes must not satisfy packed proof",
+  );
+  const residualOrigin = structuredClone(complete);
+  residualOrigin.currentPackage.transientPackageRoot.remainingDisposableOriginCount = 1;
+  assert.equal(
+    packedProductProofComplete(residualOrigin),
+    false,
+    "packed proof must reject a surviving disposable origin",
+  );
+
   for (const key of [
     "agentProjection",
     "ownershipManifest",
@@ -704,8 +810,12 @@ test("dirty but stable source content remains release-grade while commit eligibi
   );
 });
 
-test("release preflight rejects a source mutation inside the probe window", () => {
-  const invocation = {
+test("release preflight stops before expensive probes when the current version tag exists", () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-tag-preflight-"));
+  initializeUntaggedReleaseRepo(tempRoot);
+  const git = (...args) =>
+    spawnSync("git", args, { cwd: tempRoot, encoding: "utf8", windowsHide: true });
+  const stableSnapshot = {
     captureOk: true,
     head: "head-a",
     tree: "tree-a",
@@ -713,47 +823,106 @@ test("release preflight rejects a source mutation inside the probe window", () =
     diffHash: "diff-a",
     packageManifestHash: "pkg-a",
   };
-  let current = invocation;
-  const preflight = runReleasePreflight({
-    captureSnapshot: () => ({ ...current }),
-    runProbe: () => {
-      current = {
-        ...current,
-        dirty: true,
-        diffHash: "diff-mutated-during-probe",
-      };
-      return { status: "passed" };
-    },
-    runPackedProbe: () => completePackedProductProof(),
-  });
+  try {
+    let probeCount = 0;
+    const allowed = runReleasePreflight({
+      repoRoot: tempRoot,
+      captureSnapshot: () => ({ ...stableSnapshot }),
+      runProbe: () => {
+        probeCount += 1;
+        return { status: "passed" };
+      },
+      runPackedProbe: () => {
+        probeCount += 1;
+        return completePackedProductProof();
+      },
+    });
+    assert.equal(probeCount, 2, "an absent current-version tag must continue");
+    assert.equal(allowed.packedUserProof.currentVersionTagAbsent, true);
 
-  assert.equal(preflight.globalTargetProof.status, "passed");
-  assert.equal(preflight.sourceIntegrity.stable, false);
-  assert.equal(preflight.sourceIntegrity.releaseEligible, false);
-  assert.ok(
-    preflight.sourceIntegrity.mismatchReasons.includes("diffHash_changed_during_verification"),
-  );
-  assert.deepEqual(
-    preflight.sourceIntegrity.windows.map(({ from, to }) => ({ from, to })),
-    [{ from: "invocation", to: "post_probe" }],
-  );
+    assert.equal(git("tag", "v7.8.9").status, 0);
+    probeCount = 0;
+    const blocked = runReleasePreflight({
+      repoRoot: tempRoot,
+      captureSnapshot: () => ({ ...stableSnapshot }),
+      runProbe: () => {
+        probeCount += 1;
+        return { status: "passed" };
+      },
+      runPackedProbe: () => {
+        probeCount += 1;
+        return completePackedProductProof();
+      },
+    });
+    assert.equal(probeCount, 0, "a current-version tag must block every expensive probe");
+    assert.equal(
+      blocked.globalTargetProof.status,
+      "not_run_after_current_version_tag_collision",
+    );
+    assert.equal(blocked.packedUserProof.currentVersionTagAbsent, false);
+    assert.match(blocked.packedUserProof.error, /v7\.8\.9/u);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
-  const completeIntegrity = compareReleaseSourceSnapshotSequence([
-    { label: "invocation", snapshot: preflight.sourceSnapshot.invocation },
-    { label: "post_probe", snapshot: preflight.sourceSnapshot.postProbe },
-    { label: "final", snapshot: { ...preflight.sourceSnapshot.postProbe } },
-  ]);
-  assert.equal(completeIntegrity.releaseEligible, false);
-  assert.equal(
-    computeReleaseGrade({
-      results: STAGES.map((stage) => ({ name: stage.name, status: "passed" })),
-      startIndex: 0,
-      sourceIntegrity: completeIntegrity,
-      globalTargetProof: preflight.globalTargetProof,
-      packedUserProof: completePackedProductProof(),
-    }),
-    false,
-  );
+test("release preflight rejects a source mutation inside the probe window", () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-preflight-"));
+  initializeUntaggedReleaseRepo(tempRoot);
+  try {
+    const invocation = {
+      captureOk: true,
+      head: "head-a",
+      tree: "tree-a",
+      dirty: false,
+      diffHash: "diff-a",
+      packageManifestHash: "pkg-a",
+    };
+    let current = invocation;
+    const preflight = runReleasePreflight({
+      repoRoot: tempRoot,
+      captureSnapshot: () => ({ ...current }),
+      runProbe: () => {
+        current = {
+          ...current,
+          dirty: true,
+          diffHash: "diff-mutated-during-probe",
+        };
+        return { status: "passed" };
+      },
+      runPackedProbe: () => completePackedProductProof(),
+    });
+
+    assert.equal(preflight.globalTargetProof.status, "passed");
+    assert.equal(preflight.sourceIntegrity.stable, false);
+    assert.equal(preflight.sourceIntegrity.releaseEligible, false);
+    assert.ok(
+      preflight.sourceIntegrity.mismatchReasons.includes("diffHash_changed_during_verification"),
+    );
+    assert.deepEqual(
+      preflight.sourceIntegrity.windows.map(({ from, to }) => ({ from, to })),
+      [{ from: "invocation", to: "post_probe" }],
+    );
+
+    const completeIntegrity = compareReleaseSourceSnapshotSequence([
+      { label: "invocation", snapshot: preflight.sourceSnapshot.invocation },
+      { label: "post_probe", snapshot: preflight.sourceSnapshot.postProbe },
+      { label: "final", snapshot: { ...preflight.sourceSnapshot.postProbe } },
+    ]);
+    assert.equal(completeIntegrity.releaseEligible, false);
+    assert.equal(
+      computeReleaseGrade({
+        results: STAGES.map((stage) => ({ name: stage.name, status: "passed" })),
+        startIndex: 0,
+        sourceIntegrity: completeIntegrity,
+        globalTargetProof: preflight.globalTargetProof,
+        packedUserProof: completePackedProductProof(),
+      }),
+      false,
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("source snapshot binds HEAD tree diff state and package manifest and rejects mid-run mutation", () => {
@@ -803,6 +972,7 @@ test("all-runtime release preflight performs real isolated install and update ar
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-probe-test-"));
   const installerScript = path.join(tempRoot, "fake-installer.mjs");
   try {
+    initializeUntaggedReleaseRepo(tempRoot);
     writeFileSync(
       installerScript,
       [
@@ -828,6 +998,7 @@ test("all-runtime release preflight performs real isolated install and update ar
       packageManifestHash: "package-a",
     };
     const preflight = runReleasePreflight({
+      repoRoot: tempRoot,
       captureSnapshot: () => ({ ...stableSnapshot }),
       onProgress: (event) => progress.push(event),
       runProbe: ({ onProgress }) => runAllRuntimeGlobalInstallUpdateProbe({

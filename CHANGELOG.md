@@ -6,7 +6,17 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
-## Unreleased
+## [2.9.20] - 2026-08-01
+
+### Fixed
+
+- **npx remains a supported global install/update entry without turning its disposable cache into permanent runtime authority.** Before a global-writing operation projects Claude Code or Codex Commands, Hooks, or merged settings, the candidate materializes the exact package into a shared immutable store keyed by package version and packed-package SHA-256; persistent references are rendered only from that stable root.
+- **Read-only, environment, and ownership boundaries stay explicit.** Help, status, and doctor do not materialize the store merely by being invoked; check derives the real npm pack file set without writing the user's npm cache. Version probing, packing, and installation share one private cache/temp transaction, while the stable child removes transient executable environment overrides. Uninstall clears persistent references before removing only an exact manifest-owned bundle whose receipt, first-party files, and directory closure still match.
+- **Release proof now exercises the disposable-root failure mode directly.** The packed public-CLI lane updates Claude Code and Codex from an npx-shaped package root, removes every disposable package origin, runs check from the exact stable authority, and reads back Commands, Hooks, merged configuration, manifest integrity, and referenced paths. A current-version Git tag blocks the release preflight before expensive probes, preventing an unbumped candidate from being certified against an older historical tag.
+
+### Verification
+
+- Focused lifecycle, cleanup, Hook projection, packed-proof, tag-guard, release-binding, and first-party drift regressions pass after adversarial correctness, security, and completeness review. The declared security boundary covers normal cache deletion, accidental content drift, linked-path rejection, and precise uninstall ownership; it does not claim resistance to a malicious same-user process, a compromised Node/npm installation, or supply-chain compromise. P-141, P-151, P-154, P-156, Cursor live acceptance, Docker acceptance, and the cancelled Claude context-reduction A/B remain separate.
 
 ## [2.9.19] - 2026-08-01
 
