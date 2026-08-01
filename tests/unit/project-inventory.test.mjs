@@ -32,6 +32,19 @@ describe("project inventory and standard test-suite coverage", () => {
     assert.deepEqual(result.unmatched, []);
   });
 
+  test("classifies the owned process tests into the dedicated serial suite", () => {
+    const result = classifyTrackedTests([
+      "tests/unit/eval-process-runner.test.mjs",
+      "tests/setup/windows-job-process-runner.test.mjs",
+      "tests/setup/posix-process-group-runner.test.mjs",
+      "tests/setup/process-runner-contract.test.mjs",
+      "tests/unit/runtime-cli-invocation.test.mjs",
+    ]);
+    assert.equal(result.counts.processGuard, 3);
+    assert.equal(result.counts.unit, 2);
+    assert.deepEqual(result.unmatched, []);
+  });
+
   test("every tracked test belongs to an explicit standard suite", () => {
     const inventory = buildProjectInventory();
     assert.equal(
@@ -71,6 +84,10 @@ describe("project inventory and standard test-suite coverage", () => {
     assert.equal(
       packageJson.scripts["meta:test:setup:packed"],
       'node scripts/run-node-tests.mjs "tests/setup/global-runtime-bundle.test.mjs" "tests/setup/global-runtime-assets.test.mjs" "tests/setup/mcp-memory-hooks.test.mjs"',
+    );
+    assert.equal(
+      packageJson.scripts["meta:test:process-guard"],
+      'node scripts/run-node-tests.mjs "tests/setup/windows-job-process-runner.test.mjs" "tests/setup/posix-process-group-runner.test.mjs" "tests/setup/process-runner-contract.test.mjs" --concurrency 1',
     );
     assert.match(packageJson.scripts["meta:verify:governance"], /meta:test:integration/);
     assert.match(packageJson.scripts["meta:verify:governance:core"], /meta:test:governance/);

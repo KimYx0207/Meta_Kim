@@ -22,6 +22,7 @@
     "meta:runtime:produce": 1800000,
     "meta:test:inventory": 30000,
     "meta:test:unit": 120000,
+    "meta:test:process-guard": 120000,
     "meta:test:setup": 300000,
     "meta:test:setup:packed": 900000,
     "meta:test:meta-theory": 600000,

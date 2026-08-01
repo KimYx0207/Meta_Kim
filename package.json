@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "2.9.18",
+  "version": "2.9.19",
   "description": "Governance layer for AI coding: canonical meta agents, workflow contracts, default Claude/Codex projections, non-default OpenClaw/Cursor projections, and source-backed candidate probes.",
   "private": true,
   "type": "module",
@@ -69,6 +69,7 @@
     "meta:test:setup": "node scripts/run-node-tests.mjs \"tests/setup/*.test.mjs\" --exclude \"tests/setup/global-runtime-bundle.test.mjs\" --exclude \"tests/setup/global-runtime-assets.test.mjs\" --exclude \"tests/setup/mcp-memory-hooks.test.mjs\" --exclude-import \"node:child_process\" --concurrency 4",
     "meta:test:setup:diagnostic": "node scripts/run-node-tests.mjs \"tests/setup/*.test.mjs\" --exclude \"tests/setup/global-runtime-bundle.test.mjs\" --exclude \"tests/setup/global-runtime-assets.test.mjs\" --exclude \"tests/setup/mcp-memory-hooks.test.mjs\" --include-import \"node:child_process\" --concurrency 2",
     "meta:test:setup:packed": "node scripts/run-node-tests.mjs \"tests/setup/global-runtime-bundle.test.mjs\" \"tests/setup/global-runtime-assets.test.mjs\" \"tests/setup/mcp-memory-hooks.test.mjs\"",
+    "meta:test:process-guard": "node scripts/run-node-tests.mjs \"tests/setup/windows-job-process-runner.test.mjs\" \"tests/setup/posix-process-group-runner.test.mjs\" \"tests/setup/process-runner-contract.test.mjs\" --concurrency 1",
     "meta:test:meta-theory": "node scripts/run-node-tests.mjs \"tests/meta-theory/*.test.mjs\"",
     "meta:test:unit": "node scripts/run-node-tests.mjs \"tests/unit/*.test.mjs\" && npm run meta:test:poc-design-gate",
     "meta:test:poc-design-gate": "node scripts/run-node-tests.mjs \"tests/poc-design-gate/*.test.mjs\"",

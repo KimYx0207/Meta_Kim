@@ -413,7 +413,10 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /function normalizeOpenClawAgentPayload/);
     assert.match(source, /normalizeOpenClawAgentPayload\(agentId, turn\.payload\)/);
     assert.match(source, /async function runOpenClawAgentTurn/);
-    assert.match(source, /if \(code === 0\) \{\s*recoverFromSession\(\)/);
+    assert.match(source, /Promise\.race\(\[commandOutcome, sessionOutcome\]\)/);
+    assert.match(source, /commandAbort\.abort\(\)/);
+    assert.match(source, /META_KIM_COMMAND_ABORTED/);
+    assert.match(source, /pollAbort\.abort\(\)/);
     assert.match(source, /OpenClaw live turn still running/);
     assert.match(source, /heartbeatMs = 30_000/);
     assert.match(source, /baseStatus\.tempConfig\.stateDir/);
@@ -613,11 +616,8 @@ describe("eval-meta-agents Claude smoke", () => {
     );
     assert.match(source, /isCommandTimeoutFailure/);
     assert.match(source, /META_KIM_COMMAND_TIMEOUT/);
-    assert.match(
-      source,
-      /timeoutTriggered = true;[\s\S]*child\.on\("close"[\s\S]*finished \|\| timeoutTriggered/u,
-      "the timeout path must win its race with the killed child close event",
-    );
+    assert.doesNotMatch(source, /timeoutTriggered/u);
+    assert.match(source, /runCommandWithIgnoredStdin/u);
     assert.match(source, /codex_live_timeout/);
     assert.match(source, /codex_exec_orchestration_prompt/);
     assert.match(source, /function extractCodexThreadId/);
@@ -894,9 +894,10 @@ describe("eval-meta-agents Claude smoke", () => {
     );
     assert.match(
       source,
-      /runWindowsGuardedCommand[\s\S]*META_KIM_EVAL_START_GATE/u,
-      "Codex must remain gated until the Windows tree guardian is ready",
+      /import\s*\{[^}]*runWindowsGuardedCommand[^}]*\}\s*from "\.\/eval-process-runner\.mjs";/u,
+      "the primary evaluator must use the shared bounded Job Object runner",
     );
+    assert.doesNotMatch(source, /META_KIM_EVAL_START_GATE/u);
     assert.match(
       source,
       /"exec",\s*"--ignore-user-config",\s*"--enable",\s*"multi_agent",\s*"--json"/u,
@@ -909,20 +910,12 @@ describe("eval-meta-agents Claude smoke", () => {
     );
     assert.match(source, /function codexRecoveryHasReturnedChildFinal\(/u);
     assert.match(source, /completionBoundary === "returned_child_final"/u);
-    assert.match(
-      source,
-      /windows-process-tree-guard\.ps1[\s\S]*processTreeCleanupVerified/u,
-      "Windows release evidence must require verified whole-tree cleanup",
-    );
+    assert.doesNotMatch(source, /windows-process-tree-guard\.ps1/u);
+    assert.doesNotMatch(source, /taskkill(?:\.exe)?/iu);
     const isolatedRunner = source.match(
       /async function runPrimaryReleaseRuntimeIsolated\(runtimeName\) \{[\s\S]*?\n\}/u,
     )?.[0];
     assert.ok(isolatedRunner);
-    assert.match(
-      isolatedRunner,
-      /const processTreeCleanupFailure[\s\S]*processTreeCleanupFailure/u,
-      "cleanup failure classification must be defined in the isolated runtime catch",
-    );
     assert.match(
       isolatedRunner,
       /for \(let attempt = 1; attempt <= 2; attempt \+= 1\)/u,
@@ -931,25 +924,6 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(isolatedRunner, /priorAttemptEvidence: attemptEvidence/u);
     assert.match(isolatedRunner, /META_KIM_CHILD_COMMAND_FAILED/u);
     assert.match(isolatedRunner, /non_release_grade_child_exit/u);
-    assert.match(isolatedRunner, /processTreeCleanupFailure\) \{\s*break;/u);
-    assert.match(isolatedRunner, /error\?\.processTreeCleanupFailure === true/u);
-    assert.match(
-      isolatedRunner,
-      /META_KIM_COMMAND_TIMEOUT_CLEANUP_FAILED/u,
-    );
-    assert.match(source, /function processTreeCleanupError\(/u);
-    assert.match(source, /finally_child_cleanup_failed/u);
-    assert.match(source, /finally_guardian_cleanup_failed/u);
-    assert.match(
-      source,
-      /let guardDirRemovalError = null;[\s\S]*if \(finalCleanupError\) \{\s*throw finalCleanupError;\s*\}[\s\S]*if \(guardDirRemovalError\)/u,
-      "a temp-directory removal error must never mask an unverified process-tree cleanup",
-    );
-    assert.doesNotMatch(
-      source,
-      /taskkill[\s\S]{0,800}process\.kill\(pid, signal\)/u,
-      "a taskkill provider failure must not be relabeled as successful cleanup after killing only the root",
-    );
     const filtered = spawnSync(
       process.execPath,
       ["scripts/eval-meta-agents.mjs", "--primary-release-fuse", "--runtime=claude"],

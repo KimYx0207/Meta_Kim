@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
@@ -18,12 +18,24 @@ import {
 import { resolveClaudeLiveProviderEnvironment } from "./claude-live-provider-env.mjs";
 import { observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
 import { readCodexSessionEvidence } from "./live-acceptance/read-codex-session-evidence.mjs";
+import {
+  cleanupActiveChildren,
+  installSignalCleanup,
+  PROCESS_TREE_CLEANUP_BOUNDARY,
+  PROCESS_TREE_CLEANUP_CLAIM,
+  runCommandWithIgnoredStdin,
+  runWindowsGuardedCommand,
+} from "./eval-process-runner.mjs";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const rawArgs = process.argv.slice(2);
 const requireAllRuntimes = process.argv.includes("--require-all-runtimes");
+const processTreeCleanupNonClaim = Object.freeze({
+  processTreeCleanupClaim: PROCESS_TREE_CLEANUP_CLAIM,
+  processTreeCleanupBoundary: PROCESS_TREE_CLEANUP_BOUNDARY,
+});
 const primaryReleaseFuse = rawArgs.includes("--primary-release-fuse");
 const evalMode =
   primaryReleaseFuse || rawArgs.includes("--live") || rawArgs.includes("--mode=live")
@@ -66,27 +78,18 @@ const prepareOpenClawScriptPath = path.join(
   "scripts",
   "prepare-openclaw-local.mjs",
 );
-const windowsProcessTreeGuardPath = path.join(
-  repoRoot,
-  "scripts",
-  "windows-process-tree-guard.ps1",
-);
 const cursorLiveHarnessContractPath = path.join(
   repoRoot,
   "config",
   "contracts",
   "cursor-live-turn-harness-contract.json",
 );
-const activeChildren = new Map();
-let cleanupInFlight = false;
 const CODEX_LIVE_TIMEOUT_MS = 180_000;
 const CODEX_SESSION_SETTLE_TIMEOUT_MS = 10_000;
 const CODEX_SESSION_SETTLE_INTERVAL_MS = 250;
 const PRIMARY_RELEASE_RUNTIME_PROCESS_TIMEOUT_MS = Object.freeze({
   codex: 240_000,
 });
-const WINDOWS_PROCESS_TREE_GUARD_READY_TIMEOUT_MS = 15_000;
-const WINDOWS_PROCESS_TREE_GUARD_EXIT_TIMEOUT_MS = 30_000;
 
 const RUNTIME_FAILURE_TAXONOMY = Object.freeze({
   pass: "pass",
@@ -348,170 +351,6 @@ function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function markChildActive(child, label) {
-  activeChildren.set(child.pid, { child, label });
-  child.once("close", () => {
-    activeChildren.delete(child.pid);
-  });
-}
-
-function processTreeCleanupError(error, code, details = {}) {
-  const wrapped = new Error("Process-tree cleanup could not be verified", {
-    cause: error,
-  });
-  wrapped.code = code;
-  wrapped.processTreeCleanupFailure = true;
-  wrapped.processTreeCleanupReason =
-    details.reason ?? error?.processTreeCleanupReason ?? "cleanup_unverified";
-  wrapped.processTreeSurvivorCount = Number.isSafeInteger(details.survivorCount)
-    ? details.survivorCount
-    : Number.isSafeInteger(error?.processTreeSurvivorCount)
-    ? error.processTreeSurvivorCount
-    : null;
-  return wrapped;
-}
-
-async function killProcessTree(pid, options = {}) {
-  const signal = options.signal ?? "SIGTERM";
-  if (!pid) {
-    return;
-  }
-
-  if (process.platform === "win32") {
-    const guardDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "meta-kim-process-tree-stop-"),
-    );
-    const readyPath = path.join(guardDir, "ready");
-    const stopPath = path.join(guardDir, "stop");
-    const resultPath = path.join(guardDir, "result.json");
-    try {
-      await fs.writeFile(stopPath, "stop", "utf8");
-      await execFileAsync("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        windowsProcessTreeGuardPath,
-        "-RootPid",
-        String(pid),
-        "-ReadyPath",
-        readyPath,
-        "-StopPath",
-        stopPath,
-        "-ResultPath",
-        resultPath,
-      ], {
-        cwd: repoRoot,
-        timeout: WINDOWS_PROCESS_TREE_GUARD_EXIT_TIMEOUT_MS,
-        windowsHide: true,
-      });
-      const result = JSON.parse(await fs.readFile(resultPath, "utf8"));
-      if (result?.verified !== true) {
-        throw new Error("Windows process-tree guard did not verify cleanup");
-      }
-    } catch (guardError) {
-      // Retain taskkill only as a best-effort emergency action. It cannot prove
-      // provider-independent tree cleanup, so callers still receive a failure.
-      try {
-        await execFileAsync("taskkill", ["/PID", String(pid), "/T", "/F"], {
-          cwd: repoRoot,
-          timeout: 15_000,
-          windowsHide: true,
-        });
-      } catch {
-        // The verified Toolhelp32 result remains the release boundary.
-      }
-      throw processTreeCleanupError(
-        guardError,
-        "META_KIM_WINDOWS_PROCESS_TREE_CLEANUP_FAILED",
-        { reason: "toolhelp_guard_failed" },
-      );
-    } finally {
-      await fs.rm(guardDir, { recursive: true, force: true });
-    }
-    return;
-  }
-
-  const targets = [-pid, pid];
-  for (const target of targets) {
-    try {
-      process.kill(target, signal);
-      return;
-    } catch {
-      // try next target
-    }
-  }
-}
-
-async function terminateChildTree(child, options = {}) {
-  const pid = child?.pid;
-  if (!pid || child.exitCode !== null) {
-    return;
-  }
-
-  const graceMs = options.graceMs ?? 5_000;
-  await killProcessTree(pid, { signal: "SIGTERM" });
-
-  for (let waited = 0; waited < graceMs; waited += 100) {
-    if (child.exitCode !== null) {
-      return;
-    }
-    await delay(100);
-  }
-
-  await killProcessTree(pid, { signal: "SIGKILL" });
-}
-
-async function cleanupActiveChildren(reason) {
-  if (cleanupInFlight) {
-    return;
-  }
-  cleanupInFlight = true;
-
-  const entries = [...activeChildren.values()];
-  if (entries.length > 0) {
-    logProgress(`${reason}; cleaning ${entries.length} child process(es)`);
-  }
-
-  await Promise.allSettled(
-    entries.map(({ child }) => terminateChildTree(child)),
-  );
-}
-
-async function waitForEvaluatorStartGate() {
-  const gatePath = process.env.META_KIM_EVAL_START_GATE;
-  if (!gatePath) {
-    return;
-  }
-  delete process.env.META_KIM_EVAL_START_GATE;
-  if (!path.isAbsolute(gatePath)) {
-    throw new Error("META_KIM_EVAL_START_GATE must be an absolute path");
-  }
-  const deadline = Date.now() + WINDOWS_PROCESS_TREE_GUARD_READY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    try {
-      await fs.access(gatePath);
-      return;
-    } catch {
-      await delay(25);
-    }
-  }
-  throw new Error("Evaluator start gate was not released by the process-tree guard");
-}
-
-function installSignalCleanup() {
-  const handleSignal = (signal) => {
-    void cleanupActiveChildren(`received ${signal}`).finally(() => {
-      process.exitCode = 130;
-      process.exit();
-    });
-  };
-
-  process.once("SIGINT", () => handleSignal("SIGINT"));
-  process.once("SIGTERM", () => handleSignal("SIGTERM"));
 }
 
 /** Only resolve CLIs and print JSON — same logic as eval, no smoke tests. */
@@ -1763,169 +1602,88 @@ async function runOpenClawAgentTurn(command, args, options) {
   const heartbeatMs = 30_000;
   const sessionTimeoutMs = options.sessionTimeoutMs ?? 90_000;
   const startedAtMs = Date.now();
+  const commandAbort = new AbortController();
+  const pollAbort = new AbortController();
 
-  return new Promise((resolve, reject) => {
-    const child = spawn(command.file, command.toArgs(args), {
+  async function recoverFromSession(stdout = "", stderr = "") {
+    const payload = await readOpenClawSessionPayload(
+      options.agentId,
+      options.sessionId,
+      startedAtMs,
+      options.sessionDirs ?? [],
+    );
+    return payload
+      ? { stdout, stderr, payload, recoveredFromSession: true }
+      : null;
+  }
+
+  const commandPromise = runCommandWithIgnoredStdin(
+    command.file,
+    command.toArgs(args),
+    {
       cwd: options.cwd,
       env: options.env,
-      windowsHide: true,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    markChildActive(child, `${command.file} ${command.toArgs(args).join(" ")}`);
+      timeout: sessionTimeoutMs,
+      signal: commandAbort.signal,
+    },
+  );
+  const commandOutcome = commandPromise.then(
+    (result) => ({ type: "command", result, error: null }),
+    (error) => ({ type: "command", result: null, error }),
+  );
+  const sessionOutcome = (async () => {
+    let nextHeartbeatAt = startedAtMs + heartbeatMs;
+    while (!pollAbort.signal.aborted) {
+      await delay(sessionPollMs);
+      if (pollAbort.signal.aborted) return null;
+      const recovered = await recoverFromSession();
+      if (recovered) return { type: "session", result: recovered };
+      if (Date.now() >= nextHeartbeatAt) {
+        const elapsedSeconds = Math.round((Date.now() - startedAtMs) / 1_000);
+        logProgress(
+          `OpenClaw live turn still running for ${options.agentId} (${elapsedSeconds}s, session ${options.sessionId})`,
+        );
+        nextHeartbeatAt += heartbeatMs;
+      }
+    }
+    return null;
+  })();
 
-    let stdout = "";
-    let stderr = "";
-    let finished = false;
-    let pollInFlight = false;
-
-    async function settle(error, result) {
-      if (finished) {
-        return;
+  try {
+    const first = await Promise.race([commandOutcome, sessionOutcome]);
+    if (first?.type === "session") {
+      commandAbort.abort();
+      const stopped = await commandOutcome;
+      if (stopped.error?.code !== "META_KIM_COMMAND_ABORTED") {
+        if (stopped.error) throw stopped.error;
+      } else {
+        first.result.stdout = stopped.error.stdout ?? "";
+        first.result.stderr = stopped.error.stderr ?? "";
       }
-      finished = true;
-      clearInterval(pollId);
-      clearInterval(heartbeatId);
-      clearTimeout(timeoutId);
-      if (result?.recoveredFromSession && child.exitCode === null) {
-        void terminateChildTree(child, { graceMs: 1_000 });
-      }
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(result);
+      return first.result;
     }
 
-    async function recoverFromSession() {
-      const payload = await readOpenClawSessionPayload(
-        options.agentId,
-        options.sessionId,
-        startedAtMs,
-        options.sessionDirs ?? [],
+    if (first?.error) {
+      const recovered = await recoverFromSession(
+        first.error.stdout ?? "",
+        first.error.stderr ?? "",
       );
-      if (!payload) {
-        return null;
-      }
-      return {
-        stdout,
-        stderr,
-        payload,
-        recoveredFromSession: true,
-      };
+      if (recovered) return recovered;
+      throw first.error;
     }
 
-    const pollId = setInterval(() => {
-      if (finished || pollInFlight) {
-        return;
-      }
-      pollInFlight = true;
-      recoverFromSession()
-        .then((result) => {
-          if (result) {
-            void settle(null, result);
-          }
-        })
-        .catch((error) => {
-          void settle(error);
-        })
-        .finally(() => {
-          pollInFlight = false;
-        });
-    }, sessionPollMs);
-
-    const heartbeatId = setInterval(() => {
-      if (finished) {
-        return;
-      }
-      const elapsedSeconds = Math.round((Date.now() - startedAtMs) / 1_000);
-      logProgress(
-        `OpenClaw live turn still running for ${options.agentId} (${elapsedSeconds}s, session ${options.sessionId})`,
-      );
-    }, heartbeatMs);
-
-    const timeoutId = setTimeout(() => {
-      recoverFromSession()
-        .then((result) => {
-          if (result) {
-            void settle(null, result);
-            return;
-          }
-          void terminateChildTree(child, { graceMs: 1_000 });
-          const failureDetails = mergeCommandOutput(stdout, stderr);
-          void settle(
-            new Error(
-              `Command timed out after ${sessionTimeoutMs}ms: ${command.file} ${command.toArgs(args).join(" ")}${
-                failureDetails ? `\n${failureDetails}` : ""
-              }`,
-            ),
-          );
-        })
-        .catch((error) => {
-          void settle(error);
-        });
-    }, sessionTimeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => {
-      void settle(error);
-    });
-    child.on("close", (code, signal) => {
-      if (finished) {
-        return;
-      }
-      if (code === 0) {
-        recoverFromSession()
-          .then((result) => {
-            if (result) {
-              void settle(null, result);
-              return;
-            }
-            try {
-              void settle(null, {
-                stdout,
-                stderr,
-                payload: extractOpenClawReply(mergeCommandOutput(stdout, stderr)),
-                recoveredFromSession: false,
-              });
-            } catch (error) {
-              void settle(error);
-            }
-          })
-          .catch((error) => {
-            void settle(error);
-          });
-        return;
-      }
-
-      recoverFromSession()
-        .then((result) => {
-          if (result) {
-            void settle(null, result);
-            return;
-          }
-          const failureDetails = [stderr.trim(), stdout.trim()]
-            .filter(Boolean)
-            .join("\n");
-          const suffix = signal ? ` (signal: ${signal})` : "";
-          void settle(
-            new Error(
-              `Command failed: ${command.file} ${command.toArgs(args).join(" ")}${suffix}${
-                failureDetails ? `\n${failureDetails}` : ""
-              }`,
-            ),
-          );
-        })
-        .catch((error) => {
-          void settle(error);
-        });
-    });
-  });
+    const { stdout, stderr } = first.result;
+    const recovered = await recoverFromSession(stdout, stderr);
+    if (recovered) return recovered;
+    return {
+      stdout,
+      stderr,
+      payload: extractOpenClawReply(mergeCommandOutput(stdout, stderr)),
+      recoveredFromSession: false,
+    };
+  } finally {
+    pollAbort.abort();
+  }
 }
 
 function mergeCommandOutput(stdout, stderr) {
@@ -2572,424 +2330,6 @@ async function inspectCodexLiveEvidenceWithSessionFallback(
     if (Date.now() >= settleDeadline) return latestEvidence;
     await delay(CODEX_SESSION_SETTLE_INTERVAL_MS);
   } while (true);
-}
-
-async function runCommandWithIgnoredStdin(file, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const commandDisplay =
-      typeof options.commandDisplay === "string" && options.commandDisplay.trim()
-        ? options.commandDisplay.trim()
-        : `${file} ${args.join(" ")}`;
-    const redactText = (value) => {
-      if (typeof options.redactText !== "function") return String(value ?? "");
-      try {
-        return String(options.redactText(String(value ?? "")));
-      } catch {
-        return "<command-output-redaction-failed>";
-      }
-    };
-    const child = spawn(file, args, {
-      cwd: options.cwd,
-      env: options.env,
-      windowsHide: true,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    markChildActive(child, commandDisplay);
-
-    let stdout = "";
-    let stderr = "";
-    let finished = false;
-    let timeoutTriggered = false;
-    let timeoutId = null;
-
-    function settle(error, result) {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(result);
-    }
-
-    if (typeof options.timeout === "number" && options.timeout > 0) {
-      timeoutId = setTimeout(() => {
-        timeoutTriggered = true;
-        void terminateChildTree(child).then(() => {
-          const error = new Error(
-            `Command timed out after ${options.timeout}ms: ${commandDisplay}`,
-          );
-          error.code = "META_KIM_COMMAND_TIMEOUT";
-          error.timeoutMs = options.timeout;
-          error.command = commandDisplay;
-          error.stdout = redactText(stdout);
-          error.stderr = redactText(stderr);
-          settle(error);
-        }).catch((cleanupError) => {
-          const error = new Error(
-            `Command timed out and process-tree cleanup failed: ${commandDisplay}`,
-            { cause: cleanupError },
-          );
-          error.code = "META_KIM_COMMAND_TIMEOUT_CLEANUP_FAILED";
-          error.processTreeCleanupFailure = true;
-          error.processTreeCleanupReason = "timeout_cleanup_failed";
-          error.timeoutMs = options.timeout;
-          error.command = commandDisplay;
-          error.stdout = redactText(stdout);
-          error.stderr = redactText(stderr);
-          settle(error);
-        });
-      }, options.timeout);
-    }
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      if (timeoutTriggered) {
-        return;
-      }
-      settle(error);
-    });
-
-    child.on("close", (code, signal) => {
-      if (finished || timeoutTriggered) {
-        return;
-      }
-      if (code === 0) {
-        settle(null, { stdout, stderr });
-        return;
-      }
-
-      const failureDetails = [redactText(stderr).trim(), redactText(stdout).trim()]
-        .filter(Boolean)
-        .join("\n");
-      const suffix = signal ? ` (signal: ${signal})` : "";
-      const error = new Error(
-        `Command failed: ${commandDisplay}${suffix}${
-          failureDetails ? `\n${failureDetails}` : ""
-        }`,
-      );
-      error.code = "META_KIM_CHILD_COMMAND_FAILED";
-      error.command = commandDisplay;
-      error.stdout = redactText(stdout);
-      error.stderr = redactText(stderr);
-      settle(error);
-    });
-  });
-}
-
-async function runWindowsGuardedCommand(file, args, options = {}) {
-  const guardDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "meta-kim-process-tree-guard-"),
-  );
-  const gatePath = path.join(guardDir, "start");
-  const readyPath = path.join(guardDir, "ready");
-  const stopPath = path.join(guardDir, "stop");
-  const resultPath = path.join(guardDir, "result.json");
-  let child;
-  let guardian;
-  let childClosed = false;
-  let guardianClosed = false;
-  let childStdout = "";
-  let childStderr = "";
-  let guardianStdout = "";
-  let guardianStderr = "";
-  let childOutcome;
-  let guardianOutcome;
-
-  try {
-    child = spawn(file, args, {
-      cwd: options.cwd,
-      env: {
-        ...options.env,
-        META_KIM_EVAL_START_GATE: gatePath,
-      },
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    markChildActive(child, `${file} ${args.join(" ")}`);
-    child.stdout.on("data", (chunk) => {
-      childStdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      childStderr += chunk.toString();
-    });
-
-    childOutcome = new Promise((resolve) => {
-      child.once("error", (error) => {
-        childClosed = true;
-        resolve({ error, code: null, signal: null });
-      });
-      child.once("close", (code, signal) => {
-        childClosed = true;
-        resolve({ error: null, code, signal });
-      });
-    });
-
-    guardian = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        windowsProcessTreeGuardPath,
-        "-RootPid",
-        String(child.pid),
-        "-ReadyPath",
-        readyPath,
-        "-StopPath",
-        stopPath,
-        "-ResultPath",
-        resultPath,
-      ],
-      {
-        cwd: repoRoot,
-        env: process.env,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    guardian.stdout.on("data", (chunk) => {
-      guardianStdout += chunk.toString();
-    });
-    guardian.stderr.on("data", (chunk) => {
-      guardianStderr += chunk.toString();
-    });
-    guardianOutcome = new Promise((resolve) => {
-      guardian.once("error", (error) => {
-        guardianClosed = true;
-        resolve({ error, code: null, signal: null });
-      });
-      guardian.once("close", (code, signal) => {
-        guardianClosed = true;
-        resolve({ error: null, code, signal });
-      });
-    });
-
-    const readyDeadline = Date.now() + WINDOWS_PROCESS_TREE_GUARD_READY_TIMEOUT_MS;
-    while (Date.now() < readyDeadline) {
-      try {
-        await fs.access(readyPath);
-        break;
-      } catch {
-        if (childClosed || guardianClosed) {
-          throw new Error("Windows process-tree guard exited before readiness");
-        }
-        await delay(25);
-      }
-    }
-    try {
-      await fs.access(readyPath);
-    } catch {
-      throw new Error("Windows process-tree guard readiness timed out");
-    }
-    await fs.writeFile(gatePath, "start", "utf8");
-
-    let timeoutId;
-    const firstOutcome = await Promise.race([
-      childOutcome.then((outcome) => ({ kind: "child", outcome })),
-      guardianOutcome.then((outcome) => ({ kind: "guardian", outcome })),
-      new Promise((resolve) => {
-        timeoutId = setTimeout(
-          () => resolve({ kind: "timeout", outcome: null }),
-          options.timeout,
-        );
-      }),
-    ]);
-    clearTimeout(timeoutId);
-    const timedOut = firstOutcome.kind === "timeout";
-    if (timedOut || firstOutcome.kind === "guardian") {
-      await fs.writeFile(stopPath, "stop", "utf8");
-    }
-
-    if (
-      firstOutcome.kind === "guardian" &&
-      (firstOutcome.outcome.error || firstOutcome.outcome.code !== 0) &&
-      !childClosed
-    ) {
-      await terminateChildTree(child, { graceMs: 1_000 });
-    }
-
-    let drainOutcome = await Promise.race([
-      Promise.all([childOutcome, guardianOutcome]).then(
-        ([settledChild, settledGuardian]) => ({
-          timedOut: false,
-          child: settledChild,
-          guardian: settledGuardian,
-        }),
-      ),
-      delay(WINDOWS_PROCESS_TREE_GUARD_EXIT_TIMEOUT_MS).then(() => ({
-        timedOut: true,
-      })),
-    ]);
-    if (drainOutcome.timedOut) {
-      if (!guardianClosed) {
-        guardian.kill();
-        await Promise.race([guardianOutcome, delay(5_000)]);
-      }
-      if (!childClosed) {
-        await terminateChildTree(child, { graceMs: 1_000 });
-      }
-      drainOutcome = await Promise.race([
-        Promise.all([childOutcome, guardianOutcome]).then(
-          ([settledChild, settledGuardian]) => ({
-            timedOut: false,
-            child: settledChild,
-            guardian: settledGuardian,
-          }),
-        ),
-        delay(5_000).then(() => ({ timedOut: true })),
-      ]);
-      if (drainOutcome.timedOut || !childClosed || !guardianClosed) {
-        const error = processTreeCleanupError(
-          null,
-          "META_KIM_WINDOWS_PROCESS_TREE_DRAIN_FAILED",
-          { reason: "child_or_guardian_exit_unverified" },
-        );
-        throw error;
-      }
-    }
-
-    const outcome = drainOutcome.child;
-    const guardOutcome = drainOutcome.guardian;
-    if (guardOutcome.error || guardOutcome.code !== 0) {
-      let failedGuardResult = null;
-      try {
-        failedGuardResult = JSON.parse(await fs.readFile(resultPath, "utf8"));
-      } catch {
-        // Absence is itself a fail-closed diagnostic, never pass evidence.
-      }
-      const error = new Error(
-        `Windows process-tree guard failed${
-          guardianStderr.trim() || guardianStdout.trim()
-            ? `: ${guardianStderr.trim() || guardianStdout.trim()}`
-            : ""
-        }`,
-      );
-      error.code = "META_KIM_WINDOWS_PROCESS_TREE_GUARD_FAILED";
-      error.processTreeCleanupFailure = true;
-      error.processTreeCleanupReason =
-        failedGuardResult?.reason ?? "guard_result_unavailable";
-      error.processTreeSurvivorCount = Number.isSafeInteger(
-        failedGuardResult?.survivorCount,
-      )
-        ? failedGuardResult.survivorCount
-        : null;
-      throw error;
-    }
-    const guardResult = JSON.parse(await fs.readFile(resultPath, "utf8"));
-    if (guardResult?.verified !== true) {
-      const error = new Error("Windows process-tree guard did not verify cleanup");
-      error.code = "META_KIM_WINDOWS_PROCESS_TREE_GUARD_UNVERIFIED";
-      error.processTreeCleanupFailure = true;
-      error.processTreeCleanupReason =
-        guardResult?.reason ?? "guard_result_unverified";
-      error.processTreeSurvivorCount = Number.isSafeInteger(
-        guardResult?.survivorCount,
-      )
-        ? guardResult.survivorCount
-        : null;
-      throw error;
-    }
-
-    if (timedOut) {
-      const error = new Error(
-        `Command timed out after ${options.timeout}ms: ${file} ${args.join(" ")}`,
-      );
-      error.code = "META_KIM_COMMAND_TIMEOUT";
-      error.timeoutMs = options.timeout;
-      error.command = `${file} ${args.join(" ")}`;
-      error.stdout = childStdout;
-      error.stderr = childStderr;
-      error.processTreeCleanupVerified = true;
-      throw error;
-    }
-    if (outcome.error) {
-      throw outcome.error;
-    }
-    if (outcome.code !== 0) {
-      const suffix = outcome.signal ? ` (signal: ${outcome.signal})` : "";
-      const details = [childStderr.trim(), childStdout.trim()]
-        .filter(Boolean)
-        .join("\n");
-      const error = new Error(
-        `Command failed: ${file} ${args.join(" ")}${suffix}${
-          details ? `\n${details}` : ""
-        }`,
-      );
-      error.code = "META_KIM_CHILD_COMMAND_FAILED";
-      error.stdout = childStdout;
-      error.stderr = childStderr;
-      error.processTreeCleanupVerified = true;
-      throw error;
-    }
-    return {
-      stdout: childStdout,
-      stderr: childStderr,
-      processTreeCleanupVerified: true,
-    };
-  } finally {
-    let finalCleanupError = null;
-    if (child && !childClosed) {
-      try {
-        await fs.writeFile(stopPath, "stop", "utf8");
-      } catch {
-        // The guarded cleanup attempt below remains authoritative.
-      }
-      try {
-        await terminateChildTree(child, { graceMs: 1_000 });
-      } catch (error) {
-        finalCleanupError = processTreeCleanupError(
-          error,
-          "META_KIM_WINDOWS_PROCESS_TREE_FINAL_CLEANUP_FAILED",
-          { reason: "finally_child_cleanup_failed" },
-        );
-      }
-    }
-    if (guardian && !guardianClosed) {
-      try {
-        guardian.kill();
-        if (guardianOutcome) {
-          await Promise.race([guardianOutcome, delay(5_000)]);
-        }
-        if (!guardianClosed) {
-          throw new Error("guardian exit was not observed");
-        }
-      } catch (error) {
-        finalCleanupError ??= processTreeCleanupError(
-          error,
-          "META_KIM_WINDOWS_PROCESS_TREE_FINAL_CLEANUP_FAILED",
-          { reason: "finally_guardian_cleanup_failed" },
-        );
-      }
-    }
-    let guardDirRemovalError = null;
-    try {
-      await fs.rm(guardDir, { recursive: true, force: true });
-    } catch (error) {
-      guardDirRemovalError = error;
-    }
-    if (finalCleanupError) {
-      throw finalCleanupError;
-    }
-    if (guardDirRemovalError) {
-      throw guardDirRemovalError;
-    }
-  }
 }
 
 function openClawStructuredPayloadLooksReal(agentId, payload) {
@@ -4523,7 +3863,7 @@ async function runCursorLive() {
 
 async function collectOpenClawBaseStatus({ useMainConfig = false } = {}) {
   logProgress("OpenClaw smoke: preparing local config and validating hooks");
-  await runCommandWithIgnoredStdin("node", [prepareOpenClawScriptPath], {
+  await runCommandWithIgnoredStdin(process.execPath, [prepareOpenClawScriptPath], {
     cwd: repoRoot,
     timeout: 120_000,
     env: openClawChildEnv(),
@@ -4953,7 +4293,7 @@ async function runPrimaryReleaseRuntimeIsolated(runtimeName) {
       `${runtimeName} primary fuse: starting isolated runtime process attempt ${attempt}/2`,
     );
     try {
-      const { stdout, processTreeCleanupVerified } = await runner(
+      const commandResult = await runner(
         process.execPath,
         [
           fileURLToPath(import.meta.url),
@@ -4966,6 +4306,9 @@ async function runPrimaryReleaseRuntimeIsolated(runtimeName) {
           timeout,
         },
       );
+      const { stdout } = commandResult;
+      const ownedProcessGroupCleanupVerified =
+        commandResult.ownedProcessGroupCleanupVerified === true;
       const childReport = JSON.parse(stdout);
       const runtimeReport = childReport?.[runtimeName];
       const exactRuntimeScope =
@@ -4983,10 +4326,15 @@ async function runPrimaryReleaseRuntimeIsolated(runtimeName) {
           primaryReleaseProcessIsolation: "runtime_subprocess",
           primaryReleaseProcessAttempts: attempt,
           priorAttemptEvidence: attemptEvidence,
-          processTreeCleanupVerified:
+          ownedProcessGroupCleanupVerified:
             process.platform === "win32"
-              ? processTreeCleanupVerified === true
-              : "posix_process_group",
+              ? ownedProcessGroupCleanupVerified === true
+              : true,
+          ownedProcessGroupScope:
+            process.platform === "win32"
+              ? "windows_job_object_owned_process_group"
+              : "posix_detached_process_group",
+          ...processTreeCleanupNonClaim,
         };
       }
 
@@ -5004,16 +4352,21 @@ async function runPrimaryReleaseRuntimeIsolated(runtimeName) {
             (record) => record?.runtime === runtimeName,
           )?.failureClass ?? "unknown_failure",
         reasonDigest: diagnosticSha256(runtimeReport?.reason ?? "missing_reason"),
-        processTreeCleanupVerified:
+        ownedProcessGroupCleanupVerified:
           process.platform === "win32"
-            ? processTreeCleanupVerified === true
-            : "posix_process_group",
+            ? ownedProcessGroupCleanupVerified === true
+            : true,
+        ownedProcessGroupScope:
+          process.platform === "win32"
+            ? "windows_job_object_owned_process_group"
+            : "posix_detached_process_group",
+        ...processTreeCleanupNonClaim,
       });
     } catch (error) {
       if (
         error?.code === "META_KIM_CHILD_COMMAND_FAILED" &&
         (process.platform !== "win32" ||
-          error?.processTreeCleanupVerified === true)
+          error?.ownedProcessGroupCleanupVerified === true)
       ) {
         let childReport = null;
         try {
@@ -5043,45 +4396,52 @@ async function runPrimaryReleaseRuntimeIsolated(runtimeName) {
             reasonDigest: diagnosticSha256(
               runtimeReport?.reason ?? "missing_reason",
             ),
-            processTreeCleanupVerified:
+            ownedProcessGroupCleanupVerified: true,
+            ownedProcessGroupScope:
               process.platform === "win32"
-                ? true
-                : "posix_process_group",
+                ? "windows_job_object_owned_process_group"
+                : "posix_detached_process_group",
+            ...processTreeCleanupNonClaim,
           });
           continue;
         }
       }
-      const processTreeCleanupFailure =
-        error?.processTreeCleanupFailure === true ||
+      const ownedProcessGroupCleanupFailure =
+        error?.ownedProcessGroupCleanupFailure === true ||
         String(error?.code ?? "").startsWith(
-          "META_KIM_WINDOWS_PROCESS_TREE_",
+          "META_KIM_WINDOWS_JOB_PROCESS_GROUP_",
         ) ||
         error?.code === "META_KIM_COMMAND_TIMEOUT_CLEANUP_FAILED";
       const errorClass =
         error?.code === "META_KIM_COMMAND_TIMEOUT"
           ? "runtime_process_timeout"
-          : processTreeCleanupFailure
-          ? "process_tree_cleanup_failure"
+          : ownedProcessGroupCleanupFailure
+          ? "owned_process_group_cleanup_failure"
           : "runtime_process_failure";
       attemptEvidence.push({
         attempt,
         outcome: "runtime_process_error",
         errorClass,
         errorDigest: diagnosticSha256(error?.message ?? error),
-        ...(processTreeCleanupFailure
+        ...processTreeCleanupNonClaim,
+        ...(ownedProcessGroupCleanupFailure
           ? {
-              processTreeCleanupVerified: false,
-              processTreeCleanupReason:
-                error?.processTreeCleanupReason ?? "cleanup_unverified",
-              processTreeSurvivorCount: Number.isSafeInteger(
-                error?.processTreeSurvivorCount,
+              ownedProcessGroupCleanupVerified: false,
+              ownedProcessGroupCleanupReason:
+                error?.ownedProcessGroupCleanupReason ??
+                "cleanup_unverified",
+              ownedProcessGroupSurvivorCount: Number.isSafeInteger(
+                error?.ownedProcessGroupSurvivorCount,
               )
-                ? error.processTreeSurvivorCount
+                ? error.ownedProcessGroupSurvivorCount
                 : null,
+              ownedProcessGroupScope:
+                error?.ownedProcessGroupScope ??
+                "windows_job_object_owned_process_group",
             }
           : {}),
       });
-      if (processTreeCleanupFailure) {
+      if (ownedProcessGroupCleanupFailure) {
         break;
       }
     }
@@ -5098,19 +4458,25 @@ async function runPrimaryReleaseRuntimeIsolated(runtimeName) {
     primaryReleaseProcessIsolation: "runtime_subprocess",
     primaryReleaseProcessAttempts: attemptEvidence.length,
     attemptEvidence,
-    ...(lastAttempt?.processTreeCleanupVerified === false
+    ...processTreeCleanupNonClaim,
+    ...(lastAttempt?.ownedProcessGroupCleanupVerified === false
       ? {
-          processTreeCleanupVerified: false,
-          processTreeCleanupReason:
-            lastAttempt.processTreeCleanupReason ?? "cleanup_unverified",
-          processTreeSurvivorCount: lastAttempt.processTreeSurvivorCount ?? null,
+          ownedProcessGroupCleanupVerified: false,
+          ownedProcessGroupCleanupReason:
+            lastAttempt.ownedProcessGroupCleanupReason ??
+            "cleanup_unverified",
+          ownedProcessGroupSurvivorCount:
+            lastAttempt.ownedProcessGroupSurvivorCount ?? null,
+          ownedProcessGroupScope:
+            lastAttempt.ownedProcessGroupScope ??
+            "windows_job_object_owned_process_group",
         }
       : {}),
   };
 }
 
 async function main() {
-  installSignalCleanup();
+  installSignalCleanup({ log: logProgress });
   if (primaryReleaseFuse && (runtimeArg || agentArg)) {
     throw new Error(
       "--primary-release-fuse fixes runtime scope to claude,codex and forbids --runtime/--agent filters.",
@@ -5314,9 +4680,7 @@ async function main() {
 }
 
 if (process.argv.includes("--probe-clis-only")) {
-  await waitForEvaluatorStartGate();
   await probeClisOnly();
 } else {
-  await waitForEvaluatorStartGate();
   await main();
 }

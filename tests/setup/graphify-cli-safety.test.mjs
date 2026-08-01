@@ -305,6 +305,23 @@ test("graphify check binds tracked file contents even when HEAD and inventory ar
   }
 });
 
+test("graphify repository snapshots treat tracked working-tree deletions as absent", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-deleted-file-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    const bin = fakePythonBin(temp);
+    writeValidArtifacts(repo);
+    rmSync(path.join(repo, "tracked.txt"));
+
+    const result = runCheck(repo, bin);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /node identity is not release-safe/u);
+    assert.doesNotMatch(result.stderr, /ENOENT|lstat/u);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("graphify check rejects private local paths in the report without echoing them", () => {
   const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-report-private-"));
   try {

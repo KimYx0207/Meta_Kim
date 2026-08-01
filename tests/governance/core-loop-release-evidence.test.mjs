@@ -243,6 +243,7 @@ test("release verification path includes governance tests", () => {
     "meta:verify:governance:core",
     "meta:test:inventory",
     "meta:test:unit",
+    "meta:test:process-guard",
     "meta:test:setup",
     "meta:test:meta-theory",
     "meta:test:integration",
@@ -281,6 +282,11 @@ test("release stages derive runtime targets and timeout budgets from canonical p
   const setupStage = STAGES.find((stage) => stage.name === "meta:test:setup");
   assert.equal(setupStage?.cmd, "npm run meta:test:setup");
   assert.ok(setupStage.timeoutMs > 0);
+  const processGuardStage = STAGES.find(
+    (stage) => stage.name === "meta:test:process-guard",
+  );
+  assert.equal(processGuardStage?.cmd, "npm run meta:test:process-guard");
+  assert.ok(processGuardStage.timeoutMs > 0);
   const metaTheoryStage = STAGES.find(
     (stage) => stage.name === "meta:test:meta-theory",
   );
@@ -320,6 +326,10 @@ test("release stages derive runtime targets and timeout budgets from canonical p
     META_KIM_VERIFY_TIMEOUT_META_TEST_SETUP_MS: "12345",
   }).find((stage) => stage.name === "meta:test:setup");
   assert.equal(overridden.timeoutMs, 12345);
+  const processGuardOverride = buildVerificationStages({
+    META_KIM_VERIFY_TIMEOUT_META_TEST_PROCESS_GUARD_MS: "23456",
+  }).find((stage) => stage.name === "meta:test:process-guard");
+  assert.equal(processGuardOverride.timeoutMs, 23456);
   assert.throws(
     () => buildVerificationStages({
       META_KIM_VERIFY_TIMEOUT_META_TEST_SETUP_MS: "0",

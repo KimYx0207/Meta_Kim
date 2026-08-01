@@ -393,10 +393,19 @@ function readRepositoryContext(cwd) {
     "-z",
   ]);
   if (filesRaw == null) return null;
+  const deletedFilesRaw = gitText(topLevel, ["ls-files", "--deleted", "-z"]);
+  if (deletedFilesRaw == null) return null;
+  const deletedFiles = new Set(
+    deletedFilesRaw
+      .split("\0")
+      .filter((value) => value.length > 0)
+      .map((value) => value.replaceAll("\\", "/")),
+  );
   const repositoryFiles = filesRaw
     .split("\0")
     .filter((value) => value.length > 0)
     .map((value) => value.replaceAll("\\", "/"))
+    .filter((value) => !deletedFiles.has(value))
     .filter((value) => !isKnownUntrackedGraphifyAttributes(topLevel, value));
   return {
     repoRoot: topLevel,

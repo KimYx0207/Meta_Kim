@@ -30,6 +30,16 @@ export const TEST_SUITES = Object.freeze({
     packageScript: "meta:test:poc-design-gate",
     command: 'node scripts/run-node-tests.mjs "tests/poc-design-gate/*.test.mjs"',
   },
+  processGuard: {
+    paths: [
+      "tests/setup/windows-job-process-runner.test.mjs",
+      "tests/setup/posix-process-group-runner.test.mjs",
+      "tests/setup/process-runner-contract.test.mjs",
+    ],
+    packageScript: "meta:test:process-guard",
+    command:
+      'node scripts/run-node-tests.mjs "tests/setup/windows-job-process-runner.test.mjs" "tests/setup/posix-process-group-runner.test.mjs" "tests/setup/process-runner-contract.test.mjs" --concurrency 1',
+  },
   setup: {
     prefix: "tests/setup/",
     packageScript: "meta:test:setup",

@@ -8,6 +8,19 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [2.9.19] - 2026-08-01
+
+### Fixed
+
+- **Windows runtime evaluation now contains its own processes with a private Job Object instead of reconstructing a process tree from reusable PIDs.** The root process is created suspended, assigned before resume, and protected by kill-on-close plus owner-process and supervisor-pipe leases. Timeout, launcher failure, supervisor death, and an early root exit all drain the processes actually admitted to the Job.
+- **Runtime command output is bounded without losing whole-stream evidence.** Each stream retains a bounded prefix and tail, records complete byte counts and SHA-256, preserves valid UTF-8 boundaries, and applies mandatory repository, home, WSL-path, and credential redaction. Secondary temporary-file cleanup failures no longer hide the primary process-cleanup result.
+- **Cleanup claims now match the real containment boundary.** Release evidence may verify only the runner-owned Windows Job or POSIX detached process group; it explicitly does not claim arbitrary whole-process-tree cleanup or cover processes created outside that group. A dedicated serial process-guard stage exercises this boundary once in the standard release chain.
+- **Graphify rebuilds now tolerate intentional tracked-file deletions in the current worktree.** Deleted index entries are excluded from the live repository snapshot before hashing, so replacing the legacy process guardian no longer crashes the graph migration with an `ENOENT`; a concurrent disappearance still fails closed during digest verification.
+
+### Verification
+
+- Focused regressions cover root/child/grandchild timeout cleanup, nonzero root exit with descendant draining, launcher crash, Node supervisor death, missing launcher results, stale timers, stdout and stderr floods, default redaction, UTF-8 splitting, and POSIX outcome ordering. Independent correctness, security, and completeness reviews must report no unresolved findings before publication. Final release evidence still requires one clean 15/15 standard gate, exact Release binding, and formal Claude Code/Codex global readback.
+
 ## [2.9.18] - 2026-08-01
 
 ### Fixed

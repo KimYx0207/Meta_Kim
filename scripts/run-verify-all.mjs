@@ -116,6 +116,7 @@ const STANDARD_STAGE_COMMANDS = Object.freeze([
   ["meta:runtime:produce", "node scripts/run-runtime-capability-producers.mjs --status --require-fresh"],
   ["meta:test:inventory", "npm run meta:test:inventory"],
   ["meta:test:unit", "npm run meta:test:unit"],
+  ["meta:test:process-guard", "npm run meta:test:process-guard"],
   ["meta:test:setup", "npm run meta:test:setup"],
   ["meta:test:meta-theory", "npm run meta:test:meta-theory"],
   ["meta:test:integration", "npm run meta:test:integration"],
