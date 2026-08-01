@@ -113,6 +113,17 @@ export function getProfilePaths({
   };
 }
 
+export function getGlobalProfilePaths({ profile, canonicalProfile } = {}) {
+  const home = os.homedir();
+  return getProfilePaths({
+    profile,
+    canonicalProfile,
+    runtimeFamily: SHARED_RUNTIME_FAMILY,
+    repoPath: home,
+    stateRoot: path.join(home, ".meta-kim", "state"),
+  });
+}
+
 export function toRepoRelative(targetPath) {
   return path.relative(repoRoot, targetPath).replace(/\\/g, "/");
 }
@@ -178,6 +189,16 @@ export async function ensureProfileState(options = {}) {
     "utf8",
   );
   return { ...paths, metadata, projectRegistry };
+}
+
+export async function ensureGlobalProfileState({ profile, canonicalProfile } = {}) {
+  const paths = getGlobalProfilePaths({ profile, canonicalProfile });
+  return ensureProfileState({
+    canonicalProfile: paths.profile,
+    runtimeFamily: SHARED_RUNTIME_FAMILY,
+    repoPath: paths.repoPath,
+    stateRoot: path.dirname(paths.profileDir),
+  });
 }
 
 export async function detectProfileCollision(options = {}) {

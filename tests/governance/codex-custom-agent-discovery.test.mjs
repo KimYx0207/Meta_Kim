@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
+  existsSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -363,7 +364,7 @@ test("Codex live filesystem facts outrank stale and legacy cache records", () =>
   const agentsDir = join(home, ".codex", "agents");
   const agentPath = join(agentsDir, "search.toml");
   const profile = `codex-agent-stale-cache-${process.pid}-${Date.now()}`;
-  const profileDir = resolve(".meta-kim", "state", profile);
+  const profileDir = join(home, ".meta-kim", "state", profile);
   const inventoryPath = join(
     profileDir,
     "capability-index",
@@ -425,6 +426,7 @@ developer_instructions = "Use the current filesystem search policy."
       { cwd: process.cwd(), env, encoding: "utf8" },
     );
     assert.equal(discovery.status, 0, discovery.stderr);
+    assert.equal(existsSync(inventoryPath), true, "discovery must publish the HOME inventory");
     writeAgent(agentsDir, "search.toml", liveDefinition);
     const liveDigest = createHash("sha256")
       .update(`${liveDefinition.trim()}\n`)

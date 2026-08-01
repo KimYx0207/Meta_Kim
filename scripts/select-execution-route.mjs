@@ -21,6 +21,9 @@ import {
   sanitizeCapabilityPublicationText,
   sanitizeCapabilityPublicationValue,
 } from "./capability-publication-sanitizer.mjs";
+import {
+  getGlobalProfilePaths,
+} from "./meta-kim-local-state.mjs";
 
 function argValue(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -30,6 +33,29 @@ function argValue(name, fallback = null) {
 async function readStateJson(name, fallback) {
   const file = path.join(stateDir, name);
   return (await exists(file)) ? JSON.parse(await fs.readFile(file, "utf8")) : fallback;
+}
+
+async function readGlobalInventoryJson(fallback) {
+  const profileState = getGlobalProfilePaths();
+  const relativeInventoryPath = path.join("capability-index", "global-capabilities.json");
+  const candidates = [
+    {
+      path: path.join(profileState.profileDir, relativeInventoryPath),
+      sourceRef: `~/.meta-kim/state/${profileState.profile}/capability-index/global-capabilities.json`,
+    },
+    {
+      path: path.join(stateDir, relativeInventoryPath),
+      sourceRef: null,
+    },
+  ];
+  for (const candidate of candidates) {
+    if (!(await exists(candidate.path))) continue;
+    return {
+      value: JSON.parse(await fs.readFile(candidate.path, "utf8")),
+      sourceRef: candidate.sourceRef,
+    };
+  }
+  return { value: fallback, sourceRef: candidates[0].sourceRef };
 }
 
 const task = argValue("--task", "");
@@ -153,7 +179,13 @@ const registryDependencies = (await readJson("config/capability-index/dependency
 const repoCapabilityIndex = await readJson("config/capability-index/meta-kim-capabilities.json");
 const workflowContract = await readJson("config/contracts/workflow-contract.json");
 const capabilityInventory = await readStateJson("capability-inventory.json", { capabilities: [] });
-const globalCapabilityInventory = await readStateJson(path.join("capability-index", "global-capabilities.json"), { byCapabilityType: { agents: {} }, byPlatform: {} });
+const globalCapabilityInventoryRecord = await readGlobalInventoryJson({
+  byCapabilityType: { agents: {} },
+  byPlatform: {},
+});
+const globalCapabilityInventory = globalCapabilityInventoryRecord.value;
+const globalCapabilityInventoryRef = globalCapabilityInventoryRecord.sourceRef ??
+  `${stateDirRef}/capability-index/global-capabilities.json`;
 const dependencyIndex = await readStateJson("dependency-capability-index.json", { discoveredDependencyProjects: [] });
 const intentContract = await readJson("config/governance/intent-amplification-contract.json");
 const runtimeCapabilityState = loadEffectiveRuntimeCapabilityClaims({
@@ -1180,7 +1212,7 @@ const ownerDiscoveryPacket = {
     { source: "codex_project_inventory", checked: true, sourceRef: ".codex/agents; .agents/skills; .codex/commands; .codex/hooks; .codex/hooks.json; .codex/config.toml; .mcp.json; package.json scripts" },
     { source: "cursor_project_inventory", checked: true, sourceRef: ".cursor/agents; .cursor/skills; .cursor/rules; .cursor/prompts; .cursor/hooks; .cursor/hooks.json; .cursor/mcp.json" },
     { source: "openclaw_project_inventory", checked: true, sourceRef: "openclaw/workspaces; openclaw/skills; openclaw/hooks; openclaw/openclaw.template.json" },
-    { source: "local_global_inventory_cache", checked: true, sourceRef: `${stateDirRef}/capability-index/global-capabilities.json` },
+    { source: "local_global_inventory_cache", checked: true, sourceRef: globalCapabilityInventoryRef },
     { source: "claude_global_inventory", checked: true, sourceRef: "~/.claude/agents; ~/.claude/skills; ~/.claude/commands; ~/.claude/hooks; ~/.claude/settings.json" },
     { source: "codex_global_inventory", checked: true, sourceRef: "~/.codex/agents; ~/.codex/skills; ~/.codex/commands; ~/.codex/hooks; ~/.codex/hooks.json; ~/.codex/config.toml; ~/.agents/skills" },
     { source: "codex_global_skill_filesystem_light_scan", checked: true, sourceRef: "~/.codex/skills; ~/.codex/plugins/cache" },
@@ -1249,7 +1281,7 @@ const ownerDiscoveryPacket = {
     "~/.openclaw/workspace-*",
     "~/.openclaw/skills",
     "~/.openclaw/hooks",
-    `${stateDirRef}/capability-index/global-capabilities.json`,
+    globalCapabilityInventoryRef,
     "config/contracts/workflow-contract.json",
   ],
 };

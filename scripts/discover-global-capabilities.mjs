@@ -20,8 +20,7 @@ import {
   withFileLock,
 } from "../canonical/runtime-assets/shared/hooks/spine-state-utils.mjs";
 import {
-  ensureProfileState,
-  SHARED_RUNTIME_FAMILY,
+  ensureGlobalProfileState,
 } from "./meta-kim-local-state.mjs";
 import {
   loadSyncManifest,
@@ -2794,11 +2793,7 @@ async function main() {
   // This inventory joins capabilities from multiple runtime targets. Its
   // ownership family is therefore shared and must not inherit the host runtime
   // or a target value such as `--targets claude,codex`.
-  const profileState = await ensureProfileState({
-    runtimeFamily: SHARED_RUNTIME_FAMILY,
-    repoPath: os.homedir(),
-    stateRoot: path.join(os.homedir(), ".meta-kim", "state"),
-  });
+  const profileState = await ensureGlobalProfileState();
   const canonicalIndexPath = path.join(repoRoot, CANONICAL_CAPABILITY_INDEX);
   const repoCapabilityIndex = writeCanonicalIndex
     ? preserveGeneratedAtWhenUnchanged(
