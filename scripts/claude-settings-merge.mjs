@@ -115,6 +115,11 @@ export function buildMetaKimHooksTemplate(
         matcher: "Bash",
         hooks: [cmd("block-dangerous-bash.mjs")],
       },
+      {
+        matcher:
+          "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|MultiEdit|NotebookEdit",
+        hooks: [cmd("enforce-agent-dispatch.mjs", ["--runtime", "claude"])],
+      },
     ],
     Stop: [
       {
