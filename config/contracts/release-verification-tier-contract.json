@@ -1,0 +1,284 @@
+{
+  "schemaVersion": "meta-kim-release-verification-tier-contract-v0.1",
+  "contractId": "meta-kim-release-verification-tier-contract",
+  "authority": {
+    "planner": {
+      "script": "scripts/plan-release-verification.mjs",
+      "mode": "plan_only",
+      "executesVerification": false
+    },
+    "full": {
+      "packageScript": "meta:verify:all",
+      "entrypoint": "scripts/run-verify-all.mjs",
+      "stageSource": "scripts/run-verify-all.mjs#STAGES",
+      "releaseGradeClaim": "only_an_actual_complete_run_of_the_full_entrypoint",
+      "mustRemainCompleteWhenNarrowPlannerIsAdded": true
+    },
+    "smoke": {
+      "packageScript": "meta:release:smoke",
+      "claim": "smoke_pass_only",
+      "isFullVerification": false
+    }
+  },
+  "claimBoundary": {
+    "smoke": {
+      "claim": "smoke_pass_only",
+      "releaseGradeClaimable": false,
+      "neverEquivalentTo": ["narrow", "full", "release_grade"]
+    },
+    "narrow": {
+      "claim": "narrow_verification_pass_only",
+      "releaseGradeClaimable": false,
+      "neverEquivalentTo": ["smoke", "full", "release_grade"],
+      "fullEscalationIsExplicit": true
+    },
+    "full": {
+      "claim": "full_runner_plan_only_until_execution_passes",
+      "releaseGradeClaimable": "conditional_on_run_verify_all_evidence",
+      "requiredEvidenceOwner": "scripts/run-verify-all.mjs"
+    }
+  },
+  "tiers": {
+    "smoke": {
+      "kind": "routine_smoke",
+      "entrypoint": "npm run meta:release:smoke",
+      "requiredCheckIds": ["smoke"]
+    },
+    "narrow": {
+      "kind": "changed_file_impact",
+      "plannerEntrypoint": "scripts/plan-release-verification.mjs",
+      "requiredCheckIds": [
+        "version",
+        "sync",
+        "packaging",
+        "focused_regression"
+      ],
+      "unknownFilePolicy": "recommend_full",
+      "emptyChangeSetPolicy": "recommend_full",
+      "fullEscalationReasons": [
+        "unknown_file",
+        "high_risk_impact",
+        "full_only_impact",
+        "empty_changed_file_set"
+      ]
+    },
+    "full": {
+      "kind": "complete_release_verification",
+      "entrypoint": "npm run meta:verify:all",
+      "requiredCheckIds": ["full_release_runner"],
+      "requiredStageNames": [
+        "discover:global",
+        "meta:agents:migration-catalog:check",
+        "meta:sync",
+        "meta:check",
+        "meta:verify:governance:core",
+        "meta:graphify:verified-rebuild",
+        "meta:check:global:release",
+        "eval-meta-agents",
+        "meta:runtime:produce",
+        "meta:test:inventory",
+        "meta:test:unit",
+        "meta:test:process-guard",
+        "meta:test:setup",
+        "meta:test:meta-theory",
+        "meta:test:integration"
+      ]
+    }
+  },
+  "checkDefinitions": {
+    "smoke": {
+      "category": "smoke",
+      "description": "Run the existing routine release smoke chain.",
+      "commands": ["npm run meta:release:smoke"],
+      "evidenceBoundary": "A smoke pass is diagnostic and is never full or release-grade evidence."
+    },
+    "version": {
+      "category": "version",
+      "description": "Verify the current package version is release-safe and its current tag is absent.",
+      "sourceRefs": [
+        "package.json#version",
+        "scripts/verify-packed-user-install-update.mjs#assertCurrentVersionTagAbsent"
+      ],
+      "commands": [
+        "node scripts/verify-packed-user-install-update.mjs --stop-after-global-idempotence"
+      ],
+      "evidenceBoundary": "The command provides diagnostic current-version evidence; it does not by itself create full release-grade evidence."
+    },
+    "sync": {
+      "category": "sync",
+      "description": "Refresh and read back every declared runtime projection and sync coverage.",
+      "sourceRefs": [
+        "config/sync.json#supportedTargets",
+        "scripts/sync-runtimes.mjs",
+        "scripts/sync-coverage-check.mjs"
+      ],
+      "commands": [
+        "npm run meta:sync -- --targets claude,codex,openclaw,cursor",
+        "npm run meta:check:runtimes -- --targets claude,codex,openclaw,cursor",
+        "npm run meta:check:sync-coverage"
+      ],
+      "evidenceBoundary": "Projection sync/readback is a narrow diagnostic lane and is not a substitute for the full release runner."
+    },
+    "packaging": {
+      "category": "packaging",
+      "description": "Exercise the current npm-packed public CLI through the bounded install/update lane.",
+      "sourceRefs": [
+        "scripts/verify-packed-user-install-update.mjs#packAndExtract",
+        "scripts/verify-packed-user-install-update.mjs#runCurrentPackageLane"
+      ],
+      "commands": [
+        "node scripts/verify-packed-user-install-update.mjs --stop-after-global-idempotence"
+      ],
+      "evidenceBoundary": "The stop-after-global-idempotence lane is not historical-update proof and cannot be promoted to full release-grade evidence."
+    },
+    "focused_regression": {
+      "category": "focused_regression",
+      "description": "Run the smallest relevant test selectors derived from the changed-file impact map.",
+      "commandTemplate": "node scripts/run-node-tests.mjs {selectors}",
+      "defaultSelectors": ["tests/governance/release-verification-tier.test.mjs"],
+      "evidenceBoundary": "Focused regression proves selected coverage only; it never claims the complete test or release suite."
+    },
+    "graph": {
+      "category": "graph",
+      "description": "Refresh and check Graphify when graph inputs or graph tooling are affected.",
+      "commands": [
+        "npm run meta:graphify:verified-rebuild && npm run meta:graphify:check"
+      ],
+      "evidenceBoundary": "Graph health is one affected lane and is not full release-grade evidence by itself."
+    },
+    "full_release_runner": {
+      "category": "full",
+      "description": "Run the unchanged complete release verification entrypoint.",
+      "commands": ["npm run meta:verify:all"],
+      "evidenceBoundary": "Only a complete, fresh, stable run with the runner's own preflight and all standard stages can support a release-grade claim."
+    }
+  },
+  "impactRules": [
+    {
+      "id": "local-state",
+      "patterns": [".meta-kim/**"],
+      "impacts": [],
+      "ignored": true,
+      "requiresFull": false,
+      "reason": "Local state, cache, and backup paths are not distributable release inputs."
+    },
+    {
+      "id": "release-tier-contract",
+      "patterns": ["config/contracts/release-verification-tier-contract.json"],
+      "impacts": ["sync", "packaging", "focused_regression"],
+      "requiresFull": true,
+      "reason": "Changing the tier authority changes how verification claims are selected and must be checked by the complete release gate.",
+      "testSelectors": ["tests/governance/release-verification-tier.test.mjs"]
+    },
+    {
+      "id": "release-metadata",
+      "patterns": [
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "CHANGELOG.md",
+        "CHANGELOG.zh-CN.md"
+      ],
+      "impacts": ["version", "packaging", "focused_regression"],
+      "requiresFull": true,
+      "reason": "Package identity, dependencies, or release metadata can change the published artifact or release binding.",
+      "testSelectors": ["tests/governance/core-loop-release-evidence.test.mjs", "tests/setup/release-docs-semantics.test.mjs"]
+    },
+    {
+      "id": "full-runner-and-release-proof",
+      "patterns": [
+        "scripts/run-verify-all.mjs",
+        "scripts/verify-packed-user-install-update.mjs",
+        "scripts/audit-release-binding.mjs",
+        "scripts/release-binding-canonical.mjs",
+        "scripts/record-release-planning-closure.mjs"
+      ],
+      "impacts": ["version", "sync", "packaging", "focused_regression"],
+      "requiresFull": true,
+      "reason": "Changing a release proof owner can invalidate the meaning of verification evidence.",
+      "testSelectors": ["tests/governance/core-loop-release-evidence.test.mjs", "tests/governance/release-binding-audit.test.mjs"]
+    },
+    {
+      "id": "sync-runtime-boundary",
+      "patterns": [
+        "config/sync.json",
+        "canonical/runtime-assets/**",
+        "scripts/sync-runtimes.mjs",
+        "scripts/sync-global-meta-theory.mjs",
+        "scripts/meta-kim-sync-config.mjs"
+      ],
+      "impacts": ["sync", "packaging", "focused_regression"],
+      "requiresFull": true,
+      "reason": "Runtime projection and global sync changes affect distributable install/update behavior.",
+      "testSelectors": ["tests/setup/sync-runtimes-manifest.test.mjs", "tests/setup/sync-runtimes-hooks.test.mjs", "tests/governance/core-loop-release-evidence.test.mjs"]
+    },
+    {
+      "id": "runtime-projection",
+      "patterns": [
+        ".claude/**",
+        ".codex/**",
+        ".agents/**",
+        ".cursor/**",
+        "openclaw/**",
+        ".mcp.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "codex/**"
+      ],
+      "impacts": ["sync", "focused_regression"],
+      "requiresFull": true,
+      "reason": "Runtime projections are generated adapters whose drift can alter user-visible installation behavior.",
+      "testSelectors": ["tests/setup/sync-runtimes-manifest.test.mjs", "tests/governance/core-loop-release-evidence.test.mjs"]
+    },
+    {
+      "id": "canonical-governance",
+      "patterns": [
+        "canonical/**",
+        "config/contracts/**",
+        "config/capability-index/**",
+        "config/governance/**"
+      ],
+      "impacts": ["sync", "focused_regression"],
+      "requiresFull": false,
+      "reason": "Canonical governance inputs require projection readback and directly relevant governance regression tests.",
+      "testSelectors": ["tests/governance/*.test.mjs", "tests/meta-theory/07-contract-compliance.test.mjs"]
+    },
+    {
+      "id": "graph",
+      "patterns": ["graphify-out/**", "scripts/graphify-cli.mjs"],
+      "impacts": ["graph", "focused_regression"],
+      "requiresFull": false,
+      "reason": "Graph artifacts or tooling need graph refresh/readback and graph-focused regression.",
+      "testSelectors": ["tests/setup/graphify-wiring-contract.test.mjs", "tests/setup/graphify-cli-safety.test.mjs"]
+    },
+    {
+      "id": "tests",
+      "patterns": ["tests/**"],
+      "impacts": ["focused_regression"],
+      "requiresFull": false,
+      "reason": "Changed tests are direct focused regression selectors."
+    },
+    {
+      "id": "docs",
+      "patterns": ["README*", "README.zh-CN.md", "docs/**"],
+      "impacts": ["focused_regression"],
+      "requiresFull": false,
+      "reason": "Documentation changes need only their directly relevant semantic regression checks in a narrow plan.",
+      "testSelectors": ["tests/setup/release-docs-semantics.test.mjs"]
+    },
+    {
+      "id": "scripts",
+      "patterns": ["scripts/**"],
+      "impacts": ["focused_regression"],
+      "requiresFull": false,
+      "reason": "Other script changes receive focused regression coverage; specialized release or sync scripts are handled by higher-priority rules.",
+      "testSelectors": ["tests/governance/release-verification-tier.test.mjs"]
+    }
+  ],
+  "fallback": {
+    "ruleId": "unknown-file",
+    "impacts": ["version", "sync", "packaging", "focused_regression"],
+    "requiresFull": true,
+    "reason": "An unmapped file has no proven impact boundary and must recommend the complete release gate."
+  }
+}
