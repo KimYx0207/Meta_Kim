@@ -14,8 +14,14 @@ import { join, resolve } from "node:path";
 import { describe, test } from "node:test";
 import {
   cleanupExpiredMcpMemoryRecoveryArtifacts,
+  MCP_MEMORY_SQLITE_TIMEOUT_MS,
+  MCP_MEMORY_SUBPROCESS_TIMEOUT_MS,
   runMcpMemoryRecoveryProtocol,
   runMcpMemoryUpgradeTransaction,
+  runCandidateOnnxSentinel,
+  sqliteBackupWithQuickCheck,
+  sqliteQuickCheck,
+  sqliteRestoreWithQuickCheck,
   validateMcpMemoryRecoveryMaterial,
   verifyOnnxEncodeEvidence,
   writeJsonAtomic,
@@ -90,6 +96,55 @@ async function runFixture(overrides = {}) {
 }
 
 describe("MCP memory upgrade transaction", () => {
+  test("Windows SQLite and candidate probes use hidden shell-free bounded subprocesses", async () => {
+    const root = mkdtempSync(join(tmpdir(), "meta-kim-memory-subprocess-options-"));
+    const calls = [];
+    const spawnFn = (command, args, options) => {
+      calls.push({ command, args, options });
+      return {
+        status: 0,
+        stdout: JSON.stringify(validEncode),
+        stderr: "",
+      };
+    };
+    try {
+      const python = { command: "python.exe", args: [] };
+      sqliteBackupWithQuickCheck({
+        python,
+        sourcePath: join(root, "source.db"),
+        backupPath: join(root, "backup.db"),
+        spawnFn,
+      });
+      sqliteRestoreWithQuickCheck({
+        python,
+        backupPath: join(root, "backup.db"),
+        targetPath: join(root, "target.db"),
+        spawnFn,
+      });
+      sqliteQuickCheck({
+        python,
+        databasePath: join(root, "target.db"),
+        spawnFn,
+      });
+      await runCandidateOnnxSentinel({
+        pythonPath: python,
+        workDir: join(root, "sentinel"),
+        offline: false,
+        spawnFn,
+      });
+      assert.equal(calls.length, 4);
+      for (const { options } of calls) {
+        assert.equal(options.shell, false);
+        assert.equal(options.windowsHide, true);
+        assert.ok(Number.isFinite(options.timeout) && options.timeout > 0);
+      }
+      assert.equal(calls[0].options.timeout, MCP_MEMORY_SQLITE_TIMEOUT_MS);
+      assert.equal(calls.at(-1).options.timeout, MCP_MEMORY_SUBPROCESS_TIMEOUT_MS);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("recovery rejects transaction traversal and arbitrary executable or database bindings", () => {
     const root = mkdtempSync(join(tmpdir(), "meta-kim-recovery-binding-"));
     const transactionId = "update-1785103594775-101980";
@@ -287,6 +342,61 @@ describe("MCP memory upgrade transaction", () => {
     ]);
   });
 
+  test("same-version running update keeps the endpoint transaction open through a post-switch readback", async () => {
+    let writer = "old";
+    const { result, evidence } = await runFixture({
+      prepareCandidate: async () => ({
+        ok: true,
+        identity: "same-version-candidate",
+        reconciliationStage: "verified",
+        reconciliationCode: "same_version_reconciled",
+      }),
+      stopOldRuntime: async () => {
+        assert.equal(writer, "old");
+        writer = "none";
+        return { ok: true, evidence: { pid: 10 } };
+      },
+      startCandidate: async () => {
+        writer = "candidate";
+        return { ok: true };
+      },
+      verifyCandidateHealthy: async () => writer === "candidate",
+      stopCandidate: async () => {
+        writer = "none";
+        return { ok: true, stopped: true };
+      },
+      startOldRuntime: async () => {
+        writer = "old";
+        return { ok: true };
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "committed");
+    assert.ok(evidence.events.some(({ stage }) => stage === "candidate_post_switch_verified"));
+    assert.equal(writer, "candidate");
+  });
+
+  test("post-switch health or identity failure rolls back the old runtime", async () => {
+    let verificationCount = 0;
+    const { result, calls } = await runFixture({
+      verifyCandidateHealthy: async () => {
+        verificationCount += 1;
+        return verificationCount === 1;
+      },
+    });
+    assert.equal(result.code, "candidate_post_switch_verification_failed");
+    assert.equal(result.status, "rolled_back");
+    assert.deepEqual(calls.slice(-7), [
+      "stopCandidate",
+      "verifyNoWriter",
+      "restoreDatabase",
+      "restoreBoot",
+      "restoreState",
+      "startOldRuntime",
+      "verifyOldRuntimeHealthy",
+    ]);
+  });
+
   test("rollback releases the exact candidate listener before restarting the old runtime", async () => {
     let portOccupied = true;
     const { result } = await runFixture({
@@ -399,6 +509,15 @@ describe("MCP memory upgrade transaction", () => {
   test("candidate MCP config bypasses stale active runtime and binds candidate executable", () => {
     assert.match(setupSource, /function buildMcpMemoryServerConfig\([\s\S]*memoryBinOverride = null[\s\S]*preferActive = true/);
     assert.match(setupSource, /buildMcpMemoryServerConfig\(candidate\.resolved, \{\s*memoryBinOverride: candidate\.memoryBin,\s*preferActive: false/);
+  });
+
+  test("setup routes a live historical or same-version listener through the transaction authority gate", () => {
+    assert.match(setupSource, /function planMcpMemoryUpdateRoute\(/u);
+    assert.match(setupSource, /oldMemoryBinOverride: updateRoute\.oldMemoryBin/u);
+    assert.match(setupSource, /requireRuntimeAuthority: true/u);
+    assert.match(setupSource, /runtime_manifest_boot_chain_unverified/u);
+    assert.match(setupSource, /if \(listener\?\.kind !== "listening"\)/u);
+    assert.match(setupSource, /update refused: \$\{updateRoute\.reason\}/u);
   });
 
   test("recovery snapshot stores only the MCP memory entry, not the whole MCP file", () => {

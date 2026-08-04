@@ -19,6 +19,7 @@ import {
   resolveTrustedWindowsSystemDirectory,
   resolveTrustedWindowsSystemTool,
   stopVerifiedEndpointProcess,
+  verifyMcpMemoryRuntimeAuthority,
   verifyMemoryListenerIdentity,
 } from "../../scripts/mcp-memory-process-control.mjs";
 
@@ -200,10 +201,14 @@ describe("MCP memory endpoint process control", () => {
     assert.equal(result.pid, listenerPid);
     assert.deepEqual(result.listenerHosts, ["127.0.0.1", "::1"]);
     assert.deepEqual(calls[0].args, ["-ano", "-p", "tcp"]);
+    assert.equal(calls[0].options.shell, false);
+    assert.equal(calls[0].options.windowsHide, true);
     assert.equal(calls[0].options.timeout, 4_000);
     assert.match(calls[1].args.at(-1), /Get-Process -Id 4312/u);
     assert.match(calls[1].args.at(-1), /ReadCommandLine\(4312\)/u);
     assert.doesNotMatch(calls[1].args.at(-1), /Get-CimInstance|Get-NetTCPConnection/u);
+    assert.equal(calls[1].options.shell, false);
+    assert.equal(calls[1].options.windowsHide, true);
     assert.equal(calls[1].options.timeout, 12_000);
   });
 
@@ -288,6 +293,36 @@ describe("MCP memory endpoint process control", () => {
       host: endpoint.hostname,
       port: endpoint.port,
     }).verified, false);
+  });
+
+  test("runtime authority binds the active state to the manifest-owned runtime and database", () => {
+    const authority = {
+      manifest: { verified: true },
+      activeState: {
+        schemaVersion: "meta-kim-mcp-memory-active-runtime-v1",
+        memoryBin: launcherPath,
+        pythonPath: executablePath,
+        databasePath: resolve("fixture", "memory.db"),
+      },
+    };
+    assert.equal(verifyMcpMemoryRuntimeAuthority(authority, {
+      memoryBin: launcherPath,
+      pythonPath: executablePath,
+      databasePath: resolve("fixture", "memory.db"),
+    }).verified, true);
+    assert.equal(verifyMcpMemoryRuntimeAuthority({
+      ...authority,
+      manifest: { verified: false, reason: "manifest_drifted" },
+    }, {
+      memoryBin: launcherPath,
+      pythonPath: executablePath,
+      databasePath: resolve("fixture", "memory.db"),
+    }).reason, "manifest_drifted");
+    assert.equal(verifyMcpMemoryRuntimeAuthority(authority, {
+      memoryBin: launcherPath,
+      pythonPath: executablePath,
+      databasePath: resolve("fixture", "other.db"),
+    }).reason, "active_runtime_database_mismatch");
   });
 
   test("real Windows chain accepts base Python listener plus exact candidate memory launcher", () => {
@@ -557,6 +592,60 @@ describe("MCP memory endpoint process control", () => {
     });
     assert.equal(result.ok, false);
     assert.equal(signals.length, 0);
+  });
+
+  test("a live listener cannot be signalled without manifest and active-state authority", async () => {
+    const signals = [];
+    const result = await stopVerifiedEndpointProcess({
+      endpoint,
+      expectedExecutablePath: executablePath,
+      expectedLauncherPath: launcherPath,
+      expectedPythonPath: executablePath,
+      expectedDatabasePath: resolve("fixture", "memory.db"),
+      requireRuntimeAuthority: true,
+      inspect: () => identity,
+      signal: (...args) => { signals.push(args); return true; },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "runtime_authority_missing");
+    assert.equal(signals.length, 0);
+  });
+
+  test("only a fully matching authority permits the exact listener to be signalled", async () => {
+    const signals = [];
+    let inspections = 0;
+    const authority = {
+      manifest: { verified: true },
+      activeState: {
+        schemaVersion: "meta-kim-mcp-memory-active-runtime-v1",
+        memoryBin: launcherPath,
+        pythonPath: executablePath,
+        databasePath: resolve("fixture", "memory.db"),
+      },
+    };
+    const result = await stopVerifiedEndpointProcess({
+      endpoint,
+      expectedExecutablePath: executablePath,
+      expectedLauncherPath: launcherPath,
+      expectedPythonPath: executablePath,
+      expectedDatabasePath: resolve("fixture", "memory.db"),
+      runtimeAuthority: authority,
+      requireRuntimeAuthority: true,
+      graceMs: 0,
+      forceWaitMs: 0,
+      inspect: () => {
+        inspections += 1;
+        return inspections >= 3 ? { kind: "not_listening", reason: "not_listening" } : identity;
+      },
+      signal: (...args) => {
+        signals.push(args);
+        return true;
+      },
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.stopped, true);
+    assert.deepEqual(signals, [[identity.pid, { force: false }]]);
   });
 
   test("only explicit not_listening is released; null or unknown identity fails closed", async () => {

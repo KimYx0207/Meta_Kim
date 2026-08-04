@@ -80,6 +80,8 @@ const ONNX_SENTINEL_SCRIPT = [
 ].join("\n");
 
 export const MCP_MEMORY_TRANSACTION_ID_PATTERN = /^update-\d{13}-\d{1,10}$/u;
+export const MCP_MEMORY_SUBPROCESS_TIMEOUT_MS = 300_000;
+export const MCP_MEMORY_SQLITE_TIMEOUT_MS = 120_000;
 export const MCP_MEMORY_NO_DATABASE_DIGEST = createHash("sha256")
   .update("meta-kim:no-database")
   .digest("hex");
@@ -259,12 +261,20 @@ export function hardenPrivateFile(filePath) {
   return filePath;
 }
 
-export function sqliteBackupWithQuickCheck({ python, sourcePath, backupPath }) {
+export function sqliteBackupWithQuickCheck({
+  python,
+  sourcePath,
+  backupPath,
+  spawnFn = spawnSync,
+  timeoutMs = MCP_MEMORY_SQLITE_TIMEOUT_MS,
+}) {
   preparePrivateTransactionRoot(dirname(backupPath));
   const launcher = pythonCommand(python);
-  const result = spawnSync(launcher.command, [...launcher.args, "-c", SQLITE_BACKUP_SCRIPT, sourcePath, backupPath], {
+  const result = spawnFn(launcher.command, [...launcher.args, "-c", SQLITE_BACKUP_SCRIPT, sourcePath, backupPath], {
     encoding: "utf8",
+    shell: false,
     windowsHide: true,
+    timeout: timeoutMs,
   });
   hardenPrivateFile(backupPath);
   let contentSha256;
@@ -274,20 +284,35 @@ export function sqliteBackupWithQuickCheck({ python, sourcePath, backupPath }) {
   return { ok: result.status === 0, quickCheck: result.status === 0 ? "ok" : "failed", identity: backupPath, contentSha256, processResult: result };
 }
 
-export function sqliteRestoreWithQuickCheck({ python, backupPath, targetPath }) {
+export function sqliteRestoreWithQuickCheck({
+  python,
+  backupPath,
+  targetPath,
+  spawnFn = spawnSync,
+  timeoutMs = MCP_MEMORY_SQLITE_TIMEOUT_MS,
+}) {
   const launcher = pythonCommand(python);
-  const result = spawnSync(launcher.command, [...launcher.args, "-c", SQLITE_RESTORE_SCRIPT, backupPath, targetPath], {
+  const result = spawnFn(launcher.command, [...launcher.args, "-c", SQLITE_RESTORE_SCRIPT, backupPath, targetPath], {
     encoding: "utf8",
+    shell: false,
     windowsHide: true,
+    timeout: timeoutMs,
   });
   return { ok: result.status === 0, quickCheck: result.status === 0 ? "ok" : "failed", processResult: result };
 }
 
-export function sqliteQuickCheck({ python, databasePath }) {
+export function sqliteQuickCheck({
+  python,
+  databasePath,
+  spawnFn = spawnSync,
+  timeoutMs = MCP_MEMORY_SQLITE_TIMEOUT_MS,
+}) {
   const launcher = pythonCommand(python);
-  const result = spawnSync(launcher.command, [...launcher.args, "-c", SQLITE_QUICK_CHECK_SCRIPT, databasePath], {
+  const result = spawnFn(launcher.command, [...launcher.args, "-c", SQLITE_QUICK_CHECK_SCRIPT, databasePath], {
     encoding: "utf8",
+    shell: false,
     windowsHide: true,
+    timeout: timeoutMs,
   });
   return { ok: result.status === 0, quickCheck: result.status === 0 ? "ok" : "failed", processResult: result };
 }
@@ -297,6 +322,8 @@ export async function runCandidateOnnxSentinel({
   workDir,
   offline,
   baseEnv = process.env,
+  spawnFn = spawnSync,
+  timeoutMs = MCP_MEMORY_SUBPROCESS_TIMEOUT_MS,
 }) {
   mkdirSync(workDir, { recursive: true });
   const databasePath = join(workDir, offline ? "offline-sentinel.db" : "online-sentinel.db");
@@ -306,10 +333,12 @@ export async function runCandidateOnnxSentinel({
     MCP_MEMORY_SQLITE_PATH: databasePath,
   };
   const launcher = pythonCommand(pythonPath);
-  const probe = spawnSync(launcher.command, [...launcher.args, "-c", ONNX_SENTINEL_SCRIPT, databasePath], {
+  const probe = spawnFn(launcher.command, [...launcher.args, "-c", ONNX_SENTINEL_SCRIPT, databasePath], {
     env,
     encoding: "utf8",
+    shell: false,
     windowsHide: true,
+    timeout: timeoutMs,
   });
   let evidence = {};
   try {
@@ -573,6 +602,12 @@ export async function runMcpMemoryUpgradeTransaction({
       throw error;
     }
     record("candidate_active_state_written");
+    if (!(await adapters.verifyCandidateHealthy(candidate))) {
+      const error = new Error("candidate failed post-switch identity and health verification");
+      error.code = "candidate_post_switch_verification_failed";
+      throw error;
+    }
+    record("candidate_post_switch_verified");
     await adapters.commit(candidate, backup);
     evidence.status = "committed";
     record("committed");

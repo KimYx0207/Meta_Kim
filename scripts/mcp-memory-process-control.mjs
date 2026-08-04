@@ -99,6 +99,83 @@ function pathEquals(left, right) {
   return Boolean(left && right) && normalizePath(left) === normalizePath(right);
 }
 
+function authorityPathEquals(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  return pathEquals(left, right);
+}
+
+function authorityPath(value) {
+  if (typeof value !== "string" || !isAbsolute(value)) return null;
+  return safeRealpath(value) ?? value;
+}
+
+function authorityPythonCommand(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value.command === "string" && Array.isArray(value.args)) {
+    return value.command;
+  }
+  return null;
+}
+
+/**
+ * Validate the local Meta_Kim ownership evidence before a live listener may
+ * be signalled.  The manifest flag is produced by setup after it verifies the
+ * complete boot-artifact ownership chain; the active state binds that chain
+ * to the exact runtime, interpreter, and database selected for this endpoint.
+ */
+export function verifyMcpMemoryRuntimeAuthority(
+  authority,
+  {
+    memoryBin,
+    pythonPath,
+    databasePath,
+  } = {},
+) {
+  if (!authority || typeof authority !== "object") {
+    return { verified: false, reason: "runtime_authority_missing" };
+  }
+  if (authority.manifest?.verified !== true) {
+    return {
+      verified: false,
+      reason: authority.manifest?.reason || "runtime_manifest_authority_missing",
+    };
+  }
+  const active = authority.activeState;
+  if (
+    !active ||
+    active.schemaVersion !== "meta-kim-mcp-memory-active-runtime-v1"
+  ) {
+    return { verified: false, reason: "active_runtime_state_invalid" };
+  }
+  const expectedMemoryBin = authorityPath(memoryBin);
+  const activeMemoryBin = authorityPath(active.memoryBin);
+  if (!expectedMemoryBin || !activeMemoryBin || !authorityPathEquals(activeMemoryBin, expectedMemoryBin)) {
+    return { verified: false, reason: "active_runtime_memory_bin_mismatch" };
+  }
+  const expectedPython = authorityPath(authorityPythonCommand(pythonPath));
+  const activePython = authorityPath(active.pythonPath);
+  if (!expectedPython || !activePython || !authorityPathEquals(activePython, expectedPython)) {
+    return { verified: false, reason: "active_runtime_python_mismatch" };
+  }
+  const expectedDatabase = authorityPath(databasePath);
+  const activeDatabase = authorityPath(active.databasePath);
+  if (
+    !expectedDatabase ||
+    !activeDatabase ||
+    !authorityPathEquals(activeDatabase, expectedDatabase)
+  ) {
+    return { verified: false, reason: "active_runtime_database_mismatch" };
+  }
+  return {
+    verified: true,
+    evidence: {
+      manifest: true,
+      activeState: true,
+      runtime: true,
+    },
+  };
+}
+
 function stripConfigValue(value) {
   const trimmed = String(value || "").trim();
   if (
@@ -370,6 +447,7 @@ export function inspectWindowsEndpointListener(
   }
   const listenerResult = run(netstatPath, ["-ano", "-p", "tcp"], {
     encoding: "utf8",
+    shell: false,
     windowsHide: true,
     timeout: discoveryTimeoutMs,
   });
@@ -432,6 +510,7 @@ export function inspectWindowsEndpointListener(
     script,
   ], {
     encoding: "utf8",
+    shell: false,
     windowsHide: true,
     timeout: processQueryTimeoutMs,
   });
@@ -486,6 +565,7 @@ function linuxStartIdentity(pid) {
 function inspectLinuxListener({ hostname, port }) {
   const result = spawnSync("ss", ["-ltnp", `sport = :${port}`], {
     encoding: "utf8",
+    shell: false,
     timeout: PROCESS_DISCOVERY_TIMEOUT_MS,
   });
   if (result.error || result.status !== 0) {
@@ -521,6 +601,7 @@ function inspectLinuxListener({ hostname, port }) {
 function inspectDarwinListener({ hostname, port }) {
   const listener = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"], {
     encoding: "utf8",
+    shell: false,
     timeout: PROCESS_DISCOVERY_TIMEOUT_MS,
   });
   if (listener.error) return inspectionUnavailable("listener_discovery_failed");
@@ -537,6 +618,7 @@ function inspectDarwinListener({ hostname, port }) {
   }
   const readField = (field) => spawnSync("ps", ["-ww", "-p", String(pid), "-o", `${field}=`], {
     encoding: "utf8",
+    shell: false,
     timeout: PROCESS_DISCOVERY_TIMEOUT_MS,
   });
   const started = readField("lstart");
@@ -577,6 +659,7 @@ export function signalEndpointProcess(pid, { force = false } = {}) {
     if (!taskkillPath) return false;
     const result = spawnSync(taskkillPath, args, {
       encoding: "utf8",
+      shell: false,
       windowsHide: true,
       timeout: PROCESS_SIGNAL_TIMEOUT_MS,
     });
@@ -595,6 +678,11 @@ export async function stopVerifiedEndpointProcess({
   expectedExecutablePath,
   expectedExecutablePaths = null,
   expectedLauncherPath = null,
+  expectedPythonPath = null,
+  expectedDatabasePath = null,
+  runtimeAuthority = null,
+  resolveRuntimeAuthority = null,
+  requireRuntimeAuthority = false,
   platformName = platform(),
   inspect = inspectEndpointListener,
   signal = signalEndpointProcess,
@@ -610,6 +698,22 @@ export async function stopVerifiedEndpointProcess({
     launcherPath: expectedLauncherPath,
     host: endpoint.hostname,
     port: endpoint.port,
+  };
+  const checkRuntimeAuthority = () => {
+    if (!requireRuntimeAuthority) return { verified: true };
+    let authority = runtimeAuthority;
+    try {
+      if (typeof resolveRuntimeAuthority === "function") {
+        authority = resolveRuntimeAuthority();
+      }
+    } catch {
+      authority = null;
+    }
+    return verifyMcpMemoryRuntimeAuthority(authority, {
+      memoryBin: expectedLauncherPath,
+      pythonPath: expectedPythonPath,
+      databasePath: expectedDatabasePath,
+    });
   };
   const initial = inspect(endpoint);
   if (isEndpointNotListening(initial)) {
@@ -642,6 +746,15 @@ export async function stopVerifiedEndpointProcess({
     beforeGraceful.startIdentity !== initial.startIdentity
   ) {
     return { ok: false, stopped: false, reason: "graceful_revalidation_failed", evidence: verification.evidence };
+  }
+  const authorityBeforeGracefulSignal = checkRuntimeAuthority();
+  if (!authorityBeforeGracefulSignal.verified) {
+    return {
+      ok: false,
+      stopped: false,
+      reason: authorityBeforeGracefulSignal.reason,
+      evidence: verification.evidence,
+    };
   }
   const gracefulSignalled = signal(initial.pid, { force: false });
   let beforeForce;
@@ -699,6 +812,15 @@ export async function stopVerifiedEndpointProcess({
     beforeForce.startIdentity !== initial.startIdentity
   ) {
     return { ok: false, stopped: false, reason: "force_revalidation_failed", evidence: verification.evidence };
+  }
+  const authorityBeforeForceSignal = checkRuntimeAuthority();
+  if (!authorityBeforeForceSignal.verified) {
+    return {
+      ok: false,
+      stopped: false,
+      reason: authorityBeforeForceSignal.reason,
+      evidence: verification.evidence,
+    };
   }
   const forceSignalled = signal(initial.pid, { force: true });
   if (!forceSignalled && platformName !== "win32") {
