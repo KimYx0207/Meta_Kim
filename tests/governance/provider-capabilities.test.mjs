@@ -269,6 +269,7 @@ test("runtime-scoped verified claims need verified state and unknown runtime key
   provider.runtimeAdapters.codex.status = "verified";
   provider.support.runtimes.gemini = structuredClone(provider.support.runtimes.codex);
   provider.runtimeAdapters.gemini = structuredClone(provider.runtimeAdapters.codex);
+  registry.runtimes.push("gemini");
 
   const schema = JSON.parse(
     readFileSync("config/contracts/capability-provider.schema.json", "utf8"),
@@ -286,6 +287,81 @@ test("runtime-scoped verified claims need verified state and unknown runtime key
     const codes = new Set(payload.issues.map((entry) => entry.code));
     assert.ok(codes.has("inconsistent_state_status"));
     assert.ok(codes.has("unknown_runtime_claim_key"));
+    assert.ok(codes.has("unknown_runtime_registry_key"));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("activation metadata cannot replace support authority or mint live execution claims", () => {
+  const registry = JSON.parse(
+    readFileSync("config/capability-index/provider-registry.json", "utf8"),
+  );
+  const provider = registry.providers.find(
+    (entry) => entry.id === "hook-script-codex-hookprompt-adapter",
+  );
+  provider.support.runtimes.codex.live = true;
+  provider.runtimeAdapters.codex.live = true;
+
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-provider-activation-claims-"));
+  const registryPath = path.join(tempDir, "provider-registry.json");
+  writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
+  try {
+    const result = runValidator(["--registry", registryPath, "--json"]);
+    assert.notEqual(result.status, 0);
+    const payload = JSON.parse(result.stdout);
+    assert.ok(
+      payload.issues.some(
+        (entry) => entry.code === "metadata_claim_forbidden" && entry.runtimeId === "codex",
+      ),
+    );
+    assert.ok(
+      payload.issues.some(
+        (entry) => entry.code === "static_selected_claim_forbidden" && entry.runtimeId === "codex",
+      ),
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("blocked support cannot be upgraded by a runtime activation event", () => {
+  const registry = JSON.parse(
+    readFileSync("config/capability-index/provider-registry.json", "utf8"),
+  );
+  const provider = registry.providers.find(
+    (entry) => entry.id === "hook-script-codex-hookprompt-adapter",
+  );
+  const blocked = {
+    state: "blocked_for_execution",
+    status: "blocked",
+    installLayers: Object.fromEntries(
+      Object.keys(provider.support.runtimes.codex.installLayers).map((key) => [key, "unsupported"]),
+    ),
+    os: Object.fromEntries(
+      Object.keys(provider.support.runtimes.codex.os).map((key) => [key, "unsupported"]),
+    ),
+    reason: "test-only blocked support",
+  };
+  provider.support.runtimes.codex = blocked;
+  provider.runtimeAdapters.codex = {
+    ...provider.runtimeAdapters.codex,
+    ...blocked,
+    activationEvent: "forged live activation",
+  };
+
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-provider-blocked-activation-"));
+  const registryPath = path.join(tempDir, "provider-registry.json");
+  writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
+  try {
+    const result = runValidator(["--registry", registryPath, "--json"]);
+    assert.notEqual(result.status, 0);
+    const payload = JSON.parse(result.stdout);
+    assert.ok(
+      payload.issues.some(
+        (entry) => entry.code === "blocked_runtime_activation_claim" && entry.runtimeId === "codex",
+      ),
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -30,6 +30,13 @@ import { packedProductProofComplete } from "./packed-product-proof.mjs";
 export const ACCEPTANCE_ATTEMPT_SCHEMA_VERSION = "meta-kim-runtime-capability-acceptance-attempt-v1";
 export const ACCEPTANCE_INDEX_SCHEMA_VERSION = "meta-kim-runtime-capability-acceptance-index-v1";
 export const PRODUCER_RECEIPT_SCHEMA_VERSION = "meta-kim-runtime-capability-producer-receipt-v1";
+export const SUPPORTED_RUNTIME_IDS = Object.freeze([
+  "claude_code",
+  "codex",
+  "cursor",
+  "openclaw",
+]);
+const SUPPORTED_RUNTIME_ID_SET = new Set(SUPPORTED_RUNTIME_IDS);
 const CLAIM_SCHEMA_VERSION = 2;
 const LIVE_FUSE_CAPABILITIES = new Set(["agent", "subagent", "custom agent"]);
 const PACKED_CAPABILITIES = new Set([
@@ -306,11 +313,16 @@ function validateCodexDesktopEngineeringBindings(receipt, rawText, profileRoot, 
 }
 
 function runtimeKey(runtime) {
-  return runtime === "claude_code" ? "claude" : runtime;
+  const normalized = normalizeRuntimeCapabilityRuntimeId(runtime);
+  return normalized === "claude_code" ? "claude" : normalized;
 }
 
 export function normalizeRuntimeCapabilityRuntimeId(runtime) {
-  return runtime === "claude" ? "claude_code" : runtime;
+  const normalized = runtime === "claude" ? "claude_code" : runtime;
+  if (!SUPPORTED_RUNTIME_ID_SET.has(normalized)) {
+    throw new Error(`unsupported runtime acceptance target: ${runtime ?? "missing"}`);
+  }
+  return normalized;
 }
 
 function runtimeVersionFrom(report, runtime) {
@@ -758,6 +770,7 @@ export function readRuntimeCapabilityAcceptanceAttempt(filePath, { allowedRoot }
   }
   assertSafeId(record.attemptId, "acceptance attemptId");
   assertSafeId(record.correlationId, "acceptance correlationId");
+  normalizeRuntimeCapabilityRuntimeId(record.runtime);
   const { recordHash, ...withoutHash } = record;
   if (digest(JSON.stringify(withoutHash)) !== recordHash) {
     throw new Error("runtime capability acceptance attempt record hash is invalid");
@@ -785,7 +798,7 @@ export function writeRuntimeCapabilityAcceptanceAttempt({
   releaseVerificationPath = null,
   _controlledWriteToken = null,
 } = {}) {
-  if (!["claude_code", "codex", "openclaw", "cursor"].includes(runtime)) throw new Error("unsupported runtime acceptance target");
+  normalizeRuntimeCapabilityRuntimeId(runtime);
   if (!["project_projection", "global_install", "interactive_host", "headless_live", "compatibility_smoke"].includes(mode)) throw new Error("unsupported runtime acceptance mode");
   if (sourceKind === "controlled_producer_receipt" && _controlledWriteToken !== CONTROLLED_WRITE_TOKEN) throw new Error("controlled producer receipts require the internal attester path");
   const paths = prepareRuntimeCapabilityAcceptanceStore({ projectRoot, profile });
@@ -1045,6 +1058,9 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
   portableAdvisorySnapshot = false,
 } = {}) {
   const issues = [];
+  if (!SUPPORTED_RUNTIME_ID_SET.has(attempt?.runtime)) {
+    issues.push(`unsupported runtime acceptance target: ${attempt?.runtime ?? "missing"}`);
+  }
   const contract = loadSafetyContract();
   const root = assertPlainDirectory(profileRoot, "runtime capability profile state root");
   const nowMs = Date.parse(now);

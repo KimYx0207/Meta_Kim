@@ -175,6 +175,7 @@ function uniqueMappedIds(providers, field) {
 }
 
 function expandedSupport(provider, runtimeId) {
+  if (!RUNTIMES.includes(runtimeId)) return null;
   const override = provider.support.runtimes?.[runtimeId];
   const expanded = {
     ...provider.support.default,
@@ -249,7 +250,17 @@ function validateRuntimeClaimTruth(provider, issues) {
         }),
       );
     }
-    const forbiddenRunClaims = ["selected", "invoked", "completed", "live"].filter(
+    const forbiddenRunClaims = [
+      "selected",
+      "invoked",
+      "completed",
+      "live",
+      "support",
+      "availability",
+      "nativeSupport",
+      "executionAuthority",
+      "acceptanceState",
+    ].filter(
       (field) => adapter && Object.hasOwn(adapter, field),
     );
     if (forbiddenRunClaims.length > 0) {
@@ -263,6 +274,23 @@ function validateRuntimeClaimTruth(provider, issues) {
           message:
             `${provider.id} cannot persist ${forbiddenRunClaims.join(", ")} in the registry; ` +
             "selection and execution are run-scoped evidence",
+        }),
+      );
+    }
+    if (
+      adapter?.activationEvent &&
+      (support.status === "blocked" || support.state === "blocked_for_execution")
+    ) {
+      issues.push(
+        issue({
+          code: "blocked_runtime_activation_claim",
+          providerId: provider.id,
+          providerType: provider.providerType,
+          runtimeId,
+          state: support.status,
+          message:
+            `${provider.id} cannot use activation metadata to claim an executable ` +
+            `runtime while support for ${runtimeId} is blocked`,
         }),
       );
     }
@@ -604,6 +632,30 @@ function validateRegistryShape(registry, issues) {
     }
   }
 
+  const declaredRuntimes = new Set(registry.runtimes ?? []);
+  for (const runtimeId of declaredRuntimes) {
+    if (!RUNTIMES.includes(runtimeId)) {
+      issues.push(
+        issue({
+          code: "unknown_runtime_registry_key",
+          runtimeId,
+          message: `registry.runtimes contains undeclared runtime ${runtimeId}`,
+        }),
+      );
+    }
+  }
+  for (const runtimeId of RUNTIMES) {
+    if (!declaredRuntimes.has(runtimeId)) {
+      issues.push(
+        issue({
+          code: "missing_runtime_registry_key",
+          runtimeId,
+          message: `registry.runtimes is missing declared runtime ${runtimeId}`,
+        }),
+      );
+    }
+  }
+
   for (const state of SUCCESS_STATES) {
     if (!registry.stateModel?.successStates?.includes(state)) {
       issues.push(issue({ code: "missing_success_state", state, message: `stateModel missing success state ${state}` }));
@@ -642,6 +694,59 @@ function validateRegistryShape(registry, issues) {
     for (const field of ["sourceOfTruth", "activation", "verification", "risk", "support"]) {
       if (!provider[field]) {
         issues.push(issue({ code: "missing_provider_field", providerId: provider.id, providerType: provider.providerType, message: `${provider.id} missing ${field}` }));
+      }
+    }
+    for (const [metadataName, metadata] of [
+      ["activation", provider.activation],
+      ["support", provider.support],
+      ["support.default", provider.support?.default],
+    ]) {
+      for (const field of [
+        "live",
+        "selected",
+        "invoked",
+        "completed",
+        "executionAuthority",
+        "activationEvent",
+      ]) {
+        if (metadata && Object.hasOwn(metadata, field)) {
+          issues.push(
+            issue({
+              code: "metadata_claim_forbidden",
+              providerId: provider.id,
+              providerType: provider.providerType,
+              state: `${metadataName}.${field}`,
+              message:
+                `${provider.id} cannot persist ${metadataName}.${field}; ` +
+                "support is the sole durable runtime authority and live evidence is run-scoped",
+            }),
+          );
+        }
+      }
+    }
+    for (const [runtimeId, support] of Object.entries(provider.support?.runtimes ?? {})) {
+      for (const field of [
+        "live",
+        "selected",
+        "invoked",
+        "completed",
+        "executionAuthority",
+        "activationEvent",
+      ]) {
+        if (support && Object.hasOwn(support, field)) {
+          issues.push(
+            issue({
+              code: "metadata_claim_forbidden",
+              providerId: provider.id,
+              providerType: provider.providerType,
+              runtimeId,
+              state: `support.runtimes.${runtimeId}.${field}`,
+              message:
+                `${provider.id} cannot persist support.runtimes.${runtimeId}.${field}; ` +
+                "support state must not be upgraded by activation or live metadata",
+            }),
+          );
+        }
       }
     }
     for (const field of REQUIRED_PROVIDER_FIELDS) {

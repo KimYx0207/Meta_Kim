@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
 import {
+  lstatSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -10538,7 +10540,58 @@ function governedExecutionRepoProfile(stateDir) {
     return null;
   }
   const profile = segments[2];
-  return sanitizeStateProfile(profile) === profile ? profile : null;
+  if (sanitizeStateProfile(profile) !== profile) return null;
+
+  // A lexical path under the repository is not sufficient evidence that the
+  // report belongs to this repository.  An in-repo symlink/junction can point
+  // the governed-executions directory at an external artifact tree, and then
+  // the repository active-run projection would be incorrectly attached to
+  // that external report.  Require every existing component to be a plain
+  // directory whose realpath is the same repository path.  A failed or
+  // ambiguous check is intentionally treated as custom output.
+  const lexicalOutputDir = path.resolve(stateDir);
+  const canonicalPathEqual = (left, right) => {
+    const normalize = (value) => path.normalize(value);
+    const normalizedLeft = normalize(left);
+    const normalizedRight = normalize(right);
+    return process.platform === "win32"
+      ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+      : normalizedLeft === normalizedRight;
+  };
+  const isWithin = (root, candidate) => {
+    const relative = path.relative(root, candidate);
+    return relative === "" || (
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative)
+    );
+  };
+  try {
+    const canonicalRepoRoot = realpathSync.native(REPO_ROOT);
+    const canonicalOutputDir = realpathSync.native(lexicalOutputDir);
+    if (
+      !isWithin(canonicalRepoRoot, canonicalOutputDir) ||
+      !canonicalPathEqual(canonicalOutputDir, lexicalOutputDir)
+    ) {
+      return null;
+    }
+    let current = REPO_ROOT;
+    for (const segment of path.relative(REPO_ROOT, lexicalOutputDir).split(path.sep).filter(Boolean)) {
+      current = path.join(current, segment);
+      const stats = lstatSync(current);
+      if (!stats.isDirectory() || stats.isSymbolicLink()) return null;
+      const canonicalCurrent = realpathSync.native(current);
+      if (
+        !isWithin(canonicalRepoRoot, canonicalCurrent) ||
+        !canonicalPathEqual(canonicalCurrent, current)
+      ) {
+        return null;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return profile;
 }
 
 function activeRunStatusCommand(profile) {

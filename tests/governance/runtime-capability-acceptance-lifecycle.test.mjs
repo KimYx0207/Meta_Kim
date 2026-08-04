@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, symlinkS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { loadRuntimeCapabilityAcceptanceAttempts, prepareRuntimeCapabilityAcceptanceStore, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
+import { loadRuntimeCapabilityAcceptanceAttempts, normalizeRuntimeCapabilityRuntimeId, prepareRuntimeCapabilityAcceptanceStore, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "../../scripts/effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
 import { canonicalJson } from "../../scripts/audit-release-binding.mjs";
@@ -12,6 +12,14 @@ import { PACKED_USER_TARGETS } from "../../scripts/packed-user-targets.mjs";
 import { PROJECTION_PACKAGE_PURPOSE } from "../../scripts/global-projection-package-store.mjs";
 
 const packageRoot = path.resolve(import.meta.dirname, "../..");
+
+test("unknown runtime acceptance keys fail closed before source-report interpretation", () => {
+  assert.throws(
+    () => normalizeRuntimeCapabilityRuntimeId("gemini"),
+    /unsupported runtime acceptance target/u,
+  );
+  assert.equal(normalizeRuntimeCapabilityRuntimeId("claude"), "claude_code");
+});
 
 function projectFixture() {
   const root = mkdtempSync(path.join(tmpdir(), "meta-kim-p130-"));

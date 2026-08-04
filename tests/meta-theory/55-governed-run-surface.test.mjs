@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -935,6 +935,51 @@ describe("55 - governed run identity, language, and chat surface", () => {
       assert.doesNotMatch(JSON.stringify(run.selection), /unrelated-default-active-run/u);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("an in-repo reparse output boundary cannot inherit the repository active lifecycle", async (t) => {
+    const profile = createRepoReportProfile("reparse-output-boundary");
+    const profileDir = path.join(process.cwd(), ".meta-kim", "state", profile);
+    const executionDir = path.join(profileDir, "governed-executions");
+    const externalDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-external-report-"));
+    try {
+      const activeState = createInitialState({
+        taskFingerprint: "reparse-output-boundary-fingerprint",
+        taskIdentitySource: "project_profile_hmac_sha256",
+        taskClassification: "report_selection_fixture",
+        triggerReason: "test_fixture",
+      });
+      activeState.stateProfile = profile;
+      await writeSpineState(process.cwd(), activeState);
+      try {
+        await symlink(
+          externalDir,
+          executionDir,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      } catch (error) {
+        t.skip(`directory links unavailable: ${error.code ?? error.message}`);
+        return;
+      }
+      await writeGovernedReportFixture(externalDir, {
+        runId: "external-reparse-report",
+        status: "partial",
+        latest: true,
+      });
+
+      const run = await readGovernedExecutionRun({
+        runId: "latest",
+        stateDir: executionDir,
+      });
+      assert.equal(run.runId, "external-reparse-report");
+      assert.equal(run.artifact.status, "partial");
+      assert.equal(run.selection.selectionSource, "latest_committed_pointer");
+      assert.equal(run.selection.activeRunRelation, "not_checked_custom_output");
+      assert.equal(run.selection.activeRunId, null);
+    } finally {
+      await rm(profileDir, { recursive: true, force: true });
+      await rm(externalDir, { recursive: true, force: true });
     }
   });
 
