@@ -583,6 +583,15 @@ describe("Graphify node identity proof v2", () => {
     });
     assert.equal(safeHttpSource.graphPrivatePathIssues.length, 0);
 
+    const publicUrlLabel = prepare(safeGraph());
+    publicUrlLabel.nodes[0].label = "https://www.aiking.dev/";
+    publicUrlLabel.nodes[0].norm_label = "https://www.aiking.dev/";
+    const safePublicUrlLabel = analyzeGraphNodeIdentity(publicUrlLabel, {
+      repositoryFiles,
+      builtCommit: publicUrlLabel.built_at_commit,
+    });
+    assert.equal(safePublicUrlLabel.graphPrivatePathIssues.length, 0);
+
     const rejectedMutations = [
       ["description", "https://example.test/home/project/source.mjs"],
       ["source_url", "file:///home/kim/private/source.mjs"],

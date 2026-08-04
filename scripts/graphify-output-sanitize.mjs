@@ -36,7 +36,7 @@ function isCanonicalRepositoryFile(value) {
 
 function hasPrivateLocalPath(value) {
   return typeof value === "string" &&
-    /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
+    /(?:(?:^|[^A-Za-z0-9_])[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
       value,
     );
 }
@@ -78,6 +78,28 @@ function hyperedgeSurfaces(graph) {
       ? graph.graph.hyperedges
       : null,
   ].filter(Boolean);
+}
+
+function unwrapSerializedHyperedge(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== 1 ||
+    typeof value.$text !== "string"
+  ) {
+    return value;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(value.$text);
+  } catch {
+    throw new Error("Graphify output contains an invalid serialized hyperedge");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Graphify output contains an invalid serialized hyperedge");
+  }
+  return parsed;
 }
 
 export function sanitizeGraphifyOutput(
@@ -209,9 +231,16 @@ export function sanitizeGraphifyOutput(
   graph.links = nextLinks;
   let canonicalizedHyperedgeIds = 0;
   let rewrittenHyperedgeReferences = 0;
+  let recoveredSerializedHyperedges = 0;
   for (const surface of hyperedgeSurfaces(graph)) {
     const assignedHyperedgeIds = new Set();
-    for (const hyperedge of surface) {
+    for (let index = 0; index < surface.length; index += 1) {
+      const serialized = surface[index];
+      const hyperedge = unwrapSerializedHyperedge(serialized);
+      if (hyperedge !== serialized) {
+        surface[index] = hyperedge;
+        recoveredSerializedHyperedges += 1;
+      }
       if (
         !hyperedge ||
         typeof hyperedge !== "object" ||
@@ -251,13 +280,15 @@ export function sanitizeGraphifyOutput(
       redactedPrivateSourceUrls > 0 ||
       canonicalizedNodeIds > 0 ||
       canonicalizedHyperedgeIds > 0 ||
-      rewrittenHyperedgeReferences > 0,
+      rewrittenHyperedgeReferences > 0 ||
+      recoveredSerializedHyperedges > 0,
     ...sourceReclassifications,
     redactedPrivateSourceUrls,
     canonicalizedNodeIds,
     resolvedCanonicalCollisions,
     canonicalizedHyperedgeIds,
     rewrittenHyperedgeReferences,
+    recoveredSerializedHyperedges,
   };
   Object.defineProperty(result, "nodeIdMap", {
     value: assignedByRawId,

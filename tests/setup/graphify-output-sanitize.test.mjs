@@ -147,6 +147,20 @@ describe("Graphify upstream output sanitizer", () => {
     assert.deepEqual(graph, afterFirst);
   });
 
+  test("does not mistake a public URL scheme for a Windows drive path", () => {
+    const graph = {
+      nodes: [{
+        id: "public-url",
+        label: "https://www.aiking.dev/",
+        source_url: "https://www.aiking.dev/",
+      }],
+      links: [],
+    };
+    const result = sanitizeGraphifyOutput(graph);
+    assert.equal(result.redactedPrivateSourceUrls, 0);
+    assert.equal(graph.nodes[0].source_url, "https://www.aiking.dev/");
+  });
+
   test("rewrites both Graphify hyperedge reference surfaces", () => {
     const hyperedge = {
       id: "Team-Group",
@@ -172,6 +186,55 @@ describe("Graphify upstream output sanitizer", () => {
       id: "team_group",
       nodes: ["foo", "bar"],
     });
+  });
+
+  test("recovers Graphify serialized hyperedge wrappers without widening malformed input", () => {
+    const serialized = {
+      $text: JSON.stringify({
+        id: "Team-Group",
+        nodes: ["Foo", "bar"],
+        relation: "participate_in",
+      }),
+    };
+    const graph = {
+      nodes: [{ id: "Foo" }, { id: "bar" }],
+      links: [],
+      hyperedges: [structuredClone(serialized)],
+      graph: { hyperedges: [structuredClone(serialized)] },
+    };
+    const result = sanitizeGraphifyOutput(graph, {
+      normalizeNodeId: (value) => ({
+        Foo: "foo",
+        bar: "bar",
+        "Team-Group": "team_group",
+      })[value] ?? value,
+    });
+    assert.equal(result.recoveredSerializedHyperedges, 2);
+    assert.equal(result.canonicalizedHyperedgeIds, 2);
+    assert.equal(result.rewrittenHyperedgeReferences, 2);
+    assert.deepEqual(graph.hyperedges, graph.graph.hyperedges);
+    assert.deepEqual(graph.hyperedges[0], {
+      id: "team_group",
+      nodes: ["foo", "bar"],
+      relation: "participate_in",
+    });
+
+    assert.throws(
+      () => sanitizeGraphifyOutput({
+        nodes: [{ id: "safe" }],
+        links: [],
+        hyperedges: [{ $text: "{not-json" }],
+      }),
+      /invalid serialized hyperedge/u,
+    );
+    assert.throws(
+      () => sanitizeGraphifyOutput({
+        nodes: [{ id: "safe" }],
+        links: [],
+        hyperedges: [{ $text: JSON.stringify({ id: "safe", nodes: ["safe"] }), extra: true }],
+      }),
+      /malformed hyperedge/u,
+    );
   });
 
   test("refuses ambiguous duplicate raw IDs and malformed endpoints", () => {
