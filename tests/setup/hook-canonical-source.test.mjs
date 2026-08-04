@@ -18,6 +18,7 @@ import {
   runtimeHookSourceOwner,
   SHARED_RUNTIME_HOOK_FILES,
 } from "../../scripts/runtime-hook-mapping.mjs";
+import { buildIsolatedUserHomeEnv } from "../../scripts/isolated-user-home-env.mjs";
 import {
   createInitialState,
   readMetaRunStatus,
@@ -130,11 +131,17 @@ test("runtime-specific memory hooks keep explicit source owners", () => {
 test("global hook sync projects universal core and runtime-owned memory entrypoints", () => {
   const root = mkdtempSync(join(tmpdir(), "meta-kim-hook-source-"));
   try {
+    const userHome = join(root, "user-home");
     const homes = {
       claude: join(root, "claude"),
       codex: join(root, "codex"),
       cursor: join(root, "cursor"),
     };
+    const isolatedEnv = buildIsolatedUserHomeEnv(userHome, {
+      META_KIM_CLAUDE_HOME: homes.claude,
+      META_KIM_CODEX_HOME: homes.codex,
+      META_KIM_CURSOR_HOME: homes.cursor,
+    });
     const result = spawnSync(
       process.execPath,
       [
@@ -147,12 +154,7 @@ test("global hook sync projects universal core and runtime-owned memory entrypoi
       {
         cwd: REPO_ROOT,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          META_KIM_CLAUDE_HOME: homes.claude,
-          META_KIM_CODEX_HOME: homes.codex,
-          META_KIM_CURSOR_HOME: homes.cursor,
-        },
+        env: isolatedEnv,
       },
     );
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -162,13 +164,15 @@ test("global hook sync projects universal core and runtime-owned memory entrypoi
       {
         cwd: REPO_ROOT,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          META_KIM_CURSOR_HOME: homes.cursor,
-        },
+        env: isolatedEnv,
       },
     );
     assert.equal(cursorResult.status, 0, cursorResult.stderr || cursorResult.stdout);
+
+    const isolatedManifestPath = join(userHome, ".meta-kim", "install-manifest.json");
+    const isolatedManifest = JSON.parse(readFileSync(isolatedManifestPath, "utf8"));
+    assert.ok(Array.isArray(isolatedManifest.entries));
+    assert.ok(isolatedManifest.entries.some((entry) => entry.path.startsWith(root)));
 
     for (const fileName of SHARED_RUNTIME_HOOK_FILES) {
       const canonical = readFileSync(join(SHARED_HOOK_DIR, fileName), "utf8");
