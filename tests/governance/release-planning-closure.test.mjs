@@ -473,6 +473,28 @@ test("release close requires a fresh exact-release recheck after global validati
   }
 });
 
+test("release close keeps global-check, metadata, and asset timeout budgets separate", async () => {
+  const fx = fixture();
+  try {
+    let exactOptions;
+    await runFx(fx, {
+      globalCheckTimeoutMs: 111,
+      metadataTimeoutMs: 222,
+      assetTimeoutMs: 333,
+      verifyExactRelease: async (options) => {
+        exactOptions = options;
+        return { status: "published_bound" };
+      },
+    });
+    const globalCall = fx.calls.find(({ command }) => command === process.execPath);
+    assert.equal(globalCall.options.timeout, 111);
+    assert.equal(exactOptions.metadataTimeoutMs, 222);
+    assert.equal(exactOptions.assetTimeoutMs, 333);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test("release close rejects a published pointer detached from latest attempt history", async () => {
   const fx = fixture();
   try {
@@ -640,6 +662,11 @@ test("release close sanitizes runtime-home and test overrides for the formal glo
       NODE_OPTIONS: "--require X:/attacker.cjs",
       node_options: "--require X:/lower-attacker.cjs",
       NODE_PATH: "X:/attacker-modules",
+      HTTP_PROXY: "http://user:secret@example.invalid:8080",
+      HTTPS_PROXY: "http://user:secret@example.invalid:8080",
+      ALL_PROXY: "http://user:secret@example.invalid:8080",
+      NO_PROXY: "example.invalid",
+      GH_TOKEN: "secret-token",
     };
     await runFx(fx, { environment, trustedUserHome });
     const call = fx.calls.find(({ command }) => command === process.execPath);
@@ -654,6 +681,11 @@ test("release close sanitizes runtime-home and test overrides for the formal glo
     assert.equal(call.options.env.NODE_OPTIONS, undefined);
     assert.equal(call.options.env.node_options, undefined);
     assert.equal(call.options.env.NODE_PATH, undefined);
+    assert.equal(call.options.env.HTTP_PROXY, undefined);
+    assert.equal(call.options.env.HTTPS_PROXY, undefined);
+    assert.equal(call.options.env.ALL_PROXY, undefined);
+    assert.equal(call.options.env.NO_PROXY, undefined);
+    assert.equal(call.options.env.GH_TOKEN, undefined);
     assert.equal(call.options.env.HOME, trustedUserHome);
     assert.equal(call.options.env.USERPROFILE, trustedUserHome);
     assert.equal(call.options.env.home, undefined);

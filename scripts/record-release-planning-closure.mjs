@@ -32,6 +32,12 @@ import {
   sha256,
   validatePointer,
 } from "./audit-release-binding.mjs";
+import {
+  DEFAULT_GLOBAL_CHECK_TIMEOUT_MS,
+  DEFAULT_RELEASE_ASSET_TIMEOUT_MS,
+  DEFAULT_RELEASE_METADATA_TIMEOUT_MS,
+  resolveTimeoutMs,
+} from "./release-network.mjs";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLANNING_FILES = ["task_plan.md", "findings.md", "progress.md"];
@@ -104,8 +110,19 @@ function defaultRun(command, args, options = {}) {
   });
 }
 
-function commandResult(runCommand, command, args, options, errorCode, message) {
+function commandResult(
+  runCommand,
+  command,
+  args,
+  options,
+  errorCode,
+  message,
+  timeoutCode = `${errorCode}_timeout`,
+) {
   const result = runCommand(command, args, options);
+  if (result?.error?.code === "ETIMEDOUT" || result?.signal === "SIGTERM" && options?.timeout) {
+    throw codedError(timeoutCode, `${message} timed out`);
+  }
   if (result.status !== 0) {
     throw codedError(errorCode, message);
   }
@@ -338,8 +355,12 @@ export async function verifyPublishedReleaseExact({
   tag,
   storedAudit,
   environment = process.env,
+  metadataTimeoutMs = null,
+  assetTimeoutMs = null,
+  platform = process.platform,
+  systemProxyReader,
 } = {}) {
-  const gitFacts = collectGitReleaseFacts(repoRoot, tag);
+  const gitFacts = collectGitReleaseFacts(repoRoot, tag, { environment });
   const reportBytes = findVerificationReport(
     repoRoot,
     profile,
@@ -348,6 +369,10 @@ export async function verifyPublishedReleaseExact({
   const verification = readVerificationEvidence(reportBytes, gitFacts);
   const githubFacts = await fetchGitHubReleaseFacts(gitFacts, {
     environment,
+    metadataTimeoutMs,
+    assetTimeoutMs,
+    platform,
+    systemProxyReader,
     downloadAsset: true,
   });
   const packed = readPackageManifestFromTgz(githubFacts.downloadedBytes);
@@ -674,6 +699,13 @@ function sanitizedGlobalEnvironment(environment, trustedUserHome) {
         "CODEX_CONFIG_DIR",
         "NODE_OPTIONS",
         "NODE_PATH",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "NPM_TOKEN",
       ].includes(upperKey)
     ) {
       delete clean[key];
@@ -708,6 +740,11 @@ export async function recordReleasePlanningClosure({
   environment = process.env,
   trustedUserHome = userInfo().homedir,
   verifyExactRelease = verifyPublishedReleaseExact,
+  globalCheckTimeoutMs = null,
+  metadataTimeoutMs = null,
+  assetTimeoutMs = null,
+  platform = process.platform,
+  systemProxyReader,
   now = () => new Date(),
   afterProjectionWrite,
   beforeRecordPublish,
@@ -718,6 +755,21 @@ export async function recordReleasePlanningClosure({
   if (!PROFILE_PATTERN.test(profile || "")) {
     throw codedError("profile_invalid", "--profile contains unsupported characters");
   }
+  globalCheckTimeoutMs = resolveTimeoutMs(
+    globalCheckTimeoutMs,
+    DEFAULT_GLOBAL_CHECK_TIMEOUT_MS,
+    "global check timeout",
+  );
+  metadataTimeoutMs = resolveTimeoutMs(
+    metadataTimeoutMs,
+    DEFAULT_RELEASE_METADATA_TIMEOUT_MS,
+    "release metadata timeout",
+  );
+  assetTimeoutMs = resolveTimeoutMs(
+    assetTimeoutMs,
+    DEFAULT_RELEASE_ASSET_TIMEOUT_MS,
+    "release asset timeout",
+  );
   const callerRunCommand = runCommand;
   const gitEnvironment = sanitizedGitEnvironment(environment);
   runCommand = (command, args, options = {}) => callerRunCommand(
@@ -911,9 +963,14 @@ export async function recordReleasePlanningClosure({
       runCommand,
       process.execPath,
       globalCheckArgs,
-      { cwd: packageRoot, env: sanitizedGlobalEnvironment(environment, trustedUserHome) },
+      {
+        cwd: packageRoot,
+        env: sanitizedGlobalEnvironment(environment, trustedUserHome),
+        timeout: globalCheckTimeoutMs,
+      },
       "global_check_failed",
       "Claude Code and Codex global release check failed",
+      "global_check_timeout",
     );
     ({ lockedAudit, existingPlanningFiles } = revalidateLocalState());
     await verifyExactRelease({
@@ -922,6 +979,10 @@ export async function recordReleasePlanningClosure({
       tag,
       storedAudit: lockedAudit.record,
       environment,
+      metadataTimeoutMs,
+      assetTimeoutMs,
+      platform,
+      systemProxyReader,
     });
     ({ lockedAudit, existingPlanningFiles } = revalidateLocalState());
     const record = {
@@ -1009,12 +1070,30 @@ function cliOptions(args) {
     const arg = args[index];
     if (["--help", "-h"].includes(arg)) options.help = true;
     else if (arg === "--json") options.json = true;
-    else if (["--issue", "--prd", "--profile"].includes(arg)) {
+    else if ([
+      "--issue",
+      "--prd",
+      "--profile",
+      "--global-check-timeout-ms",
+      "--metadata-timeout-ms",
+      "--asset-timeout-ms",
+    ].includes(arg)) {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) throw codedError("cli_invalid", `${arg} requires a value`);
-      options[arg.slice(2).replace("issue", "issueId").replace("prd", "prdPath")] = value;
+      const optionName = {
+        "--issue": "issueId",
+        "--prd": "prdPath",
+        "--profile": "profile",
+        "--global-check-timeout-ms": "globalCheckTimeoutMs",
+        "--metadata-timeout-ms": "metadataTimeoutMs",
+        "--asset-timeout-ms": "assetTimeoutMs",
+      }[arg];
+      options[optionName] = optionName.endsWith("TimeoutMs") ? Number(value) : value;
       index += 1;
     } else if (arg.startsWith("--profile=")) options.profile = arg.slice("--profile=".length);
+    else if (arg.startsWith("--global-check-timeout-ms=")) options.globalCheckTimeoutMs = Number(arg.slice("--global-check-timeout-ms=".length));
+    else if (arg.startsWith("--metadata-timeout-ms=")) options.metadataTimeoutMs = Number(arg.slice("--metadata-timeout-ms=".length));
+    else if (arg.startsWith("--asset-timeout-ms=")) options.assetTimeoutMs = Number(arg.slice("--asset-timeout-ms=".length));
     else throw codedError("cli_invalid", `unknown option '${arg}'`);
   }
   return options;
@@ -1023,7 +1102,7 @@ function cliOptions(args) {
 function usage() {
   return [
     "Usage:",
-    "  meta-kim release close --issue P-128 --prd <repo-relative-file> [--profile default] [--json]",
+    "  meta-kim release close --issue P-128 --prd <repo-relative-file> [--profile default] [--global-check-timeout-ms <ms>] [--metadata-timeout-ms <ms>] [--asset-timeout-ms <ms>] [--json]",
     "",
     "The command records an already-published exact release into existing local planning files.",
     "It never publishes the private PRD and never creates a second queue.",

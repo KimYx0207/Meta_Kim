@@ -17,6 +17,7 @@ import test from "node:test";
 import {
   canonicalJson,
   collectGitReleaseFacts,
+  defaultReleaseAuditOutputDir,
   evaluateReleaseBinding,
   fetchGitHubReleaseFacts,
   readPackageManifestFromTgz,
@@ -711,6 +712,95 @@ test("remote annotated-tag identity must match the local tag object and peeled c
   }
 });
 
+test("release audit defaults state to the caller repository and keeps timeout budgets distinct", async () => {
+  const root = createReleaseRepo();
+  try {
+    const gitFacts = collectGitReleaseFacts(root, "v9.9.9");
+    assert.equal(
+      defaultReleaseAuditOutputDir(root),
+      path.join(root, ".meta-kim", "state", "default", "release-binding-audit"),
+    );
+    const tgz = minimalTgz({ name: "meta-kim", version: "9.9.9" });
+    const requests = [];
+    const payload = githubPayload(gitFacts, sha256(tgz), tgz.length);
+    const networkClient = {
+      request: async (url, options) => {
+        requests.push({ url: String(url), timeoutMs: options.timeoutMs });
+        if (String(url).includes("/git/ref/tags/")) {
+          return new Response(JSON.stringify({ object: { type: "tag", sha: gitFacts.tagObjectSha } }), { status: 200 });
+        }
+        if (String(url).includes("/git/tags/")) {
+          return new Response(JSON.stringify({ object: { type: "commit", sha: gitFacts.peeledCommitSha } }), { status: 200 });
+        }
+        if (String(url) === "https://github.com/example/meta-kim/releases/download/package.tgz") {
+          return new Response(tgz, {
+            status: 200,
+            headers: { "content-length": String(tgz.length) },
+          });
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+    };
+    const facts = await fetchGitHubReleaseFacts(gitFacts, {
+      networkClient,
+      metadataTimeoutMs: 111,
+      assetTimeoutMs: 222,
+      downloadAsset: true,
+    });
+    assert.equal(facts.asset.sha256, sha256(tgz));
+    assert.deepEqual(requests.map(({ timeoutMs }) => timeoutMs), [111, 111, 111, 222]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release audit keeps a failed immutable attempt in the caller repository state", async () => {
+  const root = createReleaseRepo();
+  try {
+    const written = await runReleaseBindingAudit({
+      repoRoot: root,
+      tagName: "v9.9.8",
+      now: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    assert.equal(written.record.status, "failed");
+    assert.equal(
+      written.recordPath.startsWith(defaultReleaseAuditOutputDir(root)),
+      true,
+    );
+    assert.equal(existsSync(path.join(defaultReleaseAuditOutputDir(root), "latest-attempt.json")), true);
+    assert.equal(existsSync(path.join(defaultReleaseAuditOutputDir(root), "attempts", `${written.record.attemptId}.json`)), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release asset digest binding rejects a precise remote size mismatch", async () => {
+  const root = createReleaseRepo();
+  try {
+    const gitFacts = collectGitReleaseFacts(root, "v9.9.9");
+    const tgz = minimalTgz({ name: "meta-kim", version: "9.9.9" });
+    const payload = githubPayload(gitFacts, sha256(tgz), tgz.length + 1);
+    const networkClient = {
+      request: async (url) => {
+        if (String(url).includes("/git/ref/tags/")) {
+          return new Response(JSON.stringify({ object: { type: "tag", sha: gitFacts.tagObjectSha } }), { status: 200 });
+        }
+        if (String(url).includes("/git/tags/")) {
+          return new Response(JSON.stringify({ object: { type: "commit", sha: gitFacts.peeledCommitSha } }), { status: 200 });
+        }
+        if (String(url).includes("/download/")) return new Response(tgz, { status: 200 });
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+    };
+    await assert.rejects(
+      () => fetchGitHubReleaseFacts(gitFacts, { networkClient, downloadAsset: true }),
+      (error) => error.code === "release_package_size_mismatch",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("output containment rejects a repository link that resolves outside before writing", (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-output-root-"));
   const outside = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-output-outside-"));
@@ -736,6 +826,45 @@ test("output containment rejects a repository link that resolves outside before 
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("release audit CLI rejects output-dir state redirection before any audit write", () => {
+  const root = createReleaseRepo();
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [path.resolve("scripts/audit-release-binding.mjs"), "--tag", "v9.9.9", "--output-dir", ".alternate-audit"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        windowsHide: true,
+        env: { ...process.env, META_KIM_CALLER_CWD: root },
+      },
+    );
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /--output-dir is not supported/u);
+    assert.equal(existsSync(path.join(root, ".alternate-audit")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release audit API rejects output-dir state redirection before recording an attempt", async () => {
+  const root = createReleaseRepo();
+  const alternate = path.join(root, ".alternate-audit");
+  try {
+    await assert.rejects(
+      () => runReleaseBindingAudit({
+        repoRoot: root,
+        tagName: "v9.9.9",
+        outputDir: alternate,
+      }),
+      (error) => error.code === "output_dir_forbidden",
+    );
+    assert.equal(existsSync(alternate), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -802,7 +931,7 @@ test("release attempt rejects a linked stale-locks directory before stale lock r
 
 test("end-to-end audit binds annotated tag, clean report, GitHub asset digest, and local tgz", async () => {
   const root = createReleaseRepo();
-  const outputDir = path.join(root, ".meta-kim", "release-binding-audit");
+  const outputDir = defaultReleaseAuditOutputDir(root);
   try {
     const gitFacts = collectGitReleaseFacts(root, "v9.9.9");
     assert.match(gitFacts.tagObjectSha, /^[a-f0-9]{40}$/u);

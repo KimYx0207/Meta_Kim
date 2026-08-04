@@ -23,6 +23,12 @@ import { fileURLToPath } from "node:url";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
 import { packedProductProofComplete } from "./packed-product-proof.mjs";
 import { canonicalJson, sha256 } from "./release-binding-canonical.mjs";
+import {
+  DEFAULT_RELEASE_ASSET_TIMEOUT_MS,
+  DEFAULT_RELEASE_METADATA_TIMEOUT_MS,
+  createReleaseNetworkClient,
+  resolveTimeoutMs,
+} from "./release-network.mjs";
 
 export { canonicalJson, sha256 } from "./release-binding-canonical.mjs";
 
@@ -226,12 +232,38 @@ export function readPackageManifestFromTgz(bytes, {
 }
 
 export async function fetchGitHubReleaseFacts(gitFacts, {
-  fetchImpl = globalThis.fetch,
+  fetchImpl = null,
   environment = process.env,
-  timeoutMs = 30_000,
+  timeoutMs = null,
+  metadataTimeoutMs = null,
+  assetTimeoutMs = null,
+  platform = process.platform,
+  systemProxyReader,
+  networkClient = null,
   downloadAsset = false,
 } = {}) {
-  if (typeof fetchImpl !== "function") {
+  const legacyTimeout = timeoutMs == null ? null : resolveTimeoutMs(
+    timeoutMs,
+    DEFAULT_RELEASE_METADATA_TIMEOUT_MS,
+    "release timeout",
+  );
+  const metadataTimeout = resolveTimeoutMs(
+    metadataTimeoutMs ?? legacyTimeout,
+    DEFAULT_RELEASE_METADATA_TIMEOUT_MS,
+    "release metadata timeout",
+  );
+  const assetTimeout = resolveTimeoutMs(
+    assetTimeoutMs ?? legacyTimeout,
+    DEFAULT_RELEASE_ASSET_TIMEOUT_MS,
+    "release asset timeout",
+  );
+  const client = networkClient || createReleaseNetworkClient({
+    fetchImpl,
+    environment,
+    platform,
+    systemProxyReader,
+  });
+  if (typeof client?.request !== "function") {
     throw codedError("fetch_unavailable", "release audit requires a fetch implementation");
   }
   const { owner, repo } = gitFacts.repository;
@@ -243,15 +275,31 @@ export async function fetchGitHubReleaseFacts(gitFacts, {
     "X-GitHub-Api-Version": "2022-11-28",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+  const request = async (url, options, {
+    timeoutCode,
+    unavailableCode,
+    unavailableMessage,
+  }) => {
+    try {
+      return await client.request(url, options);
+    } catch (error) {
+      if (error?.code === "release_proxy_invalid" || error?.code === "release_proxy_unavailable") throw error;
+      if (error?.code === "release_network_timeout") {
+        throw codedError(timeoutCode, unavailableMessage);
+      }
+      throw codedError(unavailableCode, unavailableMessage);
+    }
+  };
   let response;
-  try {
-    response = await fetchImpl(apiUrl, {
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch {
-    throw codedError("github_release_unavailable", "GitHub Release metadata could not be fetched");
-  }
+  response = await request(apiUrl, {
+    headers,
+    timeoutMs: metadataTimeout,
+    maxResponseBytes: 2 * 1024 * 1024,
+  }, {
+    timeoutCode: "github_release_metadata_timeout",
+    unavailableCode: "github_release_unavailable",
+    unavailableMessage: "GitHub Release metadata could not be fetched",
+  });
   if (!response.ok) {
     throw codedError(
       "github_release_unavailable",
@@ -278,20 +326,24 @@ export async function fetchGitHubReleaseFacts(gitFacts, {
       "GitHub Release package asset must expose a SHA-256 digest",
     );
   }
+  if (!Number.isSafeInteger(asset.size) || asset.size < 0) {
+    throw codedError("release_package_asset_invalid", "GitHub Release package asset size is invalid");
+  }
   if (payload.tag_name !== gitFacts.tagName || payload.html_url !== expectedUrl) {
     throw codedError("github_release_identity_mismatch", "GitHub Release tag or URL does not match origin");
   }
 
   const refUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/tags/${encodeURIComponent(gitFacts.tagName)}`;
   let refResponse;
-  try {
-    refResponse = await fetchImpl(refUrl, {
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch {
-    throw codedError("github_tag_unavailable", "GitHub tag reference could not be fetched");
-  }
+  refResponse = await request(refUrl, {
+    headers,
+    timeoutMs: metadataTimeout,
+    maxResponseBytes: 512 * 1024,
+  }, {
+    timeoutCode: "github_tag_metadata_timeout",
+    unavailableCode: "github_tag_unavailable",
+    unavailableMessage: "GitHub tag reference could not be fetched",
+  });
   if (!refResponse.ok) {
     throw codedError("github_tag_unavailable", `GitHub tag reference returned HTTP ${refResponse.status}`);
   }
@@ -307,14 +359,15 @@ export async function fetchGitHubReleaseFacts(gitFacts, {
   }
   const tagObjectUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/tags/${refPayload.object.sha}`;
   let tagResponse;
-  try {
-    tagResponse = await fetchImpl(tagObjectUrl, {
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch {
-    throw codedError("github_tag_object_unavailable", "GitHub annotated tag object could not be fetched");
-  }
+  tagResponse = await request(tagObjectUrl, {
+    headers,
+    timeoutMs: metadataTimeout,
+    maxResponseBytes: 512 * 1024,
+  }, {
+    timeoutCode: "github_tag_object_metadata_timeout",
+    unavailableCode: "github_tag_object_unavailable",
+    unavailableMessage: "GitHub annotated tag object could not be fetched",
+  });
   if (!tagResponse.ok) {
     throw codedError(
       "github_tag_object_unavailable",
@@ -334,15 +387,15 @@ export async function fetchGitHubReleaseFacts(gitFacts, {
 
   let downloadedBytes = null;
   if (downloadAsset) {
-    let assetResponse;
-    try {
-      assetResponse = await fetchImpl(asset.browser_download_url, {
-        headers: { "User-Agent": "meta-kim-release-binding-audit" },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch {
-      throw codedError("release_package_download_failed", "release package asset download failed");
-    }
+    const assetResponse = await request(asset.browser_download_url, {
+      headers: { "User-Agent": "meta-kim-release-binding-audit" },
+      timeoutMs: assetTimeout,
+      maxResponseBytes: DEFAULT_MAX_ASSET_BYTES,
+    }, {
+      timeoutCode: "release_package_download_timeout",
+      unavailableCode: "release_package_download_failed",
+      unavailableMessage: "release package asset download failed",
+    });
     if (!assetResponse.ok) {
       throw codedError(
         "release_package_download_failed",
@@ -356,6 +409,9 @@ export async function fetchGitHubReleaseFacts(gitFacts, {
     downloadedBytes = Buffer.from(await assetResponse.arrayBuffer());
     if (downloadedBytes.length > DEFAULT_MAX_ASSET_BYTES) {
       throw codedError("release_package_too_large", "release package exceeds 64 MiB");
+    }
+    if (downloadedBytes.length !== asset.size) {
+      throw codedError("release_package_size_mismatch", "downloaded package size does not match GitHub");
     }
     if (sha256(downloadedBytes) !== digestMatch[1]) {
       throw codedError("release_package_digest_mismatch", "downloaded package digest does not match GitHub");
@@ -851,18 +907,35 @@ export async function runReleaseBindingAudit({
   verificationReportPath = null,
   historicalReportUnavailable = false,
   localPackagePath = null,
-  outputDir,
-  fetchImpl = globalThis.fetch,
+  outputDir = null,
+  profile = "default",
+  fetchImpl = null,
   environment = process.env,
+  metadataTimeoutMs = null,
+  assetTimeoutMs = null,
+  platform = process.platform,
+  systemProxyReader,
   now = new Date(),
 }) {
   const id = attemptId(now);
+  const canonicalOutputDir = defaultReleaseAuditOutputDir(repoRoot, profile);
+  if (outputDir && pathIdentity(outputDir) !== pathIdentity(canonicalOutputDir)) {
+    throw codedError(
+      "output_dir_forbidden",
+      "release audit output must use the caller repository state directory",
+    );
+  }
+  const auditOutputDir = canonicalOutputDir;
   let recordInput;
   try {
-    const gitFacts = collectGitReleaseFacts(repoRoot, tagName);
+    const gitFacts = collectGitReleaseFacts(repoRoot, tagName, { environment });
     const githubFacts = await fetchGitHubReleaseFacts(gitFacts, {
       fetchImpl,
       environment,
+      metadataTimeoutMs,
+      assetTimeoutMs,
+      platform,
+      systemProxyReader,
     });
     const reportBytes = historicalReportUnavailable
       ? null
@@ -925,24 +998,39 @@ export async function runReleaseBindingAudit({
       error: safeError,
     };
   }
-  const written = writeReleaseBindingAttempt(outputDir, recordInput);
+  const written = writeReleaseBindingAttempt(auditOutputDir, recordInput);
   if (
     written.record.status === "published_bound" &&
     verificationReportPath &&
-    path.basename(path.resolve(outputDir)) === "release-binding-audit" &&
-    path.basename(path.dirname(path.resolve(outputDir)))
+    path.basename(path.resolve(auditOutputDir)) === "release-binding-audit" &&
+    path.basename(path.dirname(path.resolve(auditOutputDir)))
   ) {
-    const profileRoot = path.dirname(path.resolve(outputDir));
+    const profileRoot = path.dirname(path.resolve(auditOutputDir));
     const stateRoot = path.dirname(profileRoot);
     const metaKimRoot = path.dirname(stateRoot);
     if (path.basename(stateRoot) === "state" && path.basename(metaKimRoot) === ".meta-kim") {
       const projectRoot = path.dirname(metaKimRoot);
-      const { promoteControlledRuntimeCapabilityAcceptancesForPublishedRelease } = await import("./runtime-capability-acceptance.mjs");
-      written.acceptancePromotion = promoteControlledRuntimeCapabilityAcceptancesForPublishedRelease({
-        projectRoot,
-        profile: path.basename(profileRoot),
-        auditRecordPath: written.recordPath,
-      });
+      const profile = path.basename(profileRoot);
+      const verificationAttemptsRoot = path.join(
+        metaKimRoot,
+        "state",
+        profile,
+        "verification-reports",
+        "attempts",
+      );
+      if (existsSync(verificationAttemptsRoot)) {
+        const { promoteControlledRuntimeCapabilityAcceptancesForPublishedRelease } = await import("./runtime-capability-acceptance.mjs");
+        written.acceptancePromotion = promoteControlledRuntimeCapabilityAcceptancesForPublishedRelease({
+          projectRoot,
+          profile,
+          auditRecordPath: written.recordPath,
+        });
+      } else {
+        written.acceptancePromotion = {
+          status: "not_run",
+          reason: "immutable_verification_attempt_history_unavailable",
+        };
+      }
     }
   }
   return written;
@@ -969,6 +1057,8 @@ function cliOptions(args) {
     "--package-file",
     "--output-dir",
     "--profile",
+    "--metadata-timeout-ms",
+    "--asset-timeout-ms",
   ]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -994,6 +1084,8 @@ function cliOptions(args) {
     localPackagePath: optionValue(args, "--package-file"),
     outputDir: optionValue(args, "--output-dir"),
     profile: optionValue(args, "--profile") ?? environmentProfile(),
+    metadataTimeoutMs: optionValue(args, "--metadata-timeout-ms"),
+    assetTimeoutMs: optionValue(args, "--asset-timeout-ms"),
   };
 }
 
@@ -1001,12 +1093,21 @@ function environmentProfile() {
   return process.env.META_KIM_PROFILE || "default";
 }
 
+export function defaultReleaseAuditOutputDir(repoRoot, profile = "default") {
+  const profilePaths = getProfilePaths({
+    repoPath: repoRoot,
+    profile,
+    stateRoot: path.join(path.resolve(repoRoot), ".meta-kim", "state"),
+  });
+  return path.join(profilePaths.profileDir, "release-binding-audit");
+}
+
 function usage() {
   return [
     "Usage:",
     "  meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--json]",
     "  meta-kim release audit --tag <tag> --historical-report-unavailable [--json]",
-    "  Optional state controls: [--profile <name>] [--output-dir <repo-relative-dir>]",
+    "  Optional controls: [--profile <name>] [--metadata-timeout-ms <ms>] [--asset-timeout-ms <ms>]",
     "",
     "The audit appends an immutable attempt. A failed attempt never replaces the latest published-bound record.",
   ].join("\n");
@@ -1085,11 +1186,16 @@ async function main() {
     );
     process.exit(2);
   }
+  if (options.outputDir !== null) {
+    console.error("meta-kim release audit: --output-dir is not supported; state belongs to the caller repository");
+    process.exit(2);
+  }
   const repoRoot = path.resolve(process.env.META_KIM_CALLER_CWD || process.cwd());
-  const profilePaths = getProfilePaths({ repoPath: repoRoot, profile: options.profile });
-  const outputDir = requireContainedOutput(repoRoot, options.outputDir
-    ? path.resolve(repoRoot, options.outputDir)
-    : path.join(profilePaths.profileDir, "release-binding-audit"));
+  const profilePaths = getProfilePaths({
+    repoPath: repoRoot,
+    profile: options.profile,
+    stateRoot: path.join(repoRoot, ".meta-kim", "state"),
+  });
   const verificationReportPath = options.historicalReportUnavailable
     ? null
     : path.resolve(
@@ -1106,7 +1212,9 @@ async function main() {
     verificationReportPath,
     historicalReportUnavailable: options.historicalReportUnavailable,
     localPackagePath,
-    outputDir,
+    profile: options.profile,
+    metadataTimeoutMs: options.metadataTimeoutMs,
+    assetTimeoutMs: options.assetTimeoutMs,
   });
   const output = {
     status: record.status,
