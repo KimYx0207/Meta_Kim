@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveProfileName } from "./meta-kim-local-state.mjs";
-import { canonicalJson, sha256 as auditSha256 } from "./audit-release-binding.mjs";
+import { canonicalJson, sha256 as auditSha256 } from "./release-binding-canonical.mjs";
 import { resolveProjectRoot } from "../canonical/runtime-assets/shared/hooks/project-root.mjs";
 import { observeClaudeJsonl, observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
 import { observeCodexDesktopEngineeringSlice } from "./live-acceptance/read-codex-session-evidence.mjs";
@@ -936,6 +936,15 @@ export function selectVerificationBoundControlledAttempts(attempts, controlledPr
   return selected;
 }
 
+export function controlledProducerStageFromVerification(verification) {
+  const stages = Array.isArray(verification?.stages)
+    ? verification.stages
+    : Array.isArray(verification?.results)
+      ? verification.results
+      : [];
+  return stages.find((entry) => entry?.name === "meta:runtime:produce") ?? null;
+}
+
 export function nextControlledPromotionLineage(base, attempts, { releaseAuditAttemptId, verificationAttemptId } = {}) {
   if (!base?.attemptId || !base?.runtime || !base?.capability || !base?.mode || !releaseAuditAttemptId || !verificationAttemptId) {
     throw new Error("controlled promotion lineage inputs are incomplete");
@@ -985,7 +994,7 @@ export function promoteControlledRuntimeCapabilityAcceptancesForPublishedRelease
   const verification = readDigestBoundFile(verificationFile, verificationRoot, "release verification attempt");
   validateVerificationAttemptHash(verification.value);
   const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot: paths.projectRoot, profile: paths.profile });
-  const producerStage = verification.value.results?.find((entry) => entry.name === "meta:runtime:produce");
+  const producerStage = controlledProducerStageFromVerification(verification.value);
   const selected = selectVerificationBoundControlledAttempts(store.attempts, producerStage?.controlledProducerEvidence);
   const promoted = [];
   for (const base of selected) {

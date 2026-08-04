@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -22,28 +22,15 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
 import { packedProductProofComplete } from "./packed-product-proof.mjs";
+import { canonicalJson, sha256 } from "./release-binding-canonical.mjs";
+
+export { canonicalJson, sha256 } from "./release-binding-canonical.mjs";
 
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_MAX_ASSET_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_UNPACKED_BYTES = 128 * 1024 * 1024;
 const TAG_PATTERN = /^v?[0-9A-Za-z][0-9A-Za-z._-]{0,127}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
-
-export function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function canonicalValue(value) {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]),
-  );
-}
-
-export function canonicalJson(value) {
-  return JSON.stringify(canonicalValue(value));
-}
 
 function isSha256Hex(value) {
   return typeof value === "string" && SHA256_PATTERN.test(value);

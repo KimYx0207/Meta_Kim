@@ -6,6 +6,17 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [2.9.24] - 2026-08-05
+
+### 修复内容
+
+- **公开的发布审计 CLI 现在会在生成精确发布绑定后正常结束。** 运行时能力证据提升不再反向导入正在执行的审计模块，消除了循环模块等待；此前该问题会先写出有效的 `published_bound` 记录，随后以 Node 的 top-level await 未完成警告退出。
+- **v2.9.23 的安装、更新、启动项自动修复、Graphify 隐藏探测、全局 Claude Hook 与 runtime rebind 修复保持不变。** 本补丁只为修复其发布后审计命令而取代 v2.9.23，并继续保留对 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 在 [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) 和 [#51](https://github.com/KimYx0207/Meta_Kim/pull/51) 中贡献的致谢。
+
+### 验证
+
+- 发布验证覆盖共享 canonical 哈希边界、新旧验证报告阶段结构、真实打包后的审计 CLI，以及一次新的干净完整打包产品门禁和后续精确 GitHub Release 绑定。
+
 ## [2.9.23] - 2026-08-04
 
 ### 修复内容

@@ -9,7 +9,7 @@ import { runCodexCompositeEngineeringProducer, runCodexDesktopEngineeringSession
 import { readCodexDesktopEngineeringEvidence, readCodexDesktopSessionEvidence } from "../../scripts/live-acceptance/read-codex-session-evidence.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "../../scripts/effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
-import { selectVerificationBoundControlledAttempts, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
+import { controlledProducerStageFromVerification, selectVerificationBoundControlledAttempts, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
 import { parseRuntimeAcceptanceCliArgs } from "../../scripts/attest-runtime-capability-acceptance.mjs";
 import { loadSetupBoundRuntimeExecutable, recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
 import { observeClaudeJsonl } from "../../scripts/live-acceptance/observe-host-events.mjs";
@@ -947,6 +947,19 @@ test("standard verification reads fresh controlled evidence instead of invoking 
   const stage = buildVerificationStages().find((entry) => entry.name === "meta:runtime:produce");
   assert.match(stage.cmd, /--status --require-fresh/u);
   assert.doesNotMatch(stage.cmd, /--source|--codex-engineering-composite/u);
+});
+
+test("release promotion reads controlled evidence from current and legacy verification reports", () => {
+  const currentStage = { name: "meta:runtime:produce", controlledProducerEvidence: { ok: true } };
+  assert.equal(
+    controlledProducerStageFromVerification({ stages: [currentStage] }),
+    currentStage,
+  );
+  assert.equal(
+    controlledProducerStageFromVerification({ results: [currentStage] }),
+    currentStage,
+  );
+  assert.equal(controlledProducerStageFromVerification({ stages: [] }), null);
 });
 
 test("release promotion selects only exact verification-bound controlled attempts", () => {

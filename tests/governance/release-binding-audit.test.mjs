@@ -34,6 +34,16 @@ const CANONICAL_PACKED_TARGETS = JSON.parse(
   readFileSync("config/sync.json", "utf8"),
 ).supportedTargets;
 
+test("release audit promotion hashing does not create a CLI module cycle", () => {
+  const acceptanceSource = readFileSync("scripts/runtime-capability-acceptance.mjs", "utf8");
+  assert.match(acceptanceSource, /from "\.\/release-binding-canonical\.mjs"/u);
+  assert.doesNotMatch(acceptanceSource, /from "\.\/audit-release-binding\.mjs"/u);
+  assert.equal(
+    canonicalJson({ z: 1, nested: { b: 2, a: 1 } }),
+    '{"nested":{"a":1,"b":2},"z":1}',
+  );
+});
+
 function octalField(value, length) {
   return `${value.toString(8).padStart(length - 1, "0")}\0`;
 }

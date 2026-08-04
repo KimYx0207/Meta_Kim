@@ -6,6 +6,17 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.24] - 2026-08-05
+
+### Fixed
+
+- **The public release audit CLI now completes after creating an exact release binding.** Runtime-capability promotion no longer imports back through the executing audit module, removing the circular module wait that could write a valid `published_bound` record and then exit with Node's unsettled top-level-await warning.
+- **The v2.9.23 installation, update, startup repair, hidden Graphify probing, global Claude Hook, and runtime rebind fixes are unchanged.** This patch supersedes v2.9.23 only to repair its post-release audit command and carries forward the contribution credit for [@qitiandashenggogogo](https://github.com/qitiandashenggogogo)'s work on [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) and [#51](https://github.com/KimYx0207/Meta_Kim/pull/51).
+
+### Verification
+
+- Release verification covers the shared canonical hashing boundary, current and legacy verification-report stage layouts, the real packed audit CLI, and a new clean full packed-product gate followed by exact GitHub Release binding.
+
 ## [2.9.23] - 2026-08-04
 
 ### Fixed
