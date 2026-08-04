@@ -141,7 +141,33 @@ function createInstanceBundle({ instanceRoot, msvcVersion }) {
 }
 
 describe("MCP memory service lifecycle", () => {
-  test("base-only non-update installation executes sqlite reconciliation and verifies ONNX dependencies", () => {
+  test("fresh missing install reconciles the exact sqlite package before dependency probe", () => {
+    const plan = planMcpMemoryReconciliation({
+      existingInstalled: false,
+      inUpdateMode: false,
+    });
+    const calls = [];
+    const result = executeMcpMemoryReconciliation({
+      python: { command: "fixture-python", args: [] },
+      plan,
+      runPython: (_python, args) => {
+        calls.push(args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    assert.equal(plan.previouslyInstalled, false);
+    assert.equal(plan.shouldStopBeforeInstall, false);
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls, [[
+      "-m",
+      "pip",
+      "install",
+      "mcp-memory-service[sqlite]==11.5.5",
+    ], ["-c", "import onnxruntime, tokenizers"]]);
+  });
+
+  test("already-installed ordinary reinstall revalidates without uninstalling user dependencies", () => {
     const plan = planMcpMemoryReconciliation({
       existingInstalled: true,
       inUpdateMode: false,
@@ -156,17 +182,38 @@ describe("MCP memory service lifecycle", () => {
       },
     });
 
+    assert.equal(plan.previouslyInstalled, true);
     assert.equal(plan.shouldStopBeforeInstall, false);
     assert.equal(result.ok, true);
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[0], [
-      "-m",
-      "pip",
-      "install",
-      "mcp-memory-service[sqlite]==11.5.5",
+    assert.deepEqual(calls, [
+      ["-m", "pip", "install", "mcp-memory-service[sqlite]==11.5.5"],
+      ["-c", "import onnxruntime, tokenizers"],
     ]);
-    assert.deepEqual(calls[1].slice(0, 1), ["-c"]);
-    assert.match(calls[1][1], /import onnxruntime, tokenizers/);
+    assert.equal(calls.flat().includes("uninstall"), false);
+  });
+
+  test("update with a missing dependency installs the exact sqlite package and probes it", () => {
+    const plan = planMcpMemoryReconciliation({
+      existingInstalled: false,
+      inUpdateMode: true,
+    });
+    const calls = [];
+    const result = executeMcpMemoryReconciliation({
+      python: { command: "fixture-python", args: [] },
+      plan,
+      runPython: (_python, args) => {
+        calls.push(args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    assert.equal(plan.previouslyInstalled, false);
+    assert.equal(plan.shouldStopBeforeInstall, false);
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls, [
+      ["-m", "pip", "install", "--upgrade", "mcp-memory-service[sqlite]==11.5.5"],
+      ["-c", "import onnxruntime, tokenizers"],
+    ]);
   });
 
   test("installation and dependency probe failures remain distinct and repair only follows a probe failure", () => {
@@ -204,6 +251,18 @@ describe("MCP memory service lifecycle", () => {
     assert.equal(repaired.ok, true);
     assert.equal(repaired.code, "mcp_memory_verified_after_windows_app_local_crt");
     assert.equal(repairCalls, 1);
+
+    const installStepStart = setupSource.indexOf("async function installMcpMemoryServiceStep(");
+    const installStepEnd = setupSource.indexOf("function ensureNetworkxCompatibility", installStepStart);
+    const installStepSource = setupSource.slice(installStepStart, installStepEnd);
+    const reconciliationCall = installStepSource.indexOf("const reconciliation = executeMcpMemoryReconciliation(");
+    const failureGate = installStepSource.indexOf("if (!reconciliation.ok)", reconciliationCall);
+    const failureReturn = installStepSource.indexOf("return false;", failureGate);
+    const startupRegistration = installStepSource.indexOf("registrationOk = registerMcpMemoryServer(", reconciliationCall);
+    assert.ok(reconciliationCall >= 0, "setup executes dependency reconciliation");
+    assert.ok(reconciliationCall < failureGate, "setup checks reconciliation after execution");
+    assert.ok(failureGate < failureReturn, "failed installation or probe returns false");
+    assert.ok(failureReturn < startupRegistration, "failed reconciliation cannot reach startup registration");
   });
 
   test("CRT discovery selects the latest complete same-version official x64 bundle", () => {

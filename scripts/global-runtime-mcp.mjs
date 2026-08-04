@@ -125,6 +125,15 @@ export function legacyMetaKimMcpAliases(canonicalName) {
   return new Set([canonicalName, canonicalName.replaceAll("-", "_")]);
 }
 
+function isStrictNodeExecutable(value) {
+  if (typeof value !== "string" || !value || /["'&|<>^%!\r\n\0]/u.test(value)) return false;
+  const basename = path.win32.basename(value).toLowerCase();
+  if (basename !== "node" && basename !== "node.exe") return false;
+  return basename === value.toLowerCase() ||
+    path.win32.isAbsolute(value) ||
+    path.posix.isAbsolute(value);
+}
+
 function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
   if (!isPlainObject(definition) || !legacyScriptSuffix) return false;
   if (definition.type !== undefined && definition.type !== "stdio") return false;
@@ -134,7 +143,7 @@ function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
   if (!Array.isArray(definition.args)) return false;
 
   let scriptArg = null;
-  if (/^(?:node|node\.exe)$/iu.test(definition.command ?? "")) {
+  if (isStrictNodeExecutable(definition.command)) {
     if (definition.args.length !== 1) return false;
     [scriptArg] = definition.args;
   } else if (/^(?:cmd|cmd\.exe)$/iu.test(definition.command ?? "")) {
@@ -148,7 +157,7 @@ function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
     if (
       args.length !== 3 ||
       !/^\/c$/iu.test(args[0] ?? "") ||
-      !/^(?:node|node\.exe)$/iu.test(args[1] ?? "")
+      !isStrictNodeExecutable(args[1])
     ) {
       return false;
     }

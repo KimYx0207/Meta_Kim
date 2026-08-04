@@ -34,6 +34,7 @@ describe("stable package CLI UX", () => {
     assert.equal(help.status, 0, help.stderr);
     assert.match(help.stdout, /meta-kim status/);
     assert.match(help.stdout, /meta-kim uninstall/);
+    assert.match(help.stdout, /meta-kim uninstall \[--recover\]/);
     assert.match(help.stdout, /meta-kim doctor hooks/);
     assert.match(help.stdout, /meta-kim release audit/);
     assert.match(help.stdout, /meta-kim release close/);
@@ -85,6 +86,26 @@ describe("stable package CLI UX", () => {
       );
       assert.equal(result.status, 2, result.stderr || result.stdout);
       assert.match(result.stderr, /invalid scope 'porject'/);
+    }
+  });
+
+  test("public uninstall exposes recovery while keeping internal manifest bypass private", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "meta-kim-cli-recover-"));
+    try {
+      const recovery = run(cli, ["uninstall", "--recover", "--scope=global"], {
+        HOME: home,
+        USERPROFILE: home,
+        META_KIM_CLAUDE_HOME: path.join(home, ".claude"),
+        META_KIM_CODEX_HOME: path.join(home, ".codex"),
+      });
+      assert.equal(recovery.status, 0, recovery.stderr || recovery.stdout);
+      assert.match(recovery.stdout, /exact-signature legacy recovery/iu);
+
+      const internal = run(cli, ["uninstall", "--no-manifest"]);
+      assert.equal(internal.status, 2);
+      assert.match(internal.stderr, /unknown uninstall option '--no-manifest'/u);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T16:36:13.521Z",
+  "generatedAt": "2026-08-04T12:46:09.781Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -244,8 +244,8 @@
         "type": "skills",
         "namespace": "canonical",
         "path": "canonical/skills/meta-theory/SKILL.md",
-        "size": 86043,
-        "modified": "2026-07-27T12:54:43.214Z"
+        "size": 87116,
+        "modified": "2026-08-04T11:15:55.075Z"
       },
       "repo:canonical:same-set-reusable-flow-for-project-file-inventor": {
         "id": "same-set-reusable-flow-for-project-file-inventor",
@@ -622,8 +622,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/claude/hooks/stop-save-progress.mjs",
         "relativePath": "stop-save-progress.mjs",
-        "size": 13923,
-        "modified": "2026-06-23T14:14:21.590Z",
+        "size": 16652,
+        "modified": "2026-08-01T21:34:45.874Z",
         "canonicalPath": "canonical/runtime-assets/claude/hooks/stop-save-progress.mjs"
       },
       "repo:canonical-claude-hooks:stop-spine-cleanup.mjs": {

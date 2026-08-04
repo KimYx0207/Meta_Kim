@@ -22,11 +22,34 @@ function executableIdentity(filePath) {
   return { realpath: resolved, sha256: sha256File(resolved), size: stat.size };
 }
 
-function firstPathResolution(commandName) {
+function pathResolutions(commandName) {
   const locator = process.platform === "win32" ? "where.exe" : "which";
-  const result = spawnSync(locator, [commandName], { encoding: "utf8", windowsHide: true, shell: false });
-  if (result.status !== 0) return null;
-  return String(result.stdout).split(/\r?\n/u).map((entry) => entry.trim()).find((candidate) => candidate && existsSync(candidate)) ?? null;
+  const locatorArgs = process.platform === "win32"
+    ? [commandName]
+    : ["-a", commandName];
+  const result = spawnSync(locator, locatorArgs, { encoding: "utf8", windowsHide: true, shell: false });
+  if (result.status !== 0) return [];
+  return String(result.stdout).split(/\r?\n/u).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function normalizePathResolutions(resolved) {
+  const values = Array.isArray(resolved) ? resolved : [resolved];
+  const seen = new Set();
+  const candidates = [];
+  for (const value of values) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    const candidate = value.trim();
+    const key = process.platform === "win32" ? candidate.toLowerCase() : candidate;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(candidate);
+  }
+  return candidates;
+}
+
+function candidateFailure(candidate, error) {
+  const reason = error?.message ?? String(error);
+  return `${candidate}: ${reason}`;
 }
 
 function rawLaunchDescriptor(candidate) {
@@ -160,7 +183,7 @@ export function readSetupRuntimeLaunchInventory({ root = os.homedir(), profile =
   return { ...manifest, manifestPath, bindings };
 }
 
-export function loadSetupBoundRuntimeExecutable({ projectRoot, profile = "default", runtime, pathResolver = firstPathResolution, globalRoot = os.homedir() } = {}) {
+export function loadSetupBoundRuntimeExecutable({ projectRoot, profile = "default", runtime, pathResolver = pathResolutions, globalRoot = os.homedir() } = {}) {
   const normalizedRuntime = normalizeRuntime(runtime);
   const projectManifest = path.join(projectRoot, ".meta-kim", "state", profile, "runtime-capability-producers", "host-executable-bindings.json");
   const globalManifest = path.join(globalRoot, ".meta-kim", "state", profile, "runtime-capability-producers", "host-executable-bindings.json");
@@ -183,11 +206,26 @@ export function loadSetupBoundRuntimeExecutable({ projectRoot, profile = "defaul
   }
   const binding = validateBinding(manifest.bindings[normalizedRuntime], normalizedRuntime, inventoryScope);
   const commandName = normalizedRuntime === "claude_code" ? "claude" : "codex";
-  const discovered = pathResolver(commandName);
-  if (!discovered) throw new Error(`current PATH no longer resolves ${commandName}`);
-  const currentDescriptor = identityLaunchDescriptor(discovered);
-  if (!descriptorMatches(binding.launchDescriptor, currentDescriptor)) {
-    throw new Error(`${inventoryScope} runtime launch binding does not match the shell-free PATH invocation`);
+  const candidates = normalizePathResolutions(pathResolver(commandName));
+  if (candidates.length === 0) throw new Error(`current PATH no longer resolves ${commandName}`);
+  const failures = [];
+  let matched = false;
+  for (const candidate of candidates) {
+    try {
+      const currentDescriptor = identityLaunchDescriptor(candidate);
+      if (descriptorMatches(binding.launchDescriptor, currentDescriptor)) {
+        matched = true;
+        break;
+      }
+      failures.push(`${candidate}: descriptor does not match the stored binding`);
+    } catch (error) {
+      failures.push(candidateFailure(candidate, error));
+    }
+  }
+  if (!matched) {
+    throw new Error(
+      `${inventoryScope} runtime launch binding does not match any shell-free PATH candidate for ${commandName}: ${failures.join("; ")}`,
+    );
   }
   return {
     ...binding.launchDescriptor.launcher,
@@ -262,7 +300,7 @@ export function recordSetupRuntimeExecutableBindings({
   roots,
   profile = "default",
   targets,
-  pathResolver = firstPathResolution,
+  pathResolver = pathResolutions,
   versionRunner = (launcher, args) => spawnSync(launcher, args, { encoding: "utf8", windowsHide: true, shell: false }),
 } = {}) {
   if (!/^[a-z0-9][a-z0-9._-]*$/iu.test(profile) || profile === "." || profile === "..") {
@@ -273,13 +311,32 @@ export function recordSetupRuntimeExecutableBindings({
   const bindings = {};
   for (const target of selected) {
     const runtime = target === "claude" ? "claude_code" : "codex";
-    const candidate = pathResolver(target);
-    if (!candidate) throw new Error(`selected runtime executable is unavailable: ${target}`);
-    const launchDescriptor = identityLaunchDescriptor(candidate);
-    const version = versionRunner(launchDescriptor.launcher.realpath, [...launchDescriptor.argsPrefix, "--version"], launchDescriptor);
-    if (version.status !== 0) throw new Error(`selected runtime version probe failed: ${target}`);
-    const versionText = String(version.stdout || version.stderr || "").trim().split(/\r?\n/u)[0];
-    if (!versionText) throw new Error(`selected runtime version probe returned no version: ${target}`);
+    const candidates = normalizePathResolutions(pathResolver(target));
+    if (candidates.length === 0) throw new Error(`selected runtime executable is unavailable: ${target}`);
+    const failures = [];
+    let selectedCandidate = null;
+    for (const candidate of candidates) {
+      try {
+        const launchDescriptor = identityLaunchDescriptor(candidate);
+        const version = versionRunner(launchDescriptor.launcher.realpath, [...launchDescriptor.argsPrefix, "--version"], launchDescriptor);
+        if (version.status !== 0) {
+          const detail = String(version.stderr || version.stdout || version.error?.message || "no diagnostic output").trim().split(/\r?\n/u)[0];
+          throw new Error(`version probe exited ${version.status ?? "without status"}: ${detail}`);
+        }
+        const versionText = String(version.stdout || version.stderr || "").trim().split(/\r?\n/u)[0];
+        if (!versionText) throw new Error("version probe returned no version");
+        selectedCandidate = { launchDescriptor, versionText };
+        break;
+      } catch (error) {
+        failures.push(candidateFailure(candidate, error));
+      }
+    }
+    if (!selectedCandidate) {
+      throw new Error(
+        `selected runtime executable has no usable PATH candidate: ${target}; ${failures.join("; ")}`,
+      );
+    }
+    const { launchDescriptor, versionText } = selectedCandidate;
     bindings[runtime] = {
       target,
       runtime,

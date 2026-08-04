@@ -47,12 +47,51 @@ function completePackedProductProof() {
     currentPackage: {
       status: "passed",
       installedCliEntrypoints: true,
+      packageSha256: "b".repeat(64),
       targets: [...RELEASE_RUNTIME_TARGETS],
       modes: [
         { mode: "install", status: "passed" },
         { mode: "update", status: "passed" },
         { mode: "update", status: "passed" },
       ],
+      automaticOrphanBootRepair: {
+        status: "passed",
+        evidenceTier: "packed_isolated_installed_public_cli",
+        fixture: "exact_startup_vbs_with_missing_command_target",
+        removedBeforeDependencyWork: true,
+      },
+      packedUninstall: {
+        status: "passed",
+        platform: "win32",
+        evidenceTier: "packed_isolated_installed_public_cli",
+        packageSha256: "b".repeat(64),
+        isolatedHomeAndPrefix: true,
+        normalManifestUninstall: {
+          status: "passed",
+          evidenceScope: "synthetic_manifest_fixture_consumed_by_packed_public_cli",
+          descriptorIds: [
+            "windows-powershell",
+            "windows-command",
+            "windows-startup",
+          ],
+          syntheticFixtureExactOwnershipAndIntegrityRecorded: true,
+          allChainFilesRemoved: true,
+        },
+        privateManifestBypass: {
+          status: "passed",
+          option: "--no-manifest",
+          exitCode: 2,
+          rejectedByPublicCli: true,
+        },
+        windowsRecovery: {
+          status: "passed",
+          fixture: "shared_renderer_exact_orphan_startup_vbs",
+          missingCommandTarget: true,
+          dryRunPreserved: true,
+          unprovenBoundaryReported: true,
+          liveRunRemoved: true,
+        },
+      },
       projectPackage: {
         status: "passed",
         targets: [...RELEASE_RUNTIME_TARGETS],
@@ -575,6 +614,49 @@ test("packed product proof requires every portable runtime subproof", () => {
   const collidedCurrentVersionTag = structuredClone(complete);
   collidedCurrentVersionTag.currentVersionTagAbsent = false;
   assert.equal(packedProductProofComplete(collidedCurrentVersionTag), false);
+
+  const legacyWithoutPackedUninstall = structuredClone(complete);
+  delete legacyWithoutPackedUninstall.currentPackage.packedUninstall;
+  assert.equal(
+    packedProductProofComplete(legacyWithoutPackedUninstall),
+    false,
+    "cached proof without packed uninstall acceptance must be rejected",
+  );
+  const incompletePackedUninstall = structuredClone(complete);
+  incompletePackedUninstall.currentPackage.packedUninstall
+    .normalManifestUninstall.descriptorIds.pop();
+  assert.equal(
+    packedProductProofComplete(incompletePackedUninstall),
+    false,
+    "packed uninstall proof must cover the complete platform descriptor chain",
+  );
+  const linuxPackedUninstall = structuredClone(complete);
+  linuxPackedUninstall.currentPackage.automaticOrphanBootRepair = {
+    status: "not_applicable",
+    reason: "windows_startup_vbs_only",
+  };
+  linuxPackedUninstall.currentPackage.packedUninstall.platform = "linux";
+  linuxPackedUninstall.currentPackage.packedUninstall
+    .normalManifestUninstall.descriptorIds = [
+      "linux-command",
+      "linux-autostart",
+    ];
+  linuxPackedUninstall.currentPackage.packedUninstall.windowsRecovery = {
+    status: "not_applicable",
+    reason: "windows_exact_signature_recovery_only",
+  };
+  assert.equal(
+    packedProductProofComplete(linuxPackedUninstall),
+    true,
+    "non-Windows proof keeps full manifest/private checks while recovery is not applicable",
+  );
+  const missingAutomaticRepair = structuredClone(complete);
+  delete missingAutomaticRepair.currentPackage.automaticOrphanBootRepair;
+  assert.equal(
+    packedProductProofComplete(missingAutomaticRepair),
+    false,
+    "packed proof must include the installed CLI automatic orphan-repair lane",
+  );
 
   for (const key of [
     "status",

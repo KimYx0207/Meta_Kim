@@ -19,6 +19,7 @@
  *   node scripts/uninstall.mjs                       # dry-run
  *   node scripts/uninstall.mjs --yes                 # actually delete
  *   node scripts/uninstall.mjs --scope=global --yes  # global-only cleanup
+ *   node scripts/uninstall.mjs --recover             # exact-signature legacy recovery dry-run
  *   node scripts/uninstall.mjs --deep --yes          # also pip + git hooks
  *   node scripts/uninstall.mjs --lang zh             # en/zh/ja/ko
  */
@@ -68,6 +69,12 @@ import {
   invertCodexConfigMutations,
   normalizeCodexConfigMutations,
 } from "./codex-config-merge.mjs";
+import {
+  classifyMcpMemoryBootRecoveryFile,
+  collectMcpMemoryBootRecoveryFindings,
+  isExactMcpMemoryBootManifestIdentity,
+  snapshotMcpMemoryBootArtifactFile,
+} from "./mcp-memory-boot-artifacts.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -654,6 +661,12 @@ export function manifestEntryToFinding(entry) {
     source: entry.source || "manifest",
     purpose: entry.purpose || null,
     manifestManaged: true,
+    ownershipClass: entry.ownershipClass ?? null,
+    runtimeTarget: entry.runtimeTarget ?? null,
+    mcpMemoryBootArtifact: isExactMcpMemoryBootManifestIdentity(entry, {
+      homeRoot: homedir(),
+      platformName: process.platform,
+    }),
   };
   if (
     entry.kind === "settings-merge" &&
@@ -810,6 +823,10 @@ function validateGlobalManifestEntryForRemoval(entry) {
 
   if (trustedDurableRuntimeBundleEntry(entry)) return { ok: true };
   if (trustedProjectionPackageRuntimeBundleEntry(entry)) return { ok: true };
+  if (isExactMcpMemoryBootManifestIdentity(entry, {
+    homeRoot: homedir(),
+    platformName: process.platform,
+  })) return { ok: true };
 
   if (
     GLOBAL_REMOVAL_POLICY.externalEntries.some((rule) =>
@@ -943,6 +960,10 @@ const MSG = {
       "Source: install-manifest (recorded entries from prior sync runs).",
     sourceScan:
       "Source: filesystem scan (no manifest found, or --no-manifest was passed).",
+    sourceRecovery:
+      "Source: opt-in exact-signature legacy recovery (not manifest-backed).",
+    recoveryBoundary:
+      "Recovery handles only recognized Meta_Kim artifacts; without a trusted manifest, complete uninstall cannot be proven.",
     planHeader: "Planned actions:",
     actRemoveDir: (p) => `  − remove directory: ${p}`,
     actRemoveFile: (p) => `  − remove file: ${p}`,
@@ -953,6 +974,8 @@ const MSG = {
     actGitHook: (p) => `  − remove shared git hook: ${p}  (--deep only)`,
     summary: (n) => `${n} action(s) planned.`,
     summaryNone: "Nothing to do — system is clean.",
+    recoveryNone:
+      "No exact Meta_Kim boot artifacts were found. Nothing changed. Without a trusted manifest, full cleanup is not proven.",
     done: "Done.",
     doneDelta: (del, strip) =>
       `Done: ${del} path(s) removed, ${strip} settings entr${strip === 1 ? "y" : "ies"} stripped.`,
@@ -968,7 +991,7 @@ const MSG = {
     preservedUnverifiable: (p) => `Preserved managed file without complete integrity metadata: ${p}`,
     preservedConcurrent: (p) => `Preserved concurrently changed configuration: ${p}`,
     writeFailed: (p, reason) => `Atomic update failed for ${p}: ${reason}`,
-    manifestBlocked: (reasons) => `Refusing manifest-less cleanup: ${reasons.join("; ")}. Use --no-manifest only for explicit legacy recovery.`,
+    manifestBlocked: (reasons) => `Refusing manifest-less cleanup: ${reasons.join("; ")}. Use --recover for conservative exact-signature legacy recovery.`,
     confirmNeeded: "Refusing to delete without --yes. Exiting.",
   },
   "zh-CN": {
@@ -978,6 +1001,8 @@ const MSG = {
     sourceManifest: "来源：install-manifest（历次 sync 记录的条目）。",
     sourceScan:
       "来源：文件系统扫描（未找到 manifest，或传入了 --no-manifest）。",
+    sourceRecovery: "来源：用户明确启用的精确签名旧版恢复（非 manifest 驱动）。",
+    recoveryBoundary: "恢复模式只处理能精确识别的 Meta_Kim 产物；没有可信 manifest，无法证明已完整卸载。",
     planHeader: "计划执行的操作：",
     actRemoveDir: (p) => `  − 删除目录：${p}`,
     actRemoveFile: (p) => `  − 删除文件：${p}`,
@@ -987,6 +1012,7 @@ const MSG = {
     actGitHook: (p) => `  − 删除共享 git hook：${p}（仅 --deep 时）`,
     summary: (n) => `共 ${n} 项待执行操作。`,
     summaryNone: "无事可做，系统已是干净状态。",
+    recoveryNone: "未发现可精确识别的 Meta_Kim 启动产物。未做任何更改；没有可信 manifest，无法证明已完成全部清理。",
     done: "完成。",
     doneDelta: (del, strip) =>
       `完成：删除 ${del} 个路径，清理 ${strip} 条 settings 条目。`,
@@ -1002,7 +1028,7 @@ const MSG = {
     preservedUnverifiable: (p) => `缺少完整校验信息，已保留受管文件：${p}`,
     preservedConcurrent: (p) => `检测到并发修改，已保留配置：${p}`,
     writeFailed: (p, reason) => `${p} 原子更新失败：${reason}`,
-    manifestBlocked: (reasons) => `缺少可信 manifest，拒绝清理：${reasons.join("；")}。仅在明确进行旧版恢复时使用 --no-manifest。`,
+    manifestBlocked: (reasons) => `缺少可信 manifest，拒绝清理：${reasons.join("；")}。如需保守地恢复旧版残留，请使用 --recover。`,
     confirmNeeded: "未加 --yes，拒绝执行删除。退出。",
   },
   "ja-JP": {
@@ -1013,6 +1039,8 @@ const MSG = {
       "ソース：install-manifest（過去の sync で記録されたエントリ）。",
     sourceScan:
       "ソース：ファイルシステムスキャン（manifest なし、または --no-manifest 指定）。",
+    sourceRecovery: "ソース：明示指定された厳密署名の旧版復旧（manifest ベースではありません）。",
+    recoveryBoundary: "復旧は厳密に識別できた Meta_Kim 生成物だけを処理します。信頼できる manifest がないため、完全なアンインストールは証明できません。",
     planHeader: "実行予定の操作：",
     actRemoveDir: (p) => `  − ディレクトリ削除：${p}`,
     actRemoveFile: (p) => `  − ファイル削除：${p}`,
@@ -1023,6 +1051,7 @@ const MSG = {
     actGitHook: (p) => `  − 共有 git hook 削除：${p}（--deep のみ）`,
     summary: (n) => `計 ${n} 件の操作を予定。`,
     summaryNone: "何もする必要がありません。クリーンな状態です。",
+    recoveryNone: "厳密に識別できる Meta_Kim 起動生成物は見つかりませんでした。変更はありません。信頼できる manifest がないため、完全なクリーンアップは証明できません。",
     done: "完了。",
     doneDelta: (del, strip) =>
       `完了：${del} パス削除、${strip} 件の settings エントリ除去。`,
@@ -1037,7 +1066,7 @@ const MSG = {
     preservedUnverifiable: (p) => `完全性情報が不十分な管理ファイルを保持：${p}`,
     preservedConcurrent: (p) => `同時変更された設定を保持：${p}`,
     writeFailed: (p, reason) => `${p} のアトミック更新失敗：${reason}`,
-    manifestBlocked: (reasons) => `信頼できる manifest がないため拒否：${reasons.join("; ")}。旧版復旧時のみ --no-manifest を使用してください。`,
+    manifestBlocked: (reasons) => `信頼できる manifest がないため拒否：${reasons.join("; ")}。保守的な厳密署名の旧版復旧には --recover を使用してください。`,
     confirmNeeded: "--yes なし、削除を拒否して終了。",
   },
   "ko-KR": {
@@ -1047,6 +1076,8 @@ const MSG = {
     sourceManifest: "소스: install-manifest (이전 sync에 기록된 항목).",
     sourceScan:
       "소스: 파일시스템 스캔 (manifest 없음 또는 --no-manifest 지정).",
+    sourceRecovery: "소스: 사용자가 명시한 엄격한 서명 기반 레거시 복구(manifest 기반 아님).",
+    recoveryBoundary: "복구 모드는 정확히 식별된 Meta_Kim 산출물만 처리합니다. 신뢰할 수 있는 manifest가 없으므로 완전한 제거는 증명할 수 없습니다.",
     planHeader: "실행 예정 작업:",
     actRemoveDir: (p) => `  − 디렉터리 삭제: ${p}`,
     actRemoveFile: (p) => `  − 파일 삭제: ${p}`,
@@ -1056,6 +1087,7 @@ const MSG = {
     actGitHook: (p) => `  − 공유 git hook 제거: ${p} (--deep 전용)`,
     summary: (n) => `총 ${n} 건 작업 예정.`,
     summaryNone: "할 일 없음, 이미 깨끗한 상태.",
+    recoveryNone: "정확히 식별된 Meta_Kim 시작 산출물을 찾지 못했습니다. 변경 사항은 없습니다. 신뢰할 수 있는 manifest가 없으므로 전체 정리를 증명할 수 없습니다.",
     done: "완료.",
     doneDelta: (del, strip) =>
       `완료: 경로 ${del} 건 제거, settings 항목 ${strip} 건 제거.`,
@@ -1070,7 +1102,7 @@ const MSG = {
     preservedUnverifiable: (p) => `무결성 정보가 불완전한 관리 파일 보존: ${p}`,
     preservedConcurrent: (p) => `동시에 변경된 설정 보존: ${p}`,
     writeFailed: (p, reason) => `${p} 원자적 업데이트 실패: ${reason}`,
-    manifestBlocked: (reasons) => `신뢰 가능한 manifest가 없어 제거를 거부합니다: ${reasons.join("; ")}. 레거시 복구에만 --no-manifest를 사용하세요.`,
+    manifestBlocked: (reasons) => `신뢰 가능한 manifest가 없어 제거를 거부합니다: ${reasons.join("; ")}. 보수적인 엄격 서명 레거시 복구에는 --recover를 사용하세요.`,
     confirmNeeded: "--yes 없음, 삭제 거부. 종료.",
   },
 };
@@ -1178,6 +1210,9 @@ function removalIntegrity(finding) {
       : null,
     scanDerived: finding.source === "scan",
     scanExact: scanFindingMatchesCanonical(finding),
+    recoverySignature: finding.recoverySignature ?? null,
+    mcpMemoryBootArtifact: finding.mcpMemoryBootArtifact === true,
+    physicalPath: finding.physicalPath ?? null,
   };
 }
 
@@ -1198,6 +1233,19 @@ function scanFindingMatchesCanonical(finding) {
   if (finding.source !== "scan") return true;
   if (finding.kind !== "file") return false;
   if (![CATEGORIES.B, CATEGORIES.E].includes(finding.category)) return false;
+  if (typeof finding.recoverySignature === "string") {
+    try {
+      const bytes = readFileSync(finding.path);
+      return classifyMcpMemoryBootRecoveryFile({
+        filePath: finding.path,
+        bytes,
+        homeRoot: homedir(),
+        platformName: process.platform,
+      }) === finding.recoverySignature;
+    } catch {
+      return false;
+    }
+  }
   const fileName = path.basename(finding.path);
   if (!REPO_HOOK_FILES.has(fileName)) return false;
   const canonicalPath = path.join(
@@ -1221,6 +1269,7 @@ function planActions({
   deep,
   purgeProjectAgents,
   useManifest = true,
+  recover = false,
 }) {
   let findings = [];
   let source = "scan";
@@ -1231,6 +1280,14 @@ function planActions({
     }
     findings = state.findings;
     source = "manifest";
+  } else if (recover) {
+    findings = scope === "global" || scope === "both"
+      ? collectMcpMemoryBootRecoveryFindings({
+          homeRoot: homedir(),
+          platformName: process.platform,
+        })
+      : [];
+    source = "recovery";
   } else {
     findings = collectFindings({ scope, repoRoot });
   }
@@ -1266,6 +1323,17 @@ function planActions({
         break;
       }
       case CATEGORIES.B: {
+        if (f.mcpMemoryBootArtifact === true || typeof f.recoverySignature === "string") {
+          actions.push({
+            kind: "remove",
+            path: f.path,
+            catLabel: "B",
+            recursive: false,
+            primaryProjectionReferenceCleanup,
+            ...removalIntegrity(f),
+          });
+          break;
+        }
         if (
           f.path.endsWith(path.sep + "meta-kim") ||
           f.path.endsWith("/meta-kim")
@@ -1829,6 +1897,12 @@ export function removeManagedFileIfUnchanged(action, options = {}) {
       return { success: false, preserved: true, reason: `legacy_directory_unremovable:${error?.code ?? "unknown"}` };
     }
   }
+  if (action.scanDerived && action.recoverySignature && action.recursive !== true) {
+    if (!action.sha256 || !Number.isFinite(action.size)) {
+      return { success: false, preserved: true, reason: "missing_integrity" };
+    }
+    return quarantineAndRemoveExactFile(action, options);
+  }
   if (action.manifestManaged && action.recursive === true) {
     return removeExactManagedDirectory(action);
   }
@@ -1846,7 +1920,48 @@ export function removeManagedFileIfUnchanged(action, options = {}) {
   }
 }
 
-function inspectManagedFile(action, targetPath = action.path) {
+function physicalPathKey(value) {
+  const normalized = path.normalize(path.resolve(value));
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function inspectManagedFile(
+  action,
+  targetPath = action.path,
+  { homeRoot = homedir() } = {},
+) {
+  if (!allDirectoryAncestorsArePlain(path.dirname(targetPath))) {
+    return { ok: false, reason: "unsafe_file_ancestor" };
+  }
+  if (action.mcpMemoryBootArtifact === true || action.recoverySignature) {
+    let snapshot;
+    try {
+      snapshot = snapshotMcpMemoryBootArtifactFile({
+        filePath: targetPath,
+        homeRoot,
+        platformName: process.platform,
+      });
+    } catch (error) {
+      if (error?.code === "ENOENT") return { ok: false, reason: "file_missing" };
+      return {
+        ok: false,
+        reason: `unsafe_mcp_memory_boot_path:${error?.message ?? "inspection_failed"}`,
+      };
+    }
+    const inspectingOriginal = physicalPathKey(targetPath) === physicalPathKey(action.path);
+    if (
+      inspectingOriginal &&
+      action.physicalPath &&
+      physicalPathKey(snapshot.physicalPath) !== physicalPathKey(action.physicalPath)
+    ) {
+      return { ok: false, reason: "mcp_memory_boot_physical_path_changed" };
+    }
+    if (snapshot.size !== action.size || snapshot.sha256 !== action.sha256) {
+      return { ok: false, reason: "integrity_mismatch" };
+    }
+    return { ok: true, dev: snapshot.dev, ino: snapshot.ino };
+  }
+
   let stats;
   let bytes;
   try {
@@ -1870,10 +1985,11 @@ function quarantineAndRemoveExactFile(
   {
     beforeMove,
     removeFile = (targetPath) => rmSync(targetPath, { force: true }),
+    homeRoot = homedir(),
   } = {},
 ) {
   if (!existsSync(action.path)) return { success: true, missing: true };
-  const before = inspectManagedFile(action);
+  const before = inspectManagedFile(action, action.path, { homeRoot });
   if (!before.ok) return { success: false, preserved: true, reason: before.reason };
   const quarantinePath = path.join(
     path.dirname(action.path),
@@ -1882,9 +1998,22 @@ function quarantineAndRemoveExactFile(
   let moved = false;
   try {
     beforeMove?.();
+    const commitSnapshot = inspectManagedFile(action, action.path, { homeRoot });
+    if (
+      !commitSnapshot.ok ||
+      commitSnapshot.dev !== before.dev ||
+      commitSnapshot.ino !== before.ino
+    ) {
+      return {
+        success: false,
+        preserved: true,
+        reason: `concurrent_change_before_move:${commitSnapshot.reason ?? "file_identity"}`,
+        quarantinePath: null,
+      };
+    }
     renameSync(action.path, quarantinePath);
     moved = true;
-    const after = inspectManagedFile(action, quarantinePath);
+    const after = inspectManagedFile(action, quarantinePath, { homeRoot });
     if (!after.ok || after.dev !== before.dev || after.ino !== before.ino) {
       throw new Error(`post_move_integrity:${after.reason ?? "file_identity"}`);
     }
@@ -1896,7 +2025,7 @@ function quarantineAndRemoveExactFile(
     let restored = false;
     let rollbackIntegrity = { ok: false, reason: "quarantine_missing" };
     if (moved && existsSync(quarantinePath)) {
-      rollbackIntegrity = inspectManagedFile(action, quarantinePath);
+      rollbackIntegrity = inspectManagedFile(action, quarantinePath, { homeRoot });
       if (!existsSync(action.path)) {
         try {
           renameSync(quarantinePath, action.path);
@@ -2377,7 +2506,8 @@ async function main() {
   const apply = flag("yes");
   const deep = flag("deep");
   const purgeProjectAgents = flag("purge-project-agents");
-  const useManifest = !flag("no-manifest");
+  const recover = flag("recover");
+  const useManifest = !recover && !flag("no-manifest");
   const lang = resolveLang(valueOf("lang"));
   const t = MSG[lang] || MSG.en;
 
@@ -2389,6 +2519,7 @@ async function main() {
     deep,
     purgeProjectAgents,
     useManifest,
+    recover,
   });
 
   if (blockedReasons.length > 0) {
@@ -2405,14 +2536,17 @@ async function main() {
       : `${C.dim}${t.dryNote}${C.reset}`,
   );
   lines.push(
-    `${C.dim}${source === "manifest" ? t.sourceManifest : t.sourceScan}${C.reset}`,
+    `${C.dim}${source === "manifest" ? t.sourceManifest : source === "recovery" ? t.sourceRecovery : t.sourceScan}${C.reset}`,
   );
+  if (source === "recovery") lines.push(`${C.yellow}${t.recoveryBoundary}${C.reset}`);
   if (!purgeProjectAgents)
     lines.push(`${C.dim}${t.projectAgentsKept}${C.reset}`);
   if (!deep) lines.push(`${C.dim}${t.deepOff}${C.reset}`);
 
   if (actions.length === 0) {
-    lines.push(`${C.green}${t.summaryNone}${C.reset}`);
+    lines.push(
+      `${source === "recovery" ? C.yellow : C.green}${source === "recovery" ? t.recoveryNone : t.summaryNone}${C.reset}`,
+    );
     process.stdout.write(`${lines.join("\n")}\n`);
     return;
   }

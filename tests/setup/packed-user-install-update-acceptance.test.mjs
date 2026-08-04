@@ -473,6 +473,12 @@ test("packed release proof migrates durable Claude MCP registration and proves t
   );
   assert.match(acceptanceSource, /claudeUserConfigPath = path\.join\(roots\.userHome, "\.claude\.json"\)/u);
   assert.match(acceptanceSource, /meta_kim_runtime/u);
+  assert.match(acceptanceSource, /event: "packed_legacy_mcp_migration_complete"/u);
+  assert.ok(
+    acceptanceSource.indexOf('event: "packed_legacy_mcp_migration_complete"') <
+      acceptanceSource.indexOf("portableRuntimePrepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot"),
+    "historical-user migration proof must be emitted before unrelated live observation evidence is copied",
+  );
   assert.match(acceptanceSource, /mcpServers\?\.\["meta-kim-runtime"\]/u);
   assert.match(acceptanceSource, /resolveDurableMetaKimRuntimeLayout/u);
   assert.match(acceptanceSource, /packedCliSha256/u);

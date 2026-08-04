@@ -34,9 +34,16 @@ describe(
     assert.ok(activeId, "ACTIVE row must expose a problem ID");
     assert.ok(nextId, "NEXT row must expose a problem ID");
     assert.notEqual(activeId, nextId, "ACTIVE and NEXT must be different problems");
-    assert.match(activeRows[0], /进行中|等待标准发布门禁/);
-    assert.match(activeRows[0], /implementation_active|acceptance_candidate/);
-    assert.doesNotMatch(activeRows[0], /已发布|release_closed/);
+    const explicitlyPausedAfterRelease =
+      /已发布闭合.*release_closed/.test(activeRows[0]) &&
+      /暂停点|不代表继续执行/.test(activeRows[0]);
+    if (explicitlyPausedAfterRelease) {
+      assert.match(activeRows[0], /未自动激活/);
+    } else {
+      assert.match(activeRows[0], /进行中|等待标准发布门禁/);
+      assert.match(activeRows[0], /implementation_active|acceptance_candidate/);
+      assert.doesNotMatch(activeRows[0], /已发布|release_closed/);
+    }
     assert.match(nextRows[0], /待处理/);
     assert.match(nextRows[0], /not_started/);
 
@@ -47,10 +54,17 @@ describe(
     );
     assert.equal(
       inProgressRows.length,
-      1,
-      "the serial queue must contain exactly one in-progress item",
+      explicitlyPausedAfterRelease ? 0 : 1,
+      explicitlyPausedAfterRelease
+        ? "an explicitly paused queue must not manufacture an in-progress item"
+        : "the serial queue must contain exactly one in-progress item",
     );
-    assert.match(inProgressRows[0], new RegExp(`\\| ${activeId} \\|`));
+    const activeSerialRow = queueRows.find((line) => line.includes(`| ${activeId} |`)) ?? "";
+    assert.match(
+      explicitlyPausedAfterRelease ? activeSerialRow : inProgressRows[0],
+      new RegExp(`\\| ${activeId} \\|`),
+    );
+    if (explicitlyPausedAfterRelease) assert.match(activeSerialRow, /已发布闭合.*release_closed/);
     assert.match(queueRows.find((line) => line.includes(`| ${nextId} |`)) ?? "", /待处理（唯一 next/);
     assert.match(prd, /`v2\.9\.2` 是 P-118 重开前的公开基线/);
   });

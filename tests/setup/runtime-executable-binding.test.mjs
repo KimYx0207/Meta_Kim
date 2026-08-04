@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -97,6 +97,136 @@ test("fresh install/update binding recorder refreshes selected runtimes and pres
     const updated = JSON.parse(readFileSync(manifestPath, "utf8"));
     assert.deepEqual(updated.bindings.claude_code, retainedClaude);
     assert.notEqual(updated.bindings.codex.launchDescriptor.launcher.sha256, installed.bindings.codex.launchDescriptor.launcher.sha256);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("binding recorder skips broken candidates and records the first shell-free version probe that succeeds", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-binding-candidates-"));
+  try {
+    const stale = path.join(root, "missing-codex.exe");
+    const broken = executable(root, "broken-codex", "broken");
+    const usable = executable(root, "usable-codex", "usable");
+    const calls = [];
+    const result = recordSetupRuntimeExecutableBindings({
+      roots: [root],
+      profile: "fixture",
+      targets: ["codex"],
+      pathResolver: () => [stale, broken, usable],
+      versionRunner: (launcher) => {
+        calls.push(launcher);
+        return launcher === usable
+          ? { status: 0, stdout: "codex 2.0.0\n", stderr: "" }
+          : { status: 1, stdout: "", stderr: "broken shim" };
+      },
+    });
+    assert.deepEqual(calls, [broken, usable]);
+    assert.equal(result.bindings.codex.launchDescriptor.launcher.realpath, usable);
+    assert.equal(result.bindings.codex.version, "codex 2.0.0");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("binding loader finds the stored descriptor after a stale or mismatched earlier PATH candidate", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-loader-candidates-"));
+  try {
+    const stale = path.join(root, "missing-codex.exe");
+    const other = executable(root, "other-codex", "other");
+    const stored = executable(root, "stored-codex", "stored");
+    recordSetupRuntimeExecutableBindings({
+      roots: [root],
+      profile: "fixture",
+      targets: ["codex"],
+      pathResolver: () => stored,
+      versionRunner: () => ({ status: 0, stdout: "codex 2.0.0\n", stderr: "" }),
+    });
+    const loaded = loadSetupBoundRuntimeExecutable({
+      projectRoot: root,
+      globalRoot: path.join(root, "unused-global"),
+      profile: "fixture",
+      runtime: "codex",
+      pathResolver: () => [stale, other, stored],
+    });
+    assert.equal(loaded.realpath, stored);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("production PATH locator skips a broken first candidate and reloads the usable second candidate", { concurrency: false }, () => {
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-default-locator-"));
+  const brokenDir = path.join(root, "broken-bin");
+  const usableDir = path.join(root, "usable-bin");
+  const executableName = process.platform === "win32" ? "codex.exe" : "codex";
+  const broken = path.join(brokenDir, executableName);
+  const usable = path.join(usableDir, executableName);
+  const originalPath = process.env.PATH;
+  try {
+    mkdirSync(brokenDir, { recursive: true });
+    mkdirSync(usableDir, { recursive: true });
+    writeFileSync(broken, process.platform === "win32" ? "broken\n" : "#!/bin/sh\nexit 1\n", "utf8");
+    writeFileSync(usable, process.platform === "win32" ? "usable\n" : "#!/bin/sh\nexit 0\n", "utf8");
+    if (process.platform !== "win32") {
+      chmodSync(broken, 0o755);
+      chmodSync(usable, 0o755);
+    }
+    process.env.PATH = [brokenDir, usableDir, originalPath].filter(Boolean).join(path.delimiter);
+
+    const brokenRealpath = realpathSync.native(broken);
+    const usableRealpath = realpathSync.native(usable);
+    const calls = [];
+    const recorded = recordSetupRuntimeExecutableBindings({
+      roots: [root],
+      profile: "fixture",
+      targets: ["codex"],
+      versionRunner: (launcher) => {
+        calls.push(launcher);
+        return launcher === usableRealpath
+          ? { status: 0, stdout: "codex 2.0.0\n", stderr: "" }
+          : { status: 1, stdout: "", stderr: "broken candidate" };
+      },
+    });
+
+    assert.deepEqual(calls, [brokenRealpath, usableRealpath]);
+    assert.equal(recorded.bindings.codex.launchDescriptor.discoveredEntry.realpath, usableRealpath);
+    assert.equal(recorded.bindings.codex.launchDescriptor.launcher.realpath, usableRealpath);
+
+    const loaded = loadSetupBoundRuntimeExecutable({
+      projectRoot: root,
+      globalRoot: path.join(root, "unused-global"),
+      profile: "fixture",
+      runtime: "codex",
+    });
+    assert.equal(loaded.realpath, usableRealpath);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("binding recorder aggregates candidate diagnostics when every probe fails", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-binding-errors-"));
+  try {
+    const stale = path.join(root, "missing-codex.exe");
+    const broken = executable(root, "broken-codex", "broken");
+    assert.throws(
+      () => recordSetupRuntimeExecutableBindings({
+        roots: [root],
+        targets: ["codex"],
+        pathResolver: () => [stale, broken],
+        versionRunner: () => ({ status: 1, stdout: "", stderr: "unsupported version" }),
+      }),
+      (error) => {
+        assert.match(error.message, /no usable PATH candidate/u);
+        assert.match(error.message, /missing-codex\.exe/u);
+        assert.match(error.message, /broken-codex\.exe/u);
+        assert.match(error.message, /unsupported version/u);
+        return true;
+      },
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

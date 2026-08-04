@@ -6,6 +6,19 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.23] - 2026-08-04
+
+### Fixed
+
+- **Existing Windows users no longer need to remove a broken MCP Memory startup entry by hand.** Normal install/update detects only the exact Meta_Kim `mcp-memory-silent.vbs` shape whose command target is missing and removes the orphan before dependency work; the public recovery uninstall path provides the same bounded repair while preserving unknown or modified startup files.
+- **MCP Memory dependency setup now distinguishes a missing dependency from a healthy existing installation and a failed replacement.** Install/update verifies executable candidates instead of trusting the first PATH match, reuses healthy state, activates a replacement only after validation, and preserves the previous working runtime when an upgrade candidate fails.
+- **Historical Claude MCP registrations migrate through the public update path.** Strict legacy matching now accepts the previously emitted direct Node and `cmd /c` forms, including an absolute `node.exe` path, then replaces only the proven `meta_kim_runtime` entry with the durable `meta-kim-runtime` registration while preserving unrelated servers, auth, environment, and user configuration.
+- **Installed-user compatibility is now a release invariant.** Install, update, sync, cleanup, dependency, startup, manifest, and generated-config changes must cover fresh installs, same-version reinstalls, historical updates, partial prior installs, and user-modified drift; a maintainer-only cleanup or fresh-install-only patch no longer counts as a product fix.
+
+### Verification
+
+- The standard full release gate exercises the packed public CLI across install, update, repeated update, historical migration, automatic orphan-startup repair, manifest-owned uninstall, user-state preservation, runtime sync, Graphify, and governance regressions.
+
 ## [2.9.22] - 2026-08-02
 
 ### Fixed

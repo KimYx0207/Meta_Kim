@@ -454,6 +454,13 @@ async function assertSafeStatePath(cwd, targetPath, options = {}) {
     }
   }
 
+  // Lock files are created with exclusive `wx` semantics after this check.
+  // Their names can legitimately appear and disappear between concurrent
+  // processes, so inspecting that volatile leaf would turn normal lock churn
+  // into a false reparse escape. The fully resolved parent chain above remains
+  // mandatory; `withFileLock` refuses to follow an existing leaf.
+  if (options.exclusiveCreateLeaf === true) return resolvedTarget;
+
   try {
     const targetInfo = await lstat(resolvedTarget);
     if (targetInfo.isSymbolicLink()) {
@@ -596,7 +603,10 @@ export async function createProjectTaskIdentity(cwd, promptText, options = {}) {
     };
   }
   if (!key) {
-    await assertSafeStatePath(cwd, lockPath, { createParents: true });
+    await assertSafeStatePath(cwd, lockPath, {
+      createParents: true,
+      exclusiveCreateLeaf: true,
+    });
     let pending = taskIdentityKeyInflight.get(keyPath);
     if (!pending) {
       pending = initializeTaskIdentityKey(cwd, keyPath, lockPath);

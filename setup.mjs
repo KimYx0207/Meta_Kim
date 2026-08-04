@@ -58,6 +58,13 @@ import {
   resolveSetupRuntimeLaunchInventoryRoots,
 } from "./scripts/runtime-executable-binding.mjs";
 import {
+  repairOrphanMcpMemoryBootLaunchers,
+  recordMcpMemoryBootArtifactOwnership,
+  renderCurrentWindowsMcpMemoryCommandBytes,
+  renderCurrentWindowsMcpMemoryPowerShellBytes,
+  renderCurrentWindowsMcpMemoryStartupVbsBytes,
+} from "./scripts/mcp-memory-boot-artifacts.mjs";
+import {
   detectPython310,
   extractPipShowVersion,
   readProcessText,
@@ -188,6 +195,10 @@ import {
   summarizeInstallStatus,
 } from "./scripts/install-status-semantics.mjs";
 import {
+  MCP_MEMORY_INSTALL_OUTCOME,
+  mcpMemoryInstallStep,
+} from "./scripts/mcp-memory-install-outcome.mjs";
+import {
   MCP_MEMORY_SETUP_ACTION,
   MCP_MEMORY_SETUP_REASON,
   resolveMcpMemorySetupPolicy,
@@ -249,16 +260,6 @@ const setupWithGlobalHooks =
 const skipOptionalTools = process.env.META_KIM_SKIP_OPTIONAL_TOOLS === "1";
 const preferLocalDependencies =
   process.env.META_KIM_PREFER_LOCAL_DEPENDENCIES === "1";
-
-function writeUtf8BomFileSync(path, content) {
-  writeFileSync(
-    path,
-    Buffer.concat([
-      Buffer.from([0xef, 0xbb, 0xbf]),
-      Buffer.from(content, "utf8"),
-    ]),
-  );
-}
 
 /** Interactive extras (default off): proxy prompts stay opt-in; install scope is always shown in TTY. */
 const promptProxy =
@@ -6888,7 +6889,6 @@ function configureBootAutoStart(
   if (!databasePath || !isAbsolute(databasePath)) return false;
   const plat = platform();
   const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
-  const psSingleQuote = (value) => `'${String(value).replace(/'/g, "''")}'`;
   const xmlEscape = (value) => String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -6970,107 +6970,19 @@ function configureBootAutoStart(
       const vbsPath = join(startupDir, "mcp-memory-silent.vbs");
       const legacyCmdPath = join(startupDir, "mcp-memory-start.cmd");
       if (existsSync(legacyCmdPath)) rmSync(legacyCmdPath, { force: true });
-      const escapedMemoryBin = memoryBin.replace(/'/g, "''");
-      const psHealthUrl = psSingleQuote(endpoint.healthUrl);
-      const psEndpointUrl = psSingleQuote(endpoint.endpointUrl);
-      const psPort = psSingleQuote(endpoint.port);
-      writeUtf8BomFileSync(
-        psPath,
-        `$ErrorActionPreference = "SilentlyContinue"\r\n` +
-          `$env:MCP_ALLOW_ANONYMOUS_ACCESS = "${bootEnv.MCP_ALLOW_ANONYMOUS_ACCESS}"\r\n` +
-          `$env:HF_HUB_OFFLINE = "${bootEnv.HF_HUB_OFFLINE}"\r\n` +
-          `$env:TRANSFORMERS_OFFLINE = "${bootEnv.TRANSFORMERS_OFFLINE}"\r\n` +
-          `$env:MCP_MEMORY_ONNX_ALLOW_DOWNLOAD = "${bootEnv.MCP_MEMORY_ONNX_ALLOW_DOWNLOAD}"\r\n` +
-          `$env:MCP_MEMORY_ALLOW_HASH_EMBEDDINGS = "${bootEnv.MCP_MEMORY_ALLOW_HASH_EMBEDDINGS}"\r\n` +
-          `$env:MCP_MEMORY_USE_ONNX = "${bootEnv.MCP_MEMORY_USE_ONNX}"\r\n` +
-          `$env:MCP_MEMORY_SQLITE_PATH = ${psSingleQuote(databasePath)}\r\n` +
-          `$env:MCP_MEMORY_URL = ${psEndpointUrl}\r\n` +
-          `$env:META_KIM_MEMORY_PORT = ${psPort}\r\n` +
-          `$env:MCP_HTTP_HOST = ${psSingleQuote(endpoint.hostname)}\r\n` +
-          `$env:MCP_HTTP_PORT = ${psPort}\r\n` +
-          `$memoryBin = '${escapedMemoryBin}'\r\n` +
-          `$failureMessage = ${psSingleQuote(failureMessage)}\r\n` +
-          `$logDir = Join-Path $env:USERPROFILE ".meta-kim"\r\n` +
-          `$stdoutLog = Join-Path $logDir "mcp-memory.out.log"\r\n` +
-          `$stderrLog = Join-Path $logDir "mcp-memory.err.log"\r\n` +
-          `$lockDir = ${psSingleQuote(startLockPath)}\r\n` +
-          `$lockAcquired = $false\r\n` +
-          `$lockToken = [guid]::NewGuid().ToString("n")\r\n` +
-          `function Test-MetaKimMemoryHealth {\r\n` +
-          `  try {\r\n` +
-          `    $response = Invoke-WebRequest -Uri ${psHealthUrl} -UseBasicParsing -TimeoutSec 3\r\n` +
-          `    $payload = $response.Content | ConvertFrom-Json\r\n` +
-          `    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
-          `  } catch { return $false }\r\n` +
-          `}\r\n` +
-          `function Remove-MetaKimOwnedLock {\r\n` +
-          `  try {\r\n` +
-          `    $owner = Get-Content -LiteralPath (Join-Path $lockDir "owner.json") -Raw | ConvertFrom-Json\r\n` +
-          `    if ([string]$owner.token -eq $lockToken) { Remove-Item -LiteralPath $lockDir -Recurse -Force }\r\n` +
-          `  } catch {}\r\n` +
-          `}\r\n` +
-          `try {\r\n` +
-          `  New-Item -ItemType Directory -Path $lockDir -ErrorAction Stop | Out-Null\r\n` +
-          `  $lockAcquired = $true\r\n` +
-          `  $owner = @{ schemaVersion = "meta-kim-mcp-memory-start-lock-v1"; token = $lockToken; ownerPid = $PID; ownerStartIdentity = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o"); acquiredAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(6).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress\r\n` +
-          `  Set-Content -LiteralPath (Join-Path $lockDir "owner.json") -Value $owner -Encoding UTF8\r\n` +
-          `} catch {\r\n` +
-          `  try {\r\n` +
-          `    $existingOwner = Get-Content -LiteralPath (Join-Path $lockDir "owner.json") -Raw | ConvertFrom-Json\r\n` +
-          `    $ownerAlive = $false\r\n` +
-          `    try { $ownerProcess = Get-Process -Id ([int]$existingOwner.ownerPid) -ErrorAction Stop; $ownerAlive = ($ownerProcess.StartTime.ToUniversalTime().ToString("o") -eq [string]$existingOwner.ownerStartIdentity) } catch {}\r\n` +
-          `    if (-not $ownerAlive -and [int64]$existingOwner.expiresAt -le [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) {\r\n` +
-          `      $staleDir = "$lockDir.stale.$PID"\r\n` +
-          `      Move-Item -LiteralPath $lockDir -Destination $staleDir -ErrorAction Stop\r\n` +
-          `      New-Item -ItemType Directory -Path $lockDir -ErrorAction Stop | Out-Null\r\n` +
-          `      Remove-Item -LiteralPath $staleDir -Recurse -Force\r\n` +
-          `      $lockAcquired = $true\r\n` +
-          `      $owner = @{ schemaVersion = "meta-kim-mcp-memory-start-lock-v1"; token = $lockToken; ownerPid = $PID; ownerStartIdentity = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o"); acquiredAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(6).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress\r\n` +
-          `      Set-Content -LiteralPath (Join-Path $lockDir "owner.json") -Value $owner -Encoding UTF8\r\n` +
-          `    }\r\n` +
-          `  } catch {\r\n` +
-          `    try {\r\n` +
-          `      $lockMtime = [DateTimeOffset]((Get-Item -LiteralPath $lockDir).LastWriteTimeUtc)\r\n` +
-          `      $lockAge = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $lockMtime.ToUnixTimeMilliseconds()\r\n` +
-          `      if ($lockAge -ge 360000) {\r\n` +
-          `        $staleDir = "$lockDir.stale.$PID"\r\n` +
-          `        Move-Item -LiteralPath $lockDir -Destination $staleDir -ErrorAction Stop\r\n` +
-          `        New-Item -ItemType Directory -Path $lockDir -ErrorAction Stop | Out-Null\r\n` +
-          `        Remove-Item -LiteralPath $staleDir -Recurse -Force\r\n` +
-          `        $lockAcquired = $true\r\n` +
-          `        $owner = @{ schemaVersion = "meta-kim-mcp-memory-start-lock-v1"; token = $lockToken; ownerPid = $PID; ownerStartIdentity = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o"); acquiredAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(6).ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress\r\n` +
-          `        Set-Content -LiteralPath (Join-Path $lockDir "owner.json") -Value $owner -Encoding UTF8\r\n` +
-          `      }\r\n` +
-          `    } catch {}\r\n` +
-          `  }\r\n` +
-          `  if (-not $lockAcquired) {\r\n` +
-          `    if (Test-MetaKimMemoryHealth) { exit 0 }\r\n` +
-          `    Add-Content -LiteralPath $stderrLog -Value $failureMessage -Encoding UTF8\r\n` +
-          `    exit 1\r\n` +
-          `  }\r\n` +
-          `}\r\n` +
-          `if (Test-MetaKimMemoryHealth) { Remove-MetaKimOwnedLock; exit 0 }\r\n` +
-          `try {\r\n` +
-          `  Start-Process -FilePath $memoryBin -ArgumentList @("server", "--http", "--http-host", ${psSingleQuote(endpoint.hostname)}, "--http-port", ${psPort}) -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog\r\n` +
-          `} catch {}\r\n` +
-          `$healthy = $false\r\n` +
-          `for ($i = 0; $i -lt 150; $i++) {\r\n` +
-          `  Start-Sleep -Seconds 2\r\n` +
-          `  if (Test-MetaKimMemoryHealth) { $healthy = $true; break }\r\n` +
-          `}\r\n` +
-          `if (-not $healthy) {\r\n` +
-          `  Add-Content -LiteralPath $stderrLog -Value $failureMessage -Encoding UTF8\r\n` +
-          `}\r\n` +
-          `if ($lockAcquired) { Remove-MetaKimOwnedLock }\r\n`,
-      );
-      writeFileSync(
-        cmdPath,
-        `@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${psPath}"\r\n`,
-      );
-      writeFileSync(
-        vbsPath,
-        `Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.Run """${cmdPath}""", 0, False\r\n`,
-      );
+      writeFileSync(psPath, renderCurrentWindowsMcpMemoryPowerShellBytes({
+        memoryBin,
+        databasePath,
+        endpointUrl: endpoint.endpointUrl,
+        healthUrl: endpoint.healthUrl,
+        hostname: endpoint.hostname,
+        port: endpoint.port,
+        failureMessage,
+        lockDir: startLockPath,
+        bootEnv,
+      }));
+      writeFileSync(cmdPath, renderCurrentWindowsMcpMemoryCommandBytes({ powershellPath: psPath }));
+      writeFileSync(vbsPath, renderCurrentWindowsMcpMemoryStartupVbsBytes({ commandPath: cmdPath }));
       return true;
     }
     if (plat === "darwin") {
@@ -7951,6 +7863,22 @@ async function installMcpMemoryServiceStep(
 
   info(t.mcpMemoryServerStartHint);
 
+  if (!registrationOk || !backgroundOk) return false;
+
+  const ownership = await recordMcpMemoryBootArtifactOwnership({
+    homeRoot: homedir(),
+    platformName: platform(),
+    metaKimVersion: packageVersion,
+    canAutoStart: memoryEndpoint.canAutoStart,
+  });
+  if (!ownership.ok) {
+    warn(
+      `MCP Memory boot ownership recording failed: ${ownership.error}. ` +
+      "The service may be running, but setup is incomplete; repair the reported artifact or manifest issue and rerun setup.",
+    );
+    return MCP_MEMORY_INSTALL_OUTCOME.OWNERSHIP_FAILURE;
+  }
+
   // Step 4.7 — auto-install runtime memory hooks so the full pipeline
   // (pip package → .mcp.json → hook files → runtime registration →
   // health check) runs from a single `node setup.mjs` invocation.
@@ -7958,7 +7886,7 @@ async function installMcpMemoryServiceStep(
     allowClaudeGlobalSettings: want && activeTargets.includes("claude"),
   });
 
-  return registrationOk && hooksOk && backgroundOk;
+  return hooksOk;
 }
 
 function ensureNetworkxCompatibility(python) {
@@ -8627,6 +8555,21 @@ async function main() {
 
 // ── Action runners ──────────────────────────────────────
 
+function runAutomaticMcpMemoryBootRepair() {
+  const result = repairOrphanMcpMemoryBootLaunchers({
+    homeRoot: homedir(),
+    platformName: platform(),
+  });
+  if (!result.ok) {
+    warn(`MCP Memory automatic boot repair failed: ${result.error}`);
+    return false;
+  }
+  if (result.status === "repaired") {
+    ok(`Automatically repaired ${result.repaired.length} orphan MCP Memory startup launcher(s)`);
+  }
+  return true;
+}
+
 async function runInstall() {
   const stepResults = [];
   const runtimes = await detectRuntimes();
@@ -8692,6 +8635,12 @@ async function runInstall() {
         managedProjectResolution.rejected,
       );
     }
+  }
+
+  if (needGlobal) {
+    stepResults.push(
+      installStep("automatic MCP Memory boot repair", runAutomaticMcpMemoryBootRepair()),
+    );
   }
 
   // 步骤计数
@@ -8869,13 +8818,7 @@ async function runInstall() {
         t.stepLabel(stepNum, t.progressInstallMcpMemory),
         async () => installMcpMemoryServiceStep(false, activeTargets),
       );
-  stepResults.push(
-    installStep(
-      t.progressInstallMcpMemory,
-      mcpMemoryOk === undefined ? INSTALL_STEP_OUTCOME.SKIPPED : mcpMemoryOk,
-      INSTALL_STEP_CLASSIFICATION.OPTIONAL,
-    ),
-  );
+  stepResults.push(mcpMemoryInstallStep(t.progressInstallMcpMemory, mcpMemoryOk));
 
   // Memory can add its uniquely-owned Python hook, SessionStart fragment, and
   // command subtree after global sync. Refresh only after those writes so a
@@ -9016,6 +8959,12 @@ async function runUpdate() {
         managedProjectResolution.rejected,
       );
     }
+  }
+
+  if (needGlobal) {
+    stepResults.push(
+      installStep("automatic MCP Memory boot repair", runAutomaticMcpMemoryBootRepair()),
+    );
   }
 
   // ── 1. npm install (always — new code may have new deps) ────────────
@@ -9169,13 +9118,7 @@ async function runUpdate() {
         INSTALL_STEP_OUTCOME.SKIPPED
       )
     : await installMcpMemoryServiceStep(true, activeTargets);
-  stepResults.push(
-    installStep(
-      t.progressInstallMcpMemory,
-      mcpMemoryOk === undefined ? INSTALL_STEP_OUTCOME.SKIPPED : mcpMemoryOk,
-      INSTALL_STEP_CLASSIFICATION.OPTIONAL,
-    ),
-  );
+  stepResults.push(mcpMemoryInstallStep(t.progressInstallMcpMemory, mcpMemoryOk));
 
   // ── 5.5. Refresh global capability inventory ───────────────────────
   console.log("");

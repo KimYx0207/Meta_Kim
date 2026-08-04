@@ -9,6 +9,78 @@ function hasExactPackedTargets(targets) {
     targets.every((target, index) => target === PACKED_USER_TARGETS[index]);
 }
 
+const PACKED_UNINSTALL_DESCRIPTOR_IDS = Object.freeze({
+  win32: Object.freeze([
+    "windows-powershell",
+    "windows-command",
+    "windows-startup",
+  ]),
+  darwin: Object.freeze(["macos-command", "macos-launch-agent"]),
+  linux: Object.freeze(["linux-command", "linux-autostart"]),
+});
+
+function hasExactOrderedValues(values, expected) {
+  return Array.isArray(values) &&
+    values.length === expected.length &&
+    values.every((value, index) => value === expected[index]);
+}
+
+function packedUninstallProofComplete(currentPackage) {
+  const packedUninstall = currentPackage?.packedUninstall;
+  const expectedDescriptorIds =
+    PACKED_UNINSTALL_DESCRIPTOR_IDS[packedUninstall?.platform];
+  if (!expectedDescriptorIds) return false;
+
+  const normalManifestUninstall = packedUninstall.normalManifestUninstall;
+  const privateManifestBypass = packedUninstall.privateManifestBypass;
+  const windowsRecovery = packedUninstall.windowsRecovery;
+  const platformRecoveryComplete = packedUninstall.platform === "win32"
+    ? windowsRecovery?.status === "passed" &&
+      windowsRecovery?.fixture === "shared_renderer_exact_orphan_startup_vbs" &&
+      windowsRecovery?.missingCommandTarget === true &&
+      windowsRecovery?.dryRunPreserved === true &&
+      windowsRecovery?.unprovenBoundaryReported === true &&
+      windowsRecovery?.liveRunRemoved === true
+    : windowsRecovery?.status === "not_applicable" &&
+      windowsRecovery?.reason === "windows_exact_signature_recovery_only";
+
+  return (
+    packedUninstall.status === "passed" &&
+    packedUninstall.evidenceTier === "packed_isolated_installed_public_cli" &&
+    typeof packedUninstall.packageSha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(packedUninstall.packageSha256) &&
+    packedUninstall.packageSha256 === currentPackage?.packageSha256 &&
+    packedUninstall.isolatedHomeAndPrefix === true &&
+    normalManifestUninstall?.status === "passed" &&
+    normalManifestUninstall?.evidenceScope ===
+      "synthetic_manifest_fixture_consumed_by_packed_public_cli" &&
+    hasExactOrderedValues(
+      normalManifestUninstall?.descriptorIds,
+      expectedDescriptorIds,
+    ) &&
+    normalManifestUninstall?.syntheticFixtureExactOwnershipAndIntegrityRecorded === true &&
+    normalManifestUninstall?.allChainFilesRemoved === true &&
+    privateManifestBypass?.status === "passed" &&
+    privateManifestBypass?.option === "--no-manifest" &&
+    privateManifestBypass?.exitCode === 2 &&
+    privateManifestBypass?.rejectedByPublicCli === true &&
+    platformRecoveryComplete
+  );
+}
+
+function automaticOrphanBootRepairProofComplete(currentPackage) {
+  const proof = currentPackage?.automaticOrphanBootRepair;
+  const platformName = currentPackage?.packedUninstall?.platform;
+  if (platformName === "win32") {
+    return proof?.status === "passed" &&
+      proof?.evidenceTier === "packed_isolated_installed_public_cli" &&
+      proof?.fixture === "exact_startup_vbs_with_missing_command_target" &&
+      proof?.removedBeforeDependencyWork === true;
+  }
+  return proof?.status === "not_applicable" &&
+    proof?.reason === "windows_startup_vbs_only";
+}
+
 export function packedProductProofComplete(packedUserProof) {
   const currentPackage = packedUserProof?.currentPackage;
   const portableRuntime = currentPackage?.portableRuntime;
@@ -23,7 +95,9 @@ export function packedProductProofComplete(packedUserProof) {
     packedUserProof?.currentVersionTagAbsent === true &&
     currentPackage?.status === "passed" &&
     currentPackage?.installedCliEntrypoints === true &&
+    automaticOrphanBootRepairProofComplete(currentPackage) &&
     hasExactPackedTargets(currentPackage?.targets) &&
+    packedUninstallProofComplete(currentPackage) &&
     JSON.stringify(currentModes.map(({ mode, status }) => ({ mode, status }))) ===
       JSON.stringify([
         { mode: "install", status: "passed" },

@@ -22,6 +22,10 @@ import {
 } from "../../scripts/mcp-memory-upgrade-transaction.mjs";
 
 const setupSource = readFileSync(resolve(import.meta.dirname, "..", "..", "setup.mjs"), "utf8");
+const bootArtifactsSource = readFileSync(
+  resolve(import.meta.dirname, "..", "..", "scripts", "mcp-memory-boot-artifacts.mjs"),
+  "utf8",
+);
 
 const validEncode = {
   ok: true,
@@ -408,7 +412,8 @@ describe("MCP memory upgrade transaction", () => {
   test("custom database path is persisted into live env, every boot launcher, active state, and recovery", () => {
     assert.match(setupSource, /MCP_MEMORY_SQLITE_PATH: databasePath/);
     assert.match(setupSource, /env: \{ MCP_MEMORY_SQLITE_PATH: databasePath \}/);
-    assert.match(setupSource, /\$env:MCP_MEMORY_SQLITE_PATH =/);
+    assert.match(setupSource, /renderCurrentWindowsMcpMemoryPowerShellBytes\(\{[\s\S]*?databasePath/);
+    assert.match(bootArtifactsSource, /\$env:MCP_MEMORY_SQLITE_PATH =/);
     assert.match(setupSource, /export MCP_MEMORY_SQLITE_PATH=/);
     assert.match(setupSource, /<key>MCP_MEMORY_SQLITE_PATH<\/key>/);
     assert.match(setupSource, /databasePath,\s*activatedAt/);

@@ -3889,4 +3889,14 @@ describe("Part H: verification-to-evolution close", async () => {
       "must NOT target memory/ (Claude Code session memory, not Meta_Kim evolution)",
     );
   });
+
+  test("Verification requires installed-user compatibility beyond fresh install", async () => {
+    const skill = await readFile("canonical/skills/meta-theory/SKILL.md");
+    assert.match(skill, /Installed-user compatibility invariant/u);
+    assert.match(skill, /existing[\s\S]*same-version reinstall/u);
+    assert.match(skill, /historical-version update/u);
+    assert.match(skill, /partial\/failed-install[\s\S]*user-modified drift/u);
+    assert.match(skill, /fresh-install pass alone never proves/u);
+    assert.match(skill, /normal public[\s\S]*install\/update route/u);
+  });
 });

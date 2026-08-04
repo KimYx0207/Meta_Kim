@@ -411,8 +411,14 @@ function outputText(payload) {
 function completedShellOutput(payload) {
   if (!Array.isArray(payload?.output)) return false;
   const text = outputText(payload);
-  return !/\bScript running with cell ID\b/iu.test(text) &&
-    /(?:^|\r?\n)Exit code:\s*0(?:\r?\n|$)/iu.test(text);
+  const failed =
+    /\bScript running with cell ID\b/iu.test(text) ||
+    /^Script failed(?:\r?\n|$)/u.test(text) ||
+    /(?:^|\r?\n)[A-Za-z][A-Za-z0-9-]*:\s*\r?\nLine \|/u.test(text) ||
+    /\b(?:rejected|blocked by policy)\b/iu.test(text);
+  return !failed &&
+    (/(?:^|\r?\n)Exit code:\s*0(?:\r?\n|$)/iu.test(text) ||
+      /^Script completed(?:\r?\n|$)/u.test(text));
 }
 
 /** Parses the bounded Desktop engineering fragment, never a whole rollout. */
@@ -427,9 +433,10 @@ export function observeCodexDesktopEngineeringSlice(text, { marker, workspacePat
   const outputs = new Map(records.filter(({ value }) => value?.type === "response_item" && value?.payload?.type === "custom_tool_call_output" && value?.payload?.call_id).map((entry) => [entry.value.payload.call_id, entry]));
   const patchEnds = records.filter(({ value }) => value?.type === "event_msg" && value?.payload?.type === "patch_apply_end" && value?.payload?.success === true && value?.payload?.status === "completed");
   const normalizedInput = (entry) => normalizePathText(entry.value.payload.input ?? "");
+  const isShellProvider = (input) => /tools\.(?:shell_command|exec_command)/u.test(input);
   const successfulShell = calls.map((call) => ({ call, output: outputs.get(call.value.payload.call_id), input: normalizedInput(call) })).filter(({ output }) => output && completedShellOutput(output.value.payload));
-  const directory = successfulShell.filter(({ input }) => input.includes("tools.shell_command") && input.includes("new-item") && input.includes(normalizedWorkspace) && !input.includes("get-content"));
-  const reads = successfulShell.filter(({ input }) => input.includes("tools.shell_command") && input.includes("get-content") && input.includes(filePath));
+  const directory = successfulShell.filter(({ input }) => isShellProvider(input) && input.includes("new-item") && input.includes(normalizedWorkspace) && !input.includes("get-content"));
+  const reads = successfulShell.filter(({ input }) => isShellProvider(input) && input.includes("get-content") && input.includes(filePath));
   const beforeReads = reads.filter(({ output }) => outputText(output.value.payload).includes(`before-${marker}`) && !outputText(output.value.payload).includes(`after-${marker}`));
   const afterReads = reads.filter(({ output }) => outputText(output.value.payload).includes(`after-${marker}`));
   const patches = calls.map((call) => ({ call, output: outputs.get(call.value.payload.call_id), input: normalizedInput(call) })).filter(({ input, output }) => input.includes("tools.apply_patch") && input.includes(filePath) && output);
@@ -443,7 +450,9 @@ export function observeCodexDesktopEngineeringSlice(text, { marker, workspacePat
   };
   const adds = patches.map((entry) => bindPatchEnd(entry, "add")).filter(Boolean);
   const updates = patches.map((entry) => bindPatchEnd(entry, "update")).filter(Boolean);
-  if (directory.length !== 1 || adds.length !== 1 || beforeReads.length !== 1 || updates.length !== 1 || afterReads.length !== 1) fail("codex_desktop_engineering_chain_invalid");
+  if (directory.length !== 1 || adds.length !== 1 || beforeReads.length !== 1 || updates.length !== 1 || afterReads.length !== 1) {
+    fail(`codex_desktop_engineering_chain_invalid:directory_${directory.length}:add_${adds.length}:before_${beforeReads.length}:update_${updates.length}:after_${afterReads.length}`);
+  }
   const chain = [directory[0], adds[0], beforeReads[0], updates[0], afterReads[0]];
   const starts = chain.map((entry) => entry.call.line);
   if (starts.some((line, index) => index > 0 && line <= starts[index - 1])) fail("codex_desktop_engineering_order_invalid");
@@ -462,12 +471,15 @@ export function observeCodexDesktopEngineeringSlice(text, { marker, workspacePat
       observedAt: entry.output.value.timestamp ?? entry.patchEnd?.value?.timestamp ?? entry.call.value.timestamp,
     };
   };
+  const shellSurface = ({ input }) => input.includes("tools.exec_command")
+    ? "functions.exec.exec_command"
+    : "functions.exec.shell_command";
   return {
-    shell: makeEvent(directory[0], "functions.exec.shell_command", "shell"),
+    shell: makeEvent(directory[0], shellSurface(directory[0]), "shell"),
     patchAdd: makeEvent(adds[0], "functions.exec.apply_patch", "apply_patch / edit"),
-    filesystemBefore: makeEvent(beforeReads[0], "functions.exec.shell_command", "filesystem"),
+    filesystemBefore: makeEvent(beforeReads[0], shellSurface(beforeReads[0]), "filesystem"),
     patchUpdate: makeEvent(updates[0], "functions.exec.apply_patch", "apply_patch / edit"),
-    filesystemAfter: makeEvent(afterReads[0], "functions.exec.shell_command", "filesystem"),
+    filesystemAfter: makeEvent(afterReads[0], shellSurface(afterReads[0]), "filesystem"),
   };
 }
 
@@ -504,7 +516,13 @@ export async function readCodexDesktopEngineeringEvidence({ codexHome, threadId,
     if (!Number.isFinite(timestampMs) || timestampMs < sinceMs) continue;
     const payload = record?.payload ?? {};
     const serialized = line.replaceAll("\\", "/").replace(/\/{2,}/gu, "/").toLowerCase();
-    if (record?.type === "response_item" && payload?.type === "custom_tool_call" && payload?.name === "exec" && serialized.includes(normalizedWorkspace) && (serialized.includes("tools.shell_command") || serialized.includes("tools.apply_patch"))) {
+    if (
+      record?.type === "response_item" &&
+      payload?.type === "custom_tool_call" &&
+      payload?.name === "exec" &&
+      serialized.includes(normalizedWorkspace) &&
+      (serialized.includes("tools.shell_command") || serialized.includes("tools.exec_command") || serialized.includes("tools.apply_patch"))
+    ) {
       selectedCallIds.add(payload.call_id);
       selected.push({ line, lineNumber });
     } else if (record?.type === "response_item" && payload?.type === "custom_tool_call_output" && selectedCallIds.has(payload.call_id)) {

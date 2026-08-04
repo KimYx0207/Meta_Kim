@@ -59,15 +59,23 @@ describe("W2: protected project writes use the shared safe transaction", () => {
 describe("W2: uninstall.mjs Category B scope guard", () => {
   test("scope==='project' skips global meta-kim removal action", () => {
     const src = load("scripts/uninstall.mjs");
-    // The guard should appear inside the case CATEGORIES.B branch
-    const branchMatch = src.match(
-      /case\s+CATEGORIES\.B\s*:\s*\{[\s\S]*?break;\s*\}/,
-    );
-    assert.ok(branchMatch, "case CATEGORIES.B branch must be present");
+    const branchStart = src.indexOf("case CATEGORIES.B:");
+    const branchEnd = src.indexOf("case CATEGORIES.C:", branchStart);
+    assert.ok(branchStart >= 0 && branchEnd > branchStart, "case CATEGORIES.B branch must be present");
+    const branch = src.slice(branchStart, branchEnd);
     assert.match(
-      branchMatch[0],
+      branch,
       /if\s*\(\s*scope\s*===\s*["']project["']\s*\)\s*\{?\s*break;?\s*\}?/,
       "scope==='project' must short-circuit the global meta-kim removal",
+    );
+    assert.match(
+      branch,
+      /f\.mcpMemoryBootArtifact\s*===\s*true[\s\S]*?kind:\s*["']remove["']/,
+      "an exact manifest-owned MCP Memory boot artifact remains independently removable",
+    );
+    assert.ok(
+      branch.indexOf('if (scope === "project")') < branch.lastIndexOf('recursive: true'),
+      "the project-scope guard must precede the generic global directory removal",
     );
   });
 });

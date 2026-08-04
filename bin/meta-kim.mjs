@@ -48,7 +48,7 @@ ${status.usageHeading}:
   meta-kim runtime accept --report <file> --source-kind <kind> --runtime <runtime> --capability <capability> [--mode interactive_host]  # reference-only import
   meta-kim runtime produce --source <source> --runtimes <list> --capabilities <list> [source options]
   meta-kim runtime status [--runtimes <list>] [--capabilities <list>] [--require-fresh]
-  meta-kim uninstall [--yes] [--deep] [--scope=global|project|both]
+  meta-kim uninstall [--recover] [--yes] [--deep] [--scope=global|project|both]
   meta-kim project bootstrap [--project-dir <dir>] [--dry-run|--apply] [--json]
   meta-kim project capability copy --project-dir <dir> --runtime <runtime> --type <agent|skill|command> --id <id> --source <path> --mode <create|iterate> [--apply] [--json]
 
@@ -265,8 +265,8 @@ switch (command) {
     fail("release subcommand must be 'audit' or 'close'");
     break;
   case "uninstall":
-    if (commandArgs.some((arg) => !["--yes", "--deep"].includes(arg) && !arg.startsWith("--scope="))) {
-      fail(`unknown uninstall option '${commandArgs.find((arg) => !["--yes", "--deep"].includes(arg) && !arg.startsWith("--scope="))}'`);
+    if (commandArgs.some((arg) => !["--yes", "--deep", "--recover"].includes(arg) && !arg.startsWith("--scope="))) {
+      fail(`unknown uninstall option '${commandArgs.find((arg) => !["--yes", "--deep", "--recover"].includes(arg) && !arg.startsWith("--scope="))}'`);
     }
     validateScopeOptions(commandArgs);
     run("scripts/uninstall.mjs", commandArgs);

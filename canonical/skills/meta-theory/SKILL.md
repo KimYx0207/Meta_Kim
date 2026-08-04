@@ -416,6 +416,24 @@ Adversarial verify pattern: when Review runs for `regulated_path` or when the us
 
 ## Verification gate
 
+### Installed-user compatibility invariant
+
+For every bug fix or feature involving install, update, sync, cleanup, runtime
+homes, dependencies, startup registration, manifests, or generated config,
+Verification must cover the applicable state matrix: fresh install, existing
+same-version reinstall, historical-version update, partial/failed-install
+residue, and user-modified drift. A fresh-install pass alone never proves the
+change safe for existing users.
+
+When a bug can already exist on installed machines, the normal public
+install/update route must perform a bounded automatic migration. Maintainer-only
+cleanup, one-off support commands, and instructions that make each user edit
+local files do not count as a product fix. Migration may act only on exact
+manifest ownership, exact signatures, closed-set fingerprints, or strict
+historical classifiers. Unknown or modified state is preserved and reported as
+a collision. Release evidence must bind a real prior packed version or exact
+historical fixture to the packed public CLI and prove rollback or preservation.
+
 Do not claim verified unless a command, log, artifact, or human acceptance record supports the claim. Command pass is not `userGoalDone`. Template validation is not strict run validation.
 
 Runtime-live and `live-certified` evidence are stricter than structural checks; smoke, config validation, UI/systemMessage output, auth-present checks, and skipped/needsAuth states cannot be relabeled as live pass. Routine low-risk releases may ship after the smoke path, and standard releases may ship after a complete passing `meta:verify:all`. Only the optional `live-certified` label waits for the private-attested exact-binding evidence chain in `verification-evidence.md`.

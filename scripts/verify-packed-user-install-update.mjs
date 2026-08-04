@@ -18,6 +18,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -59,6 +60,15 @@ import {
   PROJECTION_PACKAGE_PURPOSE,
   PROJECTION_PACKAGE_RECEIPT_SCHEMA,
 } from "./global-projection-package-store.mjs";
+import {
+  createEmpty as createInstallManifest,
+  record as recordInstallManifest,
+  writeManifest as writeInstallManifest,
+} from "./install-manifest.mjs";
+import {
+  renderCurrentWindowsMcpMemoryStartupVbsBytes,
+  resolveMcpMemoryBootArtifactDescriptors,
+} from "./mcp-memory-boot-artifacts.mjs";
 
 export { PACKED_USER_TARGETS } from "./packed-user-targets.mjs";
 
@@ -703,8 +713,13 @@ function seedPortableRuntimeUserState(
       mcpServers: {
         "user-owned-server": unknownServer,
         meta_kim_runtime: {
-          command: path.basename(process.execPath),
-          args: [path.join(legacyPackageRoot, "scripts", "mcp", "meta-runtime-server.mjs")],
+          type: "stdio",
+          command: "cmd",
+          args: [
+            "/c",
+            process.execPath,
+            path.join(legacyPackageRoot, "scripts", "mcp", "meta-runtime-server.mjs"),
+          ],
         },
       },
     }, null, 2)}\n`,
@@ -1511,6 +1526,186 @@ export function runInstalledPublicCli(descriptor, roots, env, mode, timeoutMs) {
     env,
     timeoutMs,
   });
+}
+
+function runPackedUninstallLane({
+  packageInfo,
+  root,
+  environment,
+  timeoutMs,
+  onProgress,
+}) {
+  emit(onProgress, { event: "packed_uninstall_start" });
+  const roots = makeIsolatedRoots(root, "packed-uninstall");
+  const env = isolatedEnvironment(environment, roots);
+  env.METAKIM_LANG = "en";
+  const descriptor = installPackedCli(packageInfo, roots, env, timeoutMs);
+  const installed = requireInstalledCliDescriptor(descriptor);
+  if (!isPathWithin(roots.cliPrefix, installed.command)) {
+    throw new Error("packed uninstall lane did not use the isolated installed public CLI");
+  }
+
+  const bootDescriptors = resolveMcpMemoryBootArtifactDescriptors({
+    homeRoot: roots.userHome,
+    platformName: process.platform,
+  });
+  let manifest = createInstallManifest({
+    scope: "global",
+    metaKimVersion: installed.identity.packageVersion,
+  });
+  for (const bootDescriptor of bootDescriptors) {
+    const bytes = Buffer.from(`packed uninstall ${bootDescriptor.id}\n`, "utf8");
+    mkdirSync(path.dirname(bootDescriptor.path), { recursive: true });
+    writeFileSync(bootDescriptor.path, bytes);
+    manifest = recordInstallManifest(manifest, {
+      path: bootDescriptor.path,
+      source: bootDescriptor.source,
+      purpose: bootDescriptor.purpose,
+      category: bootDescriptor.category,
+      kind: bootDescriptor.kind,
+      ownershipClass: bootDescriptor.ownershipClass,
+      runtimeTarget: bootDescriptor.runtimeTarget,
+      size: bytes.length,
+      sha256: sha256(bytes),
+    });
+  }
+  const manifestPath = path.join(
+    roots.userHome,
+    ".meta-kim",
+    "install-manifest.json",
+  );
+  const persistedManifest = writeInstallManifest(manifestPath, manifest);
+  for (const bootDescriptor of bootDescriptors) {
+    const recorded = persistedManifest.entries.find(
+      (entry) =>
+        entry.path === bootDescriptor.path &&
+        entry.purpose === bootDescriptor.purpose,
+    );
+    if (
+      !recorded ||
+      recorded.source !== bootDescriptor.source ||
+      recorded.category !== bootDescriptor.category ||
+      recorded.kind !== bootDescriptor.kind ||
+      recorded.ownershipClass !== bootDescriptor.ownershipClass ||
+      recorded.runtimeTarget !== bootDescriptor.runtimeTarget ||
+      !Number.isSafeInteger(recorded.size) ||
+      !/^[a-f0-9]{64}$/u.test(recorded.sha256 ?? "")
+    ) {
+      throw new Error(`packed uninstall manifest identity is incomplete: ${bootDescriptor.id}`);
+    }
+  }
+
+  requireSuccess(
+    "packed installed public CLI normal manifest uninstall",
+    runCli(installed.command, ["uninstall", "--scope=global", "--yes"], {
+      cwd: roots.ordinaryCwd,
+      env,
+      timeoutMs,
+    }),
+  );
+  const remainingBootArtifacts = bootDescriptors
+    .filter((entry) => existsSync(entry.path))
+    .map((entry) => entry.id);
+  if (remainingBootArtifacts.length > 0) {
+    throw new Error(
+      `packed normal manifest uninstall left boot artifacts: ${remainingBootArtifacts.join(", ")}`,
+    );
+  }
+
+  const privateFlag = runCli(
+    installed.command,
+    ["uninstall", "--no-manifest", "--scope=global"],
+    { cwd: roots.ordinaryCwd, env, timeoutMs },
+  );
+  const privateFlagOutput = `${privateFlag.stdout ?? ""}\n${privateFlag.stderr ?? ""}`;
+  if (
+    privateFlag.error ||
+    privateFlag.status !== 2 ||
+    !/unknown uninstall option '--no-manifest'/u.test(privateFlagOutput)
+  ) {
+    throw new Error(
+      `packed public CLI did not reject --no-manifest: exit=${privateFlag.status}; ${privateFlagOutput.trim()}`,
+    );
+  }
+
+  let windowsRecovery;
+  if (process.platform === "win32") {
+    const byId = new Map(bootDescriptors.map((entry) => [entry.id, entry]));
+    const startupVbs = byId.get("windows-startup")?.path;
+    const commandPath = byId.get("windows-command")?.path;
+    if (!startupVbs || !commandPath || existsSync(commandPath)) {
+      throw new Error("packed Windows recovery fixture did not begin with an orphan Startup VBS");
+    }
+    mkdirSync(path.dirname(startupVbs), { recursive: true });
+    writeFileSync(
+      startupVbs,
+      renderCurrentWindowsMcpMemoryStartupVbsBytes({ commandPath }),
+    );
+    const recoveryDryRun = requireSuccess(
+      "packed installed public CLI recovery dry-run",
+      runCli(installed.command, ["uninstall", "--recover", "--scope=global"], {
+        cwd: roots.ordinaryCwd,
+        env,
+        timeoutMs,
+      }),
+    );
+    if (
+      !existsSync(startupVbs) ||
+      !/complete uninstall cannot be proven/iu.test(
+        `${recoveryDryRun.stdout ?? ""}\n${recoveryDryRun.stderr ?? ""}`,
+      )
+    ) {
+      throw new Error("packed recovery dry-run did not preserve the orphan and report its proof boundary");
+    }
+    requireSuccess(
+      "packed installed public CLI recovery live run",
+      runCli(
+        installed.command,
+        ["uninstall", "--recover", "--scope=global", "--yes"],
+        { cwd: roots.ordinaryCwd, env, timeoutMs },
+      ),
+    );
+    if (existsSync(startupVbs)) {
+      throw new Error("packed recovery live run left the exact orphan Startup VBS");
+    }
+    windowsRecovery = {
+      status: "passed",
+      fixture: "shared_renderer_exact_orphan_startup_vbs",
+      missingCommandTarget: true,
+      dryRunPreserved: true,
+      unprovenBoundaryReported: true,
+      liveRunRemoved: true,
+    };
+  } else {
+    windowsRecovery = {
+      status: "not_applicable",
+      reason: "windows_exact_signature_recovery_only",
+    };
+  }
+
+  const proof = {
+    status: "passed",
+    platform: process.platform,
+    evidenceTier: "packed_isolated_installed_public_cli",
+    packageSha256: packageInfo.tarballSha256,
+    isolatedHomeAndPrefix: true,
+    normalManifestUninstall: {
+      status: "passed",
+      evidenceScope: "synthetic_manifest_fixture_consumed_by_packed_public_cli",
+      descriptorIds: bootDescriptors.map((entry) => entry.id),
+      syntheticFixtureExactOwnershipAndIntegrityRecorded: true,
+      allChainFilesRemoved: true,
+    },
+    privateManifestBypass: {
+      status: "passed",
+      option: "--no-manifest",
+      exitCode: privateFlag.status,
+      rejectedByPublicCli: true,
+    },
+    windowsRecovery,
+  };
+  emit(onProgress, { event: "packed_uninstall_complete", status: proof.status });
+  return proof;
 }
 
 function filesRecursively(rootPath) {
@@ -2499,6 +2694,28 @@ function runCurrentPackageLane({
   const env = isolatedEnvironment(environment, roots);
   const descriptor = installPackedCli(packageInfo, roots, env, timeoutMs);
   const artifacts = expectedArtifacts(roots);
+  let automaticOrphanBootRepair = {
+    status: "not_applicable",
+    reason: "windows_startup_vbs_only",
+  };
+  let seededOrphanVbs = null;
+  if (process.platform === "win32") {
+    const bootDescriptors = resolveMcpMemoryBootArtifactDescriptors({
+      homeRoot: roots.userHome,
+      platformName: "win32",
+    });
+    const startup = bootDescriptors.find((entry) => entry.id === "windows-startup");
+    const command = bootDescriptors.find((entry) => entry.id === "windows-command");
+    mkdirSync(path.dirname(startup.path), { recursive: true });
+    writeFileSync(
+      startup.path,
+      renderCurrentWindowsMcpMemoryStartupVbsBytes({ commandPath: command.path }),
+    );
+    if (existsSync(command.path)) {
+      throw new Error("packed automatic repair fixture unexpectedly has a command target");
+    }
+    seededOrphanVbs = startup.path;
+  }
   const modes = [];
   let firstUpdateProof = null;
   let firstUpdateManifest = null;
@@ -2515,6 +2732,17 @@ function runCurrentPackageLane({
     };
     modes.push(record);
     if (record.status !== "passed") throw commandFailure(`packed user ${mode}`, result);
+    if (mode === "install" && seededOrphanVbs) {
+      if (existsSync(seededOrphanVbs)) {
+        throw new Error("packed installed public CLI left the exact orphan Startup VBS");
+      }
+      automaticOrphanBootRepair = {
+        status: "passed",
+        evidenceTier: "packed_isolated_installed_public_cli",
+        fixture: "exact_startup_vbs_with_missing_command_target",
+        removedBeforeDependencyWork: true,
+      };
+    }
     const cwdProof = assertOrdinaryCwdUntouched(roots.ordinaryCwd);
     const currentProof = artifactFingerprint(artifacts);
     const currentManifest = normalizedManifest(artifacts.manifest, roots.userHome);
@@ -2539,6 +2767,13 @@ function runCurrentPackageLane({
     }
     emit(onProgress, { event: "packed_user_mode_complete", ...record });
   }
+  const packedUninstall = runPackedUninstallLane({
+    packageInfo,
+    root,
+    environment,
+    timeoutMs,
+    onProgress,
+  });
   if (stopAfterGlobalIdempotence) {
     return {
       status: "passed",
@@ -2550,6 +2785,8 @@ function runCurrentPackageLane({
       freshGlobalUpdateCreatedProjectCopies: false,
       stoppedAfterGlobalIdempotence: true,
       installedCliEntrypoints: true,
+      automaticOrphanBootRepair,
+      packedUninstall,
     };
   }
   const projectPackage = runProjectPackageLane({
@@ -2572,6 +2809,10 @@ function runCurrentPackageLane({
     env,
     timeoutMs,
   });
+  emit(onProgress, {
+    event: "packed_legacy_mcp_migration_complete",
+    ...portableRuntimePrepared.proof.mcpRegistration,
+  });
   portableRuntimePrepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot({
     sourceProjectRoot: packageInfo.sourceRoot,
     targetProjectRoot: roots.ordinaryCwd,
@@ -2585,10 +2826,12 @@ function runCurrentPackageLane({
     packageSha256: packageInfo.tarballSha256,
     cwdBoundary: "ordinary_cwd_untouched",
     idempotentSecondUpdate: true,
+    automaticOrphanBootRepair,
     freshGlobalUpdateCreatedProjectCopies: false,
     projectPackage,
     runtimeSedimentation,
     installedCliEntrypoints: true,
+    packedUninstall,
     portableRuntime: portableRuntimePrepared.proof,
     _portableRuntimeContext: portableRuntimePrepared.context,
   };
@@ -2705,7 +2948,9 @@ export function runPackedUserInstallUpdateAcceptance({
       environment,
       timeoutMs,
     });
-    tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-packed-user-"));
+    tempRoot = realpathSync.native(
+      mkdtempSync(path.join(os.tmpdir(), "meta-kim-packed-user-")),
+    );
     let historicalResolution = null;
     let historicalResolutionError = null;
     if (!stopAfterGlobalIdempotence && includeHistorical) {

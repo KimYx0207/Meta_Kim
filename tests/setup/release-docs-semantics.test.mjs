@@ -243,6 +243,10 @@ describe("release documentation semantics", () => {
     const combined = `${checklist}\n${pullRequestTemplate}`;
 
     assert.match(combined, /Host State Impact Matrix/);
+    assert.match(combined, /Installed-User Compatibility Gate/);
+    assert.match(combined, /Historical-version update/);
+    assert.match(combined, /Partial or failed prior install/);
+    assert.match(combined, /fresh install is not enough/);
     assert.match(combined, /Existing host state/);
     assert.match(combined, /Rollback path/);
     assert.match(combined, /Hook \/ Prompt Protocol Flow/);

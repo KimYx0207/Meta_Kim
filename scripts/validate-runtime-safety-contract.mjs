@@ -624,6 +624,17 @@ for (const doc of [checklist, pullRequestTemplate].filter(Boolean)) {
   );
 }
 
+hasAll(
+  checklist,
+  [
+    "Installed-User Compatibility Gate",
+    "Historical-version update",
+    "Partial or failed prior install",
+    "fresh install is not enough",
+  ],
+  "installed-user compatibility contract",
+);
+
 if (!pullRequestTemplate) {
   console.warn(
     "[Meta_Kim] Optional GitHub pull request template is not present; " +

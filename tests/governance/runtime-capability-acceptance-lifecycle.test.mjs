@@ -90,6 +90,44 @@ function completePackedUserProof(packageSha256) {
         { mode: "update", status: "passed" },
         { mode: "update", status: "passed" },
       ],
+      automaticOrphanBootRepair: {
+        status: "passed",
+        evidenceTier: "packed_isolated_installed_public_cli",
+        fixture: "exact_startup_vbs_with_missing_command_target",
+        removedBeforeDependencyWork: true,
+      },
+      packedUninstall: {
+        status: "passed",
+        platform: "win32",
+        evidenceTier: "packed_isolated_installed_public_cli",
+        packageSha256,
+        isolatedHomeAndPrefix: true,
+        normalManifestUninstall: {
+          status: "passed",
+          evidenceScope: "synthetic_manifest_fixture_consumed_by_packed_public_cli",
+          descriptorIds: [
+            "windows-powershell",
+            "windows-command",
+            "windows-startup",
+          ],
+          syntheticFixtureExactOwnershipAndIntegrityRecorded: true,
+          allChainFilesRemoved: true,
+        },
+        privateManifestBypass: {
+          status: "passed",
+          option: "--no-manifest",
+          exitCode: 2,
+          rejectedByPublicCli: true,
+        },
+        windowsRecovery: {
+          status: "passed",
+          fixture: "shared_renderer_exact_orphan_startup_vbs",
+          missingCommandTarget: true,
+          dryRunPreserved: true,
+          unprovenBoundaryReported: true,
+          liveRunRemoved: true,
+        },
+      },
       projectPackage: {
         status: "passed",
         targets: [...PACKED_USER_TARGETS],
@@ -248,6 +286,7 @@ test("external packed observation reader recomputes complete target truth withou
   for (const [label, mutateProof] of [
     ["missing-targets", (proof) => { delete proof.currentPackage.targets; }],
     ["one-target", (proof) => { proof.currentPackage.targets = [PACKED_USER_TARGETS[0]]; }],
+    ["missing-packed-uninstall", (proof) => { delete proof.currentPackage.packedUninstall; }],
   ]) {
     const rejectedProject = projectFixture();
     assert.throws(() => writeRuntimeCapabilityAcceptanceAttempt({

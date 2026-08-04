@@ -16,6 +16,32 @@ before editing implementation code:
 Minimum regression shape: existing user config -> install -> update. A happy-path
 fresh install is not enough for host-preservation changes.
 
+## Installed-User Compatibility Gate
+
+Every bug fix or feature that touches install, update, sync, cleanup, runtime
+homes, dependencies, startup registration, manifests, or generated config must
+classify and verify all applicable user states before it can be release-ready:
+
+| User state | Required evidence |
+|---|---|
+| Fresh install | Empty isolated home installs successfully. |
+| Existing same-version install | Reinstall reconciles state without deleting user-owned assets or uninstalling healthy dependencies. |
+| Historical-version update | A real prior packed version or an exact historical fixture migrates through the public update entrypoint. |
+| Partial or failed prior install | Signature- or manifest-proven residue is repaired automatically, or preserved with an explicit blocking result. |
+| User-modified or unknown state | Drift is preserved; the updater fails closed instead of widening ownership. |
+
+If a reported bug can exist on machines that already installed Meta_Kim, the fix
+must live in the normal public install/update path. A maintainer-only cleanup,
+one-off shell command, fresh-install-only patch, or support instruction is not a
+product fix. Automatic migration may remove or replace only exact historical
+Meta_Kim shapes proven by a manifest, signature, closed-set fingerprint, or
+strict legacy classifier; otherwise preserve and report the collision.
+
+Release evidence must name the oldest supported source state or fixture, the
+migration owner, the rollback/preservation behavior, and the packed public CLI
+command that consumed it. Skipped historical coverage keeps the result below
+release-ready unless the change demonstrably cannot affect installed users.
+
 ## Hook / Prompt Protocol Flow
 
 For hook, prompt, or adapter changes, draw the data path before implementation:

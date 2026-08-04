@@ -39,6 +39,7 @@ import {
   openRecorder,
 } from "../../scripts/install-manifest.mjs";
 import { planCodexAppNativeControls } from "../../scripts/codex-config-merge.mjs";
+import { resolveMcpMemoryBootArtifactDescriptors } from "../../scripts/mcp-memory-boot-artifacts.mjs";
 
 function withTmpRepo(body) {
   const dir = mkdtempSync(path.join(tmpdir(), "meta-kim-uninstall-"));
@@ -593,6 +594,201 @@ describe("uninstall / findingsFromManifest", () => {
 });
 
 describe("uninstall / manifest fail-closed CLI", () => {
+  test("an exact future MCP Memory Startup manifest entry is removed with hash and identity enforcement", {
+    skip: process.platform !== "win32",
+  }, () => {
+    withTmpRepo((home) => {
+      const entry = resolveMcpMemoryBootArtifactDescriptors({ homeRoot: home, platformName: "win32" })
+        .find((candidate) => candidate.id === "windows-startup");
+      mkdirSync(path.dirname(entry.path), { recursive: true });
+      const commandPath = path.win32.join(home, ".meta-kim", "mcp-memory-start.cmd");
+      const bytes = Buffer.from(
+        `Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.Run """${commandPath}""", 0, False\r\n`,
+        "utf8",
+      );
+      writeFileSync(entry.path, bytes);
+      writeGlobalManifest(home, [{
+        ...entry,
+        size: bytes.length,
+        sha256: sha256(bytes),
+        installedAt: new Date().toISOString(),
+      }]);
+
+      const result = runUninstall(home, ["--scope=global", "--yes"]);
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.equal(existsSync(entry.path), false);
+    });
+  });
+
+  test("an exact Windows MCP Memory manifest removes the complete three-file boot chain", {
+    skip: process.platform !== "win32",
+  }, () => {
+    withTmpRepo((home) => {
+      const descriptors = resolveMcpMemoryBootArtifactDescriptors({
+        homeRoot: home,
+        platformName: "win32",
+      });
+      const entries = descriptors.map((descriptor) => {
+        const bytes = Buffer.from(`managed ${descriptor.id}\r\n`, "utf8");
+        mkdirSync(path.dirname(descriptor.path), { recursive: true });
+        writeFileSync(descriptor.path, bytes);
+        return {
+          ...descriptor,
+          size: bytes.length,
+          sha256: sha256(bytes),
+          installedAt: new Date().toISOString(),
+        };
+      });
+      writeGlobalManifest(home, entries);
+
+      const result = runUninstall(home, ["--scope=global", "--yes"]);
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      for (const descriptor of descriptors) {
+        assert.equal(existsSync(descriptor.path), false, descriptor.id);
+      }
+    });
+  });
+
+  test("forged MCP Memory identity is blocked and drifted manifest content is preserved", {
+    skip: process.platform !== "win32",
+  }, () => {
+    withTmpRepo((home) => {
+      const entry = resolveMcpMemoryBootArtifactDescriptors({ homeRoot: home, platformName: "win32" })
+        .find((candidate) => candidate.id === "windows-startup");
+      mkdirSync(path.dirname(entry.path), { recursive: true });
+      const managed = Buffer.from("managed startup\n", "utf8");
+      writeFileSync(entry.path, managed);
+      writeGlobalManifest(home, [{
+        ...entry,
+        purpose: `${entry.purpose}:forged`,
+        size: managed.length,
+        sha256: sha256(managed),
+        installedAt: new Date().toISOString(),
+      }]);
+      const forged = runUninstall(home, ["--scope=global", "--yes"]);
+      assert.notEqual(forged.status, 0, `${forged.stdout}\n${forged.stderr}`);
+      assert.match(`${forged.stdout}\n${forged.stderr}`, /manifest_entry_untrusted/iu);
+      assert.deepEqual(readFileSync(entry.path), managed);
+
+      writeGlobalManifest(home, [{
+        ...entry,
+        size: managed.length,
+        sha256: sha256(managed),
+        installedAt: new Date().toISOString(),
+      }]);
+      const changed = Buffer.from("user changed startup\n", "utf8");
+      writeFileSync(entry.path, changed);
+      const drifted = runUninstall(home, ["--scope=global", "--yes"]);
+      assert.notEqual(drifted.status, 0, `${drifted.stdout}\n${drifted.stderr}`);
+      assert.match(`${drifted.stdout}\n${drifted.stderr}`, /Preserved user-modified/iu);
+      assert.deepEqual(readFileSync(entry.path), changed);
+    });
+  });
+
+  test("opt-in recovery dry-run preserves and live run removes only an exact orphan Startup VBS", {
+    skip: process.platform !== "win32",
+  }, () => {
+    withTmpRepo((home) => {
+      const entry = resolveMcpMemoryBootArtifactDescriptors({ homeRoot: home, platformName: "win32" })
+        .find((candidate) => candidate.id === "windows-startup");
+      mkdirSync(path.dirname(entry.path), { recursive: true });
+      const commandPath = path.win32.join(home, ".meta-kim", "mcp-memory-start.cmd");
+      writeFileSync(
+        entry.path,
+        `Set WshShell = CreateObject("WScript.Shell")\r\nWshShell.Run """${commandPath}""", 0, False\r\n`,
+      );
+      const unrelated = path.join(path.dirname(entry.path), "user-startup.vbs");
+      writeFileSync(unrelated, "user owned\r\n");
+      const dependencySentinel = path.win32.join(
+        home,
+        ".meta-kim",
+        "memory-venv",
+        "Lib",
+        "site-packages",
+        "mcp_memory_service",
+        "__init__.py",
+      );
+      mkdirSync(path.dirname(dependencySentinel), { recursive: true });
+      writeFileSync(dependencySentinel, "# preserve installed dependency\n");
+
+      const dryRun = runUninstall(home, ["--recover", "--scope=global"]);
+      assert.equal(dryRun.status, 0, `${dryRun.stdout}\n${dryRun.stderr}`);
+      assert.match(dryRun.stdout, /exact-signature legacy recovery/iu);
+      assert.match(dryRun.stdout, /complete uninstall cannot be proven/iu);
+      assert.equal(existsSync(entry.path), true);
+
+      const live = runUninstall(home, ["--recover", "--scope=global", "--yes"]);
+      assert.equal(live.status, 0, `${live.stdout}\n${live.stderr}`);
+      assert.equal(existsSync(entry.path), false);
+      assert.equal(readFileSync(unrelated, "utf8"), "user owned\r\n");
+      assert.equal(
+        readFileSync(dependencySentinel, "utf8"),
+        "# preserve installed dependency\n",
+      );
+    });
+  });
+
+  test("opt-in recovery preserves a modified Startup VBS", {
+    skip: process.platform !== "win32",
+  }, () => {
+    withTmpRepo((home) => {
+      const entry = resolveMcpMemoryBootArtifactDescriptors({ homeRoot: home, platformName: "win32" })
+        .find((candidate) => candidate.id === "windows-startup");
+      mkdirSync(path.dirname(entry.path), { recursive: true });
+      const modified = "Set WshShell = CreateObject(\"WScript.Shell\")\r\n' user-owned customization\r\n";
+      writeFileSync(entry.path, modified);
+      const result = runUninstall(home, ["--recover", "--scope=global", "--yes", "--lang=en"]);
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.equal(readFileSync(entry.path, "utf8"), modified);
+      assert.match(result.stdout, /No exact Meta_Kim boot artifacts were found/iu);
+      assert.match(result.stdout, /Nothing changed/iu);
+      assert.match(result.stdout, /full cleanup is not proven/iu);
+      assert.doesNotMatch(result.stdout, /system is clean|Nothing to do/iu);
+    });
+  });
+
+  test("public recovery ignores matching-looking user hook and configuration files", () => {
+    withTmpRepo((home) => {
+      const hookPath = path.join(home, ".claude", "hooks", "meta-kim", "user-memory-hook.mjs");
+      const settingsPath = path.join(home, ".claude", "settings.json");
+      mkdirSync(path.dirname(hookPath), { recursive: true });
+      writeFileSync(hookPath, "// user-owned matching-looking hook\n");
+      const settings = `${JSON.stringify({
+        hooks: {
+          SessionStart: [{
+            matcher: null,
+            hooks: [{ type: "command", command: `node "${hookPath}"` }],
+          }],
+        },
+      }, null, 2)}\n`;
+      mkdirSync(path.dirname(settingsPath), { recursive: true });
+      writeFileSync(settingsPath, settings);
+
+      const result = runUninstall(home, ["--recover", "--scope=global", "--yes", "--lang=en"]);
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.equal(readFileSync(hookPath, "utf8"), "// user-owned matching-looking hook\n");
+      assert.equal(readFileSync(settingsPath, "utf8"), settings);
+      assert.match(result.stdout, /No exact Meta_Kim boot artifacts were found/iu);
+      assert.doesNotMatch(result.stdout, /system is clean|Nothing to do/iu);
+    });
+  });
+
+  test("zero-action recovery reports the bounded result in every supported locale", () => {
+    const cases = [
+      ["en", /No exact Meta_Kim boot artifacts were found[\s\S]*Nothing changed[\s\S]*full cleanup is not proven/iu],
+      ["zh", /未发现可精确识别的 Meta_Kim 启动产物[\s\S]*未做任何更改[\s\S]*无法证明已完成全部清理/u],
+      ["ja", /厳密に識別できる Meta_Kim 起動生成物は見つかりませんでした[\s\S]*変更はありません[\s\S]*完全なクリーンアップは証明できません/u],
+      ["ko", /정확히 식별된 Meta_Kim 시작 산출물을 찾지 못했습니다[\s\S]*변경 사항은 없습니다[\s\S]*전체 정리를 증명할 수 없습니다/u],
+    ];
+    for (const [language, expected] of cases) {
+      withTmpRepo((home) => {
+        const result = runUninstall(home, ["--recover", "--scope=global", `--lang=${language}`]);
+        assert.equal(result.status, 0, `${language}\n${result.stdout}\n${result.stderr}`);
+        assert.match(result.stdout, expected, language);
+      });
+    }
+  });
+
   test("global manifest cannot authorize a file outside profile-derived ownership roots", () => {
     withTmpRepo((home) => {
       const victim = path.join(home, "user-owned.txt");
@@ -942,6 +1138,31 @@ describe("uninstall / manifest fail-closed CLI", () => {
 });
 
 describe("uninstall / integrity-safe file removal", () => {
+  test("a signature recovery file changed after planning is restored instead of deleted", () => {
+    withTmpRepo((repo) => {
+      const target = path.join(repo, "mcp-memory-silent.vbs");
+      const recognized = Buffer.from("recognized\n", "utf8");
+      const concurrent = Buffer.from("USER CONCURRENT EDIT\n", "utf8");
+      writeFileSync(target, recognized);
+      const result = removeManagedFileIfUnchanged({
+        path: target,
+        recursive: false,
+        manifestManaged: false,
+        scanDerived: true,
+        scanExact: true,
+        recoverySignature: "current-windows-startup-vbs",
+        size: recognized.length,
+        sha256: sha256(recognized),
+      }, {
+        beforeMove: () => writeFileSync(target, concurrent),
+        homeRoot: repo,
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.preserved, true);
+      assert.deepEqual(readFileSync(target), concurrent);
+    });
+  });
+
   test("a file changed after preflight is restored instead of deleted", () => {
     withTmpRepo((repo) => {
       const target = path.join(repo, "managed.txt");
@@ -961,9 +1182,79 @@ describe("uninstall / integrity-safe file removal", () => {
 
       assert.equal(result.success, false);
       assert.equal(result.preserved, true);
-      assert.match(result.reason, /post_move_integrity:integrity_mismatch/u);
+      assert.match(result.reason, /concurrent_change_before_move:integrity_mismatch/u);
       assert.deepEqual(readFileSync(target), concurrent);
       assert.equal(result.quarantinePath, null);
+    });
+  });
+
+  test("an MCP Memory boot file beneath a linked ancestor is preserved", {
+    skip: process.platform !== "win32",
+  }, () => {
+    withTmpRepo((home) => {
+      const outside = mkdtempSync(path.join(tmpdir(), "meta-kim-uninstall-outside-"));
+      const linkedRoot = path.join(home, ".meta-kim");
+      const outsideTarget = path.join(outside, "mcp-memory-start.cmd");
+      const managed = Buffer.from("managed boot command\r\n", "utf8");
+      try {
+        rmSync(linkedRoot, { recursive: true, force: true });
+        writeFileSync(outsideTarget, managed);
+        symlinkSync(outside, linkedRoot, "junction");
+
+        const result = removeManagedFileIfUnchanged({
+          path: path.join(linkedRoot, "mcp-memory-start.cmd"),
+          recursive: false,
+          manifestManaged: true,
+          mcpMemoryBootArtifact: true,
+          size: managed.length,
+          sha256: sha256(managed),
+        }, { homeRoot: home });
+
+        assert.equal(result.success, false);
+        assert.equal(result.preserved, true);
+        assert.match(
+          result.reason,
+          /^(?:unsafe_file_ancestor|unsafe_mcp_memory_boot_path:.*(?:linked_directory_ancestor|unsafe_directory_type))$/iu,
+        );
+        assert.deepEqual(readFileSync(outsideTarget), managed);
+      } finally {
+        rmSync(linkedRoot, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("a generic manifest-owned file beneath a linked ancestor is preserved", () => {
+    withTmpRepo((home) => {
+      const outside = mkdtempSync(path.join(tmpdir(), "meta-kim-uninstall-generic-outside-"));
+      const linkedRoot = path.join(home, "managed-link");
+      const outsideTarget = path.join(outside, "managed.txt");
+      const managed = Buffer.from("manifest-owned bytes\n", "utf8");
+      try {
+        writeFileSync(outsideTarget, managed);
+        try {
+          symlinkSync(outside, linkedRoot, process.platform === "win32" ? "junction" : "dir");
+        } catch (error) {
+          if (["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) return;
+          throw error;
+        }
+
+        const result = removeManagedFileIfUnchanged({
+          path: path.join(linkedRoot, "managed.txt"),
+          recursive: false,
+          manifestManaged: true,
+          size: managed.length,
+          sha256: sha256(managed),
+        });
+
+        assert.equal(result.success, false);
+        assert.equal(result.preserved, true);
+        assert.equal(result.reason, "unsafe_file_ancestor");
+        assert.deepEqual(readFileSync(outsideTarget), managed);
+      } finally {
+        rmSync(linkedRoot, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+      }
     });
   });
 

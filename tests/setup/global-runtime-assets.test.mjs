@@ -30,6 +30,7 @@ import {
   manifestFileEntryMatches,
   readManifest,
 } from "../../scripts/install-manifest.mjs";
+import { recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..", "..");
 const PACKAGE_MANIFEST = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
@@ -51,6 +52,20 @@ function runSync(root, args, extraEnv = {}) {
   for (const profile of Object.values(RUNTIME_PROFILES)) {
     const runtimeHome = path.join(root, profile.activation.defaultHomeDir);
     for (const envKey of profile.activation.envKeys) runtimeEnv[envKey] = runtimeHome;
+  }
+  if (args.includes("--check")) {
+    const targetsArg = args[args.indexOf("--targets") + 1] ?? "";
+    const launchTargets = targetsArg
+      .split(",")
+      .filter((target) => ["claude", "codex"].includes(target));
+    if (launchTargets.length > 0) {
+      recordSetupRuntimeExecutableBindings({
+        roots: [root],
+        targets: launchTargets,
+        pathResolver: () => process.execPath,
+        versionRunner: () => ({ status: 0, stdout: "test-runtime 1.0.0\n", stderr: "" }),
+      });
+    }
   }
   return spawnSync(process.execPath, ["scripts/sync-global-meta-theory.mjs", ...args], {
     cwd: REPO_ROOT,
@@ -171,6 +186,28 @@ test("MCP merge migrates proven legacy entry and preserves unrelated config", ()
   assert.equal(wrappedLegacy.config.mcpServers.meta_kim_runtime, undefined);
   assert.deepEqual(wrappedLegacy.config.mcpServers["meta-kim-runtime"], portable);
 
+  const absoluteNodeWrappedLegacy = mergeClaudeUserMcpConfig({
+    mcpServers: {
+      meta_kim_runtime: {
+        type: "stdio",
+        command: "cmd",
+        args: [
+          "/c",
+          "C:/Program Files/nodejs/node.exe",
+          `C:/Users/previous-user/Desktop/Meta_Kim/${LEGACY_MCP_SUFFIX.replaceAll("\\", "/")}`,
+        ],
+      },
+    },
+  }, {
+    canonicalName: "meta-kim-runtime",
+    portableDefinition: portable,
+    identity: PACKAGE_IDENTITY,
+    legacyScriptSuffix: LEGACY_MCP_SUFFIX,
+  });
+  assert.deepEqual(absoluteNodeWrappedLegacy.collisions, []);
+  assert.equal(absoluteNodeWrappedLegacy.config.mcpServers.meta_kim_runtime, undefined);
+  assert.deepEqual(absoluteNodeWrappedLegacy.config.mcpServers["meta-kim-runtime"], portable);
+
   const wrappedCurrentDefinition = {
     type: portable.type,
     command: "cmd",
@@ -281,6 +318,19 @@ test("MCP merge blocks non-plain maps, unknown canonical collisions, and loose l
       mergeClaudeUserMcpConfig({ mcpServers: { meta_kim_runtime: {
         command: "cmd",
         args,
+      } } }, options).collisions,
+      ["meta_kim_runtime"],
+    );
+  }
+  for (const nodeCommand of [
+    "C:/Program Files/nodejs/node.exe&calc.exe",
+    "C:/Program Files/nodejs/not-node.exe",
+    "relative/path/node.exe",
+  ]) {
+    assert.deepEqual(
+      mergeClaudeUserMcpConfig({ mcpServers: { meta_kim_runtime: {
+        command: "cmd",
+        args: ["/c", nodeCommand, `/retired/${LEGACY_MCP_SUFFIX.replaceAll("\\", "/")}`],
       } } }, options).collisions,
       ["meta_kim_runtime"],
     );

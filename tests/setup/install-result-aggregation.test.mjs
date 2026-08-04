@@ -15,6 +15,10 @@ import {
   MCP_MEMORY_SETUP_REASON,
   resolveMcpMemorySetupPolicy,
 } from "../../scripts/setup-memory-policy.mjs";
+import {
+  MCP_MEMORY_INSTALL_OUTCOME,
+  mcpMemoryInstallStep,
+} from "../../scripts/mcp-memory-install-outcome.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -48,6 +52,33 @@ describe("install result aggregation", () => {
     assert.equal(result.exitCode, 0);
     assert.equal(result.criticalFailures.length, 0);
     assert.deepEqual(result.optionalFailures.map((step) => step.id), ["Python tools"]);
+  });
+
+  test("MCP boot ownership persistence failure is critical while ordinary optional failure remains partial", () => {
+    const ownershipFailure = summarizeInstallStatus([
+      mcpMemoryInstallStep("MCP Memory", MCP_MEMORY_INSTALL_OUTCOME.OWNERSHIP_FAILURE),
+    ]);
+    assert.equal(ownershipFailure.status, "failed");
+    assert.equal(ownershipFailure.exitCode, 1);
+    assert.deepEqual(ownershipFailure.criticalFailures.map((step) => step.id), ["MCP Memory"]);
+
+    const optionalFailure = summarizeInstallStatus([
+      mcpMemoryInstallStep("MCP Memory", false),
+    ]);
+    assert.equal(optionalFailure.status, "partial");
+    assert.equal(optionalFailure.exitCode, 0);
+    assert.equal(optionalFailure.criticalFailures.length, 0);
+    assert.deepEqual(optionalFailure.optionalFailures.map((step) => step.id), ["MCP Memory"]);
+  });
+
+  test("MCP install-step helper passes true and treats undefined as an optional skip", () => {
+    const result = summarizeInstallStatus([
+      mcpMemoryInstallStep("MCP Memory passed", true),
+      mcpMemoryInstallStep("MCP Memory skipped", undefined),
+    ]);
+    assert.equal(result.status, "complete");
+    assert.equal(result.exitCode, 0);
+    assert.equal(mcpMemoryInstallStep("MCP Memory skipped", undefined).outcome, INSTALL_STEP_OUTCOME.SKIPPED);
   });
 
   test("non-boolean outcomes fail closed while an explicit skip remains successful", () => {
@@ -167,7 +198,9 @@ describe("install result aggregation", () => {
       source,
       /if \(result\.status === "complete"\) \{\s*console\.log\(`\\n\$\{C\.bold\}\$\{C\.green\}✓ \$\{t\.(?:installComplete|updateComplete)\}/,
     );
-    assert.match(source, /return registrationOk && hooksOk && backgroundOk;/);
+    assert.match(source, /if \(!registrationOk \|\| !backgroundOk\) return false;/);
+    assert.match(source, /return MCP_MEMORY_INSTALL_OUTCOME\.OWNERSHIP_FAILURE;/);
+    assert.equal((source.match(/mcpMemoryInstallStep\(t\.progressInstallMcpMemory, mcpMemoryOk\)/gu) ?? []).length, 2);
     assert.match(
       source,
       /configureCandidateBoot: \(candidate\) => configureBootAutoStart\(candidate\.memoryBin, endpoint, \{\s*databasePath,\s*\}\)/,
