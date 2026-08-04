@@ -6,6 +6,21 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.26] - 2026-08-05
+
+### Fixed
+
+- **Existing Windows users can rerun install or update without manually killing MCP Memory or deleting locked files.** A running service is quiesced only when the endpoint PID, start identity, executable, launcher, arguments, host/port, global manifest, active interpreter, and database all match Meta_Kim's recorded authority. Unknown or user-modified listeners fail closed. Same-version and historical updates prepare and validate a side-by-side candidate before stopping the old runtime, then restore the prior runtime, database, startup files, MCP entry, and active state if switching, restart, or health/identity readback fails.
+- **Windows startup and dependency checks no longer turn machine configuration into a support chore.** Exact orphaned Meta_Kim startup launchers are repaired automatically before dependency work, healthy dependencies are reused, missing dependencies enter the normal installer, failed replacements preserve the last working runtime, loopback health checks bypass user proxies on Windows PowerShell 5.1 and 7, and real HTTP failures such as 503 still fail verification. Child probes are hidden, shell-free, and bounded.
+- **Historical install state now migrates through normal update with strict ownership boundaries.** Eligible stale manifest records are classified and removed only under the global install lock; unreadable, existing, drifted, linked, or user-owned content is preserved. Install, update, and exact uninstall also share the immutable projection-package digest lock, preventing a cleanup from racing an active package consumer.
+- **Release proof is stricter and more portable.** Release audit and planning closure now use bounded WinINET/WinHTTP/direct networking with trusted Windows system tools, explicit proxy/TLS cleanup, caller-repository state authority, and exact asset size/digest binding. The new `meta:release:plan` command recommends smoke or full verification from the actual diff, while install, runtime, security, unknown, and empty-change inputs fail closed to the full gate; it does not weaken `meta:verify:all`.
+- **Runtime claims keep their real provenance.** External or linked reports cannot inherit a repository run identity, runtime acceptance writes canonical runtime names, unknown runtimes fail before state mutation, and activation metadata cannot manufacture provider support that the provider registry does not declare.
+- **Contributor credit:** Thanks to [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) for the starting contributions in [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) and [#51](https://github.com/KimYx0207/Meta_Kim/pull/51). This release carries those merged contributions forward together with the historical-user update, rollback, and release-proof hardening built on top of them.
+
+### Verification
+
+- Release verification covers fresh install, existing same-version reinstall, historical update, partial prior state, user-modified drift, exact Windows process authority, transaction rollback/retry, proxy-free local health, locked manifest migration, shared package lifecycle locking, packed public CLI install/update, runtime/provider provenance, and exact GitHub Release binding.
+
 ## [2.9.25] - 2026-08-05
 
 ### Fixed

@@ -6,6 +6,21 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [2.9.26] - 2026-08-05
+
+### 修复内容
+
+- **Windows 历史安装用户重新安装或更新时，不再需要手动结束 MCP Memory 或删除被占用文件。** 只有 endpoint PID、启动身份、可执行文件、launcher、参数、host/port、全局 manifest、当前解释器和数据库都与 Meta_Kim 记录的权威完全一致，安装器才会暂停旧服务；未知 listener 或用户改动一律 fail closed。对同版本重装和历史版本更新，安装器会先在旁路目录准备并验证候选，再停止旧 runtime；切换、重启或健康/身份回读失败时，会恢复旧 runtime、数据库、启动文件、MCP 配置项和 active state。
+- **Windows 启动项与依赖检查不再把机器环境问题丢给用户处理。** 精确匹配的 Meta_Kim 孤儿启动项会在依赖步骤前自动修复；健康依赖直接复用，缺失依赖进入正常安装，替换失败保留上一份可工作 runtime。PowerShell 5.1 与 7 的本地健康检查会绕过用户代理，真实 503 等 HTTP 失败仍会判定为失败；相关子进程均隐藏窗口、禁用 shell 并设置有界超时。
+- **历史安装状态会沿正常 update 路径做严格受限的自动迁移。** 只有同时满足历史分类与精确所有权的陈旧 manifest 记录，才会在全局安装锁内移除；不可读、仍存在、已漂移、链接或用户所有内容全部保留。install、update 与精确 uninstall 还共用不可变投影包的 digest 锁，避免清理与正在使用该包的进程竞态。
+- **发布证明更严格，也更适配 Windows 网络环境。** Release 审计与规划关闭使用有界 WinINET/WinHTTP/直连策略、可信 Windows 系统工具、显式代理/TLS 清理、调用方仓库状态权威，以及精确 asset 大小与摘要绑定。新增 `meta:release:plan` 根据真实 diff 推荐 smoke 或 full；install、runtime、安全、未知或空变更会 fail closed 到完整门禁，且不会削弱 `meta:verify:all`。
+- **运行时声明继续保留真实来源。** 仓库外或链接报告不能继承仓库 run identity；runtime acceptance 统一写入规范运行端名称；未知运行端在写状态前失败；激活元数据也不能凭空制造 provider registry 未声明的支持能力。
+- **贡献者致谢：** 感谢 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 在 [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) 和 [#51](https://github.com/KimYx0207/Meta_Kim/pull/51) 中提供的初始贡献。本版本继续保留这两项已合并贡献，并补齐其上的历史用户更新、回滚与发布证明加固。
+
+### 验证
+
+- 发布验证覆盖全新安装、同版本重装、历史版本更新、部分失败残留、用户改动漂移、Windows 精确进程权威、事务回滚与直接重试、本地健康检查绕过代理、受锁保护的历史 manifest 迁移、共享包生命周期锁、公共打包 CLI 安装/更新、runtime/provider 来源，以及 GitHub Release 精确绑定。
+
 ## [2.9.25] - 2026-08-05
 
 ### 修复内容
