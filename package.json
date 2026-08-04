@@ -12,6 +12,7 @@
     "meta:sync:global": "node scripts/sync-global-meta-theory.mjs",
     "meta:sync:global:release": "node scripts/sync-global-meta-theory.mjs --with-global-hooks",
     "meta:check:global": "node scripts/sync-global-meta-theory.mjs --check",
+    "meta:runtime:rebind": "node setup.mjs --rebind-runtime-launch",
     "meta:check:global:release": "node scripts/sync-global-meta-theory.mjs --check --with-global-hooks",
     "meta:show:global:targets": "node scripts/sync-global-meta-theory.mjs --print-targets",
     "discover:global": "node scripts/discover-global-capabilities.mjs",

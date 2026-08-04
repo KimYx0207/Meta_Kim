@@ -3,6 +3,7 @@ export const SETUP_BOOLEAN_ARGS = Object.freeze([
   "--without-global-hooks", "--all-projects", "--update-projects",
   "--save-project-dirs", "--prompt-proxy", "--project-bootstrap",
   "--cleanup-projects", "--project-cleanup", "--dry-run", "--apply", "--json",
+  "--rebind-runtime-launch",
 ]);
 
 export const SETUP_VALUE_ARGS = Object.freeze([
@@ -54,6 +55,7 @@ export function validateSetupCliArgs(argv = []) {
   if (normalizedArgv.includes("--project-cleanup") || normalizedArgv.includes("--cleanup-projects")) {
     modes.add("project-cleanup");
   }
+  if (normalizedArgv.includes("--rebind-runtime-launch")) modes.add("rebind-runtime-launch");
   if (modes.size > 1) {
     throw new SetupCliPolicyError(`conflicting setup modes: ${[...modes].join(", ")}`);
   }

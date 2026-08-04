@@ -71,6 +71,21 @@ describe("setup CLI policy", () => {
     );
   });
 
+  test("rebind-runtime-launch is a standalone mode that never rides an install run", () => {
+    assert.equal(validateSetupCliArgs(["--rebind-runtime-launch"]), true);
+    assert.equal(
+      validateSetupCliArgs(["--rebind-runtime-launch", "--targets", "codex"]),
+      true,
+    );
+    for (const conflicting of ["--update", "--check", "--project-bootstrap", "--project-cleanup"]) {
+      assert.throws(
+        () => validateSetupCliArgs(["--rebind-runtime-launch", conflicting]),
+        /conflicting setup modes/,
+        conflicting,
+      );
+    }
+  });
+
   test("mutually exclusive setup modes fail closed", () => {
     assert.throws(
       () => validateSetupCliArgs(["--update", "--check"]),

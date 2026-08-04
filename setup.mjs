@@ -115,6 +115,7 @@ import {
   localOverridesPath,
   normalizeTargets,
   parseSkillsArg,
+  parseTargetsArg,
   resolveTargetContext,
   resolveRuntimeProfilesFromManifest,
   resolveRuntimeHomeDir,
@@ -244,6 +245,7 @@ const checkOnly = args.includes("--check");
 const projectBootstrapMode = args.includes("--project-bootstrap");
 const projectCleanupMode =
   args.includes("--cleanup-projects") || args.includes("--project-cleanup");
+const rebindRuntimeLaunchMode = args.includes("--rebind-runtime-launch");
 const projectBootstrapDryRun = args.includes("--dry-run");
 const projectBootstrapApply = args.includes("--apply");
 const jsonOutputMode = args.includes("--json");
@@ -5660,6 +5662,63 @@ async function refreshRuntimeExecutableBindings(activeTargets, installScope, dep
   }
 }
 
+/**
+ * Re-record the setup runtime launch inventory on its own.
+ *
+ * A host CLI upgrade (`claude`, `codex`) changes the recorded executable
+ * identity, so `checkSelectedRuntimeLaunchInventories()` reports the binding as
+ * stale until it is re-recorded. Without this mode the only way to refresh it
+ * is a full install/update run, which also re-runs boot autostart projection —
+ * an unrelated system-level side effect. This mode writes the inventory and
+ * nothing else.
+ */
+async function runRebindRuntimeLaunchCli() {
+  // This mode mutates the recorded inventory, so it must honour the engine
+  // floor even though it runs before the interactive preflight.
+  const nodeVersion = process.versions.node;
+  if (!isSupportedNodeVersion(nodeVersion)) {
+    console.error(
+      `meta-kim setup: --rebind-runtime-launch requires Node ${MIN_NODE_VERSION} or newer (running ${nodeVersion})`,
+    );
+    return false;
+  }
+  let requestedTargets;
+  try {
+    requestedTargets = args.some(
+      (arg) => arg === "--targets" || arg.startsWith("--targets="),
+    )
+      ? parseTargetsArg(args)
+      : ["claude", "codex"];
+  } catch (error) {
+    console.error(`meta-kim setup: ${error.message}`);
+    return false;
+  }
+  // Runtimes outside the launch-inventory contract must be rejected, not
+  // silently dropped, or a typo looks like a successful rebind.
+  const unsupported = requestedTargets.filter(
+    (target) => !["claude", "codex"].includes(target),
+  );
+  if (unsupported.length > 0) {
+    console.error(
+      `meta-kim setup: --rebind-runtime-launch does not support ${unsupported.join(", ")} (expected claude, codex)`,
+    );
+    return false;
+  }
+  const selected = requestedTargets;
+  if (selected.length === 0) {
+    console.error(
+      "meta-kim setup: --rebind-runtime-launch needs at least one of --targets claude,codex",
+    );
+    return false;
+  }
+  const scopeIndex = args.indexOf("--scope");
+  const scope = scopeIndex >= 0 ? String(args[scopeIndex + 1] ?? "") : "global";
+  const bound = await refreshRuntimeExecutableBindings(selected, scope, []);
+  if (!bound) return false;
+  console.log(`Re-recorded runtime launch inventory: ${selected.join(", ")} (scope: ${scope})`);
+  return true;
+}
+
 function metaTheoryGlobalSyncArgs(targets, withGlobalHooks = false) {
   return buildGlobalMetaTheorySyncArgs({ targets, withGlobalHooks });
 }
@@ -8502,6 +8561,10 @@ async function main() {
   }
   if (projectCleanupMode) {
     const ok = await runProjectCleanupCli();
+    process.exit(ok ? 0 : 1);
+  }
+  if (rebindRuntimeLaunchMode) {
+    const ok = await runRebindRuntimeLaunchCli();
     process.exit(ok ? 0 : 1);
   }
 

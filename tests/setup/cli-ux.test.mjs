@@ -67,6 +67,21 @@ describe("stable package CLI UX", () => {
     assert.match(directSetup.stderr, /unknown option/);
   });
 
+  test("rebind-runtime-launch rejects bad targets instead of silently dropping them", () => {
+    // A dropped typo looks identical to a successful rebind, so the runtime
+    // the user meant to re-record silently keeps its stale binding.
+    const typo = run(setup, ["--rebind-runtime-launch", "--targets", "codex,typo"]);
+    assert.notEqual(typo.status, 0);
+    assert.match(typo.stderr, /Unknown runtime target: typo/);
+    assert.doesNotMatch(typo.stdout, /Re-recorded/);
+
+    // Supported elsewhere in the repo, but outside this mode's contract.
+    const outOfScope = run(setup, ["--rebind-runtime-launch", "--targets", "cursor"]);
+    assert.notEqual(outOfScope.status, 0);
+    assert.match(outOfScope.stderr, /does not support cursor/);
+    assert.doesNotMatch(outOfScope.stdout, /Re-recorded/);
+  });
+
   test("empty setup values fail before setup performs work", () => {
     for (const arg of ["--lang=", "--targets=", "--project-dir="]) {
       const result = run(setup, [arg]);
