@@ -6,6 +6,18 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.25] - 2026-08-05
+
+### Fixed
+
+- **The installed Windows CLI can now finish a global update when its active Node executable does not bundle npm beside itself.** Stable-package sync first uses direct Node/npm layouts, then safely resolves the real `npm.cmd` on the sanitized PATH and invokes its absolute `npm-cli.js` without a visible shell. This covers Codex/portable Node launchers while preserving the immutable package authority and shell-free child-process boundary.
+- **Release verification remains stable under a busy Windows host.** The Graphify merge attribute is now a tracked repository rule instead of a verification-time untracked file; the Job Object owner-death probe allows enough time for a contended PowerShell process query; and concurrent verification-history fixtures retry bounded Windows temporary-directory cleanup. These changes do not weaken the production assertions.
+- **All v2.9.23 and v2.9.24 compatibility repairs remain included.** Historical startup cleanup, dependency-state handling, global `meta-theory` projection, hidden Graphify probing, PR #50/#51 corrections, and exact Release audit promotion are unchanged. Thanks again to [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) for the starting contributions in [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) and [#51](https://github.com/KimYx0207/Meta_Kim/pull/51).
+
+### Verification
+
+- Verification includes the portable-Node/no-bundled-npm regression, the real packed global update, the standard full release gate, and exact GitHub Release binding.
+
 ## [2.9.24] - 2026-08-05
 
 ### Fixed

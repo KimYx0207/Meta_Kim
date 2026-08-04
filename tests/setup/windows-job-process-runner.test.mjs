@@ -482,6 +482,7 @@ describe(
         await waitForCondition(
           () => directChildPids(supervisor.pid).length > 0,
           "owned PowerShell launcher",
+          30_000,
         );
         launcherIdentities = captureOwnedIdentities(directChildPids(supervisor.pid));
         assert.ok(launcherIdentities.length >= 1);

@@ -6,6 +6,7 @@ import process from "node:process";
 import test from "node:test";
 
 import {
+  resolveNpmCliJsPath,
   resolveWindowsCliInvocation,
   spawnCli,
 } from "../../scripts/runtime-cli-invocation.mjs";
@@ -51,6 +52,26 @@ test("Windows CLI resolution keeps native executable priority within one PATH di
   assert.equal(invocation.command, native);
   assert.deepEqual(invocation.args, ["--version"]);
   assert.equal(invocation.source, "native_executable");
+});
+
+test("npm CLI resolution falls back to a PATH shim when the active Node has no bundled npm", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-npm-cli-fallback-"));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+  const nodeDirectory = path.join(root, "portable-node-without-npm");
+  const npmDirectory = path.join(root, "npm-on-path");
+  const npmCli = path.join(npmDirectory, "node_modules", "npm", "bin", "npm-cli.js");
+  await fs.mkdir(nodeDirectory, { recursive: true });
+  await fs.mkdir(path.dirname(npmCli), { recursive: true });
+  await fs.writeFile(path.join(npmDirectory, "npm.cmd"), "@node npm-cli.js %*\r\n", "utf8");
+  await fs.writeFile(npmCli, "process.exitCode = 0;\n", "utf8");
+
+  const resolved = resolveNpmCliJsPath({
+    env: { PATH: npmDirectory },
+    nodeExecutable: path.join(nodeDirectory, "node.exe"),
+    platform: "win32",
+  });
+
+  assert.equal(resolved, npmCli);
 });
 
 test("spawnCli abort waits for child close and prevents late child work", async (t) => {

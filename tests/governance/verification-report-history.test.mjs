@@ -541,6 +541,11 @@ test("concurrent processes preserve all attempts and one valid latest projection
       false,
     );
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
   }
 });

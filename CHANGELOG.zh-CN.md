@@ -6,6 +6,18 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [2.9.25] - 2026-08-05
+
+### 修复内容
+
+- **Windows 已安装 CLI 在“当前 Node 可执行文件旁边没有自带 npm”时也能完成全局更新。** 稳定包同步会先检查 Node/npm 的直接安装布局，再从净化后的 PATH 安全解析真实 `npm.cmd` 及其绝对 `npm-cli.js`，全程不经过可见 shell。这样可兼容 Codex/便携 Node 启动器，同时保留不可变包权威和无 shell 子进程边界。
+- **繁忙 Windows 主机上的发布验证不再误报失败。** Graphify 合并属性现在是仓库正式跟踪规则，不会在验证中途产生未跟踪文件；Job Object 的“监督进程死亡”探针为高负载 PowerShell 进程查询保留了足够观察时间；并发验证历史夹具也会有限重试 Windows 临时目录清理。这些改动都没有放宽生产断言。
+- **v2.9.23 与 v2.9.24 的兼容修复全部继续保留。** 历史启动项自动清理、依赖状态处理、全局 `meta-theory` 投影、Graphify 隐藏探测、PR #50/#51 修正和精确 Release 审计提升均未改变。再次感谢 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 在 [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) 和 [#51](https://github.com/KimYx0207/Meta_Kim/pull/51) 中提供的初始贡献。
+
+### 验证
+
+- 验证覆盖便携 Node/无内置 npm 回归、真实打包后的全局更新、标准完整发布门禁和 GitHub Release 精确绑定。
+
 ## [2.9.24] - 2026-08-05
 
 ### 修复内容

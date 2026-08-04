@@ -102,6 +102,35 @@ export function resolveWindowsCliInvocation(
   };
 }
 
+export function resolveNpmCliJsPath({
+  env = process.env,
+  nodeExecutable = process.execPath,
+  platform = process.platform,
+  pathValue = null,
+} = {}) {
+  const candidates = [
+    env.npm_execpath,
+    path.join(path.dirname(nodeExecutable), "node_modules", "npm", "bin", "npm-cli.js"),
+    path.resolve(path.dirname(nodeExecutable), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+  ].filter(Boolean);
+  if (platform === "win32") {
+    try {
+      const descriptor = resolveWindowsCliLaunchDescriptor("npm", {
+        env,
+        pathValue: pathValue ?? env.PATH ?? env.Path ?? "",
+      });
+      if (descriptor.jsEntry) candidates.push(descriptor.jsEntry);
+    } catch {
+      // Keep the direct Node-layout candidates authoritative when PATH has no
+      // supported npm shim. The final error below remains deterministic.
+    }
+  }
+  const resolved = [...new Set(candidates)]
+    .find((candidate) => path.isAbsolute(candidate) && existsSync(candidate));
+  if (resolved) return resolved;
+  throw new Error("Unable to resolve npm-cli.js from the active Node installation or PATH.");
+}
+
 export function resolveCliInvocation(command, args = [], options = {}) {
   if (process.platform === "win32") {
     return resolveWindowsCliInvocation(command, args, options);

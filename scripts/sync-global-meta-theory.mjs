@@ -62,6 +62,7 @@ import {
   runtimeHookSourceOwner,
 } from "./runtime-hook-mapping.mjs";
 import { readSetupRuntimeLaunchInventory } from "./runtime-executable-binding.mjs";
+import { resolveNpmCliJsPath } from "./runtime-cli-invocation.mjs";
 import {
   findAuthoritativeGlobalProjectionPackage,
   materializeGlobalProjectionPackage,
@@ -741,18 +742,6 @@ function recordDurableMcpBundle(layout) {
   }
 }
 
-async function resolveNpmCliPath() {
-  const candidates = [
-    process.env.npm_execpath,
-    path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
-    path.join(path.dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    if (path.isAbsolute(candidate) && await pathExists(candidate)) return candidate;
-  }
-  throw new Error("Unable to resolve npm-cli.js from the active Node installation.");
-}
-
 function runDurableMcpSelfTest(cliPath, cwd) {
   return execFileSync(
     process.execPath,
@@ -800,7 +789,7 @@ async function materializeDurableMcpRuntime(plan) {
   let promoted = false;
   let promotedClosure = null;
   try {
-    const npmCliPath = await resolveNpmCliPath();
+    const npmCliPath = resolveNpmCliJsPath();
     if (process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "pack") {
       throw new Error("Injected durable MCP pack failure.");
     }
