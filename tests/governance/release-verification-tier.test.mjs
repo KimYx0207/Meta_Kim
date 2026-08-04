@@ -149,6 +149,11 @@ test("explicit smoke fails closed to full for high-risk, unknown, and empty impa
   const cases = [
     ["package.json", ["package.json"], "full_only_impact"],
     ["release proof", ["scripts/run-verify-all.mjs"], "full_only_impact"],
+    ["setup", ["setup.mjs"], "full_only_impact"],
+    ["historical install manifest", ["scripts/install-manifest.mjs"], "full_only_impact"],
+    ["runtime lifecycle", ["scripts/global-projection-package-store.mjs"], "full_only_impact"],
+    ["MCP Memory boot", ["scripts/mcp-memory-boot-artifacts.mjs"], "full_only_impact"],
+    ["release network", ["scripts/release-network.mjs"], "full_only_impact"],
     ["unknown", ["new-area/unmapped.txt"], "unknown_file"],
     ["empty", [], "empty_changed_file_set"],
   ];

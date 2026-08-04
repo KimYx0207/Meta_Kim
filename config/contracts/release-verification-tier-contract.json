@@ -203,6 +203,7 @@
         "scripts/run-verify-all.mjs",
         "scripts/verify-packed-user-install-update.mjs",
         "scripts/audit-release-binding.mjs",
+        "scripts/release-network.mjs",
         "scripts/release-binding-canonical.mjs",
         "scripts/record-release-planning-closure.mjs"
       ],
@@ -210,6 +211,24 @@
       "requiresFull": true,
       "reason": "Changing a release proof owner can invalidate the meaning of verification evidence.",
       "testSelectors": ["tests/governance/core-loop-release-evidence.test.mjs", "tests/governance/release-binding-audit.test.mjs"]
+    },
+    {
+      "id": "install-update-runtime-lifecycle",
+      "patterns": [
+        "setup.mjs",
+        "bin/**",
+        "scripts/install-manifest.mjs",
+        "scripts/install-global-skills-all-runtimes.mjs",
+        "scripts/global-projection-package-store.mjs",
+        "scripts/global-runtime-*.mjs",
+        "scripts/mcp-memory-*.mjs",
+        "scripts/runtime-cli-invocation.mjs",
+        "scripts/uninstall.mjs"
+      ],
+      "impacts": ["version", "sync", "packaging", "focused_regression"],
+      "requiresFull": true,
+      "reason": "Installer, updater, runtime lifecycle, MCP Memory, and uninstall changes affect fresh installs and historical-user repair, so they require the complete packed release gate.",
+      "testSelectors": ["tests/setup/*.test.mjs", "tests/unit/global-projection-package-store.test.mjs"]
     },
     {
       "id": "sync-runtime-boundary",
