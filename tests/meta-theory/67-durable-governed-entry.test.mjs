@@ -47,8 +47,11 @@ function durableStageRunner(root, counter, mode = "fresh") {
     runtime: "codex",
     durableMode: mode,
     durableDbPath: path.join(root, "durable-runs.sqlite"),
-    durableLeaseMs: 1_000,
-    durableHeartbeatIntervalMs: 100,
+    // Keep the integration fixture aligned with the production coordinator
+    // defaults. A one-second lease can expire when the full parallel test suite
+    // temporarily starves this process even though the coordinator is healthy.
+    durableLeaseMs: 30_000,
+    durableHeartbeatIntervalMs: 10_000,
     capacity: 1,
     timeoutMs: 30_000,
     invokeWorker: workerCounter(counter),
