@@ -17,6 +17,7 @@
 - **Windows 的 Graphify 验证不再调用 `py -3` 或弹出可见终端。** 自动发现只接受 PATH 或标准安装目录中的绝对 `python.exe` / `python3.exe`，拒绝 WindowsApps 别名，并把版本、pip、Graphify、Git 与迁移相关子进程统一隐藏运行；没有 Python 时会干净地进入依赖缺失分支，已有健康 Python 时直接复用。
 - **全局 Claude Code 安装现在会真正注册已经投影的能力优先治理 Hook。** 历史全局设置在正常更新时补上 `enforce-agent-dispatch`，重复更新保持幂等，项目内与全局治理不再出现一边生效、一边漏接线的差异。
 - **运行时 CLI 升级后可以只刷新启动清单，不再顺带重装开机启动。** 新的 `meta-kim runtime rebind` 公开入口只重绑 Claude Code / Codex 可执行身份，严格校验 target、scope 和 Node 版本。macOS / Linux 的 MCP Memory 启动链与 Windows 一样由正常更新写入精确 manifest，不依赖文件名或脚本文本启发式判断。
+- **贡献致谢：** 感谢 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 通过 [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) 和 [#51](https://github.com/KimYx0207/Meta_Kim/pull/51) 发现全局 Claude 治理 Hook 漏接线与运行时清单重绑问题，并提供初始实现；本版本在这些贡献基础上补齐历史更新、公开 CLI、跨平台 scope、安全边界和发行回归。
 
 ### 验证
 
