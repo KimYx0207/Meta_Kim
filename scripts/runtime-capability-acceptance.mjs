@@ -798,18 +798,18 @@ export function writeRuntimeCapabilityAcceptanceAttempt({
   releaseVerificationPath = null,
   _controlledWriteToken = null,
 } = {}) {
-  normalizeRuntimeCapabilityRuntimeId(runtime);
+  const canonicalRuntime = normalizeRuntimeCapabilityRuntimeId(runtime);
   if (!["project_projection", "global_install", "interactive_host", "headless_live", "compatibility_smoke"].includes(mode)) throw new Error("unsupported runtime acceptance mode");
   if (sourceKind === "controlled_producer_receipt" && _controlledWriteToken !== CONTROLLED_WRITE_TOKEN) throw new Error("controlled producer receipts require the internal attester path");
   const paths = prepareRuntimeCapabilityAcceptanceStore({ projectRoot, profile });
   const reportRoot = assertPlainDirectory(paths.profileRoot, "runtime capability profile state root");
   const loadedReport = readDigestBoundFile(reportPath, reportRoot, "runtime capability source report");
   const reportResult = sourceKind === "controlled_producer_receipt"
-    ? validateControlledProducerReceipt(loadedReport.value, runtime, capability, mode)
+    ? validateControlledProducerReceipt(loadedReport.value, canonicalRuntime, capability, mode)
     : sourceKind === "runtime_live_fuse"
-    ? validateLiveFuseReport(loadedReport.value, runtime, capability)
+    ? validateLiveFuseReport(loadedReport.value, canonicalRuntime, capability)
     : sourceKind === "packed_update_global_readback"
-      ? validatePackedReport(loadedReport.value, runtime, capability)
+      ? validatePackedReport(loadedReport.value, canonicalRuntime, capability)
       : (() => { throw new Error(`unsupported runtime acceptance sourceKind ${sourceKind}`); })();
   const observedMs = Date.parse(reportResult.observedAt);
   if (!Number.isFinite(observedMs)) throw new Error("source report observedAt is invalid");
@@ -857,7 +857,7 @@ export function writeRuntimeCapabilityAcceptanceAttempt({
     correlationId,
     createdAt,
     observedAt: reportResult.observedAt,
-    runtime,
+    runtime: canonicalRuntime,
     runtimeVersion: reportResult.runtimeVersion,
     capability,
     mode,

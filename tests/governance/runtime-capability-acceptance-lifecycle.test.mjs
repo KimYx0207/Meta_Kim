@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, symlinkS
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { loadRuntimeCapabilityAcceptanceAttempts, normalizeRuntimeCapabilityRuntimeId, prepareRuntimeCapabilityAcceptanceStore, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
+import { loadRuntimeCapabilityAcceptanceAttempts, normalizeRuntimeCapabilityRuntimeId, prepareRuntimeCapabilityAcceptanceStore, readRuntimeCapabilityAcceptanceAttempt, validateRuntimeCapabilityAcceptanceAttemptEvidence, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "../../scripts/effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
 import { canonicalJson } from "../../scripts/audit-release-binding.mjs";
@@ -19,6 +19,68 @@ test("unknown runtime acceptance keys fail closed before source-report interpret
     /unsupported runtime acceptance target/u,
   );
   assert.equal(normalizeRuntimeCapabilityRuntimeId("claude"), "claude_code");
+});
+
+test("Claude runtime aliases remain canonical across acceptance write, read, list, query, and source validation", () => {
+  const project = projectFixture();
+  const reportPath = writeLiveFuseReport(project.reports, "claude", "2026-08-05T00:00:00.000Z");
+  const acceptance = writeRuntimeCapabilityAcceptanceAttempt({
+    projectRoot: project.root,
+    profile: "default",
+    reportPath,
+    sourceKind: "runtime_live_fuse",
+    runtime: "claude",
+    capability: "agent",
+    mode: "interactive_host",
+    attemptId: "claude-canonical-agent",
+    correlationId: "claude-canonical-agent-correlation",
+  });
+
+  const rawRecord = JSON.parse(readFileSync(acceptance.recordPath, "utf8"));
+  assert.equal(rawRecord.runtime, "claude_code");
+
+  const readRecord = readRuntimeCapabilityAcceptanceAttempt(acceptance.recordPath, {
+    allowedRoot: acceptance.paths.realRoot,
+  });
+  assert.equal(readRecord.runtime, "claude_code");
+
+  const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot: project.root, profile: "default" });
+  assert.deepEqual(store.attempts.map((entry) => entry.runtime), ["claude_code"]);
+  assert.deepEqual(Object.keys(store.index.latestByClaim), ["claude_code:agent:interactive_host"]);
+  assert.equal(store.index.latestByClaim["claude_code:agent:interactive_host"].runtime, "claude_code");
+
+  const queried = loadEffectiveRuntimeCapabilityClaims({
+    packageRoot,
+    projectRoot: project.root,
+    now: "2026-08-05T00:01:00.000Z",
+  });
+  assert.deepEqual(queried.overlayStatus.rejected.map((entry) => entry.runtime), ["claude_code"]);
+  assert.match(queried.issues.join("\n"), /reference-only/u);
+
+  const sourceValidation = validateRuntimeCapabilityAcceptanceAttemptEvidence(readRecord, {
+    profileRoot: store.paths.profileRoot,
+    now: "2026-08-05T00:01:00.000Z",
+  });
+  assert.equal(sourceValidation.valid, true, sourceValidation.issues.join("\n"));
+});
+
+test("unknown runtime acceptance writes no acceptance files", () => {
+  const project = projectFixture();
+  const reportPath = writeLiveFuseReport(project.reports, "codex", "2026-08-05T00:00:00.000Z");
+  const acceptanceRoot = path.join(project.root, ".meta-kim", "state", "default", "runtime-capability-acceptance");
+
+  assert.throws(() => writeRuntimeCapabilityAcceptanceAttempt({
+    projectRoot: project.root,
+    profile: "default",
+    reportPath,
+    sourceKind: "runtime_live_fuse",
+    runtime: "unknown_runtime",
+    capability: "agent",
+    mode: "interactive_host",
+    attemptId: "unknown-runtime-agent",
+    correlationId: "unknown-runtime-agent-correlation",
+  }), /unsupported runtime acceptance target/u);
+  assert.equal(existsSync(acceptanceRoot), false);
 });
 
 function projectFixture() {
