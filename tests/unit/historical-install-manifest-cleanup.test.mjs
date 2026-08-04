@@ -36,6 +36,7 @@ test("selects only exact, missing historical hook-source test assets", () => {
         }),
         entry(root, { purpose: "user-global-hook" }),
         entry(root, { source: "manual-edit" }),
+        entry(root, { runtimeTarget: "cursor" }),
         entry(root, { path: join(root, "user-created", "claude", "hooks", "keep.mjs") }),
         entry(root, { path: join(root, "meta-kim-hook-source-old", "windows", "hooks", "keep.mjs") }),
       ],
@@ -43,7 +44,7 @@ test("selects only exact, missing historical hook-source test assets", () => {
 
     const selected = selectExactHistoricalHookSourceEntries(manifest, { tempRoot: root });
     assert.deepEqual(selected.map(({ index }) => index), [0, 1]);
-    assert.equal(manifest.entries.length, 6);
+    assert.equal(manifest.entries.length, 7);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -57,6 +58,24 @@ test("preserves user drift and assets that still exist", () => {
     writeFileSync(existingPath, "user or recovered content\n", "utf8");
 
     const classification = classifyExactHistoricalHookSourceEntry(entry(root), { tempRoot: root });
+    assert.equal(classification.matched, false);
+    assert.equal(classification.reason, "path_still_exists_or_is_unknown");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("preserves filesystem states that are not provably missing", () => {
+  const root = mkdtempSync(join(tmpdir(), "meta-kim-manifest-unknown-"));
+  try {
+    const classification = classifyExactHistoricalHookSourceEntry(entry(root), {
+      tempRoot: root,
+      stat() {
+        const error = new Error("permission denied");
+        error.code = "EACCES";
+        throw error;
+      },
+    });
     assert.equal(classification.matched, false);
     assert.equal(classification.reason, "path_still_exists_or_is_unknown");
   } finally {

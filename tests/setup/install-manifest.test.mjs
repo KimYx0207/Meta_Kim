@@ -1,5 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import {
   mkdtempSync,
@@ -13,6 +14,7 @@ import {
   utimesSync,
 } from "node:fs";
 import path from "node:path";
+import { buildIsolatedUserHomeEnv } from "../../scripts/isolated-user-home-env.mjs";
 
 import {
   CATEGORIES,
@@ -560,6 +562,142 @@ describe("install-manifest schema + helpers", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("global flush migrates exact missing hook-source entries under the lock and is idempotent", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "meta-kim-global-migration-"));
+    const historicalRoot = mkdtempSync(path.join(tmpdir(), "meta-kim-hook-source-"));
+    rmSync(historicalRoot, { recursive: true, force: true });
+    const existingRoot = mkdtempSync(path.join(tmpdir(), "meta-kim-hook-source-"));
+    const userHome = path.join(fixtureRoot, "user-home");
+    const moduleUrl = new URL("../../scripts/install-manifest.mjs", import.meta.url).href;
+    const script = `
+      import assert from "node:assert/strict";
+      import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+      import path from "node:path";
+      import {
+        CATEGORIES,
+        createEmpty,
+        manifestPathFor,
+        openRecorder,
+        readManifest,
+        record,
+        validate,
+        writeManifest,
+      } from ${JSON.stringify(moduleUrl)};
+
+      const historicalRoot = process.env.META_KIM_HISTORICAL_ROOT;
+      const existingRoot = process.env.META_KIM_EXISTING_ROOT;
+      const manifestPath = manifestPathFor("global");
+      const exactEntry = {
+        path: path.join(historicalRoot, "claude", "hooks", "meta-kim", "enforce.mjs"),
+        category: CATEGORIES.B,
+        source: "sync-global-meta-theory",
+        purpose: "claude-global-hook",
+        runtimeTarget: "claude",
+        kind: "file",
+      };
+      const existingEntry = {
+        path: path.join(existingRoot, "claude", "hooks", "meta-kim", "enforce.mjs"),
+        category: CATEGORIES.B,
+        source: "sync-global-meta-theory",
+        purpose: "claude-global-hook",
+        runtimeTarget: "claude",
+        kind: "file",
+      };
+      const nonCandidateEntry = {
+        path: path.join(historicalRoot, "claude", "hooks", "meta-kim", "user.mjs"),
+        category: CATEGORIES.B,
+        source: "manual-edit",
+        purpose: "claude-global-hook",
+        runtimeTarget: "claude",
+        kind: "file",
+      };
+      mkdirSync(existingRoot, { recursive: true });
+      mkdirSync(path.dirname(existingEntry.path), { recursive: true });
+      writeFileSync(existingEntry.path, "recovered or user content\\n", "utf8");
+      let seed = createEmpty({ scope: "global", metaKimVersion: "test" });
+      seed = record(seed, exactEntry);
+      seed = record(seed, existingEntry);
+      seed = record(seed, nonCandidateEntry);
+      writeManifest(manifestPath, seed);
+      const before = readManifest(manifestPath);
+      const first = openRecorder({ scope: "global" });
+      const second = openRecorder({ scope: "global" });
+      const [firstResult, secondResult] = await Promise.all([
+        first.flush(),
+        second.flush(),
+      ]);
+      assert.equal(firstResult.ok, true, firstResult.error);
+      assert.equal(secondResult.ok, true, secondResult.error);
+      assert.equal([firstResult, secondResult].filter((result) => result.changed).length, 1);
+      const after = readManifest(manifestPath);
+      assert.equal(validate(after).ok, true, validate(after).errors?.join("; "));
+      assert.equal(after.entries.some((entry) => entry.path === exactEntry.path), false);
+      assert.deepEqual(
+        after.entries,
+        before.entries.filter((entry) => entry.path !== exactEntry.path),
+      );
+      assert.equal(after.migrationReceipts.length, 1);
+      assert.equal(after.migrationReceipts[0].removedEntryCount, 1);
+      assert.equal(after.migrationReceipts[0].removedEntries[0].path, exactEntry.path);
+      const migrationResults = [firstResult, secondResult].filter(
+        (result) => result.migrationReceipt,
+      );
+      assert.equal(migrationResults.length, 1);
+      assert.equal(migrationResults[0].migrationReceipt.removedEntryCount, 1);
+
+      const bytesAfter = readFileSync(manifestPath, "utf8");
+      const retry = openRecorder({ scope: "global" });
+      const retryResult = await retry.flush();
+      assert.equal(retryResult.ok, true, retryResult.error);
+      assert.equal(retryResult.changed, false);
+      assert.equal(retryResult.migrationReceipt, null);
+      assert.equal(readFileSync(manifestPath, "utf8"), bytesAfter);
+      assert.deepEqual(readManifest(manifestPath).entries, after.entries);
+      assert.equal(readManifest(manifestPath).entries.some((entry) => entry.path === existingEntry.path), true);
+      assert.equal(readManifest(manifestPath).entries.some((entry) => entry.path === nonCandidateEntry.path), true);
+      assert.equal(before.entries.length, 3);
+    `;
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        {
+          cwd: path.resolve("."),
+          encoding: "utf8",
+          env: {
+            ...buildIsolatedUserHomeEnv(userHome),
+            META_KIM_HISTORICAL_ROOT: historicalRoot,
+            META_KIM_EXISTING_ROOT: existingRoot,
+          },
+        },
+      );
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+      rmSync(historicalRoot, { recursive: true, force: true });
+      rmSync(existingRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("validate rejects malformed historical migration receipts", () => {
+    const manifest = createEmpty({ scope: "global", metaKimVersion: "test" });
+    manifest.migrationReceipts = [{
+      schemaVersion: 1,
+      migrationId: "historical-hook-source-test-entry-v1",
+      operation: "remove_exact_missing_historical_hook_source_test_entries",
+      appliedAt: "not-a-date",
+      examinedEntryCount: 1,
+      preservedEntryCount: 0,
+      removedEntryCount: 1,
+      removedEntryDigest: "not-a-digest",
+      removedEntries: [],
+    }];
+    const result = validate(manifest);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.includes("appliedAt")));
+    assert.ok(result.errors.some((error) => error.includes("removedEntryDigest")));
   });
 
   test("openRecorder replaceSources drops stale source entries only", () => {

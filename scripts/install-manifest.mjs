@@ -63,13 +63,16 @@ import {
   unlinkSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { homedir, hostname } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   invertCodexConfigMutations,
   normalizeCodexConfigMutations,
 } from "./codex-config-merge.mjs";
+import {
+  pruneExactHistoricalHookSourceEntries,
+} from "./historical-install-manifest-cleanup.mjs";
 
 export const SCHEMA_VERSION = 1;
 
@@ -80,6 +83,13 @@ const MANIFEST_RENAME_RETRY_ATTEMPTS = 8;
 const MANIFEST_RENAME_RETRY_BASE_MS = 25;
 const RETRYABLE_RENAME_CODES = new Set(["EACCES", "EBUSY", "EEXIST", "EPERM"]);
 export const TOML_MUTATION_JOURNAL_LIMIT = 256;
+export const HISTORICAL_MIGRATION_RECEIPT_SCHEMA_VERSION = 1;
+export const HISTORICAL_HOOK_SOURCE_MIGRATION_ID =
+  "historical-hook-source-test-entry-v1";
+export const MIGRATION_RECEIPT_LIMIT = 16;
+export const MIGRATION_RECEIPT_SAMPLE_LIMIT = 32;
+const MIGRATION_RECEIPT_STRING_LIMIT = 4096;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
 const TOML_FRAGMENT_ENTRY_FIELDS = new Set([
   "path",
   "category",
@@ -101,6 +111,9 @@ const LEGACY_TOML_MERGE_FIELDS = new Set([
   "mergedHookFragments",
   "mergedSettingsKeys",
 ]);
+
+// P156 remains intentionally pending: content-addressed artifact reuse needs
+// a real consumer and a content-integrity design before it belongs here.
 
 export const CATEGORIES = Object.freeze({
   A: "A",
@@ -432,6 +445,164 @@ export function removeByPath(manifest, targetPath, purpose) {
   return next;
 }
 
+function receiptDigest(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function historicalReceiptIdentity({ entry, classification }) {
+  return {
+    path: entry.path,
+    source: entry.source,
+    purpose: entry.purpose,
+    category: entry.category,
+    runtimeTarget: entry.runtimeTarget ?? null,
+    runtimeName: classification.runtimeName,
+    sourceTestRoot: classification.sourceTestRoot,
+  };
+}
+
+function compareReceiptIdentities(left, right) {
+  return JSON.stringify(left).localeCompare(JSON.stringify(right));
+}
+
+function boundReceiptString(value) {
+  if (value.length <= MIGRATION_RECEIPT_STRING_LIMIT) return value;
+  const digest = receiptDigest(value);
+  return `${value.slice(0, MIGRATION_RECEIPT_STRING_LIMIT - 18)}:${digest.slice(0, 16)}`;
+}
+
+function createHistoricalMigrationReceipt({ removedEntries, examinedEntryCount }) {
+  const identities = removedEntries
+    .map(historicalReceiptIdentity)
+    .sort(compareReceiptIdentities);
+  const identityPayload = JSON.stringify(identities);
+  return {
+    schemaVersion: HISTORICAL_MIGRATION_RECEIPT_SCHEMA_VERSION,
+    migrationId: HISTORICAL_HOOK_SOURCE_MIGRATION_ID,
+    operation: "remove_exact_missing_historical_hook_source_test_entries",
+    appliedAt: new Date().toISOString(),
+    examinedEntryCount,
+    preservedEntryCount: examinedEntryCount - identities.length,
+    removedEntryCount: identities.length,
+    removedEntryDigest: receiptDigest(identityPayload),
+    removedEntries: identities
+      .slice(0, MIGRATION_RECEIPT_SAMPLE_LIMIT)
+      .map((identity) => ({
+        ...identity,
+        path: boundReceiptString(identity.path),
+        source: boundReceiptString(identity.source),
+        purpose: boundReceiptString(identity.purpose),
+        runtimeName: boundReceiptString(identity.runtimeName),
+        sourceTestRoot: boundReceiptString(identity.sourceTestRoot),
+        runtimeTarget: identity.runtimeTarget === null
+          ? null
+          : boundReceiptString(identity.runtimeTarget),
+      })),
+  };
+}
+
+function appendHistoricalMigrationReceipt(manifest, receipt) {
+  const receipts = Array.isArray(manifest.migrationReceipts)
+    ? manifest.migrationReceipts
+    : [];
+  return {
+    ...manifest,
+    migrationReceipts: [
+      ...receipts,
+      receipt,
+    ].slice(-MIGRATION_RECEIPT_LIMIT),
+  };
+}
+
+function validateMigrationReceipts(manifest, errors) {
+  if (manifest.migrationReceipts === undefined) return;
+  if (!Array.isArray(manifest.migrationReceipts)) {
+    errors.push("migrationReceipts must be an array");
+    return;
+  }
+  if (manifest.migrationReceipts.length > MIGRATION_RECEIPT_LIMIT) {
+    errors.push(`migrationReceipts exceeds ${MIGRATION_RECEIPT_LIMIT} entries`);
+  }
+  for (const [i, receipt] of manifest.migrationReceipts.entries()) {
+    const label = `migrationReceipts[${i}]`;
+    if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+      errors.push(`${label} must be an object`);
+      continue;
+    }
+    if (receipt.schemaVersion !== HISTORICAL_MIGRATION_RECEIPT_SCHEMA_VERSION) {
+      errors.push(`${label}.schemaVersion is unsupported`);
+    }
+    if (receipt.migrationId !== HISTORICAL_HOOK_SOURCE_MIGRATION_ID) {
+      errors.push(`${label}.migrationId is invalid`);
+    }
+    if (receipt.operation !== "remove_exact_missing_historical_hook_source_test_entries") {
+      errors.push(`${label}.operation is invalid`);
+    }
+    if (
+      typeof receipt.appliedAt !== "string" ||
+      !Number.isFinite(Date.parse(receipt.appliedAt))
+    ) {
+      errors.push(`${label}.appliedAt must be an ISO date`);
+    }
+    for (const field of [
+      "examinedEntryCount",
+      "preservedEntryCount",
+      "removedEntryCount",
+    ]) {
+      if (!Number.isSafeInteger(receipt[field]) || receipt[field] < 0) {
+        errors.push(`${label}.${field} must be a non-negative integer`);
+      }
+    }
+    if (
+      Number.isSafeInteger(receipt.examinedEntryCount) &&
+      Number.isSafeInteger(receipt.removedEntryCount) &&
+      receipt.removedEntryCount > receipt.examinedEntryCount
+    ) {
+      errors.push(`${label}.removedEntryCount exceeds examinedEntryCount`);
+    }
+    if (!SHA256_HEX_PATTERN.test(receipt.removedEntryDigest ?? "")) {
+      errors.push(`${label}.removedEntryDigest must be a SHA-256 digest`);
+    }
+    if (!Array.isArray(receipt.removedEntries)) {
+      errors.push(`${label}.removedEntries must be an array`);
+      continue;
+    }
+    if (receipt.removedEntries.length > MIGRATION_RECEIPT_SAMPLE_LIMIT) {
+      errors.push(
+        `${label}.removedEntries exceeds ${MIGRATION_RECEIPT_SAMPLE_LIMIT} samples`,
+      );
+    }
+    if (
+      Number.isSafeInteger(receipt.removedEntryCount) &&
+      receipt.removedEntries.length > receipt.removedEntryCount
+    ) {
+      errors.push(`${label}.removedEntries exceeds removedEntryCount`);
+    }
+    for (const [entryIndex, entry] of receipt.removedEntries.entries()) {
+      const entryLabel = `${label}.removedEntries[${entryIndex}]`;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        errors.push(`${entryLabel} must be an object`);
+        continue;
+      }
+      for (const field of ["path", "source", "purpose", "runtimeName", "sourceTestRoot"]) {
+        if (
+          typeof entry[field] !== "string" ||
+          entry[field].length === 0 ||
+          entry[field].length > MIGRATION_RECEIPT_STRING_LIMIT
+        ) {
+          errors.push(`${entryLabel}.${field} is invalid`);
+        }
+      }
+      if (!Object.prototype.hasOwnProperty.call(CATEGORIES, entry.category)) {
+        errors.push(`${entryLabel}.category is invalid`);
+      }
+      if (entry.runtimeTarget !== null && typeof entry.runtimeTarget !== "string") {
+        errors.push(`${entryLabel}.runtimeTarget is invalid`);
+      }
+    }
+  }
+}
+
 export function validate(manifest) {
   const errors = [];
   if (!manifest || typeof manifest !== "object") {
@@ -538,6 +709,7 @@ export function validate(manifest) {
       }
     }
   }
+  validateMigrationReceipts(manifest, errors);
   return errors.length === 0 ? { ok: true } : { ok: false, errors };
 }
 
@@ -683,6 +855,7 @@ export function openRecorder({
   metaKimVersion,
   verbose,
   replaceSources = [],
+  historicalTempRoot = tmpdir(),
 }) {
   let manifest;
   let baseManifest;
@@ -926,11 +1099,11 @@ export function openRecorder({
         };
       }
       const target = manifestPathFor(scope, repoRoot);
-      if (
-        touchedEntryKeys.size === 0 &&
-        forgetOperations.length === 0 &&
-        replaceSources.length === 0
-      ) {
+      const hasRecorderChanges =
+        touchedEntryKeys.size > 0 ||
+        forgetOperations.length > 0 ||
+        replaceSources.length > 0;
+      if (!hasRecorderChanges && scope !== "global") {
         const current = readManifest(target);
         return {
           ok: true,
@@ -940,7 +1113,7 @@ export function openRecorder({
         };
       }
       try {
-        const updated = await withManifestLock(target, async () => {
+        const outcome = await withManifestLock(target, async () => {
           const current = readManifest(target);
           if (existsSync(target) && !current) {
             throw new Error(`cannot merge invalid install manifest: ${target}`);
@@ -984,21 +1157,58 @@ export function openRecorder({
           if (metaKimVersion && next.metaKimVersion !== metaKimVersion) {
             next = { ...next, metaKimVersion };
           }
-          return await writeManifestAtomic(target, next);
+          let migrationReceipt = null;
+          if (scope === "global") {
+            const migration = pruneExactHistoricalHookSourceEntries(next, {
+              tempRoot: historicalTempRoot,
+            });
+            next = migration.manifest;
+            if (migration.removedEntries.length > 0) {
+              migrationReceipt = createHistoricalMigrationReceipt({
+                removedEntries: migration.removedEntries,
+                examinedEntryCount: next.entries.length + migration.removedEntries.length,
+              });
+              next = appendHistoricalMigrationReceipt(next, migrationReceipt);
+            }
+          }
+          if (!hasRecorderChanges && !migrationReceipt) {
+            return {
+              manifest: next,
+              changed: false,
+              migrationReceipt: null,
+            };
+          }
+          return {
+            manifest: await writeManifestAtomic(target, next),
+            changed: true,
+            migrationReceipt,
+          };
         });
-        promotedEntries = new Map(
-          updated.entries
-            .filter((entry) => touchedEntryKeys.has(entryKey(entry)))
-            .map((entry) => [entryKey(entry), entry]),
-        );
-        promotedForgetEntryStates = forgetOperations.map((operation) => ({
-          ...operation,
-          promotedEntries: structuredClone(
-            matchingEntries(updated, operation.targetPath, operation.purpose),
-          ),
-        }));
+        const updated = outcome.manifest;
+        if (hasRecorderChanges) {
+          promotedEntries = new Map(
+            updated.entries
+              .filter((entry) => touchedEntryKeys.has(entryKey(entry)))
+              .map((entry) => [entryKey(entry), entry]),
+          );
+          promotedForgetEntryStates = forgetOperations.map((operation) => ({
+            ...operation,
+            promotedEntries: structuredClone(
+              matchingEntries(updated, operation.targetPath, operation.purpose),
+            ),
+          }));
+        } else {
+          promotedEntries = null;
+          promotedForgetEntryStates = null;
+        }
         manifest = updated;
-        return { ok: true, path: target, entries: updated.entries.length };
+        return {
+          ok: true,
+          path: target,
+          entries: updated.entries.length,
+          changed: outcome.changed,
+          migrationReceipt: outcome.migrationReceipt,
+        };
       } catch (e) {
         if (verbose) console.error(`[manifest] flush failed: ${e?.message}`);
         return { ok: false, error: e?.message ?? String(e) };
