@@ -23,6 +23,14 @@ describe("Claude settings hook command rendering", () => {
     const command = template.PreToolUse[0].hooks[0].command;
 
     assert.equal(command, 'node "C:/Users/Example/.claude/hooks/meta-kim/block-dangerous-bash.mjs"');
+    assert.equal(
+      template.PreToolUse[1].matcher,
+      "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|MultiEdit|NotebookEdit",
+    );
+    assert.equal(
+      template.PreToolUse[1].hooks[0].command,
+      'node "C:/Users/Example/.claude/hooks/meta-kim/enforce-agent-dispatch.mjs" "--runtime" "claude"',
+    );
     const commands = Object.values(template)
       .flatMap((blocks) => blocks.flatMap((block) => block.hooks ?? []))
       .map((hook) => hook.command);
@@ -42,6 +50,30 @@ describe("Claude settings hook command rendering", () => {
       commands.some((entry) => entry.includes("stop-compaction.mjs")),
       true,
     );
+  });
+
+  test("global update adds the missing enforcement hook and stays idempotent", () => {
+    const template = buildMetaKimHooksTemplate(
+      "C:\\Users\\Example\\.claude\\hooks\\meta-kim",
+    );
+    const historical = {
+      hooks: {
+        PreToolUse: [{
+          matcher: "Bash",
+          hooks: [{
+            type: "command",
+            command: 'node "C:/Users/Example/.claude/hooks/meta-kim/block-dangerous-bash.mjs"',
+          }],
+        }],
+      },
+    };
+
+    const upgraded = mergeGlobalMetaKimHooksIntoSettings(historical, template);
+    const repeated = mergeGlobalMetaKimHooksIntoSettings(upgraded, template);
+    const serialized = JSON.stringify(upgraded);
+    assert.match(serialized, /enforce-agent-dispatch\.mjs/u);
+    assert.equal(serialized.match(/enforce-agent-dispatch\.mjs/gu)?.length, 1);
+    assert.deepEqual(repeated, upgraded);
   });
 
   test("Claude global hook template keeps native HookPrompt before Meta_Kim spine", () => {

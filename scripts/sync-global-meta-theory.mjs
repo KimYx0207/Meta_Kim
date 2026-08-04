@@ -13,7 +13,6 @@ import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
-import { auditMacosSystemLevelProjections } from "./macos-system-projection-audit.mjs";
 import {
   buildMetaKimHooksTemplate,
   hookCommandNode,
@@ -2340,20 +2339,6 @@ function isOwnedGlobalMetaKimHookCommand(command) {
   );
 }
 
-/**
- * Print the macOS system-level projection audit. Reporting only: it has no
- * return value and never influences the check's exit code.
- */
-async function reportMacosSystemLevelProjections() {
-  const { findings } = await auditMacosSystemLevelProjections();
-  for (const finding of findings) {
-    const marker = finding.severity === "notice"
-      ? `${C.yellow}!${C.reset}`
-      : `${C.green}✓${C.reset}`;
-    console.log(`${marker} ${C.dim}${finding.message}${C.reset}`);
-  }
-}
-
 function checkSelectedRuntimeLaunchInventories() {
   const descriptorTargets = [
     selectedTargetIds.includes("claude")
@@ -2555,10 +2540,6 @@ async function runCheck() {
   }
 
   if (!checkSelectedRuntimeLaunchInventories()) failed = true;
-  // Visibility only — never contributes to `failed`. See the module header:
-  // ownership of these files is not recorded anywhere, so the audit reports
-  // what it sees and leaves the judgement to a human.
-  await reportMacosSystemLevelProjections();
 
   process.exitCode = failed ? 1 : 0;
 }

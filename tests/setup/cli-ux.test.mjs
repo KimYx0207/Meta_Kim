@@ -82,6 +82,17 @@ describe("stable package CLI UX", () => {
     assert.doesNotMatch(outOfScope.stdout, /Re-recorded/);
   });
 
+  test("public runtime rebind command exposes the standalone repair path", () => {
+    const help = run(cli, ["--help"]);
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /meta-kim runtime rebind/);
+
+    const refused = run(cli, ["runtime", "rebind", "--targets", "cursor"]);
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /does not support cursor/);
+    assert.doesNotMatch(refused.stdout, /Re-recorded/);
+  });
+
   test("empty setup values fail before setup performs work", () => {
     for (const arg of ["--lang=", "--targets=", "--project-dir="]) {
       const result = run(setup, [arg]);

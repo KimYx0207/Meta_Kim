@@ -115,7 +115,6 @@ import {
   localOverridesPath,
   normalizeTargets,
   parseSkillsArg,
-  parseTargetsArg,
   resolveTargetContext,
   resolveRuntimeProfilesFromManifest,
   resolveRuntimeHomeDir,
@@ -125,6 +124,7 @@ import {
   MIN_NODE_VERSION,
   isSupportedNodeVersion,
 } from "./scripts/node-runtime-requirements.mjs";
+import { runRuntimeLaunchRebind } from "./scripts/runtime-launch-rebind.mjs";
 import {
   memoryServiceEnv,
   memoryServerHttpArgs,
@@ -5673,50 +5673,14 @@ async function refreshRuntimeExecutableBindings(activeTargets, installScope, dep
  * nothing else.
  */
 async function runRebindRuntimeLaunchCli() {
-  // This mode mutates the recorded inventory, so it must honour the engine
-  // floor even though it runs before the interactive preflight.
-  const nodeVersion = process.versions.node;
-  if (!isSupportedNodeVersion(nodeVersion)) {
-    console.error(
-      `meta-kim setup: --rebind-runtime-launch requires Node ${MIN_NODE_VERSION} or newer (running ${nodeVersion})`,
-    );
-    return false;
-  }
-  let requestedTargets;
-  try {
-    requestedTargets = args.some(
-      (arg) => arg === "--targets" || arg.startsWith("--targets="),
-    )
-      ? parseTargetsArg(args)
-      : ["claude", "codex"];
-  } catch (error) {
-    console.error(`meta-kim setup: ${error.message}`);
-    return false;
-  }
-  // Runtimes outside the launch-inventory contract must be rejected, not
-  // silently dropped, or a typo looks like a successful rebind.
-  const unsupported = requestedTargets.filter(
-    (target) => !["claude", "codex"].includes(target),
-  );
-  if (unsupported.length > 0) {
-    console.error(
-      `meta-kim setup: --rebind-runtime-launch does not support ${unsupported.join(", ")} (expected claude, codex)`,
-    );
-    return false;
-  }
-  const selected = requestedTargets;
-  if (selected.length === 0) {
-    console.error(
-      "meta-kim setup: --rebind-runtime-launch needs at least one of --targets claude,codex",
-    );
-    return false;
-  }
-  const scopeIndex = args.indexOf("--scope");
-  const scope = scopeIndex >= 0 ? String(args[scopeIndex + 1] ?? "") : "global";
-  const bound = await refreshRuntimeExecutableBindings(selected, scope, []);
-  if (!bound) return false;
-  console.log(`Re-recorded runtime launch inventory: ${selected.join(", ")} (scope: ${scope})`);
-  return true;
+  return runRuntimeLaunchRebind({
+    argv: args,
+    nodeVersion: process.versions.node,
+    minimumNodeVersion: MIN_NODE_VERSION,
+    supportsNodeVersion: isSupportedNodeVersion,
+    refreshBindings: (targets, scope) =>
+      refreshRuntimeExecutableBindings(targets, scope, []),
+  });
 }
 
 function metaTheoryGlobalSyncArgs(targets, withGlobalHooks = false) {
