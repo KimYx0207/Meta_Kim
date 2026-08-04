@@ -57,7 +57,10 @@ test("macOS system-level projection audit", async (t) => {
     for (const finding of result.findings) {
       assert.ok(["info", "notice"].includes(finding.severity), finding.severity);
     }
-    assert.ok(!("ready" in result.findings), "audit must not expose a pass/fail verdict");
+    // Assert on the module's raw return: a reintroduced verdict field must
+    // fail here, so the caller can never start gating on it again.
+    const raw = await auditMacosSystemLevelProjections({ homeRoot: home, platform: "darwin" });
+    assert.deepEqual(Object.keys(raw), ["findings"]);
   });
 
   await t.test("flags a LaunchAgent no current code path generates", async () => {
@@ -111,7 +114,10 @@ test("macOS system-level projection audit", async (t) => {
     assert.equal(result.notices.length, 0);
   });
 
-  await t.test("reports unreadable state instead of silently passing", async () => {
+  // root bypasses the permission bit, so the unreadable case cannot be staged.
+  await t.test("reports unreadable state instead of silently passing", {
+    skip: process.getuid?.() === 0 ? "root reads regardless of mode bits" : false,
+  }, async () => {
     // An unreadable directory is not the same as an empty one. Swallowing the
     // error would report a clean system the audit never actually saw.
     const home = fixtureHome();
