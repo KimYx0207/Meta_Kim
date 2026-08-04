@@ -237,6 +237,45 @@ describe("Graphify upstream output sanitizer", () => {
     );
   });
 
+  test("recovers exact Graphify item wrappers around hyperedge nodes only", () => {
+    const wrapped = {
+      id: "Team-Group",
+      nodes: { item: ["Foo", "bar"] },
+      relation: "participate_in",
+    };
+    const graph = {
+      nodes: [{ id: "Foo" }, { id: "bar" }],
+      links: [],
+      hyperedges: [structuredClone(wrapped)],
+      graph: { hyperedges: [structuredClone(wrapped)] },
+    };
+    const result = sanitizeGraphifyOutput(graph, {
+      normalizeNodeId: (value) => ({
+        Foo: "foo",
+        bar: "bar",
+        "Team-Group": "team_group",
+      })[value] ?? value,
+    });
+    assert.equal(result.recoveredSerializedHyperedgeNodes, 2);
+    assert.deepEqual(graph.hyperedges, graph.graph.hyperedges);
+    assert.deepEqual(graph.hyperedges[0].nodes, ["foo", "bar"]);
+
+    for (const nodes of [
+      { item: "safe" },
+      { item: ["safe"], extra: true },
+      { item: ["safe", 42] },
+    ]) {
+      assert.throws(
+        () => sanitizeGraphifyOutput({
+          nodes: [{ id: "safe" }],
+          links: [],
+          hyperedges: [{ id: "group", nodes }],
+        }),
+        /malformed hyperedge/u,
+      );
+    }
+  });
+
   test("refuses ambiguous duplicate raw IDs and malformed endpoints", () => {
     assert.throws(
       () => sanitizeGraphifyOutput({
