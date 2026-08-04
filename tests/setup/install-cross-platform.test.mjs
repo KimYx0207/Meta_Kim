@@ -483,12 +483,8 @@ describe("install platform config", () => {
 });
 
 describe("python launcher selection", () => {
-  test("Windows prefers py -3 before python/python3", () => {
-    assert.deepEqual(pythonCandidates("win32"), [
-      { command: "py", args: ["-3"] },
-      { command: "python", args: [] },
-      { command: "python3", args: [] },
-    ]);
+  test("Windows automatic detection uses only discovered absolute executables", () => {
+    assert.deepEqual(pythonCandidates("win32"), []);
   });
 
   test("macOS and Linux prefer python3 first", () => {

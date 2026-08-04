@@ -110,6 +110,7 @@ function verifiedGraphifyLauncher() {
     spawnSync(command, args, {
       ...options,
       env: verifiedGraphifyEnvironment(),
+      windowsHide: true,
     });
   const primaryPython = detectPython310(verifiedSpawn, process.platform, {
     requirePip: true,
@@ -138,6 +139,7 @@ function verifiedGraphifyLauncher() {
     encoding: "utf8",
     shell: false,
     env: verifiedGraphifyEnvironment(),
+    windowsHide: true,
   });
   const executableVersion = readProcessText(versionResult).match(
     /graphify\s+([^\s]+)/iu,
@@ -180,6 +182,7 @@ function graphifyMigrationBackendArgs() {
   const claude = spawnSync("claude", ["--version"], {
     encoding: "utf8",
     shell: false,
+    windowsHide: true,
   });
   return claude.status === 0 && !claude.error ? ["--backend", "claude-cli"] : [];
 }
@@ -201,12 +204,23 @@ function ensurePython({ requirePip = false } = {}) {
   return python;
 }
 
+function isSafeWindowsPythonCandidate(candidate) {
+  if (process.platform !== "win32") return true;
+  if (!candidate || candidate.args?.length !== 0) return false;
+  if (!path.win32.isAbsolute(candidate.command)) return false;
+  const normalized = candidate.command.replaceAll("\\", "/").toLowerCase();
+  return !normalized.includes("/windowsapps/") &&
+    /python(?:3)?\.exe$/iu.test(path.win32.basename(candidate.command));
+}
+
 function probePython(candidate) {
+  if (!isSafeWindowsPythonCandidate(candidate)) return null;
   let result;
   try {
     result = spawnSync(candidate.command, [...candidate.args, "--version"], {
       encoding: "utf8",
       shell: false,
+      windowsHide: true,
     });
   } catch {
     return null;
@@ -350,6 +364,7 @@ function gitText(cwd, args) {
     encoding: "utf8",
     shell: false,
     env: sanitizedGitEnvironment(),
+    windowsHide: true,
   });
   if (result.status !== 0 || result.error) return null;
   return String(result.stdout ?? "");
@@ -1203,6 +1218,7 @@ function runVerifiedLocalGraphifyUpdate(
         encoding: "utf8",
         shell: false,
         env: sanitizedGitEnvironment(),
+        windowsHide: true,
       },
     );
     if (added.status !== 0 || added.error) {
@@ -1282,6 +1298,7 @@ function runVerifiedLocalGraphifyUpdate(
         encoding: "utf8",
         shell: false,
         env: sanitizedGitEnvironment(),
+        windowsHide: true,
       });
       if (removed.status !== 0 || removed.error) {
         cleanupFailure = "isolated Graphify worktree removal failed";
@@ -1296,6 +1313,7 @@ function runVerifiedLocalGraphifyUpdate(
         encoding: "utf8",
         shell: false,
         env: sanitizedGitEnvironment(),
+        windowsHide: true,
       });
       if (pruned.status !== 0 || pruned.error) {
         cleanupFailure = "isolated Graphify worktree prune failed";
@@ -1753,6 +1771,7 @@ function runGraphifyUpdate(graphifyArgs, options = {}) {
     encoding: options.encoding,
     shell: false,
     env: options.env ?? sanitizedGitEnvironment(),
+    windowsHide: true,
   });
   if (!direct.error) {
     return { result: direct, usedDirect: true };
@@ -2253,6 +2272,7 @@ function runGraphifyPassthrough() {
     stdio: "inherit",
     shell: false,
     env: sanitizedGitEnvironment(),
+    windowsHide: true,
   });
   if (!direct.error) {
     process.exitCode = direct.status ?? 1;

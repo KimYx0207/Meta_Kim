@@ -122,11 +122,11 @@ export function homebrewPythonCandidates(
 
 export function pythonCandidates(platform = process.platform, env = process.env) {
   if (platform === "win32") {
-    return [
-      { command: "py", args: ["-3"] },
-      { command: "python", args: [] },
-      { command: "python3", args: [] },
-    ];
+    // Windows discovery is handled below through `where.exe` and known install
+    // roots so persisted/probed launchers are absolute python.exe paths. Avoid
+    // `py -3` and bare App Execution Aliases: both can surface visible launcher
+    // UI even when the actual interpreter is healthy.
+    return [];
   }
   return [
     { command: "python3", args: [] },
@@ -195,6 +195,7 @@ export function discoverWindowsPythonPathCommands(spawnFn = spawnSync) {
       result = spawnFn("where.exe", [commandName], {
         encoding: "utf8",
         shell: false,
+        windowsHide: true,
       });
     } catch {
       continue;
@@ -203,6 +204,10 @@ export function discoverWindowsPythonPathCommands(spawnFn = spawnSync) {
     for (const line of readProcessText(result).split(/\r?\n/u)) {
       const exePath = line.trim();
       if (!/python(?:3)?\.exe$/iu.test(exePath)) continue;
+      if (!win32.isAbsolute(exePath)) continue;
+      if (exePath.replaceAll("\\", "/").toLowerCase().includes("/windowsapps/")) {
+        continue;
+      }
       const key = exePath.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -269,6 +274,7 @@ export function detectPython310(
       result = spawnFn(candidate.command, [...candidate.args, "--version"], {
         encoding: "utf8",
         shell: false,
+        windowsHide: true,
       });
     } catch {
       return null;
@@ -347,6 +353,7 @@ export function runPythonModule(
     encoding: "utf8",
     shell: false,
     ...options,
+    windowsHide: true,
   });
 }
 
@@ -389,7 +396,7 @@ export function resolveGraphifyExecutable(
     result = spawnFn(
       python.command,
       [...python.args, "-c", GRAPHIFY_EXECUTABLE_RESOLVER],
-      { encoding: "utf8", shell: false },
+      { encoding: "utf8", shell: false, windowsHide: true },
     );
   } catch {
     return null;

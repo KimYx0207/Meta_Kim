@@ -1,32 +1,41 @@
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
-import { resolveGraphifyExecutable } from "../../scripts/graphify-runtime.mjs";
+import {
+  detectPython310,
+  resolveGraphifyExecutable,
+} from "../../scripts/graphify-runtime.mjs";
 
-test("real py -3 resolves the versioned Windows user Graphify script", (t) => {
+test("real Windows Graphify discovery stays on hidden absolute python.exe probes", (t) => {
   if (process.platform !== "win32") {
     t.skip("Windows-only Graphify executable integration proof");
     return;
   }
-  const py = spawnSync("py", ["-3", "--version"], {
-    encoding: "utf8",
-    shell: false,
-  });
-  if (py.error || py.status !== 0) {
-    t.skip("py -3 is unavailable");
+  const calls = [];
+  const hiddenSpawn = (command, args, options = {}) => {
+    calls.push({ command, args, options });
+    assert.equal(options.windowsHide, true);
+    return spawnSync(command, args, options);
+  };
+  const python = detectPython310(hiddenSpawn, "win32", { requirePip: true });
+  if (!python) {
+    t.skip("an absolute Python 3.10+ interpreter with pip is unavailable");
     return;
   }
-  const executable = resolveGraphifyExecutable(
-    { command: "py", args: ["-3"] },
-    spawnSync,
-  );
+  assert.equal(path.win32.isAbsolute(python.command), true);
+  assert.match(python.command, /python(?:3)?\.exe$/iu);
+  assert.equal(calls.some((call) => call.command.toLowerCase() === "py"), false);
+
+  const executable = resolveGraphifyExecutable(python, hiddenSpawn);
   if (!executable) {
-    t.skip("Graphify is not installed for py -3");
+    t.skip("Graphify is not installed for the discovered absolute interpreter");
     return;
   }
   assert.match(
     executable,
-    /[\\/]AppData[\\/]Roaming[\\/]Python[\\/]Python\d+[\\/]Scripts[\\/]graphify\.exe$/iu,
+    /[\\/]graphify\.exe$/iu,
   );
+  assert.equal(path.win32.isAbsolute(executable), true);
 });

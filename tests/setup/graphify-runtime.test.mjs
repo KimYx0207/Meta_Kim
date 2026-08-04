@@ -55,16 +55,19 @@ describe("detectPython310()", () => {
     assert.equal(python.version.minor, 11);
   });
 
-  test("prefers py -3 on Windows when available", () => {
+  test("uses an absolute hidden python.exe probe on Windows without calling py", () => {
     const calls = [];
-    const python = detectPython310((command, args) => {
-      calls.push([command, args]);
-      if (command === "py") {
+    const python = detectPython310((command, args, options) => {
+      calls.push({ command, args, options });
+      if (command === "where.exe" && args[0] === "python") {
         return {
           status: 0,
-          stdout: "Python 3.12.1",
+          stdout: "C:\\Python312\\python.exe\r\n",
           stderr: "",
         };
+      }
+      if (command === "C:\\Python312\\python.exe") {
+        return { status: 0, stdout: "Python 3.12.1", stderr: "" };
       }
       return {
         status: 1,
@@ -74,9 +77,10 @@ describe("detectPython310()", () => {
       };
     }, "win32");
 
-    assert.equal(python.command, "py");
-    assert.deepEqual(python.args, ["-3"]);
-    assert.deepEqual(calls[0], ["py", ["-3", "--version"]]);
+    assert.equal(python.command, "C:\\Python312\\python.exe");
+    assert.equal(python.absolutePath, true);
+    assert.equal(calls.some((call) => call.command === "py"), false);
+    assert(calls.every((call) => call.options.windowsHide === true));
   });
 
   test("skips a version-compatible interpreter when pip is unavailable", () => {
@@ -154,6 +158,10 @@ describe("detectPython310()", () => {
 });
 
 describe("pythonCandidates()", () => {
+  test("Windows leaves automatic discovery to absolute python.exe paths", () => {
+    assert.deepEqual(pythonCandidates("win32"), []);
+  });
+
   test("macOS keeps PATH launchers first and includes Homebrew paths", () => {
     const candidates = pythonCandidates("darwin", {
       HOMEBREW_PREFIX: "/custom/homebrew",
@@ -208,7 +216,7 @@ describe("runPythonModule()", () => {
   test("reuses the same interpreter for pip installs", () => {
     const calls = [];
     runPythonModule(
-      { command: "py", args: ["-3"] },
+      { command: "C:/Python312/python.exe", args: [] },
       ["-m", "pip", "install", "graphifyy"],
       (command, args, options) => {
         calls.push({ command, args, options });
@@ -217,11 +225,12 @@ describe("runPythonModule()", () => {
     );
 
     assert.deepEqual(calls[0], {
-      command: "py",
-      args: ["-3", "-m", "pip", "install", "graphifyy"],
+      command: "C:/Python312/python.exe",
+      args: ["-m", "pip", "install", "graphifyy"],
       options: {
         encoding: "utf8",
         shell: false,
+        windowsHide: true,
       },
     });
   });
@@ -231,7 +240,7 @@ describe("graphify helpers", () => {
   test("resolves the installed Graphify executable through the selected Python launcher", () => {
     const calls = [];
     const executable = resolveGraphifyExecutable(
-      { command: "py", args: ["-3.11"] },
+      { command: "C:/Python311/python.exe", args: [] },
       (command, args, options) => {
         calls.push({ command, args, options });
         return {
@@ -242,13 +251,17 @@ describe("graphify helpers", () => {
       },
     );
     assert.equal(executable, String.raw`C:\Users\Kim\AppData\Roaming\Python\Python311\Scripts\graphify.EXE`);
-    assert.equal(calls[0].command, "py");
-    assert.deepEqual(calls[0].args.slice(0, 2), ["-3.11", "-c"]);
-    assert.doesNotMatch(calls[0].args[2], /shutil\.which/);
-    assert.match(calls[0].args[2], /sysconfig\.get_path/);
-    assert.match(calls[0].args[2], /sysconfig\.get_preferred_scheme\("user"\)/);
-    assert.match(calls[0].args[2], /site\.USER_BASE/);
-    assert.deepEqual(calls[0].options, { encoding: "utf8", shell: false });
+    assert.equal(calls[0].command, "C:/Python311/python.exe");
+    assert.equal(calls[0].args[0], "-c");
+    assert.doesNotMatch(calls[0].args[1], /shutil\.which/);
+    assert.match(calls[0].args[1], /sysconfig\.get_path/);
+    assert.match(calls[0].args[1], /sysconfig\.get_preferred_scheme\("user"\)/);
+    assert.match(calls[0].args[1], /site\.USER_BASE/);
+    assert.deepEqual(calls[0].options, {
+      encoding: "utf8",
+      shell: false,
+      windowsHide: true,
+    });
   });
 
   test("does not fall back to a stale PATH Graphify when selected-Python candidates are missing", () => {
@@ -284,7 +297,9 @@ describe("graphify helpers", () => {
 
 describe("discoverWindowsPythonPathCommands()", () => {
   test("reads all python.exe entries from PATH instead of only the first", () => {
-    const commands = discoverWindowsPythonPathCommands((command, args) => {
+    const calls = [];
+    const commands = discoverWindowsPythonPathCommands((command, args, options) => {
+      calls.push({ command, args, options });
       assert.equal(command, "where.exe");
       if (args[0] === "python") {
         return {
@@ -299,6 +314,21 @@ describe("discoverWindowsPythonPathCommands()", () => {
 
     assert.deepEqual(commands, [
       { command: "C:\\repo\\.venv\\Scripts\\python.exe", args: [] },
+      { command: "C:\\Python312\\python.exe", args: [] },
+    ]);
+    assert(calls.every((call) => call.options.windowsHide === true));
+  });
+
+  test("filters Windows Store aliases and non-absolute output", () => {
+    const commands = discoverWindowsPythonPathCommands((_command, args) => ({
+      status: args[0] === "python" ? 0 : 1,
+      stdout: args[0] === "python"
+        ? "python.exe\r\nC:\\Users\\Kim\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe\r\nC:\\Python312\\python.exe\r\n"
+        : "",
+      stderr: "",
+    }));
+
+    assert.deepEqual(commands, [
       { command: "C:\\Python312\\python.exe", args: [] },
     ]);
   });
