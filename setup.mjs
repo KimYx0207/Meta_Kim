@@ -108,6 +108,7 @@ import {
   localOverridesPath,
   normalizeTargets,
   parseSkillsArg,
+  parseTargetsArg,
   resolveTargetContext,
   resolveRuntimeProfilesFromManifest,
   resolveRuntimeHomeDir,
@@ -5671,14 +5672,38 @@ async function refreshRuntimeExecutableBindings(activeTargets, installScope, dep
  * nothing else.
  */
 async function runRebindRuntimeLaunchCli() {
-  const targetsIndex = args.indexOf("--targets");
-  const requestedTargets = targetsIndex >= 0
-    ? String(args[targetsIndex + 1] ?? "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-    : ["claude", "codex"];
-  const selected = requestedTargets.filter((target) => ["claude", "codex"].includes(target));
+  // This mode mutates the recorded inventory, so it must honour the engine
+  // floor even though it runs before the interactive preflight.
+  const nodeVersion = process.versions.node;
+  if (!isSupportedNodeVersion(nodeVersion)) {
+    console.error(
+      `meta-kim setup: --rebind-runtime-launch requires Node ${MIN_NODE_VERSION} or newer (running ${nodeVersion})`,
+    );
+    return false;
+  }
+  let requestedTargets;
+  try {
+    requestedTargets = args.some(
+      (arg) => arg === "--targets" || arg.startsWith("--targets="),
+    )
+      ? parseTargetsArg(args)
+      : ["claude", "codex"];
+  } catch (error) {
+    console.error(`meta-kim setup: ${error.message}`);
+    return false;
+  }
+  // Runtimes outside the launch-inventory contract must be rejected, not
+  // silently dropped, or a typo looks like a successful rebind.
+  const unsupported = requestedTargets.filter(
+    (target) => !["claude", "codex"].includes(target),
+  );
+  if (unsupported.length > 0) {
+    console.error(
+      `meta-kim setup: --rebind-runtime-launch does not support ${unsupported.join(", ")} (expected claude, codex)`,
+    );
+    return false;
+  }
+  const selected = requestedTargets;
   if (selected.length === 0) {
     console.error(
       "meta-kim setup: --rebind-runtime-launch needs at least one of --targets claude,codex",
