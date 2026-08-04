@@ -77,6 +77,7 @@
     "meta:test:inventory": "node scripts/project-inventory.mjs --check-tests",
     "meta:inventory": "node scripts/project-inventory.mjs",
     "meta:test:integration": "node scripts/run-node-tests.mjs \"tests/integration/*.test.mjs\"",
+    "meta:release:plan": "node scripts/plan-release-verification.mjs",
     "meta:release:smoke": "npm run meta:sync && npm run meta:agents:migration-catalog:check && npm run meta:capabilities:smoke && npm run meta:test:inventory && npm run meta:test:unit && npm run meta:test:meta-theory && npm run meta:test:integration",
     "meta:release:audit": "node scripts/audit-release-binding.mjs",
     "meta:release:close": "node scripts/record-release-planning-closure.mjs",
