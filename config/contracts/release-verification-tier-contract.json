@@ -42,7 +42,20 @@
     "smoke": {
       "kind": "routine_smoke",
       "entrypoint": "npm run meta:release:smoke",
-      "requiredCheckIds": ["smoke"]
+      "requiredCheckIds": ["smoke"],
+      "impactEscalation": {
+        "policy": "fail_closed_recommend_full",
+        "requiresFullOnImpact": true,
+        "emptyChangeSetPolicy": "recommend_full",
+        "fullEscalationReasons": [
+          "unknown_file",
+          "high_risk_impact",
+          "full_only_impact",
+          "empty_changed_file_set"
+        ],
+        "fullEscalationCommand": "npm run meta:verify:all",
+        "lowRiskPolicy": "keep_smoke"
+      }
     },
     "narrow": {
       "kind": "changed_file_impact",

@@ -49,6 +49,16 @@ export function validateReleaseVerificationTierContract(contract = RELEASE_VERIF
     if (!contract.tiers?.[tierName]) throw new Error(`missing release verification tier ${tierName}`);
     if (!contract.claimBoundary?.[tierName]) throw new Error(`missing claim boundary for ${tierName}`);
   }
+  const smokeImpactEscalation = contract.tiers.smoke.impactEscalation;
+  if (
+    smokeImpactEscalation?.policy !== "fail_closed_recommend_full" ||
+    smokeImpactEscalation.requiresFullOnImpact !== true ||
+    smokeImpactEscalation.emptyChangeSetPolicy !== "recommend_full" ||
+    smokeImpactEscalation.fullEscalationCommand !== contract.tiers.full.entrypoint ||
+    smokeImpactEscalation.lowRiskPolicy !== "keep_smoke"
+  ) {
+    throw new Error("smoke tier must fail closed to the full entrypoint for high-risk or unbounded impact");
+  }
   const requiredNarrow = contract.tiers.narrow.requiredCheckIds;
   if (!Array.isArray(requiredNarrow) || requiredNarrow.join("|") !== BASE_NARROW_CHECK_IDS.join("|")) {
     throw new Error("narrow tier must retain version, sync, packaging, and focused_regression checks");
@@ -258,7 +268,21 @@ function buildBasePlan({ requestedTier, selectedTier, changedFiles, impactMap, c
   };
 }
 
+function collectEscalationReasons(changedFiles, impactMap) {
+  const escalationReasons = [];
+  if (changedFiles.length === 0) escalationReasons.push("empty_changed_file_set");
+  for (const entry of impactMap) {
+    if (entry.requiresFull && entry.escalationReasons.length === 0) {
+      escalationReasons.push("high_risk_impact");
+    }
+    escalationReasons.push(...entry.escalationReasons);
+  }
+  return unique(escalationReasons);
+}
+
 function buildSmokePlan({ requestedTier, changedFiles, impactMap, contract }) {
+  const escalationReasons = collectEscalationReasons(changedFiles, impactMap);
+  const requiresFull = escalationReasons.length > 0;
   const plan = buildBasePlan({
     requestedTier,
     selectedTier: "smoke",
@@ -268,12 +292,15 @@ function buildSmokePlan({ requestedTier, changedFiles, impactMap, contract }) {
   });
   return {
     ...plan,
-    recommendedTier: "smoke",
-    requiresFull: false,
-    escalationReasons: [],
+    recommendedTier: requiresFull ? "full" : "smoke",
+    requiresFull,
+    escalationReasons,
     requiredCheckIds: ["smoke"],
     checks: [buildCheckPlan("smoke", { contract })],
     command: contract.checkDefinitions.smoke.commands[0],
+    fullEscalationCommand: requiresFull
+      ? contract.tiers.smoke.impactEscalation.fullEscalationCommand
+      : null,
   };
 }
 
@@ -298,10 +325,7 @@ function buildFullPlan({ requestedTier, changedFiles, impactMap, contract }) {
 }
 
 function buildNarrowPlan({ requestedTier, changedFiles, impactMap, contract }) {
-  const escalationReasons = [];
-  if (changedFiles.length === 0) escalationReasons.push("empty_changed_file_set");
-  for (const entry of impactMap) escalationReasons.push(...entry.escalationReasons);
-  const uniqueEscalationReasons = unique(escalationReasons);
+  const uniqueEscalationReasons = collectEscalationReasons(changedFiles, impactMap);
   const focusedSelectors = buildFocusedRegressionSelectors(changedFiles, impactMap, contract);
   const checkIds = [...BASE_NARROW_CHECK_IDS];
   const additionalImpacts = unique(impactMap.flatMap((entry) => entry.impacts));

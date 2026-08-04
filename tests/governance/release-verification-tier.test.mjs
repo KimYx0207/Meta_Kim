@@ -34,6 +34,8 @@ test("release verification tier contract retains smoke, narrow, and full boundar
   ]);
   assert.equal(rawContract.claimBoundary.smoke.releaseGradeClaimable, false);
   assert.equal(rawContract.claimBoundary.narrow.releaseGradeClaimable, false);
+  assert.equal(rawContract.tiers.smoke.impactEscalation.policy, "fail_closed_recommend_full");
+  assert.equal(rawContract.tiers.smoke.impactEscalation.fullEscalationCommand, "npm run meta:verify:all");
   assert.equal(rawContract.authority.full.packageScript, "meta:verify:all");
   assert.equal(rawContract.authority.full.entrypoint, "scripts/run-verify-all.mjs");
   assert.deepEqual(rawContract.tiers.full.requiredStageNames, STAGES.map(({ name }) => name));
@@ -127,6 +129,10 @@ test("high-risk and unknown impacts recommend full without relabeling the narrow
 test("smoke and full plans keep their distinct commands and claim boundaries", () => {
   const smoke = buildReleaseVerificationPlan(["README.md"], { tier: "smoke" });
   assert.equal(smoke.tier, "smoke");
+  assert.equal(smoke.recommendedTier, "smoke");
+  assert.equal(smoke.requiresFull, false);
+  assert.deepEqual(smoke.escalationReasons, []);
+  assert.equal(smoke.fullEscalationCommand, null);
   assert.equal(smoke.command, "npm run meta:release:smoke");
   assert.equal(smoke.releaseGradeClaimable, false);
   assert.equal(smoke.requiredCheckIds.includes("packaging"), false);
@@ -137,6 +143,26 @@ test("smoke and full plans keep their distinct commands and claim boundaries", (
   assert.equal(full.releaseGradeClaimable, false);
   assert.deepEqual(full.standardStageNames, STAGES.map(({ name }) => name));
   assert.equal(full.claimBoundary.requiredEvidenceOwner, "scripts/run-verify-all.mjs");
+});
+
+test("explicit smoke fails closed to full for high-risk, unknown, and empty impact", () => {
+  const cases = [
+    ["package.json", ["package.json"], "full_only_impact"],
+    ["release proof", ["scripts/run-verify-all.mjs"], "full_only_impact"],
+    ["unknown", ["new-area/unmapped.txt"], "unknown_file"],
+    ["empty", [], "empty_changed_file_set"],
+  ];
+  for (const [label, changedFiles, reason] of cases) {
+    const plan = buildReleaseVerificationPlan(changedFiles, { tier: "smoke" });
+    assert.equal(plan.tier, "smoke", `${label} must retain the requested tier`);
+    assert.equal(plan.requestedTier, "smoke", `${label} must retain the requested tier marker`);
+    assert.equal(plan.recommendedTier, "full", `${label} must recommend full`);
+    assert.equal(plan.requiresFull, true, `${label} must require full`);
+    assert.ok(plan.escalationReasons.includes(reason), `${label} must expose ${reason}`);
+    assert.equal(plan.fullEscalationCommand, "npm run meta:verify:all", `${label} must expose full escalation`);
+    assert.equal(plan.releaseGradeClaimable, false, `${label} must not claim release-grade`);
+    assert.equal(plan.claimBoundary.releaseGradeClaimable, false, `${label} smoke claim must stay non-release-grade`);
+  }
 });
 
 test("focused selectors fall back to the planner regression test and include changed test files", () => {
