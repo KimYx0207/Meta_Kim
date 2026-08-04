@@ -427,11 +427,24 @@ export function renderCurrentWindowsMcpMemoryPowerShellBytes({
     `$lockAcquired = $false\r\n` +
     `$lockToken = [guid]::NewGuid().ToString("n")\r\n` +
     `function Test-MetaKimMemoryHealth {\r\n` +
+    `  $handler = $null\r\n` +
+    `  $client = $null\r\n` +
+    `  $response = $null\r\n` +
     `  try {\r\n` +
-    `    $response = Invoke-WebRequest -Uri ${psSingleQuote(healthUrl)} -UseBasicParsing -TimeoutSec 3\r\n` +
-    `    $payload = $response.Content | ConvertFrom-Json\r\n` +
-    `    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
+    `    $handler = [System.Net.Http.HttpClientHandler]::new()\r\n` +
+    `    $handler.UseProxy = $false\r\n` +
+    `    $client = [System.Net.Http.HttpClient]::new($handler)\r\n` +
+    `    $client.Timeout = [System.TimeSpan]::FromSeconds(3)\r\n` +
+    `    $response = $client.GetAsync(${psSingleQuote(healthUrl)}).GetAwaiter().GetResult()\r\n` +
+    `    $statusCode = [int]$response.StatusCode\r\n` +
+    `    $payload = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json\r\n` +
+    `    return ($statusCode -ge 200 -and $statusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
     `  } catch { return $false }\r\n` +
+    `  finally {\r\n` +
+    `    if ($response) { $response.Dispose() }\r\n` +
+    `    if ($client) { $client.Dispose() }\r\n` +
+    `    if ($handler) { $handler.Dispose() }\r\n` +
+    `  }\r\n` +
     `}\r\n` +
     `function Remove-MetaKimOwnedLock {\r\n` +
     `  try {\r\n` +
@@ -559,7 +572,7 @@ function isCurrentWindowsPowerShell(bytes, homeRoot) {
   const text = decodeStrictCrLf(bytes, { bom: true });
   if (!text) return false;
   const lines = text.slice(0, -2).split("\r\n");
-  if (lines.length !== 86 || lines.some((line) => !line)) return false;
+  if (lines.length !== 99 || lines.some((line) => !line)) return false;
   const sqlitePath = quotedPowerShellValue(lines[7], "$env:MCP_MEMORY_SQLITE_PATH = '");
   const endpointUrl = quotedPowerShellValue(lines[8], "$env:MCP_MEMORY_URL = '");
   const port = quotedPowerShellValue(lines[9], "$env:META_KIM_MEMORY_PORT = '");
@@ -569,9 +582,9 @@ function isCurrentWindowsPowerShell(bytes, homeRoot) {
   const failureMessage = quotedPowerShellValue(lines[13], "$failureMessage = '");
   const lockDir = quotedPowerShellValue(lines[17], "$lockDir = '");
   const healthUrl = quotedPowerShellValue(
-    lines[22],
-    "    $response = Invoke-WebRequest -Uri '",
-    "' -UseBasicParsing -TimeoutSec 3",
+    lines[29],
+    "    $response = $client.GetAsync('",
+    "').GetAwaiter().GetResult()",
   );
   let endpoint;
   try {

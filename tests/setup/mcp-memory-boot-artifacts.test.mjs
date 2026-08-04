@@ -63,6 +63,17 @@ function currentPowerShell(homeRoot) {
   });
 }
 
+test("Windows health probe bypasses system proxy and rejects non-success HTTP responses", () => {
+  const script = currentPowerShell("C:\\Users\\Fixture").toString("utf8");
+  assert.match(script, /\[System\.Net\.Http\.HttpClientHandler\]::new\(\)/u);
+  assert.match(script, /\$handler\.UseProxy = \$false/u);
+  assert.match(script, /\$client\.GetAsync\('http:\/\/localhost:8000\/api\/health'\)\.GetAwaiter\(\)\.GetResult\(\)/u);
+  assert.match(script, /\$statusCode -ge 200 -and \$statusCode -lt 300/u);
+  assert.match(script, /\$response\.Content\.ReadAsStringAsync\(\)\.GetAwaiter\(\)\.GetResult\(\) \| ConvertFrom-Json/u);
+  assert.match(script, /catch \{ return \$false \}/u);
+  assert.doesNotMatch(script, /Invoke-WebRequest/u);
+});
+
 test("current descriptors are exact, stable, and platform-specific", () => {
   const cases = [
     ["win32", "C:\\Users\\Fixture", 3],
