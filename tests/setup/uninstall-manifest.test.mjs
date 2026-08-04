@@ -24,10 +24,15 @@ import {
   removeManagedMcpFragmentFromFile,
   removeExactManagedDirectory,
   removeExactManagedRuntimeBundle,
+  removeExactManagedRuntimeBundleWithLock,
   revertManagedTomlFragments,
   stripManagedSettingsFile,
   writeDurableStagedFile,
 } from "../../scripts/uninstall.mjs";
+import {
+  resolveGlobalProjectionPackageLayout,
+  withProjectionDigestLock,
+} from "../../scripts/global-projection-package-store.mjs";
 import { mcpDefinitionFingerprint } from "../../scripts/global-runtime-mcp.mjs";
 import {
   createEmpty,
@@ -2013,6 +2018,51 @@ describe("uninstall / durable runtime bundle ownership", () => {
       assert.equal(result.success, true);
       assert.equal(existsSync(digestDir), false);
     });
+  });
+
+  test("primary projection uninstall waits on the shared digest transaction lock", async () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "meta-kim-uninstall-lock-"));
+    try {
+      mkdirSync(path.join(repo, ".meta-kim"), { recursive: true });
+      const bundle = createPrimaryProjectionBundle(repo);
+      const layout = resolveGlobalProjectionPackageLayout({
+        homeRoot: repo,
+        packageName: "meta-kim",
+        packageVersion: "2.0.22",
+        packageTarballSha256: "a".repeat(64),
+      });
+      let releaseHolder;
+      let holderEntered;
+      const holderReady = new Promise((resolve) => { holderEntered = resolve; });
+      const holder = withProjectionDigestLock(
+        layout,
+        async () => {
+          holderEntered();
+          await new Promise((resolve) => { releaseHolder = resolve; });
+        },
+        { homeRoot: repo },
+      );
+      await holderReady;
+
+      let uninstallFinished = false;
+      const uninstall = removeExactManagedRuntimeBundleWithLock(
+        bundle.action,
+        { homeRoot: repo },
+      ).then((result) => {
+        uninstallFinished = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(uninstallFinished, false);
+      assert.equal(existsSync(bundle.digestDir), true);
+      releaseHolder();
+      await holder;
+      const result = await uninstall;
+      assert.equal(result.success, true);
+      assert.equal(existsSync(bundle.digestDir), false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   test("preserves a primary projection bundle when a user file changes its closure", () => {

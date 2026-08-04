@@ -75,6 +75,10 @@ import {
   isExactMcpMemoryBootManifestIdentity,
   snapshotMcpMemoryBootArtifactFile,
 } from "./mcp-memory-boot-artifacts.mjs";
+import {
+  resolveGlobalProjectionPackageLayout,
+  withProjectionDigestLock,
+} from "./global-projection-package-store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -2486,6 +2490,49 @@ export function removeExactManagedRuntimeBundle(action, options) {
   return quarantineAndRemoveExactDirectory(action, inspectManagedBundle, options);
 }
 
+export async function removeExactManagedRuntimeBundleWithLock(
+  action,
+  options = {},
+) {
+  const { homeRoot = homedir() } = options;
+  if (action?.purpose !== PRIMARY_PROJECTION_BUNDLE_PURPOSE) {
+    return removeExactManagedRuntimeBundle(action, options);
+  }
+  const packageName = GLOBAL_REMOVAL_POLICY.projectionPackageStore.packageName;
+  const layout = (() => {
+    try {
+      return resolveGlobalProjectionPackageLayout({
+        homeRoot,
+        packageName,
+        packageVersion: path.basename(path.dirname(action.path)),
+        packageTarballSha256: path.basename(action.path),
+      });
+    } catch {
+      return null;
+    }
+  })();
+  if (!layout || pathKey(layout.digestDir) !== pathKey(action.path)) {
+    return {
+      success: false,
+      preserved: true,
+      reason: "projection_digest_lock_layout_invalid",
+    };
+  }
+  try {
+    return await withProjectionDigestLock(
+      layout,
+      () => removeExactManagedRuntimeBundle(action, options),
+      { homeRoot },
+    );
+  } catch (error) {
+    return {
+      success: false,
+      preserved: true,
+      reason: `projection_digest_lock_failed:${error?.message ?? String(error)}`,
+    };
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const flag = (name) => args.includes(`--${name}`);
@@ -2624,7 +2671,9 @@ async function main() {
             a.purpose === DURABLE_MCP_BUNDLE_PURPOSE && mcpCleanupFailed
           )
           ? { success: false, preserved: true, reason: "mcp_cleanup_failed" }
-          : removeExactManagedRuntimeBundle(a);
+          : a.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE
+            ? await removeExactManagedRuntimeBundleWithLock(a)
+            : removeExactManagedRuntimeBundle(a);
       if (result.success) {
         if (!result.missing) removedCount += 1;
       } else {

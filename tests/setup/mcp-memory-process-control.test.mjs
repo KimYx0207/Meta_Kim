@@ -892,4 +892,12 @@ describe("MCP memory endpoint process control", () => {
     const setup = readFileSync(resolve(import.meta.dirname, "..", "..", "setup.mjs"), "utf8");
     assert.doesNotMatch(setup, /taskkill[^\n]*\/IM|pkill\s+-f|Get-Process\s+-Name\s+memory|tasklist[^\n]*memory\.exe/iu);
   });
+
+  test("process control contains no broad process-name kill", () => {
+    const source = readFileSync(
+      resolve(import.meta.dirname, "..", "..", "scripts", "mcp-memory-process-control.mjs"),
+      "utf8",
+    );
+    assert.doesNotMatch(source, /taskkill[^\n]*\/IM|pkill\s+-f|Get-Process\s+-Name\s+memory|tasklist[^\n]*memory\.exe/iu);
+  });
 });

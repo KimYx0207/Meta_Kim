@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -15,6 +15,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   assertProjectionPackageWriteBoundary,
@@ -27,6 +28,7 @@ import {
   runWithCleanup,
   runGlobalProjectionPackageChild,
   sanitizeProjectionPackageEnvironment,
+  withProjectionDigestLock,
 } from "../../scripts/global-projection-package-store.mjs";
 import {
   CATEGORIES,
@@ -141,6 +143,22 @@ function packedDigest(sourceRoot, destinationRoot, env) {
   const archives = readdirSync(destinationRoot).filter((name) => name.endsWith(".tgz"));
   assert.equal(archives.length, 1);
   return sha256(readFileSync(path.join(destinationRoot, archives[0])));
+}
+
+async function waitForMarker(markerPath, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(markerPath) && Date.now() < deadline) await delay(20);
+  assert.equal(existsSync(markerPath), true, `timed out waiting for ${markerPath}`);
+}
+
+function waitForChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
 }
 
 function portableRelative(from, target) {
@@ -629,6 +647,99 @@ test("concurrent same-digest materialization leaves one complete verified winner
     assert.equal(second.packageRoot, first.packageRoot);
     assert.equal(existsSync(first.receiptPath), true);
     assert.deepEqual(readdirSync(first.versionRoot), [first.packageTarballSha256]);
+  });
+});
+
+test("two processes share one digest barrier and release it after a failed operation", async () => {
+  await withFixture(async ({ root, homeRoot, sourceRoot, env }) => {
+    const verified = await materializeGlobalProjectionPackage({
+      sourceRoot,
+      homeRoot,
+      env,
+    });
+    const workerPath = path.join(root, "projection-lock-worker.mjs");
+    const moduleUrl = new URL(
+      "../../scripts/global-projection-package-store.mjs",
+      import.meta.url,
+    ).href;
+    writeFileSync(
+      workerPath,
+      [
+        `import { existsSync, writeFileSync } from "node:fs";`,
+        `import { resolveGlobalProjectionPackageLayout, withProjectionDigestLock } from ${JSON.stringify(moduleUrl)};`,
+        `const [mode, homeRoot, version, digest, enteredPath, acquiredPath, releasePath, errorPath] = process.argv.slice(2);`,
+        `const layout = resolveGlobalProjectionPackageLayout({ homeRoot, packageName: "meta-kim", packageVersion: version, packageTarballSha256: digest });`,
+        `try {`,
+        `  await withProjectionDigestLock(layout, async () => {`,
+        `    writeFileSync(enteredPath, "entered\\n");`,
+        `    if (mode === "hold") while (!existsSync(releasePath)) await new Promise((resolve) => setTimeout(resolve, 20));`,
+        `    writeFileSync(acquiredPath, "acquired\\n");`,
+        `  }, { homeRoot });`,
+        `} catch (error) { writeFileSync(errorPath, String(error?.message ?? error)); process.exitCode = 1; }`,
+      ].join("\n"),
+      "utf8",
+    );
+    const firstEntered = path.join(root, "first-entered");
+    const firstAcquired = path.join(root, "first-acquired");
+    const secondEntered = path.join(root, "second-entered");
+    const secondAcquired = path.join(root, "second-acquired");
+    const releaseFirst = path.join(root, "release-first");
+    const firstError = path.join(root, "first-error");
+    const secondError = path.join(root, "second-error");
+    const spawnWorker = (mode, entered, acquired, errorPath) => spawn(
+      process.execPath,
+      [
+        workerPath,
+        mode,
+        homeRoot,
+        verified.packageVersion,
+        verified.packageTarballSha256,
+        entered,
+        acquired,
+        releaseFirst,
+        errorPath,
+      ],
+      { stdio: "ignore", windowsHide: true },
+    );
+
+    let first;
+    let second;
+    try {
+      first = spawnWorker("hold", firstEntered, firstAcquired, firstError);
+      await waitForMarker(firstEntered);
+      second = spawnWorker("probe", secondEntered, secondAcquired, secondError);
+      await delay(200);
+      assert.equal(existsSync(secondEntered), false, "second process crossed the digest barrier");
+      writeFileSync(releaseFirst, "release\\n", "utf8");
+      await waitForMarker(firstAcquired);
+      await waitForMarker(secondEntered);
+      await waitForMarker(secondAcquired);
+      assert.equal(existsSync(firstError), false);
+      assert.equal(existsSync(secondError), false);
+      assert.deepEqual(await Promise.all([waitForChild(first), waitForChild(second)]), [
+        { code: 0, signal: null },
+        { code: 0, signal: null },
+      ]);
+    } finally {
+      for (const child of [first, second]) {
+        if (child && child.exitCode === null) child.kill();
+      }
+    }
+
+    await assert.rejects(
+      withProjectionDigestLock(
+        verified,
+        async () => { throw new Error("operation failed"); },
+        { homeRoot },
+      ),
+      /operation failed/u,
+    );
+    const afterFailure = await withProjectionDigestLock(
+      verified,
+      async () => "reacquired",
+      { homeRoot },
+    );
+    assert.equal(afterFailure, "reacquired");
   });
 });
 

@@ -379,6 +379,18 @@ async function acquireProjectionDigestLock(layout, homeRoot) {
   }
 }
 
+export async function withProjectionDigestLock(
+  layout,
+  operation,
+  { homeRoot = layout?.homeRoot ?? os.homedir() } = {},
+) {
+  if (!layout || typeof operation !== "function") {
+    throw new TypeError("Projection digest lock requires a layout and operation");
+  }
+  const release = await acquireProjectionDigestLock(layout, homeRoot);
+  return await runWithCleanup(operation, release);
+}
+
 async function createPrivateNpmRuntime({ npmRunner, sourceRoot, storeRoot }) {
   let runtimeRoot = null;
   try {
@@ -1485,32 +1497,42 @@ export async function recordGlobalProjectionPackage(recorder, verifiedPackage) {
 export async function runGlobalProjectionPackageChild(
   verifiedPackage,
   args,
-  { env = process.env, sourceRoot = null } = {},
+  {
+    env = process.env,
+    sourceRoot = null,
+    homeRoot = verifiedPackage?.homeRoot ?? os.homedir(),
+  } = {},
 ) {
-  const fresh = await verifyGlobalProjectionPackage(verifiedPackage.digestDir, {
-    homeRoot: verifiedPackage.homeRoot,
-    expectedPackageName: verifiedPackage.packageName,
-    expectedPackageVersion: verifiedPackage.packageVersion,
-    expectedPackageTarballSha256: verifiedPackage.packageTarballSha256,
-    expectedFirstPartyClosure: verifiedPackage.firstPartyClosure,
-  });
-  if (pathKey(fresh.packageRoot) !== pathKey(verifiedPackage.packageRoot)) {
-    throw new Error("Projection package changed before stable child launch");
-  }
-  const childEnv = sanitizeProjectionPackageEnvironment(env, {
-    sourceRoot: sourceRoot ?? env.INIT_CWD ?? process.cwd(),
-    storeRoot: fresh.storeRoot,
-  });
-  childEnv.META_KIM_REPO_ROOT = fresh.packageRoot;
-  return spawnSync(
-    process.execPath,
-    [fresh.syncScriptPath, ...args],
-    {
-      cwd: fresh.packageRoot,
-      env: childEnv,
-      stdio: "inherit",
-      shell: false,
-      windowsHide: true,
+  return await withProjectionDigestLock(
+    verifiedPackage,
+    async () => {
+      const fresh = await verifyGlobalProjectionPackage(verifiedPackage.digestDir, {
+        homeRoot,
+        expectedPackageName: verifiedPackage.packageName,
+        expectedPackageVersion: verifiedPackage.packageVersion,
+        expectedPackageTarballSha256: verifiedPackage.packageTarballSha256,
+        expectedFirstPartyClosure: verifiedPackage.firstPartyClosure,
+      });
+      if (pathKey(fresh.packageRoot) !== pathKey(verifiedPackage.packageRoot)) {
+        throw new Error("Projection package changed before stable child launch");
+      }
+      const childEnv = sanitizeProjectionPackageEnvironment(env, {
+        sourceRoot: sourceRoot ?? env.INIT_CWD ?? process.cwd(),
+        storeRoot: fresh.storeRoot,
+      });
+      childEnv.META_KIM_REPO_ROOT = fresh.packageRoot;
+      return spawnSync(
+        process.execPath,
+        [fresh.syncScriptPath, ...args],
+        {
+          cwd: fresh.packageRoot,
+          env: childEnv,
+          stdio: "inherit",
+          shell: false,
+          windowsHide: true,
+        },
+      );
     },
+    { homeRoot },
   );
 }
