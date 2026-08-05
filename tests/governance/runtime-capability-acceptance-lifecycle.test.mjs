@@ -43,6 +43,12 @@ test("Claude runtime aliases remain canonical across acceptance write, read, lis
     allowedRoot: acceptance.paths.realRoot,
   });
   assert.equal(readRecord.runtime, "claude_code");
+  const validationNow = new Date(
+    Math.max(
+      Date.parse(readRecord.createdAt),
+      Date.parse(readRecord.observedAt),
+    ) + 60_000,
+  ).toISOString();
 
   const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot: project.root, profile: "default" });
   assert.deepEqual(store.attempts.map((entry) => entry.runtime), ["claude_code"]);
@@ -52,14 +58,14 @@ test("Claude runtime aliases remain canonical across acceptance write, read, lis
   const queried = loadEffectiveRuntimeCapabilityClaims({
     packageRoot,
     projectRoot: project.root,
-    now: "2026-08-05T00:01:00.000Z",
+    now: validationNow,
   });
   assert.deepEqual(queried.overlayStatus.rejected.map((entry) => entry.runtime), ["claude_code"]);
   assert.match(queried.issues.join("\n"), /reference-only/u);
 
   const sourceValidation = validateRuntimeCapabilityAcceptanceAttemptEvidence(readRecord, {
     profileRoot: store.paths.profileRoot,
-    now: "2026-08-05T00:01:00.000Z",
+    now: validationNow,
   });
   assert.equal(sourceValidation.valid, true, sourceValidation.issues.join("\n"));
 });
