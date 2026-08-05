@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -19,6 +20,7 @@ import { afterEach, test } from "node:test";
 import {
   buildGlobalCapabilityInventoryArgs,
   normalizeInstallerSkillsFilter,
+  replaceTargetDir,
   resolveSkillTargetDir,
   transactionalReplaceMetaSkillTargets,
   validateInstallerArgs,
@@ -159,6 +161,102 @@ test("custom CODEX_HOME still resolves the official Codex skill under OS user ho
     resolveSkillTargetDir(customCodex, { id: "meta-skill-creator" }, "codex", root),
     path.join(root, ".agents", "skills", "meta-skill-creator"),
   );
+});
+
+test("fresh skill promotion retries transient Windows rename locks atomically", async () => {
+  const root = tempRoot();
+  const staged = path.join(root, "planning-with-files.staged-fixture");
+  const target = path.join(root, "planning-with-files");
+  mkdirSync(staged, { recursive: true });
+  writeFileSync(path.join(staged, "SKILL.md"), "fresh\n");
+  let attempts = 0;
+  const waits = [];
+
+  await replaceTargetDir(target, staged, {
+    renameOptions: {
+      platform: "win32",
+      retries: 4,
+      retryDelayMs: 1,
+      wait: async (ms) => waits.push(ms),
+      rename: async (sourcePath, targetPath) => {
+        attempts += 1;
+        if (attempts < 3) {
+          const error = new Error("transient lock");
+          error.code = "EPERM";
+          throw error;
+        }
+        renameSync(sourcePath, targetPath);
+      },
+    },
+  });
+
+  assert.equal(attempts, 3);
+  assert.deepEqual(waits, [1, 2]);
+  assert.equal(existsSync(staged), false);
+  assert.equal(readFileSync(path.join(target, "SKILL.md"), "utf8"), "fresh\n");
+});
+
+test("persistent Windows rename locks fail bounded without publishing a partial target", async () => {
+  const root = tempRoot();
+  const staged = path.join(root, "planning-with-files.staged-fixture");
+  const target = path.join(root, "planning-with-files");
+  mkdirSync(staged, { recursive: true });
+  writeFileSync(path.join(staged, "SKILL.md"), "fresh\n");
+  let attempts = 0;
+
+  await assert.rejects(
+    replaceTargetDir(target, staged, {
+      renameOptions: {
+        platform: "win32",
+        retries: 3,
+        retryDelayMs: 1,
+        wait: async () => {},
+        rename: async () => {
+          attempts += 1;
+          const error = new Error("persistent lock");
+          error.code = "EBUSY";
+          throw error;
+        },
+      },
+    }),
+    /persistent lock/,
+  );
+
+  assert.equal(attempts, 3);
+  assert.equal(existsSync(target), false);
+  assert.equal(readFileSync(path.join(staged, "SKILL.md"), "utf8"), "fresh\n");
+});
+
+test("meta-skill transaction uses the same bounded Windows rename retry", async () => {
+  const root = tempRoot();
+  const source = path.join(root, "source");
+  const primary = path.join(root, ".agents", "skills", "meta-skill-creator");
+  const compat = path.join(root, ".codex", "skills", "meta-skill-creator");
+  writeFixture(source, "retry-safe");
+  let attempts = 0;
+
+  await transactionalReplaceMetaSkillTargets(source, [primary, compat], {
+    userHome: root,
+    renameOptions: {
+      platform: "win32",
+      retries: 4,
+      retryDelayMs: 1,
+      wait: async () => {},
+      rename: async (sourcePath, targetPath) => {
+        attempts += 1;
+        if (attempts < 3) {
+          const error = new Error("transient transaction lock");
+          error.code = "EACCES";
+          throw error;
+        }
+        renameSync(sourcePath, targetPath);
+      },
+    },
+  });
+
+  assert.ok(attempts >= 4);
+  assert.equal(hashTree(primary), hashTree(source));
+  assert.equal(hashTree(compat), hashTree(source));
 });
 
 test("real child process fresh install and update cover Claude plus both Codex roots", () => {

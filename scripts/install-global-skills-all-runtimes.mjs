@@ -765,6 +765,44 @@ function delayMs(ms) {
 }
 
 /**
+ * Windows can report a short-lived EPERM/EBUSY/EACCES while Defender or an
+ * indexer inspects a freshly prepared sibling directory. Retry only the exact
+ * source/target rename owned by the active transaction; other platforms and
+ * other error classes keep their original single-attempt behavior.
+ */
+export async function renamePathWithWindowsRetry(
+  sourcePath,
+  targetPath,
+  {
+    platform = process.platform,
+    retries = 8,
+    retryDelayMs = 120,
+    rename = fs.rename,
+    wait = delayMs,
+  } = {},
+) {
+  const maxAttempts = platform === "win32" ? Math.max(1, retries) : 1;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await rename(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        platform !== "win32" ||
+        !isWindowsLockError(error) ||
+        attempt === maxAttempts
+      ) {
+        throw error;
+      }
+      await wait(retryDelayMs * attempt);
+    }
+  }
+  throw lastError;
+}
+
+/**
  * Recursive delete with short async retries. Windows often returns EPERM/EBUSY when
  * Defender, search indexer, or antivirus holds transient handles under a staging dir.
  */
@@ -805,13 +843,19 @@ async function rmDirBestEffortLocked(dirPath) {
   }
 }
 
-async function replaceTargetDir(targetDir, stagedDir) {
+export async function replaceTargetDir(
+  targetDir,
+  stagedDir,
+  { renameOptions = {} } = {},
+) {
   const parentDir = path.dirname(targetDir);
   const targetExists = await pathExists(targetDir);
 
-  // No existing target — simple rename, always safe
+  // Even an absent target can be transiently locked on Windows while a newly
+  // prepared sibling directory is inspected. Keep this path atomic and retry
+  // the exact promotion instead of leaving a partial copy behind.
   if (!targetExists) {
-    await fs.rename(stagedDir, targetDir);
+    await renamePathWithWindowsRetry(stagedDir, targetDir, renameOptions);
     return;
   }
 
@@ -823,7 +867,7 @@ async function replaceTargetDir(targetDir, stagedDir) {
   let oldMoved = false;
 
   try {
-    await fs.rename(targetDir, backupDir);
+    await renamePathWithWindowsRetry(targetDir, backupDir, renameOptions);
     oldMoved = true;
   } catch (error) {
     if (!isWindowsLockError(error)) throw error;
@@ -833,13 +877,17 @@ async function replaceTargetDir(targetDir, stagedDir) {
 
   if (oldMoved) {
     try {
-      await fs.rename(stagedDir, targetDir);
+      await renamePathWithWindowsRetry(stagedDir, targetDir, renameOptions);
       await rmDirWithRetry(backupDir);
       return;
     } catch (error) {
       // Restore old target before falling back
       if (!(await pathExists(targetDir)) && (await pathExists(backupDir))) {
-        await fs.rename(backupDir, targetDir).catch(() => {});
+        await renamePathWithWindowsRetry(
+          backupDir,
+          targetDir,
+          renameOptions,
+        ).catch(() => {});
       }
       if (!isWindowsLockError(error)) throw error;
       // Fall through to copy fallback
@@ -1113,6 +1161,7 @@ async function transactionalReplaceMetaSkillTargets(
     userHome = os.homedir(),
     failCommitAfter = 0,
     failRollbackTarget = null,
+    renameOptions = {},
   } = {},
 ) {
   await validateMetaSkillCreatorPackage(sourceDir);
@@ -1141,13 +1190,17 @@ async function transactionalReplaceMetaSkillTargets(
         path.dirname(target),
         `${path.basename(target)}.transaction-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       );
-      await fs.rename(target, backup);
+      await renamePathWithWindowsRetry(target, backup, renameOptions);
       backups.push({ target, backup });
     }
 
     for (const item of prepared) {
       await assertRealPathContained(userHome, item.target);
-      await fs.rename(item.staged, item.target);
+      await renamePathWithWindowsRetry(
+        item.staged,
+        item.target,
+        renameOptions,
+      );
       installed.push(item.target);
       if (failCommitAfter > 0 && installed.length === failCommitAfter) {
         throw new Error(`Injected commit failure after target ${failCommitAfter}`);
@@ -1183,7 +1236,11 @@ async function transactionalReplaceMetaSkillTargets(
           if (await pathExists(target)) {
             throw new Error(`live target blocks recovery: ${target}`);
           }
-          await fs.rename(backup, target);
+          await renamePathWithWindowsRetry(
+            backup,
+            target,
+            renameOptions,
+          );
           if (!(await pathExists(target)) || (await pathExists(backup))) {
             throw new Error(`recovery verification failed: ${backup} -> ${target}`);
           }
@@ -1755,14 +1812,14 @@ async function replaceArchiveTargetAtomically(targetDir, stagedDir) {
   let movedExisting = false;
   await fs.mkdir(parentDir, { recursive: true });
   if (await pathExists(targetDir)) {
-    await fs.rename(targetDir, backupDir);
+    await renamePathWithWindowsRetry(targetDir, backupDir);
     movedExisting = true;
   }
   try {
-    await fs.rename(stagedDir, targetDir);
+    await renamePathWithWindowsRetry(stagedDir, targetDir);
   } catch (error) {
     if (movedExisting && !(await pathExists(targetDir))) {
-      await fs.rename(backupDir, targetDir).catch(() => {});
+      await renamePathWithWindowsRetry(backupDir, targetDir).catch(() => {});
     }
     throw error;
   }
