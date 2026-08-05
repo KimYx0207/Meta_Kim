@@ -137,6 +137,27 @@ function normalizeConfidenceScore(record) {
   return true;
 }
 
+export function graphifyOutputNormalizationValues(graph) {
+  const values = new Set();
+  const add = (value) => {
+    if (typeof value === "string") values.add(value);
+  };
+  for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) add(node?.id);
+  for (const link of Array.isArray(graph?.links) ? graph.links : []) {
+    add(link?.source);
+    add(link?.target);
+  }
+  for (const surface of hyperedgeSurfaces(graph)) {
+    for (const serialized of surface) {
+      const hyperedge = unwrapSerializedHyperedge(serialized);
+      add(hyperedge?.id);
+      const nodes = unwrapSerializedHyperedgeNodes(hyperedge?.nodes);
+      for (const nodeId of Array.isArray(nodes) ? nodes : []) add(nodeId);
+    }
+  }
+  return [...values];
+}
+
 export function sanitizeGraphifyOutput(
   graph,
   {

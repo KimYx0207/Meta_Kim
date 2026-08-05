@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   GRAPHIFY_OUTPUT_SANITIZE_SCHEMA,
+  graphifyOutputNormalizationValues,
   sanitizeGraphifyAnalysisSidecar,
   sanitizeGraphifyOutput,
 } from "../../scripts/graphify-output-sanitize.mjs";
@@ -298,6 +299,30 @@ describe("Graphify upstream output sanitizer", () => {
         /invalid confidence score/u,
       );
     }
+  });
+
+  test("pre-binds IDs hidden inside strict Graphify wrappers", () => {
+    const serialized = {
+      $text: JSON.stringify({
+        id: "Serialized-Group",
+        nodes: { item: ["Wrapped-One", "Wrapped-Two"] },
+      }),
+    };
+    const graph = {
+      nodes: [{ id: "Visible" }],
+      links: [{ source: "Visible", target: "Wrapped-One" }],
+      hyperedges: [structuredClone(serialized)],
+      graph: { hyperedges: [structuredClone(serialized)] },
+    };
+    assert.deepEqual(
+      new Set(graphifyOutputNormalizationValues(graph)),
+      new Set([
+        "Visible",
+        "Wrapped-One",
+        "Serialized-Group",
+        "Wrapped-Two",
+      ]),
+    );
   });
 
   test("refuses ambiguous duplicate raw IDs and malformed endpoints", () => {

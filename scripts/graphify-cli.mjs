@@ -32,6 +32,7 @@ import {
 } from "./graphify-runtime.mjs";
 import { enrichMetaKimGraph } from "./graphify-enrichment.mjs";
 import {
+  graphifyOutputNormalizationValues,
   sanitizeGraphifyAnalysisSidecar,
   sanitizeGraphifyOutput,
 } from "./graphify-output-sanitize.mjs";
@@ -500,22 +501,7 @@ function graphNormalizationValues(
   const add = (value) => {
     if (typeof value === "string") values.add(value);
   };
-  for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) add(node?.id);
-  for (const link of Array.isArray(graph?.links) ? graph.links : []) {
-    add(link?.source);
-    add(link?.target);
-  }
-  for (const surface of [
-    Array.isArray(graph?.hyperedges) ? graph.hyperedges : [],
-    Array.isArray(graph?.graph?.hyperedges) ? graph.graph.hyperedges : [],
-  ]) {
-    for (const hyperedge of surface) {
-      add(hyperedge?.id);
-      for (const nodeId of Array.isArray(hyperedge?.nodes) ? hyperedge.nodes : []) {
-        add(nodeId);
-      }
-    }
-  }
+  for (const value of graphifyOutputNormalizationValues(graph)) add(value);
   for (const source of repositoryFiles) {
     add(source);
     const extension = path.posix.extname(source);
