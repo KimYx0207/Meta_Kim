@@ -276,6 +276,30 @@ describe("Graphify upstream output sanitizer", () => {
     }
   });
 
+  test("normalizes strict serialized confidence scores and rejects unsafe values", () => {
+    const graph = {
+      nodes: [{ id: "one", confidence_score: "1.0" }],
+      links: [{ source: "one", target: "two", confidence_score: "0.75" }],
+      hyperedges: [{ id: "group", nodes: ["one", "two"], confidence_score: "0.95" }],
+    };
+    graph.nodes.push({ id: "two", confidence_score: 0 });
+    const result = sanitizeGraphifyOutput(graph);
+    assert.equal(result.recoveredSerializedConfidenceScores, 3);
+    assert.equal(graph.nodes[0].confidence_score, 1);
+    assert.equal(graph.links[0].confidence_score, 0.75);
+    assert.equal(graph.hyperedges[0].confidence_score, 0.95);
+
+    for (const confidence_score of ["NaN", " 0.5", ".5", "1.01", -0.1, 1.1, Infinity]) {
+      assert.throws(
+        () => sanitizeGraphifyOutput({
+          nodes: [{ id: "unsafe", confidence_score }],
+          links: [],
+        }),
+        /invalid confidence score/u,
+      );
+    }
+  });
+
   test("refuses ambiguous duplicate raw IDs and malformed endpoints", () => {
     assert.throws(
       () => sanitizeGraphifyOutput({

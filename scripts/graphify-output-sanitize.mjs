@@ -116,6 +116,27 @@ function unwrapSerializedHyperedgeNodes(value) {
   return value.item;
 }
 
+function normalizeConfidenceScore(record) {
+  const value = record?.confidence_score;
+  if (value === undefined || value === null) return false;
+  if (typeof value === "number") {
+    if (Number.isFinite(value) && value >= 0 && value <= 1) return false;
+    throw new Error("Graphify output contains an invalid confidence score");
+  }
+  if (
+    typeof value !== "string" ||
+    !/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/u.test(value)
+  ) {
+    throw new Error("Graphify output contains an invalid confidence score");
+  }
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized < 0 || normalized > 1) {
+    throw new Error("Graphify output contains an invalid confidence score");
+  }
+  record.confidence_score = normalized;
+  return true;
+}
+
 export function sanitizeGraphifyOutput(
   graph,
   {
@@ -128,6 +149,7 @@ export function sanitizeGraphifyOutput(
   }
   const repositorySet = new Set(repositoryFiles);
   const rawIdCounts = new Map();
+  let recoveredSerializedConfidenceScores = 0;
   for (const node of graph.nodes) {
     if (
       !node ||
@@ -138,6 +160,7 @@ export function sanitizeGraphifyOutput(
     ) {
       throw new Error("Graphify output contains a missing or unsafe raw node ID");
     }
+    if (normalizeConfidenceScore(node)) recoveredSerializedConfidenceScores += 1;
     rawIdCounts.set(node.id, (rawIdCounts.get(node.id) ?? 0) + 1);
   }
   if ([...rawIdCounts.values()].some((count) => count > 1)) {
@@ -234,6 +257,7 @@ export function sanitizeGraphifyOutput(
     ) {
       throw new Error("Graphify output contains a malformed link endpoint");
     }
+    if (normalizeConfidenceScore(link)) recoveredSerializedConfidenceScores += 1;
     nextLinks.push({
       ...link,
       source: assignedByRawId.get(link.source) ?? link.source,
@@ -271,6 +295,7 @@ export function sanitizeGraphifyOutput(
       ) {
         throw new Error("Graphify output contains a malformed hyperedge");
       }
+      if (normalizeConfidenceScore(hyperedge)) recoveredSerializedConfidenceScores += 1;
       const rawHyperedgeId = hyperedge.id;
       const canonicalHyperedgeId = normalizeNodeId(rawHyperedgeId);
       if (!canonicalHyperedgeId) {
@@ -303,7 +328,8 @@ export function sanitizeGraphifyOutput(
       canonicalizedHyperedgeIds > 0 ||
       rewrittenHyperedgeReferences > 0 ||
       recoveredSerializedHyperedges > 0 ||
-      recoveredSerializedHyperedgeNodes > 0,
+      recoveredSerializedHyperedgeNodes > 0 ||
+      recoveredSerializedConfidenceScores > 0,
     ...sourceReclassifications,
     redactedPrivateSourceUrls,
     canonicalizedNodeIds,
@@ -312,6 +338,7 @@ export function sanitizeGraphifyOutput(
     rewrittenHyperedgeReferences,
     recoveredSerializedHyperedges,
     recoveredSerializedHyperedgeNodes,
+    recoveredSerializedConfidenceScores,
   };
   Object.defineProperty(result, "nodeIdMap", {
     value: assignedByRawId,
