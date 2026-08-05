@@ -36,6 +36,7 @@ import {
   sanitizeGraphifyAnalysisSidecar,
   sanitizeGraphifyOutput,
 } from "./graphify-output-sanitize.mjs";
+import { hasPrivateLocalPath } from "./graphify-private-path.mjs";
 import {
   createGraphifyRuntimeNormalizer,
   GRAPHIFY_NODE_ID_NORMALIZATION,
@@ -452,13 +453,6 @@ function repositoryStateDigest(repoRoot, repositoryFiles) {
     digest.update("\0");
   }
   return digest.digest("hex");
-}
-
-function hasPrivateLocalPath(value) {
-  return typeof value === "string" &&
-    /(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
-      value,
-    );
 }
 
 function sanitizeKnownGraphifyReportAliases(value) {

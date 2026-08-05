@@ -6,6 +6,7 @@ import {
   sanitizeGraphifyAnalysisSidecar,
   sanitizeGraphifyOutput,
 } from "../../scripts/graphify-output-sanitize.mjs";
+import { hasPrivateLocalPath } from "../../scripts/graphify-private-path.mjs";
 
 describe("Graphify upstream output sanitizer", () => {
   test("canonicalizes Unicode IDs, rewrites exact links, and resolves canonical collisions", () => {
@@ -160,6 +161,13 @@ describe("Graphify upstream output sanitizer", () => {
     const result = sanitizeGraphifyOutput(graph);
     assert.equal(result.redactedPrivateSourceUrls, 0);
     assert.equal(graph.nodes[0].source_url, "https://www.aiking.dev/");
+    assert.equal(hasPrivateLocalPath("https://www.aiking.dev/"), false);
+    assert.equal(hasPrivateLocalPath("source=https://example.test/guide"), false);
+    assert.equal(hasPrivateLocalPath("C:/Users/Kim/private.txt"), true);
+    assert.equal(hasPrivateLocalPath("path=C:\\Users\\Kim\\private.txt"), true);
+    assert.equal(hasPrivateLocalPath("\\\\server\\share\\private.txt"), true);
+    assert.equal(hasPrivateLocalPath("/home/kim/private.txt"), true);
+    assert.equal(hasPrivateLocalPath("~/private.txt"), true);
   });
 
   test("rewrites both Graphify hyperedge reference surfaces", () => {

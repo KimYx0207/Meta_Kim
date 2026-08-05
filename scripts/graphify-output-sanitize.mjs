@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { hasPrivateLocalPath } from "./graphify-private-path.mjs";
 import { normalizeGraphifyNodeId } from "./graphify-unicode-normalize.mjs";
 
 export const GRAPHIFY_OUTPUT_SANITIZE_SCHEMA =
@@ -32,13 +33,6 @@ function isCanonicalRepositoryFile(value) {
     !value.startsWith("./") &&
     !value.endsWith("/") &&
     value.split("/").every((segment) => segment && segment !== "." && segment !== "..");
-}
-
-function hasPrivateLocalPath(value) {
-  return typeof value === "string" &&
-    /(?:(?:^|[^A-Za-z0-9_])[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
-      value,
-    );
 }
 
 function isPrivateNodeSourceUrl(value) {

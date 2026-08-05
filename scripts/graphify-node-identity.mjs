@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { hasPrivateLocalPath } from "./graphify-private-path.mjs";
 import {
   GRAPHIFY_NODE_ID_NORMALIZATION,
   normalizeGraphifyNodeId,
@@ -52,13 +53,6 @@ function isCanonicalRepositoryFile(value) {
     segments.every((segment) => segment && segment !== "." && segment !== "..") &&
     path.posix.normalize(value) === value
   );
-}
-
-function hasPrivateLocalPath(value) {
-  return typeof value === "string" &&
-    /(?:(?:^|[^A-Za-z0-9_])[A-Za-z]:[\\/]|\\\\[^\\\s]+\\|(?:^|[^A-Za-z0-9_])~[\\/]|\/(?:Users|home|root)\/)/u.test(
-      value,
-    );
 }
 
 const MAX_URL_SOURCE_LENGTH = 8192;
