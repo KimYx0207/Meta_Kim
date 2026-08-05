@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { hasPrivateLocalPath } from "./graphify-private-path.mjs";
+import {
+  hasPrivateLocalPath,
+  sanitizeKnownMetaKimHomeAliases,
+} from "./graphify-private-path.mjs";
 import { normalizeGraphifyNodeId } from "./graphify-unicode-normalize.mjs";
 
 export const GRAPHIFY_OUTPUT_SANITIZE_SCHEMA =
@@ -190,7 +193,16 @@ export function sanitizeGraphifyOutput(
     redactedExternalRefs: 0,
   };
   let redactedPrivateSourceUrls = 0;
+  let sanitizedKnownHomeAliases = 0;
   for (const node of graph.nodes) {
+    for (const field of ["label", "norm_label", "name", "description"]) {
+      const current = node[field];
+      const sanitized = sanitizeKnownMetaKimHomeAliases(current);
+      if (sanitized !== current) {
+        node[field] = sanitized;
+        sanitizedKnownHomeAliases += 1;
+      }
+    }
     if (isPrivateNodeSourceUrl(node.source_url)) {
       delete node.source_url;
       redactedPrivateSourceUrls += 1;
@@ -339,6 +351,7 @@ export function sanitizeGraphifyOutput(
     changed:
       Object.values(sourceReclassifications).some((count) => count > 0) ||
       redactedPrivateSourceUrls > 0 ||
+      sanitizedKnownHomeAliases > 0 ||
       canonicalizedNodeIds > 0 ||
       canonicalizedHyperedgeIds > 0 ||
       rewrittenHyperedgeReferences > 0 ||
@@ -347,6 +360,7 @@ export function sanitizeGraphifyOutput(
       recoveredSerializedConfidenceScores > 0,
     ...sourceReclassifications,
     redactedPrivateSourceUrls,
+    sanitizedKnownHomeAliases,
     canonicalizedNodeIds,
     resolvedCanonicalCollisions,
     canonicalizedHyperedgeIds,

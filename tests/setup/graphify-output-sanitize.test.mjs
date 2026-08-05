@@ -6,7 +6,10 @@ import {
   sanitizeGraphifyAnalysisSidecar,
   sanitizeGraphifyOutput,
 } from "../../scripts/graphify-output-sanitize.mjs";
-import { hasPrivateLocalPath } from "../../scripts/graphify-private-path.mjs";
+import {
+  hasPrivateLocalPath,
+  sanitizeKnownMetaKimHomeAliases,
+} from "../../scripts/graphify-private-path.mjs";
 
 describe("Graphify upstream output sanitizer", () => {
   test("canonicalizes Unicode IDs, rewrites exact links, and resolves canonical collisions", () => {
@@ -168,6 +171,30 @@ describe("Graphify upstream output sanitizer", () => {
     assert.equal(hasPrivateLocalPath("\\\\server\\share\\private.txt"), true);
     assert.equal(hasPrivateLocalPath("/home/kim/private.txt"), true);
     assert.equal(hasPrivateLocalPath("~/private.txt"), true);
+  });
+
+  test("renders only safe Meta_Kim home aliases without weakening path checks", () => {
+    const graph = {
+      nodes: [{
+        id: "store",
+        label: "Immutable store (~/.meta-kim/runtime/projection-packages)",
+        norm_label: "~/.meta-kim/state/default",
+      }],
+      links: [],
+    };
+    const result = sanitizeGraphifyOutput(graph);
+    assert.equal(result.sanitizedKnownHomeAliases, 2);
+    assert.equal(
+      graph.nodes[0].label,
+      "Immutable store (<meta-kim-home>/runtime/projection-packages)",
+    );
+    assert.equal(graph.nodes[0].norm_label, "<meta-kim-home>/state/default");
+    assert.equal(hasPrivateLocalPath(graph.nodes[0].label), false);
+    assert.equal(
+      sanitizeKnownMetaKimHomeAliases("~/.meta-kim/../private"),
+      "~/.meta-kim/../private",
+    );
+    assert.equal(hasPrivateLocalPath("~/.meta-kim/../private"), true);
   });
 
   test("rewrites both Graphify hyperedge reference surfaces", () => {

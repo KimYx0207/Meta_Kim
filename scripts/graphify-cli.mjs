@@ -36,7 +36,10 @@ import {
   sanitizeGraphifyAnalysisSidecar,
   sanitizeGraphifyOutput,
 } from "./graphify-output-sanitize.mjs";
-import { hasPrivateLocalPath } from "./graphify-private-path.mjs";
+import {
+  hasPrivateLocalPath,
+  sanitizeKnownMetaKimHomeAliases,
+} from "./graphify-private-path.mjs";
 import {
   createGraphifyRuntimeNormalizer,
   GRAPHIFY_NODE_ID_NORMALIZATION,
@@ -453,20 +456,6 @@ function repositoryStateDigest(repoRoot, repositoryFiles) {
     digest.update("\0");
   }
   return digest.digest("hex");
-}
-
-function sanitizeKnownGraphifyReportAliases(value) {
-  if (typeof value !== "string" || !value.includes("~/.meta-kim")) return value;
-  return value.replace(
-    /~\/\.meta-kim[^\s,;:)\]}>'"`]*/gu,
-    (candidate) => {
-      const segments = candidate.split("/").slice(2);
-      return /^~\/\.meta-kim(?:\/[A-Za-z0-9._-]+)*$/u.test(candidate) &&
-        segments.every((segment) => segment !== "." && segment !== "..")
-        ? candidate.replace(/^~\/\.meta-kim/u, "<meta-kim-home>")
-        : candidate;
-    },
-  );
 }
 
 function refreshRepositorySnapshot(expected, boundary) {
@@ -902,7 +891,7 @@ function stampGraphFreshness(cwd = process.cwd(), runtimeBinding = null) {
 
   if (existsSync(reportPath)) {
     const reportRaw = readFileSync(reportPath, "utf8");
-    const sanitizedReport = sanitizeKnownGraphifyReportAliases(reportRaw);
+    const sanitizedReport = sanitizeKnownMetaKimHomeAliases(reportRaw);
     if (hasPrivateLocalPath(sanitizedReport)) {
       fail("GRAPH_REPORT.md exposes a private local path; refusing to stamp unsafe output.");
       return false;
@@ -1374,7 +1363,7 @@ function inspectExistingExtractSnapshot(paths, repository) {
       "existing extract graph/report is not bound to the current HEAD",
     );
   }
-  const sanitizedReport = sanitizeKnownGraphifyReportAliases(reportRaw);
+  const sanitizedReport = sanitizeKnownMetaKimHomeAliases(reportRaw);
   if (hasPrivateLocalPath(sanitizedReport)) {
     throw new Error("existing extract report still contains a private local path");
   }
