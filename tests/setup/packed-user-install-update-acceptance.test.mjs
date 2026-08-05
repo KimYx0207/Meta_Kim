@@ -476,8 +476,18 @@ test("packed release proof migrates durable Claude MCP registration and proves t
   assert.match(acceptanceSource, /event: "packed_legacy_mcp_migration_complete"/u);
   assert.ok(
     acceptanceSource.indexOf('event: "packed_legacy_mcp_migration_complete"') <
-      acceptanceSource.indexOf("portableRuntimePrepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot"),
+      acceptanceSource.indexOf("prepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot"),
     "historical-user migration proof must be emitted before unrelated live observation evidence is copied",
+  );
+  const historicalUpdateCall = acceptanceSource.lastIndexOf("runHistoricalUpdateLane({");
+  const advisorySnapshotCapture = acceptanceSource.indexOf(
+    "prepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot",
+  );
+  const portableReadbackCall = acceptanceSource.lastIndexOf("finalizePortableRuntimeProof(");
+  assert.ok(
+    historicalUpdateCall < advisorySnapshotCapture &&
+      advisorySnapshotCapture < portableReadbackCall,
+    "the advisory snapshot must be captured after the slow historical-update lane and immediately before portable readback",
   );
   assert.match(acceptanceSource, /mcpServers\?\.\["meta-kim-runtime"\]/u);
   assert.match(acceptanceSource, /resolveDurableMetaKimRuntimeLayout/u);

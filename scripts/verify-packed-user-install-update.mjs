@@ -2813,12 +2813,6 @@ function runCurrentPackageLane({
     event: "packed_legacy_mcp_migration_complete",
     ...portableRuntimePrepared.proof.mcpRegistration,
   });
-  portableRuntimePrepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot({
-    sourceProjectRoot: packageInfo.sourceRoot,
-    targetProjectRoot: roots.ordinaryCwd,
-    sourceUserHome: os.homedir(),
-    targetUserHome: roots.userHome,
-  });
   return {
     status: "passed",
     targets: [...PACKED_USER_TARGETS],
@@ -3010,6 +3004,12 @@ export function runPackedUserInstallUpdateAcceptance({
         proof: currentPackage.portableRuntime,
         context: currentPackage._portableRuntimeContext,
       };
+      prepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot({
+        sourceProjectRoot: packageInfo.sourceRoot,
+        targetProjectRoot: prepared.context.roots.ordinaryCwd,
+        sourceUserHome: os.homedir(),
+        targetUserHome: prepared.context.roots.userHome,
+      });
       const transientPackage = prepareTransientPackageRoot({
         packageInfo,
         descriptor: prepared.context.descriptor,

@@ -15,11 +15,12 @@
 - **全局 Memory 生命周期不再把 `.mcp.json` 写进不可变正式包。** 回滚状态改存于 Meta_Kim 用户状态目录，因此 Memory 迁移成功后不会破坏 stable package 闭包，也不会误改调用者项目；对外仍由 `meta-kim-runtime` 提供唯一的 Meta_Kim MCP server 入口。
 - **切换后验证只容忍短暂观测空窗，不放宽身份匹配。** Windows 健康与进程身份回读会在最多 5 秒内有限重试，但成功时仍必须精确匹配同一可执行文件、launcher、参数、host 和端口；持续不一致仍会回滚。
 - **Windows 短暂目录占用不再让全局 Skill 安装倒在最后一次改名。** 普通 Skill 首次落盘、归档落盘和 `meta-skill-creator` 多目标事务，现在只会对本事务拥有的精确同级 rename 在 `EPERM`、`EBUSY` 或 `EACCES` 下做短时有界重试。持续占用仍会明确失败，且不会发布半成品；原有正式目标或已准备的 staging 保持可恢复，也不会泛化删除或重试未知路径。
+- **正式包发布验证不再让耗时的历史升级验收把“已经复制”的 runtime 观测快照拖到过期。** 只读建议快照改为在历史用户验收结束后、便携安装 CLI 回读前一刻才复制。真实主机证据的 24 小时新鲜度要求完全不变；本修复只消除检查与使用之间的竞态，不会把旧证据伪装成新证据。
 - **贡献者致谢：** 感谢 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 发起 [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) 和 [#51](https://github.com/KimYx0207/Meta_Kim/pull/51) 的贡献；这些成果与其上的历史安装用户迁移加固一并保留在本版本中。
 
 ### 验证
 
-- 验证包含针对真实“旧 manifest 未登记”Memory runtime 的正式包全局更新，并回读历史链在不扩大归属边界的前提下完成纳管、Windows launcher 已使用禁用代理的 `HttpClientHandler`、所引用可执行文件存在、重启后服务健康、没有残留孤儿启动项，且不可变正式包仍与其精确 receipt 一致。聚焦回归还注入了短暂与持续的 Windows rename 锁，证明普通 Skill 与多目标 meta-skill 事务共享有界恢复、失败原子性和可恢复 staging 边界。
+- 验证包含针对真实“旧 manifest 未登记”Memory runtime 的正式包全局更新，并回读历史链在不扩大归属边界的前提下完成纳管、Windows launcher 已使用禁用代理的 `HttpClientHandler`、所引用可执行文件存在、重启后服务健康、没有残留孤儿启动项，且不可变正式包仍与其精确 receipt 一致。聚焦回归还注入了短暂与持续的 Windows rename 锁，证明普通 Skill 与多目标 meta-skill 事务共享有界恢复、失败原子性和可恢复 staging 边界，并断言便携 runtime 观测只能在耗时的历史升级验收之后复制。
 
 ## [2.9.26] - 2026-08-05
 
