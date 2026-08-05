@@ -113,6 +113,48 @@ function unwrapSerializedHyperedgeNodes(value) {
   return value.item;
 }
 
+function canonicalizeAlternateHyperedge(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  if (value.id !== undefined || value.relation !== undefined || value.nodes !== undefined) {
+    return value;
+  }
+  const allowed = new Set([
+    "name",
+    "kind",
+    "paths",
+    "confidence",
+    "weight",
+    "source_file",
+    "label",
+  ]);
+  const keys = Object.keys(value);
+  if (
+    keys.some((key) => !allowed.has(key)) ||
+    typeof value.name !== "string" ||
+    !value.name ||
+    typeof value.kind !== "string" ||
+    !value.kind ||
+    !Array.isArray(value.paths) ||
+    value.paths.some((nodeId) => typeof nodeId !== "string")
+  ) {
+    return value;
+  }
+  const {
+    name: id,
+    kind: relation,
+    paths: nodes,
+    weight,
+    ...rest
+  } = value;
+  return {
+    ...rest,
+    id,
+    relation,
+    nodes,
+    ...(weight === undefined ? {} : { confidence_score: weight }),
+  };
+}
+
 function normalizeConfidenceScore(record) {
   const value = record?.confidence_score;
   if (value === undefined || value === null) return false;
@@ -146,7 +188,9 @@ export function graphifyOutputNormalizationValues(graph) {
   }
   for (const surface of hyperedgeSurfaces(graph)) {
     for (const serialized of surface) {
-      const hyperedge = unwrapSerializedHyperedge(serialized);
+      const hyperedge = canonicalizeAlternateHyperedge(
+        unwrapSerializedHyperedge(serialized),
+      );
       add(hyperedge?.id);
       const nodes = unwrapSerializedHyperedgeNodes(hyperedge?.nodes);
       for (const nodeId of Array.isArray(nodes) ? nodes : []) add(nodeId);
@@ -298,13 +342,20 @@ export function sanitizeGraphifyOutput(
   let rewrittenHyperedgeReferences = 0;
   let recoveredSerializedHyperedges = 0;
   let recoveredSerializedHyperedgeNodes = 0;
+  let recoveredAlternateHyperedges = 0;
   for (const surface of hyperedgeSurfaces(graph)) {
     const assignedHyperedgeIds = new Set();
     for (let index = 0; index < surface.length; index += 1) {
       const serialized = surface[index];
-      const hyperedge = unwrapSerializedHyperedge(serialized);
-      if (hyperedge !== serialized) {
+      const unwrapped = unwrapSerializedHyperedge(serialized);
+      const hyperedge = canonicalizeAlternateHyperedge(unwrapped);
+      if (hyperedge !== unwrapped) {
         surface[index] = hyperedge;
+        recoveredAlternateHyperedges += 1;
+      } else if (unwrapped !== serialized) {
+        surface[index] = hyperedge;
+      }
+      if (unwrapped !== serialized) {
         recoveredSerializedHyperedges += 1;
       }
       const serializedNodes = hyperedge?.nodes;
@@ -357,6 +408,7 @@ export function sanitizeGraphifyOutput(
       rewrittenHyperedgeReferences > 0 ||
       recoveredSerializedHyperedges > 0 ||
       recoveredSerializedHyperedgeNodes > 0 ||
+      recoveredAlternateHyperedges > 0 ||
       recoveredSerializedConfidenceScores > 0,
     ...sourceReclassifications,
     redactedPrivateSourceUrls,
@@ -367,6 +419,7 @@ export function sanitizeGraphifyOutput(
     rewrittenHyperedgeReferences,
     recoveredSerializedHyperedges,
     recoveredSerializedHyperedgeNodes,
+    recoveredAlternateHyperedges,
     recoveredSerializedConfidenceScores,
   };
   Object.defineProperty(result, "nodeIdMap", {

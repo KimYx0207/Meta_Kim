@@ -360,6 +360,57 @@ describe("Graphify upstream output sanitizer", () => {
     );
   });
 
+  test("canonicalizes only the exact alternate Graphify hyperedge schema", () => {
+    const alternate = {
+      name: "Runtime-Group",
+      kind: "form",
+      paths: ["Claude", "Codex"],
+      confidence: "EXTRACTED",
+      weight: 0.9,
+    };
+    const graph = {
+      nodes: [{ id: "Claude" }, { id: "Codex" }],
+      links: [],
+      hyperedges: [structuredClone(alternate)],
+      graph: { hyperedges: [structuredClone(alternate)] },
+    };
+    assert.deepEqual(
+      new Set(graphifyOutputNormalizationValues(graph)),
+      new Set(["Claude", "Codex", "Runtime-Group"]),
+    );
+    const result = sanitizeGraphifyOutput(graph, {
+      normalizeNodeId: (value) => ({
+        Claude: "claude",
+        Codex: "codex",
+        "Runtime-Group": "runtime_group",
+      })[value] ?? value,
+    });
+    assert.equal(result.recoveredAlternateHyperedges, 2);
+    assert.deepEqual(graph.hyperedges, graph.graph.hyperedges);
+    assert.deepEqual(graph.hyperedges[0], {
+      confidence: "EXTRACTED",
+      id: "runtime_group",
+      relation: "form",
+      nodes: ["claude", "codex"],
+      confidence_score: 0.9,
+    });
+
+    assert.throws(
+      () => sanitizeGraphifyOutput({
+        nodes: [{ id: "safe" }],
+        links: [],
+        hyperedges: [{
+          name: "unsafe",
+          kind: "form",
+          paths: ["safe"],
+          weight: 1,
+          extra: true,
+        }],
+      }),
+      /malformed hyperedge/u,
+    );
+  });
+
   test("refuses ambiguous duplicate raw IDs and malformed endpoints", () => {
     assert.throws(
       () => sanitizeGraphifyOutput({

@@ -15,7 +15,7 @@
 - **历史安装状态会沿正常 update 路径做严格受限的自动迁移。** 只有同时满足历史分类与精确所有权的陈旧 manifest 记录，才会在全局安装锁内移除；不可读、仍存在、已漂移、链接或用户所有内容全部保留。install、update 与精确 uninstall 还共用不可变投影包的 digest 锁，避免清理与正在使用该包的进程竞态。
 - **发布证明更严格，也更适配 Windows 网络环境。** Release 审计与规划关闭使用有界 WinINET/WinHTTP/直连策略、可信 Windows 系统工具、显式代理/TLS 清理、调用方仓库状态权威，以及精确 asset 大小与摘要绑定。新增 `meta:release:plan` 根据真实 diff 推荐 smoke 或 full；install、runtime、安全、未知或空变更会 fail closed 到完整门禁，且不会削弱 `meta:verify:all`。
 - **运行时声明继续保留真实来源。** 仓库外或链接报告不能继承仓库 run identity；runtime acceptance 统一写入规范运行端名称；未知运行端在写状态前失败；激活元数据也不能凭空制造 provider registry 未声明的支持能力。
-- **Graphify 发布重建现在能严格恢复上游序列化边界，同时不掩盖危险输出。** 单一 `$text` JSON 对象包装的超边、节点列表外层精确的 `{item:[...]}` 包装，以及严格处于 0–1 的十进制置信度字符串，都会先纳入绑定白名单并规范化，再继续执行原有 ID/引用校验。公开 `https://` 标签不再被误判为 Windows 盘符路径，安全的 `~/.meta-kim` 展示别名会渲染为 `<meta-kim-home>`；非法包装或置信度、不安全别名穿越、悬空引用、真实本机路径和不完整图谱身份仍会阻断发布。
+- **Graphify 发布重建现在能严格恢复上游序列化边界，同时不掩盖危险输出。** 单一 `$text` JSON 对象包装的超边、节点列表外层精确的 `{item:[...]}` 包装、精确的 `name/kind/paths/weight` 备用超边结构，以及严格处于 0–1 的十进制置信度字符串，都会先纳入绑定白名单并规范化，再继续执行原有 ID/引用校验。公开 `https://` 标签不再被误判为 Windows 盘符路径，安全的 `~/.meta-kim` 展示别名会渲染为 `<meta-kim-home>`；字段混搭或多余字段、非法包装或置信度、不安全别名穿越、悬空引用、真实本机路径和不完整图谱身份仍会阻断发布。
 - **贡献者致谢：** 感谢 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 在 [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) 和 [#51](https://github.com/KimYx0207/Meta_Kim/pull/51) 中提供的初始贡献。本版本继续保留这两项已合并贡献，并补齐其上的历史用户更新、回滚与发布证明加固。
 
 ### 验证
