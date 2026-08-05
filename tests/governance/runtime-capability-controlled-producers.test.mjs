@@ -106,6 +106,13 @@ function codexDesktopEngineeringFixture(projectRoot) {
 
 function injectedExecutor(request) {
   if (request.runtime === "claude_code") {
+    const settingSourcesIndex = request.args.indexOf("--setting-sources");
+    assert.equal(request.args[settingSourcesIndex + 1], "");
+    assert.ok(request.args.includes("--strict-mcp-config"));
+    const mcpConfigIndex = request.args.indexOf("--mcp-config");
+    const mcpConfigPath = request.args[mcpConfigIndex + 1];
+    assert.equal(path.dirname(mcpConfigPath), request.workspace);
+    assert.deepEqual(JSON.parse(readFileSync(mcpConfigPath, "utf8")), { mcpServers: {} });
     const expectedTool = request.capability === "shell"
       ? "Bash"
       : request.capability === "filesystem"

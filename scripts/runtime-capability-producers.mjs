@@ -114,9 +114,12 @@ function commandFor(runtime, workspace, capability, executableIdentity = null) {
   return {
     command: executableIdentity?.realpath ?? "test-only-claude",
     args: [...argsPrefix,
+      "--setting-sources", "",
       "-p",
       "--output-format", "stream-json",
       "--verbose",
+      "--strict-mcp-config",
+      "--mcp-config", path.join(workspace, "meta-kim-empty-mcp.json"),
       "--permission-mode", "dontAsk",
       "--no-session-persistence",
       "--tools", claudeTool,
@@ -155,7 +158,7 @@ function productionExecutor(request) {
     return {
       ...result,
       runtimeVersion: String(version.stdout ?? version.stderr).trim().split(/\r?\n/u)[0],
-      runtimeIsolation: request.runtime === "codex" ? "ephemeral_auth_only" : "current_user_profile",
+      runtimeIsolation: request.runtime === "codex" ? "ephemeral_auth_only" : "empty_setting_sources_strict_mcp_current_auth",
       executableIdentity: request.executableIdentity,
     };
   } finally {
@@ -704,6 +707,7 @@ export function runControlledRuntimeCapabilityProducer({
   const marker = `META_KIM_CAPABILITY_${capability.replace(/[^a-z0-9]+/giu, "_").toUpperCase()}_${nonce}`;
   if (capability === "filesystem") writeFileSync(path.join(workspace, "meta-kim-probe.txt"), `${marker}\n`, "utf8");
   if (capability === "apply_patch / edit") writeFileSync(path.join(workspace, "meta-kim-probe.txt"), `before-${marker}\n`, "utf8");
+  if (runtime === "claude_code") writeFileSync(path.join(workspace, "meta-kim-empty-mcp.json"), '{"mcpServers":{}}\n', "utf8");
   const executableIdentity = executor === productionExecutor
     ? loadSetupBoundRuntimeExecutable({ projectRoot: paths.projectRoot, profile: paths.profile, runtime })
     : { realpath: `<test-only:${runtime}>`, sha256: sha256(`test-only:${runtime}`), size: 0, bindingSource: "explicit_test_only_executor" };
@@ -739,7 +743,7 @@ export function runControlledRuntimeCapabilityProducer({
       observedAt,
       outcome: "pass",
       hostInvocation: {
-        runtimeIsolation: result.runtimeIsolation ?? (executor === productionExecutor ? "current_user_profile" : "test_injected"),
+        runtimeIsolation: result.runtimeIsolation ?? (executor === productionExecutor ? "runtime_native_isolation" : "test_injected"),
         request: { runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt) },
         requestDigest: sha256(JSON.stringify({ runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt) })),
         result: { status: result.status, signal: result.signal ?? null, stdoutSha256: sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) },
