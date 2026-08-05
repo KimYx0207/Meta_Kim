@@ -6,6 +6,16 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.27] - 2026-08-05
+
+### Fixed
+
+- **Packed global install and update now migrate the existing MCP Memory runtime instead of skipping it.** The immutable v2.9.26 package correctly refreshed Claude/Codex projections but accidentally treated the independent live Memory lifecycle as already handled. Historical users could therefore retain an old, proxy-sensitive startup script even though the canonical template was fixed. The exact packed CLI now applies the normal dependency, side-by-side upgrade, precise process quiesce, rollback, startup-artifact refresh, restart, and health-readback policy. Fresh installs, same-version reinstalls, missing dependencies, and explicit optional-tool skips keep their existing behavior.
+
+### Verification
+
+- Verification includes a packed global update against a real pre-existing Memory runtime and confirms that the generated Windows launcher uses a proxy-disabled `HttpClientHandler`, the referenced executable exists, the service is healthy after restart, and no orphan launcher is left behind.
+
 ## [2.9.26] - 2026-08-05
 
 ### Fixed

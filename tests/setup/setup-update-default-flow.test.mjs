@@ -680,7 +680,7 @@ describe("setup update default flow", () => {
       "setup must expose an explicit global hook opt-in",
     );
     assert.doesNotMatch(
-      source.slice(source.indexOf("const setupWithGlobalHooks"), source.indexOf("function writeUtf8BomFileSync")),
+      source.slice(source.indexOf("const setupWithGlobalHooks"), source.indexOf("const skipOptionalTools")),
       /!updateMode|!args\.includes\("--without-global-hooks"\)/,
       "fresh installs must not silently enable global hooks",
     );
@@ -805,10 +805,15 @@ describe("setup update default flow", () => {
     for (const flowSource of [installSource, updateSource]) {
       assert.match(flowSource, /skipOptionalTools[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED/);
       assert.match(flowSource, /skipOptionalTools[\s\S]*?t\.mcpMemorySkipped/);
+      assert.doesNotMatch(
+        flowSource,
+        /const mcpMemoryOk = executingStableProjectionPackage/,
+        "the exact packed CLI must not skip the independent live MCP lifecycle for historical installs",
+      );
       assert.match(
         flowSource,
-        /const mcpMemoryOk = executingStableProjectionPackage[\s\S]*?t\.mcpMemorySkipped[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED/,
-        "the immutable package lifecycle must not absorb live MCP replacement",
+        /const mcpMemoryOk = memoryPolicy\.action === MCP_MEMORY_SETUP_ACTION\.SKIP[\s\S]*?installMcpMemoryServiceStep/,
+        "the exact packed CLI must honor the normal memory policy and migrate historical boot artifacts",
       );
     }
   });

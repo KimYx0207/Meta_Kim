@@ -8978,12 +8978,7 @@ async function runInstall() {
     withGlobalHooks: setupWithGlobalHooks,
     skipOptionalTools,
   });
-  const mcpMemoryOk = executingStableProjectionPackage
-    ? (
-        skip(`${C.dim}${t.mcpMemorySkipped}${C.reset}`),
-        INSTALL_STEP_OUTCOME.SKIPPED
-      )
-    : memoryPolicy.action === MCP_MEMORY_SETUP_ACTION.SKIP
+  const mcpMemoryOk = memoryPolicy.action === MCP_MEMORY_SETUP_ACTION.SKIP
     ? (
         skip(`${C.dim}${
           memoryPolicy.reason === MCP_MEMORY_SETUP_REASON.GLOBAL_HOOKS_REQUIRED
@@ -9281,12 +9276,7 @@ async function runUpdate() {
     withGlobalHooks: setupWithGlobalHooks,
     skipOptionalTools,
   });
-  const mcpMemoryOk = executingStableProjectionPackage
-    ? (
-        skip(`${C.dim}${t.mcpMemorySkipped}${C.reset}`),
-        INSTALL_STEP_OUTCOME.SKIPPED
-      )
-    : memoryPolicy.action === MCP_MEMORY_SETUP_ACTION.SKIP
+  const mcpMemoryOk = memoryPolicy.action === MCP_MEMORY_SETUP_ACTION.SKIP
     ? (
         skip(`${C.dim}${
           memoryPolicy.reason === MCP_MEMORY_SETUP_REASON.GLOBAL_HOOKS_REQUIRED
