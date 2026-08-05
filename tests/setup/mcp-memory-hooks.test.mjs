@@ -2990,17 +2990,19 @@ describe("MCP memory cross-runtime hooks", () => {
   });
 
   test("boot autostart uses absolute-Python health probes with log-only failures", () => {
-    const source = readRepoFile("setup.mjs");
-    const startStart = source.indexOf("async function startMcpMemoryServiceBackground");
-    const configureStart = source.indexOf("function configureBootAutoStart", startStart);
-    const configureEnd = source.indexOf("async function installMcpMemoryServiceStep", configureStart);
-    const firstStart = source.slice(startStart, configureStart);
-    const autostart = source.slice(configureStart, configureEnd);
+    const setupSource = readRepoFile("setup.mjs");
+    const bootArtifactSource = readRepoFile("scripts", "mcp-memory-boot-artifacts.mjs");
+    const source = `${setupSource}\n${bootArtifactSource}`;
+    const startStart = setupSource.indexOf("async function startMcpMemoryServiceBackground");
+    const configureStart = setupSource.indexOf("function configureBootAutoStart", startStart);
+    const configureEnd = setupSource.indexOf("async function installMcpMemoryServiceStep", configureStart);
+    const firstStart = setupSource.slice(startStart, configureStart);
+    const autostart = setupSource.slice(configureStart, configureEnd);
 
     assert.match(source, /const shellQuote = \(value\) =>/);
-    assert.match(source, /const psSingleQuote = \(value\) =>/);
-    assert.match(source, /function writeUtf8BomFileSync/);
-    assert.match(source, /Buffer\.from\(\[0xef, 0xbb, 0xbf\]\)/);
+    assert.match(bootArtifactSource, /function psSingleQuote\(value\)/);
+    assert.match(setupSource, /renderCurrentWindowsMcpMemoryPowerShellBytes/);
+    assert.match(bootArtifactSource, /Buffer\.from\(\[0xef, 0xbb, 0xbf\]\)/);
     assert.match(source, /mcpMemoryAutoStartFailureMessage/);
     assert.match(source, /if \(configureBootOnHealthy\)[\s\S]*else warn\(t\.mcpMemoryAutoStartBootFailed\);/);
     assert.match(autostart, /buildBootMemoryServiceEnv/);
@@ -3011,7 +3013,7 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.match(autostartI18nSource, /시작하지 못했거나/);
     assert.match(source, /const metaKimDir = join\(homedir\(\), "\.meta-kim"\)/);
     assert.match(source, /const psPath = join\(metaKimDir, "mcp-memory-start\.ps1"\)/);
-    assert.match(source, /writeUtf8BomFileSync\(\s*psPath,/);
+    assert.match(setupSource, /writeFileSync\(psPath, renderCurrentWindowsMcpMemoryPowerShellBytes\(\{/);
     assert.match(source, /const cmdPath = join\(metaKimDir, "mcp-memory-start\.cmd"\)/);
     assert.match(source, /const vbsPath = join\(startupDir, "mcp-memory-silent\.vbs"\)/);
     assert.match(source, /const legacyCmdPath = join\(startupDir, "mcp-memory-start\.cmd"\)/);

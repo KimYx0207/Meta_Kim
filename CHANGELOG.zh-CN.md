@@ -11,10 +11,14 @@
 ### 修复内容
 
 - **正式打包 CLI 的全局安装与更新现在会迁移已有 MCP Memory runtime，不再直接跳过。** v2.9.26 的不可变正式包虽然正确刷新了 Claude/Codex 投影，却误把独立的 Memory 运行生命周期视为已经处理，导致历史用户仍可能保留旧的、会受系统代理影响的开机脚本。现在正式包会按正常策略完成依赖判断、旁路候选升级、精确暂停自有进程、失败回滚、开机文件刷新、自动重启和健康回读；全新安装、同版本重装、缺少依赖和显式跳过可选工具的行为保持不变。
+- **没有旧 manifest 记录的 Windows 启动链，也只会在归属证据完整时自动纳管。** 更新必须同时验证历史 PowerShell 字节、CMD/VBS 完整引用链、未变化的 active runtime 状态、安全的物理 runtime/Python/数据库文件、身份一致且健康的 listener，以及路径不存在既有或并发 manifest 所有者。缺失、被修改、链接、归属含糊或用户自有内容一律不碰，并保持 fail closed。
+- **全局 Memory 生命周期不再把 `.mcp.json` 写进不可变正式包。** 回滚状态改存于 Meta_Kim 用户状态目录，因此 Memory 迁移成功后不会破坏 stable package 闭包，也不会误改调用者项目；对外仍由 `meta-kim-runtime` 提供唯一的 Meta_Kim MCP server 入口。
+- **切换后验证只容忍短暂观测空窗，不放宽身份匹配。** Windows 健康与进程身份回读会在最多 5 秒内有限重试，但成功时仍必须精确匹配同一可执行文件、launcher、参数、host 和端口；持续不一致仍会回滚。
+- **贡献者致谢：** 感谢 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 发起 [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) 和 [#51](https://github.com/KimYx0207/Meta_Kim/pull/51) 的贡献；这些成果与其上的历史安装用户迁移加固一并保留在本版本中。
 
 ### 验证
 
-- 验证包含针对真实既有 Memory runtime 的正式包全局更新，并回读 Windows launcher 已使用禁用代理的 `HttpClientHandler`、所引用可执行文件存在、重启后服务健康，且没有残留孤儿启动项。
+- 验证包含针对真实“旧 manifest 未登记”Memory runtime 的正式包全局更新，并回读历史链在不扩大归属边界的前提下完成纳管、Windows launcher 已使用禁用代理的 `HttpClientHandler`、所引用可执行文件存在、重启后服务健康、没有残留孤儿启动项，且不可变正式包仍与其精确 receipt 一致。
 
 ## [2.9.26] - 2026-08-05
 

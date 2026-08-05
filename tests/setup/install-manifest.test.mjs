@@ -928,6 +928,62 @@ describe("install-manifest schema + helpers", () => {
     }
   });
 
+  test("expected-absent manifest paths reject existing and concurrent ownership claims", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "meta-kim-manifest-absent-cas-"));
+    try {
+      const targetPath = path.join(dir, "managed", "boot.cmd");
+      mkdirSync(path.dirname(targetPath), { recursive: true });
+      writeFileSync(targetPath, "managed boot\n");
+      assert.throws(
+        () => openRecorder({
+          scope: "project",
+          repoRoot: dir,
+          requireExistingValidManifest: true,
+          expectedAbsentPaths: [targetPath],
+        }),
+        /must already exist and be valid/u,
+      );
+      writeManifest(
+        manifestPathFor("project", dir),
+        createEmpty({ scope: "project", repoRoot: dir, metaKimVersion: "fixture" }),
+      );
+
+      const guarded = openRecorder({
+        scope: "project",
+        repoRoot: dir,
+        requireExistingValidManifest: true,
+        expectedAbsentPaths: [targetPath],
+      });
+      guarded.recordFile(targetPath, {
+        source: "guarded",
+        purpose: "boot",
+        category: CATEGORIES.B,
+      });
+      const concurrent = openRecorder({ scope: "project", repoRoot: dir });
+      concurrent.recordFile(targetPath, {
+        source: "concurrent",
+        purpose: "other-owner",
+        category: CATEGORIES.B,
+      });
+      assert.equal((await concurrent.flush()).ok, true);
+      const guardedFlush = await guarded.flush();
+      assert.equal(guardedFlush.ok, false);
+      assert.match(guardedFlush.error, /expected-absent path changed concurrently/u);
+      assert.equal(readManifest(manifestPathFor("project", dir)).entries[0].source, "concurrent");
+      assert.throws(
+        () => openRecorder({
+          scope: "project",
+          repoRoot: dir,
+          requireExistingValidManifest: true,
+          expectedAbsentPaths: [targetPath],
+        }),
+        /expected-absent path already has an owner/u,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("stale same-key TOML appends fail closed and can be retried without losing either journal", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "meta-kim-manifest-toml-cas-"));
     try {

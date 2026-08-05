@@ -218,6 +218,8 @@ export async function recordMcpMemoryBootArtifactOwnership({
   platformName = process.platform,
   metaKimVersion,
   canAutoStart = true,
+  expectedIntegrity = null,
+  requireManifestEntriesAbsent = false,
   recorderFactory = openRecorder,
   readFile = readFileSync,
   lstat = lstatSync,
@@ -260,9 +262,48 @@ export async function recordMcpMemoryBootArtifactOwnership({
     };
   }
 
+  if (expectedIntegrity !== null) {
+    const expectedByPath = new Map();
+    for (const item of Array.isArray(expectedIntegrity) ? expectedIntegrity : []) {
+      if (!item || typeof item.path !== "string") continue;
+      expectedByPath.set(physicalPathKey(item.path, platformName), item);
+    }
+    const changedBeforeRecord = snapshots.filter(({ entry, snapshot }) => {
+      const expected = expectedByPath.get(physicalPathKey(entry.path, platformName));
+      return !expected ||
+        typeof expected.physicalPath !== "string" ||
+        expected.size !== snapshot.size ||
+        expected.sha256 !== snapshot.sha256 ||
+        expected.dev !== snapshot.dev ||
+        expected.ino !== snapshot.ino ||
+        physicalPathKey(expected.physicalPath, platformName) !==
+          physicalPathKey(snapshot.physicalPath, platformName);
+    }).map(({ entry }) => `${entry.path}:identity_or_bytes_changed`);
+    if (
+      expectedByPath.size !== descriptors.length ||
+      changedBeforeRecord.length > 0
+    ) {
+      return {
+        ok: false,
+        status: "boot_artifacts_changed_before_recording",
+        error: `MCP Memory boot artifacts changed before ownership could be recorded: ${changedBeforeRecord.join("; ") || "incomplete expected integrity"}`,
+        changed: changedBeforeRecord,
+      };
+    }
+  }
+
   let recorder;
   try {
-    recorder = recorderFactory({ scope: "global", metaKimVersion });
+    recorder = recorderFactory({
+      scope: "global",
+      metaKimVersion,
+      ...(requireManifestEntriesAbsent
+        ? {
+            requireExistingValidManifest: true,
+            expectedAbsentPaths: descriptors.map((entry) => entry.path),
+          }
+        : {}),
+    });
     for (const { entry, snapshot } of snapshots) {
       recorder.recordFile(entry.path, {
         source: entry.source,
@@ -380,6 +421,43 @@ function assertRendererText(value, label) {
   return value;
 }
 
+function renderCurrentWindowsHealthProbe(healthUrl) {
+  return (
+    `function Test-MetaKimMemoryHealth {\r\n` +
+    `  $handler = $null\r\n` +
+    `  $client = $null\r\n` +
+    `  $response = $null\r\n` +
+    `  try {\r\n` +
+    `    $handler = [System.Net.Http.HttpClientHandler]::new()\r\n` +
+    `    $handler.UseProxy = $false\r\n` +
+    `    $client = [System.Net.Http.HttpClient]::new($handler)\r\n` +
+    `    $client.Timeout = [System.TimeSpan]::FromSeconds(3)\r\n` +
+    `    $response = $client.GetAsync(${psSingleQuote(healthUrl)}).GetAwaiter().GetResult()\r\n` +
+    `    $statusCode = [int]$response.StatusCode\r\n` +
+    `    $payload = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json\r\n` +
+    `    return ($statusCode -ge 200 -and $statusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
+    `  } catch { return $false }\r\n` +
+    `  finally {\r\n` +
+    `    if ($response) { $response.Dispose() }\r\n` +
+    `    if ($client) { $client.Dispose() }\r\n` +
+    `    if ($handler) { $handler.Dispose() }\r\n` +
+    `  }\r\n` +
+    `}\r\n`
+  );
+}
+
+function renderHistoricalWindowsHealthProbeV1(healthUrl) {
+  return (
+    `function Test-MetaKimMemoryHealth {\r\n` +
+    `  try {\r\n` +
+    `    $response = Invoke-WebRequest -Uri ${psSingleQuote(healthUrl)} -UseBasicParsing -TimeoutSec 3\r\n` +
+    `    $payload = $response.Content | ConvertFrom-Json\r\n` +
+    `    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
+    `  } catch { return $false }\r\n` +
+    `}\r\n`
+  );
+}
+
 /** Render the exact current generated Windows PowerShell boot bytes. */
 export function renderCurrentWindowsMcpMemoryPowerShellBytes({
   memoryBin,
@@ -426,26 +504,7 @@ export function renderCurrentWindowsMcpMemoryPowerShellBytes({
     `$lockDir = ${psSingleQuote(lockDir)}\r\n` +
     `$lockAcquired = $false\r\n` +
     `$lockToken = [guid]::NewGuid().ToString("n")\r\n` +
-    `function Test-MetaKimMemoryHealth {\r\n` +
-    `  $handler = $null\r\n` +
-    `  $client = $null\r\n` +
-    `  $response = $null\r\n` +
-    `  try {\r\n` +
-    `    $handler = [System.Net.Http.HttpClientHandler]::new()\r\n` +
-    `    $handler.UseProxy = $false\r\n` +
-    `    $client = [System.Net.Http.HttpClient]::new($handler)\r\n` +
-    `    $client.Timeout = [System.TimeSpan]::FromSeconds(3)\r\n` +
-    `    $response = $client.GetAsync(${psSingleQuote(healthUrl)}).GetAwaiter().GetResult()\r\n` +
-    `    $statusCode = [int]$response.StatusCode\r\n` +
-    `    $payload = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json\r\n` +
-    `    return ($statusCode -ge 200 -and $statusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
-    `  } catch { return $false }\r\n` +
-    `  finally {\r\n` +
-    `    if ($response) { $response.Dispose() }\r\n` +
-    `    if ($client) { $client.Dispose() }\r\n` +
-    `    if ($handler) { $handler.Dispose() }\r\n` +
-    `  }\r\n` +
-    `}\r\n` +
+    renderCurrentWindowsHealthProbe(healthUrl) +
     `function Remove-MetaKimOwnedLock {\r\n` +
     `  try {\r\n` +
     `    $owner = Get-Content -LiteralPath (Join-Path $lockDir "owner.json") -Raw | ConvertFrom-Json\r\n` +
@@ -508,6 +567,21 @@ export function renderCurrentWindowsMcpMemoryPowerShellBytes({
   return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(content, "utf8")]);
 }
 
+/** Render the exact pre-proxy-bypass Windows template shipped before v2.9.26. */
+export function renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options = {}) {
+  const current = renderCurrentWindowsMcpMemoryPowerShellBytes(options).toString("utf8");
+  const currentProbe = renderCurrentWindowsHealthProbe(options.healthUrl);
+  const historicalProbe = renderHistoricalWindowsHealthProbeV1(options.healthUrl);
+  const first = current.indexOf(currentProbe);
+  if (first < 0 || current.indexOf(currentProbe, first + currentProbe.length) >= 0) {
+    throw new Error("current Windows MCP Memory health probe template is not unique");
+  }
+  return Buffer.from(
+    `${current.slice(0, first)}${historicalProbe}${current.slice(first + currentProbe.length)}`,
+    "utf8",
+  );
+}
+
 /** Render the exact current generated Windows CMD boot bytes. */
 export function renderCurrentWindowsMcpMemoryCommandBytes({ powershellPath } = {}) {
   assertRendererText(powershellPath, "powershellPath");
@@ -568,11 +642,12 @@ function quotedPowerShellValue(line, prefix, suffix = "'") {
   return raw.replaceAll("''", "'");
 }
 
-function isCurrentWindowsPowerShell(bytes, homeRoot) {
+function parseWindowsPowerShellBindings(bytes, homeRoot, { historicalV1 = false } = {}) {
   const text = decodeStrictCrLf(bytes, { bom: true });
-  if (!text) return false;
+  if (!text) return null;
   const lines = text.slice(0, -2).split("\r\n");
-  if (lines.length !== 99 || lines.some((line) => !line)) return false;
+  const expectedLineCount = historicalV1 ? 86 : 99;
+  if (lines.length !== expectedLineCount || lines.some((line) => !line)) return null;
   const sqlitePath = quotedPowerShellValue(lines[7], "$env:MCP_MEMORY_SQLITE_PATH = '");
   const endpointUrl = quotedPowerShellValue(lines[8], "$env:MCP_MEMORY_URL = '");
   const port = quotedPowerShellValue(lines[9], "$env:META_KIM_MEMORY_PORT = '");
@@ -582,15 +657,19 @@ function isCurrentWindowsPowerShell(bytes, homeRoot) {
   const failureMessage = quotedPowerShellValue(lines[13], "$failureMessage = '");
   const lockDir = quotedPowerShellValue(lines[17], "$lockDir = '");
   const healthUrl = quotedPowerShellValue(
-    lines[29],
-    "    $response = $client.GetAsync('",
-    "').GetAwaiter().GetResult()",
+    lines[historicalV1 ? 22 : 29],
+    historicalV1
+      ? "    $response = Invoke-WebRequest -Uri '"
+      : "    $response = $client.GetAsync('",
+    historicalV1
+      ? "' -UseBasicParsing -TimeoutSec 3"
+      : "').GetAwaiter().GetResult()",
   );
   let endpoint;
   try {
     endpoint = new URL(endpointUrl);
   } catch {
-    return false;
+    return null;
   }
   const endpointPort = endpoint.port || (endpoint.protocol === "https:" ? "443" : "80");
   const expectedHealthUrl = new URL("/api/health", endpoint).toString();
@@ -608,8 +687,11 @@ function isCurrentWindowsPowerShell(bytes, homeRoot) {
     !failureMessage.includes("MCP_ALLOW_ANONYMOUS_ACCESS=true memory server --http") ||
     !lockDir || !path.win32.isAbsolute(lockDir) ||
     !sameArtifactPath(path.win32.dirname(lockDir), path.win32.join(homeRoot, ".meta-kim", "locks"), "win32")
-  ) return false;
-  return bytes.equals(renderCurrentWindowsMcpMemoryPowerShellBytes({
+  ) return null;
+  const render = historicalV1
+    ? renderHistoricalWindowsMcpMemoryPowerShellBytesV1
+    : renderCurrentWindowsMcpMemoryPowerShellBytes;
+  if (!bytes.equals(render({
     memoryBin,
     databasePath: sqlitePath,
     endpointUrl,
@@ -618,7 +700,25 @@ function isCurrentWindowsPowerShell(bytes, homeRoot) {
     port,
     failureMessage,
     lockDir,
-  }));
+  }))) return null;
+  return {
+    memoryBin,
+    databasePath: sqlitePath,
+    endpointUrl,
+    healthUrl,
+    hostname,
+    port,
+    failureMessage,
+    lockDir,
+  };
+}
+
+function isCurrentWindowsPowerShell(bytes, homeRoot) {
+  return Boolean(parseWindowsPowerShellBindings(bytes, homeRoot));
+}
+
+function isHistoricalWindowsPowerShellV1(bytes, homeRoot) {
+  return Boolean(parseWindowsPowerShellBindings(bytes, homeRoot, { historicalV1: true }));
 }
 
 /** Classify one exact Windows candidate from bytes; no target is required to exist. */
@@ -633,7 +733,10 @@ export function classifyMcpMemoryBootRecoveryFile({ filePath, bytes, homeRoot, p
     return isCurrentWindowsCommand(bytes, expected) ? "current-windows-command" : null;
   }
   if (sameArtifactPath(filePath, expected.powershell, "win32")) {
-    return isCurrentWindowsPowerShell(bytes, home) ? "current-windows-powershell" : null;
+    if (isCurrentWindowsPowerShell(bytes, home)) return "current-windows-powershell";
+    return isHistoricalWindowsPowerShellV1(bytes, home)
+      ? "historical-windows-powershell-proxy-v1"
+      : null;
   }
   if (sameArtifactPath(filePath, expected.legacyCommand, "win32")) {
     return isLegacyWindowsCommand(bytes) ? "legacy-windows-command" : null;
@@ -684,6 +787,8 @@ export function collectMcpMemoryBootRecoveryFindings({
       recoverySignature,
       size: snapshot.size,
       sha256: snapshot.sha256,
+      dev: snapshot.dev,
+      ino: snapshot.ino,
       physicalPath: snapshot.physicalPath,
     });
   }
@@ -692,6 +797,250 @@ export function collectMcpMemoryBootRecoveryFindings({
     finding.recoverySignature !== "legacy-windows-command" ||
     signatures.has("legacy-windows-startup-vbs")
   );
+}
+
+function sameSnapshotIdentity(expected, actual, platformName) {
+  return Boolean(
+    expected && actual &&
+    expected.size === actual.size &&
+    expected.sha256 === actual.sha256 &&
+    expected.dev === actual.dev &&
+    expected.ino === actual.ino &&
+    typeof expected.physicalPath === "string" &&
+    typeof actual.physicalPath === "string" &&
+    physicalPathKey(expected.physicalPath, platformName) ===
+      physicalPathKey(actual.physicalPath, platformName)
+  );
+}
+
+function exactObjectKeys(value, expectedKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expectedKeys].sort());
+}
+
+/**
+ * Adopt only the complete pre-proxy-bypass Windows boot chain. The caller must
+ * already have verified the live listener identity and health. This function
+ * independently binds the historical bytes to the active runtime state and
+ * uses a manifest compare-and-swap precondition so an existing owner or a
+ * concurrent claim can never be overwritten.
+ */
+export async function adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
+  homeRoot,
+  platformName = process.platform,
+  metaKimVersion,
+  manifestEntries,
+  expectedMemoryBin,
+  expectedPythonPaths = [],
+  endpoint,
+  expectedLockDir,
+  recorderFactory = openRecorder,
+  readFile = readFileSync,
+  lstat = lstatSync,
+  realpath = (targetPath) => realpathSync.native(targetPath),
+} = {}) {
+  const fail = (reason, extra = {}) => ({ ok: false, status: reason, reason, ...extra });
+  if (platformName !== "win32" || platformName !== process.platform) {
+    return fail("historical_boot_adoption_not_applicable");
+  }
+  const home = assertAbsoluteHome(homeRoot, platformName);
+  const descriptors = resolveMcpMemoryBootArtifactDescriptors({ homeRoot: home, platformName });
+  if (!Array.isArray(manifestEntries)) return fail("historical_boot_manifest_invalid");
+  if (manifestEntries.some((entry) =>
+    descriptors.some((descriptor) =>
+      typeof entry?.path === "string" && sameArtifactPath(entry.path, descriptor.path, platformName)
+    )
+  )) return fail("historical_boot_manifest_path_already_owned");
+
+  const findings = collectMcpMemoryBootRecoveryFindings({
+    homeRoot: home,
+    platformName,
+    readFile,
+    lstat,
+    realpath,
+  });
+  const requiredSignatures = new Set([
+    "historical-windows-powershell-proxy-v1",
+    "current-windows-command",
+    "current-windows-startup-vbs",
+  ]);
+  const actualSignatures = new Set(findings.map((finding) => finding.recoverySignature));
+  if (
+    findings.length !== requiredSignatures.size ||
+    [...requiredSignatures].some((signature) => !actualSignatures.has(signature))
+  ) return fail("historical_boot_chain_unverified");
+
+  const expectedPaths = windowsRecoveryPaths(home);
+  const powerShellFinding = findings.find((finding) =>
+    finding.recoverySignature === "historical-windows-powershell-proxy-v1"
+  );
+  let powerShellSnapshot;
+  let stateSnapshot;
+  let active;
+  try {
+    powerShellSnapshot = snapshotMcpMemoryBootArtifactFile({
+      filePath: expectedPaths.powershell,
+      homeRoot: home,
+      platformName,
+      readFile,
+      lstat,
+      realpath,
+    });
+    if (!sameSnapshotIdentity(powerShellFinding, powerShellSnapshot, platformName)) {
+      return fail("historical_boot_chain_changed_during_verification");
+    }
+    const statePath = path.win32.join(home, ".meta-kim", "mcp-memory-active-runtime.json");
+    stateSnapshot = snapshotMcpMemoryBootArtifactFile({
+      filePath: statePath,
+      homeRoot: home,
+      platformName,
+      readFile,
+      lstat,
+      realpath,
+    });
+    active = JSON.parse(stateSnapshot.bytes.toString("utf8"));
+  } catch (error) {
+    return fail("historical_active_runtime_state_unreadable", {
+      error: error?.message ?? String(error),
+    });
+  }
+
+  const bindings = parseWindowsPowerShellBindings(
+    powerShellSnapshot.bytes,
+    home,
+    { historicalV1: true },
+  );
+  const activeKeys = [
+    "schemaVersion",
+    "runtimeDir",
+    "pythonPath",
+    "memoryBin",
+    "databasePath",
+    "activatedAt",
+  ];
+  if (
+    !bindings ||
+    !exactObjectKeys(active, activeKeys) ||
+    active.schemaVersion !== "meta-kim-mcp-memory-active-runtime-v1" ||
+    typeof active.activatedAt !== "string" ||
+    !Number.isFinite(Date.parse(active.activatedAt)) ||
+    ![active.runtimeDir, active.pythonPath, active.memoryBin, active.databasePath]
+      .every((candidate) => typeof candidate === "string" && path.win32.isAbsolute(candidate)) ||
+    typeof expectedMemoryBin !== "string" ||
+    !path.win32.isAbsolute(expectedMemoryBin) ||
+    typeof expectedLockDir !== "string" ||
+    !path.win32.isAbsolute(expectedLockDir)
+  ) return fail("historical_active_runtime_state_invalid");
+
+  const runtimeDir = path.win32.normalize(active.runtimeDir);
+  const initialRuntimeDir = path.win32.join(home, ".meta-kim", "memory-venv");
+  const transactionalRuntimeRoot = path.win32.join(home, ".meta-kim", "memory-runtimes");
+  const runtimeName = path.win32.basename(runtimeDir);
+  const allowedRuntimeLayout =
+    sameArtifactPath(runtimeDir, initialRuntimeDir, platformName) ||
+    (
+      sameArtifactPath(path.win32.dirname(runtimeDir), transactionalRuntimeRoot, platformName) &&
+      /^update-\d{13}-\d{1,10}$/u.test(runtimeName)
+    );
+  const expectedRuntimeMemoryBin = path.win32.join(runtimeDir, "Scripts", "memory.exe");
+  const expectedRuntimePython = path.win32.join(runtimeDir, "Scripts", "python.exe");
+  if (
+    !allowedRuntimeLayout ||
+    !sameArtifactPath(active.memoryBin, expectedRuntimeMemoryBin, platformName) ||
+    !sameArtifactPath(active.pythonPath, expectedRuntimePython, platformName) ||
+    !sameArtifactPath(active.memoryBin, bindings.memoryBin, platformName) ||
+    !sameArtifactPath(active.databasePath, bindings.databasePath, platformName) ||
+    !sameArtifactPath(active.memoryBin, expectedMemoryBin, platformName) ||
+    bindings.endpointUrl !== endpoint?.endpointUrl ||
+    bindings.healthUrl !== endpoint?.healthUrl ||
+    bindings.hostname !== endpoint?.hostname ||
+    bindings.port !== String(endpoint?.port ?? "") ||
+    !sameArtifactPath(bindings.lockDir, expectedLockDir, platformName)
+  ) return fail("historical_active_runtime_binding_mismatch");
+
+  let memorySnapshot;
+  let pythonSnapshot;
+  try {
+    memorySnapshot = snapshotMcpMemoryBootArtifactFile({
+      filePath: active.memoryBin,
+      homeRoot: home,
+      platformName,
+      readFile,
+      lstat,
+      realpath,
+    });
+    pythonSnapshot = snapshotMcpMemoryBootArtifactFile({
+      filePath: active.pythonPath,
+      homeRoot: home,
+      platformName,
+      readFile,
+      lstat,
+      realpath,
+    });
+    snapshotMcpMemoryBootArtifactFile({
+      filePath: active.databasePath,
+      homeRoot: home,
+      platformName,
+      readFile,
+      lstat,
+      realpath,
+    });
+  } catch (error) {
+    return fail("historical_active_runtime_files_unsafe", {
+      error: error?.message ?? String(error),
+    });
+  }
+  const trustedPythonPaths = new Set(
+    expectedPythonPaths
+      .filter((candidate) => typeof candidate === "string" && path.win32.isAbsolute(candidate))
+      .map((candidate) => physicalPathKey(candidate, platformName)),
+  );
+  if (
+    physicalPathKey(memorySnapshot.physicalPath, platformName) !==
+      physicalPathKey(expectedMemoryBin, platformName) ||
+    !trustedPythonPaths.has(physicalPathKey(pythonSnapshot.physicalPath, platformName))
+  ) return fail("historical_active_runtime_process_binding_mismatch");
+
+  const ownership = await recordMcpMemoryBootArtifactOwnership({
+    homeRoot: home,
+    platformName,
+    metaKimVersion,
+    expectedIntegrity: findings,
+    requireManifestEntriesAbsent: true,
+    recorderFactory,
+    readFile,
+    lstat,
+    realpath,
+  });
+  if (!ownership.ok) {
+    return fail(ownership.status ?? "historical_boot_manifest_adoption_failed", {
+      error: ownership.error,
+    });
+  }
+
+  try {
+    const activeAfter = snapshotMcpMemoryBootArtifactFile({
+      filePath: path.win32.join(home, ".meta-kim", "mcp-memory-active-runtime.json"),
+      homeRoot: home,
+      platformName,
+      readFile,
+      lstat,
+      realpath,
+    });
+    if (!sameSnapshotIdentity(stateSnapshot, activeAfter, platformName)) {
+      return fail("historical_active_runtime_state_changed_during_adoption");
+    }
+  } catch (error) {
+    return fail("historical_active_runtime_state_changed_during_adoption", {
+      error: error?.message ?? String(error),
+    });
+  }
+  return {
+    ok: true,
+    status: "historical_boot_chain_adopted",
+    manifestPath: ownership.manifestPath,
+    descriptors,
+  };
 }
 
 /**

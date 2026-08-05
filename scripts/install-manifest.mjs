@@ -856,6 +856,8 @@ export function openRecorder({
   verbose,
   replaceSources = [],
   historicalTempRoot = tmpdir(),
+  requireExistingValidManifest = false,
+  expectedAbsentPaths = [],
 }) {
   let manifest;
   let baseManifest;
@@ -866,9 +868,11 @@ export function openRecorder({
   let promotedEntries = null;
   let promotedForgetEntryStates = null;
   try {
-    baseManifest =
-      readManifest(manifestPathFor(scope, repoRoot)) ??
-      createEmpty({ scope, repoRoot, metaKimVersion });
+    const existingManifest = readManifest(manifestPathFor(scope, repoRoot));
+    if (requireExistingValidManifest && !existingManifest) {
+      throw new Error("install manifest must already exist and be valid");
+    }
+    baseManifest = existingManifest ?? createEmpty({ scope, repoRoot, metaKimVersion });
     manifest = structuredClone(baseManifest);
     if (replaceSources.length > 0) {
       const sourceSet = new Set(replaceSources);
@@ -880,9 +884,26 @@ export function openRecorder({
     if (metaKimVersion && manifest.metaKimVersion !== metaKimVersion) {
       manifest = { ...manifest, metaKimVersion };
     }
-  } catch {
+  } catch (error) {
+    if (requireExistingValidManifest) throw error;
     baseManifest = createEmpty({ scope, repoRoot, metaKimVersion });
     manifest = structuredClone(baseManifest);
+  }
+
+  const absentPathKeys = new Set(expectedAbsentPaths.map((entryPath) => {
+    if (typeof entryPath !== "string" || !path.isAbsolute(entryPath)) {
+      throw new Error("expectedAbsentPaths must contain absolute paths");
+    }
+    const normalized = path.normalize(entryPath);
+    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  }));
+  const entryPathKey = (entryPath) => {
+    if (typeof entryPath !== "string") return null;
+    const normalized = path.normalize(entryPath);
+    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  };
+  if (baseManifest.entries.some((entry) => absentPathKeys.has(entryPathKey(entry.path)))) {
+    throw new Error("install manifest expected-absent path already has an owner");
   }
 
   const safeRecord = (entry) => {
@@ -1117,6 +1138,14 @@ export function openRecorder({
           const current = readManifest(target);
           if (existsSync(target) && !current) {
             throw new Error(`cannot merge invalid install manifest: ${target}`);
+          }
+          if (requireExistingValidManifest && !current) {
+            throw new Error(`install manifest is missing or invalid: ${target}`);
+          }
+          if (
+            current?.entries?.some((entry) => absentPathKeys.has(entryPathKey(entry.path)))
+          ) {
+            throw new Error("install manifest expected-absent path changed concurrently");
           }
           for (const [key, expectedEntries] of expectedTouchedEntryStates) {
             const currentEntries = entriesForKey(current, key);

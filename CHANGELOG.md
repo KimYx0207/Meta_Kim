@@ -11,10 +11,14 @@ The changelog explains the user-facing problem or risk each release solved, what
 ### Fixed
 
 - **Packed global install and update now migrate the existing MCP Memory runtime instead of skipping it.** The immutable v2.9.26 package correctly refreshed Claude/Codex projections but accidentally treated the independent live Memory lifecycle as already handled. Historical users could therefore retain an old, proxy-sensitive startup script even though the canonical template was fixed. The exact packed CLI now applies the normal dependency, side-by-side upgrade, precise process quiesce, rollback, startup-artifact refresh, restart, and health-readback policy. Fresh installs, same-version reinstalls, missing dependencies, and explicit optional-tool skips keep their existing behavior.
+- **Pre-manifest Windows startup chains are adopted automatically only when their ownership is fully proven.** Update requires the exact historical PowerShell bytes, the complete CMD/VBS reference chain, an unchanged active-runtime state, safe physical runtime/Python/database files, a matching healthy listener, and no existing or concurrent manifest owner. Missing, modified, linked, ambiguous, or user-owned content remains untouched and the update fails closed.
+- **The global Memory lifecycle no longer writes `.mcp.json` into the immutable packed package.** Its rollback state now lives under the Meta_Kim user-state root, so a successful Memory migration cannot invalidate the stable package closure or mutate the caller's project. The public `meta-kim-runtime` MCP projection remains the single Meta_Kim MCP server surface.
+- **Post-switch verification tolerates only transient observation gaps, not identity drift.** Windows health and process-identity readback now retries for a bounded five-second window while requiring the same exact executable, launcher, arguments, host, and port on every successful observation; persistent mismatch still rolls back.
+- **Contributor credit:** Thanks to [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) for the contributions initiated in [#50](https://github.com/KimYx0207/Meta_Kim/pull/50) and [#51](https://github.com/KimYx0207/Meta_Kim/pull/51), which remain part of this release together with the installed-user migration hardening built around them.
 
 ### Verification
 
-- Verification includes a packed global update against a real pre-existing Memory runtime and confirms that the generated Windows launcher uses a proxy-disabled `HttpClientHandler`, the referenced executable exists, the service is healthy after restart, and no orphan launcher is left behind.
+- Verification includes a packed global update against a real pre-manifest Memory runtime and confirms that the historical chain is adopted without widening ownership, the generated Windows launcher uses a proxy-disabled `HttpClientHandler`, the referenced executable exists, the service is healthy after restart, no orphan launcher is left behind, and the immutable packed package still matches its exact receipt.
 
 ## [2.9.26] - 2026-08-05
 

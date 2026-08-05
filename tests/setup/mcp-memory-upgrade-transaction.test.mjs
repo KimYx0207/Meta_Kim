@@ -512,12 +512,36 @@ describe("MCP memory upgrade transaction", () => {
   });
 
   test("setup routes a live historical or same-version listener through the transaction authority gate", () => {
-    assert.match(setupSource, /function planMcpMemoryUpdateRoute\(/u);
+    assert.match(setupSource, /async function planMcpMemoryUpdateRoute\(/u);
+    assert.match(setupSource, /await planMcpMemoryUpdateRoute\(/u);
     assert.match(setupSource, /oldMemoryBinOverride: updateRoute\.oldMemoryBin/u);
     assert.match(setupSource, /requireRuntimeAuthority: true/u);
     assert.match(setupSource, /runtime_manifest_boot_chain_unverified/u);
+    assert.match(setupSource, /await probeMcpMemoryHealth\(endpoint\.healthUrl\)/u);
+    assert.match(setupSource, /await adoptHistoricalWindowsMcpMemoryBootArtifactOwnership\(/u);
+    assert.match(setupSource, /manifestEntries: authority\.manifest\.entries/u);
+    assert.match(setupSource, /async function verifyEndpointRuntimeHealthy\(/u);
+    assert.match(setupSource, /timeoutMs: 5_000,[\s\S]*?pollIntervalMs: 250/u);
+    assert.match(setupSource, /verifyCandidateHealthy: \(candidate\) =>\s*verifyEndpointRuntimeHealthy/u);
     assert.match(setupSource, /if \(listener\?\.kind !== "listening"\)/u);
     assert.match(setupSource, /update refused: \$\{updateRoute\.reason\}/u);
+  });
+
+  test("global Memory lifecycle state never mutates the immutable package or caller project root", () => {
+    assert.match(
+      setupSource,
+      /function mcpMemoryRuntimeConfigPath\(\) \{\s*return join\(homedir\(\), "\.meta-kim", "mcp-memory-runtime-config\.json"\);\s*\}/u,
+    );
+    const installStart = setupSource.indexOf("async function installMcpMemoryServiceStep(");
+    const installEnd = setupSource.indexOf("function ensureNetworkxCompatibility", installStart);
+    const installStep = setupSource.slice(installStart, installEnd);
+    assert.match(installStep, /const mcpPath = mcpMemoryRuntimeConfigPath\(\)/u);
+    assert.doesNotMatch(installStep, /join\(PROJECT_DIR, "\.mcp\.json"\)/u);
+    const recoveryStart = setupSource.indexOf("async function recoverIncompleteMcpMemoryTransaction");
+    const recoveryEnd = setupSource.indexOf("async function runTransactionalMcpMemoryUpdate", recoveryStart);
+    const recoveryStep = setupSource.slice(recoveryStart, recoveryEnd);
+    assert.match(recoveryStep, /expectedMcpPath: mcpMemoryRuntimeConfigPath\(\)/u);
+    assert.doesNotMatch(recoveryStep, /join\(PROJECT_DIR, "\.mcp\.json"\)/u);
   });
 
   test("recovery snapshot stores only the MCP memory entry, not the whole MCP file", () => {

@@ -11,6 +11,7 @@ import {
   MCP_MEMORY_BOOT_ARTIFACT_OWNERSHIP_CLASS,
   MCP_MEMORY_BOOT_ARTIFACT_RUNTIME_TARGET,
   MCP_MEMORY_BOOT_ARTIFACT_SOURCE,
+  adoptHistoricalWindowsMcpMemoryBootArtifactOwnership,
   classifyMcpMemoryBootRecoveryFile,
   collectMcpMemoryBootRecoveryFindings,
   collectOrphanMcpMemoryBootLaunchers,
@@ -20,6 +21,7 @@ import {
   renderCurrentWindowsMcpMemoryCommandBytes,
   renderCurrentWindowsMcpMemoryPowerShellBytes,
   renderCurrentWindowsMcpMemoryStartupVbsBytes,
+  renderHistoricalWindowsMcpMemoryPowerShellBytesV1,
   resolveMcpMemoryBootArtifactDescriptors,
   snapshotMcpMemoryBootArtifactFile,
 } from "../../scripts/mcp-memory-boot-artifacts.mjs";
@@ -48,19 +50,26 @@ function windowsFixture() {
   return { homeRoot, descriptors, byId, startupDir, legacyCommand };
 }
 
-function currentPowerShell(homeRoot) {
+function powerShellOptions(homeRoot, {
+  runtimeDir = path.win32.join(homeRoot, ".meta-kim", "memory-venv"),
+  databasePath = path.win32.join(homeRoot, "memory", "sqlite_vec.db"),
+} = {}) {
   const endpointUrl = "http://localhost:8000";
   const healthUrl = `${endpointUrl}/api/health`;
-  return renderCurrentWindowsMcpMemoryPowerShellBytes({
-    memoryBin: path.win32.join(homeRoot, ".meta-kim", "memory-venv", "Scripts", "memory.exe"),
-    databasePath: path.win32.join(homeRoot, "memory", "sqlite_vec.db"),
+  return {
+    memoryBin: path.win32.join(runtimeDir, "Scripts", "memory.exe"),
+    databasePath,
     endpointUrl,
     healthUrl,
     hostname: "localhost",
     port: "8000",
     failureMessage: `Meta_Kim MCP Memory Service failed to start or did not become healthy at ${healthUrl}. Please start it manually: MCP_ALLOW_ANONYMOUS_ACCESS=true memory server --http`,
     lockDir: path.win32.join(homeRoot, ".meta-kim", "locks", "mcp-memory-localhost-8000.lock"),
-  });
+  };
+}
+
+function currentPowerShell(homeRoot) {
+  return renderCurrentWindowsMcpMemoryPowerShellBytes(powerShellOptions(homeRoot));
 }
 
 test("Windows health probe bypasses system proxy and rejects non-success HTTP responses", () => {
@@ -479,6 +488,150 @@ test("current Windows CMD and strong-marker PS1 classify only with exact generat
     assert.notDeepEqual(attackedPowerShell, psBytes);
     assert.equal(classifyMcpMemoryBootRecoveryFile({ filePath: psPath, bytes: attackedPowerShell, homeRoot: fixture.homeRoot, platformName: "win32" }), null);
     assert.equal(classifyMcpMemoryBootRecoveryFile({ filePath: commandPath, bytes: Buffer.from(`@echo off\r\npowershell.exe -File "${psPath}"\r\n`), homeRoot: fixture.homeRoot, platformName: "win32" }), null);
+  } finally {
+    rmSync(fixture.homeRoot, { recursive: true, force: true });
+  }
+});
+
+test("historical Windows boot adoption requires the complete exact chain and active runtime binding", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const fixture = windowsFixture();
+  try {
+    const runtimeDir = path.win32.join(
+      fixture.homeRoot,
+      ".meta-kim",
+      "memory-runtimes",
+      "update-1234567890123-4321",
+    );
+    const options = powerShellOptions(fixture.homeRoot, { runtimeDir });
+    const pythonPath = path.win32.join(runtimeDir, "Scripts", "python.exe");
+    mkdirSync(path.win32.dirname(options.memoryBin), { recursive: true });
+    mkdirSync(path.win32.dirname(options.databasePath), { recursive: true });
+    writeFileSync(options.memoryBin, "memory launcher\n");
+    writeFileSync(pythonPath, "python launcher\n");
+    writeFileSync(options.databasePath, "sqlite fixture\n");
+    writeFileSync(
+      fixture.byId.get("windows-powershell").path,
+      renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options),
+    );
+    writeFileSync(
+      fixture.byId.get("windows-command").path,
+      renderCurrentWindowsMcpMemoryCommandBytes({
+        powershellPath: fixture.byId.get("windows-powershell").path,
+      }),
+    );
+    writeFileSync(
+      fixture.byId.get("windows-startup").path,
+      renderCurrentWindowsMcpMemoryStartupVbsBytes({
+        commandPath: fixture.byId.get("windows-command").path,
+      }),
+    );
+    const activeStatePath = path.win32.join(
+      fixture.homeRoot,
+      ".meta-kim",
+      "mcp-memory-active-runtime.json",
+    );
+    const activeState = {
+      schemaVersion: "meta-kim-mcp-memory-active-runtime-v1",
+      runtimeDir,
+      pythonPath,
+      memoryBin: options.memoryBin,
+      databasePath: options.databasePath,
+      activatedAt: "2026-07-31T04:45:15.055Z",
+    };
+    writeFileSync(activeStatePath, `${JSON.stringify(activeState, null, 2)}\n`);
+
+    assert.deepEqual(
+      collectMcpMemoryBootRecoveryFindings({
+        homeRoot: fixture.homeRoot,
+        platformName: "win32",
+      }).map((entry) => entry.recoverySignature),
+      [
+        "historical-windows-powershell-proxy-v1",
+        "current-windows-command",
+        "current-windows-startup-vbs",
+      ],
+    );
+
+    let recorderOptions;
+    const recorded = [];
+    const adopted = await adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
+      homeRoot: fixture.homeRoot,
+      platformName: "win32",
+      metaKimVersion: "2.9.27",
+      manifestEntries: [],
+      expectedMemoryBin: options.memoryBin,
+      expectedPythonPaths: [pythonPath],
+      endpoint: {
+        endpointUrl: options.endpointUrl,
+        healthUrl: options.healthUrl,
+        hostname: options.hostname,
+        port: Number(options.port),
+      },
+      expectedLockDir: options.lockDir,
+      recorderFactory: (received) => {
+        recorderOptions = received;
+        return {
+          recordFile: (filePath, identity) => recorded.push({ filePath, identity }),
+          flush: async () => ({
+            ok: true,
+            path: path.win32.join(fixture.homeRoot, ".meta-kim", "install-manifest.json"),
+          }),
+        };
+      },
+    });
+    assert.equal(adopted.ok, true, adopted.error);
+    assert.equal(adopted.status, "historical_boot_chain_adopted");
+    assert.equal(recorderOptions.requireExistingValidManifest, true);
+    assert.deepEqual(
+      recorderOptions.expectedAbsentPaths,
+      fixture.descriptors.map((entry) => entry.path),
+    );
+    assert.equal(recorded.length, 3);
+
+    const collision = await adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
+      homeRoot: fixture.homeRoot,
+      platformName: "win32",
+      metaKimVersion: "2.9.27",
+      manifestEntries: [{ path: fixture.byId.get("windows-command").path }],
+      expectedMemoryBin: options.memoryBin,
+      expectedPythonPaths: [pythonPath],
+      endpoint: {
+        endpointUrl: options.endpointUrl,
+        healthUrl: options.healthUrl,
+        hostname: options.hostname,
+        port: Number(options.port),
+      },
+      expectedLockDir: options.lockDir,
+      recorderFactory: () => { throw new Error("must not record a claimed path"); },
+    });
+    assert.equal(collision.reason, "historical_boot_manifest_path_already_owned");
+
+    writeFileSync(
+      fixture.byId.get("windows-powershell").path,
+      Buffer.concat([
+        renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options),
+        Buffer.from("# user change\r\n"),
+      ]),
+    );
+    const modified = await adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
+      homeRoot: fixture.homeRoot,
+      platformName: "win32",
+      metaKimVersion: "2.9.27",
+      manifestEntries: [],
+      expectedMemoryBin: options.memoryBin,
+      expectedPythonPaths: [pythonPath],
+      endpoint: {
+        endpointUrl: options.endpointUrl,
+        healthUrl: options.healthUrl,
+        hostname: options.hostname,
+        port: Number(options.port),
+      },
+      expectedLockDir: options.lockDir,
+      recorderFactory: () => { throw new Error("must not record modified bytes"); },
+    });
+    assert.equal(modified.reason, "historical_boot_chain_unverified");
   } finally {
     rmSync(fixture.homeRoot, { recursive: true, force: true });
   }

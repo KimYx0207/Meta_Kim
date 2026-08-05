@@ -58,6 +58,7 @@ import {
   resolveSetupRuntimeLaunchInventoryRoots,
 } from "./scripts/runtime-executable-binding.mjs";
 import {
+  adoptHistoricalWindowsMcpMemoryBootArtifactOwnership,
   isExactMcpMemoryBootManifestIdentity,
   repairOrphanMcpMemoryBootLaunchers,
   recordMcpMemoryBootArtifactOwnership,
@@ -6579,6 +6580,10 @@ function activeMemoryRuntimeStatePath() {
   return join(homedir(), ".meta-kim", "mcp-memory-active-runtime.json");
 }
 
+function mcpMemoryRuntimeConfigPath() {
+  return join(homedir(), ".meta-kim", "mcp-memory-runtime-config.json");
+}
+
 function readActiveMemoryRuntimeState() {
   try {
     return JSON.parse(readFileSync(activeMemoryRuntimeStatePath(), "utf8"));
@@ -6617,8 +6622,13 @@ function readMcpMemoryManifestAuthority() {
       return Boolean(entry && manifestFileEntryMatches(entry, descriptor.path));
     });
     return complete
-      ? { verified: true, manifestPath }
-      : { verified: false, reason: "runtime_manifest_boot_chain_unverified", manifestPath };
+      ? { verified: true, manifestPath, entries }
+      : {
+          verified: false,
+          reason: "runtime_manifest_boot_chain_unverified",
+          manifestPath,
+          entries,
+        };
   } catch {
     return {
       verified: false,
@@ -6976,6 +6986,18 @@ function verifyEndpointRuntimeIdentity(endpoint, memoryBin) {
     host: endpoint.hostname,
     port: endpoint.port,
   }).verified;
+}
+
+async function verifyEndpointRuntimeHealthy(endpoint, memoryBin) {
+  const verification = await waitForMcpMemoryHealth({
+    probeHealth: async () => (
+      await probeMcpMemoryHealth(endpoint.healthUrl) &&
+      verifyEndpointRuntimeIdentity(endpoint, memoryBin)
+    ),
+    timeoutMs: 5_000,
+    pollIntervalMs: 250,
+  });
+  return verification.healthy;
 }
 
 function configureBootAutoStart(
@@ -7466,7 +7488,7 @@ async function recoverIncompleteMcpMemoryTransaction({ transactionRoot, endpoint
     expectedPython: resolved.python,
     expectedDatabasePath: trustedDatabasePath,
     expectedCandidateRoot,
-    expectedMcpPath: join(PROJECT_DIR, ".mcp.json"),
+    expectedMcpPath: mcpMemoryRuntimeConfigPath(),
     expectedSnapshotPaths: [...expectedSnapshotPaths],
     platformName: platform(),
   });
@@ -7481,7 +7503,7 @@ async function recoverIncompleteMcpMemoryTransaction({ transactionRoot, endpoint
     !isAbsoluteRecoveryPath(recovery.oldMemoryBin) ||
     !isAbsoluteRecoveryPath(recovery.candidateMemoryBin) ||
     !isAbsoluteRecoveryPath(recovery.mcpPath) ||
-    pathKeyForRecovery(recovery.mcpPath) !== pathKeyForRecovery(join(PROJECT_DIR, ".mcp.json")) ||
+    pathKeyForRecovery(recovery.mcpPath) !== pathKeyForRecovery(mcpMemoryRuntimeConfigPath()) ||
     !trustedOldMemoryBin ||
     pathKeyForRecovery(recovery.oldMemoryBin) !== pathKeyForRecovery(realpathSync(trustedOldMemoryBin)) ||
     !trustedDatabasePath ||
@@ -7781,10 +7803,8 @@ async function runTransactionalMcpMemoryUpdate({
           extraEnv: { MCP_MEMORY_SQLITE_PATH: databasePath },
         }),
       }),
-      verifyCandidateHealthy: async (candidate) => (
-        await probeMcpMemoryHealth(endpoint.healthUrl) &&
-        verifyEndpointRuntimeIdentity(endpoint, candidate.memoryBin)
-      ),
+      verifyCandidateHealthy: (candidate) =>
+        verifyEndpointRuntimeHealthy(endpoint, candidate.memoryBin),
       updateMcpConfig: async (candidate) => {
         let mcpConfig = {};
         if (existsSync(mcpPath)) mcpConfig = JSON.parse(readFileSync(mcpPath, "utf8"));
@@ -7868,7 +7888,7 @@ async function runTransactionalMcpMemoryUpdate({
   };
 }
 
-function planMcpMemoryUpdateRoute({ resolved, endpoint, existingInstalled }) {
+async function planMcpMemoryUpdateRoute({ resolved, endpoint, existingInstalled }) {
   if (endpoint.canAutoStart === false) {
     return { ok: true, useTransaction: false, reason: "remote_endpoint" };
   }
@@ -7906,8 +7926,35 @@ function planMcpMemoryUpdateRoute({ resolved, endpoint, existingInstalled }) {
     return { ok: false, reason: identity.reason || "user_drift_or_unknown_listener" };
   }
 
-  const activeState = readActiveMemoryRuntimeState();
-  const authority = readMcpMemoryRuntimeAuthority();
+  if (!await probeMcpMemoryHealth(endpoint.healthUrl)) {
+    return { ok: false, reason: "old_runtime_unhealthy" };
+  }
+
+  let authority = readMcpMemoryRuntimeAuthority();
+  if (
+    platform() === "win32" &&
+    authority.manifest?.verified !== true &&
+    authority.manifest?.reason === "runtime_manifest_boot_chain_unverified"
+  ) {
+    const adoption = await adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
+      homeRoot: homedir(),
+      platformName: platform(),
+      metaKimVersion: packageVersion,
+      manifestEntries: authority.manifest.entries,
+      expectedMemoryBin: oldMemoryBin,
+      expectedPythonPaths: expected.expectedExecutablePaths,
+      endpoint,
+      expectedLockDir: join(
+        homedir(),
+        ".meta-kim",
+        "locks",
+        endpointStartLockName(endpoint),
+      ),
+    });
+    if (!adoption.ok) return { ok: false, reason: adoption.reason };
+    authority = readMcpMemoryRuntimeAuthority();
+  }
+  const activeState = authority.activeState;
   const authorityCheck = verifyMcpMemoryRuntimeAuthority(authority, {
     memoryBin: oldMemoryBin,
     pythonPath: activeState?.pythonPath ?? resolved.python,
@@ -7958,12 +8005,13 @@ async function installMcpMemoryServiceStep(
   // locked to 3.12. Falls back to the detected Python with a warning.
   let resolved = resolvePythonForMemoryService(detected);
   let python = resolved.python;
-  const mcpPath = join(PROJECT_DIR, ".mcp.json");
+  const mcpPath = mcpMemoryRuntimeConfigPath();
+  mkdirSync(dirname(mcpPath), { recursive: true });
 
   // Check if already installed
   const existing = checkMcpMemoryService(python);
   const updateRoute = inUpdateMode
-    ? planMcpMemoryUpdateRoute({
+    ? await planMcpMemoryUpdateRoute({
         resolved,
         endpoint: memoryEndpoint,
         existingInstalled: existing.installed,
@@ -8054,7 +8102,7 @@ async function installMcpMemoryServiceStep(
   }
 
   // Step 4.7 — auto-install runtime memory hooks so the full pipeline
-  // (pip package → .mcp.json → hook files → runtime registration →
+  // (pip package → local runtime state → hook files → runtime registration →
   // health check) runs from a single `node setup.mjs` invocation.
   const hooksOk = await runMcpMemoryHookInstaller(activeTargets, {
     allowClaudeGlobalSettings: want && activeTargets.includes("claude"),
