@@ -93,7 +93,7 @@ function promptFor(capability, runtime, nonce, marker) {
   if (capability === "subagent") return `${common} Spawn exactly one native child subagent and wait for its successful completion. Require the child to return exactly the complete capability marker ${marker} as its entire final response; the nonce alone is not sufficient.`;
   if (capability === "shell") return `${common} Use the native shell tool to create meta-kim-probe.txt containing exactly shell-${marker}.`;
   if (capability === "filesystem") return `${common} Use the runtime's native file-reading capability to read meta-kim-probe.txt and report its exact existing content ${marker}; do not edit it.`;
-  if (capability === "apply_patch / edit") return `${common} First use the native file-reading capability to read meta-kim-probe.txt, then use the runtime's native edit/apply-patch capability to replace the entire content from before-${marker} to after-${marker}.`;
+  if (capability === "apply_patch / edit") return `${common} First use the native file-reading capability to read meta-kim-probe.txt. Then use the runtime's native edit/apply-patch capability to replace the entire file contents. When the edit completes, meta-kim-probe.txt must contain exactly one line, after-${marker}, followed by a newline. Do not keep the before marker and do not add any other text.`;
   throw new Error(`no controlled producer exists for capability ${capability}`);
 }
 

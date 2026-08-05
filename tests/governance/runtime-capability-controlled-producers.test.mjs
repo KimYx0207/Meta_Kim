@@ -117,6 +117,10 @@ function injectedExecutor(request) {
     assert.equal(request.args[toolsIndex + 1], expectedTool);
     const allowedToolsIndex = request.args.indexOf("--allowedTools");
     assert.equal(request.args[allowedToolsIndex + 1], expectedTool);
+    if (request.capability === "apply_patch / edit") {
+      assert.match(request.prompt, /must contain exactly one line, after-META_KIM_CAPABILITY_APPLY_PATCH_EDIT_/u);
+      assert.match(request.prompt, /Do not keep the before marker and do not add any other text\./u);
+    }
   }
   const nonce = request.prompt.match(/[0-9a-f]{8}-[0-9a-f-]{27,}/iu)?.[0];
   const marker = request.prompt.match(/META_KIM_CAPABILITY_[A-Z0-9_]+_[0-9a-f-]{36}/u)?.[0];
