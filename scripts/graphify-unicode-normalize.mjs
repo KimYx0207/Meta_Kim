@@ -135,8 +135,12 @@ export function createGraphifyRuntimeNormalizer(
   const candidates = forceAsciiInvariant
     ? []
     : pythonCandidates({ launcherCommand, environment, pythonCandidate });
+  // Canonicalize the temp base before creating the directory: on macOS
+  // os.tmpdir() is reached through the system /var -> /private/var symlink, so
+  // an uncanonicalized base would make the plain-directory assertion below
+  // impossible to satisfy. Resolving it first keeps that assertion unchanged.
   const isolatedCwd = mkdtempSync(
-    path.join(tmpdir(), "meta-kim-graphify-normalizer-"),
+    path.join(realpathSync.native(tmpdir()), "meta-kim-graphify-normalizer-"),
   );
   try {
     const cwdStats = lstatSync(isolatedCwd);
