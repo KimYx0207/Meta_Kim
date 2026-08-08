@@ -6,6 +6,20 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [2.9.28] - 2026-08-09
+
+### 修复内容
+
+- **macOS 临时目录基路径现在会先解析为真实路径再使用。** 这让临时基路径在 macOS 的路径别名和链接场景下保持可靠，包含已合并 [#52](https://github.com/KimYx0207/Meta_Kim/pull/52) 的可靠性修复。
+- **报告隐私门禁现在允许已文档化的 `~/` 展示别名，但仍会拦截真实机器身份。** 安全且已文档化的别名不再触发误报；真实的本地用户、主机和机器路径身份仍会阻断报告，包含已合并 [#53](https://github.com/KimYx0207/Meta_Kim/pull/53) 的隐私门禁修复。
+- **canonical Memory Hook 现在会在调用 `existsSync` 前拒绝非字符串 transcript 路径。** 这补上了已经证实的 Node 24 `DEP0187` 边界，但不把它宣称为原始 setup warning 的成因。
+- **公开的 Claude controlled producer 现在与调用方环境路由隔离。** `meta-kim runtime produce` 只从精确的 `CLAUDE_CONFIG_DIR` 读取 allowlist 内的 provider 配置，剥离环境中继承的 Anthropic、cloud provider 变量和 `NODE_OPTIONS`；缺少有效 endpoint 与 credential 时 fail closed，避免已配置的 MiniMax-M3 被调用方环境静默路由到其他 provider。
+- **贡献者致谢：** 感谢 [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) 在 [#52](https://github.com/KimYx0207/Meta_Kim/pull/52) 和 [#53](https://github.com/KimYx0207/Meta_Kim/pull/53) 中已合并的贡献。
+
+### 验证
+
+- 已执行的聚焦证据：Graphify 24/24、runtime 25/25、Hook 13/13。这不是完整发布门禁，也不构成已经发布的声明。
+
 ## [2.9.27] - 2026-08-05
 
 ### 修复内容

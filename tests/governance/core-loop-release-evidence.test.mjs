@@ -83,6 +83,13 @@ function completePackedProductProof() {
           exitCode: 2,
           rejectedByPublicCli: true,
         },
+        publicCliAfterFailedUninstall: {
+          status: "passed",
+          commandSource: "isolated_installed_public_cli",
+          withinIsolatedPrefix: true,
+          entrypoint: "--help",
+          exitCode: 0,
+        },
         windowsRecovery: {
           status: "passed",
           fixture: "shared_renderer_exact_orphan_startup_vbs",
@@ -629,6 +636,46 @@ test("packed product proof requires every portable runtime subproof", () => {
     packedProductProofComplete(incompletePackedUninstall),
     false,
     "packed uninstall proof must cover the complete platform descriptor chain",
+  );
+  for (const [label, mutateRecoveryProof] of [
+    ["missing proof", (proof) => {
+      delete proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall;
+    }],
+    ["failed status", (proof) => {
+      proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.status = "failed";
+    }],
+    ["wrong command source", (proof) => {
+      proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.commandSource = "repo_source_cli";
+    }],
+    ["outside isolated prefix", (proof) => {
+      proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.withinIsolatedPrefix = false;
+    }],
+    ["wrong entrypoint", (proof) => {
+      proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.entrypoint = "help";
+    }],
+    ["nonzero exit", (proof) => {
+      proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.exitCode = 1;
+    }],
+    ["raw command path", (proof) => {
+      proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.command =
+        "C:\\Users\\fixture\\AppData\\Roaming\\npm\\meta-kim.cmd";
+    }],
+  ]) {
+    const malformedRecovery = structuredClone(complete);
+    mutateRecoveryProof(malformedRecovery);
+    assert.equal(
+      packedProductProofComplete(malformedRecovery),
+      false,
+      `packed uninstall CLI recovery must reject ${label}`,
+    );
+  }
+  const serializedCliRecovery = JSON.stringify(
+    complete.currentPackage.packedUninstall.publicCliAfterFailedUninstall,
+  );
+  assert.doesNotMatch(
+    serializedCliRecovery,
+    /(?:[A-Z]:\\|\/(?:home|tmp)\/|AppData)/iu,
+    "packed uninstall CLI recovery proof must not serialize home or temporary paths",
   );
   const linuxPackedUninstall = structuredClone(complete);
   linuxPackedUninstall.currentPackage.automaticOrphanBootRepair = {

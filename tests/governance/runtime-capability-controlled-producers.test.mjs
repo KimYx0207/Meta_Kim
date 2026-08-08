@@ -125,9 +125,58 @@ function injectedExecutor(request) {
     const allowedToolsIndex = request.args.indexOf("--allowedTools");
     assert.equal(request.args[allowedToolsIndex + 1], expectedTool);
     if (request.capability === "apply_patch / edit") {
+      assert.equal(request.args[toolsIndex + 1], "Read,Edit");
+      assert.equal(request.args[allowedToolsIndex + 1], "Read,Edit");
+      assert.doesNotMatch(request.args[toolsIndex + 1], /Write/u);
+      assert.doesNotMatch(request.args[allowedToolsIndex + 1], /Write/u);
+      assert.match(request.prompt, /First call the native Read tool/u);
+      assert.match(request.prompt, /Then call the native Edit tool exactly once/u);
+      assert.match(request.prompt, /old_string exactly before-META_KIM_CAPABILITY_APPLY_PATCH_EDIT_/u);
+      assert.match(request.prompt, /new_string exactly after-META_KIM_CAPABILITY_APPLY_PATCH_EDIT_/u);
+      assert.match(request.prompt, /Do not call Write or any other write tool\./u);
       assert.match(request.prompt, /must contain exactly one line, after-META_KIM_CAPABILITY_APPLY_PATCH_EDIT_/u);
       assert.match(request.prompt, /Do not keep the before marker and do not add any other text\./u);
     }
+  }
+  if (request.runtime === "codex" && request.capability === "apply_patch / edit") {
+    assert.match(request.prompt, /native edit\/apply-patch capability/u);
+    assert.doesNotMatch(request.prompt, /native Edit tool exactly once/u);
+    assert.doesNotMatch(request.prompt, /old_string|new_string/u);
+    assert.doesNotMatch(request.prompt, /Do not call Write/u);
+  }
+  if (request.runtime === "codex" && ["agent", "subagent"].includes(request.capability)) {
+    const normalizedPrompt = request.prompt.toLowerCase();
+    const spawnInstruction = request.prompt.split(/[.!?]/u).find((sentence) =>
+      sentence.includes("spawn_agent") && /exactly once/iu.test(sentence)
+    );
+    const spawnIndex = normalizedPrompt.indexOf("spawn_agent");
+    const returnedChildMatch = /spawn_agent\s+(?:returns?|returned)\s+(?:a\s+)?child/iu.exec(request.prompt.slice(spawnIndex + 1));
+    const returnedChildIndex = returnedChildMatch ? spawnIndex + 1 + returnedChildMatch.index : -1;
+    const waitIndex = normalizedPrompt.indexOf("wait", returnedChildIndex + 1);
+    const completedIndex = normalizedPrompt.indexOf("completed", waitIndex + 1);
+    assert.ok(spawnInstruction, `${request.capability} must call native spawn_agent exactly once`);
+    assert.ok(returnedChildIndex > spawnIndex, `${request.capability} must bind the child returned by spawn_agent`);
+    assert.ok(waitIndex > returnedChildIndex, `${request.capability} must wait only after receiving the child`);
+    assert.ok(completedIndex > waitIndex, `${request.capability} must wait until the child is completed`);
+    const prohibitions = request.prompt.split(/[.!?]/u).map((sentence) => sentence.toLowerCase());
+    assert.ok(
+      prohibitions.some((sentence) => /never|do not/u.test(sentence) && sentence.includes("wait") && sentence.includes("before") && sentence.includes("spawn_agent")),
+      `${request.capability} must forbid wait-before-spawn`,
+    );
+    assert.ok(
+      prohibitions.some((sentence) => sentence.includes("do not") && sentence.includes("text") && /pretend|simulate|imitate|substitute|replace|claim/u.test(sentence)),
+      `${request.capability} must forbid textual imitation of the native tool lifecycle`,
+    );
+  }
+  if (request.runtime === "claude_code" && request.capability === "agent") {
+    assert.match(request.prompt, /Use the runtime's native agent\/subagent tool exactly once and wait for its successful completion\./u);
+    assert.match(request.prompt, /Require the child to return exactly the complete capability marker .* as its entire final response; the nonce alone is not sufficient\./u);
+    assert.doesNotMatch(request.prompt, /spawn_agent|wait-before-spawn|returned child/u);
+  }
+  if (request.runtime === "claude_code" && request.capability === "subagent") {
+    assert.match(request.prompt, /Spawn exactly one native child subagent and wait for its successful completion\./u);
+    assert.match(request.prompt, /Require the child to return exactly the complete capability marker .* as its entire final response; the nonce alone is not sufficient\./u);
+    assert.doesNotMatch(request.prompt, /spawn_agent|wait-before-spawn|returned child/u);
   }
   const nonce = request.prompt.match(/[0-9a-f]{8}-[0-9a-f-]{27,}/iu)?.[0];
   const marker = request.prompt.match(/META_KIM_CAPABILITY_[A-Z0-9_]+_[0-9a-f-]{36}/u)?.[0];
@@ -287,6 +336,40 @@ test("controlled receipts stay advisory while compatible routes hand off to the 
     assertHostHandoffOnly(evaluateRouteExecutionGate({ runtime, taskShape: "product_build", effectiveMatrix: testAware.effectiveMatrix }));
     assertHostHandoffOnly(evaluateRouteExecutionGate({ runtime, taskShape: "engineering_execution", effectiveMatrix: testAware.effectiveMatrix }));
   }
+});
+
+test("controlled producer binds Claude to the fail-closed provider resolver while retaining runtime isolation", () => {
+  const source = readFileSync(path.join(packageRoot, "scripts", "runtime-capability-producers.mjs"), "utf8");
+  const promptBuilder = source.slice(
+    source.indexOf("function promptFor("),
+    source.indexOf("function commandFor("),
+  );
+  const commandBuilder = source.slice(
+    source.indexOf("function commandFor("),
+    source.indexOf("function productionExecutor("),
+  );
+  const producerExecutor = source.slice(
+    source.indexOf("function productionExecutor(request)"),
+    source.indexOf("function eventMatches("),
+  );
+
+  assert.match(source, /import \{ resolveClaudeLiveProviderEnvironmentSync \} from "\.\/claude-live-provider-env\.mjs";/u);
+  assert.match(promptBuilder, /if \(runtime === "claude_code"\)/u);
+  assert.match(promptBuilder, /native Edit tool exactly once/u);
+  assert.match(promptBuilder, /Do not call Write or any other write tool/u);
+  assert.match(promptBuilder, /native edit\/apply-patch capability/u);
+  assert.match(producerExecutor, /if \(request\.runtime === "claude_code"\) \{\s*env = resolveClaudeLiveProviderEnvironmentSync\(\);/u);
+  assert.match(producerExecutor, /runCli\(request\.command, request\.args, \{\s*cwd: request\.workspace,\s*env,/u);
+  assert.match(producerExecutor, /runtimeIsolation: request\.runtime === "codex" \? "ephemeral_auth_only" : "empty_setting_sources_strict_mcp_current_auth"/u);
+  assert.match(commandBuilder, /"--setting-sources",\s*"",/u);
+  assert.match(commandBuilder, /"--strict-mcp-config",/u);
+  assert.match(commandBuilder, /"--mcp-config", path\.join\(workspace, "meta-kim-empty-mcp\.json"\),/u);
+
+  assert.match(producerExecutor, /isolatedRuntimeHome = mkdtempSync\(path\.join\(os\.tmpdir\(\), "meta-kim-codex-probe-"\)\)/u);
+  assert.match(producerExecutor, /const authSource = path\.join\(sourceRuntimeHome, "auth\.json"\);/u);
+  assert.match(producerExecutor, /copyFileSync\(authSource, path\.join\(isolatedRuntimeHome, "auth\.json"\)\);/u);
+  assert.match(producerExecutor, /CODEX_HOME: isolatedRuntimeHome,/u);
+  assert.match(producerExecutor, /CODEX_SKILLS_DIR: path\.join\(isolatedRuntimeHome, "skills"\),/u);
 });
 
 test("Claude 2.1.202 async Agent and subagent producers accept only marker-bound closed child lifecycles", () => {

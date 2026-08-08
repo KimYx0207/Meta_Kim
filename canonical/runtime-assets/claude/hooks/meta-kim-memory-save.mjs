@@ -84,7 +84,7 @@ function cliArgValue(name) {
 }
 
 function readText(filePath, maxChars = MAX_TEXT) {
-  if (!filePath || !existsSync(filePath)) return "";
+  if (typeof filePath !== "string" || !filePath || !existsSync(filePath)) return "";
   try {
     const text = readFileSync(filePath, "utf8");
     return text.length > maxChars ? text.slice(-maxChars) : text;

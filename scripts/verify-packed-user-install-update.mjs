@@ -1541,7 +1541,11 @@ function runPackedUninstallLane({
   env.METAKIM_LANG = "en";
   const descriptor = installPackedCli(packageInfo, roots, env, timeoutMs);
   const installed = requireInstalledCliDescriptor(descriptor);
-  if (!isPathWithin(roots.cliPrefix, installed.command)) {
+  const installedCommandWithinIsolatedPrefix = isPathWithin(
+    roots.cliPrefix,
+    installed.command,
+  );
+  if (!installedCommandWithinIsolatedPrefix) {
     throw new Error("packed uninstall lane did not use the isolated installed public CLI");
   }
 
@@ -1627,6 +1631,20 @@ function runPackedUninstallLane({
       `packed public CLI did not reject --no-manifest: exit=${privateFlag.status}; ${privateFlagOutput.trim()}`,
     );
   }
+  const helpAfterFailedUninstall = runCli(installed.command, ["--help"], {
+    cwd: roots.ordinaryCwd,
+    env,
+    timeoutMs,
+  });
+  if (
+    helpAfterFailedUninstall.error ||
+    helpAfterFailedUninstall.status !== 0 ||
+    !/meta-kim uninstall/u.test(helpAfterFailedUninstall.stdout ?? "")
+  ) {
+    throw new Error(
+      "packed installed public CLI was unavailable after the failed manifestless uninstall",
+    );
+  }
 
   let windowsRecovery;
   if (process.platform === "win32") {
@@ -1702,8 +1720,27 @@ function runPackedUninstallLane({
       exitCode: privateFlag.status,
       rejectedByPublicCli: true,
     },
+    publicCliAfterFailedUninstall: {
+      status: "passed",
+      commandSource: "isolated_installed_public_cli",
+      withinIsolatedPrefix: installedCommandWithinIsolatedPrefix,
+      entrypoint: "--help",
+      exitCode: helpAfterFailedUninstall.status,
+    },
     windowsRecovery,
   };
+  const serializedProof = JSON.stringify(proof);
+  for (const forbiddenRoot of [
+    roots.laneRoot,
+    roots.userHome,
+    roots.tempDir,
+    roots.cliPrefix,
+  ]) {
+    const serializedForbiddenRoot = JSON.stringify(forbiddenRoot).slice(1, -1);
+    if (serializedProof.includes(serializedForbiddenRoot)) {
+      throw new Error("packed uninstall proof serialized an isolated home or temporary path");
+    }
+  }
   emit(onProgress, { event: "packed_uninstall_complete", status: proof.status });
   return proof;
 }

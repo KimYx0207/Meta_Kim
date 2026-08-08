@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
 
 import {
   runtimeHookSourceOwner,
@@ -39,6 +40,113 @@ const CLAUDE_COMPATIBILITY_ADAPTERS = new Set([
   "spine-state.mjs",
   "utils.mjs",
 ]);
+
+function runMemoryHook(script, payload, env, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timedOut = false;
+    let timeout;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback(value);
+    };
+    const child = spawn(process.execPath, ["--trace-deprecation", script], {
+      cwd: REPO_ROOT,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => finish(reject, error));
+    child.on("close", (status) => finish(resolve, { status, stdout, stderr, timedOut }));
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+test("memory hooks reject truthy non-string transcript aliases and keep valid transcript reads", async () => {
+  const root = mkdtempSync(join(tmpdir(), "meta-kim-memory-hook-path-type-"));
+  const gitInit = spawnSync("git", ["init", "--quiet"], { cwd: root, encoding: "utf8" });
+  assert.equal(gitInit.status, 0, gitInit.stderr);
+  const transcriptPath = join(root, "transcript.jsonl");
+  writeFileSync(
+    transcriptPath,
+    '{"type":"user","message":{"content":[{"type":"text","text":"valid transcript evidence"}]}}\n',
+    "utf8",
+  );
+  const savedMemories = [];
+  const server = createServer((request, response) => {
+    if (request.method === "GET" && request.url === "/api/health") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end('{"status":"healthy"}');
+      return;
+    }
+    if (request.method === "POST" && request.url === "/api/memories") {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        savedMemories.push(JSON.parse(body));
+        response.writeHead(201, { "Content-Type": "application/json" });
+        response.end("{}");
+      });
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const env = {
+    ...process.env,
+    MCP_MEMORY_URL: `http://127.0.0.1:${address.port}`,
+    META_KIM_DISABLE_MEMORY_AUTOSTART: "1",
+    META_KIM_DISABLE_HOOK_DEDUPE: "1",
+  };
+  const hookScripts = [
+    join(SHARED_HOOK_DIR, "meta-kim-memory-save.mjs"),
+    join(CLAUDE_HOOK_DIR, "meta-kim-memory-save.mjs"),
+  ];
+  const nonStringAliases = [
+    { transcript_path: 17 },
+    { transcriptPath: {} },
+    { conversation_path: [] },
+    { session_path: true },
+  ];
+
+  try {
+    for (const script of hookScripts) {
+      for (const alias of nonStringAliases) {
+        const result = await runMemoryHook(script, { cwd: root, event: "stop", ...alias }, env);
+        assert.equal(result.timedOut, false, "memory hook timed out");
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stderr, /DEP0187|DeprecationWarning/u);
+      }
+      const valid = await runMemoryHook(
+        script,
+        { cwd: root, event: "stop", transcript_path: transcriptPath },
+        env,
+      );
+      assert.equal(valid.timedOut, false, "memory hook timed out");
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.doesNotMatch(valid.stderr, /DEP0187|DeprecationWarning/u);
+    }
+    assert.equal(savedMemories.length, hookScripts.length * (nonStringAliases.length + 1));
+    const validMemories = savedMemories.filter((memory) => memory.content.includes("valid transcript evidence"));
+    assert.equal(validMemories.length, hookScripts.length);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("cross-runtime hook core has one canonical owner", () => {
   assert.deepEqual(SHARED_RUNTIME_HOOK_FILES, [

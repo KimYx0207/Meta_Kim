@@ -198,6 +198,50 @@ test("release entrypoints fail on a broken installed CLI even when extracted sou
   }
 });
 
+test("packed uninstall lane reuses its installed public CLI after a failed manifestless uninstall", () => {
+  const uninstallLane = acceptanceFunctionSource(
+    "runPackedUninstallLane",
+    "filesRecursively",
+  );
+  assert.match(
+    uninstallLane,
+    /const privateFlag = runCli\([\s\S]*?installed\.command,[\s\S]*?\["uninstall", "--no-manifest", "--scope=global"\]/u,
+  );
+  assert.match(
+    uninstallLane,
+    /runCli\(installed\.command, \["--help"\]/u,
+  );
+  assert.match(
+    uninstallLane,
+    /packed installed public CLI was unavailable after the failed manifestless uninstall/u,
+  );
+  assert.match(
+    uninstallLane,
+    /publicCliAfterFailedUninstall:[\s\S]*?commandSource: "isolated_installed_public_cli"[\s\S]*?withinIsolatedPrefix: installedCommandWithinIsolatedPrefix[\s\S]*?entrypoint: "--help"/u,
+  );
+  const recoveryProofStart = uninstallLane.indexOf(
+    "publicCliAfterFailedUninstall:",
+  );
+  const recoveryProofEnd = uninstallLane.indexOf(
+    "windowsRecovery,",
+    recoveryProofStart,
+  );
+  const serializedRecoveryShape = uninstallLane.slice(
+    recoveryProofStart,
+    recoveryProofEnd,
+  );
+  assert.doesNotMatch(serializedRecoveryShape, /command:\s*installed\.command/u);
+  assert.match(uninstallLane, /const serializedProof = JSON\.stringify\(proof\)/u);
+  assert.match(
+    uninstallLane,
+    /roots\.laneRoot,[\s\S]*?roots\.userHome,[\s\S]*?roots\.tempDir,[\s\S]*?roots\.cliPrefix/u,
+  );
+  assert.match(
+    uninstallLane,
+    /packed uninstall proof serialized an isolated home or temporary path/u,
+  );
+});
+
 test("historical release baseline is the highest prior semver tag and never a fixed ref", () => {
   assert.equal(
     selectHistoricalUpdateRef({

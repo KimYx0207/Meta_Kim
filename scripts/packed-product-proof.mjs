@@ -18,6 +18,13 @@ const PACKED_UNINSTALL_DESCRIPTOR_IDS = Object.freeze({
   darwin: Object.freeze(["macos-command", "macos-launch-agent"]),
   linux: Object.freeze(["linux-command", "linux-autostart"]),
 });
+const PACKED_UNINSTALL_PUBLIC_CLI_RECOVERY_KEYS = Object.freeze([
+  "commandSource",
+  "entrypoint",
+  "exitCode",
+  "status",
+  "withinIsolatedPrefix",
+]);
 
 function hasExactOrderedValues(values, expected) {
   return Array.isArray(values) &&
@@ -33,6 +40,8 @@ function packedUninstallProofComplete(currentPackage) {
 
   const normalManifestUninstall = packedUninstall.normalManifestUninstall;
   const privateManifestBypass = packedUninstall.privateManifestBypass;
+  const publicCliAfterFailedUninstall =
+    packedUninstall.publicCliAfterFailedUninstall;
   const windowsRecovery = packedUninstall.windowsRecovery;
   const platformRecoveryComplete = packedUninstall.platform === "win32"
     ? windowsRecovery?.status === "passed" &&
@@ -64,6 +73,16 @@ function packedUninstallProofComplete(currentPackage) {
     privateManifestBypass?.option === "--no-manifest" &&
     privateManifestBypass?.exitCode === 2 &&
     privateManifestBypass?.rejectedByPublicCli === true &&
+    hasExactOrderedValues(
+      Object.keys(publicCliAfterFailedUninstall ?? {}).sort(),
+      PACKED_UNINSTALL_PUBLIC_CLI_RECOVERY_KEYS,
+    ) &&
+    publicCliAfterFailedUninstall?.status === "passed" &&
+    publicCliAfterFailedUninstall?.commandSource ===
+      "isolated_installed_public_cli" &&
+    publicCliAfterFailedUninstall?.withinIsolatedPrefix === true &&
+    publicCliAfterFailedUninstall?.entrypoint === "--help" &&
+    publicCliAfterFailedUninstall?.exitCode === 0 &&
     platformRecoveryComplete
   );
 }

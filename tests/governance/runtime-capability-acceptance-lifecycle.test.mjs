@@ -23,7 +23,8 @@ test("unknown runtime acceptance keys fail closed before source-report interpret
 
 test("Claude runtime aliases remain canonical across acceptance write, read, list, query, and source validation", () => {
   const project = projectFixture();
-  const reportPath = writeLiveFuseReport(project.reports, "claude", "2026-08-05T00:00:00.000Z");
+  const observedAt = new Date().toISOString();
+  const reportPath = writeLiveFuseReport(project.reports, "claude", observedAt);
   const acceptance = writeRuntimeCapabilityAcceptanceAttempt({
     projectRoot: project.root,
     profile: "default",
@@ -195,6 +196,13 @@ function completePackedUserProof(packageSha256) {
           exitCode: 2,
           rejectedByPublicCli: true,
         },
+        publicCliAfterFailedUninstall: {
+          status: "passed",
+          commandSource: "isolated_installed_public_cli",
+          withinIsolatedPrefix: true,
+          entrypoint: "--help",
+          exitCode: 0,
+        },
         windowsRecovery: {
           status: "passed",
           fixture: "shared_renderer_exact_orphan_startup_vbs",
@@ -363,6 +371,12 @@ test("external packed observation reader recomputes complete target truth withou
     ["missing-targets", (proof) => { delete proof.currentPackage.targets; }],
     ["one-target", (proof) => { proof.currentPackage.targets = [PACKED_USER_TARGETS[0]]; }],
     ["missing-packed-uninstall", (proof) => { delete proof.currentPackage.packedUninstall; }],
+    ["missing-installed-cli-recovery", (proof) => {
+      delete proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall;
+    }],
+    ["malformed-installed-cli-recovery", (proof) => {
+      proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.exitCode = 1;
+    }],
   ]) {
     const rejectedProject = projectFixture();
     assert.throws(() => writeRuntimeCapabilityAcceptanceAttempt({

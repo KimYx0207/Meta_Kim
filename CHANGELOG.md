@@ -6,6 +6,20 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.28] - 2026-08-09
+
+### Fixed
+
+- **macOS temporary-base handling now resolves the real path before relying on it.** This makes temporary-base selection reliable across macOS path aliases and links, including the reliability repair merged in [#52](https://github.com/KimYx0207/Meta_Kim/pull/52).
+- **The report privacy gate now accepts documented `~/` display aliases without accepting a real machine identity.** Safe, documented aliases no longer produce a false privacy finding, while actual local user, host, and machine-path identity still blocks the report, including the privacy-gate repair merged in [#53](https://github.com/KimYx0207/Meta_Kim/pull/53).
+- **Canonical Memory Hooks now reject a non-string transcript path before calling `existsSync`.** This closes the proven Node 24 `DEP0187` edge while making no claim that it caused the original setup warning.
+- **The public Claude controlled producer is now isolated from caller environment routing.** `meta-kim runtime produce` reads allowlisted provider configuration from the exact `CLAUDE_CONFIG_DIR`, strips ambient Anthropic/cloud-provider variables and `NODE_OPTIONS`, and fails closed without a valid endpoint and credential. This prevents a configured MiniMax-M3 producer from being silently routed to another provider by the caller's environment.
+- **Contributor credit:** Thanks to [@qitiandashenggogogo](https://github.com/qitiandashenggogogo) for the contributions merged in [#52](https://github.com/KimYx0207/Meta_Kim/pull/52) and [#53](https://github.com/KimYx0207/Meta_Kim/pull/53).
+
+### Verification
+
+- Focused evidence already run: Graphify 24/24, runtime 25/25, and Hook 13/13. This is not a full release gate or a release claim.
+
 ## [2.9.27] - 2026-08-05
 
 ### Fixed

@@ -162,6 +162,13 @@ function completePackedUserProof(packageSha256) {
           exitCode: 2,
           rejectedByPublicCli: true,
         },
+        publicCliAfterFailedUninstall: {
+          status: "passed",
+          commandSource: "isolated_installed_public_cli",
+          withinIsolatedPrefix: true,
+          entrypoint: "--help",
+          exitCode: 0,
+        },
         windowsRecovery: {
           status: "passed",
           fixture: "shared_renderer_exact_orphan_startup_vbs",
@@ -507,6 +514,12 @@ test("release audit recomputes packed completeness and rejects legacy or partial
   reject((proof) => {
     delete proof.currentPackage.packedUninstall;
   }, "cached report missing packed uninstall proof");
+  reject((proof) => {
+    delete proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall;
+  }, "cached report missing installed CLI recovery proof");
+  reject((proof) => {
+    proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall.entrypoint = "help";
+  }, "cached report malformed installed CLI recovery proof");
   reject((proof) => {
     proof.currentPackage.projectPackage.targets = [CANONICAL_PACKED_TARGETS[0]];
   }, "one-target project proof");

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-05T11:07:18.351Z",
+  "generatedAt": "2026-08-08T23:08:09.761Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -409,8 +409,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/meta-kim-memory-save.mjs",
         "relativePath": "meta-kim-memory-save.mjs",
-        "size": 30381,
-        "modified": "2026-07-25T16:05:17.717Z",
+        "size": 30413,
+        "modified": "2026-08-08T18:25:26.238Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/meta-kim-memory-save.mjs"
       },
       "repo:canonical-runtime-assets:project-root.mjs": {
@@ -542,8 +542,8 @@
         "namespace": "canonical-claude-hooks",
         "path": "canonical/runtime-assets/claude/hooks/meta-kim-memory-save.mjs",
         "relativePath": "meta-kim-memory-save.mjs",
-        "size": 30546,
-        "modified": "2026-07-25T15:32:17.158Z",
+        "size": 30578,
+        "modified": "2026-08-08T18:25:26.239Z",
         "canonicalPath": "canonical/runtime-assets/claude/hooks/meta-kim-memory-save.mjs"
       },
       "repo:canonical-runtime-assets:post-console-log-warn.mjs": {

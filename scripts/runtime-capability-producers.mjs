@@ -12,6 +12,7 @@ import { readCodexDesktopEngineeringEvidence, readCodexDesktopSessionEvidence } 
 import { runCli } from "./live-acceptance/run-clean-room-live-acceptance.mjs";
 import { assertExactMarkerEventLifecycles } from "./live-acceptance/validate-marker-lifecycle.mjs";
 import { loadSetupBoundRuntimeExecutable, revalidateRuntimeExecutableIdentity } from "./runtime-executable-binding.mjs";
+import { resolveClaudeLiveProviderEnvironmentSync } from "./claude-live-provider-env.mjs";
 
 const SUPPORTED_RUNTIMES = new Set(["claude_code", "codex"]);
 const PRODUCERS = Object.freeze({
@@ -89,11 +90,22 @@ function acceptanceWriterFor(testOnly, internalWriter) {
 
 function promptFor(capability, runtime, nonce, marker) {
   const common = `This is a bounded Meta_Kim runtime capability probe ${nonce}. Capability marker: ${marker}. Do only the requested action inside the current temporary workspace and then stop.`;
-  if (capability === "agent") return `${common} Use the runtime's native agent/subagent tool exactly once and wait for its successful completion. Require the child to return exactly the complete capability marker ${marker} as its entire final response; the nonce alone is not sufficient.`;
-  if (capability === "subagent") return `${common} Spawn exactly one native child subagent and wait for its successful completion. Require the child to return exactly the complete capability marker ${marker} as its entire final response; the nonce alone is not sufficient.`;
+  if (capability === "agent") {
+    if (runtime === "codex") return `${common} Your first native collaboration action must be spawn_agent, called exactly once. Give that child the exact task of returning ${marker} as its entire final response. Only after spawn_agent returns a child id, call the native wait operation for that child until it reports completed. Never call wait before spawn_agent, and do not imitate either action with ordinary text.`;
+    return `${common} Use the runtime's native agent/subagent tool exactly once and wait for its successful completion. Require the child to return exactly the complete capability marker ${marker} as its entire final response; the nonce alone is not sufficient.`;
+  }
+  if (capability === "subagent") {
+    if (runtime === "codex") return `${common} Your first native collaboration action must be spawn_agent, called exactly once. Give that child the exact task of returning ${marker} as its entire final response. Only after spawn_agent returns a child id, call the native wait operation for that child until it reports completed. Never call wait before spawn_agent, and do not imitate either action with ordinary text.`;
+    return `${common} Spawn exactly one native child subagent and wait for its successful completion. Require the child to return exactly the complete capability marker ${marker} as its entire final response; the nonce alone is not sufficient.`;
+  }
   if (capability === "shell") return `${common} Use the native shell tool to create meta-kim-probe.txt containing exactly shell-${marker}.`;
   if (capability === "filesystem") return `${common} Use the runtime's native file-reading capability to read meta-kim-probe.txt and report its exact existing content ${marker}; do not edit it.`;
-  if (capability === "apply_patch / edit") return `${common} First use the native file-reading capability to read meta-kim-probe.txt. Then use the runtime's native edit/apply-patch capability to replace the entire file contents. When the edit completes, meta-kim-probe.txt must contain exactly one line, after-${marker}, followed by a newline. Do not keep the before marker and do not add any other text.`;
+  if (capability === "apply_patch / edit") {
+    if (runtime === "claude_code") {
+      return `${common} First call the native Read tool to read meta-kim-probe.txt. Then call the native Edit tool exactly once with old_string exactly before-${marker} and new_string exactly after-${marker}. Do not call Write or any other write tool. When Edit completes, meta-kim-probe.txt must contain exactly one line, after-${marker}, followed by a newline. Do not keep the before marker and do not add any other text.`;
+    }
+    return `${common} First use the native file-reading capability to read meta-kim-probe.txt. Then use the runtime's native edit/apply-patch capability to replace the entire file contents. When the edit completes, meta-kim-probe.txt must contain exactly one line, after-${marker}, followed by a newline. Do not keep the before marker and do not add any other text.`;
+  }
   throw new Error(`no controlled producer exists for capability ${capability}`);
 }
 
@@ -132,7 +144,9 @@ function commandFor(runtime, workspace, capability, executableIdentity = null) {
 function productionExecutor(request) {
   let isolatedRuntimeHome = null;
   let env = process.env;
-  if (request.runtime === "codex") {
+  if (request.runtime === "claude_code") {
+    env = resolveClaudeLiveProviderEnvironmentSync();
+  } else if (request.runtime === "codex") {
     isolatedRuntimeHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-probe-"));
     const sourceRuntimeHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
     const authSource = path.join(sourceRuntimeHome, "auth.json");

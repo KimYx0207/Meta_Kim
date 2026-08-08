@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -40,31 +41,86 @@ function initRepo(parent, name) {
   return repo;
 }
 
-function writeCommand(dir, name, source) {
-  const modulePath = path.join(dir, `${name}.mjs`);
-  writeFileSync(modulePath, source);
-  if (process.platform === "win32") {
-    const commandPath = path.join(dir, `${name}.cmd`);
-    writeFileSync(commandPath, `@echo off\r\nnode "%~dp0${name}.mjs" %*\r\n`);
-    return commandPath;
+let compiledWindowsPython = null;
+
+function compileWindowsPythonFixture() {
+  if (compiledWindowsPython) return compiledWindowsPython;
+
+  const fixtureDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-fake-python-"));
+  const executable = path.join(fixtureDir, "python.exe");
+  const source = `
+using System;
+public static class FakePython {
+  public static int Main(string[] args) {
+    var joined = String.Join(" ", args);
+    if (args.Length == 1 && args[0] == "--version") {
+      Console.WriteLine("Python 3.12.0");
+      return 0;
+    }
+    if (joined == "-m pip --version") {
+      Console.WriteLine("pip 24.0");
+      return 0;
+    }
+    if (joined == "-m pip show graphifyy") {
+      Console.WriteLine("Name: graphifyy\\nVersion: 0.9.28");
+      return 0;
+    }
+    return 1;
   }
-  const commandPath = path.join(dir, name);
-  writeFileSync(commandPath, `#!/usr/bin/env node\nimport "./${name}.mjs";\n`);
-  chmodSync(commandPath, 0o755);
-  return commandPath;
+}
+`;
+  const encodedSource = Buffer.from(source, "utf8").toString("base64");
+  const escapedExecutable = executable.replaceAll("'", "''");
+  const compiler = path.join(
+    process.env.SystemRoot ?? "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const result = spawnSync(
+    compiler,
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      [
+        "$ErrorActionPreference = 'Stop'",
+        `$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedSource}'))`,
+        `Add-Type -TypeDefinition $source -OutputAssembly '${escapedExecutable}' -OutputType ConsoleApplication`,
+      ].join("; "),
+    ],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(existsSync(executable), true, "fake python.exe was not compiled");
+  process.once("exit", () => rmSync(fixtureDir, { recursive: true, force: true }));
+  compiledWindowsPython = executable;
+  return executable;
 }
 
 function fakePythonBin(parent) {
   const bin = path.join(parent, "bin");
   mkdirSync(bin);
-  const source = `
-const args = process.argv.slice(2).filter((arg) => arg !== "-3");
-if (args.includes("--version")) { console.log("Python 3.12.0"); process.exit(0); }
-if (args.join(" ") === "-m pip --version") { console.log("pip 24.0"); process.exit(0); }
-if (args.join(" ") === "-m pip show graphifyy") { console.log("Name: graphifyy\\nVersion: 0.9.28"); process.exit(0); }
-process.exit(1);
+  if (process.platform === "win32") {
+    copyFileSync(compileWindowsPythonFixture(), path.join(bin, "python.exe"));
+    return bin;
+  }
+
+  const source = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const joined = args.join(" ");
+if (args.length === 1 && args[0] === "--version") console.log("Python 3.12.0");
+else if (joined === "-m pip --version") console.log("pip 24.0");
+else if (joined === "-m pip show graphifyy") console.log("Name: graphifyy\\nVersion: 0.9.28");
+else process.exitCode = 1;
 `;
-  for (const name of ["py", "python", "python3"]) writeCommand(bin, name, source);
+  for (const name of ["python", "python3"]) {
+    const commandPath = path.join(bin, name);
+    writeFileSync(commandPath, source);
+    chmodSync(commandPath, 0o755);
+  }
   return bin;
 }
 
@@ -171,14 +227,29 @@ function writeRawExtractArtifacts(repo, {
 }
 
 function runCheck(repo, bin, env = {}) {
+  const childEnv = { ...process.env, ...env };
+  const inheritedPath = childEnv.Path ?? childEnv.PATH ?? "";
+  for (const key of Object.keys(childEnv)) {
+    if (
+      key.toUpperCase() === "META_KIM_GRAPHIFY_BIN" ||
+      key.toUpperCase() === "META_KIM_GRAPHIFY_BIN_ARGS" ||
+      key.toUpperCase() === "META_KIM_GRAPHIFY_PYTHON" ||
+      key.toUpperCase() === "META_KIM_GRAPHIFY_NORMALIZER_PYTHON"
+    ) {
+      delete childEnv[key];
+    }
+  }
   return spawnSync(process.execPath, [cli, "check"], {
     cwd: repo,
     encoding: "utf8",
     env: {
-      ...process.env,
-      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-      Path: `${bin}${path.delimiter}${process.env.Path ?? ""}`,
-      ...env,
+      ...childEnv,
+      META_KIM_GRAPHIFY_BIN: "",
+      META_KIM_GRAPHIFY_BIN_ARGS: "",
+      META_KIM_GRAPHIFY_PYTHON: "",
+      META_KIM_GRAPHIFY_NORMALIZER_PYTHON: "",
+      PATH: `${bin}${path.delimiter}${inheritedPath}`,
+      Path: `${bin}${path.delimiter}${inheritedPath}`,
     },
   });
 }
@@ -227,6 +298,8 @@ test("graphify check ignores a root Windows CEF debug log during verification", 
     assert.equal(git(repo, ["status", "--short"]), "");
     const result = runCheck(repo, bin);
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Python 3\.12\.0/u);
+    assert.match(result.stdout, /graphify 0\.9\.28/u);
     assert.match(result.stdout, /graph and report match HEAD/u);
   } finally {
     rmSync(temp, { recursive: true, force: true });
@@ -331,12 +404,12 @@ test("graphify check rejects private local paths in the report without echoing t
     const reportPath = path.join(repo, "graphify-out", "GRAPH_REPORT.md");
     writeFileSync(
       reportPath,
-      `${readFileSync(reportPath, "utf8")}\nPrivate: path=~/.ssh/id_rsa\n`,
+      `${readFileSync(reportPath, "utf8")}\nPrivate: path=C:/Users/test-user/.ssh/id_rsa\n`,
     );
     const result = runCheck(repo, bin);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /private local path/u);
-    assert.doesNotMatch(result.stderr, /~\/\.ssh/u);
+    assert.doesNotMatch(result.stderr, /C:\/Users\/test-user/u);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

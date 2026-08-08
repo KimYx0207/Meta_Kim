@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import {
-  resolveClaudeLiveProviderEnvironment,
+  resolveClaudeLiveProviderEnvironmentSync,
   selectClaudeLiveProviderEnv,
 } from "../../scripts/claude-live-provider-env.mjs";
 import * as evalProcessRunner from "../../scripts/eval-process-runner.mjs";
@@ -516,7 +516,7 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.doesNotMatch(helperSource, /processTreeCleanupVerified/u);
   });
 
-  test("Claude live evaluation uses the Claude provider settings without importing arbitrary settings env", async () => {
+  test("Claude controlled provider resolver discards ambient routes before applying the MiniMax allowlist", () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-claude-provider-env-"));
     try {
       const settingsDir = path.join(tempHome, ".claude");
@@ -525,35 +525,198 @@ describe("eval-meta-agents Claude smoke", () => {
         path.join(settingsDir, "settings.json"),
         JSON.stringify({
           env: {
-            ANTHROPIC_BASE_URL: "https://api.minimaxi.example/anthropic",
-            ANTHROPIC_AUTH_TOKEN: "configured-token",
+            ANTHROPIC_BASE_URL: "https://minimax.fixture.invalid/anthropic",
+            ANTHROPIC_AUTH_TOKEN: "fixture-minimax-token",
             ANTHROPIC_MODEL: "MiniMax-M3",
             ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3",
+            API_TIMEOUT_MS: "1200000",
             NODE_OPTIONS: "--require=untrusted-settings-entry",
+            AWS_PROFILE: "settings-cloud-profile-must-not-enter",
+            GOOGLE_APPLICATION_CREDENTIALS: "settings-google-credentials-must-not-enter",
+            UNRELATED_SETTINGS_VALUE: "settings-unrelated-must-not-enter",
           },
         }),
       );
 
-      const resolved = await resolveClaudeLiveProviderEnvironment({
+      const preservedSystemEnv = {
+        PATH: "fixture-path",
+        TEMP: "fixture-temp",
+        HTTPS_PROXY: "http://proxy.fixture.invalid",
+        NO_PROXY: "localhost,.fixture.invalid",
+        NODE_EXTRA_CA_CERTS: "fixture-extra-ca.pem",
+        SSL_CERT_FILE: "fixture-cert.pem",
+        REQUESTS_CA_BUNDLE: "fixture-ca-bundle.pem",
+      };
+      const resolved = resolveClaudeLiveProviderEnvironmentSync({
         homeDir: tempHome,
         ambientEnv: {
-          PATH: "fixture-path",
-          ANTHROPIC_BASE_URL: "https://api.z.example/anthropic",
-          ANTHROPIC_AUTH_TOKEN: "ambient-token",
-          ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2[1m]",
+          ...preservedSystemEnv,
+          HOME: "ambient-home-must-not-be-used",
+          ANTHROPIC_API_KEY: "ambient-api-key",
+          ANTHROPIC_AUTH_TOKEN: "ambient-glm-token",
+          ANTHROPIC_BASE_URL: "https://glm.fixture.invalid/anthropic",
+          ANTHROPIC_MODEL: "GLM-5",
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: "GLM-5-Air",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "GLM-5",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "GLM-5",
+          API_TIMEOUT_MS: "1",
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "0",
+          CLAUDE_CODE_EFFORT_LEVEL: "low",
+          NODE_OPTIONS: "--require=ambient-route",
         },
       });
 
       assert.equal(
         resolved.ANTHROPIC_BASE_URL,
-        "https://api.minimaxi.example/anthropic",
+        "https://minimax.fixture.invalid/anthropic",
       );
-      assert.equal(resolved.ANTHROPIC_AUTH_TOKEN, "configured-token");
+      assert.equal(resolved.ANTHROPIC_AUTH_TOKEN, "fixture-minimax-token");
       assert.equal(resolved.ANTHROPIC_MODEL, "MiniMax-M3");
       assert.equal(resolved.ANTHROPIC_DEFAULT_SONNET_MODEL, "MiniMax-M3");
-      assert.equal(resolved.PATH, "fixture-path");
+      assert.equal(resolved.API_TIMEOUT_MS, "1200000");
+      for (const [key, value] of Object.entries(preservedSystemEnv)) {
+        assert.equal(resolved[key], value, `${key} is required by the child process`);
+      }
+      assert.equal(resolved.HOME, "ambient-home-must-not-be-used");
       assert.equal(resolved.NO_COLOR, "1");
       assert.equal(resolved.NODE_OPTIONS, undefined);
+      assert.equal(resolved.AWS_PROFILE, undefined);
+      assert.equal(resolved.GOOGLE_APPLICATION_CREDENTIALS, undefined);
+      assert.equal(resolved.UNRELATED_SETTINGS_VALUE, undefined);
+      for (const key of [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "CLAUDE_CODE_EFFORT_LEVEL",
+      ]) {
+        assert.equal(resolved[key], undefined, `${key} must not leak from the ambient environment`);
+      }
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test("Claude controlled provider reads and forwards the exact CLAUDE_CONFIG_DIR root", () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-claude-config-root-"));
+    const defaultConfigDir = path.join(tempHome, ".claude");
+    const declaredConfigDir = path.join(tempHome, "declared-claude-config");
+    try {
+      mkdirSync(defaultConfigDir, { recursive: true });
+      mkdirSync(declaredConfigDir, { recursive: true });
+      writeFileSync(path.join(defaultConfigDir, "settings.json"), JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: "https://wrong-default.fixture.invalid/anthropic",
+          ANTHROPIC_AUTH_TOKEN: "wrong-default-token",
+        },
+      }), "utf8");
+      writeFileSync(path.join(declaredConfigDir, "settings.json"), JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: "https://minimax-config-root.fixture.invalid/anthropic",
+          ANTHROPIC_AUTH_TOKEN: "fixture-config-root-token",
+        },
+      }), "utf8");
+
+      const resolved = resolveClaudeLiveProviderEnvironmentSync({
+        homeDir: tempHome,
+        ambientEnv: {
+          PATH: "fixture-path",
+          Claude_Config_Dir: declaredConfigDir,
+        },
+      });
+
+      assert.equal(resolved.CLAUDE_CONFIG_DIR, declaredConfigDir);
+      assert.equal(resolved.ANTHROPIC_BASE_URL, "https://minimax-config-root.fixture.invalid/anthropic");
+      assert.equal(resolved.ANTHROPIC_AUTH_TOKEN, "fixture-config-root-token");
+      assert.equal(resolved.ANTHROPIC_MODEL, undefined, "endpoint plus auth is sufficient without a model override");
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test("Claude controlled provider resolver fails closed when global allowlist settings are unavailable", () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-claude-provider-env-invalid-"));
+    const settingsDir = path.join(tempHome, ".claude");
+    const settingsPath = path.join(settingsDir, "settings.json");
+    const resolve = () => resolveClaudeLiveProviderEnvironmentSync({
+      homeDir: tempHome,
+      ambientEnv: { PATH: "fixture-path", ANTHROPIC_MODEL: "ambient-GLM" },
+    });
+    try {
+      assert.throws(resolve, /missing or malformed/u, "missing settings must not inherit an ambient provider");
+      mkdirSync(settingsDir, { recursive: true });
+      writeFileSync(settingsPath, "{not-json", "utf8");
+      assert.throws(resolve, /missing or malformed/u, "malformed settings must not inherit an ambient provider");
+      writeFileSync(settingsPath, JSON.stringify({ env: { NODE_OPTIONS: "--inspect", UNRELATED: "value" } }), "utf8");
+      assert.throws(resolve, /missing or malformed/u, "settings without an allowlisted provider must fail closed");
+      for (const [label, env] of [
+        ["timeout only", { API_TIMEOUT_MS: "1200000" }],
+        ["effort only", { CLAUDE_CODE_EFFORT_LEVEL: "high" }],
+        ["model only", { ANTHROPIC_MODEL: "MiniMax-M3" }],
+      ]) {
+        writeFileSync(settingsPath, JSON.stringify({ env }), "utf8");
+        assert.throws(resolve, /missing|malformed|provider|credential|endpoint|auth/u, `${label} must not authorize a provider`);
+      }
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test("Claude controlled provider removes cloud credentials and mixed-case poison keys deterministically", () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-claude-provider-pollution-"));
+    const settingsDir = path.join(tempHome, ".claude");
+    const poisonedKeys = [
+      "CLAUDE_CODE_USE_BEDROCK",
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "AWS_SECURITY_TOKEN",
+      "AWS_PROFILE",
+      "AWS_REGION",
+      "AWS_DEFAULT_REGION",
+      "AWS_ROLE_ARN",
+      "AWS_WEB_IDENTITY_TOKEN_FILE",
+      "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+      "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+      "CLAUDE_CODE_USE_VERTEX",
+      "ANTHROPIC_VERTEX_PROJECT_ID",
+      "CLOUD_ML_REGION",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "GOOGLE_CLOUD_PROJECT",
+      "GOOGLE_CLOUD_QUOTA_PROJECT",
+      "GOOGLE_CLOUD_LOCATION",
+      "GCLOUD_PROJECT",
+      "NoDe_OpTiOnS",
+      "aNtHrOpIc_BaSe_Url",
+      "AnThRoPiC_ApI_kEy",
+      "cLaUdE_cOdE_uSe_BeDrOcK",
+      "gOoGlE_aPpLiCaTiOn_CrEdEnTiAlS",
+    ];
+    try {
+      mkdirSync(settingsDir, { recursive: true });
+      writeFileSync(path.join(settingsDir, "settings.json"), JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: "https://minimax-pollution.fixture.invalid/anthropic",
+          ANTHROPIC_AUTH_TOKEN: "fixture-pollution-token",
+        },
+      }), "utf8");
+      const resolved = resolveClaudeLiveProviderEnvironmentSync({
+        homeDir: tempHome,
+        ambientEnv: {
+          PATH: "fixture-path",
+          TEMP: "fixture-temp",
+          ...Object.fromEntries(poisonedKeys.map((key) => [key, `poison-${key}`])),
+        },
+      });
+
+      assert.equal(resolved.ANTHROPIC_BASE_URL, "https://minimax-pollution.fixture.invalid/anthropic");
+      assert.equal(resolved.ANTHROPIC_AUTH_TOKEN, "fixture-pollution-token");
+      assert.equal(resolved.PATH, "fixture-path");
+      assert.equal(resolved.TEMP, "fixture-temp");
+      for (const key of poisonedKeys) {
+        assert.equal(Object.hasOwn(resolved, key), false, `${key} must not reach the controlled child environment`);
+      }
     } finally {
       rmSync(tempHome, { recursive: true, force: true });
     }
