@@ -1,5 +1,9 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   applyGraphNodeIdentityProof,
   analyzeGraphNodeIdentity,
@@ -266,6 +270,88 @@ describe("Graphify node identity proof v2", () => {
     assert.equal(collision.status, "unsafe_node_identity");
     assert.equal(collision.duplicateNodeIds.length, 1);
     assert.equal(collision.invalidFileNodeIds.length, 2);
+  });
+
+  test("canonicalizes an aliased temporary base before creating the normalizer cwd", (t) => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "meta-kim-graphify-alias-"));
+    const realBase = path.join(fixtureRoot, "real-temp-base");
+    const aliasBase = path.join(fixtureRoot, "temp-base-alias");
+    const normalizerModule = path.resolve(
+      "scripts/graphify-unicode-normalize.mjs",
+    );
+    mkdirSync(realBase);
+
+    try {
+      try {
+        symlinkSync(
+          realBase,
+          aliasBase,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      } catch (error) {
+        if (["ENOSYS", "EOPNOTSUPP"].includes(error?.code)) {
+          t.skip(`directory alias unsupported on this platform: ${error.code}`);
+          return;
+        }
+        throw error;
+      }
+
+      assert.ok(lstatSync(aliasBase).isSymbolicLink(), "temp base must be an alias");
+      const child = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          String.raw`
+            import { realpathSync } from "node:fs";
+            import { tmpdir } from "node:os";
+            import { pathToFileURL } from "node:url";
+
+            const lexicalTmpdir = tmpdir();
+            const resolvedTmpdir = realpathSync.native(lexicalTmpdir);
+            if (lexicalTmpdir === resolvedTmpdir) {
+              throw new Error("alias temp-base fixture was not selected by tmpdir()");
+            }
+            const { createGraphifyRuntimeNormalizer } = await import(
+              pathToFileURL(process.argv[1]).href,
+            );
+            const normalizer = createGraphifyRuntimeNormalizer(["ascii-id"], {
+              forceAsciiInvariant: true,
+            });
+            if (normalizer.normalize("ascii-id") !== "ascii_id") {
+              throw new Error("Graphify runtime normalizer returned an unexpected value");
+            }
+            process.stdout.write(JSON.stringify({
+              lexicalTmpdir,
+              resolvedTmpdir,
+              descriptor: normalizer.descriptor,
+            }));
+          `,
+          normalizerModule,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            TMPDIR: aliasBase,
+            TMP: aliasBase,
+            TEMP: aliasBase,
+          },
+        },
+      );
+
+      assert.equal(child.status, 0, child.stderr);
+      assert.doesNotMatch(
+        child.stderr,
+        /Graphify normalizer cwd is not a plain isolated directory/u,
+      );
+      const result = JSON.parse(child.stdout);
+      assert.notEqual(result.lexicalTmpdir, result.resolvedTmpdir);
+      assert.equal(result.descriptor, GRAPHIFY_NODE_ID_NORMALIZATION);
+    } finally {
+      rmSync(aliasBase, { recursive: true, force: true });
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   test("rejects stale and dangling hyperedge identity references on either truth surface", () => {
