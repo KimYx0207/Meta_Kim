@@ -8,6 +8,7 @@ import {
 } from "../../scripts/graphify-output-sanitize.mjs";
 import {
   hasPrivateLocalPath,
+  revealsMachineIdentity,
   sanitizeKnownMetaKimHomeAliases,
 } from "../../scripts/graphify-private-path.mjs";
 
@@ -194,6 +195,32 @@ describe("Graphify upstream output sanitizer", () => {
       sanitizeKnownMetaKimHomeAliases("~/.meta-kim/../private"),
       "~/.meta-kim/../private",
     );
+    assert.equal(hasPrivateLocalPath("~/.meta-kim/../private"), true);
+  });
+
+  test("report identity check flags real user paths but not documented home aliases", () => {
+    // GRAPH_REPORT.md faithfully quotes comments from tracked repository files,
+    // so a documented `~/.claude/...` reference must not fail the report gate.
+    assert.equal(
+      revealsMachineIdentity(
+        "- code:bash (# Detect the Python hook path — it lives in ~/.claude/hooks/)",
+      ),
+      false,
+    );
+    assert.equal(revealsMachineIdentity("~/"), false);
+    assert.equal(revealsMachineIdentity("~\\AppData"), false);
+    assert.equal(revealsMachineIdentity("file:///~/notes"), false);
+    assert.equal(revealsMachineIdentity("https://www.aiking.dev/"), false);
+
+    assert.equal(revealsMachineIdentity("/Users/Kim/private.txt"), true);
+    assert.equal(revealsMachineIdentity("C:/Users/Kim/private.txt"), true);
+    assert.equal(revealsMachineIdentity("path=C:\\Users\\Kim\\private.txt"), true);
+    assert.equal(revealsMachineIdentity("\\\\server\\share\\private.txt"), true);
+    assert.equal(revealsMachineIdentity("/home/kim/private.txt"), true);
+    assert.equal(revealsMachineIdentity("/root/.config/private"), true);
+
+    // The broader predicate keeps its fail-closed backstop for home-relative
+    // strings that the alias sanitizer refused to rewrite.
     assert.equal(hasPrivateLocalPath("~/.meta-kim/../private"), true);
   });
 

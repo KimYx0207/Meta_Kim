@@ -38,6 +38,7 @@ import {
 } from "./graphify-output-sanitize.mjs";
 import {
   hasPrivateLocalPath,
+  revealsMachineIdentity,
   sanitizeKnownMetaKimHomeAliases,
 } from "./graphify-private-path.mjs";
 import {
@@ -688,7 +689,7 @@ function checkGraphFreshness(cwd = process.cwd(), runtimeBinding = null) {
   }
 
   const reportRaw = readFileSync(reportPath, "utf8");
-  if (hasPrivateLocalPath(reportRaw)) {
+  if (revealsMachineIdentity(reportRaw)) {
     fail("GRAPH_REPORT.md exposes a private local path; rebuild after sanitizing upstream output.");
     return false;
   }
@@ -892,7 +893,7 @@ function stampGraphFreshness(cwd = process.cwd(), runtimeBinding = null) {
   if (existsSync(reportPath)) {
     const reportRaw = readFileSync(reportPath, "utf8");
     const sanitizedReport = sanitizeKnownMetaKimHomeAliases(reportRaw);
-    if (hasPrivateLocalPath(sanitizedReport)) {
+    if (revealsMachineIdentity(sanitizedReport)) {
       fail("GRAPH_REPORT.md exposes a private local path; refusing to stamp unsafe output.");
       return false;
     }
