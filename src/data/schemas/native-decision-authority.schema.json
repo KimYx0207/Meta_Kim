@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meta-kim.dev/schemas/native-decision-authority-v1.json",
+  "title": "Meta_Kim fail-closed Native Decision Authority v1",
+  "$comment": "Runtime validation additionally requires Object.prototype records and Array.prototype lists whose own entries are enumerable data descriptors; JSON Schema cannot express descriptor semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "state", "challengeRef", "challengeDigest", "decisionId", "presentedRevision", "runId", "runtime", "surface", "requestRef", "optionSetDigest", "evidenceSetDigest", "presentationDigest", "issuedAt", "expiresAt", "claimedAt", "selectedOptionId", "expiredAt", "invalidatedAt", "invalidationReasonRef", "events"],
+  "properties": {
+    "schemaVersion": { "const": "native-decision-authority-v1" },
+    "kind": { "const": "native_decision_challenge" },
+    "state": { "enum": ["issued", "host_answer_claimed", "expired", "invalidated"] },
+    "challengeRef": { "$ref": "#/$defs/opaqueRef" },
+    "challengeDigest": { "$ref": "#/$defs/sha256Ref" },
+    "decisionId": { "type": "string", "pattern": "^decision-[a-f0-9]{64}$" },
+    "presentedRevision": { "type": "integer", "minimum": 0 },
+    "runId": { "$ref": "#/$defs/opaqueRef" },
+    "runtime": { "enum": ["codex", "claude"] },
+    "surface": { "enum": ["request_user_input", "AskUserQuestion"] },
+    "requestRef": { "$ref": "#/$defs/opaqueRef" },
+    "optionSetDigest": { "$ref": "#/$defs/sha256Ref" },
+    "evidenceSetDigest": { "$ref": "#/$defs/sha256Ref" },
+    "presentationDigest": { "$ref": "#/$defs/sha256Ref", "description": "Digest of decisionType, routeChangingDimensions, options, recommendation, evidence, requirement, and nativeSurface." },
+    "issuedAt": { "$ref": "#/$defs/timestamp", "description": "Inclusive lower boundary of the challenge validity window." },
+    "expiresAt": { "$ref": "#/$defs/timestamp", "description": "Exclusive upper boundary of the challenge validity window." },
+    "claimedAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }], "description": "When present, must be within [issuedAt, expiresAt)." },
+    "selectedOptionId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/opaqueRef" }] },
+    "expiredAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }] },
+    "invalidatedAt": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }] },
+    "invalidationReasonRef": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/opaqueRef" }] },
+    "events": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/event" } }
+  },
+  "allOf": [
+    { "oneOf": [
+      { "properties": { "runtime": { "const": "codex" }, "surface": { "const": "request_user_input" } } },
+      { "properties": { "runtime": { "const": "claude" }, "surface": { "const": "AskUserQuestion" } } }
+    ] },
+    { "if": { "properties": { "state": { "const": "issued" } } }, "then": { "properties": { "claimedAt": { "type": "null" }, "selectedOptionId": { "type": "null" }, "expiredAt": { "type": "null" }, "invalidatedAt": { "type": "null" }, "invalidationReasonRef": { "type": "null" }, "events": { "maxItems": 1 } } } },
+    { "if": { "properties": { "state": { "const": "host_answer_claimed" } } }, "then": { "properties": { "claimedAt": { "$ref": "#/$defs/timestamp" }, "selectedOptionId": { "$ref": "#/$defs/opaqueRef" }, "expiredAt": { "type": "null" }, "invalidatedAt": { "type": "null" }, "invalidationReasonRef": { "type": "null" }, "events": { "minItems": 2, "maxItems": 2 } } } },
+    { "if": { "properties": { "state": { "const": "expired" } } }, "then": { "properties": { "claimedAt": { "type": "null" }, "selectedOptionId": { "type": "null" }, "expiredAt": { "$ref": "#/$defs/timestamp" }, "invalidatedAt": { "type": "null" }, "invalidationReasonRef": { "type": "null" }, "events": { "minItems": 2, "maxItems": 2 } } } },
+    { "if": { "properties": { "state": { "const": "invalidated" } } }, "then": { "properties": { "expiredAt": { "type": "null" }, "invalidatedAt": { "$ref": "#/$defs/timestamp" }, "invalidationReasonRef": { "$ref": "#/$defs/opaqueRef" }, "events": { "minItems": 2, "maxItems": 3 } } } }
+  ],
+  "$defs": {
+    "opaqueRef": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128,
+      "pattern": "^(?:sha256:[a-f0-9]{64}|[a-z][a-z0-9_-]{1,31}:[a-z0-9][a-z0-9._/-]{0,95})$",
+      "allOf": [
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:[a-z0-9._/-]*(?:r[._/-]*a[._/-]*w|p[._/-]*r[._/-]*o[._/-]*m[._/-]*p[._/-]*t|a[._/-]*n[._/-]*s[._/-]*w[._/-]*e[._/-]*r|e[._/-]*r[._/-]*r[._/-]*o[._/-]*r|s[._/-]*t[._/-]*a[._/-]*c[._/-]*k|t[._/-]*r[._/-]*a[._/-]*c[._/-]*e|s[._/-]*e[._/-]*c[._/-]*r[._/-]*e[._/-]*t|p[._/-]*a[._/-]*s[._/-]*s[._/-]*w[._/-]*o[._/-]*r[._/-]*d|t[._/-]*o[._/-]*k[._/-]*e[._/-]*n|c[._/-]*r[._/-]*e[._/-]*d[._/-]*e[._/-]*n[._/-]*t[._/-]*i[._/-]*a[._/-]*l|b[._/-]*e[._/-]*a[._/-]*r[._/-]*e[._/-]*r|a[._/-]*c[._/-]*c[._/-]*e[._/-]*s[._/-]*s|p[._/-]*r[._/-]*i[._/-]*v[._/-]*a[._/-]*t[._/-]*e|c[._/-]*l[._/-]*i[._/-]*e[._/-]*n[._/-]*t[._/-]*s[._/-]*e[._/-]*c[._/-]*r[._/-]*e[._/-]*t|a[._/-]*p[._/-]*i[._/-]*k[._/-]*e[._/-]*y|a[._/-]*u[._/-]*t[._/-]*h(?![._/-]*o[._/-]*r[._/-]*i[._/-]*t[._/-]*y)|k[._/-]*e[._/-]*y)" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?(?:secret|token|password|credential|bearer|key|api[._-]?key|access[._-]?key|private[._-]?key|client[._-]?secret|auth(?:orization)?)(?:$|[._/-])" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?(?:sk|rk|pk|ghp|gho|ghu|ghs|github_pat|xox[abopr]|akia|aiza|eyj)(?:[._/-]|$)" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?(?:sk|rk|pk)-[a-z0-9_-]{8,}(?:$|[._/-])" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?(?:ghp|gho|ghu|ghs)_[a-z0-9]{12,}(?:$|[._/-])" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?github_pat_[a-z0-9_]{12,}(?:$|[._/-])" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?xox[abopr]-[a-z0-9-]{12,}(?:$|[._/-])" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?akia[0-9a-z]{16}(?:$|[._/-])" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?aiza[a-z0-9_-]{20,}(?:$|[._/-])" } },
+        { "not": { "pattern": "^[a-z][a-z0-9_-]{1,31}:(?:[a-z0-9._/-]*[._/-])?eyj[a-z0-9_-]{8,}\\.[a-z0-9_-]{8,}\\.[a-z0-9_-]{8,}(?:$|[._/-])" } }
+      ]
+    },
+    "sha256Ref": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time", "minLength": 20 },
+    "event": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state", "at"], "properties": { "state": { "const": "issued" }, "at": { "$ref": "#/$defs/timestamp" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "at", "selectedOptionId"], "properties": { "state": { "const": "host_answer_claimed" }, "at": { "$ref": "#/$defs/timestamp" }, "selectedOptionId": { "$ref": "#/$defs/opaqueRef" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "at"], "properties": { "state": { "const": "expired" }, "at": { "$ref": "#/$defs/timestamp" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "at", "reasonRef"], "properties": { "state": { "const": "invalidated" }, "at": { "$ref": "#/$defs/timestamp" }, "reasonRef": { "$ref": "#/$defs/opaqueRef" } } }
+      ]
+    }
+  }
+}

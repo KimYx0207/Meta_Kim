@@ -13,10 +13,17 @@ const NPM_PACK_ARGS = process.platform === "win32"
 const EVALUATOR_PATH = "src/domain/governance/governance-requirements.mjs";
 const ADAPTER_PATH = "scripts/governed-execution/governance-requirements-shadow-adapter.mjs";
 const RUNNER_PATH = "scripts/run-meta-theory-governed-execution.mjs";
-const EXCLUDED_DOMAIN_PATHS = [
+const APPROVED_DECISION_CLOSURE = [
+  "src/adapters/claude/native-decision-surface-adapter.mjs",
+  "src/adapters/codex/native-decision-surface-adapter.mjs",
+  "src/data/schemas/decision.schema.json",
+  "src/data/schemas/native-decision-authority.schema.json",
   "src/domain/decision/decision.mjs",
   "src/domain/decision/legacy-decision-projection.mjs",
-  "src/data/schemas/decision.schema.json",
+  "src/domain/decision/native-decision-authority.mjs",
+];
+const APPROVED_SOURCE_CLOSURE = [EVALUATOR_PATH, ...APPROVED_DECISION_CLOSURE].sort();
+const UNRELATED_SOURCE_PATHS = [
   "src/data/schemas/governance-requirements.schema.json",
 ];
 
@@ -41,17 +48,24 @@ function resolvePackageRelativeImport(fromPath, specifier) {
   return path.posix.normalize(path.posix.join(path.posix.dirname(fromPath), specifier));
 }
 
-test("M3 Governance package closure includes only the evaluator domain source", () => {
+test("M3 Governance evaluator remains in the exact approved M3 source package closure", () => {
   const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
-  const sourceWhitelist = manifest.files.filter((entry) => entry.startsWith("src/"));
+  const sourceWhitelist = manifest.files.filter((entry) => entry.startsWith("src/")).sort();
 
-  assert.deepEqual(sourceWhitelist, [EVALUATOR_PATH]);
+  assert.deepEqual(sourceWhitelist, APPROVED_SOURCE_CLOSURE);
+  assert.equal(
+    manifest.files.some((entry) => /^src(?:\/|\/\*\*)?$/u.test(entry)),
+    false,
+    "package files must not contain a broad src/ or src/** entry",
+  );
 
   const files = packageFileSet();
+  const packedSourceFiles = [...files].filter((filePath) => filePath.startsWith("src/")).sort();
+  assert.deepEqual(packedSourceFiles, APPROVED_SOURCE_CLOSURE);
   for (const requiredPath of [EVALUATOR_PATH, ADAPTER_PATH, RUNNER_PATH]) {
     assert.ok(files.has(requiredPath), `packed package is missing ${requiredPath}`);
   }
-  for (const excludedPath of EXCLUDED_DOMAIN_PATHS) {
+  for (const excludedPath of UNRELATED_SOURCE_PATHS) {
     assert.ok(!files.has(excludedPath), `packed package must exclude ${excludedPath}`);
   }
 });
