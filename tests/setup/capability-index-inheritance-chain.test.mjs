@@ -1,5 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +28,10 @@ const canonicalIndexPath = path.join(
   "capability-index",
   "meta-kim-capabilities.json",
 );
+
+function sha256(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
 
 function platformScan(platformId, agentIds) {
   return {
@@ -75,6 +81,77 @@ async function listCanonicalSkillIds() {
 }
 
 describe("capability index inheritance chain", () => {
+  test("global discovery help is read-only and does not create runtime inventory", async () => {
+    const tempRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "meta-kim-discovery-help-"),
+    );
+    const isolatedHome = path.join(tempRoot, "home");
+    const runtimeInventoryPath = path.join(
+      isolatedHome,
+      ".meta-kim",
+      "state",
+      "help-regression",
+      "capability-index",
+      "global-capabilities.json",
+    );
+    await fs.mkdir(isolatedHome, { recursive: true });
+
+    try {
+      const canonicalBefore = await fs.readFile(canonicalIndexPath);
+      const canonicalStatBefore = await fs.stat(canonicalIndexPath, {
+        bigint: true,
+      });
+      const result = spawnSync(
+        process.execPath,
+        [path.join(repoRoot, "scripts", "discover-global-capabilities.mjs"), "--help"],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: isolatedHome,
+            USERPROFILE: isolatedHome,
+            META_KIM_LANG: "en",
+            META_KIM_PROFILE: "help-regression",
+          },
+        },
+      );
+      const canonicalAfter = await fs.readFile(canonicalIndexPath);
+      const canonicalStatAfter = await fs.stat(canonicalIndexPath, {
+        bigint: true,
+      });
+      const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+
+      assert.equal(result.error, undefined);
+      assert.equal(result.signal, null);
+      assert.equal(result.status, 0, output);
+      assert.match(output, /usage:/iu);
+      assert.deepEqual(
+        canonicalAfter,
+        canonicalBefore,
+        "--help must preserve every byte of the canonical capability index",
+      );
+      assert.equal(sha256(canonicalAfter), sha256(canonicalBefore));
+      assert.equal(
+        canonicalStatAfter.mtimeNs,
+        canonicalStatBefore.mtimeNs,
+        "--help must not rewrite the canonical capability index with identical content",
+      );
+      await assert.rejects(
+        fs.access(runtimeInventoryPath),
+        (error) => error?.code === "ENOENT",
+        "--help must not write the runtime capability inventory",
+      );
+      assert.deepEqual(
+        await fs.readdir(isolatedHome),
+        [],
+        "--help must not create runtime state anywhere under the isolated home",
+      );
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("same-name Claude Hook adapter cannot overwrite shared canonical source", () => {
     const shared = [
       {

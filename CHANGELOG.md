@@ -13,9 +13,14 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Meta_Kim 3.0 now has a fail-closed native decision foundation.** Codex and Claude native-choice adapters can issue, normalize, expire, and record host-answer claims without granting execution authority. Every generated claim remains non-authorizing until a future host-attested observer path proves session identity, displayed content, and single-use consumption.
 - **Decision authority now rejects forged or stale terminal states.** The domain uses half-open expiry, semantic replay binding, option-membership validation, payload/reference integrity checks, and non-enumerable snapshot hardening so a structural pass cannot be mistaken for a verified answer.
 
+### Fixed
+
+- **Packed install/update verification now gives the two heaviest four-runtime updates their own bounded time budgets.** Project-aware global refresh and portable runtime preparation each receive a fail-closed 10-minute allowance, while ordinary commands remain capped at five minutes. Their release evidence keeps only bounded, redacted metadata and still rejects timeouts, truncated output, signals, and inconsistent process results.
+- **Capability discovery help is now read-only.** `discover:global -- --help` and `-h` print usage without scanning runtimes or rewriting the canonical capability index, so the release suite can no longer invalidate its own source snapshot while testing the help entrypoint.
+
 ### Verification
 
-- Focused authority, adapter, security, boundary, package-closure, and existing decision/governance tests passed `63/63`; three independent review lanes accepted the result; `npm run meta:check` and Graphify rebuild/check passed before this release candidate. Standard full release verification is still required before publication.
+- Focused authority, adapter, security, boundary, package-closure, and existing decision/governance tests passed `63/63`; three independent review lanes accepted the result. Publication still requires one fresh, stable-source `npm run meta:verify:all`; focused evidence alone is never treated as release proof.
 
 ## [2.9.28] - 2026-08-09
 

@@ -1,13 +1,59 @@
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import process from "node:process";
 
+const CANONICAL_INDEX_PATH = "config/capability-index/meta-kim-capabilities.json";
+let canonicalIndexBefore;
+let isolatedHome;
+
+function sha256(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function seedSkillFamilies() {
+  const skillsRoot = path.join(isolatedHome, ".codex", "skills");
+  const skillIds = [
+    "vercel/one",
+    "vercel/two",
+    ...Array.from({ length: 25 }, (_, index) => `family-${String(index + 1).padStart(2, "0")}`),
+  ];
+  for (const skillId of skillIds) {
+    const skillDir = path.join(skillsRoot, ...skillId.split("/"));
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(path.join(skillDir, "SKILL.md"), `# ${skillId}\n`, "utf8");
+  }
+}
+
 function scan(langFlag = "--zh") {
-  const args = ["scripts/discover-global-capabilities.mjs"];
+  const args = [
+    "scripts/discover-global-capabilities.mjs",
+    "--runtime-inventory-only",
+  ];
   if (langFlag) args.push(langFlag);
-  const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+  const localAppData = path.join(isolatedHome, "AppData", "Local");
+  mkdirSync(localAppData, { recursive: true });
+  const result = spawnSync(process.execPath, args, {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: isolatedHome,
+      USERPROFILE: isolatedHome,
+      LOCALAPPDATA: localAppData,
+      APPDATA: path.join(isolatedHome, "AppData", "Roaming"),
+      META_KIM_PROFILE: "discover-i18n-test",
+    },
+  });
   if (result.status !== 0 && result.status !== null) {
     if (result.stderr && result.stderr.trim()) {
       throw new Error(`script failed: ${result.stderr}`);
@@ -17,6 +63,30 @@ function scan(langFlag = "--zh") {
 }
 
 describe("52 — Discover capabilities i18n truncate format", () => {
+  before(() => {
+    canonicalIndexBefore = readFileSync(CANONICAL_INDEX_PATH);
+    isolatedHome = mkdtempSync(path.join(tmpdir(), "meta-kim-discover-i18n-"));
+    seedSkillFamilies();
+  });
+
+  after(() => {
+    try {
+      const canonicalIndexAfter = readFileSync(CANONICAL_INDEX_PATH);
+      assert.deepEqual(
+        canonicalIndexAfter,
+        canonicalIndexBefore,
+        "runtime-only i18n scans must not change canonical index bytes",
+      );
+      assert.equal(
+        sha256(canonicalIndexAfter),
+        sha256(canonicalIndexBefore),
+        "runtime-only i18n scans must not change the canonical index hash",
+      );
+    } finally {
+      rmSync(isolatedHome, { recursive: true, force: true });
+    }
+  });
+
   test("zh output uses 剩余 N 项因篇幅关系未显示 wording", () => {
     const out = scan();
     assert.match(out, /剩余 \d+ 项因篇幅关系未显示/, "zh output must use 因篇幅关系未显示 wording");

@@ -2722,6 +2722,12 @@ export function formatTableOutput(index, options = {}) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(`Usage: node scripts/discover-global-capabilities.mjs [options]
+
+Options: --check, --runtime-inventory-only, --targets <list>, --type <type>, --json, --verbose, --lang <locale>`);
+    return;
+  }
   const outputFormat = args.includes("--json") ? "json" : "table";
   const verboseOutput =
     args.includes("--verbose") || args.includes("--details");
