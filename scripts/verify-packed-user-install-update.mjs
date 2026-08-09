@@ -95,10 +95,48 @@ export const PACKED_GLOBAL_AGENT_TARGETS = Object.freeze(
 );
 export const PACKED_USER_ACCEPTANCE_EXPECTED_DURATION_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.expectedDurationMs;
+export const PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS =
+  PACKED_RELEASE_POLICY.packedUserAcceptance.projectAwareGlobalUpdateTimeoutMs;
 const ACCEPTANCE_SKILL_FILTER = "planning-with-files";
 const TRANSIENT_PACKAGE_TARGETS = Object.freeze(["claude", "codex"]);
 const DEFAULT_TIMEOUT_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.commandTimeoutMs;
+const PROJECT_AWARE_GLOBAL_UPDATE_OPERATION_ID =
+  "packed-project-aware-global-update";
+const PACKED_COMMAND_ERROR_CODE_ALLOWLIST = new Set([
+  "EACCES",
+  "EAGAIN",
+  "EBADF",
+  "EBUSY",
+  "ECHILD",
+  "EFAULT",
+  "EINTR",
+  "EINVAL",
+  "EIO",
+  "EISDIR",
+  "EMFILE",
+  "ENAMETOOLONG",
+  "ENFILE",
+  "ENOBUFS",
+  "ENOENT",
+  "ENOEXEC",
+  "ENOMEM",
+  "ENOSPC",
+  "ENOTDIR",
+  "ENOTEMPTY",
+  "ENOTSUP",
+  "EPERM",
+  "EPIPE",
+  "ESRCH",
+  "ETIMEDOUT",
+  "UNKNOWN",
+]);
+const PACKED_COMMAND_OPERATION_ALLOWLIST = new Set([
+  PROJECT_AWARE_GLOBAL_UPDATE_OPERATION_ID,
+]);
+const PACKED_COMMAND_SIGNAL_ALLOWLIST = new Set(
+  Object.keys(os.constants.signals ?? {}),
+);
 const HISTORICAL_REF_ENV_KEY =
   PACKED_RELEASE_POLICY.packedUserAcceptance.historicalRefEnvironmentKey;
 const PROJECT_PROJECTION_NAMES = Object.freeze([
@@ -174,7 +212,7 @@ export function assertPortablePackedReferences(value, options = {}) {
 }
 
 function run(command, args, options = {}) {
-  return spawnSync(command, args, {
+  const result = spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
@@ -183,12 +221,187 @@ function run(command, args, options = {}) {
     maxBuffer: 64 * 1024 * 1024,
     input: options.input,
   });
+  if (!Object.getOwnPropertyDescriptor(result, "error")) {
+    Object.defineProperty(result, "error", {
+      value: null,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return result;
 }
 
 function runCli(command, args, options = {}) {
   if (process.platform !== "win32") return run(command, args, options);
   const invocation = resolveWindowsCliInvocation(command, args, { env: options.env ?? process.env });
   return run(invocation.command, invocation.args, options);
+}
+
+function readOwnEnumerableDataValue(object, property) {
+  if (
+    object === null ||
+    (typeof object !== "object" && typeof object !== "function")
+  ) {
+    return { valid: false };
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(object, property);
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      return { valid: false };
+    }
+    return { valid: true, value: descriptor.value };
+  } catch {
+    return { valid: false };
+  }
+}
+
+function snapshotErrorCode(error) {
+  if (error === null || error === undefined) return null;
+  const code = readOwnEnumerableDataValue(error, "code");
+  if (!code.valid) {
+    return "COMMAND_ERROR";
+  }
+  return PACKED_COMMAND_ERROR_CODE_ALLOWLIST.has(code.value)
+    ? code.value
+    : "COMMAND_ERROR";
+}
+
+function safeNonNegativeInteger(value) {
+  return Number.isFinite(value) && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function safeExitCode(value) {
+  return Number.isFinite(value) && Number.isInteger(value) ? value : null;
+}
+
+const PACKED_COMMAND_RESULT_PROPERTIES = Object.freeze([
+  "status",
+  "error",
+  "signal",
+  "stdout",
+  "stderr",
+]);
+const PACKED_DIAGNOSTICS_OPTION_PROPERTIES = Object.freeze([
+  "operation",
+  "timeoutMs",
+  "elapsedMs",
+]);
+
+function invalidPackedCommandDiagnostics(errorCode) {
+  return Object.freeze({
+    operation: "packed-command",
+    timeoutMs: null,
+    elapsedMs: null,
+    timedOut: false,
+    exitCode: null,
+    errorCode,
+    signal: null,
+    outputRetention: "metadata_only",
+    stdoutPresent: false,
+    stderrPresent: false,
+    stdoutChars: 0,
+    stderrChars: 0,
+  });
+}
+
+function packedCommandError(message, diagnostics) {
+  const error = new Error(message);
+  Object.defineProperty(error, "boundedDiagnostics", {
+    value: diagnostics,
+    enumerable: true,
+  });
+  return error;
+}
+
+function snapshotPackedCommandResult(result) {
+  const values = Object.create(null);
+  for (const property of PACKED_COMMAND_RESULT_PROPERTIES) {
+    const read = readOwnEnumerableDataValue(result, property);
+    if (!read.valid) {
+      throw packedCommandError(
+        "packed command result snapshot is invalid",
+        invalidPackedCommandDiagnostics("COMMAND_RESULT_INVALID"),
+      );
+    }
+    values[property] = read.value;
+  }
+  return Object.freeze({
+    status: values.status,
+    error: values.error,
+    errorCode: snapshotErrorCode(values.error),
+    signal: values.signal,
+    stdout: values.stdout,
+    stderr: values.stderr,
+  });
+}
+
+function snapshotPackedDiagnosticsOptions(diagnosticsOptions) {
+  const values = Object.create(null);
+  for (const property of PACKED_DIAGNOSTICS_OPTION_PROPERTIES) {
+    const read = readOwnEnumerableDataValue(diagnosticsOptions, property);
+    if (!read.valid) {
+      throw packedCommandError(
+        "packed command diagnostics options are invalid",
+        invalidPackedCommandDiagnostics("DIAGNOSTICS_OPTIONS_INVALID"),
+      );
+    }
+    values[property] = read.value;
+  }
+  if (
+    !PACKED_COMMAND_OPERATION_ALLOWLIST.has(values.operation) ||
+    safeNonNegativeInteger(values.timeoutMs) === null ||
+    safeNonNegativeInteger(values.elapsedMs) === null
+  ) {
+    throw packedCommandError(
+      "packed command diagnostics options are invalid",
+      invalidPackedCommandDiagnostics("DIAGNOSTICS_OPTIONS_INVALID"),
+    );
+  }
+  return Object.freeze({
+    operation: values.operation,
+    timeoutMs: values.timeoutMs,
+    elapsedMs: values.elapsedMs,
+  });
+}
+
+function buildPackedCommandDiagnosticsFromSnapshot(result, options) {
+  const stdoutChars = typeof result.stdout === "string" ? result.stdout.length : 0;
+  const stderrChars = typeof result.stderr === "string" ? result.stderr.length : 0;
+  return Object.freeze({
+    operation: options.operation,
+    timeoutMs: options.timeoutMs,
+    elapsedMs: options.elapsedMs,
+    timedOut: result.errorCode === "ETIMEDOUT",
+    exitCode: safeExitCode(result.status),
+    errorCode: result.errorCode,
+    signal: PACKED_COMMAND_SIGNAL_ALLOWLIST.has(result.signal)
+      ? result.signal
+      : null,
+    outputRetention: "metadata_only",
+    stdoutPresent: stdoutChars > 0,
+    stderrPresent: stderrChars > 0,
+    stdoutChars,
+    stderrChars,
+  });
+}
+
+/**
+ * Builds metadata-only command evidence without retaining subprocess output or errors.
+ */
+export function buildPackedCommandDiagnostics(options) {
+  const diagnosticsOptions = snapshotPackedDiagnosticsOptions(options);
+  const resultRead = readOwnEnumerableDataValue(options, "result");
+  if (!resultRead.valid) {
+    throw packedCommandError(
+      "packed command diagnostics options are invalid",
+      invalidPackedCommandDiagnostics("DIAGNOSTICS_OPTIONS_INVALID"),
+    );
+  }
+  const result = snapshotPackedCommandResult(resultRead.value);
+  return buildPackedCommandDiagnosticsFromSnapshot(result, diagnosticsOptions);
 }
 
 function commandFailure(label, result) {
@@ -198,6 +411,35 @@ function commandFailure(label, result) {
   ].filter(Boolean).join("\n");
   const detail = result.error?.message || streams || `exit ${result.status}`;
   return new Error(`${label} failed: ${String(detail).trim()}`);
+}
+
+/**
+ * Enriches a packed command result with bounded diagnostics and fails closed.
+ * The helper is pure so timeout/error behavior can be verified without running
+ * the real packed install/update acceptance lane.
+ */
+export function requirePackedCommandSuccess(
+  result,
+  diagnosticsOptions,
+) {
+  const options = snapshotPackedDiagnosticsOptions(diagnosticsOptions);
+  const snapshot = snapshotPackedCommandResult(result);
+  const boundedDiagnostics = buildPackedCommandDiagnosticsFromSnapshot(
+    snapshot,
+    options,
+  );
+  if (
+    snapshot.status !== 0 ||
+    snapshot.error !== null ||
+    snapshot.signal !== null
+  ) {
+    throw packedCommandError("packed command failed", boundedDiagnostics);
+  }
+  return Object.freeze({
+    status: 0,
+    signal: boundedDiagnostics.signal,
+    boundedDiagnostics,
+  });
 }
 
 function requireSuccess(label, result) {
@@ -2227,9 +2469,10 @@ function runInstalledPublicProjectCli(descriptor, roots, env, mode, timeoutMs) {
   });
 }
 
-function runInstalledPublicGlobalUpdateFromProject(descriptor, roots, env, timeoutMs) {
+function runInstalledPublicGlobalUpdateFromProject(descriptor, roots, env) {
   const installed = requireInstalledCliDescriptor(descriptor);
-  return runCli(installed.command, [
+  const startedAt = Date.now();
+  const result = runCli(installed.command, [
     "update",
     "--silent",
     "--scope",
@@ -2241,8 +2484,16 @@ function runInstalledPublicGlobalUpdateFromProject(descriptor, roots, env, timeo
   ], {
     cwd: roots.projectDir,
     env,
-    timeoutMs,
+    timeoutMs: PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS,
   });
+  return requirePackedCommandSuccess(
+    result,
+    {
+      operation: PROJECT_AWARE_GLOBAL_UPDATE_OPERATION_ID,
+      timeoutMs: PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS,
+      elapsedMs: Date.now() - startedAt,
+    },
+  );
 }
 
 function runProjectCapabilityCopy(
@@ -2541,9 +2792,10 @@ function runRuntimeSedimentationLane({ descriptor, roots, env, timeoutMs }) {
   mkdirSync(path.dirname(unknownProjectFile), { recursive: true });
   writeFileSync(unknownProjectFile, unknownProjectContent, "utf8");
 
-  const dependencyUpdate = requireSuccess(
-    "project-aware global update after project capability copies",
-    runInstalledPublicGlobalUpdateFromProject(descriptor, roots, env, timeoutMs),
+  const dependencyUpdate = runInstalledPublicGlobalUpdateFromProject(
+    descriptor,
+    roots,
+    env,
   );
   assertOrdinaryCwdUntouched(roots.ordinaryCwd);
 
@@ -2660,6 +2912,7 @@ function runRuntimeSedimentationLane({ descriptor, roots, env, timeoutMs }) {
       unknownProjectFilePreserved: true,
       runtimeSedimentedCopiesPreserved: true,
       projectProjectionModePreserved: true,
+      diagnostics: dependencyUpdate.boundedDiagnostics,
     },
     globalReuse,
   };
@@ -3100,6 +3353,7 @@ export function runPackedUserInstallUpdateAcceptance({
       currentVersionTagCheck,
       currentPackage: null,
       historicalUpdate: null,
+      boundedDiagnostics: error.boundedDiagnostics ?? null,
       error: error.message,
     };
     emit(onProgress, {

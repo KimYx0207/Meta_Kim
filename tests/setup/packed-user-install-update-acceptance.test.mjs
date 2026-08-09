@@ -14,12 +14,15 @@ import test from "node:test";
 
 import {
   PACKED_GLOBAL_AGENT_TARGETS,
+  PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS,
   PACKED_USER_TARGETS,
   assertCurrentVersionTagAbsent,
   assertPackedAdvisoryEffectiveMatrix,
+  buildPackedCommandDiagnostics,
   collectNonPortablePackedReferences,
   durableMcpDefinitionMatches,
   referencedPersistentRuntimePaths,
+  requirePackedCommandSuccess,
   runInstalledPublicCli,
   selectHistoricalUpdateRef,
 } from "../../scripts/verify-packed-user-install-update.mjs";
@@ -34,6 +37,9 @@ import {
 const acceptanceSource = readFileSync(
   "scripts/verify-packed-user-install-update.mjs",
   "utf8",
+);
+const releaseVerificationPolicy = JSON.parse(
+  readFileSync("config/contracts/release-verification-policy.json", "utf8"),
 );
 const verifyAllSource = readFileSync("scripts/run-verify-all.mjs", "utf8");
 const packedProofSource = readFileSync("scripts/packed-product-proof.mjs", "utf8");
@@ -440,6 +446,533 @@ test("packed global update refreshes a bootstrapped project without overwriting 
   assert.match(acceptanceSource, /project-aware global update changed the existing project projection mode/u);
   assert.match(acceptanceSource, /projectProjectionModePreserved: true/u);
   assert.match(acceptanceSource, /freshGlobalUpdateCreatedProjectCopies: false/u);
+});
+
+test("project-aware packed global update alone receives the policy-scoped extended timeout", () => {
+  assert.equal(
+    releaseVerificationPolicy.packedUserAcceptance.commandTimeoutMs,
+    300_000,
+    "ordinary packed commands retain their existing five-minute timeout",
+  );
+  assert.equal(
+    releaseVerificationPolicy.packedUserAcceptance.projectAwareGlobalUpdateTimeoutMs,
+    600_000,
+  );
+  assert.equal(PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS, 600_000);
+  assert.match(
+    acceptanceSource,
+    /const DEFAULT_TIMEOUT_MS\s*=\s*[\s\S]*?packedUserAcceptance\.commandTimeoutMs/u,
+  );
+  const acceptanceRunner = acceptanceFunctionSource(
+    "runPackedUserInstallUpdateAcceptance",
+    "main",
+  );
+  assert.match(acceptanceRunner, /timeoutMs\s*=\s*DEFAULT_TIMEOUT_MS/u);
+
+  const ordinaryGlobalCli = acceptanceFunctionSource(
+    "runInstalledPublicCli",
+    "runPackedUninstallLane",
+  );
+  const projectAwareGlobalUpdate = acceptanceFunctionSource(
+    "runInstalledPublicGlobalUpdateFromProject",
+    "runProjectCapabilityCopy",
+  );
+  assert.match(ordinaryGlobalCli, /timeoutMs,/u);
+  assert.doesNotMatch(
+    ordinaryGlobalCli,
+    /PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS/u,
+  );
+  assert.match(
+    projectAwareGlobalUpdate,
+    /timeoutMs:\s*PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS/u,
+  );
+});
+
+const PACKED_DIAGNOSTIC_KEYS = Object.freeze([
+  "elapsedMs",
+  "errorCode",
+  "exitCode",
+  "operation",
+  "outputRetention",
+  "signal",
+  "stderrChars",
+  "stderrPresent",
+  "stdoutChars",
+  "stdoutPresent",
+  "timedOut",
+  "timeoutMs",
+]);
+
+function assertMetadataOnlyDiagnostics(diagnostic, expected, sensitiveValues = []) {
+  assert.deepEqual(Object.keys(diagnostic).sort(), PACKED_DIAGNOSTIC_KEYS);
+  assert.deepEqual(diagnostic, expected);
+  const serialized = JSON.stringify(diagnostic);
+  assert.doesNotMatch(serialized, /stdoutTail|stderrTail|digest|message|stack/u);
+  for (const sensitiveValue of sensitiveValues) {
+    assert.equal(
+      serialized.includes(sensitiveValue),
+      false,
+      "diagnostics serialized command-controlled text",
+    );
+  }
+}
+
+function packedDiagnosticsOptions(overrides = {}) {
+  return {
+    operation: "packed-project-aware-global-update",
+    timeoutMs: 600_000,
+    elapsedMs: 42,
+    ...overrides,
+  };
+}
+
+function packedCommandResult(overrides = {}) {
+  return {
+    status: 0,
+    error: null,
+    signal: null,
+    stdout: "",
+    stderr: "",
+    ...overrides,
+  };
+}
+
+function assertSafePackedError(
+  error,
+  expectedMessage,
+  expectedErrorCode,
+  sensitiveValues = [],
+) {
+  assert.equal(error instanceof Error, true);
+  assert.equal(error.message, expectedMessage);
+  assert.ok(error.boundedDiagnostics);
+  assert.equal(Object.isFrozen(error.boundedDiagnostics), true);
+  assert.equal(error.boundedDiagnostics.errorCode, expectedErrorCode);
+  assert.equal(error.boundedDiagnostics.outputRetention, "metadata_only");
+  const serialized = JSON.stringify({
+    message: error.message,
+    diagnostics: error.boundedDiagnostics,
+    stack: error.stack,
+  });
+  for (const sensitiveValue of sensitiveValues) {
+    assert.equal(
+      serialized.includes(sensitiveValue),
+      false,
+      "safe failure reflected command-controlled or trap-controlled text",
+    );
+  }
+  return true;
+}
+
+test("packed diagnostics count decoded characters and never claim original byte length", () => {
+  const runtimeText = (...parts) => parts.join("");
+  const stdout = runtimeText("完成", "🙂");
+  const stderr = "é";
+  const diagnostic = buildPackedCommandDiagnostics({
+    result: packedCommandResult({ status: 23, signal: "SIGTERM", stdout, stderr }),
+    ...packedDiagnosticsOptions(),
+  });
+
+  assertMetadataOnlyDiagnostics(
+    diagnostic,
+    {
+      operation: "packed-project-aware-global-update",
+      timeoutMs: 600_000,
+      elapsedMs: 42,
+      timedOut: false,
+      exitCode: 23,
+      errorCode: null,
+      signal: "SIGTERM",
+      outputRetention: "metadata_only",
+      stdoutPresent: true,
+      stderrPresent: true,
+      stdoutChars: stdout.length,
+      stderrChars: stderr.length,
+    },
+    [stdout, stderr],
+  );
+  assert.equal(stdout.length, 4, "astral Unicode uses JavaScript string length");
+  assert.notEqual(Buffer.byteLength(stdout), stdout.length);
+  assert.notEqual(Buffer.byteLength(stderr), stderr.length);
+});
+
+test("packed diagnostics treat Buffer output as unavailable decoded character metadata", () => {
+  const rawOutput = Buffer.from("buffer content must not be retained", "utf8");
+  const diagnostic = buildPackedCommandDiagnostics({
+    result: packedCommandResult({ stdout: rawOutput, stderr: rawOutput }),
+    ...packedDiagnosticsOptions(),
+  });
+  assertMetadataOnlyDiagnostics(
+    diagnostic,
+    {
+      operation: "packed-project-aware-global-update",
+      timeoutMs: 600_000,
+      elapsedMs: 42,
+      timedOut: false,
+      exitCode: 0,
+      errorCode: null,
+      signal: null,
+      outputRetention: "metadata_only",
+      stdoutPresent: false,
+      stderrPresent: false,
+      stdoutChars: 0,
+      stderrChars: 0,
+    },
+    [rawOutput.toString("utf8")],
+  );
+});
+
+test("packed diagnostics classify ETIMEDOUT and ENOBUFS without reading error text", () => {
+  let sensitiveGetterReads = 0;
+  const privateSentinel = ["private", "error", "text"].join("-");
+  const sourceError = Object.assign(new Error(), { code: "ETIMEDOUT" });
+  for (const property of ["message", "stack"]) {
+    Object.defineProperty(sourceError, property, {
+      enumerable: true,
+      get() {
+        sensitiveGetterReads += 1;
+        throw new Error(`${privateSentinel}-${property}`);
+      },
+    });
+  }
+  const diagnostic = buildPackedCommandDiagnostics({
+    result: packedCommandResult({ status: null, error: sourceError }),
+    ...packedDiagnosticsOptions({ elapsedMs: 600_123 }),
+  });
+
+  assert.equal(sensitiveGetterReads, 0);
+  assertMetadataOnlyDiagnostics(diagnostic, {
+    operation: "packed-project-aware-global-update",
+    timeoutMs: 600_000,
+    elapsedMs: 600_123,
+    timedOut: true,
+    exitCode: null,
+    errorCode: "ETIMEDOUT",
+    signal: null,
+    outputRetention: "metadata_only",
+    stdoutPresent: false,
+    stderrPresent: false,
+    stdoutChars: 0,
+    stderrChars: 0,
+  }, [privateSentinel]);
+
+  const capacityDiagnostic = buildPackedCommandDiagnostics({
+    result: packedCommandResult({
+      status: null,
+      error: Object.assign(new Error(), { code: "ENOBUFS" }),
+    }),
+    ...packedDiagnosticsOptions({ elapsedMs: 17 }),
+  });
+  assert.equal(capacityDiagnostic.errorCode, "ENOBUFS");
+  assert.equal(capacityDiagnostic.timedOut, false);
+});
+
+test("packed command helper requires valid metadata-only options and never falls back to raw failure", () => {
+  const runtimeText = (...parts) => parts.join("");
+  const rawOutput = runtimeText("raw-", "output-private-sentinel");
+  const rawError = runtimeText("raw-", "error-private-sentinel");
+  const result = packedCommandResult({
+    status: 9,
+    error: Object.assign(new Error(rawError), { code: "EIO" }),
+    stdout: rawOutput,
+    stderr: rawOutput,
+  });
+
+  const invalidOptions = [
+    undefined,
+    null,
+    {},
+    packedDiagnosticsOptions({ operation: "unknown-operation" }),
+    packedDiagnosticsOptions({ timeoutMs: -1 }),
+    packedDiagnosticsOptions({ elapsedMs: 1.5 }),
+  ];
+  for (const options of invalidOptions) {
+    assert.throws(
+      () => requirePackedCommandSuccess(result, options),
+      (error) =>
+        assertSafePackedError(
+          error,
+          "packed command diagnostics options are invalid",
+          "DIAGNOSTICS_OPTIONS_INVALID",
+          [rawOutput, rawError],
+        ),
+    );
+  }
+
+  let optionGetterReads = 0;
+  const accessorOptions = packedDiagnosticsOptions();
+  Object.defineProperty(accessorOptions, "elapsedMs", {
+    enumerable: true,
+    get() {
+      optionGetterReads += 1;
+      throw new Error(rawError);
+    },
+  });
+  assert.throws(
+    () => requirePackedCommandSuccess(result, accessorOptions),
+    (error) =>
+      assertSafePackedError(
+        error,
+        "packed command diagnostics options are invalid",
+        "DIAGNOSTICS_OPTIONS_INVALID",
+        [rawOutput, rawError],
+      ),
+  );
+  assert.equal(optionGetterReads, 0);
+});
+
+test("packed command result snapshot rejects accessors without executing alternating or throwing getters", () => {
+  const privateSentinel = ["getter", "private", "sentinel"].join("-");
+  for (const property of ["status", "error"]) {
+    let getterReads = 0;
+    const result = packedCommandResult();
+    Object.defineProperty(result, property, {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        if (getterReads === 1) return property === "status" ? 0 : null;
+        throw new Error(privateSentinel);
+      },
+    });
+    assert.throws(
+      () => requirePackedCommandSuccess(result, packedDiagnosticsOptions()),
+      (error) =>
+        assertSafePackedError(
+          error,
+          "packed command result snapshot is invalid",
+          "COMMAND_RESULT_INVALID",
+          [privateSentinel],
+        ),
+    );
+    assert.equal(getterReads, 0);
+  }
+});
+
+test("packed command result snapshot avoids ownKeys and property get traps and is read exactly once", () => {
+  const descriptorReads = new Map();
+  let ownKeysReads = 0;
+  let propertyGetterReads = 0;
+  const firstValues = packedCommandResult({ stdout: "完成🙂", stderr: "é" });
+  const laterValues = packedCommandResult({
+    status: 88,
+    error: Object.assign(new Error(), { code: "ETIMEDOUT" }),
+    stdout: "later-private-output",
+    stderr: "later-private-error",
+  });
+  const result = new Proxy({}, {
+    ownKeys() {
+      ownKeysReads += 1;
+      throw new Error("own-keys-private-sentinel");
+    },
+    get(_target, property) {
+      propertyGetterReads += 1;
+      throw new Error(`property-get-private-sentinel-${String(property)}`);
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      const reads = (descriptorReads.get(property) ?? 0) + 1;
+      descriptorReads.set(property, reads);
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: reads === 1 ? firstValues[property] : laterValues[property],
+      };
+    },
+  });
+
+  const success = requirePackedCommandSuccess(result, packedDiagnosticsOptions());
+  assert.equal(ownKeysReads, 0);
+  assert.equal(propertyGetterReads, 0);
+  for (const property of ["status", "error", "signal", "stdout", "stderr"]) {
+    assert.equal(descriptorReads.get(property), 1, `${property} was re-read after snapshot`);
+  }
+  assert.equal(success.status, 0);
+  assert.equal(success.boundedDiagnostics.exitCode, 0);
+  assert.equal(success.boundedDiagnostics.errorCode, null);
+  assert.equal(success.boundedDiagnostics.timedOut, false);
+  assert.equal(success.boundedDiagnostics.stdoutChars, firstValues.stdout.length);
+  assert.equal(success.boundedDiagnostics.stderrChars, firstValues.stderr.length);
+});
+
+test("packed command result snapshot converts throwing Proxy descriptor traps to a fixed safe failure", () => {
+  const privateSentinel = ["descriptor", "trap", "private", "sentinel"].join("-");
+  const result = new Proxy({}, {
+    getOwnPropertyDescriptor(_target, property) {
+      if (property === "status") throw new Error(privateSentinel);
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: null,
+      };
+    },
+  });
+  assert.throws(
+    () => requirePackedCommandSuccess(result, packedDiagnosticsOptions()),
+    (error) =>
+      assertSafePackedError(
+        error,
+        "packed command result snapshot is invalid",
+        "COMMAND_RESULT_INVALID",
+        [privateSentinel],
+      ),
+  );
+});
+
+test("project-aware packed command helper fails closed on ETIMEDOUT and ENOBUFS", () => {
+  const rawErrorSentinel = ["raw", "error", "private", "sentinel"].join("-");
+  const stdoutSentinel = ["stdout", "private", "sentinel"].join("-");
+  const stderrSentinel = ["stderr", "private", "sentinel"].join("-");
+  for (const code of ["ETIMEDOUT", "ENOBUFS"]) {
+    const sourceError = Object.assign(new Error(rawErrorSentinel), { code });
+    const timeoutResult = packedCommandResult({
+      status: null,
+      signal: "SIGTERM",
+      error: sourceError,
+      stdout: stdoutSentinel,
+      stderr: stderrSentinel,
+    });
+
+    assert.throws(
+      () =>
+        requirePackedCommandSuccess(
+          timeoutResult,
+          packedDiagnosticsOptions({ elapsedMs: 600_123 }),
+        ),
+      (error) => {
+        assertSafePackedError(
+          error,
+          "packed command failed",
+          code,
+          [rawErrorSentinel, stdoutSentinel, stderrSentinel],
+        );
+        assert.equal(error.boundedDiagnostics.timedOut, code === "ETIMEDOUT");
+        assert.equal(error.boundedDiagnostics.stdoutChars, stdoutSentinel.length);
+        assert.equal(error.boundedDiagnostics.stderrChars, stderrSentinel.length);
+        return true;
+      },
+    );
+  }
+});
+
+test("project-aware packed command success rejects zero exit with signal or non-null error state", () => {
+  const stdoutSentinel = ["strict", "stdout", "private", "sentinel"].join("-");
+  const stderrSentinel = ["strict", "stderr", "private", "sentinel"].join("-");
+  const unknownSignal = ["SIG", "PRIVATE", "UNKNOWN"].join("_");
+  const cases = [
+    {
+      name: "allowlisted termination signal",
+      overrides: { signal: "SIGTERM" },
+      expectedSignal: "SIGTERM",
+      sensitiveValues: [stdoutSentinel, stderrSentinel],
+    },
+    {
+      name: "unknown termination signal",
+      overrides: { signal: unknownSignal },
+      expectedSignal: null,
+      sensitiveValues: [stdoutSentinel, stderrSentinel, unknownSignal],
+    },
+    {
+      name: "undefined error state",
+      overrides: { error: undefined },
+      expectedSignal: null,
+      sensitiveValues: [stdoutSentinel, stderrSentinel],
+    },
+  ];
+
+  for (const scenario of cases) {
+    const result = packedCommandResult({
+      stdout: stdoutSentinel,
+      stderr: stderrSentinel,
+      ...scenario.overrides,
+    });
+    assert.throws(
+      () => requirePackedCommandSuccess(result, packedDiagnosticsOptions()),
+      (error) => {
+        assertSafePackedError(
+          error,
+          "packed command failed",
+          null,
+          scenario.sensitiveValues,
+        );
+        assert.equal(error.boundedDiagnostics.exitCode, 0, scenario.name);
+        assert.equal(error.boundedDiagnostics.signal, scenario.expectedSignal, scenario.name);
+        assert.equal(error.boundedDiagnostics.timedOut, false, scenario.name);
+        assert.equal(
+          error.boundedDiagnostics.stdoutChars,
+          stdoutSentinel.length,
+          scenario.name,
+        );
+        assert.equal(
+          error.boundedDiagnostics.stderrChars,
+          stderrSentinel.length,
+          scenario.name,
+        );
+        return true;
+      },
+      scenario.name,
+    );
+  }
+});
+
+test("project-aware packed command success returns only a frozen safe snapshot", () => {
+  const successStdout = "completed\n";
+  const sourceError = { private: "must-not-return" };
+  const success = requirePackedCommandSuccess(
+    packedCommandResult({ stdout: successStdout, stderr: "完成" }),
+    packedDiagnosticsOptions({ elapsedMs: 321 }),
+  );
+  assert.equal(Object.isFrozen(success), true);
+  assert.deepEqual(Object.keys(success).sort(), [
+    "boundedDiagnostics",
+    "signal",
+    "status",
+  ]);
+  assert.equal(success.status, 0);
+  assert.equal(success.signal, null);
+  assert.equal("stdout" in success, false);
+  assert.equal("stderr" in success, false);
+  assert.equal("error" in success, false);
+  assert.equal(JSON.stringify(success).includes(sourceError.private), false);
+  assertMetadataOnlyDiagnostics(success.boundedDiagnostics, {
+    operation: "packed-project-aware-global-update",
+    timeoutMs: 600_000,
+    elapsedMs: 321,
+    timedOut: false,
+    exitCode: 0,
+    errorCode: null,
+    signal: null,
+    outputRetention: "metadata_only",
+    stdoutPresent: true,
+    stderrPresent: true,
+    stdoutChars: successStdout.length,
+    stderrChars: "完成".length,
+  });
+
+  const projectAwareGlobalUpdate = acceptanceFunctionSource(
+    "runInstalledPublicGlobalUpdateFromProject",
+    "runProjectCapabilityCopy",
+  );
+  assert.match(projectAwareGlobalUpdate, /requirePackedCommandSuccess/u);
+
+  const runtimeSedimentationLane = acceptanceFunctionSource(
+    "runRuntimeSedimentationLane",
+    "runProjectPackageLane",
+  );
+  assert.match(
+    runtimeSedimentationLane,
+    /runInstalledPublicGlobalUpdateFromProject/u,
+    "ETIMEDOUT must remain a thrown lane failure instead of diagnostic success",
+  );
+
+  const acceptanceRunner = acceptanceFunctionSource(
+    "runPackedUserInstallUpdateAcceptance",
+    "main",
+  );
+  assert.match(
+    acceptanceRunner,
+    /status: "failed",[\s\S]*?boundedDiagnostics: error\.boundedDiagnostics \?\? null/u,
+  );
 });
 
 test("setup persists project projection mode only after successful project-scope completion", () => {
