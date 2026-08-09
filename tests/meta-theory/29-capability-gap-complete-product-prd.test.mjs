@@ -29,8 +29,9 @@ describe(
 
     assert.equal(activeRows.length, 1, "current queue must expose exactly one ACTIVE row");
     assert.equal(nextRows.length, 1, "current queue must expose exactly one NEXT row");
-    const activeId = activeRows[0].match(/^\| ACTIVE \| (P-\d+) \|/)?.[1];
-    const nextId = nextRows[0].match(/^\| NEXT \| (P-\d+) \|/)?.[1];
+    const queueIdPattern = "(P-\\d+|M3-P\\d+)";
+    const activeId = activeRows[0].match(new RegExp(`^\\| ACTIVE \\| ${queueIdPattern} \\|`))?.[1];
+    const nextId = nextRows[0].match(new RegExp(`^\\| NEXT \\| ${queueIdPattern} \\|`))?.[1];
     assert.ok(activeId, "ACTIVE row must expose a problem ID");
     assert.ok(nextId, "NEXT row must expose a problem ID");
     assert.notEqual(activeId, nextId, "ACTIVE and NEXT must be different problems");
@@ -47,26 +48,49 @@ describe(
     assert.match(nextRows[0], /待处理/);
     assert.match(nextRows[0], /not_started/);
 
+    const activeIsLegacyProblem = /^P-\d+$/.test(activeId);
     const serialQueue = prd.match(/### 串行执行队列([\s\S]*?)### v0\.79 历史对话证据吸收记录/)?.[1] ?? "";
     const queueRows = serialQueue.split(/\r?\n/).filter((line) => /^\| \d+ \| P-\d+ \|/.test(line));
     const inProgressRows = queueRows.filter((line) =>
       /\| (?:进行中|返工中|已验收待发布)/.test(line)
     );
-    assert.equal(
-      inProgressRows.length,
-      explicitlyPausedAfterRelease ? 0 : 1,
-      explicitlyPausedAfterRelease
-        ? "an explicitly paused queue must not manufacture an in-progress item"
-        : "the serial queue must contain exactly one in-progress item",
-    );
-    const activeSerialRow = queueRows.find((line) => line.includes(`| ${activeId} |`)) ?? "";
+    if (activeIsLegacyProblem) {
+      assert.equal(
+        inProgressRows.length,
+        explicitlyPausedAfterRelease ? 0 : 1,
+        explicitlyPausedAfterRelease
+          ? "an explicitly paused queue must not manufacture an in-progress item"
+          : "the serial queue must contain exactly one in-progress item",
+      );
+      const activeSerialRow = queueRows.find((line) => line.includes(`| ${activeId} |`)) ?? "";
+      assert.match(
+        explicitlyPausedAfterRelease ? activeSerialRow : inProgressRows[0],
+        new RegExp(`\\| ${activeId} \\|`),
+      );
+      if (explicitlyPausedAfterRelease) assert.match(activeSerialRow, /已发布闭合.*release_closed/);
+      assert.match(queueRows.find((line) => line.includes(`| ${nextId} |`)) ?? "", /待处理（唯一 next/);
+    } else {
+      assert.equal(
+        inProgressRows.length,
+        0,
+        "an M3 ACTIVE item must not leave a legacy P-series item in progress",
+      );
+      assert.match(
+        prd,
+        new RegExp(`^#{3,6}\\s+${activeId}(?:\\s|$)`, "m"),
+        "an M3 ACTIVE item must have a corresponding PRD checkpoint or heading",
+      );
+    }
     assert.match(
-      explicitlyPausedAfterRelease ? activeSerialRow : inProgressRows[0],
-      new RegExp(`\\| ${activeId} \\|`),
+      prd,
+      /最新公开版本：v2\.9\.28（commit `e56a96e089762e0a1a5eb817a5806d24d80d6491`；GitHub Release 已发布并精确绑定）/,
+      "the PRD must retain the exact current public-release baseline",
     );
-    if (explicitlyPausedAfterRelease) assert.match(activeSerialRow, /已发布闭合.*release_closed/);
-    assert.match(queueRows.find((line) => line.includes(`| ${nextId} |`)) ?? "", /待处理（唯一 next/);
-    assert.match(prd, /`v2\.9\.2` 是 P-118 重开前的公开基线/);
+    assert.match(
+      prd,
+      /\| P-122 \| 已发布闭合（v2\.9\.2） \|[\s\S]*?commit `e3475a2e84fddf69d15086a2c563bd175ade8fa0`/,
+      "the M3 queue must not erase the exact P-122/v2.9.2 historical baseline",
+    );
   });
 
   test("requires positive, falsification, and release evidence for completed claims", () => {
