@@ -246,6 +246,23 @@ function completePackedUserProof(packageSha256) {
       },
       portableRuntime: {
         status: "passed",
+        globalUpdate: {
+          status: "passed",
+          diagnostics: {
+            operation: "packed-portable-runtime-global-update",
+            timeoutMs: 600000,
+            elapsedMs: 125,
+            timedOut: false,
+            exitCode: 0,
+            errorCode: null,
+            signal: null,
+            outputRetention: "metadata_only",
+            stdoutPresent: false,
+            stderrPresent: false,
+            stdoutChars: 0,
+            stderrChars: 0,
+          },
+        },
         agentProjection: { status: "passed" },
         ownershipManifest: { status: "passed", overlappingWriterPathCount: 0 },
         hookProjection: { status: "passed" },
