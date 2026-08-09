@@ -62,6 +62,7 @@ import {
   normalizeStageRunnerRuntime,
   runStageRunnerBridge,
 } from "./governed-execution/stage-runner-bridge.mjs";
+import { buildGovernanceRequirementsShadow } from "./governed-execution/governance-requirements-shadow-adapter.mjs";
 import { openDurableRunKernel } from "./governed-execution/durable-run-kernel.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
 import {
@@ -11273,6 +11274,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
 
 export async function runMetaTheoryGovernedExecution({
   task,
+  governanceTaskFacts = null,
   runId = null,
   allowOverwrite = false,
   outputLanguage = null,
@@ -11463,6 +11465,9 @@ export async function runMetaTheoryGovernedExecution({
     runtime: routeRuntime,
     osTarget: routeOs,
     codexHostToolSchema,
+  });
+  const governanceRequirementsShadow = buildGovernanceRequirementsShadow({
+    governanceTaskFacts,
   });
   const capabilityInventoryBus = await writeCapabilityInventory(
     path.join(stateDir, "capability-inventory.json"),
@@ -12157,6 +12162,7 @@ export async function runMetaTheoryGovernedExecution({
     sourceArtifacts: {
       orchestrationReport,
       decisionResults,
+      governanceRequirementsShadow,
     },
     ...workflowContractPackets,
   };

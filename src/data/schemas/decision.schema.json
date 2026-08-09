@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meta-kim.dev/schemas/decision-domain-v1.json",
+  "title": "Meta_Kim non-authorizing Decision Domain v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "decisionId", "decisionType", "identity", "status", "routeChangingDimensions", "options", "recommendation", "evidence", "requirement", "nativeSurface", "hostAnswerClaim", "invalidation", "revision", "createdAt", "updatedAt", "events"],
+  "properties": {
+    "schemaVersion": { "const": "decision-domain-v1" },
+    "decisionId": { "type": "string", "pattern": "^decision-[a-f0-9]{64}$" },
+    "decisionType": { "$ref": "#/$defs/opaqueRef" },
+    "identity": { "$ref": "#/$defs/identity" },
+    "status": { "enum": ["pending", "presented", "host_answer_claimed", "skipped", "invalidated"] },
+    "routeChangingDimensions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["scope", "risk_or_cost", "owner", "runtime_or_os", "dependency", "acceptance", "permission", "non_goal", "read_only_branch"] } },
+    "options": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/option" } },
+    "recommendation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/recommendation" }] },
+    "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+    "requirement": { "$ref": "#/$defs/requirement" },
+    "nativeSurface": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nativeSurface" }] },
+    "hostAnswerClaim": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/hostAnswerClaim" }] },
+    "invalidation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/invalidation" }] },
+    "revision": { "type": "integer", "minimum": 0 },
+    "createdAt": { "$ref": "#/$defs/timestamp" },
+    "updatedAt": { "$ref": "#/$defs/timestamp" },
+    "events": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/event" } }
+  },
+  "allOf": [
+    { "if": { "properties": { "status": { "const": "host_answer_claimed" } } }, "then": { "properties": { "hostAnswerClaim": { "$ref": "#/$defs/hostAnswerClaim" }, "invalidation": { "type": "null" } } } },
+    { "if": { "properties": { "status": { "enum": ["pending", "presented", "skipped"] } } }, "then": { "properties": { "hostAnswerClaim": { "type": "null" }, "invalidation": { "type": "null" } } } },
+    { "if": { "properties": { "status": { "const": "invalidated" } } }, "then": { "properties": { "invalidation": { "$ref": "#/$defs/invalidation" } } } }
+  ],
+  "$defs": {
+    "opaqueRef": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]{1,31}:[a-z0-9][a-z0-9._/-]{0,95}$",
+      "allOf": [
+        { "not": { "pattern": "(?:^|[:._/-])(?:secret|token|password|credential|bearer|key|api[._-]?key|access[._-]?key|private[._-]?key|client[._-]?secret|auth(?:orization)?)(?:$|[._/-])" } },
+        { "not": { "pattern": "(?:^|[:._/-])(?:sk|rk|pk|ghp|gho|ghu|ghs|github_pat|xox[abopr]|akia|aiza|eyj)(?:[._/-]|$)" } },
+        { "not": { "pattern": "(?:^|[:._/-])(?:sk|rk|pk)-[a-z0-9_-]{8,}(?:$|[._/-])" } },
+        { "not": { "pattern": "(?:^|[:._/-])(?:ghp|gho|ghu|ghs)_[a-z0-9]{12,}(?:$|[._/-])" } },
+        { "not": { "pattern": "(?:^|[:._/-])github_pat_[a-z0-9_]{12,}(?:$|[._/-])" } },
+        { "not": { "pattern": "(?:^|[:._/-])xox[abopr]-[a-z0-9-]{12,}(?:$|[._/-])" } },
+        { "not": { "pattern": "(?:^|[:._/-])akia[0-9a-z]{16}(?:$|[._/-])" } },
+        { "not": { "pattern": "(?:^|[:._/-])aiza[a-z0-9_-]{20,}(?:$|[._/-])" } },
+        { "not": { "pattern": "(?:^|[:._/-])eyj[a-z0-9_-]{8,}\\.[a-z0-9_-]{8,}\\.[a-z0-9_-]{8,}(?:$|[._/-])" } }
+      ]
+    },
+    "timestamp": { "type": "string", "format": "date-time", "minLength": 20 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "identity": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "runId": { "$ref": "#/$defs/opaqueRef" }, "taskFingerprint": { "$ref": "#/$defs/opaqueRef" }, "decisionKey": { "$ref": "#/$defs/opaqueRef" }, "scopeRef": { "$ref": "#/$defs/opaqueRef" } } },
+    "evidence": { "type": "object", "additionalProperties": false, "required": ["evidenceRef", "digest"], "properties": { "evidenceRef": { "$ref": "#/$defs/opaqueRef" }, "digest": { "$ref": "#/$defs/opaqueRef" } } },
+    "option": { "type": "object", "additionalProperties": false, "required": ["optionId", "displayRef", "tradeoffRefs", "evidenceRefs"], "properties": { "optionId": { "$ref": "#/$defs/opaqueRef" }, "displayRef": { "$ref": "#/$defs/opaqueRef" }, "tradeoffRefs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/opaqueRef" } }, "evidenceRefs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/opaqueRef" } } } },
+    "recommendation": { "type": "object", "additionalProperties": false, "required": ["optionId", "rationaleRef", "evidenceRefs"], "properties": { "optionId": { "$ref": "#/$defs/opaqueRef" }, "rationaleRef": { "$ref": "#/$defs/opaqueRef" }, "evidenceRefs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/opaqueRef" } } } },
+    "requirement": { "type": "object", "additionalProperties": false, "required": ["required", "reasonRef", "evidenceRefs"], "properties": { "required": { "type": "boolean" }, "reasonRef": { "$ref": "#/$defs/opaqueRef" }, "evidenceRefs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/opaqueRef" } } } },
+    "nativeSurface": { "type": "object", "additionalProperties": false, "required": ["runtime", "surface", "primary"], "properties": { "runtime": { "enum": ["codex", "claude"] }, "surface": { "enum": ["request_user_input", "AskUserQuestion"] }, "primary": { "type": "boolean" } }, "oneOf": [{ "properties": { "runtime": { "const": "codex" }, "surface": { "const": "request_user_input" } } }, { "properties": { "runtime": { "const": "claude" }, "surface": { "const": "AskUserQuestion" } } }] },
+    "hostAnswerClaim": { "type": "object", "additionalProperties": false, "required": ["kind", "source", "runtime", "surface", "decisionId", "revision", "requestRef", "claimRef", "optionSetDigest", "evidenceSetDigest", "issuedAt", "expiresAt", "claimedAt", "selectedOptionId", "answerDigest"], "properties": { "kind": { "const": "host_answer_claimed" }, "source": { "enum": ["codex_request_user_input", "claude_AskUserQuestion"] }, "runtime": { "enum": ["codex", "claude"] }, "surface": { "enum": ["request_user_input", "AskUserQuestion"] }, "decisionId": { "type": "string", "pattern": "^decision-[a-f0-9]{64}$" }, "revision": { "type": "integer", "minimum": 0 }, "requestRef": { "$ref": "#/$defs/opaqueRef" }, "claimRef": { "$ref": "#/$defs/opaqueRef" }, "optionSetDigest": { "$ref": "#/$defs/sha256" }, "evidenceSetDigest": { "$ref": "#/$defs/sha256" }, "issuedAt": { "$ref": "#/$defs/timestamp" }, "expiresAt": { "$ref": "#/$defs/timestamp" }, "claimedAt": { "$ref": "#/$defs/timestamp" }, "selectedOptionId": { "$ref": "#/$defs/opaqueRef" }, "answerDigest": { "$ref": "#/$defs/opaqueRef" } }, "oneOf": [{ "properties": { "source": { "const": "codex_request_user_input" }, "runtime": { "const": "codex" }, "surface": { "const": "request_user_input" } } }, { "properties": { "source": { "const": "claude_AskUserQuestion" }, "runtime": { "const": "claude" }, "surface": { "const": "AskUserQuestion" } } }] },
+    "invalidation": { "type": "object", "additionalProperties": false, "required": ["at", "reasonRef", "changed", "nextOptionsDigest", "nextEvidenceDigest"], "properties": { "at": { "$ref": "#/$defs/timestamp" }, "reasonRef": { "$ref": "#/$defs/opaqueRef" }, "changed": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["options", "evidence"] } }, "nextOptionsDigest": { "$ref": "#/$defs/sha256" }, "nextEvidenceDigest": { "$ref": "#/$defs/sha256" } } },
+    "event": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["type", "at"], "properties": { "type": { "const": "created" }, "at": { "$ref": "#/$defs/timestamp" } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "at"], "properties": { "type": { "const": "presented" }, "at": { "$ref": "#/$defs/timestamp" } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "at"], "properties": { "type": { "const": "host_answer_claimed" }, "at": { "$ref": "#/$defs/timestamp" } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "at", "reasonRef"], "properties": { "type": { "const": "skipped" }, "at": { "$ref": "#/$defs/timestamp" }, "reasonRef": { "$ref": "#/$defs/opaqueRef" } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "at", "reasonRef", "changed"], "properties": { "type": { "const": "invalidated" }, "at": { "$ref": "#/$defs/timestamp" }, "reasonRef": { "$ref": "#/$defs/opaqueRef" }, "changed": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["options", "evidence"] } } } }
+    ] }
+  }
+}

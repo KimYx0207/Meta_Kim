@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "meta-kim/governance-requirements.schema.json",
+  "title": "Governance Requirements Shadow Engine",
+  "description": "Pure, runtime-independent input and output shapes for deriving per-run governance requirements from normalized task facts.",
+  "oneOf": [
+    { "$ref": "#/$defs/taskFacts" },
+    { "$ref": "#/$defs/evaluation" }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "opaqueEvidenceReference": {
+      "description": "NFKC-normalized opaque evidence or policy reference. It is not user prompt text, a command, or a secret value.",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^(?:(?:fact|evidence|digest|policy|check|legacy|change|decision|security|intent|verification):[a-z0-9][a-z0-9._/-]{0,95}|sha256:[a-f0-9]{64})$",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "(?:raw[ _-]*prompt|(?:api|access|private|client)[ _-]*key|(?:client[ _-]*)?secret|(?:pass(?:word|phrase)?|credential|authorization|bearer|token)(?:$|[ :._/-])|(?:^|[ :._/-])(?:sk|pk|rk|ak)[_-](?:live|test|proj|prod)?[_-]?[a-z0-9]{8,}|(?:^|[ :._/-])(?:ghp|gho|ghu|github_pat|xox[baprs]|ya29)[_-]?[a-z0-9_-]{6,}|(?:^|[ :._/-])eyj[a-z0-9_-]{10,}|(?:^|[ :._/-])key[_-][a-z0-9]{12,})"
+          }
+        }
+      ]
+    },
+    "evidenceReferences": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/opaqueEvidenceReference" }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "reason", "evidence"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "reason": { "$ref": "#/$defs/nonEmptyString" },
+        "evidence": { "$ref": "#/$defs/evidenceReferences" }
+      }
+    },
+    "taskFacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "intent",
+        "clarity",
+        "evidence",
+        "change",
+        "decision",
+        "security",
+        "verification"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "governance-task-facts-v1" },
+        "intent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["executable", "userRequestedReview", "durableLearningRequested"],
+          "properties": {
+            "executable": { "type": "boolean" },
+            "userRequestedReview": { "type": "boolean" },
+            "durableLearningRequested": { "type": "boolean" }
+          }
+        },
+        "clarity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["blockingUnknowns"],
+          "properties": {
+            "blockingUnknowns": { "$ref": "#/$defs/evidenceReferences" }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["currentExternalFactsRequired", "localEvidenceSufficient", "references"],
+          "properties": {
+            "currentExternalFactsRequired": { "type": "boolean" },
+            "localEvidenceSufficient": { "type": "boolean" },
+            "references": { "$ref": "#/$defs/evidenceReferences" }
+          }
+        },
+        "change": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["multiStep", "crossModule", "dataMigration", "externalSideEffect", "complexArchitectureChange", "multipleCapabilities", "publicInterfaceChange", "complexBusinessLogic", "dataStructureChange", "behaviorPreservingInternalOnly"],
+          "properties": {
+            "multiStep": { "type": "boolean" },
+            "crossModule": { "type": "boolean" },
+            "dataMigration": { "type": "boolean" },
+            "externalSideEffect": { "type": "boolean" },
+            "complexArchitectureChange": { "type": "boolean" },
+            "multipleCapabilities": { "type": "boolean" },
+            "publicInterfaceChange": { "type": "boolean" },
+            "complexBusinessLogic": { "type": "boolean" },
+            "dataStructureChange": { "type": "boolean" },
+            "behaviorPreservingInternalOnly": { "type": "boolean" }
+          }
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reasonableOptionCount", "materialDimensions", "internalImplementationOnly"],
+          "properties": {
+            "reasonableOptionCount": { "type": "integer", "minimum": 0 },
+            "materialDimensions": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "enum": ["result", "risk", "cost", "scope", "permission", "compatibility", "longTermImpact", "publicReadyAcceptance"]
+              }
+            },
+            "internalImplementationOnly": { "type": "boolean" }
+          }
+        },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["auth", "permission", "credential", "secret", "payment", "production", "databaseDestructive", "systemConfiguration", "highPrivilegeDependency", "highRiskMcp"],
+          "properties": {
+            "auth": { "type": "boolean" },
+            "permission": { "type": "boolean" },
+            "credential": { "type": "boolean" },
+            "secret": { "type": "boolean" },
+            "payment": { "type": "boolean" },
+            "production": { "type": "boolean" },
+            "databaseDestructive": { "type": "boolean" },
+            "systemConfiguration": { "type": "boolean" },
+            "highPrivilegeDependency": { "type": "boolean" },
+            "highRiskMcp": { "type": "boolean" }
+          }
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["deterministicChecks"],
+          "properties": {
+            "deterministicChecks": { "$ref": "#/$defs/evidenceReferences" }
+          }
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "governanceRequirements", "parityDiagnostics"],
+      "properties": {
+        "schemaVersion": { "const": "governance-requirements-v1" },
+        "governanceRequirements": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clarification", "research", "planning", "humanDecision", "permission", "review", "metaReview", "securityReview", "verification", "evolution"],
+          "properties": {
+            "clarification": { "$ref": "#/$defs/requirement" },
+            "research": { "$ref": "#/$defs/requirement" },
+            "planning": { "$ref": "#/$defs/requirement" },
+            "humanDecision": { "$ref": "#/$defs/requirement" },
+            "permission": { "$ref": "#/$defs/requirement" },
+            "review": { "$ref": "#/$defs/requirement" },
+            "metaReview": { "$ref": "#/$defs/requirement" },
+            "securityReview": { "$ref": "#/$defs/requirement" },
+            "verification": { "$ref": "#/$defs/requirement" },
+            "evolution": { "$ref": "#/$defs/requirement" }
+          }
+        },
+        "parityDiagnostics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "legacySource", "differences", "notes"],
+          "properties": {
+            "mode": { "enum": ["not_compared", "compared"] },
+            "legacySource": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/opaqueEvidenceReference" }] },
+            "differences": { "type": "array" },
+            "notes": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/nonEmptyString" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

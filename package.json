@@ -199,6 +199,7 @@
     "canonical/",
     "scripts/**/*.mjs",
     "scripts/**/*.ps1",
+    "src/domain/governance/governance-requirements.mjs",
     "bin/",
     "config/",
     "docs/images/",
