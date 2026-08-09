@@ -8,17 +8,63 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { runWindowsGuardedCommand } from "../../scripts/eval-process-runner.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const launcherPath = path.join(repoRoot, "scripts", "windows-job-process-runner.ps1");
 const powershell = "powershell.exe";
+// This fixture compiles the Windows launcher, then starts a three-process
+// tree. Keep its readiness observation aligned with the guard deadline so a
+// cold start cannot be mistaken for an owned-tree cleanup failure.
+const TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS = 20_000;
+const TIMEOUT_CLEANUP_READY_TIMEOUT_MS = TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS;
+// Early launcher failure must surface well before the 10-second guard timeout.
+const EARLY_LAUNCHER_EXIT_BUDGET_MS = 8_000;
+const testTempDirectories = new Set();
+const testTempRoot = path.resolve(os.tmpdir());
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+function registerTestDirectory(tempDir) {
+  const resolved = path.resolve(tempDir);
+  const relative = path.relative(testTempRoot, resolved);
+  if (
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative) ||
+    path.dirname(relative) !== "." ||
+    !path.basename(resolved).startsWith("meta-kim-job-")
+  ) {
+    throw new Error(`Refusing to clean an unregistered test directory: ${resolved}`);
+  }
+  testTempDirectories.add(resolved);
+}
+
+after(() => {
+  const cleanupErrors = [];
+  for (const tempDir of testTempDirectories) {
+    try {
+      rmSync(tempDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      cleanupErrors,
+      "Failed to remove registered Windows Job Object test directories",
+    );
+  }
+});
 
 async function waitForFile(filePath, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
@@ -228,8 +274,8 @@ function startLauncher(tempDir, rootScript) {
   return startLauncherForSpec(tempDir, writeSpec(tempDir, rootScript));
 }
 
-async function readOwnedTree(pidsPath) {
-  await waitForFile(pidsPath);
+async function readOwnedTree(pidsPath, timeoutMs = 10_000) {
+  await waitForFile(pidsPath, timeoutMs);
   const pids = Object.values(JSON.parse(readFileSync(pidsPath, "utf8")));
   assert.equal(pids.length, 3);
   assert.ok(pids.every((pid) => Number.isSafeInteger(pid) && pid > 0));
@@ -316,7 +362,7 @@ describe(
           assert.doesNotMatch(raw, /PRIVATE|secret|--token|spec\.json/u);
         } finally {
           if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
-          rmSync(tempDir, { recursive: true, force: true });
+          registerTestDirectory(tempDir);
         }
       }
     });
@@ -373,7 +419,7 @@ describe(
         assert.doesNotMatch(raw, /中文参数|emoji|café|日本語|한국어|utf8-spec/u);
       } finally {
         if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -399,7 +445,7 @@ describe(
       } finally {
         if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
         stopOwnedProcesses(identities);
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -426,7 +472,7 @@ describe(
       } finally {
         if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
         stopOwnedProcesses(identities);
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -444,7 +490,7 @@ describe(
       } finally {
         if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
         stopOwnedProcesses(identities);
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -477,14 +523,18 @@ describe(
       });
       let treeIdentities = [];
       let launcherIdentities = [];
+      let observedLauncherPids = [];
       try {
         treeIdentities = await readOwnedTree(pidsPath);
         await waitForCondition(
-          () => directChildPids(supervisor.pid).length > 0,
+          () => {
+            observedLauncherPids = directChildPids(supervisor.pid);
+            return observedLauncherPids.length > 0;
+          },
           "owned PowerShell launcher",
           30_000,
         );
-        launcherIdentities = captureOwnedIdentities(directChildPids(supervisor.pid));
+        launcherIdentities = captureOwnedIdentities(observedLauncherPids);
         assert.ok(launcherIdentities.length >= 1);
 
         const supervisorExit = waitForChildExit(supervisor);
@@ -495,7 +545,7 @@ describe(
       } finally {
         if (supervisor.exitCode === null) supervisor.kill("SIGKILL");
         stopOwnedProcesses([...treeIdentities, ...launcherIdentities]);
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -521,7 +571,10 @@ describe(
             timeout: 10_000,
           }),
         );
-        assert.ok(Date.now() - startedAt < 5_000, `failure took ${Date.now() - startedAt}ms`);
+        assert.ok(
+          Date.now() - startedAt < EARLY_LAUNCHER_EXIT_BUDGET_MS,
+          `failure took ${Date.now() - startedAt}ms`,
+        );
         assert.equal(
           error.code,
           "META_KIM_WINDOWS_JOB_PROCESS_GROUP_LAUNCHER_EARLY_EXIT",
@@ -530,7 +583,7 @@ describe(
         assert.equal(error.ownedProcessGroupCleanupReason, "launcher_result_missing");
         assertNoWholeTreeClaim(error);
       } finally {
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -585,12 +638,18 @@ describe(
           reason: "launcher_result_missing",
           claim: "not_claimed",
         });
-        const exit = await waitForChildExit(helper, 5_000);
+        const exit = await waitForChildExit(
+          helper,
+          EARLY_LAUNCHER_EXIT_BUDGET_MS,
+        );
         assert.equal(exit.code, 0);
-        assert.ok(Date.now() - startedAt < 5_000, `helper exit took ${Date.now() - startedAt}ms`);
+        assert.ok(
+          Date.now() - startedAt < EARLY_LAUNCHER_EXIT_BUDGET_MS,
+          `helper exit took ${Date.now() - startedAt}ms`,
+        );
       } finally {
         if (helper.exitCode === null) helper.kill("SIGKILL");
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -602,20 +661,23 @@ describe(
         const rejection = expectRejected(
           runWindowsGuardedCommand(process.execPath, [rootScript], {
             cwd: tempDir,
-            timeout: 5_000,
+            timeout: TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS,
             outputLimitBytes: 64 * 1024,
             tailBytes: 1024,
           }),
         );
-        identities = await readOwnedTree(pidsPath);
+        identities = await readOwnedTree(
+          pidsPath,
+          TIMEOUT_CLEANUP_READY_TIMEOUT_MS,
+        );
         const error = await rejection;
-        assert.equal(error.timeoutMs, 5_000);
+        assert.equal(error.timeoutMs, TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS);
         assert.equal(error.ownedProcessGroupCleanupVerified, true);
         assertNoWholeTreeClaim(error);
         await waitForOwnedProcessesToExit(identities);
       } finally {
         stopOwnedProcesses(identities);
-        rmSync(tempDir, { recursive: true, force: true });
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -653,7 +715,7 @@ describe(
           await waitForOwnedProcessesToExit(identities);
         } finally {
           stopOwnedProcesses(identities);
-          rmSync(tempDir, { recursive: true, force: true });
+          registerTestDirectory(tempDir);
         }
       });
     }
