@@ -5,6 +5,7 @@
     "expectedDurationMs": 900000,
     "commandTimeoutMs": 300000,
     "projectAwareGlobalUpdateTimeoutMs": 600000,
+    "portableRuntimeGlobalUpdateTimeoutMs": 600000,
     "historicalRefEnvironmentKey": "META_KIM_PACKED_HISTORY_REF"
   },
   "operationTimeoutsMs": {

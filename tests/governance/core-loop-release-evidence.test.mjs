@@ -38,6 +38,26 @@ const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const verifyRunnerSource = readFileSync("scripts/run-verify-all.mjs", "utf8");
 const evalMetaAgentsSource = readFileSync("scripts/eval-meta-agents.mjs", "utf8");
 
+function completePortableRuntimeGlobalUpdateProof() {
+  return {
+    status: "passed",
+    diagnostics: {
+      operation: "packed-portable-runtime-global-update",
+      timeoutMs: 600000,
+      elapsedMs: 125,
+      timedOut: false,
+      exitCode: 0,
+      errorCode: null,
+      signal: null,
+      outputRetention: "metadata_only",
+      stdoutPresent: false,
+      stderrPresent: false,
+      stdoutChars: 0,
+      stderrChars: 0,
+    },
+  };
+}
+
 function completePackedProductProof() {
   return {
     status: "passed",
@@ -131,6 +151,7 @@ function completePackedProductProof() {
       },
       portableRuntime: {
         status: "passed",
+        globalUpdate: completePortableRuntimeGlobalUpdateProof(),
         agentProjection: { status: "passed" },
         ownershipManifest: {
           status: "passed",
@@ -758,6 +779,7 @@ test("packed product proof requires every portable runtime subproof", () => {
   );
 
   for (const key of [
+    "globalUpdate",
     "agentProjection",
     "ownershipManifest",
     "hookProjection",
@@ -773,6 +795,216 @@ test("packed product proof requires every portable runtime subproof", () => {
       packedProductProofComplete(incomplete),
       false,
       `${key} must be required for packed product proof`,
+    );
+  }
+
+  const portableGlobalUpdateDiagnosticKeys = [
+    "operation",
+    "timeoutMs",
+    "elapsedMs",
+    "timedOut",
+    "exitCode",
+    "errorCode",
+    "signal",
+    "outputRetention",
+    "stdoutPresent",
+    "stderrPresent",
+    "stdoutChars",
+    "stderrChars",
+  ];
+  for (const key of portableGlobalUpdateDiagnosticKeys) {
+    const missingDiagnostic = structuredClone(complete);
+    delete missingDiagnostic.currentPackage.portableRuntime.globalUpdate.diagnostics[key];
+    assert.equal(
+      packedProductProofComplete(missingDiagnostic),
+      false,
+      `portableRuntime.globalUpdate.diagnostics.${key} must be required`,
+    );
+  }
+
+  const completeWithObservedOutput = structuredClone(complete);
+  const observedOutputDiagnostics =
+    completeWithObservedOutput.currentPackage.portableRuntime.globalUpdate.diagnostics;
+  observedOutputDiagnostics.stdoutChars = 42;
+  observedOutputDiagnostics.stdoutPresent = true;
+  observedOutputDiagnostics.stderrChars = 3;
+  observedOutputDiagnostics.stderrPresent = true;
+  assert.equal(
+    packedProductProofComplete(completeWithObservedOutput),
+    true,
+    "metadata-only character counts remain valid when presence flags match",
+  );
+
+  const secretSentinel = "portable-proof-secret-sentinel";
+  for (const [label, getterBody] of [
+    ["returns a secret sentinel", () => secretSentinel],
+    ["throws a secret sentinel", () => {
+      throw new Error(secretSentinel);
+    }],
+  ]) {
+    const accessorProof = structuredClone(complete);
+    let getterCalls = 0;
+    Object.defineProperty(
+      accessorProof.currentPackage.portableRuntime,
+      "globalUpdate",
+      {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return getterBody();
+        },
+      },
+    );
+    let predicateResult = null;
+    let escaped = false;
+    try {
+      predicateResult = packedProductProofComplete(accessorProof);
+    } catch {
+      escaped = true;
+    }
+    assert.equal(escaped, false, `globalUpdate getter that ${label} must not escape`);
+    assert.equal(predicateResult, false, `globalUpdate getter that ${label} must fail closed`);
+    assert.equal(getterCalls, 0, `globalUpdate getter that ${label} must not execute`);
+  }
+
+  for (const [label, proxyTarget, handler] of [
+    [
+      "portableRuntime ownKeys trap",
+      "portableRuntime",
+      {
+        ownKeys() {
+          throw new Error(secretSentinel);
+        },
+      },
+    ],
+    [
+      "portableRuntime descriptor trap",
+      "portableRuntime",
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error(secretSentinel);
+        },
+      },
+    ],
+    [
+      "globalUpdate ownKeys trap",
+      "globalUpdate",
+      {
+        ownKeys() {
+          throw new Error(secretSentinel);
+        },
+      },
+    ],
+    [
+      "globalUpdate descriptor trap",
+      "globalUpdate",
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error(secretSentinel);
+        },
+      },
+    ],
+  ]) {
+    const proxyProof = structuredClone(complete);
+    if (proxyTarget === "portableRuntime") {
+      const portableRuntime = proxyProof.currentPackage.portableRuntime;
+      proxyProof.currentPackage.portableRuntime = new Proxy(portableRuntime, handler);
+    } else {
+      const globalUpdate = proxyProof.currentPackage.portableRuntime.globalUpdate;
+      proxyProof.currentPackage.portableRuntime.globalUpdate = new Proxy(globalUpdate, handler);
+    }
+    let predicateResult = null;
+    let escaped = false;
+    try {
+      predicateResult = packedProductProofComplete(proxyProof);
+    } catch {
+      escaped = true;
+    }
+    assert.equal(escaped, false, `${label} failure must not escape`);
+    assert.equal(predicateResult, false, `${label} failure must fail closed`);
+  }
+
+  for (const [label, mutateGlobalUpdate] of [
+    ["failed status", (globalUpdate) => {
+      globalUpdate.status = "failed";
+    }],
+    ["missing diagnostics", (globalUpdate) => {
+      delete globalUpdate.diagnostics;
+    }],
+    ["wrong operation", (globalUpdate) => {
+      globalUpdate.diagnostics.operation = "packed-project-aware-global-update";
+    }],
+    ["wrong timeout", (globalUpdate) => {
+      globalUpdate.diagnostics.timeoutMs = 300000;
+    }],
+    ["timed out", (globalUpdate) => {
+      globalUpdate.diagnostics.timedOut = true;
+    }],
+    ["nonzero exit", (globalUpdate) => {
+      globalUpdate.diagnostics.exitCode = 1;
+    }],
+    ["command error", (globalUpdate) => {
+      globalUpdate.diagnostics.errorCode = "ENOBUFS";
+    }],
+    ["retained output", (globalUpdate) => {
+      globalUpdate.diagnostics.outputRetention = "raw";
+    }],
+    ["termination signal", (globalUpdate) => {
+      globalUpdate.diagnostics.signal = "SIGTERM";
+    }],
+    ["negative elapsed time", (globalUpdate) => {
+      globalUpdate.diagnostics.elapsedMs = -1;
+    }],
+    ["fractional stdout character count", (globalUpdate) => {
+      globalUpdate.diagnostics.stdoutChars = 0.5;
+    }],
+    ["negative stderr character count", (globalUpdate) => {
+      globalUpdate.diagnostics.stderrChars = -1;
+    }],
+    ["stdout presence/count mismatch", (globalUpdate) => {
+      globalUpdate.diagnostics.stdoutPresent = true;
+    }],
+    ["stderr presence/count mismatch", (globalUpdate) => {
+      globalUpdate.diagnostics.stderrChars = 1;
+    }],
+    ["raw stdout", (globalUpdate) => {
+      globalUpdate.diagnostics.stdout = "sensitive output";
+    }],
+    ["raw stderr", (globalUpdate) => {
+      globalUpdate.diagnostics.stderr = "sensitive error";
+    }],
+    ["raw error message", (globalUpdate) => {
+      globalUpdate.diagnostics.message = "sensitive message";
+    }],
+    ["raw error stack", (globalUpdate) => {
+      globalUpdate.diagnostics.stack = "sensitive stack";
+    }],
+    ["stdout tail", (globalUpdate) => {
+      globalUpdate.diagnostics.stdoutTail = "sensitive tail";
+    }],
+    ["stderr tail", (globalUpdate) => {
+      globalUpdate.diagnostics.stderrTail = "sensitive tail";
+    }],
+    ["stdout digest", (globalUpdate) => {
+      globalUpdate.diagnostics.stdoutDigest = "a".repeat(64);
+    }],
+    ["stderr digest", (globalUpdate) => {
+      globalUpdate.diagnostics.stderrDigest = "b".repeat(64);
+    }],
+    ["unexpected diagnostics key", (globalUpdate) => {
+      globalUpdate.diagnostics.extra = true;
+    }],
+    ["unexpected global-update key", (globalUpdate) => {
+      globalUpdate.extra = true;
+    }],
+  ]) {
+    const malformed = structuredClone(complete);
+    mutateGlobalUpdate(malformed.currentPackage.portableRuntime.globalUpdate);
+    assert.equal(
+      packedProductProofComplete(malformed),
+      false,
+      `portable runtime global update proof must reject ${label}`,
     );
   }
 

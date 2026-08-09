@@ -212,6 +212,23 @@ function completePackedUserProof(packageSha256) {
       },
       portableRuntime: {
         status: "passed",
+        globalUpdate: {
+          status: "passed",
+          diagnostics: {
+            operation: "packed-portable-runtime-global-update",
+            timeoutMs: 600000,
+            elapsedMs: 125,
+            timedOut: false,
+            exitCode: 0,
+            errorCode: null,
+            signal: null,
+            outputRetention: "metadata_only",
+            stdoutPresent: false,
+            stderrPresent: false,
+            stdoutChars: 0,
+            stderrChars: 0,
+          },
+        },
         agentProjection: { status: "passed" },
         ownershipManifest: { status: "passed", overlappingWriterPathCount: 0 },
         hookProjection: { status: "passed" },
@@ -505,6 +522,13 @@ test("release audit recomputes packed completeness and rejects legacy or partial
       delete transport.currentHostAdapter;
     }
   }, "count-only proof");
+  reject((proof) => {
+    delete proof.currentPackage.portableRuntime.globalUpdate;
+  }, "cached report missing portable runtime global update proof");
+  reject((proof) => {
+    proof.currentPackage.portableRuntime.globalUpdate.diagnostics.stdout =
+      "raw packed command output";
+  }, "cached report retaining raw portable runtime update output");
   reject((proof) => {
     delete proof.currentPackage.portableRuntime.emptyMcpTransport.missingCount;
   }, "missing exact partition fact");

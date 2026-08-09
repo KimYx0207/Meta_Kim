@@ -97,12 +97,16 @@ export const PACKED_USER_ACCEPTANCE_EXPECTED_DURATION_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.expectedDurationMs;
 export const PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.projectAwareGlobalUpdateTimeoutMs;
+export const PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS =
+  PACKED_RELEASE_POLICY.packedUserAcceptance.portableRuntimeGlobalUpdateTimeoutMs;
 const ACCEPTANCE_SKILL_FILTER = "planning-with-files";
 const TRANSIENT_PACKAGE_TARGETS = Object.freeze(["claude", "codex"]);
 const DEFAULT_TIMEOUT_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.commandTimeoutMs;
 const PROJECT_AWARE_GLOBAL_UPDATE_OPERATION_ID =
   "packed-project-aware-global-update";
+const PORTABLE_RUNTIME_GLOBAL_UPDATE_OPERATION_ID =
+  "packed-portable-runtime-global-update";
 const PACKED_COMMAND_ERROR_CODE_ALLOWLIST = new Set([
   "EACCES",
   "EAGAIN",
@@ -133,6 +137,7 @@ const PACKED_COMMAND_ERROR_CODE_ALLOWLIST = new Set([
 ]);
 const PACKED_COMMAND_OPERATION_ALLOWLIST = new Set([
   PROJECT_AWARE_GLOBAL_UPDATE_OPERATION_ID,
+  PORTABLE_RUNTIME_GLOBAL_UPDATE_OPERATION_ID,
 ]);
 const PACKED_COMMAND_SIGNAL_ALLOWLIST = new Set(
   Object.keys(os.constants.signals ?? {}),
@@ -1091,8 +1096,8 @@ function runPortableRuntimePreparation({ packageInfo, descriptor, roots, env, ti
     PACKED_GLOBAL_AGENT_TARGETS,
   );
   const hookEnv = { ...env, META_KIM_WITH_GLOBAL_HOOKS: "1" };
-  requireSuccess(
-    "packed installed CLI global runtime update",
+  const globalUpdateStartedAt = Date.now();
+  const globalUpdate = requirePackedCommandSuccess(
     runCli(
       descriptor.command,
       [
@@ -1106,8 +1111,17 @@ function runPortableRuntimePreparation({ packageInfo, descriptor, roots, env, ti
         ACCEPTANCE_SKILL_FILTER,
         "--with-global-hooks",
       ],
-      { cwd: roots.ordinaryCwd, env: hookEnv, timeoutMs },
+      {
+        cwd: roots.ordinaryCwd,
+        env: hookEnv,
+        timeoutMs: PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS,
+      },
     ),
+    {
+      operation: PORTABLE_RUNTIME_GLOBAL_UPDATE_OPERATION_ID,
+      timeoutMs: PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS,
+      elapsedMs: Date.now() - globalUpdateStartedAt,
+    },
   );
 
   const agentProof = artifactFingerprint(
@@ -1146,6 +1160,10 @@ function runPortableRuntimePreparation({ packageInfo, descriptor, roots, env, ti
   return {
     proof: {
       status: "prepared",
+      globalUpdate: {
+        status: "passed",
+        diagnostics: globalUpdate.boundedDiagnostics,
+      },
       agentProjection: {
         status: "passed",
         canonicalAgentCount: agentIds.length,

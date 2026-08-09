@@ -25,11 +25,106 @@ const PACKED_UNINSTALL_PUBLIC_CLI_RECOVERY_KEYS = Object.freeze([
   "status",
   "withinIsolatedPrefix",
 ]);
+const PORTABLE_RUNTIME_GLOBAL_UPDATE_KEYS = Object.freeze([
+  "status",
+  "diagnostics",
+]);
+const PORTABLE_RUNTIME_GLOBAL_UPDATE_DIAGNOSTIC_KEYS = Object.freeze([
+  "operation",
+  "timeoutMs",
+  "elapsedMs",
+  "timedOut",
+  "exitCode",
+  "errorCode",
+  "signal",
+  "outputRetention",
+  "stdoutPresent",
+  "stderrPresent",
+  "stdoutChars",
+  "stderrChars",
+]);
 
 function hasExactOrderedValues(values, expected) {
   return Array.isArray(values) &&
     values.length === expected.length &&
     values.every((value, index) => value === expected[index]);
+}
+
+function exactOwnDataRecord(value, expectedKeys) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  try {
+    const ownKeys = Reflect.ownKeys(value);
+    if (
+      ownKeys.length !== expectedKeys.length ||
+      ownKeys.some((key) => typeof key !== "string" || !expectedKeys.includes(key))
+    ) {
+      return null;
+    }
+
+    const record = Object.create(null);
+    for (const key of expectedKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !("value" in descriptor)) return null;
+      record[key] = descriptor.value;
+    }
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+function ownEnumerableDataValue(value, key) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  try {
+    if (!Reflect.ownKeys(value).includes(key)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) return null;
+    return { value: descriptor.value };
+  } catch {
+    return null;
+  }
+}
+
+function portableRuntimeGlobalUpdateProofComplete(portableRuntime) {
+  const globalUpdateValue = ownEnumerableDataValue(portableRuntime, "globalUpdate");
+  if (!globalUpdateValue) return false;
+  const globalUpdate = exactOwnDataRecord(
+    globalUpdateValue.value,
+    PORTABLE_RUNTIME_GLOBAL_UPDATE_KEYS,
+  );
+  if (!globalUpdate || globalUpdate.status !== "passed") return false;
+
+  const diagnostics = exactOwnDataRecord(
+    globalUpdate.diagnostics,
+    PORTABLE_RUNTIME_GLOBAL_UPDATE_DIAGNOSTIC_KEYS,
+  );
+  if (!diagnostics) return false;
+
+  return (
+    diagnostics.operation === "packed-portable-runtime-global-update" &&
+    diagnostics.timeoutMs === 600_000 &&
+    Number.isSafeInteger(diagnostics.elapsedMs) &&
+    diagnostics.elapsedMs >= 0 &&
+    diagnostics.timedOut === false &&
+    diagnostics.exitCode === 0 &&
+    diagnostics.errorCode === null &&
+    diagnostics.signal === null &&
+    diagnostics.outputRetention === "metadata_only" &&
+    typeof diagnostics.stdoutPresent === "boolean" &&
+    typeof diagnostics.stderrPresent === "boolean" &&
+    Number.isSafeInteger(diagnostics.stdoutChars) &&
+    diagnostics.stdoutChars >= 0 &&
+    Number.isSafeInteger(diagnostics.stderrChars) &&
+    diagnostics.stderrChars >= 0 &&
+    diagnostics.stdoutPresent === (diagnostics.stdoutChars > 0) &&
+    diagnostics.stderrPresent === (diagnostics.stderrChars > 0)
+  );
 }
 
 function packedUninstallProofComplete(currentPackage) {
@@ -172,6 +267,7 @@ export function packedProductProofComplete(packedUserProof) {
     historicalUpdate?.checkMethod ===
       "current_update_internal_global_check_plus_exact_artifact_manifest_validation" &&
     portableRuntime?.status === "passed" &&
+    portableRuntimeGlobalUpdateProofComplete(portableRuntime) &&
     portableRuntime.agentProjection?.status === "passed" &&
     portableRuntime.ownershipManifest?.status === "passed" &&
     portableRuntime.ownershipManifest?.overlappingWriterPathCount === 0 &&

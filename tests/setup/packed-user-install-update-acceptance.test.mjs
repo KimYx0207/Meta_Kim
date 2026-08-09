@@ -14,6 +14,7 @@ import test from "node:test";
 
 import {
   PACKED_GLOBAL_AGENT_TARGETS,
+  PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS,
   PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS,
   PACKED_USER_TARGETS,
   assertCurrentVersionTagAbsent,
@@ -488,6 +489,114 @@ test("project-aware packed global update alone receives the policy-scoped extend
   );
 });
 
+test("portable runtime global update receives its own policy-scoped extended timeout without widening other packed lanes", () => {
+  assert.equal(
+    releaseVerificationPolicy.packedUserAcceptance.commandTimeoutMs,
+    300_000,
+    "ordinary packed commands retain their existing five-minute timeout",
+  );
+  assert.equal(
+    releaseVerificationPolicy.packedUserAcceptance.portableRuntimeGlobalUpdateTimeoutMs,
+    600_000,
+  );
+  assert.equal(PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS, 600_000);
+
+  const portablePreparation = acceptanceFunctionSource(
+    "runPortableRuntimePreparation",
+    "probePackedMcpTransport",
+  );
+  assert.ok(
+    portablePreparation.includes("requirePackedCommandSuccess("),
+    "portable runtime preparation must use the metadata-only packed command gate",
+  );
+  assert.equal(
+    portablePreparation.includes("requireSuccess("),
+    false,
+    "portable runtime preparation must not expose raw command output through the legacy gate",
+  );
+  assert.ok(
+    portablePreparation.includes(
+      "timeoutMs: PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS",
+    ),
+    "the portable global update must use its dedicated ten-minute timeout",
+  );
+  assert.ok(
+    portablePreparation.includes(
+      "operation: PORTABLE_RUNTIME_GLOBAL_UPDATE_OPERATION_ID",
+    ),
+    "the portable global update must emit its dedicated operation identity",
+  );
+  assert.ok(
+    portablePreparation.includes("diagnostics: globalUpdate.boundedDiagnostics"),
+    "a successful portable proof must retain only bounded diagnostics",
+  );
+
+  const ordinaryGlobalCli = acceptanceFunctionSource(
+    "runInstalledPublicCli",
+    "runInstalledPublicProjectCli",
+  );
+  const projectCli = acceptanceFunctionSource(
+    "runInstalledPublicProjectCli",
+    "runInstalledPublicGlobalUpdateFromProject",
+  );
+  const projectAwareGlobalUpdate = acceptanceFunctionSource(
+    "runInstalledPublicGlobalUpdateFromProject",
+    "runProjectCapabilityCopy",
+  );
+  const historicalLane = acceptanceFunctionSource(
+    "runHistoricalUpdateLane",
+    "runPackedUserInstallUpdateAcceptance",
+  );
+  for (const [lane, source] of [
+    ["ordinary global", ordinaryGlobalCli],
+    ["project", projectCli],
+    ["project-aware global", projectAwareGlobalUpdate],
+    ["historical", historicalLane],
+  ]) {
+    assert.equal(
+      source.includes("PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS"),
+      false,
+      `${lane} lane inherited the portable-only timeout`,
+    );
+  }
+  assert.ok(
+    projectAwareGlobalUpdate.includes(
+      "PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS",
+    ),
+    "the project-aware lane must retain its independently named timeout",
+  );
+
+  assert.deepEqual(
+    [...PACKED_USER_TARGETS].sort(),
+    ["claude", "codex", "cursor", "openclaw"].sort(),
+  );
+  assert.ok(
+    portablePreparation.includes("const runtimeTargetIds = [...PACKED_USER_TARGETS]"),
+    "portable preparation must continue covering all four declared runtimes",
+  );
+  assert.ok(portablePreparation.includes('META_KIM_WITH_GLOBAL_HOOKS: "1"'));
+  assert.ok(portablePreparation.includes('"--with-global-hooks"'));
+  assert.ok(portablePreparation.includes("seeded.userAgents"));
+  assert.ok(portablePreparation.includes("seeded.userHookCommand"));
+  assert.ok(portablePreparation.includes("requireDurableMcpServer("));
+  assert.ok(portablePreparation.includes("unknownAgentsPreserved: true"));
+  assert.ok(portablePreparation.includes("unknownHookPreserved: true"));
+  assert.ok(
+    portablePreparation.includes("unknownServerEnvAndAuthPreserved: true"),
+  );
+
+  const acceptanceRunner = acceptanceFunctionSource(
+    "runPackedUserInstallUpdateAcceptance",
+    "main",
+  );
+  assert.ok(
+    acceptanceRunner.includes(
+      "boundedDiagnostics: error.boundedDiagnostics ?? null",
+    ),
+    "a portable preparation failure must surface metadata-only diagnostics at the top level",
+  );
+});
+
 const PACKED_DIAGNOSTIC_KEYS = Object.freeze([
   "elapsedMs",
   "errorCode",
@@ -819,39 +928,45 @@ test("packed command result snapshot converts throwing Proxy descriptor traps to
   );
 });
 
-test("project-aware packed command helper fails closed on ETIMEDOUT and ENOBUFS", () => {
+test("packed command helper fails closed on ETIMEDOUT and ENOBUFS for both extended-timeout operations", () => {
   const rawErrorSentinel = ["raw", "error", "private", "sentinel"].join("-");
   const stdoutSentinel = ["stdout", "private", "sentinel"].join("-");
   const stderrSentinel = ["stderr", "private", "sentinel"].join("-");
-  for (const code of ["ETIMEDOUT", "ENOBUFS"]) {
-    const sourceError = Object.assign(new Error(rawErrorSentinel), { code });
-    const timeoutResult = packedCommandResult({
-      status: null,
-      signal: "SIGTERM",
-      error: sourceError,
-      stdout: stdoutSentinel,
-      stderr: stderrSentinel,
-    });
+  for (const operation of [
+    "packed-project-aware-global-update",
+    "packed-portable-runtime-global-update",
+  ]) {
+    for (const code of ["ETIMEDOUT", "ENOBUFS"]) {
+      const sourceError = Object.assign(new Error(rawErrorSentinel), { code });
+      const timeoutResult = packedCommandResult({
+        status: null,
+        signal: "SIGTERM",
+        error: sourceError,
+        stdout: stdoutSentinel,
+        stderr: stderrSentinel,
+      });
 
-    assert.throws(
-      () =>
-        requirePackedCommandSuccess(
-          timeoutResult,
-          packedDiagnosticsOptions({ elapsedMs: 600_123 }),
-        ),
-      (error) => {
-        assertSafePackedError(
-          error,
-          "packed command failed",
-          code,
-          [rawErrorSentinel, stdoutSentinel, stderrSentinel],
-        );
-        assert.equal(error.boundedDiagnostics.timedOut, code === "ETIMEDOUT");
-        assert.equal(error.boundedDiagnostics.stdoutChars, stdoutSentinel.length);
-        assert.equal(error.boundedDiagnostics.stderrChars, stderrSentinel.length);
-        return true;
-      },
-    );
+      assert.throws(
+        () =>
+          requirePackedCommandSuccess(
+            timeoutResult,
+            packedDiagnosticsOptions({ operation, elapsedMs: 600_123 }),
+          ),
+        (error) => {
+          assertSafePackedError(
+            error,
+            "packed command failed",
+            code,
+            [rawErrorSentinel, stdoutSentinel, stderrSentinel],
+          );
+          assert.equal(error.boundedDiagnostics.operation, operation);
+          assert.equal(error.boundedDiagnostics.timedOut, code === "ETIMEDOUT");
+          assert.equal(error.boundedDiagnostics.stdoutChars, stdoutSentinel.length);
+          assert.equal(error.boundedDiagnostics.stderrChars, stderrSentinel.length);
+          return true;
+        },
+      );
+    }
   }
 });
 
