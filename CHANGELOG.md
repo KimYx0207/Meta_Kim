@@ -6,6 +6,17 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [2.9.29] - 2026-08-09
+
+### Added
+
+- **Meta_Kim 3.0 now has a fail-closed native decision foundation.** Codex and Claude native-choice adapters can issue, normalize, expire, and record host-answer claims without granting execution authority. Every generated claim remains non-authorizing until a future host-attested observer path proves session identity, displayed content, and single-use consumption.
+- **Decision authority now rejects forged or stale terminal states.** The domain uses half-open expiry, semantic replay binding, option-membership validation, payload/reference integrity checks, and non-enumerable snapshot hardening so a structural pass cannot be mistaken for a verified answer.
+
+### Verification
+
+- Focused authority, adapter, security, boundary, package-closure, and existing decision/governance tests passed `63/63`; three independent review lanes accepted the result; `npm run meta:check` and Graphify rebuild/check passed before this release candidate. Standard full release verification is still required before publication.
+
 ## [2.9.28] - 2026-08-09
 
 ### Fixed
