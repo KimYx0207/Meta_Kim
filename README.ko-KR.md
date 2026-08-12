@@ -12,7 +12,7 @@
 </p>
 
 <p>
-  <a href="config/runtime-compatibility-catalog.json"><img alt="Projection tiers" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat-OpenClaw%20%7C%20Cursor-111827"/></a>
+  <a href="config/runtime-compatibility-catalog.json"><img alt="Projection tiers" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
   <a href="config/runtime-compatibility-catalog.json"><img alt="Candidate compatibility probes" src="https://img.shields.io/badge/candidate-Qoder%20%7C%20Trae%20%7C%20Kiro%20%7C%20Cascade%20%7C%20Cline%20%7C%20Roo%20%7C%20Continue-475569"/></a>
   <a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&logo=github"/></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
@@ -72,7 +72,7 @@ npm run meta:validate
 
 1. 이 파일, `README.ko-KR.md`
 2. `AGENTS.md`
-3. `docs/runtime-capability-matrix.md`
+3. `config/runtime-capability-matrix.json`
 
 ### 플랫폼 지원 계층
 
@@ -868,7 +868,7 @@ Meta_Kim은 MCP(Model Context Protocol)를 사용하여 agent의 역량 경계�
 - [README.md](README.md)
 - [AGENTS.md](AGENTS.md)
 - [config/contracts/workflow-contract.json](config/contracts/workflow-contract.json)
-- [docs/runtime-capability-matrix.md](docs/runtime-capability-matrix.md)
+- [config/runtime-capability-matrix.json](config/runtime-capability-matrix.json)
 - [canonical/skills/meta-theory/SKILL.md](canonical/skills/meta-theory/SKILL.md)
 
 ---

@@ -9,6 +9,8 @@ const REQUIRED_PUBLIC_IMAGES = [
   "docs/images/wechat-pay.jpg",
   "docs/images/alipay.jpg",
 ];
+const RUNTIME_BADGE_SOURCE =
+  "https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827";
 
 const pkg = await readJson("package.json");
 const gitignore = await fs.readFile(repoPath(".gitignore"), "utf8");
@@ -44,6 +46,10 @@ function extractDocsImages(markdown) {
 const referenced = new Set();
 for (const file of README_FILES) {
   const markdown = await fs.readFile(repoPath(file), "utf8");
+  assert(
+    markdown.includes(RUNTIME_BADGE_SOURCE),
+    `${file} must use the valid Shields runtime badge source (literal hyphens require --)`,
+  );
   const refs = extractDocsImages(markdown);
   assert(refs.length > 0, `${file} must keep README image references explicit`);
   for (const ref of refs) {
