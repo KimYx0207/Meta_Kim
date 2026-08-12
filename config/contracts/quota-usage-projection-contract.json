@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-quota-usage-projection-contract",
+  "prdTaskId": "M3-A07",
+  "status": "implementation_active",
+  "purpose": "Project trusted root-run-lineage retry and wall-clock observations against a shadow-only quota policy without enforcing, consuming, mutating, scheduling, retrying, pausing, stopping, or persisting anything.",
+  "mode": "shadow_only",
+  "authorityBoundary": {
+    "durableTruthAuthority": "existing durable-run-kernel projection and verified event chain",
+    "policyAuthority": "config/governance/run-quota-policy.json",
+    "usageAuthority": "bridge-derived trusted root-lineage observation",
+    "quotaEnforcementAllowed": false,
+    "automaticActionAllowed": false
+  },
+  "domainContract": {
+    "module": "src/domain/quota/quota-usage-projection.mjs",
+    "api": "evaluateQuotaUsageProjection({ binding, quotaPolicy, trustedUsageObservation })",
+    "validator": "assertValidQuotaUsageProjectionResult(result)",
+    "schemaVersion": "quota-usage-projection-v1",
+    "kind": "quota_usage_projection_result",
+    "commandExactFields": ["binding", "quotaPolicy", "trustedUsageObservation"],
+    "quotaKeys": ["maxValidatedTransitions", "maxNoProgressLoops", "maxRetries", "maxWallClock", "maxCost"],
+    "metricStates": ["observed", "not_observed", "in_doubt"],
+    "dimensionStates": ["disabled", "within_limit", "at_limit", "exceeded", "not_observed", "in_doubt"],
+    "dispositionsByPriority": ["in_doubt", "quota_exhausted", "not_observed", "not_configured", "within_quota"],
+    "implementationRule": "pure ECMAScript with no filesystem, runtime, kernel, scheduler, lease, health, clock, or mutation import"
+  },
+  "binding": {
+    "exactFields": ["runId", "rootRunId", "taskFingerprint", "graphDigest", "projectionDigest", "durableCursor", "headEventHash", "headCheckpointId", "quotaPolicyDigest", "usageObservationDigest", "evaluationRevision"]
+  },
+  "quotaPolicy": {
+    "exactFields": ["schemaVersion", "policyId", "revision", "mode", "scope", "limits", "policyDigest"],
+    "mode": "shadow_only",
+    "scope": "root_run_lineage",
+    "limitExactFields": ["enabled", "limit", "unit", "scope"],
+    "units": {"maxValidatedTransitions":"count","maxNoProgressLoops":"count","maxRetries":"count","maxWallClock":"milliseconds","maxCost":"micro_usd"},
+    "integerOnly": true,
+    "initialPolicy": "all dimensions disabled with null limits"
+  },
+  "trustedUsageObservation": {
+    "exactFields": ["source", "runId", "rootRunId", "observedAt", "metrics", "observationDigest"],
+    "metricExactFields": ["state", "value", "unit", "scope", "evidenceRefDigest"],
+    "observableInFirstRelease": ["maxRetries", "maxWallClock"],
+    "alwaysNotObservedInFirstRelease": ["maxValidatedTransitions", "maxNoProgressLoops", "maxCost"],
+    "retryRule": "count unique fresh verified root-lineage NodeAttemptClaimed events with attemptNo > 1; completion, failure, abandonment, caller claims, and duplicated claims do not add usage",
+    "wallClockRule": "trusted observedAt minus authoritative root run createdAt; reverse clock or incomplete lineage is in_doubt",
+    "forbiddenSubstitutes": ["allowed/completed transitions", "runtime health", "heartbeat", "timeoutMs", "character counts", "declared budget", "cost estimate"]
+  },
+  "result": {
+    "exactFields": ["schemaVersion", "kind", "binding", "bindingDigest", "quotaPolicy", "usage", "dimensionResults", "disposition", "eventIntents", "authorization"],
+    "eventIntent": {"kind":"quota_usage_shadow_observed","persisted":false,"authoritative":false,"writeAllowed":false},
+    "authorizationExactFields": ["quotaEnforcementAllowed","quotaMutationAllowed","quotaConsumptionAllowed","automaticStopAllowed","automaticPauseAllowed","automaticRetryAllowed","schedulerDispatchAllowed","executionAllowed","claimAllowed","takeoverAllowed","eventPersistenceAllowed","cursorAdvanceAllowed","checkpointMutationAllowed","terminalStatusWriteAllowed","legacyGateCutoverAllowed","authoritativeWriteAllowed"],
+    "allAuthorizationValues": false,
+    "deeplyFrozen": true,
+    "deterministic": true
+  },
+  "adapterContract": {
+    "module": "scripts/governed-execution/quota-usage-projection-adapter.mjs",
+    "normalizedInputExact": {},
+    "optionsExactFields": ["authoritativeStageDagPacket", "authoritativeExecutionSnapshot", "trustedQuotaPolicy", "trustedUsageObservation"],
+    "bridgeOptInParameter": "quotaUsageProjection",
+    "bridgeReturnSibling": "quotaUsageProjection",
+    "legacyParityWhenDisabled": true
+  },
+  "nonGoals": ["quota enforcement", "quota reservation or consumption", "automatic stop/pause/retry", "scheduler feedback", "legacy gate cutover", "cost estimation", "runtime-health inference"]
+}

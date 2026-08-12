@@ -35,16 +35,18 @@ async function runPreviewAndRollback() {
       throw new Error("Preview run did not produce a candidate target.");
     }
     const approvalPacket = {
-      schemaVersion: "warden-approval-v0.1",
+      schemaVersion: "warden-approval-v0.2",
       approvalId: "approval-preview-rehearsal",
       approver: "meta-warden",
       approvedAt: "2026-06-04T00:00:00.000Z",
-      scope: "Temporary approval rehearsal for Warden panel and rollback proof.",
-      targets: [`canonical/${candidate.targetRelativeToCanonical}`],
+      scope: "canonical_reverse_sync",
+      mutationBindings: [candidate.mutationBinding],
       diffSummary: candidate.diffSummary,
       rollbackPlan: "Remove the temporary canonical root created for this rehearsal.",
-      riskReview: "Run-scoped task details must not enter durable identity.",
-      humanApprovalEvidence: "fixture-only-rehearsal-not-current-repo-approval",
+      riskReview: {
+        status: "fixture_only_rehearsal",
+        boundary: "Run-scoped task details must not enter durable identity.",
+      },
     };
     const tempCanonicalRoot = path.join(tempDir, "approved-canonical");
     const approvedRun = await runMetaTheoryGovernedExecution({

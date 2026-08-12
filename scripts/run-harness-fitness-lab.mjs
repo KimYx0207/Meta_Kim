@@ -665,11 +665,27 @@ export function buildCodexTrialArgs(workspace, model = null) {
   return args;
 }
 
+export function buildIsolatedCodexTrialEnv(
+  isolatedHome,
+  baseEnv = process.env,
+) {
+  const resolvedHome = path.resolve(isolatedHome);
+  return {
+    ...baseEnv,
+    CODEX_HOME: path.join(resolvedHome, ".codex"),
+    HOME: resolvedHome,
+    USERPROFILE: resolvedHome,
+  };
+}
+
 async function runCodexTrial(workspace, task, planItem, options) {
   const commandSpec = await resolveCodexCommandSpec();
   const args = buildCodexTrialArgs(workspace, options.model);
+  const isolatedHome = path.join(workspace, ".meta-kim-test-home");
+  await fs.mkdir(path.join(isolatedHome, ".codex"), { recursive: true });
   const result = await runChild(commandSpec.file, [...commandSpec.prefixArgs, ...args], {
     cwd: workspace,
+    env: buildIsolatedCodexTrialEnv(isolatedHome),
     timeoutMs: options.timeoutMs,
     input: executionPrompt(task, planItem),
   });

@@ -10,6 +10,7 @@ const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 const SESSION_META_READ_LIMIT_BYTES = 1024 * 1024;
 const MTIME_TOLERANCE_MS = 5_000;
 const THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const CODE_MODE_SPAWN_PATTERN = /\btools\.multi_agent_v1__spawn_agent\s*\(/gu;
 
 class CodexSessionEvidenceError extends Error {
   constructor(code) {
@@ -25,6 +26,178 @@ function fail(code) {
 
 function sha256(text) {
   return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+function parseJsonlRecords(text) {
+  return String(text)
+    .split(/\r?\n/u)
+    .map((line, index) => {
+      if (!line.trim()) return null;
+      try {
+        return { line: index + 1, raw: line, value: JSON.parse(line) };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function codeModeOutputText(payload) {
+  if (typeof payload?.output === "string") return payload.output;
+  if (!Array.isArray(payload?.output)) return "";
+  return payload.output
+    .filter((entry) =>
+      entry &&
+      typeof entry === "object" &&
+      ["input_text", "output_text", "text"].includes(entry.type) &&
+      typeof entry.text === "string")
+    .map((entry) => entry.text)
+    .join("\n");
+}
+
+function codeModeStringField(input, field) {
+  const match = new RegExp(
+    `\\b${field}\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`,
+    "u",
+  ).exec(input);
+  if (!match) return null;
+  try {
+    const value = JSON.parse(match[1]);
+    return typeof value === "string" && value.length > 0 && value.length <= 100_000
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function codeModeSpawnRequest(input) {
+  if (typeof input !== "string" || input.length === 0 || input.length > 100_000) {
+    return null;
+  }
+  const matches = [...input.matchAll(CODE_MODE_SPAWN_PATTERN)];
+  const executedCall = /^\s*(?:\/\/\s*@exec:[^\r\n]*(?:\r?\n))?\s*const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+tools\.multi_agent_v1__spawn_agent\s*\(\s*(\{[\s\S]*?\})\s*\)\s*;\s*text\s*\(\s*JSON\.stringify\s*\(\s*(?:\1|\{\s*\1\s*\})\s*\)\s*\)\s*;\s*(?:const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+tools\.multi_agent_v1__wait_agent\s*\(\s*\{\s*targets\s*:\s*\[\s*\1\.agent_id\s*\]\s*,\s*timeout_ms\s*:\s*[1-9][0-9]*\s*\}\s*\)\s*;\s*text\s*\(\s*JSON\.stringify\s*\(\s*(?:\3|\{\s*\3\s*\})\s*\)\s*\)\s*;\s*)?$/u.exec(input);
+  if (
+    matches.length !== 1 ||
+    !executedCall ||
+    /\btools\.(?:multi_agent_v1__)?(?:followup_task|send_message|interrupt_agent)\s*\(/u.test(input)
+  ) {
+    return null;
+  }
+  const invocationObject = executedCall[2];
+  const message = codeModeStringField(invocationObject, "message");
+  if (!message) return null;
+  return {
+    agentType: codeModeStringField(invocationObject, "agent_type"),
+    message,
+    input,
+  };
+}
+
+function codeModeSpawnChildId(payload) {
+  const candidates = codeModeOutputText(payload)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{") && line.endsWith("}"))
+    .map((line) => {
+      try {
+        const value = JSON.parse(line);
+        if (THREAD_ID_PATTERN.test(String(value?.agent_id ?? ""))) {
+          return value.agent_id;
+        }
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return null;
+        }
+        const nested = Object.values(value).filter(
+          (entry) => entry && typeof entry === "object" && !Array.isArray(entry),
+        );
+        return nested.length === 1 ? nested[0].agent_id ?? null : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter((value) => THREAD_ID_PATTERN.test(String(value ?? "")));
+  return [...new Set(candidates)].length === 1 ? candidates[0] : null;
+}
+
+function readCodeModeSpawnLifecycle(parentSessionText, threadId) {
+  const records = parseJsonlRecords(parentSessionText);
+  const calls = records
+    .filter(({ value }) =>
+      value?.type === "response_item" &&
+      value?.payload?.type === "custom_tool_call" &&
+      value?.payload?.name === "exec" &&
+      typeof value?.payload?.call_id === "string")
+    .map((entry) => ({
+      ...entry,
+      request: codeModeSpawnRequest(entry.value.payload.input),
+    }))
+    .filter((entry) => entry.request);
+  if (calls.length === 0) return null;
+  if (calls.length !== 1) fail("codex_parent_spawn_event_not_unique");
+  const [call] = calls;
+  const outputs = records.filter(({ value }) =>
+    value?.type === "response_item" &&
+    value?.payload?.type === "custom_tool_call_output" &&
+    value?.payload?.call_id === call.value.payload.call_id);
+  if (outputs.length !== 1) fail("codex_parent_spawn_output_not_unique");
+  const childSessionId = codeModeSpawnChildId(outputs[0].value.payload);
+  if (!childSessionId) fail("codex_parent_spawn_output_invalid");
+  return {
+    call,
+    output: outputs[0],
+    childSessionId,
+    threadId,
+  };
+}
+
+function readCodeModeChildFinal(childSessionText, childSessionId, sinceMs) {
+  const records = parseJsonlRecords(childSessionText);
+  const finals = records.filter(({ value }) =>
+    value?.type === "event_msg" &&
+    value?.payload?.type === "agent_message" &&
+    value?.payload?.phase === "final_answer" &&
+    typeof value?.payload?.message === "string" &&
+    value.payload.message.length > 0);
+  const completions = records.filter(({ value }) =>
+    value?.type === "event_msg" &&
+    value?.payload?.type === "task_complete" &&
+    typeof value?.payload?.last_agent_message === "string");
+  const messages = records.filter(({ value }) =>
+    value?.type === "response_item" &&
+    value?.payload?.type === "message" &&
+    value?.payload?.role === "assistant" &&
+    typeof value?.payload?.id === "string");
+  if (finals.length !== 1 || completions.length !== 1 || messages.length !== 1) {
+    fail("codex_child_final_invalid");
+  }
+  const finalText = finals[0].value.payload.message;
+  if (completions[0].value.payload.last_agent_message !== finalText) {
+    fail("codex_child_final_invalid");
+  }
+  const messageText = (messages[0].value.payload.content ?? [])
+    .filter((entry) => entry?.type === "output_text" && typeof entry.text === "string")
+    .map((entry) => entry.text)
+    .join("");
+  if (messageText !== finalText) fail("codex_child_final_invalid");
+  const finalAtMs = Date.parse(finals[0].value.timestamp ?? "");
+  const completedAtMs = Date.parse(completions[0].value.timestamp ?? "");
+  if (
+    !Number.isFinite(finalAtMs) ||
+    !Number.isFinite(completedAtMs) ||
+    finalAtMs < sinceMs ||
+    completedAtMs < finalAtMs
+  ) {
+    fail("codex_child_timestamp_invalid");
+  }
+  return {
+    childSessionId,
+    finalText,
+    resultMessageId: messages[0].value.payload.id,
+    finalLine: finals[0].line,
+    completionLine: completions[0].line,
+    observedAt: new Date(completedAtMs).toISOString(),
+  };
 }
 
 function isInside(parentPath, childPath) {
@@ -187,8 +360,14 @@ export async function readCodexSessionEvidence({
       typeof event.childSessionId === "string" &&
       event.childSessionId.length > 0,
   );
+  const codeModeLifecycle = spawnEvents.length === 0
+    ? readCodeModeSpawnLifecycle(parentSessionText, threadId)
+    : null;
   const spawnChildSessionIds = [
-    ...new Set(spawnEvents.map((event) => event.childSessionId)),
+    ...new Set([
+      ...spawnEvents.map((event) => event.childSessionId),
+      codeModeLifecycle?.childSessionId,
+    ].filter(Boolean)),
   ];
   if (spawnChildSessionIds.length === 0) fail("codex_parent_spawn_event_missing");
   if (spawnChildSessionIds.length !== 1) fail("codex_parent_spawn_event_not_unique");
@@ -224,6 +403,59 @@ export async function readCodexSessionEvidence({
     "codex_child_session_too_large",
   );
 
+  let nativeInvocation = null;
+  if (codeModeLifecycle) {
+    const childFinal = readCodeModeChildFinal(
+      childSessionText,
+      childSessionId,
+      sinceMs,
+    );
+    const nativeAgentType = codeModeLifecycle.call.request.agentType;
+    if (
+      nativeAgentType != null &&
+      child.meta?.source?.subagent?.thread_spawn?.agent_role !== nativeAgentType
+    ) {
+      fail("codex_child_agent_type_mismatch");
+    }
+    nativeInvocation = {
+      observerFormat: "codex_exec_code_mode_v1",
+      family: "agent_subagent",
+      eventId: codeModeLifecycle.call.value.payload.call_id,
+      parentEventId: null,
+      hostSurface: "codex_cli.spawn_agent",
+      providerId: "codex_cli.spawn_agent",
+      resultStatus: "returned",
+      inputDigest: sha256(codeModeLifecycle.call.request.input),
+      outputDigest: sha256(childFinal.finalText),
+      childSessionId,
+      taskPath: null,
+      parentAgentPath: null,
+      sessionId: threadId,
+      resultMessageId: childFinal.resultMessageId,
+      resultTextSha256: sha256(childFinal.finalText),
+      resultSourceLines: [childFinal.finalLine, childFinal.completionLine],
+      sourceLines: [
+        codeModeLifecycle.call.line,
+        codeModeLifecycle.output.line,
+      ],
+      lifecycleEvidence: "code_mode_spawn_output_and_child_session_final",
+      completionBoundary: "returned_child_final",
+      activityCompletionObserved: true,
+      ownerBindingMode: nativeAgentType
+        ? "native_custom_agent"
+        : "run_scoped_owner_contract",
+      nativeAgentType,
+      claimedOwnerBindingMode: null,
+      ownerBindingModeEvidence: nativeAgentType
+        ? "code_mode_tool_input.agent_type"
+        : "code_mode_tool_input.agent_type_absent",
+      ownerBindingModeValidation: "matched_or_host_derived",
+      ownerBindingMismatchReason: null,
+      occurredAt: childFinal.observedAt,
+      bindingUnavailableReason: "meta_kim_binding_not_present",
+    };
+  }
+
   return {
     parentSessionText,
     threadId,
@@ -232,6 +464,7 @@ export async function readCodexSessionEvidence({
     childSessionDigest: sha256(childSessionText),
     sourceCategory: "codex_home_sessions",
     cliVersion: parent.meta.cli_version ?? null,
+    nativeInvocation,
   };
 }
 

@@ -94,10 +94,7 @@ import {
 } from "./scripts/node-spawn-config.mjs";
 import {
   assertProjectionPackageWriteBoundary,
-  materializeGlobalProjectionPackage,
   projectionPackageWriteBoundaryFindings,
-  sanitizeProjectionPackageEnvironment,
-  verifyExecutingGlobalProjectionPackage,
 } from "./scripts/global-projection-package-store.mjs";
 import {
   CODEX_BUSINESS_ROLE_AGENT_IDS,
@@ -199,6 +196,12 @@ import {
   normalizeSetupCliArgs,
   validateSetupCliArgs,
 } from "./scripts/setup-cli-policy.mjs";
+import {
+  ensureStableGlobalProjectionPackage,
+} from "./src/application/installer/ensure-stable-global-projection-package.mjs";
+import {
+  createProjectionPackageBoundary,
+} from "./src/infrastructure/installer/projection-package-boundary.mjs";
 import {
   INSTALL_STEP_CLASSIFICATION,
   INSTALL_STEP_OUTCOME,
@@ -5368,85 +5371,19 @@ function runNodeScript(
 }
 
 let executingStableProjectionPackage = null;
-const PROJECTION_PACKAGE_STORE_ROOT = join(
-  homedir(),
-  ".meta-kim",
-  "runtime",
-  "projection-packages",
-);
-const STABLE_PROJECT_DEPLOYMENTS_ENV =
-  "META_KIM_STABLE_PROJECT_DEPLOYMENTS_JSON";
+const projectionPackageBoundary = createProjectionPackageBoundary({
+  packageRoot: PROJECT_DIR,
+  callerCwd: CALLER_CWD,
+  homeRoot: homedir(),
+  env: process.env,
+  managedProjectManifestRelPath:
+    existingProjectProjectionUpdatePolicy().managedStateMarker,
+  normalizeTargets,
+});
 
 function projectionPackageWriteBoundary() {
-  return executingStableProjectionPackage ?? {
-    packageRoot: PROJECTION_PACKAGE_STORE_ROOT,
-    storeRoot: PROJECTION_PACKAGE_STORE_ROOT,
-  };
-}
-
-function stableProjectDeploymentHandoff() {
-  if (!executingStableProjectionPackage) return null;
-  const raw = process.env[STABLE_PROJECT_DEPLOYMENTS_ENV];
-  if (!raw) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Stable project deployment handoff is not valid JSON");
-  }
-  if (!Array.isArray(parsed)) {
-    throw new Error("Stable project deployment handoff must be an array");
-  }
-  const expectedByPath = new Map();
-  const candidates = parsed.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error("Stable project deployment handoff entry is invalid");
-    }
-    if (typeof entry.targetDir !== "string" || !isAbsolute(entry.targetDir)) {
-      throw new Error("Stable project deployment handoff target must be absolute");
-    }
-    const targetDir = resolve(entry.targetDir);
-    const activeTargets = normalizeTargets(entry.activeTargets);
-    if (activeTargets.length === 0) {
-      throw new Error("Stable project deployment handoff targets are empty");
-    }
-    const key = isWin ? targetDir.toLowerCase() : targetDir;
-    if (expectedByPath.has(key)) {
-      throw new Error("Stable project deployment handoff contains a duplicate target");
-    }
-    expectedByPath.set(key, activeTargets);
-    return { targetDir, source: "stable_projection_handoff" };
-  });
-  const resolution = resolveExistingManagedProjectCandidates(candidates, {
-    manifestRelPath: existingProjectProjectionUpdatePolicy().managedStateMarker,
-  });
-  for (const deployment of resolution.deployments) {
-    const key = isWin
-      ? resolve(deployment.targetDir).toLowerCase()
-      : resolve(deployment.targetDir);
-    const expectedTargets = expectedByPath.get(key) ?? [];
-    if (
-      expectedTargets.length !== deployment.activeTargets.length ||
-      expectedTargets.some((target, index) => target !== deployment.activeTargets[index])
-    ) {
-      throw new Error(
-        `Stable project deployment targets changed before execution: ${deployment.targetDir}`,
-      );
-    }
-  }
-  if (
-    resolution.deployments.length + resolution.rejected.length !==
-    candidates.length
-  ) {
-    throw new Error("Stable project deployment handoff resolution is incomplete");
-  }
-  if (resolution.rejected.length > 0) {
-    const first = resolution.rejected[0];
-    throw new Error(
-      `Stable project deployment changed before execution: ${first.targetDir} (${first.reason})`,
-    );
-  }
-  return resolution;
+  return executingStableProjectionPackage ??
+    projectionPackageBoundary.storeBoundary;
 }
 
 function projectPersistentWriteTargets(targetDirs) {
@@ -5476,26 +5413,6 @@ async function assertProjectPersistentWriteBoundary(targetDirs, operation) {
   );
 }
 
-async function detectExecutingStableProjectionPackage() {
-  const homeRoot = homedir();
-  const verified = await verifyExecutingGlobalProjectionPackage({
-    packageRoot: PROJECT_DIR,
-    homeRoot,
-  });
-  if (verified) return verified;
-  const storeRoot = PROJECTION_PACKAGE_STORE_ROOT;
-  const storeFindings = await projectionPackageWriteBoundaryFindings(
-    { packageRoot: storeRoot, storeRoot },
-    [PROJECT_DIR],
-  );
-  if (storeFindings.length > 0) {
-    throw new Error(
-      "An unverified package inside the projection store cannot execute setup",
-    );
-  }
-  return null;
-}
-
 async function writeLocalOverrides(nextOverrides) {
   const findings = await projectionPackageWriteBoundaryFindings(
     projectionPackageWriteBoundary(),
@@ -5504,116 +5421,6 @@ async function writeLocalOverrides(nextOverrides) {
   if (findings.length > 0) return false;
   await persistLocalOverrides(nextOverrides);
   return true;
-}
-
-function stableGlobalSetupArgs({ mode, activeTargets, skillIds }) {
-  return [
-    ...(mode === "update" ? ["--update"] : []),
-    "--silent",
-    "--lang",
-    currentLangCode,
-    "--scope",
-    "global",
-    "--targets",
-    activeTargets.join(","),
-    "--skills",
-    skillIds.join(","),
-    ...(setupWithGlobalHooks ? ["--with-global-hooks"] : []),
-    ...(saveProjectDirsMode ? ["--save-project-dirs"] : []),
-  ];
-}
-
-async function handOffGlobalSetupIfNeeded({
-  mode,
-  activeTargets,
-  skillIds = [],
-  deployDirs = [],
-}) {
-  const homeRoot = homedir();
-  const executing = await detectExecutingStableProjectionPackage();
-  if (executing) {
-    executingStableProjectionPackage = executing;
-    return null;
-  }
-  if (executingStableProjectionPackage) {
-    throw new Error(
-      "The executing stable projection package changed before global setup",
-    );
-  }
-  const stablePackage = await materializeGlobalProjectionPackage({
-    sourceRoot: PROJECT_DIR,
-    homeRoot,
-    env: process.env,
-  });
-  const childEnv = sanitizeProjectionPackageEnvironment(process.env, {
-    sourceRoot: PROJECT_DIR,
-    storeRoot: stablePackage.storeRoot,
-  });
-  childEnv.META_KIM_REPO_ROOT = stablePackage.packageRoot;
-  childEnv.META_KIM_CALLER_CWD = CALLER_CWD;
-  childEnv[STABLE_PROJECT_DEPLOYMENTS_ENV] = JSON.stringify(
-    deployDirs.map((deployment) => ({
-      targetDir: typeof deployment === "string"
-        ? resolve(deployment)
-        : resolve(deployment.targetDir),
-      activeTargets: typeof deployment === "string"
-        ? activeTargets
-        : normalizeTargets(deployment.activeTargets),
-    })),
-  );
-  const result = spawnSync(
-    process.execPath,
-    [
-      join(stablePackage.packageRoot, "setup.mjs"),
-      ...stableGlobalSetupArgs({ mode, activeTargets, skillIds }),
-    ],
-    {
-      cwd: stablePackage.packageRoot,
-      env: childEnv,
-      stdio: "inherit",
-      shell: false,
-      windowsHide: true,
-    },
-  );
-  if (result.error) throw result.error;
-  if (result.signal) {
-    throw new Error(`Stable global setup terminated by signal ${result.signal}`);
-  }
-  const exitCode = Number.isInteger(result.status) ? result.status : 1;
-  return {
-    status: exitCode === 0 ? "complete" : "failed",
-    exitCode,
-    failedSteps: exitCode === 0 ? [] : [{ id: "stable global setup" }],
-    delegatedToStableProjectionPackage: true,
-  };
-}
-
-function mergeDelegatedGlobalSetupResult(result, rejectedManagedProjects) {
-  const explicitRejected = rejectedManagedProjects.filter(
-    (item) => item.source === "explicit_project_dirs",
-  );
-  const failedSteps = [
-    ...(result.failedSteps ?? []),
-    ...explicitRejected.map((item) => ({
-      id: `rejected managed project: ${item.targetDir}`,
-    })),
-  ];
-  return {
-    ...result,
-    status: failedSteps.length > 0 ? "failed" : result.status,
-    exitCode: failedSteps.length > 0 ? 1 : result.exitCode,
-    failedSteps,
-    rejectedManagedProjects,
-  };
-}
-
-async function stableProjectionPackageIntegrityOk() {
-  if (!executingStableProjectionPackage) return true;
-  const verified = await verifyExecutingGlobalProjectionPackage({
-    packageRoot: PROJECT_DIR,
-    homeRoot: homedir(),
-  });
-  return Boolean(verified);
 }
 
 let lastGlobalCapabilityInventoryResult = true;
@@ -8108,7 +7915,7 @@ async function installMcpMemoryServiceStep(
     allowClaudeGlobalSettings: want && activeTargets.includes("claude"),
   });
 
-  return hooksOk;
+  return registrationOk && hooksOk && backgroundOk;
 }
 
 function ensureNetworkxCompatibility(python) {
@@ -8716,7 +8523,7 @@ async function runProjectCleanupCli() {
 
 async function main() {
   executingStableProjectionPackage =
-    await detectExecutingStableProjectionPackage();
+    await projectionPackageBoundary.detectExecutingStablePackage();
 
   if (projectBootstrapMode) {
     const ok = await runProjectBootstrapCli();
@@ -8819,7 +8626,10 @@ async function runInstall() {
   showDirectoryExplanation();
 
   // Ask project deploy directories BEFORE confirm (so user decides upfront)
-  const handedOffProjectResolution = stableProjectDeploymentHandoff();
+  const handedOffProjectResolution =
+    projectionPackageBoundary.readStableProjectDeploymentHandoff(
+      executingStableProjectionPackage,
+    );
   const managedProjectResolution = needProject
     ? { deployments: await askDeployDirectory(), rejected: [] }
     : (handedOffProjectResolution ?? await existingManagedProjectDeployments());
@@ -8849,17 +8659,25 @@ async function runInstall() {
   );
 
   if (needGlobal) {
-    const delegated = await handOffGlobalSetupIfNeeded({
-      mode: "install",
-      activeTargets,
-      skillIds: selectedSkillIds,
-      deployDirs,
-    });
-    if (delegated) {
-      return mergeDelegatedGlobalSetupResult(
-        delegated,
-        managedProjectResolution.rejected,
-      );
+    const stableSetup = await ensureStableGlobalProjectionPackage(
+      {
+        currentAuthority: executingStableProjectionPackage,
+        mode: "install",
+        activeTargets,
+        skillIds: selectedSkillIds,
+        deployments: deployDirs,
+        rejectedManagedProjects: managedProjectResolution.rejected,
+        language: currentLangCode,
+        withGlobalHooks: setupWithGlobalHooks,
+        saveProjectDirs: saveProjectDirsMode,
+      },
+      projectionPackageBoundary,
+    );
+    if (stableSetup.executingAuthority) {
+      executingStableProjectionPackage = stableSetup.executingAuthority;
+    }
+    if (stableSetup.delegatedResult) {
+      return stableSetup.delegatedResult;
     }
   }
 
@@ -9110,7 +8928,9 @@ async function runInstall() {
   stepResults.push(
     installStep(
       "stable projection package integrity",
-      await stableProjectionPackageIntegrityOk(),
+      await projectionPackageBoundary.verifyExecutingIntegrity(
+        executingStableProjectionPackage,
+      ),
     ),
   );
 
@@ -9152,7 +8972,10 @@ async function runUpdate() {
   await askProxyConfig();
 
   // Ask project deploy directories BEFORE update starts
-  const handedOffProjectResolution = stableProjectDeploymentHandoff();
+  const handedOffProjectResolution =
+    projectionPackageBoundary.readStableProjectDeploymentHandoff(
+      executingStableProjectionPackage,
+    );
   const managedProjectResolution = needProject
     ? { deployments: await askDeployDirectory(), rejected: [] }
     : (handedOffProjectResolution ?? await existingManagedProjectDeployments());
@@ -9168,17 +8991,25 @@ async function runUpdate() {
     ? await resolveSelectedSkillDependencyIds()
     : [];
   if (needGlobal) {
-    const delegated = await handOffGlobalSetupIfNeeded({
-      mode: "update",
-      activeTargets,
-      skillIds: updateSkillIds,
-      deployDirs,
-    });
-    if (delegated) {
-      return mergeDelegatedGlobalSetupResult(
-        delegated,
-        managedProjectResolution.rejected,
-      );
+    const stableSetup = await ensureStableGlobalProjectionPackage(
+      {
+        currentAuthority: executingStableProjectionPackage,
+        mode: "update",
+        activeTargets,
+        skillIds: updateSkillIds,
+        deployments: deployDirs,
+        rejectedManagedProjects: managedProjectResolution.rejected,
+        language: currentLangCode,
+        withGlobalHooks: setupWithGlobalHooks,
+        saveProjectDirs: saveProjectDirsMode,
+      },
+      projectionPackageBoundary,
+    );
+    if (stableSetup.executingAuthority) {
+      executingStableProjectionPackage = stableSetup.executingAuthority;
+    }
+    if (stableSetup.delegatedResult) {
+      return stableSetup.delegatedResult;
     }
   }
 
@@ -9404,7 +9235,9 @@ async function runUpdate() {
   stepResults.push(
     installStep(
       "stable projection package integrity",
-      await stableProjectionPackageIntegrityOk(),
+      await projectionPackageBoundary.verifyExecutingIntegrity(
+        executingStableProjectionPackage,
+      ),
     ),
   );
   let result = {

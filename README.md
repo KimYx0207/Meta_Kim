@@ -49,6 +49,36 @@ This is not a new concept. Mature engineering teams already do this. Meta_Kim tu
 | Passing commands get mistaken for success | Evidence is checked against the user's real goal |
 | Good fixes disappear into chat history | Reusable lessons become governed skills, agents, scripts, contracts, or run-scoped tasks |
 
+### What 3.0 changes
+
+Meta_Kim 3.0 makes the governance system easier to trust: advice, durable truth, user-facing views, installation state, and knowledge evolution no longer blur into one another.
+
+| Architecture outcome | What it means for a user |
+| --- | --- |
+| **A01 - Evidence transition** | A worker saying “done” is not enough; evidence is independently assessed, and uncertain or contradictory material stays blocked or in doubt. |
+| **A02 - Continue / wait / stop / escalate** | Resumption advice is explicit and bound to the same durable run snapshot; it cannot resume work by itself. |
+| **A03 - Dependency-safe progress** | Meta_Kim can identify work that is safe to consider next without turning a Todo item into execution authority. |
+| **A04 - Scheduler reuse** | Ready work goes through the existing scheduler rules; 3.0 does not create a competing scheduler. |
+| **A05 - Lease / claim visibility** | Active ownership and conflicts are projected from the existing durable authority, never minted from a candidate. |
+| **A06 - Runtime health** | Health is a point-in-time observation, not proof of liveness, installation, persistence, or permission to execute. |
+| **A07 - Quota / usage** | Retry and elapsed-time observations are separated from unknown cost, progress, and provider quota; the projection cannot stop or retry work. |
+| **A08 - Read-only run surfaces** | Native panel, Kanban, Markdown, and HTML show the same digest-bound run without becoming another source of truth. |
+| **A09 - Durable repository unification** | Events, CAS, transactions, leases, fences, and checkpoints share one execution repository model; analytics and host-event stores remain non-execution data. |
+| **A10 - Safer setup boundary** | Setup remains the CLI facade, while stable package materialization and runtime writes are isolated and independently checked. |
+| **A11 - Knowledge lifecycle hygiene** | A generated evolution suggestion has zero write/delete authority until exact Warden approval; rollback, source drift, tombstones, and user state are protected. |
+| **A12 - Documentation and release truth** | Public claims must match contracts, runtime evidence, package contents, and the release gate; deferred work stays visibly deferred. |
+
+The implementation follows an inward dependency rule:
+
+| Layer | Responsibility | Explicit boundary |
+| --- | --- | --- |
+| **Domain** | Pure decision semantics and invariants | No filesystem, database, network, runtime, templates, or execution side effects |
+| **Application** | Use-case orchestration and ports | Composes Domain and adapters; does not own SQL, filesystem algorithms, or host authority |
+| **Data / Infrastructure** | SQLite, transactions, package storage, runtime process and filesystem adapters | Implements declared ports; cannot change Domain decisions or mint authorization |
+| **Presentation** | Native panel, Kanban, Markdown, and HTML rendering | Reads one validated model; cannot write, dispatch, complete, claim, lease, or move a cursor |
+
+This layering is intentionally incremental: existing script entrypoints remain compatibility facades where needed, while new stable logic lives behind the layered boundaries.
+
 ### 3-minute proof
 
 Meta_Kim is easiest to understand by watching one governed run, not by reading every rule.
@@ -111,6 +141,10 @@ The default Enter path is **global reusable capabilities**. Agents, commands, MC
 If you explicitly choose **Project directory updates**, setup asks which project directories to update and writes the target-selected project runtime projection there, including project hooks/config where that runtime supports them. This path does not install global reusable capabilities and does not run project cleanup.
 
 Project files are still allowed, but they are not the default reusable capability store. Confirmed project bootstrap writes only project context/config/state plus proven project-specific overrides, preserving existing user config through managed blocks, add-only writes, protected JSON merge, backups, and manifests. Every applied project bootstrap records `.meta-kim/` state and backup files.
+
+Update also treats third-party installers as untrusted configuration producers. For Codex, Meta_Kim restores the user's pre-install configuration and applies only its narrowly owned native controls. This prevents an upstream installer from resurrecting a third-party MCP server the user deleted, silently adopting a new server, or persisting known Meta_Kim benchmark/test project registrations. User-owned MCP servers, projects, hooks, agents, and unrelated settings remain intact.
+
+Codex agent fan-out has a bounded default of two threads and one nested level. Explicit user limits are preserved; only an absent value or Meta_Kim's former default of six threads is migrated.
 
 If you plan to maintain the repository, edit the canonical sources first: `canonical/agents/`, `canonical/skills/meta-theory/`, `config/contracts/`, and `config/capability-index/`. Then run (requires Node.js >= 22.13.0):
 
@@ -600,6 +634,8 @@ flowchart TB
 You can keep adding platform mappings over time, but the upgrade path is gated: a candidate becomes a formal projection only after Meta_Kim owns the adapter shape and can verify it.
 
 The four tool targets are first-class Meta_Kim projection families, but their native surfaces and evidence levels differ. Claude Code and Codex are the default selected primary path. OpenClaw and Cursor are available non-default compatibility projections: use them with maintainer handshake, and treat runtime changes as incomplete until strict contributor-owned self-test evidence from that tool passes review. Projection smoke, fixture validation, and generated reports are useful evidence, but they are not the same thing as native-live runtime proof.
+
+The decision-authority boundary is narrower than projection support. Current Codex app-server and Claude SDK/CLI callbacks can provide exactly correlated, non-authorizing observations, but public host surfaces do not prove Codex Desktop UI, human identity, or a human answer. That trusted-host authority remains parked. Legacy governance-gate parity and cutover are separately deferred, so 3.0 does not claim that shadow/read-only results have replaced production gates. OpenClaw still lacks a Meta_Kim typed-plugin enforcement adapter for tool blocking, and Cursor arbitrary native-choice popup authority remains unverified.
 
 | Capability surface | Claude Code | Codex | OpenClaw | Cursor |
 | --- | --- | --- | --- | --- |

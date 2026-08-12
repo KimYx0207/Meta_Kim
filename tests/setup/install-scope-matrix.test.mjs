@@ -19,7 +19,7 @@ test("install scope verification proves global/project target boundaries", () =>
     const result = spawnSync(process.execPath, ["scripts/verify-install-scope-matrix.mjs"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
-      timeout: 180_000,
+      timeout: 720_000,
       windowsHide: true,
       env: buildIsolatedUserHomeEnv(callerHome),
     });

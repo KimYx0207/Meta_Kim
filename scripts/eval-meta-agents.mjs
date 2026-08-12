@@ -2497,6 +2497,27 @@ function publicCodexSessionEvidence(evidence) {
   };
 }
 
+function codexSessionNativeInvocationMatches(invocation, representativeAgentId) {
+  return (
+    invocation?.family === "agent_subagent" &&
+    /(?:^|\.)spawn_agent$/u.test(String(invocation?.hostSurface ?? "")) &&
+    invocation?.nativeAgentType === representativeAgentId &&
+    invocation?.ownerBindingMode === "native_custom_agent" &&
+    typeof invocation?.childSessionId === "string" &&
+    invocation.childSessionId.length > 0 &&
+    typeof invocation?.sessionId === "string" &&
+    invocation.sessionId.length > 0 &&
+    invocation?.resultStatus === "returned" &&
+    invocation?.completionBoundary === "returned_child_final" &&
+    typeof invocation?.resultMessageId === "string" &&
+    invocation.resultMessageId.length > 0 &&
+    typeof invocation?.resultTextSha256 === "string" &&
+    invocation.resultTextSha256.length > 0 &&
+    typeof invocation?.outputDigest === "string" &&
+    invocation.outputDigest.length > 0
+  );
+}
+
 async function inspectCodexLiveEvidenceWithSessionFallback(
   stdout,
   {
@@ -2531,6 +2552,22 @@ async function inspectCodexLiveEvidenceWithSessionFallback(
         hostEventText: sessionEvidence.parentSessionText,
         sessionEvidence: publicCodexSessionEvidence(sessionEvidence),
       });
+      if (
+        latestEvidence.behaviorDiagnosticOk === true &&
+        latestEvidence.nativeInvocationObserved !== true &&
+        codexSessionNativeInvocationMatches(
+          sessionEvidence.nativeInvocation,
+          representativeAgentId,
+        )
+      ) {
+        latestEvidence = {
+          ...latestEvidence,
+          nativeInvocation: sessionEvidence.nativeInvocation,
+          nativeInvocationObserved: true,
+          customAgentInvocationObserved: true,
+          releaseFuseInvocationObserved: true,
+        };
+      }
       if (latestEvidence.nativeInvocationObserved) return latestEvidence;
     } catch (error) {
       latestEvidence = {
@@ -3372,7 +3409,9 @@ async function runCodexSmoke(expectedAgentIds) {
     custom_agent_definitions: publicCodexAgents.definitions,
     expected_inventory_source: "canonical/agents",
     custom_agent_inventory_kind: "definitions_only_not_live_loaded",
-    mcp_supported: configExample.includes("[mcp_servers.meta_kim_runtime]"),
+    mcp_supported: await fs
+      .access(path.join(repoRoot, "scripts", "mcp", "meta-runtime-server.mjs"))
+      .then(() => true, () => false),
     sandbox_configurable: configExample.includes("sandbox_mode"),
     approvals_configurable: configExample.includes("approval_policy"),
     suppresses_unstable_feature_warning: configExample.includes(
@@ -3472,7 +3511,9 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
     custom_agent_definitions: publicCodexAgents.definitions,
     expected_inventory_source: "canonical/agents",
     custom_agent_inventory_kind: "definitions_only_not_live_loaded",
-    mcp_supported: configExample.includes("[mcp_servers.meta_kim_runtime]"),
+    mcp_supported: await fs
+      .access(path.join(repoRoot, "scripts", "mcp", "meta-runtime-server.mjs"))
+      .then(() => true, () => false),
     sandbox_configurable: configExample.includes("sandbox_mode"),
     approvals_configurable: configExample.includes("approval_policy"),
     suppresses_unstable_feature_warning: configExample.includes(
@@ -3502,10 +3543,18 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
   let liveEvidence = null;
   let commandStartedAtMs = null;
   try {
+    const childTask =
+      'This task is entirely self-contained. Do not inspect files or call tools. Review whether the words "primary runtime evidence" are precise. Explain any ambiguity briefly and recommend tighter wording if needed. Return a concise review for the parent.';
+    const directLifecycle =
+      `const spawned = await tools.multi_agent_v1__spawn_agent({ message: ${JSON.stringify(childTask)}, agent_type: ${JSON.stringify(representativeAgentId)}, fork_turns: "none" }); ` +
+      "text(JSON.stringify(spawned)); " +
+      "const waited = await tools.multi_agent_v1__wait_agent({ targets: [spawned.agent_id], timeout_ms: 120000 }); " +
+      "text(JSON.stringify(waited));";
     const prompt =
-      `Use the native spawn_agent collaboration tool exactly once. If its active schema exposes agent_type, set it to ${representativeAgentId} and set fork_turns to "none" because the bounded child task below is self-contained; otherwise omit the selector and use a run-scoped owner contract. ` +
+      `Use the native spawn_agent collaboration tool exactly once. In Codex code mode it is exposed as multi_agent_v1__spawn_agent; call it directly without enumerating ALL_TOOLS or inspecting repository files. If its active schema exposes agent_type, set it to ${representativeAgentId} and set fork_turns to "none" because the bounded child task below is self-contained; otherwise omit the selector and use a run-scoped owner contract. ` +
       "Never use task_name or a nickname as proof of owner identity. " +
-      "Ask that child to review whether the words primary runtime evidence are precise, wait for the child result, then return JSON only. " +
+      `In one code exec run exactly this source with no leading or trailing statements: ${directLifecycle} ` +
+      "Do not add variables, helper functions, use task instead of message, pass id instead of targets, or retry the spawn. After that exact wait returns the child final, return JSON only. Never call the nonexistent multi_agent_v1__wait alias. " +
       "Do not claim the child ran unless the tool call completed. " +
       'Set runtime to "codex" and governed_entry to "meta-theory". ' +
       "Set warden_entry_gate and conductor_orchestration true only if the route is Warden -> Conductor. " +

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-09T17:39:21.031Z",
+  "generatedAt": "2026-08-12T09:21:43.706Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -38,25 +38,25 @@
       },
       "claude": {
         "projectionPresent": true,
-        "hookCommandEntries": 2,
+        "hookCommandEntries": 14,
         "hookFiles": 18,
-        "commandFiles": 0
+        "commandFiles": 3
       },
       "codex": {
         "projectionPresent": true,
-        "hookCommandEntries": 0,
+        "hookCommandEntries": 15,
         "hookFiles": 19,
-        "commandFiles": 0
+        "commandFiles": 3
       },
       "cursor": {
         "projectionPresent": true,
-        "hookCommandEntries": 0,
+        "hookCommandEntries": 11,
         "hookFiles": 18,
         "commandFiles": 0
       },
       "openclaw": {
-        "projectionPresent": false,
-        "hookCommandEntries": 0,
+        "projectionPresent": true,
+        "hookCommandEntries": 1,
         "hookFiles": 0,
         "commandFiles": 0,
         "skillFiles": 0
@@ -172,8 +172,8 @@
         "type": "agents",
         "namespace": "canonical",
         "path": "canonical/agents/meta-conductor.md",
-        "size": 62843,
-        "modified": "2026-07-15T21:51:26.809Z",
+        "size": 62949,
+        "modified": "2026-08-11T17:17:15.587Z",
         "layer": "meta",
         "executionBlock": true
       },
@@ -244,8 +244,8 @@
         "type": "skills",
         "namespace": "canonical",
         "path": "canonical/skills/meta-theory/SKILL.md",
-        "size": 87116,
-        "modified": "2026-08-04T11:15:55.075Z"
+        "size": 87259,
+        "modified": "2026-08-11T17:17:40.825Z"
       },
       "repo:canonical:same-set-reusable-flow-for-project-file-inventor": {
         "id": "same-set-reusable-flow-for-project-file-inventor",
@@ -360,8 +360,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/runtime-codex.md",
         "relativePath": "runtime-codex.md",
-        "size": 30366,
-        "modified": "2026-07-15T21:50:17.269Z"
+        "size": 30457,
+        "modified": "2026-08-11T17:17:15.587Z"
       },
       "repo:canonical-reference:spine-state": {
         "id": "spine-state",
@@ -522,8 +522,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/claude/hooks/enforce-agent-dispatch.mjs",
         "relativePath": "enforce-agent-dispatch.mjs",
-        "size": 61208,
-        "modified": "2026-07-15T15:39:20.358Z",
+        "size": 59870,
+        "modified": "2026-08-10T20:19:01.574Z",
         "canonicalPath": "canonical/runtime-assets/claude/hooks/enforce-agent-dispatch.mjs"
       },
       "repo:canonical-runtime-assets:graphify-context.mjs": {

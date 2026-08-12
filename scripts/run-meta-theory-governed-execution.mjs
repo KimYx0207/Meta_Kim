@@ -63,7 +63,11 @@ import {
   runStageRunnerBridge,
 } from "./governed-execution/stage-runner-bridge.mjs";
 import { buildGovernanceRequirementsShadow } from "./governed-execution/governance-requirements-shadow-adapter.mjs";
-import { openDurableRunKernel } from "./governed-execution/durable-run-kernel.mjs";
+import { openDurableRunRepository } from "../src/application/run/open-durable-run-repository.mjs";
+import {
+  digestKnowledgeLifecycleValue,
+  validateWardenWritebackApproval as validateExactWardenWritebackApproval,
+} from "../src/domain/evolution/warden-writeback-approval.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
 import {
   readMetaRunStatus,
@@ -97,7 +101,7 @@ const AI_READABLE_PRODUCT_STANDARDS_PATH = path.join(
   "ai-readable-product-standards.json"
 );
 const RUNTIME_TARGETS = ["claude", "codex", "cursor", "openclaw"];
-const WARDEN_APPROVAL_PACKET_SCHEMA_VERSION = "warden-approval-v0.1";
+const WARDEN_APPROVAL_PACKET_SCHEMA_VERSION = "warden-approval-v0.2";
 const CONVERSATION_NOTICE_SCHEMA_VERSION = "conversation-notice-v0.1";
 const CONVERSATION_NOTICE_ADAPTER = "meta-theory-governed-execution-cli";
 const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -179,7 +183,7 @@ const RUNTIME_SMOKE_PROJECTIONS = {
 };
 
 const AGENT_TEAMS_PLAYBOOK_ID = "agent-teams-playbook";
-const CODEX_DEFAULT_AGENT_MAX_THREADS = 6;
+const CODEX_DEFAULT_AGENT_MAX_THREADS = 2;
 const ROUTE_RUNTIME_ALIASES = Object.freeze({
   claude: "claude_code",
   claude_code: "claude_code",
@@ -947,6 +951,97 @@ async function atomicWriteFile(filePath, content) {
   }
 }
 
+async function fsyncParentDirectoryBestEffort(filePath) {
+  if (process.platform === "win32") return;
+  let directoryHandle;
+  try {
+    directoryHandle = await fs.open(path.dirname(filePath), "r");
+    await directoryHandle.sync();
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EISDIR", "EPERM"].includes(error?.code)) throw error;
+  } finally {
+    await directoryHandle?.close().catch(() => {});
+  }
+}
+
+async function installCanonicalBytesAtomically(filePath, content, {
+  expectedSourceDigest = null,
+  missingSentinel = "__META_KIM_MISSING_CANONICAL_SOURCE__",
+  beforeRename = null,
+} = {}) {
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.canonical-writeback.tmp`,
+  );
+  let tempHandle;
+  try {
+    tempHandle = await fs.open(tempPath, "wx", 0o600);
+    await tempHandle.writeFile(content);
+    await tempHandle.sync();
+    await tempHandle.close();
+    tempHandle = null;
+    await beforeRename?.({ filePath });
+    if (expectedSourceDigest) {
+      const currentBytes = await readBytesIfExists(filePath);
+      const currentDigest = `sha256:${textSha256(
+        currentBytes?.toString("utf8") ?? missingSentinel,
+      )}`;
+      if (currentDigest !== expectedSourceDigest) {
+        throw new Error(`Canonical writeback pre-state changed: ${filePath}`);
+      }
+    }
+    await renameWithTransientWindowsRetry(tempPath, filePath);
+    await fsyncParentDirectoryBestEffort(filePath);
+  } finally {
+    await tempHandle?.close().catch(() => {});
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+  }
+}
+
+async function restoreExactCanonicalBytes(filePath, priorBytes) {
+  if (priorBytes === null) {
+    await fs.rm(filePath, { force: true });
+    await fsyncParentDirectoryBestEffort(filePath);
+    return;
+  }
+  await installCanonicalBytesAtomically(filePath, priorBytes);
+}
+
+async function replaceCanonicalFileAtomically({
+  filePath,
+  content,
+  priorBytes,
+  targetRef,
+  faultInjector = null,
+  expectedSourceDigest = null,
+}) {
+  let committed = false;
+  try {
+    await installCanonicalBytesAtomically(filePath, content, {
+      expectedSourceDigest,
+      beforeRename: ({ filePath: currentPath }) => faultInjector?.({
+        stage: "before_atomic_rename",
+        targetRef,
+        filePath: currentPath,
+      }),
+    });
+    committed = true;
+    await faultInjector?.({ stage: "after_atomic_rename", targetRef, filePath });
+  } catch (error) {
+    if (committed) {
+      try {
+        await restoreExactCanonicalBytes(filePath, priorBytes);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `Canonical writeback failed and exact-byte rollback also failed: ${targetRef}`,
+        );
+      }
+    }
+    throw error;
+  }
+}
+
 async function reserveExplicitRunId(reservationPath, { runId, taskFingerprint, stagingRefs = null }) {
   let handle;
   try {
@@ -1116,7 +1211,7 @@ async function loadAlreadyMaterializedDurableRun({
     if (reservation.phase === "reserved") return null;
     throw new Error(`Durable database is missing for staged or committed run '${runId}'.`);
   }
-  const kernel = await openDurableRunKernel(durableDbPath);
+  const kernel = await openDurableRunRepository(durableDbPath);
   try {
     let projection;
     try {
@@ -1179,7 +1274,7 @@ async function openRunnerDurableCoordinator({
   leaseMs,
   heartbeatIntervalMs,
 }) {
-  const kernel = await openDurableRunKernel(durableDbPath);
+  const kernel = await openDurableRunRepository(durableDbPath);
   let claim = null;
   let heartbeatTimer = null;
   let heartbeatError = null;
@@ -1270,6 +1365,15 @@ async function readTextIfExists(filePath) {
     return await fs.readFile(filePath, "utf8");
   } catch {
     return null;
+  }
+}
+
+async function readBytesIfExists(filePath) {
+  try {
+    return await fs.readFile(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
   }
 }
 
@@ -1365,82 +1469,30 @@ function remainingActionForProjection(runtime, failureClass) {
   return `Inspect ${runtime} projection and live evidence gap.`;
 }
 
-function normalizeWardenApprovalPacket(packet) {
-  if (!packet || typeof packet !== "object") {
-    return null;
-  }
-  const targets = Array.isArray(packet.targets)
-    ? packet.targets
-    : packet.target
-      ? [packet.target]
-      : [];
+export function validateWardenApprovalPacket(packet, candidates = []) {
+  const result = validateExactWardenWritebackApproval({
+    approvalPacket: packet,
+    candidates,
+  });
+  const scopeValid = result.ok !== true || result.normalized.scope === "canonical_reverse_sync";
   return {
-    schemaVersion:
-      packet.schemaVersion ?? WARDEN_APPROVAL_PACKET_SCHEMA_VERSION,
-    approvalId: packet.approvalId ?? stableId("approval", JSON.stringify(packet)),
-    approver: packet.approver,
-    approvedAt: packet.approvedAt ?? null,
-    scope: packet.scope,
-    targets,
-    diffSummary: packet.diffSummary,
-    rollbackPlan: packet.rollbackPlan,
-    riskReview: packet.riskReview ?? null,
-    humanApprovalEvidence: packet.humanApprovalEvidence ?? null,
-  };
-}
-
-export function validateWardenApprovalPacket(packet) {
-  const normalized = normalizeWardenApprovalPacket(packet);
-  const missing = [];
-  if (!normalized) {
-    return {
-      ok: false,
-      normalized: null,
-      missing: ["approvalPacket"],
-      reason: "Missing Warden approval packet.",
-    };
-  }
-  for (const field of [
-    "schemaVersion",
-    "approvalId",
-    "approver",
-    "approvedAt",
-    "scope",
-    "diffSummary",
-    "rollbackPlan",
-  ]) {
-    if (
-      typeof normalized[field] !== "string" ||
-      normalized[field].trim().length === 0
-    ) {
-      missing.push(field);
-    }
-  }
-  if (
-    normalized.schemaVersion !== WARDEN_APPROVAL_PACKET_SCHEMA_VERSION
-  ) {
-    missing.push("schemaVersion=warden-approval-v0.1");
-  }
-  if (normalized.targets.length === 0) {
-    missing.push("targets");
-  }
-  if (
-    !String(normalized.approver ?? "").toLowerCase().includes("warden")
-  ) {
-    missing.push("approver must name meta-warden");
-  }
-  return {
-    ok: missing.length === 0,
-    normalized,
-    missing,
-    reason:
-      missing.length === 0
-        ? "Warden approval packet is complete."
-        : `Warden approval packet missing: ${missing.join(", ")}`,
+    ...result,
+    ok: result.ok === true && scopeValid,
+    status: scopeValid ? result.status : "invalid",
+    errors: scopeValid ? result.errors : ["approval scope must be canonical_reverse_sync"],
+    missing: result.errors,
+    reason: result.ok && scopeValid
+      ? "Exact Warden v0.2 approval covers every mutation binding."
+      : scopeValid
+        ? result.errors.join(", ")
+        : "approval scope must be canonical_reverse_sync",
   };
 }
 
 export function buildWardenApprovalRequest({ candidates }) {
+  const mutationBindings = candidates.map((candidate) => ({
+    ...(candidate.mutationBinding ?? candidate),
+  }));
   return {
     schemaVersion: WARDEN_APPROVAL_PACKET_SCHEMA_VERSION,
     status: "approval_required",
@@ -1450,11 +1502,13 @@ export function buildWardenApprovalRequest({ candidates }) {
       "approver",
       "approvedAt",
       "scope",
-      "targets",
+      "mutationBindings",
       "diffSummary",
       "rollbackPlan",
+      "riskReview",
     ],
     candidateIds: candidates.map((candidate) => candidate.candidateId),
+    mutationBindings,
     targetPreview: candidates.map((candidate) => ({
       candidateId: candidate.candidateId,
       target: candidate.targetRelativeToCanonical
@@ -1463,20 +1517,8 @@ export function buildWardenApprovalRequest({ candidates }) {
       diffSummary: candidate.diffSummary,
     })),
     instruction:
-      "Current repo canonical writeback stays candidate-only until this packet is explicitly supplied and validated.",
+      "Current repo canonical writeback stays candidate-only until a warden-approval-v0.2 packet exact-binds every mutation and pre-state digest.",
   };
-}
-
-function approvalTargetsCandidate(approvalPacket, targetRelativeToCanonical) {
-  if (!approvalPacket || !targetRelativeToCanonical) {
-    return false;
-  }
-  const normalizedTarget = targetRelativeToCanonical.replaceAll("\\", "/");
-  const canonicalTarget = `canonical/${normalizedTarget}`;
-  return approvalPacket.targets.some((target) => {
-    const candidate = String(target ?? "").replaceAll("\\", "/");
-    return candidate === normalizedTarget || candidate === canonicalTarget;
-  });
 }
 
 function writebackTargetFor(decisionResult, canonicalRoot) {
@@ -1497,15 +1539,14 @@ function writebackTargetFor(decisionResult, canonicalRoot) {
   return null;
 }
 
-function renderCandidateContent({ decisionResult, approvalEvidence }) {
+function renderCandidateContent({ decisionResult }) {
   const candidate = decisionResult.candidateWriteback;
   const output = decisionResult.decisionOutput;
   return [
     "---",
     `name: ${safeSlug(decisionResult.capabilityGap.requestedCapability)}`,
     `candidateType: ${candidate?.candidateType ?? "none"}`,
-    `sourceGapId: ${decisionResult.capabilityGap.gapId}`,
-    `approvalEvidence: ${approvalEvidence}`,
+    "approvalContract: warden-approval-v0.2-exact-binding",
     "---",
     "",
     `# ${decisionResult.capabilityGap.requestedCapability}`,
@@ -1530,8 +1571,10 @@ function renderCandidateContent({ decisionResult, approvalEvidence }) {
 async function maybeApplyWriteback({
   decisionResult,
   canonicalRoot,
-  approvalEvidence,
   apply,
+  expectedSourceDigest = null,
+  priorBytes = null,
+  faultInjector = null,
 }) {
   const target = writebackTargetFor(decisionResult, canonicalRoot);
   if (!target) {
@@ -1542,7 +1585,7 @@ async function maybeApplyWriteback({
       diffSummary: "No durable writeback target for this decision.",
     };
   }
-  const content = renderCandidateContent({ decisionResult, approvalEvidence });
+  const content = renderCandidateContent({ decisionResult });
   const targetRelativeToCanonical = path.relative(canonicalRoot, target).replaceAll("\\", "/");
   if (!apply) {
     return {
@@ -1553,8 +1596,20 @@ async function maybeApplyWriteback({
     };
   }
   await fs.mkdir(path.dirname(target), { recursive: true });
-  const before = await readTextIfExists(target);
-  await fs.writeFile(target, content);
+  const currentBytes = await readBytesIfExists(target);
+  const before = currentBytes?.toString("utf8") ?? null;
+  const currentDigest = `sha256:${textSha256(before ?? "__META_KIM_MISSING_CANONICAL_SOURCE__")}`;
+  if (expectedSourceDigest && currentDigest !== expectedSourceDigest) {
+    throw new Error(`Canonical writeback pre-state changed: ${targetRelativeToCanonical}`);
+  }
+  await replaceCanonicalFileAtomically({
+    filePath: target,
+    content,
+    priorBytes,
+    targetRef: `canonical/${targetRelativeToCanonical}`,
+    faultInjector,
+    expectedSourceDigest,
+  });
   return {
     applyStatus: before === null ? "created" : "updated",
     target: relative(target),
@@ -1690,69 +1745,139 @@ export async function buildWardenWritebackFlow({
   approvalPacket = null,
   applyWriteback = false,
   canonicalRoot = path.join(REPO_ROOT, "canonical"),
+  writebackFaultInjector = null,
 } = {}) {
   const candidateResults = decisionResults.filter((result) => result.candidateWriteback);
-  const approvalValidation = validateWardenApprovalPacket(approvalPacket);
-  const approved = approvalValidation.ok;
-  const candidates = [];
+  const plannedRecords = [];
   for (const result of candidateResults) {
     const plannedApplication = await maybeApplyWriteback({
       decisionResult: result,
       canonicalRoot,
-      approvalEvidence:
-        approvalValidation.normalized?.approvalId ??
-        approvalEvidence ??
-        "not-approved",
       apply: false,
     });
-    const targetApproved = approvalTargetsCandidate(
-      approvalValidation.normalized,
-      plannedApplication.targetRelativeToCanonical,
-    );
-    const candidateApproved = approved && targetApproved;
-    const writebackDecision = candidateApproved
-      ? "approved-for-writeback"
-      : "candidate_only";
-    const application =
-      candidateApproved && applyWriteback
-        ? await maybeApplyWriteback({
-            decisionResult: result,
-            canonicalRoot,
-            approvalEvidence:
-              approvalValidation.normalized?.approvalId ??
-              approvalEvidence ??
-              "not-approved",
-            apply: true,
-          })
-        : plannedApplication;
-    const plannedContent = renderCandidateContent({
-      decisionResult: result,
-      approvalEvidence:
-        approvalValidation.normalized?.approvalId ??
-        approvalEvidence ??
-        "not-approved",
+    const target = writebackTargetFor(result, canonicalRoot);
+    const beforeBytes = target ? await readBytesIfExists(target) : null;
+    const before = beforeBytes?.toString("utf8") ?? null;
+    const targetRef = plannedApplication.targetRelativeToCanonical
+      ? `canonical/${plannedApplication.targetRelativeToCanonical}`
+      : null;
+    const plannedContent = renderCandidateContent({ decisionResult: result });
+    const operation = before === null ? "create" : "replace";
+    const expectedSourceDigest = `sha256:${textSha256(
+      before ?? "__META_KIM_MISSING_CANONICAL_SOURCE__",
+    )}`;
+    const candidateDigest = `sha256:${textSha256(plannedContent)}`;
+    const rollbackPlan = {
+      action: "restore_exact_prior_bytes",
+      targetRef,
+      expectedSourceDigest,
+    };
+    const rollbackPlanDigest = digestKnowledgeLifecycleValue(rollbackPlan);
+    const transitionId = digestKnowledgeLifecycleValue({
+      targetRef,
+      operation,
+      candidateDigest,
+      expectedSourceDigest,
     });
-    candidates.push({
-      candidateId: result.candidateWriteback.candidateId,
-      sourceGapId: result.capabilityGap.gapId,
-      repeatKey: result.gapDecision.decision,
-      candidateType: result.candidateWriteback.candidateType,
-      writebackDecision,
+    const mutationBinding = targetRef
+      ? {
+          targetRef,
+          operation,
+          transitionId,
+          candidateDigest,
+          expectedSourceDigest,
+          rollbackPlanDigest,
+        }
+      : null;
+    plannedRecords.push({
+      result,
+      target,
+      before,
+      beforeBytes,
+      plannedContent,
+      plannedApplication,
+      mutationBinding,
+    });
+  }
+
+  const mutationBindings = plannedRecords
+    .map((record) => record.mutationBinding)
+    .filter(Boolean);
+  const approvalValidation = validateWardenApprovalPacket(
+    approvalPacket,
+    mutationBindings,
+  );
+  const approved = approvalValidation.ok && mutationBindings.length === plannedRecords.length;
+  const appliedByTarget = new Map();
+  if (approved && applyWriteback) {
+    for (const record of plannedRecords) {
+      const current = record.target ? await readTextIfExists(record.target) : null;
+      const currentDigest = `sha256:${textSha256(
+        current ?? "__META_KIM_MISSING_CANONICAL_SOURCE__",
+      )}`;
+      if (currentDigest !== record.mutationBinding.expectedSourceDigest) {
+        throw new Error(`Canonical writeback pre-state changed: ${record.mutationBinding.targetRef}`);
+      }
+    }
+    const applied = [];
+    try {
+      for (const record of plannedRecords) {
+        const application = await maybeApplyWriteback({
+          decisionResult: record.result,
+          canonicalRoot,
+          apply: true,
+          expectedSourceDigest: record.mutationBinding.expectedSourceDigest,
+          priorBytes: record.beforeBytes,
+          faultInjector: writebackFaultInjector,
+        });
+        applied.push(record);
+        appliedByTarget.set(record.mutationBinding.targetRef, application);
+      }
+    } catch (error) {
+      const rollbackErrors = [];
+      for (const record of applied.reverse()) {
+        try {
+          await restoreExactCanonicalBytes(record.target, record.beforeBytes);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          "Canonical writeback batch failed and one or more exact-byte rollbacks failed.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  const candidates = plannedRecords.map((record) => {
+    const candidateApproved = approved && record.mutationBinding !== null;
+    const application = appliedByTarget.get(record.mutationBinding?.targetRef)
+      ?? record.plannedApplication;
+    return {
+      candidateId: record.result.candidateWriteback.candidateId,
+      sourceGapId: record.result.capabilityGap.gapId,
+      repeatKey: record.result.gapDecision.decision,
+      candidateType: record.result.candidateWriteback.candidateType,
+      writebackDecision: candidateApproved ? "approved-for-writeback" : "candidate_only",
       approvalEvidence:
         approvalValidation.normalized?.approvalId ?? approvalEvidence,
       approvalPacket: candidateApproved ? approvalValidation.normalized : null,
-      targetApproved,
+      targetApproved: candidateApproved,
+      mutationBinding: record.mutationBinding,
       target: application.target,
       targetRelativeToCanonical: application.targetRelativeToCanonical,
       diffSummary: application.diffSummary,
       dryRunArtifact: {
         status: application.target ? "generated" : "not_applicable",
         canonicalWrites: candidateApproved && applyWriteback ? 1 : 0,
-        wouldWriteBytes: Buffer.byteLength(plannedContent, "utf8"),
+        wouldWriteBytes: Buffer.byteLength(record.plannedContent, "utf8"),
         targetRelativeToCanonical: application.targetRelativeToCanonical,
         riskReview: [
           "No canonical file is written unless a complete Warden approval packet is present.",
-          "Approval packet targets must cover the candidate target before apply.",
+          "Approval packet must exact-bind target, candidate digest, current source digest, transition, and rollback before apply.",
           "Run-scoped task details stay out of durable identity.",
           "Rollback plan must be present before approved apply.",
         ],
@@ -1760,15 +1885,15 @@ export async function buildWardenWritebackFlow({
       verificationResult: candidateApproved
         ? {
             status: application.applyStatus === "planned" ? "planned" : "pass",
-            owner: result.gapDecision.verificationOwner,
+            owner: record.result.gapDecision.verificationOwner,
           }
         : {
             status: "not-run",
-            owner: result.gapDecision.verificationOwner,
+            owner: record.result.gapDecision.verificationOwner,
           },
       applyStatus: application.applyStatus,
-    });
-  }
+    };
+  });
   const approvalRequest =
     candidates.length > 0 && !approved
       ? buildWardenApprovalRequest({ candidates })
@@ -4628,7 +4753,7 @@ function resolveAgentTeamsParallelBudget(executableLaneCount) {
     capacitySourceKind: resolvedCapacity.sourceKind,
     noArbitraryMetaKimCap: true,
     capPolicy:
-      "Meta_Kim does not set its own parallel-agent maximum; Codex wave size is limited only by host/config capacity, task DAG, and collision boundaries.",
+      "Meta_Kim installs a resource-safe Codex default of agents.max_threads=2, preserves an explicit user override, and adds no hidden cap beyond host/config capacity, task DAG, and collision boundaries.",
     overflowPolicy:
       executableLaneCount > runtimeCapacity
         ? "run all independent lanes in runtime-capacity waves"

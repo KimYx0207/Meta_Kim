@@ -345,11 +345,14 @@ test("setup records global boot ownership before hooks at the successful common 
   assert.match(step, /await recordMcpMemoryBootArtifactOwnership\(\{[\s\S]*?homeRoot: homedir\(\)[\s\S]*?platformName: platform\(\)[\s\S]*?metaKimVersion: packageVersion/u);
   assert.match(step, /canAutoStart: memoryEndpoint\.canAutoStart/u);
   assert.match(step, /if \(!ownership\.ok\)[\s\S]*?return MCP_MEMORY_INSTALL_OUTCOME\.OWNERSHIP_FAILURE;/u);
-  assert.match(step, /return hooksOk;\s*\}/u);
+  assert.match(step, /return registrationOk && hooksOk && backgroundOk;\s*\}/u);
   const backgroundGate = step.indexOf("if (!registrationOk || !backgroundOk) return false;");
   const ownershipCall = step.indexOf("await recordMcpMemoryBootArtifactOwnership(");
   const hookInstaller = step.indexOf("await runMcpMemoryHookInstaller(");
-  const finalReturn = step.indexOf("return hooksOk;", hookInstaller);
+  const finalReturn = step.indexOf(
+    "return registrationOk && hooksOk && backgroundOk;",
+    hookInstaller,
+  );
   assert.ok(backgroundGate < ownershipCall, "background success gate precedes ownership");
   assert.ok(ownershipCall < hookInstaller, "ownership is persisted before hook installation");
   assert.ok(hookInstaller < finalReturn, "hook outcome controls the final return");

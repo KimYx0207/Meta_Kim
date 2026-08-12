@@ -49,6 +49,36 @@ Meta_Kim 就是干这个的。它不是另一个模型，而是编码工具之�
 | 命令跑绿就被误认为目标完成 | 证据必须回到用户真实目标上验收 |
 | 好经验沉没在聊天记录里 | 可复用经验会沉淀成 skill、agent、script、contract 或一次性任务 |
 
+### 3.0 改变了什么
+
+Meta_Kim 3.0 的重点是让治理系统更可信：建议、耐久真相、用户视图、安装状态和知识进化不再混成一件事。
+
+| 架构结果 | 对用户意味着什么 |
+| --- | --- |
+| **A01 - 证据迁移** | worker 自己说“完成”不算；证据要经过独立判断，不确定或矛盾材料继续保持 blocked / in doubt。 |
+| **A02 - 继续 / 等待 / 停止 / 升级** | 继续建议必须绑定同一份耐久运行快照，而且建议本身不能恢复执行。 |
+| **A03 - 依赖安全推进** | Meta_Kim 可以找出值得考虑的下一项工作，但 Todo 不能因此变成执行权。 |
+| **A04 - 复用调度器** | ready work 继续走现有调度规则，3.0 不创建一套竞争调度器。 |
+| **A05 - Lease / claim 可见性** | 当前占用与冲突只从既有耐久权威投影，不能由候选项凭空生成。 |
+| **A06 - 运行健康** | health 只是一个时间点的观察，不证明持续存活、已安装、会持久运行或有权执行。 |
+| **A07 - 额度 / 用量** | retry 和经过时间与未知 cost、progress、provider quota 分开；投影本身不能 stop 或 retry。 |
+| **A08 - 只读运行视图** | 原生面板、看板、Markdown、HTML 显示同一份摘要绑定的运行，不会变成第二事实源。 |
+| **A09 - 耐久仓储统一** | event、CAS、transaction、lease、fence、checkpoint 共用一套执行仓储模型；分析库和宿主事件库仍不是执行权威。 |
+| **A10 - 更安全的 setup 边界** | setup 继续作为 CLI 门面，稳定包物化与 runtime 写入被隔离并单独校验。 |
+| **A11 - 知识生命周期卫生** | 生成的进化建议在 Warden 精确批准前没有写入/删除权；回滚、源漂移、tombstone 和用户状态都受保护。 |
+| **A12 - 文档与发布真相** | 公开声明必须和合同、runtime 证据、package 内容、发布门一致；延期事项继续明确标注延期。 |
+
+实现遵守向内依赖原则：
+
+| 层 | 职责 | 明确边界 |
+| --- | --- | --- |
+| **Domain** | 纯决策语义与不变量 | 不碰文件系统、数据库、网络、runtime、模板或执行副作用 |
+| **Application** | 用例编排与 ports | 组合 Domain 与 adapters，不拥有 SQL、文件算法或宿主权威 |
+| **Data / Infrastructure** | SQLite、事务、包存储、runtime 进程与文件 adapter | 实现声明过的 ports，不能改变 Domain 判断或铸造授权 |
+| **Presentation** | 原生面板、看板、Markdown、HTML 渲染 | 只读取一份已验证模型，不能写入、派工、完成、claim、lease 或推进 cursor |
+
+这次分层是渐进完成的：需要兼容的旧脚本入口继续做门面，新稳定逻辑放在分层边界后面。
+
 ### 3 分钟证明
 
 Meta_Kim 最好不是靠读完整套规则理解，而是先看一次 governed run。
@@ -109,6 +139,10 @@ node setup.mjs
 如果你显式选择 **批量项目更新**，setup 会让你选择要更新的项目目录，并把所选 target 的项目级 runtime 投影写进去；runtime 支持的项目 hooks/config 也会恢复。这个路径不安装全局通用能力，也不会执行项目清理。
 
 项目文件仍然允许存在，但它不是通用能力仓库。确认过的 project bootstrap 只写项目上下文/配置/状态，以及经过证明的项目专用覆盖层；已有用户配置会通过 managed block、add-only 写入、保护式 JSON merge、备份和 manifest 保留。任何 apply 过的项目 bootstrap 都会记录 `.meta-kim/` 状态与备份文件。
+
+更新还会把第三方安装器视为“不可信配置生产者”。在 Codex 中，Meta_Kim 会恢复用户安装前的配置，只应用自己明确拥有的原生控制项。这样，上游安装器不会复活用户已删除的第三方 MCP server，不会静默接纳一个新 server，也不会留下已知 Meta_Kim benchmark/test 临时项目记录。用户自己的 MCP、项目、hooks、agents 和其它无关设置保持不变。
+
+Codex agent fan-out 的默认上限是同时 2 个线程、1 层嵌套。用户显式设置的其它上限会保留；只有缺失值或 Meta_Kim 旧默认值 6 会迁移。
 
 如果你准备维护仓库，优先改主源：`canonical/agents/`、`canonical/skills/meta-theory/`、`config/contracts/`、`config/capability-index/`，然后执行（需 Node.js >= 22.13.0）：
 
@@ -596,6 +630,8 @@ flowchart TB
 你可以继续补充新平台映射，但升级路径必须被 gate 住：候选平台只有在 Meta_Kim 拥有 adapter 形态并能验证后，才是正式投影。
 
 Claude/Codex/Cursor/OpenClaw 四个工具端都是 Meta_Kim 的投影家族，但原生能力表面和证据等级不同。Claude Code 和 Codex 是默认选择的主链路；OpenClaw 与 Cursor 是可用的非默认兼容投影，需要维护者确认，并且增强原生能力的 PR 必须先在对应工具端自己完成严格自测、提供证据，证据通过审查后才能合并。投影 smoke、fixture 校验和生成报告都是有用证据，但不能冒充 native-live runtime proof。
+
+Decision authority 的边界比“能生成投影”更窄。当前 Codex app-server 与 Claude SDK/CLI callback 可以产生精确关联但永久非授权的观察，公开宿主接口仍不能证明 Codex Desktop UI、真人身份或真人回答，因此可信宿主权威继续停放。旧治理 gate 的等价迁移与 cutover 另行延期，所以 3.0 不声称 shadow/只读结果已经替换生产 gate。OpenClaw 仍没有 Meta_Kim typed-plugin 工具阻断 adapter，Cursor 的任意原生选择弹窗权威仍未验证。
 
 | 能力面 | Claude Code | Codex | OpenClaw | Cursor |
 | --- | --- | --- | --- | --- |

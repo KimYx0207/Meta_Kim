@@ -1601,6 +1601,33 @@ describe("uninstall / managed settings stripping", () => {
 });
 
 describe("uninstall / managed TOML fragment transaction", () => {
+  test("uninstall restores only Meta_Kim native controls and never resurrects removed MCP servers", () => {
+    withTmpRepo((repo) => {
+      const target = path.join(repo, "config.toml");
+      const original = [
+        "[mcp_servers.user_owned]",
+        'command = "node"',
+        "",
+      ].join("\n");
+      const planned = planCodexAppNativeControls(original, {
+        platformName: "linux",
+      });
+      writeFileSync(target, planned.text, "utf8");
+
+      const result = revertManagedTomlFragments({
+        path: target,
+        mutationJournal: planned.mutations,
+      });
+
+      assert.equal(result.success, true, result.reason);
+      assert.equal(readFileSync(target, "utf8"), original);
+      assert.doesNotMatch(
+        readFileSync(target, "utf8"),
+        /mcp_servers\.(?:github|memory|sequential-thinking)/u,
+      );
+    });
+  });
+
   test("restores false from true while preserving BOM CRLF comments and unmanaged bytes", () => {
     withTmpRepo((repo) => {
       const target = path.join(repo, "config.toml");

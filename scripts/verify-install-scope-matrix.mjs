@@ -16,6 +16,8 @@ import { buildIsolatedUserHomeEnv } from "./isolated-user-home-env.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const keepTemp = process.argv.includes("--keep-temp");
+const PROJECTION_PACKAGE_RECEIPT_PURPOSE =
+  "primary-runtime-global-projection-package-runtime-bundle:receipt";
 
 const projectCases = [
   {
@@ -97,6 +99,30 @@ function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
 }
 
+function normalizedPathText(value) {
+  const normalized = String(value).replaceAll("\\", "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function stablePackageRootFromManifest(manifest) {
+  const receiptEntry = manifest?.entries?.find((entry) =>
+    entry.source === "sync-global-meta-theory" &&
+    entry.purpose === PROJECTION_PACKAGE_RECEIPT_PURPOSE &&
+    entry.kind === "file"
+  );
+  if (!receiptEntry || !existsSync(receiptEntry.path)) return null;
+  const receipt = readJson(receiptEntry.path);
+  if (typeof receipt.packageRootRelative !== "string") return null;
+  const packageRoot = path.resolve(path.dirname(receiptEntry.path), receipt.packageRootRelative);
+  return existsSync(packageRoot) ? packageRoot : null;
+}
+
+function hookCommands(config) {
+  return Object.values(config?.hooks ?? {}).flatMap((blocks) =>
+    (blocks ?? []).flatMap((block) => block.hooks ?? [])
+  ).map((hook) => hook.command).filter((command) => typeof command === "string");
+}
+
 const runtimeCompatibilityCatalog = readJson(
   path.join(repoRoot, "config", "runtime-compatibility-catalog.json"),
 );
@@ -112,7 +138,7 @@ function runNode(args, options = {}) {
     cwd: repoRoot,
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,
-    timeout: 120_000,
+    timeout: 300_000,
     windowsHide: true,
     env: { ...process.env, ...(options.env ?? {}) },
   });
@@ -283,12 +309,22 @@ function inspectGlobalSync(baseDir, { id, targets, withGlobalHooks = false }) {
       );
       const codexHooksJsonPath = path.join(homes.codex, "hooks.json");
       const codexHooksJson = existsSync(codexHooksJsonPath)
-        ? readFileSync(codexHooksJsonPath, "utf8")
-        : "";
+        ? readJson(codexHooksJsonPath)
+        : null;
+      const stablePackageRoot = stablePackageRootFromManifest(manifest);
+      const commands = hookCommands(codexHooksJson).map(normalizedPathText);
+      const stablePackageRootText = stablePackageRoot
+        ? normalizedPathText(stablePackageRoot)
+        : null;
+      const repoRootText = normalizedPathText(repoRoot);
       requiredChecks.codexGlobalHooksJson =
-        codexHooksJson.includes("activate-meta-theory-spine.mjs") &&
-        codexHooksJson.includes("--package-root") &&
-        codexHooksJson.includes(repoRoot.replace(/\\/g, "\\\\"));
+        stablePackageRootText !== null &&
+        commands.some((command) =>
+          command.includes("activate-meta-theory-spine.mjs") &&
+          command.includes("--package-root") &&
+          command.includes(stablePackageRootText)
+        ) &&
+        commands.every((command) => !command.includes(repoRootText));
     }
   }
   if (targets.includes("cursor")) {

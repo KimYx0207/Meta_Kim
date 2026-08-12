@@ -35,6 +35,9 @@ const changelogZh = readFileSync("CHANGELOG.zh-CN.md", "utf8");
 const gitignore = readFileSync(".gitignore", "utf8");
 const scriptsReadme = readFileSync("scripts/README.md", "utf8");
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+const releaseVerificationPolicy = JSON.parse(
+  readFileSync("config/contracts/release-verification-policy.json", "utf8"),
+);
 const verifyRunnerSource = readFileSync("scripts/run-verify-all.mjs", "utf8");
 const evalMetaAgentsSource = readFileSync("scripts/eval-meta-agents.mjs", "utf8");
 
@@ -43,7 +46,9 @@ function completePortableRuntimeGlobalUpdateProof() {
     status: "passed",
     diagnostics: {
       operation: "packed-portable-runtime-global-update",
-      timeoutMs: 600000,
+      timeoutMs:
+        releaseVerificationPolicy.packedUserAcceptance
+          .portableRuntimeGlobalUpdateTimeoutMs,
       elapsedMs: 125,
       timedOut: false,
       exitCode: 0,
@@ -401,13 +406,30 @@ test("release stages derive runtime targets and timeout budgets from canonical p
   );
   assert.equal(processGuardStage?.cmd, "npm run meta:test:process-guard");
   assert.ok(processGuardStage.timeoutMs > 0);
+  const unitStage = STAGES.find((stage) => stage.name === "meta:test:unit");
+  assert.equal(unitStage?.cmd, "npm run meta:test:unit");
+  assert.ok(
+    unitStage.timeoutMs >= 420_000,
+    "the Windows unit suite must retain headroom above its current five-minute runtime",
+  );
+  const governanceCoreStage = STAGES.find(
+    (stage) => stage.name === "meta:verify:governance:core",
+  );
+  assert.equal(
+    governanceCoreStage?.timeoutMs,
+    releaseVerificationPolicy.stageTimeoutsMs["meta:verify:governance:core"],
+  );
+  assert.ok(
+    governanceCoreStage.timeoutMs >= 1_200_000,
+    "the full validator plus governance suite must retain Windows release-sequence headroom",
+  );
   const metaTheoryStage = STAGES.find(
     (stage) => stage.name === "meta:test:meta-theory",
   );
   assert.equal(metaTheoryStage?.cmd, "npm run meta:test:meta-theory");
   assert.ok(
-    metaTheoryStage.timeoutMs >= 300_000,
-    "the full meta-theory suite must retain release-sequence load headroom",
+    metaTheoryStage.timeoutMs >= 1_800_000,
+    "the full meta-theory suite must retain a deadlock-only safety fuse above its observed Windows runtime",
   );
   const primaryRuntimeFuseStage = STAGES.find(
     (stage) => stage.name === "eval-meta-agents",
@@ -455,7 +477,7 @@ test("release stages derive runtime targets and timeout budgets from canonical p
       "all-runtime-global-install-update-probe-mode",
       {},
     ),
-    180000,
+    600000,
   );
   assert.equal(
     resolveReleaseOperationTimeout(
@@ -833,6 +855,15 @@ test("packed product proof requires every portable runtime subproof", () => {
     packedProductProofComplete(completeWithObservedOutput),
     true,
     "metadata-only character counts remain valid when presence flags match",
+  );
+
+  const stalePortableTimeoutContract = structuredClone(complete);
+  stalePortableTimeoutContract.currentPackage.portableRuntime.globalUpdate
+    .diagnostics.timeoutMs = 600_000;
+  assert.equal(
+    packedProductProofComplete(stalePortableTimeoutContract),
+    false,
+    "portable runtime proof must match the configured release timeout",
   );
 
   const secretSentinel = "portable-proof-secret-sentinel";
@@ -1393,7 +1424,13 @@ test("all-runtime release preflight performs real isolated install and update ar
       "npm_pack_installed_public_cli",
     );
     assert.equal(progress[0].event, "release_preflight_start");
-    assert.ok(progress[0].expectedDurationMs >= 360_000);
+    assert.equal(
+      progress[0].expectedDurationMs,
+      releaseVerificationPolicy.operationTimeoutsMs[
+        "all-runtime-global-install-update-probe-mode"
+      ] * 2 +
+        releaseVerificationPolicy.packedUserAcceptance.expectedDurationMs,
+    );
     assert.deepEqual(
       progress
         .filter((event) => event.event === "runtime_probe_mode_start" || event.event === "runtime_probe_mode_complete")

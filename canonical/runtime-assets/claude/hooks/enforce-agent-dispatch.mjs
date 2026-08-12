@@ -124,22 +124,22 @@ const SPINE_STATE_DIR =
   process.env.META_KIM_SPINE_STATE_DIR || ".meta-kim/state/default/spine";
 const targetPath = extractFilePath(payload) || "";
 const PLANNING_FILES = ["task_plan.md", "findings.md", "progress.md"];
-const PASSIVE_CONTROL_PLANE_TOOLS = new Set([
-  "EnterPlanMode",
-  "ExitPlanMode",
+const READ_ONLY_CONTROL_PLANE_TOOLS = new Set([
   "TaskList",
   "TaskGet",
   "TaskOutput",
-  "TaskStop",
 ]);
-const TASK_BOOKKEEPING_TOOLS = new Set([
+const MUTATING_CONTROL_PLANE_TOOLS = new Set([
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "TaskStop",
   "TaskCreate",
   "TaskUpdate",
   "TodoWrite",
 ]);
 const CONTROL_PLANE_TOOLS = new Set([
-  ...PASSIVE_CONTROL_PLANE_TOOLS,
-  ...TASK_BOOKKEEPING_TOOLS,
+  ...READ_ONLY_CONTROL_PLANE_TOOLS,
+  ...MUTATING_CONTROL_PLANE_TOOLS,
 ]);
 
 function normalizeHookPath(value) {
@@ -443,47 +443,6 @@ function isPlanningFileWriteSegment(segment) {
   );
 }
 
-function hasFetchEvidenceForTaskBookkeeping(state) {
-  const fetchRecord = state?.fetchRecord;
-  if (!fetchRecord || typeof fetchRecord !== "object") return false;
-  if (fetchRecord.repairOnly || fetchRecord.status === "repair_only_fetch_record") {
-    return false;
-  }
-  return (
-    fetchRecord.capabilitySearchPerformed === true ||
-    (Array.isArray(fetchRecord.evidence) && fetchRecord.evidence.length > 0) ||
-    (Array.isArray(fetchRecord.capabilityMatches) && fetchRecord.capabilityMatches.length > 0)
-  );
-}
-
-function shouldDelayTaskBookkeeping(state) {
-  const stage = String(state?.currentStage || "").toLowerCase();
-  const dispatchMode = state?.stageRuntimeControl?.dispatchMode;
-  const dispatched = Array.isArray(state?.dispatchedAgents)
-    ? state.dispatchedAgents.length
-    : 0;
-  if (
-    ["fanout_eligible", "fan_out_ready", "fan_out_in_progress"].includes(dispatchMode) &&
-    dispatched === 0
-  ) return true;
-  if (stage === "critical") return true;
-  if (stage === "fetch" && !hasFetchEvidenceForTaskBookkeeping(state)) return true;
-  return false;
-}
-
-function formatTaskBookkeepingDelayDeny(toolName, state) {
-  const stage = state?.currentStage || "current design stage";
-  return (
-    `Task/todo bookkeeping via "${toolName}" is delayed during ${stage}. ` +
-    "For fan-out-eligible governed work, TaskCreate/TaskUpdate/TodoWrite cannot replace native Agent dispatch; " +
-    "dispatch at least one selected worker through Agent/Task before opening a bookkeeping board. " +
-    "Otherwise continue until Fetch evidence and Thinking owner bindings exist. " +
-    "Continue Fetch with read/search/capability discovery and a brief visible chat status; " +
-    "write spine-state or planning files only when needed. Do not start by creating or updating " +
-    "a task list before evidence is collected."
-  );
-}
-
 function matchesStageReadOnlyCommand(command, prefixes) {
   const segments = bashReadonlyInternals
     .splitSegments(command)
@@ -733,9 +692,22 @@ function observedModeNotice(state) {
   );
 }
 
+const EXACT_AGENT_DISPATCH_TOOLS = Object.freeze({
+  claude: new Set(["Agent", "Task"]),
+  codex: new Set([
+    "Agent",
+    "spawn_agent",
+    "followup_task",
+    "collaboration.spawn_agent",
+    "collaboration.followup_task",
+  ]),
+  cursor: new Set(["Agent", "Task", "spawn_agent"]),
+});
+
 function isAgentDispatchTool(name) {
-  const normalized = String(name ?? "").split(/[.:/]/u).at(-1);
-  return ["Agent", "Task", "spawn_agent", "followup_task"].includes(normalized);
+  const runtime = detectHookRuntime();
+  const trustedTools = EXACT_AGENT_DISPATCH_TOOLS[runtime];
+  return trustedTools?.has(String(name ?? "")) === true;
 }
 
 function normalizedDispatchToolName(name) {
@@ -1593,18 +1565,19 @@ if (isAgentDispatchTool(toolName)) {
   process.exit(0);
 }
 
-// Passive control-plane tools remain allowed. Task/todo bookkeeping is delayed
-// during Critical and pre-evidence Fetch because Claude Code can otherwise
-// churn on native task-list maintenance instead of continuing visible Fetch.
-if (TASK_BOOKKEEPING_TOOLS.has(toolName)) {
-  if (shouldDelayTaskBookkeeping(state)) {
-    exitAfterDeny(formatTaskBookkeepingDelayDeny(toolName, state));
-  }
-  process.exit(0);
+// queryBypass is a pure read-only route. Mutating host control-plane tools must
+// cross that boundary before the general control-plane allow; TaskList,
+// TaskGet, and TaskOutput remain available as read-only inspection surfaces.
+if (state.queryBypass && MUTATING_CONTROL_PLANE_TOOLS.has(toolName)) {
+  exitAfterDeny(
+    "queryBypass is limited to pure read-only inspection; mutating control-plane tools are denied.",
+  );
 }
 
-// Other passive control-plane tools are allowed. Agent dispatch and early task
-// bookkeeping have their own explicit governance branches above.
+// Passive control-plane tools, including task/todo bookkeeping, are allowed.
+// Bookkeeping never records an Agent dispatch and therefore cannot satisfy or
+// bypass the separate Agent-dispatch gates above; sequencing quality belongs
+// to the dispatcher, Review, and validators rather than a repeated Hook deny.
 if (CONTROL_PLANE_TOOLS.has(toolName)) {
   process.exit(0);
 }

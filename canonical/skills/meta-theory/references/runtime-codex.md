@@ -37,7 +37,7 @@ If `spawn_agent` is available and meta-theory / governed Meta_Kim activation aut
 - before the live call, show or record `ownerAgent` + owner source + capability/loadout + the native `spawn_agent` task plan; the run-scoped task is an invocation of that owner contract, while `task_name` remains only a lane identifier
 - do not use "created N agents", "派 agent", or host nickname lists as the complete user-visible explanation; if Codex UI shows a temporary nickname, map it back to `runtimeInstanceAlias` and the selected `ownerAgent` in the next dispatch/status notice
 - keep each worker's write scope disjoint when it edits files
-- size fan-out from Codex host/config capacity such as `[agents].max_threads`, current runtime capacity, task DAG, and collision boundaries instead of a fixed Meta_Kim cap
+- size fan-out from Codex host/config capacity such as `[agents].max_threads`, current runtime capacity, task DAG, and collision boundaries; Meta_Kim installs a visible resource-safe default of `2`, preserves explicit user overrides, and adds no hidden fixed cap
 - show the dispatch board before or alongside dispatch
 - distinguish temporary `runtimeInstanceAlias` from durable `roleDisplayName` and `ownerAgent`
 - do not describe the temporary subagent prompt as the created/iterated project agent

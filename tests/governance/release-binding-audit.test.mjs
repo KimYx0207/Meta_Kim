@@ -34,6 +34,9 @@ const DIR_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 const CANONICAL_PACKED_TARGETS = JSON.parse(
   readFileSync("config/sync.json", "utf8"),
 ).supportedTargets;
+const PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS = JSON.parse(
+  readFileSync("config/contracts/release-verification-policy.json", "utf8"),
+).packedUserAcceptance.portableRuntimeGlobalUpdateTimeoutMs;
 
 test("release audit promotion hashing does not create a CLI module cycle", () => {
   const acceptanceSource = readFileSync("scripts/runtime-capability-acceptance.mjs", "utf8");
@@ -216,7 +219,7 @@ function completePackedUserProof(packageSha256) {
           status: "passed",
           diagnostics: {
             operation: "packed-portable-runtime-global-update",
-            timeoutMs: 600000,
+            timeoutMs: PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS,
             elapsedMs: 125,
             timedOut: false,
             exitCode: 0,

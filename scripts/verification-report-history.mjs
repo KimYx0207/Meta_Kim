@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { renameWithTransientRetry } from "./transient-rename.mjs";
 
 const REPORT_SCHEMA_VERSION = "meta-kim-verification-report-v2";
 const POINTER_SCHEMA_VERSION = "meta-kim-verification-report-pointer-v1";
@@ -187,7 +188,7 @@ function atomicWrite(filePath, text) {
     writeFileSync(handle, text, "utf8");
     closeSync(handle);
     handle = undefined;
-    renameSync(temporary, filePath);
+    renameWithTransientRetry(temporary, filePath);
   } finally {
     if (handle !== undefined) closeSync(handle);
     if (existsSync(temporary)) unlinkSync(temporary);

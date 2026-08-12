@@ -2,6 +2,13 @@
 // It intentionally performs no I/O and trusts no precomputed report boolean.
 import { PACKED_USER_TARGETS } from "./packed-user-targets.mjs";
 import { PROJECTION_PACKAGE_PURPOSE } from "./global-projection-package-store.mjs";
+import releaseVerificationPolicy from "../config/contracts/release-verification-policy.json" with {
+  type: "json",
+};
+
+const PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS =
+  releaseVerificationPolicy.packedUserAcceptance
+    .portableRuntimeGlobalUpdateTimeoutMs;
 
 function hasExactPackedTargets(targets) {
   return Array.isArray(targets) &&
@@ -108,7 +115,7 @@ function portableRuntimeGlobalUpdateProofComplete(portableRuntime) {
 
   return (
     diagnostics.operation === "packed-portable-runtime-global-update" &&
-    diagnostics.timeoutMs === 600_000 &&
+    diagnostics.timeoutMs === PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS &&
     Number.isSafeInteger(diagnostics.elapsedMs) &&
     diagnostics.elapsedMs >= 0 &&
     diagnostics.timedOut === false &&

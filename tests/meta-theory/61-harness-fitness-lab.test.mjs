@@ -8,6 +8,7 @@ import {
   analyzeFitnessResults,
   assertStandaloneCodexHost,
   buildCodexTrialArgs,
+  buildIsolatedCodexTrialEnv,
   buildTrialPlan,
   codexCommandSpecFromCandidates,
   codexHostContextObservation,
@@ -89,6 +90,22 @@ test("61 — native Codex trial argv holds the controlled loadout constant", () 
   }
   assert.ok(!args.includes("danger-full-access"));
   assert.deepEqual(args.slice(-3), ["--model", "test-model", "-"]);
+});
+
+test("61 — native Codex trials isolate user config and project trust history", () => {
+  const isolatedHome = path.join(tempRoot, "isolated-codex-home");
+  const env = buildIsolatedCodexTrialEnv(isolatedHome, {
+    PATH: "test-path",
+    CODEX_HOME: "C:/Users/test/.codex",
+    HOME: "C:/Users/test",
+    USERPROFILE: "C:/Users/test",
+  });
+
+  assert.equal(env.PATH, "test-path");
+  assert.equal(env.CODEX_HOME, path.join(isolatedHome, ".codex"));
+  assert.equal(env.HOME, isolatedHome);
+  assert.equal(env.USERPROFILE, isolatedHome);
+  assert.notEqual(env.CODEX_HOME, "C:/Users/test/.codex");
 });
 
 test("61 — managed Desktop sessions fail closed while standalone native hosts pass", () => {

@@ -836,9 +836,9 @@ const STRINGS = {
     reverseModeSignalsFound: (n) => `Found ${n} evolution signal(s) from runtime projections.`,
     reverseModeConflictsDetected: (n) => `⚠ ${n} potential conflict(s) detected:`,
     reverseModeConflictHint: "(canonical has more content - may have un-synced changes)",
-    reverseModeConflictPrompt: "Conflicts detected. Use --force to overwrite canonical, or review changes manually.",
+    reverseModeConflictPrompt: "Conflicts detected. Review them first; --force only includes them in an exact approval-bound candidate batch.",
     reverseModeAborted: "Aborted: resolve conflicts before writeback.",
-    reverseModeForceProceed: "--force flag: proceeding with writeback despite conflicts.",
+    reverseModeForceProceed: "--force flag: conflicts included as candidates; canonical writeback still requires exact approval plus --apply.",
     reverseModeSafeWrites: (n) => `Safe to write back to canonical (${n} files):`,
     reverseModeDryRun: "Dry run complete: no files written. Use without --dry-run to apply changes.",
     reverseModeWriteFailed: (path, err) => `Failed to write back ${path}: ${err}`,
@@ -914,7 +914,7 @@ const STRINGS = {
     upstreamProjectLocalSkipped: (id, runtimeId, commandText) =>
       `${id}: project-local installer skipped during global update; run from each ${runtimeId} project root: ${commandText}`,
     upstreamCodexConfigPreserveDryRun: (configPath) =>
-      `preserve existing ${configPath} before ECC upstream installer and restore it with add-only ECC merge`,
+      `preserve existing ${configPath} before ECC upstream installer, reject upstream MCP/project/root config, and restore only the user snapshot plus Meta_Kim native controls`,
     upstreamCodexGlobalAgentsPreserveDryRun: (agentsPath) =>
       `protect ${agentsPath} from ECC upstream installer: restore user-authored content or quarantine the ECC baseline if it appears globally`,
     upstreamInstallerFailureReason: (commandText) =>
@@ -924,7 +924,7 @@ const STRINGS = {
     codexConfigBackupBeforeEcc: (backupPath) =>
       `Backed up Codex config before ECC upstream installer: ${backupPath}`,
     codexConfigRestoredAfterEcc: (configPath) =>
-      `Restored user Codex config after ECC upstream installer with add-only ECC merge: ${configPath}`,
+      `Restored the user Codex snapshot after ECC upstream install; upstream MCP/project/root config was not imported: ${configPath}`,
     codexGlobalAgentsBackupBeforeEcc: (backupPath) =>
       `Backed up Codex global AGENTS.md before ECC upstream installer: ${backupPath}`,
     codexGlobalAgentsRestoredAfterEcc: (agentsPath) =>
@@ -1106,9 +1106,9 @@ const STRINGS = {
     reverseModeSignalsFound: (n) => `从工具端镜像发现 ${n} 个演进信号。`,
     reverseModeConflictsDetected: (n) => `⚠ 检测到 ${n} 个潜在冲突：`,
     reverseModeConflictHint: "（canonical 内容更多 - 可能有未同步的更改）",
-    reverseModeConflictPrompt: "检测到冲突。使用 --force 覆盖 canonical，或手动审查更改。",
+    reverseModeConflictPrompt: "检测到冲突。请先审查；--force 只会把冲突纳入精确审批绑定的候选批次。",
     reverseModeAborted: "已中止：写回前请解决冲突。",
-    reverseModeForceProceed: "--force 标志：尽管存在冲突仍继续写回。",
+    reverseModeForceProceed: "--force 标志：冲突已纳入候选；写入 canonical 仍需精确审批并显式使用 --apply。",
     reverseModeSafeWrites: (n) => `可安全写回 canonical（${n} 个文件）：`,
     reverseModeDryRun: "试运行完成：未写入文件。使用不带 --dry-run 的命令应用更改。",
     reverseModeWriteFailed: (path, err) => `写回失败 ${path}：${err}`,
@@ -1174,7 +1174,7 @@ const STRINGS = {
     upstreamProjectLocalSkipped: (id, runtimeId, commandText) =>
       `${id}：全局更新不会写入项目本地安装；请在每个 ${runtimeId} 项目根目录运行：${commandText}`,
     upstreamCodexConfigPreserveDryRun: (configPath) =>
-      `保留现有 ${configPath}；ECC 上游安装后用只追加合并恢复`,
+      `保留现有 ${configPath}；ECC 上游安装后拒绝导入其 MCP、项目和根配置，只恢复用户快照及 Meta_Kim 原生控制`,
     upstreamCodexGlobalAgentsPreserveDryRun: (agentsPath) =>
       `保护 ${agentsPath} 不被 ECC 上游安装器覆盖：用户原文会恢复；全局 ECC 基线会备份并隔离`,
     upstreamInstallerFailureReason: (commandText) =>
@@ -1184,7 +1184,7 @@ const STRINGS = {
     codexConfigBackupBeforeEcc: (backupPath) =>
       `ECC 上游安装前已备份 Codex 配置：${backupPath}`,
     codexConfigRestoredAfterEcc: (configPath) =>
-      `已在 ECC 上游安装后用只追加合并恢复用户 Codex 配置：${configPath}`,
+      `ECC 上游安装后已恢复用户 Codex 快照，未导入其 MCP、项目或根配置：${configPath}`,
     codexGlobalAgentsBackupBeforeEcc: (backupPath) =>
       `ECC 上游安装前已备份 Codex 全局 AGENTS.md：${backupPath}`,
     codexGlobalAgentsRestoredAfterEcc: (agentsPath) =>
@@ -1357,9 +1357,9 @@ const STRINGS = {
     reverseModeSignalsFound: (n) => `ランタイム投影から ${n} 個の進化信号が見つかりました。`,
     reverseModeConflictsDetected: (n) => `⚠ ${n} 個の潜在的な競合が検出されました：`,
     reverseModeConflictHint: "（canonical のコンテンツが多い - 未同期の変更がある可能性があります）",
-    reverseModeConflictPrompt: "競合が検出されました。--force で canonical を上書きするか、手動で変更を確認してください。",
+    reverseModeConflictPrompt: "競合が検出されました。先に確認してください。--force は競合を厳密な承認バインド候補に含めるだけです。",
     reverseModeAborted: "中止：ライトバック前に競合を解決してください。",
-    reverseModeForceProceed: "--force フラグ：競合があるにもかかわらずライトバックを続行します。",
+    reverseModeForceProceed: "--force フラグ：競合を候補に含めました。canonical への書き込みには厳密な承認と --apply が必要です。",
     reverseModeSafeWrites: (n) => `canonical へのライトバックが安全です（${n} ファイル）：`,
     reverseModeDryRun: "ドライラン完了：ファイルは書き込まれませんでした。--dry-run を外して変更を適用してください。",
     reverseModeWriteFailed: (path, err) => `ライトバック失敗 ${path}：${err}`,
@@ -1428,7 +1428,7 @@ const STRINGS = {
     upstreamProjectLocalSkipped: (id, runtimeId, commandText) =>
       `${id}: グローバル更新ではプロジェクトローカルインストールを変更しません。各 ${runtimeId} プロジェクトルートで実行してください: ${commandText}`,
     upstreamCodexConfigPreserveDryRun: (configPath) =>
-      `既存の ${configPath} を保持し、ECC 上流インストール後に追加のみのマージで復元します`,
+      `既存の ${configPath} を保持し、ECC 上流の MCP・プロジェクト・ルート設定を取り込まず、ユーザースナップショットと Meta_Kim ネイティブ制御だけを復元します`,
     upstreamCodexGlobalAgentsPreserveDryRun: (agentsPath) =>
       `${agentsPath} を ECC 上流インストーラーから保護します。ユーザー内容は復元し、グローバル ECC ベースラインはバックアップして隔離します`,
     upstreamInstallerFailureReason: (commandText) =>
@@ -1438,7 +1438,7 @@ const STRINGS = {
     codexConfigBackupBeforeEcc: (backupPath) =>
       `ECC 上流インストール前に Codex 設定をバックアップしました: ${backupPath}`,
     codexConfigRestoredAfterEcc: (configPath) =>
-      `ECC 上流インストール後、追加のみのマージでユーザー Codex 設定を復元しました: ${configPath}`,
+      `ECC 上流インストール後にユーザー Codex スナップショットを復元し、上流の MCP・プロジェクト・ルート設定は取り込みませんでした: ${configPath}`,
     codexGlobalAgentsBackupBeforeEcc: (backupPath) =>
       `ECC 上流インストール前に Codex グローバル AGENTS.md をバックアップしました: ${backupPath}`,
     codexGlobalAgentsRestoredAfterEcc: (agentsPath) =>
@@ -1620,9 +1620,9 @@ const STRINGS = {
     reverseModeSignalsFound: (n) => `런타임 프로젝션에서 ${n}개의 진화 신호를 찾았습니다.`,
     reverseModeConflictsDetected: (n) => `⚠ ${n}개의 잠재적 충돌이 감지되었습니다:`,
     reverseModeConflictHint: "(canonical에 콘텐츠가 더 많음 - 동기화되지 않은 변경이 있을 수 있음)",
-    reverseModeConflictPrompt: "충돌이 감지되었습니다. --force로 canonical을 덮어쓰거나 변경을 수동으로 검토하세요.",
+    reverseModeConflictPrompt: "충돌이 감지되었습니다. 먼저 검토하세요. --force는 충돌을 정확한 승인 바인딩 후보에 포함할 뿐입니다.",
     reverseModeAborted: "중단됨: 라이트백 전에 충돌을 해결하세요.",
-    reverseModeForceProceed: "--force 플래그: 충돌이 있어도 라이트백을 진행합니다.",
+    reverseModeForceProceed: "--force 플래그: 충돌을 후보에 포함했습니다. canonical 쓰기는 정확한 승인과 --apply가 여전히 필요합니다.",
     reverseModeSafeWrites: (n) => `canonical에 라이트백하기 안전함(${n}개 파일):`,
     reverseModeDryRun: "드라이런 완료: 파일이 기록되지 않았습니다. --dry-run 없이 변경을 적용하세요.",
     reverseModeWriteFailed: (path, err) => `라이트백 실패 ${path}: ${err}`,
@@ -1690,7 +1690,7 @@ const STRINGS = {
     upstreamProjectLocalSkipped: (id, runtimeId, commandText) =>
       `${id}: 전역 업데이트에서는 프로젝트 로컬 설치를 변경하지 않습니다. 각 ${runtimeId} 프로젝트 루트에서 실행하세요: ${commandText}`,
     upstreamCodexConfigPreserveDryRun: (configPath) =>
-      `기존 ${configPath}를 보존하고 ECC 업스트림 설치 후 추가 전용 병합으로 복원합니다`,
+      `기존 ${configPath}를 보존하고 ECC 업스트림 MCP, 프로젝트 및 루트 설정은 가져오지 않은 채 사용자 스냅샷과 Meta_Kim 네이티브 제어만 복원합니다`,
     upstreamCodexGlobalAgentsPreserveDryRun: (agentsPath) =>
       `${agentsPath}를 ECC 업스트림 설치기로부터 보호합니다. 사용자 내용은 복원하고 전역 ECC baseline은 백업 후 격리합니다`,
     upstreamInstallerFailureReason: (commandText) =>
@@ -1700,7 +1700,7 @@ const STRINGS = {
     codexConfigBackupBeforeEcc: (backupPath) =>
       `ECC 업스트림 설치 전에 Codex 설정을 백업했습니다: ${backupPath}`,
     codexConfigRestoredAfterEcc: (configPath) =>
-      `ECC 업스트림 설치 후 사용자 Codex 설정을 추가 전용 병합으로 복원했습니다: ${configPath}`,
+      `ECC 업스트림 설치 후 사용자 Codex 스냅샷을 복원했으며 업스트림 MCP, 프로젝트 및 루트 설정은 가져오지 않았습니다: ${configPath}`,
     codexGlobalAgentsBackupBeforeEcc: (backupPath) =>
       `ECC 업스트림 설치 전에 Codex 전역 AGENTS.md를 백업했습니다: ${backupPath}`,
     codexGlobalAgentsRestoredAfterEcc: (agentsPath) =>

@@ -12,6 +12,9 @@ import { PACKED_USER_TARGETS } from "../../scripts/packed-user-targets.mjs";
 import { PROJECTION_PACKAGE_PURPOSE } from "../../scripts/global-projection-package-store.mjs";
 
 const packageRoot = path.resolve(import.meta.dirname, "../..");
+const PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS = JSON.parse(
+  readFileSync("config/contracts/release-verification-policy.json", "utf8"),
+).packedUserAcceptance.portableRuntimeGlobalUpdateTimeoutMs;
 
 test("unknown runtime acceptance keys fail closed before source-report interpretation", () => {
   assert.throws(
@@ -250,7 +253,7 @@ function completePackedUserProof(packageSha256) {
           status: "passed",
           diagnostics: {
             operation: "packed-portable-runtime-global-update",
-            timeoutMs: 600000,
+            timeoutMs: PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS,
             elapsedMs: 125,
             timedOut: false,
             exitCode: 0,

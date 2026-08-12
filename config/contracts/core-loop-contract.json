@@ -775,7 +775,7 @@
       "P-110": [
         "agentTeamsPlaybookPacket is not_required for fewer than 2 executable worker lanes",
         "2+ executable worker lanes may use agent-teams-playbook as an optional orchestration adapter, but native Agent/Task/spawn_agent plus the authoritative stage DAG is sufficient",
-        "fan-out ready sets use the current host/runtime capacity such as Codex [agents].max_threads or Claude Code's native dispatch capacity, not an arbitrary Meta_Kim hard cap, prove dependency/resource/permission/isolation safety, and preserve workerTaskPackets only as a derived compatibility view",
+        "fan-out ready sets use the current host/runtime capacity such as Codex [agents].max_threads or Claude Code's native dispatch capacity; Meta_Kim installs a resource-safe Codex default of 2 while preserving explicit user overrides and adds no hidden hard cap; ready sets still prove dependency/resource/permission/isolation safety and preserve workerTaskPackets only as a derived compatibility view",
         "the Node runner must not claim a live Skill, Agent Team, or Codex spawn_agent call without host tool-call evidence"
       ]
     }

@@ -383,6 +383,21 @@ describe("install platform config", () => {
     );
   });
 
+  test("Codex dependency updates restore the user snapshot without importing upstream MCP or project state", () => {
+    const source = readFileSync(
+      path.join(repoRoot, "scripts", "install-global-skills-all-runtimes.mjs"),
+      "utf8",
+    );
+    const restoreFunction = source.match(
+      /async function restoreCodexConfigAfterUpstream[\s\S]*?\n}\n/,
+    )?.[0];
+
+    assert.ok(restoreFunction);
+    assert.match(restoreFunction, /reconcileCodexConfigAfterUpstreamInstall/);
+    assert.doesNotMatch(restoreFunction, /mergeCodexConfigAddOnly/);
+    assert.doesNotMatch(restoreFunction, /snapshot\.text === null\) return false/);
+  });
+
   test("Codex planning Stop hook does not block on advisory progress messages", () => {
     const source = readFileSync(
       path.join(repoRoot, "scripts", "install-global-skills-all-runtimes.mjs"),

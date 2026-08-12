@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "meta-kim-setup-runtime-installer-decomposition-v1",
+  "status": "active",
+  "phase": "M3-A10",
+  "objective": "Keep setup.mjs as the CLI and workflow facade while moving the stable global projection-package handoff into explicit Application and Infrastructure boundaries without changing install or update behavior.",
+  "boundedVertical": {
+    "name": "stable_global_projection_package_handoff",
+    "applicationModule": "src/application/installer/ensure-stable-global-projection-package.mjs",
+    "infrastructureModule": "src/infrastructure/installer/projection-package-boundary.mjs",
+    "cliFacade": "setup.mjs",
+    "legacyStoreAuthority": "scripts/global-projection-package-store.mjs",
+    "reasonForBoundary": "The handoff must materialize the exact packed package into the immutable projection store before any persistent global execution reference is written."
+  },
+  "layerRules": {
+    "setup": [
+      "parse CLI and interactive choices",
+      "assemble the use-case command",
+      "render localized progress and final status",
+      "retain no materialize, environment-sanitize, stable-child spawn, or authority verification algorithm"
+    ],
+    "application": [
+      "decide whether the current package is already a verified stable authority",
+      "delegate install or update to the stable package exactly once when required",
+      "merge rejected explicit managed-project results without changing their semantics"
+    ],
+    "infrastructure": [
+      "adapt the existing immutable projection-package store",
+      "sanitize the child environment",
+      "spawn the stable setup child without a shell",
+      "verify package authority and write-boundary integrity"
+    ],
+    "dependencyDirection": "setup composition root -> application use case + infrastructure adapter -> legacy store authority"
+  },
+  "behavioralInvariants": {
+    "scopeSemanticsUnchanged": true,
+    "globalOnlySemanticsUnchanged": true,
+    "projectBootstrapMergeDeltaUnchanged": true,
+    "runtimeSedimentedProjectCopyPreserved": true,
+    "unknownAndUserOwnedContentPreserved": true,
+    "manifestOwnershipUnchanged": true,
+    "immutablePackageStoreLayoutAndReceiptUnchanged": true,
+    "helpStatusDoctorDoNotMaterialize": true,
+    "checkRemainsReadOnly": true,
+    "installAndUpdateMaterializeBeforePersistentGlobalWrites": true,
+    "stableChildUsesShellFalse": true,
+    "stableChildFailureAndSignalRemainFailures": true,
+    "explicitRejectedManagedProjectsRemainFailedSteps": true,
+    "uninstallExactOwnershipSemanticsUnchanged": true,
+    "noSecondPackageStore": true,
+    "noSecondInstallManifest": true
+  },
+  "acceptance": {
+    "sourceBoundaryTest": true,
+    "applicationUseCaseUnitTest": true,
+    "existingProjectionBoundaryTests": true,
+    "transientPackageRootPortabilityTest": true,
+    "packedInstallUpdateAcceptanceTest": true,
+    "installScopeAndManagedProjectTests": true,
+    "uninstallOwnershipTest": true,
+    "exactPackageClosure": true,
+    "realPackedDynamicImport": true,
+    "independentReviewRequired": true,
+    "lineCountIsNotAnAcceptanceCriterion": true
+  },
+  "deferred": [
+    "project-bootstrap extraction",
+    "MCP Memory installer decomposition",
+    "global projection store implementation migration",
+    "installer UX redesign",
+    "install ownership or cleanup policy changes"
+  ]
+}

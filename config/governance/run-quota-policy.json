@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "run-quota-policy-v1",
+  "policyId": "meta-kim-default-run-quota-shadow-policy",
+  "revision": 1,
+  "mode": "shadow_only",
+  "scope": "root_run_lineage",
+  "limits": {
+    "maxValidatedTransitions": { "enabled": false, "limit": null, "unit": "count", "scope": "root_run_lineage" },
+    "maxNoProgressLoops": { "enabled": false, "limit": null, "unit": "count", "scope": "root_run_lineage" },
+    "maxRetries": { "enabled": false, "limit": null, "unit": "count", "scope": "root_run_lineage" },
+    "maxWallClock": { "enabled": false, "limit": null, "unit": "milliseconds", "scope": "root_run_lineage" },
+    "maxCost": { "enabled": false, "limit": null, "unit": "micro_usd", "scope": "root_run_lineage" }
+  },
+  "policyDigest": "sha256:fe9e6cf512ef9960144d722e9e8a7410d6585fe3155d240e87db6bd12ed12909"
+}

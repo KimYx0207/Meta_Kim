@@ -117,7 +117,7 @@ export function buildMetaKimHooksTemplate(
       },
       {
         matcher:
-          "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|MultiEdit|NotebookEdit",
+          "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|TaskStop|EnterPlanMode|ExitPlanMode|MultiEdit|NotebookEdit",
         hooks: [cmd("enforce-agent-dispatch.mjs", ["--runtime", "claude"])],
       },
     ],

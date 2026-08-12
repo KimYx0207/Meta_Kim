@@ -1,6 +1,6 @@
 {
   "contractId": "stage-runtime-control-contract",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "prdTaskId": "P-115",
   "status": "ready",
   "purpose": "Keep the eight-stage spine mechanically executable without turning stage progress into permission checks for ordinary local edits or commands; reserve hard gates for governed Agent dispatch and public-ready truth.",
@@ -83,13 +83,47 @@
       "validator_dry_run",
       "spine_state_write",
       "planning_file_update",
+      "task_bookkeeping_control_plane",
       "visible_status_notice",
       "ordinary_project_file_mutation",
       "ordinary_local_command_execution"
     ],
-    "inProgressMustDelay": [
-      "task_bookkeeping_control_plane_until_fetch_evidence"
-    ],
+    "taskBookkeepingPolicy": {
+      "appliesDuring": [
+        "critical",
+        "fetch_pre_evidence"
+      ],
+      "tools": [
+        "TaskCreate",
+        "TaskUpdate",
+        "TodoWrite"
+      ],
+      "hookDisposition": "allow_without_hard_deny",
+      "queryBypassDisposition": "deny_read_only_boundary",
+      "sequencingGuidance": "soft_anti_churn_only",
+      "mustNotCountAs": [
+        "fetch_evidence",
+        "agent_dispatch",
+        "stage_progress"
+      ],
+      "agentDispatchGate": "independent_and_unchanged"
+    },
+    "queryBypassControlPlanePolicy": {
+      "disposition": "deny_mutating_control_plane_allow_read_only_queries",
+      "denyTools": [
+        "TaskCreate",
+        "TaskUpdate",
+        "TodoWrite",
+        "TaskStop",
+        "EnterPlanMode",
+        "ExitPlanMode"
+      ],
+      "allowTools": [
+        "TaskList",
+        "TaskGet",
+        "TaskOutput"
+      ]
+    },
     "inProgressMustNotRequire": [
       "fetchRecord",
       "businessFlowBlueprintPacket",
@@ -119,7 +153,9 @@
     "read_only_hook_allowance_does_not_auto_advance_stage",
     "fetch_stage_allows_spine_state_write_before_fetchRecord",
     "fetch_stage_allows_planning_files_before_fetchRecord",
-    "fetch_stage_delays_task_bookkeeping_before_fetch_evidence",
+    "fetch_stage_allows_task_bookkeeping_without_fetch_evidence",
+    "task_bookkeeping_does_not_count_as_fetch_evidence_agent_dispatch_or_stage_progress",
+    "agent_dispatch_gate_remains_independent_from_task_bookkeeping",
     "fetch_stage_allows_ordinary_business_file_mutation_without_warning",
     "fetch_self_lock_allows_repair_only_fetchRecord_write",
     "stage_readiness_does_not_block_ordinary_local_execution",

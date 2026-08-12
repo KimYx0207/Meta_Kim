@@ -179,6 +179,154 @@ test("runtime capacity bounds the maximal safe ready set", () => {
   assert.equal(ready.deferredNodeIds.length, 1);
 });
 
+test("eligibleNodeIds restricts candidates without changing null behavior or manufacturing readiness", () => {
+  const aId = stageLaneNodeId("Execution", "a");
+  const bId = stageLaneNodeId("Execution", "b");
+  const cId = stageLaneNodeId("Execution", "c");
+  const packet = buildStageDagPacket({
+    stageOrder: ["Execution"],
+    stageLanes: {
+      Execution: [
+        lane("a"),
+        lane("b", { dependsOn: [aId] }),
+        lane("c"),
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    selectMaximalSafeReadySet(packet, { stage: "Execution", capacity: 3 }),
+    selectMaximalSafeReadySet(packet, {
+      stage: "Execution",
+      capacity: 3,
+      eligibleNodeIds: null,
+    }),
+  );
+  assert.deepEqual(
+    selectMaximalSafeReadySet(packet, {
+      stage: "Execution",
+      capacity: 3,
+      eligibleNodeIds: [bId, cId],
+    }).readyNodeIds,
+    [cId],
+    "an eligible dependent must stay blocked until its real DAG dependency is completed",
+  );
+  assert.deepEqual(
+    selectMaximalSafeReadySet(packet, {
+      stage: "Execution",
+      capacity: 3,
+      eligibleNodeIds: [aId, cId],
+    }).candidateNodeIds,
+    [aId, cId],
+  );
+});
+
+test("eligibleNodeIds rejects unknown, duplicate, empty, sparse, and malformed inputs", () => {
+  const packet = buildStageDagPacket({
+    stageOrder: ["Execution"],
+    stageLanes: { Execution: [lane("a"), lane("b")] },
+  });
+  const aId = stageLaneNodeId("Execution", "a");
+  const sparse = [aId];
+  sparse.length = 2;
+
+  for (const [eligibleNodeIds, expected] of [
+    [[], /eligibleNodeIds must be a non-empty array/iu],
+    [[aId, aId], /eligibleNodeIds must contain unique node ids/iu],
+    [["unknown-node"], /eligibleNodeIds contains unknown node id: unknown-node/iu],
+    [[""], /eligibleNodeIds must contain non-empty strings/iu],
+    [[42], /eligibleNodeIds must contain non-empty strings/iu],
+    [sparse, /eligibleNodeIds must be dense/iu],
+  ]) {
+    assert.throws(
+      () => selectMaximalSafeReadySet(packet, { eligibleNodeIds }),
+      expected,
+    );
+  }
+  assert.throws(
+    () => selectMaximalSafeReadySet(packet, { eligibleNodeIds: "not-an-array" }),
+    /eligibleNodeIds must be a non-empty array/iu,
+  );
+});
+
+test("eligibleNodeIds preserves conflict, capacity, maximal-cardinality, and deterministic ordering", () => {
+  const packet = buildStageDagPacket({
+    stageOrder: ["Execution"],
+    stageLanes: {
+      Execution: [
+        lane("a", { resourceScopes: ["artifact:x", "artifact:y"] }),
+        lane("b", { resourceScopes: ["artifact:x"] }),
+        lane("c", { resourceScopes: ["artifact:y"] }),
+        lane("d", { resourceScopes: ["artifact:z"] }),
+      ],
+    },
+  });
+  const eligibleNodeIds = [
+    stageLaneNodeId("Execution", "d"),
+    stageLaneNodeId("Execution", "c"),
+    stageLaneNodeId("Execution", "b"),
+    stageLaneNodeId("Execution", "a"),
+  ];
+  const expected = [
+    stageLaneNodeId("Execution", "b"),
+    stageLaneNodeId("Execution", "c"),
+    stageLaneNodeId("Execution", "d"),
+  ];
+
+  for (let iteration = 0; iteration < 10; iteration += 1) {
+    const ready = selectMaximalSafeReadySet(packet, {
+      stage: "Execution",
+      capacity: 3,
+      eligibleNodeIds,
+    });
+    assert.deepEqual(ready.readyNodeIds, expected);
+    assert.equal(ready.readyNodeIds.length, 3);
+    assert.ok(!ready.readyNodeIds.includes(stageLaneNodeId("Execution", "a")));
+  }
+
+  assert.deepEqual(
+    selectMaximalSafeReadySet(packet, {
+      stage: "Execution",
+      capacity: 2,
+      eligibleNodeIds: eligibleNodeIds.filter((nodeId) =>
+        nodeId !== stageLaneNodeId("Execution", "a")
+      ),
+    }).readyNodeIds,
+    [stageLaneNodeId("Execution", "b"), stageLaneNodeId("Execution", "c")],
+  );
+});
+
+test("eligibleNodeIds property: every selected and deferred node is a real eligible ready candidate", () => {
+  const packet = buildStageDagPacket({
+    stageOrder: ["Execution"],
+    stageLanes: {
+      Execution: [lane("a"), lane("b"), lane("c"), lane("d")],
+    },
+  });
+  const nodeIds = packet.nodes
+    .filter((node) => node.laneKind === "execution_worker")
+    .map((node) => node.nodeId);
+
+  for (let mask = 1; mask < (1 << nodeIds.length); mask += 1) {
+    const eligibleNodeIds = nodeIds.filter((_, index) => (mask & (1 << index)) !== 0);
+    for (const capacity of [1, 2, 8]) {
+      const result = selectMaximalSafeReadySet(packet, {
+        stage: "Execution",
+        capacity,
+        eligibleNodeIds: [...eligibleNodeIds].reverse(),
+      });
+      assert.deepEqual(result.candidateNodeIds, eligibleNodeIds);
+      assert.ok(result.readyNodeIds.every((nodeId) => eligibleNodeIds.includes(nodeId)));
+      assert.ok(result.deferredNodeIds.every((nodeId) => eligibleNodeIds.includes(nodeId)));
+      assert.equal(
+        new Set([...result.readyNodeIds, ...result.deferredNodeIds]).size,
+        eligibleNodeIds.length,
+      );
+      assert.ok(result.readyNodeIds.length <= capacity);
+    }
+  }
+});
+
 test("canonical graph digest ignores runtime projections but binds graph semantics", () => {
   const packet = buildStageDagPacket({
     stageOrder: ["Execution"],

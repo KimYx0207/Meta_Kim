@@ -17,9 +17,5 @@ suppress_unstable_features_warning = true
 default_mode_request_user_input = true
 
 [agents]
-max_threads = 6
+max_threads = 2
 max_depth = 1
-
-[mcp_servers.meta_kim_runtime]
-command = "node"
-args = ["REPLACE_WITH_REPO_ROOT/scripts/mcp/meta-runtime-server.mjs"]

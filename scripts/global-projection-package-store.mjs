@@ -11,6 +11,7 @@ import {
   fileIntegritySync,
 } from "./install-manifest.mjs";
 import { resolveCliInvocation } from "./runtime-cli-invocation.mjs";
+import { renameWithTransientRetryAsync } from "./transient-rename.mjs";
 
 export const PROJECTION_PACKAGE_RECEIPT_SCHEMA =
   "meta-kim-global-projection-package-v1";
@@ -1269,44 +1270,25 @@ export async function materializeGlobalProjectionPackage({
       return false;
     };
     const promoteStagedCandidate = async () => {
-      let lastError;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        try {
-          await assertPlainDirectoryChain(homeRoot, finalLayout.versionRoot);
-          await fs.rename(stageDir, finalLayout.digestDir);
-          promoted = true;
-          return null;
-        } catch (error) {
-          lastError = error;
-          if (await lstatIfExists(finalLayout.digestDir)) {
-            return await verifyExactWinnerWithRetry();
-          }
-          if (
-            !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
-            attempt === 3
-          ) throw error;
-          await delay(25 * (attempt + 1));
+      await assertPlainDirectoryChain(homeRoot, finalLayout.versionRoot);
+      try {
+        await renameWithTransientRetryAsync(stageDir, finalLayout.digestDir, {
+          rename: fs.rename,
+        });
+        promoted = true;
+        return null;
+      } catch (error) {
+        if (await lstatIfExists(finalLayout.digestDir)) {
+          return await verifyExactWinnerWithRetry();
         }
+        throw error;
       }
-      throw lastError;
     };
 
     const quarantineIncompleteWinner = async (quarantinePath) => {
-      let lastError;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        try {
-          await fs.rename(finalLayout.digestDir, quarantinePath);
-          return;
-        } catch (error) {
-          lastError = error;
-          if (
-            !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
-            attempt === 3
-          ) throw error;
-          await delay(25 * (attempt + 1));
-        }
-      }
-      throw lastError;
+      await renameWithTransientRetryAsync(finalLayout.digestDir, quarantinePath, {
+        rename: fs.rename,
+      });
     };
 
     const releaseDigestLock = await acquireProjectionDigestLock(finalLayout, homeRoot);

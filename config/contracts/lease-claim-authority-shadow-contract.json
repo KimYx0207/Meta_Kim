@@ -1,0 +1,502 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-lease-claim-authority-shadow-contract",
+  "prdTaskId": "M3-A05",
+  "status": "implementation_active",
+  "purpose": "Project existing durable lease and claim authority into a sanitized immutable shadow observation without claiming, takeover, heartbeat, release, scheduling, execution, or durable mutation.",
+  "mode": "shadow_only",
+  "authorityBoundary": {
+    "durableTruthAuthority": "existing durable-run-kernel projection and resume state captured by stage-runner bridge",
+    "topologyAuthority": "coreLoop.stageDagPacket",
+    "schedulerChainBinding": "canonical M3-A04 scheduler authority reuse shadow result",
+    "coordinatorAuthority": "not_exposed_by_current_snapshot",
+    "trustedObservationAuthority": "one stage-runner bridge wall-clock capture immediately before A05",
+    "domainReadsKernel": false,
+    "adapterReadsKernel": false,
+    "claimObservationIsClaimAuthority": false,
+    "expiredLeaseMeansTakeoverAllowed": false
+  },
+  "domainContract": {
+    "module": "src/domain/claims/lease-claim-authority-shadow.mjs",
+    "api": "evaluateLeaseClaimAuthorityShadow(command)",
+    "validator": "assertValidLeaseClaimAuthorityShadowResult(result)",
+    "schemaVersion": "lease-claim-authority-shadow-v1",
+    "kind": "lease_claim_authority_shadow_result",
+    "commandExactFields": [
+      "binding",
+      "authoritySnapshot",
+      "claimRecords",
+      "coordinatorObservation"
+    ],
+    "legacyApiForbidden": "buildLeaseClaimAuthorityProjectionResult({ binding, schedulerPlanBinding, claimLeaseSnapshot })",
+    "implementationRule": "pure ECMAScript with no node:crypto, filesystem, network, runtime, kernel, scheduler, or mutation import"
+  },
+  "binding": {
+    "exactFields": [
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "durableCursor",
+      "headEventHash",
+      "headCheckpointId",
+      "policyDigest",
+      "evaluationRevision"
+    ],
+    "digestFields": [
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "headEventHash",
+      "policyDigest"
+    ],
+    "nullableFields": [
+      "headEventHash",
+      "headCheckpointId"
+    ],
+    "integerFields": [
+      "durableCursor",
+      "evaluationRevision"
+    ]
+  },
+  "authoritySnapshot": {
+    "exactFields": [
+      "source",
+      "projectionSchemaVersion",
+      "runStatus",
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "cursor",
+      "headEventHash",
+      "headCheckpointId",
+      "eventChainState",
+      "currentness",
+      "topologyNodeIds",
+      "completedNodeIds",
+      "blockingEffectNodeIds",
+      "inDoubtNodeIds",
+      "claimSetDigest",
+      "blockingStateDigest",
+      "trustedObservedAtMs",
+      "trustedObservedAtDigest",
+      "snapshotDigest"
+    ],
+    "fixedValues": {
+      "source": "stage_runner_bridge_existing_durable_authority_snapshot",
+      "projectionSchemaVersion": "durable-governed-run-projection-v0.1"
+    },
+    "runStatusValues": [
+      "active",
+      "completed",
+      "failed",
+      "blocked"
+    ],
+    "eventChainStateValues": [
+      "verified",
+      "failed",
+      "unknown"
+    ],
+    "currentnessValues": [
+      "fresh_bound_same_settlement",
+      "unproven"
+    ],
+    "nodeCollections": "plain dense sorted unique bounded safe node ID arrays; completed, blocking-effect, and in-doubt IDs must be topology subsets",
+    "trustedObservedAtRule": "trustedObservedAtMs is used only to compare claim expiry and is never retained in the result",
+    "trustedObservedAtDigestRule": "sha256 canonical digest of { source:'stage_runner_bridge_wall_clock_capture', projectionDigest, cursor, headEventHash, headCheckpointId, trustedObservedAtMs }",
+    "blockingStateDigestRule": "sha256 canonical digest of { completedNodeIds, blockingEffectNodeIds, inDoubtNodeIds } using their normalized sorted values",
+    "snapshotDigestRule": "sha256 canonical digest of every authoritySnapshot field except snapshotDigest"
+  },
+  "claimRecords": {
+    "collection": "plain dense canonical nodeId-sorted array with at most one item per node",
+    "itemExactFields": [
+      "runId",
+      "nodeId",
+      "attemptRefDigest",
+      "ownerRefDigest",
+      "fenceToken",
+      "leaseExpiresAtMs",
+      "latestClaimEventSeq",
+      "latestClaimEventHash",
+      "recordDigest"
+    ],
+    "rules": {
+      "runIdMustMatchBinding": true,
+      "nodeMustExistInTopology": true,
+      "fenceToken": "positive safe integer",
+      "leaseExpiresAtMs": "non-negative safe integer",
+      "latestClaimEventSeq": "non-negative safe integer not beyond authority cursor",
+      "latestClaimEventHash": "strict sha256 reference",
+      "recordDigest": "recomputed canonical digest of all item fields except recordDigest",
+      "claimSetDigest": "authoritySnapshot.claimSetDigest must equal canonical digest of sorted normalized claim records"
+    },
+    "rawCommandOnlyFields": [
+      "fenceToken",
+      "leaseExpiresAtMs"
+    ]
+  },
+  "coordinatorObservation": {
+    "exactFields": [
+      "state",
+      "reasonCode",
+      "projectionOnly",
+      "authoritative"
+    ],
+    "fixedValues": {
+      "state": "not_exposed_by_current_snapshot",
+      "reasonCode": "coordinator_authority_not_exposed",
+      "projectionOnly": true,
+      "authoritative": false
+    },
+    "inferenceFromEventsAllowed": false
+  },
+  "resultSchema": {
+    "schemaVersion": "lease-claim-authority-shadow-v1",
+    "kind": "lease_claim_authority_shadow_result",
+    "exactTopLevelFields": [
+      "schemaVersion",
+      "kind",
+      "binding",
+      "bindingDigest",
+      "authorityBinding",
+      "coordinatorObservation",
+      "claimObservations",
+      "summary",
+      "disposition",
+      "eventIntents",
+      "authorization"
+    ],
+    "authorityBindingExactFields": [
+      "source",
+      "runStatus",
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "durableCursor",
+      "headEventHash",
+      "headCheckpointId",
+      "eventChainState",
+      "currentness",
+      "topologyDigest",
+      "claimSetDigest",
+      "blockingStateDigest",
+      "trustedObservedAtDigest",
+      "snapshotDigest"
+    ],
+    "rawAuthorityValuesForbidden": [
+      "trustedObservedAtMs",
+      "leaseExpiresAtMs",
+      "fenceToken",
+      "lease owner raw value",
+      "attempt raw value"
+    ],
+    "claimObservations": {
+      "cardinality": "exactly one item per authority topology node, sorted by nodeId",
+      "itemExactFields": [
+        "claimRef",
+        "nodeId",
+        "state",
+        "attemptRefDigest",
+        "ownerRefDigest",
+        "fenceRefDigest",
+        "leaseWindowDigest",
+        "completedObserved",
+        "blockingEffectObserved",
+        "inDoubtObserved",
+        "reasonCodes",
+        "projectionOnly",
+        "authoritative"
+      ],
+      "stateValues": [
+        "no_claim_observed",
+        "active_unexpired_observed",
+        "expired_requires_kernel_recheck",
+        "blocked_by_unresolved_effect",
+        "in_doubt"
+      ],
+      "fixedValues": {
+        "projectionOnly": true,
+        "authoritative": false
+      },
+      "noClaimNullRefs": [
+        "attemptRefDigest",
+        "ownerRefDigest",
+        "fenceRefDigest",
+        "leaseWindowDigest"
+      ],
+      "claimRefRule": "digest binds nodeId, state, all sanitized refs, observed booleans, and ordered reasonCodes",
+      "precedence": [
+        "terminal run plus claim, completed node plus claim, or duplicate/conflicting claim becomes in_doubt",
+        "inDoubtNodeIds membership becomes in_doubt",
+        "blockingEffectNodeIds membership becomes blocked_by_unresolved_effect",
+        "claim with leaseExpiresAtMs greater than trustedObservedAtMs becomes active_unexpired_observed",
+        "claim with leaseExpiresAtMs less than or equal to trustedObservedAtMs becomes expired_requires_kernel_recheck",
+        "otherwise no_claim_observed"
+      ],
+      "reasonCodeValues": [
+        "no_current_claim_row_observed",
+        "lease_unexpired_at_trusted_observation",
+        "lease_expired_requires_kernel_recheck",
+        "unresolved_effect_blocks_takeover",
+        "attempt_or_effect_in_doubt",
+        "terminal_claim_conflict",
+        "completed_claim_conflict",
+        "claim_projection_conflict"
+      ]
+    },
+    "summaryExactFields": [
+      "topologyNodeCount",
+      "claimRecordCount",
+      "noClaimCount",
+      "activeObservedCount",
+      "expiredObservedCount",
+      "blockedEffectCount",
+      "inDoubtCount"
+    ],
+    "disposition": {
+      "exactFields": [
+        "state",
+        "reasonCodes",
+        "evidenceRefs"
+      ],
+      "stateValues": [
+        "observed",
+        "wait",
+        "terminal",
+        "in_doubt"
+      ],
+      "precedence": [
+        "authority, integrity, currentness, or structural conflict becomes in_doubt",
+        "clean terminal with no claim, effect, or in-doubt node becomes terminal",
+        "any active, expired, or blocking observation becomes wait",
+        "otherwise observed"
+      ],
+      "reasonCodeValues": [
+        "claim_authority_projected",
+        "authoritative_run_terminal",
+        "active_claim_observed",
+        "expired_claim_requires_kernel_recheck",
+        "unresolved_effect_blocks_claim",
+        "authority_binding_mismatch",
+        "event_chain_not_verified",
+        "snapshot_currentness_unproven",
+        "cross_run_claim",
+        "unknown_claim_node",
+        "duplicate_claim_node",
+        "terminal_claim_conflict",
+        "completed_claim_conflict",
+        "claim_state_contradiction",
+        "invalid_shadow_input"
+      ]
+    },
+    "eventIntents": {
+      "cardinality": "exactly one",
+      "itemExactFields": [
+        "kind",
+        "intentDigest",
+        "disposition",
+        "reasonCodesDigest",
+        "persisted",
+        "authoritative",
+        "writeAllowed"
+      ],
+      "fixedValues": {
+        "kind": "lease_claim_shadow_observed",
+        "persisted": false,
+        "authoritative": false,
+        "writeAllowed": false
+      }
+    },
+    "authorization": {
+      "exactFields": [
+        "claimAllowed",
+        "takeoverAllowed",
+        "heartbeatAllowed",
+        "releaseAllowed",
+        "coordinatorMutationAllowed",
+        "nodeMutationAllowed",
+        "fenceMutationAllowed",
+        "retryAllowed",
+        "reconcileAllowed",
+        "schedulerDispatchAllowed",
+        "executionAllowed",
+        "eventPersistenceAllowed",
+        "cursorAdvanceAllowed",
+        "checkpointMutationAllowed",
+        "completeNodeAllowed",
+        "terminalStatusWriteAllowed",
+        "legacyGateCutoverAllowed",
+        "authoritativeWriteAllowed"
+      ],
+      "allValues": false
+    },
+    "deeplyFrozen": true,
+    "deterministic": true,
+    "unknownOrMissingFields": "reject"
+  },
+  "adapterContract": {
+    "module": "scripts/governed-execution/lease-claim-authority-shadow-adapter.mjs",
+    "api": "buildLeaseClaimAuthorityShadowProjection(normalizedInput, { authoritativeStageDagPacket, authoritativeExecutionSnapshot, schedulerAuthorityReuseShadowProjection, trustedObservationContext })",
+    "normalizedInput": {
+      "exactFields": [],
+      "requiredValue": {},
+      "nullOrUndefinedEvaluationStatus": "not_evaluated_missing_normalized_input",
+      "unknownFieldEvaluationStatus": "not_evaluated_invalid_normalized_input",
+      "callerMaySupplyClaimOrTimeAuthority": false
+    },
+    "optionsExactFields": [
+      "authoritativeStageDagPacket",
+      "authoritativeExecutionSnapshot",
+      "schedulerAuthorityReuseShadowProjection",
+      "trustedObservationContext"
+    ],
+    "authoritativeExecutionSnapshotExactFields": [
+      "durableRunProjection",
+      "durableResume"
+    ],
+    "trustedObservationContext": {
+      "exactFields": [
+        "source",
+        "observedAtMs"
+      ],
+      "fixedSource": "stage_runner_bridge_wall_clock_capture",
+      "observedAtRule": "captured exactly once by the bridge immediately before A05; caller, Domain, and adapter cannot supply or recapture time"
+    },
+    "schedulerProjectionRule": "M3-A04 must be canonical evaluated, all authorization false, and exact chain-bound; planned or candidate IDs are ignored as claim truth",
+    "envelopeExactFields": [
+      "schemaVersion",
+      "mode",
+      "evaluationStatus",
+      "disposition",
+      "result",
+      "authority"
+    ],
+    "envelopeFixedValues": {
+      "schemaVersion": "lease-claim-authority-shadow-adapter-v1",
+      "mode": "shadow_only"
+    },
+    "invalidEnvelope": {
+      "disposition": "in_doubt",
+      "result": null,
+      "retainsInputOrExceptionDetail": false
+    },
+    "envelopeAuthority": {
+      "exactFields": [
+        "projectsClaimTruth",
+        "writesKernel",
+        "writesEvents",
+        "claimsNode",
+        "takesOverClaim",
+        "heartbeatsClaim",
+        "releasesClaim",
+        "changesLease",
+        "changesFence",
+        "selectsScheduler",
+        "dispatchesScheduler",
+        "completesNode",
+        "terminatesRun",
+        "projectionOnly"
+      ],
+      "fixedTrueFields": [
+        "projectionOnly"
+      ],
+      "allOtherValues": false
+    }
+  },
+  "bridgeAuthorityRules": {
+    "topologyDigestRecomputed": true,
+    "sameHeadRequired": [
+      "eventChain verified",
+      "projection cursor equals resume cursor",
+      "projection and resume checkpoint heads agree",
+      "last event sequence equals cursor except for empty events",
+      "run, task, and graph match the canonical M3-A04/M3-A03 binding"
+    ],
+    "derivedFacts": {
+      "completedNodeIds": "durableRunProjection.completedNodes",
+      "blockingEffectNodeIds": "durableResume.blockingEffects",
+      "inDoubtNodeIds": "uncompleted NodeAttemptInDoubt events",
+      "claimRecords": "durableResume.activeClaims exact-matched to the same node and attempt latest NodeAttemptClaimed or NodeClaimHeartbeat event"
+    },
+    "claimEventExactMatchFields": [
+      "owner",
+      "fence",
+      "expiry"
+    ],
+    "partialProjectionAllowed": false,
+    "structuralConflictsMustFailClosed": [
+      "terminal run with claim",
+      "completed node with claim",
+      "unknown claim node",
+      "duplicate claim node",
+      "claim row and latest event mismatch"
+    ],
+    "schedulerCandidateTruthConsumed": false
+  },
+  "sourceDenylist": [
+    "projectRun(",
+    "resumeRun(",
+    "claimNode(",
+    "heartbeatNode(",
+    "claimRunCoordinator(",
+    "heartbeatRunCoordinator(",
+    "releaseRunCoordinator(",
+    "completeNode(",
+    "failNode(",
+    "prepareEffect(",
+    "markEffectDispatchStarted(",
+    "markUnresolvedEffectsInDoubt(",
+    "reconcileEffect(",
+    "reuseCompletedEffect(",
+    "appendEvent(",
+    "setRunTerminalStatus(",
+    "selectMaximalSafeReadySet(",
+    "executeNativeReadySet(",
+    "executeLangGraphReadySet(",
+    "TaskCreate",
+    "TaskUpdate",
+    "TodoWrite",
+    "setInterval("
+  ],
+  "legacyConflictRejection": {
+    "forbiddenContract": "config/contracts/lease-claim-authority-projection-contract.json",
+    "forbiddenDomainModule": "src/domain/claims/lease-claim-authority-projection.mjs",
+    "forbiddenAdapterModule": "scripts/governed-execution/lease-claim-authority-projection-adapter.mjs",
+    "forbiddenSchemaVersion": "lease-claim-authority-projection-v1",
+    "forbiddenApi": "buildLeaseClaimAuthorityProjectionResult",
+    "forbiddenCommandFields": [
+      "schedulerPlanBinding",
+      "claimLeaseSnapshot"
+    ],
+    "forbiddenRuntimeDependency": "node:crypto",
+    "forbiddenRawResultRetention": true
+  },
+  "acceptance": {
+    "sameHeadAuthorityRequired": true,
+    "trustedObservedAtCapturedOnceByBridge": true,
+    "allFiveObservationStatesCovered": true,
+    "allFourDispositionsCovered": true,
+    "coordinatorFirstSliceNotExposed": true,
+    "terminalClaimAndEffectConflictsFailClosed": true,
+    "rawFenceExpiryOwnerAttemptAndObservedAtNotRetained": true,
+    "all18AuthorizationValuesFalse": true,
+    "sourceDenylistEnforced": true,
+    "bridgeTogglePreservesDurableTruth": true,
+    "legacyProjectionSchemaRejected": true,
+    "expiredLeaseNeverCreatesTakeoverAuthority": true,
+    "m3A06NotStarted": true
+  },
+  "nonGoals": [
+    "claim or takeover authority",
+    "claim heartbeat or release",
+    "coordinator observation or mutation",
+    "runtime health inference",
+    "scheduler selection or dispatch",
+    "effect reconciliation",
+    "kernel, event, cursor, checkpoint, terminal, Todo, or dependency mutation",
+    "M3-A06 execution",
+    "legacy gate cutover"
+  ]
+}

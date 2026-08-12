@@ -22,15 +22,64 @@ const DECISION_SOURCE_FILES = [
   "src/domain/decision/decision.mjs",
   "src/domain/decision/legacy-decision-projection.mjs",
   "src/domain/decision/native-decision-authority.mjs",
+  "src/domain/decision/native-host-answer-authority.mjs",
   "src/data/schemas/decision.schema.json",
   "src/data/schemas/native-decision-authority.schema.json",
+  "src/data/schemas/native-host-answer-authority.schema.json",
   "src/adapters/codex/native-decision-surface-adapter.mjs",
+  "src/adapters/codex/app-server-decision-host-adapter.mjs",
   "src/adapters/claude/native-decision-surface-adapter.mjs",
+  "src/adapters/claude/sdk-decision-host-adapter.mjs",
+];
+
+const HOST_ANSWER_REPOSITORY = "src/data/repositories/native-host-answer-repository.mjs";
+const HOST_RUNTIME_ADAPTERS = [
+  {
+    path: "src/adapters/codex/app-server-decision-host-adapter.mjs",
+    injectedRepositoryPort: /exactPort\(current\.repository,\s*["']repository["']/u,
+  },
+  {
+    path: "src/adapters/claude/sdk-decision-host-adapter.mjs",
+    injectedRepositoryPort: /const\s+\{\s*hostPort,\s*repository\s*\}\s*=\s*options;/u,
+  },
+];
+const PURE_DECISION_DOMAIN = [
+  "src/domain/decision/decision.mjs",
+  "src/domain/decision/legacy-decision-projection.mjs",
+  "src/domain/decision/native-decision-authority.mjs",
+  "src/domain/decision/native-host-answer-authority.mjs",
 ];
 
 const PACKAGE_SOURCE_CLOSURE = [
+  "src/domain/claims/lease-claim-authority-shadow.mjs",
+  "src/domain/continuation/continuation-policy-shadow.mjs",
+  "src/domain/evidence/evidence-transition.mjs",
   "src/domain/governance/governance-requirements.mjs",
+  "src/domain/quota/quota-usage-projection.mjs",
+  "src/domain/runtime/runtime-health-projection.mjs",
+  "src/domain/scheduling/scheduler-authority-reuse-shadow.mjs",
+  "src/domain/work/todo-dependency-safe-progress-shadow.mjs",
+  "src/domain/shared/canonical-digest.mjs",
+  "src/domain/presentation/read-only-run-projection-schema.mjs",
+  "src/domain/presentation/read-only-run-projection-surfaces.mjs",
+  "src/application/presentation/build-read-only-run-projection-surfaces.mjs",
+  "src/data/projections/read-only-run-authority-snapshot.mjs",
+  "src/presentation/run-surfaces/read-only-run-surface-renderers.mjs",
+  "src/domain/execution/durable-run-repository-semantics.mjs",
+  "src/application/ports/durable-run-repository-port.mjs",
+  "src/application/run/open-durable-run-repository.mjs",
+  "src/data/repositories/sqlite-durable-run-repository.mjs",
+  "src/data/sqlite/runtime.mjs",
+  "src/data/sqlite/transaction.mjs",
+  "src/application/installer/ensure-stable-global-projection-package.mjs",
+  "src/infrastructure/installer/projection-package-boundary.mjs",
+  "src/application/evolution/apply-knowledge-lifecycle-transition.mjs",
+  "src/application/ports/knowledge-lifecycle-registry-port.mjs",
+  "src/data/repositories/json-knowledge-lifecycle-registry-repository.mjs",
+  "src/domain/evolution/knowledge-lifecycle.mjs",
+  "src/domain/evolution/warden-writeback-approval.mjs",
   ...DECISION_SOURCE_FILES,
+  HOST_ANSWER_REPOSITORY,
 ].sort();
 
 const FORBIDDEN_DECISION_DEPENDENCIES = [
@@ -125,7 +174,50 @@ test("Wave A Decision sources are pure and isolated from legacy, runtime, lifecy
   }
 
   const runner = readFileSync(path.resolve("scripts/run-meta-theory-governed-execution.mjs"), "utf8");
-  assert.doesNotMatch(runner, /(?:src\/domain\/decision|legacy-decision-projection)/u, "Wave A must not wire Decision into the runner");
+  assert.doesNotMatch(
+    runner,
+    /(?:src\/domain\/decision|legacy-decision-projection|native-host-answer|app-server-decision-host-adapter|sdk-decision-host-adapter)/u,
+    "M3-P2 must leave the governed runner unwired from Decision host-answer authority",
+  );
+});
+
+test("M3-P2 keeps Domain pure and places filesystem persistence only in the Data repository", () => {
+  for (const relativePath of PURE_DECISION_DOMAIN) {
+    const source = readFileSync(path.resolve(relativePath), "utf8");
+    assert.doesNotMatch(
+      source,
+      /(?:node:(?:fs(?:\/promises)?|process|child_process|net|http|https|dns|tls|dgram)|(?:\.\.\/)+(?:data\/|adapters\/|scripts\/))/u,
+      `${relativePath} must remain a pure Domain module`,
+    );
+  }
+
+  const repositorySource = readFileSync(path.resolve(HOST_ANSWER_REPOSITORY), "utf8");
+  assert.match(repositorySource, /from\s+["']node:fs["']/u, "the Data repository owns filesystem I/O");
+  assert.match(
+    repositorySource,
+    /from\s+["']\.\.\/\.\.\/domain\/decision\/native-host-answer-authority\.mjs["']/u,
+    "the Data repository may depend inward on the Domain validator",
+  );
+});
+
+test("M3-P2 runtime adapters depend on Domain plus an injected repository port, never the filesystem repository", () => {
+  for (const { path: relativePath, injectedRepositoryPort } of HOST_RUNTIME_ADAPTERS) {
+    const source = readFileSync(path.resolve(relativePath), "utf8");
+    const importSpecifiers = [...source.matchAll(/\bfrom\s*["']([^"']+)["']/gu)].map((match) => match[1]);
+
+    assert.equal(
+      importSpecifiers.some((specifier) => specifier.startsWith("../../domain/decision/")),
+      true,
+      `${relativePath} must depend inward on the Decision Domain`,
+    );
+    assert.equal(
+      importSpecifiers.some((specifier) => specifier.includes("data/repositories")),
+      false,
+      `${relativePath} must receive a repository port instead of importing its filesystem implementation`,
+    );
+    assert.doesNotMatch(source, /node:fs|createNativeHostAnswerRepository/u, `${relativePath} must not own repository I/O`);
+    assert.match(source, injectedRepositoryPort, `${relativePath} must use an injected repository port`);
+  }
 });
 
 test("Decision host claims stay adapter-specific and cannot become generic receipt or authorization APIs", () => {

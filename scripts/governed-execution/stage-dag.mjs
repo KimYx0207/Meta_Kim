@@ -424,18 +424,51 @@ function selectMaximumCompatibleCandidateIndexes(candidates, limit) {
   return best;
 }
 
+function validateEligibleNodeIds(eligibleNodeIds, knownNodeIds) {
+  if (eligibleNodeIds === null) return null;
+  if (!Array.isArray(eligibleNodeIds) || eligibleNodeIds.length === 0) {
+    throw new TypeError("eligibleNodeIds must be a non-empty array");
+  }
+
+  for (let index = 0; index < eligibleNodeIds.length; index += 1) {
+    if (!Object.hasOwn(eligibleNodeIds, index)) {
+      throw new TypeError("eligibleNodeIds must be dense");
+    }
+    const nodeId = eligibleNodeIds[index];
+    if (typeof nodeId !== "string" || !nodeId.trim()) {
+      throw new TypeError("eligibleNodeIds must contain non-empty strings");
+    }
+  }
+
+  const eligible = new Set(eligibleNodeIds);
+  if (eligible.size !== eligibleNodeIds.length) {
+    throw new TypeError("eligibleNodeIds must contain unique node ids");
+  }
+  for (const nodeId of eligible) {
+    if (!knownNodeIds.has(nodeId)) {
+      throw new TypeError(`eligibleNodeIds contains unknown node id: ${nodeId}`);
+    }
+  }
+  return eligible;
+}
+
 export function selectMaximalSafeReadySet(
   stageDagPacket,
-  { completedNodeIds = [], capacity = null, stage = null } = {},
+  { completedNodeIds = [], capacity = null, stage = null, eligibleNodeIds = null } = {},
 ) {
   validateStageDagPacket(stageDagPacket);
   const completed = new Set(uniqueStrings(completedNodeIds));
+  const eligible = validateEligibleNodeIds(
+    eligibleNodeIds,
+    new Set(stageDagPacket.nodes.map((node) => node.nodeId)),
+  );
   const limit = Math.max(
     1,
     Number.parseInt(String(capacity ?? stageDagPacket?.runtimeCapacity ?? 1), 10) || 1,
   );
   const candidates = (stageDagPacket?.nodes ?? [])
     .filter((node) => !completed.has(node.nodeId))
+    .filter((node) => eligible === null || eligible.has(node.nodeId))
     .filter((node) => !stage || node.stage === stage)
     .filter((node) => node.dependsOn.every((dependencyId) => completed.has(dependencyId)))
     .sort((left, right) =>

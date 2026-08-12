@@ -1,0 +1,610 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-scheduler-authority-reuse-shadow-contract",
+  "prdTaskId": "M3-A04",
+  "status": "implementation_active",
+  "purpose": "Reuse the single authoritative stage-DAG selector to emit an immutable scheduler shadow plan bound to a freshly revalidated durable head, without dispatch, callbacks, claims, execution, or durable mutation.",
+  "mode": "shadow_only",
+  "authorityBoundary": {
+    "topologyAuthorityPacket": "coreLoop.stageDagPacket",
+    "topologyAuthorityContract": "config/contracts/core-loop-contract.json",
+    "executionTruthAuthority": "durable-run-kernel",
+    "advisoryCandidateSource": "canonical M3-A03 result",
+    "schedulerSelectionAuthority": "scripts/governed-execution/stage-dag.mjs#selectMaximalSafeReadySet",
+    "executionAdapterAuthority": "none_in_first_shadow_slice",
+    "checkpointAuthority": "durable-run-kernel-only",
+    "singleSelectorRule": "M3-A04 imports and invokes selectMaximalSafeReadySet exactly once. It may not copy dependency-ready, scope-conflict, capacity, deterministic-ordering, or maximal-compatible-set logic.",
+    "a03RestrictionRule": "Canonical M3-A03 candidate node IDs are eligibility restrictions only. They cannot add a DAG node, mark a node completed, supply capacity, change stage, bypass conflict checks, or become selector output by assertion.",
+    "planIsDispatch": false
+  },
+  "adapterContract": {
+    "module": "scripts/governed-execution/scheduler-authority-reuse-shadow-adapter.mjs",
+    "api": "buildSchedulerAuthorityReuseShadowPlan(normalizedInput, { authoritativeStageDagPacket, freshExecutionHeadSnapshot, todoDependencySafeProgressShadowProjection, trustedSelectionContext })",
+    "normalizedInput": {
+      "exactFields": [],
+      "requiredValue": {},
+      "callerMaySupply": {
+        "stage": false,
+        "capacity": false,
+        "binding": false,
+        "candidateNodeIds": false,
+        "eligibleNodeIds": false,
+        "completedNodeIds": false,
+        "freshHead": false
+      },
+      "unknownOrMissingFields": "reject"
+    },
+    "trustedOptions": {
+      "exactFields": [
+        "authoritativeStageDagPacket",
+        "freshExecutionHeadSnapshot",
+        "todoDependencySafeProgressShadowProjection",
+        "trustedSelectionContext"
+      ],
+      "trustedSelectionContext": {
+        "exactFields": [
+          "stage",
+          "capacity"
+        ],
+        "source": "current stage-runner bridge authority",
+        "stageRule": "stage is null or an exact stage present in the authoritative DAG; it is never caller supplied",
+        "capacityRule": "capacity is null or a positive safe integer supplied by current bridge authority; zero, negative, fractional, unsafe, string, NaN, Infinity, and caller capacity are rejected"
+      }
+    },
+    "fixedSequence": [
+      "validate canonical M3-A03 result",
+      "validate authoritative stage DAG",
+      "validate trusted selection context",
+      "validate fresh execution head",
+      "compare fresh head with the complete M3-A03 binding and execution snapshot",
+      "on mismatch emit revalidation_required and stop",
+      "derive eligibleNodeIds only from canonical M3-A03 work-item status",
+      "on any active claim or unresolved blocking effect emit an empty blocked plan and do not invoke selector",
+      "invoke selectMaximalSafeReadySet exactly once",
+      "validate selector output identity and eligibility",
+      "emit an immutable non-authorizing shadow plan"
+    ],
+    "envelopeExactFields": [
+      "schemaVersion",
+      "mode",
+      "evaluationStatus",
+      "disposition",
+      "selectorInvoked",
+      "result",
+      "authority"
+    ],
+    "fixedAuthority": {
+      "plansScheduler": false,
+      "dispatchesScheduler": false,
+      "invokesRuntimeAdapter": false,
+      "executesCallback": false,
+      "writesKernel": false,
+      "writesEvents": false,
+      "claimsNode": false,
+      "changesLease": false,
+      "changesFence": false,
+      "advancesCursor": false,
+      "changesCheckpoint": false,
+      "completesNode": false,
+      "terminatesRun": false,
+      "projectionOnly": true
+    },
+    "invalidInputEnvelope": {
+      "evaluationStatus": "not_evaluated_invalid_normalized_input",
+      "disposition": "in_doubt",
+      "selectorInvoked": false,
+      "result": null,
+      "retainsCallerInputOrExceptionDetail": false
+    },
+    "selectorImport": {
+      "module": "scripts/governed-execution/stage-dag.mjs",
+      "exportName": "selectMaximalSafeReadySet",
+      "exactImportCount": 1,
+      "maximumInvocationCountPerPlan": 1,
+      "algorithmCopyAllowed": false
+    },
+    "forbiddenImportsOrCalls": [
+      "executeNativeReadySet",
+      "createLangGraphReadySetExecutor",
+      "resolveReadySetExecutor",
+      "validateReadySetAdapterResult",
+      "readySetSettlementsToNodeResults",
+      "claimNode(",
+      "heartbeatNode(",
+      "completeNode(",
+      "failNode(",
+      "prepareEffect(",
+      "appendEvent(",
+      "resumeRun(",
+      "projectRun(",
+      "setRunTerminalStatus("
+    ],
+    "forbiddenCopiedAlgorithmSymbols": [
+      "nodesConflict",
+      "scopesConflict",
+      "maximum-compatible search",
+      "duplicated dependency-ready traversal",
+      "local capacity truncation"
+    ]
+  },
+  "selectorExtension": {
+    "existingApi": "selectMaximalSafeReadySet(stageDagPacket, { completedNodeIds = [], capacity = null, stage = null, eligibleNodeIds = null } = {})",
+    "eligibleNodeIds": {
+      "nullBehavior": "preserve existing selector behavior exactly",
+      "nonNullType": "dense_unique_non_empty_safe_node_id_array",
+      "allIdsMustExistInAuthoritativeDag": true,
+      "filterTiming": "before existing dependency-ready, conflict, capacity, and maximal-set selection",
+      "ineligibleNodesCountAsCompleted": false,
+      "candidateNodeIdsRule": "eligible and dependency-ready only",
+      "readyNodeIdsRule": "eligible, dependency-ready, conflict-safe, and within trusted capacity only",
+      "deferredNodeIdsRule": "eligible and dependency-ready but not selected only",
+      "ineligibleNodesAppearInOutput": false
+    },
+    "singleAlgorithmAuthority": true,
+    "secondSelectorAllowed": false
+  },
+  "freshExecutionHeadSnapshot": {
+    "exactFields": [
+      "source",
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "cursor",
+      "headEventHash",
+      "headCheckpointId",
+      "runStatus",
+      "eventChainState",
+      "completedNodeIds",
+      "activeClaimNodeIds",
+      "unresolvedEffectNodeIds",
+      "inDoubtNodeIds",
+      "currentness",
+      "snapshotDigest"
+    ],
+    "fixedSource": "upstream_durable_kernel_projection_owner",
+    "runStatusValues": [
+      "active",
+      "completed",
+      "failed",
+      "blocked"
+    ],
+    "eventChainStateValues": [
+      "verified",
+      "failed",
+      "unknown"
+    ],
+    "currentnessValues": [
+      "fresh_bound_for_shadow_selection",
+      "unproven"
+    ],
+    "callerTimeAccepted": false,
+    "observedAtAccepted": false,
+    "leaseExpiryAccepted": false,
+    "resumableShortcutAccepted": false,
+    "sourceRule": "The existing durable-kernel or stage-bridge authority owner produces this snapshot immediately before M3-A04. M3-A04 never calls kernel APIs to refresh it."
+  },
+  "freshRevalidation": {
+    "exactBindingFieldsCompared": [
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "cursor",
+      "headEventHash",
+      "headCheckpointId"
+    ],
+    "executionSetsCompared": [
+      "completedNodeIds",
+      "activeClaimNodeIds",
+      "unresolvedEffectNodeIds",
+      "inDoubtNodeIds"
+    ],
+    "mismatchDisposition": "revalidation_required",
+    "mismatchSelectorInvoked": false,
+    "requiredRecomputeChain": "M3-A01 -> M3-A02 -> M3-A03",
+    "refreshA04OnlyAllowed": false,
+    "futureDispatchMustRevalidateAgain": true,
+    "reasonCodes": [
+      "fresh_cursor_changed",
+      "fresh_event_head_changed",
+      "fresh_checkpoint_changed",
+      "fresh_projection_digest_changed",
+      "fresh_completed_set_changed",
+      "fresh_claim_state_changed",
+      "fresh_effect_state_changed",
+      "fresh_in_doubt_state_changed",
+      "advisory_snapshot_stale"
+    ]
+  },
+  "a03CandidateProjection": {
+    "source": "canonical todoDependencySafeProgressShadowProjection.result",
+    "canonicalResultRequired": true,
+    "bindingMustMatchFreshHead": true,
+    "candidateDerivation": {
+      "candidates_available": "nodeIds whose canonical work-item status is dependency_ready_candidate",
+      "safe_independent_candidates_available": "nodeIds whose canonical work-item status is safe_independent_candidate",
+      "otherDispositions": []
+    },
+    "eligibleNodeIdsAreRestrictionOnly": true,
+    "cannotSupplyCompletedNodes": true,
+    "cannotSupplyStage": true,
+    "cannotSupplyCapacity": true,
+    "cannotAddDagNodes": true,
+    "emptyCandidatesSelectorInvoked": false
+  },
+  "firstSliceClaimAndEffectPolicy": {
+    "anyActiveClaimProducesEmptyPlan": true,
+    "anyUnresolvedBlockingEffectProducesEmptyPlan": true,
+    "selectorInvoked": false,
+    "planStatus": "blocked",
+    "plannedNodeIds": [],
+    "rule": "The existing selector does not own claim or effect safety. M3-A04 therefore emits an empty blocked plan for any active claim or unresolved blocking effect; finer scheduling is deferred to M3-A05."
+  },
+  "domainContract": {
+    "module": "src/domain/scheduling/scheduler-authority-reuse-shadow.mjs",
+    "api": "buildSchedulerAuthorityReuseShadowResult({ binding, freshHeadBinding, advisoryBinding, executionAssessment, selectorInput, selectorOutput })",
+    "validator": "assertValidSchedulerAuthorityReuseShadowResult(result)",
+    "responsibilities": [
+      "exact schema validation",
+      "binding consistency validation",
+      "selector input and output identity validation",
+      "canonical digest derivation",
+      "deep freezing",
+      "fixed false authorization"
+    ],
+    "forbiddenResponsibilities": [
+      "dependency-ready calculation",
+      "resource-scope conflict calculation",
+      "capacity truncation",
+      "maximal-compatible-set search",
+      "selector invocation",
+      "dispatch or execution"
+    ]
+  },
+  "resultSchema": {
+    "schemaVersion": "scheduler-authority-reuse-shadow-v1",
+    "kind": "scheduler_authority_reuse_shadow_result",
+    "exactTopLevelFields": [
+      "schemaVersion",
+      "kind",
+      "binding",
+      "bindingDigest",
+      "freshHeadBinding",
+      "advisoryBinding",
+      "executionAssessment",
+      "selectorAuthority",
+      "selectorInput",
+      "selectorOutput",
+      "plan",
+      "eventIntents",
+      "authorization"
+    ],
+    "bindingExactFields": [
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "durableCursor",
+      "headEventHash",
+      "headCheckpointId",
+      "policyDigest",
+      "evaluationRevision"
+    ],
+    "freshHeadBindingExactFields": [
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "cursor",
+      "headEventHash",
+      "headCheckpointId",
+      "snapshotDigest"
+    ],
+    "advisoryBindingExactFields": [
+      "schemaVersion",
+      "resultDigest",
+      "bindingDigest",
+      "disposition",
+      "candidateNodeIds"
+    ],
+    "executionAssessment": {
+      "exactFields": [
+        "runStatus",
+        "eventChainState",
+        "currentness",
+        "completedNodeIds",
+        "activeClaimNodeIds",
+        "unresolvedEffectNodeIds",
+        "inDoubtNodeIds",
+        "advisoryCompletedNodeIds",
+        "advisoryActiveClaimNodeIds",
+        "advisoryUnresolvedEffectNodeIds",
+        "advisoryInDoubtNodeIds",
+        "advisoryDisposition"
+      ],
+      "source": "current bridge-owned fresh execution head plus the canonical M3-A03 disposition",
+      "runStatusValues": [
+        "active",
+        "completed",
+        "failed",
+        "blocked"
+      ],
+      "eventChainStateValues": [
+        "verified",
+        "failed",
+        "unknown"
+      ],
+      "currentnessValues": [
+        "fresh_bound_for_shadow_selection",
+        "unproven"
+      ],
+      "advisoryDispositionValues": [
+        "candidates_available",
+        "safe_independent_candidates_available",
+        "wait",
+        "stop",
+        "escalate",
+        "in_doubt"
+      ],
+      "nodeIdCollections": "dense_unique_bounded_safe_node_id_arrays",
+      "callerSupplied": false,
+      "authorityRule": "The Domain derives every non-invoked blocked, empty, in_doubt, or revalidation_required plan from this closed assessment together with binding, freshHeadBinding, and advisoryBinding. Adapter-only reason assertions are forbidden."
+    },
+    "selectorAuthority": {
+      "exactFields": [
+        "module",
+        "exportName",
+        "algorithmCopied",
+        "invocationCount",
+        "topologyAuthorityConsumed"
+      ],
+      "fixedValues": {
+        "module": "scripts/governed-execution/stage-dag.mjs",
+        "exportName": "selectMaximalSafeReadySet",
+        "algorithmCopied": false
+      },
+      "invocationCountValues": [
+        0,
+        1
+      ],
+      "conditionalRule": "invocationCount is 1 and topologyAuthorityConsumed is true only when the selector was actually invoked; otherwise invocationCount is 0 and topologyAuthorityConsumed is false."
+    },
+    "selectorInput": {
+      "exactFields": [
+        "graphDigest",
+        "completedNodeIds",
+        "eligibleNodeIds",
+        "stage",
+        "capacity",
+        "inputDigest"
+      ],
+      "nullableWhenSelectorNotInvoked": true,
+      "authorityRule": "graph, completedNodeIds, stage, and capacity come from current bridge authority; eligibleNodeIds comes only from canonical M3-A03 and can restrict only"
+    },
+    "selectorOutput": {
+      "exactFields": [
+        "schemaVersion",
+        "stage",
+        "capacity",
+        "candidateNodeIds",
+        "readyNodeIds",
+        "deferredNodeIds",
+        "outputDigest"
+      ],
+      "nullableWhenSelectorNotInvoked": true,
+      "idsOnly": true,
+      "fullReadyNodesRetained": false,
+      "stageIdentityRule": "When selectorInput.stage is an explicit non-null stage, selectorOutput.stage must match it exactly. When selectorInput.stage is null, selectorOutput.stage may be the non-null stage derived by the existing selector from its selected DAG node, or null for an empty selector result."
+    },
+    "plan": {
+      "exactFields": [
+        "status",
+        "plannedNodeIds",
+        "deferredNodeIds",
+        "reasonCodes",
+        "planDigest",
+        "dispatchRequiresFreshRevalidation"
+      ],
+      "statusValues": [
+        "planned",
+        "empty",
+        "revalidation_required",
+        "blocked",
+        "in_doubt"
+      ],
+      "fixedValues": {
+        "dispatchRequiresFreshRevalidation": true
+      },
+      "plannedNodeIdsMeaning": "selector output projected for future consideration only; never selected-for-dispatch, dispatched, invoked, claimed, or authorized"
+    },
+    "selectorInvocationShape": {
+      "invoked": {
+        "selectorInvoked": true,
+        "invocationCount": 1,
+        "topologyAuthorityConsumed": true,
+        "selectorInput": "exact non-null selectorInput object",
+        "selectorOutput": "exact non-null selectorOutput object"
+      },
+      "notInvoked": {
+        "selectorInvoked": false,
+        "invocationCount": 0,
+        "topologyAuthorityConsumed": false,
+        "selectorInput": null,
+        "selectorOutput": null,
+        "planStatusValues": [
+          "empty",
+          "revalidation_required",
+          "blocked",
+          "in_doubt"
+        ]
+      }
+    },
+    "eventIntents": {
+      "collection": "dense_plain_array",
+      "itemExactFields": [
+        "kind",
+        "intentDigest",
+        "planStatus",
+        "reasonCodesDigest",
+        "persisted",
+        "authoritative",
+        "writeAllowed"
+      ],
+      "fixedValues": {
+        "kind": "scheduler_shadow_plan_observed",
+        "persisted": false,
+        "authoritative": false,
+        "writeAllowed": false
+      }
+    },
+    "authorization": {
+      "exactFields": [
+        "schedulerPlanAuthoritative",
+        "schedulerDispatchAllowed",
+        "runtimeAdapterInvocationAllowed",
+        "callbackExecutionAllowed",
+        "claimAllowed",
+        "leaseMutationAllowed",
+        "fenceMutationAllowed",
+        "retryAllowed",
+        "eventPersistenceAllowed",
+        "durableCursorAdvanceAllowed",
+        "checkpointMutationAllowed",
+        "completeNodeAllowed",
+        "runTerminalStatusWriteAllowed",
+        "todoMutationAllowed",
+        "dependencyMutationAllowed",
+        "executionAllowed",
+        "authoritativeWriteAllowed",
+        "legacyGateCutoverAllowed"
+      ],
+      "allValues": false
+    },
+    "deeplyFrozen": true,
+    "deterministic": true,
+    "unknownOrMissingFields": "reject"
+  },
+  "dispositionPolicy": {
+    "statuses": [
+      "planned",
+      "empty",
+      "revalidation_required",
+      "blocked",
+      "in_doubt"
+    ],
+    "reasonCodes": {
+      "planned": [
+        "fresh_head_matches_advisory",
+        "canonical_a03_candidates_consumed",
+        "existing_selector_reused",
+        "eligible_candidates_selected"
+      ],
+      "empty": [
+        "a03_has_no_advisory_candidate",
+        "eligible_candidates_not_dependency_ready",
+        "no_conflict_safe_candidate_within_capacity"
+      ],
+      "revalidationRequired": [
+        "fresh_cursor_changed",
+        "fresh_event_head_changed",
+        "fresh_checkpoint_changed",
+        "fresh_projection_digest_changed",
+        "fresh_completed_set_changed",
+        "fresh_claim_state_changed",
+        "fresh_effect_state_changed",
+        "fresh_in_doubt_state_changed",
+        "advisory_snapshot_stale"
+      ],
+      "blocked": [
+        "run_not_active",
+        "event_chain_not_verified",
+        "fresh_currentness_unproven",
+        "active_claim_present",
+        "unresolved_effect_present",
+        "a03_disposition_blocks_scheduler_plan"
+      ],
+      "inDoubt": [
+        "topology_binding_mismatch",
+        "a03_binding_mismatch",
+        "a03_result_invalid",
+        "fresh_head_snapshot_invalid",
+        "selector_input_invalid",
+        "selector_output_identity_mismatch",
+        "selector_returned_ineligible_node",
+        "selector_algorithm_authority_unavailable"
+      ]
+    }
+  },
+  "verificationInvariants": {
+    "selectorDefaultBehaviorUnchangedWhenEligibleNodeIdsNull": true,
+    "selectorInvokedAtMostOnce": true,
+    "selectorOnlySelectionAlgorithm": true,
+    "plannedNeverMeansDispatched": true,
+    "allStatusesKeepAllAuthorizationFalse": true,
+    "futureDispatchRequiresFreshRevalidation": true,
+    "shadowTogglePreservesEventsCursorCheckpointClaimsAndNodeRecords": true,
+    "readySetExecutionAdaptersNeverInvoked": true,
+    "durableKernelNeverMutated": true
+  },
+  "dataSafety": {
+    "closedStatesIdsAndDigestsOnly": true,
+    "forbiddenInputOrRetention": [
+      "raw event payload",
+      "provider binding",
+      "raw output",
+      "raw error",
+      "filesystem path",
+      "secret",
+      "credential",
+      "token",
+      "stdout",
+      "stderr",
+      "caller time",
+      "lease expiry"
+    ],
+    "boundedFailureEnvelopeOnly": true,
+    "callerOriginalValuesRetainedOnFailure": false
+  },
+  "prohibitedActions": [
+    "accept caller stage, capacity, binding, candidate, eligibility, completed-node, or fresh-head input",
+    "copy or replace selectMaximalSafeReadySet",
+    "invoke a ready-set executor, callback, runtime adapter, or settlement converter",
+    "dispatch, claim, heartbeat, retry, complete, or fail a node",
+    "prepare an effect or append an event",
+    "call durable kernel resume or projection APIs from M3-A04",
+    "write event, cursor, checkpoint, lease, fence, terminal status, Todo, dependency, or execution state",
+    "treat plannedNodeIds as dispatched or authorized",
+    "reuse stale A03 candidates after a fresh-head mismatch",
+    "start M3-P3 or activate legacy gate cutover"
+  ],
+  "m3P3Boundary": {
+    "state": "deferred_not_started",
+    "mayStartDuringM3A04": false,
+    "legacyGateCutoverAllowed": false
+  },
+  "acceptance": {
+    "jsonParseRequired": true,
+    "normalizedInputIsExactEmptyObject": true,
+    "callerCannotSupplyStageCapacityBindingOrCandidates": true,
+    "dagCompletedAndCapacityComeFromCurrentBridgeAuthority": true,
+    "capacityIsTrustedPositiveSafeIntegerOrNull": true,
+    "a03CanOnlyRestrictEligibility": true,
+    "activeClaimOrBlockingEffectProducesEmptyPlan": true,
+    "singleSelectorImportedAndCalledAtMostOnce": true,
+    "plannedIsNeverDispatch": true,
+    "allFiveStatusesKeepAll18AuthorizationValuesFalse": true,
+    "freshHeadMismatchRequiresFullA01A02A03Revalidation": true,
+    "readySetExecutorsAndKernelApisAreForbidden": true,
+    "shadowTogglePreservesDurableTruth": true,
+    "m3P3RemainsDeferred": true
+  },
+  "nonGoals": [
+    "production scheduler cutover",
+    "dispatch or callback execution",
+    "ready-set executor integration",
+    "claim, lease, fence, retry, effect, event, cursor, checkpoint, or node mutation",
+    "duplicated scheduler algorithm",
+    "M3-P3 execution or legacy gate cutover"
+  ]
+}

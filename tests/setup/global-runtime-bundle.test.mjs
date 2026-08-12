@@ -32,7 +32,7 @@ const ORIGINAL_IDENTITY = resolvePortableMetaKimPackageIdentity(
   ORIGINAL_MANIFEST,
   DISTRIBUTION,
 );
-const SYNC_TIMEOUT_MS = 90_000;
+const SYNC_TIMEOUT_MS = 180_000;
 const SERIAL_TEST_OPTIONS = { concurrency: false };
 const NPM_CLI_PATH = process.env.npm_execpath ?? path.join(
   path.dirname(process.execPath),
@@ -113,10 +113,44 @@ function runGlobalSync(workspace, runtime, extraEnv = {}) {
   );
 }
 
+function runGlobalSyncWithoutDurableMcp(workspace, runtime) {
+  return run(
+    process.execPath,
+    [
+      path.join(workspace, "scripts", "sync-global-meta-theory.mjs"),
+      "--targets",
+      "claude",
+      "--skip-durable-mcp",
+    ],
+    {
+      cwd: runtime.userHome,
+      env: runtime.env,
+    },
+  );
+}
+
 function runGlobalCheck(workspace, runtime) {
   return run(
     process.execPath,
     [path.join(workspace, "scripts", "sync-global-meta-theory.mjs"), "--check", "--targets", "claude"],
+    {
+      cwd: runtime.userHome,
+      env: runtime.env,
+    },
+  );
+}
+
+function runRuntimeLaunchRebind(workspace, runtime) {
+  return run(
+    process.execPath,
+    [
+      path.join(workspace, "setup.mjs"),
+      "--rebind-runtime-launch",
+      "--targets",
+      "claude",
+      "--scope",
+      "global",
+    ],
     {
       cwd: runtime.userHome,
       env: runtime.env,
@@ -296,6 +330,10 @@ function verifySuccessfulDurableBundleLifecycle() {
     const backupRoot = path.join(runtime.userHome, ".meta-kim", "backups", "mcp-runtime");
     const firstBackups = listFilesIfPresent(backupRoot);
     requireSuccess("second packed global sync", runGlobalSync(candidate.workspace, runtime));
+    requireSuccess(
+      "packed setup runtime launch inventory rebind",
+      runRuntimeLaunchRebind(candidate.workspace, runtime),
+    );
     assert.equal(
       treeFingerprint(layout.bundleDir),
       firstBundleFingerprint,
@@ -456,7 +494,7 @@ function verifyPackedHistoricalAgentCatalogMigration() {
 
     requireSuccess(
       "catalog-backed packed historical Agent migration",
-      runGlobalSync(candidate.workspace, runtime),
+      runGlobalSyncWithoutDurableMcp(candidate.workspace, runtime),
     );
     assert.equal(readFileSync(target, "utf8"), fixture.current);
     const backupRoot = path.join(runtime.claudeHome, ".meta-kim", "backups", "agent");

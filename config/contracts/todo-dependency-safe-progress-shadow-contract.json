@@ -1,0 +1,581 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-todo-dependency-safe-progress-shadow-contract",
+  "prdTaskId": "M3-A03",
+  "status": "implementation_active",
+  "purpose": "Project every authoritative stage-DAG node into exactly one non-authoritative work item and prove bounded Safe Independent Progress candidates without creating Todo truth, selecting a scheduler ready set, dispatching work, or mutating durable execution state.",
+  "mode": "shadow_only",
+  "authorityBoundary": {
+    "topologyAuthority": "coreLoop.stageDagPacket.nodes",
+    "topologyValidator": "validateStageDagPacket",
+    "executionTruth": "existing durable projection held by the stage-runner bridge",
+    "workItemAuthority": "projection_only",
+    "singleTopologyRule": "Each authoritative DAG node derives exactly one work item whose workItemId equals nodeId. Callers and compatibility boards cannot add, remove, reorder, or redefine work items or dependencies.",
+    "compatibilityViews": [
+      "workerTaskPackets",
+      "dispatchBoard",
+      "orchestrationTaskBoardPacket",
+      "Claude Task/Todo",
+      "runtime task lists"
+    ],
+    "compatibilityDriftRule": "Extra, missing, reordered, or dependency-divergent compatibility entries report drift only; they never change the DAG or canonical work-item projection.",
+    "safeIndependentMeaning": "candidate proof projection only",
+    "schedulerSelectionAllowed": false,
+    "schedulerDispatchAllowed": false
+  },
+  "commandSchema": {
+    "exactTopLevelFields": [
+      "binding",
+      "topology",
+      "executionSnapshot",
+      "decisionSnapshot",
+      "evidenceTransition",
+      "continuation"
+    ],
+    "binding": {
+      "exactFields": [
+        "runId",
+        "taskFingerprint",
+        "graphDigest",
+        "projectionDigest",
+        "durableCursor",
+        "headEventHash",
+        "headCheckpointId",
+        "policyDigest",
+        "evaluationRevision"
+      ],
+      "digestFormat": "sha256:<64 lowercase hexadecimal characters>",
+      "nonNegativeSafeIntegerFields": [
+        "durableCursor",
+        "evaluationRevision"
+      ],
+      "nullableFields": [
+        "headEventHash",
+        "headCheckpointId"
+      ],
+      "antiReplayExactFields": [
+        "runId",
+        "taskFingerprint",
+        "graphDigest",
+        "projectionDigest",
+        "durableCursor",
+        "headEventHash",
+        "headCheckpointId",
+        "policyDigest",
+        "evaluationRevision"
+      ],
+      "bindingRule": "The binding must match the canonical M3-A02 binding and the stage-DAG and durable execution authority. A mismatch in runId, taskFingerprint, graphDigest, projectionDigest, durableCursor, headEventHash, headCheckpointId, policyDigest, or evaluationRevision is a cross-run or cross-revision replay conflict and produces in_doubt or escalate; it can never produce a candidate or degrade to ordinary wait."
+    },
+    "topology": {
+      "exactFields": [
+        "schemaVersion",
+        "authority",
+        "graphDigest",
+        "nodes"
+      ],
+      "sourcePacket": "coreLoop.stageDagPacket",
+      "authority": "config/contracts/core-loop-contract.json",
+      "mustPassExistingValidator": "validateStageDagPacket",
+      "nodeExactFields": [
+        "nodeId",
+        "stage",
+        "laneKind",
+        "ownerBindingRef",
+        "capabilityBindingRef",
+        "dependsOn",
+        "effectClass",
+        "resourceScopes",
+        "isolation",
+        "mergeNodeId"
+      ],
+      "nodeCollection": "dense_plain_array",
+      "graphRules": [
+        "nodeId values are unique",
+        "every dependency references an existing node",
+        "the graph is acyclic",
+        "graphDigest matches the validated canonical topology",
+        "dependsOn and resourceScopes are dense canonical sets"
+      ],
+      "callerWorkItemsFieldAllowed": false
+    },
+    "executionSnapshot": {
+      "exactFields": [
+        "projectionDigest",
+        "eventChainState",
+        "currentness",
+        "completedNodeIds",
+        "activeClaimNodeIds",
+        "unresolvedEffectNodeIds",
+        "inDoubtNodeIds"
+      ],
+      "eventChainStateValues": [
+        "verified",
+        "failed",
+        "unknown"
+      ],
+      "currentnessValues": [
+        "bound_same_bridge_settlement",
+        "active_claim_present",
+        "unresolved_effect_present",
+        "unproven"
+      ],
+      "nodeIdCollections": [
+        "completedNodeIds",
+        "activeClaimNodeIds",
+        "unresolvedEffectNodeIds",
+        "inDoubtNodeIds"
+      ],
+      "collectionType": "dense_unique_canonical_node_id_array",
+      "allNodeIdsMustExistInTopology": true,
+      "contradictoryMembership": "escalate",
+      "callerTimeAccepted": false,
+      "leaseExpiryAccepted": false,
+      "resumableShortcutAccepted": false
+    },
+    "decisionSnapshot": {
+      "exactFields": [
+        "pendingDecisionNodeIds",
+        "verifiedDecisionNodeIds",
+        "unknownDecisionNodeIds",
+        "snapshotDigest"
+      ],
+      "decisionNodePredicate": "effectClass === approval_gate",
+      "mappingRules": [
+        "completed approval gate maps to verifiedDecisionNodeIds",
+        "incomplete approval gate maps to pendingDecisionNodeIds",
+        "an unbindable decision source maps to unknownDecisionNodeIds",
+        "a global or unknown Decision applicability maps to unknownDecisionNodeIds and cannot be treated as independent",
+        "no second decision dependency graph may be created"
+      ],
+      "exactBindingRule": "A decision identifier binds only when it exactly equals an approval-gate nodeId; names, descriptions, positions, caller mappings, similarity, global applicability, and unknown applicability are never binding evidence.",
+      "unknownDecisionRule": "When unknownDecisionNodeIds is non-empty, Safe Independent Progress is forbidden and the affected projection becomes in_doubt or waiting_decision."
+    },
+    "evidenceTransition": {
+      "exactFields": [
+        "schemaVersion",
+        "resultDigest",
+        "bindingDigest",
+        "evaluationStatus",
+        "verdict",
+        "blockedDecisionIds",
+        "reasonCodes"
+      ],
+      "source": "canonical M3-A01 result",
+      "evaluationStatusValues": [
+        "evaluated",
+        "not_evaluated_missing_normalized_input",
+        "not_evaluated_invalid_normalized_input"
+      ],
+      "verdictValues": [
+        "allowed",
+        "blocked",
+        "in_doubt"
+      ],
+      "decisionBindingRule": "Every blockedDecisionId used by Safe Independent Progress must exactly equal an approval-gate nodeId."
+    },
+    "continuation": {
+      "exactFields": [
+        "schemaVersion",
+        "resultDigest",
+        "bindingDigest",
+        "evaluationStatus",
+        "action",
+        "reasonCodes"
+      ],
+      "source": "canonical M3-A02 result",
+      "evaluationStatusValues": [
+        "evaluated",
+        "not_evaluated_missing_normalized_input",
+        "not_evaluated_invalid_normalized_input"
+      ],
+      "actionValues": [
+        "continue",
+        "wait",
+        "stop",
+        "escalate"
+      ]
+    },
+    "structuralSafety": {
+      "unknownOrMissingFields": "reject",
+      "plainDataObjectsOnly": true,
+      "denseArraysOnly": true,
+      "accessorsAllowed": false,
+      "proxiesAllowed": false,
+      "prototypePollutionKeysAllowed": false
+    }
+  },
+  "workItemProjection": {
+    "source": "command.topology.nodes",
+    "cardinalityRule": "workItems.length === topology.nodes.length",
+    "identityRule": "workItemId === nodeId",
+    "setRule": "Set(workItems.nodeId) === Set(topology.nodes.nodeId)",
+    "callerSuppliedWorkItemsAllowed": false,
+    "itemExactFields": [
+      "workItemId",
+      "nodeId",
+      "nodeDefinitionDigest",
+      "stage",
+      "laneKind",
+      "ownerBindingRef",
+      "capabilityBindingRef",
+      "dependsOn",
+      "effectClass",
+      "resourceScopes",
+      "isolation",
+      "mergeNodeId",
+      "status",
+      "reasonCodes",
+      "evidenceRefs",
+      "projectionOnly",
+      "authoritative"
+    ],
+    "fixedValues": {
+      "projectionOnly": true,
+      "authoritative": false
+    },
+    "copiedExactlyFromNode": [
+      "nodeId",
+      "stage",
+      "laneKind",
+      "ownerBindingRef",
+      "capabilityBindingRef",
+      "dependsOn",
+      "effectClass",
+      "resourceScopes",
+      "isolation",
+      "mergeNodeId"
+    ],
+    "statusValues": [
+      "completed",
+      "dependency_ready_candidate",
+      "safe_independent_candidate",
+      "waiting_dependency",
+      "waiting_decision",
+      "waiting_active_claim",
+      "waiting_unresolved_effect",
+      "suppressed_by_run_disposition",
+      "in_doubt"
+    ],
+    "statusAuthority": "projection_only_not_todo_state"
+  },
+  "safeIndependentPolicy": {
+    "computesTransitiveDependencyClosure": true,
+    "selectsReadySet": false,
+    "selectsOrderWaveCapacityRetryOrDispatch": false,
+    "allRequired": [
+      "continuation.action === wait",
+      "continuation.reasonCodes is non-empty",
+      "every continuation.reasonCode is awaiting_human_decision or evidence_transition_blocked",
+      "evidenceTransition.blockedDecisionIds.length > 0",
+      "every evidenceTransition.blockedDecisionId exactly equals an approval-gate nodeId",
+      "decisionSnapshot.unknownDecisionNodeIds.length === 0",
+      "candidate is not completed",
+      "candidate is not in activeClaimNodeIds",
+      "candidate is not in unresolvedEffectNodeIds",
+      "candidate is not in inDoubtNodeIds",
+      "every direct dependency of the candidate is completed",
+      "the candidate transitive dependency closure has no pendingDecisionNodeId",
+      "candidate.effectClass is read_only*, merge_only, or stage_control",
+      "executionSnapshot.eventChainState === verified",
+      "executionSnapshot.currentness === bound_same_bridge_settlement",
+      "all binding and digest checks pass"
+    ],
+    "allowedWaitReasonCodes": [
+      "awaiting_human_decision",
+      "evidence_transition_blocked"
+    ],
+    "shadowSafeEffectClasses": [
+      "read_only*",
+      "merge_only",
+      "stage_control"
+    ],
+    "forbiddenContinuationConditions": [
+      "stop",
+      "escalate",
+      "wait because active claim",
+      "wait because unresolved effect",
+      "wait because currentness unproven",
+      "wait because scope unknown or outside",
+      "wait because hard or recoverable blocker",
+      "wait because unsupported or malformed evidence"
+    ],
+    "continueRule": "When continuation.action is continue, dependency-ready nodes may become dependency_ready_candidate only; they are never Safe Independent candidates and never authorize dispatch.",
+    "unboundDecisionRule": "An A01 blockedDecisionId that cannot bind exactly to an approval-gate node, or any global or unknown Decision applicability, produces in_doubt, escalate, or waiting_decision and never an independent candidate."
+  },
+  "safeIndependentCandidateSchema": {
+    "exactFields": [
+      "nodeId",
+      "workItemId",
+      "transitiveDependencyNodeIds",
+      "pendingDecisionNodeIds",
+      "intersectingDecisionNodeIds",
+      "allDirectDependenciesCompleted",
+      "decisionIndependenceProven",
+      "effectBoundaryShadowSafe",
+      "proofDigest"
+    ],
+    "fixedValues": {
+      "nodeIdEqualsWorkItemId": true,
+      "intersectingDecisionNodeIds": [],
+      "allDirectDependenciesCompleted": true,
+      "decisionIndependenceProven": true,
+      "effectBoundaryShadowSafe": true
+    },
+    "authority": "proof_projection_only"
+  },
+  "dispositionPolicy": {
+    "dispositions": [
+      "candidates_available",
+      "safe_independent_candidates_available",
+      "wait",
+      "stop",
+      "escalate",
+      "in_doubt"
+    ],
+    "priority": [
+      "escalate",
+      "stop",
+      "in_doubt",
+      "safe_independent_candidates_available",
+      "candidates_available",
+      "wait"
+    ],
+    "reasonCodes": {
+      "candidate": [
+        "all_dependencies_completed",
+        "continuation_shadow_recommends_continue",
+        "pending_decision_outside_dependency_closure",
+        "decision_only_wait_preserves_independent_candidate",
+        "shadow_safe_effect_boundary"
+      ],
+      "wait": [
+        "dependency_incomplete",
+        "pending_decision_in_dependency_closure",
+        "active_claim_present",
+        "unresolved_effect_present",
+        "execution_currentness_unproven",
+        "continuation_wait_not_decision_only",
+        "no_dependency_ready_candidate",
+        "side_effect_boundary_not_shadow_safe"
+      ],
+      "inDoubtOrEscalate": [
+        "topology_binding_mismatch",
+        "execution_projection_integrity_failed",
+        "node_projection_not_bijective",
+        "contradictory_node_state",
+        "decision_gate_unbound",
+        "evidence_transition_binding_mismatch",
+        "continuation_binding_mismatch",
+        "unsupported_shadow_input"
+      ],
+      "stop": [
+        "continuation_policy_stopped",
+        "authoritative_run_terminal"
+      ]
+    }
+  },
+  "resultSchema": {
+    "schemaVersion": "todo-dependency-safe-progress-shadow-v1",
+    "kind": "todo_dependency_safe_progress_shadow_result",
+    "exactTopLevelFields": [
+      "schemaVersion",
+      "kind",
+      "binding",
+      "bindingDigest",
+      "topologyDigest",
+      "executionSnapshot",
+      "decisionSnapshot",
+      "evidenceTransition",
+      "continuation",
+      "workItems",
+      "safeIndependentCandidates",
+      "disposition",
+      "eventIntents",
+      "authorization"
+    ],
+    "bindingExactFieldsRef": "commandSchema.binding.exactFields",
+    "workItemExactFieldsRef": "workItemProjection.itemExactFields",
+    "safeIndependentCandidateExactFieldsRef": "safeIndependentCandidateSchema.exactFields",
+    "disposition": {
+      "exactFields": [
+        "action",
+        "reasonCodes",
+        "evidenceRefs"
+      ],
+      "actionValuesRef": "dispositionPolicy.dispositions"
+    },
+    "eventIntents": {
+      "collection": "dense_plain_array",
+      "itemExactFields": [
+        "kind",
+        "intentDigest",
+        "disposition",
+        "reasonCodesDigest",
+        "persisted",
+        "authoritative",
+        "writeAllowed"
+      ],
+      "fixedValues": {
+        "kind": "safe_progress_shadow_observed",
+        "persisted": false,
+        "authoritative": false,
+        "writeAllowed": false
+      }
+    },
+    "authorization": {
+      "exactFields": [
+        "todoTruthWriteAllowed",
+        "workItemMutationAllowed",
+        "dependencyMutationAllowed",
+        "decisionDependencyMutationAllowed",
+        "schedulerSelectionAllowed",
+        "schedulerDispatchAllowed",
+        "retryAllowed",
+        "claimAllowed",
+        "leaseMutationAllowed",
+        "fenceMutationAllowed",
+        "eventPersistenceAllowed",
+        "durableCursorAdvanceAllowed",
+        "checkpointMutationAllowed",
+        "completeNodeAllowed",
+        "runTerminalStatusWriteAllowed",
+        "executionAllowed",
+        "authoritativeWriteAllowed",
+        "legacyGateCutoverAllowed"
+      ],
+      "allValues": false
+    },
+    "deeplyFrozen": true,
+    "deterministic": true,
+    "unknownOrMissingFields": "reject"
+  },
+  "adapterContract": {
+    "module": "scripts/governed-execution/todo-dependency-safe-progress-shadow-adapter.mjs",
+    "api": "buildTodoDependencySafeProgressShadowProjection(normalizedInput, { authoritativeTopology, authoritativeExecutionSnapshot, evidenceTransitionShadowProjection, continuationPolicyShadowProjection })",
+    "responsibilities": [
+      "validate the stage DAG and derive normalized topology",
+      "validate durable projection and binding",
+      "validate canonical M3-A01 and M3-A02 results",
+      "normalize completed, claim, effect, in-doubt, and decision-gate state from existing projections",
+      "invoke the pure domain",
+      "return a bounded non-authorizing shadow envelope"
+    ],
+    "envelopeExactFields": [
+      "schemaVersion",
+      "mode",
+      "evaluationStatus",
+      "disposition",
+      "result",
+      "authority"
+    ],
+    "fixedAuthority": {
+      "projectsTodoTruth": false,
+      "writesTodo": false,
+      "writesKernel": false,
+      "writesEvents": false,
+      "selectsSchedulerReadySet": false,
+      "dispatchesScheduler": false,
+      "claimsNode": false,
+      "changesLease": false,
+      "changesFence": false,
+      "advancesCursor": false,
+      "changesCheckpoint": false,
+      "completesNode": false,
+      "terminatesRun": false,
+      "projectionOnly": true
+    },
+    "invalidInputEnvelope": {
+      "evaluationStatus": "not_evaluated_invalid_normalized_input",
+      "disposition": "escalate",
+      "result": null,
+      "retainsCallerInputOrExceptionDetail": false
+    },
+    "forbiddenSourceTokens": [
+      "TaskCreate",
+      "TaskUpdate",
+      "TodoWrite"
+    ],
+    "forbiddenSourceCalls": [
+      "selectMaximalSafeReadySet(",
+      "claimNode(",
+      "heartbeatNode(",
+      "completeNode(",
+      "failNode(",
+      "prepareEffect(",
+      "appendEvent(",
+      "resumeRun(",
+      "projectRun(",
+      "setRunTerminalStatus("
+    ],
+    "forbiddenPersistence": [
+      "Todo database",
+      "work-item manifest",
+      "dependency event log",
+      "new durable table",
+      "new scheduler packet authority"
+    ]
+  },
+  "dataSafety": {
+    "closedStatesAndOpaqueReferencesOnly": true,
+    "forbiddenInputOrRetention": [
+      "raw events",
+      "provider binding",
+      "raw output",
+      "raw error",
+      "filesystem path",
+      "secret",
+      "credential",
+      "token",
+      "stdout",
+      "stderr",
+      "caller time",
+      "lease expiry"
+    ],
+    "boundedFailureEnvelopeOnly": true,
+    "callerOriginalValuesRetainedOnFailure": false
+  },
+  "prohibitedActions": [
+    "create caller-defined work items or Todo truth",
+    "rebuild or override the DAG from workerTaskPackets or a board",
+    "mutate dependencies or decision dependencies",
+    "select a scheduler ready set, capacity, wave, collision policy, retry, or dispatch",
+    "claim, heartbeat, complete, or fail a node",
+    "prepare an effect or append an event",
+    "resume, project, terminate, or mutate a durable run from the adapter",
+    "write cursor, checkpoint, lease, fence, or terminal state",
+    "treat a work-item status or candidate proof as execution authority",
+    "create a second topology, decision graph, event log, or persistence authority",
+    "start M3-P3 or activate legacy gate cutover"
+  ],
+  "m3P3Boundary": {
+    "state": "deferred_not_started",
+    "mayStartDuringM3A03": false,
+    "legacyGateCutoverAllowed": false
+  },
+  "acceptance": {
+    "jsonParseRequired": true,
+    "oneWorkItemPerDagNode": true,
+    "workItemIdEqualsNodeId": true,
+    "dependsOnCopiedExactly": true,
+    "callerCannotInjectWorkItems": true,
+    "safeIndependentRequiresExactDecisionGateBinding": true,
+    "unknownOrGlobalDecisionApplicabilityBlocksSafeIndependent": true,
+    "fullBindingMismatchBlocksReplay": true,
+    "activeClaimsBlockCandidatesWithoutExpiryInference": true,
+    "unresolvedEffectsBlockCandidates": true,
+    "unprovenCurrentnessBlocksCandidates": true,
+    "sideEffectsNeverBecomeSafeIndependent": true,
+    "allAuthorizationValuesRemainFalse": true,
+    "shadowTogglePreservesDagAndDurableTruth": true,
+    "compatibilityBoardDriftDoesNotChangeWorkItemSet": true,
+    "m3P3RemainsDeferred": true
+  },
+  "nonGoals": [
+    "authoritative Todo or work-item state",
+    "scheduler ready-set selection",
+    "capacity, collision, wave, retry, claim, lease, fence, or dispatch implementation",
+    "durable mutation or new persistence",
+    "production Safe Independent execution",
+    "M3-P3 execution or legacy gate cutover"
+  ]
+}

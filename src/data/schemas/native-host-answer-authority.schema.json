@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meta-kim.dev/schemas/native-host-answer-substrate-v1.json",
+  "title": "Meta_Kim fail-closed Native Host Answer Non-Authorizing Substrate v1",
+  "$comment": "This schema validates a non-authorizing claim substrate. Host and time-source claims are not authenticated by the Domain. Runtime validation additionally enforces Object.prototype records, dense Array.prototype lists, enumerable own data descriptors, canonical UTC timestamps, exact event history, immutable digest binding, semantic secret rejection, and Decision/challenge equality. JSON Schema cannot express those constraints.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "kind", "state", "revision", "substrateRef", "substrateDigest",
+    "decisionId", "presentedRevision", "runId", "challengeRef", "challengeDigest",
+    "runtime", "surface", "hostEventClaimRef", "hostEventClaimDigest", "renderedHostPayloadDigest", "hostConnectionRef",
+    "sessionOrThreadRef", "turnRef", "itemRef", "toolUseOrRequestRef", "issuedAt",
+    "expiresAt", "presentationTimeSourceClaimRef", "hostReturnObservedClaimDigest", "observedAt",
+    "observationTimeSourceClaimRef", "consumedAt", "consumptionTimeSourceClaimRef",
+    "consumerRef", "expiredAt", "expiryTimeSourceClaimRef", "invalidatedAt",
+    "invalidationTimeSourceClaimRef", "invalidationReasonRef", "events"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "native-host-answer-substrate-v1" },
+    "kind": { "const": "native_host_answer_substrate" },
+    "state": { "enum": ["presented", "host_return_observed", "consumed", "expired", "invalidated"] },
+    "revision": { "type": "integer", "minimum": 0, "maximum": 2 },
+    "substrateRef": { "$ref": "#/$defs/opaqueRef", "description": "Opaque caller-supplied substrate claim reference. Uniqueness and provenance are repository/runtime responsibilities, not Domain proof." },
+    "substrateDigest": { "$ref": "#/$defs/sha256Ref", "description": "Digest of the immutable Decision, challenge, claimed host context, payload, window, and presentation time-source claim." },
+    "decisionId": { "type": "string", "pattern": "^decision-[a-f0-9]{64}$" },
+    "presentedRevision": { "type": "integer", "minimum": 0 },
+    "runId": { "$ref": "#/$defs/opaqueRef" },
+    "challengeRef": { "$ref": "#/$defs/opaqueRef" },
+    "challengeDigest": { "$ref": "#/$defs/sha256Ref" },
+    "runtime": { "enum": ["codex", "claude"] },
+    "surface": { "enum": ["request_user_input", "AskUserQuestion"] },
+    "hostEventClaimRef": { "$ref": "#/$defs/opaqueRef", "description": "Runtime-supplied claimed host-event identity; provenance and uniqueness require runtime/repository enforcement." },
+    "hostEventClaimDigest": { "$ref": "#/$defs/sha256Ref", "description": "Domain-derived digest of the claimed runtime/surface/connection/session-or-thread/turn/item/tool-use-or-request event identity." },
+    "renderedHostPayloadDigest": { "$ref": "#/$defs/sha256Ref" },
+    "hostConnectionRef": { "$ref": "#/$defs/opaqueRef" },
+    "sessionOrThreadRef": { "$ref": "#/$defs/opaqueRef" },
+    "turnRef": { "$ref": "#/$defs/opaqueRef" },
+    "itemRef": { "$ref": "#/$defs/opaqueRef" },
+    "toolUseOrRequestRef": { "$ref": "#/$defs/opaqueRef", "description": "Normalized native tool-use id or JSON-RPC request id." },
+    "issuedAt": { "$ref": "#/$defs/timestamp" },
+    "expiresAt": { "$ref": "#/$defs/timestamp", "description": "Exclusive upper boundary of the claimed substrate validity window." },
+    "presentationTimeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" },
+    "hostReturnObservedClaimDigest": { "$ref": "#/$defs/nullableSha256Ref" },
+    "observedAt": { "$ref": "#/$defs/nullableTimestamp" },
+    "observationTimeSourceClaimRef": { "$ref": "#/$defs/nullableOpaqueRef" },
+    "consumedAt": { "$ref": "#/$defs/nullableTimestamp" },
+    "consumptionTimeSourceClaimRef": { "$ref": "#/$defs/nullableOpaqueRef" },
+    "consumerRef": { "$ref": "#/$defs/nullableOpaqueRef" },
+    "expiredAt": { "$ref": "#/$defs/nullableTimestamp" },
+    "expiryTimeSourceClaimRef": { "$ref": "#/$defs/nullableOpaqueRef" },
+    "invalidatedAt": { "$ref": "#/$defs/nullableTimestamp" },
+    "invalidationTimeSourceClaimRef": { "$ref": "#/$defs/nullableOpaqueRef" },
+    "invalidationReasonRef": { "$ref": "#/$defs/nullableOpaqueRef" },
+    "events": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/event" } }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        { "properties": { "runtime": { "const": "codex" }, "surface": { "const": "request_user_input" } } },
+        { "properties": { "runtime": { "const": "claude" }, "surface": { "const": "AskUserQuestion" } } }
+      ]
+    },
+    {
+      "if": { "properties": { "state": { "const": "presented" } }, "required": ["state"] },
+      "then": {
+        "properties": {
+          "revision": { "const": 0 }, "hostReturnObservedClaimDigest": { "type": "null" }, "observedAt": { "type": "null" },
+          "observationTimeSourceClaimRef": { "type": "null" }, "consumedAt": { "type": "null" },
+          "consumptionTimeSourceClaimRef": { "type": "null" }, "consumerRef": { "type": "null" },
+          "expiredAt": { "type": "null" }, "expiryTimeSourceClaimRef": { "type": "null" },
+          "invalidatedAt": { "type": "null" }, "invalidationTimeSourceClaimRef": { "type": "null" },
+          "invalidationReasonRef": { "type": "null" }, "events": { "minItems": 1, "maxItems": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "host_return_observed" } }, "required": ["state"] },
+      "then": {
+        "properties": {
+          "revision": { "const": 1 }, "hostReturnObservedClaimDigest": { "$ref": "#/$defs/sha256Ref" },
+          "observedAt": { "$ref": "#/$defs/timestamp" }, "observationTimeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" },
+          "consumedAt": { "type": "null" }, "consumptionTimeSourceClaimRef": { "type": "null" },
+          "consumerRef": { "type": "null" }, "expiredAt": { "type": "null" },
+          "expiryTimeSourceClaimRef": { "type": "null" }, "invalidatedAt": { "type": "null" },
+          "invalidationTimeSourceClaimRef": { "type": "null" }, "invalidationReasonRef": { "type": "null" },
+          "events": { "minItems": 2, "maxItems": 2 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "consumed" } }, "required": ["state"] },
+      "then": {
+        "properties": {
+          "revision": { "const": 2 }, "hostReturnObservedClaimDigest": { "$ref": "#/$defs/sha256Ref" },
+          "observedAt": { "$ref": "#/$defs/timestamp" }, "observationTimeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" },
+          "consumedAt": { "$ref": "#/$defs/timestamp" }, "consumptionTimeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" },
+          "consumerRef": { "$ref": "#/$defs/opaqueRef" }, "expiredAt": { "type": "null" },
+          "expiryTimeSourceClaimRef": { "type": "null" }, "invalidatedAt": { "type": "null" },
+          "invalidationTimeSourceClaimRef": { "type": "null" }, "invalidationReasonRef": { "type": "null" },
+          "events": { "minItems": 3, "maxItems": 3 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "expired" } }, "required": ["state"] },
+      "then": {
+        "properties": {
+          "consumedAt": { "type": "null" }, "consumptionTimeSourceClaimRef": { "type": "null" },
+          "consumerRef": { "type": "null" }, "expiredAt": { "$ref": "#/$defs/timestamp" },
+          "expiryTimeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" }, "invalidatedAt": { "type": "null" },
+          "invalidationTimeSourceClaimRef": { "type": "null" }, "invalidationReasonRef": { "type": "null" },
+          "events": { "minItems": 2, "maxItems": 3 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "state": { "const": "invalidated" } }, "required": ["state"] },
+      "then": {
+        "properties": {
+          "consumedAt": { "type": "null" }, "consumptionTimeSourceClaimRef": { "type": "null" },
+          "consumerRef": { "type": "null" }, "expiredAt": { "type": "null" },
+          "expiryTimeSourceClaimRef": { "type": "null" }, "invalidatedAt": { "$ref": "#/$defs/timestamp" },
+          "invalidationTimeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" },
+          "invalidationReasonRef": { "$ref": "#/$defs/opaqueRef" },
+          "events": { "minItems": 2, "maxItems": 3 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "opaqueRef": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128,
+      "pattern": "^(?:sha256:[a-f0-9]{64}|[a-z][a-z0-9_-]{1,31}:[a-z0-9][a-z0-9._/-]{0,95})$"
+    },
+    "sha256Ref": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time", "minLength": 20 },
+    "nullableOpaqueRef": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/opaqueRef" }] },
+    "nullableSha256Ref": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256Ref" }] },
+    "nullableTimestamp": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }] },
+    "event": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["state", "at", "timeSourceClaimRef"],
+          "properties": { "state": { "const": "presented" }, "at": { "$ref": "#/$defs/timestamp" }, "timeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["state", "at", "timeSourceClaimRef", "hostReturnObservedClaimDigest"],
+          "properties": { "state": { "const": "host_return_observed" }, "at": { "$ref": "#/$defs/timestamp" }, "timeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" }, "hostReturnObservedClaimDigest": { "$ref": "#/$defs/sha256Ref" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["state", "at", "timeSourceClaimRef", "consumerRef"],
+          "properties": { "state": { "const": "consumed" }, "at": { "$ref": "#/$defs/timestamp" }, "timeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" }, "consumerRef": { "$ref": "#/$defs/opaqueRef" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["state", "at", "timeSourceClaimRef"],
+          "properties": { "state": { "const": "expired" }, "at": { "$ref": "#/$defs/timestamp" }, "timeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["state", "at", "timeSourceClaimRef", "reasonRef"],
+          "properties": { "state": { "const": "invalidated" }, "at": { "$ref": "#/$defs/timestamp" }, "timeSourceClaimRef": { "$ref": "#/$defs/opaqueRef" }, "reasonRef": { "$ref": "#/$defs/opaqueRef" } }
+        }
+      ]
+    }
+  }
+}

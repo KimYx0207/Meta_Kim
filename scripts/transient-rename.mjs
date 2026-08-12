@@ -44,3 +44,39 @@ export function renameWithTransientRetry(
     }
   }
 }
+
+/**
+ * Async counterpart for promise-based filesystem workflows.
+ */
+export async function renameWithTransientRetryAsync(
+  source,
+  target,
+  {
+    rename,
+    platform = process.platform,
+    attempts = 6,
+    initialDelayMs = 50,
+    wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  } = {},
+) {
+  if (typeof rename !== "function") {
+    throw new TypeError("rename must be a function");
+  }
+  const maxAttempts = Number.isInteger(attempts) && attempts > 0 ? attempts : 1;
+  const retryable = new Set(WINDOWS_TRANSIENT_RENAME_CODES);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await rename(source, target);
+      return;
+    } catch (error) {
+      if (
+        platform !== "win32" ||
+        !retryable.has(error?.code) ||
+        attempt === maxAttempts
+      ) {
+        throw error;
+      }
+      await wait(Math.min(initialDelayMs * (2 ** (attempt - 1)), 800));
+    }
+  }
+}

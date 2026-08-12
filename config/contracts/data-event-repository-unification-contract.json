@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "data-event-repository-unification-contract-v1",
+  "phase": "M3-A09",
+  "status": "bounded_vertical",
+  "authority": {
+    "executionTruth": "governed_events_and_current_head",
+    "durableRepository": "src/data/repositories/sqlite-durable-run-repository.mjs",
+    "applicationComposition": "src/application/run/open-durable-run-repository.mjs",
+    "applicationPort": "src/application/ports/durable-run-repository-port.mjs",
+    "domainSemantics": "src/domain/execution/durable-run-repository-semantics.mjs",
+    "legacyFacade": "scripts/governed-execution/durable-run-kernel.mjs"
+  },
+  "repositoryClasses": {
+    "durableRun": {
+      "role": "sole_execution_truth",
+      "eventIdentity": "append_only_exact_idempotency",
+      "eventOrdering": "per_run_monotonic_cursor",
+      "concurrency": "cursor_and_version_compare_and_set",
+      "transaction": "sqlite_begin_immediate",
+      "checkpoint": "immutable_event_bound_projection",
+      "claimLeaseFence": "owner_attempt_lease_and_fence_bound"
+    },
+    "nativeHostAnswer": {
+      "role": "non_authoritative_filesystem_revision_cas",
+      "path": "src/data/repositories/native-host-answer-repository.mjs",
+      "mayAuthorizeExecution": false,
+      "mergedIntoDurableRun": false
+    },
+    "legacyAnalytics": {
+      "role": "analytics_projection_only",
+      "paths": [
+        "scripts/capability-gap-mvp.mjs#openRunStateStore",
+        "scripts/run-index.mjs"
+      ],
+      "runEventsWriteMode": "legacy_insert_or_replace",
+      "mayResume": false,
+      "mayClaim": false,
+      "mayLease": false,
+      "mayCheckpoint": false,
+      "mergedIntoDurableRun": false
+    }
+  },
+  "layering": {
+    "domain": {
+      "mayImport": [],
+      "forbidden": ["node_io", "sqlite", "scripts", "runtime_adapter"]
+    },
+    "application": {
+      "owns": ["port_validation", "repository_composition"],
+      "forbidden": ["sql", "filesystem_paths", "schema_migration"]
+    },
+    "data": {
+      "owns": ["sqlite_runtime", "transaction", "governed_schema", "event_cas", "persistence"],
+      "forbidden": ["scheduler_policy", "ui_projection_authority", "second_event_store"]
+    },
+    "presentation": {
+      "owns": ["read_only_rendering"],
+      "mayMutateRepository": false
+    }
+  },
+  "compatibility": {
+    "diskSchemaVersion": 5,
+    "schemaChanged": false,
+    "databaseCopied": false,
+    "dualWriteAllowed": false,
+    "legacyFacadeContainsImplementation": false,
+    "legacyFacadeRetainedForPackedConsumers": true,
+    "rollback": "restore_legacy_facade_implementation_without_disk_migration"
+  },
+  "invariants": {
+    "eventOrderPreserved": true,
+    "eventHashChainPreserved": true,
+    "cursorCasPreserved": true,
+    "transactionRollbackPreserved": true,
+    "leaseFencePreserved": true,
+    "checkpointBindingPreserved": true,
+    "unknownUserStatePreserved": true,
+    "projectionMayAuthorizeExecution": false
+  },
+  "verification": {
+    "required": [
+      "old_new_api_parity",
+      "existing_database_reopen",
+      "transaction_rollback",
+      "concurrent_cursor_cas",
+      "lease_fence_monotonicity",
+      "checkpoint_event_atomicity",
+      "a08_attestation_parity",
+      "legacy_analytics_isolation",
+      "packed_old_and_new_imports"
+    ]
+  }
+}

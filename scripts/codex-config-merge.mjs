@@ -3,6 +3,9 @@ import path from "node:path";
 
 export const CODEX_REQUEST_USER_INPUT_FEATURE = "default_mode_request_user_input";
 export const CODEX_JS_REPL_FEATURE = "js_repl";
+export const CODEX_DEFAULT_AGENT_MAX_THREADS = 2;
+export const CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS = 6;
+export const CODEX_DEFAULT_AGENT_MAX_DEPTH = 1;
 export const CODEX_APP_NATIVE_PLUGIN_IDS = [
   "browser@openai-bundled",
   "chrome@openai-bundled",
@@ -239,6 +242,38 @@ function sectionNames(lines) {
   return lines
     .map((line) => line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/)?.[1])
     .filter(Boolean);
+}
+
+function codexProjectPathFromSectionName(sectionName = "") {
+  const match = String(sectionName).match(/^projects\.(?:'([^']+)'|"([^"]+)")$/u);
+  return match?.[1] ?? match?.[2] ?? null;
+}
+
+function isMetaKimTemporaryProjectPath(projectPath = "") {
+  const normalized = String(projectPath).replaceAll("\\", "/").toLowerCase();
+  return (
+    normalized.includes("/meta-kim-harness-fitness-lab-workspaces/") ||
+    normalized.includes("/.meta-kim/state/default/harness-fitness-lab/workspaces/") ||
+    /\/temp\/meta-kim-context-ab(?:-formal)?-[a-f0-9]+\//u.test(normalized) ||
+    /\/temp\/meta-kim-p116-(?:permission-profile|formal)-workspaces\//u.test(normalized)
+  );
+}
+
+export function removeMetaKimTemporaryProjectResidue(configText = "") {
+  assertCodexConfigTomlMergeable(configText);
+  const lines = normalizeLines(configText);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const sectionName = lines[index].match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/u)?.[1];
+    const projectPath = codexProjectPathFromSectionName(sectionName);
+    if (!projectPath || !isMetaKimTemporaryProjectPath(projectPath)) continue;
+    let end = index + 1;
+    while (end < lines.length && !/^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(lines[end])) {
+      end += 1;
+    }
+    lines.splice(index, end - index);
+  }
+  while (lines.length > 0 && lines.at(-1).trim() === "") lines.pop();
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
 function sectionSettingLines(lines, sectionName) {
@@ -715,6 +750,26 @@ export function ensureCodexAppNativeControls(configText = "", options = {}) {
 
   ensureSectionSetting(lines, "features", CODEX_REQUEST_USER_INPUT_FEATURE, "true");
   ensureSectionSetting(lines, "features", CODEX_JS_REPL_FEATURE, "true");
+  const configuredMaxThreads = sectionSettingValue(lines, "agents", "max_threads");
+  if (
+    configuredMaxThreads === null ||
+    configuredMaxThreads === String(CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS)
+  ) {
+    ensureSectionSetting(
+      lines,
+      "agents",
+      "max_threads",
+      String(CODEX_DEFAULT_AGENT_MAX_THREADS),
+    );
+  }
+  if (sectionSettingValue(lines, "agents", "max_depth") === null) {
+    ensureSectionSetting(
+      lines,
+      "agents",
+      "max_depth",
+      String(CODEX_DEFAULT_AGENT_MAX_DEPTH),
+    );
+  }
   if (platformName === "win32") {
     ensureSectionSetting(lines, "windows", "sandbox", tomlString("unelevated"));
     ensureOpenAiBundledMarketplace(lines, { ...options, platformName });
@@ -1200,6 +1255,17 @@ export function planCodexAppNativeControls(configText = "", options = {}) {
     ["features", CODEX_REQUEST_USER_INPUT_FEATURE, "true"],
     ["features", CODEX_JS_REPL_FEATURE, "true"],
   ];
+  const initialLines = normalizeLines(text);
+  const configuredMaxThreads = sectionSettingValue(initialLines, "agents", "max_threads");
+  if (
+    configuredMaxThreads === null ||
+    configuredMaxThreads === String(CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS)
+  ) {
+    settings.push(["agents", "max_threads", String(CODEX_DEFAULT_AGENT_MAX_THREADS)]);
+  }
+  if (sectionSettingValue(initialLines, "agents", "max_depth") === null) {
+    settings.push(["agents", "max_depth", String(CODEX_DEFAULT_AGENT_MAX_DEPTH)]);
+  }
   const platformName = options.platformName ?? process.platform;
   if (platformName === "win32") {
     settings.push(
@@ -1286,6 +1352,27 @@ export function planCodexAppNativeControls(configText = "", options = {}) {
 
   assertCodexConfigTomlMergeable(text);
   return { text, mutations: normalizeCodexConfigMutations(mutations) };
+}
+
+/**
+ * Restore the exact user-owned Codex config after a dependency installer ran.
+ *
+ * Dependency CLIs are not an authority for the user's global MCP registry,
+ * project trust ledger, agents, hooks, or root settings. Importing their whole
+ * output additively can resurrect servers the user deleted and can persist
+ * temporary benchmark workspaces. Only Meta_Kim's narrowly planned native
+ * controls are applied to the pre-install snapshot.
+ */
+export function reconcileCodexConfigAfterUpstreamInstall(
+  snapshotText = null,
+  _upstreamText = "",
+  options = {},
+) {
+  const userBaseline = snapshotText == null ? "" : String(snapshotText);
+  return ensureCodexAppNativeControls(
+    removeMetaKimTemporaryProjectResidue(userBaseline),
+    options,
+  );
 }
 
 function uniqueAssignmentForInverse(text, locator) {

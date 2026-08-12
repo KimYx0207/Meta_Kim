@@ -40,7 +40,7 @@ describe("42 — Feedback loop and Review / Meta-Review gate", () => {
       "reject",
     ]);
     assert.equal(contract.durableWritePolicy.canonicalWritesWithoutApproval, 0);
-    assert.equal(contract.durableWritePolicy.approvalPacketRequired, "warden-approval-v0.1");
+    assert.equal(contract.durableWritePolicy.approvalPacketRequired, "warden-approval-v0.2");
     assert.ok(contract.reviewMetaReviewGate.reviewRequiredChecks.includes("fetch_source_evidence"));
     assert.ok(
       contract.reviewMetaReviewGate.metaReviewRequiredChecks.includes(

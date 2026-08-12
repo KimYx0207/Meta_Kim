@@ -95,6 +95,12 @@ export const PACKED_GLOBAL_AGENT_TARGETS = Object.freeze(
 );
 export const PACKED_USER_ACCEPTANCE_EXPECTED_DURATION_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.expectedDurationMs;
+export const PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS =
+  PACKED_RELEASE_POLICY.packedUserAcceptance.globalUserUpdateTimeoutMs;
+export const PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS =
+  PACKED_RELEASE_POLICY.packedUserAcceptance.historicalUserUpdateTimeoutMs;
+export const PACKED_TRANSIENT_PACKAGE_INSTALL_TIMEOUT_MS =
+  PACKED_RELEASE_POLICY.packedUserAcceptance.transientPackageInstallTimeoutMs;
 export const PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.projectAwareGlobalUpdateTimeoutMs;
 export const PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS =
@@ -2320,7 +2326,11 @@ function prepareTransientPackageRoot({
         "--no-fund",
         packageInfo.tarball,
       ],
-      { cwd: roots.laneRoot, env, timeoutMs },
+      {
+        cwd: roots.laneRoot,
+        env,
+        timeoutMs: PACKED_TRANSIENT_PACKAGE_INSTALL_TIMEOUT_MS,
+      },
     ),
   );
   const transientNodeModules = path.join(transientPrefix, "node_modules");
@@ -3029,7 +3039,13 @@ function runCurrentPackageLane({
   let firstUpdateManifest = null;
   for (const mode of ["install", "update", "update"]) {
     emit(onProgress, { event: "packed_user_mode_start", mode, ordinal: modes.length + 1 });
-    const result = runInstalledPublicCli(descriptor, roots, env, mode, timeoutMs);
+    const result = runInstalledPublicCli(
+      descriptor,
+      roots,
+      env,
+      mode,
+      mode === "update" ? PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS : timeoutMs,
+    );
     const record = {
       mode,
       ordinal: modes.length + 1,
@@ -3207,7 +3223,13 @@ function runHistoricalUpdateLane({
   const currentDescriptor = installPackedCli(packageInfo, roots, env, timeoutMs);
   const update = requireSuccess(
     `installed packed user update from ${historicalRef}`,
-    runInstalledPublicCli(currentDescriptor, roots, env, "update", timeoutMs),
+    runInstalledPublicCli(
+      currentDescriptor,
+      roots,
+      env,
+      "update",
+      PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS,
+    ),
   );
   assertOrdinaryCwdUntouched(roots.ordinaryCwd);
   const proof = artifactFingerprint(artifacts);
@@ -3395,9 +3417,23 @@ export function runPackedUserInstallUpdateAcceptance({
 }
 
 function main() {
-  const includeHistorical = !process.argv.includes("--skip-history");
-  const allowMissingHistory = process.argv.includes("--allow-missing-history");
-  const stopAfterGlobalIdempotence = process.argv.includes("--stop-after-global-idempotence");
+  const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write([
+      "Usage: node scripts/verify-packed-user-install-update.mjs [options]",
+      "",
+      "Options:",
+      "  --skip-history                 Skip historical-version update coverage.",
+      "  --allow-missing-history        Allow missing historical release baseline.",
+      "  --stop-after-global-idempotence Stop after the global idempotence lane.",
+      "  -h, --help                     Show this help message.",
+      "",
+    ].join("\n"));
+    return;
+  }
+  const includeHistorical = !args.includes("--skip-history");
+  const allowMissingHistory = args.includes("--allow-missing-history");
+  const stopAfterGlobalIdempotence = args.includes("--stop-after-global-idempotence");
   const result = runPackedUserInstallUpdateAcceptance({
     includeHistorical,
     allowMissingHistory,

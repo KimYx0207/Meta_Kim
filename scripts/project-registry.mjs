@@ -2,8 +2,8 @@ import crypto from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { importDatabaseSync } from "./sqlite-runtime.mjs";
-import { withSqliteTransaction } from "./sqlite-transaction.mjs";
+import { importDatabaseSync } from "../src/data/sqlite/runtime.mjs";
+import { withSqliteTransaction } from "../src/data/sqlite/transaction.mjs";
 
 const PROJECT_BOOTSTRAP_SOURCE_TYPE = "project_bootstrap";
 const PROJECT_BOOTSTRAP_SOURCE_REF = "setup-project-bootstrap";

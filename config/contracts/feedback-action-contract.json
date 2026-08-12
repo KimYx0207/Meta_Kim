@@ -30,7 +30,7 @@
   },
   "durableWritePolicy": {
     "canonicalWritesWithoutApproval": 0,
-    "approvalPacketRequired": "warden-approval-v0.1",
+    "approvalPacketRequired": "warden-approval-v0.2",
     "promotionWithoutApprovalAction": "candidate_only",
     "forbiddenTargetsWithoutApproval": ["canonical/agents", "canonical/skills", "canonical/runtime-assets"]
   },

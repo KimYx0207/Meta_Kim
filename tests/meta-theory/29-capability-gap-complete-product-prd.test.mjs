@@ -22,65 +22,391 @@ describe(
   "29 — Capability Gap complete product PRD",
   { skip: prd ? false : "local-private PRD is not attached in this workspace" },
   () => {
-  test("machine-enforces one current queue head and one next item", () => {
+  test("machine-enforces the final M3-A12 release gate and completed M3-A11 lifecycle boundary", () => {
     const currentQueue = markedBlock("<!-- CURRENT_QUEUE_START -->", "<!-- CURRENT_QUEUE_END -->");
+    const completedRows = currentQueue.match(/^\| COMPLETED \|.*$/gm) ?? [];
     const activeRows = currentQueue.match(/^\| ACTIVE \|.*$/gm) ?? [];
     const nextRows = currentQueue.match(/^\| NEXT \|.*$/gm) ?? [];
+    const parkedRows = currentQueue.match(/^\| PARKED \|.*$/gm) ?? [];
+    const deferredRows = currentQueue.match(/^\| DEFERRED \|.*$/gm) ?? [];
 
     assert.equal(activeRows.length, 1, "current queue must expose exactly one ACTIVE row");
-    assert.equal(nextRows.length, 1, "current queue must expose exactly one NEXT row");
-    const queueIdPattern = "(P-\\d+|M3-P\\d+)";
-    const activeId = activeRows[0].match(new RegExp(`^\\| ACTIVE \\| ${queueIdPattern} \\|`))?.[1];
-    const nextId = nextRows[0].match(new RegExp(`^\\| NEXT \\| ${queueIdPattern} \\|`))?.[1];
-    assert.ok(activeId, "ACTIVE row must expose a problem ID");
-    assert.ok(nextId, "NEXT row must expose a problem ID");
-    assert.notEqual(activeId, nextId, "ACTIVE and NEXT must be different problems");
-    const explicitlyPausedAfterRelease =
-      /已发布闭合.*release_closed/.test(activeRows[0]) &&
-      /暂停点|不代表继续执行/.test(activeRows[0]);
-    if (explicitlyPausedAfterRelease) {
-      assert.match(activeRows[0], /未自动激活/);
-    } else {
-      assert.match(activeRows[0], /进行中|等待标准发布门禁/);
-      assert.match(activeRows[0], /implementation_active|acceptance_candidate/);
-      assert.doesNotMatch(activeRows[0], /已发布|release_closed/);
-    }
-    assert.match(nextRows[0], /待处理/);
-    assert.match(nextRows[0], /not_started/);
+    assert.equal(nextRows.length, 0, "the final active architecture phase must not invent a successor NEXT row");
+    assert.equal(completedRows.length, 11, "current queue must preserve all locally verified architecture rows");
+    assert.equal(parkedRows.length, 1, "current queue must expose exactly one PARKED row");
+    assert.equal(deferredRows.length, 1, "current queue must expose exactly one DEFERRED row");
 
-    const activeIsLegacyProblem = /^P-\d+$/.test(activeId);
+    const queueIdPattern = "(P-\\d+|M3-[AP]\\d+)";
+    const activeId = activeRows[0].match(new RegExp(`^\\| ACTIVE \\| ${queueIdPattern} \\|`))?.[1];
+    assert.ok(activeId, "ACTIVE row must expose a problem ID");
+    assert.equal(activeId, "M3-A12", "M3-A12 must be the sole ACTIVE architecture item");
+    assert.match(activeRows[0], /执行中/);
+    assert.match(activeRows[0], /implementation_active/);
+    assert.doesNotMatch(activeRows[0], /已发布|release_closed|acceptance_candidate/);
+
+    const completedA01 = completedRows.find((line) => /^\| COMPLETED \| M3-A01 \|/.test(line)) ?? "";
+    assert.ok(completedA01, "M3-A01 must leave ACTIVE only after local verification");
+    assert.match(completedA01, /local_verified/);
+    assert.match(completedA01, /聚焦主门 93\/93/);
+    assert.match(completedA01, /Review ACCEPT/);
+    assert.match(completedA01, /未运行 3\.0 最终全回归/);
+    assert.match(completedA01, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA01, /release_closed|public_ready/);
+
+    const completedA02 = completedRows.find((line) => /^\| COMPLETED \| M3-A02 \|/.test(line)) ?? "";
+    assert.ok(completedA02, "M3-A02 must leave ACTIVE only after local verification");
+    assert.match(completedA02, /local_verified/);
+    assert.match(completedA02, /聚焦主门 100\/100/);
+    assert.match(completedA02, /Review ACCEPT/);
+    assert.match(completedA02, /未运行 3\.0 最终全回归/);
+    assert.match(completedA02, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA02, /release_closed|public_ready/);
+
+    const completedA03 = completedRows.find((line) => /^\| COMPLETED \| M3-A03 \|/.test(line)) ?? "";
+    assert.ok(completedA03, "M3-A03 must leave ACTIVE only after local verification");
+    assert.match(completedA03, /local_verified/);
+    assert.match(completedA03, /聚焦主门 133\/133/);
+    assert.match(completedA03, /Review ACCEPT/);
+    assert.match(completedA03, /未运行 3\.0 最终全回归/);
+    assert.match(completedA03, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA03, /release_closed|public_ready/);
+
+    const completedA04 = completedRows.find((line) => /^\| COMPLETED \| M3-A04 \|/.test(line)) ?? "";
+    assert.ok(completedA04, "M3-A04 must leave ACTIVE only after local verification");
+    assert.match(completedA04, /local_verified/);
+    assert.match(completedA04, /Root focused 102\/102/);
+    assert.match(completedA04, /Review ACCEPT（P0-P3=0）/);
+    assert.match(completedA04, /package closure 14\/14/);
+    assert.match(completedA04, /真实 pack import/);
+    assert.match(completedA04, /未运行 3\.0 最终全回归/);
+    assert.match(completedA04, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA04, /release_closed|public_ready/);
+
+    const completedA05 = completedRows.find((line) => /^\| COMPLETED \| M3-A05 \|/.test(line)) ?? "";
+    assert.ok(completedA05, "M3-A05 must leave ACTIVE only after local verification");
+    assert.match(completedA05, /local_verified/);
+    assert.match(completedA05, /Root focused 117\/117/);
+    assert.match(completedA05, /package closure 15\/15/);
+    assert.match(completedA05, /真实 pack import/);
+    assert.match(completedA05, /Review ACCEPT（P0-P3=0）/);
+    assert.match(completedA05, /未运行 3\.0 最终全回归/);
+    assert.match(completedA05, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA05, /release_closed|public_ready/);
+
+    const completedA06 = completedRows.find((line) => /^\| COMPLETED \| M3-A06 \|/.test(line)) ?? "";
+    assert.ok(completedA06, "M3-A06 must leave ACTIVE only after local verification");
+    assert.match(completedA06, /local_verified/);
+    assert.match(completedA06, /Root focused 133\/133/);
+    assert.match(completedA06, /test75 16\/16/);
+    assert.match(completedA06, /package closure 16\/16/);
+    assert.match(completedA06, /真实 pack import/);
+    assert.match(completedA06, /Review ACCEPT（P0-P3=0）/);
+    assert.match(completedA06, /未运行 3\.0 最终全回归/);
+    assert.match(completedA06, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA06, /release_closed|public_ready/);
+
+    const completedA07 = completedRows.find((line) => /^\| COMPLETED \| M3-A07 \|/.test(line)) ?? "";
+    assert.ok(completedA07, "M3-A07 must leave ACTIVE only after local verification");
+    assert.match(completedA07, /local_verified/);
+    assert.match(completedA07, /test76 12\/12/);
+    assert.match(completedA07, /package\/source closure/);
+    assert.match(completedA07, /真实 pack import/);
+    assert.match(completedA07, /Review ACCEPT/);
+    assert.match(completedA07, /未运行 3\.0 最终全回归/);
+    assert.match(completedA07, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA07, /release_closed|public_ready/);
+
+    const completedA08 = completedRows.find((line) => /^\| COMPLETED \| M3-A08 \|/.test(line)) ?? "";
+    assert.ok(completedA08, "M3-A08 must leave ACTIVE only after local verification");
+    assert.match(completedA08, /local_verified/);
+    assert.match(completedA08, /test77 10\/10/);
+    assert.match(completedA08, /157\/157/);
+    assert.match(completedA08, /9 项真实 packed import/);
+    assert.match(completedA08, /Review ACCEPT（P0-P3=0）/);
+    assert.match(completedA08, /A335B9C710B9650ADF1F4CDA7494E4E12564E1D86C6F3311733FB88D30B037EE/);
+    assert.match(completedA08, /未运行 3\.0 最终全回归/);
+    assert.match(completedA08, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA08, /release_closed|public_ready/);
+
+    const completedA09 = completedRows.find((line) => /^\| COMPLETED \| M3-A09 \|/.test(line)) ?? "";
+    assert.ok(completedA09, "M3-A09 must leave ACTIVE only after local verification");
+    assert.match(completedA09, /local_verified/);
+    assert.match(completedA09, /A09 13\/13/);
+    assert.match(completedA09, /106\/106/);
+    assert.match(completedA09, /真实 packed 新旧 9 项 import/);
+    assert.match(completedA09, /Review ACCEPT（P0-P3=0）/);
+    assert.match(completedA09, /schema v5/);
+    assert.match(completedA09, /event\/CAS\/transaction\/lease\/fence\/checkpoint/);
+    assert.match(completedA09, /未运行 3\.0 最终全回归/);
+    assert.match(completedA09, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA09, /release_closed|public_ready/);
+
+    const completedA10 = completedRows.find((line) => /^\| COMPLETED \| M3-A10 \|/.test(line)) ?? "";
+    assert.ok(completedA10, "M3-A10 must leave ACTIVE only after packed install verification");
+    assert.match(completedA10, /local_verified/);
+    assert.match(completedA10, /A10 targeted 52\/52/);
+    assert.match(completedA10, /transient package root 6\/6/);
+    assert.match(completedA10, /packed acceptance contract 32\/32/);
+    assert.match(completedA10, /install scope matrix 1\/1/);
+    assert.match(completedA10, /manifest receipt/);
+    assert.match(completedA10, /immutable projection package root/);
+    assert.match(completedA10, /Review ACCEPT（P0-P2=0）/);
+    assert.match(completedA10, /未运行 3\.0 最终全回归/);
+    assert.match(completedA10, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA10, /release_closed|public_ready/);
+
+    const completedA11 = completedRows.find((line) => /^\| COMPLETED \| M3-A11 \|/.test(line)) ?? "";
+    assert.ok(completedA11, "M3-A11 must leave ACTIVE only after exact lifecycle verification");
+    assert.match(completedA11, /local_verified/);
+    assert.match(completedA11, /lifecycle \+ Evolution Gate 25\/25/);
+    assert.match(completedA11, /T-003\/T-003a\/T-003b/);
+    assert.match(completedA11, /package\/source boundary 20\/20/);
+    assert.match(completedA11, /Review ACCEPT（P0-P2=0）/);
+    assert.match(completedA11, /真实 source drift/);
+    assert.match(completedA11, /原字节批量回滚/);
+    assert.match(completedA11, /未运行 3\.0 最终全回归/);
+    assert.match(completedA11, /未提交、push、tag 或发布/);
+    assert.doesNotMatch(completedA11, /release_closed|public_ready/);
+
+    assert.match(activeRows[0], /Docs Truth & 3\.0 Release Gate/);
+    assert.match(activeRows[0], /contracts\/runtime\/provider\/package/);
+    assert.match(activeRows[0], /真实 packed 新装\/重装\/历史升级\/残留\/用户漂移/);
+    assert.match(activeRows[0], /Claude\/Codex 回读/);
+    assert.match(activeRows[0], /v3\.0\.0 发布和 exact audit/);
+    assert.match(activeRows[0], /没有后续 NEXT/);
+
+    const parkedP2 = parkedRows.find((line) => /^\| PARKED \| M3-P2 \|/.test(line)) ?? "";
+    assert.ok(parkedP2, "M3-P2 must be parked instead of occupying ACTIVE or NEXT");
+    assert.match(parkedP2, /parked_external_blocked/);
+    assert.match(parkedP2, /不算完成/);
+    assert.match(parkedP2, /官方可信 host receipt、Desktop\/真人身份或等价私有能力根出现时恢复/);
+    assert.doesNotMatch(parkedP2, /implementation_active|acceptance_candidate|release_closed|已完成/);
+
+    const deferredP3 = deferredRows.find((line) => /^\| DEFERRED \| M3-P3 \|/.test(line)) ?? "";
+    assert.ok(deferredP3, "M3-P3 must remain deferred and must not become NEXT");
+    assert.match(deferredP3, /deferred_not_started/);
+    assert.match(deferredP3, /不得成为 NEXT/);
+    assert.match(deferredP3, /不得伪造 parity、影响现有 gate 或启动 cutover/);
+    assert.doesNotMatch(deferredP3, /implementation_active|acceptance_candidate|release_closed|已完成/);
+    assert.doesNotMatch(activeRows.join("\n"), /\| M3-P[23] \|/);
+    assert.doesNotMatch(nextRows.join("\n"), /\| M3-P[23] \|/);
+    assert.doesNotMatch(completedRows.join("\n"), /\| M3-P[23] \|/);
+
     const serialQueue = prd.match(/### 串行执行队列([\s\S]*?)### v0\.79 历史对话证据吸收记录/)?.[1] ?? "";
     const queueRows = serialQueue.split(/\r?\n/).filter((line) => /^\| \d+ \| P-\d+ \|/.test(line));
     const inProgressRows = queueRows.filter((line) =>
       /\| (?:进行中|返工中|已验收待发布)/.test(line)
     );
-    if (activeIsLegacyProblem) {
-      assert.equal(
-        inProgressRows.length,
-        explicitlyPausedAfterRelease ? 0 : 1,
-        explicitlyPausedAfterRelease
-          ? "an explicitly paused queue must not manufacture an in-progress item"
-          : "the serial queue must contain exactly one in-progress item",
-      );
-      const activeSerialRow = queueRows.find((line) => line.includes(`| ${activeId} |`)) ?? "";
-      assert.match(
-        explicitlyPausedAfterRelease ? activeSerialRow : inProgressRows[0],
-        new RegExp(`\\| ${activeId} \\|`),
-      );
-      if (explicitlyPausedAfterRelease) assert.match(activeSerialRow, /已发布闭合.*release_closed/);
-      assert.match(queueRows.find((line) => line.includes(`| ${nextId} |`)) ?? "", /待处理（唯一 next/);
-    } else {
-      assert.equal(
-        inProgressRows.length,
-        0,
-        "an M3 ACTIVE item must not leave a legacy P-series item in progress",
-      );
-      assert.match(
-        prd,
-        new RegExp(`^#{3,6}\\s+${activeId}(?:\\s|$)`, "m"),
-        "an M3 ACTIVE item must have a corresponding PRD checkpoint or heading",
-      );
+    assert.equal(
+      inProgressRows.length,
+      0,
+      "an M3 architecture ACTIVE item must not leave a legacy P-series item in progress",
+    );
+
+    const architectureReorder = prd.match(
+      /#### 3\.0 架构重排与 Authority Matrix（2026-08-11）([\s\S]*?)(?=\n### )/,
+    )?.[1] ?? "";
+    assert.ok(architectureReorder, "the M3 architecture queue must have a bounded authority-matrix checkpoint");
+    for (const marker of [
+      "stageDagPacket` 只拥有拓扑权威",
+      "durable kernel event 加 CAS/lease/fence/checkpoint/resume 只拥有执行真值",
+      "Decision 始终是非授权输入",
+      "UI、Kanban、Markdown、spine 摘要与 run index 都只是投影",
+      "EvidenceClaim -> VerifiedEvidence -> TransitionProposal -> ShadowVerdict",
+      "allowed / blocked / in_doubt",
+      "不接生产 Gate",
+      "不写 authoritative event",
+      "不调用 `completeNode`",
+      "不推进 durable cursor",
+      "不建立 scheduler",
+      "不启动 M3-P3",
+    ]) {
+      assert.match(architectureReorder, new RegExp(marker), `missing M3-A01 shadow boundary ${marker}`);
     }
+    for (const marker of [
+      "M3-A02",
+      "continue / wait / stop / escalate",
+      "只读取 durable projection",
+      "resumeRun",
+      "claim",
+      "lease",
+      "checkpoint",
+      "event",
+      "scheduler",
+      "authoritative execution truth",
+      "不得让 shadow 建议冒充执行控制",
+    ]) {
+      assert.match(architectureReorder, new RegExp(marker), `missing M3-A02 shadow boundary ${marker}`);
+    }
+    assert.match(architectureReorder, /不得调用[^\n]*resumeRun[^\n]*claim[^\n]*lease[^\n]*checkpoint[^\n]*event[^\n]*scheduler/);
+    assert.match(architectureReorder, /COMPLETED \/ local_verified/);
+    assert.match(architectureReorder, /不等于 3\.0 最终全回归、发布验证或 release-complete/);
+    assert.match(architectureReorder, /只读取 durable projection/);
+    for (const marker of [
+      "M3-A03",
+      "Todo/workItem 只能 1:1 映射 `stageDag` 中的 DAG node",
+      "只是 projection",
+      "依赖 ready 只能由 `stageDag \\+ durable projection` 推导",
+      "safe_progress_candidate / wait_dependency / wait_decision / wait_evidence / blocked / in_doubt",
+      "advisory",
+      "claim",
+      "lease",
+      "schedule",
+      "dispatch",
+      "completeNode",
+      "writeEvent",
+      "推进 cursor",
+      "第二 Todo authority",
+    ]) {
+      assert.match(architectureReorder, new RegExp(marker), `missing M3-A03 shadow boundary ${marker}`);
+    }
+    assert.match(
+      architectureReorder,
+      /只允许输出 `safe_progress_candidate \/ wait_dependency \/ wait_decision \/ wait_evidence \/ blocked \/ in_doubt` advisory/,
+    );
+    assert.match(
+      architectureReorder,
+      /不得 claim、lease、schedule、dispatch、调用 `completeNode`、`writeEvent`、推进 cursor 或写入 authoritative execution truth/,
+    );
+    assert.match(architectureReorder, /不能形成第二 Todo authority/);
+    for (const marker of [
+      "M3-A04",
+      "selectMaximalSafeReadySet",
+      "`stageDag` authority",
+      "fresh durable head、graph、checkpoint、claims 与 effects",
+      "M3-A03 产生的 candidates",
+      "只能作为输入提示，不 authoritative",
+      "shadow scheduling plan",
+      "第二 scheduler",
+      "自建 ready 算法",
+      "dispatch",
+      "claim",
+      "lease",
+      "event",
+      "cursor",
+      "completeNode",
+    ]) {
+      assert.match(architectureReorder, new RegExp(marker), `missing M3-A04 shadow boundary ${marker}`);
+    }
+    assert.match(architectureReorder, /必须直接复用现有 `selectMaximalSafeReadySet` 和 `stageDag` authority/);
+    assert.match(architectureReorder, /生成 shadow scheduling plan 前，必须针对 fresh durable head、graph、checkpoint、claims 与 effects 重新校验/);
+    assert.match(architectureReorder, /M3-A03 产生的 candidates 只能作为输入提示，不 authoritative/);
+    assert.match(architectureReorder, /首期只输出 shadow scheduling plan/);
+    assert.match(
+      architectureReorder,
+      /不得 dispatch、claim、lease、写 event、推进 cursor、调用 `completeNode` 或产生其他执行副作用/,
+    );
+    for (const marker of [
+      "M3-A05",
+      "lease/claim/fence authority",
+      "受限 projection",
+      "M3-A04 的 `plannedNodeIds`",
+      "M3-A03 candidate",
+      "Todo 状态",
+      "worker 自报",
+      "新账本",
+      "non-authoritative availability / blocked / in_doubt",
+      "第二 lease",
+      "第二 claim",
+      "平行 fence 权威",
+      "dispatch",
+      "heartbeatNode",
+      "claimNode",
+      "claim/takeover/heartbeat/release coordinator",
+      "mutate durable state",
+      "写 event",
+      "推进 cursor",
+      "expiry 铸造 takeover",
+    ]) {
+      assert.match(architectureReorder, new RegExp(marker), `missing M3-A05 shadow boundary ${marker}`);
+    }
+    assert.match(architectureReorder, /只能复用 durable kernel 现有的 lease\/claim\/fence authority/);
+    assert.match(architectureReorder, /不得建立第二 lease、第二 claim 或平行 fence 权威/);
+    assert.match(
+      architectureReorder,
+      /不得 dispatch，不得调用 `heartbeatNode`、`claimNode` 或 claim\/takeover\/heartbeat\/release coordinator，不得 mutate durable state、写 event、推进 cursor 或产生其他执行副作用，也不得仅据 expiry 铸造 takeover/,
+    );
+    assert.match(architectureReorder, /Architecture Phase 6 — Runtime Health Projection/);
+    for (const marker of [
+      "M3-A06",
+      "Runtime Health",
+      "point-in-time",
+      "bridge-owned",
+      "可重放",
+      "非授权 projection",
+      "不是 liveness authority",
+      "OpenClaw heartbeat",
+      "presence/install/persisted acceptance",
+      "健康检查",
+      "host 自报",
+      "进程存活",
+      "版本探测",
+      "Claude/Codex",
+      "observation_only",
+      "responsive_at_observation",
+      "Cursor/OpenClaw",
+      "not_observed",
+      "dispatch",
+      "claim",
+      "lease",
+      "cursor",
+      "checkpoint",
+      "event",
+      "completeNode",
+    ]) {
+      assert.match(architectureReorder, new RegExp(marker), `missing M3-A06 shadow boundary ${marker}`);
+    }
+    assert.match(
+      architectureReorder,
+      /lease、OpenClaw heartbeat、presence\/install\/persisted acceptance、健康检查、host 自报、进程存活、版本探测、transport ping 或普通 adapter return 都不能证明 health 或升级为 execution truth/,
+    );
+    assert.match(
+      architectureReorder,
+      /Claude\/Codex 也只能保持 `observation_only`，且只允许把已 settled 的 native invocation 记为 `responsive_at_observation`；Cursor\/OpenClaw 必须保持 `not_observed`/,
+    );
+    assert.match(architectureReorder, /全部 authorization \/ dispatch \/ claim \/ lease \/ event \/ cursor \/ checkpoint \/ completion \/ persistence 权限为 false/);
+    assert.match(architectureReorder, /Architecture Phase 7 — Quota \/ Usage Projection/);
+    assert.match(
+      architectureReorder,
+      /M3-A06 不得读取、消耗或预判 M3-A07 的 quota \/ usage \/ budget \/ rate-limit \/ context-window 权威/,
+    );
+    for (const marker of [
+      "M3-A07",
+      "Quota / Usage",
+      "shadow",
+      "maxRetries",
+      "point-in-time wallclock",
+      "validated transitions",
+      "no-progress",
+      "cost",
+      "not_observed",
+      "第二 quota authority",
+      "自动 stop",
+      "pause",
+      "retry",
+      "dispatch",
+    ]) {
+      assert.match(architectureReorder, new RegExp(marker), `missing M3-A07 shadow boundary ${marker}`);
+    }
+    assert.match(architectureReorder, /M3-A06 的 Runtime Health observation 不计入 quota/);
+    assert.match(
+      architectureReorder,
+      /只有 `maxRetries` 与 point-in-time wallclock 可观察；validated transitions、no-progress 与 cost 必须保持 `not_observed`/,
+    );
+    assert.match(
+      architectureReorder,
+      /不得建立第二 quota authority，不得自动 stop、pause、retry 或 dispatch/,
+    );
+    const a08ToA12Route = prd.match(
+      /## 2026-08-12 — 3\.0 完成目标锁定，A08–A12 路线冻结([\s\S]*?)(?=\n### |\n## 2026|<!-- META_KIM_CHATGPT_PRD_SOURCE_END -->|$)/,
+    )?.[1] ?? "";
+    assert.ok(a08ToA12Route, "A08-A12 dependency route must remain explicit");
+    assert.match(a08ToA12Route, /先冻结读模型可防止 UI 在数据迁移期间形成第二事实源/);
+    assert.match(a08ToA12Route, /Native Panel\/Kanban\/Markdown\/HTML/);
+    assert.match(a08ToA12Route, /A09 Data\/Event\/Repository Unification/);
+    assert.match(a08ToA12Route, /A10 Setup\/Runtime\/Installer Decomposition/);
+    assert.match(a08ToA12Route, /A11 Knowledge Lifecycle Hygiene/);
+    assert.match(a08ToA12Route, /A12 Docs Truth & 3\.0 Release Gate/);
     assert.match(
       prd,
       /最新公开版本：v2\.9\.28（commit `e56a96e089762e0a1a5eb817a5806d24d80d6491`；GitHub Release 已发布并精确绑定）/,

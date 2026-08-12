@@ -121,7 +121,7 @@ describe("installPluginBundlesForNonClaudeRuntimes (dry-run e2e)", () => {
     assert.match(plain, /npx --yes --package ecc-universal@latest ecc install --profile core --target codex/);
     assert.match(
       plain,
-      /preserve existing .*\.codex.*config\.toml before ECC upstream installer and restore it with add-only ECC merge/,
+      /preserve existing .*\.codex.*config\.toml before ECC upstream installer, reject upstream MCP\/project\/root config, and restore only the user snapshot plus Meta_Kim native controls/,
     );
     assert.match(
       plain,

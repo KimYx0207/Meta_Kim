@@ -30,7 +30,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|MultiEdit|NotebookEdit",
+        "matcher": "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|TaskStop|EnterPlanMode|ExitPlanMode|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",

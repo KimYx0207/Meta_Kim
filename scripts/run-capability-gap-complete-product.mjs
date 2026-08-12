@@ -534,6 +534,13 @@ async function buildGovernedExecutionEvidence() {
       stateDir: path.join(tempDir, "smoke"),
       dbPath: path.join(tempDir, "smoke.sqlite"),
     });
+    const approvedCandidate = await runMetaTheoryGovernedExecution({
+      task: "同一套 PRD review standard 需要 skill。",
+      runId: "complete-product-warden-candidate-proof",
+      stateDir: path.join(tempDir, "approval-candidate"),
+      dbPath: path.join(tempDir, "approval-candidate.sqlite"),
+      canonicalRoot: path.join(tempDir, "canonical"),
+    });
     const approvedRun = await runMetaTheoryGovernedExecution({
       task: "同一套 PRD review standard 需要 skill。",
       runId: "complete-product-warden-approved-proof",
@@ -541,14 +548,15 @@ async function buildGovernedExecutionEvidence() {
       dbPath: path.join(tempDir, "approved.sqlite"),
       canonicalRoot: path.join(tempDir, "canonical"),
       approvalPacket: {
-        schemaVersion: "warden-approval-v0.1",
+        schemaVersion: "warden-approval-v0.2",
         approvalId: "complete-product-warden-approval-test",
         approver: "meta-warden",
         approvedAt: "2026-06-04T00:00:00.000Z",
-        scope: "complete product temporary canonical writeback proof",
-        targets: ["canonical/skills/prd-review-standard-skill/SKILL.md"],
+        scope: "canonical_reverse_sync",
+        mutationBindings: [approvedCandidate.wardenWritebackFlow.candidates[0].mutationBinding],
         diffSummary: "Create one temporary skill candidate for complete-product acceptance.",
         rollbackPlan: "Delete the temporary canonical root used by this test.",
+        riskReview: { status: "fixture_only", owner: "meta-sentinel" },
       },
       applyWriteback: true,
     });

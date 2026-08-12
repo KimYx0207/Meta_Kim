@@ -1,0 +1,162 @@
+{
+  "schemaVersion": "knowledge-lifecycle-hygiene-contract-v1",
+  "phase": "M3-A11",
+  "status": "bounded_vertical",
+  "purpose": "Govern explicit, reversible lifecycle transitions for knowledge, rules, and capability indexes without turning age, score, or candidate generation into deletion or execution authority.",
+  "authority": {
+    "domain": "src/domain/evolution/knowledge-lifecycle.mjs",
+    "wardenApproval": "src/domain/evolution/warden-writeback-approval.mjs",
+    "application": "src/application/evolution/apply-knowledge-lifecycle-transition.mjs",
+    "port": "src/application/ports/knowledge-lifecycle-registry-port.mjs",
+    "data": "src/data/repositories/json-knowledge-lifecycle-registry-repository.mjs",
+    "registry": "config/governance/knowledge-lifecycle-registry.json"
+  },
+  "recordKinds": [
+    "knowledge",
+    "rule",
+    "capability_index"
+  ],
+  "states": [
+    "active",
+    "aging",
+    "deprecated",
+    "retired"
+  ],
+  "operations": {
+    "retain": {
+      "from": ["active", "aging", "deprecated", "retired"],
+      "to": "same",
+      "requiresWardenApproval": true
+    },
+    "mark_aging": {
+      "from": ["active"],
+      "to": "aging",
+      "requiresWardenApproval": true
+    },
+    "deprecate": {
+      "from": ["aging"],
+      "to": "deprecated",
+      "requiresWardenApproval": true,
+      "replacementRefsRequired": true
+    },
+    "retire": {
+      "from": ["deprecated"],
+      "to": "retired",
+      "requiresWardenApproval": true,
+      "replacementRefsRequired": true,
+      "result": "retained_tombstone"
+    },
+    "restore": {
+      "from": ["aging", "deprecated", "retired"],
+      "to": "active",
+      "requiresWardenApproval": true
+    },
+    "upgrade": {
+      "from": ["active", "aging", "deprecated", "retired"],
+      "to": "active",
+      "requiresWardenApproval": true,
+      "mayChangeSourceDigest": true
+    }
+  },
+  "foundationalCapabilityPolicy": {
+    "allowedOperations": ["retain", "upgrade", "restore"],
+    "forbiddenStates": ["aging", "deprecated", "retired"],
+    "automaticRetirement": false,
+    "automaticDeletion": false
+  },
+  "referenceOnlyPolicy": {
+    "executionClass": "reference_only",
+    "promotionByLifecycleTransition": false,
+    "invocationAuthority": false,
+    "dependencyAuthority": false,
+    "candidateMayAuthorizeExecution": false
+  },
+  "candidatePolicy": {
+    "authorizationState": "candidate_only",
+    "authorityFlags": {
+      "approved": false,
+      "mayWrite": false,
+      "mayDelete": false,
+      "mayAuthorizeExecution": false
+    },
+    "ageOrScoreMayApply": false,
+    "legacyApprovalMayApply": false
+  },
+  "approval": {
+    "schemaVersion": "warden-approval-v0.2",
+    "legacyV01Status": "legacy_unbound",
+    "scopes": [
+      "knowledge_lifecycle_transition",
+      "canonical_reverse_sync"
+    ],
+    "requiredFields": [
+      "schemaVersion",
+      "approvalId",
+      "approver",
+      "approvedAt",
+      "scope",
+      "mutationBindings",
+      "diffSummary",
+      "rollbackPlan",
+      "riskReview"
+    ],
+    "mutationBindingFields": [
+      "targetRef",
+      "operation",
+      "transitionId",
+      "candidateDigest",
+      "expectedSourceDigest",
+      "rollbackPlanDigest"
+    ],
+    "bindingCardinality": "one_exact_binding_per_candidate_no_extras_and_one_mutation_per_target",
+    "reviewDataRule": "rollbackPlan and riskReview must be non-empty finite review data",
+    "entryScopeRule": "each writeback entrypoint must require its own exact approval scope; scopes are not interchangeable",
+    "digestFormat": "sha256:<64-lowercase-hex>"
+  },
+  "persistence": {
+    "writeMode": "serialized_atomic_compare_and_swap",
+    "idempotencyKey": "transitionId_plus_candidateDigest",
+    "rollback": "restore_previous_bytes_when_atomic_replace_fails",
+    "unknownTopLevelState": "preserve",
+    "unknownEntryState": "preserve",
+    "deleteApi": false,
+    "retiredRecords": "preserve_as_tombstone",
+    "retiredTombstoneInvariant": "retained=true and deletionAuthorized=false",
+    "sourcePrecondition": "application must rehash the actual targetRef bytes and match the approved expected or upgrade digest before registry CAS",
+    "pathAuthority": "explicit_absolute_allowed_root_and_registry_path",
+    "linkPolicy": "fail_closed_on_symlink_junction_or_alias",
+    "maximumBytes": 2097152
+  },
+  "forbidden": [
+    "delete_by_age",
+    "delete_by_score",
+    "automatic_state_transition",
+    "foundational_retirement",
+    "reference_only_execution_promotion",
+    "candidate_authorizes_write",
+    "legacy_v0.1_authorizes_write",
+    "unbound_warden_approval",
+    "cross_scope_approval_replay",
+    "multiple_mutations_for_one_target",
+    "registry_only_source_digest_without_actual_target_readback",
+    "whole_file_rewrite_that_drops_unknown_user_state",
+    "repository_delete_or_remove_method"
+  ],
+  "verification": [
+    "state_machine_positive_and_negative_paths",
+    "foundational_capability_protection",
+    "reference_only_non_promotion",
+    "candidate_zero_authority",
+    "approval_v0.2_exact_binding_for_both_scopes",
+    "entrypoint_scope_isolation",
+    "non_empty_review_data_and_unique_targets",
+    "actual_target_source_drift_rejected",
+    "legacy_v0.1_rejected_as_legacy_unbound",
+    "cas_stale_writer_rejection",
+    "exact_retry_idempotency",
+    "injected_write_failure_rolls_back",
+    "unknown_user_state_preserved",
+    "retirement_keeps_tombstone_and_no_delete_api",
+    "unsafe_path_and_link_rejection"
+  ]
+}

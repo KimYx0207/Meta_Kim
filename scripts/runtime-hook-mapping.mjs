@@ -402,7 +402,7 @@ export function buildCodexHooksJson({
       // Capability-first + meta-readonly deny gate must run before any other
       // PreToolUse logic so it can short-circuit unsafe dispatches.
       {
-        matcher: "Bash|apply_patch|Edit|Write|MultiEdit|NotebookEdit|Agent|spawn_agent|followup_task|collaboration\\.followup_task",
+        matcher: "Bash|apply_patch|Edit|Write|MultiEdit|NotebookEdit|Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
         hooks: [
           hookCommand(
             nodeHookCommand(enforceAgentDispatchHookPath, ["--runtime", "codex"]),

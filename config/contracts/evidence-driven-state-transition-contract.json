@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-evidence-driven-state-transition-contract",
+  "prdTaskId": "M3-A01",
+  "status": "implementation_active",
+  "purpose": "Define the Phase 0 authority boundary and the Phase 1 evidence-driven state-transition shadow vertical without changing the authoritative DAG, durable execution truth, or legacy completion gate.",
+  "mode": "shadow_only",
+  "authorityMatrix": {
+    "topologyAuthority": {
+      "packet": "coreLoop.stageDagPacket",
+      "contract": "config/contracts/core-loop-contract.json",
+      "owns": [
+        "stage order",
+        "node and edge topology",
+        "dependency readiness",
+        "merge authority"
+      ],
+      "rule": "No Evidence Domain artifact, runtime adapter, projection, or shadow verdict may define or mutate topology."
+    },
+    "executionTruth": {
+      "authority": "durable kernel",
+      "module": "scripts/governed-execution/durable-run-kernel.mjs",
+      "eventStore": "governed_events",
+      "contract": "config/contracts/durable-run-kernel-contract.json",
+      "owns": [
+        "authoritative event history",
+        "event cursor and hash chain",
+        "lease and fencing truth",
+        "checkpoint and resume truth",
+        "committed node transitions"
+      ],
+      "rule": "governed_events remains the only authoritative execution event store; a second event store is forbidden."
+    },
+    "legacyCompletionGate": {
+      "api": "completeNode",
+      "status": "unchanged",
+      "owner": "durable kernel",
+      "rule": "M3-A01 may observe and compare legacy outcomes but may not call, wrap, replace, bypass, or change completeNode authorization or behavior."
+    },
+    "evidenceDomain": {
+      "authority": "non_authoritative",
+      "mode": "shadow_only",
+      "owns": [
+        "normalized evidence claims",
+        "verified-evidence assessments",
+        "non-authoritative transition proposals",
+        "shadow verdict comparisons"
+      ],
+      "doesNotOwn": [
+        "topology",
+        "execution authorization",
+        "kernel events",
+        "scheduler decisions",
+        "lease or fencing state",
+        "checkpoint or resume state",
+        "legacy completion gates"
+      ]
+    },
+    "projections": {
+      "examples": [
+        "spine state",
+        "run index",
+        "Kanban",
+        "runtime UI"
+      ],
+      "authority": "projection_only",
+      "rule": "A projection consumes authoritative topology or durable execution truth and can never become an authority source."
+    }
+  },
+  "shadowVertical": {
+    "phase": "Phase 1",
+    "pipeline": [
+      "EvidenceClaim",
+      "VerifiedEvidence",
+      "TransitionProposal",
+      "ShadowVerdict"
+    ],
+    "commandSchema": {
+      "exactTopLevelFields": [
+        "binding",
+        "evidenceClaims",
+        "validatorAssessments",
+        "decisionDependencies",
+        "transitionRequest"
+      ],
+      "binding": {
+        "exactFields": [
+          "runId",
+          "taskFingerprint",
+          "graphDigest",
+          "nodeId",
+          "attemptId",
+          "fenceToken",
+          "revision",
+          "policyDigest"
+        ]
+      },
+      "evidenceClaims": {
+        "collection": "dense_plain_array",
+        "itemExactFields": [
+          "claimId",
+          "producerRef",
+          "evidenceType",
+          "subjectRef",
+          "payloadDigest"
+        ]
+      },
+      "validatorAssessments": {
+        "collection": "dense_plain_array",
+        "itemExactFields": [
+          "claimId",
+          "validatorRef",
+          "assessment",
+          "assessmentDigest",
+          "reasonCode"
+        ],
+        "assessmentValues": [
+          "verified",
+          "rejected",
+          "in_doubt"
+        ]
+      },
+      "decisionDependencies": {
+        "collection": "dense_plain_array",
+        "itemExactFields": [
+          "decisionId",
+          "revision",
+          "required",
+          "authorityState",
+          "executionAllowed",
+          "evidenceDigest"
+        ]
+      },
+      "transitionRequest": {
+        "exactFields": [
+          "proposalId",
+          "fromStage",
+          "toStage",
+          "requiredClaimIds"
+        ]
+      },
+      "unknownOrMissingFields": "reject"
+    },
+    "eventTaxonomy": {
+      "EvidenceClaim": {
+        "kind": "input_claim",
+        "source": "command.evidenceClaims[]",
+        "exactInputFields": [
+          "claimId",
+          "producerRef",
+          "evidenceType",
+          "subjectRef",
+          "payloadDigest"
+        ],
+        "domainGeneratedFields": [
+          "claimDigest"
+        ],
+        "rawEvidenceAllowed": false,
+        "rawSecretsAllowed": false,
+        "authoritative": false
+      },
+      "VerifiedEvidence": {
+        "kind": "verified_evidence_shadow",
+        "source": "domain_derived_from_claim_and_independent_verified_assessment",
+        "callerSupplied": false,
+        "exactFields": [
+          "kind",
+          "claimId",
+          "claimDigest",
+          "validatorRefs",
+          "assessmentDigests",
+          "evidenceDigest",
+          "truthEstablished",
+          "hostAuthority",
+          "shadowOnly",
+          "authoritative"
+        ],
+        "fixedValues": {
+          "truthEstablished": false,
+          "hostAuthority": false,
+          "shadowOnly": true,
+          "authoritative": false
+        },
+        "rawEvidenceAllowed": false,
+        "rawSecretsAllowed": false
+      },
+      "TransitionProposal": {
+        "kind": "shadow_proposal",
+        "source": "domain_generated",
+        "callerSupplied": false,
+        "exactFields": [
+          "proposalId",
+          "fromStage",
+          "toStage",
+          "requiredClaimIds",
+          "bindingDigest",
+          "evidenceSetDigest",
+          "decisionSetDigest",
+          "policyDigest",
+          "proposalDigest"
+        ],
+        "proposalDigestGeneratedByDomain": true,
+        "authoritative": false
+      },
+      "ShadowVerdict": {
+        "source": "result.verdict",
+        "exactFields": [
+          "status",
+          "reasonCodes",
+          "verifiedClaimIds",
+          "unresolvedClaimIds",
+          "rejectedClaimIds",
+          "blockedDecisionIds"
+        ],
+        "verdicts": [
+          "allowed",
+          "blocked",
+          "in_doubt"
+        ],
+        "authoritative": false
+      }
+    },
+    "resultSchema": {
+      "schemaVersion": "evidence-transition-shadow-v1",
+      "kind": "evidence_transition_shadow_result",
+      "exactTopLevelFields": [
+        "schemaVersion",
+        "kind",
+        "binding",
+        "bindingDigest",
+        "evidenceClaims",
+        "validatorAssessments",
+        "verifiedEvidence",
+        "decisionDependencies",
+        "transitionProposal",
+        "verdict",
+        "eventIntents",
+        "authorization"
+      ],
+      "binding": {
+        "exactFieldsRef": "shadowVertical.commandSchema.binding.exactFields"
+      },
+      "evidenceClaims": {
+        "itemExactFields": [
+          "claimId",
+          "producerRef",
+          "evidenceType",
+          "subjectRef",
+          "payloadDigest",
+          "claimDigest"
+        ]
+      },
+      "validatorAssessments": {
+        "itemExactFieldsRef": "shadowVertical.commandSchema.validatorAssessments.itemExactFields"
+      },
+      "verifiedEvidence": {
+        "itemExactFieldsRef": "shadowVertical.eventTaxonomy.VerifiedEvidence.exactFields"
+      },
+      "decisionDependencies": {
+        "itemExactFieldsRef": "shadowVertical.commandSchema.decisionDependencies.itemExactFields"
+      },
+      "transitionProposal": {
+        "exactFieldsRef": "shadowVertical.eventTaxonomy.TransitionProposal.exactFields",
+        "proposalDigestGeneratedByDomain": true
+      },
+      "verdict": {
+        "exactFieldsRef": "shadowVertical.eventTaxonomy.ShadowVerdict.exactFields",
+        "statusValues": [
+          "allowed",
+          "blocked",
+          "in_doubt"
+        ]
+      },
+      "authorization": {
+        "exactFields": [
+          "executionAllowed",
+          "authoritativeWriteAllowed",
+          "eventPersistenceAllowed",
+          "completeNodeAllowed",
+          "durableCursorAdvanceAllowed",
+          "schedulerDispatchAllowed",
+          "legacyGateCutoverAllowed"
+        ],
+        "allValues": false
+      },
+      "eventIntents": {
+        "collection": "dense_plain_array",
+        "itemExactFields": [
+          "kind",
+          "intentDigest",
+          "proposalDigest",
+          "verdictStatus",
+          "persisted",
+          "authoritative",
+          "writeAllowed"
+        ],
+        "fixedValues": {
+          "kind": "shadow_verdict_observed",
+          "persisted": false,
+          "authoritative": false,
+          "writeAllowed": false
+        },
+        "durableCursorOrHashFieldsAllowed": false
+      },
+      "deeplyFrozen": true,
+      "unknownOrMissingFields": "reject"
+    },
+    "fixedSafetyFlags": {
+      "authoritative": false,
+      "executionAllowed": false,
+      "gatesExecution": false,
+      "writesState": false,
+      "advancesCursor": false,
+      "changesCheckpoint": false,
+      "changesLegacyGate": false,
+      "transitionCommitted": false
+    }
+  },
+  "dataSafety": {
+    "referenceOnlyEvidence": true,
+    "allowedEvidenceMaterial": [
+      "opaque evidence reference",
+      "content digest",
+      "bounded reason code",
+      "opaque validatorRef",
+      "assessment digest"
+    ],
+    "forbiddenEvidenceMaterial": [
+      "raw evidence payload",
+      "raw prompt or model transcript",
+      "secret",
+      "credential",
+      "token",
+      "private key",
+      "unbounded stdout or stderr"
+    ],
+    "failClosedOnUnknownOrMissingBinding": true,
+    "unknownVerdict": "in_doubt"
+  },
+  "prohibitedActions": [
+    "create or use a second authoritative event store",
+    "append to or mutate governed_events",
+    "invoke or alter durable kernel mutation APIs",
+    "invoke completeNode",
+    "advance a durable cursor",
+    "create, change, or consume a checkpoint for authority",
+    "change lease or fencing state",
+    "schedule or dispatch work",
+    "treat a projection as authority",
+    "retain raw evidence or secrets",
+    "start M3-P3",
+    "activate legacy gate cutover"
+  ],
+  "m3P3Boundary": {
+    "state": "deferred_not_started",
+    "mayStartDuringM3A01": false,
+    "legacyGateCutoverAllowed": false,
+    "rule": "M3-P3 remains deferred until an explicit future cutover decision satisfies every cutover gate in this contract."
+  },
+  "futureCutoverGates": {
+    "default": "closed",
+    "allRequired": true,
+    "requirements": [
+      "A versioned non-shadow contract is approved through the Warden gate.",
+      "Shadow comparison evidence covers allowed, blocked, in_doubt, duplicate, stale, malformed, and adversarial cases.",
+      "No shadow component owns topology, scheduler, lease, fence, checkpoint, cursor, or event-store authority.",
+      "The cutover design writes authoritative transitions only through the existing durable kernel and governed_events.",
+      "Legacy completeNode behavior remains available as an independently verified rollback path.",
+      "Migration, compatibility, security, and packed-product verification pass with fresh evidence.",
+      "An explicit product decision starts M3-P3 or its approved replacement work item."
+    ],
+    "shadowEvidenceAloneOpensGate": false,
+    "projectionEvidenceOpensGate": false,
+    "currentStatus": "not_eligible"
+  },
+  "rollbackGates": {
+    "rollbackAvailableBeforeCutover": true,
+    "rollbackTarget": "unchanged legacy completeNode path backed by the durable kernel and governed_events",
+    "triggers": [
+      "shadow verdict authorizes or mutates execution",
+      "shadow and legacy disagreement exceeds the approved threshold",
+      "unknown evidence is treated as allowed instead of in_doubt",
+      "authority leakage into a projection or second event store",
+      "raw evidence or secret retention",
+      "cursor, checkpoint, lease, fence, scheduler, or topology mutation",
+      "fresh verification failure"
+    ],
+    "requiredActions": [
+      "disable the candidate cutover path",
+      "retain governed_events as execution truth",
+      "restore the legacy completeNode route without translating shadow records into authoritative events",
+      "record the failure and require a new explicit cutover review"
+    ],
+    "shadowRecordsMayBeReplayedAsAuthoritative": false
+  },
+  "acceptance": {
+    "jsonParseRequired": true,
+    "topologyAuthorityIsSingle": true,
+    "executionEventStoreIsSingle": true,
+    "legacyGateUnchanged": true,
+    "eventTaxonomyExact": [
+      "EvidenceClaim",
+      "VerifiedEvidence",
+      "TransitionProposal",
+      "ShadowVerdict"
+    ],
+    "shadowVerdictsExact": [
+      "allowed",
+      "blocked",
+      "in_doubt"
+    ],
+    "allSafetyFlagsRemainFalse": true,
+    "m3P3RemainsDeferred": true
+  },
+  "nonGoals": [
+    "authoritative state transition",
+    "legacy gate replacement",
+    "scheduler implementation",
+    "provider or runtime adapter implementation",
+    "new persistence or event-store implementation",
+    "raw evidence archive",
+    "M3-P3 execution"
+  ]
+}

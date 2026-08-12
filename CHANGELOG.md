@@ -6,6 +6,52 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [3.0.0] - 2026-08-12
+
+### Added
+
+- **Governed execution now has one layered source of truth.** Pure Domain rules evaluate evidence, continuation, dependency-safe progress, scheduler eligibility, lease/claim state, runtime health, and quota observations without writing or granting authority. Application use cases compose those rules, Data adapters own durable SQLite/transaction work, and Presentation renders read-only views. Legacy script entrypoints remain compatibility facades instead of parallel implementations.
+- **A01-A12 close the architecture loop in reader-visible terms.** A01-A03 distinguish verified evidence, continuation advice, and dependency-safe candidates; A04-A07 reuse the existing scheduler and execution authority while projecting claims, health, and quota without creating a second controller; A08 renders the same digest-bound run as a native panel, Kanban, Markdown, or HTML; A09 unifies durable execution events and repository semantics; A10 separates setup orchestration from package/runtime infrastructure; A11 makes knowledge lifecycle changes reversible and approval-bound; A12 keeps documentation and release claims tied to current contracts, runtime evidence, package truth, and release gates.
+- **Knowledge evolution is candidate-only until exact Warden approval.** Age, score, a generated suggestion, or a legacy approval cannot write, delete, or authorize execution. Approval binds the exact target, operation, source digest, candidate digest, rollback plan, and scope; source drift fails closed. Retirement keeps a tombstone, foundational capabilities cannot be retired, and unknown or user-owned state is preserved.
+- **Run projections are explicitly read-only.** Native panel, Kanban, Markdown, and HTML surfaces share one semantic digest and cannot dispatch, complete work, move the durable cursor, create claims or leases, or become a second run-state authority.
+
+### Changed
+
+- **Install and update use an immutable packed-package handoff before persistent global writes.** The CLI remains the user-facing setup facade, while Application and Infrastructure boundaries verify the exact package receipt, stable root, child process, write boundary, and install result. Help, status, and doctor remain non-materializing diagnostics; check remains read-only.
+- **Codex agent fan-out now starts from a resource-safe default.** New/default configuration uses at most two agent threads and one nested level. An explicit user override is preserved; the former Meta_Kim default of six threads is migrated to the safer value.
+- **Runtime support remains evidence-tiered.** Claude Code and Codex are the default formal projections. OpenClaw and Cursor remain non-default compatibility projections whose runtime-specific changes require their own strict evidence; OpenClaw still has no Meta_Kim typed-plugin tool-blocking adapter, and Cursor native arbitrary-choice popup authority remains unverified.
+
+### Fixed
+
+- **An upstream dependency installer can no longer rewrite Codex configuration as authority.** Update reconciles from the user's pre-install snapshot, so a third-party MCP server the user removed is not resurrected, an installer-added server is not silently adopted, and known Meta_Kim benchmark/test project registrations do not persist. User-owned MCP servers, projects, hooks, agents, and unrelated settings remain intact.
+
+### Evidence boundaries
+
+- The Codex app-server and Claude SDK/CLI decision substrate remains permanently non-authorizing. It can correlate a presented request and observed return, but current public host surfaces do not prove Codex Desktop UI, human identity, or a human answer. Trusted host/Desktop authority remains parked until such evidence exists.
+- Legacy governance-gate parity and cutover remain deferred. Meta_Kim 3.0 does not claim that the old gates have been replaced, nor does a shadow result or read-only projection change production execution authority.
+
+## [2.9.30] - 2026-08-10
+
+### Added
+
+- **Meta_Kim 3.0 now has a durable, non-authorizing claimed-host-event substrate.** Codex app-server and Claude SDK/CLI adapters bind the exact decision, challenge, rendered payload digest, runtime session or thread, turn, item, and request identity, then persist only bounded references and digests. The substrate records presentation, observed-return, consumption, expiry, and invalidation transitions without claiming that the host, human, or answer has been independently verified.
+- **Host-event replay and crash recovery are fail closed.** A profile-local repository uses immutable revisions, exact compare-and-swap, independent host-event and challenge uniqueness, bounded reads, and dead-owner-only lock recovery. Codex and Claude adapters require return redelivery and acknowledge it only after the matching observation is durable, so interruptions before or after CAS converge without granting execution authority.
+- **Real runtime probes now preserve the evidence boundary instead of simulating host authority.** A Codex 0.146 app-server probe correlates the actual `requestUserInput` request and completed turn, including the built-in Other option, while a Claude Code 2.1.220 / Agent SDK 0.3.220 probe correlates the active `AskUserQuestion` callback and stream result through the configured MiniMax-M3 provider. Both probes explicitly record that their answers were machine/script selected and keep human verification, current-host authority, and execution authorization false.
+
+### Security
+
+- **Every new host-event gate remains permanently non-authorizing.** No verifier or `answered_verified` API is exposed, every adapter result keeps `executionAllowed=false`, raw prompts and answers are excluded from persistence, and accessor, Proxy, sparse-array, cross-runtime, cross-session, cross-request, stale, and replay inputs fail closed.
+- **Distribution remains exact and layered.** The package adds exactly five approved `src` Domain, schema, Data repository, and runtime-adapter files, while the existing bounded `scripts/**/*.mjs` distribution includes the three non-authorizing live-probe/composition scripts. Domain code has no filesystem dependency, adapters receive repository ports instead of importing storage, and no broad `src/**` package entry or runner authorization wiring was added.
+
+### Fixed
+
+- **The four-runtime install/update release preflight now has the same bounded 10-minute per-mode allowance as the other heavy four-runtime acceptance lanes.** Ordinary commands keep their existing limits, and a timeout still fails closed; the wider bound prevents a valid external dependency install on a busy Windows host from being cut off by the former three-minute ceiling.
+
+### Verification
+
+- Focused Domain, repository, Codex, Claude, fake-host integration, architecture-boundary, and package-closure tests passed `65/65`; `meta:check` also passed. Fake/injected host ports do not prove real Codex or Claude host identity, human identity, or transport durability, and M3-P2 therefore remains active until a later real-host E2E increment. Publication still requires a fresh verified Graphify rebuild and one stable-source `npm run meta:verify:all`.
+- The real Codex transport and Claude SDK callback probes passed with exact correlation, but the public host surfaces still do not prove Codex Desktop UI or a human answer. The user chose to wait for trusted host proof rather than lower the evidence standard, so M3-P2 remains blocked and M3-P3, the final full regression, and the 3.0 release have not started.
+
 ## [2.9.29] - 2026-08-09
 
 ### Added

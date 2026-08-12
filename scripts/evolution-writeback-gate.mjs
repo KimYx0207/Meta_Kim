@@ -17,6 +17,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { validateWardenWritebackApproval } from '../src/domain/evolution/warden-writeback-approval.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -232,6 +233,29 @@ export async function gateDecision(packet, options = {}) {
   const writebacks = getWritebacks(packet);
   const noWritebackDecision = isNoWritebackDecision(packet);
   const noWriteback = noWritebackDecision && writebacks.length === 0;
+  const mutationCandidates = Array.isArray(options.mutationCandidates)
+    ? options.mutationCandidates
+    : Array.isArray(packet.mutationCandidates)
+      ? packet.mutationCandidates
+      : [];
+  let approvalValidation = noWriteback
+    ? null
+    : validateWardenWritebackApproval({
+        approvalPacket: options.approvalPacket ?? packet.approvalPacket ?? null,
+        candidates: mutationCandidates,
+      });
+  if (
+    approvalValidation?.ok === true &&
+    options.requiredApprovalScope &&
+    approvalValidation.normalized.scope !== options.requiredApprovalScope
+  ) {
+    approvalValidation = {
+      ...approvalValidation,
+      ok: false,
+      status: 'invalid',
+      errors: [`approval scope must be ${options.requiredApprovalScope}`],
+    };
+  }
 
   if (noWritebackDecision && writebacks.length > 0) {
     return {
@@ -244,9 +268,11 @@ export async function gateDecision(packet, options = {}) {
     };
   }
 
-  let decision = 'approve';
+  let decision = noWriteback ? 'approve' : 'candidate_only';
   let riskLevel = 'low';
-  let reason = noWriteback ? 'No durable writeback requested; none-with-reason accepted' : '';
+  let reason = noWriteback
+    ? 'No durable writeback requested; none-with-reason accepted'
+    : 'Canonical writeback remains candidate-only until an exact Warden approval is validated';
 
   // 检查递归风险
   if (recursiveRisk.detected) {
@@ -287,8 +313,11 @@ export async function gateDecision(packet, options = {}) {
     reason = 'Critical scars detected - requires dual review';
   } else if (options.boundaryModification) {
     riskLevel = 'medium';
-    decision = options.force ? 'approve' : 'defer';
+    decision = 'defer';
     reason = 'Boundary modification requires user confirmation';
+  } else if (!noWriteback && approvalValidation?.ok === true) {
+    decision = 'approve';
+    reason = 'Exact Warden approval covers every mutation candidate';
   }
 
   return {
@@ -297,6 +326,7 @@ export async function gateDecision(packet, options = {}) {
     fiveCriteria,
     prinSt,
     recursiveRisk,
+    approvalValidation,
     reason
   };
 }
@@ -325,13 +355,24 @@ export async function processEvolutionPacket(packet, options = {}) {
     return { ...decision, escalated: true };
   }
 
+  if (decision.decision === 'candidate_only') {
+    console.log('[Evolution Gate] Candidate-only - no canonical write authorized');
+    return {
+      ...decision,
+      approved: false,
+      candidateOnly: true,
+      canonicalWrites: 0,
+      approvalRequired: true,
+    };
+  }
+
   if (isNoWritebackDecision(packet) && getWritebackTargets(packet).length === 0) {
     console.log('[Evolution Gate] Approved - no writeback requested');
     return { ...decision, approved: true, noWriteback: true };
   }
 
-  console.log('[Evolution Gate] Approved - proceeding with writeback');
-  return { ...decision, approved: true };
+  console.log('[Evolution Gate] Warden-approved - writeback may proceed through the bound apply path');
+  return { ...decision, approved: true, canonicalWrites: 0 };
 }
 
 // CLI入口
@@ -346,13 +387,16 @@ Usage:
   node evolution-writeback-gate.mjs <packet-file> [options]
 
 Options:
-  --force    Force approval (skip user confirmation)
+  --approval <file>  Exact Warden approval v0.2 packet
+  --apply            Authorize the caller to apply only the approved bindings
+  --force            Conflict handling only; never substitutes for approval
   --dry-run  Show decision without processing
   --help     Show this help
 
 Examples:
   node evolution-writeback-gate.mjs evolution-packet.json
   node evolution-writeback-gate.mjs evolution-packet.json --dry-run
+  node evolution-writeback-gate.mjs evolution-packet.json --approval approval.json --apply
     `);
     process.exit(0);
   }
@@ -364,9 +408,21 @@ Examples:
   }
 
   const packet = JSON.parse(await fs.readFile(packetFile, 'utf8'));
+  const approvalIndex = args.indexOf('--approval');
+  const approvalFile = approvalIndex >= 0 ? args[approvalIndex + 1] : null;
+  if (approvalIndex >= 0 && !approvalFile) {
+    console.error('Error: --approval requires a packet file');
+    process.exit(1);
+  }
+  const approvalPacket = approvalFile
+    ? JSON.parse(await fs.readFile(path.resolve(approvalFile), 'utf8'))
+    : null;
   const options = {
     force: args.includes('--force'),
     dryRun: args.includes('--dry-run'),
+    apply: args.includes('--apply'),
+    approvalPacket,
+    mutationCandidates: packet.mutationCandidates,
     boundaryModification: packet.boundaryModification
   };
 

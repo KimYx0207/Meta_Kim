@@ -14,6 +14,9 @@ import test from "node:test";
 
 import {
   PACKED_GLOBAL_AGENT_TARGETS,
+  PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS,
+  PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS,
+  PACKED_TRANSIENT_PACKAGE_INSTALL_TIMEOUT_MS,
   PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS,
   PACKED_PROJECT_AWARE_GLOBAL_UPDATE_TIMEOUT_MS,
   PACKED_USER_TARGETS,
@@ -168,6 +171,24 @@ test("packed user acceptance runs public install and update from an npm-packed c
   assert.match(acceptanceSource, /global-only CLI polluted ordinary cwd/u);
   assert.match(acceptanceSource, /second packed user update changed managed artifacts/u);
   assert.match(acceptanceSource, /global install manifest is missing required entries/u);
+});
+
+test("packed user acceptance help is read-only and does not start install/update lanes", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/verify-packed-user-install-update.mjs", "--help"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Usage: node scripts\/verify-packed-user-install-update\.mjs/u);
+  assert.match(result.stdout, /--skip-history/u);
+  assert.doesNotMatch(result.stdout, /packed_user_acceptance_start/u);
+  assert.doesNotMatch(result.stderr ?? "", /packed_user_acceptance_start/u);
+  assert.doesNotMatch(result.stderr ?? "", /npm pack/u);
 });
 
 test("release entrypoints fail on a broken installed CLI even when extracted source is green", () => {
@@ -371,7 +392,7 @@ test("every packed CLI install and update lane uses every manifest runtime targe
   );
   assert.match(
     historicalLane,
-    /runInstalledPublicCli\(currentDescriptor, roots, env, "update", timeoutMs\)/u,
+    /runInstalledPublicCli\([\s\S]*?currentDescriptor,[\s\S]*?"update",[\s\S]*?PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS/u,
     "the historical upgrade must use the current tarball-installed CLI entry",
   );
   assert.doesNotMatch(
@@ -489,6 +510,48 @@ test("project-aware packed global update alone receives the policy-scoped extend
   );
 });
 
+test("ordinary packed global updates receive a bounded Windows-safe timeout without widening install", () => {
+  assert.equal(
+    releaseVerificationPolicy.packedUserAcceptance.globalUserUpdateTimeoutMs,
+    600_000,
+  );
+  assert.equal(PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS, 600_000);
+  const currentLane = acceptanceFunctionSource(
+    "runCurrentPackageLane",
+    "runHistoricalUpdateLane",
+  );
+  assert.match(
+    currentLane,
+    /mode === "update" \? PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS : timeoutMs/u,
+  );
+});
+
+test("historical packed upgrade receives its own bounded Windows-safe timeout", () => {
+  assert.equal(
+    releaseVerificationPolicy.packedUserAcceptance.historicalUserUpdateTimeoutMs,
+    600_000,
+  );
+  assert.equal(PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS, 600_000);
+  const historicalLane = acceptanceFunctionSource(
+    "runHistoricalUpdateLane",
+    "runPackedUserInstallUpdateAcceptance",
+  );
+  assert.match(historicalLane, /PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS/u);
+});
+
+test("transient npx-shaped package install receives a bounded Windows-safe timeout", () => {
+  assert.equal(
+    releaseVerificationPolicy.packedUserAcceptance.transientPackageInstallTimeoutMs,
+    600_000,
+  );
+  assert.equal(PACKED_TRANSIENT_PACKAGE_INSTALL_TIMEOUT_MS, 600_000);
+  const transientPreparation = acceptanceFunctionSource(
+    "prepareTransientPackageRoot",
+    "runTransientPackageRootLane",
+  );
+  assert.match(transientPreparation, /PACKED_TRANSIENT_PACKAGE_INSTALL_TIMEOUT_MS/u);
+});
+
 test("portable runtime global update receives its own policy-scoped extended timeout without widening other packed lanes", () => {
   assert.equal(
     releaseVerificationPolicy.packedUserAcceptance.commandTimeoutMs,
@@ -497,9 +560,9 @@ test("portable runtime global update receives its own policy-scoped extended tim
   );
   assert.equal(
     releaseVerificationPolicy.packedUserAcceptance.portableRuntimeGlobalUpdateTimeoutMs,
-    600_000,
+    1_200_000,
   );
-  assert.equal(PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS, 600_000);
+  assert.equal(PACKED_PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS, 1_200_000);
 
   const portablePreparation = acceptanceFunctionSource(
     "runPortableRuntimePreparation",

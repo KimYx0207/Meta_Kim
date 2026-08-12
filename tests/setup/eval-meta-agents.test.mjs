@@ -1240,6 +1240,22 @@ describe("eval-meta-agents Claude smoke", () => {
       /set fork_turns to "none" because the bounded child task below is self-contained/u,
       "Codex 0.146 rejects an explicit agent_type when spawn_agent keeps the default full-history fork",
     );
+    assert.match(
+      source,
+      /multi_agent_v1__wait_agent\(\{ targets: \[spawned\.agent_id\], timeout_ms: 120000 \}\)/u,
+      "Codex code mode must use the exact wait_agent argument shape exposed by the host",
+    );
+    assert.match(source, /const directLifecycle/u);
+    assert.match(source, /message: \$\{JSON\.stringify\(childTask\)\}/u);
+    assert.match(source, /text\(JSON\.stringify\(spawned\)\)/u);
+    assert.match(source, /with no leading or trailing statements/u);
+    assert.match(source, /Do not add variables, helper functions/u);
+    assert.match(source, /pass id instead of targets/u);
+    assert.match(
+      source,
+      /Never call the nonexistent multi_agent_v1__wait alias/u,
+      "the release prompt must reject the stale fabricated wait alias",
+    );
     assert.match(source, /isCommandTimeoutFailure/);
     assert.match(source, /META_KIM_COMMAND_TIMEOUT/);
     assert.doesNotMatch(source, /timeoutTriggered/u);
@@ -1298,6 +1314,7 @@ describe("eval-meta-agents Claude smoke", () => {
     );
     assert.match(sessionFallbackHelper, /hostEventText: sessionEvidence\.parentSessionText/u);
     assert.match(sessionFallbackHelper, /sessionEvidence: publicCodexSessionEvidence\(sessionEvidence\)/u);
+    assert.match(sessionFallbackHelper, /codexSessionNativeInvocationMatches/u);
     assert.match(
       source,
       /liveEvidence = await inspectCodexLiveEvidenceWithSessionFallback\(stdout,/u,

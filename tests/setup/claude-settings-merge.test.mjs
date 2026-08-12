@@ -1,5 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   buildMetaKimHooksTemplate,
@@ -7,6 +8,20 @@ import {
   mergeGlobalMetaKimHooksIntoSettings,
   mergeRepoClaudeSettings,
 } from "../../scripts/claude-settings-merge.mjs";
+
+const REPO_ROOT = new URL("../../", import.meta.url);
+
+function matcherTools(matcher) {
+  return new Set(String(matcher ?? "").split("|").filter(Boolean));
+}
+
+function findEnforcementBlock(settings) {
+  return settings.hooks.PreToolUse.find((block) =>
+    (block.hooks ?? []).some((hook) =>
+      String(hook.command ?? "").includes("enforce-agent-dispatch.mjs"),
+    ),
+  );
+}
 
 describe("Claude settings hook command rendering", () => {
   test("normalizes Windows paths to slash form before writing shell commands", () => {
@@ -25,7 +40,7 @@ describe("Claude settings hook command rendering", () => {
     assert.equal(command, 'node "C:/Users/Example/.claude/hooks/meta-kim/block-dangerous-bash.mjs"');
     assert.equal(
       template.PreToolUse[1].matcher,
-      "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|MultiEdit|NotebookEdit",
+      "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|TaskStop|EnterPlanMode|ExitPlanMode|MultiEdit|NotebookEdit",
     );
     assert.equal(
       template.PreToolUse[1].hooks[0].command,
@@ -49,6 +64,51 @@ describe("Claude settings hook command rendering", () => {
     assert.equal(
       commands.some((entry) => entry.includes("stop-compaction.mjs")),
       true,
+    );
+  });
+
+  test("Claude enforcement matchers cover the queryBypass control-plane deny contract", () => {
+    const template = buildMetaKimHooksTemplate(
+      "C:\\Users\\Example\\.claude\\hooks\\meta-kim",
+    );
+    const canonicalSettings = JSON.parse(
+      readFileSync(
+        new URL("canonical/runtime-assets/claude/settings.json", REPO_ROOT),
+        "utf8",
+      ),
+    );
+    const runtimeControlContract = JSON.parse(
+      readFileSync(
+        new URL("config/contracts/stage-runtime-control-contract.json", REPO_ROOT),
+        "utf8",
+      ),
+    );
+
+    const templateBlock = findEnforcementBlock({ hooks: template });
+    const canonicalBlock = findEnforcementBlock(canonicalSettings);
+    assert.ok(templateBlock, "global merge template must register the enforcement hook");
+    assert.ok(canonicalBlock, "canonical Claude settings must register the enforcement hook");
+    assert.equal(
+      canonicalBlock.matcher,
+      templateBlock.matcher,
+      "project and global Claude projections must expose the same enforcement surface",
+    );
+
+    const registeredTools = matcherTools(templateBlock.matcher);
+    const denyTools =
+      runtimeControlContract.fetchPolicy.queryBypassControlPlanePolicy.denyTools;
+    assert.deepEqual(denyTools, [
+      "TaskCreate",
+      "TaskUpdate",
+      "TodoWrite",
+      "TaskStop",
+      "EnterPlanMode",
+      "ExitPlanMode",
+    ]);
+    assert.deepEqual(
+      denyTools.filter((tool) => !registeredTools.has(tool)),
+      [],
+      "every machine-contract deny tool must be reachable through the Claude matcher",
     );
   });
 

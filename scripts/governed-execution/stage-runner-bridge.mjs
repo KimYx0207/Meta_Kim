@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import runQuotaPolicy from "../../config/governance/run-quota-policy.json" with { type: "json" };
 import {
   observeClaudeAssistantMessages,
   observeClaudeJsonl,
@@ -9,7 +10,20 @@ import {
   observeCodexJsonl,
 } from "../live-acceptance/observe-host-events.mjs";
 import { spawnCli } from "../runtime-cli-invocation.mjs";
-import { openDurableRunKernel } from "./durable-run-kernel.mjs";
+import { assertDurableRunRepositoryPort } from "../../src/application/ports/durable-run-repository-port.mjs";
+import { openDurableRunRepository } from "../../src/application/run/open-durable-run-repository.mjs";
+import { buildEvidenceTransitionShadowProjection } from "./evidence-transition-shadow-adapter.mjs";
+import { buildContinuationPolicyShadowProjection } from "./continuation-policy-shadow-adapter.mjs";
+import { buildTodoDependencySafeProgressShadowProjection } from "./todo-dependency-safe-progress-shadow-adapter.mjs";
+import { buildSchedulerAuthorityReuseShadowPlan } from "./scheduler-authority-reuse-shadow-adapter.mjs";
+import { buildLeaseClaimAuthorityShadowProjection } from "./lease-claim-authority-shadow-adapter.mjs";
+import { buildRuntimeHealthProjection } from "./runtime-health-projection-adapter.mjs";
+import {
+  buildQuotaUsageProjection,
+  buildTrustedQuotaUsageObservation,
+} from "./quota-usage-projection-adapter.mjs";
+import { buildReadOnlyRunProjectionSurfacesAdapter } from "./read-only-run-projection-surfaces-adapter.mjs";
+import { buildReadOnlyRunAuthoritySnapshot } from "../../src/data/projections/read-only-run-authority-snapshot.mjs";
 import {
   executeNativeReadySet,
   validateReadySetAdapterResult,
@@ -56,6 +70,127 @@ const CHILD_ENV_RUNTIME_ALLOWLIST = Object.freeze({
 
 const sha256 = (value) =>
   createHash("sha256").update(String(value ?? ""), "utf8").digest("hex");
+
+const sha256Reference = (value) => {
+  const normalized = String(value ?? "");
+  if (/^sha256:[a-f0-9]{64}$/u.test(normalized)) return normalized;
+  if (/^[a-f0-9]{64}$/u.test(normalized)) return `sha256:${normalized}`;
+  return `sha256:${sha256(normalized)}`;
+};
+
+const canonicalJson = (value) => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+};
+
+const canonicalDigestReference = (value) => `sha256:${sha256(canonicalJson(value))}`;
+
+function runtimeHealthFailureStatus(failureClass) {
+  switch (failureClass) {
+    case "runtime_safety_timeout":
+      return { invocationStatus: "timeout", failureClass: "runtime_safety_timeout" };
+    case "runtime_launch_failed":
+      return { invocationStatus: "launch_failed", failureClass: "runtime_launch_failed" };
+    case "runtime_output_parse_failed":
+      return { invocationStatus: "parse_failed", failureClass: "runtime_parse_failed" };
+    case "runtime_output_limit":
+      return { invocationStatus: "output_limit", failureClass: "runtime_output_limit" };
+    case "runtime_nonzero_exit":
+      return { invocationStatus: "nonzero_exit", failureClass: "runtime_nonzero_exit" };
+    case "runtime_final_message_missing":
+      return { invocationStatus: "final_message_missing", failureClass: "final_message_missing" };
+    default:
+      return { invocationStatus: "conflict", failureClass: "unknown" };
+  }
+}
+
+function buildRuntimeHealthRegistryBinding({ runtimeId, runtimeMode, evidenceLedgerDigest }) {
+  const core = {
+    runtimeId,
+    runtimeMode,
+    catalogDigest: canonicalDigestReference({
+      source: "stage_runner_bridge_supported_runtime_catalog",
+      runtimeIds: [...SUPPORTED_RUNTIMES].sort(),
+    }),
+    capabilityMatrixDigest: canonicalDigestReference({
+      source: "config/runtime-capability-matrix.json",
+      runtimeId,
+      runtimeMode,
+    }),
+    evidenceLedgerDigest,
+  };
+  return { ...core, registryDigest: canonicalDigestReference(core) };
+}
+
+function buildTrustedRuntimeHealthObservation({
+  runtimeId,
+  nativeRuntimeInvokerSelected,
+  nativeInvocationAttemptedNodeIds,
+  nodeRecords,
+  observedAt,
+}) {
+  const runtimeMode = nativeRuntimeInvokerSelected ? "native_cli" : "injected_callback";
+  const settled = nodeRecords.filter((record) =>
+    record?.laneKind === "execution_worker" &&
+    record?.runtime === runtimeId &&
+    record?.evidenceKind === "native_read_only_stage_runner" &&
+    nativeInvocationAttemptedNodeIds.has(record?.nodeId) &&
+    (record?.status === "completed" || record?.status === "failed")
+  );
+  if (!nativeRuntimeInvokerSelected || settled.length === 0) {
+    const core = {
+      source: "none",
+      runtimeId,
+      runtimeMode,
+      currentRun: true,
+      nativeInvocationObserved: false,
+      invocationStatus: "not_invoked",
+      failureClass: nativeRuntimeInvokerSelected ? "not_applicable" : "injected_callback",
+      startedAt: null,
+      endedAt: null,
+      observedAt: null,
+      evidenceRefDigest: null,
+    };
+    return { ...core, observationDigest: canonicalDigestReference(core) };
+  }
+  const failed = settled.find((record) => record.status === "failed") ?? null;
+  const classification = failed
+    ? runtimeHealthFailureStatus(failed.failureClass)
+    : { invocationStatus: "pass", failureClass: "none" };
+  const startedValues = settled.map((record) => Date.parse(record.startedAt));
+  const endedValues = settled.map((record) => Date.parse(record.endedAt));
+  const timestampsValid = [...startedValues, ...endedValues].every(Number.isSafeInteger) &&
+    startedValues.every((value, index) => value <= endedValues[index]) &&
+    endedValues.every((value) => value <= observedAt);
+  const evidenceRefDigest = canonicalDigestReference(settled.map((record) => ({
+    nodeId: record.nodeId,
+    status: record.status,
+    failureClass: record.failureClass ?? null,
+    outputSha256: record.outputSha256 ?? null,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+  })));
+  const core = {
+    source: "stage_runner_bridge_native_invocation",
+    runtimeId,
+    runtimeMode,
+    currentRun: true,
+    nativeInvocationObserved: true,
+    invocationStatus: timestampsValid ? classification.invocationStatus : "conflict",
+    failureClass: timestampsValid ? classification.failureClass : "unknown",
+    startedAt: timestampsValid ? Math.min(...startedValues) : observedAt,
+    endedAt: timestampsValid ? Math.max(...endedValues) : observedAt,
+    observedAt,
+    evidenceRefDigest,
+  };
+  return { ...core, observationDigest: canonicalDigestReference(core) };
+}
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
@@ -390,7 +525,9 @@ async function prepareDurableBridgeContext({
   if (!durable.kernel && (typeof durable.dbPath !== "string" || !durable.dbPath.trim())) {
     throw new TypeError("durable.dbPath or durable.kernel is required");
   }
-  const kernel = durable.kernel ?? await openDurableRunKernel(durable.dbPath);
+  const kernel = assertDurableRunRepositoryPort(
+    durable.kernel ?? await openDurableRunRepository(durable.dbPath),
+  );
   const ownsKernel = !durable.kernel;
   const mode = durable.mode ?? "create";
   if (!["create", "resume", "create_or_resume"].includes(mode)) {
@@ -627,6 +764,267 @@ function durableClaimForNode(context, node, dependencyResults) {
   });
 }
 
+function ownDataValue(record, field) {
+  try {
+    if (record == null || typeof record !== "object" || Array.isArray(record)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(record, field);
+    return descriptor?.enumerable === true && "value" in descriptor
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function evidenceTransitionAuthorityBinding({
+  durableContext,
+  durableRunProjection,
+  stageDagPacket,
+  executionNodes,
+  durableClaimsByNodeId,
+  evidenceTransitionShadow,
+}) {
+  if (!durableContext || !durableRunProjection) return null;
+  try {
+    validateStageDagPacket(stageDagPacket, { requireDigest: true });
+  } catch {
+    return null;
+  }
+  if (durableRunProjection.run.graphDigest !== stageDagPacket.graphDigest) return null;
+  const executionIndex = stageDagPacket.stageOrder.indexOf("Execution");
+  const reviewIndex = stageDagPacket.stageOrder.indexOf("Review");
+  if (executionIndex < 0 || reviewIndex !== executionIndex + 1) return null;
+  const executionMerges = stageDagPacket.nodes.filter(
+    (node) => node.stage === "Execution" && node.laneKind === "stage_merge",
+  );
+  const reviewLanes = stageDagPacket.nodes.filter(
+    (node) => node.stage === "Review" && node.laneKind !== "stage_merge",
+  );
+  const reviewMerges = stageDagPacket.nodes.filter(
+    (node) => node.stage === "Review" && node.laneKind === "stage_merge",
+  );
+  if (
+    executionMerges.length !== 1 ||
+    reviewLanes.length < 1 ||
+    reviewMerges.length !== 1
+  ) {
+    return null;
+  }
+  const [executionMerge] = executionMerges;
+  const [reviewMerge] = reviewMerges;
+  const reviewLaneIds = new Set(reviewLanes.map((node) => node.nodeId));
+  if (
+    reviewLanes.some((node) => !node.dependsOn.includes(executionMerge.nodeId)) ||
+    reviewMerge.dependsOn.length !== reviewLaneIds.size ||
+    reviewMerge.dependsOn.some((nodeId) => !reviewLaneIds.has(nodeId))
+  ) return null;
+  const transitionRequest = ownDataValue(evidenceTransitionShadow, "transitionRequest");
+  if (
+    ownDataValue(transitionRequest, "fromStage") !== "execution" ||
+    ownDataValue(transitionRequest, "toStage") !== "review"
+  ) {
+    return null;
+  }
+  const mergeNode = executionNodes.find((node) => node.nodeId === executionMerge.nodeId);
+  if (!mergeNode) return null;
+  const completed = durableRunProjection.completedNodes.find(
+    (record) => record.nodeId === mergeNode.nodeId,
+  );
+  if (!completed) return null;
+  let claim = durableClaimsByNodeId.get(mergeNode.nodeId) ?? null;
+  if (!claim) {
+    const claimEvent = durableRunProjection.events.find(
+      (event) =>
+        event.eventType === "NodeAttemptClaimed" &&
+        event.nodeId === mergeNode.nodeId &&
+        event.attemptId === completed.sourceAttemptId,
+    );
+    if (claimEvent) {
+      claim = {
+        attemptId: claimEvent.attemptId,
+        attemptNo: claimEvent.payload?.attemptNo,
+        fenceToken: claimEvent.payload?.fenceToken,
+      };
+    }
+  }
+  if (
+    !claim ||
+    typeof claim.attemptId !== "string" ||
+    !Number.isSafeInteger(claim.attemptNo) ||
+    claim.attemptNo < 1 ||
+    !Number.isSafeInteger(claim.fenceToken) ||
+    claim.fenceToken < 1
+  ) {
+    return null;
+  }
+  return {
+    runId: durableRunProjection.run.runId,
+    taskFingerprint: sha256Reference(durableRunProjection.run.taskFingerprint),
+    graphDigest: sha256Reference(durableRunProjection.run.graphDigest),
+    nodeId: mergeNode.nodeId,
+    attemptId: claim.attemptId,
+    fenceToken: claim.fenceToken,
+    revision: claim.attemptNo - 1,
+  };
+}
+
+function continuationPolicyAuthoritySnapshot({
+  durableContext,
+  durableRunProjection,
+  failure,
+  executionNodes,
+  nodeRecordsById,
+}) {
+  if (!durableContext || !durableRunProjection) return null;
+  const resume = durableContext.resume;
+  const blockingEffectRefs = (resume.blockingEffects ?? [])
+    .map((effect) => effect?.effectId)
+    .filter((effectId) => typeof effectId === "string" && effectId.length > 0)
+    .sort();
+  const activeClaimRefs = (resume.activeClaims ?? [])
+    .map((claim) => [
+      "claim",
+      claim?.nodeId,
+      claim?.attemptId,
+      claim?.fenceToken,
+    ].join(":"))
+    .filter((claimRef) => !claimRef.includes("undefined"))
+    .sort();
+  const bridgeSettlementState = failure
+    ? "failed"
+    : executionNodes.length > 0 && executionNodes.every(
+        (node) => nodeRecordsById.get(node.nodeId)?.status === "completed",
+      )
+      ? "settled"
+      : "incomplete";
+  const eventChainState = durableRunProjection.eventChain?.ok === true
+    ? "verified"
+    : durableRunProjection.eventChain?.ok === false
+      ? "failed"
+      : "unknown";
+  const authorityCoherent =
+    durableRunProjection.schemaVersion === "durable-governed-run-projection-v0.1" &&
+    durableRunProjection.run?.runId === resume.runId &&
+    durableRunProjection.run?.graphDigest === durableContext.graphDigest &&
+    durableRunProjection.run?.taskFingerprint === durableContext.taskFingerprint &&
+    Number.isSafeInteger(durableRunProjection.cursor) &&
+    durableRunProjection.cursor >= resume.cursor &&
+    (
+      durableRunProjection.events.length === 0 ||
+      durableRunProjection.events.at(-1)?.eventSeq === durableRunProjection.cursor
+    );
+  const currentness = activeClaimRefs.length > 0
+    ? "active_claim_present"
+    : blockingEffectRefs.length > 0
+      ? "unresolved_effect_present"
+      : authorityCoherent && bridgeSettlementState === "settled"
+        ? "bound_same_bridge_settlement"
+        : "unproven";
+  const lastEvent = durableRunProjection.events.at(-1) ?? null;
+  const projectionBinding = {
+    schemaVersion: durableRunProjection.schemaVersion,
+    runId: durableRunProjection.run?.runId ?? null,
+    taskFingerprint: durableRunProjection.run?.taskFingerprint ?? null,
+    graphDigest: durableRunProjection.run?.graphDigest ?? null,
+    runStatus: durableRunProjection.run?.status ?? null,
+    cursor: durableRunProjection.cursor,
+    headEventHash: lastEvent?.eventHash ?? null,
+    headCheckpointId: durableRunProjection.headCheckpointId,
+    eventChainState,
+    blockingEffectRefs,
+    activeClaimRefs,
+    bridgeSettlementState,
+  };
+  return {
+    source: "stage_runner_bridge_existing_authority_projection",
+    projectionSchemaVersion: durableRunProjection.schemaVersion,
+    runStatus: durableRunProjection.run?.status ?? "blocked",
+    runId: durableRunProjection.run?.runId ?? resume.runId,
+    taskFingerprint: sha256Reference(
+      durableRunProjection.run?.taskFingerprint ?? durableContext.taskFingerprint,
+    ),
+    graphDigest: sha256Reference(
+      durableRunProjection.run?.graphDigest ?? durableContext.graphDigest,
+    ),
+    cursor: durableRunProjection.cursor,
+    headEventHash: lastEvent?.eventHash ? sha256Reference(lastEvent.eventHash) : null,
+    headCheckpointId: durableRunProjection.headCheckpointId ?? null,
+    projectionDigest: sha256Reference(JSON.stringify(projectionBinding)),
+    eventChainState,
+    blockingEffectRefs,
+    activeClaimRefs,
+    bridgeSettlementState,
+    currentness,
+  };
+}
+
+function schedulerFreshExecutionHeadSnapshot({
+  durableContext,
+  durableRunProjection,
+  durableResume,
+  executionNodes,
+  nodeRecordsById,
+}) {
+  if (!durableContext || !durableRunProjection || !durableResume) return null;
+  const continuationAuthority = continuationPolicyAuthoritySnapshot({
+    durableContext: { ...durableContext, resume: durableResume },
+    durableRunProjection,
+    failure: null,
+    executionNodes,
+    nodeRecordsById,
+  });
+  if (!continuationAuthority) return null;
+  const completedNodeIds = [...new Set(
+    durableRunProjection.completedNodes.map((record) => record.nodeId),
+  )].sort();
+  const activeClaimNodeIds = [...new Set(
+    (durableResume.activeClaims ?? []).map((claim) => claim.nodeId),
+  )].sort();
+  const unresolvedEffectNodeIds = [...new Set(
+    (durableResume.blockingEffects ?? []).map((effect) => effect.nodeId),
+  )].sort();
+  const inDoubtNodeIds = [...new Set(
+    durableRunProjection.events
+      .filter((event) => event.eventType === "NodeAttemptInDoubt")
+      .map((event) => event.nodeId)
+      .filter((nodeId) => !completedNodeIds.includes(nodeId)),
+  )].sort();
+  const lastEvent = durableRunProjection.events.at(-1) ?? null;
+  const stableHead =
+    durableRunProjection.cursor === durableResume.cursor &&
+    durableRunProjection.headCheckpointId === durableResume.headCheckpointId &&
+    (lastEvent === null || lastEvent.eventSeq === durableResume.cursor);
+  const currentness =
+    continuationAuthority.currentness === "bound_same_bridge_settlement" && stableHead
+      ? "fresh_bound_for_shadow_selection"
+      : "unproven";
+  const rawRunStatus = durableRunProjection.run.status;
+  const runStatus = ["active", "completed", "failed", "blocked"].includes(rawRunStatus)
+    ? rawRunStatus
+    : "blocked";
+  const snapshot = {
+    source: "upstream_durable_kernel_projection_owner",
+    runId: continuationAuthority.runId,
+    taskFingerprint: continuationAuthority.taskFingerprint,
+    graphDigest: continuationAuthority.graphDigest,
+    projectionDigest: continuationAuthority.projectionDigest,
+    cursor: continuationAuthority.cursor,
+    headEventHash: continuationAuthority.headEventHash,
+    headCheckpointId: continuationAuthority.headCheckpointId,
+    runStatus,
+    eventChainState: continuationAuthority.eventChainState,
+    completedNodeIds,
+    activeClaimNodeIds,
+    unresolvedEffectNodeIds,
+    inDoubtNodeIds,
+    currentness,
+  };
+  return {
+    ...snapshot,
+    snapshotDigest: canonicalDigestReference(snapshot),
+  };
+}
+
 export async function runStageRunnerBridge({
   runId,
   runtime,
@@ -640,6 +1038,14 @@ export async function runStageRunnerBridge({
   executeReadySet = executeNativeReadySet,
   readySetTimeoutMs = null,
   evidenceKind = "native_read_only_stage_runner",
+  evidenceTransitionShadow = null,
+  continuationPolicyShadow = null,
+  todoDependencySafeProgressShadow = null,
+  schedulerAuthorityReuseShadow = null,
+  leaseClaimAuthorityShadow = null,
+  runtimeHealthProjection = null,
+  quotaUsageProjection = null,
+  readOnlyRunProjectionSurfaces = null,
   durable = null,
   redactionEnv = process.env,
 }) {
@@ -665,6 +1071,8 @@ export async function runStageRunnerBridge({
   const executionNodes = stageDagPacket.nodes.filter((node) => node.stage === "Execution");
   const nodeRecordsById = new Map();
   const workerResultsByNodeId = new Map();
+  const durableClaimsByNodeId = new Map();
+  const nativeInvocationAttemptedNodeIds = new Set();
   for (const completed of durableContext?.resume.completedNodes ?? []) {
     const record = completed.output;
     if (!record || record.nodeId !== completed.nodeId || record.status !== "completed") {
@@ -700,6 +1108,7 @@ export async function runStageRunnerBridge({
         .map((dependencyId) => nodeRecordsById.get(dependencyId))
         .filter(Boolean);
       const claim = durableClaimForNode(durableContext, node, dependencyResults);
+      if (claim) durableClaimsByNodeId.set(node.nodeId, claim);
       const heartbeat = startDurableHeartbeat(durableContext, node, claim);
       let normalizedResult;
       if (node.laneKind === "stage_merge") {
@@ -781,6 +1190,9 @@ export async function runStageRunnerBridge({
           });
           let result;
           try {
+            if (nativeRuntimeInvokerSelected) {
+              nativeInvocationAttemptedNodeIds.add(node.nodeId);
+            }
             result = await invokeWorker({
               runtime: normalizedRuntime,
               prompt,
@@ -1077,6 +1489,9 @@ export async function runStageRunnerBridge({
     workerResults.every(
       (result) => result.evidenceKind === "native_read_only_stage_runner",
     );
+  const durableRunProjection = durableContext
+    ? durableContext.kernel.projectRun(runId)
+    : null;
   const executionProjection = {
     schemaVersion: "stage-dag-execution-projection-v0.1",
     authorityPacketRef: "coreLoop.stageDagPacket",
@@ -1099,10 +1514,221 @@ export async function runStageRunnerBridge({
           resumed: durableContext.resumed,
           leaseMs: durableContext.leaseMs,
           heartbeatIntervalMs: durableContext.heartbeatIntervalMs,
-          projection: durableContext.kernel.projectRun(runId),
+          projection: durableRunProjection,
         }
       : { enabled: false, resumed: false },
   };
+  const evidenceTransitionShadowProjection = failure || evidenceTransitionShadow == null
+    ? null
+    : buildEvidenceTransitionShadowProjection(evidenceTransitionShadow, {
+        authoritativeBinding: evidenceTransitionAuthorityBinding({
+          durableContext,
+          durableRunProjection,
+          stageDagPacket,
+          executionNodes,
+          durableClaimsByNodeId,
+          evidenceTransitionShadow,
+        }),
+      });
+  const continuationPolicyShadowProjection = continuationPolicyShadow == null
+    ? null
+    : buildContinuationPolicyShadowProjection(continuationPolicyShadow, {
+        authoritativeSnapshot: continuationPolicyAuthoritySnapshot({
+          durableContext,
+          durableRunProjection,
+          failure,
+          executionNodes,
+          nodeRecordsById,
+        }),
+        evidenceTransitionShadowProjection,
+      });
+  const todoDependencySafeProgressShadowProjection = todoDependencySafeProgressShadow == null
+    ? null
+    : buildTodoDependencySafeProgressShadowProjection(
+        todoDependencySafeProgressShadow,
+        {
+          authoritativeTopology: stageDagPacket,
+          authoritativeExecutionSnapshot: durableContext && durableRunProjection
+            ? {
+                durableRunProjection,
+                durableResume: durableContext.resume,
+                nodeRecords: nodeRecords.map((record) => ({
+                  nodeId: record.nodeId,
+                  status: record.status,
+                })),
+              }
+            : null,
+          evidenceTransitionShadowProjection,
+          continuationPolicyShadowProjection,
+        },
+      );
+  let schedulerFreshHeadSnapshot = null;
+  if (schedulerAuthorityReuseShadow != null && durableContext) {
+    try {
+      const freshProjection = durableContext.kernel.projectRun(runId);
+      const freshResume = durableContext.kernel.resumeRun({
+        runId,
+        graphDigest: durableContext.graphDigest,
+        taskFingerprint: durableContext.taskFingerprint,
+      });
+      schedulerFreshHeadSnapshot = schedulerFreshExecutionHeadSnapshot({
+        durableContext,
+        durableRunProjection: freshProjection,
+        durableResume: freshResume,
+        executionNodes,
+        nodeRecordsById,
+      });
+    } catch {
+      schedulerFreshHeadSnapshot = null;
+    }
+  }
+  const rawTrustedSchedulerCapacity = capacity ?? stageDagPacket.runtimeCapacity;
+  const trustedSchedulerCapacity = Number.isSafeInteger(rawTrustedSchedulerCapacity) &&
+    rawTrustedSchedulerCapacity > 0
+    ? rawTrustedSchedulerCapacity
+    : null;
+  const schedulerAuthorityReuseShadowProjection = schedulerAuthorityReuseShadow == null
+    ? null
+    : buildSchedulerAuthorityReuseShadowPlan(schedulerAuthorityReuseShadow, {
+        authoritativeStageDagPacket: stageDagPacket,
+        freshExecutionHeadSnapshot: schedulerFreshHeadSnapshot,
+        todoDependencySafeProgressShadowProjection,
+        trustedSelectionContext: {
+          stage: null,
+          capacity: trustedSchedulerCapacity,
+        },
+      });
+  let leaseClaimExecutionSnapshot = null;
+  let leaseClaimObservationContext = null;
+  if (leaseClaimAuthorityShadow != null && durableContext) {
+    try {
+      const freshProjection = durableContext.kernel.projectRun(runId);
+      const freshResume = durableContext.kernel.resumeRun({
+        runId,
+        graphDigest: durableContext.graphDigest,
+        taskFingerprint: durableContext.taskFingerprint,
+      });
+      leaseClaimExecutionSnapshot = {
+        durableRunProjection: freshProjection,
+        durableResume: freshResume,
+      };
+      leaseClaimObservationContext = {
+        source: "stage_runner_bridge_wall_clock_capture",
+        observedAtMs: Date.now(),
+      };
+    } catch {
+      leaseClaimExecutionSnapshot = null;
+      leaseClaimObservationContext = null;
+    }
+  }
+  const leaseClaimAuthorityProjection = leaseClaimAuthorityShadow == null
+    ? null
+    : buildLeaseClaimAuthorityShadowProjection(leaseClaimAuthorityShadow, {
+        authoritativeStageDagPacket: stageDagPacket,
+        authoritativeExecutionSnapshot: leaseClaimExecutionSnapshot,
+        schedulerAuthorityReuseShadowProjection,
+        trustedObservationContext: leaseClaimObservationContext,
+      });
+  let runtimeHealthRegistryBinding = null;
+  let trustedRuntimeObservation = null;
+  const bridgeProjectionObservedAt = runtimeHealthProjection != null || quotaUsageProjection != null
+    ? Date.now()
+    : null;
+  if (runtimeHealthProjection != null) {
+    trustedRuntimeObservation = buildTrustedRuntimeHealthObservation({
+      runtimeId: normalizedRuntime,
+      nativeRuntimeInvokerSelected,
+      nativeInvocationAttemptedNodeIds,
+      nodeRecords,
+      observedAt: bridgeProjectionObservedAt,
+    });
+    runtimeHealthRegistryBinding = buildRuntimeHealthRegistryBinding({
+      runtimeId: normalizedRuntime,
+      runtimeMode: nativeRuntimeInvokerSelected ? "native_cli" : "injected_callback",
+      evidenceLedgerDigest: canonicalDigestReference({
+        runId,
+        runtimeId: normalizedRuntime,
+        observationDigest: trustedRuntimeObservation.observationDigest,
+      }),
+    });
+  }
+  const runtimeHealthProjectionResult = runtimeHealthProjection == null
+    ? null
+    : buildRuntimeHealthProjection(runtimeHealthProjection, {
+        authoritativeStageDagPacket: stageDagPacket,
+        authoritativeExecutionSnapshot: leaseClaimExecutionSnapshot,
+        leaseClaimAuthorityShadowProjection: leaseClaimAuthorityProjection,
+        runtimeRegistryBinding: runtimeHealthRegistryBinding,
+        trustedRuntimeObservation,
+      });
+  let quotaExecutionSnapshot = null;
+  let trustedQuotaUsageObservation = null;
+  if (quotaUsageProjection != null && durableContext) {
+    try {
+      quotaExecutionSnapshot = {
+        durableRunProjection: durableContext.kernel.projectRun(runId),
+        durableResume: durableContext.kernel.resumeRun({
+          runId,
+          graphDigest: durableContext.graphDigest,
+          taskFingerprint: durableContext.taskFingerprint,
+        }),
+      };
+      trustedQuotaUsageObservation = buildTrustedQuotaUsageObservation({
+        authoritativeExecutionSnapshot: quotaExecutionSnapshot,
+        observedAt: bridgeProjectionObservedAt,
+      });
+    } catch {
+      quotaExecutionSnapshot = null;
+      trustedQuotaUsageObservation = null;
+    }
+  }
+  const quotaUsageProjectionResult = quotaUsageProjection == null
+    ? null
+    : buildQuotaUsageProjection(quotaUsageProjection, {
+        authoritativeStageDagPacket: stageDagPacket,
+        authoritativeExecutionSnapshot: quotaExecutionSnapshot,
+        trustedQuotaPolicy: runQuotaPolicy,
+        trustedUsageObservation: trustedQuotaUsageObservation,
+      });
+  let readOnlyRunProjectionSurfacesResult = null;
+  if (readOnlyRunProjectionSurfaces != null) {
+    let authoritySnapshot = null;
+    try {
+      const freshProjection = durableContext?.kernel.projectRun(runId) ?? null;
+      const freshResume = durableContext?.kernel.resumeRun({
+        runId,
+        graphDigest: durableContext?.graphDigest,
+        taskFingerprint: durableContext?.taskFingerprint,
+      }) ?? null;
+      if (freshProjection && freshResume) {
+        const canonicalProjectionEnvelopes = [
+          evidenceTransitionShadowProjection,
+          continuationPolicyShadowProjection,
+          todoDependencySafeProgressShadowProjection,
+          schedulerAuthorityReuseShadowProjection,
+          leaseClaimAuthorityProjection,
+          runtimeHealthProjectionResult,
+          quotaUsageProjectionResult,
+        ];
+        authoritySnapshot = buildReadOnlyRunAuthoritySnapshot({
+          authoritativeDurableProjection: freshProjection,
+          authoritativeDurableResume: freshResume,
+          stageDag: stageDagPacket,
+          canonicalProjectionEnvelopes,
+        });
+      }
+    } catch {
+      authoritySnapshot = null;
+    }
+    const presentationOptions = readOnlyRunProjectionSurfaces && typeof readOnlyRunProjectionSurfaces === "object"
+      ? readOnlyRunProjectionSurfaces
+      : {};
+    readOnlyRunProjectionSurfacesResult = buildReadOnlyRunProjectionSurfacesAdapter({}, {
+      authoritySnapshot,
+      copy: presentationOptions.copy,
+      statusColumnMap: presentationOptions.statusColumnMap,
+    });
+  }
   const bridge = {
     schemaVersion: "stage-runner-bridge-v0.1",
     prdTaskId: "P-117",
@@ -1140,6 +1766,30 @@ export async function runStageRunnerBridge({
       adapterIds: [...new Set(readySetAdapterBatches.map((batch) => batch.adapterId).filter(Boolean))],
       batches: readySetAdapterBatches,
     },
+    ...(evidenceTransitionShadowProjection
+      ? { evidenceTransitionShadowProjection }
+      : {}),
+    ...(continuationPolicyShadowProjection
+      ? { continuationPolicyShadowProjection }
+      : {}),
+    ...(todoDependencySafeProgressShadowProjection
+      ? { todoDependencySafeProgressShadowProjection }
+      : {}),
+    ...(schedulerAuthorityReuseShadowProjection
+      ? { schedulerAuthorityReuseShadowProjection }
+      : {}),
+    ...(leaseClaimAuthorityProjection
+      ? { leaseClaimAuthorityProjection }
+      : {}),
+    ...(runtimeHealthProjectionResult
+      ? { runtimeHealthProjection: runtimeHealthProjectionResult }
+      : {}),
+    ...(quotaUsageProjectionResult
+      ? { quotaUsageProjection: quotaUsageProjectionResult }
+      : {}),
+    ...(readOnlyRunProjectionSurfacesResult
+      ? { readOnlyRunProjectionSurfaces: readOnlyRunProjectionSurfacesResult }
+      : {}),
     compatibilityView: {
       stageDagStatus: executionProjection.status,
       nodeStatuses: executionProjection.nodeStatuses,

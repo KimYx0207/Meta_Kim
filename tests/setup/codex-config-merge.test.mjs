@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  CODEX_DEFAULT_AGENT_MAX_THREADS,
+  CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS,
   assertCodexConfigTomlMergeable,
   ensureCodexAppNativeControls,
   ensureCodexWindowsNotifyCompat,
@@ -13,6 +15,8 @@ import {
   mergeCodexConfigAddOnly,
   normalizeCodexConfigMutations,
   planCodexAppNativeControls,
+  reconcileCodexConfigAfterUpstreamInstall,
+  removeMetaKimTemporaryProjectResidue,
 } from "../../scripts/codex-config-merge.mjs";
 
 function sectionBlock(configText, sectionName) {
@@ -30,8 +34,101 @@ function sectionBlock(configText, sectionName) {
 }
 
 describe("Codex config merge", () => {
+  test("resource-safe agent defaults migrate the legacy Meta_Kim value and preserve explicit overrides", () => {
+    const legacy = ensureCodexAppNativeControls(
+      `[agents]\nmax_threads = ${CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS}\n`,
+      { platformName: "linux" },
+    );
+    assert.match(legacy, new RegExp(`max_threads = ${CODEX_DEFAULT_AGENT_MAX_THREADS}`));
+    assert.match(legacy, /max_depth = 1/);
+
+    const explicit = ensureCodexAppNativeControls(
+      "[agents]\nmax_threads = 3\nmax_depth = 2\n",
+      { platformName: "linux" },
+    );
+    assert.match(explicit, /max_threads = 3/);
+    assert.match(explicit, /max_depth = 2/);
+  });
+
+  test("upstream dependency output cannot resurrect deleted MCPs or temporary projects", () => {
+    const snapshot = [
+      'model = "gpt-5.6"',
+      "",
+      "[mcp_servers.user_owned]",
+      'command = "node"',
+      "",
+      '[projects.\'D:/User/RealProject\']',
+      'trust_level = "trusted"',
+      "",
+      '[projects.\'C:/Users/Kim/AppData/Local/Temp/meta-kim-context-ab-deadbeef/codex-workspace/trial\']',
+      'trust_level = "trusted"',
+      "",
+    ].join("\n");
+    const upstream = [
+      "[mcp_servers.github]",
+      'command = "npx"',
+      "",
+      "[mcp_servers.memory]",
+      'command = "npx"',
+      "",
+      "[mcp_servers.sequential-thinking]",
+      'command = "npx"',
+      "",
+      '[projects.\'C:/Temp/meta-kim-harness-fitness-lab-workspaces/run/trial\']',
+      'trust_level = "trusted"',
+      "",
+    ].join("\n");
+
+    const out = reconcileCodexConfigAfterUpstreamInstall(snapshot, upstream, {
+      platformName: "linux",
+    });
+
+    assert.match(out, /mcp_servers\.user_owned/);
+    assert.match(out, /D:\/User\/RealProject/);
+    assert.doesNotMatch(out, /mcp_servers\.(?:github|memory|sequential-thinking)/);
+    assert.doesNotMatch(out, /meta-kim-(?:context-ab|harness-fitness)/i);
+    assert.match(out, /max_threads = 2/);
+  });
+
+  test("an absent pre-install config never adopts an upstream-owned Codex config", () => {
+    const upstream = [
+      'approval_policy = "never"',
+      "[mcp_servers.github]",
+      'command = "npx"',
+      '[projects.\'C:/Temp/meta-kim-context-ab-deadbeef/workspace\']',
+      'trust_level = "trusted"',
+    ].join("\n");
+    const out = reconcileCodexConfigAfterUpstreamInstall(null, upstream, {
+      platformName: "linux",
+    });
+    assert.doesNotMatch(out, /approval_policy|mcp_servers|projects/);
+    assert.match(out, /\[agents\][\s\S]*max_threads = 2[\s\S]*max_depth = 1/);
+  });
+
+  test("temporary project residue cleanup is exact and preserves user projects", () => {
+    const input = [
+      '[projects.\'C:/Temp/meta-kim-harness-fitness-lab-workspaces/run/trial\']',
+      'trust_level = "trusted"',
+      "",
+      '[projects.\'D:/KimProject/Meta_Kim/.meta-kim/state/default/harness-fitness-lab/workspaces/run/trial\']',
+      'trust_level = "trusted"',
+      "",
+      '[projects.\'C:/Users/Kim/AppData/Local/Temp/meta-kim-p116-formal-workspaces/run/trial\']',
+      'trust_level = "trusted"',
+      "",
+      '[projects.\'D:/User/meta-kim-context-ab-not-a-temp-project\']',
+      'trust_level = "trusted"',
+      "",
+    ].join("\n");
+    const out = removeMetaKimTemporaryProjectResidue(input);
+    assert.doesNotMatch(out, /harness-fitness-lab-workspaces/);
+    assert.doesNotMatch(out, /\.meta-kim\/state\/default\/harness-fitness-lab/);
+    assert.doesNotMatch(out, /meta-kim-p116-formal-workspaces/);
+    assert.match(out, /D:\/User\/meta-kim-context-ab-not-a-temp-project/);
+  });
+
   test("native-control planner leaves already-equal bytes untouched", () => {
-    const input = "\uFEFF[features]\r\ndefault_mode_request_user_input = true # keep\r\njs_repl = true\r\n";
+    const input = "\uFEFF[features]\r\ndefault_mode_request_user_input = true # keep\r\njs_repl = true\r\n\r\n[agents]\r\nmax_threads = 2\r\nmax_depth = 1\r\n";
     const planned = planCodexAppNativeControls(input, { platformName: "linux" });
     assert.equal(planned.text, input);
     assert.deepEqual(planned.mutations, []);
@@ -47,13 +144,20 @@ describe("Codex config merge", () => {
       "",
     ].join("\r\n");
     const planned = planCodexAppNativeControls(input, { platformName: "linux" });
-    assert.equal(planned.mutations.length, 1);
+    assert.equal(planned.mutations.length, 3);
     assert.deepEqual(planned.mutations[0], {
       kind: "replace",
       locator: { table: "features", key: "default_mode_request_user_input" },
       beforeFragment: "default_mode_request_user_input = false # preserve comment",
       afterFragment: "default_mode_request_user_input = true # preserve comment",
     });
+    assert.deepEqual(
+      planned.mutations.slice(1).map((mutation) => mutation.locator),
+      [
+        { table: "agents", key: "max_threads" },
+        { table: "agents", key: "max_depth" },
+      ],
+    );
     assert.match(planned.text, /true # preserve comment\r\n/u);
     assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
   });

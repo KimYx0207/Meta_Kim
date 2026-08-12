@@ -1644,6 +1644,128 @@ test("Codex session reader binds one fresh exec parent to one exact child backli
   }
 });
 
+test("Codex session reader binds code-mode multi_agent spawn to the exact child final", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-code-mode-session-"));
+  try {
+    const codexHome = path.join(tempRoot, "codex-home");
+    const parentId = "44444444-4444-4444-8444-444444444444";
+    const childId = "55555555-5555-4555-8555-555555555555";
+    const startedAt = Date.now() - 5_000;
+    const timestamp = (offset) => new Date(startedAt + offset).toISOString();
+    const finalText = "bounded code-mode child review";
+    const callId = "code-mode-spawn-call";
+    const records = {
+      parent: [
+        {
+          timestamp: timestamp(0),
+          type: "session_meta",
+          payload: {
+            id: parentId,
+            source: "exec",
+            originator: "codex_exec",
+            cli_version: "0.146.0",
+          },
+        },
+        {
+          timestamp: timestamp(1_000),
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "exec",
+            status: "completed",
+            call_id: callId,
+            input: '// @exec: {"yield_time_ms": 120000, "max_output_tokens": 2000}\nconst spawned = await tools.multi_agent_v1__spawn_agent({ agent_type: "meta-prism", fork_context: false, message: "bounded review" });\ntext(JSON.stringify({spawned}));\nconst waited = await tools.multi_agent_v1__wait_agent({ targets: [spawned.agent_id], timeout_ms: 3600000 });\ntext(JSON.stringify({waited}));',
+          },
+        },
+        {
+          timestamp: timestamp(1_100),
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call_output",
+            call_id: callId,
+            output: [
+              { type: "input_text", text: "Script completed\nWall time 0.4 seconds\nOutput:\n" },
+              { type: "input_text", text: JSON.stringify({ spawned: { agent_id: childId, nickname: "Review" } }) },
+              { type: "input_text", text: JSON.stringify({ waited: { status: "completed", agent_id: childId } }) },
+            ],
+          },
+        },
+      ],
+      child: [
+        {
+          timestamp: timestamp(1_200),
+          type: "session_meta",
+          payload: {
+            id: childId,
+            source: {
+              subagent: {
+                thread_spawn: {
+                  parent_thread_id: parentId,
+                  agent_role: "meta-prism",
+                },
+              },
+            },
+            originator: "codex_exec",
+            cli_version: "0.146.0",
+          },
+        },
+        {
+          timestamp: timestamp(2_000),
+          type: "event_msg",
+          payload: { type: "agent_message", message: finalText, phase: "final_answer" },
+        },
+        {
+          timestamp: timestamp(2_000),
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "msg-code-mode-child-final",
+            role: "assistant",
+            content: [{ type: "output_text", text: finalText }],
+            phase: "final_answer",
+          },
+        },
+        {
+          timestamp: timestamp(2_100),
+          type: "event_msg",
+          payload: { type: "task_complete", last_agent_message: finalText },
+        },
+      ],
+    };
+    const paths = writeCodexSessionPair(codexHome, records);
+
+    const evidence = await readCodexSessionEvidence({
+      codexHome,
+      threadId: parentId,
+      sinceMs: startedAt - 1_000,
+    });
+
+    assert.equal(evidence.childSessionId, childId);
+    assert.equal(evidence.nativeInvocation?.observerFormat, "codex_exec_code_mode_v1");
+    assert.equal(evidence.nativeInvocation?.hostSurface, "codex_cli.spawn_agent");
+    assert.equal(evidence.nativeInvocation?.nativeAgentType, "meta-prism");
+    assert.equal(evidence.nativeInvocation?.ownerBindingMode, "native_custom_agent");
+    assert.equal(evidence.nativeInvocation?.completionBoundary, "returned_child_final");
+    assert.equal(evidence.nativeInvocation?.resultMessageId, "msg-code-mode-child-final");
+    assert.equal(evidence.nativeInvocation?.resultTextSha256, sha256(finalText));
+    assert.equal(evidence.nativeInvocation?.outputDigest, sha256(finalText));
+    assert.doesNotMatch(JSON.stringify(evidence.nativeInvocation), /bounded code-mode child review/u);
+
+    records.parent[1].payload.input = '/* tools.multi_agent_v1__spawn_agent({ agent_type: "meta-prism", message: "spoof" }); */\ntext("not a spawn");';
+    writeFileSync(paths.parentPath, `${jsonl(records.parent)}\n`, "utf8");
+    await assert.rejects(
+      readCodexSessionEvidence({
+        codexHome,
+        threadId: parentId,
+        sinceMs: startedAt - 1_000,
+      }),
+      (error) => error instanceof Error && error.code === "codex_parent_spawn_event_missing",
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("Codex session reader collapses parent event frames only when they bind the same child", async () => {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-session-frames-"));
   try {

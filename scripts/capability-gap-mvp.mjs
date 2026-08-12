@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { importDatabaseSync } from "./sqlite-runtime.mjs";
-import { withSqliteTransaction } from "./sqlite-transaction.mjs";
+import { importDatabaseSync } from "../src/data/sqlite/runtime.mjs";
+import { withSqliteTransaction } from "../src/data/sqlite/transaction.mjs";
 import { buildAgentProjectionTargets } from "./runtime-tool-profiles.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));

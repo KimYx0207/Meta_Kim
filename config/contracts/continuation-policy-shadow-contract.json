@@ -1,0 +1,551 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-continuation-policy-shadow-contract",
+  "prdTaskId": "M3-A02",
+  "status": "implementation_active",
+  "purpose": "Define the Phase 2 continuation and stop policy as a read-only shadow projection over authority facts already held by the stage-runner bridge, without authorizing execution, resuming a run, dispatching work, terminating a run, or mutating durable state.",
+  "mode": "shadow_only",
+  "authorityBoundary": {
+    "upstreamAuthority": "stage_runner_bridge_existing_authority_projection",
+    "consumes": [
+      "the existing authoritative stage DAG binding",
+      "the existing durable resume snapshot held by the bridge",
+      "the existing durable run projection held by the bridge",
+      "the existing bridge node-settlement records",
+      "the canonical M3-A01 evidence-transition shadow result"
+    ],
+    "rule": "M3-A02 consumes only the already-produced, same-settlement durable authority snapshot. It may not independently load, replay, resume, refresh, infer, or mutate execution truth.",
+    "resumableFieldAccepted": false,
+    "callerTimeAccepted": false,
+    "stopTerminatesOrKillsRun": false,
+    "dispositionAuthority": "advisory_only"
+  },
+  "commandSchema": {
+    "exactTopLevelFields": [
+      "binding",
+      "authoritySnapshot",
+      "goalAssessment",
+      "workAssessment",
+      "evidenceAssessment",
+      "blockerAssessment",
+      "humanDecisionAssessment",
+      "scopeAssessment",
+      "repeatAssessment",
+      "controlAssessment",
+      "evidenceTransition"
+    ],
+    "binding": {
+      "exactFields": [
+        "runId",
+        "taskFingerprint",
+        "graphDigest",
+        "projectionDigest",
+        "durableCursor",
+        "headEventHash",
+        "headCheckpointId",
+        "policyDigest",
+        "evaluationRevision"
+      ],
+      "digestFormat": "sha256:<64 lowercase hexadecimal characters>",
+      "nonNegativeSafeIntegerFields": [
+        "durableCursor",
+        "evaluationRevision"
+      ],
+      "nullableFields": [
+        "headEventHash",
+        "headCheckpointId"
+      ],
+      "bindingGroups": {
+        "a01AndDurableAuthorityFields": [
+          "runId",
+          "taskFingerprint",
+          "graphDigest",
+          "policyDigest"
+        ],
+        "durableSnapshotFields": [
+          "projectionDigest",
+          "durableCursor",
+          "headEventHash",
+          "headCheckpointId"
+        ],
+        "callerAssessmentRevisionField": "evaluationRevision"
+      },
+      "exactBindingRule": "runId, taskFingerprint, graphDigest, and policyDigest must match the canonical M3-A01 result and the bridge-held durable or policy authority; projectionDigest, durableCursor, headEventHash, and headCheckpointId must match the existing durable authority snapshot; evaluationRevision is only the caller assessment revision and never establishes authority, currentness, or single use. Any authority conflict escalates and may not degrade to wait."
+    },
+    "authoritySnapshot": {
+      "exactFields": [
+        "source",
+        "projectionSchemaVersion",
+        "runStatus",
+        "runId",
+        "taskFingerprint",
+        "graphDigest",
+        "cursor",
+        "headEventHash",
+        "headCheckpointId",
+        "projectionDigest",
+        "eventChainState",
+        "blockingEffectRefs",
+        "activeClaimRefs",
+        "bridgeSettlementState",
+        "currentness"
+      ],
+      "fixedSource": "stage_runner_bridge_existing_authority_projection",
+      "runStatusValues": [
+        "active",
+        "completed",
+        "failed",
+        "blocked"
+      ],
+      "eventChainStateValues": [
+        "verified",
+        "failed",
+        "unknown"
+      ],
+      "bridgeSettlementStateValues": [
+        "settled",
+        "failed",
+        "incomplete",
+        "unknown"
+      ],
+      "currentnessValues": [
+        "bound_same_bridge_settlement",
+        "active_claim_present",
+        "unresolved_effect_present",
+        "unproven"
+      ],
+      "referenceCollections": [
+        "blockingEffectRefs",
+        "activeClaimRefs"
+      ],
+      "referenceCollectionType": "dense_plain_array_of_non_empty_opaque_strings"
+    },
+    "assessmentSchema": {
+      "sharedExactFields": [
+        "state",
+        "evidenceRefs",
+        "assessmentDigest"
+      ],
+      "evidenceRefsType": "dense_plain_array_of_non_empty_opaque_strings",
+      "goalAssessment": {
+        "stateValues": [
+          "unfinished",
+          "satisfied",
+          "unknown"
+        ]
+      },
+      "workAssessment": {
+        "stateValues": [
+          "executable_candidate_present",
+          "none",
+          "unknown"
+        ]
+      },
+      "evidenceAssessment": {
+        "stateValues": [
+          "new_valid_evidence_expected",
+          "none_expected",
+          "unknown"
+        ]
+      },
+      "blockerAssessment": {
+        "stateValues": [
+          "none",
+          "recoverable",
+          "hard",
+          "unknown"
+        ]
+      },
+      "humanDecisionAssessment": {
+        "stateValues": [
+          "not_required",
+          "pending",
+          "answered_verified",
+          "denied",
+          "unknown"
+        ]
+      },
+      "scopeAssessment": {
+        "stateValues": [
+          "inside",
+          "outside",
+          "unknown"
+        ]
+      },
+      "repeatAssessment": {
+        "stateValues": [
+          "novel",
+          "repeat_only",
+          "unknown"
+        ]
+      },
+      "controlAssessment": {
+        "exactFields": [
+          "state",
+          "controlRef",
+          "evidenceRefs",
+          "assessmentDigest"
+        ],
+        "stateValues": [
+          "none",
+          "stop_verified",
+          "continue_verified",
+          "unknown"
+        ],
+        "verifiedSourceRule": "stop_verified requires a verified host decision or a validator-passing plan-challenge artifact. continue_verified means only that the user did not request stop and never bypasses another continuation condition.",
+        "forbiddenVerifiedSources": [
+          "transcript text",
+          "compaction text",
+          "stop-save text",
+          "local continuity hint"
+        ]
+      }
+    },
+    "evidenceTransition": {
+      "exactFields": [
+        "schemaVersion",
+        "resultDigest",
+        "bindingDigest",
+        "evaluationStatus",
+        "verdict"
+      ],
+      "evaluationStatusValues": [
+        "evaluated",
+        "not_evaluated_missing_normalized_input",
+        "not_evaluated_invalid_normalized_input"
+      ],
+      "verdictValues": [
+        "allowed",
+        "blocked",
+        "in_doubt"
+      ],
+      "validationRule": "Revalidate and digest the canonical M3-A01 result. Caller-reported result, binding, digest, evaluation status, or verdict is never trusted.",
+      "allowedIsExecutionAuthority": false
+    },
+    "structuralSafety": {
+      "unknownOrMissingFields": "reject",
+      "plainDataObjectsOnly": true,
+      "denseArraysOnly": true,
+      "accessorsAllowed": false,
+      "proxiesAllowed": false,
+      "prototypePollutionKeysAllowed": false
+    }
+  },
+  "decisionPolicy": {
+    "dispositions": [
+      "continue",
+      "wait",
+      "stop",
+      "escalate"
+    ],
+    "priority": [
+      "escalate",
+      "stop",
+      "wait",
+      "continue"
+    ],
+    "reasonCodes": {
+      "escalate": [
+        "authority_binding_mismatch",
+        "projection_integrity_failed",
+        "unsupported_projection_schema",
+        "required_work_out_of_scope",
+        "hard_blocker_requires_route_change",
+        "contradictory_authoritative_signals",
+        "invalid_shadow_input"
+      ],
+      "stop": [
+        "verified_user_stop",
+        "authoritative_run_terminal",
+        "all_goals_satisfied",
+        "repeat_only_no_new_evidence",
+        "no_unfinished_goal"
+      ],
+      "wait": [
+        "authority_snapshot_currentness_unproven",
+        "active_claim_requires_kernel_recheck",
+        "unresolved_effect_present",
+        "bridge_settlement_incomplete",
+        "awaiting_human_decision",
+        "human_decision_denied",
+        "recoverable_blocker_present",
+        "goal_state_unknown",
+        "no_executable_work_observed",
+        "work_state_unknown",
+        "new_evidence_opportunity_unknown",
+        "evidence_transition_blocked",
+        "evidence_transition_in_doubt",
+        "evidence_transition_not_evaluated"
+      ],
+      "continue": [
+        "unfinished_goal_executable_in_scope",
+        "new_valid_evidence_expected",
+        "shadow_evidence_transition_allowed"
+      ]
+    },
+    "escalateRules": [
+      "A binding mismatch between command, authority snapshot, or M3-A01 result escalates.",
+      "eventChainState failed escalates.",
+      "bridgeSettlementState failed escalates.",
+      "an unsupported projection schema escalates.",
+      "required work outside scope escalates.",
+      "an active run with no work and an unfinished goal is contradictory and escalates."
+    ],
+    "stopRules": [
+      "A verified user stop produces an advisory stop disposition.",
+      "A clean authoritative terminal run produces stop.",
+      "A satisfied goal produces stop.",
+      "repeat-only work with no prospect of new valid evidence produces stop.",
+      "stop is a recommendation and must not kill, terminate, cancel, or write terminal run status."
+    ],
+    "waitRules": [
+      "Absent a higher-priority escalate or stop condition, any active claim produces wait regardless of caller time, lease age, or apparent expiry; an active claim always blocks continue.",
+      "currentness other than bound_same_bridge_settlement produces wait unless a higher-priority integrity conflict escalates.",
+      "Any unresolved blocking effect produces wait unless a higher-priority hard blocker escalates.",
+      "A pending or denied human decision produces wait. Phase 2 does not prove Safe Independent Progress.",
+      "A blocked, in_doubt, or not-evaluated M3-A01 evidence transition produces wait.",
+      "Unknown goal, work, or evidence potential produces wait."
+    ],
+    "continueAllRequired": [
+      "authoritySnapshot.runStatus === active",
+      "authoritySnapshot.eventChainState === verified",
+      "authoritySnapshot.currentness === bound_same_bridge_settlement",
+      "authoritySnapshot.bridgeSettlementState === settled",
+      "authoritySnapshot.blockingEffectRefs.length === 0",
+      "authoritySnapshot.activeClaimRefs.length === 0",
+      "goalAssessment.state === unfinished",
+      "workAssessment.state === executable_candidate_present",
+      "evidenceAssessment.state === new_valid_evidence_expected",
+      "blockerAssessment.state === none",
+      "humanDecisionAssessment.state === not_required || humanDecisionAssessment.state === answered_verified",
+      "scopeAssessment.state === inside",
+      "repeatAssessment.state === novel",
+      "controlAssessment.state !== stop_verified",
+      "evidenceTransition.evaluationStatus === evaluated",
+      "evidenceTransition.verdict === allowed",
+      "all exact bindings match"
+    ],
+    "continueMeaning": "shadow policy recommends continuation",
+    "continueMustNotMean": [
+      "execution may begin",
+      "scheduler may dispatch",
+      "run may resume"
+    ]
+  },
+  "resultSchema": {
+    "schemaVersion": "continuation-policy-shadow-v1",
+    "kind": "continuation_policy_shadow_result",
+    "exactTopLevelFields": [
+      "schemaVersion",
+      "kind",
+      "binding",
+      "bindingDigest",
+      "authoritySnapshot",
+      "goalAssessment",
+      "workAssessment",
+      "evidenceAssessment",
+      "blockerAssessment",
+      "humanDecisionAssessment",
+      "scopeAssessment",
+      "repeatAssessment",
+      "controlAssessment",
+      "evidenceTransition",
+      "disposition",
+      "eventIntents",
+      "authorization"
+    ],
+    "binding": {
+      "exactFieldsRef": "commandSchema.binding.exactFields"
+    },
+    "authoritySnapshot": {
+      "exactFieldsRef": "commandSchema.authoritySnapshot.exactFields"
+    },
+    "assessmentFieldsRef": "commandSchema.assessmentSchema",
+    "evidenceTransition": {
+      "exactFieldsRef": "commandSchema.evidenceTransition.exactFields"
+    },
+    "disposition": {
+      "exactFields": [
+        "action",
+        "reasonCodes",
+        "evidenceRefs"
+      ],
+      "actionValuesRef": "decisionPolicy.dispositions",
+      "reasonCodesRef": "decisionPolicy.reasonCodes"
+    },
+    "eventIntents": {
+      "collection": "dense_plain_array",
+      "itemExactFields": [
+        "kind",
+        "intentDigest",
+        "disposition",
+        "reasonCodesDigest",
+        "persisted",
+        "authoritative",
+        "writeAllowed"
+      ],
+      "fixedValues": {
+        "kind": "continuation_shadow_observed",
+        "persisted": false,
+        "authoritative": false,
+        "writeAllowed": false
+      }
+    },
+    "authorization": {
+      "exactFields": [
+        "continuationAuthorized",
+        "executionAllowed",
+        "schedulerDispatchAllowed",
+        "todoMutationAllowed",
+        "authoritativeWriteAllowed",
+        "eventPersistenceAllowed",
+        "durableCursorAdvanceAllowed",
+        "completeNodeAllowed",
+        "runTerminalStatusWriteAllowed",
+        "checkpointMutationAllowed",
+        "leaseMutationAllowed",
+        "fenceMutationAllowed",
+        "legacyGateCutoverAllowed"
+      ],
+      "allValues": false
+    },
+    "assurance": {
+      "currentnessEstablished": false,
+      "singleUseEstablished": false,
+      "projectionAuthority": false,
+      "rule": "These are contract-level non-authorizing assurances and are not additional caller-supplied or result fields."
+    },
+    "deeplyFrozen": true,
+    "deterministic": true,
+    "stableSortedReasonCodes": true,
+    "unknownOrMissingFields": "reject"
+  },
+  "adapterContract": {
+    "module": "scripts/governed-execution/continuation-policy-shadow-adapter.mjs",
+    "api": "buildContinuationPolicyShadowProjection(normalizedInput, { authoritativeSnapshot, evidenceTransitionShadowProjection })",
+    "envelopeExactFields": [
+      "schemaVersion",
+      "mode",
+      "evaluationStatus",
+      "disposition",
+      "result",
+      "authority"
+    ],
+    "fixedAuthority": {
+      "gatesExecution": false,
+      "writesKernel": false,
+      "writesEvents": false,
+      "completesNode": false,
+      "advancesCursor": false,
+      "changesCheckpoint": false,
+      "changesLease": false,
+      "changesFence": false,
+      "dispatchesScheduler": false,
+      "terminatesRun": false,
+      "projectionOnly": true
+    },
+    "invalidInputEnvelope": {
+      "evaluationStatus": "not_evaluated_invalid_normalized_input",
+      "disposition": "escalate",
+      "result": null,
+      "retainsCallerInputOrExceptionDetail": false
+    },
+    "forbiddenSourceCalls": [
+      "projectRun(",
+      "resumeRun(",
+      "completeNode(",
+      "appendEvent(",
+      "claimNode(",
+      "heartbeatNode(",
+      "setRunTerminalStatus(",
+      "selectMaximalSafeReadySet("
+    ]
+  },
+  "bridgeProjection": {
+    "field": "continuationPolicyShadowProjection",
+    "placement": "sibling_of_evidenceTransitionShadowProjection",
+    "derivationOrder": [
+      "existing stageDagPacket",
+      "existing durableContext.resume",
+      "existing durableRunProjection",
+      "existing bridge node settlement records",
+      "upstream authoritySnapshot",
+      "canonical M3-A01 evidenceTransitionShadowProjection",
+      "normalized Phase 2 assessments",
+      "continuationPolicyShadowProjection"
+    ],
+    "shadowToggleMustPreserve": [
+      "durableRunProjection",
+      "events",
+      "cursor",
+      "checkpoint lineage",
+      "completedNodes",
+      "nodeRecords",
+      "workerResults",
+      "stageDagPacket",
+      "legacy completeNode behavior"
+    ]
+  },
+  "dataSafety": {
+    "factsUseClosedStatesOnly": true,
+    "referenceOnly": true,
+    "forbiddenInputOrRetention": [
+      "raw events",
+      "providerBinding",
+      "raw output",
+      "raw error",
+      "filesystem path",
+      "secret",
+      "credential",
+      "token",
+      "stdout",
+      "stderr",
+      "now",
+      "observedAtMs",
+      "leaseExpiresAtMs"
+    ],
+    "boundedFailureEnvelopeOnly": true,
+    "callerOriginalValuesRetainedOnFailure": false
+  },
+  "prohibitedActions": [
+    "call projectRun or resumeRun from the M3-A02 domain or adapter",
+    "create a new durable table, event store, checkpoint, or authority source",
+    "write governed_events or advance its cursor",
+    "mutate node completion, claims, leases, fences, checkpoints, or terminal run status",
+    "change scheduler ready-set selection or dispatch work",
+    "write a continuation disposition back into spine state",
+    "connect this shadow projection to a production execution gate",
+    "treat stop as kill, cancellation, or terminal-status mutation",
+    "treat continue as run-resume or execution authorization",
+    "start M3-P3 or activate legacy gate cutover"
+  ],
+  "m3P3Boundary": {
+    "state": "deferred_not_started",
+    "mayStartDuringM3A02": false,
+    "legacyGateCutoverAllowed": false
+  },
+  "acceptance": {
+    "jsonParseRequired": true,
+    "fourDispositionsCovered": true,
+    "continueRequiresEveryCondition": true,
+    "activeClaimBlocksContinue": true,
+    "unprovenCurrentnessWaits": true,
+    "eventChainFailureEscalates": true,
+    "bindingConflictEscalates": true,
+    "terminalCleanRunStops": true,
+    "pendingHumanDecisionWaits": true,
+    "stopNeverTerminatesRun": true,
+    "allAuthorizationValuesRemainFalse": true,
+    "shadowTogglePreservesLegacyExecutionTruth": true,
+    "m3P3RemainsDeferred": true
+  },
+  "nonGoals": [
+    "Safe Independent Progress proof",
+    "authoritative continuation or stop control",
+    "run resume or execution authorization",
+    "scheduler or Todo mutation",
+    "kernel, event, cursor, checkpoint, lease, fence, claim, or terminal-status mutation",
+    "raw evidence retention",
+    "M3-P3 execution or legacy gate cutover"
+  ]
+}

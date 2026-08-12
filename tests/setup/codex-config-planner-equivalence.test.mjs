@@ -132,6 +132,10 @@ describe("Codex config native-control planner compatibility", () => {
       "default_mode_request_user_input = true # user comment",
       "js_repl = true",
       "",
+      "[agents]",
+      "max_threads = 2",
+      "max_depth = 1",
+      "",
     ].join("\n");
     const options = { platformName: "linux" };
     const planned = planCodexAppNativeControls(input, options);

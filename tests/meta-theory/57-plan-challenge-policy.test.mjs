@@ -664,14 +664,15 @@ describe("57 - risk-adaptive plan challenge", () => {
       const targetRelative =
         candidateOnly.wardenWritebackFlow.candidates[0].targetRelativeToCanonical;
       const approvalPacket = {
-        schemaVersion: "warden-approval-v0.1",
+        schemaVersion: "warden-approval-v0.2",
         approvalId: "plan-challenge-write-gate-approval",
         approver: "meta-warden",
         approvedAt: "2026-07-14T00:00:00.000Z",
-        scope: "test only: approved target remains blocked while user choice is pending",
-        targets: [`canonical/${targetRelative}`],
+        scope: "canonical_reverse_sync",
+        mutationBindings: [candidateOnly.wardenWritebackFlow.candidates[0].mutationBinding],
         diffSummary: "Approve the temp candidate only after the challenge closes.",
         rollbackPlan: "Remove the temp canonical file.",
+        riskReview: { status: "accepted", owner: "meta-sentinel" },
       };
       const blocked = await runMetaTheoryGovernedExecution({
         task,

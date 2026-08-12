@@ -81,6 +81,8 @@ describe("sync-runtimes / target selection", () => {
     assert.match(source, /manifestFileEntryMatches\(entry, filePath\)/);
     assert.match(source, /entry\.source === "sync-runtimes"/);
     assert.match(source, /await enforceGlobalOnlyProjectShape\(changedFiles\)/);
+    assert.match(source, /mcp_servers\.meta-kim-runtime/);
+    assert.match(source, /mcp_servers\.meta_kim_runtime/);
     assert.doesNotMatch(source, /replaceSources:\s*\["sync-runtimes"\]/);
   });
 
@@ -360,6 +362,24 @@ describe("sync-runtimes / install projection ownership", () => {
 });
 
 describe("sync-runtimes / Codex project hooks", () => {
+  test("fresh Codex project config does not auto-register a per-session stdio MCP", () => {
+    const configExample = [
+      'approval_policy = "on-request"',
+      "[features]",
+      "default_mode_request_user_input = true",
+      "[agents]",
+      "max_threads = 2",
+      "max_depth = 1",
+      "",
+    ].join("\n");
+    const out = buildCodexProjectConfig("", configExample, {
+      platformName: "linux",
+      codexHome: "/tmp/codex-home",
+    });
+    assert.doesNotMatch(out, /\[mcp_servers\./);
+    assert.match(out, /max_threads = 2/);
+  });
+
   test("project Codex config preserves local MCP while enabling native choice surface", () => {
     const existingProjectConfig = [
       "[mcp_servers.meta-kim-runtime]",
@@ -375,7 +395,7 @@ describe("sync-runtimes / Codex project hooks", () => {
       "default_mode_request_user_input = true",
       "",
       "[agents]",
-      "max_threads = 6",
+      "max_threads = 2",
       "max_depth = 1",
       "",
     ].join("\n");

@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import {
@@ -58,7 +59,123 @@ const jsonMode = process.argv.includes("--json");
 const reverseMode = process.argv.includes("--reverse");
 const dryRun = process.argv.includes("--dry-run");
 const forceWrite = process.argv.includes("--force");
+const applyReverseWriteback = process.argv.includes("--apply");
+const reverseApprovalArgIndex = cliArgs.indexOf("--approval");
+const reverseApprovalPath = reverseApprovalArgIndex >= 0
+  ? cliArgs[reverseApprovalArgIndex + 1]
+  : null;
+const reverseCandidateOutputArgIndex = cliArgs.indexOf("--candidate-output");
+const reverseCandidateOutputPath = reverseCandidateOutputArgIndex >= 0
+  ? cliArgs[reverseCandidateOutputArgIndex + 1]
+  : null;
 const PROJECT_RUNTIME_SKILL_IDS = new Set(["meta-theory"]);
+
+function sha256Binding(value) {
+  return `sha256:${createHash("sha256").update(String(value), "utf8").digest("hex")}`;
+}
+
+function canonicalTargetRef(filePath) {
+  return path.relative(repoRoot, filePath).replace(/\\/gu, "/");
+}
+
+export function buildReverseSyncMutationCandidate(signal) {
+  const targetRef = canonicalTargetRef(signal.canonicalPath);
+  const operation = signal.type === "new" ? "create" : "replace";
+  const expectedSourceDigest = sha256Binding(
+    signal.canonicalContent ?? "__META_KIM_MISSING_CANONICAL_SOURCE__",
+  );
+  const candidateDigest = sha256Binding(signal.runtimeContent);
+  const rollbackPlanDigest = sha256Binding(JSON.stringify({
+    operation: "restore_exact_prior_bytes",
+    targetRef,
+    expectedSourceDigest,
+  }));
+  const transitionId = sha256Binding(JSON.stringify({
+    targetRef,
+    operation,
+    candidateDigest,
+    expectedSourceDigest,
+  }));
+  return {
+    targetRef,
+    operation,
+    transitionId,
+    candidateDigest,
+    expectedSourceDigest,
+    rollbackPlanDigest,
+  };
+}
+
+export function buildReverseSyncCandidateArtifact(mutationCandidates) {
+  return {
+    schemaVersion: "reverse-sync-candidate-v1",
+    scope: "canonical_reverse_sync",
+    mutationCandidates: mutationCandidates.map((candidate) => ({ ...candidate })),
+    approvalPacketTemplate: {
+      schemaVersion: "warden-approval-v0.2",
+      approvalId: "replace-with-review-id",
+      approver: "meta-warden",
+      approvedAt: "replace-with-canonical-ISO-timestamp",
+      scope: "canonical_reverse_sync",
+      mutationBindings: mutationCandidates.map((candidate) => ({ ...candidate })),
+      diffSummary: "replace-with-reviewed-diff-summary",
+      rollbackPlan: { strategy: "restore_exact_prior_bytes" },
+      riskReview: { status: "replace-with-review-result", owner: "meta-sentinel" },
+    },
+  };
+}
+
+async function readReverseSyncCanonicalContent(filePath) {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return "__META_KIM_MISSING_CANONICAL_SOURCE__";
+    throw error;
+  }
+}
+
+async function writeReverseSyncBytesAtomically(filePath, content) {
+  const tempPath = `${filePath}.meta-kim-restore-${process.pid}-${Date.now()}.tmp`;
+  let handle;
+  try {
+    handle = await fs.open(tempPath, "wx", 0o600);
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.rename(tempPath, filePath);
+  } finally {
+    await handle?.close().catch(() => {});
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+  }
+}
+
+export async function rollbackReverseSyncPriorStates(priorStates, { faultInjector = null } = {}) {
+  const rollbackErrors = [];
+  for (const prior of [...priorStates].reverse()) {
+    try {
+      await faultInjector?.(prior);
+      if (prior.priorContent === null) {
+        await fs.rm(prior.path, { force: true });
+      } else {
+        await writeReverseSyncBytesAtomically(prior.path, prior.priorContent);
+      }
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  if (rollbackErrors.length > 0) {
+    throw new AggregateError(rollbackErrors, "Reverse sync rollback could not restore every prior state");
+  }
+}
+
+export async function assertReverseSyncSourcePrestate(signal, candidate) {
+  const content = await readReverseSyncCanonicalContent(signal.canonicalPath);
+  if (sha256Binding(content) !== candidate.expectedSourceDigest) {
+    throw new Error(`Canonical source changed after approval candidate creation: ${candidate.targetRef}`);
+  }
+  return content === "__META_KIM_MISSING_CANONICAL_SOURCE__" ? null : content;
+}
 
 export function parseGlobalAssetTypesArg(
   argv,
@@ -915,67 +1032,10 @@ async function executeReverseSync(dirs, selectedTargets) {
 
   if (allSignals.length === 0) {
     console.log(t.reverseModeNoSignals);
-    return [];
+    return { signals: [], applied: false, canonicalWrites: 0 };
   }
 
   console.log(t.reverseModeSignalsFound(allSignals.length));
-  console.log("");
-
-  // Import gate functions for validation
-  const {
-    processEvolutionPacket
-  } = await import("./evolution-writeback-gate.mjs");
-
-  // Build evolution packet from signals
-  const evolutionPacket = {
-    writebackDecision: "writeback",
-    writebacks: allSignals.map(s => s.canonicalPath),
-    retain: [],
-    upgrade: [],
-    retire: [],
-    scarIds: [],
-    syncRequired: true,
-    signalSummary: {
-      totalSignals: allSignals.length,
-      byType: allSignals.reduce((acc, s) => {
-        acc[s.type] = (acc[s.type] || 0) + 1;
-        return acc;
-      }, {}),
-      bySeverity: allSignals.reduce((acc, s) => {
-        acc[s.severity] = (acc[s.severity] || 0) + 1;
-        return acc;
-      }, {})
-    }
-  };
-
-  // Pass through Evolution Writeback Gate
-  console.log("[Gate] Passing signals through Evolution Writeback Gate...");
-  const gateResult = await processEvolutionPacket(evolutionPacket, {
-    force: forceWrite,
-    dryRun: dryRun
-  });
-
-  console.log(`[Gate] Decision: ${gateResult.decision}`);
-  console.log(`[Gate] Risk Level: ${gateResult.riskLevel}`);
-  console.log(`[Gate] Reason: ${gateResult.reason}`);
-
-  // If gate rejects, stop here
-  if (gateResult.decision === "reject") {
-    console.log("");
-    console.error(`[Gate] Rejected: ${gateResult.reason}`);
-    throw new Error(`Evolution writeback rejected: ${gateResult.reason}`);
-  }
-
-  // If gate defers (needs user confirmation), stop unless --force
-  if (gateResult.decision === "defer" && !forceWrite) {
-    console.log("");
-    console.log("[Gate] User confirmation required");
-    console.log("Use --force to proceed anyway.");
-    throw new Error("Evolution writeback deferred: user confirmation required");
-  }
-
-  console.log("");
-  console.log("[Gate] Approved - proceeding with writeback");
   console.log("");
 
   // Categorize signals
@@ -1015,7 +1075,7 @@ async function executeReverseSync(dirs, selectedTargets) {
       // In non-interactive context, abort on conflict
       console.error(t.reverseModeAborted);
       process.exitCode = 1;
-      return allSignals;
+      return { signals: allSignals, applied: false, canonicalWrites: 0 };
     }
 
     if (forceWrite) {
@@ -1034,26 +1094,122 @@ async function executeReverseSync(dirs, selectedTargets) {
     }
   }
 
-  // Dry run: show what would be written
-  if (dryRun) {
+  // `--force` controls only already-approved conflict handling. It never
+  // creates, widens, or substitutes for Warden approval.
+  const toWrite = forceWrite ? [...safeWrites, ...conflicts] : safeWrites;
+  const mutationCandidates = toWrite.map(buildReverseSyncMutationCandidate);
+  const candidateArtifact = buildReverseSyncCandidateArtifact(mutationCandidates);
+  if (reverseCandidateOutputPath) {
+    const outputPath = path.resolve(reverseCandidateOutputPath);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, `${JSON.stringify(candidateArtifact, null, 2)}\n`, "utf8");
+    console.log(`[ReverseSyncCandidate] ${outputPath}`);
+  }
+  if (jsonMode) {
+    console.log(`[ReverseSyncCandidateJSON] ${JSON.stringify(candidateArtifact)}`);
+  }
+  const approvalPacket = reverseApprovalPath
+    ? JSON.parse(await fs.readFile(path.resolve(reverseApprovalPath), "utf8"))
+    : null;
+
+  const { processEvolutionPacket } = await import("./evolution-writeback-gate.mjs");
+  const evolutionPacket = {
+    writebackDecision: "writeback",
+    decisionReason: "Runtime projection changes are lifecycle candidates until Warden approval is exact-bound",
+    writebacks: toWrite.map((signal) => signal.canonicalPath),
+    mutationCandidates,
+    retain: [],
+    upgrade: [],
+    retire: [],
+    scarIds: [],
+    syncRequired: true,
+    signalSummary: {
+      totalSignals: toWrite.length,
+      byType: toWrite.reduce((acc, signal) => {
+        acc[signal.type] = (acc[signal.type] || 0) + 1;
+        return acc;
+      }, {}),
+      bySeverity: toWrite.reduce((acc, signal) => {
+        acc[signal.severity] = (acc[signal.severity] || 0) + 1;
+        return acc;
+      }, {}),
+    },
+  };
+
+  console.log("[Gate] Passing exact-bound candidates through Evolution Writeback Gate...");
+  const gateResult = await processEvolutionPacket(evolutionPacket, {
+    force: forceWrite,
+    dryRun,
+    apply: applyReverseWriteback,
+    approvalPacket,
+    mutationCandidates,
+    requiredApprovalScope: "canonical_reverse_sync",
+  });
+  console.log(`[Gate] Decision: ${gateResult.decision}`);
+  console.log(`[Gate] Risk Level: ${gateResult.riskLevel}`);
+  console.log(`[Gate] Reason: ${gateResult.reason}`);
+
+  if (gateResult.decision === "reject") {
+    throw new Error(`Evolution writeback rejected: ${gateResult.reason}`);
+  }
+  if (gateResult.decision === "defer" || gateResult.decision === "escalate") {
+    throw new Error(`Evolution writeback ${gateResult.decision}: ${gateResult.reason}`);
+  }
+  if (dryRun || gateResult.decision !== "approve" || !applyReverseWriteback) {
     console.log("");
-    console.log(t.reverseModeDryRun);
-    return allSignals;
+    console.log(
+      dryRun
+        ? t.reverseModeDryRun
+        : "Candidate collection complete: canonicalWrites=0. Supply --approval <file> --apply after Warden review.",
+    );
+    return {
+      signals: allSignals,
+      mutationCandidates,
+      candidateArtifact,
+      applied: false,
+      canonicalWrites: 0,
+    };
   }
 
-  // Perform writeback for safe writes and forced conflicts
-  const toWrite = forceWrite ? [...safeWrites, ...conflicts] : safeWrites;
-  const writtenFiles = [];
+  // Re-read every canonical source before the first write. Approval binds the
+  // exact pre-state, so a concurrent/user edit invalidates the whole batch.
+  for (let index = 0; index < toWrite.length; index += 1) {
+    const signal = toWrite[index];
+    await assertReverseSyncSourcePrestate(signal, mutationCandidates[index]);
+  }
 
-  for (const signal of toWrite) {
-    try {
+  const writtenFiles = [];
+  const priorStates = [];
+
+  try {
+    for (let index = 0; index < toWrite.length; index += 1) {
+      const signal = toWrite[index];
+      const priorContent = await assertReverseSyncSourcePrestate(signal, mutationCandidates[index]);
+      priorStates.push({ path: signal.canonicalPath, priorContent });
       await ensureDir(path.dirname(signal.canonicalPath));
-      await fs.writeFile(signal.canonicalPath, signal.runtimeContent, "utf8");
+      const tempPath = `${signal.canonicalPath}.meta-kim-writeback-${process.pid}.tmp`;
+      try {
+        await fs.writeFile(tempPath, signal.runtimeContent, "utf8");
+        // The approval pre-state is rechecked immediately before each atomic
+        // rename, after the replacement bytes are fully materialized.
+        await assertReverseSyncSourcePrestate(signal, mutationCandidates[index]);
+        await fs.rename(tempPath, signal.canonicalPath);
+      } finally {
+        await fs.rm(tempPath, { force: true });
+      }
       console.log(`  [writeback] ${signal.displayPath} -> canonical/${path.relative(repoRoot, signal.canonicalPath)}`);
       writtenFiles.push(signal.canonicalPath);
-    } catch (error) {
-      console.error(t.reverseModeWriteFailed(signal.displayPath, error.message));
     }
+  } catch (error) {
+    try {
+      await rollbackReverseSyncPriorStates(priorStates);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, ...rollbackError.errors],
+        "Reverse sync batch failed and rollback could not restore every prior state",
+      );
+    }
+    throw new Error(`Reverse sync batch rolled back: ${error.message}`);
   }
 
   if (writtenFiles.length > 0) {
@@ -1061,7 +1217,13 @@ async function executeReverseSync(dirs, selectedTargets) {
     console.log(t.reverseModeComplete(writtenFiles.length));
   }
 
-  return allSignals;
+  return {
+    signals: allSignals,
+    mutationCandidates,
+    candidateArtifact,
+    applied: writtenFiles.length > 0,
+    canonicalWrites: writtenFiles.length,
+  };
 }
 
 /**
@@ -2345,7 +2507,10 @@ async function enforceGlobalOnlyProjectShape(changedFiles) {
   );
   await rewriteGlobalOnlyConfig(
     path.join(repoRoot, ".codex", "config.toml"),
-    (raw) => stripTomlTable(raw, "mcp_servers.meta-kim-runtime"),
+    (raw) => stripTomlTable(
+      stripTomlTable(raw, "mcp_servers.meta-kim-runtime"),
+      "mcp_servers.meta_kim_runtime",
+    ),
     changedFiles,
   );
 }
@@ -3234,7 +3399,10 @@ Options:
   --check                        Show what would be synced without writing
   --reverse                      Reverse sync: runtime -> canonical (collect evolution signals)
   --dry-run                      Preview reverse sync changes without writing
-  --force                        Skip conflict warnings and overwrite canonical
+  --approval <file>              Exact Warden approval v0.2 for reverse-sync candidates
+  --candidate-output <file>      Write exact reverse-sync candidates plus an approval template
+  --apply                        Apply only exact approval-bound reverse-sync candidates
+  --force                        Include approved conflicts; never substitutes for approval
   --help, -h                     Show this help
 
 Scopes:
@@ -3247,9 +3415,11 @@ Examples:
   node sync-runtimes.mjs --scope global        # write to ~/.claude, ~/.codex, ~/.openclaw
   node sync-runtimes.mjs --scope global --targets claude  # Claude Code only, global
   node sync-runtimes.mjs --check                # preview changes
-  node sync-runtimes.mjs --reverse              # collect evolution signals from runtime
+  node sync-runtimes.mjs --reverse              # collect candidate-only evolution signals
   node sync-runtimes.mjs --reverse --dry-run    # preview reverse sync
-  node sync-runtimes.mjs --reverse --force      # force writeback without prompts
+  node sync-runtimes.mjs --reverse --force      # still candidate-only without approval
+  node sync-runtimes.mjs --reverse --candidate-output reverse-candidates.json
+  node sync-runtimes.mjs --reverse --approval approval.json --apply
 `);
     return;
   }
@@ -3316,16 +3486,22 @@ Examples:
 
   // ── Reverse Mode: Runtime -> Canonical signal propagation ─────────────
   if (reverseMode) {
-    const signals = await executeReverseSync(dirs, selectedTargets);
+    if (reverseApprovalArgIndex >= 0 && !reverseApprovalPath) {
+      throw new Error("--approval requires a packet file");
+    }
+    if (reverseCandidateOutputArgIndex >= 0 && !reverseCandidateOutputPath) {
+      throw new Error("--candidate-output requires a file path");
+    }
+    const reverseResult = await executeReverseSync(dirs, selectedTargets);
 
     // After reverse sync, optionally run forward sync to propagate updates
-    // to other runtimes (unless --dry-run)
-    if (!dryRun && signals.length > 0) {
+    // only after an exact-bound canonical batch was actually applied.
+    if (!dryRun && reverseResult.applied) {
       console.log("");
       console.log(t.reverseModePropagating);
       // Continue to forward sync below
     } else {
-      return signals;
+      return reverseResult.signals;
     }
   }
 

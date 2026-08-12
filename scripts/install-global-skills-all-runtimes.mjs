@@ -52,8 +52,7 @@ import {
 } from "./install-manifest.mjs";
 import {
   CODEX_REQUEST_USER_INPUT_FEATURE,
-  ensureCodexAppNativeControls,
-  mergeCodexConfigAddOnly,
+  reconcileCodexConfigAfterUpstreamInstall,
 } from "./codex-config-merge.mjs";
 import {
   detectManagedInstallConflict,
@@ -2509,14 +2508,17 @@ async function backupCodexGlobalAgentsBeforeUpstream(snapshot) {
 }
 
 async function restoreCodexConfigAfterUpstream(snapshot, runtimeHome) {
-  if (!snapshot || snapshot.text === null) return false;
+  if (!snapshot) return false;
   const upstreamText = (await pathExists(snapshot.configPath))
     ? await fs.readFile(snapshot.configPath, "utf8")
     : "";
-  const merged = mergeCodexConfigAddOnly(snapshot.text, upstreamText);
-  const next = ensureCodexAppNativeControls(merged, {
+  const next = reconcileCodexConfigAfterUpstreamInstall(
+    snapshot.text,
+    upstreamText,
+    {
     codexHome: runtimeHome,
-  });
+    },
+  );
   if (upstreamText === next) return false;
   await fs.writeFile(snapshot.configPath, next, "utf8");
   console.log(
@@ -2674,7 +2676,7 @@ async function ensureCodexChoiceSurfaceAfterInstall(runtimeHomes, activeTargets)
     ? await fs.readFile(configPath, "utf8")
     : "";
 
-  const next = ensureCodexAppNativeControls(previous, {
+  const next = reconcileCodexConfigAfterUpstreamInstall(previous, "", {
     codexHome: runtimeHomes.codex,
   });
 

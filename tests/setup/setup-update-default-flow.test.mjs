@@ -41,6 +41,26 @@ describe("setup update default flow", () => {
     assert.doesNotMatch(source, /return summarizeInstallStatus\(\[\]\)/);
   });
   const source = readFileSync(path.join(repoRoot, "setup.mjs"), "utf8");
+  const stableSetupApplicationSource = readFileSync(
+    path.join(
+      repoRoot,
+      "src",
+      "application",
+      "installer",
+      "ensure-stable-global-projection-package.mjs",
+    ),
+    "utf8",
+  );
+  const projectionPackageBoundarySource = readFileSync(
+    path.join(
+      repoRoot,
+      "src",
+      "infrastructure",
+      "installer",
+      "projection-package-boundary.mjs",
+    ),
+    "utf8",
+  );
   const i18nStrings = readFileSync(path.join(repoRoot, "config", "i18n", "setup-strings.mjs"), "utf8");
   const projectFileSafetySource = readFileSync(
     path.join(repoRoot, "scripts", "project-bootstrap-file-safety.mjs"),
@@ -269,14 +289,29 @@ describe("setup update default flow", () => {
   });
 
   test("global install and update hand off to the immutable package before persistent writes", () => {
-    assert.match(source, /async function handOffGlobalSetupIfNeeded\(/);
-    assert.match(source, /verifyExecutingGlobalProjectionPackage\(/);
-    assert.match(source, /materializeGlobalProjectionPackage\(/);
-    assert.match(source, /sanitizeProjectionPackageEnvironment\(/);
-    assert.match(source, /join\(stablePackage\.packageRoot, "setup\.mjs"\)/);
-    assert.match(source, /childEnv\.META_KIM_CALLER_CWD = CALLER_CWD/);
+    assert.match(source, /ensureStableGlobalProjectionPackage\(/);
     assert.match(
-      source,
+      projectionPackageBoundarySource,
+      /verifyExecutingGlobalProjectionPackage\(/,
+    );
+    assert.match(
+      projectionPackageBoundarySource,
+      /materializeGlobalProjectionPackage\(/,
+    );
+    assert.match(
+      projectionPackageBoundarySource,
+      /sanitizeProjectionPackageEnvironment\(/,
+    );
+    assert.match(
+      projectionPackageBoundarySource,
+      /path\.join\(stablePackage\.packageRoot, "setup\.mjs"\)/,
+    );
+    assert.match(
+      projectionPackageBoundarySource,
+      /childEnv\.META_KIM_CALLER_CWD = resolvedCallerCwd/,
+    );
+    assert.match(
+      projectionPackageBoundarySource,
       /childEnv\[STABLE_PROJECT_DEPLOYMENTS_ENV\] = JSON\.stringify\([\s\S]*?targetDir:[\s\S]*?activeTargets:/,
       "stable handoff must preserve each managed project's path and runtime targets as structured data",
     );
@@ -286,13 +321,13 @@ describe("setup update default flow", () => {
       "managed project objects must never be coerced into [object Object] CLI paths",
     );
     assert.match(
-      source,
-      /function stableProjectDeploymentHandoff\(\)[\s\S]*?JSON\.parse\(raw\)[\s\S]*?resolveExistingManagedProjectCandidates\([\s\S]*?Stable project deployment targets changed before execution/,
+      projectionPackageBoundarySource,
+      /function readStableProjectDeploymentHandoff\(authority\)[\s\S]*?JSON\.parse\(raw\)[\s\S]*?resolveExistingManagedProjectCandidates\([\s\S]*?Stable project deployment targets changed before execution/,
       "stable child must revalidate the handed-off project manifest and its saved runtime targets",
     );
     assert.match(
-      source,
-      /async function detectExecutingStableProjectionPackage\(\)[\s\S]*?verifyExecutingGlobalProjectionPackage\([\s\S]*?projectionPackageWriteBoundaryFindings\([\s\S]*?PROJECT_DIR[\s\S]*?unverified package inside the projection store cannot execute setup/,
+      projectionPackageBoundarySource,
+      /async function detectExecutingStablePackage\(\)[\s\S]*?verifyExecutingGlobalProjectionPackage\([\s\S]*?projectionPackageWriteBoundaryFindings\([\s\S]*?sourceRoot[\s\S]*?unverified package inside the projection store cannot execute setup/,
       "an invalid package already inside the immutable store must fail closed",
     );
     assert.match(
@@ -325,12 +360,12 @@ describe("setup update default flow", () => {
       source.indexOf("async function runInstall()"),
       source.indexOf("async function runUpdate()"),
     );
-    const installHandoff = installSource.indexOf("handOffGlobalSetupIfNeeded");
+    const installHandoff = installSource.indexOf("ensureStableGlobalProjectionPackage");
     assert.ok(installHandoff > installSource.indexOf("const confirm = await askYesNo"));
     assert.ok(installHandoff < installSource.indexOf("// 步骤计数"));
     assert.match(
       installSource,
-      /mode: "install"[\s\S]*?skillIds: selectedSkillIds[\s\S]*?deployDirs/,
+      /mode: "install"[\s\S]*?skillIds: selectedSkillIds[\s\S]*?deployments: deployDirs/,
     );
     assert.match(installSource, /assertProjectPersistentWriteBoundary\(deployDirs, "install project target"\)/);
 
@@ -338,7 +373,7 @@ describe("setup update default flow", () => {
       source.indexOf("async function runUpdate()"),
       source.indexOf("async function runCheck()"),
     );
-    const updateHandoff = updateSource.indexOf("handOffGlobalSetupIfNeeded");
+    const updateHandoff = updateSource.indexOf("ensureStableGlobalProjectionPackage");
     assert.ok(updateHandoff > updateSource.indexOf("const updateSkillIds"));
     assert.ok(updateHandoff < updateSource.indexOf("// ── 1. npm install"));
     assert.match(
@@ -352,8 +387,11 @@ describe("setup update default flow", () => {
       /if \(needProject\) \{\s*if \(executingStableProjectionPackage\)[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED[\s\S]*?SETUP_NODE_CHILD\.RUNTIME_SYNC/,
       "project update from the stable public CLI must project directly to targets instead of syncing into the package root",
     );
-    assert.match(source, /async function stableProjectionPackageIntegrityOk\(\)/);
-    assert.match(source, /mergeDelegatedGlobalSetupResult\([\s\S]*?explicit_project_dirs/);
+    assert.match(source, /projectionPackageBoundary\.verifyExecutingIntegrity\(/);
+    assert.match(
+      stableSetupApplicationSource,
+      /function mergeDelegatedGlobalSetupResult\([\s\S]*?explicit_project_dirs/,
+    );
     assert.match(
       source,
       /async function installPythonTools\([\s\S]*?Graphify project integration[\s\S]*?join\(homedir\(\), "\.claude", "settings\.json"\)[\s\S]*?Graphify user Hook reconciliation/,
@@ -492,7 +530,7 @@ describe("setup update default flow", () => {
   test("global install/update refreshes only existing managed projects and keeps cleanup explicit", () => {
     assert.match(
       source,
-      /const handedOffProjectResolution = stableProjectDeploymentHandoff\(\);[\s\S]*?const managedProjectResolution = needProject\s*\? \{ deployments: await askDeployDirectory\(\), rejected: \[\] \}\s*:\s*\(handedOffProjectResolution \?\? await existingManagedProjectDeployments\(\)\);[\s\S]*?const deployDirs = managedProjectResolution\.deployments;/,
+      /const handedOffProjectResolution =\s*projectionPackageBoundary\.readStableProjectDeploymentHandoff\([\s\S]*?executingStableProjectionPackage,[\s\S]*?\);[\s\S]*?const managedProjectResolution = needProject\s*\? \{ deployments: await askDeployDirectory\(\), rejected: \[\] \}\s*:\s*\(handedOffProjectResolution \?\? await existingManagedProjectDeployments\(\)\);[\s\S]*?const deployDirs = managedProjectResolution\.deployments;/,
       "global install/update must reuse either the verified stable handoff or existing managed projects without a new prompt",
     );
     const installSource = source.slice(

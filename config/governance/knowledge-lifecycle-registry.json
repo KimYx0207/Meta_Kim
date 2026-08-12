@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "knowledge-lifecycle-registry-v1",
+  "revision": 0,
+  "updatedAt": "2026-08-12T00:00:00.000Z",
+  "entries": {
+    "canonical/skills/meta-theory/SKILL.md": {
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "kind": "knowledge",
+      "status": "active",
+      "foundational": true,
+      "executionClass": "execution_eligible",
+      "sourceDigest": "sha256:67b490e804b8710197c84da46713ecc3e0f33a57a5481f5648ac0127559f5ddb",
+      "replacementRefs": [],
+      "provenance": {
+        "sourceRefs": ["canonical/skills/meta-theory/SKILL.md"],
+        "evidenceRefs": ["AGENTS.md#Meta-Theory-Activation"],
+        "recordedAt": "2026-08-12T00:00:00.000Z"
+      },
+      "lifecycle": {
+        "lastTransitionId": "genesis:meta-theory-skill",
+        "changedAt": "2026-08-12T00:00:00.000Z",
+        "reason": "Foundational governed-execution source retained as active."
+      }
+    },
+    "config/contracts/core-loop-contract.json": {
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "kind": "rule",
+      "status": "active",
+      "foundational": true,
+      "executionClass": "execution_eligible",
+      "sourceDigest": "sha256:2ec5d1012785a9e2fe38b871ab48cbcbbe318d46bda500c920d521d7b89d6397",
+      "replacementRefs": [],
+      "provenance": {
+        "sourceRefs": ["config/contracts/core-loop-contract.json"],
+        "evidenceRefs": ["AGENTS.md#Eight-Stage-Spine"],
+        "recordedAt": "2026-08-12T00:00:00.000Z"
+      },
+      "lifecycle": {
+        "lastTransitionId": "genesis:core-loop-contract",
+        "changedAt": "2026-08-12T00:00:00.000Z",
+        "reason": "Foundational eight-stage execution contract retained as active."
+      }
+    },
+    "config/governance/decision-pattern-catalog.json": {
+      "targetRef": "config/governance/decision-pattern-catalog.json",
+      "kind": "capability_index",
+      "status": "active",
+      "foundational": false,
+      "executionClass": "reference_only",
+      "sourceDigest": "sha256:b4e827d2032422ae635a6bc31b7af3dddbab6a94a372669ae200948536abc6b5",
+      "replacementRefs": [],
+      "provenance": {
+        "sourceRefs": ["config/governance/decision-pattern-catalog.json"],
+        "evidenceRefs": ["config/capability-index/dependency-project-registry.json"],
+        "recordedAt": "2026-08-12T00:00:00.000Z"
+      },
+      "lifecycle": {
+        "lastTransitionId": "genesis:decision-pattern-catalog",
+        "changedAt": "2026-08-12T00:00:00.000Z",
+        "reason": "Reference-only distilled patterns remain registered without execution authority."
+      }
+    }
+  },
+  "appliedTransitions": {},
+  "history": [],
+  "policy": {
+    "automaticDeletion": false,
+    "automaticAgeTransition": false,
+    "foundationalRetirement": false,
+    "referenceOnlyPromotion": false,
+    "retiredRecordsRemainTombstones": true
+  }
+}

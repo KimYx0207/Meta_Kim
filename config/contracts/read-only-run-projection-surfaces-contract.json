@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "read-only-run-projection-surfaces-contract-v1",
+  "owner": "meta-warden",
+  "purpose": "One digest-bound read model for native panel, Kanban, Markdown, and HTML without a second run-state authority.",
+  "layers": {
+    "domain": {
+      "module": "src/domain/presentation/read-only-run-projection-surfaces.mjs",
+      "api": "buildReadOnlyRunProjectionModel(command)",
+      "responsibility": "canonical semantic model and non-authorizing validation",
+      "forbidden": ["node built-ins", "filesystem", "network", "database", "runtime", "template", "locale", "HTML", "Markdown"]
+    },
+    "sharedDigest": {
+      "module": "src/domain/shared/canonical-digest.mjs",
+      "responsibility": "pure canonical JSON and SHA-256 used by inward layers without Node.js imports"
+    },
+    "sharedSchema": {
+      "module": "src/domain/presentation/read-only-run-projection-schema.mjs",
+      "responsibility": "single closed-set source for A01-A07 ids, evaluation states, authorization fields, and sensitive-material rejection"
+    },
+    "application": {
+      "module": "src/application/presentation/build-read-only-run-projection-surfaces.mjs",
+      "responsibility": "the only snapshot-to-domain-to-renderer orchestration point"
+    },
+    "data": {
+      "module": "src/data/projections/read-only-run-authority-snapshot.mjs",
+      "responsibility": "validate and normalize an already trusted point-in-time snapshot",
+      "forbidden": ["filesystem", "database", "kernel mutation", "runtime dispatch"]
+    },
+    "presentation": {
+      "module": "src/presentation/run-surfaces/read-only-run-surface-renderers.mjs",
+      "responsibility": "render four configured copies from the canonical model",
+      "forbidden": ["data access", "durable state", "scheduler", "execution authority"]
+    }
+  },
+  "authoritySnapshot": {
+    "exactFields": ["binding", "currentness", "eventChainState", "runStatus", "currentStage", "stageDag", "durableHead", "canonicalProjections", "snapshotDigest"],
+    "bindingFields": ["runId", "taskFingerprint", "graphDigest", "durableCursor", "headEventHash", "headCheckpointId", "policyDigest"],
+    "canonicalBindingKeys": ["M3-A01", "M3-A02", "M3-A03", "M3-A04", "M3-A05", "M3-A06", "M3-A07"],
+    "requiredCurrentness": "fresh_bound_same_settlement",
+    "requiredEventChainState": "verified",
+    "producer": "scripts/governed-execution/stage-runner-bridge.mjs",
+    "builder": "buildReadOnlyRunAuthoritySnapshot",
+    "kernelAttestation": "projectRun and resumeRun objects must retain their durable-kernel private identity plus unchanged canonical fingerprint",
+    "rule": "The stage-runner bridge fresh-reads kernel-attested projectRun and resumeRun objects from the same verified head, then passes A01-A07 envelopes through their canonical result validators. Each canonical result digest is rebound to that settlement. Cloned, modified, raw, or self-signed snapshots are rejected; missing projections remain explicit not_evaluated and make the surface in_doubt."
+  },
+  "surfaceCopy": {
+    "source": "caller-selected i18n/config projection",
+    "exactFields": ["title", "runLabel", "statusLabel", "stageLabel", "projectionStatusLabel", "completedColumnLabel", "pendingColumnLabel", "blockedColumnLabel", "inDoubtColumnLabel"],
+    "statusColumnMap": "configured dense status-to-column mapping; unknown statuses fail closed",
+    "hardcodedFallbackAllowed": false
+  },
+  "statusRule": {
+    "projected": "all seven canonical projections are evaluated",
+    "in_doubt": "one or more canonical projections are not_evaluated or in_doubt"
+  },
+  "surfaces": ["nativePanel", "kanban", "markdown", "html"],
+  "invariants": {
+    "fourSurfacesShareSemanticDigest": true,
+    "fourSurfacesContainTheSameRunStatusStageAndNodes": true,
+    "allAuthorityAndActionFlagsFalse": true,
+    "secretPathAndRawDataNeverEchoed": true,
+    "legacyRunReportWithoutFreshBindingIsInDoubt": true,
+    "bridgeOptInPreservesDurableTruth": true,
+    "exactSchema": true,
+    "deeplyFrozen": true,
+    "deterministic": true
+  },
+  "nonGoals": ["authorization", "writes", "events", "claims", "leases", "cursor movement", "completion", "dispatch", "repository migration", "setup decomposition"]
+}

@@ -29,6 +29,12 @@ function hasAll(raw, markers, label) {
   }
 }
 
+function hasExactly(raw, markers, label) {
+  assert(Array.isArray(raw), `${label} must be an array`);
+  assert(raw.length === markers.length, `${label} must contain exactly ${markers.length} entries`);
+  hasAll(raw, markers, label);
+}
+
 function assertContract() {
   const contract = readJson("config/contracts/stage-runtime-control-contract.json");
   assert(contract.contractId === "stage-runtime-control-contract", "wrong contract id");
@@ -106,16 +112,64 @@ function assertContract() {
       "capability_scan",
       "spine_state_write",
       "planning_file_update",
+      "task_bookkeeping_control_plane",
       "visible_status_notice",
       "ordinary_project_file_mutation",
       "ordinary_local_command_execution",
     ],
     "fetchPolicy.inProgressMustAllow",
   );
+  assert(
+    !Object.hasOwn(contract.fetchPolicy ?? {}, "inProgressMustDelay"),
+    "Fetch must not retain a hard-delay policy for task bookkeeping",
+  );
   hasAll(
-    contract.fetchPolicy?.inProgressMustDelay ?? [],
-    ["task_bookkeeping_control_plane_until_fetch_evidence"],
-    "fetchPolicy.inProgressMustDelay",
+    contract.fetchPolicy?.taskBookkeepingPolicy?.appliesDuring ?? [],
+    ["critical", "fetch_pre_evidence"],
+    "fetchPolicy.taskBookkeepingPolicy.appliesDuring",
+  );
+  hasAll(
+    contract.fetchPolicy?.taskBookkeepingPolicy?.tools ?? [],
+    ["TaskCreate", "TaskUpdate", "TodoWrite"],
+    "fetchPolicy.taskBookkeepingPolicy.tools",
+  );
+  assert(
+    contract.fetchPolicy?.taskBookkeepingPolicy?.hookDisposition === "allow_without_hard_deny",
+    "Critical/pre-evidence Fetch task bookkeeping must not be hard-denied by Hook",
+  );
+  assert(
+    contract.fetchPolicy?.taskBookkeepingPolicy?.queryBypassDisposition ===
+      "deny_read_only_boundary",
+    "queryBypass must keep task bookkeeping outside its pure read-only boundary",
+  );
+  assert(
+    contract.fetchPolicy?.taskBookkeepingPolicy?.sequencingGuidance === "soft_anti_churn_only",
+    "task bookkeeping sequencing must remain soft anti-churn guidance",
+  );
+  hasAll(
+    contract.fetchPolicy?.taskBookkeepingPolicy?.mustNotCountAs ?? [],
+    ["fetch_evidence", "agent_dispatch", "stage_progress"],
+    "fetchPolicy.taskBookkeepingPolicy.mustNotCountAs",
+  );
+  assert(
+    contract.fetchPolicy?.taskBookkeepingPolicy?.agentDispatchGate ===
+      "independent_and_unchanged",
+    "real Agent dispatch governance must remain independent from task bookkeeping",
+  );
+  assert(
+    contract.fetchPolicy?.queryBypassControlPlanePolicy?.disposition ===
+      "deny_mutating_control_plane_allow_read_only_queries",
+    "queryBypass must distinguish mutating control-plane tools from read-only queries",
+  );
+  hasExactly(
+    contract.fetchPolicy?.queryBypassControlPlanePolicy?.denyTools,
+    ["TaskCreate", "TaskUpdate", "TodoWrite", "TaskStop", "EnterPlanMode", "ExitPlanMode"],
+    "fetchPolicy.queryBypassControlPlanePolicy.denyTools",
+  );
+  hasExactly(
+    contract.fetchPolicy?.queryBypassControlPlanePolicy?.allowTools,
+    ["TaskList", "TaskGet", "TaskOutput"],
+    "fetchPolicy.queryBypassControlPlanePolicy.allowTools",
   );
   hasAll(
     contract.fetchPolicy?.inProgressMustNotRequire ?? [],
@@ -217,8 +271,15 @@ function assertRuntimeSources() {
       "observedModeNotice",
       "Local execution tools are not stage drivers",
       "must never block or warn on ordinary project edits or local commands",
+      "Passive control-plane tools, including task/todo bookkeeping, are allowed",
+      "Bookkeeping never records an Agent dispatch",
     ],
     "enforce-agent-dispatch.mjs",
+  );
+  assert(
+    !hook.includes("shouldDelayTaskBookkeeping") &&
+      !hook.includes("formatTaskBookkeepingDelayDeny"),
+    "Hook must not retain a Critical/pre-evidence Fetch task-bookkeeping hard deny",
   );
   assert(
     !hook.includes("formatDesignStageMutationDeny") &&
@@ -250,7 +311,8 @@ function assertRegressionTests() {
       "read-only hook allowance does not auto-advance Critical to Fetch",
       "Fetch stage allows Bash spine-state writes even before fetchRecord exists",
       "Fetch stage allows planning files before fetchRecord exists",
-      "Fetch stage delays task bookkeeping before Fetch evidence exists",
+      "Fetch stage allows task bookkeeping without treating it as Fetch evidence",
+      "fanout-eligible TaskCreate stays bookkeeping and does not substitute for Agent dispatch",
       "Fetch stage allows ordinary business file mutation without warning",
       "dispatch history cannot impersonate a meta-agent caller or warn on project mutation",
       "runtime-injected meta-agent identity still enforces the readonly role boundary",

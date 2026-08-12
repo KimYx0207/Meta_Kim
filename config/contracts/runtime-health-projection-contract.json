@@ -1,0 +1,508 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-runtime-health-projection-contract",
+  "prdTaskId": "M3-A06",
+  "status": "implementation_active",
+  "purpose": "Project a current run's trusted settled runtime invocation into a sanitized point-in-time health observation without claiming current liveness, creating a second heartbeat authority, dispatching work, mutating durable state, or consuming quota.",
+  "mode": "shadow_only",
+  "authorityBoundary": {
+    "runtimeHealthAuthority": "trusted current-run invocation observation captured by stage-runner bridge",
+    "runtimeRegistryAuthority": "bridge-bound runtime catalog and capability-matrix digests",
+    "durableTruthAuthority": "existing durable-run-kernel projection and resume state",
+    "leaseClaimAuthority": "canonical M3-A05 lease/claim authority shadow projection",
+    "pointInTimeOnly": true,
+    "currentLivenessClaimed": false,
+    "domainReadsRuntime": false,
+    "adapterReadsRuntime": false,
+    "excludedSignalsCanProveHealth": false,
+    "quotaAuthority": "deferred_to_M3_A07"
+  },
+  "domainContract": {
+    "module": "src/domain/runtime/runtime-health-projection.mjs",
+    "api": "evaluateRuntimeHealthProjection(command)",
+    "validator": "assertValidRuntimeHealthProjectionResult(result)",
+    "requiredExports": [
+      "RUNTIME_HEALTH_PROJECTION_SCHEMA_VERSION",
+      "RUNTIME_HEALTH_STATUSES",
+      "RUNTIME_HEALTH_DISPOSITIONS",
+      "evaluateRuntimeHealthProjection",
+      "assertValidRuntimeHealthProjectionResult"
+    ],
+    "schemaVersion": "runtime-health-projection-v1",
+    "kind": "runtime_health_projection_result",
+    "commandExactFields": [
+      "binding",
+      "runtimeRegistryBinding",
+      "trustedObservation",
+      "excludedSignalContext"
+    ],
+    "implementationRule": "pure ECMAScript with no filesystem, network, runtime, kernel, scheduler, lease, quota, clock-loop, or mutation import"
+  },
+  "binding": {
+    "exactFields": [
+      "runId",
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "durableCursor",
+      "headEventHash",
+      "headCheckpointId",
+      "runtimeRegistryDigest",
+      "policyDigest",
+      "evaluationRevision"
+    ],
+    "digestFields": [
+      "taskFingerprint",
+      "graphDigest",
+      "projectionDigest",
+      "headEventHash",
+      "runtimeRegistryDigest",
+      "policyDigest"
+    ],
+    "nullableFields": [
+      "headEventHash",
+      "headCheckpointId"
+    ],
+    "integerFields": [
+      "durableCursor",
+      "evaluationRevision"
+    ]
+  },
+  "runtimeRegistryBinding": {
+    "exactFields": [
+      "runtimeId",
+      "runtimeMode",
+      "catalogDigest",
+      "capabilityMatrixDigest",
+      "evidenceLedgerDigest",
+      "registryDigest"
+    ],
+    "runtimeModeValues": [
+      "native_cli",
+      "injected_callback",
+      "compatibility_projection"
+    ],
+    "digestFields": [
+      "catalogDigest",
+      "capabilityMatrixDigest",
+      "evidenceLedgerDigest",
+      "registryDigest"
+    ],
+    "registryDigestRule": "sha256 canonical digest of every runtimeRegistryBinding field except registryDigest",
+    "runtimeIdRule": "bounded safe runtime identifier sourced from the bridge registry binding; Domain logic dispatches by runtimeMode and observation consistency, not by hardcoded runtime names"
+  },
+  "trustedObservation": {
+    "exactFields": [
+      "source",
+      "runtimeId",
+      "runtimeMode",
+      "currentRun",
+      "nativeInvocationObserved",
+      "invocationStatus",
+      "failureClass",
+      "startedAt",
+      "endedAt",
+      "observedAt",
+      "evidenceRefDigest",
+      "observationDigest"
+    ],
+    "sourceValues": [
+      "stage_runner_bridge_native_invocation",
+      "none"
+    ],
+    "invocationStatusValues": [
+      "pass",
+      "timeout",
+      "launch_failed",
+      "parse_failed",
+      "output_limit",
+      "nonzero_exit",
+      "final_message_missing",
+      "not_invoked",
+      "conflict"
+    ],
+    "failureClassValues": [
+      "none",
+      "runtime_safety_timeout",
+      "runtime_launch_failed",
+      "runtime_parse_failed",
+      "runtime_output_limit",
+      "runtime_nonzero_exit",
+      "final_message_missing",
+      "injected_callback",
+      "not_applicable",
+      "unknown"
+    ],
+    "timestampRule": "startedAt, endedAt, and observedAt are null together for source none/not_invoked, or non-negative safe integers with startedAt <= endedAt <= observedAt; endedAt > observedAt is future evidence and becomes in_doubt",
+    "clockRule": "observedAt is captured exactly once by the bridge after the settled native invocation; Domain and adapter must not call Date.now",
+    "observationDigestRule": "sha256 canonical digest of every trustedObservation field except observationDigest",
+    "bindingRules": [
+      "runtimeId and runtimeMode exactly match runtimeRegistryBinding",
+      "currentRun must be true for an observed health status",
+      "nativeInvocationObserved true requires source stage_runner_bridge_native_invocation and runtimeMode native_cli",
+      "source none, injected_callback, compatibility_projection, or not_invoked cannot prove health",
+      "status and failureClass combinations are closed-set and internally consistent"
+    ],
+    "rawFieldsNotRetained": [
+      "startedAt",
+      "endedAt",
+      "observedAt",
+      "rawOutput",
+      "stdout",
+      "stderr",
+      "message",
+      "sessionId",
+      "provider payload"
+    ],
+    "endedAtProjectionRule": "only a validated endedAt safe integer may be projected as health.lastSeenAt; it is never retained under the raw endedAt key"
+  },
+  "excludedSignalContext": {
+    "exactFields": [
+      "leaseClaimHeartbeat",
+      "openClawScheduledHeartbeat",
+      "presenceProbe",
+      "installOrConfigPresence",
+      "persistedCapabilityAcceptance"
+    ],
+    "itemExactFields": [
+      "present",
+      "evidenceDigest",
+      "provesRuntimeHealth"
+    ],
+    "fixedValues": {
+      "provesRuntimeHealth": false
+    },
+    "evidenceDigestNullableWhenAbsent": true,
+    "rule": "presence is retained only as excluded evidence context and never changes health.status away from not_observed or in_doubt"
+  },
+  "statusModel": {
+    "values": [
+      "responsive_at_observation",
+      "unresponsive_at_observation_deadline",
+      "unavailable_at_observation",
+      "failed_at_observation",
+      "not_observed",
+      "in_doubt"
+    ],
+    "precedence": [
+      "cross-runtime, replay/non-current-run, future, digest, schema, or observation conflict becomes in_doubt",
+      "no native current-run observation, source none, injected callback, or compatibility projection becomes not_observed",
+      "pass plus failureClass none becomes responsive_at_observation",
+      "timeout plus runtime_safety_timeout becomes unresponsive_at_observation_deadline",
+      "launch_failed plus runtime_launch_failed becomes unavailable_at_observation",
+      "parse_failed, output_limit, nonzero_exit, or final_message_missing with its matching failure class becomes failed_at_observation",
+      "all other closed-set contradictions become in_doubt"
+    ],
+    "claudeCodexRule": "a trusted settled native_cli invocation may produce only a point-in-time observation; it never proves current liveness after the observation",
+    "cursorOpenClawRule": "compatibility_projection and other non-native observations remain not_observed until a trusted current-run native observation provider exists"
+  },
+  "resultSchema": {
+    "schemaVersion": "runtime-health-projection-v1",
+    "kind": "runtime_health_projection_result",
+    "exactTopLevelFields": [
+      "schemaVersion",
+      "kind",
+      "binding",
+      "bindingDigest",
+      "runtimeObservation",
+      "health",
+      "excludedSignals",
+      "disposition",
+      "eventIntents",
+      "authorization"
+    ],
+    "runtimeObservationExactFields": [
+      "source",
+      "runtimeId",
+      "runtimeMode",
+      "currentRun",
+      "nativeInvocationObserved",
+      "invocationStatus",
+      "failureClass",
+      "evidenceRefDigest",
+      "observationDigest",
+      "lastSeenAtBindingDigest"
+    ],
+    "lastSeenAtBindingDigestRule": "sha256 canonical digest of { observationDigest, lastSeenAt }; this is an internal-consistency binding only and never authenticates the observation or grants authority",
+    "health": {
+      "exactFields": [
+        "status",
+        "lastSeenAt",
+        "temporalScope",
+        "source",
+        "evidenceRefDigest",
+        "reasonCodes",
+        "currentLivenessClaimed",
+        "projectionOnly",
+        "authoritative"
+      ],
+      "statusValues": [
+        "responsive_at_observation",
+        "unresponsive_at_observation_deadline",
+        "unavailable_at_observation",
+        "failed_at_observation",
+        "not_observed",
+        "in_doubt"
+      ],
+      "fixedValues": {
+        "temporalScope": "point_in_time_observation_only",
+        "currentLivenessClaimed": false,
+        "projectionOnly": true,
+        "authoritative": false
+      },
+      "lastSeenAtRule": "validated settled native observations project endedAt as a non-negative safe integer; not_observed and rejected/conflicting observations use null; the value must match runtimeObservation.lastSeenAtBindingDigest",
+      "sourceRule": "stage_runner_bridge_native_invocation for accepted native observations, otherwise none"
+    },
+    "excludedSignals": {
+      "exactFields": [
+        "leaseClaimHeartbeat",
+        "openClawScheduledHeartbeat",
+        "presenceProbe",
+        "installOrConfigPresence",
+        "persistedCapabilityAcceptance"
+      ],
+      "itemExactFields": [
+        "present",
+        "evidenceDigest",
+        "provesRuntimeHealth"
+      ],
+      "allProvesRuntimeHealthValues": false
+    },
+    "disposition": {
+      "exactFields": [
+        "state",
+        "reasonCodes",
+        "evidenceRefs"
+      ],
+      "stateValues": [
+        "observed",
+        "degraded",
+        "not_observed",
+        "in_doubt"
+      ],
+      "statusMapping": {
+        "responsive_at_observation": "observed",
+        "unresponsive_at_observation_deadline": "degraded",
+        "unavailable_at_observation": "degraded",
+        "failed_at_observation": "degraded",
+        "not_observed": "not_observed",
+        "in_doubt": "in_doubt"
+      },
+      "reasonCodeValues": [
+        "runtime_responsive_at_observation",
+        "runtime_unresponsive_at_deadline",
+        "runtime_unavailable_at_observation",
+        "runtime_failed_at_observation",
+        "runtime_not_observed",
+        "runtime_observation_in_doubt",
+        "cross_runtime_observation",
+        "observation_binding_mismatch",
+        "future_observation_rejected",
+        "conflicting_observation",
+        "excluded_signals_not_health_authority"
+      ]
+    },
+    "eventIntents": {
+      "cardinality": "exactly one",
+      "itemExactFields": [
+        "kind",
+        "intentDigest",
+        "disposition",
+        "reasonCodesDigest",
+        "persisted",
+        "authoritative",
+        "writeAllowed"
+      ],
+      "fixedValues": {
+        "kind": "runtime_health_shadow_observed",
+        "persisted": false,
+        "authoritative": false,
+        "writeAllowed": false
+      }
+    },
+    "authorization": {
+      "exactFields": [
+        "currentLivenessClaimAllowed",
+        "schedulerDispatchAllowed",
+        "executionAllowed",
+        "claimAllowed",
+        "takeoverAllowed",
+        "heartbeatAllowed",
+        "releaseAllowed",
+        "coordinatorMutationAllowed",
+        "nodeMutationAllowed",
+        "leaseMutationAllowed",
+        "fenceMutationAllowed",
+        "retryAllowed",
+        "quotaMutationAllowed",
+        "quotaConsumptionAllowed",
+        "eventPersistenceAllowed",
+        "cursorAdvanceAllowed",
+        "checkpointMutationAllowed",
+        "completeNodeAllowed",
+        "terminalStatusWriteAllowed",
+        "legacyGateCutoverAllowed",
+        "authoritativeWriteAllowed"
+      ],
+      "allValues": false
+    },
+    "deeplyFrozen": true,
+    "deterministicForSameTrustedObservation": true,
+    "unknownOrMissingFields": "reject"
+  },
+  "adapterContract": {
+    "module": "scripts/governed-execution/runtime-health-projection-adapter.mjs",
+    "api": "buildRuntimeHealthProjection(normalizedInput, { authoritativeStageDagPacket, authoritativeExecutionSnapshot, leaseClaimAuthorityShadowProjection, runtimeRegistryBinding, trustedRuntimeObservation })",
+    "normalizedInput": {
+      "exactFields": [],
+      "requiredValue": {},
+      "nullOrUndefinedEvaluationStatus": "not_evaluated_missing_normalized_input",
+      "unknownFieldEvaluationStatus": "not_evaluated_invalid_normalized_input",
+      "callerMaySupplyRuntimeObservation": false
+    },
+    "optionsExactFields": [
+      "authoritativeStageDagPacket",
+      "authoritativeExecutionSnapshot",
+      "leaseClaimAuthorityShadowProjection",
+      "runtimeRegistryBinding",
+      "trustedRuntimeObservation"
+    ],
+    "authoritativeExecutionSnapshotExactFields": [
+      "durableRunProjection",
+      "durableResume"
+    ],
+    "evaluationStatusValues": [
+      "evaluated",
+      "not_evaluated_missing_normalized_input",
+      "not_evaluated_invalid_normalized_input"
+    ],
+    "envelopeExactFields": [
+      "schemaVersion",
+      "mode",
+      "evaluationStatus",
+      "disposition",
+      "result",
+      "authority"
+    ],
+    "envelopeFixedValues": {
+      "schemaVersion": "runtime-health-projection-adapter-v1",
+      "mode": "shadow_only"
+    },
+    "invalidEnvelope": {
+      "disposition": "in_doubt",
+      "result": null,
+      "retainsInputOrExceptionDetail": false
+    },
+    "envelopeAuthority": {
+      "exactFields": [
+        "projectsRuntimeHealth",
+        "claimsCurrentLiveness",
+        "writesKernel",
+        "writesEvents",
+        "dispatchesRuntime",
+        "claimsNode",
+        "takesOverClaim",
+        "retriesRuntime",
+        "consumesQuota",
+        "mutatesQuota",
+        "projectionOnly"
+      ],
+      "fixedTrueFields": [
+        "projectionOnly"
+      ],
+      "allOtherValues": false
+    }
+  },
+  "bridgeAuthorityRules": {
+    "optInParameter": "runtimeHealthProjection",
+    "returnSibling": "runtimeHealthProjection",
+    "legacyParityWhenDisabled": true,
+    "sameHeadRequired": true,
+    "settledWorkerResultOnly": true,
+    "trustedObservationSource": "bridge-owned current-run worker invocation result after settlement plus one bridge-owned observedAt capture",
+    "observedAtCapturedExactlyOnce": true,
+    "runtimeRegistryBindingDerivedByBridge": true,
+    "normalizedCallerInputMustEqual": {},
+    "injectedCallbackIsObservationOnly": false,
+    "compatibilityProjectionIsObservationOnly": false,
+    "writesDurableState": false,
+    "appendsEvents": false,
+    "dispatchesAdditionalRuntimeWork": false,
+    "consumesOrMutatesQuota": false
+  },
+  "sourceDenylist": [
+    "projectRun(",
+    "resumeRun(",
+    "claimNode(",
+    "heartbeatNode(",
+    "claimRunCoordinator(",
+    "heartbeatRunCoordinator(",
+    "releaseRunCoordinator(",
+    "completeNode(",
+    "failNode(",
+    "prepareEffect(",
+    "markEffectDispatchStarted(",
+    "markUnresolvedEffectsInDoubt(",
+    "reconcileEffect(",
+    "reuseCompletedEffect(",
+    "appendEvent(",
+    "setRunTerminalStatus(",
+    "selectMaximalSafeReadySet(",
+    "executeNativeReadySet(",
+    "executeLangGraphReadySet(",
+    "consumeQuota(",
+    "mutateQuota(",
+    "reserveQuota(",
+    "setInterval(",
+    "TaskCreate",
+    "TaskUpdate",
+    "TodoWrite"
+  ],
+  "secretAndRawDataPolicy": {
+    "rejectSecretLikeIdentifiers": true,
+    "rejectAccessorsAndExoticObjects": true,
+    "rejectSparseArrays": true,
+    "resultMayRetainOnly": [
+      "strict digests",
+      "bounded safe identifiers",
+      "validated lastSeenAt",
+      "closed-set statuses and reason codes",
+      "non-authorizing booleans"
+    ],
+    "forbiddenResultData": [
+      "raw stdout or stderr",
+      "raw model output",
+      "session or message identifiers",
+      "credentials, API keys, JWTs, or high-entropy bearer-like values",
+      "startedAt or endedAt raw field names",
+      "observedAt raw field name",
+      "lease owner, attempt, fence, expiry, or heartbeat internals"
+    ]
+  },
+  "acceptance": {
+    "allSixHealthStatusesCovered": true,
+    "allFourDispositionsCovered": true,
+    "excludedSignalsNeverProveHealth": true,
+    "nativeSettledObservationNeverClaimsCurrentLiveness": true,
+    "compatibilityRuntimeWithoutNativeObservationIsNotObserved": true,
+    "crossRuntimeReplayFutureAndConflictFailClosed": true,
+    "rawAndSecretDataRejectedOrSanitized": true,
+    "all21AuthorizationValuesFalse": true,
+    "sourceDenylistEnforced": true,
+    "bridgeTogglePreservesLegacyDurableTruth": true,
+    "quotaMutationAndConsumptionForbidden": true,
+    "m3A07NotStarted": true
+  },
+  "nonGoals": [
+    "continuous or current liveness claim",
+    "new heartbeat loop or heartbeat persistence",
+    "lease claim, takeover, renewal, or release",
+    "scheduler selection, dispatch, or retry",
+    "runtime dispatch or termination",
+    "kernel, event, cursor, checkpoint, node, or terminal mutation",
+    "quota accounting, reservation, consumption, enforcement, or mutation",
+    "install, configuration, presence, acceptance, or persisted capability as health evidence",
+    "M3-A07 execution",
+    "legacy gate cutover"
+  ]
+}

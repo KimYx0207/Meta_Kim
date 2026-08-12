@@ -13,8 +13,8 @@ import {
   MIN_NODE_VERSION,
   isSupportedNodeVersion,
 } from "./node-runtime-requirements.mjs";
-import { importDatabaseSync } from "./sqlite-runtime.mjs";
-import { withSqliteTransaction } from "./sqlite-transaction.mjs";
+import { importDatabaseSync } from "../src/data/sqlite/runtime.mjs";
+import { withSqliteTransaction } from "../src/data/sqlite/transaction.mjs";
 import { validateArtifactFile } from "./validate-run-artifact.mjs";
 
 const DEFAULT_SOURCE = "tests/fixtures/run-artifacts";

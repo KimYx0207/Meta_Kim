@@ -6,6 +6,52 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [3.0.0] - 2026-08-12
+
+### 新增内容
+
+- **治理执行现在只有一套分层真相。** 纯 Domain 规则负责判断证据、继续/停止、依赖安全推进、调度候选、lease/claim、运行健康和额度观察，本身不写入、不授权；Application 负责编排用例，Data 负责耐久 SQLite/事务，Presentation 只生成只读视图。旧脚本入口保留为兼容门面，不再形成平行实现。
+- **A01-A12 用用户能理解的结果闭合了 3.0 架构。** A01-A03 分开已验证证据、继续建议和依赖安全候选；A04-A07 复用既有调度与执行权威，只投影 claim、health、quota，不创造第二控制器；A08 把同一份摘要绑定的运行渲染成原生面板、看板、Markdown 或 HTML；A09 统一耐久执行事件与仓储语义；A10 分开 setup 编排和 package/runtime 基础设施；A11 让知识生命周期变更可回滚、受审批约束；A12 让文档与发布声明只能来自当前合同、runtime 证据、打包真相和发布门。
+- **知识进化在 Warden 精确批准前始终只是候选。** 年龄、评分、生成建议或旧版 approval 都不能写入、删除或授权执行。批准必须绑定精确目标、操作、源摘要、候选摘要、回滚方案和 scope；源文件漂移会直接拒绝。退休只保留 tombstone，基础能力不能被退休，未知状态和用户状态会保留。
+- **运行投影明确是只读的。** 原生面板、看板、Markdown、HTML 共用同一个语义摘要，不能派工、标记完成、推进耐久 cursor、创建 claim/lease，也不能成为第二套运行状态权威。
+
+### 变更
+
+- **安装和更新会先把精确打包产物固定到不可变目录，再写持久全局配置。** CLI 继续作为用户入口；Application 与 Infrastructure 边界负责验证 package receipt、稳定根目录、子进程、写入边界和安装结果。help、status、doctor 仍是不会物化安装包的诊断命令，check 仍只读。
+- **Codex agent fan-out 使用更稳妥的默认值。** 新装/默认配置最多同时运行 2 个 agent 线程、只允许 1 层嵌套；用户显式设置的其它上限会保留，Meta_Kim 旧默认值 6 会迁移到新默认值。
+- **工具端支持继续按证据分层。** Claude Code 和 Codex 是默认正式投影；OpenClaw 和 Cursor 是非默认兼容投影，工具端专属改造必须提供各自的严格证据。OpenClaw 仍没有 Meta_Kim typed-plugin 工具阻断 adapter，Cursor 的任意原生选择弹窗权威仍未验证。
+
+### 修复
+
+- **上游依赖安装器不能再把自己的 Codex 配置当成用户授权。** 更新会以安装前的用户快照为基线，因此不会复活用户已删除的第三方 MCP server，不会静默接纳安装器新增的 server，也不会留下已知 Meta_Kim benchmark/test 临时项目记录。用户自己的 MCP、项目、hooks、agents 和其它无关设置保持不变。
+
+### 证据边界
+
+- Codex app-server 与 Claude SDK/CLI 的 Decision substrate 仍永久非授权：它能关联一次展示请求与观察到的返回，但当前公开宿主接口不能证明 Codex Desktop UI、真人身份或真人回答。可信宿主/Desktop 权威继续停放，直到真实证据出现。
+- 旧治理 gate 的等价迁移与 cutover 仍延期。Meta_Kim 3.0 不声称旧 gate 已被替换，shadow 结果或只读投影也不会改变生产执行权威。
+
+## [2.9.30] - 2026-08-10
+
+### 新增内容
+
+- **Meta_Kim 3.0 现在有了可持久化、但不授予权限的宿主事件声明基底。** Codex app-server 与 Claude SDK/CLI 适配器会精确绑定 decision、challenge、实际展示内容摘要、运行时 session 或 thread、turn、item 与 request 身份；持久化内容仅包含有界引用和摘要。它可以记录展示、返回已观测、消费、过期与失效转换，但不会宣称宿主、真人或回答已经得到独立验证。
+- **宿主事件重放与崩溃恢复保持 fail closed。** profile-local 仓储使用不可变 revision、精确 compare-and-swap、彼此独立的宿主事件与 challenge 唯一性、有界读取，以及仅限已证明 owner 死亡时的锁恢复。Codex 与 Claude 适配器要求宿主能够重投尚未确认的返回，并且只在匹配 observation 已持久化后确认，因此 CAS 前后中断都能收敛，同时不会授予执行权限。
+- **真实运行时探针不再用模拟结果冒充宿主权威。** Codex 0.146 app-server 探针会关联真实 `requestUserInput` 请求与完成的 turn，并保留宿主内置 Other 入口；Claude Code 2.1.220 / Agent SDK 0.3.220 探针通过已配置的 MiniMax-M3 provider 关联 active `AskUserQuestion` callback 与 stream 结果。两条探针都明确记录答案由机器/脚本选择，并保持真人验证、当前宿主权威和执行授权为 false。
+
+### 安全
+
+- **所有新增宿主事件 Gate 永久保持非授权。** 对外没有 verifier 或 `answered_verified` API；所有适配器结果都保持 `executionAllowed=false`；原始 prompt 与 answer 不会进入持久化；accessor、Proxy、稀疏数组、跨 runtime、跨 session、跨 request、过期和重放输入都会 fail closed。
+- **发布包继续保持精确分层。** package 精确新增 5 个已批准的 `src` Domain、schema、Data 仓储与运行时适配器文件；现有有界 `scripts/**/*.mjs` 分发范围同时包含 3 个永久非授权的真实探针/composition 脚本。Domain 不依赖文件系统，适配器通过 port 接收仓储能力而不是直接导入存储层，也没有新增宽泛的 `src/**` 打包入口或 runner 授权接线。
+
+### 修复内容
+
+- **四运行时安装/更新发布预检现在与另外两条重型四运行时验收一样，每个模式拥有有界的 10 分钟上限。** 普通命令继续使用原有时间限制，超时也仍会 fail closed；这项调整避免繁忙 Windows 主机上的有效外部依赖安装被旧的 3 分钟上限提前切断。
+
+### 验证
+
+- Domain、仓储、Codex、Claude、fake-host 集成、架构边界与 package closure 聚焦测试已通过 `65/65`，`meta:check` 也已通过。fake/injected host port 不能证明真实 Codex/Claude 宿主身份、真人身份或真实 transport 的持久性，因此 M3-P2 仍保持进行中，等待后续真实宿主 E2E 增量。发布前仍必须完成一次 verified Graphify rebuild，并在稳定源码快照上完整通过一次 `npm run meta:verify:all`。
+- 真实 Codex transport 与 Claude SDK callback 探针已经通过精确关联，但公开宿主接口仍不能证明 Codex Desktop UI 或真人回答。用户选择等待可信宿主证明，而不是降低证据标准，因此 M3-P2 保持阻塞，M3-P3、最终全回归和 3.0 发布均未启动。
+
 ## [2.9.29] - 2026-08-09
 
 ### 新增内容

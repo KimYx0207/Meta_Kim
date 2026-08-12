@@ -478,7 +478,7 @@ test("missing real npm discovery fails before creating projection store state", 
 test("cleanup contract: npm lifecycle leaves HOME unchanged outside the store and removes its private runtime", async () => {
   await withFixture(async ({ homeRoot, sourceRoot, env }) => {
     const homeBefore = readdirSync(homeRoot).sort();
-    assert.deepEqual(privateNpmRuntimeRoots(), []);
+    const privateRuntimeRootsBefore = privateNpmRuntimeRoots();
 
     await packageContentClosure(sourceRoot, { env, homeRoot });
     assert.deepEqual(
@@ -486,7 +486,11 @@ test("cleanup contract: npm lifecycle leaves HOME unchanged outside the store an
       homeBefore,
       "the read-only package closure probe must not persist npm state in HOME",
     );
-    assert.deepEqual(privateNpmRuntimeRoots(), []);
+    assert.deepEqual(
+      privateNpmRuntimeRoots(),
+      privateRuntimeRootsBefore,
+      "the read-only closure probe must not leak a private npm runtime",
+    );
 
     await materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env });
     assert.deepEqual(
@@ -496,8 +500,8 @@ test("cleanup contract: npm lifecycle leaves HOME unchanged outside the store an
     );
     assert.deepEqual(
       privateNpmRuntimeRoots(),
-      [],
-      "materialization must remove its private npm cache and temp root",
+      privateRuntimeRootsBefore,
+      "materialization must remove only the private npm runtime it created",
     );
   });
 });
