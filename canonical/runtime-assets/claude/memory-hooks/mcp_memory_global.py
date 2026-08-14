@@ -57,6 +57,35 @@ MAX_LEN_COMPACT = 120
 MAX_LEN_L2 = 400
 MAX_LEN_L3 = 800
 
+# Note written by the Stop-hook autosave in stop-save-progress.mjs.
+AUTOSAVE_NOTE_MARKER = "auto-save from Stop hook"
+# Session retention is split by source rather than one rolling window.
+#
+# stop-save-progress.mjs appends one regex-scraped session per turn end, so a
+# single window fills with chatter: on one project all 20 slots came from a
+# single 8-hour stretch and 15 of them were autosaves. Sessions written on
+# purpose by /end-working — the ones a later session actually needs to resume
+# from — were evicted the same day. Giving curated sessions their own quota
+# keeps them out of reach of the autosave stream.
+CURATED_SESSION_KEEP = 20
+AUTOSAVE_SESSION_KEEP = 5
+
+
+def is_autosave_session(session):
+    """True when the entry came from the Stop-hook autosave, not a curated save."""
+    if not isinstance(session, dict):
+        return False
+    note = session.get("note")
+    return isinstance(note, str) and AUTOSAVE_NOTE_MARKER in note
+
+
+def prune_sessions(sessions):
+    """Keep recent curated sessions and a short tail of autosaves, in order."""
+    curated = [i for i, s in enumerate(sessions) if not is_autosave_session(s)]
+    autosaves = [i for i, s in enumerate(sessions) if is_autosave_session(s)]
+    keep = set(curated[-CURATED_SESSION_KEEP:]) | set(autosaves[-AUTOSAVE_SESSION_KEEP:])
+    return [s for i, s in enumerate(sessions) if i in keep]
+
 
 def _build_opener():
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -358,7 +387,7 @@ def write_task_state(args):
         "note": args.note or "",
     })
 
-    state["sessions"] = state["sessions"][-20:]
+    state["sessions"] = prune_sessions(state["sessions"])
     state["updated_at"] = now
     state["project"] = project_name
     state["project_dir"] = cwd
