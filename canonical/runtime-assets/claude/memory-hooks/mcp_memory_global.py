@@ -231,10 +231,15 @@ def _resolve_project_root():
             return cwd
         git_dir = os.path.realpath(os.path.join(cwd, git_dir))
         common_dir = os.path.realpath(os.path.join(cwd, common_dir))
-        if git_dir != common_dir:
+        if os.path.normcase(git_dir) != os.path.normcase(common_dir):
             # Linked worktree: anchor to the main repo instead of this checkout.
             main_root = os.path.dirname(common_dir)
-            if os.path.isdir(main_root):
+            main_git_dir = os.path.realpath(os.path.join(main_root, ".git"))
+            if (
+                os.path.isdir(main_root)
+                and os.path.isdir(main_git_dir)
+                and os.path.normcase(main_git_dir) == os.path.normcase(common_dir)
+            ):
                 return main_root
         return toplevel
     except Exception:
