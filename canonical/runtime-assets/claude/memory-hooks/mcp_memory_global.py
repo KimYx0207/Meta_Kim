@@ -200,8 +200,57 @@ def _memory_health_warning():
 
 # ─── Project Detection ─────────────────────────────────────────────────────
 
-def detect_project_tag():
+_PROJECT_ROOT_CACHE = None
+
+
+def _resolve_project_root():
+    """Locate the project root that memory should anchor to.
+
+    cwd only says "where I am standing", not "which project I am working on".
+    A linked git worktree is a second checkout of the same project, so memory
+    written there vanishes when the worktree is removed. git already models
+    project identity: --git-common-dir points at the main repo's .git from
+    inside any worktree, so its parent is the shared project root.
+
+    Submodules keep their own root on purpose (git-dir == git-common-dir there),
+    and anything outside a repo falls back to cwd -- same behaviour as before.
+    """
     cwd = os.getcwd()
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--git-dir", "--git-common-dir", "--show-toplevel"],
+            cwd=cwd, capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode != 0:
+            return cwd
+        parts = proc.stdout.strip().splitlines()
+        if len(parts) < 3:
+            return cwd
+        git_dir, common_dir, toplevel = (p.strip() for p in parts[:3])
+        if not toplevel:
+            return cwd
+        git_dir = os.path.realpath(os.path.join(cwd, git_dir))
+        common_dir = os.path.realpath(os.path.join(cwd, common_dir))
+        if git_dir != common_dir:
+            # Linked worktree: anchor to the main repo instead of this checkout.
+            main_root = os.path.dirname(common_dir)
+            if os.path.isdir(main_root):
+                return main_root
+        return toplevel
+    except Exception:
+        return cwd
+
+
+def project_root():
+    """Stable directory that owns this project's memory. Cached per process."""
+    global _PROJECT_ROOT_CACHE
+    if _PROJECT_ROOT_CACHE is None:
+        _PROJECT_ROOT_CACHE = _resolve_project_root()
+    return _PROJECT_ROOT_CACHE
+
+
+def detect_project_tag():
+    cwd = project_root()
     tag_file = os.path.join(cwd, ".claude", "memory_tag")
     if os.path.isfile(tag_file):
         try:
@@ -247,7 +296,7 @@ def detect_project_tag():
 
 
 def detect_project_name():
-    cwd = os.getcwd()
+    cwd = project_root()
     claude_md = os.path.join(cwd, "CLAUDE.md")
     if os.path.isfile(claude_md):
         try:
@@ -266,7 +315,7 @@ TASK_STATE_FILENAME = "project-task-state.json"
 
 
 def task_state_path():
-    cwd = os.getcwd()
+    cwd = project_root()
     ts_path = os.path.join(cwd, ".claude", TASK_STATE_FILENAME)
     return ts_path if os.path.isfile(ts_path) else None
 
@@ -337,7 +386,9 @@ def format_task_state_full(state, project_name):
 
 
 def write_task_state(args):
-    cwd = os.getcwd()
+    # Must resolve the same way task_state_path() reads, or memory would be
+    # read from the main repo and written into the worktree.
+    cwd = project_root()
     os.makedirs(os.path.join(cwd, ".claude"), exist_ok=True)
     ts_path = os.path.join(cwd, ".claude", TASK_STATE_FILENAME)
 
