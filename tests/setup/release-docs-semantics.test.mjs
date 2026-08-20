@@ -168,7 +168,7 @@ describe("release documentation semantics", () => {
     );
     assert.match(
       readFileSync(path.join(root, "README.ja-JP.md"), "utf8"),
-      /依存プロジェクト側の install target は upstream project で管理される/,
+      /依存プロジェクト側の install target は upstream project で管理され/,
     );
     assert.match(
       readFileSync(path.join(root, "README.ko-KR.md"), "utf8"),
@@ -176,14 +176,19 @@ describe("release documentation semantics", () => {
     );
   });
 
-  test("public current docs expose formal projections and candidate compatibility probes without overpromoting them", () => {
-    const candidateNames = [
-      "Qoder",
-      "Trae",
-      "Kiro",
-      "Cline",
-      "Roo",
-      "Continue",
+  test("public current docs expose the three runtime tiers without overpromoting beta adapters", () => {
+    const betaNames = ["ZCode", "DeepSeek Harness"];
+    const removedPublicCandidatePatterns = [
+      /Qoder/u,
+      /\bTrae\b/u,
+      /\bKiro\b/u,
+      /Windsurf/u,
+      /Devin Desktop/u,
+      /\bCline\b/u,
+      /Roo Code/u,
+      /Candidate compatibility probes/u,
+      /候选兼容 probe/u,
+      /candidate-Qoder/u,
     ];
     const overbroadMappingPatterns = [
       /any project that supports agents and agent-to-agent communication/,
@@ -202,18 +207,21 @@ describe("release documentation semantics", () => {
       const raw = readFileSync(path.join(root, file), "utf8");
 
       assert.match(raw, /alt="Projection tiers"/, file);
-      assert.match(raw, /alt="Candidate compatibility probes"/, file);
+      assert.match(raw, /alt="Beta compatibility adapters"/, file);
       assert.match(
         raw,
-        /default-Claude%20Code%20%7C%20Codex%20%2B%20compat-OpenClaw%20%7C%20Cursor/,
+        /default-Claude%20Code%20%7C%20Codex%20%2B%20compat--?OpenClaw%20%7C%20Cursor/,
         file,
       );
-      assert.match(raw, /Qoder%20%7C%20Trae%20%7C%20Kiro%20%7C%20Cascade%20%7C%20Cline%20%7C%20Roo%20%7C%20Continue/, file);
+      for (const betaName of betaNames) {
+        assert.match(raw, new RegExp(betaName), `${file} missing ${betaName}`);
+      }
+      assert.match(raw, /\bBeta\b/iu, `${file} missing Beta tier`);
       assert.doesNotMatch(raw, /alt="Runtime"/, file);
       assert.doesNotMatch(raw, /runtime-Claude%20Code%20%7C%20Codex%20%7C%20OpenClaw%20%7C%20Cursor/, file);
 
-      for (const candidateName of candidateNames) {
-        assert.match(raw, new RegExp(candidateName), `${file} missing ${candidateName}`);
+      for (const pattern of removedPublicCandidatePatterns) {
+        assert.doesNotMatch(raw, pattern, `${file} still publishes a research-only candidate`);
       }
       for (const pattern of overbroadMappingPatterns) {
         assert.doesNotMatch(raw, pattern, `${file} has overbroad mapping claim`);
@@ -223,12 +231,14 @@ describe("release documentation semantics", () => {
       }
     }
 
-    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Default formal projections/);
+    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Primary formal projections/);
+    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Beta compatibility adapters/);
     assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Non-default compatibility projections/);
-    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Candidate compatibility probes/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /默认正式投影/);
+    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /Primary 正式投影/);
+    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /Beta 兼容 adapter/);
     assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /非默认兼容投影/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /候选兼容 probe/);
+    assert.match(readFileSync(path.join(root, "README.ja-JP.md"), "utf8"), /\bBeta\b/);
+    assert.match(readFileSync(path.join(root, "README.ko-KR.md"), "utf8"), /\bBeta\b/);
   });
 
   test("change readiness checklist covers P1 and P2 release review lanes", () => {

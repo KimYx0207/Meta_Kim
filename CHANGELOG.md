@@ -6,10 +6,21 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [3.0.1] - 2026-08-21
+
+### Added
+
+- **ZCode and DeepSeek Harness are now Beta compatibility adapters.** Their packaged adapters are included in the immutable install/update bundle and sit directly below Claude Code and Codex in the public runtime priority.
+
+### Changed
+
+- **Public runtime support is now a clean three-tier list.** Claude Code and Codex are Primary, ZCode and DeepSeek Harness are Beta, and OpenClaw and Cursor are Compatibility. Research-only candidate platforms remain in the internal catalog instead of the public README support list.
+
 ## [3.0.0] - 2026-08-12
 
 ### Added
 
+- **3.0 runtime support is explicitly three-tiered.** Claude Code and Codex are Primary, ZCode and DeepSeek Harness are Beta, and OpenClaw and Cursor are Compatibility.
 - **Governed execution now has one layered source of truth.** Pure Domain rules evaluate evidence, continuation, dependency-safe progress, scheduler eligibility, lease/claim state, runtime health, and quota observations without writing or granting authority. Application use cases compose those rules, Data adapters own durable SQLite/transaction work, and Presentation renders read-only views. Legacy script entrypoints remain compatibility facades instead of parallel implementations.
 - **A01-A12 close the architecture loop in reader-visible terms.** A01-A03 distinguish verified evidence, continuation advice, and dependency-safe candidates; A04-A07 reuse the existing scheduler and execution authority while projecting claims, health, and quota without creating a second controller; A08 renders the same digest-bound run as a native panel, Kanban, Markdown, or HTML; A09 unifies durable execution events and repository semantics; A10 separates setup orchestration from package/runtime infrastructure; A11 makes knowledge lifecycle changes reversible and approval-bound; A12 keeps documentation and release claims tied to current contracts, runtime evidence, package truth, and release gates.
 - **Knowledge evolution is candidate-only until exact Warden approval.** Age, score, a generated suggestion, or a legacy approval cannot write, delete, or authorize execution. Approval binds the exact target, operation, source digest, candidate digest, rollback plan, and scope; source drift fails closed. Retirement keeps a tombstone, foundational capabilities cannot be retired, and unknown or user-owned state is preserved.
@@ -20,6 +31,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Install and update use an immutable packed-package handoff before persistent global writes.** The CLI remains the user-facing setup facade, while Application and Infrastructure boundaries verify the exact package receipt, stable root, child process, write boundary, and install result. Help, status, and doctor remain non-materializing diagnostics; check remains read-only.
 - **Codex agent fan-out now starts from a resource-safe default.** New/default configuration uses at most two agent threads and one nested level. An explicit user override is preserved; the former Meta_Kim default of six threads is migrated to the safer value.
 - **Runtime support remains evidence-tiered.** Claude Code and Codex are the default formal projections. OpenClaw and Cursor remain non-default compatibility projections whose runtime-specific changes require their own strict evidence; OpenClaw still has no Meta_Kim typed-plugin tool-blocking adapter, and Cursor native arbitrary-choice popup authority remains unverified.
+- **Beta adapters are included in the immutable package lifecycle.** Global install and update verify the ZCode and DeepSeek Harness adapter bundle before reporting success.
 
 ### Fixed
 

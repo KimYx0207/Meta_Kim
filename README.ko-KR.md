@@ -13,7 +13,7 @@
 
 <p>
   <a href="config/runtime-compatibility-catalog.json"><img alt="Projection tiers" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-  <a href="config/runtime-compatibility-catalog.json"><img alt="Candidate compatibility probes" src="https://img.shields.io/badge/candidate-Qoder%20%7C%20Trae%20%7C%20Kiro%20%7C%20Cascade%20%7C%20Cline%20%7C%20Roo%20%7C%20Continue-475569"/></a>
+  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness-b45309"/></a>
   <a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&logo=github"/></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
 </p>
@@ -80,11 +80,19 @@ Meta_Kim은 호환 가능한 표면을 모두 "완전 지원"이라고 부르지
 
 | 계층 | 제품 | 의미 |
 |---|---|---|
-| default formal projection | Claude Code, Codex | canonical 거버넌스를 기본 runtime 파일로 투영하고 `npm run meta:sync` / `npm run meta:check`로 검증합니다. |
-| non-default compatibility projection | OpenClaw, Cursor | 명시적으로 선택한 경우에만 project projection을 생성합니다. runtime 변경은 maintainer handshake와 해당 tool-side self-test evidence가 필요합니다. |
-| candidate compatibility probe | Qoder CLI, Trae, Kiro, Windsurf / Devin Desktop Cascade, Cline, Roo Code, Continue | 공식 문서에서 rules / instructions, skills, agents / modes, hooks, MCP, commands, memory, permission controls 같은 호환 primitive를 확인했습니다. Meta_Kim은 후보로 추적하며 공식 지원으로 보지 않습니다. |
+| primary formal projection | Claude Code, Codex | canonical 거버넌스를 기본 runtime 파일로 투영하고 `npm run meta:sync` / `npm run meta:check`로 검증합니다. |
+| Beta | ZCode, DeepSeek Harness | 패키지에 포함된 compatibility adapter를 사용합니다. |
+| Compatibility | OpenClaw, Cursor | runtime별 project projection을 사용합니다. |
 
 사실 소스: `config/runtime-compatibility-catalog.json`.
+
+의존 프로젝트의 install target은 upstream project에서 관리하며 Meta_Kim의 공개 runtime support list에 포함되지 않습니다.
+
+### 사용 경로
+
+- **Primary (Claude Code / Codex)**: 일반 자연어 작업을 입력하고 primary prompt-first 공식 projection을 사용합니다.
+- **Beta (ZCode / DeepSeek Harness)**: 패키지에 포함된 compatibility adapter를 사용합니다.
+- **Compatibility (OpenClaw / Cursor)**: runtime별 project projection을 사용합니다.
 
 Surface compatibility는 formal runtime support보다 약한 주장입니다. adapter, profile/layout, sync tests, live validation이 준비되기 전에는 공식 projection으로 승격하지 않습니다. 의존 프로젝트의 install target matrix는 Meta_Kim의 support claim으로 여기서 반복하지 않습니다.
 
@@ -489,16 +497,16 @@ Claude Code에서 Meta_Kim은 **Hook**을 사용하여 자동화합니다:
 
 **새 platform은 Meta_Kim이 매핑할 수 있는 primitives를 노출할 때 후보로 평가할 수 있습니다. 하지만 profile, layout, sync, tests, evidence가 갖춰지기 전에는 공식 projection이 아닙니다.**
 
-Meta_Kim은 현재 4개의 공식 projection target을 가집니다:
+Meta_Kim은 현재 2개의 primary 공식 projection target, 2개의 opt-in beta compatibility adapter, 2개의 비기본 compatibility projection target을 가집니다:
 
 | 플랫폼 | 상태 | 매핑 방식 |
 | --- | --- | --- |
 | **Claude Code** | default formal projection | `.claude/agents/*.md` + `SKILL.md` + hooks + MCP |
 | **Codex** | default formal projection | generated local `.codex/agents/*.toml` + `.agents/skills/` + commands + hooks |
-| **OpenClaw** | non-default compatibility projection; maintainer handshake required | `openclaw/` workspaces + skills + internal hooks |
-| **Cursor** | non-default compatibility projection; maintainer handshake required | `.cursor/agents/*.md` + `.cursor/rules/*.mdc` + skills + hooks + MCP |
-
-Meta_Kim은 Qoder CLI, Trae, Kiro, Windsurf / Devin Desktop Cascade, Cline, Roo Code, Continue도 candidate compatibility probe로 추적합니다. 이들은 공식 문서에서 호환 primitives를 확인했지만 setup은 project projection을 생성하지 않습니다. promotion에는 runtime profile, projection layout, generated paths, sync tests, install policy, live 또는 official probe evidence가 필요합니다.
+| **ZCode** | Beta | 패키지에 포함된 ZCode compatibility adapter |
+| **DeepSeek Harness** | Beta | 패키지에 포함된 plugin / preset compatibility adapter |
+| **OpenClaw** | Compatibility | `openclaw/` workspaces + skills + internal hooks |
+| **Cursor** | Compatibility | `.cursor/agents/*.md` + `.cursor/rules/*.mdc` + skills + hooks + MCP |
 
 핵심 논리는 동일(`canonical/`)하며, `npm run meta:sync`를 통해 공식 projection target별 파일 구조로 투영합니다.
 
@@ -513,19 +521,19 @@ flowchart TB
     CANONICAL --> |npm run meta:sync| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills + hooks"]
     CANONICAL --> |npm run meta:sync| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + hooks + MCP"]
 
-    CANDIDATE["candidate probes<br/>Qoder / Trae / Kiro / Cascade / Cline / Roo / Continue"] -.-> |promotion requires profile + layout + tests + evidence| CANONICAL
+    BETA["beta adapters<br/>ZCode / DeepSeek Harness"] -.-> |structural adapter planning| CANONICAL
 
     style CANONICAL fill:#7c3aed,color:#fff
     style CLAUDE fill:#fbbf24,color:#000
     style CODEX fill:#34d399,color:#000
     style OPENCLAW fill:#60a5fa,color:#000
     style CURSOR fill:#f87171,color:#fff
-    style CANDIDATE fill:#555,color:#aaa
+    style BETA fill:#b45309,color:#fff
 ```
 
 새 platform은 계속 추가할 수 있지만, 후보에서 공식 projection으로 승격하려면 adapter 형태와 검증 가능성이 먼저 갖춰져야 합니다.
 
-4개의 projection family는 같은 canonical source에서 생성되지만 native surface는 다릅니다. Claude Code와 Codex는 default formal projection이고, OpenClaw와 Cursor는 maintainer handshake와 native self-test evidence가 필요한 non-default compatibility projection입니다.
+Meta_Kim의 primary formal projection은 Claude Code와 Codex 두 개입니다. ZCode와 DeepSeek Harness는 beta compatibility adapter이고, OpenClaw와 Cursor는 비기본 compatibility projection입니다.
 
 | 역량 표면 | Claude Code | Codex | OpenClaw | Cursor |
 | --- | --- | --- | --- | --- |
@@ -764,8 +772,6 @@ flowchart TB
 | opencode | `.opencode/` → `skills/` |
 | Qwen | ECC는 `npx --yes --package ecc-universal@latest ecc install --profile core --target qwen`을 사용합니다 |
 | Zed, Gemini, CodeBuddy, Antigravity, JoyCode | ECC는 project-local입니다. 각 프로젝트 루트에서 `npx --yes --package ecc-universal@latest ecc install --profile core --target <target>`를 실행합니다 |
-| Qoder CLI | candidate probe 전용입니다. `.qoder/` → `skills/` 탐색은 가능하지만 upstream ECC가 `qoder`를 나열하지 않으므로 ECC install은 실행하지 않습니다 |
-| Trae, Kiro, Windsurf / Devin Desktop Cascade, Cline, Roo Code, Continue | candidate probe 전용입니다. 호환 primitive는 `config/runtime-compatibility-catalog.json`에서 추적하지만 adapter, sync path, validation suite가 생기기 전에는 install / projection하지 않습니다 |
 
 추출 결과는 `~/.<runtime>/skills/<id>/`에 배치됨. 설치/업데이트에서 Enter를 누르면 기본값은 Claude Code + Codex임. Claude marketplace plugin만 설치하려면 `npm run meta:deps:install:claude-plugins`, Claude Code, Codex, OpenClaw, Cursor를 명시적으로 커버하려면 `npm run meta:deps:install:all-runtimes`. **업그레이드 시 수동 정리 불필요**: 이전 버전의 full-repo clone 잔존물은 대상 디렉터리 루트의 `.claude-plugin/` 마커로 자동 감지되어 다음 실행 시 재추출됨.
 
@@ -825,7 +831,7 @@ Meta_Kim은 설치 범위와 실행 중 프로젝트 정착을 분리합니다:
 
 ### 어떤 플랫폼을 지원하나요?
 
-Claude Code와 Codex는 default formal runtime projection입니다. OpenClaw와 Cursor는 maintainer handshake와 native self-test evidence가 필요한 non-default compatibility projection입니다. Qoder CLI, Trae, Kiro, Windsurf / Devin Desktop Cascade, Cline, Roo Code, Continue는 candidate probe입니다. 공식 문서에서 호환 primitive를 확인했지만 아직 Meta_Kim의 공식 runtime projection은 아닙니다. 의존 프로젝트의 install target은 upstream project에서 관리되며 Meta_Kim의 support claim으로 반복하지 않습니다. 정확한 경계는 `config/runtime-compatibility-catalog.json`에 있습니다.
+Claude Code와 Codex는 Primary, ZCode와 DeepSeek Harness는 Beta, OpenClaw와 Cursor는 Compatibility입니다. 정확한 경계는 `config/runtime-compatibility-catalog.json`에 있습니다.
 
 ### 설치가 복잡한가요?
 

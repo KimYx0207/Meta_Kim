@@ -137,6 +137,23 @@ describe("runtime compatibility catalog", () => {
     }
   });
 
+  test("ZCode and DeepSeek Harness are beta adapters below primary runtimes and outside formal sync", () => {
+    const byId = new Map(catalog.products.map((product) => [product.id, product]));
+
+    for (const id of ["zcode", "deepseek-harness"]) {
+      const product = byId.get(id);
+      assert.ok(product, id);
+      assert.equal(product.tier, "beta_compatibility", id);
+      assert.equal(product.formalProjection.inSyncManifest, false, id);
+      assert.equal(product.formalProjection.hasRuntimeProfile, false, id);
+      assert.equal(product.formalProjection.hasProjectionLayout, false, id);
+      assert.equal(product.formalProjection.isDefaultTarget, false, id);
+      assert.equal(syncManifest.supportedTargets.includes(id), false, id);
+      assert.match(product.decision, /packed structural/i, id);
+      assert.match(product.decision, /not.*formal|forbid formal/i, id);
+    }
+  });
+
   test("current official evidence keeps Qoder paths and Cline skill primitive fresh", () => {
     const byId = new Map(catalog.products.map((product) => [product.id, product]));
     const qoder = byId.get("qoder");

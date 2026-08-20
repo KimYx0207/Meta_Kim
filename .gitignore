@@ -38,6 +38,9 @@ graphify-out/
 
 # ========== Runtime Directories ==========
 runtimes/
+# Runtime source adapters are durable source, not generated runtime homes.
+!/src/runtimes/
+!/src/runtimes/**
 
 # ========== Auto-generated Records (Not source code) ==========
 memory/

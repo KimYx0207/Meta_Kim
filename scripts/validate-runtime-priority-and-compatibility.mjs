@@ -38,7 +38,9 @@ const FIXTURE_ARTIFACT_PATH = path.join(
 );
 
 const PRIMARY = ["claude_code", "codex"];
+const BETA_COMPATIBILITY = ["zcode", "deepseek-harness"];
 const COMPATIBILITY = ["cursor", "openclaw"];
+const PRIORITY_ORDER = ["primary", "beta_compatibility", "compatibility"];
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
@@ -53,7 +55,9 @@ function validateContractShape(contract, stageContract, liveContract, pkg) {
   assert.equal(contract.status, "productized");
   sameSet(contract.prdTaskIds, ["P-085", "P-092"], "runtime contract task ids drifted");
   sameSet(contract.primaryRuntimeTier, PRIMARY, "runtime contract primary tier drifted");
+  sameSet(contract.betaCompatibilityRuntimeTier, BETA_COMPATIBILITY, "runtime contract beta compatibility tier drifted");
   sameSet(contract.compatibilityRuntimeTier, COMPATIBILITY, "runtime contract compatibility tier drifted");
+  assert.deepEqual(contract.priorityOrder, PRIORITY_ORDER, "runtime contract priority order drifted");
   assert.equal(contract.primaryRequiredEvidenceKind, "runtime_live_pass");
   for (const kind of [
     "compatibility_smoke_pass",
@@ -61,9 +65,11 @@ function validateContractShape(contract, stageContract, liveContract, pkg) {
     "blocked_with_contract",
     "native_harness_missing",
     "candidate_probe",
+    "packed_structural_adapter",
   ]) {
     assert.ok(contract.compatibilityAllowedEvidenceKinds.includes(kind), `missing compatibility kind ${kind}`);
   }
+  assert.deepEqual(contract.betaCompatibilityAllowedEvidenceKinds, ["packed_structural_adapter"]);
   assert.deepEqual(contract.priorityRules.primaryClosureTasks, [
     "P-087",
     "P-088",
@@ -72,12 +78,24 @@ function validateContractShape(contract, stageContract, liveContract, pkg) {
     "P-091",
   ]);
   assert.equal(contract.priorityRules.compatibilityDoesNotBlockPrimary, true);
+  assert.equal(contract.priorityRules.betaCompatibilityDoesNotBlockPrimary, true);
+  assert.equal(contract.priorityRules.compatibilityDoesNotBlockBetaCompatibility, true);
   assert.equal(contract.priorityRules.cursorNativeLiveBlockedOnlyBlocksAllToolCompatibility, true);
   assert.equal(contract.priorityRules.p024BlocksOnly, "all-tool compatibility claim");
   assert.equal(contract.priorityRules.compatibilityPriorityLeakTarget, 0);
+  assert.equal(contract.priorityRules.betaCompatibilityPriorityLeakTarget, 0);
   assert.equal(contract.priorityRules.openclawCursorPrimaryBlockerTarget, 0);
   assert.equal(contract.compatibilityDemotion.openclaw.tier, "compatibility");
   assert.equal(contract.compatibilityDemotion.cursor.tier, "compatibility");
+  for (const runtimeId of BETA_COMPATIBILITY) {
+    assert.equal(contract.compatibilityDemotion[runtimeId].tier, "beta_compatibility");
+    assert.deepEqual(contract.compatibilityDemotion[runtimeId].notAllowedToBlock, [
+      "Claude Code primary release gate",
+      "Codex primary release gate",
+    ]);
+  }
+  assert.ok(contract.noOverclaimRules.some((rule) => /packed structural adapter/u.test(rule)));
+  assert.ok(contract.noOverclaimRules.some((rule) => /live-certified/u.test(rule)));
 
   sameSet(stageContract.primaryRuntimeTier, PRIMARY, "stage contract primary tier drifted");
   sameSet(stageContract.compatibilityRuntimeTier, COMPATIBILITY, "stage contract compatibility tier drifted");
@@ -184,8 +202,11 @@ function main() {
       status: "pass",
       contract: "config/contracts/runtime-priority-and-compatibility-contract.json",
       primaryRuntimeTier: PRIMARY,
+      betaCompatibilityRuntimeTier: BETA_COMPATIBILITY,
       compatibilityRuntimeTier: COMPATIBILITY,
+      priorityOrder: PRIORITY_ORDER,
       compatibilityPriorityLeakTarget: 0,
+      betaCompatibilityPriorityLeakTarget: 0,
       privateEvidence: [prdEvidence],
     }, null, 2)}\n`,
   );

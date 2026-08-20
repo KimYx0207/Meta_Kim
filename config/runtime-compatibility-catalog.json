@@ -1,7 +1,7 @@
 {
   "$schema": "./contracts/runtime-compatibility-catalog.schema.json",
   "schemaVersion": 1,
-  "lastReviewedAt": "2026-06-15",
+  "lastReviewedAt": "2026-08-21",
   "decisionBoundary": {
     "noAutoPromotionFromDependencyInstall": true,
     "noAutoPromotionFromGenericSkillPath": true,
@@ -11,6 +11,7 @@
   "tierDefinitions": {
     "runtime_projection": "Meta_Kim has a formal repo projection, runtime profile, projection layout, sync manifest entry, and validation coverage.",
     "dependency_install_target": "A dependency installer can target the product, but Meta_Kim does not own a formal runtime projection for it.",
+    "beta_compatibility": "Meta_Kim ships an opt-in packed structural adapter for the product; it is disabled by default, outside formal sync, and not live-certified.",
     "candidate_probe": "External docs or user demand suggest compatibility, but Meta_Kim needs a probe, adapter design, and validation before promotion."
   },
   "surfaceTaxonomy": {
@@ -847,6 +848,92 @@
       ],
       "decision": "Admit Continue as candidate_probe only: rules, config agents, MCP, prompts, and CLI permissions are compatible primitives, not a Meta_Kim projection.",
       "nextAction": "Probe Continue config.yaml projection, local rule precedence, MCP block files, prompt commands, and CLI permission semantics before promotion."
+    },
+    {
+      "id": "zcode",
+      "label": "ZCode",
+      "tier": "beta_compatibility",
+      "formalProjection": {
+        "inSyncManifest": false,
+        "hasRuntimeProfile": false,
+        "hasProjectionLayout": false,
+        "isDefaultTarget": false
+      },
+      "genericCompatibility": {
+        "skillPath": "ZCode skill surface is locally observable; exact durable project/global projection paths still require official contract evidence",
+        "agentPath": "ZCode expert and subagent surfaces are locally observable; durable agent file format and ownership need probe",
+        "hookConfig": null,
+        "mcpConfig": "ZCode exposes an MCP command surface; exact merge-safe configuration file authority needs probe",
+        "status": "partial"
+      },
+      "compatibilitySurfaces": [
+        "skill_workflow",
+        "agent_mode",
+        "mcp_tooling",
+        "command_cli",
+        "permission_safety"
+      ],
+      "dependencyInstall": {
+        "ecc": {
+          "support": "not_supported",
+          "mode": "not_applicable",
+          "evidenceRef": "npx --yes --package ecc-universal@latest ecc install --help"
+        }
+      },
+      "evidence": [
+        {
+          "type": "command_output",
+          "ref": "zcode version; zcode --help; zcode commands",
+          "claim": "A local no-prompt probe observed ZCode 0.16.3, plan/build/edit/yolo modes, skills, goals, experts, subagents, MCP, resume, and JSON output surfaces."
+        }
+      ],
+      "decision": "Admit ZCode as beta_compatibility only: packed structural evidence is enough for an opt-in plan-only adapter, but not for formal sync, install, native runtime, or live-certified model support claims.",
+      "nextAction": "Keep the beta adapter disabled by default, no-quota and plan-only; promote only after official path/config contracts, merge-safe install/update behavior, and separate live acceptance are proven."
+    },
+    {
+      "id": "deepseek-harness",
+      "label": "DeepSeek Harness",
+      "tier": "beta_compatibility",
+      "formalProjection": {
+        "inSyncManifest": false,
+        "hasRuntimeProfile": false,
+        "hasProjectionLayout": false,
+        "isDefaultTarget": false
+      },
+      "genericCompatibility": {
+        "skillPath": "DeepSeek Harness plugin and skills surfaces; exact Meta_Kim preset ownership remains opt-in",
+        "agentPath": "DeepSeek Harness subagent and workflow primitives; no Meta_Kim durable agent projection yet",
+        "hookConfig": null,
+        "mcpConfig": null,
+        "status": "partial"
+      },
+      "compatibilitySurfaces": [
+        "skill_workflow",
+        "agent_mode",
+        "command_cli",
+        "permission_safety"
+      ],
+      "dependencyInstall": {
+        "ecc": {
+          "support": "not_supported",
+          "mode": "not_applicable",
+          "evidenceRef": "npx --yes --package ecc-universal@latest ecc install --help"
+        }
+      },
+      "evidence": [
+        {
+          "type": "official_docs",
+          "ref": "https://deepseek.com/harness/en/",
+          "claim": "DeepSeek describes Harness as a developer preview with plugin-based model, tool, skill, session, sandbox, storage, loop, scheduler, and UI primitives."
+        },
+        {
+          "type": "official_docs",
+          "ref": "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/acp/acp/README.md",
+          "claim": "The official ACP package documents a JSON-RPC stdio automation transport with intentionally incomplete UI, configuration, MCP, and replay surfaces."
+        }
+      ],
+      "decision": "Admit DeepSeek Harness as beta_compatibility only: its plugin architecture and ACP automation seam support a packed structural adapter, but developer-preview status and missing full-runtime ACP surfaces forbid formal, native, or live-certified claims.",
+      "nextAction": "Keep the preset opt-in, disabled by default, version-gated, and no-quota; promote only after pinned feature probes, config ownership, install/update/uninstall policy, and separate live acceptance are proven."
     },
     {
       "id": "qoder",

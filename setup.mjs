@@ -203,6 +203,12 @@ import {
   createProjectionPackageBoundary,
 } from "./src/infrastructure/installer/projection-package-boundary.mjs";
 import {
+  buildBetaRuntimeAdapterBundlePlan,
+} from "./src/application/installer/beta-runtime-adapter-bundle.mjs";
+import {
+  verifyBetaRuntimeAdapterBundle,
+} from "./src/infrastructure/installer/beta-runtime-adapter-bundle.mjs";
+import {
   INSTALL_STEP_CLASSIFICATION,
   INSTALL_STEP_OUTCOME,
   installStep,
@@ -5386,6 +5392,25 @@ function projectionPackageWriteBoundary() {
     projectionPackageBoundary.storeBoundary;
 }
 
+async function verifyBetaRuntimeAdapterBundleStep(mode, stepResults) {
+  const plan = buildBetaRuntimeAdapterBundlePlan({ mode });
+  const verification = await verifyBetaRuntimeAdapterBundle({
+    packageRoot: executingStableProjectionPackage?.packageRoot,
+    stablePackage: executingStableProjectionPackage,
+    plan,
+  });
+  stepResults.push(
+    installStep(
+      `beta runtime adapter bundle (${mode}; available, inactive)`,
+      verification.status === "verified",
+    ),
+  );
+  info(
+    `Beta compatibility adapters verified in the immutable package; available by default, inactive, and not formal sync targets (${verification.entries.length} files)`,
+  );
+  return verification;
+}
+
 function projectPersistentWriteTargets(targetDirs) {
   return (targetDirs ?? []).flatMap((candidate) => {
     const targetDir = resolve(
@@ -8679,6 +8704,7 @@ async function runInstall() {
     if (stableSetup.delegatedResult) {
       return stableSetup.delegatedResult;
     }
+    await verifyBetaRuntimeAdapterBundleStep("install", stepResults);
   }
 
   if (needGlobal) {
@@ -9011,6 +9037,7 @@ async function runUpdate() {
     if (stableSetup.delegatedResult) {
       return stableSetup.delegatedResult;
     }
+    await verifyBetaRuntimeAdapterBundleStep("update", stepResults);
   }
 
   if (needGlobal) {

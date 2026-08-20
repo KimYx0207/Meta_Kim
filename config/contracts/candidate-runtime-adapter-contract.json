@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "meta-kim-candidate-runtime-adapter-v1",
+  "scope": "beta_compatibility",
+  "purpose": "Describe opt-in, no-quota packed structural adapters for beta compatibility runtimes that are not Meta_Kim formal projection targets or live-certified runtimes.",
+  "decisionBoundary": {
+    "formalRuntimeSource": "config/sync.json supportedTargets plus runtimeProfileCatalog/runtimeProjectionLayouts in scripts/meta-kim-sync-config.mjs",
+    "candidateAdaptersDoNotCreateFormalSupport": true,
+    "betaAdaptersDoNotEnterDefaultRuntimeActivationOrSync": true,
+    "betaAdaptersDoNotBlockPrimaryRuntime": true,
+    "betaAdaptersProvePackedStructuralAdapterOnly": true,
+    "betaAdaptersAreNotLiveCertified": true,
+    "surfaceSimilarityDoesNotProveNativeSupport": true,
+    "promotionRequiresSeparateReviewedRuntimeProjectionWork": true
+  },
+  "inputBoundary": {
+    "explicitProbeFactsOnly": true,
+    "ambientRuntimeDiscovery": false,
+    "callerMayNotAssertFormalProjection": true,
+    "unknownCapabilitiesFailClosed": true,
+    "credentialsOrRawModelOutputForbidden": true
+  },
+  "resultExactFields": [
+    "schemaVersion",
+    "runtimeId",
+    "tier",
+    "formalProjection",
+    "probe",
+    "capabilityAssessment",
+    "projectionPlan",
+    "invocationPolicy",
+    "configurationPolicy",
+    "authorization"
+  ],
+  "authorizationExactFields": [
+    "modelInvocationAllowed",
+    "processSpawnAllowed",
+    "globalConfigWriteAllowed",
+    "userConfigOverwriteAllowed",
+    "mcpAutoStartAllowed",
+    "hookClaimAllowed",
+    "formalRuntimePromotionAllowed"
+  ],
+  "authorizationRule": "Every authorization field is always false for beta_compatibility plans.",
+  "runtimeRules": {
+    "zcode": {
+      "runtimeId": "zcode",
+      "headlessMode": "plan",
+      "forbiddenHeadlessModes": ["build", "edit", "yolo"],
+      "hookSupport": "not_claimed",
+      "mcpPolicy": "preserve_user_merge_plan_only",
+      "modelInvocationDuringProbeOrTest": false,
+      "liveCertified": false
+    },
+    "deepseek-harness": {
+      "runtimeId": "deepseek-harness",
+      "releaseState": "developer_preview_breaking_changes_possible",
+      "integrationMode": "opt_in_plugin_preset",
+      "acpScope": "automation_transport_only_not_full_runtime_ui",
+      "globalConfigurationWrite": false,
+      "modelInvocationDuringProbeOrTest": false,
+      "liveCertified": false
+    }
+  },
+  "verification": {
+    "requiresInstalledRuntime": false,
+    "requiresNetwork": false,
+    "requiresCredentials": false,
+    "requiresModelInvocation": false,
+    "focusedStructuralTestsOnly": true,
+    "evidenceKind": "packed_structural_adapter",
+    "liveCertified": false,
+    "forbiddenClaims": [
+      "formal runtime projection",
+      "native hook support",
+      "live model acceptance",
+      "installed-user acceptance",
+      "default sync support"
+    ]
+  }
+}

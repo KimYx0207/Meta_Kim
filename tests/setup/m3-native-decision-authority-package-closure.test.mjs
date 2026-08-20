@@ -33,6 +33,14 @@ const SCHEDULER_AUTHORITY_REUSE_DOMAIN = "src/domain/scheduling/scheduler-author
 const QUOTA_USAGE_PROJECTION_DOMAIN = "src/domain/quota/quota-usage-projection.mjs";
 const RUNTIME_HEALTH_PROJECTION_DOMAIN = "src/domain/runtime/runtime-health-projection.mjs";
 const TODO_SAFE_PROGRESS_DOMAIN = "src/domain/work/todo-dependency-safe-progress-shadow.mjs";
+const CANDIDATE_RUNTIME_ADAPTER_FILES = [
+  "src/runtimes/deepseek-harness/candidate-adapter.mjs",
+  "src/runtimes/zcode/candidate-adapter.mjs",
+];
+const BETA_RUNTIME_ADAPTER_BUNDLE_FILES = [
+  "src/application/installer/beta-runtime-adapter-bundle.mjs",
+  "src/infrastructure/installer/beta-runtime-adapter-bundle.mjs",
+];
 const READ_ONLY_SURFACE_SOURCE_FILES = [
   "src/domain/shared/canonical-digest.mjs",
   "src/domain/presentation/read-only-run-projection-schema.mjs",
@@ -74,6 +82,8 @@ const PACKAGE_SOURCE_FILES = [
   ...DATA_EVENT_REPOSITORY_SOURCE_FILES,
   ...SETUP_INSTALLER_DECOMPOSITION_SOURCE_FILES,
   ...KNOWLEDGE_LIFECYCLE_SOURCE_FILES,
+  ...CANDIDATE_RUNTIME_ADAPTER_FILES,
+  ...BETA_RUNTIME_ADAPTER_BUNDLE_FILES,
 ].sort();
 const IMPORT_CLOSURE_ROOTS = [
   "src/adapters/claude/native-decision-surface-adapter.mjs",

@@ -6,10 +6,12 @@
   "verificationOwner": "verify",
   "prdTaskIds": ["P-085", "P-092"],
   "status": "productized",
-  "currentAsOf": "2026-06-13",
-  "purpose": "Make Claude Code and Codex the Tier 0 primary prompt-first full-flow runtimes, while preserving OpenClaw and Cursor as compatibility runtimes that provide smoke, projection, degraded, blocked, and future native-probe evidence without blocking the primary release-grade claim.",
+  "currentAsOf": "2026-08-21",
+  "purpose": "Make Claude Code and Codex the primary prompt-first full-flow runtimes, keep ZCode and DeepSeek Harness as opt-in beta compatibility adapters, and preserve OpenClaw and Cursor as compatibility runtimes without allowing lower tiers to overclaim or block a higher tier.",
   "primaryRuntimeTier": ["claude_code", "codex"],
+  "betaCompatibilityRuntimeTier": ["zcode", "deepseek-harness"],
   "compatibilityRuntimeTier": ["openclaw", "cursor"],
+  "priorityOrder": ["primary", "beta_compatibility", "compatibility"],
   "primaryRequiredEvidenceKind": "runtime_live_pass",
   "compatibilityAllowedEvidenceKinds": [
     "compatibility_smoke_pass",
@@ -17,8 +19,10 @@
     "blocked_with_contract",
     "native_harness_missing",
     "candidate_probe",
+    "packed_structural_adapter",
     "degraded"
   ],
+  "betaCompatibilityAllowedEvidenceKinds": ["packed_structural_adapter"],
   "priorityRules": {
     "sameFrameworkPromptRequiredForPrimary": true,
     "primaryClosureTasks": ["P-087", "P-088", "P-089", "P-090", "P-091"],
@@ -30,12 +34,27 @@
       "evidence overclaim"
     ],
     "compatibilityDoesNotBlockPrimary": true,
+    "betaCompatibilityDoesNotBlockPrimary": true,
+    "compatibilityDoesNotBlockBetaCompatibility": true,
     "cursorNativeLiveBlockedOnlyBlocksAllToolCompatibility": true,
     "p024BlocksOnly": "all-tool compatibility claim",
     "compatibilityPriorityLeakTarget": 0,
+    "betaCompatibilityPriorityLeakTarget": 0,
     "openclawCursorPrimaryBlockerTarget": 0
   },
   "compatibilityDemotion": {
+    "zcode": {
+      "tier": "beta_compatibility",
+      "keptEvidence": ["packed_structural_adapter", "plan_only", "blocked_with_reason"],
+      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
+      "notAllowedClaims": ["formal projection", "native runtime", "live certification", "default sync target"]
+    },
+    "deepseek-harness": {
+      "tier": "beta_compatibility",
+      "keptEvidence": ["packed_structural_adapter", "developer_preview", "ACP automation seam", "blocked_with_reason"],
+      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
+      "notAllowedClaims": ["formal projection", "native runtime", "complete UI", "live certification", "default sync target"]
+    },
     "openclaw": {
       "tier": "compatibility",
       "keptEvidence": ["projection", "shard", "smoke", "batch_stability", "blocked_with_reason"],
@@ -49,6 +68,9 @@
     }
   },
   "noOverclaimRules": [
+    "ZCode and DeepSeek Harness beta adapters prove only a packed structural adapter; they are not live-certified or native runtime support.",
+    "Beta compatibility adapters are opt-in, disabled by default, absent from sync supportedTargets, and cannot start a process, invoke a model, consume quota, or write global or user configuration.",
+    "DeepSeek Harness ACP is an automation structural seam only and cannot be presented as a complete Harness UI or runtime.",
     "OpenClaw or Cursor smoke cannot be renamed primary live pass.",
     "A blocked Cursor native live harness cannot be renamed release-grade pass.",
     "A primary Claude Code or Codex pass cannot be broadened into Claude/Codex/Cursor/OpenClaw all-tool compatibility completion.",

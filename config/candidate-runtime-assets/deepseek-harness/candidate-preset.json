@@ -1,0 +1,39 @@
+{
+  "$schema": "../../contracts/candidate-runtime-adapter-contract.json",
+  "kind": "beta_compatibility_preset",
+  "runtimeId": "deepseek-harness",
+  "tier": "beta_compatibility",
+  "formalProjection": false,
+  "packedStructuralAdapterOnly": true,
+  "liveCertified": false,
+  "releaseState": "developer_preview_breaking_changes_possible",
+  "integrationMode": "opt_in_plugin_preset",
+  "enabledByDefault": false,
+  "optInRequired": true,
+  "probeFactsRequired": [
+    "version",
+    "feature:plugin",
+    "feature:preset",
+    "feature:acp.automation",
+    "feature:acp.ui",
+    "feature:acp.configuration",
+    "feature:acp.mcp",
+    "feature:acp.replay"
+  ],
+  "acp": {
+    "mode": "automation_transport_only",
+    "fullRuntimeUi": false,
+    "configuration": false,
+    "mcp": false,
+    "replay": false
+  },
+  "policy": {
+    "modelInvocationAllowed": false,
+    "processSpawnAllowed": false,
+    "globalConfigWriteAllowed": false,
+    "userConfigOverwriteAllowed": false,
+    "mcpAutoStartAllowed": false,
+    "hookClaimAllowed": false,
+    "formalRuntimePromotionAllowed": false
+  }
+}

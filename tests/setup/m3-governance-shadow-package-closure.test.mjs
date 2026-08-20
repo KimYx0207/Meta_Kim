@@ -18,6 +18,14 @@ const SCHEDULER_AUTHORITY_REUSE_PATH = "src/domain/scheduling/scheduler-authorit
 const QUOTA_USAGE_PROJECTION_PATH = "src/domain/quota/quota-usage-projection.mjs";
 const RUNTIME_HEALTH_PROJECTION_PATH = "src/domain/runtime/runtime-health-projection.mjs";
 const TODO_SAFE_PROGRESS_PATH = "src/domain/work/todo-dependency-safe-progress-shadow.mjs";
+const CANDIDATE_RUNTIME_ADAPTER_PATHS = [
+  "src/runtimes/deepseek-harness/candidate-adapter.mjs",
+  "src/runtimes/zcode/candidate-adapter.mjs",
+];
+const BETA_RUNTIME_ADAPTER_BUNDLE_PATHS = [
+  "src/application/installer/beta-runtime-adapter-bundle.mjs",
+  "src/infrastructure/installer/beta-runtime-adapter-bundle.mjs",
+];
 const READ_ONLY_SURFACE_SOURCE_PATHS = [
   "src/domain/shared/canonical-digest.mjs",
   "src/domain/presentation/read-only-run-projection-schema.mjs",
@@ -82,6 +90,8 @@ const APPROVED_SOURCE_CLOSURE = [
   ...DATA_EVENT_REPOSITORY_SOURCE_PATHS,
   ...SETUP_INSTALLER_DECOMPOSITION_SOURCE_PATHS,
   ...KNOWLEDGE_LIFECYCLE_SOURCE_PATHS,
+  ...CANDIDATE_RUNTIME_ADAPTER_PATHS,
+  ...BETA_RUNTIME_ADAPTER_BUNDLE_PATHS,
   ...APPROVED_DECISION_CLOSURE,
 ].sort();
 const UNRELATED_SOURCE_PATHS = [
