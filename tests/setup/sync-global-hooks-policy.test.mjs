@@ -798,6 +798,80 @@ Critical -> Fetch -> Thinking -> Review
     });
   });
 
+  test("Codex global sync preserves a shared meta-theory junction and still projects hooks", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      const claudeSkill = path.join(root, "claude", "skills", "meta-theory");
+      const sharedAlias = path.join(root, ".agents", "skills", "meta-theory");
+      await mkdir(claudeSkill, { recursive: true });
+      await mkdir(path.dirname(sharedAlias), { recursive: true });
+      await writeFile(
+        path.join(claudeSkill, "SKILL.md"),
+        `---
+name: meta-theory
+description: user-managed shared Meta_Kim skill
+---
+`,
+        "utf8",
+      );
+      await symlink(claudeSkill, sharedAlias, "junction");
+
+      const sync = await runScript(
+        ["--targets", "codex", "--with-global-hooks"],
+        env,
+      );
+
+      assert.match(
+        await readFile(path.join(sharedAlias, "SKILL.md"), "utf8"),
+        /user-managed shared Meta_Kim skill/,
+      );
+      assert.doesNotMatch(sync.stdout, /Skipped stale skill alias cleanup/);
+      const hooks = JSON.parse(
+        await readFile(path.join(root, "codex", "hooks.json"), "utf8"),
+      );
+      assert.match(JSON.stringify(hooks), /activate-meta-theory-spine\.mjs/);
+    });
+  });
+
+  test("Codex global sync keeps unexpected stale-alias backup failures fatal", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      const staleAlias = path.join(root, ".agents", "skills", "meta-theory");
+      const backupBlocker = path.join(
+        root,
+        "codex",
+        ".meta-kim",
+        "backups",
+        "stale-skill-aliases",
+      );
+      await mkdir(staleAlias, { recursive: true });
+      await writeFile(
+        path.join(staleAlias, "SKILL.md"),
+        `---
+name: meta-theory
+description: Meta_Kim executable governance dispatcher
+---
+`,
+        "utf8",
+      );
+      await mkdir(path.dirname(backupBlocker), { recursive: true });
+      await writeFile(backupBlocker, "blocks backup directory creation\n", "utf8");
+
+      await assert.rejects(
+        () => runScript(["--targets", "codex", "--with-global-hooks"], env),
+        (error) => {
+          assert.match(
+            `${error.stdout ?? ""}\n${error.stderr ?? ""}`,
+            /EEXIST|ENOTDIR|already exists|file exists|not a directory/iu,
+          );
+          return true;
+        },
+      );
+      assert.match(
+        await readFile(path.join(staleAlias, "SKILL.md"), "utf8"),
+        /Meta_Kim executable governance dispatcher/,
+      );
+    });
+  });
+
   test("Codex global hooks merge preserves user hooks and detects stale Meta_Kim entries", async () => {
     await withTempRuntimeHomes(async ({ env, root }) => {
       const codexHome = path.join(root, "codex");
