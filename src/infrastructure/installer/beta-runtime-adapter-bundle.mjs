@@ -91,12 +91,17 @@ function assertContract(contract) {
 }
 
 function assertAdapterSource(source, runtimeId) {
-  const names = runtimeId === "zcode"
-    ? ["buildZCodeCandidateRuntimePlan", "assertValidZCodeCandidateRuntimePlan"]
-    : [
-        "buildDeepSeekHarnessCandidateRuntimePlan",
-        "assertValidDeepSeekHarnessCandidateRuntimePlan",
-      ];
+  const namesByRuntime = {
+    zcode: ["buildZCodeCandidateRuntimePlan", "assertValidZCodeCandidateRuntimePlan"],
+    "deepseek-harness": [
+      "buildDeepSeekHarnessCandidateRuntimePlan",
+      "assertValidDeepSeekHarnessCandidateRuntimePlan",
+    ],
+    qoder: ["buildQoderCandidateRuntimePlan", "assertValidQoderCandidateRuntimePlan"],
+    trae: ["buildTraeCandidateRuntimePlan", "assertValidTraeCandidateRuntimePlan"],
+  };
+  const names = namesByRuntime[runtimeId];
+  if (!names) fail(`unknown beta adapter runtime ${runtimeId}`);
   for (const name of names) {
     if (!new RegExp(`export\\s+function\\s+${name}\\b`, "u").test(source)) {
       fail(`${runtimeId} adapter is missing ${name}`);

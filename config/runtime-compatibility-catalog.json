@@ -493,7 +493,7 @@
     {
       "id": "trae",
       "label": "Trae",
-      "tier": "candidate_probe",
+      "tier": "beta_compatibility",
       "formalProjection": {
         "inSyncManifest": false,
         "hasRuntimeProfile": false,
@@ -501,10 +501,10 @@
         "isDefaultTarget": false
       },
       "genericCompatibility": {
-        "skillPath": "Trae Skills / SKILL.md-compatible skill packages; exact project and global paths need probe",
-        "agentPath": "Trae custom agents in IDE settings; exact exported file path needs probe",
+        "skillPath": "Trae Skills and project Rules provide the packaged compatibility planning surface",
+        "agentPath": "Trae custom agents expose prompt and tool composition for adapter planning",
         "hookConfig": null,
-        "mcpConfig": "Trae MCP settings / Add MCP servers UI; exact file path needs probe",
+        "mcpConfig": "Trae MCP settings and project .trae/mcp.json import surface",
         "status": "partial"
       },
       "compatibilitySurfaces": [
@@ -548,8 +548,8 @@
           "claim": "Trae documents memory for persisted preferences and context."
         }
       ],
-      "decision": "Admit Trae as candidate_probe only: official docs expose compatible primitives, but Meta_Kim lacks profile/layout/sync validation and local runtime probe evidence.",
-      "nextAction": "Design a Trae adapter only after probing actual project/global paths, export format, MCP config shape, and validation hooks."
+      "decision": "Admit Trae as beta_compatibility only: official Rules, Skills, custom Agent, and MCP surfaces support a packed structural adapter, not a formal projection.",
+      "nextAction": "Keep the packaged Trae adapter in the Beta tier and promote through a separate formal runtime projection change."
     },
     {
       "id": "kiro",
@@ -938,7 +938,7 @@
     {
       "id": "qoder",
       "label": "Qoder CLI",
-      "tier": "candidate_probe",
+      "tier": "beta_compatibility",
       "formalProjection": {
         "inSyncManifest": false,
         "hasRuntimeProfile": false,
@@ -999,8 +999,8 @@
           "claim": "ECC install help does not list qoder as a supported target."
         }
       ],
-      "decision": "Admit Qoder as candidate_probe only: official docs prove compatible primitives, but Meta_Kim lacks profile/layout/sync validation and ECC currently omits qoder.",
-      "nextAction": "Use a generic adapter probe first; promote only after adding a profile, projection layout, generated target paths, sync tests, and install policy."
+      "decision": "Admit Qoder as beta_compatibility only: official rules, skills, subagents, hooks, plugins, commands, permissions, and MCP surfaces support a packed structural adapter, not a formal projection.",
+      "nextAction": "Keep the packaged Qoder adapter in the Beta tier and promote through a separate formal runtime projection change."
     }
   ]
 }

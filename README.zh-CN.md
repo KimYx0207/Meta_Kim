@@ -13,7 +13,7 @@
 
 <p>
   <a href="config/runtime-compatibility-catalog.json"><img alt="Projection tiers" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness-b45309"/></a>
+  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness%20%7C%20Qoder%20%7C%20Trae-b45309"/></a>
   <a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&logo=github"/></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
 </p>
@@ -169,6 +169,8 @@ npm run meta:validate
 | Codex | 全局 skill + 项目 `AGENTS.md` 上下文；全局 hooks 需要显式 `--with-global-hooks`；本地 `.codex/agents`、`.codex/commands` 或 `.agents/skills` 是项目专用覆盖层，不是默认执行层投影 | 直接说任务；Codex 会区分 durable 工作、主观模糊输入和纯查询 |
 | ZCode | Beta | 使用随包提供的 ZCode 兼容 adapter |
 | DeepSeek Harness | Beta | 使用随包提供的 plugin/preset 兼容 adapter |
+| Qoder | Beta | 使用随包提供的 Qoder 兼容 adapter |
+| Trae | Beta | 使用随包提供的 Trae 兼容 adapter |
 | OpenClaw | 全局/共享 skill + OpenClaw config/auth；项目 `openclaw/` 材料用于项目专用 workspace/context 覆盖层 | 需要配置 OpenClaw config/auth；提交者必须先在 OpenClaw 自己完成严格自测并提供证据，证据通过审查后才能合并 |
 | Cursor | 全局 skill + 项目 rules/context；本地 `.cursor/agents`、`.cursor/rules`、`.cursor/skills`、hooks、MCP 是项目专用覆盖层 | 提交者必须先在 Cursor 自己完成严格自测并提供证据，证据通过审查后才能合并 |
 
@@ -179,7 +181,7 @@ Meta_Kim 现在把平台支持分成几层，而不是把所有“看起来兼�
 | 层级 | 产品 | 含义 |
 |---|---|---|
 | Primary 正式投影 | Claude Code、Codex | canonical 治理层默认同步成对应工具端文件，并由 `npm run meta:sync` / `npm run meta:check` 校验，是 prompt-first 主链路。 |
-| Beta 兼容 adapter | ZCode、DeepSeek Harness | 随安装包提供，并由安装与更新流程校验。 |
+| Beta 兼容 adapter | ZCode、DeepSeek Harness、Qoder、Trae | 随安装包提供，并由安装与更新流程校验。 |
 | 非默认兼容投影 | OpenClaw、Cursor | 显式选择目标时生成项目文件；runtime 改造必须有维护者确认和对应工具端自测证据，才能视为完成。 |
 
 事实源：`config/runtime-compatibility-catalog.json`。
@@ -605,6 +607,8 @@ Meta_Kim 当前拥有 2 个 primary 正式投影目标、2 个 opt-in beta 兼�
 | **Codex** | 默认正式投影 | 为九个治理 agent 生成本地 `.codex/agents/*.toml` + `.agents/skills/` + commands + hooks；作为默认 target 参与主链路，由 sync/check 验证 |
 | **ZCode** | Beta | 随包提供的 ZCode 兼容 adapter |
 | **DeepSeek Harness** | Beta | 随包提供的 plugin/preset 兼容 adapter |
+| **Qoder** | Beta | 随包提供的 Qoder 兼容 adapter |
+| **Trae** | Beta | 随包提供的 Trae 兼容 adapter |
 | **OpenClaw** | Compatibility | `openclaw/` workspaces + skills + internal hooks |
 | **Cursor** | Compatibility | `.cursor/agents/*.md` + `.cursor/rules/*.mdc` + skills + hooks + MCP |
 
@@ -621,7 +625,7 @@ flowchart TB
     CANONICAL --> |npm run meta:sync| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills + internal hooks"]
     CANONICAL --> |npm run meta:sync| CURSOR[".cursor/<br/>Cursor<br/>agents + rules + skills + hooks + MCP"]
 
-    BETA["Beta adapters<br/>ZCode / DeepSeek Harness"] -.-> |随包提供的兼容 adapter| CANONICAL
+    BETA["Beta adapters<br/>ZCode / DeepSeek Harness / Qoder / Trae"] -.-> |随包提供的兼容 adapter| CANONICAL
 
     style CANONICAL fill:#7c3aed,color:#fff
     style CLAUDE fill:#fbbf24,color:#000
@@ -631,7 +635,7 @@ flowchart TB
     style BETA fill:#b45309,color:#fff
 ```
 
-Meta_Kim 只有 Claude Code 与 Codex 两个 Primary；ZCode 与 DeepSeek Harness 是 Beta；OpenClaw 与 Cursor 是 Compatibility。
+Meta_Kim 只有 Claude Code 与 Codex 两个 Primary；ZCode、DeepSeek Harness、Qoder 与 Trae 是 Beta；OpenClaw 与 Cursor 是 Compatibility。
 
 Decision authority 的边界比“能生成投影”更窄。当前 Codex app-server 与 Claude SDK/CLI callback 可以产生精确关联但永久非授权的观察，公开宿主接口仍不能证明 Codex Desktop UI、真人身份或真人回答，因此可信宿主权威继续停放。旧治理 gate 的等价迁移与 cutover 另行延期，所以 3.0 不声称 shadow/只读结果已经替换生产 gate。OpenClaw 仍没有 Meta_Kim typed-plugin 工具阻断 adapter，Cursor 的任意原生选择弹窗权威仍未验证。
 
@@ -979,7 +983,7 @@ Meta_Kim 明确区分全局和项目两个作用域；普通全局安装不会�
 
 ### Q：支持哪些平台？
 
-Claude Code 和 Codex 是 Primary；ZCode 和 DeepSeek Harness 是 Beta；OpenClaw 和 Cursor 是 Compatibility。精确边界见 `config/runtime-compatibility-catalog.json`。
+Claude Code 和 Codex 是 Primary；ZCode、DeepSeek Harness、Qoder 和 Trae 是 Beta；OpenClaw 和 Cursor 是 Compatibility。精确边界见 `config/runtime-compatibility-catalog.json`。
 
 ### Q：安装复杂吗？
 

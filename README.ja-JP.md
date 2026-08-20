@@ -13,7 +13,7 @@
 
 <p>
   <a href="config/runtime-compatibility-catalog.json"><img alt="Projection tiers" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness-b45309"/></a>
+  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness%20%7C%20Qoder%20%7C%20Trae-b45309"/></a>
   <a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&logo=github"/></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
 </p>
@@ -81,7 +81,7 @@ Meta_Kim は、互換性のある面をすべて「完全対応」とは呼び�
 | 層 | 製品 | 意味 |
 |---|---|---|
 | primary formal projection | Claude Code、Codex | canonical の統治層をデフォルトで runtime 固有ファイルへ投影し、`npm run meta:sync` / `npm run meta:check` で検証します。 |
-| Beta | ZCode、DeepSeek Harness | パッケージ同梱の compatibility adapter を使用します。 |
+| Beta | ZCode、DeepSeek Harness、Qoder、Trae | パッケージ同梱の compatibility adapter を使用します。 |
 | Compatibility | OpenClaw、Cursor | runtime 固有の project projection を使用します。 |
 
 事実のソース: `config/runtime-compatibility-catalog.json`。
@@ -91,7 +91,7 @@ Meta_Kim は、互換性のある面をすべて「完全対応」とは呼び�
 ### 利用経路
 
 - **Primary（Claude Code / Codex）**: 通常の自然言語タスクを入力し、primary prompt-first の正式 projection を使います。
-- **Beta（ZCode / DeepSeek Harness）**: パッケージ同梱の compatibility adapter を使用します。
+- **Beta（ZCode / DeepSeek Harness / Qoder / Trae）**: パッケージ同梱の compatibility adapter を使用します。
 - **Compatibility（OpenClaw / Cursor）**: runtime 固有の project projection を使用します。
 
 Surface compatibility は formal runtime support より弱い扱いです。adapter、profile/layout、sync tests、live validation が揃うまでは正式 projection には昇格しません。依存プロジェクト側の install target matrix は、Meta_Kim の support claim としてここでは繰り返しません。
@@ -501,6 +501,8 @@ Meta_Kim は現在 2 つの primary formal projection target、2 つの opt-in b
 | **Codex** | default formal projection | generated local `.codex/agents/*.toml` + `.agents/skills/` + commands + hooks |
 | **ZCode** | Beta | パッケージ同梱の ZCode compatibility adapter |
 | **DeepSeek Harness** | Beta | パッケージ同梱の plugin / preset compatibility adapter |
+| **Qoder** | Beta | パッケージ同梱の Qoder compatibility adapter |
+| **Trae** | Beta | パッケージ同梱の Trae compatibility adapter |
 | **OpenClaw** | Compatibility | `openclaw/` workspaces + skills + internal hooks |
 | **Cursor** | Compatibility | `.cursor/agents/*.md` + `.cursor/rules/*.mdc` + skills + hooks + MCP |
 
@@ -517,7 +519,7 @@ flowchart TB
     CANONICAL --> |npm run meta:sync| OPENCLAW["openclaw/<br/>OpenClaw<br/>ワークスペース・スキル・フック"]
     CANONICAL --> |npm run meta:sync| CURSOR[".cursor/<br/>Cursor<br/>エージェント・スキル・フック・MCP"]
 
-    BETA["beta adapters<br/>ZCode / DeepSeek Harness"] -.-> |structural adapter planning| CANONICAL
+    BETA["beta adapters<br/>ZCode / DeepSeek Harness / Qoder / Trae"] -.-> |packaged compatibility adapters| CANONICAL
 
     style CANONICAL fill:#7c3aed,color:#fff
     style CLAUDE fill:#fbbf24,color:#000
@@ -529,7 +531,7 @@ flowchart TB
 
 新しい platform は順次追加できますが、候補から正式 projection への昇格は adapter 形態と検証可能性が揃ってからです。
 
-Meta_Kim の primary formal projection は Claude Code と Codex の 2 つです。ZCode と DeepSeek Harness は beta compatibility adapter、OpenClaw と Cursor は non-default compatibility projection です。
+Meta_Kim の Primary は Claude Code と Codex の 2 つです。ZCode、DeepSeek Harness、Qoder、Trae は Beta、OpenClaw と Cursor は Compatibility です。
 
 | 能力面 | Claude Code | Codex | OpenClaw | Cursor |
 | --- | --- | --- | --- | --- |
@@ -830,7 +832,7 @@ Meta_Kim はインストール範囲と実行時のプロジェクト定着を�
 
 ### Q: どのプラットフォームに対応していますか?
 
-Claude Code と Codex は Primary、ZCode と DeepSeek Harness は Beta、OpenClaw と Cursor は Compatibility です。正確な境界は `config/runtime-compatibility-catalog.json` を参照してください。
+Claude Code と Codex は Primary、ZCode、DeepSeek Harness、Qoder、Trae は Beta、OpenClaw と Cursor は Compatibility です。正確な境界は `config/runtime-compatibility-catalog.json` を参照してください。
 
 ### Q: インストールは難しいですか?
 

@@ -35,6 +35,8 @@ const RUNTIME_HEALTH_PROJECTION_DOMAIN = "src/domain/runtime/runtime-health-proj
 const TODO_SAFE_PROGRESS_DOMAIN = "src/domain/work/todo-dependency-safe-progress-shadow.mjs";
 const CANDIDATE_RUNTIME_ADAPTER_FILES = [
   "src/runtimes/deepseek-harness/candidate-adapter.mjs",
+  "src/runtimes/qoder/candidate-adapter.mjs",
+  "src/runtimes/trae/candidate-adapter.mjs",
   "src/runtimes/zcode/candidate-adapter.mjs",
 ];
 const BETA_RUNTIME_ADAPTER_BUNDLE_FILES = [

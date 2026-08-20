@@ -10,11 +10,11 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ### Added
 
-- **ZCode and DeepSeek Harness are now Beta compatibility adapters.** Their packaged adapters are included in the immutable install/update bundle and sit directly below Claude Code and Codex in the public runtime priority.
+- **ZCode, DeepSeek Harness, Qoder, and Trae are now Beta compatibility adapters.** Their packaged adapters are included in the immutable install/update bundle and sit directly below Claude Code and Codex in the public runtime priority.
 
 ### Changed
 
-- **Public runtime support is now a clean three-tier list.** Claude Code and Codex are Primary, ZCode and DeepSeek Harness are Beta, and OpenClaw and Cursor are Compatibility. Research-only candidate platforms remain in the internal catalog instead of the public README support list.
+- **Public runtime support is now a clean three-tier list.** Claude Code and Codex are Primary, ZCode, DeepSeek Harness, Qoder, and Trae are Beta, and OpenClaw and Cursor are Compatibility. Research-only candidate platforms remain in the internal catalog instead of the public README support list.
 
 ## [3.0.0] - 2026-08-12
 

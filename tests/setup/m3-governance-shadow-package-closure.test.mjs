@@ -20,6 +20,8 @@ const RUNTIME_HEALTH_PROJECTION_PATH = "src/domain/runtime/runtime-health-projec
 const TODO_SAFE_PROGRESS_PATH = "src/domain/work/todo-dependency-safe-progress-shadow.mjs";
 const CANDIDATE_RUNTIME_ADAPTER_PATHS = [
   "src/runtimes/deepseek-harness/candidate-adapter.mjs",
+  "src/runtimes/qoder/candidate-adapter.mjs",
+  "src/runtimes/trae/candidate-adapter.mjs",
   "src/runtimes/zcode/candidate-adapter.mjs",
 ];
 const BETA_RUNTIME_ADAPTER_BUNDLE_PATHS = [

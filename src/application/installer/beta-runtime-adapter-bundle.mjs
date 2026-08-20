@@ -30,6 +30,16 @@ export const BETA_RUNTIME_ADAPTER_BUNDLE_FILES = Object.freeze([
     runtimeId: "deepseek-harness",
   }),
   Object.freeze({
+    path: "src/runtimes/qoder/candidate-adapter.mjs",
+    role: "adapter",
+    runtimeId: "qoder",
+  }),
+  Object.freeze({
+    path: "src/runtimes/trae/candidate-adapter.mjs",
+    role: "adapter",
+    runtimeId: "trae",
+  }),
+  Object.freeze({
     path: "config/candidate-runtime-assets/zcode/CANDIDATE_PROBE.md",
     role: "beta_asset",
     runtimeId: "zcode",
@@ -43,6 +53,16 @@ export const BETA_RUNTIME_ADAPTER_BUNDLE_FILES = Object.freeze([
     path: "config/candidate-runtime-assets/deepseek-harness/candidate-preset.json",
     role: "beta_asset",
     runtimeId: "deepseek-harness",
+  }),
+  Object.freeze({
+    path: "config/candidate-runtime-assets/qoder/CANDIDATE_PROBE.md",
+    role: "beta_asset",
+    runtimeId: "qoder",
+  }),
+  Object.freeze({
+    path: "config/candidate-runtime-assets/trae/CANDIDATE_PROBE.md",
+    role: "beta_asset",
+    runtimeId: "trae",
   }),
 ]);
 

@@ -177,10 +177,8 @@ describe("release documentation semantics", () => {
   });
 
   test("public current docs expose the three runtime tiers without overpromoting beta adapters", () => {
-    const betaNames = ["ZCode", "DeepSeek Harness"];
+    const betaNames = ["ZCode", "DeepSeek Harness", "Qoder", "Trae"];
     const removedPublicCandidatePatterns = [
-      /Qoder/u,
-      /\bTrae\b/u,
       /\bKiro\b/u,
       /Windsurf/u,
       /Devin Desktop/u,

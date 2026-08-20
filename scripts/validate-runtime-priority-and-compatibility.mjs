@@ -38,7 +38,7 @@ const FIXTURE_ARTIFACT_PATH = path.join(
 );
 
 const PRIMARY = ["claude_code", "codex"];
-const BETA_COMPATIBILITY = ["zcode", "deepseek-harness"];
+const BETA_COMPATIBILITY = ["zcode", "deepseek-harness", "qoder", "trae"];
 const COMPATIBILITY = ["cursor", "openclaw"];
 const PRIORITY_ORDER = ["primary", "beta_compatibility", "compatibility"];
 

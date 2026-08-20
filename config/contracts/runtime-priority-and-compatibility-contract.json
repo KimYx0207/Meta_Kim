@@ -7,9 +7,9 @@
   "prdTaskIds": ["P-085", "P-092"],
   "status": "productized",
   "currentAsOf": "2026-08-21",
-  "purpose": "Make Claude Code and Codex the primary prompt-first full-flow runtimes, keep ZCode and DeepSeek Harness as opt-in beta compatibility adapters, and preserve OpenClaw and Cursor as compatibility runtimes without allowing lower tiers to overclaim or block a higher tier.",
+  "purpose": "Make Claude Code and Codex the primary prompt-first full-flow runtimes, keep ZCode, DeepSeek Harness, Qoder CLI, and Trae as opt-in beta compatibility adapters, and preserve OpenClaw and Cursor as compatibility runtimes without allowing lower tiers to overclaim or block a higher tier.",
   "primaryRuntimeTier": ["claude_code", "codex"],
-  "betaCompatibilityRuntimeTier": ["zcode", "deepseek-harness"],
+  "betaCompatibilityRuntimeTier": ["zcode", "deepseek-harness", "qoder", "trae"],
   "compatibilityRuntimeTier": ["openclaw", "cursor"],
   "priorityOrder": ["primary", "beta_compatibility", "compatibility"],
   "primaryRequiredEvidenceKind": "runtime_live_pass",
@@ -55,6 +55,18 @@
       "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
       "notAllowedClaims": ["formal projection", "native runtime", "complete UI", "live certification", "default sync target"]
     },
+    "qoder": {
+      "tier": "beta_compatibility",
+      "keptEvidence": ["packed_structural_adapter", "official_rules_skills_agents_commands_hooks_mcp", "blocked_with_reason"],
+      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
+      "notAllowedClaims": ["formal projection", "native runtime", "live certification", "default sync target"]
+    },
+    "trae": {
+      "tier": "beta_compatibility",
+      "keptEvidence": ["packed_structural_adapter", "official_rules_skills_agents_mcp", "blocked_with_reason"],
+      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
+      "notAllowedClaims": ["formal projection", "native runtime", "live certification", "default sync target"]
+    },
     "openclaw": {
       "tier": "compatibility",
       "keptEvidence": ["projection", "shard", "smoke", "batch_stability", "blocked_with_reason"],
@@ -68,7 +80,7 @@
     }
   },
   "noOverclaimRules": [
-    "ZCode and DeepSeek Harness beta adapters prove only a packed structural adapter; they are not live-certified or native runtime support.",
+    "ZCode, DeepSeek Harness, Qoder CLI, and Trae beta adapters prove only a packed structural adapter; they are not live-certified or native runtime support.",
     "Beta compatibility adapters are opt-in, disabled by default, absent from sync supportedTargets, and cannot start a process, invoke a model, consume quota, or write global or user configuration.",
     "DeepSeek Harness ACP is an automation structural seam only and cannot be presented as a complete Harness UI or runtime.",
     "OpenClaw or Cursor smoke cannot be renamed primary live pass.",

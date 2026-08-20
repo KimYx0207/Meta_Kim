@@ -13,7 +13,7 @@
 
 <p>
   <a href="config/runtime-compatibility-catalog.json"><img alt="Projection tiers" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness-b45309"/></a>
+  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness%20%7C%20Qoder%20%7C%20Trae-b45309"/></a>
   <a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&logo=github"/></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
 </p>
@@ -81,7 +81,7 @@ Meta_Kim은 호환 가능한 표면을 모두 "완전 지원"이라고 부르지
 | 계층 | 제품 | 의미 |
 |---|---|---|
 | primary formal projection | Claude Code, Codex | canonical 거버넌스를 기본 runtime 파일로 투영하고 `npm run meta:sync` / `npm run meta:check`로 검증합니다. |
-| Beta | ZCode, DeepSeek Harness | 패키지에 포함된 compatibility adapter를 사용합니다. |
+| Beta | ZCode, DeepSeek Harness, Qoder, Trae | 패키지에 포함된 compatibility adapter를 사용합니다. |
 | Compatibility | OpenClaw, Cursor | runtime별 project projection을 사용합니다. |
 
 사실 소스: `config/runtime-compatibility-catalog.json`.
@@ -91,7 +91,7 @@ Meta_Kim은 호환 가능한 표면을 모두 "완전 지원"이라고 부르지
 ### 사용 경로
 
 - **Primary (Claude Code / Codex)**: 일반 자연어 작업을 입력하고 primary prompt-first 공식 projection을 사용합니다.
-- **Beta (ZCode / DeepSeek Harness)**: 패키지에 포함된 compatibility adapter를 사용합니다.
+- **Beta (ZCode / DeepSeek Harness / Qoder / Trae)**: 패키지에 포함된 compatibility adapter를 사용합니다.
 - **Compatibility (OpenClaw / Cursor)**: runtime별 project projection을 사용합니다.
 
 Surface compatibility는 formal runtime support보다 약한 주장입니다. adapter, profile/layout, sync tests, live validation이 준비되기 전에는 공식 projection으로 승격하지 않습니다. 의존 프로젝트의 install target matrix는 Meta_Kim의 support claim으로 여기서 반복하지 않습니다.
@@ -505,6 +505,8 @@ Meta_Kim은 현재 2개의 primary 공식 projection target, 2개의 opt-in beta
 | **Codex** | default formal projection | generated local `.codex/agents/*.toml` + `.agents/skills/` + commands + hooks |
 | **ZCode** | Beta | 패키지에 포함된 ZCode compatibility adapter |
 | **DeepSeek Harness** | Beta | 패키지에 포함된 plugin / preset compatibility adapter |
+| **Qoder** | Beta | 패키지에 포함된 Qoder compatibility adapter |
+| **Trae** | Beta | 패키지에 포함된 Trae compatibility adapter |
 | **OpenClaw** | Compatibility | `openclaw/` workspaces + skills + internal hooks |
 | **Cursor** | Compatibility | `.cursor/agents/*.md` + `.cursor/rules/*.mdc` + skills + hooks + MCP |
 
@@ -521,7 +523,7 @@ flowchart TB
     CANONICAL --> |npm run meta:sync| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills + hooks"]
     CANONICAL --> |npm run meta:sync| CURSOR[".cursor/<br/>Cursor<br/>agents + skills + hooks + MCP"]
 
-    BETA["beta adapters<br/>ZCode / DeepSeek Harness"] -.-> |structural adapter planning| CANONICAL
+    BETA["beta adapters<br/>ZCode / DeepSeek Harness / Qoder / Trae"] -.-> |packaged compatibility adapters| CANONICAL
 
     style CANONICAL fill:#7c3aed,color:#fff
     style CLAUDE fill:#fbbf24,color:#000
@@ -533,7 +535,7 @@ flowchart TB
 
 새 platform은 계속 추가할 수 있지만, 후보에서 공식 projection으로 승격하려면 adapter 형태와 검증 가능성이 먼저 갖춰져야 합니다.
 
-Meta_Kim의 primary formal projection은 Claude Code와 Codex 두 개입니다. ZCode와 DeepSeek Harness는 beta compatibility adapter이고, OpenClaw와 Cursor는 비기본 compatibility projection입니다.
+Meta_Kim의 Primary는 Claude Code와 Codex 두 개입니다. ZCode, DeepSeek Harness, Qoder, Trae는 Beta이고 OpenClaw와 Cursor는 Compatibility입니다.
 
 | 역량 표면 | Claude Code | Codex | OpenClaw | Cursor |
 | --- | --- | --- | --- | --- |
@@ -831,7 +833,7 @@ Meta_Kim은 설치 범위와 실행 중 프로젝트 정착을 분리합니다:
 
 ### 어떤 플랫폼을 지원하나요?
 
-Claude Code와 Codex는 Primary, ZCode와 DeepSeek Harness는 Beta, OpenClaw와 Cursor는 Compatibility입니다. 정확한 경계는 `config/runtime-compatibility-catalog.json`에 있습니다.
+Claude Code와 Codex는 Primary, ZCode, DeepSeek Harness, Qoder, Trae는 Beta, OpenClaw와 Cursor는 Compatibility입니다. 정확한 경계는 `config/runtime-compatibility-catalog.json`에 있습니다.
 
 ### 설치가 복잡한가요?
 

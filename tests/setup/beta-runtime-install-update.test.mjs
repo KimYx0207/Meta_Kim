@@ -51,7 +51,7 @@ test("fresh install, update, and same-version reuse keep the beta bundle availab
       assert.equal(report.activated, false);
       assert.equal(report.formalProjection, false);
       assert.equal(report.syncTarget, false);
-      assert.equal(report.entries.length, 6);
+      assert.equal(report.entries.length, 10);
     }
     assert.deepEqual(
       fresh.entries.map(({ path: entryPath }) => entryPath),

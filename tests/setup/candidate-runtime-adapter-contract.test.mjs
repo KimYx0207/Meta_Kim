@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import {
+  resolveRuntimeProfilesFromManifest,
+  resolveRuntimeProjection,
+} from "../../scripts/meta-kim-sync-config.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const readJson = (relativePath) =>
@@ -15,7 +19,7 @@ const catalog = readJson("config/runtime-compatibility-catalog.json");
 const syncManifest = readJson("config/sync.json");
 const packageJson = readJson("package.json");
 
-test("candidate adapter contract keeps both runtimes outside formal sync and all side effects denied", () => {
+test("candidate adapter contract keeps all four beta runtimes outside formal sync and all side effects denied", () => {
   assert.equal(contract.schemaVersion, "meta-kim-candidate-runtime-adapter-v1");
   assert.equal(contract.scope, "beta_compatibility");
   assert.equal(contract.decisionBoundary.candidateAdaptersDoNotCreateFormalSupport, true);
@@ -32,6 +36,9 @@ test("candidate adapter contract keeps both runtimes outside formal sync and all
   assert.ok(contract.runtimeRules.zcode.forbiddenHeadlessModes.includes("yolo"));
   assert.equal(contract.runtimeRules["deepseek-harness"].integrationMode, "opt_in_plugin_preset");
   assert.match(contract.runtimeRules["deepseek-harness"].acpScope, /not_full_runtime_ui/u);
+  assert.equal(contract.runtimeRules.qoder.projectRulePath, ".qoder/rules");
+  assert.equal(contract.runtimeRules.qoder.projectSkillPath, ".qoder/skills/{skill-name}/SKILL.md");
+  assert.equal(contract.runtimeRules.trae.projectRulePath, ".trae/rules");
   assert.equal(contract.authorizationExactFields.length, 7);
   assert.match(contract.authorizationRule, /always false/u);
   assert.equal(contract.verification.evidenceKind, "packed_structural_adapter");
@@ -40,7 +47,7 @@ test("candidate adapter contract keeps both runtimes outside formal sync and all
 
 test("three-level priority keeps beta adapters between primary and compatibility", () => {
   assert.deepEqual(priorityContract.primaryRuntimeTier, ["claude_code", "codex"]);
-  assert.deepEqual(priorityContract.betaCompatibilityRuntimeTier, ["zcode", "deepseek-harness"]);
+  assert.deepEqual(priorityContract.betaCompatibilityRuntimeTier, ["zcode", "deepseek-harness", "qoder", "trae"]);
   assert.deepEqual(priorityContract.compatibilityRuntimeTier, ["openclaw", "cursor"]);
   assert.deepEqual(priorityContract.priorityOrder, ["primary", "beta_compatibility", "compatibility"]);
   assert.equal(priorityContract.priorityRules.betaCompatibilityDoesNotBlockPrimary, true);
@@ -48,9 +55,9 @@ test("three-level priority keeps beta adapters between primary and compatibility
   assert.equal(priorityContract.priorityRules.betaCompatibilityPriorityLeakTarget, 0);
 });
 
-test("catalog admits ZCode and DeepSeek Harness only as beta compatibility", () => {
+test("catalog admits the four packaged adapters only as beta compatibility", () => {
   const byId = new Map(catalog.products.map((product) => [product.id, product]));
-  for (const id of ["zcode", "deepseek-harness"]) {
+  for (const id of ["zcode", "deepseek-harness", "qoder", "trae"]) {
     const product = byId.get(id);
     assert.ok(product, id);
     assert.equal(product.tier, "beta_compatibility", id);
@@ -84,6 +91,8 @@ test("package closure is exact for candidate adapters and does not widen src", (
       "src/runtimes/deepseek-harness/candidate-adapter.mjs",
     ),
   );
+  assert.ok(packageJson.files.includes("src/runtimes/qoder/candidate-adapter.mjs"));
+  assert.ok(packageJson.files.includes("src/runtimes/trae/candidate-adapter.mjs"));
   assert.ok(packageJson.files.includes("canonical/"));
 });
 
@@ -98,6 +107,8 @@ test("candidate assets stay in the non-sync config namespace", () => {
     "config/candidate-runtime-assets/zcode/CANDIDATE_PROBE.md",
     "config/candidate-runtime-assets/deepseek-harness/README.md",
     "config/candidate-runtime-assets/deepseek-harness/candidate-preset.json",
+    "config/candidate-runtime-assets/qoder/CANDIDATE_PROBE.md",
+    "config/candidate-runtime-assets/trae/CANDIDATE_PROBE.md",
   ]) {
     assert.doesNotThrow(() => readFileSync(path.join(REPO_ROOT, relativePath)));
   }
@@ -115,6 +126,8 @@ test("candidate adapters are data-only and cannot invoke runtimes or write confi
   for (const relativePath of [
     "src/runtimes/zcode/candidate-adapter.mjs",
     "src/runtimes/deepseek-harness/candidate-adapter.mjs",
+    "src/runtimes/qoder/candidate-adapter.mjs",
+    "src/runtimes/trae/candidate-adapter.mjs",
   ]) {
     const source = readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
     assert.doesNotMatch(source, forbiddenImports, relativePath);
@@ -139,16 +152,20 @@ test("DeepSeek Harness beta preset is opt-in, disabled, and non-authorizing", ()
 });
 
 test("candidate adapters stay absent from formal runtime profile and layout sources", () => {
-  const syncConfigSource = readFileSync(
-    path.join(REPO_ROOT, "scripts", "meta-kim-sync-config.mjs"),
-    "utf8",
-  );
-  for (const id of ["zcode", "deepseek-harness"]) {
-    const escapedId = id.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    assert.doesNotMatch(
-      syncConfigSource,
-      new RegExp(`["']?${escapedId}["']?\\s*:`, "u"),
-      id,
+  for (const id of ["zcode", "deepseek-harness", "qoder", "trae"]) {
+    assert.throws(
+      () =>
+        resolveRuntimeProfilesFromManifest({
+          ...syncManifest,
+          supportedTargets: [id],
+        }),
+      /Unknown runtime target|Missing runtime catalog entry/u,
+      `${id} must not resolve a formal runtime profile`,
+    );
+    assert.throws(
+      () => resolveRuntimeProjection(id, "project", { projectRoot: REPO_ROOT }),
+      /Missing projection layout/u,
+      `${id} must not resolve a formal projection layout`,
     );
   }
 });

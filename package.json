@@ -242,6 +242,8 @@
     "src/domain/work/todo-dependency-safe-progress-shadow.mjs",
     "src/runtimes/zcode/candidate-adapter.mjs",
     "src/runtimes/deepseek-harness/candidate-adapter.mjs",
+    "src/runtimes/qoder/candidate-adapter.mjs",
+    "src/runtimes/trae/candidate-adapter.mjs",
     "bin/",
     "config/",
     "docs/images/",

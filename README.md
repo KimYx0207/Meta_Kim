@@ -13,7 +13,7 @@
 
 <p>
   <a href="config/runtime-compatibility-catalog.json"><img alt="Projection tiers" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness-b45309"/></a>
+  <a href="config/runtime-compatibility-catalog.json"><img alt="Beta compatibility adapters" src="https://img.shields.io/badge/beta-ZCode%20%7C%20DeepSeek%20Harness%20%7C%20Qoder%20%7C%20Trae-b45309"/></a>
   <a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&logo=github"/></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
 </p>
@@ -171,6 +171,8 @@ After the default install (`node setup.mjs` or `npx`) or a confirmed project boo
 | Codex | Global skills plus project `AGENTS.md` context when present; global hooks require explicit `--with-global-hooks`; local `.codex/agents`, `.codex/commands`, or `.agents/skills` are project-specific overrides, not default execution-layer projection | Say the task naturally; Codex classifies durable work, subjective ambiguity, and pure queries differently |
 | ZCode | Beta | Use the packaged ZCode compatibility adapter |
 | DeepSeek Harness | Beta | Use the packaged plugin/preset compatibility adapter |
+| Qoder | Beta | Use the packaged Qoder compatibility adapter |
+| Trae | Beta | Use the packaged Trae compatibility adapter |
 | OpenClaw | Global/shared skills plus OpenClaw config/auth; project `openclaw/` material is for project-specific workspace/context overrides | Requires OpenClaw config/auth; contributors must complete strict OpenClaw self-testing and provide evidence; changes can merge only after that evidence passes review |
 | Cursor | Global skills plus project rules/context when present; local `.cursor/agents`, `.cursor/rules`, `.cursor/skills`, hooks, and MCP are project-specific overrides | Contributors must complete strict Cursor self-testing and provide evidence; changes can merge only after that evidence passes review |
 
@@ -181,7 +183,7 @@ Meta_Kim now tracks platform support in tiers instead of treating every compatib
 | Tier | Products | What it means |
 |---|---|---|
 | Primary formal projections | Claude Code, Codex | Canonical governance is projected by default, checked by `npm run meta:sync` / `npm run meta:check`, and used for the primary prompt-first flow. |
-| Beta compatibility adapters | ZCode, DeepSeek Harness | Packaged compatibility adapters, verified by install and update. |
+| Beta compatibility adapters | ZCode, DeepSeek Harness, Qoder, Trae | Packaged compatibility adapters, verified by install and update. |
 | Non-default compatibility projections | OpenClaw, Cursor | Tool-specific project files are generated only when these targets are selected; runtime changes need maintainer handshake plus tool-side self-test evidence before they are treated as complete. |
 
 Source of truth: `config/runtime-compatibility-catalog.json`.
@@ -609,6 +611,8 @@ Meta_Kim currently owns two primary formal projection targets, two opt-in beta c
 | **Codex** | Default formal projection | generated local `.codex/agents/*.toml` for the nine governance agents + `.agents/skills/` + commands + hooks; primary prompt-first path verified by sync/check and maintained as a default target |
 | **ZCode** | Beta | Packaged ZCode compatibility adapter |
 | **DeepSeek Harness** | Beta | Packaged plugin/preset compatibility adapter |
+| **Qoder** | Beta | Packaged Qoder compatibility adapter |
+| **Trae** | Beta | Packaged Trae compatibility adapter |
 | **OpenClaw** | Compatibility | `openclaw/` workspaces + skills + internal hooks |
 | **Cursor** | Compatibility | `.cursor/agents/*.md` + `.cursor/rules/*.mdc` + skills + hooks + MCP |
 
@@ -625,7 +629,7 @@ flowchart TB
     CANONICAL --> |npm run meta:sync| OPENCLAW["openclaw/<br/>OpenClaw<br/>workspaces + skills + internal hooks"]
     CANONICAL --> |npm run meta:sync| CURSOR[".cursor/<br/>Cursor<br/>agents + rules + skills + hooks + MCP"]
 
-    BETA["Beta adapters<br/>ZCode / DeepSeek Harness"] -.-> |packaged compatibility adapters| CANONICAL
+    BETA["Beta adapters<br/>ZCode / DeepSeek Harness / Qoder / Trae"] -.-> |packaged compatibility adapters| CANONICAL
 
     style CANONICAL fill:#7c3aed,color:#fff
     style CLAUDE fill:#fbbf24,color:#000
@@ -635,7 +639,7 @@ flowchart TB
     style BETA fill:#b45309,color:#fff
 ```
 
-Meta_Kim has two Primary targets, two Beta adapters, and two Compatibility projections. Claude Code and Codex are the default primary path; ZCode and DeepSeek Harness are Beta; OpenClaw and Cursor are Compatibility.
+Meta_Kim has two Primary targets, four Beta adapters, and two Compatibility projections. Claude Code and Codex are the default primary path; ZCode, DeepSeek Harness, Qoder, and Trae are Beta; OpenClaw and Cursor are Compatibility.
 
 The decision-authority boundary is narrower than projection support. Current Codex app-server and Claude SDK/CLI callbacks can provide exactly correlated, non-authorizing observations, but public host surfaces do not prove Codex Desktop UI, human identity, or a human answer. That trusted-host authority remains parked. Legacy governance-gate parity and cutover are separately deferred, so 3.0 does not claim that shadow/read-only results have replaced production gates. OpenClaw still lacks a Meta_Kim typed-plugin enforcement adapter for tool blocking, and Cursor arbitrary native-choice popup authority remains unverified.
 
@@ -989,7 +993,7 @@ Together, they cost far less than asking AI to reread the entire project from sc
 
 ### Q: Which platforms are supported?
 
-Claude Code and Codex are Primary. ZCode and DeepSeek Harness are Beta. OpenClaw and Cursor are Compatibility. The exact support boundary lives in `config/runtime-compatibility-catalog.json`.
+Claude Code and Codex are Primary. ZCode, DeepSeek Harness, Qoder, and Trae are Beta. OpenClaw and Cursor are Compatibility. The exact support boundary lives in `config/runtime-compatibility-catalog.json`.
 
 ### Q: Is the installation complicated?
 

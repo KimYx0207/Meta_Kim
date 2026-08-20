@@ -60,6 +60,24 @@
       "globalConfigurationWrite": false,
       "modelInvocationDuringProbeOrTest": false,
       "liveCertified": false
+    },
+    "qoder": {
+      "runtimeId": "qoder",
+      "integrationMode": "opt_in_rules_skills_plugin_plan",
+      "projectRulePath": ".qoder/rules",
+      "projectSkillPath": ".qoder/skills/{skill-name}/SKILL.md",
+      "projectMcpPath": ".qoder/settings.json or .mcp.json",
+      "globalConfigurationWrite": false,
+      "modelInvocationDuringProbeOrTest": false,
+      "liveCertified": false
+    },
+    "trae": {
+      "runtimeId": "trae",
+      "integrationMode": "opt_in_rules_agents_skills_mcp_plan",
+      "projectRulePath": ".trae/rules",
+      "globalConfigurationWrite": false,
+      "modelInvocationDuringProbeOrTest": false,
+      "liveCertified": false
     }
   },
   "verification": {

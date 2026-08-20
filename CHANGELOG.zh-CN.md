@@ -10,11 +10,11 @@
 
 ### 新增内容
 
-- **ZCode 与 DeepSeek Harness 现已作为 Beta 兼容 adapter 提供。** 两者随不可变安装包进入 install/update 校验链，公开优先级仅次于 Claude Code 与 Codex。
+- **ZCode、DeepSeek Harness、Qoder 与 Trae 现已作为 Beta 兼容 adapter 提供。** 四者随不可变安装包进入 install/update 校验链，公开优先级仅次于 Claude Code 与 Codex。
 
 ### 变更
 
-- **公开 runtime 支持收敛为清晰的三层。** Claude Code 与 Codex 是 Primary，ZCode 与 DeepSeek Harness 是 Beta，OpenClaw 与 Cursor 是 Compatibility。只有研究记录的平台继续留在内部 catalog，不再进入 README 的公开支持列表。
+- **公开 runtime 支持收敛为清晰的三层。** Claude Code 与 Codex 是 Primary，ZCode、DeepSeek Harness、Qoder 与 Trae 是 Beta，OpenClaw 与 Cursor 是 Compatibility。只有研究记录的平台继续留在内部 catalog，不再进入 README 的公开支持列表。
 
 ## [3.0.0] - 2026-08-12
 
