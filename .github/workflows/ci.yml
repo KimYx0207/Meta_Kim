@@ -52,7 +52,7 @@ jobs:
           mkdir -p dist
           npm pack --pack-destination dist
       - name: Upload package candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: meta-kim-${{ github.sha }}
           path: dist/*.tgz
