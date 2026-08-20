@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  global-sync-policy:
+    name: Global sync policy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Check global sync syntax
+        run: node --check scripts/sync-global-meta-theory.mjs
+      - name: Test global sync and stale-alias policy
+        run: >-
+          node --test
+          --test-name-pattern
+          "preserves a shared meta-theory junction|keeps unexpected stale-alias backup failures fatal"
+          tests/setup/sync-global-hooks-policy.test.mjs
+
+  package-candidate:
+    name: Package candidate
+    if: github.event_name != 'pull_request'
+    needs: global-sync-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+      - name: Build npm package candidate
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination dist
+      - name: Upload package candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: meta-kim-${{ github.sha }}
+          path: dist/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
