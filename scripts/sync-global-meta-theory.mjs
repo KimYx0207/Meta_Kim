@@ -2749,7 +2749,18 @@ async function runSync() {
   }
 
   for (const target of staleSkillCleanupTargets) {
-    await backupAndRemoveStaleSkillAlias(target);
+    // Removing a legacy alias is best-effort housekeeping, not part of the
+    // contract. It runs before hook projection, so letting it throw aborts the
+    // whole sync: a user whose legacy alias is a symlink into another runtime
+    // home hits assertRealHomeBound, and hooks silently never get projected.
+    // Report the skip and keep going -- the alias staying put is harmless.
+    try {
+      await backupAndRemoveStaleSkillAlias(target);
+    } catch (error) {
+      console.log(
+        `${C.yellow}⊘${C.reset} ${C.dim}Skipped stale skill alias cleanup (${target.label ?? target.name}): ${error?.message ?? error}${C.reset}`,
+      );
+    }
   }
 
   if (selectedTargetIds.includes("claude") && withGlobalHooks) {
