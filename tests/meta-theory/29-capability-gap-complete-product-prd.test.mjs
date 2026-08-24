@@ -409,7 +409,7 @@ describe(
     assert.match(a08ToA12Route, /A12 Docs Truth & 3\.0 Release Gate/);
     assert.match(
       prd,
-      /最新公开版本：v2\.9\.28（commit `e56a96e089762e0a1a5eb817a5806d24d80d6491`；GitHub Release 已发布并精确绑定）/,
+      /最新公开版本：v3\.0\.1（commit `4d9dd5fc`；本地 `main`、`origin\/main` 与 annotated tag `v3\.0\.1` 当前一致）/,
       "the PRD must retain the exact current public-release baseline",
     );
     assert.match(

@@ -1225,7 +1225,7 @@ describe("eval-meta-agents Claude smoke", () => {
       "utf8",
     );
 
-    assert.match(source, /const codexLiveOrchestrationSchema/);
+    assert.match(source, /const successPayload = \{/);
     assert.match(source, /function codexLivePayloadOk/);
     assert.match(source, /function tryExtractCodexReply/);
     assert.match(source, /governed_entry/);
@@ -1237,25 +1237,28 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.match(source, /roleDisplayName/);
     assert.match(
       source,
-      /set fork_turns to "none" because the bounded child task below is self-contained/u,
-      "Codex 0.146 rejects an explicit agent_type when spawn_agent keeps the default full-history fork",
+      /Owner: \$\{representativeAgentId\}\. Return ONLY OK/u,
+      "the CLI lifecycle probe must carry the professional owner in its bounded child message",
     );
     assert.match(
       source,
-      /multi_agent_v1__wait_agent\(\{ targets: \[spawned\.agent_id\], timeout_ms: 120000 \}\)/u,
-      "Codex code mode must use the exact wait_agent argument shape exposed by the host",
+      /wait for exactly that returned child until its final is visible/u,
+      "Codex must use the current top-level collaboration lifecycle",
     );
-    assert.match(source, /const directLifecycle/u);
-    assert.match(source, /message: \$\{JSON\.stringify\(childTask\)\}/u);
-    assert.match(source, /text\(JSON\.stringify\(spawned\)\)/u);
-    assert.match(source, /with no leading or trailing statements/u);
-    assert.match(source, /Do not add variables, helper functions/u);
-    assert.match(source, /pass id instead of targets/u);
+    assert.match(source, /Call the native spawn_agent tool exactly once now/u);
+    assert.match(source, /Never call wait before spawn_agent succeeds/u);
+    assert.match(source, /do not retry the spawn/u);
+    assert.match(source, /return exactly this JSON object and nothing else/u);
     assert.match(
       source,
-      /Never call the nonexistent multi_agent_v1__wait alias/u,
-      "the release prompt must reject the stale fabricated wait alias",
+      /do not use a code-exec wrapper/u,
+      "the release prompt must reject the obsolete code-mode shim",
     );
+    assert.doesNotMatch(source, /tools\.multi_agent_v1__spawn_agent/u);
+    assert.doesNotMatch(source, /tools\.multi_agent_v1__wait_agent/u);
+    assert.match(source, /META_KIM_CODEX_EVAL_MODEL/u);
+    assert.match(source, /META_KIM_CODEX_EVAL_REASONING_EFFORT/u);
+    assert.doesNotMatch(source, /runtimePayloadTemplate/u);
     assert.match(source, /isCommandTimeoutFailure/);
     assert.match(source, /META_KIM_COMMAND_TIMEOUT/);
     assert.doesNotMatch(source, /timeoutTriggered/u);
@@ -1543,9 +1546,15 @@ describe("eval-meta-agents Claude smoke", () => {
     assert.doesNotMatch(source, /META_KIM_EVAL_START_GATE/u);
     assert.match(
       source,
-      /"exec",\s*"--ignore-user-config",\s*"--enable",\s*"multi_agent",\s*"--json"/u,
+      /async function prepareIsolatedCodexLiveHome\([\s\S]*auth\.json[\s\S]*multi_agent = true[\s\S]*max_threads = 2/u,
       "the release probe must retain auth while isolating itself from unrelated user MCP configuration",
     );
+    assert.match(source, /CODEX_HOME: isolatedRuntimeHome\.runtimeHome/u);
+    assert.match(source, /delete codexEnv\.CODEX_THREAD_ID/u);
+    assert.match(source, /delete codexEnv\.CODEX_SESSION_ID/u);
+    assert.match(source, /delete codexEnv\.CODEX_INTERNAL_ORIGINATOR_OVERRIDE/u);
+    assert.match(source, /cleanupIsolatedCodexLiveHome\(isolatedRuntimeHome\)/u);
+    assert.doesNotMatch(source, /"--ignore-user-config"/u);
     assert.match(
       source,
       /META_KIM_CHILD_COMMAND_FAILED[\s\S]*codex_wrapper_failed_after_completed_native_invocation/u,

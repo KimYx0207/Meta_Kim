@@ -28,6 +28,24 @@
 
 **Meta_Kim** is not another AI coding tool. It is a governance layer for durable AI coding work.
 
+### Meta_Kim Live: proof you can see
+
+Meta_Kim Live turns the durable run record into a local **Proof-Carrying Run Graph**: current stages, owners, evidence, uncertainty, and replay are visible in one read-only page. It attaches to the project you already run with Codex or Claude Code; it does not replace the agent, create a second scheduler, or pretend an unverified node is done.
+
+```bash
+meta-kim live
+```
+
+The MVP binds only to `127.0.0.1` and loads no third-party assets. The default surface is read-only; guarded controls are opt-in only with `--enable-control` and a complete injected authority loadout (durable repository, lease/fence/effect checks, control token, and capable adapter). Without that complete authority chain, the service remains plan-only and fail-closed. Reopening a run is available now; automatic execution resume and cross-runtime handoff remain separate capabilities that require lease/fence and side-effect safety evidence.
+
+#### M3-L02–L04 sharing and control boundaries
+
+- **L02 share/replay:** `meta-kim live` can expose a deterministic local share artifact and replay view. JSON export, PR-card copy (from `/api/share?format=markdown`), and README embed (from `/api/share?format=readme`, rendered by the canonical safe renderer) stay on the local machine; there is no upload path. Content-bound SHA-256 is recomputed from canonical content, and the artifact never republishes secrets, absolute paths, raw prompts/outputs, or environment data.
+- **L03 continuation controls:** the page remains read-only by default. Opt in with `--enable-control` only when the local service explicitly advertises every `pause`, `resume`, `reassign`, and `handoff` capability and supplies the complete injected authority chain. Commands are authority-bound and fail closed without the durable repository/lease/fence/adapter chain; a request being accepted is not presented as execution success.
+- **L04 SDK:** `meta-kim/live-sdk` (source: `src/sdk/live/index.mjs`) is projection-only for runtime adapters, evidence cards, and replay themes. It has no runtime authority and does not claim `live-certified` status.
+
+Runtime support is intentionally tiered: Claude/Codex are the primary targets; ZCode, DeepSeek Harness, Qoder, and Trae are beta/compatibility paths; OpenClaw and Cursor remain compatibility-only until native adapter evidence exists. Missing adapters fail closed, and this surface is not a live-certified claim.
+
 The hard part of AI coding is no longer getting a model to change files. The hard part is deciding what should happen first, which capability should own it, what evidence proves it worked, and how the lesson survives the next run.
 
 Claude Code, Codex, OpenClaw, and Cursor are all hands: they can write code and change files. But who decides which file to change first? Who reviews the result? Who fixes the problems that show up? And how do we make sure the same mistake does not repeat next time?
@@ -88,6 +106,7 @@ npm run meta:theory:demo
 npm run meta:run-status:latest
 npm run meta:theory:report -- --run-id latest
 npm run meta:delivery:bundle
+meta-kim live
 ```
 
 `meta:run-status:latest` is a minimal redacted status summary. Use the explicit

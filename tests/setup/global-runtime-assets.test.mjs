@@ -9,12 +9,56 @@ import test from "node:test";
 import {
   buildDurableMetaKimMcpServer,
   buildPortableMetaKimMcpServer,
+  isStrictSemVer,
   mcpDefinitionFingerprint,
   mergeClaudeUserMcpConfig,
+  normalizeExactDurableMetaKimMcpDefinition,
   removeExactManagedMcpFragment,
   resolveDurableMetaKimRuntimeLayout,
   resolvePortableMetaKimPackageIdentity,
 } from "../../scripts/global-runtime-mcp.mjs";
+
+test("durable MCP definition normalizer accepts only the exact Node launch shape", () => {
+  const direct = buildDurableMetaKimMcpServer(
+    "C:\\Program Files\\nodejs\\node.exe",
+    "C:\\Users\\Kim\\.meta-kim\\runtime\\meta-kim\\3.0.0\\node_modules\\meta-kim\\bin\\meta-kim.mjs",
+  );
+  assert.deepEqual(normalizeExactDurableMetaKimMcpDefinition(direct), direct);
+
+  const wrapped = {
+    type: "stdio",
+    command: "cmd",
+    args: ["/d", "/s", "/c", direct.command, ...direct.args],
+    env: {},
+  };
+  assert.deepEqual(normalizeExactDurableMetaKimMcpDefinition(wrapped), direct);
+  if (process.env.SystemRoot) {
+    const absoluteSystemCmdWrapped = {
+      ...wrapped,
+      command: path.win32.join(process.env.SystemRoot, "System32", "cmd.exe"),
+    };
+    assert.deepEqual(normalizeExactDurableMetaKimMcpDefinition(absoluteSystemCmdWrapped), direct);
+  }
+  const posix = buildDurableMetaKimMcpServer(
+    "/usr/bin/node",
+    "/home/kim/.meta-kim/runtime/meta-kim/3.0.0/node_modules/meta-kim/bin/meta-kim.mjs",
+  );
+  assert.deepEqual(normalizeExactDurableMetaKimMcpDefinition(posix), posix);
+  assert.equal(isStrictSemVer("3.0.0"), true);
+  assert.equal(isStrictSemVer("v3"), false);
+
+  for (const invalid of [
+    { ...wrapped, command: "C:\\user-tools\\cmd.exe" },
+    { ...wrapped, cwd: "C:\\tmp" },
+    { ...wrapped, env: { TOKEN: "user" } },
+    { ...wrapped, args: [...wrapped.args, "--extra"] },
+    { ...wrapped, args: ["/d", "/d", ...wrapped.args.slice(1)] },
+    { ...direct, args: [direct.args[0], "mcp", "serve", "--extra"] },
+    { ...direct, args: ["relative/meta-kim.mjs", "mcp", "serve"] },
+  ]) {
+    assert.equal(normalizeExactDurableMetaKimMcpDefinition(invalid), null);
+  }
+});
 import {
   GLOBAL_PROJECTION_OWNER_SYNC_RUNTIMES,
   globalAgentProjectionFileName,
@@ -161,6 +205,9 @@ test("MCP merge migrates proven legacy entry and preserves unrelated config", ()
       portableDefinition: portable,
       identity: PACKAGE_IDENTITY,
       legacyScriptSuffix: LEGACY_MCP_SUFFIX,
+      managedFingerprints: new Set([
+        mcpDefinitionFingerprint(base.mcpServers.meta_kim_runtime),
+      ]),
     },
   );
   assert.deepEqual(result.collisions, []);
@@ -182,9 +229,9 @@ test("MCP merge migrates proven legacy entry and preserves unrelated config", ()
     identity: PACKAGE_IDENTITY,
     legacyScriptSuffix: LEGACY_MCP_SUFFIX,
   });
-  assert.deepEqual(wrappedLegacy.collisions, []);
-  assert.equal(wrappedLegacy.config.mcpServers.meta_kim_runtime, undefined);
-  assert.deepEqual(wrappedLegacy.config.mcpServers["meta-kim-runtime"], portable);
+  assert.deepEqual(wrappedLegacy.collisions, ["meta_kim_runtime"]);
+  assert.ok(wrappedLegacy.config.mcpServers.meta_kim_runtime);
+  assert.equal(wrappedLegacy.config.mcpServers["meta-kim-runtime"], undefined);
 
   const absoluteNodeWrappedLegacy = mergeClaudeUserMcpConfig({
     mcpServers: {
@@ -204,9 +251,9 @@ test("MCP merge migrates proven legacy entry and preserves unrelated config", ()
     identity: PACKAGE_IDENTITY,
     legacyScriptSuffix: LEGACY_MCP_SUFFIX,
   });
-  assert.deepEqual(absoluteNodeWrappedLegacy.collisions, []);
-  assert.equal(absoluteNodeWrappedLegacy.config.mcpServers.meta_kim_runtime, undefined);
-  assert.deepEqual(absoluteNodeWrappedLegacy.config.mcpServers["meta-kim-runtime"], portable);
+  assert.deepEqual(absoluteNodeWrappedLegacy.collisions, ["meta_kim_runtime"]);
+  assert.ok(absoluteNodeWrappedLegacy.config.mcpServers.meta_kim_runtime);
+  assert.equal(absoluteNodeWrappedLegacy.config.mcpServers["meta-kim-runtime"], undefined);
 
   const wrappedCurrentDefinition = {
     type: portable.type,
@@ -396,7 +443,6 @@ test("global sync derives every supported Agent projection from runtime profiles
       keep: true,
       mcpServers: {
         user: { command: "user-tool", env: { AUTH: "preserve" } },
-        meta_kim_runtime: { command: "node", args: ["C:/old/scripts/mcp/meta-runtime-server.mjs"] },
       },
     })}\n`);
     const first = runSync(root, ["--targets", GLOBAL_AGENT_TARGET_IDS.join(",")]);
@@ -431,7 +477,6 @@ test("global sync derives every supported Agent projection from runtime profiles
     const config = JSON.parse(readFileSync(path.join(root, ".claude.json"), "utf8"));
     assert.equal(config.keep, true);
     assert.equal(config.mcpServers.user.env.AUTH, "preserve");
-    assert.equal(config.mcpServers.meta_kim_runtime, undefined);
     const managed = config.mcpServers["meta-kim-runtime"];
     assert.ok(managed);
     const layout = resolveDurableMetaKimRuntimeLayout(root, PACKAGE_IDENTITY, PACKAGE_MANIFEST);

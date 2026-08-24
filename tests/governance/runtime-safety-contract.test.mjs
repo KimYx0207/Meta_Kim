@@ -246,6 +246,10 @@ test("install experience contract keeps full platform compatibility tiers explic
     tiers.dependencyInstallTargets.toSorted(),
     productIdsByTier("dependency_install_target"),
   );
+  assert.deepEqual(
+    tiers.betaCompatibilityTargets.toSorted(),
+    productIdsByTier("beta_compatibility"),
+  );
   assert.deepEqual(tiers.candidateProbeTargets.toSorted(), productIdsByTier("candidate_probe"));
   assert.match(tiers.boundary, /formal Meta_Kim projection targets/);
   assert.match(tiers.promotionInvariant, /runtime profile/);
@@ -284,6 +288,7 @@ test("HookPrompt bad-input fixtures flow through adapter into model-visible fiel
     try {
       const adapterPath = path.join(tempDir, "hookprompt-adapter.mjs");
       const hookPromptPath = path.join(tempDir, "user-prompt-submit.js");
+      writeFileSync(path.join(tempDir, "package.json"), '{"type":"module"}\n', "utf8");
       writeFileSync(adapterPath, buildHookPromptAdapterSource(runtimeId), "utf8");
       writeFileSync(
         hookPromptPath,

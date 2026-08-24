@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { applyGraphNodeIdentityProof } from "../../scripts/graphify-node-identity.mjs";
@@ -1337,6 +1337,74 @@ writeFileSync(statePath, JSON.stringify(state));
       JSON.parse(readFileSync(statePath, "utf8")),
       { update: 2, cluster: 1 },
     );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify rebuild reports the active phase before a slow upstream producer returns", async () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-progress-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    writeValidArtifacts(repo);
+    const fake = path.join(temp, "slow-graphify.mjs");
+    writeFileSync(fake, `setTimeout(() => { console.log("producer-returned"); process.exit(0); }, 200);\n`);
+
+    let stdout = "";
+    let stderr = "";
+    const child = spawn(process.execPath, [cli, "rebuild"], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        META_KIM_GRAPHIFY_BIN: process.execPath,
+        META_KIM_GRAPHIFY_BIN_ARGS: fake,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const status = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+
+    assert.equal(status, 0, stderr || stdout);
+    assert.ok(
+      stdout.indexOf("running incremental producer") >= 0 &&
+        stdout.indexOf("running incremental producer") < stdout.indexOf("producer-returned"),
+      `progress did not precede the slow producer output:\n${stdout}`,
+    );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify rebuild never promotes a signaled upstream producer to success", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-signal-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    writeValidArtifacts(repo);
+    const fake = path.join(temp, "signaled-graphify.mjs");
+    writeFileSync(fake, `process.kill(process.pid, "SIGTERM");\n`);
+
+    const result = spawnSync(process.execPath, [cli, "rebuild"], {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        META_KIM_GRAPHIFY_BIN: process.execPath,
+        META_KIM_GRAPHIFY_BIN_ARGS: fake,
+      },
+    });
+
+    assert.notEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stderr, /terminated before completion/u);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

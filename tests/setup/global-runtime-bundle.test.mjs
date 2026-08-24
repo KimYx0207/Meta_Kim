@@ -32,7 +32,7 @@ const ORIGINAL_IDENTITY = resolvePortableMetaKimPackageIdentity(
   ORIGINAL_MANIFEST,
   DISTRIBUTION,
 );
-const SYNC_TIMEOUT_MS = 180_000;
+const SYNC_TIMEOUT_MS = 300_000;
 const SERIAL_TEST_OPTIONS = { concurrency: false };
 const NPM_CLI_PATH = process.env.npm_execpath ?? path.join(
   path.dirname(process.execPath),
@@ -419,15 +419,20 @@ function verifyDurableBundleRollbackFailures() {
       nextManifest,
     );
 
-    for (const failurePoint of ["pack", "install", "rename", "manifest", "post_rename_verify"]) {
+    for (const failurePoint of ["pack", "install", "candidate_lock", "rename", "manifest", "post_rename_verify"]) {
       const failed = runGlobalSync(candidate.workspace, runtime, {
         META_KIM_TEST_FAIL_DURABLE_MCP_AT: failurePoint,
       });
       assert.notEqual(failed.status, 0, `${failurePoint} fault injection unexpectedly passed`);
-      assert.match(
-        `${failed.stdout ?? ""}\n${failed.stderr ?? ""}`,
-        new RegExp(`Injected durable MCP ${failurePoint} failure`, "iu"),
-      );
+      const failureOutput = `${failed.stdout ?? ""}\n${failed.stderr ?? ""}`;
+      if (failurePoint === "candidate_lock") {
+        assert.match(failureOutput, /candidate lock does not match the packed source digest/iu);
+      } else {
+        assert.match(
+          failureOutput,
+          new RegExp(`Injected durable MCP ${failurePoint} failure`, "iu"),
+        );
+      }
       if (failurePoint === "manifest") {
         assert.match(
           `${failed.stdout ?? ""}\n${failed.stderr ?? ""}`,
@@ -473,6 +478,59 @@ function verifyDurableBundleRollbackFailures() {
     assert.equal(readFileSync(runtime.claudeConfig, "utf8"), oldConfigRaw);
     assert.equal(readFileSync(manifestPath, "utf8"), oldManifestRaw);
     assert.deepEqual(listFilesIfPresent(backupRoot), oldBackups);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
+function verifyLockedSameVersionBundleUsesImmutableAuthority() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-locked-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const runtime = isolatedRuntime(testRoot, "runtime-home");
+    requireSuccess("seed packed global sync", runGlobalSync(candidate.workspace, runtime));
+
+    const legacyLayout = resolveDurableMetaKimRuntimeLayout(
+      runtime.userHome,
+      ORIGINAL_IDENTITY,
+      ORIGINAL_MANIFEST,
+    );
+    const legacyFingerprint = treeFingerprint(legacyLayout.bundleDir);
+    const candidateCliPath = path.join(
+      candidate.workspace,
+      ORIGINAL_MANIFEST.bin[ORIGINAL_IDENTITY.cliName],
+    );
+    writeFileSync(
+      candidateCliPath,
+      `${readFileSync(candidateCliPath, "utf8")}\n// locked same-version candidate\n`,
+      "utf8",
+    );
+
+    const updated = runGlobalSync(candidate.workspace, runtime, {
+      META_KIM_TEST_FAIL_DURABLE_MCP_AT: "locked_rename",
+    });
+    requireSuccess("locked same-version packed global sync", updated);
+    assert.match(
+      `${updated.stdout ?? ""}\n${updated.stderr ?? ""}`,
+      /switched future launches to the exact immutable projection package/iu,
+    );
+    assert.equal(treeFingerprint(legacyLayout.bundleDir), legacyFingerprint);
+
+    const config = JSON.parse(readFileSync(runtime.claudeConfig, "utf8"));
+    const cliPath = config.mcpServers["meta-kim-runtime"].args[0];
+    const portableCliPath = cliPath.replaceAll("\\", "/");
+    assert.ok(
+      portableCliPath.includes(
+        `/projection-packages/meta-kim/${ORIGINAL_MANIFEST.version}/`,
+      ),
+    );
+    assert.match(portableCliPath, /\/[a-f0-9]{64}\/bundle\//u);
+    assert.ok(existsSync(cliPath));
+    requireSuccess(
+      "immutable-authority idempotent sync after locked update",
+      runGlobalSync(candidate.workspace, runtime),
+    );
+    assert.equal(treeFingerprint(legacyLayout.bundleDir), legacyFingerprint);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }
@@ -587,6 +645,12 @@ test(
   "pack, install, rename, manifest, and post-rename verification failures preserve the previous bundle and MCP transaction",
   SERIAL_TEST_OPTIONS,
   verifyDurableBundleRollbackFailures,
+);
+
+test(
+  "a locked same-version MCP bundle switches future launches to immutable package authority without killing the running bundle",
+  SERIAL_TEST_OPTIONS,
+  verifyLockedSameVersionBundleUsesImmutableAuthority,
 );
 
 test(

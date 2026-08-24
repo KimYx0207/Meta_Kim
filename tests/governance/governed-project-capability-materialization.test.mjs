@@ -17,7 +17,7 @@ import { copyProjectCapability } from "../../scripts/project-capability-copy.mjs
 const REPO_ROOT = path.resolve(".");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-meta-theory-governed-execution.mjs");
 
-function makeFixture(name, { projectMarker = true } = {}) {
+function makeFixture(name, { projectMarker = true, freshGlobalInventory = true } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), `meta-kim-governed-materialize-${name}-`));
   const projectDir = path.join(root, "project");
   const userHome = path.join(root, "user-home");
@@ -27,6 +27,49 @@ function makeFixture(name, { projectMarker = true } = {}) {
   mkdirSync(userHome, { recursive: true });
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(artifactDir, { recursive: true });
+  if (freshGlobalInventory) {
+    const globalInventoryPath = path.join(
+      userHome,
+      ".meta-kim",
+      "state",
+      "default",
+      "capability-index",
+      "global-capabilities.json",
+    );
+    mkdirSync(path.dirname(globalInventoryPath), { recursive: true });
+    writeFileSync(globalInventoryPath, `${JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      registryName: "global-capabilities",
+      scope: "local-global-inventory",
+      profile: "default",
+      canonicalProjection: "config/capability-index/meta-kim-capabilities.json",
+      repoCanonicalIndex: "config/capability-index/meta-kim-capabilities.json",
+      localInventoryPath: ".meta-kim/state/default/capability-index/global-capabilities.json",
+      summary: {
+        totalAgents: 0,
+        totalSkills: 0,
+        totalHooks: 0,
+        totalMcpServers: 0,
+        totalMcpTools: 0,
+        totalPlugins: 0,
+        totalCommands: 0,
+        totalRules: 0,
+        totalPrompts: 0,
+      },
+      byPlatform: {},
+      byCapabilityType: {
+        agents: {},
+        skills: {},
+        hooks: {},
+        mcpServers: {},
+        mcpTools: {},
+        plugins: {},
+        commands: {},
+        rules: {},
+        prompts: {},
+      },
+    }, null, 2)}\n`, "utf8");
+  }
   if (projectMarker) writeFileSync(path.join(projectDir, "package.json"), "{}\n", "utf8");
   return { root, projectDir, userHome, stateDir, artifactDir };
 }
@@ -253,6 +296,28 @@ test("read-only governed run and unresolved project root do not claim materializ
   } finally {
     rmSync(readOnlyFixture.root, { recursive: true, force: true });
     rmSync(failedFixture.root, { recursive: true, force: true });
+  }
+});
+
+test("missing global inventory blocks project capability creation before materialization", () => {
+  const fixture = makeFixture("missing-inventory", { freshGlobalInventory: false });
+  try {
+    const artifact = runGoverned(fixture, {
+      runId: "governed-materialize-missing-inventory",
+      task: "请在当前项目新建 command governed-inventory-gated-report，用于输出报告并拒绝执行未授权命令。",
+    });
+    assert.equal(artifact.status, "partial");
+    assert.equal(artifact.projectCustomizationPacket.execution.appliedCount, 0);
+    assert.equal(
+      artifact.projectCustomizationPacket.execution.results[0].reason,
+      "governed_route_not_execution_ready",
+    );
+    assert.equal(
+      existsSync(path.join(fixture.projectDir, ".codex", "commands", "governed-inventory-gated-report.md")),
+      false,
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 

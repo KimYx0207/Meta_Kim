@@ -6,6 +6,29 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [3.0.2] - 2026-08-24
+
+### Live M3-L02–L04
+
+- Added deterministic local share/replay artifacts with recomputed content-bound SHA-256; JSON export uses the validated artifact, the PR card reads `/api/share?format=markdown`, and the README embed reads `/api/share?format=readme` through the canonical safe renderer. None of these actions upload data or expose secrets, absolute paths, raw prompts/outputs, or environment values.
+- Added opt-in continuation controls. The Live page is read-only by default; `--enable-control` only takes effect when all four command capabilities and the complete injected authority chain are explicitly available. Before the durable-repository, command-store, lease/fence, effect-check, token, and capable-adapter gate is satisfied, no adapter invocation occurs. A successful invocation reports `status: "adapter_invoked"` with `completionVerified: false`; missing adapters fail closed and endpoint acknowledgement is never shown as durable completion.
+- Added the projection-only `meta-kim/live-sdk` for runtime adapters, evidence cards, and replay themes. Runtime tiers remain primary (Claude/Codex), beta/compatibility (ZCode, DeepSeek Harness, Qoder, Trae), and compatibility-only (OpenClaw/Cursor); no `live-certified` claim is made.
+
+### Added
+
+- **Meta_Kim Live turns governed-run evidence into a local, read-only task graph.** A loopback-only web surface shows dependency state, evidence-backed completion, uncertainty, snapshot replay, and live updates without creating a second scheduler or mutation authority.
+
+### Changed
+
+- **Packed historical runtime observations can be copied as portable advisory evidence.** Stale snapshots remain explicitly non-authorizing and cannot activate runtime support outside release resolution.
+- **Beta compatibility truth is aligned across contracts and validation.** ZCode, DeepSeek Harness, Qoder, and Trae share the same Beta tier while remaining outside formal project projection targets.
+
+### Fixed
+
+- **Graph generation now fails closed when a producer is terminated or cannot spawn, while reporting bounded progress for long rebuilds.**
+- **Release-source snapshots now handle large tracked binary diffs without silently overflowing the child-process capture buffer.**
+- **Live completion requires structured, bound passing evidence.** Empty, missing, failed, or mismatched evidence remains visibly in doubt.
+
 ## [3.0.1] - 2026-08-21
 
 ### Added

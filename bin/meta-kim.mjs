@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Stable CLI for npx / npm i -g. All paths resolve from the package root. */
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateSetupCliArgs } from "../scripts/setup-cli-policy.mjs";
@@ -39,6 +39,7 @@ ${status.usageHeading}:
   meta-kim [install] [options]
   meta-kim update [options]
   meta-kim check [options]
+  meta-kim live [--port <port>] [--profile <name>] [--no-open] [--project-root <dir>] [--json] [--enable-control]
   ${status.usage}
   meta-kim doctor
   meta-kim doctor hooks [--fix] [--project|--all] [--project-root <dir>]
@@ -61,7 +62,7 @@ ${status.optionsHeading}:
 `;
 }
 
-const commands = new Set(["install", "update", "check", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime"]);
+const commands = new Set(["install", "update", "check", "live", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime"]);
 
 function fail(message, copy = statusCopy()) {
   console.error(`meta-kim: ${message}`);
@@ -179,6 +180,32 @@ function run(relativeScript, args = []) {
   process.exit(result.status === null ? 1 : result.status);
 }
 
+function runLongLived(relativeScript, args = []) {
+  const child = spawn(process.execPath, [join(root, relativeScript), ...args], {
+    cwd: root,
+    stdio: "inherit",
+    env: { ...process.env, META_KIM_CALLER_CWD: callerCwd },
+    windowsHide: true,
+  });
+  const handlers = new Map(
+    ["SIGINT", "SIGTERM"].map((signal) => [signal, () => {
+      if (!child.killed) child.kill(signal);
+    }]),
+  );
+  for (const [signal, handler] of handlers) process.once(signal, handler);
+  const cleanup = () => {
+    for (const [signal, handler] of handlers) process.off(signal, handler);
+  };
+  child.once("error", () => {
+    cleanup();
+    process.exitCode = 1;
+  });
+  child.once("exit", (code) => {
+    cleanup();
+    process.exitCode = Number.isInteger(code) ? code : 1;
+  });
+}
+
 if (rawArgs.length === 1 && ["-h", "--help", "help"].includes(rawArgs[0])) {
   console.log(renderHelp());
   process.exit(0);
@@ -204,6 +231,9 @@ switch (command) {
   case "check":
     validateSetupOptions(commandArgs);
     run("setup.mjs", ["--check", ...commandArgs]);
+    break;
+  case "live":
+    runLongLived("scripts/meta-kim-live.mjs", commandArgs);
     break;
   case "status":
     {

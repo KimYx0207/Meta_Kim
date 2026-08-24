@@ -207,17 +207,21 @@
         "antigravity",
         "joycode"
       ],
-      "candidateProbeTargets": [
+      "betaCompatibilityTargets": [
+        "zcode",
+        "deepseek-harness",
         "qoder",
-        "trae",
+        "trae"
+      ],
+      "candidateProbeTargets": [
         "kiro",
         "windsurf",
         "cline",
         "roo-code",
         "continue"
       ],
-      "boundary": "Claude Code, Codex, OpenClaw, and Cursor are the formal Meta_Kim projection targets; dependency_install_target and candidate_probe products are not project projections.",
-      "promotionInvariant": "dependency_install_target and candidate_probe products must not be treated as project projections until runtime profile, projection layout, generated target paths, sync tests, install policy, and live or official probe evidence exist."
+      "boundary": "Claude Code, Codex, OpenClaw, and Cursor are the formal Meta_Kim projection targets; beta_compatibility, dependency_install_target, and candidate_probe products are not project projections.",
+      "promotionInvariant": "beta_compatibility, dependency_install_target, and candidate_probe products must not be treated as project projections until runtime profile, projection layout, generated target paths, sync tests, install policy, and live or official probe evidence exist."
     },
     "installOptions": [
       {

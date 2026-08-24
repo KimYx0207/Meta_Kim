@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "meta-kim-live-share-v1",
+  "title": "Meta_Kim Live public share artifact",
+  "description": "A deterministic, read-only, allowlisted projection of an M3-L01 Live snapshot. It is suitable for a PR card, README embed, or public replay review without carrying raw packets. The share service returns JSON for the artifact, canonical PR Markdown with format=markdown, and canonical README Markdown with format=readme.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "source",
+    "run",
+    "nodes",
+    "edges",
+    "evidence",
+    "replay",
+    "permissions",
+    "contentDigest"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "meta-kim-live-share-v1"
+    },
+    "kind": {
+      "const": "live_share_artifact"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "replay": {
+      "$ref": "#/$defs/publicReplay"
+    },
+    "permissions": {
+      "$ref": "#/$defs/permissions"
+    },
+    "contentDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Internal-consistency binding over the canonical artifact payload excluding contentDigest. A caller-declared value is never an authority or authenticity proof; independent readers recompute it."
+    }
+  },
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+    },
+    "safeText": {
+      "type": "string",
+      "maxLength": 240,
+      "description": "Display text after control-character, secret, path, prompt, output, and environment sanitization."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "completed",
+        "pending",
+        "failed",
+        "blocked",
+        "cancelled",
+        "session_stopped",
+        "archived",
+        "in_doubt"
+      ]
+    },
+    "timestamp": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "observedAt", "stale"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["durable_status", "governed_artifact", "local", "empty", "unknown"]
+        },
+        "observedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "status", "currentStage", "updatedAt"],
+      "properties": {
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "currentStage": {
+          "$ref": "#/$defs/safeId"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "stage", "status", "ownerAgent", "runtime", "summary", "evidenceCount"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "label": {
+          "$ref": "#/$defs/safeText"
+        },
+        "stage": {
+          "$ref": "#/$defs/safeId"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "ownerAgent": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtime": {
+          "$ref": "#/$defs/safeId"
+        },
+        "summary": {
+          "$ref": "#/$defs/safeText"
+        },
+        "evidenceCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/safeId"
+        },
+        "to": {
+          "$ref": "#/$defs/safeId"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "label", "status"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/safeId"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["stage", "transition", "node", "evidence", "review", "verification", "status", "test", "runtime", "in_doubt", "unknown"]
+        },
+        "label": {
+          "$ref": "#/$defs/safeText"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        }
+      }
+    },
+    "replayEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "at", "kind", "nodeId", "status", "label"],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["stage", "transition", "node", "evidence", "review", "verification", "status", "test", "runtime", "in_doubt", "unknown"]
+        },
+        "nodeId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "label": {
+          "$ref": "#/$defs/safeText"
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readOnly", "projectionOnly", "executionAllowed", "mutationAllowed"],
+      "properties": {
+        "readOnly": {
+          "const": true
+        },
+        "projectionOnly": {
+          "const": true
+        },
+        "executionAllowed": {
+          "const": false
+        },
+        "mutationAllowed": {
+          "const": false
+        }
+      }
+    },
+    "publicReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runId", "source", "events", "permissions"],
+      "properties": {
+        "schemaVersion": {
+          "const": "meta-kim-live-public-replay-v1"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observedAt", "stale"],
+          "properties": {
+            "observedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "stale": {
+              "type": "boolean"
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/replayEvent"
+          }
+        },
+        "permissions": {
+          "$ref": "#/$defs/permissions"
+        }
+      }
+    }
+  }
+}

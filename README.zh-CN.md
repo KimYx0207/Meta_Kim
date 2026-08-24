@@ -28,6 +28,24 @@
 
 **Meta_Kim** 不是又一个 AI 编码工具。它是面向持续性 AI 编码工作的治理层。
 
+### Meta_Kim Live：把证据直接摆到眼前
+
+Meta_Kim Live 把耐久运行记录变成一个本地 **Proof-Carrying Run Graph（带证据的运行图）**：阶段、owner、证据、不确定状态和历史回放都在同一个只读页面里。它附着在你已经使用的 Codex 或 Claude Code 项目上，不替换 Agent、不创建第二套调度器，也不会把未验证节点包装成完成。
+
+```bash
+meta-kim live
+```
+
+MVP 只绑定 `127.0.0.1`、不加载第三方资源。页面默认只读；只有通过 `--enable-control` 显式 opt-in，并注入完整权威链（durable repository、lease/fence/effect 检查、control token 与可用 adapter）时，才允许 guarded controls。缺少完整权威链时，服务保持 plan-only 并 fail-closed。现在完成的是重新打开并理解同一运行；自动恢复真实执行和跨 Runtime 接力仍是后续能力，必须先通过 lease/fence 与副作用安全证据。
+
+#### M3-L02–L04 分享与控制边界
+
+- **L02 分享/回放：** `meta-kim live` 可生成确定性的本地 share artifact 与 replay 视图。JSON 导出、PR 卡片复制（读取 `/api/share?format=markdown`）和 README embed（读取 `/api/share?format=readme`，由 canonical safe renderer 渲染）都只留在本机，不提供上传路径。内容绑定的 SHA-256 会依据规范化内容重新计算，秘密、绝对路径、原始 prompt/output 和环境信息不会进入公开 artifact。
+- **L03 继续控制：** 页面默认始终只读。只有在本地服务明确声明 `pause`、`resume`、`reassign`、`handoff` 四项能力全部可用并提供完整注入权威链时，才通过 `--enable-control` 显式启用。命令必须经过 durable repository、lease/fence 与 adapter 权威链；缺少 adapter 时 fail closed，收到请求也不会被表述为执行成功。
+- **L04 SDK：** `meta-kim/live-sdk`（源码：`src/sdk/live/index.mjs`）仅用于 runtime adapter、evidence card 和 replay theme 的投影，没有运行时权威，也不宣称 `live-certified`。
+
+运行时支持分层：Claude/Codex 是主要目标；ZCode、DeepSeek Harness、Qoder、Trae 属于 beta/兼容路径；OpenClaw 与 Cursor 在获得原生 adapter 证据前仅作兼容支持。缺少 adapter 会 fail closed，本页面不构成 live-certified 声明。
+
 AI 编码现在最难的，已经不是让模型改文件。真正难的是：先做什么、该由什么能力负责、怎么证明真的做对、这次经验怎么在下一轮继续复用。
 
 打个比方：你现在用的 Claude Code、Codex、OpenClaw、Cursor，本质上都是"手"——能写代码、能改文件。但谁来决定先改哪个文件？改完谁来检查？检查出了问题谁来修？修完了怎么保证下次不会再犯同样的错？
@@ -88,6 +106,7 @@ npm run meta:theory:demo
 npm run meta:run-status:latest
 npm run meta:theory:report -- --run-id latest
 npm run meta:delivery:bundle
+meta-kim live
 ```
 
 `meta:run-status:latest` 只输出最小脱敏状态摘要；需要查看报告内容时，请使用显式的

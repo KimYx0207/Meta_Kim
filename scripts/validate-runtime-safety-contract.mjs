@@ -261,6 +261,13 @@ assert(
 );
 assert(
   sameMembers(
+    platformSupportTiers.betaCompatibilityTargets,
+    productIdsByTier(catalog, "beta_compatibility"),
+  ),
+  "Beta compatibility targets must match beta_compatibility catalog products",
+);
+assert(
+  sameMembers(
     platformSupportTiers.candidateProbeTargets,
     productIdsByTier(catalog, "candidate_probe"),
   ),
@@ -268,7 +275,7 @@ assert(
 );
 hasAll(
   platformSupportTiers.boundary ?? "",
-  ["OpenClaw", "Cursor", "formal Meta_Kim projection targets"],
+  ["OpenClaw", "Cursor", "beta_compatibility", "formal Meta_Kim projection targets"],
   "platform support tier boundary",
 );
 hasAll(

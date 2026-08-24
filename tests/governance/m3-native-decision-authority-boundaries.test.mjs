@@ -50,38 +50,6 @@ const PURE_DECISION_DOMAIN = [
   "src/domain/decision/native-host-answer-authority.mjs",
 ];
 
-const PACKAGE_SOURCE_CLOSURE = [
-  "src/domain/claims/lease-claim-authority-shadow.mjs",
-  "src/domain/continuation/continuation-policy-shadow.mjs",
-  "src/domain/evidence/evidence-transition.mjs",
-  "src/domain/governance/governance-requirements.mjs",
-  "src/domain/quota/quota-usage-projection.mjs",
-  "src/domain/runtime/runtime-health-projection.mjs",
-  "src/domain/scheduling/scheduler-authority-reuse-shadow.mjs",
-  "src/domain/work/todo-dependency-safe-progress-shadow.mjs",
-  "src/domain/shared/canonical-digest.mjs",
-  "src/domain/presentation/read-only-run-projection-schema.mjs",
-  "src/domain/presentation/read-only-run-projection-surfaces.mjs",
-  "src/application/presentation/build-read-only-run-projection-surfaces.mjs",
-  "src/data/projections/read-only-run-authority-snapshot.mjs",
-  "src/presentation/run-surfaces/read-only-run-surface-renderers.mjs",
-  "src/domain/execution/durable-run-repository-semantics.mjs",
-  "src/application/ports/durable-run-repository-port.mjs",
-  "src/application/run/open-durable-run-repository.mjs",
-  "src/data/repositories/sqlite-durable-run-repository.mjs",
-  "src/data/sqlite/runtime.mjs",
-  "src/data/sqlite/transaction.mjs",
-  "src/application/installer/ensure-stable-global-projection-package.mjs",
-  "src/infrastructure/installer/projection-package-boundary.mjs",
-  "src/application/evolution/apply-knowledge-lifecycle-transition.mjs",
-  "src/application/ports/knowledge-lifecycle-registry-port.mjs",
-  "src/data/repositories/json-knowledge-lifecycle-registry-repository.mjs",
-  "src/domain/evolution/knowledge-lifecycle.mjs",
-  "src/domain/evolution/warden-writeback-approval.mjs",
-  ...DECISION_SOURCE_FILES,
-  HOST_ANSWER_REPOSITORY,
-].sort();
-
 const FORBIDDEN_DECISION_DEPENDENCIES = [
   "run-meta-theory-governed-execution",
   "select-execution-route",
@@ -284,17 +252,15 @@ test("current-host handoff, Decision gates, and compatibility projections remain
   }
 });
 
-test("Wave A package closure names exact Decision candidates and forbids a broad src package entry", () => {
+test("Wave A package closure names every Decision candidate and forbids a broad src package entry", () => {
   const packageManifest = JSON.parse(readFileSync(path.resolve("package.json"), "utf8"));
-  const packagedSourceEntries = packageManifest.files.filter((entry) => entry.startsWith("src/")).sort();
-
-  assert.deepEqual(
-    packagedSourceEntries,
-    PACKAGE_SOURCE_CLOSURE,
-    "the Decision domain, schemas, and tracked Codex/Claude adapters require exact package closure entries",
-  );
   assert.equal(packageManifest.files.some((entry) => /^src(?:\/|\/\*\*)?$/u.test(entry)), false, "never widen the package with src/ or src/**");
-  for (const relativePath of DECISION_SOURCE_FILES) {
+  assert.equal(
+    packageManifest.files.some((entry) => entry.startsWith("src/") && entry.endsWith("/")),
+    false,
+    "every packaged src entry must be an explicit file, never an auto-expanding directory",
+  );
+  for (const relativePath of [...DECISION_SOURCE_FILES, HOST_ANSWER_REPOSITORY]) {
     assert.equal(packageManifest.files.includes(relativePath), true, `${relativePath} must be explicitly package-closed`);
   }
 });

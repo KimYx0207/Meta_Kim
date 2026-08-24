@@ -341,7 +341,7 @@ test("release verification path includes governance tests", () => {
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:open-source-boundary:validate/);
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:test:integration/);
   assert.match(verifyRunnerSource, /npm run meta:graphify:check/);
-  assert.match(verifyRunnerSource, /node scripts\/eval-meta-agents\.mjs --primary-release-fuse/);
+  assert.match(verifyRunnerSource, /\["eval-meta-agents", "node scripts\/eval-meta-agents\.mjs"\]/);
   assert.match(verifyRunnerSource, /npm run meta:acceptance:clean-room:require/);
   assert.doesNotMatch(
     packageJson.scripts["meta:verify:all:chain"],
@@ -377,9 +377,9 @@ test("release verification path includes governance tests", () => {
     runtimeFuseStages.map(({ name, cmd }) => ({ name, cmd })),
     [{
       name: "eval-meta-agents",
-      cmd: "node scripts/eval-meta-agents.mjs --primary-release-fuse",
+      cmd: "node scripts/eval-meta-agents.mjs",
     }],
-    "standard verification must own one fixed Claude+Codex native release fuse",
+    "standard verification must own one fixed cross-runtime smoke stage",
   );
   assert.equal(
     STAGES.some((stage) => /--runtime=|--agent=|FIXTURE/u.test(stage.cmd)),
@@ -437,7 +437,7 @@ test("release stages derive runtime targets and timeout budgets from canonical p
   assert.ok(primaryRuntimeFuseStage);
   assert.ok(
     primaryRuntimeFuseStage.timeoutMs >= 900_000,
-    "outer release timeout must cover the dual-primary live probe worst-case budget",
+    "outer release timeout retains headroom for cross-runtime smoke diagnostics",
   );
   assert.match(evalMetaAgentsSource, /attempt <= 2/u);
   assert.match(evalMetaAgentsSource, /timeout:\s*150_000/u);
@@ -1355,6 +1355,12 @@ test("source snapshot binds HEAD tree diff state and package manifest and reject
     assert.equal(comparison.stable, false);
     assert.equal(comparison.releaseEligible, false);
     assert.ok(comparison.mismatchReasons.includes("diffHash_changed_during_verification"));
+
+    writeFileSync(path.join(tempRoot, "tracked.txt"), "x".repeat(1_500_000));
+    const largeDirty = captureReleaseSourceSnapshot(tempRoot);
+    assert.equal(largeDirty.captureOk, true, largeDirty.error);
+    assert.equal(largeDirty.dirty, true);
+    assert.match(largeDirty.diffHash, /^[a-f0-9]{64}$/u);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

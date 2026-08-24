@@ -806,56 +806,6 @@ const codexSmokeSchema = JSON.stringify({
   ],
 });
 
-const codexLiveOrchestrationSchema = JSON.stringify({
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    runtime: { type: "string" },
-    governed_entry: { type: "string" },
-    warden_entry_gate: { type: "boolean" },
-    conductor_orchestration: { type: "boolean" },
-    orchestrationTaskBoardPacket: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        synthesisOwner: { type: "string" },
-        route: { type: "string" },
-      },
-      required: ["synthesisOwner", "route"],
-    },
-    workerTaskPackets: {
-      type: "array",
-      minItems: 1,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          owner: { type: "string" },
-          roleDisplayName: { type: "string" },
-          deliverable: { type: "string" },
-          verificationOwner: { type: "string" },
-        },
-        required: [
-          "owner",
-          "roleDisplayName",
-          "deliverable",
-          "verificationOwner",
-        ],
-      },
-    },
-    verificationOwner: { type: "string" },
-  },
-  required: [
-    "runtime",
-    "governed_entry",
-    "warden_entry_gate",
-    "conductor_orchestration",
-    "orchestrationTaskBoardPacket",
-    "workerTaskPackets",
-    "verificationOwner",
-  ],
-});
-
 const claudeCases = {
   "meta-warden": {
     ownGroups: [
@@ -2436,8 +2386,7 @@ function inspectCodexLiveEvidence(
     sessionLookupFailure = null,
   },
 ) {
-  const runtimePayload = tryExtractCodexReply(stdout);
-  const behaviorDiagnosticOk = codexLivePayloadOk(structuralOk, runtimePayload);
+  const parsedRuntimePayload = tryExtractCodexReply(stdout);
   const observedEvents = fixture ? [] : observeCodexJsonl(hostEventText);
   const rootSessionIds = new Set(
     observedEvents.map((event) => event.sessionId).filter(Boolean),
@@ -2464,14 +2413,16 @@ function inspectCodexLiveEvidence(
       typeof event.outputDigest === "string" &&
       event.outputDigest.length > 0,
   );
-  const nativeInvocation =
+  const invocationCandidate =
     !fixture &&
     structuralOk &&
-    behaviorDiagnosticOk &&
     rootSessionIds.size === 1 &&
     matchingNativeInvocations.length === 1
       ? matchingNativeInvocations[0]
       : null;
+  const runtimePayload = parsedRuntimePayload;
+  const behaviorDiagnosticOk = codexLivePayloadOk(structuralOk, runtimePayload);
+  const nativeInvocation = behaviorDiagnosticOk ? invocationCandidate : null;
   return {
     runtimePayload,
     behaviorDiagnosticOk,
@@ -2526,6 +2477,7 @@ async function inspectCodexLiveEvidenceWithSessionFallback(
     fixture = false,
     sinceMs,
     sessionSettleTimeoutMs = 0,
+    codexHome = process.env.CODEX_HOME,
   },
 ) {
   const directEvidence = inspectCodexLiveEvidence(stdout, {
@@ -2542,7 +2494,7 @@ async function inspectCodexLiveEvidenceWithSessionFallback(
   do {
     try {
       const sessionEvidence = await readCodexSessionEvidence({
-        codexHome: process.env.CODEX_HOME,
+        codexHome,
         threadId,
         sinceMs,
       });
@@ -3442,6 +3394,71 @@ async function runCodexSmoke(expectedAgentIds) {
   };
 }
 
+async function prepareIsolatedCodexLiveHome({ requireAuth = true } = {}) {
+  const runtimeHome = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meta-kim-codex-live-"),
+  );
+  let copiedAuth = null;
+  if (requireAuth) {
+    const sourceRuntimeHome =
+      readEnvCliOverride("CODEX_HOME") ?? path.join(os.homedir(), ".codex");
+    const authSource = path.join(sourceRuntimeHome, "auth.json");
+    try {
+      await fs.access(authSource);
+    } catch {
+      await fs.rm(runtimeHome, { recursive: true, force: true });
+      throw new Error("codex auth.json is required for the isolated live probe");
+    }
+    copiedAuth = path.join(runtimeHome, "auth.json");
+    await fs.copyFile(authSource, copiedAuth);
+    await fs.chmod(copiedAuth, 0o600).catch(() => {});
+  }
+  const evalModel = readEnvCliOverride("META_KIM_CODEX_EVAL_MODEL");
+  const evalReasoningEffort = readEnvCliOverride(
+    "META_KIM_CODEX_EVAL_REASONING_EFFORT",
+  );
+  const modelConfig = [
+    ...(evalModel ? [`model = ${JSON.stringify(evalModel)}`] : []),
+    ...(evalReasoningEffort
+      ? [`model_reasoning_effort = ${JSON.stringify(evalReasoningEffort)}`]
+      : []),
+  ];
+  await fs.writeFile(
+    path.join(runtimeHome, "config.toml"),
+    `${modelConfig.length > 0 ? `${modelConfig.join("\n")}\n\n` : ""}[features]\nmulti_agent = true\n\n[agents]\nmax_threads = 2\nmax_depth = 1\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return { runtimeHome, copiedAuth };
+}
+
+async function cleanupIsolatedCodexLiveHome({ runtimeHome, copiedAuth }) {
+  try {
+    await fs.rm(runtimeHome, {
+      recursive: true,
+      force: true,
+      maxRetries: 8,
+      retryDelay: 125,
+    });
+  } catch {
+    if (copiedAuth) {
+      await fs.rm(copiedAuth, {
+        force: true,
+        maxRetries: 8,
+        retryDelay: 125,
+      }).catch(() => {});
+    }
+    if (!copiedAuth) {
+      throw new Error("codex isolated runtime cleanup failed");
+    }
+    try {
+      await fs.access(copiedAuth);
+    } catch {
+      return;
+    }
+    throw new Error("codex isolated auth cleanup failed");
+  }
+}
+
 async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-prism") {
   const forceTimeoutFixture = shouldForceCodexLiveTimeoutFixture();
   const forceNonzeroFixture = shouldForceCodexLiveNonzeroFixture();
@@ -3536,47 +3553,91 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
     payload.suppresses_unstable_feature_warning === true &&
     payload.request_user_input_default_mode === true;
 
-  const schemaDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-codex-"));
-  const schemaPath = path.join(schemaDir, "codex-live-orchestration.schema.json");
-  await fs.writeFile(schemaPath, codexLiveOrchestrationSchema, "utf8");
-
   let liveEvidence = null;
   let commandStartedAtMs = null;
+  let isolatedRuntimeHome = null;
+  const successPayload = {
+    runtime: "codex",
+    governed_entry: "meta-theory",
+    warden_entry_gate: true,
+    conductor_orchestration: true,
+    orchestrationTaskBoardPacket: {
+      synthesisOwner: "meta-conductor",
+      route: "Warden -> Conductor -> board -> workerTaskPackets",
+    },
+    workerTaskPackets: [
+      {
+        owner: representativeAgentId,
+        roleDisplayName: "review",
+        deliverable: "Bounded wording review returned by the native child.",
+        verificationOwner: "meta-conductor",
+      },
+    ],
+    verificationOwner: "meta-conductor",
+  };
   try {
     const childTask =
-      'This task is entirely self-contained. Do not inspect files or call tools. Review whether the words "primary runtime evidence" are precise. Explain any ambiguity briefly and recommend tighter wording if needed. Return a concise review for the parent.';
-    const directLifecycle =
-      `const spawned = await tools.multi_agent_v1__spawn_agent({ message: ${JSON.stringify(childTask)}, agent_type: ${JSON.stringify(representativeAgentId)}, fork_turns: "none" }); ` +
-      "text(JSON.stringify(spawned)); " +
-      "const waited = await tools.multi_agent_v1__wait_agent({ targets: [spawned.agent_id], timeout_ms: 120000 }); " +
-      "text(JSON.stringify(waited));";
+      `Owner: ${representativeAgentId}. Return ONLY OK.`;
     const prompt =
-      `Use the native spawn_agent collaboration tool exactly once. In Codex code mode it is exposed as multi_agent_v1__spawn_agent; call it directly without enumerating ALL_TOOLS or inspecting repository files. If its active schema exposes agent_type, set it to ${representativeAgentId} and set fork_turns to "none" because the bounded child task below is self-contained; otherwise omit the selector and use a run-scoped owner contract. ` +
-      "Never use task_name or a nickname as proof of owner identity. " +
-      `In one code exec run exactly this source with no leading or trailing statements: ${directLifecycle} ` +
-      "Do not add variables, helper functions, use task instead of message, pass id instead of targets, or retry the spawn. After that exact wait returns the child final, return JSON only. Never call the nonexistent multi_agent_v1__wait alias. " +
-      "Do not claim the child ran unless the tool call completed. " +
-      'Set runtime to "codex" and governed_entry to "meta-theory". ' +
-      "Set warden_entry_gate and conductor_orchestration true only if the route is Warden -> Conductor. " +
-      'orchestrationTaskBoardPacket.synthesisOwner must be "meta-conductor" and route must mention Warden -> Conductor -> board -> workerTaskPackets. ' +
-      "workerTaskPackets must contain one bounded task with owner, deliverable, and verificationOwner. " +
-      "Do not modify files and do not explain outside JSON.";
+      `Call the native spawn_agent tool exactly once now. The child message is: ${JSON.stringify(childTask)}. ` +
+      "After spawn_agent returns, wait for exactly that returned child until its final is visible. Never call wait before spawn_agent succeeds. Do not simulate either tool, do not retry the spawn, and do not use a code-exec wrapper. " +
+      `Only after observing the actual child final, return exactly this JSON object and nothing else: ${JSON.stringify(successPayload)}. Do not modify files.`;
 
+    const evalModel = readEnvCliOverride("META_KIM_CODEX_EVAL_MODEL");
+    const evalReasoningEffort = readEnvCliOverride(
+      "META_KIM_CODEX_EVAL_REASONING_EFFORT",
+    );
     const codexExecArgs = codexCmd.toArgs([
       "exec",
-      "--ignore-user-config",
       "--enable",
       "multi_agent",
+      ...(evalModel ? ["--model", evalModel] : []),
+      ...(evalReasoningEffort
+        ? ["-c", `model_reasoning_effort=${JSON.stringify(evalReasoningEffort)}`]
+        : []),
       "--json",
       "--skip-git-repo-check",
       "--sandbox",
       "read-only",
-      "--output-schema",
-      schemaPath,
       "--cd",
       repoRoot,
-      prompt,
+      "-",
     ]);
+    isolatedRuntimeHome = await prepareIsolatedCodexLiveHome({
+      requireAuth: !(
+        forceTimeoutFixture ||
+        forceNonzeroFixture ||
+        forceWeakNormalFixture
+      ),
+    });
+    const codexEnv = {
+      ...process.env,
+      NO_COLOR: "1",
+      CODEX_HOME: isolatedRuntimeHome.runtimeHome,
+      CODEX_SKILLS_DIR: path.join(isolatedRuntimeHome.runtimeHome, "skills"),
+    };
+    delete codexEnv.CODEX_THREAD_ID;
+    delete codexEnv.CODEX_SESSION_ID;
+    delete codexEnv.CODEX_INTERNAL_ORIGINATOR_OVERRIDE;
+    const promptPath = path.join(
+      isolatedRuntimeHome.runtimeHome,
+      "codex-live-prompt.txt",
+    );
+    const invocationSpecPath = path.join(
+      isolatedRuntimeHome.runtimeHome,
+      "codex-live-invocation.json",
+    );
+    await fs.writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
+    await fs.writeFile(
+      invocationSpecPath,
+      `${JSON.stringify({
+        file: codexCmd.file,
+        args: codexExecArgs,
+        cwd: repoRoot,
+        inputFile: promptPath,
+      })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
     commandStartedAtMs = Date.now();
     if (forceTimeoutFixture) {
       throw buildCodexLiveTimeoutFixtureError();
@@ -3589,12 +3650,15 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
       stdout = buildCodexLiveNonzeroFixtureError("weak").stdout;
     } else {
       ({ stdout } = await runCommandWithIgnoredStdin(
-        codexCmd.file,
-        codexExecArgs,
+        process.execPath,
+        [
+          path.join(repoRoot, "scripts", "run-command-with-input-file.mjs"),
+          invocationSpecPath,
+        ],
         {
           cwd: repoRoot,
           timeout: CODEX_LIVE_TIMEOUT_MS,
-          env: { ...process.env, NO_COLOR: "1" },
+          env: codexEnv,
         },
       ));
     }
@@ -3604,6 +3668,7 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
       representativeAgentId,
       fixture: forceTimeoutFixture,
       sinceMs: commandStartedAtMs,
+      codexHome: isolatedRuntimeHome.runtimeHome,
     });
   } catch (error) {
     if (isCommandTimeoutFailure(error)) {
@@ -3615,6 +3680,7 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
           fixture: forceTimeoutFixture,
           sinceMs: commandStartedAtMs,
           sessionSettleTimeoutMs: CODEX_SESSION_SETTLE_TIMEOUT_MS,
+          codexHome: isolatedRuntimeHome.runtimeHome,
         },
       );
       if (codexRecoveryHasReturnedChildFinal(timeoutEvidence)) {
@@ -3724,6 +3790,7 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
           fixture: false,
           sinceMs: commandStartedAtMs,
           sessionSettleTimeoutMs: CODEX_SESSION_SETTLE_TIMEOUT_MS,
+          codexHome: isolatedRuntimeHome.runtimeHome,
         });
       if (codexRecoveryHasReturnedChildFinal(completedEvidence)) {
         return {
@@ -3782,7 +3849,9 @@ async function runCodexLive(expectedAgentIds, representativeAgentId = "meta-pris
     }
     throw error;
   } finally {
-    await fs.rm(schemaDir, { recursive: true, force: true });
+    if (isolatedRuntimeHome) {
+      await cleanupIsolatedCodexLiveHome(isolatedRuntimeHome);
+    }
   }
 
   const runtimePayload = liveEvidence?.runtimePayload ?? null;

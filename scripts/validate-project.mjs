@@ -1900,10 +1900,10 @@ async function validateRuntimeCompatibilityCatalog() {
   const qoder = byId.get("qoder");
   assert(qoder, "runtime compatibility catalog must include qoder.");
   assert(
-    qoder.tier === "candidate_probe" &&
+    qoder.tier === "beta_compatibility" &&
       qoder.dependencyInstall?.ecc?.support === "not_supported" &&
       qoder.genericCompatibility?.status === "verified_current",
-    "qoder must remain a verified generic candidate, not a formal projection or ECC target.",
+    "qoder must remain a verified generic Beta adapter, not a formal projection or ECC target.",
   );
   assert(
     !eccTargets.has("qoder") && !supportedTargets.has("qoder"),
@@ -1921,6 +1921,7 @@ async function validateRuntimeCompatibilityCatalog() {
   const candidateProfiles = [
     {
       id: "qoder",
+      tier: "beta_compatibility",
       minDocs: 4,
       surfaces: [
         "instruction_context",
@@ -1933,6 +1934,7 @@ async function validateRuntimeCompatibilityCatalog() {
     },
     {
       id: "trae",
+      tier: "beta_compatibility",
       minDocs: 4,
       surfaces: [
         "instruction_context",
@@ -2003,11 +2005,11 @@ async function validateRuntimeCompatibilityCatalog() {
     const product = byId.get(profile.id);
     assert(product, `runtime compatibility catalog must include candidate ${profile.id}.`);
     assert(
-      product.tier === "candidate_probe" &&
+      product.tier === (profile.tier ?? "candidate_probe") &&
         product.formalProjection?.inSyncManifest === false &&
         product.dependencyInstall?.ecc?.support === "not_supported" &&
         product.genericCompatibility?.status === profile.status,
-      `${profile.id} must remain a candidate_probe with honest projection and ECC boundaries.`,
+      `${profile.id} must retain its declared compatibility tier with honest projection and ECC boundaries.`,
     );
     assert(
       !eccTargets.has(profile.id) && !supportedTargets.has(profile.id),

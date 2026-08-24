@@ -8,7 +8,6 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -19,6 +18,7 @@ import {
   buildBootMemoryServiceEnv,
   buildInitialMemoryServiceEnv,
 } from "./mcp-memory-service-lifecycle.mjs";
+import { renameWithTransientRetry } from "./transient-rename.mjs";
 
 const SQLITE_BACKUP_SCRIPT = [
   "import sqlite3, sys",
@@ -353,12 +353,24 @@ export async function runCandidateOnnxSentinel({
   };
 }
 
-export function writeJsonAtomic(filePath, payload) {
+export function writeJsonAtomic(
+  filePath,
+  payload,
+  {
+    platform = process.platform,
+    rename,
+    wait,
+  } = {},
+) {
   mkdirSync(dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   hardenPrivateFile(tempPath);
-  renameSync(tempPath, filePath);
+  renameWithTransientRetry(tempPath, filePath, {
+    platform,
+    ...(rename ? { rename } : {}),
+    ...(wait ? { wait } : {}),
+  });
   hardenPrivateFile(filePath);
 }
 

@@ -31,6 +31,7 @@ export function loadEffectiveRuntimeCapabilityClaims({
   now = new Date().toISOString(),
   releaseResolution = false,
   allowTestReceipts = false,
+  portableAdvisorySnapshot = false,
 } = {}) {
   const matrix = readJson(path.join(packageRoot, "config", "runtime-capability-matrix.json"));
   const ledger = readJson(path.join(packageRoot, "config", "runtime-capability-evidence.json"));
@@ -77,7 +78,12 @@ export function loadEffectiveRuntimeCapabilityClaims({
     const ordered = [...entries].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)) || right.attemptId.localeCompare(left.attemptId));
     let chosen = null;
     for (const attempt of ordered) {
-      const evidence = validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, { profileRoot: store.paths.profileRoot, now, releaseResolution, portableAdvisorySnapshot: portableSnapshotAttempts.has(attempt.attemptId) });
+      const evidence = validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
+        profileRoot: store.paths.profileRoot,
+        now,
+        releaseResolution,
+        portableAdvisorySnapshot: portableAdvisorySnapshot || portableSnapshotAttempts.has(attempt.attemptId),
+      });
       const reasons = [...evidence.issues];
       if (attempt.attestationAuthority !== "controlled_producer") reasons.push("external/imported reports are reference-only");
       if (attempt.testOnly === true && !allowTestReceipts) reasons.push("test-only producer receipt cannot authorize production execution");

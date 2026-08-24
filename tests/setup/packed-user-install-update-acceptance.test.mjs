@@ -1259,6 +1259,7 @@ test("packed release proof migrates durable Claude MCP registration and proves t
   assert.match(acceptanceSource, /evidenceTier: "packed_isolated_transport"/u);
   assert.match(acceptanceSource, /liveHostInvocation: false/u);
   assert.match(acceptanceSource, /copyRuntimeCapabilityObservationSnapshot/u);
+  assert.match(acceptanceSource, /portableAdvisorySnapshot: true/u);
   assert.match(acceptanceSource, /runtime", "status", "--require-fresh"/u);
   assert.match(acceptanceSource, /assertExactStandardRuntimeObservationSet\(populatedPayload\.results\)/u);
   assert.match(acceptanceSource, /assertExactStandardRuntimeObservationSet\(emptyPayload\.missing\)/u);

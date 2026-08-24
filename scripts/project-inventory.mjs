@@ -20,6 +20,11 @@ export const TEST_SUITES = Object.freeze({
     packageScript: "meta:test:integration",
     command: 'node scripts/run-node-tests.mjs "tests/integration/*.test.mjs"',
   },
+  live: {
+    prefix: "tests/live/",
+    packageScript: "meta:test:live",
+    command: 'node scripts/run-node-tests.mjs "tests/live/*.test.mjs"',
+  },
   metaTheory: {
     prefix: "tests/meta-theory/",
     packageScript: "meta:test:meta-theory",

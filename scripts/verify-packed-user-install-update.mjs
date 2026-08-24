@@ -952,6 +952,15 @@ function seedPortableRuntimeUserState(
 
   const claudeUserConfigPath = path.join(roots.userHome, ".claude.json");
   const legacyPackageRoot = path.join(roots.laneRoot, "retired-package-root");
+  const legacyServer = {
+    type: "stdio",
+    command: "cmd",
+    args: [
+      "/c",
+      process.execPath,
+      path.join(legacyPackageRoot, "scripts", "mcp", "meta-runtime-server.mjs"),
+    ],
+  };
   const unknownServer = {
     command: "user-owned-mcp-command",
     args: ["--preserve"],
@@ -965,19 +974,44 @@ function seedPortableRuntimeUserState(
       unknownUserField: { preserve: true },
       mcpServers: {
         "user-owned-server": unknownServer,
-        meta_kim_runtime: {
-          type: "stdio",
-          command: "cmd",
-          args: [
-            "/c",
-            process.execPath,
-            path.join(legacyPackageRoot, "scripts", "mcp", "meta-runtime-server.mjs"),
-          ],
-        },
+        meta_kim_runtime: legacyServer,
       },
     }, null, 2)}\n`,
     "utf8",
   );
+  const manifestPath = path.join(roots.userHome, ".meta-kim", "install-manifest.json");
+  mkdirSync(path.dirname(manifestPath), { recursive: true });
+  const now = new Date().toISOString();
+  const existingManifest = existsSync(manifestPath)
+    ? JSON.parse(readFileSync(manifestPath, "utf8"))
+    : {
+        schemaVersion: 1,
+        scope: "global",
+        metaKimVersion: "3.0.0",
+        createdAt: now,
+        entries: [],
+      };
+  const legacyFingerprintEntry = {
+    path: claudeUserConfigPath,
+    category: "C",
+    source: "sync-global-meta-theory",
+    purpose: "claude-user-mcp:meta-kim-runtime:legacy-fixture",
+    kind: "mcp-server",
+    mcpServerName: "meta-kim-runtime",
+    mcpServerFingerprint: mcpDefinitionFingerprint(legacyServer),
+    installedAt: now,
+  };
+  writeFileSync(manifestPath, `${JSON.stringify({
+    ...existingManifest,
+    updatedAt: now,
+    entries: [
+      ...(existingManifest.entries ?? []).filter((entry) =>
+        entry.path !== legacyFingerprintEntry.path ||
+        entry.purpose !== legacyFingerprintEntry.purpose
+      ),
+      legacyFingerprintEntry,
+    ],
+  }, null, 2)}\n`, "utf8");
   return {
     runtimeBaseDir: roots.userHome,
     userAgentId,
@@ -1213,7 +1247,11 @@ function copyPreservingPath(source, target) {
 }
 
 export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, targetProjectRoot, sourceUserHome = os.homedir(), targetUserHome, profile = "default" } = {}) {
-  const effective = loadEffectiveRuntimeCapabilityClaims({ projectRoot: sourceProjectRoot, profile });
+  const effective = loadEffectiveRuntimeCapabilityClaims({
+    projectRoot: sourceProjectRoot,
+    profile,
+    portableAdvisorySnapshot: true,
+  });
   assertExactStandardRuntimeObservationSet(effective.overlayStatus.applied);
   const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot: sourceProjectRoot, profile });
   const sourceProfile = store.paths.profileRoot;

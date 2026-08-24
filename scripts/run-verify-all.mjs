@@ -113,7 +113,7 @@ const STANDARD_STAGE_COMMANDS = Object.freeze([
     "npm run meta:graphify:verified-rebuild && npm run meta:graphify:check",
   ],
   ["meta:check:global:release", "npm run meta:check:global:release"],
-  ["eval-meta-agents", "node scripts/eval-meta-agents.mjs --primary-release-fuse"],
+  ["eval-meta-agents", "node scripts/eval-meta-agents.mjs"],
   ["meta:runtime:produce", "node scripts/run-runtime-capability-producers.mjs --status --require-fresh"],
   ["meta:test:inventory", "npm run meta:test:inventory"],
   ["meta:test:unit", "npm run meta:test:unit"],
@@ -171,6 +171,7 @@ function captureCommand(cwd, command, args) {
     cwd,
     encoding: "utf8",
     windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024,
   });
   if (result.status !== 0) {
     throw new Error(

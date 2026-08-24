@@ -51,8 +51,11 @@ import {
   renderGlobalAgentProjection,
 } from "./sync-runtimes.mjs";
 import {
+  buildDurableMetaKimMcpServer,
   mcpDefinitionFingerprint,
+  isStrictSemVer,
   mergeClaudeUserMcpConfig,
+  normalizeExactDurableMetaKimMcpDefinition,
   resolveDurableMetaKimRuntimeLayout,
   resolvePortableMetaKimPackageIdentity,
 } from "./global-runtime-mcp.mjs";
@@ -449,6 +452,10 @@ async function renameDirectoryWithRetry(sourcePath, targetPath) {
   throw lastError;
 }
 
+function isRetryableDirectoryLock(error) {
+  return ["EACCES", "EBUSY", "EPERM"].includes(error?.code);
+}
+
 function sha256Text(content) {
   return createHash("sha256").update(content).digest("hex");
 }
@@ -750,13 +757,49 @@ function runDurableMcpSelfTest(cliPath, cwd) {
   );
 }
 
-async function verifyDurableMcpLayout(layout, identity) {
+async function verifyDurableMcpLayout(layout, identity, sourcePackageSha256 = null) {
   const installedManifest = JSON.parse(await fs.readFile(layout.packageManifestPath, "utf8"));
-  if (installedManifest.name !== identity.packageName || installedManifest.version !== identity.packageVersion) {
+  const installedBins = Object.keys(installedManifest.bin ?? {});
+  const expectedBinPath = path.relative(layout.packageRoot, layout.cliPath);
+  if (
+    installedManifest.name !== identity.packageName ||
+    installedManifest.version !== identity.packageVersion ||
+    installedBins.length !== 1 ||
+    installedBins[0] !== identity.cliName ||
+    path.normalize(installedManifest.bin[identity.cliName]) !== path.normalize(expectedBinPath)
+  ) {
     throw new Error("Durable MCP runtime package identity does not match the executing candidate.");
   }
-  await fs.access(layout.cliPath);
-  await fs.access(layout.serverPath);
+  if (
+    !(await pathIsPlainOwnedDirectory(layout.bundleDir)) ||
+    !(await directoryChainHasNoLinks(layout.bundleDir, layout.packageRoot))
+  ) {
+    throw new Error("Durable MCP runtime package path contains a link or non-directory boundary.");
+  }
+  const realBundleDir = await fs.realpath(layout.bundleDir);
+  for (const filePath of [layout.packageManifestPath, layout.cliPath, layout.serverPath]) {
+    if (!(await pathIsPlainOwnedFile(filePath))) {
+      throw new Error("Durable MCP runtime contains a linked or non-file identity asset.");
+    }
+    const realFile = await fs.realpath(filePath);
+    if (!pathIsWithin(realBundleDir, realFile)) {
+      throw new Error("Durable MCP runtime identity asset escapes the candidate bundle.");
+    }
+  }
+  if (sourcePackageSha256 !== null) {
+    const lockPath = path.join(layout.bundleDir, ".meta-kim-candidate.json");
+    if (!(await pathIsPlainOwnedFile(lockPath))) {
+      throw new Error("Durable MCP runtime candidate lock is missing or linked.");
+    }
+    const realLockPath = await fs.realpath(lockPath);
+    const lockContent = await fs.readFile(lockPath, "utf8");
+    if (
+      !pathIsWithin(realBundleDir, realLockPath) ||
+      lockContent !== candidateLockContent(identity, sourcePackageSha256)
+    ) {
+      throw new Error("Durable MCP runtime candidate lock does not match the packed source digest.");
+    }
+  }
   const output = runDurableMcpSelfTest(layout.cliPath, layout.packageRoot);
   if (!/"ok"\s*:\s*true/u.test(output)) {
     throw new Error("Durable MCP runtime self-test did not return ok=true.");
@@ -828,8 +871,11 @@ async function materializeDurableMcpRuntime(plan) {
       candidateLockContent(identity, sourcePackageSha256),
       "utf8",
     );
+    if (process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "candidate_lock") {
+      await fs.appendFile(path.join(stageDir, ".meta-kim-candidate.json"), "\n", "utf8");
+    }
     const stagedLayout = stagedLayoutFor(layout, stageDir);
-    await verifyDurableMcpLayout(stagedLayout, identity);
+    await verifyDurableMcpLayout(stagedLayout, identity, sourcePackageSha256);
     promotedClosure = directoryClosureSync(stageDir);
     if (!promotedClosure) {
       throw new Error("Unable to capture the staged durable MCP bundle closure.");
@@ -847,7 +893,30 @@ async function materializeDurableMcpRuntime(plan) {
       assertHomeBound(displacedPath);
       await assertRealHomeBound(displacedPath);
       await fs.mkdir(path.dirname(displacedPath), { recursive: true });
-      await renameDirectoryWithRetry(layout.bundleDir, displacedPath);
+      try {
+        if (process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "locked_rename") {
+          const locked = new Error("Injected durable MCP locked_rename failure.");
+          locked.code = "EPERM";
+          throw locked;
+        }
+        await renameDirectoryWithRetry(layout.bundleDir, displacedPath);
+      } catch (error) {
+        if (!isRetryableDirectoryLock(error) || !executingProjectionPackage) {
+          throw error;
+        }
+        const authorityLayout = projectionPackageMcpLayout(executingProjectionPackage);
+        await verifyDurableMcpLayout(authorityLayout, identity);
+        plan.layout = authorityLayout;
+        plan.definition = authorityLayout.definition;
+        await fs.rm(stageDir, { recursive: true, force: true });
+        console.log(
+          `${C.yellow}⊘${C.reset} ${C.dim}Active durable MCP bundle is locked; switched future launches to the exact immutable projection package and preserved the running bundle without interruption.${C.reset}`,
+        );
+        return {
+          displacedPath: null,
+          installed: false,
+        };
+      }
     }
     if (process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "rename") {
       throw new Error("Injected durable MCP rename failure.");
@@ -864,7 +933,7 @@ async function materializeDurableMcpRuntime(plan) {
     if (process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "post_rename_verify") {
       throw new Error("Injected durable MCP post_rename_verify failure.");
     }
-    await verifyDurableMcpLayout(layout, identity);
+    await verifyDurableMcpLayout(layout, identity, sourcePackageSha256);
   } catch (error) {
     const rollbackErrors = [];
     if (promoted && await pathExists(layout.bundleDir)) {
@@ -920,7 +989,7 @@ async function buildClaudeUserMcpPlan() {
   const base = (await pathExists(configPath))
     ? JSON.parse(await fs.readFile(configPath, "utf8"))
     : {};
-  const canonical = await canonicalClaudeMcpIdentity();
+  let canonical = await canonicalClaudeMcpIdentity();
   const managedFingerprints = new Set(
     (globalManifestSnapshot?.entries ?? [])
       .filter((entry) =>
@@ -931,11 +1000,186 @@ async function buildClaudeUserMcpPlan() {
       )
       .map((entry) => entry.mcpServerFingerprint),
   );
+  for (const fingerprint of await verifiedHistoricalClaudeMcpFingerprints(base, canonical)) {
+    managedFingerprints.add(fingerprint);
+  }
+  if (executingProjectionPackage) {
+    const authorityLayout = projectionPackageMcpLayout(executingProjectionPackage);
+    const existing = base?.mcpServers?.[canonical.name];
+    if (
+      existing !== undefined &&
+      managedFingerprints.has(mcpDefinitionFingerprint(existing)) &&
+      mcpDefinitionFingerprint(existing) ===
+        mcpDefinitionFingerprint(authorityLayout.definition)
+    ) {
+      canonical = {
+        ...canonical,
+        layout: authorityLayout,
+        definition: authorityLayout.definition,
+        usesProjectionPackageAuthority: true,
+      };
+    }
+  }
   const merged = mergeClaudeUserMcpConfig(
     base,
     { ...canonical, canonicalName: canonical.name, portableDefinition: canonical.definition, managedFingerprints },
   );
   return { configPath, base, managedFingerprints, ...canonical, ...merged };
+}
+
+function projectionPackageMcpLayout(authority) {
+  if (!authority?.packageRoot || !authority?.cliPath || !authority?.bundleDir) {
+    throw new Error("Exact immutable projection package authority is unavailable.");
+  }
+  const serverPath = path.join(
+    authority.packageRoot,
+    "scripts",
+    "mcp",
+    "meta-runtime-server.mjs",
+  );
+  return {
+    runtimeRoot: authority.storeRoot,
+    bundleDir: authority.bundleDir,
+    packageRoot: authority.packageRoot,
+    packageManifestPath: authority.packageManifestPath,
+    cliPath: authority.cliPath,
+    serverPath,
+    definition: buildDurableMetaKimMcpServer(process.execPath, authority.cliPath),
+  };
+}
+
+async function pathIsPlainOwnedFile(targetPath) {
+  const stat = await fs.lstat(targetPath);
+  return stat.isFile() && !stat.isSymbolicLink();
+}
+
+async function pathIsPlainOwnedDirectory(targetPath) {
+  const stat = await fs.lstat(targetPath);
+  return stat.isDirectory() && !stat.isSymbolicLink();
+}
+
+async function directoryChainHasNoLinks(root, target) {
+  const relative = path.relative(root, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  let cursor = root;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    if (!(await pathIsPlainOwnedDirectory(cursor))) return false;
+  }
+  return true;
+}
+
+async function verifiedHistoricalClaudeMcpFingerprints(base, canonical) {
+  const fingerprints = new Set();
+  const existing = base?.mcpServers?.[canonical.name];
+  const normalized = normalizeExactDurableMetaKimMcpDefinition(existing);
+  if (!normalized) return fingerprints;
+
+  try {
+    const runtimeBaseDir = path.resolve(path.dirname(runtimeHomes.claude.dir));
+    const runtimeRoot = path.join(runtimeBaseDir, ".meta-kim", "runtime");
+    const realHome = await fs.realpath(runtimeBaseDir);
+    const realRuntimeRoot = await fs.realpath(runtimeRoot);
+    if (
+      !pathIsWithin(realHome, realRuntimeRoot) ||
+      packagePathKey(realRuntimeRoot) !== packagePathKey(path.join(realHome, ".meta-kim", "runtime")) ||
+      !(await pathIsPlainOwnedDirectory(runtimeRoot))
+    ) {
+      return fingerprints;
+    }
+
+    const nodeRealPath = await fs.realpath(normalized.command);
+    const currentNodeRealPath = await fs.realpath(process.execPath);
+    if (
+      packagePathKey(nodeRealPath) !== packagePathKey(currentNodeRealPath) ||
+      !(await pathIsPlainOwnedFile(normalized.command))
+    ) {
+      return fingerprints;
+    }
+
+    const cliPath = path.resolve(normalized.args[0]);
+    const relativeCliPath = path.relative(runtimeRoot, cliPath);
+    if (!relativeCliPath || relativeCliPath.startsWith("..") || path.isAbsolute(relativeCliPath)) {
+      return fingerprints;
+    }
+    const packageSegments = canonical.identity.packageName.split("/");
+    const binRelativePath = canonical.packageManifest.bin?.[canonical.identity.cliName];
+    if (typeof binRelativePath !== "string" || path.isAbsolute(binRelativePath)) return fingerprints;
+    const binSegments = path.normalize(binRelativePath).split(path.sep);
+    if (binSegments.includes("..") || binSegments.includes(".")) return fingerprints;
+    const actualSegments = relativeCliPath.split(path.sep);
+    const versionIndex = packageSegments.length;
+    const version = actualSegments[versionIndex];
+    const expectedSegments = [
+      ...packageSegments,
+      version,
+      "node_modules",
+      ...packageSegments,
+      ...binSegments,
+    ];
+    if (
+      !isStrictSemVer(version) ||
+      actualSegments.length !== expectedSegments.length ||
+      actualSegments.some((segment, index) => packagePathKey(segment) !== packagePathKey(expectedSegments[index]))
+    ) {
+      return fingerprints;
+    }
+
+    const bundleDir = path.join(runtimeRoot, ...packageSegments, version);
+    const packageRoot = path.join(bundleDir, "node_modules", ...packageSegments);
+    const packageManifestPath = path.join(packageRoot, "package.json");
+    const serverPath = path.join(packageRoot, "scripts", "mcp", "meta-runtime-server.mjs");
+    if (!(await directoryChainHasNoLinks(runtimeBaseDir, packageRoot))) return fingerprints;
+    for (const directory of [bundleDir, packageRoot]) {
+      if (!(await pathIsPlainOwnedDirectory(directory))) return fingerprints;
+      const realDirectory = await fs.realpath(directory);
+      if (!pathIsWithin(realRuntimeRoot, realDirectory)) return fingerprints;
+    }
+    for (const filePath of [packageManifestPath, cliPath, serverPath]) {
+      if (!(await pathIsPlainOwnedFile(filePath))) return fingerprints;
+      const realFile = await fs.realpath(filePath);
+      if (!pathIsWithin(realRuntimeRoot, realFile)) return fingerprints;
+    }
+
+    const installedManifest = JSON.parse(await fs.readFile(packageManifestPath, "utf8"));
+    const installedBins = Object.keys(installedManifest.bin ?? {});
+    if (
+      installedManifest.name !== canonical.identity.packageName ||
+      installedManifest.version !== version ||
+      installedBins.length !== 1 ||
+      installedBins[0] !== canonical.identity.cliName ||
+      path.normalize(installedManifest.bin[canonical.identity.cliName]) !== path.normalize(binRelativePath)
+    ) {
+      return fingerprints;
+    }
+    const historicalLayout = {
+      bundleDir,
+      packageRoot,
+      packageManifestPath,
+      cliPath,
+      serverPath,
+    };
+    if (!(await manifestOwnsExactBundle(historicalLayout))) return fingerprints;
+    const candidateLockPath = path.join(bundleDir, ".meta-kim-candidate.json");
+    if (!(await pathIsPlainOwnedFile(candidateLockPath))) return fingerprints;
+    const realCandidateLock = await fs.realpath(candidateLockPath);
+    if (!pathIsWithin(realRuntimeRoot, realCandidateLock)) return fingerprints;
+    const candidateLock = JSON.parse(await fs.readFile(candidateLockPath, "utf8"));
+    if (
+      candidateLock?.schemaVersion !== 1 ||
+      candidateLock.packageName !== canonical.identity.packageName ||
+      candidateLock.packageVersion !== version ||
+      !/^[a-f0-9]{64}$/u.test(candidateLock.sourcePackageSha256 ?? "")
+    ) {
+      return fingerprints;
+    }
+    fingerprints.add(mcpDefinitionFingerprint(existing));
+    fingerprints.add(mcpDefinitionFingerprint(normalized));
+  } catch {
+    // Any missing, malformed, linked, or unowned historical bundle is
+    // preserved as a collision. Auto-migration never weakens fail-closed.
+  }
+  return fingerprints;
 }
 
 async function syncClaudeUserMcp(plan) {
@@ -2721,7 +2965,11 @@ async function runSync() {
   });
 
   if (mcpPlan) {
-    bundleTransaction = await materializeDurableMcpRuntime(mcpPlan);
+    if (mcpPlan.usesProjectionPackageAuthority) {
+      await verifyDurableMcpLayout(mcpPlan.layout, mcpPlan.identity);
+    } else {
+      bundleTransaction = await materializeDurableMcpRuntime(mcpPlan);
+    }
   }
 
   for (const target of cleanupTargets) {

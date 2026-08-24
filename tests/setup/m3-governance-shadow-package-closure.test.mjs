@@ -55,6 +55,28 @@ const KNOWLEDGE_LIFECYCLE_SOURCE_PATHS = [
   "src/application/ports/knowledge-lifecycle-registry-port.mjs",
   "src/data/repositories/json-knowledge-lifecycle-registry-repository.mjs",
 ];
+const LIVE_L02_L04_SOURCE_PATHS = [
+  "src/domain/live/live-continuation-command.mjs",
+  "src/domain/live/live-share-artifact.mjs",
+  "src/application/live/build-live-share-artifact.mjs",
+  "src/application/live/live-control-room-service.mjs",
+  "src/application/live/plan-live-continuation.mjs",
+  "src/infrastructure/live/live-continuation-command-store.mjs",
+  "src/infrastructure/live/live-control-room-server.mjs",
+  "src/infrastructure/live/live-read-repository.mjs",
+  "src/infrastructure/live/live-runtime-adapter-registry.mjs",
+  "src/presentation/live/live-control-room-page.mjs",
+  "src/presentation/live/render-live-share-card.mjs",
+  "src/sdk/live/common.mjs",
+  "src/sdk/live/evidence-card.mjs",
+  "src/sdk/live/index.mjs",
+  "src/sdk/live/replay-theme.mjs",
+  "src/sdk/live/runtime-adapter.mjs",
+];
+const LIVE_L02_L04_PACKAGE_FILES = [
+  "config/contracts/meta-kim-live-share-schema.json",
+  "scripts/meta-kim-live.mjs",
+];
 const ADAPTER_PATH = "scripts/governed-execution/governance-requirements-shadow-adapter.mjs";
 const LEASE_CLAIM_AUTHORITY_ADAPTER_PATH = "scripts/governed-execution/lease-claim-authority-shadow-adapter.mjs";
 const EVIDENCE_TRANSITION_ADAPTER_PATH = "scripts/governed-execution/evidence-transition-shadow-adapter.mjs";
@@ -92,6 +114,7 @@ const APPROVED_SOURCE_CLOSURE = [
   ...DATA_EVENT_REPOSITORY_SOURCE_PATHS,
   ...SETUP_INSTALLER_DECOMPOSITION_SOURCE_PATHS,
   ...KNOWLEDGE_LIFECYCLE_SOURCE_PATHS,
+  ...LIVE_L02_L04_SOURCE_PATHS,
   ...CANDIDATE_RUNTIME_ADAPTER_PATHS,
   ...BETA_RUNTIME_ADAPTER_BUNDLE_PATHS,
   ...APPROVED_DECISION_CLOSURE,
@@ -135,6 +158,10 @@ test("M3 Governance evaluator remains in the exact approved M3 source package cl
   );
 
   const files = packageFileSet();
+  for (const requiredPath of LIVE_L02_L04_PACKAGE_FILES) {
+    assert.ok(manifest.files.includes(requiredPath), `package.files is missing ${requiredPath}`);
+    assert.ok(files.has(requiredPath), `packed package is missing ${requiredPath}`);
+  }
   const packedSourceFiles = [...files].filter((filePath) => filePath.startsWith("src/")).sort();
   assert.deepEqual(packedSourceFiles, APPROVED_SOURCE_CLOSURE);
   for (const requiredPath of [EVALUATOR_PATH, ADAPTER_PATH, RUNNER_PATH]) {

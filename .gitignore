@@ -101,6 +101,7 @@ lib/
 # docs/ is local-private by default. Keep only README images public.
 docs/**
 !docs/
+!docs/live-sdk.md
 !docs/images/
 !docs/images/**
 

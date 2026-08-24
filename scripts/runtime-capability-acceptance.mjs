@@ -1072,7 +1072,7 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
   if (!Number.isFinite(nowMs) || !Number.isFinite(observedMs) || !Number.isFinite(createdMs)) issues.push("acceptance timestamps are invalid");
   else {
     if (observedMs > nowMs || createdMs > nowMs) issues.push("acceptance timestamps are future-dated");
-    if (nowMs - observedMs > maxAge) issues.push("acceptance source observation is stale");
+    if ((!portableAdvisorySnapshot || releaseResolution) && nowMs - observedMs > maxAge) issues.push("acceptance source observation is stale");
   }
   try {
     const source = readDigestBoundFile(path.resolve(root, attempt.sourceReport.path), root, "runtime capability source report");

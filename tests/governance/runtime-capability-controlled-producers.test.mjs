@@ -578,6 +578,63 @@ test("recomputing receipt, attempt and index hashes can only forge advisory stat
   assertHostHandoffOnly(evaluateRouteExecutionGate({ runtime: "codex", taskShape: "default_executable", effectiveMatrix: state.effectiveMatrix }));
 });
 
+test("portable advisory snapshots preserve stale observations without weakening normal freshness", () => {
+  const projectRoot = fixtureProject();
+  const produced = runControlledRuntimeCapabilityProducer({
+    projectRoot,
+    runtime: "codex",
+    capability: "shell",
+    executor: injectedExecutor,
+  });
+  const staleNow = new Date(Date.parse(produced.acceptance.record.observedAt) + (2 * 24 * 60 * 60 * 1000)).toISOString();
+
+  const normal = loadEffectiveRuntimeCapabilityClaims({
+    packageRoot,
+    projectRoot,
+    allowTestReceipts: true,
+    now: staleNow,
+  });
+  assert.equal(normal.overlayStatus.applied.length, 0);
+  assert.match(normal.issues.join("\n"), /source observation is stale/u);
+
+  const sourceSnapshot = loadEffectiveRuntimeCapabilityClaims({
+    packageRoot,
+    projectRoot,
+    allowTestReceipts: true,
+    now: staleNow,
+    portableAdvisorySnapshot: true,
+  });
+  assert.equal(sourceSnapshot.overlayStatus.applied.length, 1);
+  assertHostHandoffOnly(evaluateRouteExecutionGate({
+    runtime: "codex",
+    taskShape: "default_executable",
+    effectiveMatrix: sourceSnapshot.effectiveMatrix,
+  }));
+
+  writeFileSync(path.join(
+    projectRoot,
+    ".meta-kim",
+    "state",
+    "default",
+    "runtime-capability-acceptance",
+    "advisory-snapshot.json",
+  ), `${JSON.stringify({
+    schemaVersion: "meta-kim-runtime-advisory-snapshot-v1",
+    evidenceClass: "read_only_advisory_snapshot",
+    observedInCurrentRun: false,
+    executionAuthority: false,
+    bindings: [{ attemptId: produced.acceptance.record.attemptId }],
+  }, null, 2)}\n`, "utf8");
+  const copiedSnapshot = loadEffectiveRuntimeCapabilityClaims({
+    packageRoot,
+    projectRoot,
+    allowTestReceipts: true,
+    now: staleNow,
+  });
+  assert.equal(copiedSnapshot.overlayStatus.applied.length, 1);
+  assert.equal(copiedSnapshot.overlayStatus.applied[0].executionAuthority, false);
+});
+
 test("Codex engineering composite rejects an incomplete or reordered facet chain", () => {
   const projectRoot = fixtureProject();
   assert.throws(() => runCodexCompositeEngineeringProducer({

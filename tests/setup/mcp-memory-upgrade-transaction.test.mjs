@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   utimesSync,
@@ -96,6 +97,31 @@ async function runFixture(overrides = {}) {
 }
 
 describe("MCP memory upgrade transaction", () => {
+  test("atomic evidence writes retry transient Windows rename locks", () => {
+    const root = mkdtempSync(join(tmpdir(), "meta-kim-memory-atomic-write-"));
+    const target = join(root, "evidence.json");
+    let attempts = 0;
+    try {
+      writeJsonAtomic(target, { ok: true }, {
+        platform: "win32",
+        rename: (source, destination) => {
+          attempts += 1;
+          if (attempts < 3) {
+            const error = new Error("transient lock");
+            error.code = "EPERM";
+            throw error;
+          }
+          renameSync(source, destination);
+        },
+        wait: () => {},
+      });
+      assert.equal(attempts, 3);
+      assert.deepEqual(JSON.parse(readFileSync(target, "utf8")), { ok: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("Windows SQLite and candidate probes use hidden shell-free bounded subprocesses", async () => {
     const root = mkdtempSync(join(tmpdir(), "meta-kim-memory-subprocess-options-"));
     const calls = [];

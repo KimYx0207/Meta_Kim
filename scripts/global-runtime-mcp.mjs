@@ -15,11 +15,35 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
+function hasOnlyKeys(value, allowedKeys) {
+  if (!isPlainObject(value)) return false;
+  const allowed = new Set(allowedKeys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isTrustedWindowsCmdWrapperCommand(value) {
+  if (typeof value !== "string") return false;
+  if (/^(?:cmd|cmd\.exe)$/iu.test(value)) return true;
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot || !path.win32.isAbsolute(value)) return false;
+  const commandKey = path.win32.normalize(value).toLowerCase();
+  return ["System32", "Sysnative"].some((directory) =>
+    commandKey === path.win32
+      .normalize(path.win32.join(systemRoot, directory, "cmd.exe"))
+      .toLowerCase()
+  );
+}
+
 function requireSafeToken(value, label) {
   if (typeof value !== "string" || !value || /[\s\0\r\n]/u.test(value)) {
     throw new Error(`${label} must be a non-empty token without whitespace.`);
   }
   return value;
+}
+
+export function isStrictSemVer(value) {
+  return typeof value === "string" &&
+    /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u.test(value);
 }
 
 export function mcpDefinitionFingerprint(definition) {
@@ -40,6 +64,9 @@ export function resolvePortableMetaKimPackageIdentity(packageManifest, distribut
     throw new Error("package name is not a safe npm package identifier.");
   }
   const packageVersion = requireSafeToken(packageManifest?.version, "package version");
+  if (!isStrictSemVer(packageVersion)) {
+    throw new Error("package version must be strict SemVer.");
+  }
   const cliName = resolvePackageCliName(packageManifest);
   const distributionSpec = requireSafeToken(
     distribution?.project?.npxSpec,
@@ -127,7 +154,7 @@ export function legacyMetaKimMcpAliases(canonicalName) {
 
 function isStrictNodeExecutable(value) {
   if (typeof value !== "string" || !value || /["'&|<>^%!\r\n\0]/u.test(value)) return false;
-  const basename = path.win32.basename(value).toLowerCase();
+  const basename = (value.includes("\\") ? path.win32.basename(value) : path.posix.basename(value)).toLowerCase();
   if (basename !== "node" && basename !== "node.exe") return false;
   return basename === value.toLowerCase() ||
     path.win32.isAbsolute(value) ||
@@ -136,6 +163,7 @@ function isStrictNodeExecutable(value) {
 
 function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
   if (!isPlainObject(definition) || !legacyScriptSuffix) return false;
+  if (!hasOnlyKeys(definition, ["type", "command", "args", "env"])) return false;
   if (definition.type !== undefined && definition.type !== "stdio") return false;
   if (definition.env !== undefined && (!isPlainObject(definition.env) || Object.keys(definition.env).length > 0)) {
     return false;
@@ -146,7 +174,7 @@ function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
   if (isStrictNodeExecutable(definition.command)) {
     if (definition.args.length !== 1) return false;
     [scriptArg] = definition.args;
-  } else if (/^(?:cmd|cmd\.exe)$/iu.test(definition.command ?? "")) {
+  } else if (isTrustedWindowsCmdWrapperCommand(definition.command)) {
     const args = [...definition.args];
     const seenFlags = new Set();
     while (/^\/(?:d|s)$/iu.test(args[0] ?? "")) {
@@ -177,8 +205,9 @@ function unwrapExactWindowsCmdWrapper(definition) {
   if (!isPlainObject(definition) || !isPlainObject(definition.env) || !Array.isArray(definition.args)) {
     return null;
   }
-  const commandBase = path.win32.basename(String(definition.command ?? "")).toLowerCase();
-  if (commandBase !== "cmd" && commandBase !== "cmd.exe") return null;
+  if (!hasOnlyKeys(definition, ["type", "command", "args", "env"])) return null;
+  const command = String(definition.command ?? "");
+  if (!isTrustedWindowsCmdWrapperCommand(command)) return null;
 
   const args = [...definition.args];
   const seenFlags = new Set();
@@ -196,6 +225,39 @@ function unwrapExactWindowsCmdWrapper(definition) {
   };
   if (definition.type !== undefined) unwrapped.type = definition.type;
   return unwrapped;
+}
+
+/**
+ * Normalize only the closed durable MCP launch shape that Meta_Kim has emitted.
+ * Filesystem ownership is intentionally verified by the sync layer; this pure
+ * helper proves only the data shape and never treats a matching path as owned.
+ */
+export function normalizeExactDurableMetaKimMcpDefinition(definition) {
+  if (!isPlainObject(definition)) return null;
+  if (!hasOnlyKeys(definition, ["type", "command", "args", "env"])) return null;
+  if (definition.type !== "stdio") return null;
+  if (!isPlainObject(definition.env) || Object.keys(definition.env).length !== 0) return null;
+
+  const normalized = unwrapExactWindowsCmdWrapper(definition) ?? structuredClone(definition);
+  if (!hasOnlyKeys(normalized, ["type", "command", "args", "env"])) return null;
+  if (normalized.type !== "stdio") return null;
+  if (!isPlainObject(normalized.env) || Object.keys(normalized.env).length !== 0) return null;
+  if (
+    !isStrictNodeExecutable(normalized.command) ||
+    !(path.win32.isAbsolute(normalized.command) || path.posix.isAbsolute(normalized.command))
+  ) return null;
+  if (
+    !Array.isArray(normalized.args) ||
+    normalized.args.length !== 3 ||
+    typeof normalized.args[0] !== "string" ||
+    !(path.win32.isAbsolute(normalized.args[0]) || path.posix.isAbsolute(normalized.args[0])) ||
+    normalized.args[1] !== "mcp" ||
+    normalized.args[2] !== "serve" ||
+    /[&|<>^%!\r\n\0]/u.test(normalized.args[0])
+  ) {
+    return null;
+  }
+  return normalized;
 }
 
 function isExactWindowsCmdWrapperOf(definition, expectedDefinition) {
@@ -236,7 +298,8 @@ export function mergeClaudeUserMcpConfig(base, {
         managedFingerprints.has(fingerprint) ||
         managedUnwrapped ||
         exactWindowsWrapper
-      : isStrictLegacyMetaKimMcpDefinition(existing, legacyScriptSuffix);
+      : isStrictLegacyMetaKimMcpDefinition(existing, legacyScriptSuffix) &&
+        managedFingerprints.has(fingerprint);
     if (!proven) {
       collisions.push(alias);
       continue;

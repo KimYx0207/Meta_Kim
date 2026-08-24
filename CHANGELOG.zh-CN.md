@@ -6,6 +6,29 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [3.0.2] - 2026-08-24
+
+### Live M3-L02–L04
+
+- 新增确定性的本地 share/replay artifact，并依据规范化内容重新计算内容绑定 SHA-256；JSON 导出使用已验证 artifact，PR 卡片读取 `/api/share?format=markdown`，README embed 读取 `/api/share?format=readme` 并经过 canonical safe renderer。这些动作都不上传数据，也不会暴露秘密、绝对路径、原始 prompt/output 或环境值。
+- 新增显式 opt-in 的继续控制。Live 页面默认只读；只有四项 command capability 和完整注入权威链全部明确可用时 `--enable-control` 才生效。完整门禁包括 durable repository、command store、lease/fence、effect 检查、token 与可用 adapter；门禁满足前不会调用 adapter。调用成功仅报告 `status: "adapter_invoked"` 与 `completionVerified: false`；缺少 adapter 时 fail closed，接口确认也绝不显示为 durable completion。
+- 新增仅投影的 `meta-kim/live-sdk`，用于 runtime adapter、evidence card 与 replay theme。运行时分层保持为主要支持（Claude/Codex）、beta/兼容（ZCode、DeepSeek Harness、Qoder、Trae）和仅兼容（OpenClaw/Cursor）；不作 `live-certified` 宣称。
+
+### 新增内容
+
+- **Meta_Kim Live 把治理运行证据转成一张本地只读任务图。** 仅监听回环地址的网页界面展示依赖状态、证据支持的完成结论、不确定项、快照回放和实时更新，但不会创建第二套调度器或写入权威。
+
+### 变更
+
+- **历史 runtime 观察可以随打包产品复制为可移植的建议性证据。** 过期快照仍明确不具备授权能力，也不能在 release resolution 之外激活 runtime 支持。
+- **Beta 兼容真相已在合同与验证器间统一。** ZCode、DeepSeek Harness、Qoder 和 Trae 使用同一 Beta 层级，同时仍不属于正式项目投影目标。
+
+### 修复
+
+- **Graphify producer 被终止或无法启动时会 fail closed，并为长时间重建输出有界进度。**
+- **发布源快照可以处理较大的已跟踪二进制 diff，不再因子进程默认输出缓冲区溢出而静默失败。**
+- **Live 只有在结构化、精确绑定且通过的证据存在时才显示完成。** 空证据、缺失证据、失败证据或错误绑定证据都会保持“存疑”。
+
 ## [3.0.1] - 2026-08-21
 
 ### 新增内容

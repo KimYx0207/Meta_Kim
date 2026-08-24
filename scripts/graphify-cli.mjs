@@ -1241,7 +1241,7 @@ function runVerifiedLocalGraphifyUpdate(
         requireDirect: true,
       },
     );
-    if ((updated.status || 0) !== 0) {
+    if (!graphifyProcessSucceeded(updated)) {
       throw new Error("isolated Graphify update failed");
     }
     const isolatedPaths = assertPlainGraphifyPaths(workspace, {
@@ -1262,6 +1262,7 @@ function runVerifiedLocalGraphifyUpdate(
     );
   } finally {
     let cleanupFailure = null;
+    console.log("Graphify rebuild: cleaning isolated workspace...");
     if (worktreeAdded) {
       const removed = spawnSync("git", ["worktree", "remove", "--force", workspace], {
         cwd: repository.repoRoot,
@@ -1729,6 +1730,20 @@ function processOutputText(result) {
   return `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
 }
 
+function graphifyProcessSucceeded(result) {
+  return result?.status === 0 && !result?.error && !result?.signal;
+}
+
+function reportGraphifyProcessFailure(result, stage) {
+  process.exitCode =
+    Number.isInteger(result?.status) && result.status !== 0
+      ? result.status
+      : 1;
+  console.error(
+    `Graphify ${stage} terminated before completion; its output was not promoted.`,
+  );
+}
+
 function isGraphifySmallerGraphRefusal(result) {
   return /Refusing to overwrite/i.test(processOutputText(result));
 }
@@ -1782,7 +1797,7 @@ function runGraphifyUpdateForRebuild(graphifyArgs, options = {}) {
     encoding: "utf8",
     ...options,
   }).result;
-  if ((first.status || 0) === 0) {
+  if (graphifyProcessSucceeded(first)) {
     process.stdout.write(first.stdout ?? "");
     process.stderr.write(first.stderr ?? "");
     return first;
@@ -2035,6 +2050,7 @@ function runRebuild() {
     }
   }
   let plan;
+  console.log("Graphify rebuild: analyzing the current repository snapshot...");
   try {
     plan = graphIdentityMigrationPlan(
       process.cwd(),
@@ -2045,8 +2061,10 @@ function runRebuild() {
     return;
   }
   const migrationInProgress = plan.fullExtract || migrationState !== null;
+  const migrationCodeOnly =
+    process.env.META_KIM_GRAPHIFY_MIGRATION_CODE_ONLY === "1";
   const migrationBackendArgs = migrationInProgress
-    ? verifiedLocalUpdate
+    ? verifiedLocalUpdate || migrationCodeOnly
       ? ["--no-label", "--no-viz"]
       : graphifyMigrationBackendArgs()
     : [];
@@ -2055,14 +2073,18 @@ function runRebuild() {
     console.log(
       "Graphify has real legacy/unsafe file-node identities; running one resumable upstream extract --force migration.",
     );
+    console.log("Graphify rebuild: running full extract producer...");
     const extracted = runGraphifyUpdateForRebuild([
       "extract",
       ".",
       "--force",
-      ...migrationBackendArgs,
+      ...(migrationCodeOnly ? ["--code-only"] : migrationBackendArgs),
     ]);
-    process.exitCode = extracted.status || 0;
-    if ((extracted.status || 0) !== 0) return;
+    if (!graphifyProcessSucceeded(extracted)) {
+      reportGraphifyProcessFailure(extracted, "extract producer");
+      return;
+    }
+    process.exitCode = 0;
     try {
       plan.repository = refreshRepositorySnapshot(
         plan.repository,
@@ -2114,6 +2136,7 @@ function runRebuild() {
       return;
     }
     console.log("Resuming Graphify identity migration from the completed extract checkpoint.");
+    console.log("Graphify rebuild: running cluster producer...");
     const clustered = runGraphifyUpdate(
       ["cluster-only", ".", ...migrationBackendArgs],
       {
@@ -2127,8 +2150,11 @@ function runRebuild() {
           : {}),
       },
     ).result;
-    process.exitCode = clustered.status || 0;
-    if ((clustered.status || 0) !== 0) return;
+    if (!graphifyProcessSucceeded(clustered)) {
+      reportGraphifyProcessFailure(clustered, "cluster producer");
+      return;
+    }
+    process.exitCode = 0;
     try {
       plan.repository = refreshRepositorySnapshot(
         plan.repository,
@@ -2150,9 +2176,13 @@ function runRebuild() {
   if (!migrationInProgress) {
     const graphifyArgs = ["update", "."];
     if (process.argv.includes("--force")) graphifyArgs.push("--force");
+    console.log("Graphify rebuild: running incremental producer...");
     const updated = runGraphifyUpdateForRebuild(graphifyArgs);
-    process.exitCode = updated.status || 0;
-    if ((updated.status || 0) !== 0) return;
+    if (!graphifyProcessSucceeded(updated)) {
+      reportGraphifyProcessFailure(updated, "incremental producer");
+      return;
+    }
+    process.exitCode = 0;
     try {
       plan.repository = refreshRepositorySnapshot(
         plan.repository,
@@ -2179,8 +2209,11 @@ function runRebuild() {
           ["cluster-only", ".", ...clusterBackendArgs],
           { stdio: "inherit" },
         ).result;
-        process.exitCode = clustered.status || 0;
-        if ((clustered.status || 0) !== 0) return;
+        if (!graphifyProcessSucceeded(clustered)) {
+          reportGraphifyProcessFailure(clustered, "post-update cluster producer");
+          return;
+        }
+        process.exitCode = 0;
         plan.repository = refreshRepositorySnapshot(
           plan.repository,
           "post-update cluster",
@@ -2221,6 +2254,7 @@ function runRebuild() {
     fail(`Graphify stamping refused a mixed repository snapshot: ${error.message}`);
     return;
   }
+  console.log("Graphify rebuild: validating and stamping generated artifacts...");
   if (!stampGraphFreshness(
     plan.repository.repoRoot,
     verifiedRuntimeBinding,
