@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "meta-kim/governance-requirement-plan.schema.json",
+  "title": "Governance Requirement Cutover Plan",
+  "description": "A pure, non-authorizing per-Gate plan for legacy parity and reversible Governance Requirement cutover.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "mode", "productDecisionRef", "gates", "authority"],
+  "properties": {
+    "schemaVersion": { "const": "governance-requirement-cutover-v1" },
+    "mode": {
+      "const": "gradual_cutover"
+    },
+    "productDecisionRef": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/opaqueReference" }]
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clarification",
+        "research",
+        "planning",
+        "humanDecision",
+        "permission",
+        "review",
+        "metaReview",
+        "securityReview",
+        "verification",
+        "evolution"
+      ],
+      "properties": {
+        "clarification": { "$ref": "#/$defs/gate" },
+        "research": { "$ref": "#/$defs/gate" },
+        "planning": { "$ref": "#/$defs/gate" },
+        "humanDecision": { "$ref": "#/$defs/gate" },
+        "permission": { "$ref": "#/$defs/gate" },
+        "review": { "$ref": "#/$defs/gate" },
+        "metaReview": { "$ref": "#/$defs/gate" },
+        "securityReview": { "$ref": "#/$defs/gate" },
+        "verification": { "$ref": "#/$defs/gate" },
+        "evolution": { "$ref": "#/$defs/gate" }
+      }
+    },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "$defs": {
+    "opaqueReference": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^(?:(?:fact|evidence|digest|policy|check|legacy|change|decision|security|intent|verification|receipt|cutover|rollback|product):[a-z0-9][a-z0-9._/-]{0,95}|sha256:[a-f0-9]{64})$",
+      "not": {
+        "pattern": "(?:raw[ _-]*prompt|(?:api|access|private|client)[ _-]*key|(?:client[ _-]*)?secret|(?:pass(?:word|phrase)?|credential|authorization|bearer|token)(?:$|[ :._/-])|(?:^|[ :._/-])(?:sk|pk|rk|ak)[_-](?:live|test|proj|prod)?[_-]?[a-z0-9]{8,}|(?:^|[ :._/-])(?:ghp|gho|ghu|github_pat|xox[baprs]|ya29)[_-]?[a-z0-9_-]{6,}|(?:^|[ :._/-])eyj[a-z0-9_-]{10,}|(?:^|[ :._/-])key[_-][a-z0-9]{12,})"
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domainRequired",
+        "legacyRequired",
+        "effectiveRequired",
+        "effectiveSource",
+        "parityStatus",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "domainRequired": { "type": "boolean" },
+        "legacyRequired": { "type": "boolean" },
+        "effectiveRequired": { "type": "boolean" },
+        "effectiveSource": { "enum": ["legacy", "domain"] },
+        "parityStatus": {
+          "enum": ["not_compared", "matched", "divergent", "approved_divergence"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "evidence": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/opaqueReference" }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution", "action", "permission", "host", "durableMutation"],
+      "properties": {
+        "execution": { "const": false },
+        "action": { "const": false },
+        "permission": { "const": false },
+        "host": { "const": false },
+        "durableMutation": { "const": false }
+      }
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "governance-requirement-rollout-v1",
+  "workItem": "M3-P3",
+  "productDecisionRef": "decision:m3-p3-explicit-start-2026-08-25",
+  "defaultMode": "legacy_authoritative",
+  "gates": {
+    "clarification": {
+      "mode": "shadow_compare",
+      "cutoverDecisionRef": "decision:m3-p3-clarification-host-boundary",
+      "parityEvidenceRefs": ["check:m3-p3-clarification-parity"],
+      "rollbackRef": "policy:m3-p3-clarification-rollback"
+    },
+    "research": {
+      "mode": "domain_authoritative",
+      "cutoverDecisionRef": "decision:m3-p3-research-cutover",
+      "parityEvidenceRefs": ["check:m3-p3-research-parity"],
+      "rollbackRef": "policy:m3-p3-research-rollback"
+    },
+    "planning": {
+      "mode": "domain_authoritative",
+      "cutoverDecisionRef": "decision:m3-p3-planning-cutover",
+      "parityEvidenceRefs": ["check:m3-p3-planning-parity"],
+      "rollbackRef": "policy:m3-p3-planning-rollback"
+    },
+    "humanDecision": {
+      "mode": "shadow_compare",
+      "cutoverDecisionRef": "decision:m3-p3-human-decision-host-boundary",
+      "parityEvidenceRefs": ["check:m3-p3-human-decision-parity"],
+      "rollbackRef": "policy:m3-p3-human-decision-rollback"
+    },
+    "permission": {
+      "mode": "shadow_compare",
+      "cutoverDecisionRef": "decision:m3-p3-permission-authority-boundary",
+      "parityEvidenceRefs": ["check:m3-p3-permission-parity"],
+      "rollbackRef": "policy:m3-p3-permission-rollback"
+    },
+    "review": {
+      "mode": "domain_authoritative",
+      "cutoverDecisionRef": "decision:m3-p3-review-cutover",
+      "parityEvidenceRefs": ["check:m3-p3-review-parity"],
+      "rollbackRef": "policy:m3-p3-review-rollback"
+    },
+    "metaReview": {
+      "mode": "domain_authoritative",
+      "cutoverDecisionRef": "decision:m3-p3-meta-review-cutover",
+      "parityEvidenceRefs": ["check:m3-p3-meta-review-parity"],
+      "rollbackRef": "policy:m3-p3-meta-review-rollback"
+    },
+    "securityReview": {
+      "mode": "domain_authoritative",
+      "cutoverDecisionRef": "decision:m3-p3-security-review-cutover",
+      "parityEvidenceRefs": ["check:m3-p3-security-review-parity"],
+      "rollbackRef": "policy:m3-p3-security-review-rollback"
+    },
+    "verification": {
+      "mode": "domain_authoritative",
+      "cutoverDecisionRef": "decision:m3-p3-verification-cutover",
+      "parityEvidenceRefs": ["check:m3-p3-verification-parity"],
+      "rollbackRef": "policy:m3-p3-verification-rollback"
+    },
+    "evolution": {
+      "mode": "domain_authoritative",
+      "cutoverDecisionRef": "decision:m3-p3-evolution-cutover",
+      "parityEvidenceRefs": ["check:m3-p3-evolution-parity"],
+      "rollbackRef": "policy:m3-p3-evolution-rollback"
+    }
+  }
+}

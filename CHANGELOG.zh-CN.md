@@ -6,6 +6,14 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [3.0.3] - 2026-08-25
+
+### 变更
+
+- **治理流程会按任务动态选择，不再默认把每个阶段都跑一遍。** clarification、research、planning、human decision、permission、review、meta-review、security review、verification、evolution 十项 Requirement 会从有界任务事实中判定，与旧信号对照，并通过可回滚计划逐门迁移。
+- **普通 CLI 运行会自动进入 Governance Requirements。** runner 会生成规范事实，但不会把原始任务文本复制进 Governance Requirements packets；显式传入的非法 facts 会被丢弃，十个 Gate 全部回退到旧判定。
+- **安全权威继续独立。** rollout 期间 clarification、human decision、permission 仍走 legacy/native host 路径；Requirement plan 不能授权执行、外部动作、权限、宿主回答、持久化变更或 public-ready 结论。
+
 ## [3.0.2] - 2026-08-24
 
 ### Live M3-L02–L04

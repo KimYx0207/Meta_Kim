@@ -1,0 +1,187 @@
+{
+  "schemaVersion": "governance-requirement-cutover-contract-v1",
+  "workItem": "M3-P3",
+  "purpose": "Migrate ten governance requiredness decisions from dispersed legacy signals to the Governance Requirement Domain one gate at a time without creating execution authority.",
+  "requirementOrder": [
+    "clarification",
+    "research",
+    "planning",
+    "humanDecision",
+    "permission",
+    "review",
+    "metaReview",
+    "securityReview",
+    "verification",
+    "evolution"
+  ],
+  "allowedModes": [
+    "legacy_authoritative",
+    "shadow_compare",
+    "domain_authoritative"
+  ],
+  "defaultMode": "legacy_authoritative",
+  "legacyMappings": {
+    "clarification": {
+      "authorityRefs": [
+        "selectedExecutionRoute.entryChoiceDecision",
+        "coreLoop.intentPacket.blockingUnknowns",
+        "coreLoop.preDecisionOptionFrame"
+      ],
+      "decisionEntrypoints": [
+        "classifyMetaTheoryEntry",
+        "evaluateChoiceRequirement",
+        "buildPlanChallengeState"
+      ]
+    },
+    "research": {
+      "authorityRefs": [
+        "coreLoop.fetchPacket",
+        "contentEvidencePacket.researchRequired"
+      ],
+      "decisionEntrypoints": [
+        "buildWorkflowContractPackets",
+        "buildRouteDrivenOrchestration"
+      ]
+    },
+    "planning": {
+      "authorityRefs": [
+        "coreLoop.thinkingPacket.workerTaskPackets",
+        "coreLoop.stageDagPacket",
+        "businessPhasePlanPacket.planning"
+      ],
+      "decisionEntrypoints": [
+        "buildRouteDrivenWorkerTasks",
+        "buildRunnerStageDagPacket",
+        "buildBusinessPhasePlanPacket"
+      ]
+    },
+    "humanDecision": {
+      "authorityRefs": [
+        "selectedExecutionRoute.entryChoiceDecision",
+        "coreLoop.preDecisionOptionFrame.nativeChoiceSurface"
+      ],
+      "decisionEntrypoints": [
+        "evaluateChoiceRequirement",
+        "buildNativeChoiceSurfaceGate"
+      ]
+    },
+    "permission": {
+      "authorityRefs": [
+        "selectedExecutionRoute.routeExecutionGate",
+        "coreLoop.preDecisionOptionFrame.planChallengeState",
+        "permissionMatrixPacket"
+      ],
+      "decisionEntrypoints": [
+        "planChallengeAuthorizationBinding",
+        "buildWorkflowContractPackets"
+      ]
+    },
+    "review": {
+      "authorityRefs": [
+        "sourceArtifacts.orchestrationReport.reviewResult",
+        "coreLoop.reviewPacket",
+        "businessPhasePlanPacket.review"
+      ],
+      "decisionEntrypoints": [
+        "buildRouteDrivenOrchestration",
+        "buildCoreLoopArtifact",
+        "buildPhaseTriggerEvaluation"
+      ]
+    },
+    "metaReview": {
+      "authorityRefs": [
+        "coreLoop.metaReviewPacket",
+        "coreLoop.publicReadyDecision"
+      ],
+      "decisionEntrypoints": [
+        "buildCoreLoopArtifact",
+        "buildCapabilityInvocationTruthGate"
+      ]
+    },
+    "securityReview": {
+      "authorityRefs": [
+        "governanceAgentResultPackets.meta-sentinel",
+        "selectedExecutionRoute.security-approval"
+      ],
+      "decisionEntrypoints": [
+        "buildGovernanceAgentResultPackets",
+        "buildProductRoute"
+      ],
+      "legacyGap": "No independent legacy security-review verdict exists."
+    },
+    "verification": {
+      "authorityRefs": [
+        "sourceArtifacts.orchestrationReport.verificationResult",
+        "coreLoop.verificationResult",
+        "verificationPacket",
+        "coreLoop.publicReadyDecision"
+      ],
+      "decisionEntrypoints": [
+        "buildRuntimeProjectionEvidence",
+        "buildCoreLoopArtifact",
+        "buildWorkflowContractPackets"
+      ]
+    },
+    "evolution": {
+      "authorityRefs": [
+        "wardenWritebackFlow",
+        "coreLoop.evolutionWritebackDecision",
+        "evolutionWritebackPacket"
+      ],
+      "decisionEntrypoints": [
+        "buildWardenWritebackFlow",
+        "maybeApplyWriteback",
+        "buildCoreLoopArtifact"
+      ]
+    }
+  },
+  "rolloutSequence": [
+    "clarification",
+    "research",
+    "planning",
+    "humanDecision",
+    "permission",
+    "review",
+    "metaReview",
+    "securityReview",
+    "verification",
+    "evolution"
+  ],
+  "cutoverGate": {
+    "allRequired": [
+      "versioned rollout policy",
+      "explicit product decision reference",
+      "per-gate legacy mapping",
+      "per-gate parity evidence references",
+      "per-gate cutover decision reference",
+      "per-gate rollback reference",
+      "focused positive and adversarial tests"
+    ],
+    "missingInputBehavior": "legacy_authoritative",
+    "unknownModeBehavior": "legacy_authoritative_with_diagnostic"
+  },
+  "authorityBoundary": {
+    "controlsGovernanceRequirednessOnly": true,
+    "executionAllowed": false,
+    "actionAuthorizationAllowed": false,
+    "permissionReceiptMintingAllowed": false,
+    "nativeHostAuthorityAllowed": false,
+    "durableMutationAllowed": false,
+    "publicReadyAllowed": false,
+    "rule": "A domain-authoritative governance requirement can require or skip governance work; it can never authorize an external action, answer a native decision, mutate durable execution truth, or claim public readiness."
+  },
+  "rollback": {
+    "targetMode": "legacy_authoritative",
+    "independentPerGate": true,
+    "shadowRecordsBecomeAuthoritative": false,
+    "requiresNewReviewAfterRollback": true
+  },
+  "nonGoals": [
+    "M3-P2 trusted host receipt",
+    "execution authorization",
+    "permission approval",
+    "durable kernel replacement",
+    "second event store",
+    "big-bang legacy removal"
+  ]
+}

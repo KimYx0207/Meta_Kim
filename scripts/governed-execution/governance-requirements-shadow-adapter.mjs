@@ -58,7 +58,7 @@ function shadowRecord({ evaluationStatus, facts = null, evaluation = null }) {
  * This adapter never derives facts from raw task text, modifies a legacy gate,
  * or retains rejected input/error values in persisted artifacts.
  */
-export function buildGovernanceRequirementsShadow({ governanceTaskFacts = null } = {}) {
+export function buildGovernanceRequirementsShadow({ governanceTaskFacts = null, legacyGate = null } = {}) {
   if (governanceTaskFacts == null) {
     return shadowRecord({
       evaluationStatus: "not_evaluated_missing_normalized_facts",
@@ -70,7 +70,7 @@ export function buildGovernanceRequirementsShadow({ governanceTaskFacts = null }
     return shadowRecord({
       evaluationStatus: "evaluated",
       facts,
-      evaluation: evaluateGovernanceRequirements(facts),
+      evaluation: evaluateGovernanceRequirements(facts, { legacyGate }),
     });
   } catch {
     return shadowRecord({

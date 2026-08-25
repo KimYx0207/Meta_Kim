@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Governance layer for AI coding: primary Claude Code/Codex projections first, opt-in beta compatibility adapters second, and non-default OpenClaw/Cursor compatibility projections third.",
   "private": true,
   "type": "module",
@@ -219,6 +219,7 @@
     "src/data/schemas/decision.schema.json",
     "src/data/schemas/native-decision-authority.schema.json",
     "src/data/schemas/native-host-answer-authority.schema.json",
+    "src/data/schemas/governance-requirement-plan.schema.json",
     "src/domain/claims/lease-claim-authority-shadow.mjs",
     "src/domain/continuation/continuation-policy-shadow.mjs",
     "src/domain/decision/decision.mjs",
@@ -230,6 +231,7 @@
     "src/domain/evolution/warden-writeback-approval.mjs",
     "src/domain/execution/durable-run-repository-semantics.mjs",
     "src/domain/governance/governance-requirements.mjs",
+    "src/domain/governance/governance-requirement-cutover.mjs",
     "src/domain/quota/quota-usage-projection.mjs",
     "src/domain/runtime/runtime-health-projection.mjs",
     "src/domain/shared/canonical-digest.mjs",

@@ -63,6 +63,16 @@ import {
   runStageRunnerBridge,
 } from "./governed-execution/stage-runner-bridge.mjs";
 import { buildGovernanceRequirementsShadow } from "./governed-execution/governance-requirements-shadow-adapter.mjs";
+import {
+  buildLegacyGovernanceRequirementSnapshot,
+  deriveGovernanceTaskFacts,
+  LEGACY_GOVERNANCE_REQUIREMENT_KEYS,
+  legacyGateFromSnapshot,
+} from "./governed-execution/governance-requirement-legacy-adapter.mjs";
+import {
+  assertGovernanceRequirementCutoverConfiguration,
+  buildGovernanceRequirementPlan,
+} from "../src/domain/governance/governance-requirement-cutover.mjs";
 import { openDurableRunRepository } from "../src/application/run/open-durable-run-repository.mjs";
 import {
   digestKnowledgeLifecycleValue,
@@ -93,6 +103,28 @@ const CORE_LOOP_CONTRACT_PATH = path.join(
   "core-loop-contract.json",
 );
 const CORE_LOOP_CONTRACT = JSON.parse(readFileSync(CORE_LOOP_CONTRACT_PATH, "utf8"));
+const GOVERNANCE_REQUIREMENT_CUTOVER_CONTRACT = JSON.parse(readFileSync(path.join(
+  REPO_ROOT,
+  "config",
+  "contracts",
+  "governance-requirement-cutover-contract.json",
+), "utf8"));
+const GOVERNANCE_REQUIREMENT_ROLLOUT = JSON.parse(readFileSync(path.join(
+  REPO_ROOT,
+  "config",
+  "governance",
+  "governance-requirement-rollout.json",
+), "utf8"));
+assertGovernanceRequirementCutoverConfiguration({
+  contract: GOVERNANCE_REQUIREMENT_CUTOVER_CONTRACT,
+  rolloutPolicy: GOVERNANCE_REQUIREMENT_ROLLOUT,
+});
+if (
+  Object.keys(GOVERNANCE_REQUIREMENT_ROLLOUT.gates).join("|") !==
+    LEGACY_GOVERNANCE_REQUIREMENT_KEYS.join("|")
+) {
+  throw new Error("Governance Requirement rollout does not match the legacy Gate order.");
+}
 const TRACE_SPINE = Object.freeze([...(CORE_LOOP_CONTRACT.defaultEntry?.spine ?? [])]);
 const AI_READABLE_PRODUCT_STANDARDS_PATH = path.join(
   REPO_ROOT,
@@ -2377,24 +2409,67 @@ function buildRouteDrivenDecisionResults({ task, runId }) {
   }));
 }
 
-function buildBusinessPhasePlanPacket({ runId, orchestrationReport, runtimeEvidence, writebackFlow }) {
+function assertGovernanceRequirementPlanConsumerSafe(plan) {
+  if (plan == null) return;
+  if (
+    plan.schemaVersion !== "governance-requirement-cutover-v1" ||
+    plan.mode !== "gradual_cutover" ||
+    plan.authority?.execution !== false ||
+    plan.authority?.action !== false ||
+    plan.authority?.permission !== false ||
+    plan.authority?.host !== false ||
+    plan.authority?.durableMutation !== false
+  ) {
+    throw new TypeError("Governance Requirement consumers require a validated, non-authorizing gradual-cutover plan.");
+  }
+}
+
+function buildBusinessPhasePlanPacket({
+  runId,
+  orchestrationReport,
+  runtimeEvidence,
+  writebackFlow,
+  governanceRequirementPlan = null,
+}) {
+  assertGovernanceRequirementPlanConsumerSafe(governanceRequirementPlan);
+  const requirementIsRequired = (key, legacyDefault) => {
+    const value = governanceRequirementPlan?.gates?.[key]?.effectiveRequired;
+    return typeof value === "boolean" ? value : legacyDefault;
+  };
+  const planningRequired = requirementIsRequired("planning", true);
+  const reviewRequired = requirementIsRequired("review", true);
+  const metaReviewRequired = requirementIsRequired("metaReview", true);
+  const verificationRequired = requirementIsRequired("verification", true);
+  const evolutionRequired = requirementIsRequired(
+    "evolution",
+    writebackFlow.status !== "none-with-reason",
+  );
   const phaseStatuses = new Map([
     ["direction", "done"],
-    ["planning", "done"],
+    ["planning", planningRequired ? "done" : "skipped"],
     ["execution", orchestrationReport.workerTaskPackets.length > 0 ? "done" : "skipped"],
-    ["review", orchestrationReport.reviewResult.status === "pass" ? "done" : "blocked"],
-    ["meta_review", "done"],
-    ["revision", orchestrationReport.reviewResult.status === "pass" ? "skipped" : "pending"],
-    ["verify", runtimeEvidence.status === "pass" ? "done" : "blocked"],
+    ["review", reviewRequired ? (orchestrationReport.reviewResult.status === "pass" ? "done" : "blocked") : "skipped"],
+    ["meta_review", metaReviewRequired ? "done" : "skipped"],
+    ["revision", !reviewRequired || orchestrationReport.reviewResult.status === "pass" ? "skipped" : "pending"],
+    ["verify", verificationRequired ? (runtimeEvidence.status === "pass" ? "done" : "blocked") : "skipped"],
     ["summary", "done"],
     ["feedback", "pending"],
-    ["evolve", writebackFlow.status === "none-with-reason" ? "skipped" : "done"],
-    ["mirror", runtimeEvidence.status === "pass" ? "done" : "blocked"],
+    ["evolve", evolutionRequired ? (writebackFlow.status === "none-with-reason" ? "skipped" : "done") : "skipped"],
+    ["mirror", verificationRequired ? (runtimeEvidence.status === "pass" ? "done" : "blocked") : "skipped"],
   ]);
   const skipReasons = new Map([
+    ["planning", governanceRequirementPlan?.gates?.planning?.reason ?? "Governance Requirements did not require planning for this run."],
     ["execution", "本次没有需要派发的 worker 任务"],
-    ["revision", "Review 已通过，没有未解决修复项，所以不打开 revision loop"],
-    ["evolve", writebackFlow.noneWithReason ?? "本次没有产生可写回的长期候选"],
+    ["review", governanceRequirementPlan?.gates?.review?.reason ?? "Governance Requirements did not require review for this run."],
+    ["meta_review", governanceRequirementPlan?.gates?.metaReview?.reason ?? "Governance Requirements did not require meta-review for this run."],
+    ["revision", reviewRequired
+      ? "Review 已通过，没有未解决修复项，所以不打开 revision loop"
+      : governanceRequirementPlan?.gates?.review?.reason ?? "Review was not required, so no revision loop is opened."],
+    ["verify", governanceRequirementPlan?.gates?.verification?.reason ?? "Governance Requirements did not require verification for this run."],
+    ["evolve", evolutionRequired
+      ? writebackFlow.noneWithReason ?? "本次没有产生可写回的长期候选"
+      : governanceRequirementPlan?.gates?.evolution?.reason ?? "Governance Requirements did not require evolution for this run."],
+    ["mirror", governanceRequirementPlan?.gates?.verification?.reason ?? "Verification was not required, so no verification mirror is emitted."],
   ]);
   const phases = BUSINESS_PHASES.map(([phase, label, mapsToSpine, owner], index) => {
     const status = phaseStatuses.get(phase) ?? "pending";
@@ -2457,6 +2532,9 @@ function buildBusinessPhasePlanPacket({ runId, orchestrationReport, runtimeEvide
     },
     spineRelationship:
       "The 8-stage spine governs execution logic; the 11-phase workflow governs packaging, closure, feedback, evolution, and mirrors.",
+    governanceRequirementPlanRef: governanceRequirementPlan == null
+      ? null
+      : "governanceRequirementPlanPacket",
     phaseCount: phases.length,
     phases,
     closure: {
@@ -9777,7 +9855,9 @@ function buildWorkflowContractPackets({
   contradictionEvidence = [],
   requestedSideEffectActions = [],
   planChallengePreview = null,
+  governanceRequirementPlan = null,
 }) {
+  assertGovernanceRequirementPlanConsumerSafe(governanceRequirementPlan);
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const projectRef = `meta-kim-governed-execution-${runId}`;
@@ -9866,9 +9946,12 @@ function buildWorkflowContractPackets({
       },
     ],
   };
-  const externalEvidenceRequired = /third[-\s]?party|external|provider|service|api|sdk|oauth|integration|webhook|授权|接口|外部|第三方|服务商|集成|平台规则|发布|自动发|风控|规则|限流|价格|合规/i.test(
-    task,
-  );
+  const domainResearchRequired = governanceRequirementPlan?.gates?.research?.effectiveRequired;
+  const externalEvidenceRequired = typeof domainResearchRequired === "boolean"
+    ? domainResearchRequired
+    : /third[-\s]?party|external|provider|service|api|sdk|oauth|integration|webhook|授权|接口|外部|第三方|服务商|集成|平台规则|发布|自动发|风控|规则|限流|价格|合规/i.test(
+        task,
+      );
   const contentEvidencePacket = {
     evidenceScope: externalEvidenceRequired ? "mixed" : "local_project",
     researchCapabilityDiscovery: {
@@ -11591,8 +11674,41 @@ export async function runMetaTheoryGovernedExecution({
     osTarget: routeOs,
     codexHostToolSchema,
   });
+  const governanceRequirementLegacySnapshot = buildLegacyGovernanceRequirementSnapshot({
+    task: normalizedTask,
+    orchestrationReport,
+    planChallengePreview,
+    requestedSideEffectActions: governedSideEffectActions,
+  });
+  const derivedGovernanceTaskFacts = deriveGovernanceTaskFacts({
+    task: normalizedTask,
+    orchestrationReport,
+    planChallengePreview,
+    requestedSideEffectActions: governedSideEffectActions,
+  });
+  const governanceLegacyGate = legacyGateFromSnapshot(governanceRequirementLegacySnapshot);
   const governanceRequirementsShadow = buildGovernanceRequirementsShadow({
-    governanceTaskFacts,
+    governanceTaskFacts: governanceTaskFacts ?? derivedGovernanceTaskFacts,
+    legacyGate: governanceLegacyGate,
+  });
+  const internallyDerivedGovernanceRequirements = buildGovernanceRequirementsShadow({
+    governanceTaskFacts: derivedGovernanceTaskFacts,
+    legacyGate: governanceLegacyGate,
+  });
+  const cutoverEvaluation = internallyDerivedGovernanceRequirements.evaluation;
+  const rolloutPolicy = governanceTaskFacts != null && governanceRequirementsShadow.evaluation == null
+    ? {
+        ...GOVERNANCE_REQUIREMENT_ROLLOUT,
+        defaultMode: "legacy_authoritative",
+        gates: Object.fromEntries(Object.entries(GOVERNANCE_REQUIREMENT_ROLLOUT.gates).map(
+          ([key, value]) => [key, { ...value, mode: "legacy_authoritative" }],
+        )),
+      }
+    : GOVERNANCE_REQUIREMENT_ROLLOUT;
+  const governanceRequirementPlanPacket = buildGovernanceRequirementPlan({
+    evaluation: cutoverEvaluation,
+    legacySnapshot: governanceRequirementLegacySnapshot,
+    rolloutPolicy,
   });
   const capabilityInventoryBus = await writeCapabilityInventory(
     path.join(stateDir, "capability-inventory.json"),
@@ -11658,6 +11774,7 @@ export async function runMetaTheoryGovernedExecution({
     orchestrationReport,
     runtimeEvidence,
     writebackFlow,
+    governanceRequirementPlan: governanceRequirementPlanPacket,
   });
   const businessFlowBlueprintPacket = buildBusinessFlowBlueprintPacket({
     businessPhasePlanPacket,
@@ -12123,6 +12240,7 @@ export async function runMetaTheoryGovernedExecution({
     contradictionEvidence: planChallengeContradictionEvidence,
     requestedSideEffectActions: governedSideEffectActions,
     planChallengePreview,
+    governanceRequirementPlan: governanceRequirementPlanPacket,
   });
   coreLoop = {
     ...coreLoop,
@@ -12231,6 +12349,7 @@ export async function runMetaTheoryGovernedExecution({
     stageVisibility: orchestrationReport.stageVisibility,
     cardPlanPacket,
     businessPhasePlanPacket,
+    governanceRequirementPlanPacket,
     governanceStartReasonPacket,
     businessFlowBlueprintPacket,
     capabilityRoute: orchestrationReport.fetchEvidence.capabilityInventory,
@@ -12288,6 +12407,7 @@ export async function runMetaTheoryGovernedExecution({
       orchestrationReport,
       decisionResults,
       governanceRequirementsShadow,
+      governanceRequirementLegacySnapshot,
     },
     ...workflowContractPackets,
   };

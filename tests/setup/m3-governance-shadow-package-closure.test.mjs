@@ -11,6 +11,15 @@ const NPM_PACK_ARGS = process.platform === "win32"
   ? ["/d", "/s", "/c", "npm.cmd pack --dry-run --json --ignore-scripts"]
   : ["pack", "--dry-run", "--json", "--ignore-scripts"];
 const EVALUATOR_PATH = "src/domain/governance/governance-requirements.mjs";
+const GOVERNANCE_REQUIREMENT_CUTOVER_SOURCE_PATHS = [
+  "src/data/schemas/governance-requirement-plan.schema.json",
+  "src/domain/governance/governance-requirement-cutover.mjs",
+];
+const GOVERNANCE_REQUIREMENT_CUTOVER_PACKAGE_PATHS = [
+  "config/contracts/governance-requirement-cutover-contract.json",
+  "config/governance/governance-requirement-rollout.json",
+  "scripts/governed-execution/governance-requirement-legacy-adapter.mjs",
+];
 const LEASE_CLAIM_AUTHORITY_PATH = "src/domain/claims/lease-claim-authority-shadow.mjs";
 const EVIDENCE_TRANSITION_PATH = "src/domain/evidence/evidence-transition.mjs";
 const CONTINUATION_POLICY_PATH = "src/domain/continuation/continuation-policy-shadow.mjs";
@@ -103,6 +112,7 @@ const APPROVED_DECISION_CLOSURE = [
 ];
 const APPROVED_SOURCE_CLOSURE = [
   EVALUATOR_PATH,
+  ...GOVERNANCE_REQUIREMENT_CUTOVER_SOURCE_PATHS,
   LEASE_CLAIM_AUTHORITY_PATH,
   EVIDENCE_TRANSITION_PATH,
   CONTINUATION_POLICY_PATH,
@@ -167,6 +177,9 @@ test("M3 Governance evaluator remains in the exact approved M3 source package cl
   for (const requiredPath of [EVALUATOR_PATH, ADAPTER_PATH, RUNNER_PATH]) {
     assert.ok(files.has(requiredPath), `packed package is missing ${requiredPath}`);
   }
+  for (const requiredPath of GOVERNANCE_REQUIREMENT_CUTOVER_PACKAGE_PATHS) {
+    assert.ok(files.has(requiredPath), `packed package is missing ${requiredPath}`);
+  }
   for (const excludedPath of UNRELATED_SOURCE_PATHS) {
     assert.ok(!files.has(excludedPath), `packed package must exclude ${excludedPath}`);
   }
@@ -188,11 +201,27 @@ test("M3 Governance shadow adapter resolves its packaged evaluator dependency", 
     /from\s+["']\.\/governed-execution\/governance-requirements-shadow-adapter\.mjs["']/,
     "governed runner must import the packaged shadow adapter",
   );
+  assert.match(
+    runnerSource,
+    /from\s+["']\.\/governed-execution\/governance-requirement-legacy-adapter\.mjs["']/,
+    "governed runner must import the packaged legacy snapshot adapter",
+  );
+  assert.match(
+    runnerSource,
+    /from\s+["']\.\.\/src\/domain\/governance\/governance-requirement-cutover\.mjs["']/,
+    "governed runner must import the packaged cutover controller",
+  );
 
   const files = packageFileSet();
   assert.ok(files.has(EVALUATOR_PATH));
   assert.ok(files.has(ADAPTER_PATH));
   assert.ok(files.has(RUNNER_PATH));
+  for (const requiredPath of [
+    ...GOVERNANCE_REQUIREMENT_CUTOVER_SOURCE_PATHS,
+    ...GOVERNANCE_REQUIREMENT_CUTOVER_PACKAGE_PATHS,
+  ]) {
+    assert.ok(files.has(requiredPath), `packed package is missing ${requiredPath}`);
+  }
 });
 
 test("M3-A01 Evidence shadow resolves Domain inward and stays on the existing packaged bridge path", () => {

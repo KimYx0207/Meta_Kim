@@ -6,6 +6,14 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [3.0.3] - 2026-08-25
+
+### Changed
+
+- **Governance work is now selected per task instead of always running every phase.** Ten requirements—clarification, research, planning, human decision, permission, review, meta-review, security review, verification, and evolution—are evaluated from bounded task facts, compared with their legacy signals, and migrated independently through a reversible rollout plan.
+- **Normal CLI runs now participate in Governance Requirements automatically.** The runner derives normalized facts without copying the raw task into Governance Requirements packets; invalid explicit facts are discarded and every Gate falls back to the legacy decision.
+- **Safety authority remains separate.** Clarification, human decision, and permission stay on the legacy/native host path during rollout. The requirement plan cannot authorize execution, actions, permissions, host answers, durable mutation, or public-ready claims.
+
 ## [3.0.2] - 2026-08-24
 
 ### Live M3-L02–L04
