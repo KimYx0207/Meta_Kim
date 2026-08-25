@@ -296,3 +296,119 @@ test("requires the fixed control header and a bounded token before exposing cont
   assert.match(escapedToken, /safe-token-123456\\u003D/u);
   assert.doesNotMatch(escapedToken, /safe-token-123456=/u);
 });
+
+test("uses a compact, zoomable DAG canvas with a minimap and fit controls", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  for (const marker of [
+    "data-live-graph-viewport",
+    "data-live-graph-scene",
+    "data-live-graph-minimap",
+    "data-live-minimap-viewport",
+    "data-live-graph-fit",
+    "data-live-graph-zoom-in",
+    "data-live-graph-zoom-out",
+    "data-live-graph-layout",
+    "layoutGraph",
+    "updateCamera",
+  ]) {
+    assert.match(html, new RegExp(marker.replace(/[.*+?^${}()|[\[\]\\]/gu, "\\$&"), "u"), marker);
+  }
+  assert.match(html, /graph-scene[^>]+style|transform:\translate/iu);
+  assert.match(html, /data-live-graph-minimap/iu);
+});
+
+test("draws curved status-aware edges and a live flow animation with reduced-motion fallback", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /createElementNS\(["']http:\/\/www\.w3\.org\/2000\/svg["'],\s*["']path["']\)/u);
+  assert.match(html, /edge-running/iu);
+  assert.match(html, /edge-failed/iu);
+  assert.match(html, /edge-queued/iu);
+  assert.match(html, /march|dash|flow/iu);
+  assert.match(html, /prefers-reduced-motion\s*:\s*reduce/iu);
+});
+
+test("binds node selection to evidence and replay state without unbounded DOM growth", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /data-live-selected-node/iu);
+  assert.match(html, /selectNode/iu);
+  assert.match(html, /associated|nodeId|selected.*evidence/isu);
+  assert.match(html, /slice\(0,\s*128\)/u);
+  assert.match(html, /data-replay-active|replay-active/iu);
+  assert.match(html, /ArrowUp|ArrowDown|Enter/iu);
+});
+
+test("keeps the eight-stage spine distinct and derives omitted edge status from the target node", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /STAGE_MATCH_ORDER\s*=\s*\[\.\.\.STAGE_ORDER\]\.sort/iu);
+  assert.match(html, /text\.startsWith\(stageName\s*\+\s*["']-["']\)/u);
+  assert.match(html, /explicitStatus[\s\S]{0,500}nodeById\.get\(targetId\)\?\.status/u);
+  assert.match(html, /edge-running[\s\S]{0,120}edge-flow/iu);
+});
+
+test("anchors the compact desktop cards and curved paths to one fixed geometry", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /const cardWidth\s*=\s*132/u);
+  assert.match(html, /const cardHeight\s*=\s*76/u);
+  assert.match(html, /\.node-card\s*\{[^}]*height:\s*76px/su);
+  assert.match(html, /from\.x\s*\+\s*from\.width[\s\S]{0,250}to\.x/u);
+});
+
+test("keeps inspector provenance and replay navigation visible and keyboard reachable", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  for (const marker of [
+    "data-live-selected-node-status",
+    "data-live-selected-node-owner",
+    "data-live-selected-node-runtime",
+    "data-live-selected-node-summary",
+    "data-live-selected-node-evidence-detail",
+    "data-replay-prev",
+    "data-replay-next",
+    "data-replay-live",
+    "Escape",
+    "aria-selected",
+  ]) {
+    assert.match(html, new RegExp(marker.replace(/[.*+?^${}()|[\[\]\\]/gu, "\\$&"), "u"), marker);
+  }
+  assert.match(html, /entry\.addEventListener\(["']keydown["'][\s\S]{0,450}selectNode\(item\.nodeId\)/u);
+  assert.match(html, /replayFollowingLive/iu);
+});
+
+test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#55e6d0["']/u);
+  assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
+  assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
+});
+
+test("keeps the desktop workspace bounded and coalesces high-frequency snapshot updates", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*430px/su);
+  assert.match(html, /\.evidence-panel\s*\{[^}]*height:\s*430px[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.evidence-drawer\s*\{[^}]*overflow:\s*auto/su);
+  assert.match(html, /SNAPSHOT_COALESCE_MS\s*=\s*75/u);
+  assert.match(html, /scheduleSnapshotUpdate[\s\S]*snapshotCoalesceTimer[\s\S]*setTimeout/su);
+  assert.match(html, /beforeunload[\s\S]*clearTimeout\(snapshotCoalesceTimer\)/su);
+});
+
+test("preserves real edge state without replay evidence and uses valid listbox semantics", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /let replayState\s*=\s*edge\.status/u);
+  assert.match(html, /if\s*\(!hasReplayState\)\s*replayState\s*=\s*edge\.status/u);
+  assert.match(html, /data-live-node-list role="listbox"/u);
+  assert.match(html, /setAttribute\(["']role["'],\s*["']option["']\)/u);
+  assert.doesNotMatch(html, /aria-pressed/u);
+  assert.match(html, /replayPlay\.disabled\s*=\s*events\.length\s*<\s*2/u);
+  assert.match(html, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/u);
+  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*126\s*:\s*144/u);
+  assert.match(html, /\.node-meta\s*\{[^}]*flex-wrap:\s*nowrap/su);
+  assert.match(html, /\.node-meta-item\s*\{[^}]*min-width:\s*0/su);
+});

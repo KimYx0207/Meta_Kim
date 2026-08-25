@@ -6,6 +6,19 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [3.0.5] - 2026-08-26
+
+### Changed
+
+- **Meta_Kim Live now presents a compact, navigable execution graph.** The eight-stage spine and worker branches use a bounded SVG/DOM layout with curved status-aware edges, animated running flow, pan, zoom, fit, a minimap, keyboard selection, and reduced-motion support.
+- **Replay and provenance are usable in the same control-room view.** The desktop graph and evidence panels stay bounded so Replay remains visible, while node inspection, evidence reverse-selection, and Prev/Next/Live controls keep the selected run state connected.
+- **Mobile Live views are denser without horizontal overflow.** Stage and worker nodes use a compact two-column relationship view with upstream hints and touch-sized controls.
+
+### Fixed
+
+- **Live updates no longer erase real running-edge state or churn the page for every SSE hint.** Missing replay events preserve canonical edge status, and high-frequency snapshots are coalesced before rendering.
+- **Real evidence is safely linked to known graph nodes.** Verification, review, and worker evidence use an allowlisted stage/worker node binding; unknown or hostile identifiers remain unbound and cannot enter the snapshot.
+
 ## [3.0.4] - 2026-08-25
 
 ### Changed

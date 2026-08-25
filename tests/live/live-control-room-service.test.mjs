@@ -96,6 +96,46 @@ test("requires bound passing structured evidence before projecting completion", 
   assert.ok(proven.evidence.some((item) => item.status === "completed"));
 });
 
+test("binds evidence to known stage/worker nodes without accepting hostile ids", () => {
+  const snapshot = buildLiveSnapshot({
+    durableStatus: {
+      ...sampleStatus(),
+      evidence: [{ label: "global durable status", nodeId: "worker:unknown" }],
+    },
+    governedArtifact: {
+      ...sampleArtifact(),
+      verificationPacket: {
+        evidence: ["verification record"],
+        verificationResults: [{
+          status: "passed",
+          taskPacketId: "task-backend-1",
+          stage: "execution",
+        }],
+      },
+      reviewPacket: {
+        findings: [
+          { status: "open", nodeId: "worker:unknown" },
+          { status: "open", nodeId: "worker:../hostile" },
+        ],
+      },
+    },
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+
+  const verification = snapshot.evidence.filter((item) => item.type === "verification");
+  assert.equal(verification[0]?.nodeId, "stage:verification");
+  assert.equal(verification[1]?.nodeId, "worker:task-backend-1");
+
+  const review = snapshot.evidence.filter((item) => item.type === "review");
+  assert.equal(review.length, 2);
+  assert.ok(review.every((item) => item.nodeId === "stage:review"));
+
+  const status = snapshot.evidence.filter((item) => item.type === "status");
+  assert.equal(status.length, 1);
+  assert.equal(status[0].nodeId, "");
+  assert.doesNotMatch(JSON.stringify(snapshot), /unknown|hostile|\.\./u);
+});
+
 async function makeProject({ status, artifact, latest } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-"));
   await mkdir(path.join(root, ".git"));

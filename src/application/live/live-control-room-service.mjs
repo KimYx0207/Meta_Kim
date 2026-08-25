@@ -410,45 +410,73 @@ function buildEdges(artifact, nodes) {
   return uniqueEdges(edges, nodes);
 }
 
-function evidenceRecord(id, type, label, status) {
+function evidenceNodeId(item, fallbackNodeId, knownNodeIds) {
+  const known = knownNodeIds instanceof Set ? knownNodeIds : new Set();
+  const explicit = [
+    firstString(item, ["nodeId", "targetNodeId", "workerNodeId", "stageNodeId"]),
+  ];
+  for (const value of explicit) {
+    const candidate = safeId(value, null);
+    if (candidate && known.has(candidate)) return candidate;
+  }
+
+  const taskId = safeId(firstString(item, ["taskPacketId", "taskId", "roleInstanceId", "businessRoleId"]), null);
+  const workerNodeId = taskId ? `worker:${taskId}` : null;
+  if (workerNodeId && known.has(workerNodeId)) return workerNodeId;
+
+  const stage = normalizeStage(firstString(item, ["stage", "currentStage", "stageKey"]));
+  const stageNodeId = stage !== "in_doubt" ? `stage:${stage}` : null;
+  if (stageNodeId && known.has(stageNodeId)) return stageNodeId;
+
+  const fallback = safeId(fallbackNodeId, null);
+  return fallback && known.has(fallback) ? fallback : "";
+}
+
+function evidenceRecord(id, type, label, status, nodeId = "") {
   return {
     id,
     type: normalizeKind(type),
     label: safeText(label, "in_doubt"),
     status: normalizeStatus(status),
+    nodeId: typeof nodeId === "string" ? nodeId : "",
   };
 }
 
-function buildEvidence(durable, artifact, stale) {
+function buildEvidence(durable, artifact, stale, nodes = []) {
   const output = [];
-  const append = (type, label, status) => {
+  const knownNodeIds = new Set(nodes.map((node) => node?.id).filter((id) => typeof id === "string"));
+  const append = (type, label, status, item, fallbackNodeId = "") => {
     if (output.length >= LIVE_MAX_EVIDENCE) return;
     const safeLabel = safeText(label, "in_doubt");
     if (safeLabel === "in_doubt") return;
-    output.push(evidenceRecord(`evidence:${output.length + 1}`, type, safeLabel, stale ? "in_doubt" : status));
+    output.push(evidenceRecord(
+      `evidence:${output.length + 1}`,
+      type,
+      safeLabel,
+      stale ? "in_doubt" : status,
+      evidenceNodeId(item, fallbackNodeId, knownNodeIds),
+    ));
   };
 
   const verification = artifact?.verificationPacket;
   if (verification && typeof verification === "object") {
     for (const item of Array.isArray(verification.evidence) ? verification.evidence : []) {
-      void item;
-      append("verification", "Verification evidence", "in_doubt");
+      append("verification", "Verification evidence", "in_doubt", item, "stage:verification");
     }
     for (const item of Array.isArray(verification.verificationResults) ? verification.verificationResults : []) {
-      append("verification", "Verification result", structuredEvidencePassed(item) ? "completed" : "in_doubt");
+      append("verification", "Verification result", structuredEvidencePassed(item) ? "completed" : "in_doubt", item, "stage:verification");
     }
     for (const item of Array.isArray(verification.fixEvidence) ? verification.fixEvidence : []) {
-      append("verification", "Fix verification", structuredEvidencePassed(item) ? "completed" : "in_doubt");
+      append("verification", "Fix verification", structuredEvidencePassed(item) ? "completed" : "in_doubt", item, "stage:verification");
     }
   }
 
   const review = artifact?.reviewPacket;
   for (const finding of Array.isArray(review?.findings) ? review.findings : []) {
-    append("review", "Review finding", firstString(finding, ["closeState", "status"]));
+    append("review", "Review finding", firstString(finding, ["closeState", "status"]), finding, "stage:review");
   }
   for (const item of Array.isArray(durable?.evidence) ? durable.evidence : []) {
-    void item;
-    append("status", "Run status evidence", "in_doubt");
+    append("status", "Run status evidence", "in_doubt", item);
   }
   return output;
 }
@@ -552,7 +580,7 @@ export function buildLiveSnapshot({
     ...(!selectedDurable && compatibleArtifact ? artifactStageNodes(compatibleArtifact, stale) : []),
     ...workerNodes(compatibleArtifact, stale),
   ].slice(0, LIVE_MAX_NODES);
-  const evidence = buildEvidence(selectedDurable, compatibleArtifact, stale);
+  const evidence = buildEvidence(selectedDurable, compatibleArtifact, stale, nodes);
   const replay = buildReplay(compatibleArtifact, selectedDurable, safeObservedAt, stale, nodes);
   const kind = selectedDurable ? "durable_status" : "governed_artifact";
   return {

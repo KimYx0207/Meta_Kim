@@ -123,9 +123,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const updated = app.querySelector("[data-live-run-updated]");
   const source = app.querySelector("[data-live-source]");
   const graph = app.querySelector("[data-live-graph]");
+  const graphScene = app.querySelector("[data-live-graph-scene]");
   const edgeLayer = app.querySelector("[data-live-edge-layer]");
   const nodeList = app.querySelector("[data-live-node-list]");
   const graphEmpty = app.querySelector("[data-live-graph-empty]");
+  const graphMinimap = app.querySelector("[data-live-graph-minimap]");
+  const graphMinimapScene = app.querySelector("[data-live-minimap-scene]");
+  const graphMinimapViewport = app.querySelector("[data-live-minimap-viewport]");
+  const selectedNodeLabel = app.querySelector("[data-live-selected-node-label]");
+  const selectedNodeEvidence = app.querySelector("[data-live-selected-node-evidence]");
+  const selectedNodeStatus = app.querySelector("[data-live-selected-node-status]");
+  const selectedNodeOwner = app.querySelector("[data-live-selected-node-owner]");
+  const selectedNodeRuntime = app.querySelector("[data-live-selected-node-runtime]");
+  const selectedNodeSummary = app.querySelector("[data-live-selected-node-summary]");
+  const selectedNodeEvidenceDetail = app.querySelector("[data-live-selected-node-evidence-detail]");
   const evidenceList = app.querySelector("[data-live-evidence-list]");
   const evidenceCount = app.querySelector("[data-live-evidence-count]");
   const evidenceDrawer = app.querySelector("[data-evidence-drawer]");
@@ -135,6 +146,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const replayProgress = app.querySelector("[data-replay-progress]");
   const replayPlay = app.querySelector("[data-replay-play]");
   const replayPlayLabel = app.querySelector("[data-replay-play-label]");
+  const replayPrev = app.querySelector("[data-replay-prev]");
+  const replayNext = app.querySelector("[data-replay-next]");
+  const replayLive = app.querySelector("[data-replay-live]");
   const replayStatus = app.querySelector("[data-replay-status]");
   const emptyState = app.querySelector("[data-live-empty]");
   const liveRegion = app.querySelector("[data-live-region]");
@@ -154,12 +168,30 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let replayTimer = null;
   let eventSource = null;
   let abortController = null;
+  let snapshotCoalesceTimer = null;
+  let pendingSnapshot = null;
+  let refreshQueued = false;
+  let snapshotRequestInFlight = false;
+  let refreshAfterRequest = false;
+  let unloading = false;
   let controlBusy = false;
   let initialControlConfig = null;
+  let selectedNodeId = null;
+  let replayFollowingLive = true;
+  let layoutMode = "flow";
+  let graphState = {
+    positions: new Map(),
+    nodeElements: new Map(),
+    edgeElements: new Map(),
+    bounds: { width: 1, height: 1 },
+  };
+  let camera = { x: 0, y: 0, scale: 1 };
+  let pointerPan = null;
 
   const statuses = new Set(["live", "stale", "in_doubt"]);
   const nodeStatuses = new Set(["running", "completed", "failed", "blocked", "in_doubt", "queued"]);
   const controlActions = ["pause", "resume", "reassign", "handoff"];
+  const SNAPSHOT_COALESCE_MS = 75;
 
   function capabilityAvailable(value) {
     return value === true || Boolean(value && typeof value === "object" && !Array.isArray(value) && (value.available === true || value.enabled === true));
@@ -258,7 +290,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       ? (normalizeControlConfig(controlInput) || { controlEnabled: false, capabilities: {} })
       : null;
 
-    const nodes = nodeInput.slice(0, 500).map((node, index) => {
+    // The browser is a live observer, not a transcript dump. Keep the graph
+    // bounded so a noisy run cannot grow one DOM card per event forever.
+    const nodes = nodeInput.slice(0, 128).map((node, index) => {
       const item = node && typeof node === "object" ? node : {};
       return {
         id: display(firstValue(item, ["id", "nodeId"], "node-" + (index + 1)), "node-" + (index + 1)),
@@ -272,17 +306,24 @@ const CLIENT_SCRIPT = String.raw`(() => {
       };
     });
 
-    const edges = edgeInput.slice(0, 1000).map((edge, index) => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const edges = edgeInput.slice(0, 256).map((edge, index) => {
       const item = edge && typeof edge === "object" ? edge : {};
+      const targetId = display(firstValue(item, ["to", "target", "targetId"], ""), "");
+      const explicitStatus = firstValue(item, ["status", "state"], null);
       return {
         id: display(firstValue(item, ["id", "edgeId"], "edge-" + (index + 1)), "edge-" + (index + 1)),
         from: display(firstValue(item, ["from", "source", "sourceId"], ""), ""),
-        to: display(firstValue(item, ["to", "target", "targetId"], ""), ""),
-        status: normalizedNodeStatus(firstValue(item, ["status", "state"], "queued")),
+        to: targetId,
+        // Services commonly omit edge status. The target node is the source
+        // of truth for liveness in that case, so running edges still flow.
+        status: explicitStatus === null || explicitStatus === undefined || explicitStatus === ""
+          ? (nodeById.get(targetId)?.status || "queued")
+          : normalizedNodeStatus(explicitStatus),
       };
     }).filter((edge) => edge.from && edge.to);
 
-    const evidence = evidenceInput.slice(0, 500).map((item, index) => {
+    const evidence = evidenceInput.slice(0, 256).map((item, index) => {
       const record = item && typeof item === "object" ? item : {};
       return {
         id: display(firstValue(record, ["id", "evidenceId", "ref"], "evidence-" + (index + 1)), "evidence-" + (index + 1)),
@@ -294,7 +335,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       };
     });
 
-    const replay = replayInputEvents.slice(0, 1000).map((item, index) => {
+    const replay = replayInputEvents.slice(0, 512).map((item, index) => {
       const record = item && typeof item === "object" ? item : {};
       return {
         id: display(firstValue(record, ["id", "eventId"], "event-" + (index + 1)), "event-" + (index + 1)),
@@ -383,23 +424,251 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return status === "in_doubt" ? "in-doubt" : status;
   }
 
+  function edgeMarkerId(status) {
+    return "live-edge-arrow-" + nodeClass(status);
+  }
+
+  const STAGE_ORDER = [
+    "critical",
+    "fetch",
+    "thinking",
+    "execution",
+    "review",
+    "meta-review",
+    "verification",
+    "evolution",
+  ];
+  const STAGE_MATCH_ORDER = [...STAGE_ORDER].sort((left, right) => right.length - left.length);
+
+  function stageIndex(node) {
+    const text = (String(node.id) + " " + String(node.label)).toLowerCase().replace(/[\s_]+/gu, "-");
+    const matched = STAGE_MATCH_ORDER.find((stageName) => text === stageName || text.startsWith(stageName + "-") || text.endsWith("-" + stageName) || text.includes("-" + stageName + "-"));
+    return matched ? STAGE_ORDER.indexOf(matched) : -1;
+  }
+
+  function layoutGraph(snapshot) {
+    const nodes = snapshot.nodes;
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const parentById = new Map(snapshot.edges.map((edge) => [edge.to, edge.from]));
+    const stageNodes = new Map();
+    const stageFor = new Map();
+    const branchSlots = new Map();
+    const positions = new Map();
+    const cardWidth = 132;
+    const cardHeight = 76;
+    const columnGap = layoutMode === "compact" ? 126 : 144;
+    const rowGap = 88;
+    const top = 38;
+    const branchTop = 140;
+
+    function inheritedStage(id, seen = new Set()) {
+      if (stageFor.has(id)) return stageFor.get(id);
+      if (seen.has(id)) return -1;
+      seen.add(id);
+      const own = stageIndex(nodeById.get(id) || { id, label: "" });
+      if (own >= 0) {
+        stageFor.set(id, own);
+        return own;
+      }
+      const parent = parentById.get(id);
+      const inherited = parent ? inheritedStage(parent, seen) : -1;
+      stageFor.set(id, inherited);
+      return inherited;
+    }
+
+    for (const node of nodes) {
+      const stage = inheritedStage(node.id);
+      if (stage >= 0 && !stageNodes.has(stage)) stageNodes.set(stage, node.id);
+    }
+
+    nodes.forEach((node, index) => {
+      let column = inheritedStage(node.id);
+      if (column < 0) column = Math.min(STAGE_ORDER.length - 1, Math.max(0, index));
+      const isSpine = stageNodes.get(column) === node.id;
+      if (isSpine) {
+        positions.set(node.id, { x: 32 + column * columnGap, y: top, width: cardWidth, height: cardHeight, spine: true });
+      } else {
+        const slot = branchSlots.get(column) || 0;
+        branchSlots.set(column, slot + 1);
+        positions.set(node.id, { x: 32 + column * columnGap, y: branchTop + slot * rowGap, width: cardWidth, height: cardHeight, spine: false });
+      }
+    });
+
+    let maxX = 0;
+    let maxY = 0;
+    for (const position of positions.values()) {
+      maxX = Math.max(maxX, position.x + position.width);
+      maxY = Math.max(maxY, position.y + position.height);
+    }
+    return {
+      positions,
+      bounds: {
+        width: Math.max(680, maxX + 42),
+        height: Math.max(300, maxY + 42),
+      },
+    };
+  }
+
+  function updateCamera(nextCamera = camera) {
+    camera = {
+      x: Number.isFinite(nextCamera.x) ? nextCamera.x : 0,
+      y: Number.isFinite(nextCamera.y) ? nextCamera.y : 0,
+      scale: Math.max(.28, Math.min(1.6, Number.isFinite(nextCamera.scale) ? nextCamera.scale : 1)),
+    };
+    if (graphScene) {
+      graphScene.style.transform = "translate(" + camera.x + "px, " + camera.y + "px) scale(" + camera.scale + ")";
+    }
+    updateMinimap();
+  }
+
+  function updateMinimap() {
+    if (!graphMinimap || !graphMinimapScene || !graphMinimapViewport) return;
+    const miniWidth = Math.max(1, graphMinimap.clientWidth || 180);
+    const miniHeight = Math.max(1, graphMinimap.clientHeight || 100);
+    const miniScale = Math.min((miniWidth - 12) / Math.max(1, graphState.bounds.width), (miniHeight - 12) / Math.max(1, graphState.bounds.height));
+    graphMinimapScene.style.width = graphState.bounds.width + "px";
+    graphMinimapScene.style.height = graphState.bounds.height + "px";
+    graphMinimapScene.style.transform = "scale(" + miniScale + ")";
+    const viewportWidth = (graph?.clientWidth || miniWidth) / camera.scale * miniScale;
+    const viewportHeight = (graph?.clientHeight || miniHeight) / camera.scale * miniScale;
+    graphMinimapViewport.style.width = Math.max(8, viewportWidth) + "px";
+    graphMinimapViewport.style.height = Math.max(8, viewportHeight) + "px";
+    graphMinimapViewport.style.left = Math.max(0, -camera.x / camera.scale * miniScale) + "px";
+    graphMinimapViewport.style.top = Math.max(0, -camera.y / camera.scale * miniScale) + "px";
+  }
+
+  function fitGraph() {
+    if (!graph || !graphState.bounds.width) return;
+    const width = graph.clientWidth || 760;
+    const height = graph.clientHeight || 420;
+    const padding = 26;
+    const scale = Math.max(.28, Math.min(1.1, Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height)));
+    updateCamera({
+      scale,
+      x: (width - graphState.bounds.width * scale) / 2,
+      y: (height - graphState.bounds.height * scale) / 2,
+    });
+  }
+
+  function zoomGraph(factor, anchorX, anchorY) {
+    if (!graph) return;
+    const localX = Number.isFinite(anchorX) ? anchorX : graph.clientWidth / 2;
+    const localY = Number.isFinite(anchorY) ? anchorY : graph.clientHeight / 2;
+    const worldX = (localX - camera.x) / camera.scale;
+    const worldY = (localY - camera.y) / camera.scale;
+    const scale = Math.max(.28, Math.min(1.6, camera.scale * factor));
+    updateCamera({ scale, x: localX - worldX * scale, y: localY - worldY * scale });
+  }
+
+  function updateSelectedNodeVisuals() {
+    const selected = currentSnapshot?.nodes.find((node) => node.id === selectedNodeId) || null;
+    for (const [id, card] of graphState.nodeElements.entries()) {
+      const active = Boolean(selected && id === selected.id);
+      card.dataset.selected = active ? "true" : "false";
+      card.setAttribute("aria-selected", String(active));
+    }
+    const linked = selected
+      ? currentSnapshot.evidence.filter((item) => item.nodeId === selected.id)
+      : [];
+    setText(selectedNodeLabel, selected ? "Selected · " + selected.label : "Select a node to inspect provenance", "Select a node to inspect provenance");
+    setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
+    setText(selectedNodeStatus, selected ? "Status · " + selected.status : "Status · —", "Status · —");
+    setText(selectedNodeOwner, selected ? "Owner · " + selected.agent : "Owner · —", "Owner · —");
+    setText(selectedNodeRuntime, selected ? "Runtime · " + selected.runtime : "Runtime · —", "Runtime · —");
+    setText(selectedNodeSummary, selected ? selected.summary : "Select a node to inspect its execution summary.", "Select a node to inspect its execution summary.");
+    setText(selectedNodeEvidenceDetail, linked[0]?.detail || (selected ? "No evidence detail is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.");
+    evidenceList?.querySelectorAll("[data-evidence-id]").forEach((entry) => {
+      const associated = Boolean(selected && entry.dataset.nodeId === selected.id);
+      entry.dataset.associated = associated ? "true" : "false";
+    });
+  }
+
+  function selectNode(nodeId, { focus = false } = {}) {
+    if (!currentSnapshot || !currentSnapshot.nodes.some((node) => node.id === nodeId)) return;
+    selectedNodeId = nodeId;
+    updateSelectedNodeVisuals();
+    if (evidenceDrawer?.hidden) {
+      evidenceDrawer.hidden = false;
+      evidenceToggle?.setAttribute("aria-expanded", "true");
+    }
+    const node = currentSnapshot.nodes.find((item) => item.id === nodeId);
+    if (liveRegion && node) liveRegion.textContent = "Selected node: " + node.label;
+    if (focus) graphState.nodeElements.get(nodeId)?.focus();
+  }
+
+  function handleNodeKeydown(event, nodeId) {
+    const ids = currentSnapshot?.nodes.map((node) => node.id) || [];
+    const index = ids.indexOf(nodeId);
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectNode(nodeId);
+      return;
+    }
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) || index < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? ids.length - 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? Math.max(0, index - 1)
+          : Math.min(ids.length - 1, index + 1);
+    selectNode(ids[next], { focus: true });
+  }
+
   function renderGraph(snapshot) {
     clearChildren(nodeList);
     clearChildren(edgeLayer);
+    clearChildren(graphMinimapScene);
     if (!snapshot.nodes.length) {
       if (graphEmpty) graphEmpty.hidden = false;
+      graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), bounds: { width: 1, height: 1 } };
       return;
     }
     if (graphEmpty) graphEmpty.hidden = true;
 
-    const nodeById = new Map();
-    snapshot.nodes.forEach((node, index) => {
+    const layout = layoutGraph(snapshot);
+    graphState = { positions: layout.positions, nodeElements: new Map(), edgeElements: new Map(), bounds: layout.bounds };
+    if (graphScene) {
+      graphScene.style.width = layout.bounds.width + "px";
+      graphScene.style.height = layout.bounds.height + "px";
+    }
+    if (edgeLayer) {
+      edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
+      const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+      const markerColors = { running: "#55e6d0", completed: "#75e5aa", failed: "#ff7e92", "in-doubt": "#ff7e92", blocked: "#ffca73", queued: "#6d8dff" };
+      for (const [status, color] of Object.entries(markerColors)) {
+        const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+        marker.id = edgeMarkerId(status);
+        marker.setAttribute("viewBox", "0 0 10 10");
+        marker.setAttribute("refX", "8");
+        marker.setAttribute("refY", "5");
+        marker.setAttribute("markerWidth", "5");
+        marker.setAttribute("markerHeight", "5");
+        marker.setAttribute("orient", "auto-start-reverse");
+        const markerPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        markerPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+        markerPath.setAttribute("fill", color);
+        marker.append(markerPath);
+        defs.append(marker);
+      }
+      edgeLayer.append(defs);
+    }
+    snapshot.nodes.forEach((node) => {
       const card = makeElement("article", "node-card node-" + nodeClass(node.status));
       card.dataset.nodeId = node.id;
       card.dataset.status = node.status;
       card.dataset.replayStatus = node.status;
-      card.setAttribute("role", "listitem");
+      card.dataset.selected = "false";
+      card.setAttribute("role", "option");
+      card.setAttribute("aria-selected", "false");
+      card.setAttribute("aria-label", node.label + ", " + node.status);
       card.tabIndex = 0;
+      const position = layout.positions.get(node.id) || { x: 32, y: 32, width: 132, height: 76 };
+      card.style.left = position.x + "px";
+      card.style.top = position.y + "px";
+      card.style.width = position.width + "px";
+      card.style.minHeight = position.height + "px";
       const top = makeElement("div", "node-card-top");
       const marker = makeElement("span", "node-marker", "");
       marker.setAttribute("aria-hidden", "true");
@@ -415,6 +684,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
       runtime.title = "Runtime";
       meta.append(role, agent, runtime);
       card.append(top, heading, summary, meta);
+      const parent = snapshot.edges.find((edge) => edge.to === node.id);
+      if (parent) {
+        const parentNode = snapshot.nodes.find((candidate) => candidate.id === parent.from);
+        const linkHint = makeElement("p", "node-connection", "↳ from " + (parentNode?.label || parent.from));
+        card.append(linkHint);
+      }
       if (node.progress !== null) {
         const progress = makeElement("div", "node-progress");
         const bar = makeElement("span", "node-progress-bar");
@@ -422,35 +697,44 @@ const CLIENT_SCRIPT = String.raw`(() => {
         progress.append(bar);
         card.append(progress);
       }
+      card.addEventListener("click", () => selectNode(node.id));
+      card.addEventListener("keydown", (event) => handleNodeKeydown(event, node.id));
       nodeList.append(card);
-      nodeById.set(node.id, card);
-      card.style.setProperty("--node-order", String(index));
+      graphState.nodeElements.set(node.id, card);
     });
 
-    // Edges are visual guidance only. Geometry is computed from DOM positions;
-    // IDs and labels never become markup or selectors.
-    const drawEdges = () => {
-      if (!graph || !edgeLayer) return;
-      const graphRect = graph.getBoundingClientRect();
-      edgeLayer.setAttribute("viewBox", "0 0 " + Math.max(1, graph.clientWidth) + " " + Math.max(1, graph.clientHeight));
-      for (const edge of snapshot.edges) {
-        const from = nodeById.get(edge.from);
-        const to = nodeById.get(edge.to);
-        if (!from || !to) continue;
-        const fromRect = from.getBoundingClientRect();
-        const toRect = to.getBoundingClientRect();
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute("x1", String(fromRect.right - graphRect.left));
-        line.setAttribute("y1", String(fromRect.top + fromRect.height / 2 - graphRect.top));
-        line.setAttribute("x2", String(toRect.left - graphRect.left));
-        line.setAttribute("y2", String(toRect.top + toRect.height / 2 - graphRect.top));
-        line.setAttribute("class", "edge edge-" + nodeClass(edge.status));
-        line.setAttribute("vector-effect", "non-scaling-stroke");
-        edgeLayer.append(line);
-      }
-    };
-    if (window.requestAnimationFrame) window.requestAnimationFrame(drawEdges);
-    else drawEdges();
+    for (const edge of snapshot.edges) {
+      const from = layout.positions.get(edge.from);
+      const to = layout.positions.get(edge.to);
+      if (!from || !to || !edgeLayer) continue;
+      const x1 = from.x + from.width;
+      const y1 = from.y + from.height / 2;
+      const x2 = to.x;
+      const y2 = to.y + to.height / 2;
+      const distance = Math.max(28, Math.abs(x2 - x1) * .45);
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "M " + x1 + " " + y1 + " C " + (x1 + distance) + " " + y1 + ", " + (x2 - distance) + " " + y2 + ", " + x2 + " " + y2);
+      path.setAttribute("class", "edge edge-" + nodeClass(edge.status));
+      path.setAttribute("data-edge-id", edge.id);
+      path.setAttribute("marker-end", "url(#" + edgeMarkerId(edge.status) + ")");
+      path.setAttribute("vector-effect", "non-scaling-stroke");
+      edgeLayer.append(path);
+      graphState.edgeElements.set(edge.id, path);
+    }
+
+    for (const node of snapshot.nodes) {
+      const position = layout.positions.get(node.id);
+      if (!position || !graphMinimapScene) continue;
+      const miniNode = makeElement("span", "minimap-node minimap-node-" + nodeClass(node.status));
+      miniNode.dataset.nodeId = node.id;
+      miniNode.style.left = position.x + "px";
+      miniNode.style.top = position.y + "px";
+      miniNode.style.width = position.width + "px";
+      miniNode.style.height = position.height + "px";
+      graphMinimapScene.append(miniNode);
+    }
+    updateCamera(camera);
+    updateSelectedNodeVisuals();
   }
 
   function renderEvidence(snapshot) {
@@ -464,20 +748,34 @@ const CLIENT_SCRIPT = String.raw`(() => {
     snapshot.evidence.forEach((item) => {
       const entry = makeElement("article", "evidence-item");
       entry.dataset.evidenceId = item.id;
-      entry.setAttribute("role", "listitem");
+      entry.dataset.nodeId = item.nodeId;
+      entry.dataset.associated = "false";
+      entry.setAttribute("role", "button");
+      entry.setAttribute("aria-label", item.label + " evidence");
+      entry.tabIndex = 0;
       const top = makeElement("div", "evidence-item-top");
       top.append(makeElement("span", "evidence-kind", item.label), makeElement("time", "evidence-time", formatTime(item.at)));
       const detail = makeElement("p", "evidence-detail", item.detail);
       const status = makeElement("span", "evidence-status evidence-status-" + item.status.toLowerCase().replace(/[^a-z0-9_-]/gu, "-"), item.status);
       entry.append(top, detail, status);
+      entry.addEventListener("click", () => selectNode(item.nodeId));
+      entry.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectNode(item.nodeId);
+      });
       evidenceList.append(entry);
     });
+    updateSelectedNodeVisuals();
   }
 
   function renderReplay(snapshot) {
     const events = snapshot.replay;
     clearChildren(replayEvents);
     const max = Math.max(0, events.length - 1);
+    if (replayPlay) replayPlay.disabled = events.length < 2;
+    if (events.length < 2) stopReplay();
+    if (replayFollowingLive) currentReplayIndex = max;
     if (replayRange) {
       replayRange.max = String(max);
       replayRange.value = String(Math.min(currentReplayIndex, max));
@@ -486,6 +784,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!events.length) {
       replayEvents.append(makeElement("li", "replay-empty", "No replay events in this snapshot."));
       setText(replayStatus, "Waiting for replay data", "Waiting for replay data");
+      if (replayPrev) replayPrev.disabled = true;
+      if (replayNext) replayNext.disabled = true;
+      if (replayLive) replayLive.disabled = true;
       return;
     }
     events.forEach((event, index) => {
@@ -494,6 +795,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const marker = makeElement("span", "replay-event-marker", "");
       marker.setAttribute("aria-hidden", "true");
       item.append(marker, makeElement("span", "replay-event-time", formatTime(event.at)), makeElement("span", "replay-event-label", event.label));
+      item.tabIndex = 0;
+      item.setAttribute("role", "button");
+      item.setAttribute("aria-label", "Replay " + event.label);
+      item.addEventListener("click", () => {
+        replayFollowingLive = false;
+        updateReplayPosition(index);
+      });
+      item.addEventListener("keydown", (keyboardEvent) => {
+        if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") return;
+        keyboardEvent.preventDefault();
+        replayFollowingLive = false;
+        updateReplayPosition(index);
+      });
       replayEvents.append(item);
     });
     updateReplayPosition(currentReplayIndex);
@@ -694,15 +1008,40 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const active = Number(element.dataset.replayIndex) === currentReplayIndex;
       element.dataset.active = active ? "true" : "false";
     });
+    if (replayPrev) replayPrev.disabled = currentReplayIndex <= 0 || events.length < 2;
+    if (replayNext) replayNext.disabled = currentReplayIndex >= max || events.length < 2;
+    if (replayLive) {
+      replayLive.disabled = events.length < 1;
+      replayLive.dataset.active = replayFollowingLive ? "true" : "false";
+    }
     nodeList?.querySelectorAll("[data-node-id]").forEach((element) => {
       const active = events[currentReplayIndex]?.nodeId && element.dataset.nodeId === events[currentReplayIndex].nodeId;
       element.dataset.replayActive = active ? "true" : "false";
-      let replayState = "queued";
+      let replayState = element.dataset.status || "queued";
       for (const event of events.slice(0, currentReplayIndex + 1)) {
         if (event.nodeId === element.dataset.nodeId) replayState = event.status;
       }
       element.dataset.replayStatus = replayState;
     });
+    if (events[currentReplayIndex]?.nodeId && currentSnapshot.nodes.some((node) => node.id === events[currentReplayIndex].nodeId)) {
+      selectedNodeId = events[currentReplayIndex].nodeId;
+      updateSelectedNodeVisuals();
+    }
+    for (const edge of currentSnapshot.edges) {
+      const path = graphState.edgeElements.get(edge.id);
+      if (!path) continue;
+      let replayState = edge.status;
+      let hasReplayState = false;
+      for (const event of events.slice(0, currentReplayIndex + 1)) {
+        if (event.nodeId === edge.to) {
+          replayState = event.status;
+          hasReplayState = true;
+        }
+      }
+      if (!hasReplayState) replayState = edge.status;
+      path.setAttribute("class", "edge edge-" + nodeClass(replayState));
+      path.setAttribute("marker-end", "url(#" + edgeMarkerId(replayState) + ")");
+    }
   }
 
   function stopReplay() {
@@ -716,6 +1055,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function toggleReplay() {
     if (!currentSnapshot || currentSnapshot.replay.length < 2) return;
+    replayFollowingLive = false;
     if (replayTimer !== null) {
       stopReplay();
       return;
@@ -758,14 +1098,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
       updateConnection("stale", "No run observed");
       return;
     }
+    const firstSnapshot = !currentSnapshot;
     currentSnapshot = snapshot;
     hideEmpty();
-    currentReplayIndex = 0;
     updateHeader(snapshot);
     renderGraph(snapshot);
     renderEvidence(snapshot);
     renderReplay(snapshot);
     renderControlPanel(snapshot);
+    if (firstSnapshot) {
+      if (window.requestAnimationFrame) window.requestAnimationFrame(fitGraph);
+      else fitGraph();
+    }
     updateConnection(snapshot.run.status === "live" ? "live" : "stale", snapshot.run.status === "live" ? "Streaming" : "Snapshot loaded");
   }
 
@@ -778,22 +1122,50 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
+  function flushSnapshotUpdate() {
+    snapshotCoalesceTimer = null;
+    if (unloading) return;
+    const snapshot = pendingSnapshot;
+    const shouldRefresh = refreshQueued;
+    pendingSnapshot = null;
+    refreshQueued = false;
+    if (snapshot) {
+      renderSnapshot(snapshot);
+      return;
+    }
+    if (shouldRefresh) loadSnapshot(true);
+  }
+
+  function scheduleSnapshotUpdate(snapshot = null) {
+    if (unloading) return;
+    if (snapshot && typeof snapshot === "object") pendingSnapshot = snapshot;
+    else refreshQueued = true;
+    if (snapshotCoalesceTimer === null) {
+      snapshotCoalesceTimer = window.setTimeout(flushSnapshotUpdate, SNAPSHOT_COALESCE_MS);
+    }
+  }
+
   function handleEvent(event) {
     const payload = parseEventData(event?.data);
     if (payload && payload.snapshot && typeof payload.snapshot === "object") {
-      renderSnapshot(payload.snapshot);
+      scheduleSnapshotUpdate(payload.snapshot);
       return;
     }
     if (payload && payload.run && Array.isArray(payload.nodes)) {
-      renderSnapshot(payload);
+      scheduleSnapshotUpdate(payload);
       return;
     }
     // Events are refresh hints. Fetching the canonical snapshot keeps the
     // control room from treating an incomplete SSE event as authoritative.
-    loadSnapshot(true);
+    scheduleSnapshotUpdate();
   }
 
   async function loadSnapshot(silent) {
+    if (snapshotRequestInFlight) {
+      refreshAfterRequest = true;
+      return;
+    }
+    snapshotRequestInFlight = true;
     if (abortController) abortController.abort();
     abortController = new AbortController();
     try {
@@ -803,11 +1175,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
       });
       if (!response.ok) throw new Error("snapshot request failed");
       const payload = await response.json();
-      renderSnapshot(payload);
+      if (silent) scheduleSnapshotUpdate(payload);
+      else renderSnapshot(payload);
     } catch (error) {
       if (error?.name === "AbortError") return;
       updateConnection("stale", "Reconnecting");
       if (!silent) showEmpty("The local observer is not serving a snapshot yet.");
+    } finally {
+      snapshotRequestInFlight = false;
+      if (refreshAfterRequest && !unloading) {
+        refreshAfterRequest = false;
+        scheduleSnapshotUpdate();
+      }
     }
   }
 
@@ -833,12 +1212,39 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (evidenceDrawer) evidenceDrawer.hidden = !next;
     evidenceToggle.setAttribute("aria-expanded", String(next));
   });
+  app.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    selectedNodeId = null;
+    updateSelectedNodeVisuals();
+    if (evidenceDrawer) evidenceDrawer.hidden = true;
+    evidenceToggle?.setAttribute("aria-expanded", "false");
+    document.activeElement?.blur?.();
+  });
   replayPlay?.addEventListener("click", toggleReplay);
+  replayPrev?.addEventListener("click", () => {
+    replayFollowingLive = false;
+    stopReplay();
+    updateReplayPosition(currentReplayIndex - 1);
+  });
+  replayNext?.addEventListener("click", () => {
+    replayFollowingLive = false;
+    stopReplay();
+    updateReplayPosition(currentReplayIndex + 1);
+  });
+  replayLive?.addEventListener("click", () => {
+    replayFollowingLive = true;
+    stopReplay();
+    updateReplayPosition(currentSnapshot?.replay.length ? currentSnapshot.replay.length - 1 : 0);
+  });
   app.querySelector("[data-replay-reset]")?.addEventListener("click", () => {
+    replayFollowingLive = false;
     stopReplay();
     updateReplayPosition(0);
   });
-  replayRange?.addEventListener("input", (event) => updateReplayPosition(event.target.value));
+  replayRange?.addEventListener("input", (event) => {
+    replayFollowingLive = false;
+    updateReplayPosition(event.target.value);
+  });
   replayRange?.addEventListener("keydown", (event) => {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End") {
       window.setTimeout(() => updateReplayPosition(replayRange.value), 0);
@@ -847,6 +1253,43 @@ const CLIENT_SCRIPT = String.raw`(() => {
   app.querySelector("[data-live-share-export-json]")?.addEventListener("click", exportShareJson);
   app.querySelector("[data-live-share-copy-pr]")?.addEventListener("click", () => copyShareValue("pr"));
   app.querySelector("[data-live-share-copy-readme]")?.addEventListener("click", () => copyShareValue("readme"));
+
+  app.querySelector("[data-live-graph-fit]")?.addEventListener("click", fitGraph);
+  app.querySelector("[data-live-graph-zoom-in]")?.addEventListener("click", () => zoomGraph(1.18));
+  app.querySelector("[data-live-graph-zoom-out]")?.addEventListener("click", () => zoomGraph(.84));
+  app.querySelector("[data-live-graph-layout]")?.addEventListener("click", () => {
+    layoutMode = layoutMode === "flow" ? "compact" : "flow";
+    if (currentSnapshot) {
+      renderGraph(currentSnapshot);
+      fitGraph();
+    }
+  });
+  graph?.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (target?.closest?.("[data-node-id], button, .graph-minimap")) return;
+    pointerPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
+    graph.setPointerCapture?.(event.pointerId);
+    graph.dataset.panning = "true";
+  });
+  graph?.addEventListener("pointermove", (event) => {
+    if (!pointerPan || pointerPan.pointerId !== event.pointerId) return;
+    updateCamera({ ...camera, x: pointerPan.cameraX + event.clientX - pointerPan.x, y: pointerPan.cameraY + event.clientY - pointerPan.y });
+  });
+  const stopPointerPan = (event) => {
+    if (!pointerPan || (event.pointerId !== undefined && pointerPan.pointerId !== event.pointerId)) return;
+    graph?.releasePointerCapture?.(pointerPan.pointerId);
+    pointerPan = null;
+    if (graph) graph.dataset.panning = "false";
+  };
+  graph?.addEventListener("pointerup", stopPointerPan);
+  graph?.addEventListener("pointercancel", stopPointerPan);
+  graph?.addEventListener("wheel", (event) => {
+    if (event.target?.closest?.(".graph-minimap")) return;
+    event.preventDefault();
+    const rect = graph.getBoundingClientRect();
+    zoomGraph(event.deltaY < 0 ? 1.1 : .9, event.clientX - rect.left, event.clientY - rect.top);
+  }, { passive: false });
+  window.addEventListener("resize", updateMinimap, { passive: true });
 
   const snapshotText = initialElement?.textContent?.trim();
   if (snapshotText && snapshotText !== "null") {
@@ -862,6 +1305,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
   connectEvents();
 
   window.addEventListener("beforeunload", () => {
+    unloading = true;
+    pendingSnapshot = null;
+    refreshQueued = false;
+    refreshAfterRequest = false;
+    if (snapshotCoalesceTimer !== null) {
+      window.clearTimeout(snapshotCoalesceTimer);
+      snapshotCoalesceTimer = null;
+    }
     stopReplay();
     abortController?.abort();
     if (eventSource) eventSource.close();
@@ -1001,10 +1452,61 @@ button:focus-visible, [type="range"]:focus-visible, [tabindex]:focus-visible, a:
 .empty-copy { max-width: 36rem; margin: .5rem auto 0; color: var(--muted); font-size: .8rem; line-height: 1.5; }
 .footer { display: flex; justify-content: space-between; gap: 1rem; padding: 1.2rem 0 0; color: var(--subtle); font-size: .68rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.main { padding-top: 1.15rem; }
+.run-hero { padding: .8rem 0 1rem; gap: 1rem; }
+.run-title { font-size: clamp(1.65rem, 3.6vw, 3.15rem); letter-spacing: -.045em; }
+.run-subtitle { margin-top: .65rem; font-size: .78rem; }
+.run-facts { margin-bottom: .85rem; }
+.workspace-grid { grid-template-columns: minmax(0, 1fr) minmax(290px, 310px); align-items: stretch; height: 430px; }
+.graph-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 430px; overflow: hidden; }
+.evidence-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 430px; min-height: 0; overflow: hidden; }
+.evidence-drawer { min-height: 0; max-height: none; overflow: auto; }
+.graph-header-actions { display: inline-flex; align-items: center; gap: .35rem; }
+.graph-tool-button { min-width: 2rem; padding: .35rem .5rem; color: var(--muted); background: rgba(7, 11, 22, .45); border: 1px solid var(--line); border-radius: .45rem; font-size: .68rem; }
+.graph-tool-button:hover { color: var(--ink); border-color: rgba(85, 230, 208, .5); }
+.graph-stage { min-height: 0; height: 100%; padding: 0; background: rgba(5, 9, 18, .24); }
+.graph-canvas { position: relative; min-height: 0; height: 100%; overflow: hidden; cursor: grab; background: radial-gradient(circle at 15% 18%, rgba(85, 230, 208, .065), transparent 22rem), linear-gradient(rgba(113, 135, 190, .045) 1px, transparent 1px), linear-gradient(90deg, rgba(113, 135, 190, .045) 1px, transparent 1px); background-size: auto, 28px 28px, 28px 28px; }
+.graph-canvas[data-panning="true"] { cursor: grabbing; }
+.graph-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+.edge-layer { inset: 0; width: 100%; height: 100%; }
+.edge { fill: none; color: rgba(109, 141, 255, .36); stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 3 8; }
+.edge-running { color: var(--cyan); stroke-width: 2.1; stroke-dasharray: 1 8; animation: edge-flow 1.05s linear infinite; }
+.edge-completed { color: var(--green); stroke-dasharray: 5 6; opacity: .7; }
+.edge-failed, .edge-in-doubt { color: var(--red); stroke-dasharray: 2 5; }
+.edge-blocked { color: var(--amber); stroke-dasharray: 2 6; }
+.edge-queued { color: rgba(109, 141, 255, .32); }
+.node-list { position: absolute; inset: 0; display: block; }
+.node-card { position: absolute; height: 76px; min-height: 76px; overflow: hidden; padding: .3rem .44rem; border-radius: .6rem; box-shadow: 0 8px 22px rgba(0, 0, 0, .24); }
+.node-card:hover, .node-card:focus-visible { transform: translateY(-2px) scale(1.015); }
+.node-card[data-selected="true"] { border-color: var(--cyan); box-shadow: 0 0 0 1px rgba(85, 230, 208, .45), 0 12px 32px rgba(45, 214, 192, .18); }
+.node-card[data-selected="true"]::after { position: absolute; top: -.3rem; right: .5rem; width: .35rem; height: .35rem; content: ""; background: var(--cyan); border-radius: 50%; box-shadow: 0 0 0 4px rgba(85, 230, 208, .13); }
+.node-title { margin: .2rem 0 .1rem; font-size: .74rem; }
+.node-summary { min-height: 1.2em; font-size: .6rem; -webkit-line-clamp: 1; }
+.node-meta { flex-wrap: nowrap; gap: .12rem; margin-top: .2rem; }
+.node-meta-item { min-width: 0; padding: .1rem .18rem; font-size: .48rem; }
+.node-progress { margin-top: .15rem; }
+.node-connection { display: none; margin: .22rem 0 0; overflow: hidden; color: var(--blue); font-size: .58rem; text-overflow: ellipsis; white-space: nowrap; }
+.graph-minimap { position: absolute; right: .75rem; bottom: .75rem; z-index: 3; width: 190px; height: 104px; overflow: hidden; background: rgba(7, 11, 22, .8); border: 1px solid rgba(140, 159, 207, .28); border-radius: .55rem; box-shadow: 0 8px 26px rgba(0, 0, 0, .28); pointer-events: none; }
+.minimap-scene { position: absolute; top: 6px; left: 6px; transform-origin: 0 0; }
+.minimap-node { position: absolute; display: block; background: rgba(109, 141, 255, .55); border: 1px solid rgba(210, 220, 255, .4); border-radius: 2px; }
+.minimap-node-running { background: var(--cyan); box-shadow: 0 0 6px rgba(85, 230, 208, .9); }
+.minimap-node-completed { background: var(--green); }
+.minimap-node-failed, .minimap-node-in-doubt { background: var(--red); }
+.minimap-node-blocked { background: var(--amber); }
+.minimap-viewport { position: absolute; z-index: 2; display: block; border: 1px solid var(--cyan); border-radius: 2px; box-shadow: 0 0 0 1px rgba(85, 230, 208, .2); }
+.selected-node-summary { display: grid; gap: .3rem; padding: .7rem .8rem; color: var(--muted); background: rgba(7, 11, 22, .38); border-bottom: 1px solid var(--line); font-size: .69rem; }
+.selected-node-summary strong { overflow: hidden; color: var(--ink); font-size: .73rem; text-overflow: ellipsis; white-space: nowrap; }
+.selected-node-facts { display: flex; flex-wrap: wrap; gap: .28rem .55rem; color: var(--subtle); font-family: "SFMono-Regular", Consolas, monospace; font-size: .59rem; }
+.selected-node-summary p { margin: 0; overflow: hidden; color: var(--muted); line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-item[data-associated="true"] { border-color: rgba(85, 230, 208, .42); background: rgba(85, 230, 208, .08); }
+.replay-panel { margin-top: .55rem; }
+.replay-range-wrap { padding-top: .55rem; }
+.replay-events { gap: .5rem; padding-top: .55rem; padding-bottom: .65rem; }
 @keyframes pulse { 0%, 100% { opacity: .55; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
 @keyframes dash { to { stroke-dashoffset: -16; } }
-@media (max-width: 980px) { .run-hero { grid-template-columns: 1fr; gap: 1.2rem; } .run-facts { max-width: 700px; } .workspace-grid { grid-template-columns: 1fr; } .evidence-drawer { max-height: 360px; } }
-@media (max-width: 620px) { .shell { padding: 0 1rem 1.4rem; } .topbar { min-height: 72px; } .connection [data-live-connection] { display: none; } .run-title { font-size: clamp(2.25rem, 13vw, 4rem); } .run-subtitle span { flex-basis: 100%; } .run-subtitle span + span::before { display: none; } .run-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .node-list { grid-template-columns: 1fr; } .graph-stage { min-height: 360px; padding: .75rem; } .panel-header { padding: .9rem; } .replay-events, .replay-range-wrap { padding-left: .9rem; padding-right: .9rem; } .footer { flex-direction: column; } }
+@keyframes edge-flow { to { stroke-dashoffset: -18; } }
+@media (max-width: 980px) { .run-hero { grid-template-columns: 1fr; gap: 1.2rem; } .run-facts { max-width: 700px; } .workspace-grid { grid-template-columns: 1fr; height: auto; } .graph-panel { height: 430px; } .evidence-panel { height: auto; max-height: 360px; } .evidence-drawer { max-height: 210px; } }
+@media (max-width: 620px) { .shell { padding: 0 1rem 1.4rem; } .topbar { min-height: 72px; } .connection [data-live-connection] { display: none; } .run-title { font-size: clamp(1.65rem, 10vw, 2.65rem); } .run-subtitle span { flex-basis: 100%; } .run-subtitle span + span::before { display: none; } .run-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .state-chip { justify-self: start; } .graph-panel .panel-header { flex-wrap: wrap; } .graph-header-actions { width: 100%; justify-content: flex-end; } .graph-header-actions .panel-count, .graph-header-actions [data-live-graph-layout] { display: none; } .graph-tool-button, .replay-button { min-width: 44px; min-height: 44px; } .graph-panel { height: auto; } .graph-stage, .graph-canvas { min-height: 330px; height: auto; } .graph-canvas { overflow: auto; cursor: default; } .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; } .node-list { position: relative; inset: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; padding: .55rem; } .node-card { position: relative !important; top: auto !important; left: auto !important; width: auto !important; height: auto !important; min-height: 92px !important; max-height: none; } .node-summary { -webkit-line-clamp: 1; } .node-connection { display: block; } .edge-layer, .graph-minimap { display: none; } .panel-header { padding: .9rem; } .replay-events, .replay-range-wrap { padding-left: .9rem; padding-right: .9rem; } .footer { flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
 `;
 
@@ -1070,20 +1572,26 @@ export function renderLiveControlRoomPage({
       <div class="sr-only" data-live-region aria-live="polite"></div>
       <section class="workspace-grid" aria-label="Live execution workspace">
         <section class="panel graph-panel" aria-labelledby="graph-title">
-          <header class="panel-header"><div><h2 class="panel-title" id="graph-title">Execution graph</h2><p class="panel-note">Tasks move from evidence to verified state.</p></div><span class="panel-count">DAG / READ-ONLY</span></header>
-          <div class="graph-stage" data-live-graph role="region" aria-label="Read-only execution graph">
-            <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
-            <div class="node-list" data-live-node-list role="list" aria-label="Execution nodes"></div>
+          <header class="panel-header"><div><h2 class="panel-title" id="graph-title">Execution graph</h2><p class="panel-note">A compact stage spine with live worker branches.</p></div><div class="graph-header-actions"><span class="panel-count">DAG / READ-ONLY</span><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Toggle graph layout">Layout</button><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Fit graph to viewport">Fit</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in">+</button></div></header>
+          <div class="graph-stage" data-live-graph-viewport>
+            <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
+              <div class="graph-scene" data-live-graph-scene>
+                <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
+                <div class="node-list" data-live-node-list role="listbox" aria-label="Execution nodes"></div>
+              </div>
+              <div class="graph-minimap" data-live-graph-minimap aria-label="Graph minimap" role="img"><div class="minimap-scene" data-live-minimap-scene></div><span class="minimap-viewport" data-live-minimap-viewport aria-hidden="true"></span></div>
+            </div>
             <div class="graph-empty" data-live-graph-empty hidden><p>No task nodes in this snapshot.</p></div>
           </div>
         </section>
         <aside class="panel evidence-panel" aria-labelledby="evidence-title">
           <header class="panel-header"><div><h2 class="panel-title" id="evidence-title">Evidence</h2><p class="panel-note">What the observer can substantiate.</p></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="drawer-toggle" type="button" data-evidence-toggle aria-controls="evidence-drawer" aria-expanded="true" aria-label="Toggle evidence drawer">Details</button></div></header>
+          <div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>Select a node to inspect provenance</strong><div class="selected-node-facts"><span data-live-selected-node-status>Status · —</span><span data-live-selected-node-owner>Owner · —</span><span data-live-selected-node-runtime>Runtime · —</span></div><p data-live-selected-node-summary>Select a node to inspect its execution summary.</p><p data-live-selected-node-evidence-detail>Evidence details appear when a node is selected.</p><span data-live-selected-node-evidence>Evidence stays visible in the drawer</span></div>
           <div class="evidence-drawer" id="evidence-drawer" data-evidence-drawer><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
         </aside>
       </section>
       <section class="panel replay-panel" aria-labelledby="replay-title">
-        <header class="panel-header"><div><h2 class="panel-title" id="replay-title">Replay timeline</h2><p class="panel-note" data-replay-status>Waiting for replay data</p></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-play aria-label="Play replay"><span aria-hidden="true">▶</span><span data-replay-play-label>Play</span></button><button class="replay-button" type="button" data-replay-reset aria-label="Reset replay">Reset</button></div></header>
+          <header class="panel-header"><div><h2 class="panel-title" id="replay-title">Replay timeline</h2><p class="panel-note" data-replay-status>Waiting for replay data</p></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event">Prev</button><button class="replay-button" type="button" data-replay-play aria-label="Play replay"><span aria-hidden="true">▶</span><span data-replay-play-label>Play</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event">Next</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position">Live</button><button class="replay-button" type="button" data-replay-reset aria-label="Reset replay">Reset</button></div></header>
         <div class="replay-range-wrap"><label class="sr-only" for="replay-range">Replay position</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div></div>
         <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
       </section>

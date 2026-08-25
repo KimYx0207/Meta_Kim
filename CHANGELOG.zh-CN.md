@@ -6,6 +6,19 @@
 
 更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看 Git 历史、测试、生成报告和 PRD 产物。
 
+## [3.0.5] - 2026-08-26
+
+### 变更
+
+- **Meta_Kim Live 升级为紧凑、可导航的执行图。** 八阶段主干与 worker 分支使用有界 SVG/DOM 布局，支持状态曲线、running 流动动画、拖拽、缩放、Fit、小地图、键盘选择和 reduced-motion。
+- **Replay 与证据详情能在同一控制室中直接操作。** 桌面图与 Evidence 面板高度受控，Replay 保持可见；节点详情、证据反向选中与 Prev/Next/Live 共用同一份运行状态。
+- **移动端 Live 更紧凑且不水平溢出。** 阶段与 worker 使用双列关系视图、上游提示和触控尺寸按钮。
+
+### 修复
+
+- **Live 更新不再把真实 running edge 覆盖成 queued，也不再为每个 SSE 提示反复抖动页面。** 缺失 Replay 事件时保留 canonical edge status，高频 snapshot 在渲染前合并。
+- **真实证据会安全联系到已知图节点。** Verification、Review 和 worker evidence 仅能绑定白名单中的 stage/worker node；未知或恶意标识继续保持未绑定，不会进入 snapshot。
+
 ## [3.0.4] - 2026-08-25
 
 ### 变更
