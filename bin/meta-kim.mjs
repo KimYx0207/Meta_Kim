@@ -43,7 +43,7 @@ ${status.usageHeading}:
   ${status.usage}
   meta-kim doctor
   meta-kim doctor hooks [--fix] [--project|--all] [--project-root <dir>]
-  meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--json]
+  meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--verify-asset-download] [--json]
   meta-kim release close --issue <P-NNN> --prd <repo-relative-file> [--profile default] [--json]
   meta-kim mcp serve
   meta-kim runtime accept --report <file> --source-kind <kind> --runtime <runtime> --capability <capability> [--mode interactive_host]  # reference-only import

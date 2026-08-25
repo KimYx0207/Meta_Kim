@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "states": [
+    "reference_only",
+    "available_not_installed",
+    "installed_provider",
+    "active_for_run"
+  ],
+  "transitions": {
+    "reference_only": ["available_not_installed"],
+    "available_not_installed": ["installed_provider"],
+    "installed_provider": ["active_for_run"],
+    "active_for_run": []
+  },
+  "invariants": [
+    "registry_or_path_presence_never_proves_installed_provider",
+    "installed_provider_requires_exact_category_a_directory_closure",
+    "active_for_run_requires_explicit_current_run_activation_evidence",
+    "discovery_does_not_emit_active_for_run_without_activation_evidence",
+    "unknown_user_paths_are_read_only_and_are_never_deleted"
+  ]
+}

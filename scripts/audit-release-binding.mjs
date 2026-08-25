@@ -29,6 +29,14 @@ import {
   createReleaseNetworkClient,
   resolveTimeoutMs,
 } from "./release-network.mjs";
+import {
+  flushFile,
+  flushParentDirectory,
+  getProcessStartIdentity,
+  lockOwnerAppearsLive,
+  RELEASE_STATE_DURABILITY,
+  sanitizeUserVisibleText,
+} from "./release-state-hardening.mjs";
 
 export { canonicalJson, sha256 } from "./release-binding-canonical.mjs";
 
@@ -555,7 +563,7 @@ export function evaluateReleaseBinding({
   if (githubFacts.prerelease) failureReasons.push("github_release_is_prerelease");
   if (!githubFacts.publishedAt) failureReasons.push("github_release_not_published");
   if (!["exact", "tag_commit_is_ancestor"].includes(gitFacts.remoteMainRelation)) {
-    failureReasons.push("tag_commit_not_in_remote_main_history");
+    failureReasons.push("tag_commit_not_in_local_origin_main_tracking_history");
   }
   if (verification.exact === true && !localPackage) {
     failureReasons.push("local_package_evidence_missing_for_exact_binding");
@@ -739,6 +747,65 @@ export function validatePointer(outputDir, pointerPath) {
   return pointer;
 }
 
+export function summarizeReleaseBindingAttempts(outputDir) {
+  const resolvedOutputDir = ensurePlainDirectory(
+    outputDir,
+    "release audit output directory",
+  );
+  const recordsDir = ensurePlainDirectory(
+    path.join(resolvedOutputDir, "attempts"),
+    "release audit attempts directory",
+  );
+  const recordsByHash = new Map();
+  const validById = new Map();
+  const invalidAttemptFiles = [];
+  for (const entry of readdirSync(recordsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    try {
+      const record = validatedRecord(path.join(recordsDir, entry.name));
+      if (`${record.attemptId}.json` !== entry.name || validById.has(record.attemptId)) {
+        invalidAttemptFiles.push(entry.name);
+        continue;
+      }
+      recordsByHash.set(record.recordHash, record);
+      validById.set(record.attemptId, record);
+    } catch {
+      invalidAttemptFiles.push(entry.name);
+    }
+  }
+  const latestPointer = safeJsonRead(path.join(resolvedOutputDir, "latest-attempt.json"));
+  const reachable = [];
+  const visited = new Set();
+  let chainComplete = latestPointer == null && validById.size === 0;
+  let current = typeof latestPointer?.recordHash === "string"
+    ? recordsByHash.get(latestPointer.recordHash)
+    : null;
+  while (current && !visited.has(current.recordHash)) {
+    visited.add(current.recordHash);
+    reachable.push(current.attemptId);
+    if (current.previousRecordHash == null) {
+      chainComplete = true;
+      break;
+    }
+    current = recordsByHash.get(current.previousRecordHash);
+  }
+  const reachableSet = new Set(reachable);
+  return {
+    schemaVersion: "meta-kim-release-binding-attempt-summary-v1",
+    advisoryOnly: true,
+    latestAttemptId: latestPointer?.attemptId ?? null,
+    totalValidAttempts: validById.size,
+    reachableAttemptIds: [...reachable].reverse(),
+    orphanedAttemptIds: [...validById.keys()]
+      .filter((id) => !reachableSet.has(id))
+      .sort(),
+    invalidAttemptFiles: invalidAttemptFiles.sort(),
+    chainComplete,
+    immutableAttemptsPreserved: true,
+    storageDurability: RELEASE_STATE_DURABILITY,
+  };
+}
+
 function atomicWrite(filePath, text) {
   ensurePlainDirectory(path.dirname(filePath), "release audit pointer directory");
   const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -746,22 +813,15 @@ function atomicWrite(filePath, text) {
   try {
     handle = openSync(temporary, "wx", 0o600);
     writeFileSync(handle, text, "utf8");
+    flushFile(handle);
     closeSync(handle);
     handle = null;
+    assertPlainExistingDirectory(path.dirname(filePath), "release audit pointer directory");
     renameSync(temporary, filePath);
+    flushParentDirectory(filePath);
   } finally {
     if (handle !== null && handle !== undefined) closeSync(handle);
     if (existsSync(temporary)) unlinkSync(temporary);
-  }
-}
-
-function processIsAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code !== "ESRCH";
   }
 }
 
@@ -775,9 +835,11 @@ function acquireLock(outputDir) {
       handle = openSync(lockPath, "wx", 0o600);
       writeFileSync(handle, JSON.stringify({
         pid: process.pid,
+        processStartIdentity: getProcessStartIdentity(process.pid),
         token,
         createdAt: new Date().toISOString(),
       }));
+      flushFile(handle);
       closeSync(handle);
       handle = undefined;
       return () => {
@@ -792,7 +854,7 @@ function acquireLock(outputDir) {
       if (handle !== undefined) closeSync(handle);
       if (error.code !== "EEXIST") throw error;
       const owner = safeJsonRead(lockPath);
-      if (processIsAlive(owner?.pid)) {
+      if (lockOwnerAppearsLive(owner)) {
         throw codedError("audit_busy", "another release-binding audit owns the output directory");
       }
       const staleDir = ensurePlainDirectory(
@@ -841,10 +903,13 @@ export function writeReleaseBindingAttempt(outputDir, recordInput) {
     const recordPath = path.join(recordsDir, `${id}.json`);
     let handle;
     try {
+      assertPlainExistingDirectory(recordsDir, "release audit attempts directory");
       handle = openSync(recordPath, "wx", 0o600);
       writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      flushFile(handle);
       closeSync(handle);
       handle = null;
+      flushParentDirectory(recordPath);
     } finally {
       if (handle !== null && handle !== undefined) closeSync(handle);
     }
@@ -862,7 +927,12 @@ export function writeReleaseBindingAttempt(outputDir, recordInput) {
         `${JSON.stringify(pointer, null, 2)}\n`,
       );
     }
-    return { record, recordPath, pointer };
+    const attemptSummary = summarizeReleaseBindingAttempts(safeOutputDir);
+    atomicWrite(
+      path.join(safeOutputDir, "attempt-summary.json"),
+      `${JSON.stringify(attemptSummary, null, 2)}\n`,
+    );
+    return { record, recordPath, pointer, attemptSummary };
   } finally {
     releaseLock();
   }
@@ -888,13 +958,10 @@ function readLocalPackage(packagePath) {
 }
 
 function safeRecordError(error, roots = []) {
-  let message = typeof error?.message === "string"
-    ? error.message.replaceAll(process.cwd(), "<repo>")
-    : "release audit failed";
-  for (const root of roots) {
-    if (root) message = message.replaceAll(root, "<repo>");
-  }
-  if (process.env.USERPROFILE) message = message.replaceAll(process.env.USERPROFILE, "<home>");
+  const message = sanitizeUserVisibleText(
+    typeof error?.message === "string" ? error.message : "release audit failed",
+    { roots: [process.cwd(), process.env.USERPROFILE, ...roots].filter(Boolean) },
+  );
   return {
     code: typeof error?.code === "string" ? error.code : "release_audit_failed",
     message,
@@ -913,6 +980,7 @@ export async function runReleaseBindingAudit({
   environment = process.env,
   metadataTimeoutMs = null,
   assetTimeoutMs = null,
+  verifyAssetDownload = false,
   platform = process.platform,
   systemProxyReader,
   now = new Date(),
@@ -936,6 +1004,7 @@ export async function runReleaseBindingAudit({
       assetTimeoutMs,
       platform,
       systemProxyReader,
+      downloadAsset: verifyAssetDownload,
     });
     const reportBytes = historicalReportUnavailable
       ? null
@@ -962,6 +1031,15 @@ export async function runReleaseBindingAudit({
       packageAsset: {
         ...githubFacts.asset,
         ...(localPackage ? { localVerification: localPackage } : {}),
+        assetDownloadVerification: verifyAssetDownload
+          ? {
+              status: "passed",
+              size: githubFacts.downloadedBytes.length,
+              sha256: sha256(githubFacts.downloadedBytes),
+            }
+          : {
+              status: "not_requested",
+            },
       },
       verification,
     };
@@ -975,6 +1053,7 @@ export async function runReleaseBindingAudit({
       result: evaluation,
       evidence,
       evidenceFingerprint: sha256(canonicalJson(evidence)),
+      storageDurability: RELEASE_STATE_DURABILITY,
       error: null,
     };
   } catch (error) {
@@ -995,6 +1074,7 @@ export async function runReleaseBindingAudit({
       },
       evidence: null,
       evidenceFingerprint: null,
+      storageDurability: RELEASE_STATE_DURABILITY,
       error: safeError,
     };
   }
@@ -1048,6 +1128,7 @@ function cliOptions(args) {
     "--json",
     "--require-exact",
     "--historical-report-unavailable",
+    "--verify-asset-download",
     "--help",
     "-h",
   ]);
@@ -1078,6 +1159,7 @@ function cliOptions(args) {
     help: args.includes("--help") || args.includes("-h"),
     json: args.includes("--json"),
     requireExact: args.includes("--require-exact"),
+    verifyAssetDownload: args.includes("--verify-asset-download"),
     historicalReportUnavailable: args.includes("--historical-report-unavailable"),
     tagName: optionValue(args, "--tag"),
     verificationReportPath: optionValue(args, "--verification-report"),
@@ -1105,10 +1187,11 @@ export function defaultReleaseAuditOutputDir(repoRoot, profile = "default") {
 function usage() {
   return [
     "Usage:",
-    "  meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--json]",
+    "  meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--verify-asset-download] [--json]",
     "  meta-kim release audit --tag <tag> --historical-report-unavailable [--json]",
     "  Optional controls: [--profile <name>] [--metadata-timeout-ms <ms>] [--asset-timeout-ms <ms>]",
     "",
+    "--verify-asset-download explicitly downloads and digest-checks the GitHub asset; the default remains metadata-only.",
     "The audit appends an immutable attempt. A failed attempt never replaces the latest published-bound record.",
   ].join("\n");
 }
@@ -1167,7 +1250,9 @@ async function main() {
   try {
     options = cliOptions(process.argv.slice(2));
   } catch (error) {
-    console.error(`meta-kim release audit: ${error.message}`);
+    console.error(`meta-kim release audit: ${sanitizeUserVisibleText(error.message, {
+      roots: [process.cwd(), process.env.USERPROFILE].filter(Boolean),
+    })}`);
     console.error(usage());
     process.exit(2);
   }
@@ -1215,6 +1300,7 @@ async function main() {
     profile: options.profile,
     metadataTimeoutMs: options.metadataTimeoutMs,
     assetTimeoutMs: options.assetTimeoutMs,
+    verifyAssetDownload: options.verifyAssetDownload,
   });
   const output = {
     status: record.status,
@@ -1224,6 +1310,9 @@ async function main() {
     record: path.relative(repoRoot, recordPath).replaceAll("\\", "/"),
     failureReasons: record.result.failureReasons,
     error: record.error,
+    remoteMainEvidence: record.evidence?.git?.remoteMainEvidenceSource ?? null,
+    orphanedAttemptIds: summarizeReleaseBindingAttempts(defaultReleaseAuditOutputDir(repoRoot, options.profile)).orphanedAttemptIds,
+    storageDurability: RELEASE_STATE_DURABILITY,
     explanation: statusExplanation(record.status),
   };
   if (options.json) {
@@ -1233,6 +1322,12 @@ async function main() {
     console.log(`promotionEligible=${output.promotionEligible}`);
     console.log(`explanation=${output.explanation}`);
     console.log(`record=${output.record}`);
+    if (output.remoteMainEvidence) {
+      console.log(`remoteMainEvidence=${output.remoteMainEvidence}`);
+    }
+    if (output.orphanedAttemptIds.length) {
+      console.log(`orphanedAttempts=${output.orphanedAttemptIds.join(",")}`);
+    }
     if (output.failureReasons.length) {
       console.log(`failureReasons=${output.failureReasons.join(",")}`);
     }

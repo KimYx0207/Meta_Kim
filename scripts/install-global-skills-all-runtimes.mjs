@@ -12,7 +12,8 @@
  *   --dry-run         print actions only
  *   --plugins-only    only run `claude plugin install` (no git clones)
  *   --skip-plugins    skip `claude plugin install` even if defaults apply
- *   --skills=id,...   install only these manifest skill ids (omit = all)
+ *   --all             install/update every manifest skill (explicit)
+ *   --skills=id,...   install/update only these manifest skill ids
  *   --lang <code>     localize installer output (en, zh-CN, ja-JP, ko-KR)
  *   --prefer-local-dependencies
  *                     prefer local sibling dependency checkouts for testing
@@ -47,7 +48,9 @@ import {
 } from "./install-error-classifier.mjs";
 import {
   CATEGORIES,
+  directoryClosureSync,
   manifestPathFor,
+  openRecorder,
   readManifest,
 } from "./install-manifest.mjs";
 import {
@@ -203,6 +206,7 @@ function guideAlreadyHasGraphifySection(platform) {
 const cliArgs = process.argv.slice(2);
 const directInvocation = process.argv[1] === fileURLToPath(import.meta.url);
 const INSTALLER_BOOLEAN_FLAGS = new Set([
+  "--all",
   "--update",
   "--dry-run",
   "--plugins-only",
@@ -243,6 +247,7 @@ function installerHelpText() {
     "",
     "Options:",
     "  --update                    update installed skills",
+    "  --all                       explicitly select all manifest skills",
     "  --targets <ids>             comma-separated runtime ids",
     "  --skills <ids>              comma-separated skill ids",
     "  --lang <code>               localize output (en, zh, zh-CN, ja, ja-JP, ko, ko-KR)",
@@ -258,6 +263,12 @@ function installerHelpText() {
 }
 
 function validateInstallerArgs(argv) {
+  const hasAll = argv.includes("--all");
+  const hasSkills = argv.some(
+    (arg) => arg === "--skills" || arg.startsWith("--skills="),
+  );
+  const pluginsOnly = argv.includes("--plugins-only");
+  const help = argv.includes("--help") || argv.includes("-h");
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "-h" || arg === "--help") continue;
@@ -286,6 +297,65 @@ function validateInstallerArgs(argv) {
       continue;
     }
     throw new Error(`Unknown installer argument: ${arg}`);
+  }
+  if (!help && hasAll && hasSkills) {
+    throw new Error("--all and --skills are mutually exclusive");
+  }
+  if (!help && !pluginsOnly && !hasAll && !hasSkills) {
+    throw new Error(
+      "dependency install requires an explicit selection: use --all or --skills <ids>",
+    );
+  }
+}
+
+async function recordManagedDependencyReceipts(homes, activeTargets) {
+  if (dryRun || pluginsOnly) return;
+  const packageVersion = JSON.parse(
+    readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+  ).version;
+  const recorder = openRecorder({
+    scope: "global",
+    metaKimVersion: packageVersion,
+  });
+  const recorded = new Set();
+  for (const runtimeId of activeTargets) {
+    const runtimeHome = homes[runtimeId];
+    if (!runtimeHome) continue;
+    for (const spec of SKILL_REPOS) {
+      if (!usesGenericSkillInstall(spec)) continue;
+      if (spec.targets && !spec.targets.includes(runtimeId)) continue;
+      const targetDirs = [resolveSkillTargetDir(runtimeHome, spec, runtimeId)];
+      if (runtimeId === "codex" && spec.id === "meta-skill-creator") {
+        targetDirs.push(path.join(runtimeHome, "skills", spec.id));
+      }
+      for (const targetDir of targetDirs) {
+        const key = managedDependencyTargetKey(targetDir);
+        if (recorded.has(key) || !(await pathExists(targetDir))) continue;
+        const previousEntry = globalManagedSkillPaths.find((entry) => {
+          if (managedDependencyTargetKey(entry.path) !== key) return false;
+          if (entry.purpose !== `${spec.id}-global-skill`) return false;
+          return true;
+        });
+        const currentClosure = directoryClosureSync(targetDir);
+        if (!shouldRecordManagedDependencyTarget({
+          wasWritten: managedDependencyTargetsWritten.has(key),
+          previousEntry,
+          currentClosure,
+        })) {
+          continue;
+        }
+        recorded.add(key);
+        recorder.recordDir(targetDir, {
+          source: "install-global-skills-all-runtimes",
+          purpose: `${spec.id}-global-skill`,
+          category: CATEGORIES.A,
+        });
+      }
+    }
+  }
+  const result = await recorder.flush();
+  if (!result.ok) {
+    throw new Error(`dependency ownership receipt flush failed: ${result.error}`);
   }
 }
 
@@ -336,6 +406,30 @@ const installFailures = [];
 const archiveFallbacks = [];
 const repairedInstallRoots = [];
 const sanitizedSkillIssues = [];
+const managedDependencyTargetsWritten = new Set();
+
+function managedDependencyTargetKey(targetDir) {
+  const resolved = path.resolve(targetDir);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function markManagedDependencyTargetWritten(targetDir) {
+  managedDependencyTargetsWritten.add(managedDependencyTargetKey(targetDir));
+}
+
+function shouldRecordManagedDependencyTarget({
+  wasWritten = false,
+  previousEntry = null,
+  currentClosure = null,
+} = {}) {
+  if (wasWritten) return true;
+  return Boolean(
+    previousEntry &&
+    currentClosure &&
+    currentClosure.sha256 === previousEntry.directoryClosureSha256 &&
+    currentClosure.entryCount === previousEntry.directoryClosureEntryCount,
+  );
+}
 
 // ── Log file tee ───────────────────────────────────────────────────────────
 
@@ -1273,6 +1367,7 @@ async function transactionalReplaceMetaSkillTargets(
   for (const { backup } of backups) {
     await rmDirBestEffortLocked(backup);
   }
+  for (const target of targets) markManagedDependencyTargetWritten(target);
 }
 
 function testMetaSkillSourceDir() {
@@ -1948,6 +2043,7 @@ async function installViaArchiveFallback({
         requestedUrl: archiveUrl,
         resolvedUrl: response.url,
     });
+    markManagedDependencyTargetWritten(targetDir);
     archiveFallbacks.push({ skillId, targetDir: displayTargetDir, category });
     console.warn(
       `${C.yellow}⚠${C.reset} ${t.warnArchiveFallback(skillId, category)}`,
@@ -2102,6 +2198,7 @@ async function installGitSkill(skillId, targetDir, repoUrl) {
             cwd: targetDir,
             skillLabel: `pull ${skillId}`,
           });
+          markManagedDependencyTargetWritten(targetDir);
           console.log(`${C.green}✓${C.reset} ${t.okUpdated(targetDir)}`);
         } catch {
           console.warn(`${C.yellow}⚠${C.reset} ${t.warnPullFailed(targetDir)}`);
@@ -2127,6 +2224,7 @@ async function installGitSkill(skillId, targetDir, repoUrl) {
               !(await isEmptyDir(stagedDir))
             ) {
               await replaceTargetDir(targetDir, stagedDir);
+              markManagedDependencyTargetWritten(targetDir);
               console.log(`${C.green}✓${C.reset} ${t.okUpdated(targetDir)}`);
             } else if (installFailures.length === failureCountBeforeFallback) {
               recordInstallFailure({
@@ -2171,6 +2269,7 @@ async function installGitSkill(skillId, targetDir, repoUrl) {
       runGit(["clone", "--depth", "1", repoUrl, targetDir], {
         skillLabel: `clone ${skillId}`,
       });
+      markManagedDependencyTargetWritten(targetDir);
       console.log(`${C.green}✓${C.reset} ${t.okCloned(targetDir)}`);
     } catch (error) {
       await handleGitFailure({
@@ -2284,6 +2383,7 @@ async function installGitSkillFromSubdir(
     !(await isEmptyDir(stagedTargetDir))
   ) {
     await replaceTargetDir(targetDir, stagedTargetDir);
+    markManagedDependencyTargetWritten(targetDir);
     console.log(
       `${C.green}✓${C.reset} ${t.okBasename(path.basename(targetDir), targetDir)}`,
     );
@@ -3967,6 +4067,7 @@ async function deployStagedSkill(stagedPath, targetDir, skillId, subdirPath) {
     await fs.cp(stagedPath, stagedCopy, { recursive: true, force: true });
     if ((await pathExists(stagedCopy)) && !(await isEmptyDir(stagedCopy))) {
       await replaceTargetDir(targetDir, stagedCopy);
+      markManagedDependencyTargetWritten(targetDir);
       console.log(
         `${C.green}✓${C.reset} ${t.okBasename(path.basename(targetDir), targetDir)}`,
       );
@@ -4237,6 +4338,7 @@ async function main() {
   await installUpstreamCliSpecs(homes, activeTargets);
   await installPluginBundlesForNonClaudeRuntimes(homes, activeTargets);
   await ensureCodexChoiceSurfaceAfterInstall(homes, activeTargets);
+  await recordManagedDependencyReceipts(homes, activeTargets);
   if (!skipInventoryRefresh) refreshGlobalCapabilityInventory(activeTargets);
 
   // Optional: graphify (code knowledge graph)
@@ -5563,6 +5665,7 @@ export {
   directoryContentEqual,
   resolveOsUserHome,
   resolveSkillTargetDir,
+  shouldRecordManagedDependencyTarget,
   transactionalReplaceMetaSkillTargets,
   validateInstallerArgs,
   validateMetaSkillCreatorPackage,

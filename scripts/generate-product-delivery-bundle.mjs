@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createReportContext } from "./report-context.mjs";
+import { importDatabaseSync } from "../src/data/sqlite/runtime.mjs";
 
 const reportContext = createReportContext();
 const REPO_ROOT = reportContext.repoRoot;
@@ -17,14 +20,22 @@ const SCENARIO_PATH = path.join(
   "scenarios",
   "reviewer-calibration-samples.json",
 );
-const OUTPUT_DIR = reportContext.resolveStatePath("product-delivery-bundle");
-const BUNDLE_RUN_ID = `product-delivery-bundle-${process.pid}`;
+function argValue(name, fallback = null) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : fallback;
+}
+
+const OUTPUT_DIR = path.resolve(
+  argValue("--state-dir", reportContext.resolveStatePath("product-delivery-bundle")),
+);
+const BUNDLE_TASK =
+  "Generate an AI-readable product delivery bundle with design, execution, acceptance, feedback, deliverables, reviewer calibration, runtime evidence, GitHub delta, and research evidence.";
 
 const componentCommands = {
   governedRun: [
     "scripts/run-meta-theory-governed-execution.mjs",
     "--task",
-    "Generate an AI-readable product delivery bundle with design, execution, acceptance, feedback, deliverables, reviewer calibration, runtime evidence, GitHub delta, and research evidence.",
+    BUNDLE_TASK,
   ],
   deliverables: ["scripts/generate-meta-theory-run-deliverables.mjs"],
   githubGap: ["scripts/generate-github-gap-report.mjs"],
@@ -35,6 +46,13 @@ const componentCommands = {
 };
 
 const relativeToRepo = reportContext.relativeToRepo;
+
+function publicOutputPath(filePath) {
+  const relative = relativeToRepo(filePath);
+  return path.isAbsolute(relative) || hasLocalAbsolutePath(relative)
+    ? `@state/product-delivery-bundle/${path.basename(filePath)}`
+    : relative;
+}
 
 function parseJsonFromStdout(stdout) {
   const jsonStart = stdout.indexOf("{");
@@ -50,24 +68,217 @@ function tryParseJsonFromStdout(stdout) {
   }
 }
 
-function runNodeScript(args) {
+function sha256Bytes(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function governedArtifactPaths(stateDir, runId, language = "en") {
+  return {
+    artifactPath: path.join(stateDir, `${runId}.json`),
+    markdownPath: path.join(stateDir, `${runId}.${language}.md`),
+    reservationPath: path.join(stateDir, `${runId}.reservation.json`),
+  };
+}
+
+async function atomicWriteText(filePath, text) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporary, text, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await fs.rename(temporary, filePath);
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
+}
+
+async function readBundleLifecycleRow(dbPath, runId) {
+  let db;
+  try {
+    const DatabaseSync = await importDatabaseSync();
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    return db.prepare(`
+      SELECT run_id, status, artifact_status, task_fingerprint, bundle_identity,
+             json_sha256, markdown_sha256
+      FROM product_delivery_bundle_runs
+      WHERE run_id = ?
+    `).get(runId) ?? null;
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
+async function loadReusableGovernedRun({ runId, stateDir, dbPath, bundleIdentity }) {
+  const artifactPath = path.join(stateDir, `${runId}.json`);
+  const reservationPath = path.join(stateDir, `${runId}.reservation.json`);
+  if (![artifactPath, reservationPath, dbPath].every(existsSync)) return null;
+  try {
+    const artifact = JSON.parse(statSync(artifactPath).size > 0
+      ? requireText(artifactPath)
+      : "null");
+    const reservation = JSON.parse(requireText(reservationPath));
+    const language = artifact?.resolvedOutputLanguage ?? "en";
+    const markdownPath = path.join(stateDir, `${runId}.${language}.md`);
+    if (!existsSync(markdownPath)) return null;
+    const jsonSha256 = sha256Bytes(readFileSync(artifactPath));
+    const markdownSha256 = sha256Bytes(readFileSync(markdownPath));
+    const expectedStagingRefs = {
+      json: `.${runId}.json.staging`,
+      markdown: `.${runId}.${language}.md.staging`,
+    };
+    const expectedArtifactRefs = {
+      json: path.basename(artifactPath),
+      markdown: path.basename(markdownPath),
+    };
+    const lifecycleRow = await readBundleLifecycleRow(dbPath, runId);
+    if (
+      artifact?.schemaVersion !== 1 ||
+      artifact?.runId !== runId ||
+      artifact?.task !== BUNDLE_TASK ||
+      !["pass", "partial"].includes(artifact?.status) ||
+      reservation?.schemaVersion !== "governed-run-reservation-v0.1" ||
+      reservation?.runId !== runId ||
+      reservation?.taskFingerprint !== artifact.taskFingerprint ||
+      reservation?.phase !== "materialized" ||
+      reservation?.status !== "materialized" ||
+      reservation?.jsonSha256 !== jsonSha256 ||
+      reservation?.markdownSha256 !== markdownSha256 ||
+      JSON.stringify(reservation?.stagingRefs) !== JSON.stringify(expectedStagingRefs) ||
+      JSON.stringify(reservation?.artifactRefs) !== JSON.stringify(expectedArtifactRefs) ||
+      statSync(dbPath).size <= 0 ||
+      lifecycleRow?.run_id !== runId ||
+      lifecycleRow?.status !== "materialized" ||
+      lifecycleRow?.artifact_status !== artifact.status ||
+      lifecycleRow?.task_fingerprint !== artifact.taskFingerprint ||
+      lifecycleRow?.bundle_identity !== bundleIdentity ||
+      lifecycleRow?.json_sha256 !== jsonSha256 ||
+      lifecycleRow?.markdown_sha256 !== markdownSha256
+    ) {
+      return null;
+    }
+    return {
+      status: artifact.status,
+      runId,
+      report: relativeToRepo(artifactPath),
+      reusedGovernedRun: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function requireText(filePath) {
+  return readFileSync(filePath, "utf8");
+}
+
+async function finalizeGovernedRunLifecycle(lifecycle) {
+  const provisionalArtifactPath = path.join(lifecycle.stateDir, `${lifecycle.runId}.json`);
+  const artifact = JSON.parse(requireText(provisionalArtifactPath));
+  if (
+    artifact?.schemaVersion !== 1 ||
+    artifact?.runId !== lifecycle.runId ||
+    artifact?.task !== BUNDLE_TASK ||
+    !["pass", "partial"].includes(artifact?.status) ||
+    typeof artifact?.taskFingerprint !== "string" ||
+    !artifact.taskFingerprint
+  ) {
+    throw new Error("Governed bundle artifact is incomplete and cannot be finalized.");
+  }
+  const language = artifact.resolvedOutputLanguage ?? "en";
+  const paths = governedArtifactPaths(lifecycle.stateDir, lifecycle.runId, language);
+  if (!existsSync(paths.markdownPath)) {
+    throw new Error("Governed bundle markdown is missing and cannot be finalized.");
+  }
+  const jsonSha256 = sha256Bytes(readFileSync(paths.artifactPath));
+  const markdownSha256 = sha256Bytes(readFileSync(paths.markdownPath));
+  let priorReservation = {};
+  try {
+    priorReservation = JSON.parse(requireText(paths.reservationPath));
+  } catch {
+    // A missing or malformed managed reservation is reconstructed from the finished pair.
+  }
+  const now = new Date().toISOString();
+  const reservation = {
+    schemaVersion: "governed-run-reservation-v0.1",
+    runId: lifecycle.runId,
+    taskFingerprint: artifact.taskFingerprint,
+    status: "materialized",
+    phase: "materialized",
+    jsonSha256,
+    markdownSha256,
+    stagingRefs: {
+      json: `.${lifecycle.runId}.json.staging`,
+      markdown: `.${lifecycle.runId}.${language}.md.staging`,
+    },
+    artifactRefs: {
+      json: path.basename(paths.artifactPath),
+      markdown: path.basename(paths.markdownPath),
+    },
+    reservedAt: priorReservation.reservedAt ?? now,
+    updatedAt: now,
+  };
+  await atomicWriteText(paths.reservationPath, `${JSON.stringify(reservation, null, 2)}\n`);
+
+  const DatabaseSync = await importDatabaseSync();
+  const db = new DatabaseSync(lifecycle.dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS product_delivery_bundle_runs (
+        run_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        artifact_status TEXT NOT NULL,
+        task_fingerprint TEXT NOT NULL,
+        bundle_identity TEXT NOT NULL,
+        json_sha256 TEXT NOT NULL,
+        markdown_sha256 TEXT NOT NULL,
+        materialized_at TEXT NOT NULL
+      )
+    `);
+    db.prepare(`
+      INSERT OR REPLACE INTO product_delivery_bundle_runs
+      (run_id, status, artifact_status, task_fingerprint, bundle_identity,
+       json_sha256, markdown_sha256, materialized_at)
+      VALUES (?, 'materialized', ?, ?, ?, ?, ?, ?)
+    `).run(
+      lifecycle.runId,
+      artifact.status,
+      artifact.taskFingerprint,
+      lifecycle.bundleIdentity,
+      jsonSha256,
+      markdownSha256,
+      now,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+async function runNodeScript(args, lifecycle) {
   const commandArgs = [...args];
   if (commandArgs[0] === "scripts/run-meta-theory-governed-execution.mjs") {
+    const reusable = await loadReusableGovernedRun(lifecycle);
+    if (reusable) return reusable;
+    const managedRunExists = [
+      path.join(lifecycle.stateDir, `${lifecycle.runId}.json`),
+      path.join(lifecycle.stateDir, `${lifecycle.runId}.reservation.json`),
+    ].some(existsSync);
     commandArgs.push(
       "--run-id",
-      BUNDLE_RUN_ID,
+      lifecycle.runId,
       "--state-dir",
-      OUTPUT_DIR,
+      lifecycle.stateDir,
       "--db",
-      path.join(OUTPUT_DIR, `governed-${process.pid}.sqlite`),
+      lifecycle.dbPath,
     );
+    if (managedRunExists) commandArgs.push("--overwrite-run");
   }
   if (commandArgs[0] === "scripts/generate-meta-theory-run-deliverables.mjs") {
     commandArgs.push(
       "--run-id",
-      BUNDLE_RUN_ID,
+      lifecycle.runId,
       "--state-dir",
-      OUTPUT_DIR,
+      lifecycle.stateDir,
     );
   }
   const allowPartialNonzero =
@@ -79,14 +290,20 @@ function runNodeScript(args) {
   });
   const parsed = result.stdout ? tryParseJsonFromStdout(result.stdout) : null;
   if (result.status !== 0 && allowPartialNonzero && parsed?.status === "partial") {
-    return parsed;
+    await finalizeGovernedRunLifecycle(lifecycle);
+    return { ...parsed, reusedGovernedRun: false };
   }
   if (result.status !== 0) {
     throw new Error(
       result.stderr || result.stdout || `Command failed: node ${commandArgs.join(" ")}`,
     );
   }
-  return parsed ?? parseJsonFromStdout(result.stdout);
+  const output = parsed ?? parseJsonFromStdout(result.stdout);
+  if (commandArgs[0] === "scripts/run-meta-theory-governed-execution.mjs") {
+    await finalizeGovernedRunLifecycle(lifecycle);
+    return { ...output, reusedGovernedRun: false };
+  }
+  return output;
 }
 
 function hasLocalAbsolutePath(value) {
@@ -167,17 +384,86 @@ function buildMarkdown(report) {
   return `${lines.join("\n")}\n`;
 }
 
+async function resolveLocalImport(parentFile, specifier) {
+  const base = path.resolve(path.dirname(parentFile), specifier);
+  const candidates = [
+    base,
+    `${base}.mjs`,
+    `${base}.js`,
+    `${base}.json`,
+    path.join(base, "index.mjs"),
+    path.join(base, "index.js"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if ((await fs.stat(candidate)).isFile()) return candidate;
+    } catch {
+      // Continue through deterministic local import candidates.
+    }
+  }
+  return null;
+}
+
+async function dependencyClosureDigest(entryFiles) {
+  const pending = [...new Set(entryFiles.map((file) => path.resolve(file)))];
+  const sources = new Map();
+  while (pending.length > 0) {
+    const filePath = pending.pop();
+    if (sources.has(filePath)) continue;
+    const bytes = await fs.readFile(filePath);
+    sources.set(filePath, bytes);
+    if (!/\.[cm]?js$/u.test(filePath)) continue;
+    const text = bytes.toString("utf8");
+    const importPattern = /(?:from\s*|import\s*(?:\(\s*)?)["'](\.[^"']+)["']/gu;
+    for (const match of text.matchAll(importPattern)) {
+      const dependency = await resolveLocalImport(filePath, match[1]);
+      if (dependency && !sources.has(dependency)) pending.push(dependency);
+    }
+  }
+  const hash = createHash("sha256");
+  for (const [filePath, bytes] of [...sources.entries()].sort(([left], [right]) =>
+    left.localeCompare(right))) {
+    hash.update(path.relative(REPO_ROOT, filePath).replaceAll("\\", "/"));
+    hash.update("\0");
+    hash.update(bytes);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
 async function main() {
   const contract = JSON.parse(await fs.readFile(CONTRACT_PATH, "utf8"));
   const scenario = JSON.parse(await fs.readFile(SCENARIO_PATH, "utf8"));
 
-  const governedRun = runNodeScript(componentCommands.governedRun);
-  const deliverables = runNodeScript(componentCommands.deliverables);
-  const githubGap = runNodeScript(componentCommands.githubGap);
-  const runtimeMatrix = runNodeScript(componentCommands.runtimeMatrix);
-  const orchestrationDag = runNodeScript(componentCommands.orchestrationDag);
-  const research = runNodeScript(componentCommands.research);
-  const feedback = runNodeScript(componentCommands.feedback);
+  const sourceClosureDigest = await dependencyClosureDigest([
+    fileURLToPath(import.meta.url),
+    ...Object.values(componentCommands).map((command) => path.join(REPO_ROOT, command[0])),
+  ]);
+  const bundleIdentity = createHash("sha256")
+    .update(JSON.stringify({
+      lifecycleSchema: "product-delivery-bundle-lifecycle-v1",
+      task: BUNDLE_TASK,
+      contract,
+      scenario,
+      componentCommands,
+      sourceClosureDigest,
+    }))
+    .digest("hex")
+    .slice(0, 16);
+  const lifecycle = {
+    runId: `product-delivery-bundle-${bundleIdentity}`,
+    stateDir: OUTPUT_DIR,
+    dbPath: path.join(OUTPUT_DIR, `governed-${bundleIdentity}.sqlite`),
+    bundleIdentity,
+  };
+
+  const governedRun = await runNodeScript(componentCommands.governedRun, lifecycle);
+  const deliverables = await runNodeScript(componentCommands.deliverables, lifecycle);
+  const githubGap = await runNodeScript(componentCommands.githubGap, lifecycle);
+  const runtimeMatrix = await runNodeScript(componentCommands.runtimeMatrix, lifecycle);
+  const orchestrationDag = await runNodeScript(componentCommands.orchestrationDag, lifecycle);
+  const research = await runNodeScript(componentCommands.research, lifecycle);
+  const feedback = await runNodeScript(componentCommands.feedback, lifecycle);
 
   const files = {
     panelHtml: {
@@ -270,12 +556,12 @@ async function main() {
   const jsonPath = path.join(OUTPUT_DIR, "latest.json");
   const mdPath = path.join(OUTPUT_DIR, "latest.zh-CN.md");
   files.bundleManifest = {
-    path: relativeToRepo(jsonPath),
+    path: publicOutputPath(jsonPath),
     audience: "automation",
     reviewUse: "Machine-readable bundle manifest.",
   };
   files.bundleMarkdown = {
-    path: relativeToRepo(mdPath),
+    path: publicOutputPath(mdPath),
     audience: "reviewer",
     reviewUse: "Human-readable product delivery bundle.",
   };
@@ -303,6 +589,12 @@ async function main() {
   const report = {
     schemaVersion: "product-delivery-bundle-v0.1",
     generatedAt: new Date().toISOString(),
+    lifecycle: {
+      bundleIdentity,
+      sourceClosureDigest,
+      governedRunId: lifecycle.runId,
+      governedRunReused: governedRun.reusedGovernedRun === true,
+    },
     contract: relativeToRepo(CONTRACT_PATH),
     scenario: relativeToRepo(SCENARIO_PATH),
     status,
@@ -324,14 +616,18 @@ async function main() {
       {
         ok: report.status === "pass",
         status: report.status,
-        report: relativeToRepo(jsonPath),
-        markdown: relativeToRepo(mdPath),
+        report: publicOutputPath(jsonPath),
+        markdown: publicOutputPath(mdPath),
         fileCount: report.summary.fileCount,
         requiredSectionsCovered: report.summary.requiredSectionsCovered,
         governedRunStatus: report.summary.governedRunStatus,
         scoringSampleCount: report.reviewerCalibration.sampleCount,
         missingPitfalls: report.reviewerCalibration.missingPitfalls,
         privacyStatus: report.privacyCheck.status,
+        bundleIdentity,
+        sourceClosureDigest,
+        governedRunId: lifecycle.runId,
+        reusedGovernedRun: governedRun.reusedGovernedRun === true,
       },
       null,
       2,

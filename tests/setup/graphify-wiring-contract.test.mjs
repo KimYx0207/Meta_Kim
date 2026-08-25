@@ -59,7 +59,7 @@ describe("graphify idempotent wiring (contract)", () => {
     assert.match(src, /function runRebuild\(\)/);
     assert.match(
       src,
-      /\[\s*"extract",\s*"\.",\s*"--force",\s*\.\.\.migrationBackendArgs,?\s*\]/,
+      /\[\s*"extract",\s*"\.",\s*"--force",\s*\.\.\.\(migrationCodeOnly \? \["--code-only"\] : migrationBackendArgs\),?\s*\]/,
     );
     assert.match(src, /\["update", "\."\]/);
     assert.match(src, /graphIdentityMigrationPlan\(/);

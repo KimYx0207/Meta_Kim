@@ -38,6 +38,14 @@ import {
   DEFAULT_RELEASE_METADATA_TIMEOUT_MS,
   resolveTimeoutMs,
 } from "./release-network.mjs";
+import {
+  flushFile,
+  flushParentDirectory,
+  getProcessStartIdentity,
+  lockOwnerAppearsLive,
+  RELEASE_STATE_DURABILITY,
+  sanitizeUserVisibleText,
+} from "./release-state-hardening.mjs";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLANNING_FILES = ["task_plan.md", "findings.md", "progress.md"];
@@ -298,6 +306,7 @@ function readAndValidateAudit(repoRoot, profile, packageVersion, head, tagCommit
     !SHA1_PATTERN.test(record.evidence?.git?.peeledTreeSha || "") ||
     record.evidence?.git?.remoteMainSha !== head ||
     record.evidence?.git?.remoteMainRelation !== "exact" ||
+    record.evidence?.git?.remoteMainEvidenceSource !== "local_tracking_ref" ||
     record.evidence?.githubRelease?.draft !== false ||
     record.evidence?.githubRelease?.prerelease !== false ||
     typeof record.evidence?.githubRelease?.url !== "string" ||
@@ -310,7 +319,7 @@ function readAndValidateAudit(repoRoot, profile, packageVersion, head, tagCommit
   ) {
     throw codedError(
       "release_audit_invalid",
-      "published release audit does not exactly bind the current version, HEAD, tag, remote main, and Release",
+      "published release audit does not exactly bind the current version, HEAD, tag, local origin/main tracking ref, and Release",
     );
   }
   return { pointer, record, recordPath };
@@ -406,24 +415,16 @@ export async function verifyPublishedReleaseExact({
   ) {
     throw codedError(
       "release_exact_recheck_failed",
-      "live GitHub release, package, verification report, tag, and remote main no longer exactly match the audit",
+      "live GitHub release, package, verification report, tag, and local origin/main tracking ref no longer exactly match the audit",
     );
   }
   return { gitFacts, githubFacts, verification, localPackage, result };
 }
 
-function processIsAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code !== "ESRCH";
-  }
-}
-
 function acquireClosureLock(repoRoot, stateDir, now) {
+  assertNoLinkedAncestors(repoRoot, stateDir, "planning closure state directory");
   mkdirSync(stateDir, { recursive: true });
+  assertNoLinkedAncestors(repoRoot, stateDir, "planning closure state directory");
   const lockPath = path.join(stateDir, "planning-closure.lock");
   const staleDir = path.join(stateDir, "stale-locks");
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -433,7 +434,13 @@ function acquireClosureLock(repoRoot, stateDir, now) {
     let handle;
     try {
       handle = openSync(lockPath, "wx", 0o600);
-      writeFileSync(handle, jsonText({ pid: process.pid, token, createdAt: now().toISOString() }));
+      writeFileSync(handle, jsonText({
+        pid: process.pid,
+        processStartIdentity: getProcessStartIdentity(process.pid),
+        token,
+        createdAt: now().toISOString(),
+      }));
+      flushFile(handle);
       closeSync(handle);
       handle = undefined;
       return () => {
@@ -458,7 +465,7 @@ function acquireClosureLock(repoRoot, stateDir, now) {
         // A malformed lock is recoverable only after it is no longer brand new.
       }
       const malformedOldEnough = !owner && Date.now() - statSync(lockPath).mtimeMs >= 2_000;
-      if ((owner && !processIsAlive(owner.pid)) || malformedOldEnough) {
+      if ((owner && !lockOwnerAppearsLive(owner)) || malformedOldEnough) {
         mkdirSync(staleDir, { recursive: true });
         assertNoLinkedAncestors(repoRoot, staleDir, "planning closure stale-locks directory");
         renameSync(
@@ -479,12 +486,18 @@ function atomicWrite(filePath, text, expectedSha256 = null) {
   try {
     handle = openSync(temporary, "wx", 0o600);
     writeFileSync(handle, text, "utf8");
+    flushFile(handle);
     closeSync(handle);
     handle = undefined;
     if (expectedSha256 != null && sha256(readFileSync(filePath)) !== expectedSha256) {
       throw codedError("planning_file_changed", "planning file changed during release-closure projection");
     }
+    const parentStats = lstatSync(path.dirname(filePath));
+    if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
+      throw codedError("path_invalid", "planning file parent changed before publication");
+    }
     renameSync(temporary, filePath);
+    flushParentDirectory(filePath);
   } finally {
     if (handle !== undefined) closeSync(handle);
     if (existsSync(temporary)) unlinkSync(temporary);
@@ -497,9 +510,15 @@ function immutableWrite(filePath, text) {
   try {
     handle = openSync(temporary, "wx", 0o600);
     writeFileSync(handle, text, "utf8");
+    flushFile(handle);
     closeSync(handle);
     handle = undefined;
+    const parentStats = lstatSync(path.dirname(filePath));
+    if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
+      throw codedError("path_invalid", "release evidence parent changed before publication");
+    }
     linkSync(temporary, filePath);
+    flushParentDirectory(filePath);
   } finally {
     if (handle !== undefined) closeSync(handle);
     if (existsSync(temporary)) unlinkSync(temporary);
@@ -619,13 +638,16 @@ function validateExistingClosureRecord(recordPath, expected) {
     "planningFiles",
     "releaseBoundAt",
     "recordedAt",
+    "storageDurability",
     "projectionResults",
     "recordHash",
   ].sort();
+  const legacyAllowedKeys = allowedKeys.filter((key) => key !== "storageDurability");
+  const actualKeys = canonicalJson(Object.keys(current).sort());
   if (
     !SHA256_PATTERN.test(recordHash || "") ||
     recordHash !== sha256(canonicalJson(withoutHash)) ||
-    canonicalJson(Object.keys(current).sort()) !== canonicalJson(allowedKeys) ||
+    ![canonicalJson(allowedKeys), canonicalJson(legacyAllowedKeys)].includes(actualKeys) ||
     !Array.isArray(current.planningFiles) ||
     new Set(current.planningFiles).size !== current.planningFiles.length ||
     !current.planningFiles.every((file) => PLANNING_FILES.includes(file)) ||
@@ -1008,6 +1030,7 @@ export async function recordReleasePlanningClosure({
       planningFiles: existingPlanningFiles,
       releaseBoundAt: lockedAudit.record.createdAt,
       recordedAt: now().toISOString(),
+      storageDurability: RELEASE_STATE_DURABILITY,
     };
     const recordName = `${issueId}-${tag}-${lockedAudit.record.attemptId}.json`;
     const recordPath = path.join(stateDir, recordName);
@@ -1114,7 +1137,9 @@ async function main() {
   try {
     options = cliOptions(process.argv.slice(2));
   } catch (error) {
-    console.error(`meta-kim release close: ${error.message}`);
+    console.error(`meta-kim release close: ${sanitizeUserVisibleText(error.message, {
+      roots: [process.cwd(), process.env.USERPROFILE].filter(Boolean),
+    })}`);
     console.error(usage());
     process.exit(2);
   }
@@ -1149,7 +1174,10 @@ async function main() {
       console.log(`record=${output.record}`);
     }
   } catch (error) {
-    console.error(`meta-kim release close: ${error.code || "failed"}: ${error.message}`);
+    const safeMessage = sanitizeUserVisibleText(error.message, {
+      roots: [process.cwd(), process.env.USERPROFILE].filter(Boolean),
+    });
+    console.error(`meta-kim release close: ${error.code || "failed"}: ${safeMessage}`);
     process.exit(1);
   }
 }

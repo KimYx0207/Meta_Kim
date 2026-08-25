@@ -112,9 +112,6 @@ const LEGACY_TOML_MERGE_FIELDS = new Set([
   "mergedSettingsKeys",
 ]);
 
-// P156 remains intentionally pending: content-addressed artifact reuse needs
-// a real consumer and a content-integrity design before it belongs here.
-
 export const CATEGORIES = Object.freeze({
   A: "A",
   B: "B",

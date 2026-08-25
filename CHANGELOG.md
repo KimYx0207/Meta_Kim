@@ -6,6 +6,20 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [3.0.4] - 2026-08-25
+
+### Changed
+
+- **Dependency installation is explicit and auditable.** Direct installer runs now require `--all` or an explicit `--skills` selection. Reference-only projects are never installed, and installed providers are promoted to active only through an exact managed receipt plus run-bound evidence.
+- **Large product-delivery runs reuse verified state.** Identical inputs reuse one stable run, SQLite database, and reservation only after the JSON, Markdown, reservation, database terminal state, and recursive source closure all match. Partial or tampered state is rebuilt without deleting history.
+- **Graphify reports semantic coverage honestly.** Diagnostics distinguish expected non-graph assets and configuration from missing semantic sources, persist content-bound evidence, and report real cross-source ID collisions without manufacturing placeholder nodes.
+
+### Fixed
+
+- **Release evidence is safer under crashes and concurrent maintainers.** Attempt journals report orphan records, locks bind PID plus process-start identity, persisted evidence is flushed where the platform supports it, optional release-asset download verification is explicit, and diagnostics redact unrelated absolute paths.
+- **Capability discovery is deterministic.** An unchanged canonical capability index is a byte-for-byte and mtime-preserving no-op; project MCP projections can no longer leak into canonical discovery.
+- **Tests no longer inflate the real default state directory.** Product-bundle acceptance uses isolated state and repeated identical runs do not create another full artifact set.
+
 ## [3.0.3] - 2026-08-25
 
 ### Changed

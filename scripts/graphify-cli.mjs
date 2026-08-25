@@ -52,6 +52,10 @@ import {
   GRAPH_NODE_IDENTITY_SCHEMA,
   validateGraphNodeIdentity,
 } from "./graphify-node-identity.mjs";
+import {
+  analyzeGraphSemanticCoverage,
+  writeGraphSemanticCoverageArtifact,
+} from "./graphify-semantic-diagnostics.mjs";
 import { homedir } from "node:os";
 import { sanitizeGraphifyWindowsHooks } from "./graphify-hook-sanitize.mjs";
 import { renameWithTransientRetry } from "./transient-rename.mjs";
@@ -617,6 +621,24 @@ function readGraphifyAnalysisSidecar(paths) {
   return JSON.parse(readFileSync(paths.analysisPath, "utf8"));
 }
 
+function readGraphifyManifest(paths) {
+  const manifestPath = path.join(paths.output, "manifest.json");
+  if (!existsSync(manifestPath)) return null;
+  const stats = lstatSync(manifestPath);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error("Graphify manifest must be a plain file");
+  }
+  const realOutput = realpathSync.native(paths.output);
+  const realManifest = realpathSync.native(manifestPath);
+  if (
+    !isContained(realOutput, realManifest) ||
+    pathIdentity(realManifest) !== pathIdentity(manifestPath)
+  ) {
+    throw new Error("Graphify manifest resolves outside graphify-out");
+  }
+  return JSON.parse(readFileSync(manifestPath, "utf8"));
+}
+
 function sanitizeGraphifyAnalysisFile(
   paths,
   graph,
@@ -646,7 +668,11 @@ function sanitizeGraphifyAnalysisFile(
   return { analysis, sanitization };
 }
 
-function checkGraphFreshness(cwd = process.cwd(), runtimeBinding = null) {
+function checkGraphFreshness(
+  cwd = process.cwd(),
+  runtimeBinding = null,
+  { persistDiagnostics = false } = {},
+) {
   const repository = readRepositoryContext(cwd);
   if (!repository) {
     fail("Graphify check must run from the real Git repository root");
@@ -755,6 +781,40 @@ function checkGraphFreshness(cwd = process.cwd(), runtimeBinding = null) {
     counts.communities !== actualCounts.communities
   ) {
     fail("GRAPH_REPORT.md node/edge/community counts do not match graph and analysis artifacts; run npm run meta:graphify:rebuild.");
+    return false;
+  }
+
+  let semanticCoverage = null;
+  try {
+    const manifest = readGraphifyManifest(paths);
+    semanticCoverage = analyzeGraphSemanticCoverage(graph, {
+      manifest,
+      normalizeNodeId: nodeNormalizer.normalize,
+      releaseSafeIdentity: identity.ok,
+      freshnessVerified: true,
+    });
+    const evidence = semanticCoverage.evidence;
+    console.log(
+      `graphify semantic coverage: ${semanticCoverage.status} ` +
+      `(releaseSafeIdentity=${semanticCoverage.releaseSafeIdentity}; ` +
+      `freshnessVerified=${semanticCoverage.freshnessVerified}; ` +
+      `zeroNodeSources=${evidence?.zeroNodeSourceCount ?? "unavailable"}; ` +
+      `semanticIdCollisions=${evidence?.semanticIdCollisionCount ?? "unavailable"})`,
+    );
+    if (persistDiagnostics) {
+      writeGraphSemanticCoverageArtifact({
+        outputDir: paths.output,
+        diagnostics: semanticCoverage,
+        binding: {
+          builtAtCommit: repository.currentHead,
+          graphIdentityProofDigest: identity.expected.evidenceSha256,
+          graphContentSha256: identity.expected.graphContentSha256,
+          graphReportSha256: sha256(reportRaw),
+        },
+      });
+    }
+  } catch (error) {
+    fail(`Graphify semantic coverage diagnostics are unavailable: ${error.message}`);
     return false;
   }
 
@@ -927,7 +987,9 @@ function stampGraphFreshness(cwd = process.cwd(), runtimeBinding = null) {
   if (changed) {
     console.log(`graphify freshness stamped to HEAD ${repository.currentHead.slice(0, 8)}`);
   }
-  return checkGraphFreshness(repository.repoRoot, runtimeBinding);
+  return checkGraphFreshness(repository.repoRoot, runtimeBinding, {
+    persistDiagnostics: true,
+  });
 }
 
 function migrationStatePath(output) {

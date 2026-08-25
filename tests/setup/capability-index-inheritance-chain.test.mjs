@@ -29,6 +29,78 @@ const canonicalIndexPath = path.join(
   "meta-kim-capabilities.json",
 );
 
+const ISOLATED_PROJECT_EXCLUDES = new Set([
+  ".agents",
+  ".claude",
+  ".codex",
+  ".cursor",
+  ".git",
+  ".meta-kim",
+  ".planning",
+  ".reports",
+  "graphify-out",
+  "node_modules",
+  "openclaw",
+]);
+
+function isolatedProjectFilter(sourcePath) {
+  const relative = path.relative(repoRoot, sourcePath).replace(/\\/g, "/");
+  if (!relative) return true;
+  if (relative === ".mcp.json") return false;
+  const [rootEntry] = relative.split("/");
+  return !ISOLATED_PROJECT_EXCLUDES.has(rootEntry) &&
+    !rootEntry.startsWith(".meta-kim-graphify-previous-");
+}
+
+async function createIsolatedProjectCheckout() {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "meta-kim-capability-index-project-"),
+  );
+  const projectRoot = path.join(tempRoot, "repo");
+  const homeRoot = path.join(tempRoot, "home");
+  await fs.cp(repoRoot, projectRoot, {
+    recursive: true,
+    filter: isolatedProjectFilter,
+  });
+  await fs.mkdir(homeRoot, { recursive: true });
+  const dependencyLink = path.join(projectRoot, "node_modules");
+  await fs.symlink(
+    path.join(repoRoot, "node_modules"),
+    dependencyLink,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  return { tempRoot, projectRoot, homeRoot };
+}
+
+function runIsolatedNode(projectRoot, homeRoot, script, args = []) {
+  return spawnSync(
+    process.execPath,
+    [path.join(projectRoot, script), ...args],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 8,
+      env: {
+        ...process.env,
+        HOME: homeRoot,
+        USERPROFILE: homeRoot,
+        META_KIM_CALLER_CWD: projectRoot,
+        META_KIM_REPO_ROOT: projectRoot,
+        META_KIM_PROFILE: "capability-index-regression",
+        META_KIM_RUNTIME_FAMILY: "shared",
+        META_KIM_CLAUDE_HOME: path.join(homeRoot, ".claude"),
+        META_KIM_CODEX_HOME: path.join(homeRoot, ".codex"),
+        META_KIM_OPENCLAW_HOME: path.join(homeRoot, ".openclaw"),
+        META_KIM_CURSOR_HOME: path.join(homeRoot, ".cursor"),
+        CLAUDE_HOME: path.join(homeRoot, ".claude"),
+        CODEX_HOME: path.join(homeRoot, ".codex"),
+        OPENCLAW_HOME: path.join(homeRoot, ".openclaw"),
+        CURSOR_HOME: path.join(homeRoot, ".cursor"),
+      },
+    },
+  );
+}
+
 function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
@@ -599,6 +671,119 @@ describe("capability index inheritance chain", () => {
     );
   });
 
+  test("canonical MCP capability IDs are deterministic and complete", async () => {
+    const index = await readJson("config/capability-index/meta-kim-capabilities.json");
+    const actual = Object.keys(index.byCapabilityType?.mcpTools ?? {}).sort();
+    assert.deepEqual(actual, [
+      "repo:repo-mcp:meta-kim-runtime:dispatch_meta_agent",
+      "repo:repo-mcp:meta-kim-runtime:get_meta_agent",
+      "repo:repo-mcp:meta-kim-runtime:get_meta_effective_runtime_capabilities",
+      "repo:repo-mcp:meta-kim-runtime:get_meta_runtime_capabilities",
+      "repo:repo-mcp:meta-kim-runtime:get_meta_runtime_evidence",
+      "repo:repo-mcp:meta-kim-runtime:list_meta_agents",
+    ]);
+    assert.equal(index.summary?.totalMcpTools, 6);
+  });
+
+  test("canonical discovery remains byte-stable before and after isolated project sync", async () => {
+    const fixture = await createIsolatedProjectCheckout();
+    const canonicalPath = path.join(
+      fixture.projectRoot,
+      "config",
+      "capability-index",
+      "meta-kim-capabilities.json",
+    );
+    const projectOnlyPaths = [".codex", ".cursor", "openclaw"];
+
+    try {
+      for (const relativePath of projectOnlyPaths) {
+        await assert.rejects(
+          fs.access(path.join(fixture.projectRoot, relativePath)),
+          (error) => error?.code === "ENOENT",
+          `${relativePath} must be absent before isolated sync`,
+        );
+      }
+
+      const before = await fs.readFile(canonicalPath);
+      let result = runIsolatedNode(
+        fixture.projectRoot,
+        fixture.homeRoot,
+        "scripts/discover-global-capabilities.mjs",
+        ["--check"],
+      );
+      assert.equal(
+        result.status,
+        0,
+        `discover --check before sync failed:\n${result.stdout}\n${result.stderr}`,
+      );
+      assert.deepEqual(await fs.readFile(canonicalPath), before);
+
+      await fs.writeFile(
+        path.join(fixture.projectRoot, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            "user-only-server": {
+              command: "node",
+              args: ["user-only-server.mjs"],
+            },
+          },
+        }),
+      );
+      result = runIsolatedNode(
+        fixture.projectRoot,
+        fixture.homeRoot,
+        "scripts/discover-global-capabilities.mjs",
+        ["--check"],
+      );
+      assert.equal(
+        result.status,
+        0,
+        `discover --check with project MCP config failed:\n${result.stdout}\n${result.stderr}`,
+      );
+      assert.deepEqual(
+        await fs.readFile(canonicalPath),
+        before,
+        "project .mcp.json must not alter repo-canonical capability truth",
+      );
+
+      result = runIsolatedNode(
+        fixture.projectRoot,
+        fixture.homeRoot,
+        "scripts/sync-runtimes.mjs",
+        ["--scope", "project", "--targets", "claude,codex,openclaw,cursor"],
+      );
+      assert.equal(
+        result.status,
+        0,
+        `isolated meta:sync failed:\n${result.stdout}\n${result.stderr}`,
+      );
+      assert.deepEqual(
+        await fs.readFile(canonicalPath),
+        before,
+        "meta:sync must not rewrite repo-canonical capability truth",
+      );
+
+      result = runIsolatedNode(
+        fixture.projectRoot,
+        fixture.homeRoot,
+        "scripts/discover-global-capabilities.mjs",
+        ["--check"],
+      );
+      assert.equal(
+        result.status,
+        0,
+        `discover --check after sync failed:\n${result.stdout}\n${result.stderr}`,
+      );
+      assert.deepEqual(
+        await fs.readFile(canonicalPath),
+        before,
+        "canonical index bytes must remain stable after project projections exist",
+      );
+    } finally {
+      await fs.rm(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("runtime mirror capability indexes are optional in clean checkout but exact when project projections are active", async () => {
     if ((await readProjectProjectionMode()) === "global_only") {
       return;
@@ -689,6 +874,40 @@ describe("capability index inheritance chain", () => {
           (error) => error?.code === "ENOENT",
         );
       }
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("canonical writer is a byte-identical mtime no-op", async () => {
+    const tempRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "meta-kim-capability-writer-idempotence-"),
+    );
+    try {
+      const canonicalPath = path.join(tempRoot, "meta-kim-capabilities.json");
+      const index = {
+        registryName: "test-capability-index",
+        mirroredTo: [],
+        byCapabilityType: {},
+      };
+
+      const firstWrite = await writeCanonicalCapabilityIndex(canonicalPath, index);
+      assert.equal(firstWrite.changed, true);
+      const stableTime = new Date("2000-01-01T00:00:00.000Z");
+      await fs.utimes(canonicalPath, stableTime, stableTime);
+      const beforeBytes = await fs.readFile(canonicalPath);
+      const beforeStat = await fs.stat(canonicalPath, { bigint: true });
+
+      const secondWrite = await writeCanonicalCapabilityIndex(canonicalPath, index);
+
+      assert.equal(secondWrite.changed, false);
+      assert.deepEqual(await fs.readFile(canonicalPath), beforeBytes);
+      const afterStat = await fs.stat(canonicalPath, { bigint: true });
+      assert.equal(
+        afterStat.mtimeNs,
+        beforeStat.mtimeNs,
+        "same canonical bytes must not update the source mtime",
+      );
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true });
     }

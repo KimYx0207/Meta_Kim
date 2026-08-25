@@ -149,9 +149,18 @@ export async function writeCanonicalCapabilityIndex(
   repoCapabilityIndex,
 ) {
   const content = `${JSON.stringify(repoCapabilityIndex, null, 2)}\n`;
+  let existingContent = null;
+  try {
+    existingContent = await fs.readFile(canonicalIndexPath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (existingContent === content) {
+    return { path: canonicalIndexPath, content, changed: false };
+  }
   await fs.mkdir(path.dirname(canonicalIndexPath), { recursive: true });
   await fs.writeFile(canonicalIndexPath, content);
-  return { path: canonicalIndexPath, content };
+  return { path: canonicalIndexPath, content, changed: true };
 }
 
 export async function checkCanonicalCapabilityIndex(

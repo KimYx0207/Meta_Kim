@@ -4,6 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { OS_TARGETS, RUNTIMES, exists, listFiles, readJson, repoPath, stateDir, toPosix, writeJson } from "./governance-lib.mjs";
+import { CATEGORIES, directoryClosureSync, manifestPathFor, readManifest } from "./install-manifest.mjs";
+import {
+  buildOwnershipReceipt,
+  classifyDependencyLifecycle,
+  lifecycleRouteEligibility,
+} from "./dependency-lifecycle.mjs";
 
 const args = process.argv.slice(2);
 const json = args.includes("--json");
@@ -40,24 +46,116 @@ async function discoverSkillDirs() {
     "openclaw/skills",
   ];
   const globalRoots = [
-    path.join(os.homedir(), ".claude", "skills"),
-    path.join(os.homedir(), ".codex", "skills"),
-    path.join(os.homedir(), ".cursor", "skills"),
-    path.join(os.homedir(), ".openclaw", "skills"),
+    { runtime: "claude", root: path.join(os.homedir(), ".claude", "skills"), publicRoot: "~/.claude/skills" },
+    { runtime: "codex", root: path.join(os.homedir(), ".codex", "skills"), publicRoot: "~/.codex/skills" },
+    { runtime: "codex", root: path.join(os.homedir(), ".agents", "skills"), publicRoot: "~/.agents/skills" },
+    { runtime: "cursor", root: path.join(os.homedir(), ".cursor", "skills"), publicRoot: "~/.cursor/skills" },
+    { runtime: "openclaw", root: path.join(os.homedir(), ".openclaw", "skills"), publicRoot: "~/.openclaw/skills" },
   ];
   const records = [];
   for (const root of roots) {
     for (const file of await listFiles(repoPath(root), (candidate) => path.basename(candidate) === "SKILL.md")) {
-      records.push({ id: path.basename(path.dirname(file)), source: root, path: toPosix(path.relative(repoPath("."), file)), installedStatus: "project_present" });
+      records.push({
+        id: path.basename(path.dirname(file)),
+        source: root,
+        path: toPosix(path.relative(repoPath("."), file)),
+        absolutePath: file,
+        skillRoot: path.dirname(file),
+        runtime: null,
+        scope: "project",
+      });
     }
   }
-  for (const root of globalRoots) {
+  for (const { root, runtime, publicRoot } of globalRoots) {
     if (!(await exists(root))) continue;
     for (const file of await listFiles(root, (candidate) => path.basename(candidate) === "SKILL.md")) {
-      records.push({ id: path.basename(path.dirname(file)), source: toPosix(root), path: toPosix(file), installedStatus: "global_present" });
+      records.push({
+        id: path.basename(path.dirname(file)),
+        source: publicRoot,
+        path: `${publicRoot}/${toPosix(path.relative(root, file))}`,
+        absolutePath: file,
+        skillRoot: path.dirname(file),
+        runtime,
+        scope: "global",
+      });
     }
   }
   return records;
+}
+
+function publicSkillDirRecord(record) {
+  const { absolutePath, skillRoot, ...publicRecord } = record;
+  return publicRecord;
+}
+
+function samePath(left, right) {
+  if (!left || !right) return false;
+  const normalize = (value) => {
+    const resolved = path.resolve(value).replaceAll("\\", "/");
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const a = normalize(left);
+  const b = normalize(right);
+  return a === b;
+}
+
+function manifestOwnershipForSkill(record, manifest) {
+  if (record.scope !== "global" || !manifest) return null;
+  const entry = (manifest.entries ?? []).find((candidate) => {
+    if (candidate.category !== CATEGORIES.A || candidate.kind !== "dir") return false;
+    if (!samePath(candidate.path, record.skillRoot)) return false;
+    if (![
+      `${record.id}-global-skill`,
+      `${record.runtime}-global-skill`,
+    ].includes(candidate.purpose)) return false;
+    const closure = directoryClosureSync(record.skillRoot);
+    return Boolean(
+      closure &&
+      closure.sha256 === candidate.directoryClosureSha256 &&
+      closure.entryCount === candidate.directoryClosureEntryCount,
+    );
+  });
+  if (!entry) return null;
+  return buildOwnershipReceipt({
+    manifest,
+    entry,
+    runtime: record.runtime,
+    path: record.skillRoot,
+    userHome: os.homedir(),
+    repoRoot: repoPath("."),
+  });
+}
+
+function lifecycleForProject(project, skillDirs, globalManifest) {
+  const available = skillDirs.filter((record) => record.id === project.id);
+  const managed = available
+    .map((record) => manifestOwnershipForSkill(record, globalManifest))
+    .find(Boolean) ?? null;
+  const declaredReference =
+    project.invokeAs === "reference" ||
+    project.invokeAs === "notInvokable" ||
+    project.routeEligibility === "reference_only";
+  const lifecycleState = classifyDependencyLifecycle({
+    providerId: project.id,
+    isReference: declaredReference,
+    isAvailable: available.length > 0,
+    managedReceipt: managed,
+  });
+  return {
+    ...project,
+    lifecycleState,
+    installedStatus: lifecycleState,
+    lifecycleEvidence: {
+      available: available.length > 0,
+      managedOwnership: Boolean(managed),
+      activeForRun: false,
+    },
+    ...(managed ? { ownershipReceipt: managed } : {}),
+    routeEligibility: lifecycleRouteEligibility({
+      lifecycleState,
+      declaredRouteEligibility: project.routeEligibility,
+    }),
+  };
 }
 
 async function discoverGithubUrls() {
@@ -197,6 +295,7 @@ async function discover() {
   const skillDirs = await discoverSkillDirs();
   const githubUrls = await discoverGithubUrls();
   const mcpServers = await discoverMcpServers();
+  const globalManifest = readManifest(manifestPathFor("global"));
   const registryProjects = (registry.projects ?? []).map((project) => annotateMissing(normalizeProject(project)));
   const manifestProjects = (skills.skills ?? []).map((skill) => {
     const existing = registryProjects.find((project) => project.id === skill.id);
@@ -229,7 +328,9 @@ async function discover() {
   if (!registryProjects.some((project) => project.id === "kim-decision")) {
     dynamicProjects.push(await kimDecisionRecord());
   }
-  const discoveredDependencyProjects = [...registryProjects, ...manifestProjects, ...dynamicProjects].filter((project) => !projectFilter || project.id === projectFilter || project.name.toLowerCase().includes(projectFilter.toLowerCase()));
+  const discoveredDependencyProjects = [...registryProjects, ...manifestProjects, ...dynamicProjects]
+    .map((project) => lifecycleForProject(project, skillDirs, globalManifest))
+    .filter((project) => !projectFilter || project.id === projectFilter || project.name.toLowerCase().includes(projectFilter.toLowerCase()));
   return {
     generatedAt: new Date().toISOString(),
     scannedSources: {
@@ -237,7 +338,7 @@ async function discover() {
       skillsManifestCount: skills.skills?.length ?? 0,
       packageScripts: Object.keys(pkg.scripts ?? {}),
       setupExternalMentions: [...setupText.matchAll(/github|pip|npm|mcp|graphify|memory/gi)].length,
-      skillDirs,
+      skillDirs: skillDirs.map(publicSkillDirRecord),
       githubUrls,
       mcpServers,
       docsResearchDependencies: (await listFiles(repoPath("docs/research/dependencies"), (file) => file.endsWith(".md"))).map((file) => toPosix(path.relative(repoPath("."), file))),
@@ -247,18 +348,29 @@ async function discover() {
     discoveredDependencyProjects,
     localDependencyProjects: discoveredDependencyProjects.filter((project) => ["local", "mcp", "script"].includes(project.sourceType)),
     externalDependencyProjects: discoveredDependencyProjects.filter((project) => !["local", "mcp", "script"].includes(project.sourceType)),
-    rankedRoutes: discoveredDependencyProjects.filter((project) => !["reference_only", "external_reference", "blocked_for_execution", "needs_probe"].includes(project.routeEligibility)),
+    rankedRoutes: discoveredDependencyProjects.filter((project) =>
+      ["installed_provider", "active_for_run"].includes(project.lifecycleState) &&
+      !["reference_only", "external_reference", "blocked_for_execution", "needs_probe", "available_not_installed"].includes(project.routeEligibility),
+    ),
   };
 }
 
 function validateIndex(index) {
   for (const project of index.discoveredDependencyProjects ?? []) {
+    if (![
+      "reference_only",
+      "available_not_installed",
+      "installed_provider",
+      "active_for_run",
+    ].includes(project.lifecycleState)) {
+      throw new Error(`${project.id} has invalid dependency lifecycle state`);
+    }
     if (project.routeEligibility === "callable") {
       if (!project.invocationPath) throw new Error(`${project.id} callable dependency missing invocationPath`);
       if (!project.verificationMethod) throw new Error(`${project.id} callable dependency missing verificationMethod`);
     }
-    if (project.routeEligibility === "reference_only" && (index.rankedRoutes ?? []).some((route) => route.id === project.id)) {
-      throw new Error(`${project.id} reference_only dependency entered execution route`);
+    if (["reference_only", "available_not_installed"].includes(project.lifecycleState) && (index.rankedRoutes ?? []).some((route) => route.id === project.id)) {
+      throw new Error(`${project.id} ${project.lifecycleState} dependency entered execution route`);
     }
   }
   const kim = index.discoveredDependencyProjects.find((project) => project.id === "kim-decision");

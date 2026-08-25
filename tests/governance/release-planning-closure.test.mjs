@@ -51,6 +51,7 @@ function auditRecord(overrides = {}) {
         packageVersion: VERSION,
         remoteMainSha: COMMIT,
         remoteMainRelation: "exact",
+        remoteMainEvidenceSource: "local_tracking_ref",
       },
       githubRelease: {
         url: `https://github.com/example/meta-kim/releases/tag/${TAG}`,

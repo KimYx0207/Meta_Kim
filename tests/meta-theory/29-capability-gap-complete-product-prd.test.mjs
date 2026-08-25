@@ -412,7 +412,7 @@ describe(
     assert.match(a08ToA12Route, /A12 Docs Truth & 3\.0 Release Gate/);
     assert.match(
       prd,
-      /最新公开版本：v3\.0\.2（commit `9d0892010a99c081854edacb49603ca812c98cc3`；本地 `main`、`origin\/main` 与 annotated tag `v3\.0\.2` 当前一致）/,
+      /最新公开版本：v3\.0\.3（commit `6fd74a6fb0295970100bcc82f09041dbedfa3876`；`origin\/main` 与 annotated tag `v3\.0\.3` 均指向该提交；Release：`https:\/\/github\.com\/KimYx0207\/Meta_Kim\/releases\/tag\/v3\.0\.3`）/,
       "the PRD must retain the exact current public-release baseline",
     );
     assert.match(
@@ -442,9 +442,8 @@ describe(
     assert.equal(parkedRows.length, 1, "external parked work remains explicitly parked");
     assert.equal(deferredRows.length, 0, "M3-P3 is complete rather than deferred");
     const completedP3 = completedRows.find((line) => /^\| COMPLETED \| M3-P3 \|/.test(line)) ?? "";
-    assert.match(completedP3, /local_verified_gradual_cutover/);
-    assert.match(completedP3, /legacy snapshot、exact parity、逐 Gate mixed rollout、CLI 消费、聚焦测试与 package closure/);
-    assert.doesNotMatch(completedP3, /release_complete/);
+    assert.match(completedP3, /release_complete/);
+    assert.match(completedP3, /legacy snapshot、exact parity、逐 Gate mixed rollout、CLI 消费、聚焦测试、package closure、packed 新装\/更新\/重复更新/);
     assert.doesNotMatch(currentQueue, /^\| (?:COMPLETED|NEXT|PARKED|DEFERRED) \|.*ACTIVE.*$/gm);
 
     for (const id of ["M3-L01", "M3-L02", "M3-L03", "M3-L04"]) {
@@ -455,19 +454,19 @@ describe(
     }
     assert.match(
       prd,
-      /最新公开版本：v3\.0\.2（commit `9d0892010a99c081854edacb49603ca812c98cc3`；本地 `main`、`origin\/main` 与 annotated tag `v3\.0\.2` 当前一致）/,
+      /最新公开版本：v3\.0\.3（commit `6fd74a6fb0295970100bcc82f09041dbedfa3876`；`origin\/main` 与 annotated tag `v3\.0\.3` 均指向该提交；Release：`https:\/\/github\.com\/KimYx0207\/Meta_Kim\/releases\/tag\/v3\.0\.3`）/,
     );
-    assert.match(prd, /\| 26 \| P-142 \|[^\n]*\| 待处理[^\n]*not_started/);
-    assert.match(prd, /\| 33 \| P-149 \|[^\n]*\| 暂停候选[^\n]*not_started/);
-    assert.match(prd, /\| 40 \| P-156 \|[^\n]*design_pending/);
+    assert.match(prd, /\| 26 \| P-142 \|[^\n]*local_verified/);
+    assert.match(prd, /\| 33 \| P-149 \|[^\n]*local_verified_degraded_navigation/);
+    assert.match(prd, /\| 40 \| P-156 \|[^\n]*local_verified/);
     assert.match(prd, /M3-P2[^\n]*parked_external_blocked/);
-    assert.match(prd, /M3-P3[^\n]*local_verified_gradual_cutover/);
+    assert.match(prd, /M3-P3[^\n]*release_complete/);
     assert.match(prd, /P-145[^\n]*paused_unreproduced/);
-    assert.match(prd, /M3-P3 Governance Requirement 逐门切换验收候选/);
+    assert.match(prd, /M3-P3 Governance Requirement 逐门切换发布闭合/);
     assert.match(prd, /clarification、humanDecision、permission 继续 `shadow_compare`/);
     assert.match(prd, /caller-supplied facts 仅用于诊断/);
     assert.match(prd, /execution、action、permission、host 或 durable mutation/);
-    assert.match(prd, /local_verified_gradual_cutover/);
+    assert.match(prd, /v3\.0\.2→v3\.0\.3 历史升级/);
   });
 
   test("requires positive, falsification, and release evidence for completed claims", () => {

@@ -25,8 +25,14 @@ import {
   requireContainedOutput,
   runReleaseBindingAudit,
   sha256,
+  summarizeReleaseBindingAttempts,
   writeReleaseBindingAttempt,
 } from "../../scripts/audit-release-binding.mjs";
+import {
+  getProcessStartIdentity,
+  RELEASE_STATE_DURABILITY,
+  sanitizeUserVisibleText,
+} from "../../scripts/release-state-hardening.mjs";
 import { writeVerificationReportAttempt } from "../../scripts/verification-report-history.mjs";
 import { PROJECTION_PACKAGE_PURPOSE } from "../../scripts/global-projection-package-store.mjs";
 
@@ -682,6 +688,59 @@ test("attempt journal is immutable, chained, and failure preserves latest publis
   }
 });
 
+test("attempt journal reports valid orphan attempts without deleting immutable evidence", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-orphans-"));
+  try {
+    const first = writeReleaseBindingAttempt(root, attemptedRecordInput("reachable"));
+    const orphanWithoutHash = {
+      ...attemptedRecordInput("orphaned"),
+      previousRecordHash: null,
+    };
+    const orphan = {
+      ...orphanWithoutHash,
+      recordHash: sha256(canonicalJson(orphanWithoutHash)),
+    };
+    writeFileSync(
+      path.join(root, "attempts", "orphaned.json"),
+      `${JSON.stringify(orphan, null, 2)}\n`,
+    );
+
+    const summary = summarizeReleaseBindingAttempts(root);
+    assert.equal(summary.totalValidAttempts, 2);
+    assert.deepEqual(summary.reachableAttemptIds, [first.record.attemptId]);
+    assert.deepEqual(summary.orphanedAttemptIds, ["orphaned"]);
+    assert.equal(existsSync(path.join(root, "attempts", "orphaned.json")), true);
+
+    writeReleaseBindingAttempt(root, attemptedRecordInput("next"));
+    const persisted = JSON.parse(readFileSync(path.join(root, "attempt-summary.json"), "utf8"));
+    assert.deepEqual(persisted.orphanedAttemptIds, ["orphaned"]);
+    assert.equal(persisted.advisoryOnly, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release state declares crash recovery separately from power-loss durability", () => {
+  assert.equal(RELEASE_STATE_DURABILITY.crashRecovery, "hash_bound_atomic_replace");
+  assert.equal(RELEASE_STATE_DURABILITY.fileDataFlush, "fsync_before_publish");
+  assert.equal(
+    RELEASE_STATE_DURABILITY.parentDirectoryFlush,
+    process.platform === "win32"
+      ? "unsupported_by_node_on_windows"
+      : "best_effort_fsync_when_filesystem_supports_directory_handles",
+  );
+  assert.equal(RELEASE_STATE_DURABILITY.universalPowerLossDurability, false);
+});
+
+test("user-visible release errors redact unrelated absolute paths", () => {
+  const windows = sanitizeUserVisibleText("failed at Z:\\private\\release\\token.txt");
+  const posix = sanitizeUserVisibleText("failed at /srv/private/release/token.txt");
+  assert.doesNotMatch(windows, /Z:\\private/u);
+  assert.doesNotMatch(posix, /\/srv\/private/u);
+  assert.match(windows, /<path>/u);
+  assert.match(posix, /<path>/u);
+});
+
 test("journal recovers a dead-owner lock but rejects a live owner and tampered chain head", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-lock-"));
   try {
@@ -725,6 +784,31 @@ test("journal recovers a dead-owner lock but rejects a live owner and tampered c
       }),
       (error) => error.code === "audit_chain_head_invalid",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("journal recovers a reused PID when the recorded process-start identity differs", (t) => {
+  const currentIdentity = getProcessStartIdentity(process.pid);
+  if (!currentIdentity) {
+    t.skip("host cannot reliably expose process start identity");
+    return;
+  }
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-pid-reuse-"));
+  try {
+    writeFileSync(
+      path.join(root, "audit.lock"),
+      JSON.stringify({
+        pid: process.pid,
+        processStartIdentity: `${currentIdentity}-reused`,
+        token: "reused",
+        createdAt: "2020-01-01T00:00:00Z",
+      }),
+    );
+    const recovered = writeReleaseBindingAttempt(root, attemptedRecordInput("after-pid-reuse"));
+    assert.equal(recovered.record.attemptId, "after-pid-reuse");
+    assert.equal(readdirSync(path.join(root, "stale-locks")).length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -789,6 +873,61 @@ test("release audit defaults state to the caller repository and keeps timeout bu
     });
     assert.equal(facts.asset.sha256, sha256(tgz));
     assert.deepEqual(requests.map(({ timeoutMs }) => timeoutMs), [111, 111, 111, 222]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release audit downloads and verifies the GitHub asset only with explicit opt-in", async () => {
+  const root = createReleaseRepo();
+  try {
+    const gitFacts = collectGitReleaseFacts(root, "v9.9.9");
+    const tgz = minimalTgz({ name: "meta-kim", version: "9.9.9" });
+    const payload = githubPayload(gitFacts, sha256(tgz), tgz.length);
+    const requests = [];
+    const fetchImpl = async (url) => {
+      requests.push(String(url));
+      if (String(url).includes("/git/ref/tags/")) {
+        return new Response(JSON.stringify({ object: { type: "tag", sha: gitFacts.tagObjectSha } }));
+      }
+      if (String(url).includes("/git/tags/")) {
+        return new Response(JSON.stringify({ object: { type: "commit", sha: gitFacts.peeledCommitSha } }));
+      }
+      if (String(url).includes("/download/")) {
+        return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+      }
+      return new Response(JSON.stringify(payload));
+    };
+
+    const metadataOnly = await runReleaseBindingAudit({
+      repoRoot: root,
+      tagName: "v9.9.9",
+      historicalReportUnavailable: true,
+      fetchImpl,
+      now: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    assert.equal(requests.some((url) => url.includes("/download/")), false);
+    assert.equal(
+      metadataOnly.record.evidence.packageAsset.assetDownloadVerification.status,
+      "not_requested",
+    );
+
+    requests.length = 0;
+    const downloaded = await runReleaseBindingAudit({
+      repoRoot: root,
+      tagName: "v9.9.9",
+      historicalReportUnavailable: true,
+      fetchImpl,
+      verifyAssetDownload: true,
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+    assert.equal(requests.filter((url) => url.includes("/download/")).length, 1);
+    assert.deepEqual(downloaded.record.evidence.packageAsset.assetDownloadVerification, {
+      status: "passed",
+      size: tgz.length,
+      sha256: sha256(tgz),
+    });
+    assert.equal(downloaded.record.status, metadataOnly.record.status);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -976,6 +1115,7 @@ test("end-to-end audit binds annotated tag, clean report, GitHub asset digest, a
     const gitFacts = collectGitReleaseFacts(root, "v9.9.9");
     assert.match(gitFacts.tagObjectSha, /^[a-f0-9]{40}$/u);
     assert.equal(gitFacts.remoteMainRelation, "exact");
+    assert.equal(gitFacts.remoteMainEvidenceSource, "local_tracking_ref");
     const tgz = minimalTgz({ name: "meta-kim", version: "9.9.9" });
     const tgzPath = path.join(root, "meta-kim-9.9.9.tgz");
     const reportPath = path.join(root, "verification-report.json");

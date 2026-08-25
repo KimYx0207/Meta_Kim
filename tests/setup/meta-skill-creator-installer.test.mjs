@@ -22,6 +22,7 @@ import {
   normalizeInstallerSkillsFilter,
   replaceTargetDir,
   resolveSkillTargetDir,
+  shouldRecordManagedDependencyTarget,
   transactionalReplaceMetaSkillTargets,
   validateInstallerArgs,
 } from "../../scripts/install-global-skills-all-runtimes.mjs";
@@ -107,8 +108,18 @@ test("setup-compatible empty --skills is accepted while real missing values fail
   assert.deepEqual(normalizeInstallerSkillsFilter([]), []);
   assert.throws(() => validateInstallerArgs(["--targets", ""]), /requires a value/);
   assert.throws(() => validateInstallerArgs(["--skills"]), /requires a value/);
+  assert.throws(
+    () => validateInstallerArgs(["--targets", "codex"]),
+    /explicit selection/,
+  );
+  assert.throws(
+    () => validateInstallerArgs(["--all", "--skills", "ecc"]),
+    /mutually exclusive/,
+  );
+  assert.doesNotThrow(() => validateInstallerArgs(["--all", "--targets", "codex"]));
+  assert.doesNotThrow(() => validateInstallerArgs(["--help"]));
   for (const language of ["en", "zh", "zh-CN", "ja", "ja-JP", "ko", "ko-KR"]) {
-    assert.doesNotThrow(() => validateInstallerArgs([`--lang=${language}`]));
+    assert.doesNotThrow(() => validateInstallerArgs(["--all", `--lang=${language}`]));
   }
   for (const language of ["", "-x", "en-US", "../../tmp", "unknown"]) {
     assert.throws(
@@ -124,6 +135,32 @@ test("setup-compatible empty --skills is accepted while real missing values fail
     "--targets",
     "claude,codex",
   ]);
+});
+
+test("an existing user directory is not adopted without a current write or matching receipt", () => {
+  const closure = { sha256: "a".repeat(64), entryCount: 2 };
+  assert.equal(shouldRecordManagedDependencyTarget({ currentClosure: closure }), false);
+  assert.equal(shouldRecordManagedDependencyTarget({
+    currentClosure: closure,
+    previousEntry: {
+      directoryClosureSha256: "b".repeat(64),
+      directoryClosureEntryCount: 2,
+    },
+  }), false);
+  assert.equal(shouldRecordManagedDependencyTarget({
+    currentClosure: closure,
+    previousEntry: {
+      directoryClosureSha256: closure.sha256,
+      directoryClosureEntryCount: 2,
+    },
+  }), true);
+  assert.equal(shouldRecordManagedDependencyTarget({ wasWritten: true }), true);
+});
+
+test("legacy shell wrapper preserves explicit dependency selection for install and update", () => {
+  const wrapper = readFileSync(path.join(repoRoot, "install-deps.sh"), "utf8");
+  assert.match(wrapper, /ARGS=\(--all --targets claude\)/u);
+  assert.match(wrapper, /ARGS=\(--update --all --targets claude\)/u);
 });
 
 test("split and equals language forms produce the same localized zero-write output", () => {
@@ -276,6 +313,23 @@ test("real child process fresh install and update cover Claude plus both Codex r
   const codexCompat = path.join(root, "custom", "deep", "codex-home", "skills", "meta-skill-creator");
   const v1Hash = hashTree(fixture);
   assert.deepEqual([hashTree(claude), hashTree(codexMain), hashTree(codexCompat)], [v1Hash, v1Hash, v1Hash]);
+  const manifestPath = path.join(root, ".meta-kim", "install-manifest.json");
+  const freshManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const freshReceipts = freshManifest.entries.filter(
+    (entry) => entry.purpose === "meta-skill-creator-global-skill",
+  );
+  assert.deepEqual(
+    freshReceipts.map((entry) => path.resolve(entry.path)).sort(),
+    [claude, codexMain, codexCompat].map((entry) => path.resolve(entry)).sort(),
+  );
+  assert.equal(
+    freshReceipts.every(
+      (entry) => /^[a-f0-9]{64}$/u.test(entry.directoryClosureSha256) &&
+        Number.isSafeInteger(entry.directoryClosureEntryCount) &&
+        entry.directoryClosureEntryCount > 0,
+    ),
+    true,
+  );
 
   rmSync(fixture, { recursive: true, force: true });
   writeFixture(fixture, "v2");
@@ -284,6 +338,17 @@ test("real child process fresh install and update cover Claude plus both Codex r
   const v2Hash = hashTree(fixture);
   assert.notEqual(v2Hash, v1Hash);
   assert.deepEqual([hashTree(claude), hashTree(codexMain), hashTree(codexCompat)], [v2Hash, v2Hash, v2Hash]);
+  const updatedManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const updatedReceipts = updatedManifest.entries.filter(
+    (entry) => entry.purpose === "meta-skill-creator-global-skill",
+  );
+  assert.equal(updatedReceipts.length, 3);
+  assert.equal(
+    updatedReceipts.every((entry) => entry.directoryClosureSha256 !== freshReceipts.find(
+      (before) => path.resolve(before.path) === path.resolve(entry.path),
+    )?.directoryClosureSha256),
+    true,
+  );
   assert.deepEqual([hashTree(oldAgents), hashTree(oldCodex)], oldHashes);
 });
 
