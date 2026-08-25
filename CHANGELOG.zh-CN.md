@@ -14,6 +14,10 @@
 - **普通 CLI 运行会自动进入 Governance Requirements。** runner 会生成规范事实，但不会把原始任务文本复制进 Governance Requirements packets；显式传入的非法 facts 会被丢弃，十个 Gate 全部回退到旧判定。
 - **安全权威继续独立。** rollout 期间 clarification、human decision、permission 仍走 legacy/native host 路径；Requirement plan 不能授权执行、外部动作、权限、宿主回答、持久化变更或 public-ready 结论。
 
+### 修复
+
+- **干净源码的发布验证现在可以稳定复现。** repo-canonical 能力索引不再写入被 Git 忽略的本机投影统计，因此维护者本机的 Claude、Codex、Cursor 或 OpenClaw 文件不会再让另一个 checkout 被误判为过期。
+
 ## [3.0.2] - 2026-08-24
 
 ### Live M3-L02–L04

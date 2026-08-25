@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-25T02:37:00.859Z",
+  "generatedAt": "2026-08-25T02:54:10.201Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -28,39 +28,6 @@
     "countSemantics": {
       "totalHooks": "canonical_inventory_entries",
       "totalCommands": "canonical_inventory_entries"
-    },
-    "runtimeActualCounts": {
-      "scope": "local_project_projection_when_present",
-      "note": "Canonical totals count source inventory entries; runtimeActualCounts counts generated local projection files/settings when those gitignored runtime folders exist.",
-      "canonicalInventory": {
-        "hooks": 25,
-        "commands": 7
-      },
-      "claude": {
-        "projectionPresent": true,
-        "hookCommandEntries": 14,
-        "hookFiles": 18,
-        "commandFiles": 3
-      },
-      "codex": {
-        "projectionPresent": true,
-        "hookCommandEntries": 15,
-        "hookFiles": 19,
-        "commandFiles": 3
-      },
-      "cursor": {
-        "projectionPresent": true,
-        "hookCommandEntries": 11,
-        "hookFiles": 18,
-        "commandFiles": 0
-      },
-      "openclaw": {
-        "projectionPresent": true,
-        "hookCommandEntries": 1,
-        "hookFiles": 0,
-        "commandFiles": 0,
-        "skillFiles": 0
-      }
     }
   },
   "abstractCapabilitySlots": [

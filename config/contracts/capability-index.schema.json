@@ -77,26 +77,6 @@
             "totalHooks": { "type": "string" },
             "totalCommands": { "type": "string" }
           }
-        },
-        "runtimeActualCounts": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "scope": { "type": "string" },
-            "note": { "type": "string" },
-            "canonicalInventory": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "hooks": { "type": "integer" },
-                "commands": { "type": "integer" }
-              }
-            },
-            "claude": { "$ref": "#/$defs/runtimeActualCount" },
-            "codex": { "$ref": "#/$defs/runtimeActualCount" },
-            "cursor": { "$ref": "#/$defs/runtimeActualCount" },
-            "openclaw": { "$ref": "#/$defs/runtimeActualCount" }
-          }
         }
       }
     },
@@ -314,19 +294,6 @@
           "description": "Behavior when no open-source governance owner or run-scoped capability evidence is found",
           "const": "Use a governance meta owner plus run-scoped matchedCapabilities/capabilityBindings, or block with capabilityGapPacket. Do not persist non-governance execution agents in the public repo."
         }
-      }
-    }
-  },
-  "$defs": {
-    "runtimeActualCount": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "projectionPresent": { "type": "boolean" },
-        "hookCommandEntries": { "type": "integer" },
-        "hookFiles": { "type": "integer" },
-        "commandFiles": { "type": "integer" },
-        "skillFiles": { "type": "integer" }
       }
     }
   }

@@ -14,6 +14,10 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Normal CLI runs now participate in Governance Requirements automatically.** The runner derives normalized facts without copying the raw task into Governance Requirements packets; invalid explicit facts are discarded and every Gate falls back to the legacy decision.
 - **Safety authority remains separate.** Clarification, human decision, and permission stay on the legacy/native host path during rollout. The requirement plan cannot authorize execution, actions, permissions, host answers, durable mutation, or public-ready claims.
 
+### Fixed
+
+- **Release verification is reproducible across clean checkouts.** The repo-canonical capability index no longer embeds gitignored workstation projection counts, so a maintainer's local Claude, Codex, Cursor, or OpenClaw files cannot make another checkout appear stale.
+
 ## [3.0.2] - 2026-08-24
 
 ### Live M3-L02–L04

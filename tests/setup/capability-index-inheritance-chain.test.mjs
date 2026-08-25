@@ -796,7 +796,7 @@ describe("capability index inheritance chain", () => {
     );
   });
 
-  test("capability index separates canonical totals from runtime actual counts", async () => {
+  test("canonical capability index excludes workstation-local runtime projection counts", async () => {
     const index = await readJson("config/capability-index/meta-kim-capabilities.json");
     assert.equal(
       index.summary?.countSemantics?.totalHooks,
@@ -807,24 +807,10 @@ describe("capability index inheritance chain", () => {
       "canonical_inventory_entries",
     );
     assert.equal(
-      index.summary?.runtimeActualCounts?.scope,
-      "local_project_projection_when_present",
+      "runtimeActualCounts" in (index.summary ?? {}),
+      false,
+      "repo-canonical release truth must not depend on gitignored workstation projections",
     );
-    assert.equal(
-      index.summary?.runtimeActualCounts?.canonicalInventory?.hooks,
-      index.summary?.totalHooks,
-    );
-    assert.equal(
-      index.summary?.runtimeActualCounts?.canonicalInventory?.commands,
-      index.summary?.totalCommands,
-    );
-    for (const runtime of ["claude", "codex", "cursor", "openclaw"]) {
-      const counts = index.summary?.runtimeActualCounts?.[runtime];
-      assert.equal(typeof counts?.projectionPresent, "boolean", runtime);
-      assert.equal(typeof counts?.hookCommandEntries, "number", runtime);
-      assert.equal(typeof counts?.hookFiles, "number", runtime);
-      assert.equal(typeof counts?.commandFiles, "number", runtime);
-    }
   });
 
   test("sync configuration projects only runtime-approved skills", async () => {
