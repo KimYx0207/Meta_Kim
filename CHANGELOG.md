@@ -6,6 +6,18 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## [3.0.6] - 2026-08-26
+
+### Changed
+
+- **The README now explains Meta_Kim from a new user's point of view.** The first screen shows one natural-language request, what happens during execution, what deliverables come back, what the final handoff looks like, and a three-step path to the first run.
+- **Concrete outcomes now come before internal architecture.** Examples cover product implementation, difficult bug fixes, pull-request review, and PRD-to-code work; the complete architecture, platform support, and maintainer reference remain available in an expandable technical section.
+
+### Visuals
+
+- **The repository now shows the actual Meta_Kim Live experience.** A real 1440×900 control-room render demonstrates the stage graph, worker branches, evidence drawer, minimap, and replay timeline using clearly labeled representative demo data.
+- **The social card has been refreshed.** The new visual contrasts uncoordinated AI coding with Meta_Kim's intent, routing, execution, review, and learning flow.
+
 ## [3.0.5] - 2026-08-26
 
 ### Changed

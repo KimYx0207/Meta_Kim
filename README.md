@@ -24,6 +24,92 @@
 
 </div>
 
+## Start here
+
+**Tell your coding agent what you want. Meta_Kim turns that request into a visible, reviewed, verifiable execution.**
+
+Meta_Kim is not a new model and it does not replace Claude Code or Codex. It adds the missing team layer around them: clarify the goal, find the right capabilities, split safe parallel work, review the result, verify the evidence, and preserve useful lessons for the next run.
+
+> You say: “Finish the sign-up and login flow. Keep existing users working, split frontend/backend/testing where useful, and tell me exactly what was verified.”
+
+| What happens next | What you can see |
+| --- | --- |
+| The vague request becomes a goal, success criteria, and non-goals | What Meta_Kim understood before files change |
+| Existing agents, skills, commands, tools, runtime support, and project evidence are checked | Why each capability and owner was selected |
+| Independent work is split and coordinated when the host supports it | Who is working on product, frontend, backend, security, or testing |
+| Review challenges the implementation; verification checks fresh evidence | Passed checks, failed checks, blockers, and remaining risk |
+| Reusable lessons can be written back through a governed approval path | The next run starts with stronger capabilities instead of chat amnesia |
+
+### What you actually get
+
+- The thing you asked for: code, a fix, a PR review, a PRD, documentation, or a release-ready change.
+- A readable explanation of what changed and why.
+- Test and verification evidence, with unknown or unproven claims kept visible instead of being called “done.”
+- A local Live view of the execution graph, workers, evidence, and replay history.
+
+### What it looks like while running
+
+<p align="center">
+  <a href="docs/images/meta-kim-live-demo.png">
+    <img alt="Meta_Kim Live showing the eight-stage execution graph, worker branches, evidence drawer, minimap, and replay timeline" src="docs/images/meta-kim-live-demo.png" width="100%"/>
+  </a>
+</p>
+
+<p align="center"><sub>The real Meta_Kim Live renderer with representative demo data. The page is local and read-only by default.</sub></p>
+
+The top row is the governed path from understanding the request to verification and learning. Worker branches show who owns each bounded task. Animated edges show active flow; the evidence drawer and replay timeline show why a node has its current status.
+
+### What the final handoff looks like
+
+```text
+Done      Sign-up, login, token refresh, and error states implemented
+Changed   8 source files, 3 tests, 1 migration
+Verified  Unit 42/42 · integration 11/11 · build passed
+Open      OAuth browser acceptance was not run — credentials unavailable
+Next      Connect staging credentials, then replay the blocked check
+```
+
+That summary is backed by the changed project files and run evidence. Meta_Kim does not turn an unavailable check into a green result.
+
+### What can it help you make?
+
+| You ask for | Typical deliverable |
+| --- | --- |
+| “Build this landing page” | Responsive frontend, interaction polish, screenshots, and browser checks |
+| “Fix this difficult bug” | Reproduced cause, focused patch, regression test, and remaining-risk note |
+| “Review this pull request” | Plain-language verdict, safe fixes, CI evidence, and merge recommendation |
+| “Turn this idea into a product” | Prioritized PRD, chosen first slice, implementation, and acceptance evidence |
+
+The coding runtime still does the domain work. Meta_Kim makes the route, ownership, review, and proof explicit around it.
+
+### Try it in 3 steps
+
+1. Install Meta_Kim:
+
+   ```bash
+   npx --yes github:KimYx0207/Meta_Kim meta-kim
+   ```
+
+2. Open your project in Claude Code or Codex and ask normally. You do not need to memorize a command:
+
+   ```text
+   Review this project, fix the three highest-impact problems,
+   use parallel work where it is safe, and verify the final result.
+   ```
+
+3. See the run:
+
+   ```bash
+   meta-kim live
+   ```
+
+Good first requests include building a feature across frontend/backend/tests, investigating and fixing a difficult bug, reviewing and improving a pull request, turning a product idea into a PRD and first implementation, or preparing a change for release without hiding failed checks.
+
+**In one sentence:** Claude Code and Codex are the hands; Meta_Kim is the team structure, quality control, and evidence trail around those hands.
+
+<details>
+<summary><strong>Technical architecture, runtime support, and maintainer commands</strong></summary>
+
 ## Overview
 
 **Meta_Kim** is not another AI coding tool. It is a governance layer for durable AI coding work.
@@ -967,6 +1053,8 @@ Sparse-checkout fallback trees land in `~/.<runtime>/skills/<id>/`; native ECC i
 More advanced commands (`meta:validate:run`, `meta:eval:agents`, `meta:eval:agents:live`, `meta:index:runs`, `meta:query:runs`, `migrate:meta-kim`) are in `AGENTS.md`.
 
 ---
+
+</details>
 
 ## FAQ
 

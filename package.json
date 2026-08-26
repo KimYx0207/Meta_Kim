@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.0.5",
+  "version": "3.0.6",
   "description": "Governance layer for AI coding: primary Claude Code/Codex projections first, opt-in beta compatibility adapters second, and non-default OpenClaw/Cursor compatibility projections third.",
   "private": true,
   "type": "module",
