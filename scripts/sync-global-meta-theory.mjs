@@ -1918,10 +1918,17 @@ async function ensureCodexGlobalConfigChoiceSurface() {
 
 async function removeIfExists(targetPath) {
   assertHomeBound(targetPath);
-  await assertRealHomeBound(targetPath);
   if (!(await pathExists(targetPath))) {
     return false;
   }
+  // Real-home containment must only be enforced for paths that actually
+  // exist. Checking it before the existence probe made every cleanup target
+  // abort the whole global sync on machines where a runtime directory is a
+  // symlink (e.g. ~/.claude/skills -> external storage), even when the legacy
+  // flat-skill file was already absent. Guarding the removal of an existing
+  // path keeps the safety contract; guarding a nonexistent path escapes
+  // nothing.
+  await assertRealHomeBound(targetPath);
   await fs.rm(targetPath, { recursive: true, force: true });
   return true;
 }
