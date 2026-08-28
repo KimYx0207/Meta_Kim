@@ -368,6 +368,12 @@ function baseIsolatedEnv(home, runtimeHome, tempDir) {
     "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "ComSpec",
     "LANG", "LC_ALL", "TERM", "NODE_EXTRA_CA_CERTS",
     "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    // install-global-skills-all-runtimes.mjs reads this explicit git proxy
+    // switch. HOME isolation strips ~/.gitconfig, so a loopback proxy
+    // configured there is invisible to the dependency git clone; without this
+    // passthrough the clean-room dependency step cannot run on proxied or
+    // offline-first machines.
+    "META_KIM_GIT_PROXY",
   ];
   const env = Object.fromEntries(
     allowed.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
