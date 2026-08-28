@@ -41,6 +41,8 @@ const PACKAGE_REQUIRED_FILES = [
   "src/infrastructure/live/live-continuation-command-store.mjs",
   "src/infrastructure/live/live-runtime-adapter-registry.mjs",
   "src/infrastructure/live/live-control-room-server.mjs",
+  "src/infrastructure/live/live-hub-lifecycle.mjs",
+  "src/infrastructure/live/live-hub-project-catalog.mjs",
   "src/infrastructure/live/live-read-repository.mjs",
   "src/presentation/live/render-live-share-card.mjs",
   "src/presentation/live/live-control-room-page.mjs",

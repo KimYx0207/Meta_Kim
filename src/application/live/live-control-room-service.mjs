@@ -638,9 +638,29 @@ export function createLiveControlRoomService(options = {}) {
     }
   };
 
-  const getSnapshot = async () => {
+  const getSnapshot = async (requestedRunId = null) => {
     const observedAt = nowIso(clock);
     const durable = await readDurable();
+    if (requestedRunId !== null) {
+      if (!isLiveRunId(requestedRunId)) return emptySnapshot(observedAt);
+      let artifact = null;
+      try {
+        artifact = typeof repository.readArtifact === "function"
+          ? await repository.readArtifact(requestedRunId)
+          : null;
+      } catch {
+        artifact = null;
+      }
+      const matchingDurable = normalizeLiveRunId(durable?.runId) === requestedRunId
+        ? durable
+        : null;
+      return buildLiveSnapshot({
+        durableStatus: matchingDurable,
+        governedArtifact: artifact,
+        observedAt,
+        staleAfterMs,
+      });
+    }
     const artifact = await readLatestArtifact();
     return buildLiveSnapshot({ durableStatus: durable, governedArtifact: artifact, observedAt, staleAfterMs });
   };
@@ -675,12 +695,9 @@ export function createLiveControlRoomService(options = {}) {
     if (runId !== null && !isLiveRunId(runId)) {
       throw continuationError("invalid share run id", "LIVE_SHARE_RUN_ID_INVALID");
     }
-    const snapshot = await getSnapshot();
+    const snapshot = await getSnapshot(runId);
     if (!snapshot?.run) throw continuationError("no trusted run is available for sharing", "LIVE_SHARE_UNAVAILABLE");
     const requestedRunId = runId || snapshot.run.runId;
-    if (requestedRunId !== snapshot.run.runId) {
-      throw continuationError("share run is not the current trusted run", "LIVE_SHARE_RUN_MISMATCH");
-    }
     const replay = runId ? await getReplay(runId) : {
       runId: snapshot.run.runId,
       replay: snapshot.replay,

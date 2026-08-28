@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "description": "Governance layer for AI coding: primary Claude Code/Codex projections first, opt-in beta compatibility adapters second, and non-default OpenClaw/Cursor compatibility projections third.",
   "private": true,
   "type": "module",
@@ -255,6 +255,8 @@
     "src/infrastructure/installer/beta-runtime-adapter-bundle.mjs",
     "src/infrastructure/live/live-continuation-command-store.mjs",
     "src/infrastructure/live/live-control-room-server.mjs",
+    "src/infrastructure/live/live-hub-lifecycle.mjs",
+    "src/infrastructure/live/live-hub-project-catalog.mjs",
     "src/infrastructure/live/live-read-repository.mjs",
     "src/infrastructure/live/live-runtime-adapter-registry.mjs",
     "src/presentation/run-surfaces/read-only-run-surface-renderers.mjs",

@@ -97,7 +97,7 @@ The coding runtime still does the domain work. Meta_Kim makes the route, ownersh
    use parallel work where it is safe, and verify the final result.
    ```
 
-3. See the run:
+3. See the run. The first governed request lazily starts one local Live Hub and returns the current graph link in the conversation. The manual recovery command remains:
 
    ```bash
    meta-kim live
@@ -116,13 +116,15 @@ Good first requests include building a feature across frontend/backend/tests, in
 
 ### Meta_Kim Live: proof you can see
 
-Meta_Kim Live turns the durable run record into a local **Proof-Carrying Run Graph**: current stages, owners, evidence, uncertainty, and replay are visible in one read-only page. It attaches to the project you already run with Codex or Claude Code; it does not replace the agent, create a second scheduler, or pretend an unverified node is done.
+Meta_Kim Live turns durable run records into a local **Proof-Carrying Run Graph**. One user-level Hub lists explicitly registered Meta_Kim projects, then lets you choose a Session / Run and inspect its stages, owners, evidence, uncertainty, and replay. It never scans the whole disk, reads raw Codex or Claude Code conversations, replaces the agent, creates a second scheduler, or pretends an unverified node is done.
+
+The Hub opens in Chinese by default; use the `EN` switch in the top-right corner for English. The preference is remembered locally. A marker-backed project joins the catalog when you explicitly open Live for it or start its first governed run, while an existing explicit skip is preserved.
 
 ```bash
 meta-kim live
 ```
 
-The MVP binds only to `127.0.0.1` and loads no third-party assets. The default surface is read-only; guarded controls are opt-in only with `--enable-control` and a complete injected authority loadout (durable repository, lease/fence/effect checks, control token, and capable adapter). Without that complete authority chain, the service remains plan-only and fail-closed. Reopening a run is available now; automatic execution resume and cross-runtime handoff remain separate capabilities that require lease/fence and side-effect safety evidence.
+The Hub binds only to `127.0.0.1`, loads no third-party assets, and reuses one process through a PID, process-start identity, and instance-health proof; first use after an update safely replaces an older Hub version. The default surface is read-only; guarded controls are opt-in only with `--enable-control` and a complete injected authority loadout (durable repository, lease/fence/effect checks, control token, and capable adapter). Without that complete authority chain, the service remains plan-only and fail-closed. Selecting and reopening an observed run is available now; automatic execution resume and cross-runtime handoff remain separate capabilities that require lease/fence and side-effect safety evidence.
 
 #### M3-L02–L04 sharing and control boundaries
 

@@ -2,7 +2,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { readJsonFromStdin } from "./utils.mjs";
 import {
   projectRootCandidatesFromPayload,
@@ -296,7 +296,7 @@ function startPostCopyAutoInit(root) {
     spawnSync(process.execPath, [scriptPath, "--auto", "--project-root", root], {
       cwd: root,
       stdio: "ignore",
-      timeout: 4000,
+      timeout: 2000,
       windowsHide: true,
       env: {
         ...process.env,
@@ -307,6 +307,68 @@ function startPostCopyAutoInit(root) {
     // Post-copy auto-init is opportunistic. A failure here must not block
     // the meta-theory state machine from starting.
   }
+}
+
+async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") {
+  if (
+    process.env.META_KIM_LIVE_AUTO === "off" ||
+    process.env.NODE_TEST_CONTEXT ||
+    !packageRoot
+  ) return null;
+  const lifecycleModule = join(
+    packageRoot,
+    "src",
+    "infrastructure",
+    "live",
+    "live-hub-lifecycle.mjs",
+  );
+  if (!existsSync(lifecycleModule)) return null;
+  try {
+    const { ensureLiveHub } = await import(pathToFileURL(lifecycleModule).href);
+    const { ensureGovernedLiveProjectRegistration } = await import(
+      pathToFileURL(join(packageRoot, "scripts", "project-registry.mjs")).href
+    );
+    const registration = await ensureGovernedLiveProjectRegistration({
+      repoPath: root,
+      runtimeFamily: "shared",
+      sourceRef: "meta-kim-live-hook",
+    });
+    const projectRef = registration.registryStatus === "joined"
+      ? registration.projectRef
+      : null;
+    const result = await ensureLiveHub({
+      packageRoot,
+      projectRef,
+      runId: projectRef ? runId : null,
+      profile,
+      timeoutMs: 2_000,
+    });
+    return result?.started === true && typeof result.deepLink === "string"
+      ? result
+      : null;
+  } catch {
+    // Live is an optional local observation surface. Startup failure must not
+    // prevent the governed run itself from starting.
+    return null;
+  }
+}
+
+function emitLiveHubStartedContext(live, language = "en") {
+  if (!live?.started || typeof live.deepLink !== "string") return;
+  const additionalContext = language === "zh-CN"
+    ? `Meta_Kim Live 已启动，你可以在这里查看它的实时运行图：${live.deepLink}\n请在本轮正常会话回复中向用户显示这条启动信息和可点击链接；不要把 Hook 上下文当作业务完成证据。`
+    : `Meta_Kim Live has started. View its real-time run graph here: ${live.deepLink}\nShow this startup message and clickable link in the normal assistant response for this turn; do not treat Hook context as business-completion evidence.`;
+  const isCursor =
+    process.env.META_KIM_HOOK_RUNTIME === "cursor" ||
+    payload?.hook_event_name === "beforeSubmitPrompt";
+  process.stdout.write(`${JSON.stringify(isCursor
+    ? { prompt: additionalContext }
+    : {
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext,
+        },
+      })}\n`);
 }
 
 const activation = isMetaTheoryTrigger();
@@ -352,6 +414,10 @@ if (existing && existing.active && !shouldReplaceActiveState(existing, promptFin
       refreshExisting: true,
     });
   }
+  emitLiveHubStartedContext(
+    await ensureLiveHubOnFirstUse(projectRoot, existing.runId || null, identityBinding.profile),
+    detectPromptLanguage(rawPromptText),
+  );
   process.exit(0);
 }
 
@@ -415,6 +481,11 @@ await activateSpineState(projectRoot, state, {
   replaceActive: existing?.active === true,
   expectedRunId: existing?.runId || null,
 });
+
+emitLiveHubStartedContext(
+  await ensureLiveHubOnFirstUse(projectRoot, state.runId || null, identityBinding.profile),
+  detectPromptLanguage(rawPromptText),
+);
 
 // ── multi-agent helpers ───────────────────────────────────────────────────────
 // 1) runAutoCapabilitySearch：扫 canonical/agents/ + agent-eligibility.json，
