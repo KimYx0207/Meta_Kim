@@ -140,8 +140,6 @@ const TRIVIAL_PROMPTS = new Set([
   "开工", "收工", "继续", "好", "好的", "是", "对", "行", "可以", "嗯",
   "ok", "okay", "yes", "y", "continue", "go", "next",
 ]);
-const SUMMARISER_PROMPT_RE = /^Below is a conversation log from a Claude Code/i;
-
 // A session's goal is neither "the first prompt" nor "the last one". Measured over
 // 783 transcripts: `--continue` / `/resume` append to the *same* JSONL under the same
 // sessionId (0 of 777 files carried a second one), so the first substantive prompt can
@@ -167,7 +165,7 @@ function pickGoalPrompt(prompts) {
 function isSubstantivePrompt(prompt) {
   if (prompt.length <= 6) return false;
   if (TRIVIAL_PROMPTS.has(prompt.toLowerCase())) return false;
-  return !SUMMARISER_PROMPT_RE.test(prompt);
+  return !isSummariserPromptBlock(prompt);
 }
 
 function stripInjectedContext(text) {
@@ -208,8 +206,9 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
   const userBlocks = [];
   const substantivePrompts = [];
   let lastPrompt = "";
+  let fd = null;
   try {
-    const fd = await fs.open(transcriptPath, "r");
+    fd = await fs.open(transcriptPath, "r");
     for await (const line of fd.readLines()) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -217,6 +216,15 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
       try {
         entry = JSON.parse(trimmed);
       } catch {
+        // Older Claude fixtures and partially written transcripts can contain plain
+        // text lines. Preserve the historical extractor behavior for those lines.
+        const text = stripInjectedContext(trimmed);
+        if (text) {
+          blocks.push({ role: "unknown", text });
+          if (blocks.length > maxBlocks) blocks.shift();
+          userBlocks.push({ role: "unknown", text });
+          if (userBlocks.length > maxUserBlocks) userBlocks.shift();
+        }
         continue;
       }
       if (!entry || typeof entry !== "object") continue;
@@ -249,11 +257,11 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
         }
       }
     }
-    // D9: `close()` returns a promise. Un-awaited, the descriptor outlives the call and
-    // a batch run (the 791-transcript harness) leaks one per transcript.
-    await fd.close();
   } catch {
     return { blocks: [], userBlocks: [], lastPrompt: "", goalPrompt: "" };
+  } finally {
+    // D9: always close the descriptor, including read/iteration failures.
+    await fd?.close().catch(() => {});
   }
   return { blocks, userBlocks, lastPrompt, goalPrompt: pickGoalPrompt(substantivePrompts) };
 }

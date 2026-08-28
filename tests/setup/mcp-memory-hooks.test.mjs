@@ -1501,6 +1501,56 @@ describe("MCP memory cross-runtime hooks", () => {
     }
   });
 
+  test("Claude stop save progress ignores prefixed summariser prompts as the task", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-stop-save-summariser-"));
+    const transcriptPath = path.join(tempDir, "transcript.jsonl");
+
+    try {
+      writeFileSync(
+        transcriptPath,
+        [
+          JSON.stringify({
+            type: "last-prompt",
+            lastPrompt: "📝 原始输入：Below is a conversation log from a Claude Code session. Continue the previous work.",
+          }),
+          JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "已经完成当前阶段的代码检查。" }] } }),
+          JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "接下来继续 Fetch 并核对运行时状态。" }] } }),
+          JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "还需要检查 stop-save-progress 的回归测试。" }] } }),
+          JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "这是真实进度记录，足以通过 Stop hook 的内容阈值。" }] } }),
+          JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "完成后继续验证并整理结果。" }] } }),
+        ].join("\n"),
+        "utf8",
+      );
+
+      const hookPath = path.join(
+        repoRoot,
+        "canonical",
+        "runtime-assets",
+        "claude",
+        "hooks",
+        "stop-save-progress.mjs",
+      );
+      const result = spawnSync(
+        process.execPath,
+        [hookPath],
+        {
+          input: JSON.stringify({ transcript_path: transcriptPath }),
+          encoding: "utf8",
+          env: { ...process.env, META_KIM_DRY_RUN: "1" },
+          cwd: tempDir,
+        },
+      );
+
+      assert.equal(result.status, 0, result.stderr);
+      const diagnostic = JSON.parse(result.stdout.trim());
+      const args = diagnostic.args || [];
+      const taskIndex = args.indexOf("--task");
+      assert.equal(taskIndex, -1, "prefixed summariser prompt must not be saved as --task");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("Claude spine state dir rejects META_KIM_SPINE_STATE_DIR outside .meta-kim/state", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-spine-"));
     const outsideDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-outside-"));
