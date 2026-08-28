@@ -129,6 +129,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Stale": "未更新",
     "running": "运行中",
     "completed": "已完成",
+    "skipped": "已跳过",
     "failed": "失败",
     "blocked": "已阻塞",
     "in doubt": "存疑",
@@ -233,6 +234,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Reset replay": "重置回放",
     "Replay position": "回放位置",
     "Replay events": "回放事件"
+    ,"Overview": "总览"
+    ,"Follow": "跟随"
+    ,"Manual": "手动"
+    ,"Relayout": "重排"
+    ,"Inspector": "检查器"
+    ,"Camera": "相机"
   }));
   let currentLanguage = (() => {
     try { return window.localStorage?.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh"; }
@@ -256,6 +263,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (match) return "已完成 " + match[1] + " / " + match[2] + " 个步骤";
     match = text.match(/^(\d+) active workers?$/u);
     if (match) return match[1] + " 个执行者正在工作";
+    match = text.match(/^(\d+) nodes?$/u);
+    if (match) return match[1] + " 个节点";
     match = text.match(/^(.*) · waiting for its first governed run$/u);
     if (match) return match[1] + " · 等待首次治理运行";
     match = text.match(/^Event (\d+) of (\d+): (.*)$/u);
@@ -331,6 +340,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const evidencePanel = app.querySelector("[data-live-inspector]");
   const evidenceClose = app.querySelector("[data-live-inspector-close]");
   const graphFollow = app.querySelector("[data-live-graph-follow]");
+  const cameraModeLabel = app.querySelector("[data-live-camera-mode]");
+  const sessionsDialog = app.querySelector("[data-live-sessions-dialog]");
+  const helpDialog = app.querySelector("[data-live-help-dialog]");
+  const infoDialog = app.querySelector("[data-live-info-dialog]");
+  const infoTools = app.querySelector("[data-live-info-tools]");
   const replayRange = app.querySelector("[data-replay-range]");
   const replayEvents = app.querySelector("[data-replay-events]");
   const replayProgress = app.querySelector("[data-replay-progress]");
@@ -343,11 +357,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const emptyState = app.querySelector("[data-live-empty]");
   const liveRegion = app.querySelector("[data-live-region]");
   const lastUpdate = app.querySelector("[data-live-last-update]");
-  const runHero = app.querySelector(".run-hero");
-  const runFacts = app.querySelector(".run-facts");
-  const stageRail = app.querySelector("[data-live-stage-rail]");
   const runProgress = app.querySelector("[data-live-run-progress]");
   const runWorkers = app.querySelector("[data-live-run-workers]");
+  const statusTitle = app.querySelector("[data-live-status-title]");
+  const nodeCount = app.querySelector("[data-live-node-count]");
   const workspace = app.querySelector(".workspace-grid");
   const replayPanel = app.querySelector(".replay-panel");
   const shareStatus = app.querySelector("[data-live-share-status]");
@@ -373,6 +386,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let replayFollowingLive = true;
   let layoutMode = "compact";
   let graphFollowing = true;
+  let cameraMode = "follow";
   let graphState = {
     positions: new Map(),
     nodeElements: new Map(),
@@ -387,9 +401,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let catalogAvailable = false;
   let catalogRefreshTimer = null;
   let selectionGeneration = 0;
+  let dialogOpener = null;
 
   const statuses = new Set(["live", "stale", "in_doubt"]);
-  const nodeStatuses = new Set(["running", "completed", "failed", "blocked", "in_doubt", "queued"]);
+  const nodeStatuses = new Set(["running", "completed", "skipped", "failed", "blocked", "in_doubt", "queued"]);
   const controlActions = ["pause", "resume", "reassign", "handoff"];
   const SNAPSHOT_COALESCE_MS = 75;
 
@@ -661,20 +676,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function updateHeader(snapshot) {
     setText(title, snapshot.run.title, "Live execution");
+    setText(statusTitle, snapshot.run.title, "Live execution");
     setText(runId, "Run · " + snapshot.run.id.slice(-8), "unidentified run");
     setText(stage, snapshot.run.stage, "Observing");
     setText(started, formatTime(snapshot.run.startedAt), "—");
     setText(updated, formatTime(snapshot.run.updatedAt), "—");
     setText(source, snapshot.source, "local observer");
-    const currentStageIndex = stageIndex({ id: snapshot.run.stage, label: snapshot.run.stage });
     const observedStageStates = new Map();
     for (const node of snapshot.nodes) {
       const index = stageIndex(node);
       if (index >= 0 && !observedStageStates.has(index)) observedStageStates.set(index, node.status);
     }
-    const completedSteps = STAGE_ORDER.filter((_, index) => (
-      observedStageStates.get(index) === "completed" || (currentStageIndex >= 0 && index < currentStageIndex)
-    )).length;
+    const completedSteps = STAGE_ORDER.filter((_, index) => ["completed", "skipped"].includes(observedStageStates.get(index))).length;
     const activeWorkers = new Set(snapshot.nodes
       .filter((node) => ["running", "active"].includes(node.status))
       .map((node) => node.agent)
@@ -683,6 +696,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(runWorkers, activeWorkers.size
       ? activeWorkers.size + " active worker" + (activeWorkers.size === 1 ? "" : "s")
       : "No active workers", "—");
+    setText(nodeCount, snapshot.nodes.length + " nodes", "0 nodes");
     const status = snapshot.run.status;
     if (stateChip) stateChip.dataset.state = status;
     setText(stateLabel, stateCopy(status), "Stale");
@@ -721,46 +735,6 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return matched ? STAGE_ORDER.indexOf(matched) : -1;
   }
 
-  function renderStageRail(snapshot) {
-    clearChildren(stageRail);
-    if (!stageRail) return;
-    const currentIndex = stageIndex({ id: snapshot.run.stage, label: snapshot.run.stage });
-    const nodeByStage = new Map();
-    for (const node of snapshot.nodes) {
-      const index = stageIndex(node);
-      if (index >= 0 && !nodeByStage.has(index)) nodeByStage.set(index, node);
-    }
-    STAGE_ORDER.forEach((stageName, index) => {
-      const node = nodeByStage.get(index) || null;
-      const state = node?.status === "completed"
-        ? "completed"
-        : index === currentIndex || ["running", "active"].includes(node?.status)
-          ? "current"
-          : index < currentIndex
-            ? "completed"
-            : "upcoming";
-      const item = makeElement("li", "stage-step");
-      item.dataset.state = state;
-      const marker = makeElement("span", "stage-step-marker", String(index + 1));
-      marker.setAttribute("aria-hidden", "true");
-      const copy = makeElement("span", "stage-step-copy");
-      copy.append(
-        makeElement("strong", "stage-step-name", stageName),
-        makeElement("small", "stage-step-state", state === "current" ? "running" : state),
-      );
-      item.append(marker, copy);
-      if (node) {
-        item.tabIndex = 0;
-        item.setAttribute("role", "button");
-        item.addEventListener("click", () => selectNode(node.id));
-        item.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") selectNode(node.id, { focus: true });
-        });
-      }
-      stageRail.append(item);
-    });
-  }
-
   function layoutGraph(snapshot) {
     const nodes = snapshot.nodes;
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -771,9 +745,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const positions = new Map();
     const cardWidth = 168;
     const cardHeight = 96;
-    const spineColumns = layoutMode === "compact" ? 8 : 4;
-    const columnGap = layoutMode === "compact" ? 184 : 204;
-    const rowGap = 126;
+    const spineColumns = layoutMode === "compact" ? 4 : 8;
+    const columnGap = layoutMode === "compact" ? 220 : 184;
+    const rowGap = layoutMode === "compact" ? 150 : 126;
     const top = 38;
     const spineRows = Math.ceil(STAGE_ORDER.length / spineColumns);
     const branchTop = top + spineRows * rowGap + 32;
@@ -895,20 +869,36 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (graphScene) {
       graphScene.style.transform = "translate(" + camera.x + "px, " + camera.y + "px) scale(" + camera.scale + ")";
     }
+    if (graph) graph.dataset.semanticZoom = camera.scale < .42 ? "cell" : "card";
     updateMinimap();
   }
 
-  function setGraphFollowing(active) {
-    graphFollowing = Boolean(active);
+  function setCameraMode(mode) {
+    cameraMode = ["overview", "follow", "manual"].includes(mode) ? mode : "manual";
+    graphFollowing = cameraMode === "follow";
     if (graphFollow) {
       graphFollow.dataset.active = graphFollowing ? "true" : "false";
       graphFollow.setAttribute("aria-pressed", String(graphFollowing));
     }
     if (graph) graph.dataset.following = graphFollowing ? "true" : "false";
+    setText(cameraModeLabel, cameraMode[0].toUpperCase() + cameraMode.slice(1), "Manual");
+  }
+
+  function setGraphFollowing(active) {
+    setCameraMode(active ? "follow" : "manual");
   }
 
   function centerGraphNode(nodeId) {
     if (!graph || !nodeId) return;
+    const card = graphState.nodeElements.get(nodeId);
+    if (window.matchMedia?.("(max-width: 720px)").matches && card) {
+      graph.scrollTo({
+        top: Math.max(0, card.offsetTop - graph.clientHeight / 2 + card.offsetHeight / 2),
+        left: 0,
+        behavior: reducedMotion.matches ? "auto" : "smooth",
+      });
+      return;
+    }
     const position = graphState.positions.get(nodeId);
     if (!position) return;
     updateCamera({
@@ -921,10 +911,69 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function setInspectorOpen(open) {
     if (!evidencePanel) return;
     const active = Boolean(open);
+    const changed = evidencePanel.dataset.open !== (active ? "true" : "false");
     evidencePanel.dataset.open = active ? "true" : "false";
     evidencePanel.setAttribute("aria-hidden", String(!active));
     if ("inert" in evidencePanel) evidencePanel.inert = !active;
     evidenceToggle?.setAttribute("aria-expanded", String(active));
+    workspace?.setAttribute("data-inspector-open", active ? "true" : "false");
+    if (changed) repositionCameraAfterInspector(active);
+  }
+
+  function repositionCameraAfterInspector(active) {
+    const reposition = () => reconcileCamera({ inspectorOpen: active });
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(reposition));
+    } else {
+      window.setTimeout(reposition, 0);
+    }
+    workspace?.addEventListener("transitionend", reposition, { once: true });
+  }
+
+  function followTargetId() {
+    return selectedNodeId
+      || currentSnapshot?.replay[currentReplayIndex]?.nodeId
+      || currentSnapshot?.nodes.find((node) => node.status === "running")?.id
+      || null;
+  }
+
+  function reconcileCamera({ inspectorOpen = evidencePanel?.dataset.open === "true" } = {}) {
+    if (!graph || !currentSnapshot) return;
+    if (cameraMode === "overview") {
+      fitGraph();
+      return;
+    }
+    if (cameraMode === "follow") {
+      if (inspectorOpen && camera.scale < .68) updateCamera({ ...camera, scale: .68 });
+      centerGraphNode(followTargetId());
+      return;
+    }
+    updateMinimap();
+  }
+
+  function setDialogOpen(dialog, open) {
+    if (!dialog) return;
+    const active = Boolean(open);
+    if (active) {
+      for (const other of [sessionsDialog, helpDialog, infoDialog]) {
+        if (other && other !== dialog) {
+          other.hidden = true;
+          other.setAttribute("aria-hidden", "true");
+        }
+      }
+      dialogOpener = document.activeElement;
+    }
+    dialog.hidden = !active;
+    dialog.setAttribute("aria-hidden", String(!active));
+    if (active) dialog.querySelector("button, select, [tabindex]")?.focus();
+    else if (dialogOpener && typeof dialogOpener.focus === "function") {
+      dialogOpener.focus();
+      dialogOpener = null;
+    }
+  }
+
+  function closeTransientUi() {
+    for (const dialog of [sessionsDialog, helpDialog, infoDialog]) setDialogOpen(dialog, false);
   }
 
   function updateMinimap() {
@@ -953,12 +1002,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const width = graph.clientWidth || 760;
     const height = graph.clientHeight || 420;
     const padding = 26;
-    const scale = Math.max(.28, Math.min(1.1, Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height)));
+    const scale = Math.max(.42, Math.min(1.1, Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height)));
     updateCamera({
       scale,
       x: (width - graphState.bounds.width * scale) / 2,
       y: (height - graphState.bounds.height * scale) / 2,
     });
+    setCameraMode("overview");
   }
 
   function zoomGraph(factor, anchorX, anchorY) {
@@ -969,6 +1019,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const worldY = (localY - camera.y) / camera.scale;
     const scale = Math.max(.28, Math.min(1.6, camera.scale * factor));
     updateCamera({ scale, x: localX - worldX * scale, y: localY - worldY * scale });
+    setCameraMode("manual");
   }
 
   function updateSelectedNodeVisuals() {
@@ -1046,7 +1097,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (edgeLayer) {
       edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
       const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      const markerColors = { running: "#55e6d0", completed: "#75e5aa", failed: "#ff7e92", "in-doubt": "#ff7e92", blocked: "#ffca73", queued: "#6d8dff" };
+      const markerColors = { running: "#87d787", completed: "#d7af00", skipped: "#585858", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#f0d56a", queued: "#777777" };
       for (const [status, color] of Object.entries(markerColors)) {
         const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         marker.id = edgeMarkerId(status);
@@ -1085,10 +1136,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
       top.append(marker, makeElement("span", "node-status", localize(node.status.replaceAll("_", " "))));
       const heading = makeElement("h3", "node-title", node.label);
       const summary = makeElement("p", "node-summary", node.summary);
-      const meta = makeElement("div", "node-meta");
-      const agent = makeElement("span", "node-meta-item node-agent", node.agent);
+      const meta = makeElement("div", "node-meta activity-chips");
+      const role = makeElement("span", "node-meta-item activity-chip chip-role", node.role);
+      role.title = localize("Role");
+      const agent = makeElement("span", "node-meta-item activity-chip chip-owner", node.agent);
       agent.title = localize("Agent");
+      const runtime = makeElement("span", "node-meta-item activity-chip chip-runtime", node.runtime);
+      runtime.title = localize("Runtime");
+      if (usefulNodeMeta(role.textContent)) meta.append(role);
       if (usefulNodeMeta(agent.textContent)) meta.append(agent);
+      if (usefulNodeMeta(runtime.textContent)) meta.append(runtime);
       if (!meta.childElementCount) meta.hidden = true;
       card.append(top, heading, summary, meta);
       const parent = snapshot.edges.find((edge) => edge.to === node.id);
@@ -1195,6 +1252,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     events.forEach((event, index) => {
       const item = makeElement("li", "replay-event");
       item.dataset.replayIndex = String(index);
+      item.dataset.status = event.status;
       const marker = makeElement("span", "replay-event-marker", "");
       marker.setAttribute("aria-hidden", "true");
       item.append(marker, makeElement("span", "replay-event-time", formatTime(event.at)), makeElement("span", "replay-event-label", event.label));
@@ -1411,6 +1469,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     replayEvents?.querySelectorAll("[data-replay-index]").forEach((element) => {
       const active = Number(element.dataset.replayIndex) === currentReplayIndex;
       element.dataset.active = active ? "true" : "false";
+      if (active) element.scrollIntoView?.({ behavior: "auto", block: "nearest", inline: "nearest" });
     });
     if (replayPrev) replayPrev.disabled = currentReplayIndex <= 0 || events.length < 2;
     if (replayNext) replayNext.disabled = currentReplayIndex >= max || events.length < 2;
@@ -1689,7 +1748,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function showEmpty(message) {
     if (emptyState) emptyState.hidden = false;
-    for (const element of [runHero, runFacts, workspace, replayPanel]) {
+    for (const element of [workspace, replayPanel]) {
       if (element) element.hidden = true;
     }
     if (message) setText(app.querySelector("[data-live-empty-message]"), message, "Waiting for a run snapshot");
@@ -1697,7 +1756,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function hideEmpty() {
     if (emptyState) emptyState.hidden = true;
-    for (const element of [runHero, runFacts, workspace, replayPanel]) {
+    for (const element of [workspace, replayPanel]) {
       if (element) element.hidden = false;
     }
   }
@@ -1706,26 +1765,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const selectedSession = projectForSelection()?.sessions.find((session) => session.runId === selectedRunId) || null;
     const inputRun = input?.run && typeof input.run === "object" && !Array.isArray(input.run) ? input.run : null;
     const genericTitle = ["", "Live execution", "Observed execution"].includes(display(inputRun?.title, ""));
-    const selectedStageIndex = STAGE_ORDER.indexOf(display(selectedSession?.currentStage, "").toLowerCase());
-    const readableNodes = selectedStageIndex >= 0 && Array.isArray(input?.nodes)
-      ? input.nodes.map((node) => {
-          const index = stageIndex(node && typeof node === "object" ? node : {});
-          const status = display(node?.status || node?.state, "in_doubt").toLowerCase();
-          if (index < 0 || !["in_doubt", "in doubt", "queued", "pending"].includes(status)) return node;
-          return {
-            ...node,
-            status: index < selectedStageIndex
-              ? "completed"
-              : index === selectedStageIndex && selectedSession.active
-                ? "running"
-                : "queued",
-          };
-        })
-      : input?.nodes;
     const enrichedInput = selectedSession && input && typeof input === "object" && !Array.isArray(input)
       ? {
           ...input,
-          nodes: readableNodes,
           run: {
             ...(inputRun || {}),
             title: genericTitle ? selectedSession.title : inputRun?.title,
@@ -1751,14 +1793,21 @@ const CLIENT_SCRIPT = String.raw`(() => {
     currentSnapshot = snapshot;
     hideEmpty();
     updateHeader(snapshot);
-    renderStageRail(snapshot);
     renderGraph(snapshot);
     renderEvidence(snapshot);
     renderReplay(snapshot);
     renderControlPanel(snapshot);
     if (firstSnapshot) {
-      if (window.requestAnimationFrame) window.requestAnimationFrame(fitGraph);
-      else fitGraph();
+      const establishInitialCamera = () => {
+        fitGraph();
+        setCameraMode("follow");
+        centerGraphNode(snapshot.nodes.find((node) => node.status === "running")?.id || snapshot.replay.at(-1)?.nodeId);
+      };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(establishInitialCamera);
+      else establishInitialCamera();
+    } else if (cameraMode === "follow") {
+      if (window.requestAnimationFrame) window.requestAnimationFrame(() => reconcileCamera());
+      else reconcileCamera();
     }
     updateConnection(snapshot.run.status === "live" ? "live" : "stale", snapshot.run.status === "live" ? "Streaming" : "Snapshot loaded");
   }
@@ -1889,16 +1938,51 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   evidenceToggle?.addEventListener("click", () => setInspectorOpen(evidencePanel?.dataset.open !== "true"));
   evidenceClose?.addEventListener("click", () => setInspectorOpen(false));
+  app.querySelector("[data-live-open-sessions]")?.addEventListener("click", () => setDialogOpen(sessionsDialog, true));
+  app.querySelector("[data-live-open-help]")?.addEventListener("click", () => setDialogOpen(helpDialog, true));
+  app.querySelector("[data-live-open-info]")?.addEventListener("click", () => setDialogOpen(infoDialog, true));
+  app.querySelectorAll("[data-live-dialog-close]").forEach((button) => button.addEventListener("click", () => setDialogOpen(button.closest("[data-live-dialog]"), false)));
+  app.querySelectorAll("[data-live-dialog]").forEach((dialog) => dialog.addEventListener("pointerdown", (event) => {
+    if (event.target === dialog) setDialogOpen(dialog, false);
+  }));
   graphFollow?.addEventListener("click", () => {
-    setGraphFollowing(!graphFollowing);
-    if (graphFollowing) centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId);
+    setCameraMode("follow");
+    centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId || currentSnapshot?.nodes.find((node) => node.status === "running")?.id);
   });
   app.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    selectedNodeId = null;
-    updateSelectedNodeVisuals();
-    setInspectorOpen(false);
-    document.activeElement?.blur?.();
+    const target = event.target;
+    const typing = target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
+    if (event.key === "Escape") {
+      closeTransientUi();
+      selectedNodeId = null;
+      updateSelectedNodeVisuals();
+      setInspectorOpen(false);
+      document.activeElement?.blur?.();
+      return;
+    }
+    const interactive = target?.closest?.('button, a, [role="button"], [role="option"], [contenteditable="true"]');
+    const dialogActive = [sessionsDialog, helpDialog, infoDialog].some((dialog) => dialog && !dialog.hidden);
+    if (event.defaultPrevented || typing || interactive || dialogActive) return;
+    const key = event.key.toLowerCase();
+    if (key === "o") { event.preventDefault(); fitGraph(); return; }
+    if (key === "f") {
+      event.preventDefault();
+      setCameraMode("follow");
+      centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId || currentSnapshot?.nodes.find((node) => node.status === "running")?.id);
+      return;
+    }
+    if (key === "r") {
+      event.preventDefault();
+      layoutMode = layoutMode === "flow" ? "compact" : "flow";
+      if (currentSnapshot) { renderGraph(currentSnapshot); fitGraph(); }
+      return;
+    }
+    if (event.key === " ") { event.preventDefault(); toggleReplay(); return; }
+    if (event.key === "[") { event.preventDefault(); replayFollowingLive = false; stopReplay(); updateReplayPosition(currentReplayIndex - 1); return; }
+    if (event.key === "]") { event.preventDefault(); replayFollowingLive = false; stopReplay(); updateReplayPosition(currentReplayIndex + 1); return; }
+    if (event.key === "End") { event.preventDefault(); replayFollowingLive = true; stopReplay(); updateReplayPosition(currentSnapshot?.replay.length ? currentSnapshot.replay.length - 1 : 0); return; }
+    if (event.key === "?") { event.preventDefault(); setDialogOpen(helpDialog, true); return; }
+    if (key === "i") { event.preventDefault(); setDialogOpen(infoDialog, true); }
   });
   replayPlay?.addEventListener("click", toggleReplay);
   replayPrev?.addEventListener("click", () => {
@@ -1959,7 +2043,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const target = event.target;
     if (target?.closest?.("[data-node-id], button, .graph-minimap")) return;
     pointerPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
-    setGraphFollowing(false);
+    setCameraMode("manual");
     graph.setPointerCapture?.(event.pointerId);
     graph.dataset.panning = "true";
   });
@@ -1978,15 +2062,22 @@ const CLIENT_SCRIPT = String.raw`(() => {
   graph?.addEventListener("wheel", (event) => {
     if (event.target?.closest?.(".graph-minimap")) return;
     event.preventDefault();
-    setGraphFollowing(false);
+    setCameraMode("manual");
     const rect = graph.getBoundingClientRect();
     zoomGraph(event.deltaY < 0 ? 1.1 : .9, event.clientX - rect.left, event.clientY - rect.top);
   }, { passive: false });
-  window.addEventListener("resize", updateMinimap, { passive: true });
+  window.addEventListener("resize", reconcileCamera, { passive: true });
+  if (window.ResizeObserver && graph) {
+    const graphResizeObserver = new ResizeObserver(() => reconcileCamera());
+    graphResizeObserver.observe(graph);
+    window.addEventListener("beforeunload", () => graphResizeObserver.disconnect(), { once: true });
+  }
 
   applyLanguage();
-  setGraphFollowing(true);
+  for (const panel of app.querySelectorAll(".share-panel, .control-panel")) infoTools?.append(panel);
+  setCameraMode("follow");
   setInspectorOpen(false);
+  closeTransientUi();
   const snapshotText = initialElement?.textContent?.trim();
   if (snapshotText && snapshotText !== "null") {
     try {
@@ -2445,6 +2536,174 @@ body { overflow-x: hidden; background: var(--canvas); }
 }
 `;
 
+const GRAPH_FIRST_CSS = String.raw`
+:root { color-scheme: dark; --ink: #121212; --panel: #1c1c1c; --panel-2: #242424; --gold: #d7af00; --gold-bright: #f0d56a; --green: #87d787; --dim: #777; --line: #353535; --text: #e6e6e6; --muted: #a0a0a0; --danger: #e06c75; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
+body { letter-spacing: 0; }
+button, select, input { font: inherit; }
+button { color: inherit; }
+[hidden] { display: none !important; }
+.skip-link { position: fixed; z-index: 100; top: .5rem; left: .5rem; transform: translateY(-160%); padding: .55rem .75rem; background: var(--gold); color: #111; }
+.skip-link:focus { transform: none; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
+.shell { height: 100dvh; min-width: 0; display: grid; grid-template-rows: 44px minmax(0, 1fr); background: var(--ink); }
+.topbar { min-width: 0; display: flex; align-items: center; gap: .75rem; padding: 0 .75rem; border-bottom: 1px solid var(--line); background: #151515; }
+.brand { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; }
+.brand-mark { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--gold); color: var(--gold-bright); font: 700 12px/1 monospace; }
+.brand-title { margin: 0; font-size: .78rem; font-weight: 700; }
+.top-run-context { min-width: 0; display: flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .72rem; }
+.top-run-context strong { min-width: 0; max-width: min(40vw, 560px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 600; }
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: .25rem; }
+.connection { display: flex; align-items: center; gap: .35rem; min-width: 0; margin-right: .3rem; color: var(--muted); font-size: .68rem; white-space: nowrap; }
+.connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.connection-dot[data-connection="live"] { background: var(--green); box-shadow: 0 0 8px rgba(135,215,135,.55); }
+.connection-dot[data-connection="stale"] { background: var(--gold); }
+.topbar-button, .graph-tool-button, .replay-button { min-height: 30px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--muted); cursor: pointer; }
+.topbar-button { padding: 0 .55rem; font-size: .7rem; }
+.topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: #555; background: #262626; color: var(--gold-bright); outline: none; }
+.main { min-width: 0; min-height: 0; overflow: hidden; }
+.workspace-grid { position: relative; min-width: 0; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 0; overflow: hidden; transition: grid-template-columns .18s ease; }
+.workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(280px, 30%) minmax(0, 70%); }
+.workspace-grid[data-inspector-open="true"] .replay-panel { grid-template-columns: minmax(0,1fr); }
+.workspace-grid[data-inspector-open="true"] .replay-dock-header { grid-column: 1; grid-row: 1; min-width: 0; display: flex; justify-content: center; border-right: 0; border-bottom: 1px solid var(--line); }
+.workspace-grid[data-inspector-open="true"] .replay-current { display: none; }
+.workspace-grid[data-inspector-open="true"] .replay-range-wrap { grid-column: 1; grid-row: 2; }
+.workspace-grid[data-inspector-open="true"] .replay-events { grid-column: 1; grid-row: 3; }
+.workspace-grid[data-inspector-open="true"] .replay-live, .workspace-grid[data-inspector-open="true"] .replay-reset { display: none; }
+.workspace-grid[data-inspector-open="true"] .status-title, .workspace-grid[data-inspector-open="true"] .status-nodes, .workspace-grid[data-inspector-open="true"] .status-camera { display: none; }
+.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 92px 24px; border: 0; background: #101010; overflow: hidden; }
+.graph-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.graph-toolbar { position: absolute; z-index: 8; top: .55rem; left: .55rem; display: flex; flex-wrap: wrap; gap: .22rem; max-width: calc(100% - 1.1rem); padding: .25rem; border: 1px solid #3a3a3a; background: rgba(24,24,24,.94); box-shadow: 0 8px 20px rgba(0,0,0,.28); }
+.graph-tool-button { min-width: 31px; padding: 0 .48rem; font-size: .68rem; }
+.graph-tool-button[data-active="true"], .replay-button[data-active="true"] { border-color: var(--gold); color: var(--gold-bright); }
+.graph-canvas { position: absolute; inset: 0; overflow: hidden; cursor: grab; background-color: #111; background-image: linear-gradient(#1b1b1b 1px, transparent 1px), linear-gradient(90deg, #1b1b1b 1px, transparent 1px); background-size: 24px 24px; touch-action: none; }
+.graph-canvas[data-panning="true"] { cursor: grabbing; }
+.graph-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform .16s ease-out; }
+.edge-layer, .node-list { position: absolute; inset: 0; width: 100%; height: 100%; }
+.edge { fill: none; stroke: #555; stroke-width: 1.5; opacity: .72; }
+.edge-running { stroke: var(--green); stroke-dasharray: 8 8; animation: live-flow 1.2s linear infinite; }
+.edge-completed { stroke: var(--gold); }
+.edge-skipped, .edge-queued { stroke: #555; }
+.edge-failed, .edge-in-doubt { stroke: var(--danger); }
+.edge-blocked { stroke: var(--gold-bright); }
+@keyframes live-flow { to { stroke-dashoffset: -16; } }
+.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; gap: .35rem; width: 168px; min-height: 96px; max-height: 112px; padding: .6rem; overflow: hidden; border: 1px solid #3d3d3d; border-left: 3px solid #666; border-radius: 3px; background: #1c1c1c; color: var(--text); box-shadow: 0 6px 16px rgba(0,0,0,.24); cursor: pointer; }
+.node-card:hover, .node-card:focus-visible, .node-card[data-selected="true"] { border-color: var(--gold); outline: none; box-shadow: 0 0 0 1px rgba(215,175,0,.24), 0 8px 24px rgba(0,0,0,.35); }
+.node-running { border-left-color: var(--green); }
+.node-completed { border-left-color: var(--gold); }
+.node-skipped { border-left-color: #585858; opacity: .72; }
+.node-failed, .node-in-doubt { border-left-color: var(--danger); }
+.node-blocked { border-left-color: var(--gold-bright); }
+.node-card-top { display: flex; align-items: center; gap: .3rem; color: var(--muted); font: 600 .58rem/1 monospace; text-transform: uppercase; }
+.node-marker { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.node-running .node-marker { color: var(--green); }
+.node-completed .node-marker { color: var(--gold); }
+.node-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
+.node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .63rem; line-height: 1.35; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.activity-chips { display: flex; gap: .2rem; min-width: 0; overflow: hidden; }
+.activity-chip { min-width: 0; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .12rem .25rem; border: 1px solid #3c3c3c; color: #bdbdbd; font: .52rem/1.2 monospace; }
+.chip-owner { color: var(--gold-bright); }
+.chip-runtime { color: var(--green); }
+.node-connection, .node-progress { display: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card { height: 96px !important; min-height: 96px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card::after { content: ""; position: absolute; top: 35px; right: 0; left: 0; height: 26px; border-left: 8px solid #666; background: #292929; }
+.graph-canvas[data-semantic-zoom="cell"] .node-running::after { border-left-color: var(--green); }.graph-canvas[data-semantic-zoom="cell"] .node-completed::after { border-left-color: var(--gold); }.graph-canvas[data-semantic-zoom="cell"] .node-failed::after,.graph-canvas[data-semantic-zoom="cell"] .node-blocked::after { border-left-color: var(--danger); }
+.graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: hidden; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: absolute; z-index: 1; top: 35px; right: 0; left: 8px; height: 26px; visibility: visible; padding: .4rem .45rem; font: 700 11px/1 monospace; }
+.graph-minimap { position: absolute; z-index: 7; top: .55rem; right: .55rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid #454545; background: rgba(18,18,18,.9); pointer-events: none; }
+.minimap-scene { position: absolute; transform-origin: 0 0; }
+.minimap-node { position: absolute; border-radius: 1px; background: #666; }
+.minimap-node-running { background: var(--green); }.minimap-node-completed { background: var(--gold); }.minimap-node-failed,.minimap-node-blocked { background: var(--danger); }
+.minimap-viewport { position: absolute; border: 1px solid var(--gold-bright); background: rgba(215,175,0,.08); }
+.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+.replay-panel { min-width: 0; display: grid; grid-template-columns: 300px minmax(0,1fr); grid-template-rows: 34px 28px 28px; border-top: 1px solid var(--line); background: #181818; }
+.replay-dock-header { grid-row: 1 / -1; min-width: 300px; display: grid; grid-template-columns: minmax(74px,1fr) auto; align-items: center; gap: .45rem; padding: .45rem .55rem; border-right: 1px solid var(--line); }
+.replay-current { min-width: 74px; overflow: hidden; }
+.replay-current .panel-title { white-space: nowrap; }
+.replay-current .panel-note { display: none; }
+.panel-title { display: block; color: var(--text); font-size: .68rem; font-weight: 700; }
+.panel-note { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .58rem; }
+.replay-controls { display: flex; flex: 0 0 auto; gap: .15rem; white-space: nowrap; }
+.replay-button { min-width: 27px; min-height: 27px; padding: 0 .38rem; font-size: .62rem; }
+.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; display: flex; align-items: center; padding: 0 .65rem; border-bottom: 1px solid #2b2b2b; }
+.replay-range { position: absolute; inset: 0 .65rem; width: calc(100% - 1.3rem); opacity: 0; cursor: ew-resize; z-index: 2; }
+.replay-track { width: 100%; height: 4px; background: #353535; }
+.replay-progress { display: block; height: 100%; background: var(--gold); }
+.replay-events { grid-column: 2; grid-row: 2 / 4; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(70px,1fr); gap: 1px; margin: 0; padding: 5px .65rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; list-style: none; }
+.replay-event { position: relative; min-width: 0; border-top: 5px solid #555; color: transparent; }
+.replay-event[data-active="true"] { border-color: var(--gold-bright); background: rgba(215,175,0,.12); }
+.replay-event[data-status="running"] { border-color: var(--green); }.replay-event[data-status="completed"] { border-color: var(--gold); }.replay-event[data-status="failed"] { border-color: var(--danger); }
+.status-bar { min-width: 0; display: flex; align-items: center; gap: .65rem; padding: 0 .55rem; overflow: hidden; border-top: 1px solid var(--line); background: #101010; color: var(--muted); font: .58rem/1 monospace; }
+.status-bar > span { min-width: 0; white-space: nowrap; }
+.status-bar .status-title { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.status-bar strong { color: var(--gold-bright); font-weight: 600; }
+.evidence-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: 48px auto minmax(0,1fr); overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
+.evidence-panel[data-open="false"] { visibility: hidden; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; padding: .55rem .7rem; border-bottom: 1px solid var(--line); }
+.kicker { margin: 0 0 .12rem; color: var(--gold); font: .55rem/1 monospace; text-transform: uppercase; }
+.panel-count { color: var(--gold-bright); font: .6rem/1 monospace; }
+.selected-node-summary { padding: .8rem; border-bottom: 1px solid var(--line); }
+.selected-node-summary strong { display: block; color: var(--gold-bright); font-size: .82rem; }
+.selected-node-summary p { color: var(--muted); font-size: .68rem; line-height: 1.5; }
+.selected-node-facts { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; }
+.selected-node-facts span, [data-live-selected-node-evidence] { padding: .2rem .35rem; border: 1px solid #3b3b3b; color: #bfbfbf; font: .56rem/1.2 monospace; }
+.evidence-drawer { min-height: 0; overflow: auto; padding: .55rem; }
+.evidence-list { display: grid; gap: .35rem; }
+.evidence-item { padding: .55rem; border: 1px solid #383838; border-left: 2px solid #555; background: #181818; }
+.evidence-item[data-associated="true"] { border-left-color: var(--gold); }
+.empty-state { height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); }
+.empty-title { color: var(--text); }
+.live-dialog { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(0,0,0,.72); }
+.dialog-card { width: min(640px,100%); max-height: min(78dvh,720px); overflow: auto; border: 1px solid #4a4a4a; background: #1b1b1b; box-shadow: 0 24px 80px rgba(0,0,0,.6); }
+.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: .65rem .8rem; border-bottom: 1px solid var(--line); background: #1b1b1b; }
+.dialog-title { margin: 0; font-size: .82rem; }
+.dialog-body { padding: .8rem; }
+.hub-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.hub-field { display: grid; gap: .3rem; color: var(--muted); font-size: .65rem; }
+.hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 .5rem; border: 1px solid #444; background: #111; color: var(--text); }
+.hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .65rem; }
+.shortcut-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .35rem .8rem; margin: 0; }
+.shortcut-grid div { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid #303030; color: var(--muted); font-size: .68rem; }
+kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid #555; background: #111; color: var(--gold-bright); text-align: center; font: .58rem/1.2 monospace; }
+.share-panel, .control-panel { margin-top: .7rem; border: 1px solid var(--line); }
+.share-content, .control-content { padding: .7rem; }.share-actions,.control-actions { display: flex; flex-wrap: wrap; gap: .3rem; }.share-status,.control-status,.control-result,.control-error { color: var(--muted); font-size: .65rem; overflow-wrap: anywhere; }.control-error { color: var(--danger); }
+@media (max-width: 720px) {
+  .shell { grid-template-rows: 44px minmax(0,1fr); }
+  .top-run-context, .connection span:last-child { display: none; }
+  .topbar { gap: .35rem; padding-inline: .4rem; }
+  .brand { min-width: 0; }
+  .topbar-actions { min-width: 0; flex: 0 0 auto; gap: .12rem; }
+  .connection { margin: 0 .1rem 0 0; }
+  .topbar-button { min-width: 30px; padding-inline: .3rem; }
+  .workspace-grid, .workspace-grid[data-inspector-open="true"] { display: block; }
+  .graph-panel { height: 100%; grid-template-rows: minmax(0,1fr) 104px 26px; }
+  .graph-toolbar { top: .4rem; left: .4rem; right: .4rem; width: auto; overflow-x: auto; flex-wrap: nowrap; }
+  .graph-tool-button { min-width: 40px; min-height: 40px; }
+  [data-live-graph-fit], [data-live-graph-layout], [data-live-graph-zoom-out], [data-live-graph-zoom-in] { display: none; }
+  .graph-canvas { overflow: auto; touch-action: pan-y; }
+  .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
+  .node-list { position: relative; inset: auto; display: grid; gap: .45rem; padding: 3.4rem .5rem .6rem; }
+  .node-card { position: relative !important; top: auto !important; left: auto !important; width: 100% !important; min-height: 84px !important; max-height: none; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: .6rem; overflow: hidden; border: 1px solid #3d3d3d; border-left-width: 3px; background: #1c1c1c; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: visible; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; height: auto; padding: 0; font: inherit; }
+  .edge-layer, .graph-minimap { display: none; }
+  .replay-panel { grid-template-columns: 1fr; grid-template-rows: 42px 28px 34px; }
+  .replay-dock-header { grid-row: 1; min-width: 0; grid-template-columns: minmax(64px,1fr) auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .replay-range-wrap { grid-column: 1; grid-row: 2; }
+  .replay-events { grid-column: 1; grid-row: 3; }
+  .evidence-panel { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; height: min(72dvh,620px); border: 1px solid #505050; transform: translateY(102%); transition: transform .18s ease; visibility: visible !important; }
+  .evidence-panel[data-open="true"] { transform: translateY(0); }
+  .status-bar { gap: .45rem; }.status-bar .status-nodes,.status-bar .status-transport { display: none; }
+  .hub-switcher, .shortcut-grid { grid-template-columns: 1fr; }
+  .hub-status { grid-column: 1; }
+}
+@media (max-width: 380px) { .brand-title { display: none; }.top-run-context strong { max-width: 24vw; }.topbar-button { font-size: .62rem; }.status-bar .status-camera { display: none; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
+`;
+
 export function renderLiveControlRoomPage({
   snapshot = null,
   snapshotEndpoint = DEFAULT_SNAPSHOT_ENDPOINT,
@@ -2476,52 +2735,30 @@ export function renderLiveControlRoomPage({
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#070b16">
+  <meta name="theme-color" content="#121212">
   <meta name="description" content="Meta_Kim Live 只读实时运行控制中心">
   <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMic+PHJlY3Qgd2lkdGg9JzMyJyBoZWlnaHQ9JzMyJyByeD0nOCcgZmlsbD0nIzA3MGIxNicvPjxwYXRoIGQ9J004IDIyVjEwaDRsNCA1IDQtNWg0djEyaC00di02bC00IDUtNC01djZ6JyBmaWxsPScjNmVlN2ZmJy8+PC9zdmc+">
   <title>Meta_Kim Live · 控制中心</title>
-  <style>${PAGE_CSS}${CANVAS_FIRST_CSS}</style>
+  <style>${GRAPH_FIRST_CSS}</style>
 </head>
 <body>
   <a class="skip-link" id="skip-to-content" href="#live-main" data-i18n-en="Skip to content" data-i18n-zh="跳到主要内容">跳到主要内容</a>
-  <div class="ambient" aria-hidden="true"></div>
   <div id="live-app" class="shell" data-snapshot-endpoint="${escapeHtml(safeSnapshotEndpoint)}" data-events-endpoint="${escapeHtml(safeEventsEndpoint)}" data-projects-endpoint="${escapeHtml(safeProjectsEndpoint)}" data-replay-endpoint="${escapeHtml(safeReplayEndpoint)}" data-share-endpoint="${escapeHtml(safeShareEndpoint)}" data-control-endpoint="${escapeHtml(safeControlEndpoint)}">
     <header class="topbar" aria-label="Meta_Kim Live header">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">M</span>
-        <div><p class="eyebrow">Meta_Kim</p><p class="brand-title" data-i18n-en="Live workspace" data-i18n-zh="实时工作台">实时工作台</p></div>
+        <p class="brand-title">Meta_Kim Live</p>
       </div>
-      <section class="hub-switcher" aria-label="Meta_Kim project and session selection">
-        <label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label>
-        <label class="hub-field hub-field-run" for="live-session-select"><span data-i18n-en="Session / run" data-i18n-zh="会话 / 运行">会话 / 运行</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed session" disabled><option value="">请先选择项目</option></select></label>
-        <p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p>
-      </section>
-      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="language-toggle" type="button" data-live-language-toggle aria-label="Switch to English">EN</button></div>
+      <div class="top-run-context"><strong data-live-run-title>正在等待运行快照</strong><span data-live-run-id>未识别运行</span></div>
+      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Sessions" data-i18n-zh="会话">会话</button><button class="topbar-button" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
     <main class="main" id="live-main" tabindex="-1">
-      <section class="run-context run-hero" aria-labelledby="run-title">
-        <div class="run-heading">
-          <p class="kicker" data-i18n-en="Observed run" data-i18n-zh="当前运行">当前运行</p>
-          <h1 class="run-title" id="run-title" data-live-run-title>正在等待运行快照</h1>
-          <p class="run-subtitle"><span class="run-stage-primary" data-live-run-stage>观测中</span><span data-live-source>本地观察器</span><span data-live-run-id>未识别运行</span></p>
-        </div>
-        <dl class="run-facts" aria-label="Run facts">
-          <div class="run-fact run-fact-primary"><dt data-i18n-en="Progress" data-i18n-zh="进度">进度</dt><dd data-live-run-progress>—</dd></div>
-          <div class="run-fact"><dt data-i18n-en="Active" data-i18n-zh="执行中">执行中</dt><dd data-live-run-workers>—</dd></div>
-          <div class="run-fact"><dt data-i18n-en="Started" data-i18n-zh="开始">开始</dt><dd data-live-run-started>—</dd></div>
-          <div class="run-fact"><dt data-i18n-en="Updated" data-i18n-zh="更新">更新</dt><dd data-live-run-updated>—</dd></div>
-        </dl>
-        <div class="state-chip" data-live-state data-state="stale"><span class="status-pulse" aria-hidden="true"></span><span data-live-state-label>未更新</span></div>
-      </section>
       <div class="sr-only" data-live-region aria-live="polite"></div>
-      <section class="workspace-grid" aria-label="Live execution workspace">
-        <section class="panel graph-panel" aria-labelledby="graph-title">
-          <header class="panel-header graph-header"><div><h2 class="panel-title" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h2><p class="panel-note" data-i18n-en="Live topology and verified run state." data-i18n-zh="实时拓扑与已验证运行状态。">实时拓扑与已验证运行状态。</p></div><div class="graph-header-actions"><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Open inspector">ⓘ</button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="true" aria-pressed="true" aria-label="Follow active node" title="Follow active node">◎</button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Toggle graph layout" data-i18n-en="Layout" data-i18n-zh="布局">布局</button><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Fit graph to viewport" data-i18n-en="Fit" data-i18n-zh="适应">适应</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button></div></header>
-          <section class="stage-overview" aria-labelledby="stage-overview-title">
-            <h2 class="sr-only" id="stage-overview-title" data-i18n-en="Eight-stage path" data-i18n-zh="八阶段执行路径">八阶段执行路径</h2>
-            <ol class="stage-rail" data-live-stage-rail aria-label="Run progress"></ol>
-          </section>
+      <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
+        <section class="graph-panel" aria-labelledby="graph-title">
           <div class="graph-stage" data-live-graph-viewport>
+            <h1 class="sr-only" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
+            <div class="graph-toolbar" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)" data-i18n-en="Overview" data-i18n-zh="总览">总览</button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="true" aria-pressed="true" aria-label="Follow active node" title="Follow (F)" data-i18n-en="Follow" data-i18n-zh="跟随">跟随</button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)" data-i18n-en="Relayout" data-i18n-zh="重排">重排</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
@@ -2536,6 +2773,7 @@ export function renderLiveControlRoomPage({
             <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div></div>
             <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
           </section>
+          <div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span class="status-title" data-live-status-title>等待运行</span><span><strong data-live-run-progress>—</strong> · <span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>—</span> · <span data-live-node-count>0 个节点</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>—</span><span class="sr-only" data-live-run-updated>—</span><span class="sr-only" data-live-source>本地观察器</span></div>
         </section>
         <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
           <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
@@ -2553,7 +2791,9 @@ export function renderLiveControlRoomPage({
       </section>
       <section class="empty-state" data-live-empty hidden aria-labelledby="empty-title"><span class="empty-glyph" aria-hidden="true">◌</span><h2 class="empty-title" id="empty-title" data-i18n-en="No live snapshot yet" data-i18n-zh="尚无实时快照">尚无实时快照</h2><p class="empty-copy" data-live-empty-message>正在等待本地观察器发布 Frozen v1 快照。</p></section>
     </main>
-    <footer class="footer"><span><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 —</span></span><span data-i18n-en="Read-only surface · no run mutations" data-i18n-zh="只读界面 · 不修改运行">只读界面 · 不修改运行</span></footer>
+    <section class="live-dialog" data-live-dialog data-live-sessions-dialog role="dialog" aria-modal="true" aria-labelledby="sessions-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="sessions-title" data-i18n-en="Sessions" data-i18n-zh="会话">会话</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close sessions">×</button></header><div class="dialog-body"><section class="hub-switcher" aria-label="Meta_Kim project and session selection"><label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label><label class="hub-field" for="live-session-select"><span data-i18n-en="Session / run" data-i18n-zh="会话 / 运行">会话 / 运行</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed session" disabled><option value="">请先选择项目</option></select></label><p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p></section></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-help-dialog role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="help-title" data-i18n-en="Keyboard and camera" data-i18n-zh="键盘与相机">键盘与相机</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close help">×</button></header><div class="dialog-body"><div class="shortcut-grid"><div><span>Overview</span><kbd>O</kbd></div><div><span>Follow active</span><kbd>F</kbd></div><div><span>Relayout</span><kbd>R</kbd></div><div><span>Play / pause</span><kbd>Space</kbd></div><div><span>Previous event</span><kbd>[</kbd></div><div><span>Next event</span><kbd>]</kbd></div><div><span>Jump live</span><kbd>End</kbd></div><div><span>Session info</span><kbd>I</kbd></div><div><span>Close</span><kbd>Esc</kbd></div><div><span>Help</span><kbd>?</kbd></div></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-info-dialog role="dialog" aria-modal="true" aria-labelledby="info-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="info-title" data-i18n-en="Session info and local tools" data-i18n-zh="会话信息与本地工具">会话信息与本地工具</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close session info">×</button></header><div class="dialog-body"><p class="panel-note"><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 —</span> · <span data-i18n-en="Read-only by default" data-i18n-zh="默认只读">默认只读</span></p><div data-live-info-tools></div></div></div></section>
   </div>
   <script type="application/json" id="live-initial-snapshot">${initialJson}</script>
   <script type="application/json" id="live-control-config">${controlConfigJson}</script>

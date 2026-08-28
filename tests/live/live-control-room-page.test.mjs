@@ -140,34 +140,41 @@ test("includes graph, evidence drawer, and replay controls", () => {
   assert.match(html, /data\.replayStatus|dataset\.replayStatus/u);
 });
 
-test("prioritizes a readable task summary and eight-stage progress rail", () => {
+test("keeps stage progress in the compact status bar without duplicating the eight-stage rail", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /data-live-run-progress/u);
   assert.match(html, /data-live-run-workers/u);
-  assert.match(html, /data-live-stage-rail/u);
-  assert.match(html, /function renderStageRail\(snapshot\)/u);
-  assert.match(html, /STAGE_ORDER\.forEach/u);
+  assert.match(html, /class="status-bar"/u);
+  assert.match(html, /data-live-run-stage/u);
+  assert.doesNotMatch(html, /data-live-stage-rail|function renderStageRail\(/u);
+  assert.doesNotMatch(html, /class="[^"]*run-hero|class="[^"]*run-facts/u);
   assert.match(html, /selectedSession\.currentStage/u);
   assert.match(html, /selectedSession\.active\s*\?\s*"live"/u);
-  assert.match(html, /index === selectedStageIndex && selectedSession\.active/u);
-  assert.match(html, /data-i18n-zh="八阶段执行路径"/u);
-  assert.doesNotMatch(html, /data-i18n-zh="数据协议"|DAG \/ 只读/u);
+  assert.match(html, /\["completed", "skipped"\]\.includes\(observedStageStates\.get\(index\)\)/u);
+  assert.doesNotMatch(html, /index < selectedStageIndex|currentStageIndex >= 0 && index < currentStageIndex/u);
 });
 
 test("uses a canvas-first control-room hierarchy with an on-demand inspector and integrated transport", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /<header class="topbar"[\s\S]*class="hub-switcher"[\s\S]*<\/header>/u);
-  assert.match(html, /class="[^"]*run-context[^"]*"/u);
-  assert.match(html, /class="workspace-grid"[\s\S]*class="panel graph-panel"[\s\S]*class="stage-overview"[\s\S]*class="replay-panel replay-dock"/u);
+  assert.match(html, /<header class="topbar"[\s\S]*data-live-open-sessions[\s\S]*<\/header>/u);
+  assert.match(html, /class="workspace-grid"[^>]*data-inspector-open="false"[\s\S]*class="graph-panel"[\s\S]*class="replay-panel replay-dock"[\s\S]*class="status-bar"/u);
+  assert.match(html, /data-live-sessions-dialog/u);
+  assert.match(html, /data-live-help-dialog/u);
+  assert.match(html, /data-live-info-dialog/u);
   assert.match(html, /data-live-inspector[^>]+data-open="false"/u);
   assert.match(html, /data-live-inspector-close/u);
   assert.match(html, /function setInspectorOpen\(/u);
   assert.match(html, /setInspectorOpen\(true\)/u);
-  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*clamp\(/su);
-  assert.match(html, /\.evidence-panel\s*\{[^}]*position:\s*absolute/su);
-  assert.match(html, /\.replay-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/su);
+  assert.match(html, /function repositionCameraAfterInspector\(active\)/u);
+  assert.match(html, /requestAnimationFrame\(\(\)\s*=>\s*window\.requestAnimationFrame\(reposition\)\)/u);
+  assert.match(html, /workspace\?\.addEventListener\("transitionend", reposition, \{ once: true \}\)/u);
+  assert.match(html, /function reconcileCamera\([\s\S]{0,700}camera\.scale < \.68[\s\S]{0,160}centerGraphNode\(followTargetId\(\)\)/u);
+  assert.match(html, /new ResizeObserver\(\(\)\s*=>\s*reconcileCamera\(\)\)/u);
+  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\]\s*\{[^}]*30%[^}]*70%/su);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.evidence-panel\s*\{[^}]*position:\s*fixed/su);
+  assert.match(html, /\.graph-panel\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s*92px\s*24px/su);
 });
 
 test("is accessible by keyboard and respects reduced motion", () => {
@@ -185,6 +192,9 @@ test("is accessible by keyboard and respects reduced motion", () => {
   assert.match(html, /prefers-reduced-motion\s*:\s*reduce/iu);
   assert.match(html, /focus-visible/iu);
   assert.match(html, /overflow-wrap:\s*anywhere/iu);
+  assert.match(html, /event\.defaultPrevented \|\| typing \|\| interactive/u);
+  assert.match(html, /button, a, \[role="button"\], \[role="option"\], \[contenteditable="true"\]/u);
+  assert.match(html, /dialogActive[\s\S]{0,120}event\.defaultPrevented \|\| typing \|\| interactive \|\| dialogActive/u);
 });
 
 test("does not expose mutation affordances in the read-only MVP", () => {
@@ -226,7 +236,7 @@ test("renders an accessible project and session selector with explicit empty gui
   assert.match(html, /No Meta_Kim projects are registered yet/u);
   assert.match(html, /no governed runs yet/iu);
   assert.match(html, /Hub never scans your disk/u);
-  assert.match(html, /@media \(max-width: 620px\)[\s\S]{0,500}\.hub-switcher\s*\{[^}]*grid-template-columns:\s*1fr/u);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.hub-switcher[^}]*grid-template-columns:\s*1fr/u);
 });
 
 test("loads the Hub catalog, honors deep links, and reconnects scoped read endpoints", () => {
@@ -423,8 +433,10 @@ test("uses a compact, zoomable DAG canvas with a minimap and fit controls", () =
   ]) {
     assert.match(html, new RegExp(marker.replace(/[.*+?^${}()|[\[\]\\]/gu, "\\$&"), "u"), marker);
   }
-  assert.match(html, /graph-scene[^>]+style|transform:\translate/iu);
+  assert.match(html, /graphScene\.style\.transform/u);
   assert.match(html, /data-live-graph-minimap/iu);
+  assert.match(html, /dataset\.semanticZoom\s*=\s*camera\.scale\s*<\s*\.42\s*\?\s*"cell"\s*:\s*"card"/u);
+  assert.match(html, /const scale\s*=\s*Math\.max\(\.42,/u);
 });
 
 test("draws curved status-aware edges and a live flow animation with reduced-motion fallback", () => {
@@ -445,17 +457,19 @@ test("binds node selection to evidence and replay state without unbounded DOM gr
   assert.match(html, /selectNode/iu);
   assert.match(html, /associated|nodeId|selected.*evidence/isu);
   assert.match(html, /slice\(0,\s*128\)/u);
-  assert.match(html, /data-replay-active|replay-active/iu);
+  assert.match(html, /dataset\.replayActive/iu);
   assert.match(html, /ArrowUp|ArrowDown|Enter/iu);
 });
 
-test("keeps the eight-stage spine distinct and derives omitted edge status from the target node", () => {
+test("keeps the stage spine in the graph model and never infers completion from the current stage", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /STAGE_MATCH_ORDER\s*=\s*\[\.\.\.STAGE_ORDER\]\.sort/iu);
   assert.match(html, /text\.startsWith\(stageName\s*\+\s*["']-["']\)/u);
   assert.match(html, /explicitStatus[\s\S]{0,500}nodeById\.get\(targetId\)\?\.status/u);
-  assert.match(html, /edge-running[\s\S]{0,120}edge-flow/iu);
+  assert.match(html, /nodeStatuses\s*=\s*new Set\(\[[^\]]*"skipped"/u);
+  assert.match(html, /completedSteps[\s\S]{0,180}\["completed", "skipped"\]/u);
+  assert.doesNotMatch(html, /index < selectedStageIndex|index < currentStageIndex/u);
 });
 
 test("keeps the default graph readable with a four-column serpentine spine and directional edges", () => {
@@ -463,7 +477,8 @@ test("keeps the default graph readable with a four-column serpentine spine and d
 
   assert.match(html, /const cardWidth\s*=\s*168/u);
   assert.match(html, /const cardHeight\s*=\s*96/u);
-  assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*8\s*:\s*4/u);
+  assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*4\s*:\s*8/u);
+  assert.match(html, /const rowGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*150\s*:\s*126/u);
   assert.match(html, /row\s*%\s*2\s*===\s*0\s*\?\s*withinRow\s*:\s*spineColumns\s*-\s*1\s*-\s*withinRow/u);
   assert.match(html, /function edgeGeometry\(/u);
   assert.match(html, /vertical\s*=\s*Math\.abs\(deltaY\)/u);
@@ -494,7 +509,7 @@ test("keeps inspector provenance and replay navigation visible and keyboard reac
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#55e6d0["']/u);
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#87d787["'][\s\S]*skipped:\s*["']#585858["']/u);
   assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
   assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
 });
@@ -502,8 +517,8 @@ test("uses explicit marker colors so SVG arrows do not inherit an unreliable cur
 test("keeps the desktop workspace bounded and coalesces high-frequency snapshot updates", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*clamp\([^}]*overflow:\s*hidden/su);
-  assert.match(html, /\.evidence-panel\s*\{[^}]*height:\s*calc\([^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*100%[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.evidence-panel\s*\{[^}]*min-height:\s*0[^}]*overflow:\s*hidden/su);
   assert.match(html, /\.evidence-drawer\s*\{[^}]*overflow:\s*auto/su);
   assert.match(html, /graphMinimap\.hidden\s*=\s*!overflowing/u);
   assert.match(html, /SNAPSHOT_COALESCE_MS\s*=\s*75/u);
@@ -521,8 +536,23 @@ test("preserves real edge state without replay evidence and uses valid listbox s
   assert.match(html, /data-live-graph-follow[^>]+aria-pressed="true"/u);
   assert.doesNotMatch(html, /card\.setAttribute\(["']aria-pressed/u);
   assert.match(html, /replayPlay\.disabled\s*=\s*events\.length\s*<\s*2/u);
-  assert.match(html, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/u);
-  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*184\s*:\s*204/u);
-  assert.match(html, /\.node-meta\s*\{[^}]*flex-wrap:\s*nowrap/su);
-  assert.match(html, /\.node-meta-item\s*\{[^}]*min-width:\s*0/su);
+  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*220\s*:\s*184/u);
+  assert.match(html, /\.replay-panel\s*\{[^}]*grid-template-columns:\s*300px\s*minmax\(0,1fr\)/su);
+  assert.match(html, /\.replay-dock-header\s*\{[^}]*min-width:\s*300px[^}]*grid-template-columns:\s*minmax\(74px,1fr\)\s*auto/su);
+  assert.match(html, /\.replay-current \.panel-note\s*\{[^}]*display:\s*none/su);
+  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-panel\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\)/su);
+  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-current\s*\{[^}]*display:\s*none/su);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.top-run-context, \.connection span:last-child\s*\{\s*display:\s*none/su);
+  assert.match(html, /data-live-open-sessions[\s\S]{0,500}data-live-language-toggle[\s\S]{0,500}data-live-open-help[\s\S]{0,500}data-live-open-info/u);
+  assert.match(html, /\[data-live-graph-fit\], \[data-live-graph-layout\], \[data-live-graph-zoom-out\], \[data-live-graph-zoom-in\]\s*\{\s*display:\s*none/su);
+  assert.match(html, /\.replay-events\s*\{[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*hidden/su);
+  assert.match(html, /scrollIntoView\?\.\(\{ behavior:\s*"auto", block:\s*"nearest", inline:\s*"nearest" \}\)/u);
+  assert.match(html, /for \(const other of \[sessionsDialog, helpDialog, infoDialog\]\)/u);
+  assert.match(html, /dialogOpener = document\.activeElement/u);
+  assert.match(html, /dialogOpener\.focus\(\)/u);
+  assert.match(html, /data-semantic-zoom="cell"\] \.node-card\s*\{[^}]*height:\s*96px[^}]*background:\s*transparent/su);
+  assert.match(html, /class="status-bar"/u);
+  assert.match(html, /\.activity-chips\s*\{[^}]*display:\s*flex/su);
+  assert.match(html, /\.activity-chip\s*\{[^}]*min-width:\s*0/su);
+  assert.match(html, /graph\.scrollTo\(\{[\s\S]{0,260}behavior:\s*reducedMotion\.matches\s*\?\s*"auto"\s*:\s*"smooth"/u);
 });
