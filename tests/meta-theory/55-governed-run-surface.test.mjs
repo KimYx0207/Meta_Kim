@@ -768,6 +768,12 @@ describe("55 - governed run identity, language, and chat surface", () => {
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
       });
+      const firstLiveProjection = JSON.parse(await readFile(first.paths.liveProjection, "utf8"));
+      const firstPointer = JSON.parse(await readFile(first.paths.latest, "utf8"));
+      assert.equal(firstLiveProjection.schemaVersion, "meta-kim-live-projection-v2");
+      assert.equal(firstPointer.liveProjectionPath.endsWith("protected-run.live.json"), true);
+      assert.equal(firstPointer.liveProjectionBytes <= 256 * 1024, true);
+      assert.match(firstPointer.liveProjectionSha256, /^[a-f0-9]{64}$/u);
       await assert.rejects(
         runMetaTheoryGovernedExecution({
           task: "second explicit run",

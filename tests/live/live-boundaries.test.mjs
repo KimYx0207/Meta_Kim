@@ -20,8 +20,10 @@ import {
   sanitizeLiveProfile,
 } from "../../src/infrastructure/live/live-read-repository.mjs";
 import {
+  buildLiveCompactProjection,
   emptyReplay,
   emptySnapshot,
+  LIVE_MAX_COMPACT_BYTES,
   normalizeKind,
   normalizeStage,
   normalizeStatus,
@@ -122,6 +124,10 @@ test("snapshot allowlists normalize aliases while redacting every sensitive stri
   assert.equal(safeText("-----BEGIN PRIVATE KEY-----"), "redacted");
   assert.equal(safeText("sk-abcdefghijk"), "redacted");
   assert.equal(safeText("C:\\Users\\Kim\\secret.txt"), "[path omitted]");
+  assert.equal(safeText("~/private/tool.log"), "[path omitted]");
+  assert.equal(safeText("~\\private\\tool.log"), "[path omitted]");
+  assert.equal(safeText("file:///Users/Kim/private/tool.log"), "[path omitted]");
+  assert.equal(safeText("vscode://file/C:/Users/Kim/private/tool.log"), "[path omitted]");
   assert.equal(safeText("src/private/file.mjs"), "[path omitted]");
   assert.equal(safeText(" <safe>   label "), "safe label");
   assert.equal(safeText(123), "123");
@@ -229,6 +235,181 @@ test("repository reads bounded legacy status and digest-bound governed artifacts
   }
 });
 
+test("compact live projection is bounded, digest-bound, Unicode-safe, and preferred over oversized raw artifacts", async () => {
+  const root = await projectFixture();
+  const executionDir = path.join(root, ".meta-kim", "state", "default", "governed-executions");
+  const runId = "meta-compact-1";
+  const rawTaskId = "unicode-id-任务-甲-987";
+  const projection = buildLiveCompactProjection({
+    schemaVersion: "governed-execution-v1",
+    runId,
+    status: "partial",
+    task: "Safe compact task",
+    updatedAt: "2026-08-24T10:00:00.000Z",
+    workerTaskPackets: [{
+      taskPacketId: rawTaskId,
+      roleDisplayName: "backend",
+      ownerAgent: "backend-architect",
+      todayTask: "Prepare the bounded service projection",
+      parallelGroup: "delivery",
+    }],
+    workerResultPackets: [{ taskPacketId: rawTaskId, status: "planned_not_executed" }],
+    coreLoop: { runtimeInvocationPlanPacket: { evidence: [
+      {
+        eventId: "tool-call-1",
+        taskPacketId: rawTaskId,
+        bindingRef: rawTaskId,
+        proofValid: true,
+        passEligible: true,
+        family: "runtime_tool",
+        providerId: "read-only-observer",
+        evidenceKind: "runtime_tool_call",
+        state: "invoked",
+        resultStatus: "started",
+        occurredAt: "2026-08-24T09:59:58.000Z",
+      },
+      {
+        eventId: "tool-call-1",
+        taskPacketId: rawTaskId,
+        bindingRef: rawTaskId,
+        proofValid: true,
+        passEligible: true,
+        family: "runtime_tool",
+        providerId: "read-only-observer",
+        evidenceKind: "runtime_tool_call",
+        resultStatus: "completed",
+        occurredAt: "2026-08-24T10:00:00.000Z",
+        payload: "secret=must-not-project",
+      },
+      {
+        eventId: "agent-call-1",
+        taskPacketId: rawTaskId,
+        bindingRef: rawTaskId,
+        proofValid: true,
+        passEligible: true,
+        family: "agent_subagent",
+        providerId: "backend-architect",
+        evidenceKind: "agent_task_result",
+        resultStatus: "returned",
+        occurredAt: "2026-08-24T10:00:01.000Z",
+      },
+      {
+        eventId: "tool-call-2",
+        taskPacketId: rawTaskId,
+        bindingRef: rawTaskId,
+        proofValid: true,
+        passEligible: false,
+        family: "runtime_tool",
+        providerId: "file:///Users/Kim/private/tool.exe",
+        evidenceKind: "runtime_tool_call",
+        resultStatus: "failed",
+        occurredAt: "2026-08-24T10:00:02.000Z",
+      },
+    ] } },
+    agUiStageEvents: { events: [{
+      eventId: "event-1",
+      eventType: "StepFinished",
+      stage: "Execution",
+      status: "completed",
+      timestamp: "2026-08-24T10:00:00.000Z",
+    }] },
+  });
+  const content = `${JSON.stringify(projection, null, 2)}\n`;
+  const digest = createHash("sha256").update(content, "utf8").digest("hex");
+  try {
+    await mkdir(executionDir, { recursive: true });
+    await writeFile(path.join(executionDir, `${runId}.live.json`), content, "utf8");
+    await writeFile(path.join(executionDir, `${runId}.json`), JSON.stringify({ runId, padding: "x".repeat(8 * 1024 * 1024) }), "utf8");
+    await writeFile(path.join(executionDir, "latest.json"), JSON.stringify({
+      runId,
+      jsonPath: `.meta-kim/state/default/governed-executions/${runId}.json`,
+      liveProjectionPath: `.meta-kim/state/default/governed-executions/${runId}.live.json`,
+      liveProjectionSha256: digest,
+      liveProjectionBytes: Buffer.byteLength(content, "utf8"),
+    }), "utf8");
+    const repository = createLiveReadRepository({ projectRoot: root });
+    const latest = await repository.readLatestArtifact();
+    assert.equal(latest.__source, "live_projection");
+    assert.equal(latest.run.runId, runId);
+    assert.ok(Buffer.byteLength(content, "utf8") <= LIVE_MAX_COMPACT_BYTES);
+    assert.equal(projection.nodes.some((node) => node.kind === "stage"), false);
+    assert.equal(projection.nodes.find((node) => node.label === "backend")?.status, "pending");
+    assert.equal(projection.nodes.find((node) => node.label === "backend")?.toolCalls.length, 3);
+    const toolEvent = projection.replay.find((event) => event.kind === "tool_end");
+    assert.ok(toolEvent?.nodeId);
+    assert.ok(toolEvent?.toolCallId);
+    assert.deepEqual(
+      new Set(projection.replay.map((event) => event.kind)),
+      new Set(["stage", "tool_start", "tool_end", "agent", "failure"]),
+    );
+    assert.doesNotMatch(content, new RegExp(rawTaskId, "u"));
+    assert.doesNotMatch(content, /must-not-project|payload|secret=|Users\/Kim|tool\.exe/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("compact projection trims optional detail before nodes and records original versus visible counts", () => {
+  const runId = "meta-compact-truncated";
+  const workerTaskPackets = Array.from({ length: 80 }, (_, index) => ({
+    taskPacketId: `任务-${index}-${"x".repeat(120)}`,
+    roleDisplayName: `worker-${index}`,
+    ownerAgent: "backend-architect",
+    parallelGroup: `group-${index % 8}`,
+  }));
+  const workerResultPackets = workerTaskPackets.map((packet) => ({
+    taskPacketId: packet.taskPacketId,
+    status: "completed",
+    workerExecutionEvidence: Array.from({ length: 24 }, (_, index) => ({
+      status: "passed",
+      verifyStepRef: `proof-${index}-${"y".repeat(120)}`,
+    })),
+  }));
+  const projection = buildLiveCompactProjection({
+    runId,
+    status: "completed",
+    workerTaskPackets,
+    workerResultPackets,
+    verificationPacket: { verificationResults: [{ status: "passed" }] },
+  }, { maxBytes: 24 * 1024 });
+  assert.ok(Buffer.byteLength(JSON.stringify(projection), "utf8") <= 24 * 1024);
+  assert.equal(projection.truncated.applied, true);
+  assert.ok(projection.counts.nodes > projection.visibleCounts.nodes);
+  assert.ok(projection.truncated.omitted.evidence > 0);
+  assert.equal(projection.truncated.omitted.nodes, projection.counts.nodes - projection.visibleCounts.nodes);
+  assert.equal(projection.truncated.omitted.evidence, projection.counts.evidence - projection.visibleCounts.evidence);
+  assert.equal(projection.truncated.omitted.toolCalls, projection.counts.toolCalls - projection.visibleCounts.toolCalls);
+  assert.equal(projection.truncated.omitted.prompts, projection.counts.prompts - projection.visibleCounts.prompts);
+  assert.equal(projection.truncated.omitted.provenance, projection.counts.provenance - projection.visibleCounts.provenance);
+  assert.equal(projection.truncated.omitted.replay, projection.counts.events - projection.visibleCounts.events);
+  assert.equal(projection.truncated.finalBytes, Buffer.byteLength(JSON.stringify(projection), "utf8"));
+  assert.equal(projection.nodes.some((node) => node.isMain === true), true);
+});
+
+test("repository falls back to the same pointer raw artifact when compact data is missing or corrupt", async () => {
+  const root = await projectFixture();
+  const executionDir = path.join(root, ".meta-kim", "state", "default", "governed-executions");
+  const runId = "meta-compact-fallback";
+  const raw = JSON.stringify(artifact(runId));
+  try {
+    await mkdir(executionDir, { recursive: true });
+    await writeFile(path.join(executionDir, `${runId}.json`), raw, "utf8");
+    await writeFile(path.join(executionDir, `${runId}.live.json`), "{broken", "utf8");
+    await writeFile(path.join(executionDir, "latest.json"), JSON.stringify({
+      runId,
+      jsonPath: `.meta-kim/state/default/governed-executions/${runId}.json`,
+      liveProjectionPath: `.meta-kim/state/default/governed-executions/${runId}.live.json`,
+      liveProjectionSha256: "0".repeat(64),
+      liveProjectionBytes: 7,
+    }), "utf8");
+    const latest = await createLiveReadRepository({ projectRoot: root }).readLatestArtifact();
+    assert.equal(latest.runId, runId);
+    assert.equal(latest.__source, "governed_artifact");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("project-root resolution rejects symbolic roots and invalid explicit candidates", async (t) => {
   const root = await projectFixture();
   const link = `${root}-link`;
@@ -270,9 +451,9 @@ test("snapshot truth handles stale, conflicting, proven, and malformed histories
     observedAt: "2026-08-25T10:00:00.000Z",
     staleAfterMs: 1_000,
   });
-  assert.equal(stale.source.stale, true);
-  assert.equal(stale.run.status, "in_doubt");
-  assert.ok(stale.nodes.every((node) => node.status === "in_doubt"));
+  assert.equal(stale.source.stale, false);
+  assert.equal(stale.run.runId, "meta-boundary-1");
+  assert.equal(stale.nodes.some((node) => node.kind === "stage"), false);
 
   const durableWins = buildLiveSnapshot({
     durableStatus: status("meta-current", "2026-08-24T10:03:00.000Z"),

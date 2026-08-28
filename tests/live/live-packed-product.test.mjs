@@ -116,7 +116,7 @@ test("the real packed CLI serves the read-only control room without a source che
     const response = await fetch(`${address.url}/api/snapshot`);
     assert.equal(response.status, 200);
     const snapshot = await response.json();
-    assert.equal(snapshot.schemaVersion, "meta-kim-live-snapshot-v1");
+    assert.equal(snapshot.schemaVersion, "meta-kim-live-snapshot-v2");
     assert.equal(snapshot.run, null);
     assert.equal(snapshot.permissions.mutationAllowed, false);
   } finally {

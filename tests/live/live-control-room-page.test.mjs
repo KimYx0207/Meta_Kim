@@ -140,19 +140,19 @@ test("includes graph, evidence drawer, and replay controls", () => {
   assert.match(html, /data\.replayStatus|dataset\.replayStatus/u);
 });
 
-test("keeps stage progress in the compact status bar without duplicating the eight-stage rail", () => {
+test("keeps event progress and the current stage in the compact status bar with a replay-backed stage rail", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /data-live-run-progress/u);
   assert.match(html, /data-live-run-workers/u);
   assert.match(html, /class="status-bar"/u);
   assert.match(html, /data-live-run-stage/u);
-  assert.doesNotMatch(html, /data-live-stage-rail|function renderStageRail\(/u);
+  assert.match(html, /data-live-stage-rail|function renderStageRail\(/u);
   assert.doesNotMatch(html, /class="[^"]*run-hero|class="[^"]*run-facts/u);
   assert.match(html, /selectedSession\.currentStage/u);
   assert.match(html, /selectedSession\.active\s*\?\s*"live"/u);
-  assert.match(html, /\["completed", "skipped"\]\.includes\(observedStageStates\.get\(index\)\)/u);
-  assert.doesNotMatch(html, /index < selectedStageIndex|currentStageIndex >= 0 && index < currentStageIndex/u);
+  assert.match(html, /"Event " \+ snapshot\.run\.eventIndex \+ " of " \+ snapshot\.run\.eventCount/u);
+  assert.match(html, /eventCount\s*=\s*Math\.max\(replay\.length/u);
 });
 
 test("uses a canvas-first control-room hierarchy with an on-demand inspector and integrated transport", () => {
@@ -461,28 +461,32 @@ test("binds node selection to evidence and replay state without unbounded DOM gr
   assert.match(html, /ArrowUp|ArrowDown|Enter/iu);
 });
 
-test("keeps the stage spine in the graph model and never infers completion from the current stage", () => {
+test("keeps stage chapters out of a v2 entity graph while preserving v1 fallback", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /STAGE_MATCH_ORDER\s*=\s*\[\.\.\.STAGE_ORDER\]\.sort/iu);
   assert.match(html, /text\.startsWith\(stageName\s*\+\s*["']-["']\)/u);
   assert.match(html, /explicitStatus[\s\S]{0,500}nodeById\.get\(targetId\)\?\.status/u);
   assert.match(html, /nodeStatuses\s*=\s*new Set\(\[[^\]]*"skipped"/u);
-  assert.match(html, /completedSteps[\s\S]{0,180}\["completed", "skipped"\]/u);
-  assert.doesNotMatch(html, /index < selectedStageIndex|index < currentStageIndex/u);
+  assert.match(html, /executionNodes\s*=\s*snapshot\.nodes\.filter[\s\S]{0,180}"stage_summary"/u);
+  assert.match(html, /return executionNodes\.length \? executionNodes : snapshot\.nodes/u);
 });
 
-test("keeps the default graph readable with a four-column serpentine spine and directional edges", () => {
+test("lays out worker and workflow entities by spawn depth with a v1 serpentine fallback", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /const cardWidth\s*=\s*168/u);
-  assert.match(html, /const cardHeight\s*=\s*96/u);
+  assert.match(html, /const cardHeight\s*=\s*116/u);
+  assert.match(html, /depthFor\(parentId, seen\) \+ 1/u);
+  assert.match(html, /Math\.ceil\(Math\.sqrt\(lane\.length\)\)/u);
+  assert.match(html, /index % laneColumns/u);
+  assert.match(html, /laneStartX/u);
   assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*4\s*:\s*8/u);
   assert.match(html, /const rowGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*150\s*:\s*126/u);
   assert.match(html, /row\s*%\s*2\s*===\s*0\s*\?\s*withinRow\s*:\s*spineColumns\s*-\s*1\s*-\s*withinRow/u);
   assert.match(html, /function edgeGeometry\(/u);
   assert.match(html, /vertical\s*=\s*Math\.abs\(deltaY\)/u);
-  assert.match(html, /\.node-card\s*\{[^}]*height:\s*96px/su);
+  assert.match(html, /\.node-card\s*\{[^}]*min-height:\s*116px/su);
 });
 
 test("keeps inspector provenance and replay navigation visible and keyboard reachable", () => {
@@ -504,6 +508,54 @@ test("keeps inspector provenance and replay navigation visible and keyboard reac
   }
   assert.match(html, /entry\.addEventListener\(["']keydown["'][\s\S]{0,450}selectNode\(item\.nodeId\)/u);
   assert.match(html, /replayFollowingLive/iu);
+});
+
+test("consumes bounded v2 agent, prompt, tool, provenance, and event facts with v1 fallbacks", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  for (const marker of [
+    "data-live-selected-node-model",
+    "data-live-selected-node-duration",
+    "data-live-selected-node-tools",
+    "data-live-selected-node-tokens",
+    "data-live-selected-node-provenance",
+    "data-live-selected-node-prompt",
+    "data-live-session-list",
+    "renderInspectorHistory",
+    "graphNodesForSnapshot",
+    "toolCalls",
+    "triggerPromptId",
+    "reasoningExcerpt",
+    "terminalEvidence",
+    "outputTokens",
+    "latestTool",
+  ]) {
+    assert.match(html, new RegExp(marker, "u"), marker);
+  }
+  assert.match(html, /promptInput\.slice\(0, 256\)/u);
+  assert.match(html, /toolCallInput\.slice\(0, 512\)/u);
+  assert.match(html, /provenanceInput\.slice\(0, 256\)/u);
+  assert.match(html, /replayInputEvents\.slice\(0, 512\)/u);
+  assert.match(html, /node\.toolCount \+ " tools"[\s\S]{0,120}node\.latestTool/u);
+  assert.match(html, /node\.outputTokens \+ " tok"/u);
+  assert.match(html, /item\.dataset\.kind = event\.kind/u);
+  assert.match(html, /data-kind="prompt"/u);
+  assert.match(html, /data-kind="spawn"/u);
+  assert.match(html, /data-tool-density/u);
+});
+
+test("adapts service field aliases and safely summarizes structured terminal evidence", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /const sessionCandidate = input\.sessionInfo \?\? input\.session/u);
+  assert.match(html, /\["timestamp", "observedAt", "occurredAt", "createdAt"\]/u);
+  assert.match(html, /\["startedAt", "occurredAt", "at", "timestamp"\]/u);
+  assert.match(html, /function summarizeTerminalEvidence\(value\)/u);
+  assert.match(html, /\["completed", "failed", "blocked"\]\.includes\(item\.status\)/u);
+  assert.match(html, /trusted\.length \+ " terminal evidence/u);
+  assert.match(html, /firstValue\(record, \["ownerBindingMode"\], ""\)/u);
+  assert.match(html, /firstValue\(record, \["state", "status"\], ""\)/u);
+  assert.doesNotMatch(html, /terminalEvidence:\s*display\(/u);
 });
 
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
@@ -550,7 +602,7 @@ test("preserves real edge state without replay evidence and uses valid listbox s
   assert.match(html, /for \(const other of \[sessionsDialog, helpDialog, infoDialog\]\)/u);
   assert.match(html, /dialogOpener = document\.activeElement/u);
   assert.match(html, /dialogOpener\.focus\(\)/u);
-  assert.match(html, /data-semantic-zoom="cell"\] \.node-card\s*\{[^}]*height:\s*96px[^}]*background:\s*transparent/su);
+  assert.match(html, /data-semantic-zoom="cell"\] \.node-card\s*\{[^}]*height:\s*116px[^}]*background:\s*transparent/su);
   assert.match(html, /class="status-bar"/u);
   assert.match(html, /\.activity-chips\s*\{[^}]*display:\s*flex/su);
   assert.match(html, /\.activity-chip\s*\{[^}]*min-width:\s*0/su);

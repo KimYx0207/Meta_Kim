@@ -30,7 +30,7 @@ test("does not present an unproven completed node as verified completion", () =>
     observedAt: "2026-08-24T01:01:00.000Z",
   });
   assert.equal(snapshot.run.status, "in_doubt");
-  assert.equal(snapshot.nodes.find((node) => node.id === "stage:critical")?.status, "in_doubt");
+  assert.equal(snapshot.nodes.some((node) => node.kind === "stage"), false);
 });
 
 test("requires bound passing structured evidence before projecting completion", () => {
@@ -58,11 +58,10 @@ test("requires bound passing structured evidence before projecting completion", 
 
   assert.equal(unproven.run.status, "in_doubt");
   assert.equal(
-    unproven.nodes.find((node) => node.id === "worker:task-unproven")?.status,
+    unproven.nodes.find((node) => node.label === "backend" && node.isMain === false)?.status,
     "in_doubt",
   );
-  assert.ok(unproven.evidence.length > 0);
-  assert.ok(unproven.evidence.every((item) => item.status === "in_doubt"));
+  assert.equal(unproven.nodes.some((node) => node.kind === "stage"), false);
 
   const proven = buildLiveSnapshot({
     governedArtifact: {
@@ -90,13 +89,13 @@ test("requires bound passing structured evidence before projecting completion", 
 
   assert.equal(proven.run.status, "completed");
   assert.equal(
-    proven.nodes.find((node) => node.id === "worker:task-proven")?.status,
+    proven.nodes.find((node) => node.label === "backend" && node.isMain === false)?.status,
     "completed",
   );
   assert.ok(proven.evidence.some((item) => item.status === "completed"));
 });
 
-test("binds evidence to known stage/worker nodes without accepting hostile ids", () => {
+test("binds projected evidence only to hashed known worker nodes without accepting hostile ids", () => {
   const snapshot = buildLiveSnapshot({
     durableStatus: {
       ...sampleStatus(),
@@ -122,17 +121,9 @@ test("binds evidence to known stage/worker nodes without accepting hostile ids",
     observedAt: "2026-08-24T01:01:00.000Z",
   });
 
-  const verification = snapshot.evidence.filter((item) => item.type === "verification");
-  assert.equal(verification[0]?.nodeId, "stage:verification");
-  assert.equal(verification[1]?.nodeId, "worker:task-backend-1");
-
-  const review = snapshot.evidence.filter((item) => item.type === "review");
-  assert.equal(review.length, 2);
-  assert.ok(review.every((item) => item.nodeId === "stage:review"));
-
-  const status = snapshot.evidence.filter((item) => item.type === "status");
-  assert.equal(status.length, 1);
-  assert.equal(status[0].nodeId, "");
+  const knownNodeIds = new Set(snapshot.nodes.map((node) => node.id));
+  assert.ok(snapshot.evidence.every((item) => knownNodeIds.has(item.nodeId)));
+  assert.ok(snapshot.nodes.every((node) => /^(?:agent|workflow):[a-f0-9]{20}$/u.test(node.id)));
   assert.doesNotMatch(JSON.stringify(snapshot), /unknown|hostile|\.\./u);
 });
 
@@ -197,7 +188,11 @@ function sampleArtifact(runId = "meta-live-1") {
       },
     ],
     workerResultPackets: [
-      { taskPacketId: "task-backend-1", status: "completed" },
+      {
+        taskPacketId: "task-backend-1",
+        status: "completed",
+        workerExecutionEvidence: [{ status: "passed", passClaim: "Focused worker verification passed" }],
+      },
     ],
     verificationPacket: {
       evidence: ["focused test passed"],
@@ -284,6 +279,64 @@ test("an explicitly stopped durable run does not hide the latest governed artifa
   assert.equal(snapshot.source.kind, "governed_artifact");
 });
 
+test("a future-dated durable run cannot hide the latest governed artifact", () => {
+  const snapshot = buildLiveSnapshot({
+    durableStatus: { ...sampleStatus("meta-future"), updatedAt: "2099-08-24T02:00:00.000Z" },
+    governedArtifact: { ...sampleArtifact("meta-current"), updatedAt: "2026-08-24T01:00:00.000Z" },
+    observedAt: "2026-08-24T02:01:00.000Z",
+  });
+  assert.equal(snapshot.run.runId, "meta-current");
+  assert.equal(snapshot.source.kind, "governed_artifact");
+});
+
+test("foreign-run worker results and host evidence cannot contaminate the current snapshot", () => {
+  const current = sampleArtifact("meta-current");
+  current.workerTaskPackets[0].roleInstanceId = "exec-course-publish-1";
+  current.workerResultPackets = [{
+    runId: "meta-foreign",
+    taskPacketId: "task-backend-1",
+    status: "completed",
+    workerExecutionEvidence: [{ status: "passed" }],
+  }];
+  current.hostInvocationEvidence = [{
+    runId: "meta-foreign",
+    taskPacketId: "task-backend-1",
+    proofValid: true,
+    synthetic: false,
+    providerId: "canonical/runtime-assets/claude/mcp.json",
+    runtime: "codex",
+    model: "foreign-model",
+    resultStatus: "completed",
+    usage: { outputTokens: 999 },
+  }];
+  const snapshot = buildLiveSnapshot({ governedArtifact: current, observedAt: "2026-08-24T01:01:00.000Z" });
+  const worker = snapshot.nodes.find((node) => node.isMain === false && node.kind === "agent");
+  assert.equal(worker.label, "course-publish");
+  assert.equal(worker.roleDisplayName, "backend");
+  assert.equal(worker.status, "pending");
+  assert.equal(worker.runtime, "unavailable");
+  assert.equal(worker.model, "unavailable");
+  assert.equal(worker.outputTokens, null);
+  assert.equal(worker.toolCount, 0);
+  assert.equal(snapshot.replay.some((event) => /canonical|foreign-model/iu.test(event.label)), false);
+});
+
+test("relative repository paths are redacted from tool and replay labels", () => {
+  const current = sampleArtifact("meta-path-redaction");
+  current.hostInvocationEvidence = [{
+    runId: current.runId,
+    taskPacketId: "task-backend-1",
+    proofValid: true,
+    synthetic: false,
+    providerId: "canonical/runtime-assets/claude/mcp.json",
+    resultStatus: "completed",
+  }];
+  const snapshot = buildLiveSnapshot({ governedArtifact: current, observedAt: "2026-08-24T01:01:00.000Z" });
+  const serialized = JSON.stringify(snapshot);
+  assert.doesNotMatch(serialized, /canonical[\\/]runtime-assets/iu);
+  assert.match(serialized, /\[path omitted\]/u);
+});
+
 test("builds the frozen projection and never exposes raw prompt/path data", async () => {
   const projectRoot = await makeProject({
     status: sampleStatus(),
@@ -309,8 +362,8 @@ test("builds the frozen projection and never exposes raw prompt/path data", asyn
   try {
     const service = createLiveControlRoomService({ projectRoot });
     const snapshot = await service.getSnapshot();
-    assert.equal(snapshot.schemaVersion, "meta-kim-live-snapshot-v1");
-    assert.equal(snapshot.source.kind, "durable_status");
+    assert.equal(snapshot.schemaVersion, "meta-kim-live-snapshot-v2");
+    assert.equal(snapshot.source.kind, "governed_artifact");
     assert.equal(snapshot.run.runId, "meta-live-1");
     assert.equal(snapshot.permissions.projectionOnly, true);
     assert.equal(snapshot.permissions.executionAllowed, false);
@@ -355,7 +408,7 @@ test("server starts on a random loopback port, serves snapshot/replay, and close
     assert.ok(address.port > 0);
     const snapshotResponse = await fetch(`${address.url}/api/snapshot`);
     assert.equal(snapshotResponse.status, 200);
-    assert.equal((await snapshotResponse.json()).schemaVersion, "meta-kim-live-snapshot-v1");
+    assert.equal((await snapshotResponse.json()).schemaVersion, "meta-kim-live-snapshot-v2");
     const replayResponse = await fetch(`${address.url}/api/replay?runId=meta-live-1`);
     assert.equal(replayResponse.status, 200);
     assert.ok(Array.isArray((await replayResponse.json()).replay));
@@ -401,7 +454,7 @@ test("historical replay consumes saved AG-UI stage events without current-run co
   assert.equal(replay.runId, "meta-history");
   assert.equal(replay.replay.length, 1);
   assert.equal(replay.replay[0].kind, "stage");
-  assert.equal(replay.replay[0].nodeId, "stage:execution");
+  assert.equal(replay.replay[0].nodeId, null);
   assert.doesNotMatch(replay.replay[0].label, /must be replaced/iu);
 });
 
@@ -419,7 +472,7 @@ test("SSE emits an initial snapshot and has no mutation side effects", async () 
     const text = new TextDecoder().decode(first.value);
     assert.match(text, /data:/u);
     const payload = text.match(/data: (.+)\n/u)?.[1];
-    assert.equal(JSON.parse(payload).schemaVersion, "meta-kim-live-snapshot-v1");
+    assert.equal(JSON.parse(payload).schemaVersion, "meta-kim-live-snapshot-v2");
     await reader.cancel();
     await control.close();
     const after = await stat(path.join(projectRoot, ".meta-kim", "state", "default", "active-run.json"));
