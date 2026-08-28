@@ -819,6 +819,26 @@ function stagedLayoutFor(layout, stageDir) {
   };
 }
 
+async function copyDurableMcpRuntimeFromProjectionAuthority(targetBundleDir) {
+  if (!executingProjectionPackage?.bundleDir) {
+    throw new Error("Verified projection package authority is unavailable for durable MCP copy.");
+  }
+  const sourceBundleDir = executingProjectionPackage.bundleDir;
+  if (
+    !(await pathIsPlainOwnedDirectory(sourceBundleDir)) ||
+    !(await directoryChainHasNoLinks(sourceBundleDir, executingProjectionPackage.packageRoot))
+  ) {
+    throw new Error("Verified projection package bundle is not safe to copy.");
+  }
+  await fs.rm(targetBundleDir, { recursive: true, force: true });
+  await fs.cp(sourceBundleDir, targetBundleDir, {
+    recursive: true,
+    dereference: true,
+    errorOnExist: true,
+    force: false,
+  });
+}
+
 async function materializeDurableMcpRuntime(plan) {
   const { layout, identity } = plan;
   const stageDir = path.join(
@@ -832,21 +852,27 @@ async function materializeDurableMcpRuntime(plan) {
   let promoted = false;
   let promotedClosure = null;
   try {
-    const npmCliPath = resolveNpmCliJsPath();
     if (process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "pack") {
       throw new Error("Injected durable MCP pack failure.");
     }
-    execFileSync(
-      process.execPath,
-      [npmCliPath, "pack", repoRoot, "--pack-destination", stageDir],
-      { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const archives = (await fs.readdir(stageDir)).filter((name) => name.endsWith(".tgz"));
-    if (archives.length !== 1) throw new Error(`Expected one packed candidate, found ${archives.length}.`);
-    const archivePath = path.join(stageDir, archives[0]);
-    const sourcePackageSha256 = createHash("sha256")
-      .update(await fs.readFile(archivePath))
-      .digest("hex");
+    let archivePath = null;
+    let sourcePackageSha256 = null;
+    if (executingProjectionPackage) {
+      sourcePackageSha256 = executingProjectionPackage.packageTarballSha256;
+    } else {
+      const npmCliPath = resolveNpmCliJsPath();
+      execFileSync(
+        process.execPath,
+        [npmCliPath, "pack", repoRoot, "--pack-destination", stageDir],
+        { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const archives = (await fs.readdir(stageDir)).filter((name) => name.endsWith(".tgz"));
+      if (archives.length !== 1) throw new Error(`Expected one packed candidate, found ${archives.length}.`);
+      archivePath = path.join(stageDir, archives[0]);
+      sourcePackageSha256 = createHash("sha256")
+        .update(await fs.readFile(archivePath))
+        .digest("hex");
+    }
     if (await pathExists(layout.bundleDir)) {
       if (!(await manifestOwnsExactBundle(layout))) {
         throw new Error(`Refusing to replace an unowned durable MCP runtime: ${layout.bundleDir}`);
@@ -860,12 +886,17 @@ async function materializeDurableMcpRuntime(plan) {
     if (process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "install") {
       throw new Error("Injected durable MCP install failure.");
     }
-    execFileSync(
-      process.execPath,
-      [npmCliPath, "install", "--prefix", stageDir, "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", archivePath],
-      { cwd: stageDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    await fs.rm(archivePath, { force: true });
+    if (executingProjectionPackage) {
+      await copyDurableMcpRuntimeFromProjectionAuthority(stageDir);
+    } else {
+      const npmCliPath = resolveNpmCliJsPath();
+      execFileSync(
+        process.execPath,
+        [npmCliPath, "install", "--prefix", stageDir, "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", archivePath],
+        { cwd: stageDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      await fs.rm(archivePath, { force: true });
+    }
     await fs.writeFile(
       path.join(stageDir, ".meta-kim-candidate.json"),
       candidateLockContent(identity, sourcePackageSha256),
@@ -1921,13 +1952,6 @@ async function removeIfExists(targetPath) {
   if (!(await pathExists(targetPath))) {
     return false;
   }
-  // Real-home containment must only be enforced for paths that actually
-  // exist. Checking it before the existence probe made every cleanup target
-  // abort the whole global sync on machines where a runtime directory is a
-  // symlink (e.g. ~/.claude/skills -> external storage), even when the legacy
-  // flat-skill file was already absent. Guarding the removal of an existing
-  // path keeps the safety contract; guarding a nonexistent path escapes
-  // nothing.
   await assertRealHomeBound(targetPath);
   await fs.rm(targetPath, { recursive: true, force: true });
   return true;

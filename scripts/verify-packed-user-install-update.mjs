@@ -2773,7 +2773,7 @@ function runGlobalReuseNegativeLane({ descriptor, roots, env, fixtures, timeoutM
   };
 }
 
-function runRuntimeSedimentationLane({ descriptor, roots, env, timeoutMs }) {
+function runRuntimeSedimentationLane({ descriptor, roots, env, timeoutMs, onProgress = null }) {
   const fixtures = runtimeSedimentationFixtures(roots);
   const reuseOnlyFixtures = globalReuseOnlyFixtures(roots);
   for (const fixture of fixtures) {
@@ -2858,11 +2858,13 @@ function runRuntimeSedimentationLane({ descriptor, roots, env, timeoutMs }) {
   mkdirSync(path.dirname(unknownProjectFile), { recursive: true });
   writeFileSync(unknownProjectFile, unknownProjectContent, "utf8");
 
+  emit(onProgress, { event: "packed_project_aware_global_update_start" });
   const dependencyUpdate = runInstalledPublicGlobalUpdateFromProject(
     descriptor,
     roots,
     env,
   );
+  emit(onProgress, { event: "packed_project_aware_global_update_complete", status: "passed" });
   assertOrdinaryCwdUntouched(roots.ordinaryCwd);
 
   if (readFileSync(globalArtifacts.codexSkill, "utf8") !== globalSkillExpected) {
@@ -3163,6 +3165,7 @@ function runCurrentPackageLane({
     roots,
     env,
     timeoutMs,
+    onProgress,
   });
   const portableRuntimePrepared = runPortableRuntimePreparation({
     packageInfo,
@@ -3254,7 +3257,7 @@ function runHistoricalUpdateLane({
       roots,
       env,
       "install",
-      timeoutMs,
+      PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS,
     ),
   );
   const before = normalizedManifest(artifacts.manifest, roots.userHome);

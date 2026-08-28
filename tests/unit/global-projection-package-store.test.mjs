@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -43,6 +44,21 @@ import {
 
 const RECEIPT_SCHEMA = "meta-kim-global-projection-package-v1";
 const BUNDLE_PURPOSE = "primary-runtime-global-projection-package-runtime-bundle";
+const PROJECTION_STORE_SOURCE = readFileSync(
+  path.join(import.meta.dirname, "..", "..", "scripts", "global-projection-package-store.mjs"),
+  "utf8",
+);
+
+test("same-digest materialization verifies the immutable winner before staging dependencies", () => {
+  const earlyWinnerCheck = PROJECTION_STORE_SOURCE.indexOf(
+    "const existingDigestBeforeInstall",
+  );
+  const stagedDependencyInstall = PROJECTION_STORE_SOURCE.indexOf(
+    "const stageBundleDir",
+  );
+  assert.ok(earlyWinnerCheck >= 0);
+  assert.ok(stagedDependencyInstall > earlyWinnerCheck);
+});
 
 function resolveNpmCliPath() {
   const candidates = [
@@ -558,6 +574,7 @@ test("an exact same-digest materialization retry reuses the verified staged pack
       env,
     });
     const firstClosure = directoryClosureSync(first.digestDir);
+    const firstPackageMtime = statSync(first.packageManifestPath).mtimeMs;
     const second = await materializeGlobalProjectionPackage({
       sourceRoot,
       homeRoot,
@@ -565,6 +582,7 @@ test("an exact same-digest materialization retry reuses the verified staged pack
     });
     assert.equal(second.digestDir, first.digestDir);
     assert.equal(second.packageRoot, first.packageRoot);
+    assert.equal(statSync(second.packageManifestPath).mtimeMs, firstPackageMtime);
     assert.deepEqual(directoryClosureSync(second.digestDir), firstClosure);
     assert.deepEqual(readdirSync(first.versionRoot), [first.packageTarballSha256]);
   });

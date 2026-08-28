@@ -2,7 +2,7 @@
   "schemaVersion": "2.0.0",
   "claimSchemaVersion": 2,
   "authorityBoundary": "observations_only",
-  "reviewedAt": "2026-07-28",
+  "reviewedAt": "2026-08-28",
   "matrixAuthority": "config/runtime-capability-matrix.json",
   "description": "Observation ledger for runtime capability claims. Conclusions remain solely in the runtime capability matrix.",
   "observations": [
@@ -251,7 +251,7 @@
         "setup.mjs"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "19e6f2567cb90d532a8804613304d2b2cf98b600b772b88b95ce5a1d9452821f" },
+        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "37d2408d6e6e14ea68601c8af3501d72d3be16c2b72b3ec0e270eca60fd12948" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "3e8e9f39e4ab2534a6ad13a47ae3cbfa5938aef6d3cead711207c5a16559744c" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "172c35cf333eedc2aa1ddead6e2c4a5ac889d274d7ba24ef757848e3add5a93b" }
       ],
@@ -304,7 +304,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-08-28",
       "sourceRefs": [
         "canonical/runtime-assets/claude",
         "config/governance/choice-surface-policy.json",
@@ -616,7 +616,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-08-28",
       "sourceRefs": [
         "canonical/runtime-assets/codex",
         "config/governance/choice-surface-policy.json",
@@ -991,7 +991,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-08-28",
       "sourceRefs": [
         "canonical/runtime-assets/openclaw",
         "config/governance/choice-surface-policy.json",
@@ -1345,7 +1345,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-08-28",
       "sourceRefs": [
         "canonical/runtime-assets/cursor",
         "config/governance/choice-surface-policy.json",

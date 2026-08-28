@@ -1168,6 +1168,33 @@ export async function materializeGlobalProjectionPackage({
       throw new Error("Source package content changed while the stable package was packed");
     }
 
+    const existingDigestBeforeInstall = await lstatIfExists(finalLayout.digestDir);
+    if (existingDigestBeforeInstall) {
+      if (
+        existingDigestBeforeInstall.isSymbolicLink() ||
+        !existingDigestBeforeInstall.isDirectory()
+      ) {
+        throw new Error("Existing projection package digest is not a plain directory");
+      }
+      try {
+        return await verifyGlobalProjectionPackage(finalLayout.digestDir, {
+          homeRoot,
+          expectedPackageName: sourceManifest.name,
+          expectedPackageVersion: sourceManifest.version,
+          expectedPackageTarballSha256: packageTarballSha256,
+          expectedFirstPartyClosure: sourceSnapshotBeforePack.closure,
+        });
+      } catch (error) {
+        const receiptStat = await lstatIfExists(finalLayout.receiptPath);
+        const incompleteWinner =
+          !receiptStat &&
+          /global projection package receipt is unavailable: ENOENT/u.test(
+            error?.message ?? "",
+          );
+        if (!incompleteWinner) throw error;
+      }
+    }
+
     const stageBundleDir = path.join(stageDir, BUNDLE_DIR);
     await fs.mkdir(stageBundleDir, { recursive: true });
     await assertPlainDirectoryChain(homeRoot, stageBundleDir);
