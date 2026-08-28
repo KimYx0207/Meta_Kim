@@ -73,7 +73,7 @@ test("defaults to Chinese and provides a persistent English language switch", ()
   assert.match(html, /<title>Meta_Kim Live · 控制中心<\/title>/u);
   assert.match(html, /data-live-language-toggle/u);
   assert.match(html, /data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图/u);
-  assert.match(html, /data-i18n-en="Evidence" data-i18n-zh="证据">证据/u);
+  assert.match(html, /data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据/u);
   assert.match(html, /data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线/u);
   assert.match(html, /LANGUAGE_STORAGE_KEY\s*=\s*"meta-kim-live-language"/u);
   assert.match(html, /localStorage\?\.getItem\(LANGUAGE_STORAGE_KEY\)\s*===\s*"en"/u);
@@ -134,7 +134,7 @@ test("includes graph, evidence drawer, and replay controls", () => {
   ]) {
     assert.match(html, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"), marker);
   }
-  assert.match(html, /aria-controls="evidence-drawer"/iu);
+  assert.match(html, /aria-controls="live-inspector"/iu);
   assert.match(html, /role="list"/iu);
   assert.match(html, /<svg\b[^>]*aria-hidden="true"/iu);
   assert.match(html, /data\.replayStatus|dataset\.replayStatus/u);
@@ -151,8 +151,23 @@ test("prioritizes a readable task summary and eight-stage progress rail", () => 
   assert.match(html, /selectedSession\.currentStage/u);
   assert.match(html, /selectedSession\.active\s*\?\s*"live"/u);
   assert.match(html, /index === selectedStageIndex && selectedSession\.active/u);
-  assert.match(html, /data-i18n-zh="这项任务现在走到哪一步"/u);
+  assert.match(html, /data-i18n-zh="八阶段执行路径"/u);
   assert.doesNotMatch(html, /data-i18n-zh="数据协议"|DAG \/ 只读/u);
+});
+
+test("uses a canvas-first control-room hierarchy with an on-demand inspector and integrated transport", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /<header class="topbar"[\s\S]*class="hub-switcher"[\s\S]*<\/header>/u);
+  assert.match(html, /class="[^"]*run-context[^"]*"/u);
+  assert.match(html, /class="workspace-grid"[\s\S]*class="panel graph-panel"[\s\S]*class="stage-overview"[\s\S]*class="replay-panel replay-dock"/u);
+  assert.match(html, /data-live-inspector[^>]+data-open="false"/u);
+  assert.match(html, /data-live-inspector-close/u);
+  assert.match(html, /function setInspectorOpen\(/u);
+  assert.match(html, /setInspectorOpen\(true\)/u);
+  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*clamp\(/su);
+  assert.match(html, /\.evidence-panel\s*\{[^}]*position:\s*absolute/su);
+  assert.match(html, /\.replay-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/su);
 });
 
 test("is accessible by keyboard and respects reduced motion", () => {
@@ -487,9 +502,10 @@ test("uses explicit marker colors so SVG arrows do not inherit an unreliable cur
 test("keeps the desktop workspace bounded and coalesces high-frequency snapshot updates", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*560px/su);
-  assert.match(html, /\.evidence-panel\s*\{[^}]*height:\s*560px[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*clamp\([^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.evidence-panel\s*\{[^}]*height:\s*calc\([^}]*overflow:\s*hidden/su);
   assert.match(html, /\.evidence-drawer\s*\{[^}]*overflow:\s*auto/su);
+  assert.match(html, /graphMinimap\.hidden\s*=\s*!overflowing/u);
   assert.match(html, /SNAPSHOT_COALESCE_MS\s*=\s*75/u);
   assert.match(html, /scheduleSnapshotUpdate[\s\S]*snapshotCoalesceTimer[\s\S]*setTimeout/su);
   assert.match(html, /beforeunload[\s\S]*clearTimeout\(snapshotCoalesceTimer\)/su);
@@ -502,10 +518,11 @@ test("preserves real edge state without replay evidence and uses valid listbox s
   assert.match(html, /if\s*\(!hasReplayState\)\s*replayState\s*=\s*edge\.status/u);
   assert.match(html, /data-live-node-list role="listbox"/u);
   assert.match(html, /setAttribute\(["']role["'],\s*["']option["']\)/u);
-  assert.doesNotMatch(html, /aria-pressed/u);
+  assert.match(html, /data-live-graph-follow[^>]+aria-pressed="true"/u);
+  assert.doesNotMatch(html, /card\.setAttribute\(["']aria-pressed/u);
   assert.match(html, /replayPlay\.disabled\s*=\s*events\.length\s*<\s*2/u);
   assert.match(html, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/u);
-  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*150\s*:\s*190/u);
+  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*184\s*:\s*204/u);
   assert.match(html, /\.node-meta\s*\{[^}]*flex-wrap:\s*nowrap/su);
   assert.match(html, /\.node-meta-item\s*\{[^}]*min-width:\s*0/su);
 });

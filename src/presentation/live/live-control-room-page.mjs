@@ -216,11 +216,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Live execution workspace": "实时执行工作区",
     "Toggle graph layout": "切换运行图布局",
     "Fit graph to viewport": "让运行图适应视口",
+    "Follow active node": "跟随当前节点",
     "Zoom graph out": "缩小运行图",
     "Zoom graph in": "放大运行图",
     "Read-only execution graph": "只读执行运行图",
     "Execution nodes": "执行节点",
     "Graph minimap": "运行图小地图",
+    "Open inspector": "打开检查器",
+    "Close inspector": "关闭检查器",
     "Toggle evidence drawer": "展开或收起证据抽屉",
     "Observed evidence": "已观测证据",
     "Previous replay event": "上一个回放事件",
@@ -325,6 +328,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const evidenceCount = app.querySelector("[data-live-evidence-count]");
   const evidenceDrawer = app.querySelector("[data-evidence-drawer]");
   const evidenceToggle = app.querySelector("[data-evidence-toggle]");
+  const evidencePanel = app.querySelector("[data-live-inspector]");
+  const evidenceClose = app.querySelector("[data-live-inspector-close]");
+  const graphFollow = app.querySelector("[data-live-graph-follow]");
   const replayRange = app.querySelector("[data-replay-range]");
   const replayEvents = app.querySelector("[data-replay-events]");
   const replayProgress = app.querySelector("[data-replay-progress]");
@@ -365,7 +371,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let initialControlConfig = null;
   let selectedNodeId = null;
   let replayFollowingLive = true;
-  let layoutMode = "flow";
+  let layoutMode = "compact";
+  let graphFollowing = true;
   let graphState = {
     positions: new Map(),
     nodeElements: new Map(),
@@ -659,12 +666,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(started, formatTime(snapshot.run.startedAt), "—");
     setText(updated, formatTime(snapshot.run.updatedAt), "—");
     setText(source, snapshot.source, "local observer");
-    const completedSteps = snapshot.nodes.filter((node) => node.status === "completed").length;
+    const currentStageIndex = stageIndex({ id: snapshot.run.stage, label: snapshot.run.stage });
+    const observedStageStates = new Map();
+    for (const node of snapshot.nodes) {
+      const index = stageIndex(node);
+      if (index >= 0 && !observedStageStates.has(index)) observedStageStates.set(index, node.status);
+    }
+    const completedSteps = STAGE_ORDER.filter((_, index) => (
+      observedStageStates.get(index) === "completed" || (currentStageIndex >= 0 && index < currentStageIndex)
+    )).length;
     const activeWorkers = new Set(snapshot.nodes
       .filter((node) => ["running", "active"].includes(node.status))
       .map((node) => node.agent)
       .filter(Boolean));
-    setText(runProgress, completedSteps + " of " + snapshot.nodes.length + " steps complete", "—");
+    setText(runProgress, completedSteps + " of " + STAGE_ORDER.length + " steps complete", "—");
     setText(runWorkers, activeWorkers.size
       ? activeWorkers.size + " active worker" + (activeWorkers.size === 1 ? "" : "s")
       : "No active workers", "—");
@@ -757,7 +772,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const cardWidth = 168;
     const cardHeight = 96;
     const spineColumns = layoutMode === "compact" ? 8 : 4;
-    const columnGap = layoutMode === "compact" ? 150 : 190;
+    const columnGap = layoutMode === "compact" ? 184 : 204;
     const rowGap = 126;
     const top = 38;
     const spineRows = Math.ceil(STAGE_ORDER.length / spineColumns);
@@ -883,8 +898,42 @@ const CLIENT_SCRIPT = String.raw`(() => {
     updateMinimap();
   }
 
+  function setGraphFollowing(active) {
+    graphFollowing = Boolean(active);
+    if (graphFollow) {
+      graphFollow.dataset.active = graphFollowing ? "true" : "false";
+      graphFollow.setAttribute("aria-pressed", String(graphFollowing));
+    }
+    if (graph) graph.dataset.following = graphFollowing ? "true" : "false";
+  }
+
+  function centerGraphNode(nodeId) {
+    if (!graph || !nodeId) return;
+    const position = graphState.positions.get(nodeId);
+    if (!position) return;
+    updateCamera({
+      ...camera,
+      x: graph.clientWidth / 2 - (position.x + position.width / 2) * camera.scale,
+      y: graph.clientHeight / 2 - (position.y + position.height / 2) * camera.scale,
+    });
+  }
+
+  function setInspectorOpen(open) {
+    if (!evidencePanel) return;
+    const active = Boolean(open);
+    evidencePanel.dataset.open = active ? "true" : "false";
+    evidencePanel.setAttribute("aria-hidden", String(!active));
+    if ("inert" in evidencePanel) evidencePanel.inert = !active;
+    evidenceToggle?.setAttribute("aria-expanded", String(active));
+  }
+
   function updateMinimap() {
     if (!graphMinimap || !graphMinimapScene || !graphMinimapViewport) return;
+    const graphWidth = Math.max(1, graph?.clientWidth || 760);
+    const graphHeight = Math.max(1, graph?.clientHeight || 420);
+    const overflowing = graphState.bounds.width > graphWidth * 1.05 || graphState.bounds.height > graphHeight * 1.05;
+    graphMinimap.hidden = !overflowing;
+    if (!overflowing) return;
     const miniWidth = Math.max(1, graphMinimap.clientWidth || 180);
     const miniHeight = Math.max(1, graphMinimap.clientHeight || 100);
     const miniScale = Math.min((miniWidth - 12) / Math.max(1, graphState.bounds.width), (miniHeight - 12) / Math.max(1, graphState.bounds.height));
@@ -949,10 +998,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!currentSnapshot || !currentSnapshot.nodes.some((node) => node.id === nodeId)) return;
     selectedNodeId = nodeId;
     updateSelectedNodeVisuals();
-    if (evidenceDrawer?.hidden) {
-      evidenceDrawer.hidden = false;
-      evidenceToggle?.setAttribute("aria-expanded", "true");
-    }
+    if (evidenceDrawer) evidenceDrawer.hidden = false;
+    setInspectorOpen(true);
+    if (graphFollowing) centerGraphNode(nodeId);
     const node = currentSnapshot.nodes.find((item) => item.id === nodeId);
     if (liveRegion && node) liveRegion.textContent = localize("Selected node: " + node.label);
     if (focus) graphState.nodeElements.get(nodeId)?.focus();
@@ -1382,6 +1430,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (events[currentReplayIndex]?.nodeId && currentSnapshot.nodes.some((node) => node.id === events[currentReplayIndex].nodeId)) {
       selectedNodeId = events[currentReplayIndex].nodeId;
       updateSelectedNodeVisuals();
+      if (graphFollowing) centerGraphNode(selectedNodeId);
     }
     for (const edge of currentSnapshot.edges) {
       const path = graphState.edgeElements.get(edge.id);
@@ -1838,17 +1887,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
-  evidenceToggle?.addEventListener("click", () => {
-    const next = evidenceDrawer?.hidden !== false;
-    if (evidenceDrawer) evidenceDrawer.hidden = !next;
-    evidenceToggle.setAttribute("aria-expanded", String(next));
+  evidenceToggle?.addEventListener("click", () => setInspectorOpen(evidencePanel?.dataset.open !== "true"));
+  evidenceClose?.addEventListener("click", () => setInspectorOpen(false));
+  graphFollow?.addEventListener("click", () => {
+    setGraphFollowing(!graphFollowing);
+    if (graphFollowing) centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId);
   });
   app.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     selectedNodeId = null;
     updateSelectedNodeVisuals();
-    if (evidenceDrawer) evidenceDrawer.hidden = true;
-    evidenceToggle?.setAttribute("aria-expanded", "false");
+    setInspectorOpen(false);
     document.activeElement?.blur?.();
   });
   replayPlay?.addEventListener("click", toggleReplay);
@@ -1910,6 +1959,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const target = event.target;
     if (target?.closest?.("[data-node-id], button, .graph-minimap")) return;
     pointerPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
+    setGraphFollowing(false);
     graph.setPointerCapture?.(event.pointerId);
     graph.dataset.panning = "true";
   });
@@ -1928,12 +1978,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
   graph?.addEventListener("wheel", (event) => {
     if (event.target?.closest?.(".graph-minimap")) return;
     event.preventDefault();
+    setGraphFollowing(false);
     const rect = graph.getBoundingClientRect();
     zoomGraph(event.deltaY < 0 ? 1.1 : .9, event.clientX - rect.left, event.clientY - rect.top);
   }, { passive: false });
   window.addEventListener("resize", updateMinimap, { passive: true });
 
   applyLanguage();
+  setGraphFollowing(true);
+  setInspectorOpen(false);
   const snapshotText = initialElement?.textContent?.trim();
   if (snapshotText && snapshotText !== "null") {
     try {
@@ -2196,6 +2249,202 @@ button:focus-visible, [type="range"]:focus-visible, [tabindex]:focus-visible, a:
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
 `;
 
+const CANVAS_FIRST_CSS = String.raw`
+:root {
+  --ink: #f3f4f6;
+  --muted: #a1a6b0;
+  --subtle: #707681;
+  --line: rgba(255, 255, 255, .1);
+  --line-strong: rgba(255, 255, 255, .17);
+  --panel: #111318;
+  --panel-strong: #171a20;
+  --canvas: #090a0d;
+  --cyan: #48d8c6;
+  --blue: #7aa2ff;
+  --amber: #e9b85f;
+  --red: #f27689;
+  --green: #72d99c;
+  --shadow: 0 18px 48px rgba(0, 0, 0, .3);
+}
+
+html, body { height: 100%; }
+body { overflow-x: hidden; background: var(--canvas); }
+.ambient { opacity: .18; background-size: 48px 48px; mask-image: linear-gradient(to bottom, black, transparent 68%); }
+.shell { width: 100%; min-height: 100dvh; padding: 0 .9rem .8rem; }
+.topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 62px; gap: .9rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
+.brand { min-width: 146px; gap: .6rem; }
+.brand-mark { width: 1.8rem; height: 1.8rem; color: #06110f; background: var(--cyan); border-radius: 6px; box-shadow: none; font-size: .72rem; font-weight: 900; }
+.eyebrow { color: var(--subtle); font-size: .56rem; letter-spacing: .11em; }
+.brand-title { margin-top: .08rem; font-size: .78rem; }
+.topbar-actions { justify-content: flex-end; }
+.language-toggle { min-width: 2.5rem; min-height: 34px; border-radius: 6px; background: transparent; }
+.connection { font-size: .7rem; white-space: nowrap; }
+.connection-dot, .status-pulse { width: .42rem; height: .42rem; box-shadow: none; }
+.connection-dot[data-connection="live"], .state-chip[data-state="live"] .status-pulse { box-shadow: 0 0 0 4px rgba(72, 216, 198, .09); }
+.hub-switcher { display: grid; grid-template-columns: minmax(150px, .72fr) minmax(260px, 1.28fr); gap: .55rem; min-width: 0; margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; }
+.hub-field { gap: .2rem; font-size: .53rem; letter-spacing: .08em; }
+.hub-select { min-height: 36px; padding: .42rem 1.8rem .42rem .58rem; color: var(--ink); background: #13161c; border-color: var(--line); border-radius: 6px; font-size: .7rem; }
+.hub-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.main { padding-top: .65rem; }
+.run-hero { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(440px, auto) auto; align-items: center; gap: .85rem; min-height: 70px; padding: .45rem .6rem .6rem; border-bottom: 1px solid var(--line); }
+.run-heading { min-width: 0; }
+.kicker { margin: 0 0 .25rem; color: var(--cyan); font-size: .55rem; letter-spacing: .1em; }
+.run-title { max-width: none; font-size: 1.05rem; line-height: 1.2; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-subtitle { gap: .25rem .65rem; margin-top: .3rem; font-size: .65rem; }
+.run-subtitle span + span::before { margin-right: .65rem; }
+.state-chip { justify-self: end; padding: .42rem .58rem; border-radius: 999px; font-size: .66rem; }
+.run-facts { grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 0; margin: 0; border-left: 1px solid var(--line); }
+.run-fact { padding: .3rem .65rem; background: transparent; border: 0; border-right: 1px solid var(--line); border-radius: 0; }
+.run-fact-primary { background: transparent; }
+.run-fact dt { margin-bottom: .18rem; font-size: .51rem; letter-spacing: .08em; }
+.run-fact dd { color: var(--ink); font-size: .66rem; }
+.workspace-grid { position: relative; display: block; height: clamp(560px, calc(100dvh - 150px), 980px); min-height: 560px; margin-top: .65rem; overflow: hidden; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: none; }
+.graph-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; width: 100%; height: 100%; overflow: hidden; }
+.panel-header { min-height: 48px; padding: .62rem .75rem; }
+.panel-title { font-size: .78rem; letter-spacing: 0; }
+.panel-note { margin-top: .15rem; font-size: .61rem; }
+.graph-header { background: #101216; }
+.graph-header-actions { flex-wrap: nowrap; }
+.graph-tool-button { display: inline-grid; min-width: 32px; min-height: 32px; padding: .28rem .45rem; place-items: center; color: var(--muted); background: transparent; border-color: var(--line); border-radius: 6px; }
+.graph-tool-button:hover, .graph-tool-button:focus-visible, .graph-tool-button[data-active="true"] { color: var(--cyan); border-color: rgba(72, 216, 198, .44); background: rgba(72, 216, 198, .06); }
+.stage-overview { margin: 0; padding: .45rem .55rem; overflow-x: auto; background: #0d0f13; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.stage-rail { grid-template-columns: repeat(8, minmax(112px, 1fr)); gap: .28rem; min-width: 930px; }
+.stage-step { min-height: 34px; padding: .34rem .4rem; background: transparent; border: 1px solid transparent; border-radius: 6px; }
+.stage-step::after { position: absolute; top: 50%; right: -.3rem; width: .3rem; height: 1px; background: var(--line-strong); content: ""; }
+.stage-step:last-child::after { display: none; }
+.stage-step[data-state="current"] { background: rgba(72, 216, 198, .07); border-color: rgba(72, 216, 198, .32); }
+.stage-step-marker { flex-basis: 1.15rem; width: 1.15rem; height: 1.15rem; font-size: .5rem; }
+.stage-step-name { font-size: .59rem; }
+.stage-step-state { font-size: .49rem; }
+.graph-stage { min-height: 0; height: 100%; background: #0b0d11; }
+.graph-canvas { min-height: 0; height: 100%; background: radial-gradient(circle at 50% 35%, rgba(72, 216, 198, .045), transparent 34rem), linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .028) 1px, transparent 1px); background-size: auto, 32px 32px, 32px 32px; }
+.graph-canvas[data-following="true"] .graph-scene { transition: transform .24s cubic-bezier(.2, .75, .3, 1); }
+.node-card { height: 100px; min-height: 100px; padding: .55rem .65rem; background: #171a21; border-color: rgba(255,255,255,.11); border-radius: 7px; box-shadow: 0 10px 26px rgba(0, 0, 0, .24); }
+.node-card::before { position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--subtle); content: ""; }
+.node-running::before { background: var(--cyan); }
+.node-completed::before { background: var(--green); }
+.node-failed::before, .node-in-doubt::before { background: var(--red); }
+.node-blocked::before { background: var(--amber); }
+.node-card:hover, .node-card:focus-visible { transform: translateY(-1px); background: #1b1f27; border-color: var(--line-strong); }
+.node-card[data-selected="true"], .node-card[data-replay-active="true"] { border-color: rgba(72, 216, 198, .68); box-shadow: 0 0 0 1px rgba(72, 216, 198, .18), 0 14px 32px rgba(0, 0, 0, .32); }
+.node-card[data-replay-active="true"]::after { position: absolute; inset: -1px; border: 1px solid rgba(72, 216, 198, .55); border-radius: 7px; content: ""; animation: node-breathe 1.4s ease-in-out infinite; pointer-events: none; }
+.node-title { margin: .45rem 0 .25rem; font-size: .78rem; }
+.node-summary { min-height: 1.35em; font-size: .61rem; line-height: 1.35; -webkit-line-clamp: 1; }
+.node-meta { margin-top: .45rem; }
+.node-meta-item { padding: .18rem .3rem; color: var(--muted); background: #0e1014; border: 1px solid rgba(255,255,255,.07); border-radius: 4px; font-size: .52rem; }
+.node-progress { margin-top: .45rem; }
+.edge { color: rgba(122, 162, 255, .38); stroke-width: 1.35; }
+.edge-running { color: var(--cyan); stroke-width: 2; animation: edge-flow .9s linear infinite; }
+.graph-minimap { right: .65rem; bottom: .65rem; width: 158px; height: 86px; background: rgba(12, 14, 18, .92); border-color: var(--line-strong); border-radius: 6px; box-shadow: 0 10px 26px rgba(0,0,0,.3); }
+.evidence-panel { position: absolute; z-index: 9; top: 56px; right: .65rem; display: grid; grid-template-rows: auto auto minmax(0, 1fr); width: min(360px, calc(100% - 1.3rem)); height: calc(100% - 174px); min-height: 0; overflow: hidden; background: rgba(17, 19, 24, .98); border-color: var(--line-strong); box-shadow: var(--shadow); transform: translateX(calc(100% + 1.2rem)); opacity: 0; pointer-events: none; transition: transform .22s ease, opacity .16s ease; }
+.evidence-panel[data-open="true"] { transform: translateX(0); opacity: 1; pointer-events: auto; }
+.evidence-panel .kicker { margin-bottom: .18rem; }
+.selected-node-summary { gap: .55rem; padding: .75rem; background: #14171d; }
+.selected-node-summary strong { font-size: .78rem; white-space: normal; }
+.selected-node-summary p { color: var(--muted); font-size: .66rem; line-height: 1.45; white-space: normal; overflow: visible; }
+.selected-node-facts { gap: .35rem; }
+.evidence-drawer { min-height: 0; max-height: none; padding: .55rem; }
+.evidence-item { border-radius: 6px; }
+.replay-panel { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(230px, auto) minmax(0, 1fr); grid-template-rows: auto auto; min-height: 112px; margin: 0; }
+.replay-dock { margin: 0; background: #101216; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.replay-dock-header { grid-row: 1 / span 2; display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .48rem .65rem; border-right: 1px solid var(--line); }
+.replay-current { display: flex; min-width: 0; align-items: baseline; gap: .55rem; }
+.replay-current .panel-note { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replay-controls { gap: .3rem; }
+.replay-button { min-height: 32px; padding: .3rem .48rem; border-radius: 6px; font-size: .62rem; }
+.replay-play { min-width: 34px; justify-content: center; }
+.replay-range-wrap, .replay-events { grid-column: 2; }
+.replay-range-wrap { gap: .28rem; padding: .35rem .65rem .2rem; }
+.replay-range { height: 12px; margin: 0; }
+.replay-events { gap: .35rem; padding: .3rem .65rem .55rem; scrollbar-width: thin; }
+.replay-event { grid-template-columns: auto minmax(0, 1fr); min-width: 128px; max-width: 180px; padding: .38rem .45rem; background: transparent; border-radius: 5px; }
+.replay-event-time { font-size: .5rem; }
+.replay-event-label { font-size: .58rem; }
+.graph-minimap[hidden] { display: none; }
+.share-panel, .control-panel { margin-top: .55rem; border-color: rgba(255,255,255,.08); box-shadow: none; }
+.share-panel .panel-header, .control-panel .panel-header { min-height: 42px; }
+.share-content, .control-content { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .55rem .7rem; }
+.share-status, .control-status, .control-result, .control-error { margin: 0; }
+.empty-state { border-radius: 8px; }
+.footer { padding-top: .65rem; }
+
+@keyframes node-breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+
+@media (max-width: 1100px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr); }
+  .topbar-actions { grid-column: 1 / -1; position: absolute; top: .9rem; right: .9rem; }
+  .hub-switcher { padding-right: 7.5rem; }
+  .run-hero { grid-template-columns: minmax(220px, 1fr) minmax(400px, auto) auto; }
+  .run-facts { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .run-fact:nth-child(2) { border-right: 0; }
+  .run-fact:nth-child(n+3) { border-top: 1px solid var(--line); }
+}
+
+@media (max-width: 760px) {
+  .shell { padding: 0 .55rem .7rem; }
+  .topbar { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .45rem; min-height: 0; padding: .55rem 0; }
+  .brand { min-width: 0; }
+  .topbar-actions { position: static; grid-column: 2; grid-row: 1; }
+  .connection [data-live-connection] { display: none; }
+  .hub-switcher { grid-column: 1 / -1; grid-row: 2; grid-template-columns: 1fr; width: 100%; padding: 0; }
+  .hub-field { grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: .45rem; }
+  .hub-field > span { padding-left: .15rem; }
+  .hub-select { min-height: 38px; }
+  .main { padding-top: .4rem; }
+  .run-hero { grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; min-height: 0; padding: .4rem .2rem .5rem; }
+  .run-heading { grid-column: 1; }
+  .run-title { font-size: .94rem; }
+  .run-subtitle { font-size: .59rem; }
+  .state-chip { grid-column: 2; grid-row: 1; }
+  .run-facts { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; border-top: 1px solid var(--line); border-left: 0; }
+  .run-fact { padding: .35rem .45rem; }
+  .run-fact:nth-child(1), .run-fact:nth-child(3) { border-left: 0; }
+  .workspace-grid { height: calc(100dvh - 272px); min-height: 500px; margin-top: .4rem; }
+  .graph-panel { grid-template-rows: auto auto minmax(240px, 1fr) auto; }
+  .graph-header { flex-wrap: nowrap; padding: .5rem; }
+  .graph-header .panel-note { display: none; }
+  .graph-header-actions { gap: .2rem; }
+  .graph-header-actions [data-live-graph-layout] { display: none; }
+  .graph-tool-button, .replay-button { min-width: 44px; min-height: 44px; }
+  .stage-overview { padding: .35rem .4rem; }
+  .stage-rail { display: flex; min-width: max-content; }
+  .stage-step { width: 108px; }
+  .graph-canvas { overflow: auto; cursor: default; }
+  .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
+  .node-list { position: relative; inset: auto; display: grid; grid-template-columns: 1fr; gap: .45rem; padding: .55rem; }
+  .node-card { position: relative !important; top: auto !important; left: auto !important; width: auto !important; height: auto !important; min-height: 88px !important; max-height: none; }
+  .node-summary { -webkit-line-clamp: 2; }
+  .node-connection { display: block; }
+  .edge-layer, .graph-minimap { display: none; }
+  .replay-panel { grid-template-columns: 1fr; min-height: 126px; }
+  .replay-dock-header { grid-row: auto; align-items: flex-start; padding: .4rem .5rem; border-right: 0; border-bottom: 1px solid var(--line); }
+  .replay-range-wrap, .replay-events { grid-column: 1; }
+  .replay-current { display: grid; gap: .1rem; }
+  .replay-controls { flex-wrap: wrap; justify-content: flex-end; }
+  .replay-reset { display: none; }
+  .replay-events { display: none; padding-inline: .5rem; }
+  .evidence-panel { position: fixed; top: auto; right: .5rem; bottom: .5rem; left: .5rem; width: auto; max-height: min(72dvh, 620px); transform: translateY(calc(100% + 1rem)); }
+  .evidence-panel[data-open="true"] { transform: translateY(0); }
+  .share-content, .control-content { align-items: flex-start; flex-direction: column; }
+  .footer { flex-direction: column; }
+}
+
+@media (max-width: 420px) {
+  .workspace-grid { height: calc(100dvh - 288px); min-height: 470px; }
+  .run-facts { display: flex; overflow-x: auto; }
+  .run-fact { flex: 0 0 132px; border-top: 0 !important; }
+  .run-fact + .run-fact { border-left: 1px solid var(--line); }
+  .graph-header-actions [data-live-graph-zoom-out], .graph-header-actions [data-live-graph-zoom-in] { display: none; }
+  .replay-current .panel-note { max-width: 150px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-canvas[data-following="true"] .graph-scene, .evidence-panel { transition: none !important; }
+  .node-card[data-replay-active="true"]::after { animation: none !important; opacity: 1; }
+}
+`;
+
 export function renderLiveControlRoomPage({
   snapshot = null,
   snapshotEndpoint = DEFAULT_SNAPSHOT_ENDPOINT,
@@ -2231,7 +2480,7 @@ export function renderLiveControlRoomPage({
   <meta name="description" content="Meta_Kim Live 只读实时运行控制中心">
   <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMic+PHJlY3Qgd2lkdGg9JzMyJyBoZWlnaHQ9JzMyJyByeD0nOCcgZmlsbD0nIzA3MGIxNicvPjxwYXRoIGQ9J004IDIyVjEwaDRsNCA1IDQtNWg0djEyaC00di02bC00IDUtNC01djZ6JyBmaWxsPScjNmVlN2ZmJy8+PC9zdmc+">
   <title>Meta_Kim Live · 控制中心</title>
-  <style>${PAGE_CSS}</style>
+  <style>${PAGE_CSS}${CANVAS_FIRST_CSS}</style>
 </head>
 <body>
   <a class="skip-link" id="skip-to-content" href="#live-main" data-i18n-en="Skip to content" data-i18n-zh="跳到主要内容">跳到主要内容</a>
@@ -2239,39 +2488,39 @@ export function renderLiveControlRoomPage({
   <div id="live-app" class="shell" data-snapshot-endpoint="${escapeHtml(safeSnapshotEndpoint)}" data-events-endpoint="${escapeHtml(safeEventsEndpoint)}" data-projects-endpoint="${escapeHtml(safeProjectsEndpoint)}" data-replay-endpoint="${escapeHtml(safeReplayEndpoint)}" data-share-endpoint="${escapeHtml(safeShareEndpoint)}" data-control-endpoint="${escapeHtml(safeControlEndpoint)}">
     <header class="topbar" aria-label="Meta_Kim Live header">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">✦</span>
-        <div><p class="eyebrow">Meta_Kim / Live</p><p class="brand-title" data-i18n-en="Control room" data-i18n-zh="控制中心">控制中心</p></div>
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <div><p class="eyebrow">Meta_Kim</p><p class="brand-title" data-i18n-en="Live workspace" data-i18n-zh="实时工作台">实时工作台</p></div>
       </div>
-      <div class="topbar-actions"><button class="language-toggle" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div></div>
+      <section class="hub-switcher" aria-label="Meta_Kim project and session selection">
+        <label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label>
+        <label class="hub-field hub-field-run" for="live-session-select"><span data-i18n-en="Session / run" data-i18n-zh="会话 / 运行">会话 / 运行</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed session" disabled><option value="">请先选择项目</option></select></label>
+        <p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p>
+      </section>
+      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="language-toggle" type="button" data-live-language-toggle aria-label="Switch to English">EN</button></div>
     </header>
-    <section class="hub-switcher" aria-label="Meta_Kim project and session selection">
-      <label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label>
-      <label class="hub-field" for="live-session-select"><span data-i18n-en="Session / run" data-i18n-zh="会话 / 运行">会话 / 运行</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed session" disabled><option value="">请先选择项目</option></select></label>
-      <p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p>
-    </section>
     <main class="main" id="live-main" tabindex="-1">
-      <section class="run-hero" aria-labelledby="run-title">
-        <div>
-          <p class="kicker" data-i18n-en="What is happening now" data-i18n-zh="当前任务">当前任务</p>
+      <section class="run-context run-hero" aria-labelledby="run-title">
+        <div class="run-heading">
+          <p class="kicker" data-i18n-en="Observed run" data-i18n-zh="当前运行">当前运行</p>
           <h1 class="run-title" id="run-title" data-live-run-title>正在等待运行快照</h1>
           <p class="run-subtitle"><span class="run-stage-primary" data-live-run-stage>观测中</span><span data-live-source>本地观察器</span><span data-live-run-id>未识别运行</span></p>
         </div>
+        <dl class="run-facts" aria-label="Run facts">
+          <div class="run-fact run-fact-primary"><dt data-i18n-en="Progress" data-i18n-zh="进度">进度</dt><dd data-live-run-progress>—</dd></div>
+          <div class="run-fact"><dt data-i18n-en="Active" data-i18n-zh="执行中">执行中</dt><dd data-live-run-workers>—</dd></div>
+          <div class="run-fact"><dt data-i18n-en="Started" data-i18n-zh="开始">开始</dt><dd data-live-run-started>—</dd></div>
+          <div class="run-fact"><dt data-i18n-en="Updated" data-i18n-zh="更新">更新</dt><dd data-live-run-updated>—</dd></div>
+        </dl>
         <div class="state-chip" data-live-state data-state="stale"><span class="status-pulse" aria-hidden="true"></span><span data-live-state-label>未更新</span></div>
-      </section>
-      <dl class="run-facts" aria-label="Run facts">
-        <div class="run-fact run-fact-primary"><dt data-i18n-en="Overall progress" data-i18n-zh="整体进度">整体进度</dt><dd data-live-run-progress>—</dd></div>
-        <div class="run-fact"><dt data-i18n-en="Working now" data-i18n-zh="正在执行">正在执行</dt><dd data-live-run-workers>—</dd></div>
-        <div class="run-fact"><dt data-i18n-en="Started" data-i18n-zh="开始时间">开始时间</dt><dd data-live-run-started>—</dd></div>
-        <div class="run-fact"><dt data-i18n-en="Last update" data-i18n-zh="最近更新">最近更新</dt><dd data-live-run-updated>—</dd></div>
-      </dl>
-      <section class="stage-overview" aria-labelledby="stage-overview-title">
-        <header class="stage-overview-header"><div><p class="kicker" data-i18n-en="Eight-stage path" data-i18n-zh="执行路径">执行路径</p><h2 id="stage-overview-title" data-i18n-en="Where this task is now" data-i18n-zh="这项任务现在走到哪一步">这项任务现在走到哪一步</h2></div><span data-i18n-en="Select a step to inspect it" data-i18n-zh="点击步骤查看详情">点击步骤查看详情</span></header>
-        <ol class="stage-rail" data-live-stage-rail aria-label="Run progress"></ol>
       </section>
       <div class="sr-only" data-live-region aria-live="polite"></div>
       <section class="workspace-grid" aria-label="Live execution workspace">
         <section class="panel graph-panel" aria-labelledby="graph-title">
-          <header class="panel-header"><div><h2 class="panel-title" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h2><p class="panel-note" data-i18n-en="Main stages on top; live execution branches below." data-i18n-zh="上方是主流程，下方是正在执行的工作分支。">上方是主流程，下方是正在执行的工作分支。</p></div><div class="graph-header-actions"><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Toggle graph layout" data-i18n-en="Layout" data-i18n-zh="布局">布局</button><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Fit graph to viewport" data-i18n-en="Fit" data-i18n-zh="适应">适应</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in">+</button></div></header>
+          <header class="panel-header graph-header"><div><h2 class="panel-title" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h2><p class="panel-note" data-i18n-en="Live topology and verified run state." data-i18n-zh="实时拓扑与已验证运行状态。">实时拓扑与已验证运行状态。</p></div><div class="graph-header-actions"><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Open inspector">ⓘ</button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="true" aria-pressed="true" aria-label="Follow active node" title="Follow active node">◎</button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Toggle graph layout" data-i18n-en="Layout" data-i18n-zh="布局">布局</button><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Fit graph to viewport" data-i18n-en="Fit" data-i18n-zh="适应">适应</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button></div></header>
+          <section class="stage-overview" aria-labelledby="stage-overview-title">
+            <h2 class="sr-only" id="stage-overview-title" data-i18n-en="Eight-stage path" data-i18n-zh="八阶段执行路径">八阶段执行路径</h2>
+            <ol class="stage-rail" data-live-stage-rail aria-label="Run progress"></ol>
+          </section>
           <div class="graph-stage" data-live-graph-viewport>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
@@ -2282,17 +2531,17 @@ export function renderLiveControlRoomPage({
             </div>
             <div class="graph-empty" data-live-graph-empty hidden><p data-i18n-en="No task nodes in this snapshot." data-i18n-zh="当前快照中没有任务节点。">当前快照中没有任务节点。</p></div>
           </div>
+          <section class="replay-panel replay-dock" aria-labelledby="replay-title">
+            <header class="replay-dock-header"><div class="replay-current"><span class="panel-title" id="replay-title" data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线</span><span class="panel-note" data-replay-status>正在等待回放数据</span></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event" title="Previous">‹</button><button class="replay-button replay-play" type="button" data-replay-play aria-label="Play replay"><span aria-hidden="true">▶</span><span class="sr-only" data-replay-play-label>播放</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event" title="Next">›</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position" data-i18n-en="Live" data-i18n-zh="实时">实时</button><button class="replay-button replay-reset" type="button" data-replay-reset aria-label="Reset replay" data-i18n-en="Reset" data-i18n-zh="重置">重置</button></div></header>
+            <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div></div>
+            <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
+          </section>
         </section>
-        <aside class="panel evidence-panel" aria-labelledby="evidence-title">
-          <header class="panel-header"><div><h2 class="panel-title" id="evidence-title" data-i18n-en="Evidence" data-i18n-zh="证据">证据</h2><p class="panel-note" data-i18n-en="What the observer can substantiate." data-i18n-zh="观察器能够证明的事实。">观察器能够证明的事实。</p></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="drawer-toggle" type="button" data-evidence-toggle aria-controls="evidence-drawer" aria-expanded="true" aria-label="Toggle evidence drawer" data-i18n-en="Details" data-i18n-zh="详情">详情</button></div></header>
+        <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
+          <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
           <div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · —</span><span data-live-selected-node-owner>负责人 · —</span><span data-live-selected-node-runtime>运行时 · —</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示证据详情。</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div>
           <div class="evidence-drawer" id="evidence-drawer" data-evidence-drawer><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
         </aside>
-      </section>
-      <section class="panel replay-panel" aria-labelledby="replay-title">
-          <header class="panel-header"><div><h2 class="panel-title" id="replay-title" data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线</h2><p class="panel-note" data-replay-status>正在等待回放数据</p></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event" data-i18n-en="Prev" data-i18n-zh="上一个">上一个</button><button class="replay-button" type="button" data-replay-play aria-label="Play replay"><span aria-hidden="true">▶</span><span data-replay-play-label>播放</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event" data-i18n-en="Next" data-i18n-zh="下一个">下一个</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position" data-i18n-en="Live" data-i18n-zh="实时">实时</button><button class="replay-button" type="button" data-replay-reset aria-label="Reset replay" data-i18n-en="Reset" data-i18n-zh="重置">重置</button></div></header>
-        <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div></div>
-        <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
       </section>
       <section class="panel share-panel" aria-labelledby="share-title">
         <header class="panel-header"><div><h2 class="panel-title" id="share-title" data-i18n-en="Share locally" data-i18n-zh="本地分享">本地分享</h2><p class="panel-note" data-i18n-en="No upload, no external assets, no mutation." data-i18n-zh="不上传、不加载外部资源、不修改运行。">不上传、不加载外部资源、不修改运行。</p></div><span class="panel-count" data-i18n-en="LOCAL ONLY" data-i18n-zh="仅限本地">仅限本地</span></header>
