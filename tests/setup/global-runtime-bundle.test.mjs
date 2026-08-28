@@ -34,6 +34,10 @@ const ORIGINAL_IDENTITY = resolvePortableMetaKimPackageIdentity(
 );
 const SYNC_TIMEOUT_MS = 300_000;
 const SERIAL_TEST_OPTIONS = { concurrency: false };
+const GLOBAL_SYNC_SOURCE = readFileSync(
+  path.join(REPO_ROOT, "scripts", "sync-global-meta-theory.mjs"),
+  "utf8",
+);
 const NPM_CLI_PATH = process.env.npm_execpath ?? path.join(
   path.dirname(process.execPath),
   "node_modules",
@@ -58,6 +62,18 @@ function requireSuccess(label, result) {
   );
   return result;
 }
+
+test("durable MCP materialization reuses the verified projection bundle without a third npm install", () => {
+  assert.match(
+    GLOBAL_SYNC_SOURCE,
+    /copyDurableMcpRuntimeFromProjectionAuthority\([\s\S]*executingProjectionPackage\.bundleDir/u,
+  );
+  assert.match(GLOBAL_SYNC_SOURCE, /fs\.cp\([\s\S]*dereference:\s*true/u);
+  assert.match(
+    GLOBAL_SYNC_SOURCE,
+    /sourcePackageSha256\s*=\s*executingProjectionPackage\.packageTarballSha256/u,
+  );
+});
 
 function preparePackedCandidate(testRoot) {
   const installDir = path.join(testRoot, "candidate-package");

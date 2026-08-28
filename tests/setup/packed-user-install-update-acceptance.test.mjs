@@ -510,6 +510,12 @@ test("project-aware packed global update alone receives the policy-scoped extend
   );
 });
 
+test("project-aware packed global update emits bounded progress around the long-running command", () => {
+  assert.match(acceptanceSource, /packed_project_aware_global_update_start/u);
+  assert.match(acceptanceSource, /packed_project_aware_global_update_complete/u);
+  assert.match(acceptanceSource, /runRuntimeSedimentationLane\(\{[\s\S]*?onProgress/u);
+});
+
 test("ordinary packed global updates receive a bounded Windows-safe timeout without widening install", () => {
   assert.equal(
     releaseVerificationPolicy.packedUserAcceptance.globalUserUpdateTimeoutMs,
@@ -536,7 +542,16 @@ test("historical packed upgrade receives its own bounded Windows-safe timeout", 
     "runHistoricalUpdateLane",
     "runPackedUserInstallUpdateAcceptance",
   );
-  assert.match(historicalLane, /PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS/u);
+  assert.match(
+    historicalLane,
+    /historicalDescriptor,[\s\S]*?"install",[\s\S]*?PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS/u,
+    "the historical seed must receive the historical Windows-safe timeout",
+  );
+  assert.match(
+    historicalLane,
+    /currentDescriptor,[\s\S]*?"update",[\s\S]*?PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS/u,
+    "the historical update must retain the historical Windows-safe timeout",
+  );
 });
 
 test("transient npx-shaped package install receives a bounded Windows-safe timeout", () => {

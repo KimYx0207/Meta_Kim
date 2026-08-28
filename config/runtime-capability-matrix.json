@@ -102,7 +102,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -246,7 +246,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -388,7 +388,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -530,7 +530,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -674,7 +674,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -814,7 +814,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -956,7 +956,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1101,7 +1101,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1234,7 +1234,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies a host surface, but scope or runtime mode remains partial without current-host/live acceptance.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1367,7 +1367,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1501,7 +1501,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1628,7 +1628,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1759,7 +1759,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1886,7 +1886,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -1964,7 +1964,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2036,7 +2036,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2109,7 +2109,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2182,7 +2182,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2263,7 +2263,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2364,7 +2364,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2505,7 +2505,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2639,7 +2639,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2720,7 +2720,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2800,7 +2800,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2878,7 +2878,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -2960,7 +2960,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -3099,7 +3099,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -3241,7 +3241,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -3380,7 +3380,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -3477,7 +3477,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "claude_code.review.conservative.2026-07-28",
@@ -3575,7 +3575,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -3720,7 +3720,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -3865,7 +3865,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -4012,7 +4012,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -4157,7 +4157,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -4302,7 +4302,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -4449,7 +4449,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -4594,7 +4594,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -4738,7 +4738,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -4878,7 +4878,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5016,7 +5016,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5154,7 +5154,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5292,7 +5292,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5426,7 +5426,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5511,7 +5511,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5595,7 +5595,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28"
@@ -5679,7 +5679,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5764,7 +5764,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28"
@@ -5848,7 +5848,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -5951,7 +5951,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6095,7 +6095,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6230,7 +6230,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6316,7 +6316,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6401,7 +6401,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6484,7 +6484,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6571,7 +6571,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6710,7 +6710,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6855,7 +6855,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -6997,7 +6997,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -7098,7 +7098,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "codex.review.conservative.2026-07-28",
@@ -7192,7 +7192,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -7335,7 +7335,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -7478,7 +7478,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -7623,7 +7623,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -7766,7 +7766,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -7909,7 +7909,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -8054,7 +8054,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -8197,7 +8197,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -8339,7 +8339,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -8477,7 +8477,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -8613,7 +8613,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -8751,7 +8751,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -8887,7 +8887,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9019,7 +9019,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9102,7 +9102,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9187,7 +9187,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9270,7 +9270,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9354,7 +9354,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies a host surface, but scope or runtime mode remains partial without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9438,7 +9438,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9539,7 +9539,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9681,7 +9681,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9814,7 +9814,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9898,7 +9898,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -9981,7 +9981,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -10062,7 +10062,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -10147,7 +10147,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -10284,7 +10284,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -10427,7 +10427,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -10567,7 +10567,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -10667,7 +10667,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "openclaw.review.conservative.2026-07-28",
@@ -10763,7 +10763,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -10908,7 +10908,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -11051,7 +11051,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -11196,7 +11196,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -11339,7 +11339,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -11484,7 +11484,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies the host surface; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -11631,7 +11631,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -11774,7 +11774,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -11916,7 +11916,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12054,7 +12054,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12190,7 +12190,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12326,7 +12326,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12464,7 +12464,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies a host surface, but scope or runtime mode remains partial without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12598,7 +12598,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies a host surface, but scope or runtime mode remains partial without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12683,7 +12683,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies a host surface, but scope or runtime mode remains partial without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12768,7 +12768,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Cursor 2.4 primary changelog verifies the host Ask Question surface; no Meta_Kim or product execution acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12851,7 +12851,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -12937,7 +12937,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies a host surface, but scope or runtime mode remains partial without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13023,7 +13023,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies the host surface; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13124,7 +13124,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13266,7 +13266,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13399,7 +13399,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13482,7 +13482,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13563,7 +13563,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13644,7 +13644,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13729,7 +13729,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Existing conclusion was retained or downgraded because capability-specific behavioral acceptance is absent.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -13866,7 +13866,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -14011,7 +14011,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation verifies the host surface; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -14151,7 +14151,7 @@
           ],
           "reviewState": {
             "status": "current",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed; no Meta_Kim integration or current-host/live acceptance is inferred.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -14251,7 +14251,7 @@
           ],
           "reviewState": {
             "status": "conservative_retained",
-            "lastReviewedAt": "2026-07-28",
+            "lastReviewedAt": "2026-08-28",
             "rationale": "Primary documentation was reviewed, but the mode-dependent partial conclusion is retained without current-host/live acceptance.",
             "evidenceRefs": [
               "cursor.review.conservative.2026-07-28",
@@ -14309,7 +14309,7 @@
   },
   "claimSchemaVersion": 2,
   "evidenceLedger": "config/runtime-capability-evidence.json",
-  "lastReviewedAt": "2026-07-28",
+  "lastReviewedAt": "2026-08-28",
   "claimSemantics": {
     "hostSupport": "What the runtime host documents or a correlated acceptance artifact proves for one mode.",
     "metaKimIntegration": "What Meta_Kim projects or implements for one mode; repository presence cannot prove behavior.",
