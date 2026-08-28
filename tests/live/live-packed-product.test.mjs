@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -54,6 +54,7 @@ test("the real packed CLI serves the read-only control room without a source che
   const extractRoot = path.join(temp, "extract");
   const projectRoot = path.join(temp, "project");
   let child;
+  let daemonState = null;
   try {
     await mkdir(extractRoot);
     await mkdir(path.join(projectRoot, ".git"), { recursive: true });
@@ -78,12 +79,17 @@ test("the real packed CLI serves the read-only control room without a source che
       cli,
       "live",
       "--project-root", projectRoot,
+      "--profile", "packed-profile",
       "--port", "0",
       "--no-open",
       "--json",
     ], {
       cwd: projectRoot,
-      env: { ...process.env, META_KIM_CALLER_CWD: projectRoot },
+      env: {
+        ...process.env,
+        META_KIM_CALLER_CWD: projectRoot,
+        META_KIM_LIVE_HOME: path.join(temp, "home"),
+      },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -91,6 +97,22 @@ test("the real packed CLI serves the read-only control room without a source che
     assert.equal(address.host, "127.0.0.1");
     assert.equal(address.readOnly, true);
     assert.equal(address.controlEnabled, false);
+    assert.equal(address.singleton, true);
+    assert.equal(address.profile, "packed-profile");
+    daemonState = JSON.parse(await readFile(
+      path.join(temp, "home", ".meta-kim", "live", "hub.json"),
+      "utf8",
+    ));
+    assert.equal(daemonState.instanceId.length > 0, true);
+    assert.equal(daemonState.profile, "packed-profile");
+    const catalogResponse = await fetch(`${address.url}/api/projects`);
+    assert.equal(catalogResponse.status, 200);
+    const catalog = await catalogResponse.json();
+    assert.equal(catalog.projects.length, 1);
+    assert.equal(catalog.projects[0].displayName, "project");
+    assert.equal(Object.prototype.hasOwnProperty.call(catalog.projects[0], "repoRoot"), false);
+    const health = await (await fetch(`${address.url}/api/health`)).json();
+    assert.equal(health.profile, "packed-profile");
     const response = await fetch(`${address.url}/api/snapshot`);
     assert.equal(response.status, 200);
     const snapshot = await response.json();
@@ -104,6 +126,25 @@ test("the real packed CLI serves the read-only control room without a source che
         new Promise((resolve) => child.once("exit", resolve)),
         new Promise((resolve) => setTimeout(resolve, 3_000)),
       ]);
+    }
+    if (daemonState?.pid) {
+      try {
+        const health = await (await fetch(`http://127.0.0.1:${daemonState.port}/api/health`)).json();
+        if (health.instanceId === daemonState.instanceId) {
+          process.kill(daemonState.pid, "SIGTERM");
+          const deadline = Date.now() + 3_000;
+          while (Date.now() < deadline) {
+            try {
+              process.kill(daemonState.pid, 0);
+              await new Promise((resolve) => setTimeout(resolve, 75));
+            } catch {
+              break;
+            }
+          }
+        }
+      } catch {
+        // Already stopped is an acceptable cleanup state.
+      }
     }
     await rm(temp, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
   }

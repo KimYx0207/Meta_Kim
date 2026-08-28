@@ -8,6 +8,7 @@ import { promises as fs } from "node:fs";
 import {
   buildProjectRef,
   detectProjectRegistryEntry,
+  ensureGovernedLiveProjectRegistration,
   getProjectRegistryPaths,
   joinProjectRegistry,
   listJoinedProjectRegistryEntries,
@@ -78,6 +79,35 @@ describe("project registry", () => {
     const detected = await detectProjectRegistryEntry({ homeDir, repoPath });
     assert.equal(detected.registryStatus, "skipped");
     assert.equal(detected.known, false);
+  });
+
+  test("governed Live auto-joins unknown projects but preserves an explicit skip", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-live-registry-"));
+    try {
+      const joinedPath = path.join(homeDir, "workspaces", "joined-live");
+      const skippedPath = path.join(homeDir, "workspaces", "skipped-live");
+      const joined = await ensureGovernedLiveProjectRegistration({
+        homeDir,
+        repoPath: joinedPath,
+        sourceRef: "test-live",
+      });
+      assert.equal(joined.registryStatus, "joined");
+      assert.equal((await detectProjectRegistryEntry({ homeDir, repoPath: joinedPath })).known, true);
+
+      await skipProjectRegistry({ homeDir, repoPath: skippedPath });
+      const skipped = await ensureGovernedLiveProjectRegistration({ homeDir, repoPath: skippedPath });
+      assert.equal(skipped.registryStatus, "skipped");
+      assert.equal(skipped.known, false);
+
+      const detached = await ensureGovernedLiveProjectRegistration({
+        homeDir,
+        preferredProjectRef: "project-a1b2c3d4e5f6",
+      });
+      assert.equal(detached.projectRef, "project-a1b2c3d4e5f6");
+      assert.equal(detached.registryStatus, "not_applicable");
+    } finally {
+      await fs.rm(homeDir, { recursive: true, force: true });
+    }
   });
 
   test(

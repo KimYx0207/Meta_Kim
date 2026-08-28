@@ -39,7 +39,7 @@ ${status.usageHeading}:
   meta-kim [install] [options]
   meta-kim update [options]
   meta-kim check [options]
-  meta-kim live [--port <port>] [--profile <name>] [--no-open] [--project-root <dir>] [--json] [--enable-control]
+  meta-kim live [--port <port>] [--profile <name>] [--no-open] [--project-root <dir>] [--json] [--enable-control]  Start or reuse the global local Live Hub
   ${status.usage}
   meta-kim doctor
   meta-kim doctor hooks [--fix] [--project|--all] [--project-root <dir>]

@@ -97,7 +97,7 @@ Meta_Kim 不是新模型，也不替代 Claude Code 或 Codex。它给这些“�
    能安全并行的就并行，最后把结果完整验证一遍。
    ```
 
-3. 查看执行过程：
+3. 查看执行过程：第一次进入治理任务时，Meta_Kim 会懒启动一个本机 Live Hub，并在对话中给出当前运行图链接。需要手动重新打开时仍可运行：
 
    ```bash
    meta-kim live
@@ -116,13 +116,15 @@ Meta_Kim 不是新模型，也不替代 Claude Code 或 Codex。它给这些“�
 
 ### Meta_Kim Live：把证据直接摆到眼前
 
-Meta_Kim Live 把耐久运行记录变成一个本地 **Proof-Carrying Run Graph（带证据的运行图）**：阶段、owner、证据、不确定状态和历史回放都在同一个只读页面里。它附着在你已经使用的 Codex 或 Claude Code 项目上，不替换 Agent、不创建第二套调度器，也不会把未验证节点包装成完成。
+Meta_Kim Live 把耐久运行记录变成一个本地 **Proof-Carrying Run Graph（带证据的运行图）**：一个全局单实例 Hub 会列出用户明确登记的 Meta_Kim 项目，再按项目展示可选择的 Session / Run；阶段、owner、证据、不确定状态和历史回放都在同一个只读页面里。它不扫描整块磁盘、不读取 Codex / Claude Code 的原始私聊、不替换 Agent、不创建第二套调度器，也不会把未验证节点包装成完成。
+
+Hub 默认显示中文，右上角 `EN` 可以切换英文，选择会保存在本机浏览器中。当你为一个带项目 marker 的目录显式打开 Live，或首次启动治理运行时，该项目会自动加入目录；如果此前明确选择跳过，则继续尊重该选择。
 
 ```bash
 meta-kim live
 ```
 
-MVP 只绑定 `127.0.0.1`、不加载第三方资源。页面默认只读；只有通过 `--enable-control` 显式 opt-in，并注入完整权威链（durable repository、lease/fence/effect 检查、control token 与可用 adapter）时，才允许 guarded controls。缺少完整权威链时，服务保持 plan-only 并 fail-closed。现在完成的是重新打开并理解同一运行；自动恢复真实执行和跨 Runtime 接力仍是后续能力，必须先通过 lease/fence 与副作用安全证据。
+Hub 只绑定 `127.0.0.1`、不加载第三方资源，并通过 PID、进程启动身份与实例健康证明复用同一个进程；新版本首次使用时会安全替换旧版本 Hub。页面默认只读；只有通过 `--enable-control` 显式 opt-in，并注入完整权威链（durable repository、lease/fence/effect 检查、control token 与可用 adapter）时，才允许 guarded controls。缺少完整权威链时，服务保持 plan-only 并 fail-closed。现在完成的是选择、重新打开并理解已有运行；自动恢复真实执行和跨 Runtime 接力仍是后续能力，必须先通过 lease/fence 与副作用安全证据。
 
 #### M3-L02–L04 分享与控制边界
 

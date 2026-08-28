@@ -56,13 +56,30 @@ test("renders a complete local control-room shell with no external assets", () =
   const html = renderLiveControlRoomPage();
 
   assert.match(html, /^<!doctype html>/iu);
-  assert.match(html, /<html[^>]+lang="en"/iu);
+  assert.match(html, /<html[^>]+lang="zh-CN"/iu);
   assert.match(html, /<main\b/iu);
   assert.match(html, /data-snapshot-endpoint="\/api\/snapshot"/u);
   assert.match(html, /data-events-endpoint="\/api\/events"/u);
+  assert.match(html, /data-projects-endpoint="\/api\/projects"/u);
+  assert.match(html, /data-replay-endpoint="\/api\/replay"/u);
   assert.match(html, /rel="icon" href="data:image\/svg\+xml;base64,/u);
   assert.doesNotMatch(html, /<(?:script|link|img)[^>]+(?:https?:)?\/\//iu);
   assert.doesNotMatch(html, /<(?:script|link)[^>]+(?:unpkg|jsdelivr|fonts\.googleapis)/iu);
+});
+
+test("defaults to Chinese and provides a persistent English language switch", () => {
+  const html = renderLiveControlRoomPage();
+
+  assert.match(html, /<title>Meta_Kim Live · 控制中心<\/title>/u);
+  assert.match(html, /data-live-language-toggle/u);
+  assert.match(html, /data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图/u);
+  assert.match(html, /data-i18n-en="Evidence" data-i18n-zh="证据">证据/u);
+  assert.match(html, /data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线/u);
+  assert.match(html, /LANGUAGE_STORAGE_KEY\s*=\s*"meta-kim-live-language"/u);
+  assert.match(html, /localStorage\?\.getItem\(LANGUAGE_STORAGE_KEY\)\s*===\s*"en"/u);
+  assert.match(html, /localStorage\?\.setItem\(LANGUAGE_STORAGE_KEY, currentLanguage\)/u);
+  assert.match(html, /currentLanguage\s*=\s*currentLanguage\s*===\s*"zh"\s*\?\s*"en"\s*:\s*"zh"/u);
+  assert.match(html, /window\.location\.reload\(\)/u);
 });
 
 test("keeps snapshot values out of markup and safely seeds JSON for the text-only renderer", () => {
@@ -88,8 +105,8 @@ test("keeps snapshot values out of markup and safely seeds JSON for the text-onl
 test("wires read-only snapshot polling and server-sent events", () => {
   const html = renderLiveControlRoomPage();
 
-  assert.match(html, /fetch\(snapshotEndpoint/iu);
-  assert.match(html, /new\s+EventSource\(eventsEndpoint/iu);
+  assert.match(html, /fetch\(endpointForSelection\(snapshotEndpoint\)/iu);
+  assert.match(html, /new\s+EventSource\(endpointForSelection\(eventsEndpoint\)\)/iu);
   assert.match(html, /addEventListener\(["']snapshot["']/iu);
   assert.match(html, /addEventListener\(["']message["']/iu);
   assert.match(html, /eventSource\.close\(\)/iu);
@@ -121,6 +138,21 @@ test("includes graph, evidence drawer, and replay controls", () => {
   assert.match(html, /role="list"/iu);
   assert.match(html, /<svg\b[^>]*aria-hidden="true"/iu);
   assert.match(html, /data\.replayStatus|dataset\.replayStatus/u);
+});
+
+test("prioritizes a readable task summary and eight-stage progress rail", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /data-live-run-progress/u);
+  assert.match(html, /data-live-run-workers/u);
+  assert.match(html, /data-live-stage-rail/u);
+  assert.match(html, /function renderStageRail\(snapshot\)/u);
+  assert.match(html, /STAGE_ORDER\.forEach/u);
+  assert.match(html, /selectedSession\.currentStage/u);
+  assert.match(html, /selectedSession\.active\s*\?\s*"live"/u);
+  assert.match(html, /index === selectedStageIndex && selectedSession\.active/u);
+  assert.match(html, /data-i18n-zh="这项任务现在走到哪一步"/u);
+  assert.doesNotMatch(html, /data-i18n-zh="数据协议"|DAG \/ 只读/u);
 });
 
 test("is accessible by keyboard and respects reduced motion", () => {
@@ -157,11 +189,69 @@ test("escapes custom endpoint attributes without changing the runtime contract",
   const html = renderLiveControlRoomPage({
     snapshotEndpoint: "/api/snapshot?view=control-room&x=\"quoted\"",
     eventsEndpoint: "/api/events?channel=live&x=<unsafe>",
+    projectsEndpoint: "/api/projects?source=registry&x=<unsafe>",
+    replayEndpoint: "/api/replay?view=timeline&x=\"quoted\"",
   });
 
   assert.match(html, /data-snapshot-endpoint="\/api\/snapshot\?view=control-room&amp;x=&quot;quoted&quot;"/u);
   assert.match(html, /data-events-endpoint="\/api\/events\?channel=live&amp;x=&lt;unsafe&gt;"/u);
+  assert.match(html, /data-projects-endpoint="\/api\/projects\?source=registry&amp;x=&lt;unsafe&gt;"/u);
+  assert.match(html, /data-replay-endpoint="\/api\/replay\?view=timeline&amp;x=&quot;quoted&quot;"/u);
   assert.doesNotMatch(html, /data-(?:snapshot|events)-endpoint="[^"]*<|data-(?:snapshot|events)-endpoint="[^"]*"[^>]*\bon/iu);
+});
+
+test("renders an accessible project and session selector with explicit empty guidance", () => {
+  const html = renderLiveControlRoomPage();
+
+  assert.match(html, /data-live-project-select/u);
+  assert.match(html, /data-live-session-select/u);
+  assert.match(html, /aria-label="Choose a Meta_Kim project"/u);
+  assert.match(html, /aria-label="Choose a governed session"/u);
+  assert.match(html, /data-live-hub-status[^>]+aria-live="polite"/u);
+  assert.match(html, /No Meta_Kim projects are registered yet/u);
+  assert.match(html, /no governed runs yet/iu);
+  assert.match(html, /Hub never scans your disk/u);
+  assert.match(html, /@media \(max-width: 620px\)[\s\S]{0,500}\.hub-switcher\s*\{[^}]*grid-template-columns:\s*1fr/u);
+});
+
+test("loads the Hub catalog, honors deep links, and reconnects scoped read endpoints", () => {
+  const html = renderLiveControlRoomPage();
+
+  assert.match(html, /fetch\(projectsEndpoint/iu);
+  assert.match(html, /selectionFromLocation\(\)/u);
+  assert.match(html, /new URL\(window\.location\.href\)\.searchParams/u);
+  assert.match(html, /new URLSearchParams\(url\.search\)/u);
+  assert.match(html, /params\.set\("projectId", selectedProjectId\)/u);
+  assert.match(html, /params\.set\("runId", selectedRunId\)/u);
+  assert.match(html, /history\.replaceState/u);
+  assert.match(html, /fetch\(endpointForSelection\(replayEndpoint\)/u);
+  assert.match(html, /disconnectEvents\(\)/u);
+  assert.match(html, /abortController\?\.abort\(\)/u);
+  assert.match(html, /connectEvents\(generation\)/u);
+  assert.match(html, /projectSelect\?\.addEventListener\("change"/u);
+  assert.match(html, /sessionSelect\?\.addEventListener\("change"/u);
+  assert.match(html, /loadProjectCatalog\(\{ refresh: true \}\)/u);
+  assert.match(html, /document\.visibilityState === "visible"/u);
+  assert.match(html, /clearInterval\(catalogRefreshTimer\)/u);
+  assert.match(html, /const generation = \+\+selectionGeneration/u);
+  assert.match(html, /generation !== selectionGeneration/u);
+  assert.match(html, /pendingSnapshot = null/u);
+  assert.match(html, /snapshotRequestInFlight = false/u);
+  assert.match(html, /selectedNodeId = null/u);
+});
+
+test("renders catalog labels through bounded text-only DOM operations", () => {
+  const html = renderLiveControlRoomPage();
+
+  assert.match(html, /rawProjects\.slice\(0, 128\)/u);
+  assert.match(html, /rawSessions\.slice\(0, 256\)/u);
+  assert.match(html, /option\.textContent\s*=/u);
+  assert.match(html, /option\.value\s*=/u);
+  assert.match(html, /safeIdentifier/u);
+  assert.match(html, /formatSessionTime\(session\.updatedAt\)/u);
+  assert.match(html, /session\.runId\.slice\(-6\)/u);
+  assert.doesNotMatch(html, /\.innerHTML\b/iu);
+  assert.doesNotMatch(html, /projectsEndpoint\s*\+|eventsEndpoint\s*\+|snapshotEndpoint\s*\+/u);
 });
 
 test("falls back from unsafe endpoints and circular initial snapshots", () => {
@@ -171,9 +261,13 @@ test("falls back from unsafe endpoints and circular initial snapshots", () => {
     snapshot: circular,
     snapshotEndpoint: "https://attacker.example/snapshot",
     eventsEndpoint: "//attacker.example/events",
+    projectsEndpoint: "https://attacker.example/projects",
+    replayEndpoint: "//attacker.example/replay",
   });
   assert.match(html, /data-snapshot-endpoint="\/api\/snapshot"/u);
   assert.match(html, /data-events-endpoint="\/api\/events"/u);
+  assert.match(html, /data-projects-endpoint="\/api\/projects"/u);
+  assert.match(html, /data-replay-endpoint="\/api\/replay"/u);
   assert.match(html, /id="live-initial-snapshot">null<\/script>/u);
 });
 
@@ -349,13 +443,16 @@ test("keeps the eight-stage spine distinct and derives omitted edge status from 
   assert.match(html, /edge-running[\s\S]{0,120}edge-flow/iu);
 });
 
-test("anchors the compact desktop cards and curved paths to one fixed geometry", () => {
+test("keeps the default graph readable with a four-column serpentine spine and directional edges", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /const cardWidth\s*=\s*132/u);
-  assert.match(html, /const cardHeight\s*=\s*76/u);
-  assert.match(html, /\.node-card\s*\{[^}]*height:\s*76px/su);
-  assert.match(html, /from\.x\s*\+\s*from\.width[\s\S]{0,250}to\.x/u);
+  assert.match(html, /const cardWidth\s*=\s*168/u);
+  assert.match(html, /const cardHeight\s*=\s*96/u);
+  assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*8\s*:\s*4/u);
+  assert.match(html, /row\s*%\s*2\s*===\s*0\s*\?\s*withinRow\s*:\s*spineColumns\s*-\s*1\s*-\s*withinRow/u);
+  assert.match(html, /function edgeGeometry\(/u);
+  assert.match(html, /vertical\s*=\s*Math\.abs\(deltaY\)/u);
+  assert.match(html, /\.node-card\s*\{[^}]*height:\s*96px/su);
 });
 
 test("keeps inspector provenance and replay navigation visible and keyboard reachable", () => {
@@ -390,8 +487,8 @@ test("uses explicit marker colors so SVG arrows do not inherit an unreliable cur
 test("keeps the desktop workspace bounded and coalesces high-frequency snapshot updates", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*430px/su);
-  assert.match(html, /\.evidence-panel\s*\{[^}]*height:\s*430px[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*560px/su);
+  assert.match(html, /\.evidence-panel\s*\{[^}]*height:\s*560px[^}]*overflow:\s*hidden/su);
   assert.match(html, /\.evidence-drawer\s*\{[^}]*overflow:\s*auto/su);
   assert.match(html, /SNAPSHOT_COALESCE_MS\s*=\s*75/u);
   assert.match(html, /scheduleSnapshotUpdate[\s\S]*snapshotCoalesceTimer[\s\S]*setTimeout/su);
@@ -408,7 +505,7 @@ test("preserves real edge state without replay evidence and uses valid listbox s
   assert.doesNotMatch(html, /aria-pressed/u);
   assert.match(html, /replayPlay\.disabled\s*=\s*events\.length\s*<\s*2/u);
   assert.match(html, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/u);
-  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*126\s*:\s*144/u);
+  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*150\s*:\s*190/u);
   assert.match(html, /\.node-meta\s*\{[^}]*flex-wrap:\s*nowrap/su);
   assert.match(html, /\.node-meta-item\s*\{[^}]*min-width:\s*0/su);
 });

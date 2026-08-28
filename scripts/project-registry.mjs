@@ -335,6 +335,31 @@ export async function joinProjectRegistry({
   }
 }
 
+export async function ensureGovernedLiveProjectRegistration({
+  homeDir = os.homedir(),
+  repoPath = null,
+  preferredProjectRef = null,
+  runtimeFamily = "shared",
+  sourceRef = "meta-kim-live",
+} = {}) {
+  if (typeof repoPath !== "string" || !repoPath.trim()) {
+    return {
+      projectRef: preferredProjectRef,
+      registryStatus: "not_applicable",
+      known: false,
+    };
+  }
+  const detected = await detectProjectRegistryEntry({ homeDir, repoPath, runtimeFamily });
+  if (detected.registryStatus !== "prompt_join") return detected;
+  return joinProjectRegistry({
+    homeDir,
+    repoPath,
+    runtimeFamily,
+    sourceType: "governed_live",
+    sourceRef,
+  });
+}
+
 export async function skipProjectRegistry({
   homeDir = os.homedir(),
   repoPath = process.cwd(),
@@ -430,7 +455,8 @@ export async function readProjectRegistryEntry({
 
 export async function listJoinedProjectRegistryEntries({ homeDir = os.homedir() } = {}) {
   const { projectRegistryPath } = getProjectRegistryPaths({ homeDir });
-  const db = await openProjectRegistry(projectRegistryPath);
+  const db = await openProjectRegistry(projectRegistryPath, { readOnly: true, create: false });
+  if (!db) return [];
   try {
     return db.prepare(`
       SELECT

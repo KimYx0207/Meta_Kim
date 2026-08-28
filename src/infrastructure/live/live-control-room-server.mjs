@@ -4,6 +4,8 @@ import { randomBytes } from "node:crypto";
 
 import { createLiveControlRoomService } from "../../application/live/live-control-room-service.mjs";
 import { isLiveRunId } from "./live-read-repository.mjs";
+import { LIVE_HUB_HEALTH_SCHEMA_VERSION } from "./live-hub-lifecycle.mjs";
+import { createLiveHubProjectCatalog } from "./live-hub-project-catalog.mjs";
 import { renderLiveControlRoomPage } from "../../presentation/live/live-control-room-page.mjs";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -361,13 +363,48 @@ function boundedError(error, fallback = "control_unavailable") {
  * @returns {{server: import('node:http').Server, service: object, start: Function, close: Function}}
  */
 export function createLiveControlRoomServer(options = {}) {
-  const service = options.service || createLiveControlRoomService(options);
+  const globalHub = options.globalHub === true;
+  const service = options.service || createLiveControlRoomService(globalHub
+    ? {
+        ...options,
+        repository: {
+          readDurableStatus: async () => null,
+          readLatestArtifact: async () => null,
+          readArtifact: async () => null,
+        },
+      }
+    : options);
   const requestedPort = Number.isInteger(options.port) && options.port >= 0 ? options.port : DEFAULT_PORT;
   const requestedHost = options.host;
   if (!loopbackOnly(requestedHost)) {
     throw new TypeError("Live sidecar accepts loopback host only.");
   }
-  const enableControl = options.enableControl === true;
+  const instanceId = typeof options.instanceId === "string" ? options.instanceId : null;
+  const packageIdentity = typeof options.packageIdentity === "string" ? options.packageIdentity : null;
+  const hubCatalog = globalHub
+    ? (options.hubCatalog || createLiveHubProjectCatalog(options))
+    : null;
+  const hubProfile = globalHub && typeof hubCatalog?.profile === "string"
+    ? hubCatalog.profile
+    : typeof options.profile === "string"
+      ? options.profile
+      : "default";
+  const projectServices = new Map();
+  const hubCatalogTtlMs = Number.isInteger(options.hubCatalogTtlMs) && options.hubCatalogTtlMs >= 250
+    ? Math.min(options.hubCatalogTtlMs, 60_000)
+    : 2_000;
+  let hubCatalogCache = null;
+  let hubCatalogCacheExpiresAt = 0;
+  let hubCatalogReadPromise = null;
+  const createProjectService = typeof options.createProjectService === "function"
+    ? options.createProjectService
+    : ({ repoRoot }) => createLiveControlRoomService({
+        ...options,
+        service: undefined,
+        repository: undefined,
+        projectRoot: repoRoot,
+      });
+  const enableControl = !globalHub && options.enableControl === true;
   const exposure = controlExposure(options, enableControl);
   const controlToken = enableControl
     ? (typeof options.controlToken === "string" && options.controlToken.length >= 16
@@ -378,39 +415,134 @@ export function createLiveControlRoomServer(options = {}) {
     ? options.maxJsonBytes
     : DEFAULT_MAX_JSON_BYTES;
 
-  const clients = new Set();
+  const clients = new Map();
   let listening = null;
   let closePromise = null;
   let closed = false;
   let heartbeat = null;
   let observer = null;
   let observerBusy = false;
-  let lastSnapshotKey = null;
   const pollIntervalMs = Number.isInteger(options.pollIntervalMs) && options.pollIntervalMs >= 10
     ? options.pollIntervalMs
     : 1_000;
+  const heartbeatIntervalMs = Number.isInteger(options.heartbeatIntervalMs) && options.heartbeatIntervalMs >= 10
+    ? options.heartbeatIntervalMs
+    : 25_000;
 
   const stopObserverWhenIdle = () => {
     if (clients.size > 0 || !observer) return;
     clearInterval(observer);
     observer = null;
-    lastSnapshotKey = null;
+  };
+
+  const readHubProjects = async ({ refresh = false } = {}) => {
+    const now = Date.now();
+    if (!refresh && hubCatalogCache && hubCatalogCacheExpiresAt > now) return hubCatalogCache;
+    if (!hubCatalogReadPromise) {
+      hubCatalogReadPromise = Promise.resolve(hubCatalog.listProjects())
+        .then((projects) => {
+          hubCatalogCache = Array.isArray(projects) ? projects : [];
+          hubCatalogCacheExpiresAt = Date.now() + hubCatalogTtlMs;
+          return hubCatalogCache;
+        })
+        .finally(() => {
+          hubCatalogReadPromise = null;
+        });
+    }
+    return hubCatalogReadPromise;
+  };
+
+  const publicHubCatalog = async ({ requestedProjectId = null, requestedRunId = null, refresh = false } = {}) => {
+    const internalProjects = await readHubProjects({ refresh });
+    const projects = internalProjects.map((project) => ({
+      projectId: project.projectRef,
+      displayName: project.displayName,
+      status: project.status,
+      activeSessionId: project.activeSessionId,
+      sessionCount: project.sessionCount,
+      updatedAt: project.updatedAt,
+      sessions: Array.isArray(project.sessions)
+        ? project.sessions.map((session) => ({
+            sessionId: session.sessionId,
+            runId: session.runId,
+            title: session.title,
+            status: session.status,
+            currentStage: session.currentStage,
+            runtime: session.runtime,
+            updatedAt: session.updatedAt,
+            active: session.active === true,
+          }))
+        : [],
+    })).sort((left, right) => {
+      const activeOrder = Number(right.status === "active") - Number(left.status === "active");
+      if (activeOrder !== 0) return activeOrder;
+      const updatedOrder = String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
+      return updatedOrder || String(left.projectId || "").localeCompare(String(right.projectId || ""));
+    });
+    const selectedProject = projects.find((project) => project.projectId === requestedProjectId)
+      || projects.find((project) => project.status === "active")
+      || projects[0]
+      || null;
+    const selectedRun = selectedProject?.sessions?.find((session) => session.runId === requestedRunId)
+      || selectedProject?.sessions?.find((session) => session.active)
+      || selectedProject?.sessions?.[0]
+      || null;
+    return {
+      schemaVersion: "meta-kim-live-hub-catalog-v1",
+      projects,
+      selected: {
+        projectId: selectedProject?.projectId || null,
+        runId: selectedRun?.runId || null,
+      },
+    };
+  };
+
+  const resolveHubSelection = async (parsed) => {
+    if (!globalHub) return { service, projectId: null, runId: parsed.searchParams.get("runId") || null };
+    const requestedProjectId = parsed.searchParams.get("projectId");
+    const requestedRunId = parsed.searchParams.get("runId");
+    const catalog = await publicHubCatalog({ requestedProjectId, requestedRunId });
+    if (catalog.projects.length === 0) return { service: null, projectId: null, runId: null, catalog };
+    if (requestedProjectId && catalog.selected.projectId !== requestedProjectId) {
+      return { service: null, projectId: null, runId: null, catalog, invalidProject: true };
+    }
+    const projectId = catalog.selected.projectId;
+    const runId = requestedRunId || catalog.selected.runId;
+    if (requestedRunId && !isLiveRunId(requestedRunId)) {
+      return { service: null, projectId, runId: null, catalog, invalidRun: true };
+    }
+    const selectedProject = catalog.projects.find((project) => project.projectId === projectId);
+    if (requestedRunId && !selectedProject?.sessions?.some((session) => session.runId === requestedRunId)) {
+      return { service: null, projectId, runId: requestedRunId, catalog, invalidRun: true };
+    }
+    const internalProject = await hubCatalog.resolveProject(projectId);
+    if (!internalProject) return { service: null, projectId, runId, catalog, invalidProject: true };
+    const cacheKey = `${projectId}:${internalProject.repoRoot}`;
+    let selectedService = projectServices.get(cacheKey);
+    if (!selectedService) {
+      selectedService = createProjectService(internalProject);
+      projectServices.clear();
+      projectServices.set(cacheKey, selectedService);
+    }
+    return { service: selectedService, projectId, runId, catalog };
   };
 
   const publishSnapshotChange = async () => {
     if (observerBusy || clients.size === 0) return;
     observerBusy = true;
     try {
-      const snapshot = withoutControlProjection(await service.getSnapshot().catch(() => null));
-      if (!snapshot) return;
-      const key = semanticSnapshotKey(snapshot);
-      if (lastSnapshotKey !== null && key !== lastSnapshotKey) {
-        const payload = `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`;
-        for (const client of clients) {
-          if (!client.writableEnded) client.write(payload);
+      for (const [client, selection] of clients) {
+        if (client.writableEnded) continue;
+        const snapshot = withoutControlProjection(await selection.service
+          .getSnapshot(selection.runId)
+          .catch(() => null));
+        if (!snapshot) continue;
+        const key = semanticSnapshotKey(snapshot);
+        if (selection.lastSnapshotKey !== null && key !== selection.lastSnapshotKey) {
+          client.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
         }
+        selection.lastSnapshotKey = key;
       }
-      lastSnapshotKey = key;
     } finally {
       observerBusy = false;
     }
@@ -433,6 +565,50 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
+    if (parsed.pathname === "/api/health") {
+      if (request.method !== "GET") {
+        response.setHeader("allow", "GET");
+        jsonResponse(response, 405, safeError("method_not_allowed"));
+        return;
+      }
+      jsonResponse(response, 200, {
+        schemaVersion: LIVE_HUB_HEALTH_SCHEMA_VERSION,
+        status: "ok",
+        instanceId,
+        packageIdentity,
+        profile: hubProfile,
+        singleton: globalHub,
+        readOnly: !exposure.enabled,
+      });
+      return;
+    }
+
+    if (parsed.pathname === "/api/projects") {
+      if (request.method !== "GET") {
+        response.setHeader("allow", "GET");
+        jsonResponse(response, 405, safeError("method_not_allowed"));
+        return;
+      }
+      if (!globalHub) {
+        jsonResponse(response, 404, safeError("hub_catalog_unavailable"));
+        return;
+      }
+      try {
+        jsonResponse(response, 200, await publicHubCatalog({
+          requestedProjectId: parsed.searchParams.get("projectId"),
+          requestedRunId: parsed.searchParams.get("runId"),
+          refresh: true,
+        }));
+      } catch {
+        jsonResponse(response, 200, {
+          schemaVersion: "meta-kim-live-hub-catalog-v1",
+          projects: [],
+          selected: { projectId: null, runId: null },
+        });
+      }
+      return;
+    }
+
     if (parsed.pathname === "/api/share") {
       if (request.method !== "GET") {
         response.setHeader("allow", "GET");
@@ -442,7 +618,12 @@ export function createLiveControlRoomServer(options = {}) {
       try {
         const format = parsed.searchParams.get("format") || "json";
         const runId = parsed.searchParams.get("runId");
-        const result = await service.getShare({ format, runId: runId || null });
+        const selection = await resolveHubSelection(parsed);
+        if (!selection.service) {
+          jsonResponse(response, selection.invalidProject || selection.invalidRun ? 404 : 200, safeError("share_unavailable"));
+          return;
+        }
+        const result = await selection.service.getShare({ format, runId: runId || null });
         if (format === "markdown" || format === "readme") textResponse(response, 200, result, "text/markdown; charset=utf-8");
         else jsonResponse(response, 200, result);
       } catch (error) {
@@ -532,7 +713,16 @@ export function createLiveControlRoomServer(options = {}) {
 
     if (parsed.pathname === "/api/snapshot") {
       try {
-        jsonResponse(response, 200, withoutControlProjection(await service.getSnapshot()));
+        const selection = await resolveHubSelection(parsed);
+        if (!selection.service) {
+          if (selection.invalidProject || selection.invalidRun) {
+            jsonResponse(response, 404, safeError("selection_not_found"));
+          } else {
+            jsonResponse(response, 200, withoutControlProjection(await service.getSnapshot()));
+          }
+          return;
+        }
+        jsonResponse(response, 200, withoutControlProjection(await selection.service.getSnapshot(selection.runId)));
       } catch {
         jsonResponse(response, 200, withoutControlProjection(await service.getSnapshot().catch(() => ({ error: "snapshot_unavailable" }))));
       }
@@ -546,7 +736,18 @@ export function createLiveControlRoomServer(options = {}) {
         return;
       }
       try {
-        jsonResponse(response, 200, await service.getReplay(rawRunId));
+        const selection = await resolveHubSelection(parsed);
+        if (!selection.service) {
+          jsonResponse(response, selection.invalidProject || selection.invalidRun ? 404 : 200, {
+            schemaVersion: "meta-kim-live-replay-v1",
+            runId: rawRunId,
+            replay: [],
+            source: { kind: "empty", observedAt: new Date().toISOString(), stale: true },
+            permissions: { projectionOnly: true, executionAllowed: false, mutationAllowed: false },
+          });
+          return;
+        }
+        jsonResponse(response, 200, await selection.service.getReplay(rawRunId));
       } catch {
         jsonResponse(response, 200, {
           schemaVersion: "meta-kim-live-replay-v1",
@@ -560,6 +761,11 @@ export function createLiveControlRoomServer(options = {}) {
     }
 
     if (parsed.pathname === "/api/events") {
+      const selection = await resolveHubSelection(parsed);
+      if (!selection.service) {
+        jsonResponse(response, selection.invalidProject || selection.invalidRun ? 404 : 200, safeError("selection_unavailable"));
+        return;
+      }
       securityHeaders(response);
       response.statusCode = 200;
       response.setHeader("content-type", "text/event-stream; charset=utf-8");
@@ -567,14 +773,19 @@ export function createLiveControlRoomServer(options = {}) {
       response.setHeader("connection", "keep-alive");
       response.setHeader("x-content-type-options", "nosniff");
       response.flushHeaders?.();
-      clients.add(response);
+      const clientSelection = {
+        service: selection.service,
+        runId: selection.runId,
+        lastSnapshotKey: null,
+      };
+      clients.set(response, clientSelection);
       request.once("close", () => {
         clients.delete(response);
         stopObserverWhenIdle();
       });
-      const snapshot = withoutControlProjection(await service.getSnapshot().catch(() => null));
+      const snapshot = withoutControlProjection(await selection.service.getSnapshot(selection.runId).catch(() => null));
       if (!response.writableEnded && snapshot) {
-        if (lastSnapshotKey === null) lastSnapshotKey = semanticSnapshotKey(snapshot);
+        clientSelection.lastSnapshotKey = semanticSnapshotKey(snapshot);
         response.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
       }
       ensureObserver();
@@ -582,7 +793,10 @@ export function createLiveControlRoomServer(options = {}) {
     }
 
     if (parsed.pathname === "/" || parsed.pathname === "/index.html") {
-      const snapshot = withoutControlProjection(await service.getSnapshot().catch(() => null));
+      const selection = await resolveHubSelection(parsed);
+      const snapshot = withoutControlProjection(await (selection.service || service)
+        .getSnapshot(selection.runId)
+        .catch(() => null));
       const body = renderLiveControlRoomPage({
         snapshot: withoutControlProjection(snapshot),
         controlEnabled: exposure.enabled,
@@ -631,10 +845,15 @@ export function createLiveControlRoomServer(options = {}) {
       server.listen(requestedPort, LOOPBACK_HOST);
     });
     heartbeat = setInterval(() => {
-      for (const client of clients) {
-        if (!client.writableEnded) client.write(": keep-alive\n\n");
+      for (const client of clients.keys()) {
+        if (client.destroyed || client.writableEnded) continue;
+        try {
+          client.write(": keep-alive\n\n");
+        } catch {
+          clients.delete(client);
+        }
       }
-    }, 25_000);
+    }, heartbeatIntervalMs);
     heartbeat.unref?.();
     return listening;
   };
@@ -646,7 +865,7 @@ export function createLiveControlRoomServer(options = {}) {
     heartbeat = null;
     if (observer) clearInterval(observer);
     observer = null;
-    for (const client of clients) {
+    for (const client of clients.keys()) {
       try {
         client.end();
       } catch {

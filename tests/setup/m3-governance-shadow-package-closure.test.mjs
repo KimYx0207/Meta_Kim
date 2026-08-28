@@ -72,6 +72,8 @@ const LIVE_L02_L04_SOURCE_PATHS = [
   "src/application/live/plan-live-continuation.mjs",
   "src/infrastructure/live/live-continuation-command-store.mjs",
   "src/infrastructure/live/live-control-room-server.mjs",
+  "src/infrastructure/live/live-hub-lifecycle.mjs",
+  "src/infrastructure/live/live-hub-project-catalog.mjs",
   "src/infrastructure/live/live-read-repository.mjs",
   "src/infrastructure/live/live-runtime-adapter-registry.mjs",
   "src/presentation/live/live-control-room-page.mjs",

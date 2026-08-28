@@ -6,6 +6,26 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
 
+## Unreleased
+
+## [3.0.7] - 2026-08-27
+
+### Added
+
+- **Meta_Kim Live is now a global local Hub.** One loopback-only process lists explicitly registered projects and their governed Sessions / Runs, with project and run deep links into the existing graph, evidence, and replay experience.
+- **The first governed request lazily starts Live.** The normal conversation receives a clickable current-run link; later prompts reuse the same verified process instead of creating per-project or per-session servers.
+- **Live now opens in Chinese by default with a persistent English switch.** The complete navigation, graph chrome, evidence, replay, empty states, and accessibility labels are bilingual while project/session content stays in its original language.
+- **A verified governed project joins the Hub catalog on first use.** Explicitly opening Live or entering a governed run makes the current marker-backed project immediately selectable without a disk scan; an existing explicit skip remains respected.
+
+### Changed
+
+- **Live now explains the run before exposing implementation detail.** The first screen leads with the current task, overall progress, active workers, and a readable eight-stage progress rail; protocol labels are moved out of the primary hierarchy, and graph cards keep only information that helps identify the work.
+- **Historical Sessions are distinguishable at a glance.** Catalog labels combine local time, governed stage, safe public title, and a unique run suffix instead of repeating the same run-id prefix across hundreds of entries.
+
+### Security
+
+- **The Hub never scans the disk or republishes private conversations.** Public catalog responses use opaque project IDs, bounded sanitized run summaries, and an explicit field allowlist; repository roots, source paths, raw prompts, outputs, and secrets remain server-side.
+
 ## [3.0.6] - 2026-08-26
 
 ### Changed
