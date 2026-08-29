@@ -140,7 +140,7 @@ export const LIVE_CERTIFIED_STAGE = Object.freeze({
   cmd: "npm run meta:acceptance:clean-room:require",
   timeoutMs: resolveReleaseStageTimeout("meta:acceptance:clean-room:require"),
 });
-const RELEASE_PROBE_SKILL_ID = "planning-with-files";
+const RELEASE_PROBE_SKILL_ID = "findskill";
 const RELEASE_PROBE_MODE_OPERATION =
   "all-runtime-global-install-update-probe-mode";
 

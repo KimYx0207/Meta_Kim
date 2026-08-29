@@ -20,7 +20,6 @@ const REQUIRED_SKILLS = [
   "hookprompt",
   "superpowers",
   "ecc",
-  "planning-with-files",
   "cli-anything",
   "gstack",
   "meta-skill-creator",
@@ -72,34 +71,13 @@ for (const id of REQUIRED_SKILLS) {
   assert(skillIds.has(id), `config/skills.json missing preserved skill ${id}`);
 }
 
-const planningWithFiles = (skills.skills ?? []).find(
-  (skill) => skill.id === "planning-with-files",
-);
-assert(planningWithFiles, "planning-with-files core skill missing from config/skills.json");
 assert(
-  planningWithFiles.installMethod === "subdirExtraction" &&
-    planningWithFiles.subdir === "skills/planning-with-files",
-  "planning-with-files must install from the upstream skills/planning-with-files subdirectory",
-);
-for (const runtime of ["claude", "codex", "openclaw", "cursor"]) {
-  assert(
-    planningWithFiles.targets?.includes(runtime),
-    `planning-with-files must target ${runtime}`,
-  );
-}
-assert(
-  planningWithFiles.pluginHookCompat === true,
-  "planning-with-files must preserve pluginHookCompat hook deployment",
+  !skillIds.has("planning-with-files"),
+  "retired planning-with-files dependency must not remain in config/skills.json",
 );
 assert(
-  planningWithFiles.globalHookSubdirs?.codex?.includes("~/.codex/hooks/meta-kim") &&
-    planningWithFiles.globalHookSubdirs?.cursor?.includes("~/.cursor/hooks/meta-kim"),
-  "planning-with-files must declare Codex and Cursor global hook subdirectories",
-);
-assert(
-  planningWithFiles.globalHookConfigFiles?.codex === "~/.codex/hooks.json" &&
-    planningWithFiles.globalHookConfigFiles?.cursor === "~/.cursor/hooks.json",
-  "planning-with-files must declare Codex and Cursor global hook config files",
+  pkg.scripts?.["meta:planning:validate"],
+  "Meta_Kim first-party planning continuity validator is required",
 );
 
 for (const scriptName of REQUIRED_SCRIPTS) {

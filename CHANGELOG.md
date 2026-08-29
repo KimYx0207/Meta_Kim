@@ -8,10 +8,11 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
-## [3.0.7] - 2026-08-27
+## [3.0.7] - 2026-08-30
 
 ### Added
 
+- **Planning continuity is now first-party.** Meta_Kim preserves run-scoped plans, progress, checkpoints, recovery evidence, and bounded completion without installing or invoking `planning-with-files`.
 - **Meta_Kim Live is now a global local Hub.** One loopback-only process lists explicitly registered projects and their governed Sessions / Runs, with project and run deep links into the existing graph, evidence, and replay experience.
 - **The first governed request lazily starts Live.** The normal conversation receives a clickable current-run link; later prompts reuse the same verified process instead of creating per-project or per-session servers.
 - **Live now opens in Chinese by default with a persistent English switch.** The complete navigation, graph chrome, evidence, replay, empty states, and accessibility labels are bilingual while project/session content stays in its original language.
@@ -19,11 +20,13 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ### Changed
 
+- **The first dependency-absorption cycle is closed.** `planning-with-files` remains only as historical research evidence; install, update, discovery, provider routing, and runtime projections no longer depend on it.
 - **Live now explains the run before exposing implementation detail.** The first screen leads with the current task, overall progress, active workers, and a readable eight-stage progress rail; protocol labels are moved out of the primary hierarchy, and graph cards keep only information that helps identify the work.
 - **Historical Sessions are distinguishable at a glance.** Catalog labels combine local time, governed stage, safe public title, and a unique run suffix instead of repeating the same run-id prefix across hundreds of entries.
 
 ### Security
 
+- **Dependency retirement now fails closed.** Install and update preserve unknown or drifted hooks, aliases, caches, and junction-backed paths instead of deleting content that Meta_Kim cannot prove it owns.
 - **The Hub never scans the disk or republishes private conversations.** Public catalog responses use opaque project IDs, bounded sanitized run summaries, and an explicit field allowlist; repository roots, source paths, raw prompts, outputs, and secrets remain server-side.
 
 ## [3.0.6] - 2026-08-26

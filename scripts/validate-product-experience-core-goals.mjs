@@ -211,7 +211,7 @@ function assertVisibleMetaTheorySurface(report) {
   assert.equal(Object.hasOwn(packet, "capabilityInvocationTruth"), false);
   assert.equal(Object.hasOwn(packet.capabilityInvocationPresentation, "rows"), false);
   assert.equal(packet.agentTeamsPlaybook.status, "pass");
-  assert.equal(packet.agentTeamsPlaybook.selected, true);
+  assert.equal(packet.agentTeamsPlaybook.selected, false);
   assert.ok(packet.agentTeamsPlaybook.waveCount >= 1);
   assert.equal(packet.peerAgentMesh.status, "pass");
   assert.ok(packet.peerAgentMesh.peerCount > 0);
@@ -279,11 +279,10 @@ function assertCapabilityInvocationTruth(report) {
   assert.equal(byFamily.get("prompt_rule").state, "applied");
   assert.equal(byFamily.get("command_script").state, "selected_not_invoked");
   assert.equal(byFamily.get("runtime_tool").state, "not_required");
-  assert.equal(byFamily.get("agent_teams_playbook").state, "selected_not_invoked");
+  assert.equal(byFamily.get("agent_teams_playbook").state, "not_required");
   assert.equal(packet.realInvocationCoverage.status, "partial");
   for (const family of [
     "agent_subagent",
-    "agent_teams_playbook",
     "skill",
     "mcp",
     "hook",

@@ -138,7 +138,11 @@ function validateProductExperienceEvidence(report) {
   assert.equal(report.coreLoop.langGraphRunPacket.status, "pass");
   assert.equal(report.coreLoop.peerAgentMeshPacket.status, "pass");
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.status, "pass");
-  assert.equal(report.coreLoop.agentTeamsPlaybookPacket.selected, true);
+  assert.equal(report.coreLoop.agentTeamsPlaybookPacket.selected, false);
+  assert.equal(
+    report.coreLoop.agentTeamsPlaybookPacket.acceptance.optionalProviderDoesNotGateNativeFanout,
+    true,
+  );
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, true);
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.acceptance.independentLanesProven, true);
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.acceptance.parallelWaveExists, true);
@@ -207,7 +211,7 @@ function validateProductExperienceEvidence(report) {
   assert.equal(invocationByFamily.get("app_visible_subagent").state, "not_required");
   assert.equal(invocationByFamily.get("worker_task").state, "blocked");
   assert.equal(invocationByFamily.get("prompt_rule").state, "applied");
-  assert.equal(invocationByFamily.get("agent_teams_playbook").state, "selected_not_invoked");
+  assert.equal(invocationByFamily.get("agent_teams_playbook").state, "not_required");
   assert.equal(report.coreLoop.capabilityInvocationProbePacket.status, "not_run");
   assert.ok(
     ["selected_not_invoked", "discovered_not_selected", "not_required"].includes(

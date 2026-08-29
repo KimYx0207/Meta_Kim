@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "meta-kim-planning-continuity",
+  "owner": "meta-conductor",
+  "reviewOwners": [
+    "meta-sentinel",
+    "meta-prism"
+  ],
+  "purpose": "Keep governed planning resumable without requiring an external planning skill, script, hook bundle, cache, or network lookup.",
+  "humanReadableFiles": [
+    "task_plan.md",
+    "findings.md",
+    "progress.md"
+  ],
+  "authority": {
+    "root": ".meta-kim/state/{profile}/planning-continuity",
+    "binding": [
+      "trusted_project_root",
+      "runtime",
+      "run_identifier_digest"
+    ],
+    "writer": "meta-conductor_or_main_coordinator",
+    "atomicity": "file_lock_plus_temp_rename",
+    "ledger": "bounded_structured_events"
+  },
+  "initialization": {
+    "trigger": "governed_route_active_or_explicit_cli",
+    "mode": "create_missing_only",
+    "overwriteExisting": false,
+    "existingFilesRequireOwnerReviewBeforeAttestation": true
+  },
+  "recovery": {
+    "requiresCurrentAttestation": true,
+    "rejectsProjectOrRunMismatch": true,
+    "rejectsSymlinkEscape": true,
+    "rejectsHashDrift": true,
+    "rejectsControlInstructionPatterns": true,
+    "autoInjectedFiles": [
+      "task_plan.md",
+      "progress.md"
+    ],
+    "neverAutoInjectedFiles": [
+      "findings.md"
+    ],
+    "projection": "bounded_structural_summary"
+  },
+  "completionGate": {
+    "requires": [
+      "current_attestation",
+      "no_open_checklist_items",
+      "verification_passed",
+      "summary_closed"
+    ],
+    "zeroPhase": "explicit_reason_required",
+    "maxBlockingAttempts": 2,
+    "afterBound": "allow_stop_without_completion_claim"
+  },
+  "runtimeSupport": {
+    "claude_code": {
+      "target": "lifecycle_block",
+      "claimUntilVerified": "adapter_unverified"
+    },
+    "codex": {
+      "target": "lifecycle_block",
+      "claimUntilVerified": "adapter_unverified"
+    },
+    "cursor": {
+      "target": "no_adapter",
+      "claimUntilVerified": "blocked"
+    },
+    "openclaw": {
+      "target": "no_adapter",
+      "claimUntilVerified": "blocked"
+    }
+  },
+  "dependencyPolicy": {
+    "implementationAuthority": "meta_kim_first_party",
+    "externalReference": "OthmanAdi/planning-with-files",
+    "externalReferenceStatus": "retain_until_absence_test_and_independent_review",
+    "deletionRequiresUserAuthorization": true
+  },
+  "absenceAcceptance": {
+    "networkFallbackAbsent": true,
+    "hostOsEvidenceOnly": true,
+    "externalCheckoutAbsent": true,
+    "runtimeSkillCopiesAbsent": true,
+    "externalHookBundleAbsent": true,
+    "cacheFallbackAbsent": true,
+    "requiredScenarios": [
+      "fresh_init",
+      "existing_file_preservation",
+      "session_resume",
+      "run_isolation",
+      "tamper_refusal",
+      "structured_ledger",
+      "doctor",
+      "bounded_completion_gate"
+    ]
+  }
+}

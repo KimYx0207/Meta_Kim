@@ -149,6 +149,7 @@ describe("Claude settings hook command rendering", () => {
 
     assert.match(promptHooks[0].command, /user-prompt-submit\.js/);
     assert.match(promptHooks[1].command, /activate-meta-theory-spine\.mjs/);
+    assert.match(promptHooks[2].command, /planning-continuity\.mjs/);
     assert.doesNotMatch(
       JSON.stringify(promptHooks),
       /hookprompt-adapter\.mjs/,
@@ -187,7 +188,8 @@ describe("Claude settings hook command rendering", () => {
 
     assert.match(promptHooks[0].command, /user-prompt-submit\.js/);
     assert.match(promptHooks[1].command, /activate-meta-theory-spine\.mjs/);
-    assert.match(promptHooks[2].command, /optional\.js/);
+    assert.match(promptHooks[2].command, /planning-continuity\.mjs/);
+    assert.match(promptHooks[3].command, /optional\.js/);
   });
 
   test("global settings merge preserves unproven same-name retired hooks", () => {
@@ -272,7 +274,14 @@ describe("Claude settings hook command rendering", () => {
       template,
     );
 
-    assert.equal(merged.hooks.PostToolUse, undefined);
+    assert.match(
+      JSON.stringify(merged.hooks.PostToolUse),
+      /planning-continuity\.mjs/,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(merged.hooks.PostToolUse),
+      /post-format\.mjs/,
+    );
     assert.match(
       JSON.stringify(merged.hooks),
       /block-dangerous-bash\.mjs/,

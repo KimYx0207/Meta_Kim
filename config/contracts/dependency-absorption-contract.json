@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "contractId": "meta-kim-dependency-absorption-contract",
+  "owner": "meta-artisan",
+  "gateOwner": "meta-warden",
+  "mode": "single_project_sequential",
+  "maxActiveResearch": 1,
+  "crossProjectEvidenceReuse": false,
+  "nextProjectActivationAllowed": false,
+  "activeItem": {
+    "id": "planning-with-files",
+    "source": "OthmanAdi/planning-with-files",
+    "upstreamHead": "af9a1fab2f9b80995789e55cc3fb886a1c2f8b05",
+    "release": "v3.11.2",
+    "releaseCommit": "9e94390e5912b1ff296556505cd999ff84838160",
+    "license": "MIT",
+    "state": "DEPENDENCY_REMOVED_CLOSED",
+    "routeEligibility": "historical_evidence_only",
+    "installedState": "removed",
+    "deletionAuthorized": true
+  },
+  "lifecycle": [
+    "research_primary_sources",
+    "internalize_runtime_neutral_patterns",
+    "absence_test_without_external_project",
+    "independent_correctness_security_integrity_review",
+    "user_authorizes_single_deletion",
+    "delete_exactly_one_dependency",
+    "independent_deletion_closure_review",
+    "close_exactly_one_dependency",
+    "activate_next_project"
+  ],
+  "deletionGate": {
+    "required": [
+      "internalization implementation passes",
+      "real packed install and update evidence passes",
+      "absence tests prove no checkout, skill, hook, cache, network, or default-route fallback",
+      "independent review passes",
+      "user explicitly authorizes deletion of this one dependency"
+    ],
+    "currentDecision": "dependency_removed_closed",
+    "reason": "The user authorized deletion of planning-with-files. Install declarations, managed runtime copies, aliases, and legacy Codex Hook registrations were retired; historical evidence remains. Two independent deletion-closure reviews passed with no P0-P2 findings. Next-project activation remains separately blocked."
+  },
+  "closureReview": {
+    "decision": "REVIEW_PASS",
+    "completedAt": "2026-08-30",
+    "independentReviewCount": 2,
+    "blockingFindings": {
+      "p0": 0,
+      "p1": 0,
+      "p2": 0
+    },
+    "nextProjectActivationAuthorized": false
+  },
+  "forbidden": [
+    "activate more than one dependency research item",
+    "reuse evidence across dependency projects",
+    "bulk downgrade unrelated projects",
+    "bulk delete dependencies",
+    "treat an installed reference as runtime authority"
+  ]
+}

@@ -384,7 +384,7 @@ const CAPABILITY_SLOT_CATALOG = [
     dependsOn: [],
     toolRequirements: ["intent_record", "acceptance_record", "product_scope_contract"],
     capabilityLoadout: buildCapabilityLoadout({
-      runtimeSkillCandidates: ["strategic-compact", "planning-with-files"],
+      runtimeSkillCandidates: ["strategic-compact"],
       commands: ["meta:gap:orchestrate", "meta:theory:run"],
       runtimeTools: ["filesystem", "shell", "memory"],
     }),

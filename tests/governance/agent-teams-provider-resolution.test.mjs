@@ -22,7 +22,7 @@ async function runFor(runtime) {
   }
 }
 
-test("Codex resolves the local upstream checkout before a stale global package", async () => {
+test("Codex discovers the local upstream checkout before a stale global package without selecting the optional adapter", async () => {
   const resolution = await runFor("codex");
   assert.equal(resolution.runtime, "codex");
   assert.equal(resolution.candidates[0].source, "project_codex_skill");
@@ -30,16 +30,16 @@ test("Codex resolves the local upstream checkout before a stale global package",
     resolution.candidates.findIndex((candidate) => candidate.source === "sibling_dependency_checkout") <
       resolution.candidates.findIndex((candidate) => candidate.source === "codex_global_skill"),
   );
-  assert.equal(resolution.selectedSource, "sibling_dependency_checkout");
-  assert.equal(resolution.selectedVersion, "4.8.0");
+  assert.equal(resolution.selectedSource, null);
+  assert.equal(resolution.selectedVersion, null);
 });
 
-test("Claude Code resolves Claude-native skill roots and the same local upstream contract", async () => {
+test("Claude Code discovers Claude-native roots and the local upstream contract without selecting the optional adapter", async () => {
   const resolution = await runFor("claude_code");
   assert.equal(resolution.runtime, "claude_code");
   assert.equal(resolution.candidates[0].source, "project_claude_skill");
   assert.ok(resolution.candidates.some((candidate) => candidate.source === "claude_global_skill"));
   assert.equal(resolution.candidates.some((candidate) => candidate.source === "codex_global_skill"), false);
-  assert.equal(resolution.selectedSource, "sibling_dependency_checkout");
-  assert.equal(resolution.selectedVersion, "4.8.0");
+  assert.equal(resolution.selectedSource, null);
+  assert.equal(resolution.selectedVersion, null);
 });

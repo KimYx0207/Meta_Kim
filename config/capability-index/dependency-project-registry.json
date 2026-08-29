@@ -1,5 +1,14 @@
 {
   "schemaVersion": 1,
+  "absorptionQueuePolicy": {
+    "contractRef": "config/contracts/dependency-absorption-contract.json",
+    "maxActiveResearch": 1,
+    "activeProjectId": null,
+    "state": "DEPENDENCY_REMOVED_CLOSED",
+    "crossProjectEvidenceReuse": false,
+    "nextProjectActivationAllowed": false,
+    "deletionRequiresUserAuthorization": true
+  },
   "projects": [
     {
       "id": "agent-teams-playbook",
@@ -261,7 +270,7 @@
         "risk": [
           "third_party_skill_requires_trust_review"
         ],
-        "routeEligibility": "external_reference",
+        "routeEligibility": "reference_only",
         "notFor": [
           "automatic execution without trust review"
         ],
@@ -616,68 +625,64 @@
         "type": "github",
         "uri": "OthmanAdi/planning-with-files",
         "localPath": null,
-        "inspectionStatus": "external_reference",
-        "lastInspectedAt": null
+        "inspectionStatus": "absorbed_removed_historical_reference",
+        "lastInspectedAt": "2026-08-30"
       },
       "capabilityCard": {
-        "oneLine": "Dependency capability for planning-with-files.",
+        "oneLine": "Historical evidence for the retired planning-with-files dependency; runtime planning is owned by Meta_Kim planning-continuity.",
         "canDo": [
-          "external_capability"
+          "historical_reference_evidence"
         ],
         "canNotDo": [
-          "automatic execution without trust review"
+          "runtime execution",
+          "installation",
+          "automatic routing"
         ],
         "inputContract": {
           "requires": [
-            "matched task shape",
-            "trust review when third-party"
+            "dependency absorption audit or provenance review"
           ]
         },
         "outputContract": {
           "produces": [
-            "skill-specific artifact or reference evidence"
+            "source provenance and absorption evidence"
           ]
         },
-        "triggerConditions": [
-          "planning-with-files"
-        ],
-        "verificationMethod": "npm run meta:deps:compat",
+        "triggerConditions": [],
+        "verificationMethod": "npm run meta:deps:absorption:validate",
         "risk": [
           "third_party_skill_requires_trust_review"
         ],
-        "routeEligibility": "external_reference",
+        "routeEligibility": "historical_evidence_only",
         "notFor": [
-          "automatic execution without trust review"
+          "runtime execution",
+          "installation",
+          "automatic routing"
         ],
         "taskShapes": [
-          "external_capability"
+          "historical_reference"
         ],
         "writebackKey": "dependency:planning-with-files",
         "verificationMethods": [
-          "npm run meta:deps:compat"
+          "npm run meta:deps:absorption:validate"
         ]
       },
       "interface": {
-        "invokeAs": "reference",
+        "invokeAs": "historical_reference",
         "invocationPath": null,
-        "preferredWeaponId": "planning-with-files-skill",
+        "preferredWeaponId": null,
         "requiredFiles": [],
         "requiredEnv": [],
-        "requiredRuntime": [
-          "claude_code",
-          "codex",
-          "cursor",
-          "openclaw"
-        ]
+        "requiredRuntime": []
       },
       "scoring": {
-        "overall": 62
+        "overall": 0
       },
       "reusePolicy": {
         "reuseWhenScoreAbove": 80,
         "requiresHumanConfirmationAboveRisk": "medium",
-        "writebackOnUse": true,
-        "recordUsageStats": true
+        "writebackOnUse": false,
+        "recordUsageStats": false
       },
       "evolution": {
         "usageCount": 0,
@@ -687,22 +692,22 @@
         "nextRunHints": []
       },
       "runtimeSupport": {
-        "claude_code": "partial",
-        "codex": "partial",
-        "cursor": "partial",
-        "openclaw": "partial"
+        "claude_code": "blocked",
+        "codex": "blocked",
+        "cursor": "blocked",
+        "openclaw": "blocked"
       },
       "osSupport": {
-        "macos": "partial",
-        "windows": "partial",
-        "linux": "partial",
-        "wsl2": "partial"
+        "macos": "blocked",
+        "windows": "blocked",
+        "linux": "blocked",
+        "wsl2": "blocked"
       },
       "supportEvidence": {
-        "source": "repo_claim",
-        "confidence": "repo_claim",
-        "verificationCommand": "npm run meta:deps:compat",
-        "lastVerifiedAt": null
+        "source": "independent_absorption_review",
+        "confidence": "verified",
+        "verificationCommand": "npm run meta:deps:absorption:validate",
+        "lastVerifiedAt": "2026-08-30"
       }
     },
     {
