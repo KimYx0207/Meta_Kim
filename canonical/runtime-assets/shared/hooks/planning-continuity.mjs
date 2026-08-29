@@ -644,17 +644,32 @@ function parseArgs(argv) {
 
 async function readPayload() {
   try {
-    const raw = await readFile(0, "utf8");
-    return raw.trim() ? JSON.parse(raw) : {};
+    process.stdin.setEncoding("utf8");
+    let raw = "";
+    for await (const chunk of process.stdin) raw += chunk;
+    const normalized = raw.replace(/^\uFEFF/u, "").trim();
+    return normalized ? JSON.parse(normalized) : {};
   } catch {
     return {};
   }
 }
 
-function emitHookContext(runtime, projection) {
+function hookEventName(event) {
+  const normalized = String(event || "").toLowerCase();
+  if (["session-start", "sessionstart"].includes(normalized)) return "SessionStart";
+  if (["user-prompt", "userpromptsubmit", "beforesubmitprompt"].includes(normalized)) return "UserPromptSubmit";
+  if (["pre-compact", "precompact"].includes(normalized)) return "PreCompact";
+  if (["post-tool", "posttooluse"].includes(normalized)) return "PostToolUse";
+  if (normalized === "stop") return "Stop";
+  return null;
+}
+
+function emitHookContext(runtime, event, projection) {
+  const eventName = hookEventName(event);
+  if (!eventName) return;
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
-      hookEventName: "PlanningContinuity",
+      hookEventName: eventName,
       additionalContext: projection,
     },
   }));
@@ -683,19 +698,24 @@ function isPlanningWriteTarget(payload, context) {
 async function runHook(payload, options) {
   if (process.env.PLANNING_DISABLED === "1" || process.env.META_KIM_PLANNING_DISABLED === "1") return;
   const event = String(options.event || payload.hook_event_name || payload.event || "").toLowerCase();
+  // Hook payloads are untrusted runtime input. If the host cannot provide a
+  // session/run binding, fail closed with a silent no-op instead of creating
+  // shared authority or surfacing a non-blocking startup error. Direct CLI and
+  // library operations remain strict through contextFrom().
+  if (!runIdentifier(payload, options.runId)) return;
   const base = { payload, options };
   const context = await contextFrom(base);
   if (event === "user-prompt" || event === "userpromptsubmit" || event === "beforesubmitprompt") {
     if (await governedRouteActive(context.projectRoot, context.profile)) {
       await initializePlanningContinuity(base);
       const resumed = await resumePlanningContinuity(base);
-      if (resumed.status === "resumed") emitHookContext(context.runtime, resumed.projection);
+      if (resumed.status === "resumed") emitHookContext(context.runtime, event, resumed.projection);
     }
     return;
   }
   if (event === "session-start" || event === "sessionstart" || event === "pre-compact" || event === "precompact") {
     const resumed = await resumePlanningContinuity(base);
-    if (resumed.status === "resumed") emitHookContext(context.runtime, resumed.projection);
+    if (resumed.status === "resumed") emitHookContext(context.runtime, event, resumed.projection);
     return;
   }
   if (event === "post-tool" || event === "posttooluse") {

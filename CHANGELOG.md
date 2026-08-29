@@ -8,6 +8,13 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.0.8] - 2026-08-30
+
+### Fixed
+
+- **Claude Code planning continuity now reads Hook JSON correctly on native Windows.** The Hook consumes stdin as a stream instead of using a file-descriptor read that could discard a valid `session_id` and report `planning_run_identifier_missing` during `SessionStart`.
+- **Planning context uses the real Claude Code Hook event name.** `SessionStart`, `UserPromptSubmit`, and `PreCompact` context output now matches Claude Code's official `hookSpecificOutput` contract; unbound Hook input safely exits without creating shared authority or showing a startup error.
+
 ## [3.0.7] - 2026-08-30
 
 ### Added
