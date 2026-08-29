@@ -6,6 +6,148 @@ import {
   renderLiveControlRoomPage,
 } from "../../src/presentation/live/live-control-room-page.mjs";
 
+function modalBehaviorHarness() {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const modalStart = html.indexOf("  function modalBackgroundElements()");
+  const modalEnd = html.indexOf("\n  function updateMinimap()", modalStart);
+  const keydownStart = html.indexOf('  app.addEventListener("keydown", (event) => {', modalEnd);
+  const keydownEnd = html.indexOf("\n  replayPlay?.addEventListener", keydownStart);
+  assert.ok(modalStart >= 0 && modalEnd > modalStart, "modal controller must remain in the shipped client script");
+  assert.ok(keydownStart >= 0 && keydownEnd > keydownStart, "modal keyboard binding must remain in the shipped client script");
+
+  const document = {
+    activeElement: null,
+    skipLink: null,
+    querySelector(selector) {
+      return selector === ".skip-link" ? this.skipLink : null;
+    },
+  };
+  class FakeElement {
+    constructor(name, { dialog = false } = {}) {
+      this.name = name;
+      this.dialog = dialog;
+      this.hidden = false;
+      this.inert = false;
+      this.children = [];
+      this.focusables = [];
+      this.attributes = new Map();
+      this.focusCount = 0;
+    }
+
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+    }
+
+    getAttribute(name) {
+      return this.attributes.has(name) ? this.attributes.get(name) : null;
+    }
+
+    removeAttribute(name) {
+      this.attributes.delete(name);
+    }
+
+    matches(selector) {
+      return selector === "[data-live-dialog]" && this.dialog;
+    }
+
+    querySelector() {
+      return this.focusables[0] || null;
+    }
+
+    querySelectorAll() {
+      return this.focusables;
+    }
+
+    contains(element) {
+      return element === this || this.focusables.includes(element);
+    }
+
+    focus() {
+      this.focusCount += 1;
+      document.activeElement = this;
+    }
+
+    blur() {
+      if (document.activeElement === this) document.activeElement = null;
+    }
+  }
+
+  const app = new FakeElement("app");
+  const skipLink = new FakeElement("skip-link");
+  const background = new FakeElement("background");
+  const preservedBackground = new FakeElement("preserved-background");
+  preservedBackground.inert = true;
+  preservedBackground.setAttribute("aria-hidden", "legacy");
+  const sessionsDialog = new FakeElement("sessions", { dialog: true });
+  const helpDialog = new FakeElement("help", { dialog: true });
+  const infoDialog = new FakeElement("info", { dialog: true });
+  const first = new FakeElement("first");
+  const last = new FakeElement("last");
+  sessionsDialog.focusables = [first, last];
+  sessionsDialog.setAttribute("aria-hidden", "true");
+  sessionsDialog.hidden = true;
+  helpDialog.setAttribute("aria-hidden", "true");
+  helpDialog.hidden = true;
+  infoDialog.setAttribute("aria-hidden", "true");
+  infoDialog.hidden = true;
+  app.children = [background, preservedBackground, sessionsDialog, helpDialog, infoDialog];
+  document.skipLink = skipLink;
+  app.addEventListener = (type, handler) => {
+    if (type === "keydown") app.keydownHandler = handler;
+  };
+
+  const modalSource = html.slice(modalStart, modalEnd);
+  const keydownSource = html.slice(keydownStart, keydownEnd);
+  const createController = new Function(
+    "document",
+    "app",
+    "sessionsDialog",
+    "helpDialog",
+    "infoDialog",
+    "HTMLInputElement",
+    "HTMLSelectElement",
+    "HTMLTextAreaElement",
+    `${String.raw`
+      let dialogOpener = null;
+      let activeDialog = null;
+      const modalBackgroundState = new Map();
+      const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      let selectedNodeId = null;
+      const updateSelectedNodeVisuals = () => {};
+      const setInspectorOpen = () => {};
+      ${modalSource}
+      ${keydownSource}
+      return {
+        setDialogOpen,
+        trapDialogFocus,
+        keydownHandler: () => app.keydownHandler,
+        activeDialog: () => activeDialog,
+      };
+    `}`,
+  );
+  const controller = createController(
+    document,
+    app,
+    sessionsDialog,
+    helpDialog,
+    infoDialog,
+    class FakeInput extends FakeElement {},
+    class FakeSelect extends FakeElement {},
+    class FakeTextArea extends FakeElement {},
+  );
+  return {
+    controller,
+    document,
+    skipLink,
+    background,
+    preservedBackground,
+    sessionsDialog,
+    first,
+    last,
+    FakeElement,
+  };
+}
+
 const snapshotFixture = {
   schemaVersion: LIVE_SNAPSHOT_SCHEMA_VERSION,
   source: {
@@ -73,7 +215,7 @@ test("defaults to Chinese and provides a persistent English language switch", ()
   assert.match(html, /<title>Meta_Kim Live · 控制中心<\/title>/u);
   assert.match(html, /data-live-language-toggle/u);
   assert.match(html, /data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图/u);
-  assert.match(html, /data-i18n-en="Evidence" data-i18n-zh="证据">证据/u);
+  assert.match(html, /data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据/u);
   assert.match(html, /data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线/u);
   assert.match(html, /LANGUAGE_STORAGE_KEY\s*=\s*"meta-kim-live-language"/u);
   assert.match(html, /localStorage\?\.getItem\(LANGUAGE_STORAGE_KEY\)\s*===\s*"en"/u);
@@ -134,25 +276,47 @@ test("includes graph, evidence drawer, and replay controls", () => {
   ]) {
     assert.match(html, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"), marker);
   }
-  assert.match(html, /aria-controls="evidence-drawer"/iu);
+  assert.match(html, /aria-controls="live-inspector"/iu);
   assert.match(html, /role="list"/iu);
   assert.match(html, /<svg\b[^>]*aria-hidden="true"/iu);
   assert.match(html, /data\.replayStatus|dataset\.replayStatus/u);
 });
 
-test("prioritizes a readable task summary and eight-stage progress rail", () => {
+test("keeps event progress and the current stage in the compact status bar with a replay-backed stage rail", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /data-live-run-progress/u);
   assert.match(html, /data-live-run-workers/u);
-  assert.match(html, /data-live-stage-rail/u);
-  assert.match(html, /function renderStageRail\(snapshot\)/u);
-  assert.match(html, /STAGE_ORDER\.forEach/u);
+  assert.match(html, /class="status-bar"/u);
+  assert.match(html, /data-live-run-stage/u);
+  assert.match(html, /data-live-stage-rail|function renderStageRail\(/u);
+  assert.doesNotMatch(html, /class="[^"]*run-hero|class="[^"]*run-facts/u);
   assert.match(html, /selectedSession\.currentStage/u);
   assert.match(html, /selectedSession\.active\s*\?\s*"live"/u);
-  assert.match(html, /index === selectedStageIndex && selectedSession\.active/u);
-  assert.match(html, /data-i18n-zh="这项任务现在走到哪一步"/u);
-  assert.doesNotMatch(html, /data-i18n-zh="数据协议"|DAG \/ 只读/u);
+  assert.match(html, /"Event " \+ snapshot\.run\.eventIndex \+ " of " \+ snapshot\.run\.eventCount/u);
+  assert.match(html, /eventCount\s*=\s*Math\.max\(replay\.length/u);
+});
+
+test("uses a canvas-first control-room hierarchy with an on-demand inspector and integrated transport", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /<header class="topbar"[\s\S]*data-live-open-sessions[\s\S]*<\/header>/u);
+  assert.match(html, /class="workspace-grid"[^>]*data-inspector-open="false"[\s\S]*class="graph-panel"[\s\S]*class="replay-panel replay-dock"[\s\S]*class="status-bar"/u);
+  assert.match(html, /data-live-sessions-dialog/u);
+  assert.match(html, /data-live-help-dialog/u);
+  assert.match(html, /data-live-info-dialog/u);
+  assert.match(html, /data-live-inspector[^>]+data-open="false"/u);
+  assert.match(html, /data-live-inspector-close/u);
+  assert.match(html, /function setInspectorOpen\(/u);
+  assert.match(html, /setInspectorOpen\(true\)/u);
+  assert.match(html, /function repositionCameraAfterInspector\(active\)/u);
+  assert.match(html, /requestAnimationFrame\(\(\)\s*=>\s*window\.requestAnimationFrame\(reposition\)\)/u);
+  assert.match(html, /workspace\?\.addEventListener\("transitionend", reposition, \{ once: true \}\)/u);
+  assert.match(html, /function reconcileCamera\([\s\S]{0,700}camera\.scale < \.68[\s\S]{0,160}centerGraphNode\(followTargetId\(\)\)/u);
+  assert.match(html, /new ResizeObserver\(\(\)\s*=>\s*reconcileCamera\(\)\)/u);
+  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\]\s*\{[^}]*30%[^}]*70%/su);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.evidence-panel\s*\{[^}]*position:\s*fixed/su);
+  assert.match(html, /\.graph-panel\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s*92px\s*24px/su);
 });
 
 test("is accessible by keyboard and respects reduced motion", () => {
@@ -170,6 +334,9 @@ test("is accessible by keyboard and respects reduced motion", () => {
   assert.match(html, /prefers-reduced-motion\s*:\s*reduce/iu);
   assert.match(html, /focus-visible/iu);
   assert.match(html, /overflow-wrap:\s*anywhere/iu);
+  assert.match(html, /event\.defaultPrevented \|\| typing \|\| interactive/u);
+  assert.match(html, /button, a, \[role="button"\], \[role="option"\], \[contenteditable="true"\]/u);
+  assert.match(html, /dialogActive[\s\S]{0,120}event\.defaultPrevented \|\| typing \|\| interactive \|\| dialogActive/u);
 });
 
 test("does not expose mutation affordances in the read-only MVP", () => {
@@ -211,7 +378,7 @@ test("renders an accessible project and session selector with explicit empty gui
   assert.match(html, /No Meta_Kim projects are registered yet/u);
   assert.match(html, /no governed runs yet/iu);
   assert.match(html, /Hub never scans your disk/u);
-  assert.match(html, /@media \(max-width: 620px\)[\s\S]{0,500}\.hub-switcher\s*\{[^}]*grid-template-columns:\s*1fr/u);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.hub-switcher[^}]*grid-template-columns:\s*1fr/u);
 });
 
 test("loads the Hub catalog, honors deep links, and reconnects scoped read endpoints", () => {
@@ -408,8 +575,10 @@ test("uses a compact, zoomable DAG canvas with a minimap and fit controls", () =
   ]) {
     assert.match(html, new RegExp(marker.replace(/[.*+?^${}()|[\[\]\\]/gu, "\\$&"), "u"), marker);
   }
-  assert.match(html, /graph-scene[^>]+style|transform:\translate/iu);
+  assert.match(html, /graphScene\.style\.transform/u);
   assert.match(html, /data-live-graph-minimap/iu);
+  assert.match(html, /dataset\.semanticZoom\s*=\s*camera\.scale\s*<\s*\.42\s*\?\s*"cell"\s*:\s*"card"/u);
+  assert.match(html, /const scale\s*=\s*Math\.max\(\.42,/u);
 });
 
 test("draws curved status-aware edges and a live flow animation with reduced-motion fallback", () => {
@@ -430,29 +599,36 @@ test("binds node selection to evidence and replay state without unbounded DOM gr
   assert.match(html, /selectNode/iu);
   assert.match(html, /associated|nodeId|selected.*evidence/isu);
   assert.match(html, /slice\(0,\s*128\)/u);
-  assert.match(html, /data-replay-active|replay-active/iu);
+  assert.match(html, /dataset\.replayActive/iu);
   assert.match(html, /ArrowUp|ArrowDown|Enter/iu);
 });
 
-test("keeps the eight-stage spine distinct and derives omitted edge status from the target node", () => {
+test("keeps stage chapters out of a v2 entity graph while preserving v1 fallback", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /STAGE_MATCH_ORDER\s*=\s*\[\.\.\.STAGE_ORDER\]\.sort/iu);
   assert.match(html, /text\.startsWith\(stageName\s*\+\s*["']-["']\)/u);
   assert.match(html, /explicitStatus[\s\S]{0,500}nodeById\.get\(targetId\)\?\.status/u);
-  assert.match(html, /edge-running[\s\S]{0,120}edge-flow/iu);
+  assert.match(html, /nodeStatuses\s*=\s*new Set\(\[[^\]]*"skipped"/u);
+  assert.match(html, /executionNodes\s*=\s*snapshot\.nodes\.filter[\s\S]{0,180}"stage_summary"/u);
+  assert.match(html, /return executionNodes\.length \? executionNodes : snapshot\.nodes/u);
 });
 
-test("keeps the default graph readable with a four-column serpentine spine and directional edges", () => {
+test("lays out worker and workflow entities by spawn depth with a v1 serpentine fallback", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /const cardWidth\s*=\s*168/u);
-  assert.match(html, /const cardHeight\s*=\s*96/u);
-  assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*8\s*:\s*4/u);
+  assert.match(html, /const cardHeight\s*=\s*116/u);
+  assert.match(html, /depthFor\(parentId, seen\) \+ 1/u);
+  assert.match(html, /Math\.ceil\(Math\.sqrt\(lane\.length\)\)/u);
+  assert.match(html, /index % laneColumns/u);
+  assert.match(html, /laneStartX/u);
+  assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*4\s*:\s*8/u);
+  assert.match(html, /const rowGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*150\s*:\s*126/u);
   assert.match(html, /row\s*%\s*2\s*===\s*0\s*\?\s*withinRow\s*:\s*spineColumns\s*-\s*1\s*-\s*withinRow/u);
   assert.match(html, /function edgeGeometry\(/u);
   assert.match(html, /vertical\s*=\s*Math\.abs\(deltaY\)/u);
-  assert.match(html, /\.node-card\s*\{[^}]*height:\s*96px/su);
+  assert.match(html, /\.node-card\s*\{[^}]*min-height:\s*116px/su);
 });
 
 test("keeps inspector provenance and replay navigation visible and keyboard reachable", () => {
@@ -476,20 +652,149 @@ test("keeps inspector provenance and replay navigation visible and keyboard reac
   assert.match(html, /replayFollowingLive/iu);
 });
 
+test("consumes bounded v2 agent, prompt, tool, provenance, and event facts with v1 fallbacks", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  for (const marker of [
+    "data-live-selected-node-model",
+    "data-live-selected-node-duration",
+    "data-live-selected-node-tools",
+    "data-live-selected-node-tokens",
+    "data-live-selected-node-provenance",
+    "data-live-selected-node-prompt",
+    "data-live-session-list",
+    "renderInspectorHistory",
+    "graphNodesForSnapshot",
+    "toolCalls",
+    "triggerPromptId",
+    "reasoningExcerpt",
+    "terminalEvidence",
+    "outputTokens",
+    "latestTool",
+  ]) {
+    assert.match(html, new RegExp(marker, "u"), marker);
+  }
+  assert.match(html, /promptInput\.slice\(0, 256\)/u);
+  assert.match(html, /toolCallInput\.slice\(0, 512\)/u);
+  assert.match(html, /provenanceInput\.slice\(0, 256\)/u);
+  assert.match(html, /replayInputEvents\.slice\(0, 512\)/u);
+  assert.match(html, /node\.toolCount \+ " tools"[\s\S]{0,120}node\.latestTool/u);
+  assert.match(html, /node\.outputTokens \+ " tok"/u);
+  assert.match(html, /item\.dataset\.kind = event\.kind/u);
+  assert.match(html, /data-kind="prompt"/u);
+  assert.match(html, /data-kind="spawn"/u);
+  assert.match(html, /data-tool-density/u);
+});
+
+test("adapts service field aliases and safely summarizes structured terminal evidence", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /const sessionCandidate = input\.sessionInfo \?\? input\.session/u);
+  assert.match(html, /\["timestamp", "observedAt", "occurredAt", "createdAt"\]/u);
+  assert.match(html, /\["startedAt", "occurredAt", "at", "timestamp"\]/u);
+  assert.match(html, /function summarizeTerminalEvidence\(value\)/u);
+  assert.match(html, /\["completed", "failed", "blocked"\]\.includes\(item\.status\)/u);
+  assert.match(html, /trusted\.length \+ " terminal evidence/u);
+  assert.match(html, /firstValue\(record, \["ownerBindingMode"\], ""\)/u);
+  assert.match(html, /firstValue\(record, \["state", "status"\], ""\)/u);
+  assert.doesNotMatch(html, /terminalEvidence:\s*display\(/u);
+});
+
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#55e6d0["']/u);
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#58d4cf["'][\s\S]*completed:\s*["']#5b8cff["'][\s\S]*skipped:\s*["']#585858["']/u);
   assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
   assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
+});
+
+test("makes aria-modal dialogs isolate the app, trap focus, and restore the opener", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /const FOCUSABLE_DIALOG_SELECTOR\s*=/u);
+  assert.match(html, /function trapDialogFocus\(event\)[\s\S]{0,1200}event\.key !== "Tab"/u);
+  assert.match(html, /event\.shiftKey[\s\S]{0,500}last\.focus\(\)/u);
+  assert.match(html, /first\.focus\(\)/u);
+  assert.match(html, /background\.inert\s*=\s*active/u);
+  assert.match(html, /background\.setAttribute\("aria-hidden", "true"\)/u);
+  assert.match(html, /restoreModalBackground\(\)/u);
+  assert.match(html, /activeDialog\.contains\(document\.activeElement\)/u);
+  assert.match(html, /dialogOpener\.focus\(\)/u);
+  assert.match(html, /const hadOpenDialog\s*=\s*Boolean\(activeDialog\)/u);
+  assert.match(html, /if \(!hadOpenDialog\) document\.activeElement\?\.blur\?\.\(\)/u);
+
+  const {
+    controller,
+    document,
+    skipLink,
+    background,
+    preservedBackground,
+    sessionsDialog,
+    first,
+    last,
+    FakeElement,
+  } = modalBehaviorHarness();
+  const opener = new FakeElement("opener");
+  opener.focus();
+  controller.setDialogOpen(sessionsDialog, true);
+
+  assert.equal(controller.activeDialog(), sessionsDialog);
+  assert.equal(sessionsDialog.hidden, false);
+  assert.equal(sessionsDialog.getAttribute("aria-hidden"), "false");
+  assert.equal(document.activeElement, first);
+  for (const isolated of [skipLink, background, preservedBackground]) {
+    assert.equal(isolated.inert, true, isolated.name);
+    assert.equal(isolated.getAttribute("aria-hidden"), "true", isolated.name);
+  }
+
+  const tabEvent = (shiftKey = false) => ({
+    key: "Tab",
+    shiftKey,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  last.focus();
+  const forwardTab = tabEvent(false);
+  controller.trapDialogFocus(forwardTab);
+  assert.equal(forwardTab.defaultPrevented, true);
+  assert.equal(document.activeElement, first);
+  const reverseTab = tabEvent(true);
+  controller.trapDialogFocus(reverseTab);
+  assert.equal(reverseTab.defaultPrevented, true);
+  assert.equal(document.activeElement, last);
+
+  const escape = {
+    key: "Escape",
+    target: last,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  controller.keydownHandler()(escape);
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(controller.activeDialog(), null);
+  assert.equal(sessionsDialog.hidden, true);
+  assert.equal(sessionsDialog.getAttribute("aria-hidden"), "true");
+  assert.equal(background.inert, false);
+  assert.equal(background.getAttribute("aria-hidden"), null);
+  assert.equal(skipLink.inert, false);
+  assert.equal(skipLink.getAttribute("aria-hidden"), null);
+  assert.equal(preservedBackground.inert, true);
+  assert.equal(preservedBackground.getAttribute("aria-hidden"), "legacy");
+  assert.equal(document.activeElement, opener);
+
+  controller.setDialogOpen(sessionsDialog, true);
+  controller.setDialogOpen(sessionsDialog, false);
+  assert.equal(document.activeElement, opener);
+  assert.equal(background.inert, false);
 });
 
 test("keeps the desktop workspace bounded and coalesces high-frequency snapshot updates", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*560px/su);
-  assert.match(html, /\.evidence-panel\s*\{[^}]*height:\s*560px[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.workspace-grid\s*\{[^}]*height:\s*100%[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.evidence-panel\s*\{[^}]*min-height:\s*0[^}]*overflow:\s*hidden/su);
   assert.match(html, /\.evidence-drawer\s*\{[^}]*overflow:\s*auto/su);
+  assert.match(html, /graphMinimap\.hidden\s*=\s*!overflowing/u);
   assert.match(html, /SNAPSHOT_COALESCE_MS\s*=\s*75/u);
   assert.match(html, /scheduleSnapshotUpdate[\s\S]*snapshotCoalesceTimer[\s\S]*setTimeout/su);
   assert.match(html, /beforeunload[\s\S]*clearTimeout\(snapshotCoalesceTimer\)/su);
@@ -502,10 +807,148 @@ test("preserves real edge state without replay evidence and uses valid listbox s
   assert.match(html, /if\s*\(!hasReplayState\)\s*replayState\s*=\s*edge\.status/u);
   assert.match(html, /data-live-node-list role="listbox"/u);
   assert.match(html, /setAttribute\(["']role["'],\s*["']option["']\)/u);
-  assert.doesNotMatch(html, /aria-pressed/u);
+  assert.match(html, /data-live-graph-follow[^>]+aria-pressed="true"/u);
+  assert.doesNotMatch(html, /card\.setAttribute\(["']aria-pressed/u);
   assert.match(html, /replayPlay\.disabled\s*=\s*events\.length\s*<\s*2/u);
-  assert.match(html, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/u);
-  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*150\s*:\s*190/u);
-  assert.match(html, /\.node-meta\s*\{[^}]*flex-wrap:\s*nowrap/su);
-  assert.match(html, /\.node-meta-item\s*\{[^}]*min-width:\s*0/su);
+  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*220\s*:\s*184/u);
+  assert.match(html, /\.replay-panel\s*\{[^}]*grid-template-columns:\s*300px\s*minmax\(0,1fr\)/su);
+  assert.match(html, /\.replay-dock-header\s*\{[^}]*min-width:\s*300px[^}]*grid-template-columns:\s*minmax\(74px,1fr\)\s*auto/su);
+  assert.match(html, /\.replay-current \.panel-note\s*\{[^}]*display:\s*none/su);
+  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-panel\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\)/su);
+  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-current\s*\{[^}]*display:\s*none/su);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.top-run-context, \.connection span:last-child\s*\{\s*display:\s*none/su);
+  assert.match(html, /data-live-open-sessions[\s\S]{0,500}data-live-language-toggle[\s\S]{0,500}data-live-open-help[\s\S]{0,500}data-live-open-info/u);
+  assert.match(html, /\[data-live-graph-fit\], \[data-live-graph-layout\], \[data-live-graph-zoom-out\], \[data-live-graph-zoom-in\]\s*\{\s*display:\s*none/su);
+  assert.match(html, /\.replay-events\s*\{[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*hidden/su);
+  assert.match(html, /scrollIntoView\?\.\(\{ behavior:\s*"auto", block:\s*"nearest", inline:\s*"nearest" \}\)/u);
+  assert.match(html, /for \(const other of \[sessionsDialog, helpDialog, infoDialog\]\)/u);
+  assert.match(html, /dialogOpener = document\.activeElement/u);
+  assert.match(html, /dialogOpener\.focus\(\)/u);
+  assert.match(html, /data-semantic-zoom="cell"\] \.node-card\s*\{[^}]*height:\s*116px[^}]*background:\s*transparent/su);
+  assert.match(html, /class="status-bar"/u);
+  assert.match(html, /\.activity-chips\s*\{[^}]*display:\s*flex/su);
+  assert.match(html, /\.activity-chip\s*\{[^}]*min-width:\s*0/su);
+  assert.match(html, /graph\.scrollTo\(\{[\s\S]{0,260}behavior:\s*reducedMotion\.matches\s*\?\s*"auto"\s*:\s*"smooth"/u);
+});
+
+test("adds a persistent keyboard-accessible Repository Workspace Run work surface", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /class="work-view-switcher" role="tablist" aria-label="Work surface view"/u);
+  for (const view of ["repository", "workspace", "run"]) {
+    assert.match(html, new RegExp(`role="tab"[^>]+data-live-work-view="${view}"`, "u"));
+    assert.match(html, new RegExp(`data-live-${view === "run" ? "run" : view}-view`, "u"));
+  }
+  assert.match(html, /WORK_VIEW_STORAGE_KEY\s*=\s*"meta-kim-live-work-view"/u);
+  assert.match(html, /window\.sessionStorage\?\.getItem\(key\)/u);
+  assert.match(html, /window\.localStorage\?\.getItem\(key\)/u);
+  assert.match(html, /window\.sessionStorage\?\.setItem\(key, value\)/u);
+  assert.match(html, /bindRovingTabs\(workViewTabs, WORK_VIEWS, setWorkView\)/u);
+  assert.match(html, /\["ArrowLeft", "ArrowRight", "Home", "End"\]/u);
+  assert.match(html, /setWorkView\(currentWorkView, \{ persist: false \}\)/u);
+  assert.match(html, /params\.set\("projectId", selectedProjectId\)[\s\S]*params\.set\("runId", selectedRunId\)/u);
+  assert.doesNotMatch(html, /worktree children|session worktree/iu);
+});
+
+test("renders repository and workspace facts without inventing unavailable source-control data", () => {
+  const html = renderLiveControlRoomPage({
+    snapshot: {
+      ...snapshotFixture,
+      repository: {
+        name: { state: "observed", value: "Meta_Kim" },
+        branch: { state: "observed", value: "codex/live-hub-canvas-first" },
+      },
+      workspace: {
+        workspaceId: { state: "observed", value: "workspace-17" },
+        transcript: { state: "unavailable", value: null },
+        terminal: { state: "unavailable", value: null },
+      },
+    },
+  });
+
+  assert.match(html, /data-live-repository-title/u);
+  assert.match(html, /data-live-repository-boundary/u);
+  assert.match(html, /data-live-repository-sessions/u);
+  assert.match(html, /Active workspace|Observed workspace/u);
+  assert.match(html, /\["Branch", repository\.branch\]/u);
+  assert.match(html, /\["Worktree", repository\.worktree\]/u);
+  assert.match(html, /\["Pull request", repository\.pullRequest\]/u);
+  assert.match(html, /\["Diff", repository\.diff\]/u);
+  assert.match(html, /fact\?\.summary \|\| "Unavailable"/u);
+  assert.match(html, /data-live-workspace-boundary/u);
+  assert.match(html, /\["Plan", plan\].*\["Conversation", thread\].*\["Terminal", terminal\].*\["Changes", changes\].*\["Review", review\]/su);
+  assert.match(html, /Conversation transcript unavailable/u);
+  assert.match(html, /Terminal adapter telemetry unavailable/u);
+  assert.match(html, /Diff telemetry unavailable/u);
+  assert.doesNotMatch(html, /repositoryInput\.(?:root|projectRoot|path)/u);
+});
+
+test("splits Inspector into six bounded tabs and distinguishes planned context delivery", () => {
+  const html = renderLiveControlRoomPage({
+    snapshot: {
+      ...snapshotFixture,
+      contextTransfers: [{ id: "ctx-1", state: "planned", fromNodeId: "critical", toNodeId: "execution" }],
+    },
+  });
+
+  assert.match(html, /class="inspector-tabs" role="tablist" aria-label="Inspector sections"/u);
+  for (const tab of ["summary", "conversation", "terminal", "changes", "evidence", "context"]) {
+    assert.match(html, new RegExp(`data-live-inspector-tab="${tab}"`, "u"));
+    assert.match(html, new RegExp(`data-live-inspector-panel="${tab}"`, "u"));
+  }
+  assert.match(html, /contextTransferInput\.slice\(0, 256\)/u);
+  assert.match(html, /\["observed", "accepted"\]\.includes\(rawState\) \? rawState : "planned"/u);
+  assert.match(html, /nullableCount\(record\.summaryCount\)/u);
+  assert.match(html, /planned · delivery not observed/u);
+  assert.match(html, /entry\.dataset\.transferState = item\.transferState/u);
+  assert.match(html, /entry\.dataset\.deliveryObserved = item\.transferState === "observed" \|\| item\.transferState === "accepted" \? "true" : "false"/u);
+  assert.match(html, /\.evidence-item\[data-transfer-state="planned"\][^}]*border-left-style:\s*dashed/su);
+  assert.doesNotMatch(html, /data-transfer-state="planned"[^}]*animation/isu);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.work-view-switcher[^}]*grid-column:\s*1 \/ -1/su);
+  assert.match(html, /html, body \{[^}]*overflow:\s*hidden/su);
+});
+
+test("keeps the reference-inspired cool-tech surface restrained, stateful, and mobile-bounded", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const themeCss = html.slice(html.lastIndexOf(":root {"));
+  const variable = (name) => themeCss.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "iu"))?.[1].toLowerCase();
+  const pixelVariable = (name) => Number(themeCss.match(new RegExp(`--${name}:\\s*([0-9]+(?:\\.[0-9]+)?)px`, "iu"))?.[1]);
+  const rgbToHsl = (hex) => {
+    const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+    const maximum = Math.max(...channels);
+    const minimum = Math.min(...channels);
+    const lightness = (maximum + minimum) / 2;
+    const saturation = maximum === minimum
+      ? 0
+      : (maximum - minimum) / (1 - Math.abs(2 * lightness - 1));
+    return { saturation: saturation * 100 };
+  };
+
+  const completion = variable("completion");
+  const completionBright = variable("completion-bright");
+  const running = variable("running");
+  const success = variable("green");
+  const danger = variable("danger");
+  assert.ok(completion && completionBright && running && success && danger, "the final theme must expose semantic color variables");
+  assert.equal(completion, "#5b8cff", "completion must use the electric-blue state color");
+  assert.equal(running, "#58d4cf", "running must use the teal state color");
+  assert.equal(new Set([completion, running, success, danger]).size, 4, "completion, running, success, and failed states need distinct colors");
+  assert.doesNotMatch(html, /gold|#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b|#d7af00|#f0d56a|#87d787/iu, "the full generated HTML and script must not retain gold names or warm completion swatches");
+  assert.match(themeCss, /--accent:\s*#58d4cf/iu);
+  assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--running\)/su);
+  assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--completion\)/su);
+  assert.match(themeCss, /\.node-failed, \.node-in-doubt\s*\{[^}]*border-left-color:\s*var\(--danger\)/su);
+
+  const pixelRadii = [...themeCss.matchAll(/border-radius:\s*([0-9]+(?:\.[0-9]+)?)px/giu)]
+    .map((match) => Number(match[1]));
+  assert.ok(pixelRadii.length > 0, "the final theme should declare a restrained radius hierarchy");
+  assert.ok(Math.max(...pixelRadii) <= 6, "non-circular component radii must not exceed 6px");
+  assert.ok(pixelVariable("radius-sm") <= 6 && pixelVariable("radius") <= 6, "theme radius tokens must not exceed 6px");
+
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.topbar\s*\{[^}]*grid-template-columns:\s*auto\s+minmax\(0,1fr\)\s+auto/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.work-view-switcher\s*\{[^}]*width:\s*100%/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.work-view-tab\s*\{[^}]*min-width:\s*0/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.node-card\s*\{[^}]*width:\s*100%\s*!important/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.graph-toolbar\s*\{[^}]*overflow-x:\s*auto/su);
+  assert.match(themeCss, /\.inspector-tabs\s*\{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/su);
 });

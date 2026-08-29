@@ -26,8 +26,8 @@ function hubFixture() {
     activeSessionId: "meta-run-2",
     sessionCount: 2,
     sessions: [
-      { sessionId: "meta-run-2", runId: "meta-run-2", title: "Current run", status: "active", currentStage: "execution", runtime: "codex", updatedAt: "2026-08-26T09:00:00.000Z", active: true, repoRoot: "C:\\private\\nested" },
-      { sessionId: "meta-run-1", runId: "meta-run-1", title: "Earlier run", status: "completed", currentStage: "verification", runtime: "claude", updatedAt: "2026-08-26T08:00:00.000Z", active: false },
+      { sessionId: "meta-run-2", runId: "meta-run-2", title: "Current run", status: "active", currentStage: "execution", runtime: "codex", updatedAt: "2026-08-26T09:00:00.000Z", nodeCount: 10, eventCount: 24, active: true, repoRoot: "C:\\private\\nested" },
+      { sessionId: "meta-run-1", runId: "meta-run-1", title: "Earlier run", status: "completed", currentStage: "verification", runtime: "claude", updatedAt: "2026-08-26T08:00:00.000Z", nodeCount: 129, eventCount: -1, active: false },
     ],
   };
   return {
@@ -52,7 +52,7 @@ test("global Hub publishes path-free project catalog and selected session APIs",
         return snapshot(runId);
       },
       getReplay: async (runId) => ({
-        schemaVersion: "meta-kim-live-replay-v1",
+        schemaVersion: "meta-kim-live-replay-v2",
         runId,
         replay: [{ id: "event-1", label: "Observed" }],
         source: snapshot(runId).source,
@@ -71,6 +71,10 @@ test("global Hub publishes path-free project catalog and selected session APIs",
   assert.equal(publicCatalog.projects[0].projectId, internal.projectRef);
   assert.equal(publicCatalog.projects[0].projectRef, undefined);
   assert.equal(publicCatalog.selected.runId, "meta-run-2");
+  assert.equal(publicCatalog.projects[0].sessions[0].nodeCount, 10);
+  assert.equal(publicCatalog.projects[0].sessions[0].eventCount, 24);
+  assert.equal(publicCatalog.projects[0].sessions[1].nodeCount, undefined);
+  assert.equal(publicCatalog.projects[0].sessions[1].eventCount, undefined);
   assert.doesNotMatch(JSON.stringify(publicCatalog), /repoRoot|private|C:\\/iu);
 
   const selected = new URL(`${address.url}/api/snapshot`);
@@ -116,6 +120,12 @@ test("global Hub rejects unknown selections and exposes an instance-bound health
   assert.equal(unknownProject.status, 404);
   const unknownRun = await fetch(`${address.url}/api/snapshot?projectId=project-a1b2c3d4e5f6&runId=meta-missing`);
   assert.equal(unknownRun.status, 404);
+  const unknownReplay = await fetch(`${address.url}/api/replay?projectId=project-a1b2c3d4e5f6&runId=meta-missing`);
+  assert.equal(unknownReplay.status, 404);
+  assert.equal((await unknownReplay.json()).schemaVersion, "meta-kim-live-replay-v2");
+  const fallbackReplay = await fetch(`${address.url}/api/replay?projectId=project-a1b2c3d4e5f6&runId=meta-run-2`);
+  assert.equal(fallbackReplay.status, 200);
+  assert.equal((await fallbackReplay.json()).schemaVersion, "meta-kim-live-replay-v2");
   const page = await (await fetch(`${address.url}/?projectId=project-a1b2c3d4e5f6&runId=meta-run-2`)).text();
   assert.match(page, /data-live-project-select/u);
   assert.match(page, /data-live-session-select/u);

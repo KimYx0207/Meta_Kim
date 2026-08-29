@@ -15,6 +15,7 @@ import { createLiveContinuationCommand } from "../../src/domain/live/live-contin
 import { createLiveRuntimeAdapterRegistry, createFakeLiveRuntimeAdapter } from "../../src/infrastructure/live/live-runtime-adapter-registry.mjs";
 import { createLiveContinuationCommandStore } from "../../src/infrastructure/live/live-continuation-command-store.mjs";
 import { createLiveContinuationPlanner } from "../../src/application/live/plan-live-continuation.mjs";
+import { buildLiveCompactProjection } from "../../src/application/live/live-control-room-service.mjs";
 import { renderLiveReadmeEmbed } from "../../src/presentation/live/render-live-share-card.mjs";
 
 test("does not present an unproven completed node as verified completion", () => {
@@ -30,7 +31,101 @@ test("does not present an unproven completed node as verified completion", () =>
     observedAt: "2026-08-24T01:01:00.000Z",
   });
   assert.equal(snapshot.run.status, "in_doubt");
-  assert.equal(snapshot.nodes.find((node) => node.id === "stage:critical")?.status, "in_doubt");
+  assert.equal(snapshot.nodes.some((node) => node.kind === "stage"), false);
+});
+
+test("re-sanitizes hostile compact projections before exposing the public snapshot", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: {
+      schemaVersion: "meta-kim-live-projection-v2",
+      run: {
+        runId: "explicit-safe-run",
+        title: "password=must-not-leak",
+        task: "C:/Users/Kim/private/task.txt",
+        status: "active",
+        currentStage: "execution",
+      },
+      session: {
+        title: "Safe session",
+        runtime: "secret=must-not-leak",
+        mode: "C:/Users/Kim/private/mode",
+      },
+      nodes: [
+        {
+          id: "agent:known",
+          kind: "agent",
+          label: "token=must-not-leak",
+          status: "active",
+          ownerAgent: "C:/Users/Kim/private/owner",
+          runtimeObservation: { state: "observed", value: "C:/Users/Kim/private/runtime" },
+        },
+        { id: "../../escape", kind: "agent", label: "unsafe node" },
+      ],
+      edges: [
+        { from: "agent:known", to: "agent:missing", kind: "contains" },
+        { from: "../../escape", to: "agent:known", kind: "depends_on" },
+      ],
+      evidence: [{ id: "proof:known", nodeId: "agent:known", label: "file:///Users/Kim/private/evidence" }],
+      replay: [{ id: "event:known", nodeId: "agent:missing", at: "2026-08-24T01:00:00.000Z", label: "secret=must-not-leak" }],
+      prompts: [{ nodeId: "agent:known", summary: "password=must-not-leak" }],
+      toolCalls: [{ id: "tool:known", nodeId: "agent:known", name: "C:/Users/Kim/private/tool.exe" }],
+      provenance: [{ nodeId: "agent:known", kind: "secret=must-not-leak" }],
+      contextTransfers: [],
+    },
+  });
+
+  const publicBytes = JSON.stringify(snapshot);
+  assert.doesNotMatch(publicBytes, /must-not-leak|Users[\\/]Kim|private[\\/]|tool\.exe|\.\.\/\.\.\/escape/u);
+  assert.equal(snapshot.run.runId, "explicit-safe-run");
+  assert.deepEqual(snapshot.edges, []);
+  assert.equal(snapshot.nodes.length, 1);
+  assert.equal(snapshot.replay[0].nodeId, null);
+});
+
+test("redacts whitespace-delimited credentials and punctuation-prefixed POSIX paths", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: {
+      schemaVersion: "meta-kim-live-projection-v2",
+      run: {
+        runId: "hostile-public-text-run",
+        title: "Bearer opaqueSecret123456",
+        task: "password hunter2",
+        status: "active",
+        currentStage: "execution",
+      },
+      session: {
+        title: "token abcdefghijklmnop",
+        activity: "path=/home/kim/.ssh/id_rsa",
+        runtime: "codex",
+        mode: "token budget",
+        proofState: "secret sauce",
+      },
+      nodes: [{
+        id: "agent:known",
+        kind: "agent",
+        label: "api key Abcdef12",
+        summary: "password manager",
+        status: "active",
+        ownerAgent: "meta-warden",
+      }],
+      edges: [],
+      evidence: [],
+      replay: [],
+      prompts: [],
+      toolCalls: [],
+      provenance: [],
+      contextTransfers: [],
+    },
+  });
+
+  const publicBytes = JSON.stringify(snapshot);
+  assert.doesNotMatch(publicBytes, /opaqueSecret123456|hunter2|abcdefghijklmnop|home[\\/]kim|id_rsa|Abcdef12/u);
+  assert.equal(snapshot.run.title, "redacted");
+  assert.equal(snapshot.run.task, "redacted");
+  assert.equal(snapshot.session.activity, "[path omitted]");
+  assert.equal(snapshot.session.mode, "token budget");
+  assert.equal(snapshot.session.proofState, "secret sauce");
+  assert.equal(snapshot.nodes[0].summary, "password manager");
 });
 
 test("requires bound passing structured evidence before projecting completion", () => {
@@ -58,11 +153,10 @@ test("requires bound passing structured evidence before projecting completion", 
 
   assert.equal(unproven.run.status, "in_doubt");
   assert.equal(
-    unproven.nodes.find((node) => node.id === "worker:task-unproven")?.status,
+    unproven.nodes.find((node) => node.label === "backend" && node.isMain === false)?.status,
     "in_doubt",
   );
-  assert.ok(unproven.evidence.length > 0);
-  assert.ok(unproven.evidence.every((item) => item.status === "in_doubt"));
+  assert.equal(unproven.nodes.some((node) => node.kind === "stage"), false);
 
   const proven = buildLiveSnapshot({
     governedArtifact: {
@@ -90,13 +184,13 @@ test("requires bound passing structured evidence before projecting completion", 
 
   assert.equal(proven.run.status, "completed");
   assert.equal(
-    proven.nodes.find((node) => node.id === "worker:task-proven")?.status,
+    proven.nodes.find((node) => node.label === "backend" && node.isMain === false)?.status,
     "completed",
   );
   assert.ok(proven.evidence.some((item) => item.status === "completed"));
 });
 
-test("binds evidence to known stage/worker nodes without accepting hostile ids", () => {
+test("binds projected evidence only to hashed known worker nodes without accepting hostile ids", () => {
   const snapshot = buildLiveSnapshot({
     durableStatus: {
       ...sampleStatus(),
@@ -122,17 +216,9 @@ test("binds evidence to known stage/worker nodes without accepting hostile ids",
     observedAt: "2026-08-24T01:01:00.000Z",
   });
 
-  const verification = snapshot.evidence.filter((item) => item.type === "verification");
-  assert.equal(verification[0]?.nodeId, "stage:verification");
-  assert.equal(verification[1]?.nodeId, "worker:task-backend-1");
-
-  const review = snapshot.evidence.filter((item) => item.type === "review");
-  assert.equal(review.length, 2);
-  assert.ok(review.every((item) => item.nodeId === "stage:review"));
-
-  const status = snapshot.evidence.filter((item) => item.type === "status");
-  assert.equal(status.length, 1);
-  assert.equal(status[0].nodeId, "");
+  const knownNodeIds = new Set(snapshot.nodes.map((node) => node.id));
+  assert.ok(snapshot.evidence.every((item) => knownNodeIds.has(item.nodeId)));
+  assert.ok(snapshot.nodes.every((node) => /^(?:agent|workflow):[a-f0-9]{20}$/u.test(node.id)));
   assert.doesNotMatch(JSON.stringify(snapshot), /unknown|hostile|\.\./u);
 });
 
@@ -197,7 +283,11 @@ function sampleArtifact(runId = "meta-live-1") {
       },
     ],
     workerResultPackets: [
-      { taskPacketId: "task-backend-1", status: "completed" },
+      {
+        taskPacketId: "task-backend-1",
+        status: "completed",
+        workerExecutionEvidence: [{ status: "passed", passClaim: "Focused worker verification passed" }],
+      },
     ],
     verificationPacket: {
       evidence: ["focused test passed"],
@@ -216,6 +306,233 @@ function sampleArtifact(runId = "meta-live-1") {
     ],
   };
 }
+
+test("snapshot v2 exposes stable unavailable repository, workspace, and context transfer fields", () => {
+  const snapshot = buildLiveSnapshot({ observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.deepEqual(snapshot.repository, {
+    name: { state: "unavailable", value: null },
+    branch: { state: "unavailable", value: null },
+    worktree: { state: "unavailable", value: null },
+    pullRequest: { state: "unavailable", value: null },
+    diff: { state: "unavailable", value: null },
+  });
+  assert.deepEqual(snapshot.workspace, {
+    name: { state: "unavailable", value: null },
+    workspaceId: { state: "unavailable", value: null },
+    transcript: { state: "unavailable", value: null },
+    terminal: { state: "unavailable", value: null },
+  });
+  assert.deepEqual(snapshot.contextTransfers, []);
+});
+
+test("depends_on creates a planned context transfer with unavailable payload truth", () => {
+  const artifact = sampleArtifact("meta-context-planned");
+  artifact.workerTaskPackets.push({
+    taskPacketId: "task-frontend-1",
+    roleDisplayName: "frontend",
+    stage: "execution",
+    dependsOn: ["task-backend-1"],
+  });
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.contextTransfers.length, 1);
+  const transfer = snapshot.contextTransfers[0];
+  const backend = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+  const frontend = snapshot.nodes.find((node) => node.roleDisplayName === "frontend");
+  assert.deepEqual(transfer, {
+    id: transfer.id,
+    fromNodeId: backend.id,
+    toNodeId: frontend.id,
+    kind: "dependency",
+    state: "planned",
+    summaryCount: null,
+    decisionCount: null,
+    fileCount: null,
+    evidenceCount: null,
+    observedAt: null,
+    digest: null,
+    bytes: null,
+    compactionState: "unavailable",
+    omittedCount: null,
+    omissionReason: null,
+    downstreamAcceptanceState: "unavailable",
+    evidenceRefs: [],
+  });
+  assert.match(transfer.id, /^transfer:[a-f0-9]{20}$/u);
+  assert.equal(snapshot.counts.contextTransfers, 1);
+});
+
+test("projects same-run observed and accepted structured context handoffs", () => {
+  const artifact = sampleArtifact("meta-context-observed");
+  artifact.workerTaskPackets.push({
+    taskPacketId: "task-frontend-1",
+    roleDisplayName: "frontend",
+    stage: "execution",
+    dependsOn: ["task-backend-1"],
+  });
+  artifact.repository = {
+    branch: { state: "observed", value: "feature/live-context" },
+    worktree: { state: "observed", value: "dirty" },
+  };
+  artifact.workspace = {
+    workspaceId: { state: "observed", value: "workspace-17" },
+    transcript: { state: "observed", value: "available" },
+  };
+  artifact.contextHandoffs = [{
+    runId: artifact.runId,
+    fromTaskPacketId: "task-backend-1",
+    toTaskPacketId: "task-frontend-1",
+    kind: "implementation_handoff",
+    state: "accepted",
+    summaryCount: 3,
+    decisionCount: 2,
+    fileCount: 4,
+    evidenceCount: 2,
+    observedAt: "2026-08-24T01:00:30.000Z",
+    digest: "a".repeat(64),
+    bytes: 4096,
+    compactionState: "compacted",
+    omittedCount: 1,
+    omissionReason: "One duplicate summary omitted",
+    downstreamAcceptanceState: "accepted",
+    evidenceRefs: ["handoff:evidence:1", "handoff:evidence:2"],
+  }];
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.deepEqual(snapshot.repository.branch, { state: "observed", value: "feature/live-context" });
+  assert.deepEqual(snapshot.repository.pullRequest, { state: "unavailable", value: null });
+  assert.deepEqual(snapshot.workspace.workspaceId, { state: "observed", value: "workspace-17" });
+  assert.deepEqual(snapshot.workspace.terminal, { state: "unavailable", value: null });
+  assert.equal(snapshot.contextTransfers.length, 1);
+  assert.deepEqual(snapshot.contextTransfers[0], {
+    ...snapshot.contextTransfers[0],
+    kind: "implementation_handoff",
+    state: "accepted",
+    summaryCount: 3,
+    decisionCount: 2,
+    fileCount: 4,
+    evidenceCount: 2,
+    observedAt: "2026-08-24T01:00:30.000Z",
+    digest: "a".repeat(64),
+    bytes: 4096,
+    compactionState: "compacted",
+    omittedCount: 1,
+    omissionReason: "One duplicate summary omitted",
+    downstreamAcceptanceState: "accepted",
+    evidenceRefs: ["handoff:evidence:1", "handoff:evidence:2"],
+  });
+});
+
+test("accepted context state requires downstream acceptance plus safe evidence", () => {
+  const artifact = sampleArtifact("meta-context-acceptance-proof");
+  artifact.workerTaskPackets.push(
+    {
+      taskPacketId: "task-frontend-1",
+      roleDisplayName: "frontend",
+      stage: "execution",
+      dependsOn: ["task-backend-1"],
+    },
+    {
+      taskPacketId: "task-test-1",
+      roleDisplayName: "test",
+      stage: "execution",
+      dependsOn: ["task-frontend-1"],
+    },
+  );
+  artifact.contextTransfers = [
+    {
+      runId: artifact.runId,
+      fromTaskPacketId: "task-backend-1",
+      toTaskPacketId: "task-frontend-1",
+      state: "accepted",
+      downstreamAcceptanceState: "pending",
+      evidenceRefs: ["proof:raw-state-only"],
+      observedAt: "2026-08-24T01:00:20.000Z",
+    },
+    {
+      runId: artifact.runId,
+      fromTaskPacketId: "task-frontend-1",
+      toTaskPacketId: "task-test-1",
+      state: "accepted",
+      downstreamAcceptanceState: "accepted",
+      evidenceRefs: [],
+      observedAt: "2026-08-24T01:00:30.000Z",
+    },
+  ];
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.deepEqual(snapshot.contextTransfers.map((transfer) => transfer.state), ["observed", "observed"]);
+  assert.deepEqual(snapshot.contextTransfers.map((transfer) => transfer.downstreamAcceptanceState), ["pending", "accepted"]);
+});
+
+test("older compact projections receive a stable numeric context transfer count", () => {
+  const compact = buildLiveCompactProjection(sampleArtifact("meta-old-compact-count"));
+  delete compact.counts.contextTransfers;
+  const snapshot = buildLiveSnapshot({ governedArtifact: compact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.counts.contextTransfers, 0);
+  assert.equal(Number.isSafeInteger(snapshot.counts.contextTransfers), true);
+});
+
+test("older compact projections cannot preserve accepted context without acceptance evidence", () => {
+  const compact = buildLiveCompactProjection(sampleArtifact("meta-old-compact-acceptance"));
+  const backend = compact.nodes.find((node) => node.roleDisplayName === "backend");
+  const main = compact.nodes.find((node) => node.isMain);
+  compact.contextTransfers = [{
+    id: `transfer:${"a".repeat(20)}`,
+    fromNodeId: main.id,
+    toNodeId: backend.id,
+    kind: "context_handoff",
+    state: "accepted",
+    observedAt: "2026-08-24T01:00:30.000Z",
+    digest: null,
+    bytes: null,
+    compactionState: "unavailable",
+    omittedCount: null,
+    omissionReason: null,
+    downstreamAcceptanceState: "accepted",
+    evidenceRefs: [],
+  }];
+  compact.counts.contextTransfers = 1;
+  const snapshot = buildLiveSnapshot({ governedArtifact: compact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.contextTransfers[0].state, "observed");
+});
+
+test("rejects hostile, cross-run, path-bearing, and secret-bearing context handoffs", () => {
+  const artifact = sampleArtifact("meta-context-rejected");
+  artifact.workerTaskPackets.push({
+    taskPacketId: "task-frontend-1",
+    roleDisplayName: "frontend",
+    stage: "execution",
+    dependsOn: ["task-backend-1"],
+  });
+  const base = {
+    runId: artifact.runId,
+    fromTaskPacketId: "task-backend-1",
+    toTaskPacketId: "task-frontend-1",
+    observedAt: "2026-08-24T01:00:30.000Z",
+  };
+  artifact.contextTransfers = [
+    { ...base, runId: "meta-foreign", state: "accepted" },
+    { ...base, fromNodeId: "agent:../hostile", fromTaskPacketId: null, state: "observed" },
+    { ...base, evidenceRefs: ["src/private/context.json"], state: "observed" },
+    { ...base, omissionReason: "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz", state: "observed" },
+  ];
+  artifact.repository = {
+    observed: true,
+    branch: "C:\\private\\repo",
+    pullRequest: "PR 17",
+  };
+  artifact.workspace = {
+    observed: true,
+    transcript: "secret=super-secret",
+    terminal: "C:\\private\\terminal.log",
+  };
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.contextTransfers.length, 1);
+  assert.equal(snapshot.contextTransfers[0].state, "planned");
+  assert.deepEqual(snapshot.repository.branch, { state: "unavailable", value: null });
+  assert.deepEqual(snapshot.repository.pullRequest, { state: "observed", value: "PR 17" });
+  assert.deepEqual(snapshot.workspace.transcript, { state: "unavailable", value: null });
+  assert.deepEqual(snapshot.workspace.terminal, { state: "unavailable", value: null });
+  assert.doesNotMatch(JSON.stringify(snapshot), /super-secret|ghp_|private[\\/]|hostile/iu);
+});
 
 function getWithHost(url, host) {
   return new Promise((resolve, reject) => {
@@ -284,6 +601,64 @@ test("an explicitly stopped durable run does not hide the latest governed artifa
   assert.equal(snapshot.source.kind, "governed_artifact");
 });
 
+test("a future-dated durable run cannot hide the latest governed artifact", () => {
+  const snapshot = buildLiveSnapshot({
+    durableStatus: { ...sampleStatus("meta-future"), updatedAt: "2099-08-24T02:00:00.000Z" },
+    governedArtifact: { ...sampleArtifact("meta-current"), updatedAt: "2026-08-24T01:00:00.000Z" },
+    observedAt: "2026-08-24T02:01:00.000Z",
+  });
+  assert.equal(snapshot.run.runId, "meta-current");
+  assert.equal(snapshot.source.kind, "governed_artifact");
+});
+
+test("foreign-run worker results and host evidence cannot contaminate the current snapshot", () => {
+  const current = sampleArtifact("meta-current");
+  current.workerTaskPackets[0].roleInstanceId = "exec-course-publish-1";
+  current.workerResultPackets = [{
+    runId: "meta-foreign",
+    taskPacketId: "task-backend-1",
+    status: "completed",
+    workerExecutionEvidence: [{ status: "passed" }],
+  }];
+  current.hostInvocationEvidence = [{
+    runId: "meta-foreign",
+    taskPacketId: "task-backend-1",
+    proofValid: true,
+    synthetic: false,
+    providerId: "canonical/runtime-assets/claude/mcp.json",
+    runtime: "codex",
+    model: "foreign-model",
+    resultStatus: "completed",
+    usage: { outputTokens: 999 },
+  }];
+  const snapshot = buildLiveSnapshot({ governedArtifact: current, observedAt: "2026-08-24T01:01:00.000Z" });
+  const worker = snapshot.nodes.find((node) => node.isMain === false && node.kind === "agent");
+  assert.equal(worker.label, "course-publish");
+  assert.equal(worker.roleDisplayName, "backend");
+  assert.equal(worker.status, "pending");
+  assert.equal(worker.runtime, "unavailable");
+  assert.equal(worker.model, "unavailable");
+  assert.equal(worker.outputTokens, null);
+  assert.equal(worker.toolCount, 0);
+  assert.equal(snapshot.replay.some((event) => /canonical|foreign-model/iu.test(event.label)), false);
+});
+
+test("relative repository paths are redacted from tool and replay labels", () => {
+  const current = sampleArtifact("meta-path-redaction");
+  current.hostInvocationEvidence = [{
+    runId: current.runId,
+    taskPacketId: "task-backend-1",
+    proofValid: true,
+    synthetic: false,
+    providerId: "canonical/runtime-assets/claude/mcp.json",
+    resultStatus: "completed",
+  }];
+  const snapshot = buildLiveSnapshot({ governedArtifact: current, observedAt: "2026-08-24T01:01:00.000Z" });
+  const serialized = JSON.stringify(snapshot);
+  assert.doesNotMatch(serialized, /canonical[\\/]runtime-assets/iu);
+  assert.match(serialized, /\[path omitted\]/u);
+});
+
 test("builds the frozen projection and never exposes raw prompt/path data", async () => {
   const projectRoot = await makeProject({
     status: sampleStatus(),
@@ -309,8 +684,8 @@ test("builds the frozen projection and never exposes raw prompt/path data", asyn
   try {
     const service = createLiveControlRoomService({ projectRoot });
     const snapshot = await service.getSnapshot();
-    assert.equal(snapshot.schemaVersion, "meta-kim-live-snapshot-v1");
-    assert.equal(snapshot.source.kind, "durable_status");
+    assert.equal(snapshot.schemaVersion, "meta-kim-live-snapshot-v2");
+    assert.equal(snapshot.source.kind, "governed_artifact");
     assert.equal(snapshot.run.runId, "meta-live-1");
     assert.equal(snapshot.permissions.projectionOnly, true);
     assert.equal(snapshot.permissions.executionAllowed, false);
@@ -355,7 +730,7 @@ test("server starts on a random loopback port, serves snapshot/replay, and close
     assert.ok(address.port > 0);
     const snapshotResponse = await fetch(`${address.url}/api/snapshot`);
     assert.equal(snapshotResponse.status, 200);
-    assert.equal((await snapshotResponse.json()).schemaVersion, "meta-kim-live-snapshot-v1");
+    assert.equal((await snapshotResponse.json()).schemaVersion, "meta-kim-live-snapshot-v2");
     const replayResponse = await fetch(`${address.url}/api/replay?runId=meta-live-1`);
     assert.equal(replayResponse.status, 200);
     assert.ok(Array.isArray((await replayResponse.json()).replay));
@@ -401,7 +776,7 @@ test("historical replay consumes saved AG-UI stage events without current-run co
   assert.equal(replay.runId, "meta-history");
   assert.equal(replay.replay.length, 1);
   assert.equal(replay.replay[0].kind, "stage");
-  assert.equal(replay.replay[0].nodeId, "stage:execution");
+  assert.equal(replay.replay[0].nodeId, null);
   assert.doesNotMatch(replay.replay[0].label, /must be replaced/iu);
 });
 
@@ -419,7 +794,7 @@ test("SSE emits an initial snapshot and has no mutation side effects", async () 
     const text = new TextDecoder().decode(first.value);
     assert.match(text, /data:/u);
     const payload = text.match(/data: (.+)\n/u)?.[1];
-    assert.equal(JSON.parse(payload).schemaVersion, "meta-kim-live-snapshot-v1");
+    assert.equal(JSON.parse(payload).schemaVersion, "meta-kim-live-snapshot-v2");
     await reader.cancel();
     await control.close();
     const after = await stat(path.join(projectRoot, ".meta-kim", "state", "default", "active-run.json"));

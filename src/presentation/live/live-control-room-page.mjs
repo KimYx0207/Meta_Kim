@@ -1,13 +1,13 @@
 /**
  * Dependency-free presentation for the Meta_Kim Live control room.
  *
- * The page is deliberately a shell: the browser reads the frozen v1 snapshot
+ * The page is deliberately a shell: the browser reads the bounded live snapshot
  * from the local API and listens for refresh hints over SSE. Snapshot values
  * are only ever placed into DOM text nodes by the client script. This keeps a
  * compromised or malformed observer payload from becoming executable markup.
  */
 
-export const LIVE_SNAPSHOT_SCHEMA_VERSION = "meta-kim-live-snapshot-v1";
+export const LIVE_SNAPSHOT_SCHEMA_VERSION = "meta-kim-live-snapshot-v2";
 
 const DEFAULT_SNAPSHOT_ENDPOINT = "/api/snapshot";
 const DEFAULT_EVENTS_ENDPOINT = "/api/events";
@@ -111,12 +111,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const shareEndpoint = app.dataset.shareEndpoint || "/api/share";
   const controlEndpoint = app.dataset.controlEndpoint || "/api/commands";
   const initialElement = document.getElementById("live-initial-snapshot");
+  const initialCatalogElement = document.getElementById("live-initial-catalog");
   const controlConfigElement = document.getElementById("live-control-config");
   const reducedMotion = window.matchMedia
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
     : { matches: false };
 
   const LANGUAGE_STORAGE_KEY = "meta-kim-live-language";
+  const WORK_VIEW_STORAGE_KEY = "meta-kim-live-work-view";
+  const WORK_VIEWS = ["repository", "workspace", "run"];
+  const INSPECTOR_TABS = ["summary", "conversation", "terminal", "changes", "evidence", "context"];
   const zhText = new Map(Object.entries({
     "Connecting…": "正在连接…",
     "Streaming": "实时连接中",
@@ -129,6 +133,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Stale": "未更新",
     "running": "运行中",
     "completed": "已完成",
+    "skipped": "已跳过",
     "failed": "失败",
     "blocked": "已阻塞",
     "in doubt": "存疑",
@@ -216,11 +221,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Live execution workspace": "实时执行工作区",
     "Toggle graph layout": "切换运行图布局",
     "Fit graph to viewport": "让运行图适应视口",
+    "Follow active node": "跟随当前节点",
     "Zoom graph out": "缩小运行图",
     "Zoom graph in": "放大运行图",
     "Read-only execution graph": "只读执行运行图",
     "Execution nodes": "执行节点",
     "Graph minimap": "运行图小地图",
+    "Open inspector": "打开检查器",
+    "Close inspector": "关闭检查器",
     "Toggle evidence drawer": "展开或收起证据抽屉",
     "Observed evidence": "已观测证据",
     "Previous replay event": "上一个回放事件",
@@ -230,6 +238,26 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Reset replay": "重置回放",
     "Replay position": "回放位置",
     "Replay events": "回放事件"
+    ,"Overview": "总览"
+    ,"Follow": "跟随"
+    ,"Manual": "手动"
+    ,"Relayout": "重排"
+    ,"Inspector": "检查器"
+    ,"Camera": "相机"
+    ,"Mode": "模式"
+    ,"Workers": "执行者"
+    ,"Events": "事件"
+    ,"Snapshots": "快照"
+    ,"Terminal": "终态"
+    ,"Proof": "证据状态"
+    ,"Prompt summary": "任务摘要"
+    ,"Loadout": "能力装载"
+    ,"Declared capability loadout": "已声明能力装载"
+    ,"observed": "已观测"
+    ,"planned snapshot": "计划快照"
+    ,"structural evidence only": "仅结构化证据"
+    ,"Prompt summary withheld": "提示词摘要未展示"
+    ,"No accepted host execution evidence": "没有已接受的主机执行证据"
   }));
   let currentLanguage = (() => {
     try { return window.localStorage?.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh"; }
@@ -253,6 +281,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (match) return "已完成 " + match[1] + " / " + match[2] + " 个步骤";
     match = text.match(/^(\d+) active workers?$/u);
     if (match) return match[1] + " 个执行者正在工作";
+    match = text.match(/^(\d+) nodes?$/u);
+    if (match) return match[1] + " 个节点";
+    match = text.match(/^Event (\d+) of (\d+)$/u);
+    if (match) return "事件 " + match[1] + " / " + match[2];
+    match = text.match(/^(\d+) tools?$/u);
+    if (match) return match[1] + " 次工具调用";
+    match = text.match(/^(\d+) tokens?$/u);
+    if (match) return match[1] + " 输出 token";
     match = text.match(/^(.*) · waiting for its first governed run$/u);
     if (match) return match[1] + " · 等待首次治理运行";
     match = text.match(/^Event (\d+) of (\d+): (.*)$/u);
@@ -265,12 +301,22 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (text.startsWith("Status · ")) return "状态 · " + localize(text.slice(9));
     if (text.startsWith("Owner · ")) return "负责人 · " + text.slice(8);
     if (text.startsWith("Runtime · ")) return "运行时 · " + text.slice(10);
+    if (text.startsWith("Model · ")) return "模型 · " + text.slice(8);
+    if (text.startsWith("Duration · ")) return "耗时 · " + text.slice(11);
+    if (text.startsWith("Tools · ")) return "工具 · " + text.slice(8);
+    if (text.startsWith("Tokens · ")) return "输出 · " + text.slice(9);
+    if (text.startsWith("Prompt era · ")) return "提示词阶段 · " + text.slice(13);
+    if (text.startsWith("Source · ")) return "来源 · " + text.slice(9);
     if (text.startsWith("Run snapshot updated: ")) return "运行快照已更新：" + text.slice(22);
     if (text.startsWith("Last observed ")) return "最近观测 " + text.slice(14);
     if (text.startsWith("Selected node: ")) return "已选择节点：" + text.slice(15);
     if (text.startsWith("Replay ")) return "回放 " + text.slice(7);
     if (text.startsWith("Stage state projected from")) return "阶段状态来自运行记录";
     if (text.endsWith(" evidence")) return text.slice(0, -9) + " 证据";
+    match = text.match(/^(planned|observed) · (\d+) evidence$/u);
+    if (match) return (match[1] === "planned" ? "计划" : "已观测") + " · " + match[2] + " 条证据";
+    if (text === "planned · awaiting host evidence") return "计划 · 等待主机证据";
+    if (text === "no evidence linked") return "未关联证据";
     if (text.startsWith("↳ from ")) return "↳ 来自 " + text.slice(7);
     return text;
   }
@@ -297,16 +343,29 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const connectionDot = app.querySelector("[data-live-connection-dot]");
   const projectSelect = app.querySelector("[data-live-project-select]");
   const sessionSelect = app.querySelector("[data-live-session-select]");
+  const sessionList = app.querySelector("[data-live-session-list]");
   const hubStatus = app.querySelector("[data-live-hub-status]");
+  const workViewTabs = [...app.querySelectorAll("[data-live-work-view]")];
+  const repositoryView = app.querySelector("[data-live-repository-view]");
+  const repositoryTitle = app.querySelector("[data-live-repository-title]");
+  const repositoryBoundary = app.querySelector("[data-live-repository-boundary]");
+  const repositoryFacts = app.querySelector("[data-live-repository-facts]");
+  const repositorySessions = app.querySelector("[data-live-repository-sessions]");
+  const workspaceView = app.querySelector("[data-live-workspace-view]");
+  const workspaceTitle = app.querySelector("[data-live-workspace-title]");
+  const workspaceBoundary = app.querySelector("[data-live-workspace-boundary]");
+  const workspaceFacts = app.querySelector("[data-live-workspace-facts]");
   const stateLabel = app.querySelector("[data-live-state-label]");
   const stateChip = app.querySelector("[data-live-state]");
-  const title = app.querySelector("[data-live-run-title]");
+  const title = app.querySelector(".top-run-context [data-live-run-title]");
+  const contextTitle = app.querySelector("[data-live-context-title]");
   const runId = app.querySelector("[data-live-run-id]");
   const stage = app.querySelector("[data-live-run-stage]");
   const started = app.querySelector("[data-live-run-started]");
   const updated = app.querySelector("[data-live-run-updated]");
   const source = app.querySelector("[data-live-source]");
   const graph = app.querySelector("[data-live-graph]");
+  const stageRail = app.querySelector("[data-live-stage-rail]");
   const graphScene = app.querySelector("[data-live-graph-scene]");
   const edgeLayer = app.querySelector("[data-live-edge-layer]");
   const nodeList = app.querySelector("[data-live-node-list]");
@@ -319,12 +378,33 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const selectedNodeStatus = app.querySelector("[data-live-selected-node-status]");
   const selectedNodeOwner = app.querySelector("[data-live-selected-node-owner]");
   const selectedNodeRuntime = app.querySelector("[data-live-selected-node-runtime]");
+  const selectedNodeModel = app.querySelector("[data-live-selected-node-model]");
+  const selectedNodeDuration = app.querySelector("[data-live-selected-node-duration]");
+  const selectedNodeTools = app.querySelector("[data-live-selected-node-tools]");
+  const selectedNodeTokens = app.querySelector("[data-live-selected-node-tokens]");
+  const selectedNodeLoadout = app.querySelector("[data-live-selected-node-loadout]");
   const selectedNodeSummary = app.querySelector("[data-live-selected-node-summary]");
   const selectedNodeEvidenceDetail = app.querySelector("[data-live-selected-node-evidence-detail]");
+  const selectedNodeProvenance = app.querySelector("[data-live-selected-node-provenance]");
+  const selectedNodePrompt = app.querySelector("[data-live-selected-node-prompt]");
   const evidenceList = app.querySelector("[data-live-evidence-list]");
   const evidenceCount = app.querySelector("[data-live-evidence-count]");
-  const evidenceDrawer = app.querySelector("[data-evidence-drawer]");
   const evidenceToggle = app.querySelector("[data-evidence-toggle]");
+  const evidencePanel = app.querySelector("[data-live-inspector]");
+  const evidenceClose = app.querySelector("[data-live-inspector-close]");
+  const inspectorTabs = [...app.querySelectorAll("[data-live-inspector-tab]")];
+  const inspectorPanels = [...app.querySelectorAll("[data-live-inspector-panel]")];
+  const conversationList = app.querySelector("[data-live-conversation-list]");
+  const terminalList = app.querySelector("[data-live-terminal-list]");
+  const changesList = app.querySelector("[data-live-changes-list]");
+  const contextTransferList = app.querySelector("[data-live-context-transfer-list]");
+  const graphFollow = app.querySelector("[data-live-graph-follow]");
+  const cameraModeLabel = app.querySelector("[data-live-camera-mode]");
+  const sessionsDialog = app.querySelector("[data-live-sessions-dialog]");
+  const helpDialog = app.querySelector("[data-live-help-dialog]");
+  const infoDialog = app.querySelector("[data-live-info-dialog]");
+  const infoTools = app.querySelector("[data-live-info-tools]");
+  const infoFacts = app.querySelector("[data-live-info-facts]");
   const replayRange = app.querySelector("[data-replay-range]");
   const replayEvents = app.querySelector("[data-replay-events]");
   const replayProgress = app.querySelector("[data-replay-progress]");
@@ -337,11 +417,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const emptyState = app.querySelector("[data-live-empty]");
   const liveRegion = app.querySelector("[data-live-region]");
   const lastUpdate = app.querySelector("[data-live-last-update]");
-  const runHero = app.querySelector(".run-hero");
-  const runFacts = app.querySelector(".run-facts");
-  const stageRail = app.querySelector("[data-live-stage-rail]");
   const runProgress = app.querySelector("[data-live-run-progress]");
   const runWorkers = app.querySelector("[data-live-run-workers]");
+  const statusTitle = app.querySelector("[data-live-status-title]");
+  const nodeCount = app.querySelector("[data-live-node-count]");
+  const contextTask = app.querySelector("[data-live-context-task]");
+  const contextStage = app.querySelector("[data-live-context-stage]");
+  const contextStatus = app.querySelector("[data-live-context-status]");
+  const contextUpdated = app.querySelector("[data-live-context-updated]");
+  const contextSource = app.querySelector("[data-live-context-source]");
+  const contextNodes = app.querySelector("[data-live-context-nodes]");
+  const contextEvents = app.querySelector("[data-live-context-events]");
+  const contextEvidence = app.querySelector("[data-live-context-evidence]");
   const workspace = app.querySelector(".workspace-grid");
   const replayPanel = app.querySelector(".replay-panel");
   const shareStatus = app.querySelector("[data-live-share-status]");
@@ -365,7 +452,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let initialControlConfig = null;
   let selectedNodeId = null;
   let replayFollowingLive = true;
-  let layoutMode = "flow";
+  let layoutMode = "compact";
+  // Start in a full-graph overview so the run topology is legible before the
+  // user opts into following a replay target.
+  let graphFollowing = false;
+  let cameraMode = "overview";
   let graphState = {
     positions: new Map(),
     nodeElements: new Map(),
@@ -378,13 +469,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let selectedProjectId = "";
   let selectedRunId = "";
   let catalogAvailable = false;
+  let catalogRequestInFlight = false;
   let catalogRefreshTimer = null;
   let selectionGeneration = 0;
+  let dialogOpener = null;
+  let activeDialog = null;
+  const modalBackgroundState = new Map();
+  let currentWorkView = "run";
+  let currentInspectorTab = "summary";
 
   const statuses = new Set(["live", "stale", "in_doubt"]);
-  const nodeStatuses = new Set(["running", "completed", "failed", "blocked", "in_doubt", "queued"]);
+  const nodeStatuses = new Set(["running", "completed", "skipped", "failed", "blocked", "in_doubt", "queued"]);
   const controlActions = ["pause", "resume", "reassign", "handoff"];
   const SNAPSHOT_COALESCE_MS = 75;
+  const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
   function safeIdentifier(value) {
     if (typeof value !== "string") return "";
@@ -469,6 +567,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return Number.isFinite(number) ? number : fallback;
   }
 
+  function nullableCount(value) {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
   function firstValue(record, keys, fallback) {
     if (!record || typeof record !== "object") return fallback;
     for (const key of keys) {
@@ -496,14 +598,64 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return nodeStatuses.has(status) ? status : "queued";
   }
 
+  function summarizeTerminalEvidence(value) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return display(value, "");
+    const records = (Array.isArray(value) ? value : [value])
+      .slice(0, 24)
+      .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      .map((item) => ({
+        label: display(firstValue(item, ["label", "title", "kind", "type"], ""), ""),
+        status: normalizedNodeStatus(firstValue(item, ["status", "state", "result"], "in_doubt")),
+      }));
+    const trusted = records.filter((item) => ["completed", "failed", "blocked"].includes(item.status));
+    if (!trusted.length) return "";
+    if (trusted.length === 1) return [trusted[0].label, trusted[0].status].filter(Boolean).join(" · ");
+    const counts = new Map();
+    trusted.forEach((item) => counts.set(item.status, (counts.get(item.status) || 0) + 1));
+    return trusted.length + " terminal evidence · " + [...counts].map(([status, count]) => status + " " + count).join(" · ");
+  }
+
+  function normalizedAvailability(value, fallbackSummary) {
+    if (value === true) return { state: "observed", summary: fallbackSummary || "Observed" };
+    if (value === false || value === null || value === undefined) {
+      return { state: "unavailable", summary: fallbackSummary || "Telemetry unavailable" };
+    }
+    if (typeof value === "string" || typeof value === "number") {
+      return { state: "observed", summary: display(value, fallbackSummary || "Observed") };
+    }
+    if (typeof value !== "object" || Array.isArray(value)) {
+      return { state: "unavailable", summary: fallbackSummary || "Telemetry unavailable" };
+    }
+    const rawState = display(firstValue(value, ["state", "status", "availability"], "unavailable"), "unavailable")
+      .toLowerCase().replace(/[\s-]+/gu, "_");
+    const state = ["observed", "accepted", "completed", "available", "active"].includes(rawState)
+      ? "observed"
+      : rawState === "planned" || rawState === "pending"
+        ? "planned"
+        : "unavailable";
+    return {
+      state,
+      summary: display(firstValue(value, ["value", "summary", "label", "detail", "message"], fallbackSummary), fallbackSummary || "Telemetry unavailable"),
+      count: Math.max(0, numberOr(firstValue(value, ["count", "total", "items"], 0), 0)),
+    };
+  }
+
   function normalizeSnapshot(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return null;
     const hasRun = Boolean(input.run && typeof input.run === "object" && !Array.isArray(input.run));
     const runInput = hasRun ? input.run : {};
     const sourceInput = input.source && typeof input.source === "object" ? input.source : {};
+    const sessionCandidate = input.sessionInfo ?? input.session;
+    const sessionInput = sessionCandidate && typeof sessionCandidate === "object" && !Array.isArray(sessionCandidate) ? sessionCandidate : {};
     const nodeInput = Array.isArray(input.nodes) ? input.nodes : [];
     const edgeInput = Array.isArray(input.edges) ? input.edges : [];
     const evidenceInput = Array.isArray(input.evidence) ? input.evidence : [];
+    const promptInput = Array.isArray(input.prompts) ? input.prompts : [];
+    const toolCallInput = Array.isArray(input.toolCalls) ? input.toolCalls : [];
+    const provenanceInput = Array.isArray(input.provenance) ? input.provenance : [];
+    const repositoryInput = input.repository && typeof input.repository === "object" && !Array.isArray(input.repository) ? input.repository : {};
+    const workspaceInput = input.workspace && typeof input.workspace === "object" && !Array.isArray(input.workspace) ? input.workspace : {};
+    const contextTransferInput = Array.isArray(input.contextTransfers) ? input.contextTransfers : [];
     const replayInput = Array.isArray(input.replay)
       ? { events: input.replay }
       : input.replay && typeof input.replay === "object"
@@ -520,24 +672,53 @@ const CLIENT_SCRIPT = String.raw`(() => {
       ? (normalizeControlConfig(controlInput) || { controlEnabled: false, capabilities: {} })
       : null;
 
-    // The browser is a live observer, not a transcript dump. Keep the graph
-    // bounded so a noisy run cannot grow one DOM card per event forever.
+    // The observer projects safe summaries, never raw transcripts or tool
+    // payloads. Every collection remains bounded so long runs cannot grow the
+    // DOM without limit.
     const nodes = nodeInput.slice(0, 128).map((node, index) => {
       const item = node && typeof node === "object" ? node : {};
       return {
         id: display(firstValue(item, ["id", "nodeId"], "node-" + (index + 1)), "node-" + (index + 1)),
         label: display(firstValue(item, ["label", "title", "name", "nodeId"], "Untitled task"), "Untitled task"),
+        kind: display(firstValue(item, ["kind", "nodeKind", "type"], "worker"), "worker").toLowerCase().replace(/[\s-]+/gu, "_"),
         status: normalizedNodeStatus(firstValue(item, ["status", "state"], "queued")),
         role: display(firstValue(item, ["roleDisplayName", "role", "ownerRole"], "worker"), "worker"),
         agent: display(firstValue(item, ["agent", "ownerAgent", "owner"], "—"), "—"),
         runtime: display(firstValue(item, ["runtime", "runtimeId", "runtimeInstanceAlias"], "local"), "local"),
+        modelName: display(firstValue(item, ["modelName", "model", "providerModel"], ""), ""),
         summary: display(firstValue(item, ["summary", "description", "message"], "No task detail available"), "No task detail available"),
+        description: display(firstValue(item, ["description", "summary", "message"], "No task detail available"), "No task detail available"),
+        parentId: display(firstValue(item, ["parentId", "parentNodeId", "spawnedByNodeId"], ""), ""),
+        model: display(firstValue(item, ["model", "modelName", "providerModel"], ""), ""),
+        inputTokens: Math.max(0, numberOr(firstValue(item, ["inputTokens"], 0), 0)),
+        outputTokens: Math.max(0, numberOr(firstValue(item, ["outputTokens", "tokens", "tokenCount"], 0), 0)),
+        totalTokens: Math.max(0, numberOr(firstValue(item, ["totalTokens"], 0), 0)),
+        firstAt: display(firstValue(item, ["firstAt", "startedAt", "createdAt"], ""), ""),
+        lastAt: display(firstValue(item, ["lastAt", "endedAt", "updatedAt"], ""), ""),
+        terminalEvidence: summarizeTerminalEvidence(firstValue(item, ["terminalEvidence", "completionEvidence", "resultSummary"], "")),
+        toolCount: Math.max(0, numberOr(firstValue(item, ["toolCount", "toolsUsed", "toolCalls"], 0), 0)),
+        latestTool: display(firstValue(item, ["latestTool", "lastTool", "activeTool"], ""), ""),
+        loadout: (() => {
+          const value = item.loadout && typeof item.loadout === "object" ? item.loadout : {};
+          return {
+            skills: Math.max(0, numberOr(value.skills, 0)),
+            mcp: Math.max(0, numberOr(value.mcp, 0)),
+            tools: Math.max(0, numberOr(value.tools, 0)),
+            commands: Math.max(0, numberOr(value.commands, 0)),
+            skillNames: Array.isArray(value.skillNames) ? value.skillNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
+            mcpNames: Array.isArray(value.mcpNames) ? value.mcpNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
+            toolNames: Array.isArray(value.toolNames) ? value.toolNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
+            commandNames: Array.isArray(value.commandNames) ? value.commandNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
+          };
+        })(),
+        evidenceCount: Math.max(0, numberOr(firstValue(item, ["evidenceCount", "evidenceItems"], 0), 0)),
         progress: numberOr(firstValue(item, ["progress", "progressPercent"], null), null),
+        task: display(firstValue(item, ["task", "scope", "purpose"], ""), ""),
       };
     });
 
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const edges = edgeInput.slice(0, 256).map((edge, index) => {
+    const explicitEdges = edgeInput.slice(0, 256).map((edge, index) => {
       const item = edge && typeof edge === "object" ? edge : {};
       const targetId = display(firstValue(item, ["to", "target", "targetId"], ""), "");
       const explicitStatus = firstValue(item, ["status", "state"], null);
@@ -552,6 +733,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
           : normalizedNodeStatus(explicitStatus),
       };
     }).filter((edge) => edge.from && edge.to);
+    const edgeKeys = new Set(explicitEdges.map((edge) => edge.from + "\u0000" + edge.to));
+    const inferredEdges = nodes.filter((node) => node.parentId && nodeById.has(node.parentId) && !edgeKeys.has(node.parentId + "\u0000" + node.id)).map((node, index) => ({
+      id: "parent-edge-" + (index + 1),
+      from: node.parentId,
+      to: node.id,
+      status: node.status,
+    }));
+    const edges = [...explicitEdges, ...inferredEdges].slice(0, 256);
 
     const evidence = evidenceInput.slice(0, 256).map((item, index) => {
       const record = item && typeof item === "object" ? item : {};
@@ -561,9 +750,47 @@ const CLIENT_SCRIPT = String.raw`(() => {
         status: display(firstValue(record, ["status", "assessment", "state"], "observed"), "observed"),
         detail: display(firstValue(record, ["summary", "detail", "message", "description"], "Observed by the local runtime"), "Observed by the local runtime"),
         nodeId: display(firstValue(record, ["nodeId", "node", "ownerNodeId"], ""), ""),
-        at: display(firstValue(record, ["timestamp", "occurredAt", "createdAt"], ""), ""),
+        at: display(firstValue(record, ["timestamp", "observedAt", "occurredAt", "createdAt"], ""), ""),
+        sourceRef: display(firstValue(record, ["sourceRef", "source", "ref"], ""), ""),
       };
     });
+
+    const prompts = promptInput.slice(0, 256).map((item, index) => {
+      const record = item && typeof item === "object" ? item : {};
+      return {
+        id: display(firstValue(record, ["id", "promptId", "eraId"], "prompt-" + (index + 1)), "prompt-" + (index + 1)),
+        label: display(firstValue(record, ["label", "title", "era", "kind"], "Prompt era " + (index + 1)), "Prompt era " + (index + 1)),
+        excerpt: display(firstValue(record, ["excerpt", "summary", "safeExcerpt", "description"], "Prompt content withheld"), "Prompt content withheld"),
+        nodeId: display(firstValue(record, ["nodeId", "agentNodeId", "ownerNodeId"], ""), ""),
+        at: display(firstValue(record, ["at", "timestamp", "createdAt", "startedAt"], ""), ""),
+      };
+    });
+
+    const toolCalls = toolCallInput.slice(0, 512).map((item, index) => {
+      const record = item && typeof item === "object" ? item : {};
+      return {
+        id: display(firstValue(record, ["id", "toolCallId"], "tool-" + (index + 1)), "tool-" + (index + 1)),
+        nodeId: display(firstValue(record, ["nodeId", "agentNodeId", "ownerNodeId"], ""), ""),
+        name: display(firstValue(record, ["name", "tool", "toolName", "kind"], "Tool call"), "Tool call"),
+        summary: display(firstValue(record, ["summary", "safeSummary", "description", "label"], "Tool activity observed"), "Tool activity observed"),
+        startedAt: display(firstValue(record, ["startedAt", "occurredAt", "at", "timestamp"], ""), ""),
+        endedAt: display(firstValue(record, ["endedAt", "completedAt", "updatedAt", "occurredAt"], ""), ""),
+        state: normalizedNodeStatus(firstValue(record, ["state", "status"], "queued")),
+        promptId: display(firstValue(record, ["promptId", "triggerPromptId", "eraId"], ""), ""),
+      };
+    });
+
+    const provenance = provenanceInput.slice(0, 256).map((item) => {
+      const record = item && typeof item === "object" ? item : {};
+      return {
+        nodeId: display(firstValue(record, ["nodeId", "agentNodeId"], ""), ""),
+        triggerPromptId: display(firstValue(record, ["triggerPromptId", "promptId", "eraId"], ""), ""),
+        reasoningExcerpt: display(firstValue(record, ["reasoningExcerpt", "summary", "safeExcerpt"], [
+          firstValue(record, ["ownerBindingMode"], ""),
+          firstValue(record, ["state", "status"], ""),
+        ].filter(Boolean).join(" · ")), ""),
+      };
+    }).filter((item) => item.nodeId);
 
     const replay = replayInputEvents.slice(0, 512).map((item, index) => {
       const record = item && typeof item === "object" ? item : {};
@@ -573,8 +800,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
         nodeId: display(firstValue(record, ["nodeId", "node", "taskId"], ""), ""),
         at: display(firstValue(record, ["timestamp", "occurredAt", "at", "time"], ""), ""),
         status: normalizedNodeStatus(firstValue(record, ["status", "state"], "queued")),
+        kind: display(firstValue(record, ["kind", "type", "eventType"], "status"), "status").toLowerCase().replace(/[\s-]+/gu, "_"),
+        toolCallId: display(firstValue(record, ["toolCallId", "toolId"], ""), ""),
+        promptId: display(firstValue(record, ["promptId", "eraId"], ""), ""),
+        visibility: display(firstValue(record, ["visibility", "action"], ""), ""),
+        eventType: display(firstValue(record, ["eventType", "type", "kind"], "status"), "status"),
+        stage: display(firstValue(record, ["stage", "phase", "chapter"], ""), "").toLowerCase().replace(/[\s_]+/gu, "-"),
+        chapter: display(firstValue(record, ["chapter", "stage", "phase"], ""), "").toLowerCase().replace(/[\s_]+/gu, "-"),
       };
     });
+
+    const eventCount = Math.max(replay.length, numberOr(firstValue(runInput, ["eventCount", "totalEvents"], replay.length), replay.length));
+    const eventIndex = Math.max(0, Math.min(eventCount, numberOr(firstValue(runInput, ["eventIndex", "currentEventIndex"], replay.length), replay.length)));
 
     return {
       schemaVersion: display(input.schemaVersion, "unknown"),
@@ -582,14 +819,75 @@ const CLIENT_SCRIPT = String.raw`(() => {
       run: hasRun ? {
         id: display(firstValue(runInput, ["id", "runId", "key"], input.runId), "unidentified run"),
         title: display(firstValue(runInput, ["title", "name", "label"], "Live execution"), "Live execution"),
+        task: display(firstValue(runInput, ["task", "description", "summary"], input.task), "Governed execution"),
         status: normalizedStatus(firstValue(runInput, ["status", "state", "runStatus"], input.status)),
         stage: display(firstValue(runInput, ["stage", "currentStage", "phase"], "Observing"), "Observing"),
+        currentStage: display(firstValue(runInput, ["currentStage", "stage", "phase"], "Observing"), "Observing"),
         startedAt: display(firstValue(runInput, ["startedAt", "startTime"], "—"), "—"),
         updatedAt: display(firstValue(runInput, ["updatedAt", "lastUpdatedAt", "observedAt"], "—"), "—"),
+        transport: display(firstValue(runInput, ["transport", "sourceTransport"], "snapshot"), "snapshot"),
+        eventIndex,
+        eventCount,
       } : null,
+      sessionInfo: {
+        title: display(firstValue(sessionInput, ["title", "name"], firstValue(runInput, ["title", "name"], "Live execution")), "Live execution"),
+        activity: display(firstValue(sessionInput, ["activity", "latestActivity", "summary"], ""), ""),
+        workerCount: Math.max(0, numberOr(firstValue(sessionInput, ["workerCount", "agentCount", "nodeCount"], nodes.filter((node) => node.kind !== "stage").length), 0)),
+        eventCount: Math.max(0, numberOr(firstValue(sessionInput, ["eventCount", "totalEvents"], eventCount), eventCount)),
+        runtime: display(firstValue(sessionInput, ["runtime", "transport"], firstValue(runInput, ["transport"], "local")), "local"),
+        mode: display(firstValue(sessionInput, ["mode", "sessionMode"], "observed"), "observed"),
+        lastPromptSummary: display(firstValue(sessionInput, ["lastPromptSummary", "promptSummary"], "Prompt summary withheld"), "Prompt summary withheld"),
+        fileChangeCount: Math.max(0, numberOr(firstValue(sessionInput, ["fileChangeCount", "fileSnapshots"], 0), 0)),
+        artifactCount: Math.max(0, numberOr(firstValue(sessionInput, ["artifactCount", "artifacts"], 0), 0)),
+        plannedCount: Math.max(0, numberOr(firstValue(sessionInput, ["plannedCount"], 0), 0)),
+        completedCount: Math.max(0, numberOr(firstValue(sessionInput, ["completedCount"], 0), 0)),
+        failedCount: Math.max(0, numberOr(firstValue(sessionInput, ["failedCount"], 0), 0)),
+        blockedCount: Math.max(0, numberOr(firstValue(sessionInput, ["blockedCount"], 0), 0)),
+        proofState: display(firstValue(sessionInput, ["proofState"], "structural evidence only"), "structural evidence only"),
+      },
+      repository: {
+        name: normalizedAvailability(repositoryInput.name, "Repository name unavailable"),
+        branch: normalizedAvailability(repositoryInput.branch, "Branch unavailable"),
+        worktree: normalizedAvailability(repositoryInput.worktree, "Worktree unavailable"),
+        pullRequest: normalizedAvailability(repositoryInput.pullRequest, "Pull request unavailable"),
+        diff: normalizedAvailability(repositoryInput.diff, "Diff telemetry unavailable"),
+      },
+      workspace: {
+        name: normalizedAvailability(workspaceInput.name, "Workspace name unavailable"),
+        workspaceId: normalizedAvailability(workspaceInput.workspaceId, "Workspace identifier unavailable"),
+        transcript: normalizedAvailability(workspaceInput.transcript, "Conversation transcript unavailable"),
+        terminal: normalizedAvailability(workspaceInput.terminal, "Terminal adapter telemetry unavailable"),
+      },
+      contextTransfers: contextTransferInput.slice(0, 256).map((item, index) => {
+        const record = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+        const rawState = display(firstValue(record, ["state", "status", "deliveryState"], "planned"), "planned").toLowerCase().replace(/[\s-]+/gu, "_");
+        const state = ["observed", "accepted"].includes(rawState) ? rawState : "planned";
+        return {
+          id: display(firstValue(record, ["id", "transferId"], "transfer-" + (index + 1)), "transfer-" + (index + 1)),
+          state,
+          fromNodeId: display(firstValue(record, ["fromNodeId", "sourceNodeId"], "unavailable"), "unavailable"),
+          toNodeId: display(firstValue(record, ["toNodeId", "targetNodeId"], "unavailable"), "unavailable"),
+          kind: display(firstValue(record, ["kind"], "context_handoff"), "context_handoff"),
+          summaryCount: nullableCount(record.summaryCount),
+          decisionCount: nullableCount(record.decisionCount),
+          fileCount: nullableCount(record.fileCount),
+          evidenceCount: nullableCount(record.evidenceCount),
+          observedAt: display(firstValue(record, ["observedAt"], ""), ""),
+          digest: display(firstValue(record, ["digest"], ""), ""),
+          bytes: nullableCount(record.bytes),
+          compactionState: display(firstValue(record, ["compactionState"], "unavailable"), "unavailable"),
+          omittedCount: nullableCount(record.omittedCount),
+          omissionReason: display(firstValue(record, ["omissionReason"], ""), ""),
+          downstreamAcceptanceState: display(firstValue(record, ["downstreamAcceptanceState"], "unavailable"), "unavailable"),
+          evidenceRefs: Array.isArray(record.evidenceRefs) ? record.evidenceRefs.slice(0, 24).map((value) => display(value, "")).filter(Boolean) : [],
+        };
+      }),
       nodes,
       edges,
       evidence,
+      prompts,
+      toolCalls,
+      provenance,
       replay,
       control,
       permissions: input.permissions && typeof input.permissions === "object" ? input.permissions : {},
@@ -625,6 +923,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return text;
   }
 
+  function formatDuration(firstAt, lastAt) {
+    const startedAt = new Date(display(firstAt, ""));
+    const endedAt = new Date(display(lastAt, ""));
+    if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) return "—";
+    const milliseconds = Math.max(0, endedAt.getTime() - startedAt.getTime());
+    if (milliseconds < 1000) return milliseconds + " ms";
+    const seconds = Math.round(milliseconds / 1000);
+    if (seconds < 60) return seconds + " s";
+    const minutes = Math.floor(seconds / 60);
+    return minutes + "m " + String(seconds % 60).padStart(2, "0") + "s";
+  }
+
   function formatSessionTime(value) {
     const date = new Date(display(value, ""));
     if (Number.isNaN(date.getTime())) return currentLanguage === "zh" ? "时间未知" : "Unknown time";
@@ -644,6 +954,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function stateCopy(status) {
     if (status === "live") return localize("Live");
     if (status === "in_doubt") return localize("In doubt");
+    if (status === "completed") return localize("Completed");
+    if (status === "running") return localize("Running");
+    if (status === "pending" || status === "queued") return localize("Queued");
+    if (status === "failed") return localize("Failed");
+    if (status === "blocked") return localize("Blocked");
+    if (status === "skipped") return localize("Skipped");
     return localize("Stale");
   }
 
@@ -654,20 +970,30 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function updateHeader(snapshot) {
     setText(title, snapshot.run.title, "Live execution");
+    setText(contextTitle, snapshot.run.title, "Live execution");
+    setText(statusTitle, snapshot.run.title, "Live execution");
     setText(runId, "Run · " + snapshot.run.id.slice(-8), "unidentified run");
     setText(stage, snapshot.run.stage, "Observing");
     setText(started, formatTime(snapshot.run.startedAt), "—");
     setText(updated, formatTime(snapshot.run.updatedAt), "—");
     setText(source, snapshot.source, "local observer");
-    const completedSteps = snapshot.nodes.filter((node) => node.status === "completed").length;
-    const activeWorkers = new Set(snapshot.nodes
+    const activeWorkers = new Set(graphNodesForSnapshot(snapshot)
       .filter((node) => ["running", "active"].includes(node.status))
       .map((node) => node.agent)
       .filter(Boolean));
-    setText(runProgress, completedSteps + " of " + snapshot.nodes.length + " steps complete", "—");
+    setText(runProgress, "Event " + snapshot.run.eventIndex + " of " + snapshot.run.eventCount, "—");
     setText(runWorkers, activeWorkers.size
       ? activeWorkers.size + " active worker" + (activeWorkers.size === 1 ? "" : "s")
       : "No active workers", "—");
+    setText(nodeCount, graphNodesForSnapshot(snapshot).length + " nodes", "0 nodes");
+    setText(contextTask, snapshot.run.task, "Governed execution");
+    setText(contextStage, snapshot.run.stage, "in_doubt");
+    setText(contextStatus, stateCopy(snapshot.run.status), "In doubt");
+    setText(contextUpdated, formatTime(snapshot.run.updatedAt), "—");
+    setText(contextSource, snapshot.source, "local observer");
+    setText(contextNodes, String(graphNodesForSnapshot(snapshot).length), "0");
+    setText(contextEvents, String(snapshot.run.eventCount || snapshot.replay.length || 0), "0");
+    setText(contextEvidence, String(snapshot.evidence.length || 0), "0");
     const status = snapshot.run.status;
     if (stateChip) stateChip.dataset.state = status;
     setText(stateLabel, stateCopy(status), "Stale");
@@ -681,7 +1007,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function usefulNodeMeta(value) {
     const normalized = display(value, "").trim().toLowerCase();
-    return normalized && !["—", "unknown", "in_doubt", "in doubt", "unassigned", "local"].includes(normalized);
+    return normalized && !["—", "unknown", "unavailable", "in_doubt", "in doubt", "unassigned", "local"].includes(normalized);
   }
 
   function edgeMarkerId(status) {
@@ -706,62 +1032,91 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return matched ? STAGE_ORDER.indexOf(matched) : -1;
   }
 
-  function renderStageRail(snapshot) {
-    clearChildren(stageRail);
-    if (!stageRail) return;
-    const currentIndex = stageIndex({ id: snapshot.run.stage, label: snapshot.run.stage });
-    const nodeByStage = new Map();
-    for (const node of snapshot.nodes) {
-      const index = stageIndex(node);
-      if (index >= 0 && !nodeByStage.has(index)) nodeByStage.set(index, node);
-    }
-    STAGE_ORDER.forEach((stageName, index) => {
-      const node = nodeByStage.get(index) || null;
-      const state = node?.status === "completed"
-        ? "completed"
-        : index === currentIndex || ["running", "active"].includes(node?.status)
-          ? "current"
-          : index < currentIndex
-            ? "completed"
-            : "upcoming";
-      const item = makeElement("li", "stage-step");
-      item.dataset.state = state;
-      const marker = makeElement("span", "stage-step-marker", String(index + 1));
-      marker.setAttribute("aria-hidden", "true");
-      const copy = makeElement("span", "stage-step-copy");
-      copy.append(
-        makeElement("strong", "stage-step-name", stageName),
-        makeElement("small", "stage-step-state", state === "current" ? "running" : state),
-      );
-      item.append(marker, copy);
-      if (node) {
-        item.tabIndex = 0;
-        item.setAttribute("role", "button");
-        item.addEventListener("click", () => selectNode(node.id));
-        item.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") selectNode(node.id, { focus: true });
-        });
-      }
-      stageRail.append(item);
-    });
+  function graphNodesForSnapshot(snapshot) {
+    const executionNodes = snapshot.nodes.filter((node) => !["stage", "chapter", "stage_summary"].includes(node.kind));
+    return executionNodes.length ? executionNodes : snapshot.nodes;
+  }
+
+  function graphEdgesForSnapshot(snapshot, nodes = graphNodesForSnapshot(snapshot)) {
+    const ids = new Set(nodes.map((node) => node.id));
+    return snapshot.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
   }
 
   function layoutGraph(snapshot) {
-    const nodes = snapshot.nodes;
+    const nodes = graphNodesForSnapshot(snapshot);
+    const graphEdges = graphEdgesForSnapshot(snapshot, nodes);
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const parentById = new Map(snapshot.edges.map((edge) => [edge.to, edge.from]));
+    const parentById = new Map(graphEdges.map((edge) => [edge.to, edge.from]));
     const stageNodes = new Map();
     const stageFor = new Map();
     const branchSlots = new Map();
     const positions = new Map();
     const cardWidth = 168;
-    const cardHeight = 96;
-    const spineColumns = layoutMode === "compact" ? 8 : 4;
-    const columnGap = layoutMode === "compact" ? 150 : 190;
-    const rowGap = 126;
+    const cardHeight = 116;
+    const spineColumns = layoutMode === "compact" ? 4 : 8;
+    const columnGap = layoutMode === "compact" ? 220 : 184;
+    const rowGap = layoutMode === "compact" ? 150 : 126;
     const top = 38;
     const spineRows = Math.ceil(STAGE_ORDER.length / spineColumns);
     const branchTop = top + spineRows * rowGap + 32;
+    // A live projection is an entity graph whenever it has explicit edges or
+    // parent links. Older snapshots omitted kind on some nodes, which made
+    // the previous heuristic fall through to the stage layout and stack all
+    // workers into one branch slot.
+    const entityGraph = graphEdges.length > 0
+      || nodes.some((node) => node.parentId)
+      || nodes.some((node) => ["agent", "worker", "workflow", "group", "main_agent", "subagent"].includes(node.kind));
+
+    if (entityGraph) {
+      const depthById = new Map();
+      function depthFor(id, seen = new Set()) {
+        if (depthById.has(id)) return depthById.get(id);
+        if (seen.has(id)) return 0;
+        seen.add(id);
+        const parentId = parentById.get(id) || nodeById.get(id)?.parentId;
+        const depth = parentId && nodeById.has(parentId) ? depthFor(parentId, seen) + 1 : 0;
+        depthById.set(id, depth);
+        return depth;
+      }
+      const lanes = new Map();
+      for (const node of nodes) {
+        const depth = depthFor(node.id);
+        const lane = lanes.get(depth) || [];
+        lane.push(node);
+        lanes.set(depth, lane);
+      }
+      for (const [depth, lane] of lanes) {
+        lane.sort((left, right) => String(left.firstAt || "").localeCompare(String(right.firstAt || "")) || left.label.localeCompare(right.label));
+        const sqrtColumns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(lane.length))));
+        const laneColumns = depth === 0 ? 1 : depth === 1 ? 1 : Math.max(sqrtColumns, Math.min(4, lane.length));
+        const laneStartX = [...lanes.entries()]
+          .filter(([candidateDepth]) => candidateDepth < depth)
+          .sort(([left], [right]) => left - right)
+          .reduce((offset, [, candidateLane]) => {
+            const candidateColumns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(candidateLane.length))));
+            return offset + Math.max(238, candidateColumns * 210 + 28);
+          }, 44);
+        lane.forEach((node, index) => {
+          positions.set(node.id, {
+            x: laneStartX + (index % laneColumns) * 210,
+            y: 42 + Math.floor(index / laneColumns) * 144,
+            width: 184,
+            height: cardHeight,
+            spine: depth === 0,
+          });
+        });
+      }
+      let maxX = 0;
+      let maxY = 0;
+      for (const position of positions.values()) {
+        maxX = Math.max(maxX, position.x + position.width);
+        maxY = Math.max(maxY, position.y + position.height);
+      }
+      return {
+        positions,
+        bounds: { width: Math.max(680, maxX + 54), height: Math.max(360, maxY + 54) },
+      };
+    }
 
     function inheritedStage(id, seen = new Set()) {
       if (stageFor.has(id)) return stageFor.get(id);
@@ -880,11 +1235,247 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (graphScene) {
       graphScene.style.transform = "translate(" + camera.x + "px, " + camera.y + "px) scale(" + camera.scale + ")";
     }
+    if (graph) graph.dataset.semanticZoom = camera.scale < .42 ? "cell" : "card";
     updateMinimap();
+  }
+
+  function setCameraMode(mode) {
+    cameraMode = ["overview", "follow", "manual"].includes(mode) ? mode : "manual";
+    graphFollowing = cameraMode === "follow";
+    if (graphFollow) {
+      graphFollow.dataset.active = graphFollowing ? "true" : "false";
+      graphFollow.setAttribute("aria-pressed", String(graphFollowing));
+    }
+    if (graph) graph.dataset.following = graphFollowing ? "true" : "false";
+    setText(cameraModeLabel, cameraMode[0].toUpperCase() + cameraMode.slice(1), "Manual");
+  }
+
+  function setGraphFollowing(active) {
+    setCameraMode(active ? "follow" : "manual");
+  }
+
+  function centerGraphNode(nodeId) {
+    if (!graph || !nodeId) return;
+    const card = graphState.nodeElements.get(nodeId);
+    if (window.matchMedia?.("(max-width: 720px)").matches && card) {
+      graph.scrollTo({
+        top: Math.max(0, card.offsetTop - graph.clientHeight / 2 + card.offsetHeight / 2),
+        left: 0,
+        behavior: reducedMotion.matches ? "auto" : "smooth",
+      });
+      return;
+    }
+    const position = graphState.positions.get(nodeId);
+    if (!position) return;
+    updateCamera({
+      ...camera,
+      x: graph.clientWidth / 2 - (position.x + position.width / 2) * camera.scale,
+      y: graph.clientHeight / 2 - (position.y + position.height / 2) * camera.scale,
+    });
+  }
+
+  function setInspectorOpen(open) {
+    if (!evidencePanel) return;
+    const active = Boolean(open);
+    const changed = evidencePanel.dataset.open !== (active ? "true" : "false");
+    evidencePanel.dataset.open = active ? "true" : "false";
+    evidencePanel.setAttribute("aria-hidden", String(!active));
+    if ("inert" in evidencePanel) evidencePanel.inert = !active;
+    evidenceToggle?.setAttribute("aria-expanded", String(active));
+    workspace?.setAttribute("data-inspector-open", active ? "true" : "false");
+    if (changed) repositionCameraAfterInspector(active);
+  }
+
+  function safeStoredChoice(key, allowed, fallback) {
+    try {
+      const sessionValue = window.sessionStorage?.getItem(key);
+      if (allowed.includes(sessionValue)) return sessionValue;
+      const localValue = window.localStorage?.getItem(key);
+      if (allowed.includes(localValue)) return localValue;
+    } catch {}
+    return fallback;
+  }
+
+  function persistStoredChoice(key, value) {
+    try { window.sessionStorage?.setItem(key, value); } catch {}
+    try { window.localStorage?.setItem(key, value); } catch {}
+  }
+
+  function setWorkView(view, { focus = false, persist = true } = {}) {
+    currentWorkView = WORK_VIEWS.includes(view) ? view : "run";
+    workViewTabs.forEach((tab) => {
+      const selected = tab.dataset.liveWorkView === currentWorkView;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      tab.dataset.active = selected ? "true" : "false";
+      if (selected && focus) tab.focus();
+    });
+    const graphPanel = app.querySelector("[data-live-run-view]");
+    if (repositoryView) repositoryView.hidden = currentWorkView !== "repository";
+    if (workspaceView) workspaceView.hidden = currentWorkView !== "workspace";
+    if (graphPanel) graphPanel.hidden = currentWorkView !== "run";
+    workspace?.setAttribute("data-work-view", currentWorkView);
+    if (currentWorkView !== "run") setInspectorOpen(false);
+    if (persist) persistStoredChoice(WORK_VIEW_STORAGE_KEY, currentWorkView);
+    if (currentWorkView === "run" && currentSnapshot) {
+      const refreshCamera = () => reconcileCamera();
+      if (window.requestAnimationFrame) window.requestAnimationFrame(refreshCamera);
+      else refreshCamera();
+    }
+  }
+
+  function setInspectorTab(tabName, { focus = false } = {}) {
+    currentInspectorTab = INSPECTOR_TABS.includes(tabName) ? tabName : "summary";
+    inspectorTabs.forEach((tab) => {
+      const selected = tab.dataset.liveInspectorTab === currentInspectorTab;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected && focus) tab.focus();
+    });
+    inspectorPanels.forEach((panel) => {
+      const selected = panel.dataset.liveInspectorPanel === currentInspectorTab;
+      panel.hidden = !selected;
+      if (selected) setText(evidenceCount, String(Number(panel.dataset.itemCount) || 0).padStart(2, "0"), "00");
+    });
+  }
+
+  function bindRovingTabs(tabs, values, select) {
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => select(tab.dataset.liveWorkView || tab.dataset.liveInspectorTab, { focus: false }));
+      tab.addEventListener("keydown", (event) => {
+        const current = values.indexOf(tab.dataset.liveWorkView || tab.dataset.liveInspectorTab);
+        if (current < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? values.length - 1
+            : (current + (event.key === "ArrowRight" ? 1 : -1) + values.length) % values.length;
+        select(values[next], { focus: true });
+      });
+    });
+  }
+
+  function repositionCameraAfterInspector(active) {
+    const reposition = () => reconcileCamera({ inspectorOpen: active });
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(reposition));
+    } else {
+      window.setTimeout(reposition, 0);
+    }
+    workspace?.addEventListener("transitionend", reposition, { once: true });
+  }
+
+  function followTargetId() {
+    return selectedNodeId
+      || currentSnapshot?.replay[currentReplayIndex]?.nodeId
+      || currentSnapshot?.nodes.find((node) => node.status === "running")?.id
+      || null;
+  }
+
+  function reconcileCamera({ inspectorOpen = evidencePanel?.dataset.open === "true" } = {}) {
+    if (!graph || !currentSnapshot) return;
+    if (cameraMode === "overview") {
+      fitGraph();
+      return;
+    }
+    if (cameraMode === "follow") {
+      if (inspectorOpen && camera.scale < .68) updateCamera({ ...camera, scale: .68 });
+      centerGraphNode(followTargetId());
+      return;
+    }
+    updateMinimap();
+  }
+
+  function modalBackgroundElements() {
+    const skipLink = document.querySelector(".skip-link");
+    return [skipLink, ...Array.from(app.children).filter((child) => !child.matches("[data-live-dialog]"))]
+      .filter(Boolean);
+  }
+
+  function setModalBackgroundIsolated(active) {
+    for (const background of modalBackgroundElements()) {
+      if (active && !modalBackgroundState.has(background)) {
+        modalBackgroundState.set(background, {
+          ariaHidden: background.getAttribute("aria-hidden"),
+          inert: background.inert,
+        });
+      }
+      background.inert = active;
+      if (active) background.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function restoreModalBackground() {
+    for (const [background, state] of modalBackgroundState) {
+      background.inert = state.inert;
+      if (state.ariaHidden === null) background.removeAttribute("aria-hidden");
+      else background.setAttribute("aria-hidden", state.ariaHidden);
+    }
+    modalBackgroundState.clear();
+  }
+
+  function dialogFocusables(dialog) {
+    return Array.from(dialog?.querySelectorAll(FOCUSABLE_DIALOG_SELECTOR) || [])
+      .filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+  }
+
+  function trapDialogFocus(event) {
+    if (event.key !== "Tab" || !activeDialog || activeDialog.hidden) return;
+    const focusable = dialogFocusables(activeDialog);
+    if (!focusable.length) {
+      event.preventDefault();
+      activeDialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const focusInside = activeDialog.contains(document.activeElement);
+    if (event.shiftKey && (!focusInside || document.activeElement === first)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (!focusInside || document.activeElement === last)) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function setDialogOpen(dialog, open) {
+    if (!dialog) return;
+    const active = Boolean(open);
+    if (active) {
+      for (const other of [sessionsDialog, helpDialog, infoDialog]) {
+        if (other && other !== dialog) {
+          other.hidden = true;
+          other.setAttribute("aria-hidden", "true");
+        }
+      }
+      if (!activeDialog) dialogOpener = document.activeElement;
+      activeDialog = dialog;
+      setModalBackgroundIsolated(true);
+    }
+    dialog.hidden = !active;
+    dialog.setAttribute("aria-hidden", String(!active));
+    if (active) dialog.querySelector("button, select, [tabindex]")?.focus();
+    else if (activeDialog === dialog) {
+      activeDialog = null;
+      restoreModalBackground();
+      if (dialogOpener && typeof dialogOpener.focus === "function") dialogOpener.focus();
+      dialogOpener = null;
+    }
+  }
+
+  function closeTransientUi() {
+    for (const dialog of [sessionsDialog, helpDialog, infoDialog]) setDialogOpen(dialog, false);
   }
 
   function updateMinimap() {
     if (!graphMinimap || !graphMinimapScene || !graphMinimapViewport) return;
+    const graphWidth = Math.max(1, graph?.clientWidth || 760);
+    const graphHeight = Math.max(1, graph?.clientHeight || 420);
+    const overflowing = graphState.bounds.width > graphWidth * 1.05 || graphState.bounds.height > graphHeight * 1.05;
+    graphMinimap.hidden = !overflowing;
+    if (!overflowing) return;
     const miniWidth = Math.max(1, graphMinimap.clientWidth || 180);
     const miniHeight = Math.max(1, graphMinimap.clientHeight || 100);
     const miniScale = Math.min((miniWidth - 12) / Math.max(1, graphState.bounds.width), (miniHeight - 12) / Math.max(1, graphState.bounds.height));
@@ -904,12 +1495,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const width = graph.clientWidth || 760;
     const height = graph.clientHeight || 420;
     const padding = 26;
-    const scale = Math.max(.28, Math.min(1.1, Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height)));
+    const scale = Math.max(.42, Math.min(1.1, Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height)));
     updateCamera({
       scale,
       x: (width - graphState.bounds.width * scale) / 2,
       y: (height - graphState.bounds.height * scale) / 2,
     });
+    setCameraMode("overview");
   }
 
   function zoomGraph(factor, anchorX, anchorY) {
@@ -920,6 +1512,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const worldY = (localY - camera.y) / camera.scale;
     const scale = Math.max(.28, Math.min(1.6, camera.scale * factor));
     updateCamera({ scale, x: localX - worldX * scale, y: localY - worldY * scale });
+    setCameraMode("manual");
   }
 
   function updateSelectedNodeVisuals() {
@@ -932,27 +1525,128 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const linked = selected
       ? currentSnapshot.evidence.filter((item) => item.nodeId === selected.id)
       : [];
+    const provenance = selected
+      ? currentSnapshot.provenance.find((item) => item.nodeId === selected.id) || null
+      : null;
+    const promptIds = new Set([
+      provenance?.triggerPromptId,
+      ...currentSnapshot?.toolCalls.filter((item) => selected && item.nodeId === selected.id).map((item) => item.promptId) || [],
+    ].filter(Boolean));
+    const prompts = selected
+      ? currentSnapshot.prompts.filter((item) => item.nodeId === selected.id || promptIds.has(item.id))
+      : [];
+    const activePrompt = prompts.at(-1) || null;
+    const nodeTools = selected ? currentSnapshot.toolCalls.filter((item) => item.nodeId === selected.id) : [];
+    const nodeEvents = selected ? currentSnapshot.replay.filter((item) => item.nodeId === selected.id) : [];
+    const toolCount = selected ? Math.max(selected.toolCount, nodeTools.length) : 0;
     setText(selectedNodeLabel, selected ? "Selected · " + selected.label : "Select a node to inspect provenance", "Select a node to inspect provenance");
-    setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
+    setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") + " · " + nodeTools.length + " tools · " + nodeEvents.length + " events" : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
     setText(selectedNodeStatus, selected ? "Status · " + selected.status : "Status · —", "Status · —");
     setText(selectedNodeOwner, selected ? "Owner · " + selected.agent : "Owner · —", "Owner · —");
     setText(selectedNodeRuntime, selected ? "Runtime · " + selected.runtime : "Runtime · —", "Runtime · —");
+    setText(selectedNodeModel, selected ? "Model · " + (selected.model || "—") : "Model · —", "Model · —");
+    setText(selectedNodeDuration, selected ? "Duration · " + formatDuration(selected.firstAt, selected.lastAt) : "Duration · —", "Duration · —");
+    setText(selectedNodeTools, selected ? "Tools · " + toolCount + (usefulNodeMeta(selected.latestTool) ? " · " + selected.latestTool : "") : "Tools · —", "Tools · —");
+    setText(selectedNodeTokens, selected ? "Tokens · " + selected.outputTokens : "Tokens · —", "Tokens · —");
+    if (selectedNodeLoadout) {
+      const loadout = selected?.loadout || {};
+      const labels = [
+        ["skills", loadout.skillNames, "skills"],
+        ["mcp", loadout.mcpNames, "MCP"],
+        ["tools", loadout.toolNames, "tools"],
+        ["commands", loadout.commandNames, "commands"],
+      ].filter(([, names, key]) => Number(loadout[key]) > 0 || names?.length);
+      const detail = labels.map(([, names, key]) => {
+        const count = Number(loadout[key]) || names?.length || 0;
+        return key.toUpperCase() + " " + count + (names?.length ? " · " + names.slice(0, 4).join(", ") : "");
+      }).join(" | ");
+      setText(selectedNodeLoadout, selected ? "Loadout · " + (detail || "—") : "Loadout · —", "Loadout · —");
+    }
     setText(selectedNodeSummary, selected ? selected.summary : "Select a node to inspect its execution summary.", "Select a node to inspect its execution summary.");
-    setText(selectedNodeEvidenceDetail, linked[0]?.detail || (selected ? "No evidence detail is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.");
-    evidenceList?.querySelectorAll("[data-evidence-id]").forEach((entry) => {
-      const associated = Boolean(selected && entry.dataset.nodeId === selected.id);
-      entry.dataset.associated = associated ? "true" : "false";
-    });
+    setText(selectedNodeEvidenceDetail, selected?.terminalEvidence || linked[0]?.detail || (selected ? "No terminal evidence is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.");
+    setText(selectedNodeProvenance, selected ? "Source · " + (provenance?.reasoningExcerpt || (selected.parentId ? "spawned by " + selected.parentId : "run root")) : "Source · —", "Source · —");
+    setText(selectedNodePrompt, selected ? "Prompt era · " + (activePrompt ? activePrompt.label + " · " + activePrompt.excerpt : "—") : "Prompt era · —", "Prompt era · —");
+    renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents });
+  }
+
+  function renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents }) {
+    const renderItems = (list, panelName, items, emptyMessage) => {
+      clearChildren(list);
+      const panel = inspectorPanels.find((item) => item.dataset.liveInspectorPanel === panelName);
+      if (panel) panel.dataset.itemCount = String(items.length);
+      if (!items.length) {
+        list?.append(makeElement("p", "panel-empty", emptyMessage));
+        return;
+      }
+      items.forEach((item) => {
+      const entry = makeElement("article", "evidence-item history-item history-" + item.kind);
+      entry.dataset.evidenceId = item.id;
+      entry.dataset.nodeId = item.nodeId || selected?.id || "";
+      entry.dataset.associated = selected && entry.dataset.nodeId === selected.id ? "true" : "false";
+      entry.dataset.historyKind = item.kind;
+      if (item.transferState) {
+        entry.dataset.transferState = item.transferState;
+        entry.dataset.deliveryObserved = item.transferState === "observed" || item.transferState === "accepted" ? "true" : "false";
+      }
+      entry.setAttribute("role", "listitem");
+      const top = makeElement("div", "evidence-item-top");
+      const label = makeElement("span", "evidence-kind", item.kind + " · " + item.label);
+      top.append(label, makeElement("time", "evidence-time", formatTime(item.at)));
+      const detail = makeElement("p", "evidence-detail", item.detail);
+      const footer = makeElement("div", "history-footer");
+      footer.append(makeElement("span", "evidence-status evidence-status-" + nodeClass(normalizedNodeStatus(item.status)), item.status));
+      if (item.sourceRef) footer.append(makeElement("span", "history-source", item.sourceRef));
+      entry.append(top, detail, footer);
+        list?.append(entry);
+      });
+    };
+    const selectedEvidence = selected ? linked : currentSnapshot?.evidence || [];
+    const conversation = (selected ? prompts : currentSnapshot?.prompts || []).map((item) => ({
+      id: item.id, kind: "prompt_summary", label: item.label, detail: "Prompt summary · " + item.excerpt, at: item.at, status: "observed", sourceRef: item.id, nodeId: item.nodeId,
+    }));
+    if (!conversation.length && currentSnapshot?.workspace.transcript.state === "observed") {
+      conversation.push({ id: "transcript-availability", kind: "conversation", label: "Transcript availability", detail: currentSnapshot.workspace.transcript.summary, at: currentSnapshot.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    }
+    const terminal = [
+      ...(selected?.terminalEvidence ? [{ id: selected.id + "-terminal", kind: "terminal", label: "Terminal evidence", detail: selected.terminalEvidence, at: selected.lastAt, status: selected.status, nodeId: selected.id }] : []),
+    ];
+    if (!terminal.length && currentSnapshot?.workspace.terminal.state === "observed") {
+      terminal.push({ id: "terminal-availability", kind: "terminal", label: "Terminal telemetry", detail: currentSnapshot.workspace.terminal.summary, at: currentSnapshot.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    }
+    const changes = [];
+    const changeCount = currentSnapshot?.sessionInfo.fileChangeCount || 0;
+    if (currentSnapshot?.repository.diff.state === "observed") changes.push({ id: "diff-observed", kind: "diff", label: "Diff telemetry", detail: currentSnapshot.repository.diff.summary, at: currentSnapshot.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    if (changeCount > 0) changes.push({ id: "file-snapshots-observed", kind: "file_snapshots", label: changeCount + " file snapshots", detail: "Snapshot count observed; file diff content is not included", at: currentSnapshot?.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    const evidence = [
+      ...selectedEvidence.map((item) => ({ id: item.id, kind: "evidence", label: item.label, detail: item.detail, at: item.at, status: item.status, sourceRef: item.sourceRef, nodeId: item.nodeId })),
+      ...(selected ? nodeTools : currentSnapshot?.toolCalls || []).map((item) => ({ id: item.id, kind: "tool_activity", label: item.name, detail: item.summary, at: item.startedAt || item.endedAt, status: item.state, sourceRef: item.promptId, nodeId: item.nodeId })),
+    ];
+    const transfers = (currentSnapshot?.contextTransfers || [])
+      .filter((item) => !selected || item.fromNodeId === selected.id || item.toNodeId === selected.id)
+      .map((item) => {
+        const counts = [["summaries", item.summaryCount], ["decisions", item.decisionCount], ["files", item.fileCount], ["evidence", item.evidenceCount]].filter(([, value]) => Number.isFinite(value)).map(([label, value]) => value + " " + label).join(" · ");
+        const compact = item.compactionState === "omitted"
+          ? "omitted " + (Number.isFinite(item.omittedCount) ? item.omittedCount : "") + (item.omissionReason ? " · " + item.omissionReason : "")
+          : item.compactionState;
+        const proof = [item.downstreamAcceptanceState, counts, compact, Number.isFinite(item.bytes) ? item.bytes + " bytes" : "", item.digest ? "digest " + item.digest.slice(0, 12) : "", item.evidenceRefs.length ? "evidence refs " + item.evidenceRefs.join(", ") : ""].filter(Boolean).join(" · ");
+        return { id: item.id, kind: item.kind, label: item.fromNodeId + " → " + item.toNodeId, detail: proof || (item.state === "planned" ? "Planned dependency; delivery not observed" : "Context delivery observed"), at: item.observedAt, status: item.state, sourceRef: item.state === "planned" ? "planned · delivery not observed" : item.state + " · delivery observed", nodeId: item.toNodeId, transferState: item.state };
+      });
+    renderItems(conversationList, "conversation", conversation, "Conversation transcript unavailable for this selection.");
+    renderItems(terminalList, "terminal", terminal, "Terminal adapter telemetry unavailable for this selection.");
+    renderItems(changesList, "changes", changes, "Diff telemetry unavailable for this selection.");
+    renderItems(evidenceList, "evidence", evidence, "No observed evidence is linked to this selection.");
+    renderItems(contextTransferList, "context", transfers, "No context transfer records are available for this selection.");
+    const summaryPanel = inspectorPanels.find((item) => item.dataset.liveInspectorPanel === "summary");
+    if (summaryPanel) summaryPanel.dataset.itemCount = selected ? "1" : "0";
+    setInspectorTab(currentInspectorTab);
   }
 
   function selectNode(nodeId, { focus = false } = {}) {
     if (!currentSnapshot || !currentSnapshot.nodes.some((node) => node.id === nodeId)) return;
     selectedNodeId = nodeId;
     updateSelectedNodeVisuals();
-    if (evidenceDrawer?.hidden) {
-      evidenceDrawer.hidden = false;
-      evidenceToggle?.setAttribute("aria-expanded", "true");
-    }
+    setInspectorOpen(true);
+    if (graphFollowing) centerGraphNode(nodeId);
     const node = currentSnapshot.nodes.find((item) => item.id === nodeId);
     if (liveRegion && node) liveRegion.textContent = localize("Selected node: " + node.label);
     if (focus) graphState.nodeElements.get(nodeId)?.focus();
@@ -979,10 +1673,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function renderGraph(snapshot) {
+    const graphNodes = graphNodesForSnapshot(snapshot);
+    const graphEdges = graphEdgesForSnapshot(snapshot, graphNodes);
     clearChildren(nodeList);
     clearChildren(edgeLayer);
     clearChildren(graphMinimapScene);
-    if (!snapshot.nodes.length) {
+    if (!graphNodes.length) {
       if (graphEmpty) graphEmpty.hidden = false;
       graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), bounds: { width: 1, height: 1 } };
       return;
@@ -998,7 +1694,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (edgeLayer) {
       edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
       const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      const markerColors = { running: "#55e6d0", completed: "#75e5aa", failed: "#ff7e92", "in-doubt": "#ff7e92", blocked: "#ffca73", queued: "#6d8dff" };
+      const markerColors = { running: "#58d4cf", completed: "#5b8cff", skipped: "#585858", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#a98bff", queued: "#777777" };
       for (const [status, color] of Object.entries(markerColors)) {
         const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         marker.id = edgeMarkerId(status);
@@ -1016,15 +1712,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
       }
       edgeLayer.append(defs);
     }
-    snapshot.nodes.forEach((node) => {
+    graphNodes.forEach((node) => {
       const card = makeElement("article", "node-card node-" + nodeClass(node.status));
       card.dataset.nodeId = node.id;
       card.dataset.status = node.status;
       card.dataset.replayStatus = node.status;
       card.dataset.selected = "false";
+      card.title = node.task || node.label;
       card.setAttribute("role", "option");
       card.setAttribute("aria-selected", "false");
-      card.setAttribute("aria-label", node.label + ", " + localize(node.status.replaceAll("_", " ")));
+      card.setAttribute("aria-label", node.label + ", " + localize(node.status.replaceAll("_", " ")) + ", " + node.toolCount + " tools, " + node.outputTokens + " tokens");
       card.tabIndex = 0;
       const position = layout.positions.get(node.id) || { x: 32, y: 32, width: 132, height: 76 };
       card.style.left = position.x + "px";
@@ -1037,15 +1734,48 @@ const CLIENT_SCRIPT = String.raw`(() => {
       top.append(marker, makeElement("span", "node-status", localize(node.status.replaceAll("_", " "))));
       const heading = makeElement("h3", "node-title", node.label);
       const summary = makeElement("p", "node-summary", node.summary);
-      const meta = makeElement("div", "node-meta");
-      const agent = makeElement("span", "node-meta-item node-agent", node.agent);
+      const proof = makeElement(
+        "div",
+        "node-proof",
+        node.evidenceCount
+          ? (["pending", "queued"].includes(node.status) ? "planned · " : "observed · ") + node.evidenceCount + " evidence"
+          : ["pending", "queued"].includes(node.status) ? "planned · awaiting host evidence" : "no evidence linked",
+      );
+      const meta = makeElement("div", "node-meta activity-chips");
+      const role = makeElement("span", "node-meta-item activity-chip chip-role", node.role);
+      role.title = localize("Role");
+      const agent = makeElement("span", "node-meta-item activity-chip chip-owner", node.agent);
       agent.title = localize("Agent");
+      const runtime = makeElement("span", "node-meta-item activity-chip chip-runtime", node.runtime);
+      runtime.title = localize("Runtime");
+      const model = makeElement("span", "node-meta-item activity-chip chip-model", node.model || "model unavailable");
+      model.title = localize("Model");
+      const tools = makeElement("span", "node-meta-item activity-chip chip-tools", node.toolCount + " tools" + (usefulNodeMeta(node.latestTool) ? " · " + node.latestTool : ""));
+      tools.title = localize("Tool activity");
+      const tokens = makeElement("span", "node-meta-item activity-chip chip-tokens", node.outputTokens + " tok");
+      tokens.title = localize("Output tokens");
+      const evidence = makeElement("span", "node-meta-item activity-chip chip-evidence", node.evidenceCount + " evidence");
+      evidence.title = localize("Observed evidence");
+      const loadout = node.loadout || {};
+      const loadoutTotal = [loadout.skills, loadout.mcp, loadout.tools, loadout.commands]
+        .map((value) => Number(value) || 0)
+        .reduce((sum, value) => sum + value, 0);
+      const loadoutChip = makeElement("span", "node-meta-item activity-chip chip-loadout", loadoutTotal + " loadout");
+      loadoutChip.title = "Declared capability loadout";
+      if (usefulNodeMeta(role.textContent)) meta.append(role);
       if (usefulNodeMeta(agent.textContent)) meta.append(agent);
+      if (usefulNodeMeta(runtime.textContent)) meta.append(runtime);
+      if (usefulNodeMeta(node.model)) meta.append(model);
+      if (node.toolCount || usefulNodeMeta(node.latestTool)) meta.append(tools);
+      if (node.outputTokens) meta.append(tokens);
+      if (node.evidenceCount) meta.append(evidence);
+      if (loadoutTotal) meta.append(loadoutChip);
+      if (usefulNodeMeta(node.firstAt) || usefulNodeMeta(node.lastAt)) meta.append(makeElement("span", "node-meta-item activity-chip chip-duration", formatDuration(node.firstAt, node.lastAt)));
       if (!meta.childElementCount) meta.hidden = true;
-      card.append(top, heading, summary, meta);
-      const parent = snapshot.edges.find((edge) => edge.to === node.id);
+      card.append(top, heading, summary, proof, meta);
+      const parent = graphEdges.find((edge) => edge.to === node.id);
       if (parent) {
-        const parentNode = snapshot.nodes.find((candidate) => candidate.id === parent.from);
+        const parentNode = graphNodes.find((candidate) => candidate.id === parent.from);
         const linkHint = makeElement("p", "node-connection", localize("↳ from " + (parentNode?.label || parent.from)));
         card.append(linkHint);
       }
@@ -1062,7 +1792,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       graphState.nodeElements.set(node.id, card);
     });
 
-    for (const edge of snapshot.edges) {
+    for (const edge of graphEdges) {
       const from = layout.positions.get(edge.from);
       const to = layout.positions.get(edge.to);
       if (!from || !to || !edgeLayer) continue;
@@ -1077,7 +1807,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       graphState.edgeElements.set(edge.id, path);
     }
 
-    for (const node of snapshot.nodes) {
+    for (const node of graphNodes) {
       const position = layout.positions.get(node.id);
       if (!position || !graphMinimapScene) continue;
       const miniNode = makeElement("span", "minimap-node minimap-node-" + nodeClass(node.status));
@@ -1090,6 +1820,32 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     updateCamera(camera);
     updateSelectedNodeVisuals();
+  }
+
+  function renderStageRail(snapshot) {
+    if (!stageRail) return;
+    clearChildren(stageRail);
+    const current = String(snapshot.run?.currentStage || "").toLowerCase();
+    const currentIndex = STAGE_ORDER.indexOf(current);
+    const terminalRun = ["completed", "failed", "blocked"].includes(String(snapshot.run?.status || "").toLowerCase());
+    const events = snapshot.replay || [];
+    STAGE_ORDER.forEach((stageName, index) => {
+      const stageEvents = events.filter((event) => String(event.stage || event.chapter || "").toLowerCase() === stageName);
+      const latest = stageEvents.at(-1);
+      const state = currentIndex >= 0
+        ? index < currentIndex || (index === currentIndex && terminalRun) ? "completed" : index === currentIndex ? "current" : "upcoming"
+        : latest?.status === "completed" ? "completed" : "upcoming";
+      const item = makeElement("li", "stage-step");
+      item.dataset.state = state;
+      item.setAttribute("role", "listitem");
+      item.append(
+        makeElement("span", "stage-step-marker", String(index + 1).padStart(2, "0")),
+        makeElement("span", "stage-step-copy", ""),
+      );
+      const copy = item.lastElementChild;
+      copy.append(makeElement("span", "stage-step-name", localize(stageName)), makeElement("span", "stage-step-state", localize(state)));
+      stageRail.append(item);
+    });
   }
 
   function renderEvidence(snapshot) {
@@ -1124,6 +1880,101 @@ const CLIENT_SCRIPT = String.raw`(() => {
     updateSelectedNodeVisuals();
   }
 
+  function renderSessionInfo(snapshot) {
+    if (!infoFacts) return;
+    clearChildren(infoFacts);
+    const session = snapshot.sessionInfo || {};
+    const loadoutTotals = snapshot.nodes.reduce((totals, node) => {
+      const loadout = node.loadout || {};
+      totals.skills += Number(loadout.skills) || 0;
+      totals.mcp += Number(loadout.mcp) || 0;
+      totals.tools += Number(loadout.tools) || 0;
+      totals.commands += Number(loadout.commands) || 0;
+      return totals;
+    }, { skills: 0, mcp: 0, tools: 0, commands: 0 });
+    const facts = [
+      ["Mode", session.mode],
+      ["Runtime", session.runtime],
+      ["Workers", String(session.workerCount) + " total · " + String(session.completedCount) + " completed · " + String(session.plannedCount) + " queued"],
+      ["Events", String(snapshot.replay.length) + " replay events · " + String(snapshot.evidence.length) + " evidence"],
+      ["Snapshots", String(session.fileChangeCount) + " file snapshots · " + String(session.artifactCount) + " artifacts"],
+      ["Loadout", loadoutTotals.skills + " skills · " + loadoutTotals.mcp + " MCP · " + loadoutTotals.tools + " tools · " + loadoutTotals.commands + " commands"],
+      ["Terminal", String(session.failedCount) + " failed · " + String(session.blockedCount) + " blocked"],
+      ["Proof", session.proofState],
+    ];
+    facts.forEach(([label, value]) => {
+      const row = makeElement("div", "info-fact-row");
+      row.append(makeElement("span", "info-fact-label", localize(label)), makeElement("span", "info-fact-value", display(value, "—")));
+      infoFacts.append(row);
+    });
+    const prompt = makeElement("div", "info-fact-prompt");
+    prompt.append(makeElement("span", "info-fact-label", localize("Prompt summary")), makeElement("p", "info-fact-value", session.lastPromptSummary));
+    infoFacts.append(prompt);
+  }
+
+  function appendOperationalRow(container, label, value, state = "unavailable") {
+    if (!container) return;
+    const row = makeElement("div", "operational-row");
+    row.dataset.state = state;
+    row.append(makeElement("span", "operational-label", label), makeElement("strong", "operational-value", value));
+    container.append(row);
+  }
+
+  function renderRepositoryView(snapshot) {
+    const project = projectForSelection();
+    const repository = snapshot.repository || {};
+    setText(repositoryTitle, repository.name?.state === "observed" ? repository.name.summary : project?.displayName || "Registered project", "Registered project");
+    setText(repositoryBoundary, "Repository boundary · " + (project?.projectId || "unavailable"), "Repository boundary unavailable");
+    clearChildren(repositoryFacts);
+    for (const [label, fact] of [
+      ["Branch", repository.branch],
+      ["Worktree", repository.worktree],
+      ["Pull request", repository.pullRequest],
+      ["Diff", repository.diff],
+    ]) appendOperationalRow(repositoryFacts, label, fact?.summary || "Unavailable", fact?.state || "unavailable");
+    clearChildren(repositorySessions);
+    const sessions = project?.sessions || [];
+    if (!sessions.length) {
+      repositorySessions?.append(makeElement("p", "panel-empty", "No observed workspace sessions."));
+      return;
+    }
+    sessions.forEach((session) => {
+      const row = makeElement("button", "workspace-child");
+      row.type = "button";
+      row.dataset.runId = session.runId;
+      row.dataset.active = session.runId === selectedRunId ? "true" : "false";
+      row.append(
+        makeElement("span", "workspace-child-title", session.title),
+        makeElement("span", "workspace-child-meta", (session.active ? "Active workspace" : "Observed workspace") + " · " + session.currentStage + " · " + formatSessionTime(session.updatedAt)),
+      );
+      row.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
+      repositorySessions?.append(row);
+    });
+  }
+
+  function renderWorkspaceView(snapshot) {
+    const selectedSession = projectForSelection()?.sessions.find((session) => session.runId === selectedRunId) || null;
+    const workspaceData = snapshot.workspace || {};
+    const session = snapshot.sessionInfo || {};
+    setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace");
+    setText(workspaceBoundary, "Workspace boundary · " + (workspaceData.workspaceId?.state === "observed" ? workspaceData.workspaceId.summary : snapshot.run.id), "Workspace boundary unavailable");
+    clearChildren(workspaceFacts);
+    const plan = session.plannedCount || session.completedCount
+      ? { state: "observed", summary: session.completedCount + " completed · " + session.plannedCount + " queued" }
+      : { state: "unavailable", summary: "Plan telemetry unavailable" };
+    const thread = workspaceData.transcript;
+    const terminal = workspaceData.terminal;
+    const changes = snapshot.repository.diff.state === "observed"
+      ? snapshot.repository.diff
+      : { state: "unavailable", summary: session.fileChangeCount ? session.fileChangeCount + " file snapshots observed · diff telemetry unavailable" : "Diff telemetry unavailable" };
+    const review = snapshot.replay.some((event) => event.stage === "review" || event.chapter === "review")
+        ? { state: "observed", summary: "Review-stage activity observed" }
+        : { state: "unavailable", summary: "Review telemetry unavailable" };
+    for (const [label, fact] of [["Plan", plan], ["Conversation", thread], ["Terminal", terminal], ["Changes", changes], ["Review", review]]) {
+      appendOperationalRow(workspaceFacts, label, fact?.summary || "Telemetry unavailable", fact?.state || "unavailable");
+    }
+  }
+
   function renderReplay(snapshot) {
     const events = snapshot.replay;
     clearChildren(replayEvents);
@@ -1147,8 +1998,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     events.forEach((event, index) => {
       const item = makeElement("li", "replay-event");
       item.dataset.replayIndex = String(index);
+      item.dataset.status = event.status;
+      item.dataset.kind = event.kind;
+      const nearbyToolActivity = events.slice(Math.max(0, index - 2), Math.min(events.length, index + 3)).filter((candidate) => candidate.kind === "tool_start" || candidate.kind === "tool_end" || candidate.toolCallId).length;
+      item.dataset.toolDensity = String(Math.min(4, nearbyToolActivity));
       const marker = makeElement("span", "replay-event-marker", "");
       marker.setAttribute("aria-hidden", "true");
+      marker.title = localize(event.kind.replaceAll("_", " "));
       item.append(marker, makeElement("span", "replay-event-time", formatTime(event.at)), makeElement("span", "replay-event-label", event.label));
       item.tabIndex = 0;
       item.setAttribute("role", "button");
@@ -1363,6 +2219,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     replayEvents?.querySelectorAll("[data-replay-index]").forEach((element) => {
       const active = Number(element.dataset.replayIndex) === currentReplayIndex;
       element.dataset.active = active ? "true" : "false";
+      if (active) element.scrollIntoView?.({ behavior: "auto", block: "nearest", inline: "nearest" });
     });
     if (replayPrev) replayPrev.disabled = currentReplayIndex <= 0 || events.length < 2;
     if (replayNext) replayNext.disabled = currentReplayIndex >= max || events.length < 2;
@@ -1370,10 +2227,21 @@ const CLIENT_SCRIPT = String.raw`(() => {
       replayLive.disabled = events.length < 1;
       replayLive.dataset.active = replayFollowingLive ? "true" : "false";
     }
+    const visibleNodeIds = new Set();
+    for (const event of events.slice(0, currentReplayIndex + 1)) {
+      if (event.nodeId && (event.visibility === "visible" || ["agent", "workflow", "spawn", "stage"].includes(event.kind))) {
+        visibleNodeIds.add(event.nodeId);
+      }
+    }
+    const mainNode = currentSnapshot.nodes.find((node) => node.isMain);
+    if (mainNode && currentReplayIndex >= 0) visibleNodeIds.add(mainNode.id);
     nodeList?.querySelectorAll("[data-node-id]").forEach((element) => {
       const active = events[currentReplayIndex]?.nodeId && element.dataset.nodeId === events[currentReplayIndex].nodeId;
       element.dataset.replayActive = active ? "true" : "false";
-      let replayState = element.dataset.status || "queued";
+      const visible = visibleNodeIds.has(element.dataset.nodeId);
+      element.dataset.replayVisible = visible ? "true" : "false";
+      element.setAttribute("aria-hidden", String(!visible));
+      let replayState = visible ? "queued" : "queued";
       for (const event of events.slice(0, currentReplayIndex + 1)) {
         if (event.nodeId === element.dataset.nodeId) replayState = event.status;
       }
@@ -1382,10 +2250,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (events[currentReplayIndex]?.nodeId && currentSnapshot.nodes.some((node) => node.id === events[currentReplayIndex].nodeId)) {
       selectedNodeId = events[currentReplayIndex].nodeId;
       updateSelectedNodeVisuals();
+      if (graphFollowing) centerGraphNode(selectedNodeId);
     }
     for (const edge of currentSnapshot.edges) {
       const path = graphState.edgeElements.get(edge.id);
       if (!path) continue;
+      const edgeVisible = visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to);
+      path.dataset.replayVisible = edgeVisible ? "true" : "false";
+      path.style.opacity = edgeVisible ? "" : "0";
       let replayState = edge.status;
       let hasReplayState = false;
       for (const event of events.slice(0, currentReplayIndex + 1)) {
@@ -1446,6 +2318,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
           currentStage: display(session.currentStage, "—"),
           runtime: display(session.runtime, "local"),
           updatedAt: display(session.updatedAt, ""),
+          activity: display(firstValue(session, ["activity", "latestActivity", "summary"], session.currentStage), "—"),
+          workerCount: Math.max(0, numberOr(firstValue(session, ["workerCount", "agentCount", "nodeCount"], 0), 0)),
+          eventCount: Math.max(0, numberOr(firstValue(session, ["eventCount", "totalEvents"], 0), 0)),
           active: session.active === true,
         };
       }).filter(Boolean);
@@ -1523,11 +2398,51 @@ const CLIENT_SCRIPT = String.raw`(() => {
           + formatSessionTime(session.updatedAt)
           + " · " + localize(session.currentStage)
           + " · " + session.title
+          + (session.workerCount ? " · " + session.workerCount + " workers" : "")
+          + (session.eventCount ? " · " + session.eventCount + " events" : "")
           + " · #" + session.runId.slice(-6),
       })),
       selectedRunId,
       project ? "No governed runs yet" : "Select a project first",
     );
+    renderSessionCards(sessions);
+  }
+
+  function renderSessionCards(sessions) {
+    clearChildren(sessionList);
+    if (!sessionList) return;
+    if (!sessions.length) {
+      sessionList.append(makeElement("p", "panel-empty", "No governed runs yet"));
+      return;
+    }
+    const visibleSessions = sessions.slice(0, 64);
+    visibleSessions.forEach((session) => {
+      const card = makeElement("button", "session-card");
+      card.type = "button";
+      card.dataset.runId = session.runId;
+      card.dataset.active = session.runId === selectedRunId ? "true" : "false";
+      const heading = makeElement("span", "session-card-title", session.title);
+      const activity = makeElement("span", "session-card-activity", session.activity || session.currentStage || "Observed");
+      const facts = makeElement("span", "session-card-facts");
+      facts.append(
+        makeElement("span", "", formatSessionTime(session.updatedAt)),
+        makeElement("span", "", session.workerCount + " workers"),
+        makeElement("span", "", session.eventCount + " events"),
+        makeElement("span", "", session.runtime),
+      );
+      card.append(heading, activity, facts);
+      card.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
+      sessionList.append(card);
+    });
+    if (sessions.length > visibleSessions.length) {
+      sessionList.append(makeElement(
+        "p",
+        "panel-empty",
+        currentLanguage === "zh"
+          ? "显示最近 " + visibleSessions.length + "/" + sessions.length + " 个会话"
+          : "Showing the newest " + visibleSessions.length + " of " + sessions.length + " sessions",
+      ));
+    }
   }
 
   function defaultSessionFor(project, preferredRunId = "") {
@@ -1591,12 +2506,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (generation === selectionGeneration) connectEvents(generation);
   }
 
-  async function loadProjectCatalog({ refresh = false } = {}) {
-    try {
-      const response = await fetch(projectsEndpoint, { headers: { accept: "application/json" } });
-      if (!response.ok) throw new Error("project catalog request failed");
-      const catalog = normalizeCatalog(await response.json());
-      if (!catalog) throw new Error("project catalog unavailable");
+  async function applyProjectCatalog(catalog, { refresh = false } = {}) {
       catalogAvailable = true;
       projectCatalog = catalog.projects;
       if (refresh && selectedProjectId) {
@@ -1624,6 +2534,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const preferredRunId = requested.runId || (project.projectId === catalog.selected.projectId ? catalog.selected.runId : "");
       await switchSelection(project.projectId, preferredRunId, { updateUrl: true });
       return true;
+  }
+
+  async function loadProjectCatalog({ refresh = false } = {}) {
+    if (catalogRequestInFlight) return catalogAvailable;
+    catalogRequestInFlight = true;
+    try {
+      const response = await fetch(projectsEndpoint, { headers: { accept: "application/json" } });
+      if (!response.ok) throw new Error("project catalog request failed");
+      const catalog = normalizeCatalog(await response.json());
+      if (!catalog) throw new Error("project catalog unavailable");
+      return await applyProjectCatalog(catalog, { refresh });
     } catch {
       if (refresh && catalogAvailable) {
         setHubStatus("Project catalog refresh paused · showing the last verified list");
@@ -1635,12 +2556,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
       populateSessionSelect();
       setHubStatus("Current project mode · global catalog unavailable");
       return false;
+    } finally {
+      catalogRequestInFlight = false;
     }
   }
 
   function showEmpty(message) {
     if (emptyState) emptyState.hidden = false;
-    for (const element of [runHero, runFacts, workspace, replayPanel]) {
+    for (const element of [workspace, replayPanel]) {
       if (element) element.hidden = true;
     }
     if (message) setText(app.querySelector("[data-live-empty-message]"), message, "Waiting for a run snapshot");
@@ -1648,7 +2571,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function hideEmpty() {
     if (emptyState) emptyState.hidden = true;
-    for (const element of [runHero, runFacts, workspace, replayPanel]) {
+    for (const element of [workspace, replayPanel]) {
       if (element) element.hidden = false;
     }
   }
@@ -1657,26 +2580,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const selectedSession = projectForSelection()?.sessions.find((session) => session.runId === selectedRunId) || null;
     const inputRun = input?.run && typeof input.run === "object" && !Array.isArray(input.run) ? input.run : null;
     const genericTitle = ["", "Live execution", "Observed execution"].includes(display(inputRun?.title, ""));
-    const selectedStageIndex = STAGE_ORDER.indexOf(display(selectedSession?.currentStage, "").toLowerCase());
-    const readableNodes = selectedStageIndex >= 0 && Array.isArray(input?.nodes)
-      ? input.nodes.map((node) => {
-          const index = stageIndex(node && typeof node === "object" ? node : {});
-          const status = display(node?.status || node?.state, "in_doubt").toLowerCase();
-          if (index < 0 || !["in_doubt", "in doubt", "queued", "pending"].includes(status)) return node;
-          return {
-            ...node,
-            status: index < selectedStageIndex
-              ? "completed"
-              : index === selectedStageIndex && selectedSession.active
-                ? "running"
-                : "queued",
-          };
-        })
-      : input?.nodes;
     const enrichedInput = selectedSession && input && typeof input === "object" && !Array.isArray(input)
       ? {
           ...input,
-          nodes: readableNodes,
           run: {
             ...(inputRun || {}),
             title: genericTitle ? selectedSession.title : inputRun?.title,
@@ -1705,11 +2611,25 @@ const CLIENT_SCRIPT = String.raw`(() => {
     renderStageRail(snapshot);
     renderGraph(snapshot);
     renderEvidence(snapshot);
+    renderSessionInfo(snapshot);
+    renderRepositoryView(snapshot);
+    renderWorkspaceView(snapshot);
     renderReplay(snapshot);
     renderControlPanel(snapshot);
+    setWorkView(currentWorkView, { persist: false });
     if (firstSnapshot) {
-      if (window.requestAnimationFrame) window.requestAnimationFrame(fitGraph);
-      else fitGraph();
+      const establishInitialCamera = () => {
+        fitGraph();
+        setCameraMode("overview");
+        if (window.matchMedia?.("(max-width: 720px)").matches) {
+          graph?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        }
+      };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(establishInitialCamera);
+      else establishInitialCamera();
+    } else if (cameraMode === "follow") {
+      if (window.requestAnimationFrame) window.requestAnimationFrame(() => reconcileCamera());
+      else reconcileCamera();
     }
     updateConnection(snapshot.run.status === "live" ? "live" : "stale", snapshot.run.status === "live" ? "Streaming" : "Snapshot loaded");
   }
@@ -1838,18 +2758,57 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
-  evidenceToggle?.addEventListener("click", () => {
-    const next = evidenceDrawer?.hidden !== false;
-    if (evidenceDrawer) evidenceDrawer.hidden = !next;
-    evidenceToggle.setAttribute("aria-expanded", String(next));
+  evidenceToggle?.addEventListener("click", () => setInspectorOpen(evidencePanel?.dataset.open !== "true"));
+  evidenceClose?.addEventListener("click", () => setInspectorOpen(false));
+  app.querySelector("[data-live-open-sessions]")?.addEventListener("click", () => setDialogOpen(sessionsDialog, true));
+  app.querySelector("[data-live-open-help]")?.addEventListener("click", () => setDialogOpen(helpDialog, true));
+  app.querySelector("[data-live-open-info]")?.addEventListener("click", () => setDialogOpen(infoDialog, true));
+  app.querySelectorAll("[data-live-dialog-close]").forEach((button) => button.addEventListener("click", () => setDialogOpen(button.closest("[data-live-dialog]"), false)));
+  app.querySelectorAll("[data-live-dialog]").forEach((dialog) => dialog.addEventListener("pointerdown", (event) => {
+    if (event.target === dialog) setDialogOpen(dialog, false);
+  }));
+  graphFollow?.addEventListener("click", () => {
+    setCameraMode("follow");
+    centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId || currentSnapshot?.nodes.find((node) => node.status === "running")?.id);
   });
   app.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    selectedNodeId = null;
-    updateSelectedNodeVisuals();
-    if (evidenceDrawer) evidenceDrawer.hidden = true;
-    evidenceToggle?.setAttribute("aria-expanded", "false");
-    document.activeElement?.blur?.();
+    trapDialogFocus(event);
+    if (event.defaultPrevented) return;
+    const target = event.target;
+    const typing = target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
+    if (event.key === "Escape") {
+      const hadOpenDialog = Boolean(activeDialog);
+      event.preventDefault();
+      closeTransientUi();
+      selectedNodeId = null;
+      updateSelectedNodeVisuals();
+      setInspectorOpen(false);
+      if (!hadOpenDialog) document.activeElement?.blur?.();
+      return;
+    }
+    const interactive = target?.closest?.('button, a, [role="button"], [role="option"], [contenteditable="true"]');
+    const dialogActive = [sessionsDialog, helpDialog, infoDialog].some((dialog) => dialog && !dialog.hidden);
+    if (event.defaultPrevented || typing || interactive || dialogActive) return;
+    const key = event.key.toLowerCase();
+    if (key === "o") { event.preventDefault(); fitGraph(); return; }
+    if (key === "f") {
+      event.preventDefault();
+      setCameraMode("follow");
+      centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId || currentSnapshot?.nodes.find((node) => node.status === "running")?.id);
+      return;
+    }
+    if (key === "r") {
+      event.preventDefault();
+      layoutMode = layoutMode === "flow" ? "compact" : "flow";
+      if (currentSnapshot) { renderGraph(currentSnapshot); fitGraph(); }
+      return;
+    }
+    if (event.key === " ") { event.preventDefault(); toggleReplay(); return; }
+    if (event.key === "[") { event.preventDefault(); replayFollowingLive = false; stopReplay(); updateReplayPosition(currentReplayIndex - 1); return; }
+    if (event.key === "]") { event.preventDefault(); replayFollowingLive = false; stopReplay(); updateReplayPosition(currentReplayIndex + 1); return; }
+    if (event.key === "End") { event.preventDefault(); replayFollowingLive = true; stopReplay(); updateReplayPosition(currentSnapshot?.replay.length ? currentSnapshot.replay.length - 1 : 0); return; }
+    if (event.key === "?") { event.preventDefault(); setDialogOpen(helpDialog, true); return; }
+    if (key === "i") { event.preventDefault(); setDialogOpen(infoDialog, true); }
   });
   replayPlay?.addEventListener("click", toggleReplay);
   replayPrev?.addEventListener("click", () => {
@@ -1895,6 +2854,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   sessionSelect?.addEventListener("change", () => {
     void switchSelection(selectedProjectId, sessionSelect.value, { updateUrl: true });
   });
+  bindRovingTabs(workViewTabs, WORK_VIEWS, setWorkView);
+  bindRovingTabs(inspectorTabs, INSPECTOR_TABS, setInspectorTab);
 
   app.querySelector("[data-live-graph-fit]")?.addEventListener("click", fitGraph);
   app.querySelector("[data-live-graph-zoom-in]")?.addEventListener("click", () => zoomGraph(1.18));
@@ -1910,6 +2871,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const target = event.target;
     if (target?.closest?.("[data-node-id], button, .graph-minimap")) return;
     pointerPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
+    setCameraMode("manual");
     graph.setPointerCapture?.(event.pointerId);
     graph.dataset.panning = "true";
   });
@@ -1928,12 +2890,25 @@ const CLIENT_SCRIPT = String.raw`(() => {
   graph?.addEventListener("wheel", (event) => {
     if (event.target?.closest?.(".graph-minimap")) return;
     event.preventDefault();
+    setCameraMode("manual");
     const rect = graph.getBoundingClientRect();
     zoomGraph(event.deltaY < 0 ? 1.1 : .9, event.clientX - rect.left, event.clientY - rect.top);
   }, { passive: false });
-  window.addEventListener("resize", updateMinimap, { passive: true });
+  window.addEventListener("resize", reconcileCamera, { passive: true });
+  if (window.ResizeObserver && graph) {
+    const graphResizeObserver = new ResizeObserver(() => reconcileCamera());
+    graphResizeObserver.observe(graph);
+    window.addEventListener("beforeunload", () => graphResizeObserver.disconnect(), { once: true });
+  }
 
   applyLanguage();
+  for (const panel of app.querySelectorAll(".share-panel, .control-panel")) infoTools?.append(panel);
+  currentWorkView = safeStoredChoice(WORK_VIEW_STORAGE_KEY, WORK_VIEWS, "run");
+  setWorkView(currentWorkView, { persist: false });
+  setInspectorTab("summary");
+  setCameraMode("overview");
+  setInspectorOpen(false);
+  closeTransientUi();
   const snapshotText = initialElement?.textContent?.trim();
   if (snapshotText && snapshotText !== "null") {
     try {
@@ -1945,7 +2920,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     showEmpty("Waiting for a run snapshot");
   }
   void (async () => {
-    const startedFromCatalog = await loadProjectCatalog();
+    let startedFromCatalog = false;
+    const initialCatalogText = initialCatalogElement?.textContent?.trim();
+    if (initialCatalogText && initialCatalogText !== "null") {
+      try {
+        const initialCatalog = normalizeCatalog(JSON.parse(initialCatalogText));
+        if (initialCatalog) startedFromCatalog = await applyProjectCatalog(initialCatalog);
+      } catch {
+        startedFromCatalog = false;
+      }
+    }
+    if (!startedFromCatalog) startedFromCatalog = await loadProjectCatalog();
+    else void loadProjectCatalog({ refresh: true });
     if (!startedFromCatalog && !catalogAvailable) {
       await loadSnapshot(false);
       connectEvents();
@@ -2196,8 +3182,475 @@ button:focus-visible, [type="range"]:focus-visible, [tabindex]:focus-visible, a:
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
 `;
 
+const CANVAS_FIRST_CSS = String.raw`
+:root {
+  --ink: #f3f4f6;
+  --muted: #a1a6b0;
+  --subtle: #707681;
+  --line: rgba(255, 255, 255, .1);
+  --line-strong: rgba(255, 255, 255, .17);
+  --panel: #111318;
+  --panel-strong: #171a20;
+  --canvas: #090a0d;
+  --cyan: #48d8c6;
+  --blue: #7aa2ff;
+  --amber: #e9b85f;
+  --red: #f27689;
+  --green: #72d99c;
+  --shadow: 0 18px 48px rgba(0, 0, 0, .3);
+}
+
+html, body { height: 100%; }
+body { overflow-x: hidden; background: var(--canvas); }
+.ambient { opacity: .18; background-size: 48px 48px; mask-image: linear-gradient(to bottom, black, transparent 68%); }
+.shell { width: 100%; min-height: 100dvh; padding: 0 .9rem .8rem; }
+.topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 62px; gap: .9rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
+.brand { min-width: 146px; gap: .6rem; }
+.brand-mark { width: 1.8rem; height: 1.8rem; color: #06110f; background: var(--cyan); border-radius: 6px; box-shadow: none; font-size: .72rem; font-weight: 900; }
+.eyebrow { color: var(--subtle); font-size: .56rem; letter-spacing: .11em; }
+.brand-title { margin-top: .08rem; font-size: .78rem; }
+.topbar-actions { justify-content: flex-end; }
+.language-toggle { min-width: 2.5rem; min-height: 34px; border-radius: 6px; background: transparent; }
+.connection { font-size: .7rem; white-space: nowrap; }
+.connection-dot, .status-pulse { width: .42rem; height: .42rem; box-shadow: none; }
+.connection-dot[data-connection="live"], .state-chip[data-state="live"] .status-pulse { box-shadow: 0 0 0 4px rgba(72, 216, 198, .09); }
+.hub-switcher { display: grid; grid-template-columns: minmax(150px, .72fr) minmax(260px, 1.28fr); gap: .55rem; min-width: 0; margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; }
+.hub-field { gap: .2rem; font-size: .53rem; letter-spacing: .08em; }
+.hub-select { min-height: 36px; padding: .42rem 1.8rem .42rem .58rem; color: var(--ink); background: #13161c; border-color: var(--line); border-radius: 6px; font-size: .7rem; }
+.hub-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.main { padding-top: .65rem; }
+.run-hero { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(440px, auto) auto; align-items: center; gap: .85rem; min-height: 70px; padding: .45rem .6rem .6rem; border-bottom: 1px solid var(--line); }
+.run-heading { min-width: 0; }
+.kicker { margin: 0 0 .25rem; color: var(--cyan); font-size: .55rem; letter-spacing: .1em; }
+.run-title { max-width: none; font-size: 1.05rem; line-height: 1.2; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-subtitle { gap: .25rem .65rem; margin-top: .3rem; font-size: .65rem; }
+.run-subtitle span + span::before { margin-right: .65rem; }
+.state-chip { justify-self: end; padding: .42rem .58rem; border-radius: 999px; font-size: .66rem; }
+.run-facts { grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 0; margin: 0; border-left: 1px solid var(--line); }
+.run-fact { padding: .3rem .65rem; background: transparent; border: 0; border-right: 1px solid var(--line); border-radius: 0; }
+.run-fact-primary { background: transparent; }
+.run-fact dt { margin-bottom: .18rem; font-size: .51rem; letter-spacing: .08em; }
+.run-fact dd { color: var(--ink); font-size: .66rem; }
+.workspace-grid { position: relative; display: block; height: clamp(560px, calc(100dvh - 150px), 980px); min-height: 560px; margin-top: .65rem; overflow: hidden; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: none; }
+.graph-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; width: 100%; height: 100%; overflow: hidden; }
+.panel-header { min-height: 48px; padding: .62rem .75rem; }
+.panel-title { font-size: .78rem; letter-spacing: 0; }
+.panel-note { margin-top: .15rem; font-size: .61rem; }
+.graph-header { background: #101216; }
+.graph-header-actions { flex-wrap: nowrap; }
+.graph-tool-button { display: inline-grid; min-width: 32px; min-height: 32px; padding: .28rem .45rem; place-items: center; color: var(--muted); background: transparent; border-color: var(--line); border-radius: 6px; }
+.graph-tool-button:hover, .graph-tool-button:focus-visible, .graph-tool-button[data-active="true"] { color: var(--cyan); border-color: rgba(72, 216, 198, .44); background: rgba(72, 216, 198, .06); }
+.stage-overview { margin: 0; padding: .45rem .55rem; overflow-x: auto; background: #0d0f13; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.stage-rail { grid-template-columns: repeat(8, minmax(112px, 1fr)); gap: .28rem; min-width: 930px; }
+.stage-step { min-height: 34px; padding: .34rem .4rem; background: transparent; border: 1px solid transparent; border-radius: 6px; }
+.stage-step::after { position: absolute; top: 50%; right: -.3rem; width: .3rem; height: 1px; background: var(--line-strong); content: ""; }
+.stage-step:last-child::after { display: none; }
+.stage-step[data-state="current"] { background: rgba(72, 216, 198, .07); border-color: rgba(72, 216, 198, .32); }
+.stage-step-marker { flex-basis: 1.15rem; width: 1.15rem; height: 1.15rem; font-size: .5rem; }
+.stage-step-name { font-size: .59rem; }
+.stage-step-state { font-size: .49rem; }
+.graph-stage { min-height: 0; height: 100%; background: #0b0d11; }
+.graph-canvas { min-height: 0; height: 100%; background: radial-gradient(circle at 50% 35%, rgba(72, 216, 198, .045), transparent 34rem), linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .028) 1px, transparent 1px); background-size: auto, 32px 32px, 32px 32px; }
+.graph-canvas[data-following="true"] .graph-scene { transition: transform .24s cubic-bezier(.2, .75, .3, 1); }
+.node-card { height: 100px; min-height: 100px; padding: .55rem .65rem; background: #171a21; border-color: rgba(255,255,255,.11); border-radius: 7px; box-shadow: 0 10px 26px rgba(0, 0, 0, .24); }
+.node-card::before { position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--subtle); content: ""; }
+.node-running::before { background: var(--cyan); }
+.node-completed::before { background: var(--green); }
+.node-failed::before, .node-in-doubt::before { background: var(--red); }
+.node-blocked::before { background: var(--amber); }
+.node-card:hover, .node-card:focus-visible { transform: translateY(-1px); background: #1b1f27; border-color: var(--line-strong); }
+.node-card[data-selected="true"], .node-card[data-replay-active="true"] { border-color: rgba(72, 216, 198, .68); box-shadow: 0 0 0 1px rgba(72, 216, 198, .18), 0 14px 32px rgba(0, 0, 0, .32); }
+.node-card[data-replay-active="true"]::after { position: absolute; inset: -1px; border: 1px solid rgba(72, 216, 198, .55); border-radius: 7px; content: ""; animation: node-breathe 1.4s ease-in-out infinite; pointer-events: none; }
+.node-title { margin: .45rem 0 .25rem; font-size: .78rem; }
+.node-summary { min-height: 1.35em; font-size: .61rem; line-height: 1.35; -webkit-line-clamp: 1; }
+.node-meta { margin-top: .45rem; }
+.node-meta-item { padding: .18rem .3rem; color: var(--muted); background: #0e1014; border: 1px solid rgba(255,255,255,.07); border-radius: 4px; font-size: .52rem; }
+.node-progress { margin-top: .45rem; }
+.edge { color: rgba(122, 162, 255, .38); stroke-width: 1.35; }
+.edge-running { color: var(--cyan); stroke-width: 2; animation: edge-flow .9s linear infinite; }
+.graph-minimap { right: .65rem; bottom: .65rem; width: 158px; height: 86px; background: rgba(12, 14, 18, .92); border-color: var(--line-strong); border-radius: 6px; box-shadow: 0 10px 26px rgba(0,0,0,.3); }
+.evidence-panel { position: absolute; z-index: 9; top: 56px; right: .65rem; display: grid; grid-template-rows: auto auto minmax(0, 1fr); width: min(360px, calc(100% - 1.3rem)); height: calc(100% - 174px); min-height: 0; overflow: hidden; background: rgba(17, 19, 24, .98); border-color: var(--line-strong); box-shadow: var(--shadow); transform: translateX(calc(100% + 1.2rem)); opacity: 0; pointer-events: none; transition: transform .22s ease, opacity .16s ease; }
+.evidence-panel[data-open="true"] { transform: translateX(0); opacity: 1; pointer-events: auto; }
+.evidence-panel .kicker { margin-bottom: .18rem; }
+.selected-node-summary { gap: .55rem; padding: .75rem; background: #14171d; }
+.selected-node-summary strong { font-size: .78rem; white-space: normal; }
+.selected-node-summary p { color: var(--muted); font-size: .66rem; line-height: 1.45; white-space: normal; overflow: visible; }
+.selected-node-facts { gap: .35rem; }
+.evidence-drawer { min-height: 0; max-height: none; padding: .55rem; }
+.evidence-item { border-radius: 6px; }
+.replay-panel { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(230px, auto) minmax(0, 1fr); grid-template-rows: auto auto; min-height: 112px; margin: 0; }
+.replay-dock { margin: 0; background: #101216; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.replay-dock-header { grid-row: 1 / span 2; display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .48rem .65rem; border-right: 1px solid var(--line); }
+.replay-current { display: flex; min-width: 0; align-items: baseline; gap: .55rem; }
+.replay-current .panel-note { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replay-controls { gap: .3rem; }
+.replay-button { min-height: 32px; padding: .3rem .48rem; border-radius: 6px; font-size: .62rem; }
+.replay-play { min-width: 34px; justify-content: center; }
+.replay-range-wrap, .replay-events { grid-column: 2; }
+.replay-range-wrap { gap: .28rem; padding: .35rem .65rem .2rem; }
+.replay-range { height: 12px; margin: 0; }
+.replay-events { gap: .35rem; padding: .3rem .65rem .55rem; scrollbar-width: thin; }
+.replay-event { grid-template-columns: auto minmax(0, 1fr); min-width: 128px; max-width: 180px; padding: .38rem .45rem; background: transparent; border-radius: 5px; }
+.replay-event-time { font-size: .5rem; }
+.replay-event-label { font-size: .58rem; }
+.graph-minimap[hidden] { display: none; }
+.share-panel, .control-panel { margin-top: .55rem; border-color: rgba(255,255,255,.08); box-shadow: none; }
+.share-panel .panel-header, .control-panel .panel-header { min-height: 42px; }
+.share-content, .control-content { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .55rem .7rem; }
+.share-status, .control-status, .control-result, .control-error { margin: 0; }
+.empty-state { border-radius: 8px; }
+.footer { padding-top: .65rem; }
+
+@keyframes node-breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+
+@media (max-width: 1100px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr); }
+  .topbar-actions { grid-column: 1 / -1; position: absolute; top: .9rem; right: .9rem; }
+  .hub-switcher { padding-right: 7.5rem; }
+  .run-hero { grid-template-columns: minmax(220px, 1fr) minmax(400px, auto) auto; }
+  .run-facts { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .run-fact:nth-child(2) { border-right: 0; }
+  .run-fact:nth-child(n+3) { border-top: 1px solid var(--line); }
+}
+
+@media (max-width: 760px) {
+  .shell { padding: 0 .55rem .7rem; }
+  .topbar { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .45rem; min-height: 0; padding: .55rem 0; }
+  .brand { min-width: 0; }
+  .topbar-actions { position: static; grid-column: 2; grid-row: 1; }
+  .connection [data-live-connection] { display: none; }
+  .hub-switcher { grid-column: 1 / -1; grid-row: 2; grid-template-columns: 1fr; width: 100%; padding: 0; }
+  .hub-field { grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: .45rem; }
+  .hub-field > span { padding-left: .15rem; }
+  .hub-select { min-height: 38px; }
+  .main { padding-top: .4rem; }
+  .run-hero { grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; min-height: 0; padding: .4rem .2rem .5rem; }
+  .run-heading { grid-column: 1; }
+  .run-title { font-size: .94rem; }
+  .run-subtitle { font-size: .59rem; }
+  .state-chip { grid-column: 2; grid-row: 1; }
+  .run-facts { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; border-top: 1px solid var(--line); border-left: 0; }
+  .run-fact { padding: .35rem .45rem; }
+  .run-fact:nth-child(1), .run-fact:nth-child(3) { border-left: 0; }
+  .workspace-grid { height: calc(100dvh - 272px); min-height: 500px; margin-top: .4rem; }
+  .graph-panel { grid-template-rows: auto auto minmax(240px, 1fr) auto; }
+  .graph-header { flex-wrap: nowrap; padding: .5rem; }
+  .graph-header .panel-note { display: none; }
+  .graph-header-actions { gap: .2rem; }
+  .graph-header-actions [data-live-graph-layout] { display: none; }
+  .graph-tool-button, .replay-button { min-width: 44px; min-height: 44px; }
+  .stage-overview { padding: .35rem .4rem; }
+  .stage-rail { display: flex; min-width: max-content; }
+  .stage-step { width: 108px; }
+  .graph-canvas { overflow: auto; cursor: default; }
+  .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
+  .node-list { position: relative; inset: auto; display: grid; grid-template-columns: 1fr; gap: .45rem; padding: .55rem; }
+  .node-card { position: relative !important; top: auto !important; left: auto !important; width: auto !important; height: auto !important; min-height: 88px !important; max-height: none; }
+  .node-summary { -webkit-line-clamp: 2; }
+  .node-connection { display: block; }
+  .edge-layer, .graph-minimap { display: none; }
+  .replay-panel { grid-template-columns: 1fr; min-height: 126px; }
+  .replay-dock-header { grid-row: auto; align-items: flex-start; padding: .4rem .5rem; border-right: 0; border-bottom: 1px solid var(--line); }
+  .replay-range-wrap, .replay-events { grid-column: 1; }
+  .replay-current { display: grid; gap: .1rem; }
+  .replay-controls { flex-wrap: wrap; justify-content: flex-end; }
+  .replay-reset { display: none; }
+  .replay-events { display: none; padding-inline: .5rem; }
+  .evidence-panel { position: fixed; top: auto; right: .5rem; bottom: .5rem; left: .5rem; width: auto; max-height: min(72dvh, 620px); transform: translateY(calc(100% + 1rem)); }
+  .evidence-panel[data-open="true"] { transform: translateY(0); }
+  .share-content, .control-content { align-items: flex-start; flex-direction: column; }
+  .footer { flex-direction: column; }
+}
+
+@media (max-width: 420px) {
+  .workspace-grid { height: calc(100dvh - 288px); min-height: 470px; }
+  .run-facts { display: flex; overflow-x: auto; }
+  .run-fact { flex: 0 0 132px; border-top: 0 !important; }
+  .run-fact + .run-fact { border-left: 1px solid var(--line); }
+  .graph-header-actions [data-live-graph-zoom-out], .graph-header-actions [data-live-graph-zoom-in] { display: none; }
+  .replay-current .panel-note { max-width: 150px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-canvas[data-following="true"] .graph-scene, .evidence-panel { transition: none !important; }
+  .node-card[data-replay-active="true"]::after { animation: none !important; opacity: 1; }
+}
+`;
+
+const GRAPH_FIRST_CSS = String.raw`
+:root { color-scheme: dark; --ink: #0b101a; --panel: #141b29; --panel-2: #1b2638; --completion: #5b8cff; --completion-bright: #a9c2ff; --accent: #58d4cf; --running: #58d4cf; --green: #76d59c; --dim: #65748e; --line-soft: #202c40; --line: #30415b; --line-strong: #466080; --text: #e4ecfb; --muted: #96a7c1; --danger: #dc788f; --radius-sm: 4px; --radius: 6px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
+body { letter-spacing: 0; }
+button, select, input { font: inherit; }
+button { color: inherit; }
+[hidden] { display: none !important; }
+.skip-link { position: fixed; z-index: 100; top: .5rem; left: .5rem; transform: translateY(-160%); padding: .55rem .75rem; border-radius: var(--radius); background: var(--completion); color: #07101f; }
+.skip-link:focus { transform: none; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
+.shell { height: 100dvh; min-width: 0; display: grid; grid-template-rows: 44px minmax(0, 1fr); background: var(--ink); }
+.topbar { min-width: 0; display: flex; align-items: center; gap: .75rem; padding: 0 .75rem; border-bottom: 1px solid var(--line); background: #101725; }
+.brand { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; }
+.brand-mark { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--completion); border-radius: var(--radius-sm); color: var(--completion-bright); font: 700 12px/1 monospace; }
+.brand-title { margin: 0; font-size: .78rem; font-weight: 700; }
+.top-run-context { min-width: 0; display: flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .72rem; }
+.top-run-context strong { min-width: 0; max-width: min(40vw, 560px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 600; }
+.work-view-switcher { flex: 0 0 auto; display: inline-grid; grid-template-columns: repeat(3, minmax(0,1fr)); padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: #0e1522; }
+.work-view-tab { min-width: 76px; min-height: 27px; padding: 0 .5rem; border: 0; border-right: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: .62rem; cursor: pointer; }
+.work-view-tab:last-child { border-right: 0; }
+.work-view-tab[aria-selected="true"] { border-radius: var(--radius-sm); background: rgba(88,212,207,.08); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.work-view-tab:focus-visible, .inspector-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: .25rem; }
+.connection { display: flex; align-items: center; gap: .35rem; min-width: 0; margin-right: .3rem; color: var(--muted); font-size: .68rem; white-space: nowrap; }
+.connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.connection-dot[data-connection="live"] { background: var(--green); box-shadow: 0 0 8px rgba(118,184,141,.42); }
+.connection-dot[data-connection="stale"] { background: var(--completion); }
+.topbar-button, .graph-tool-button, .replay-button { min-height: 30px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.topbar-button { padding: 0 .55rem; font-size: .7rem; }
+.topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
+.main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #101725; }
+.run-context-heading { min-width: 0; }
+.context-kicker { display: block; margin-bottom: .2rem; color: var(--completion); font: .55rem/1 monospace; text-transform: uppercase; }
+.run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .98rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.run-context-task { min-width: 0; margin: .25rem 0 0; overflow: hidden; color: var(--muted); font-size: .65rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.run-context-facts { min-width: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-left: 1px solid var(--line); }
+.context-fact { min-width: 0; display: grid; gap: .18rem; padding: .08rem .55rem; border-right: 1px solid var(--line); }
+.context-fact span, .run-context-source span { color: var(--muted); font: .52rem/1 monospace; text-transform: uppercase; }
+.context-fact strong { min-width: 0; overflow: hidden; color: var(--completion-bright); font: 600 .65rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.run-context-source { min-width: 0; display: grid; gap: .18rem; padding-left: .3rem; }
+.run-context-source strong { min-width: 0; overflow: hidden; color: var(--muted); font: .58rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #101725; }
+.run-context-heading { min-width: 0; }
+.context-kicker { display: block; margin-bottom: .2rem; color: var(--completion); font: .55rem/1 monospace; text-transform: uppercase; }
+.run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .98rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.run-context-task { min-width: 0; margin: .25rem 0 0; overflow: hidden; color: var(--muted); font-size: .65rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.run-context-facts { min-width: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-left: 1px solid var(--line); }
+.context-fact { min-width: 0; display: grid; gap: .18rem; padding: .08rem .55rem; border-right: 1px solid var(--line); }
+.context-fact span, .run-context-source span { color: var(--muted); font: .52rem/1 monospace; text-transform: uppercase; }
+.context-fact strong { min-width: 0; overflow: hidden; color: var(--completion-bright); font: 600 .65rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.run-context-source { min-width: 0; display: grid; gap: .18rem; padding-left: .3rem; }
+.run-context-source strong { min-width: 0; overflow: hidden; color: var(--muted); font: .58rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-grid { position: relative; min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 0; overflow: hidden; transition: grid-template-columns .18s ease; }
+.workspace-grid[data-work-view="repository"], .workspace-grid[data-work-view="workspace"] { grid-template-columns: minmax(0,1fr) 0; }
+.work-surface-view { min-width: 0; min-height: 0; overflow: auto; background: #0f1623; }
+.work-surface-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.15rem 1.25rem; border-bottom: 1px solid var(--line); background: #101725; }
+.work-surface-header h2 { margin: 0; color: var(--text); font-size: 1rem; }
+.work-surface-header p { max-width: 72ch; margin: .32rem 0 0; overflow-wrap: anywhere; color: var(--muted); font: .62rem/1.45 monospace; }
+.surface-state { flex: 0 0 auto; padding: .25rem .4rem; border: 1px solid #385275; border-radius: var(--radius-sm); color: var(--completion-bright); background: rgba(91,140,255,.08); font: .55rem/1.2 monospace; text-transform: uppercase; }
+.repository-layout { display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); min-height: calc(100% - 82px); }
+.operational-section { min-width: 0; padding: 1rem 1.25rem; }
+.operational-section + .operational-section { border-left: 1px solid var(--line); }
+.operational-section h3 { margin: 0 0 .7rem; color: var(--muted); font: 600 .6rem/1 monospace; text-transform: uppercase; }
+.operational-list { border-top: 1px solid var(--line); }
+.operational-row { min-width: 0; display: grid; grid-template-columns: minmax(92px,.4fr) minmax(0,1fr); gap: .75rem; align-items: center; padding: .72rem 0; border-bottom: 1px solid var(--line); }
+.operational-label { color: var(--muted); font-size: .64rem; }
+.operational-value { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: .7rem; font-weight: 600; }
+.operational-row[data-state="unavailable"] .operational-value { color: #777; font-weight: 500; }
+.operational-row[data-state="planned"] .operational-value { color: var(--completion-bright); }
+.workspace-children { display: grid; border-top: 1px solid var(--line); }
+.workspace-child { min-width: 0; display: grid; gap: .24rem; padding: .72rem 0; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; }
+.workspace-child:hover, .workspace-child:focus-visible, .workspace-child[data-active="true"] { background: rgba(88,212,207,.05); outline: none; box-shadow: inset 3px 0 0 var(--accent); }
+.workspace-child-title { overflow: hidden; color: var(--text); font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-child-meta { overflow: hidden; color: var(--muted); font: .56rem/1.35 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-availability { max-width: 920px; }
+.workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(280px, 30%) minmax(0, 70%); }
+.workspace-grid[data-inspector-open="true"] .replay-panel { grid-template-columns: minmax(0,1fr); }
+.workspace-grid[data-inspector-open="true"] .replay-dock-header { grid-column: 1; grid-row: 1; min-width: 0; display: flex; justify-content: center; border-right: 0; border-bottom: 1px solid var(--line); }
+.workspace-grid[data-inspector-open="true"] .replay-current { display: none; }
+.workspace-grid[data-inspector-open="true"] .replay-range-wrap { grid-column: 1; grid-row: 2; }
+.workspace-grid[data-inspector-open="true"] .replay-events { grid-column: 1; grid-row: 3; }
+.workspace-grid[data-inspector-open="true"] .replay-live, .workspace-grid[data-inspector-open="true"] .replay-reset { display: none; }
+.workspace-grid[data-inspector-open="true"] .status-title, .workspace-grid[data-inspector-open="true"] .status-nodes, .workspace-grid[data-inspector-open="true"] .status-camera { display: none; }
+.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 92px 24px; border: 0; background: #12110f; overflow: hidden; }
+.graph-stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.graph-toolbar { position: absolute; z-index: 8; top: .55rem; right: .55rem; display: flex; flex-wrap: wrap; gap: .22rem; max-width: calc(100% - 1.1rem); padding: .25rem; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(20,27,41,.96); box-shadow: 0 8px 20px rgba(0,0,0,.28); }
+.graph-tool-button { min-width: 31px; padding: 0 .48rem; font-size: .68rem; }
+.graph-tool-button[data-active="true"], .replay-button[data-active="true"] { border-color: var(--accent); color: var(--accent); background: rgba(88,212,207,.07); }
+.graph-canvas { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; cursor: grab; background-color: #0f1623; background-image: linear-gradient(#1c2a3d 1px, transparent 1px), linear-gradient(90deg, #1c2a3d 1px, transparent 1px); background-size: 24px 24px; touch-action: none; }
+.graph-canvas[data-panning="true"] { cursor: grabbing; }
+.graph-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform .16s ease-out; }
+.edge-layer, .node-list { position: absolute; inset: 0; width: 100%; height: 100%; }
+.edge { fill: none; stroke: #53647e; stroke-width: 1.5; opacity: .72; }
+.edge-running { stroke: var(--running); stroke-dasharray: 8 8; animation: live-flow 1.2s linear infinite; }
+.edge-completed { stroke: var(--completion); }
+.edge-skipped, .edge-queued { stroke: #53647e; }
+.edge-failed, .edge-in-doubt { stroke: var(--danger); }
+.edge-blocked { stroke: var(--completion-bright); }
+@keyframes live-flow { to { stroke-dashoffset: -16; } }
+.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: .28rem; width: 184px; min-height: 116px; max-height: 128px; padding: .58rem; overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #172131; color: var(--text); box-shadow: 0 6px 16px rgba(0,0,0,.24); cursor: pointer; }
+.node-card:hover, .node-card:focus-visible, .node-card[data-selected="true"] { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px rgba(88,212,207,.2), 0 8px 24px rgba(0,0,0,.35); }
+.node-running { border-left-color: var(--running); }
+.node-completed { border-left-color: var(--completion); }
+.node-skipped { border-left-color: #585858; opacity: .72; }
+.node-failed, .node-in-doubt { border-left-color: var(--danger); }
+.node-blocked { border-left-color: var(--completion-bright); }
+.node-card-top { display: flex; align-items: center; gap: .3rem; color: var(--muted); font: 600 .58rem/1 monospace; text-transform: uppercase; }
+.node-marker { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.node-running .node-marker { color: var(--running); }
+.node-completed .node-marker { color: var(--completion); }
+.node-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
+.node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .63rem; line-height: 1.35; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.node-proof { min-width: 0; overflow: hidden; color: var(--completion-bright); font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.activity-chips { display: flex; flex-wrap: wrap; gap: .18rem; min-width: 0; max-height: 31px; overflow: hidden; }
+.activity-chip { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .12rem .25rem; border: 1px solid var(--line); border-radius: var(--radius-sm); color: #b5c4dd; background: #101725; font: .5rem/1.2 monospace; }
+.chip-owner { color: var(--completion-bright); }
+.chip-runtime { color: var(--green); }
+.chip-tools { color: #7cc7ef; }.chip-tokens { color: #8ecae6; }.chip-evidence { color: var(--completion-bright); }.chip-loadout { color: #9fb8e8; }
+.node-connection, .node-progress { display: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card { height: 116px !important; min-height: 116px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card::after { content: ""; position: absolute; top: 35px; right: 0; left: 0; height: 26px; border-left: 8px solid #666; background: #292929; }
+.graph-canvas[data-semantic-zoom="cell"] .node-running::after { border-left-color: var(--running); }.graph-canvas[data-semantic-zoom="cell"] .node-completed::after { border-left-color: var(--completion); }.graph-canvas[data-semantic-zoom="cell"] .node-failed::after,.graph-canvas[data-semantic-zoom="cell"] .node-blocked::after { border-left-color: var(--danger); }
+.graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: hidden; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: absolute; z-index: 1; top: 35px; right: 0; left: 8px; height: 26px; visibility: visible; padding: .4rem .45rem; font: 700 11px/1 monospace; }
+.graph-minimap { position: absolute; z-index: 7; top: .55rem; right: .55rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: rgba(16,23,37,.94); pointer-events: none; }
+.minimap-scene { position: absolute; transform-origin: 0 0; }
+.minimap-node { position: absolute; border-radius: 1px; background: #666; }
+.minimap-node-running { background: var(--running); }.minimap-node-completed { background: var(--completion); }.minimap-node-failed,.minimap-node-blocked { background: var(--danger); }
+.minimap-viewport { position: absolute; border: 1px solid var(--accent); background: rgba(88,212,207,.07); }
+.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+.replay-panel { min-width: 0; display: grid; grid-template-columns: 300px minmax(0,1fr); grid-template-rows: 34px 28px 28px; border-top: 1px solid var(--line); background: #121a29; }
+.replay-dock-header { grid-row: 1 / -1; min-width: 300px; display: grid; grid-template-columns: minmax(74px,1fr) auto; align-items: center; gap: .45rem; padding: .45rem .55rem; border-right: 1px solid var(--line); }
+.replay-current { min-width: 74px; overflow: hidden; }
+.replay-current .panel-title { white-space: nowrap; }
+.replay-current .panel-note { display: none; }
+.panel-title { display: block; color: var(--text); font-size: .68rem; font-weight: 700; }
+.panel-note { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .58rem; }
+.replay-controls { display: flex; flex: 0 0 auto; gap: .15rem; white-space: nowrap; }
+.replay-button { min-width: 27px; min-height: 27px; padding: 0 .38rem; font-size: .62rem; }
+.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; display: flex; align-items: center; padding: 0 .65rem; border-bottom: 1px solid var(--line-soft); }
+.replay-range { position: absolute; inset: 0 .65rem; width: calc(100% - 1.3rem); opacity: 0; cursor: ew-resize; z-index: 2; }
+.replay-track { width: 100%; height: 4px; border-radius: var(--radius-sm); background: var(--line); }
+.replay-progress { display: block; height: 100%; background: var(--accent); }
+.replay-events { grid-column: 2; grid-row: 2 / 4; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(70px,1fr); gap: 1px; margin: 0; padding: 5px .65rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; list-style: none; }
+.replay-event { position: relative; min-width: 0; border-top: 5px solid #53647e; color: transparent; }
+.replay-event[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.08); }
+.replay-event[data-status="running"] { border-color: var(--running); }.replay-event[data-status="completed"] { border-color: var(--completion); }.replay-event[data-status="failed"] { border-color: var(--danger); }
+.replay-event[data-kind="prompt"] { border-top-style: double; border-color: #8ecae6; }.replay-event[data-kind="spawn"] { border-color: var(--completion-bright); }.replay-event[data-kind="failure"],.replay-event[data-kind="tool_error"] { border-color: var(--danger); }
+.replay-event[data-kind^="tool_"]::after { position: absolute; right: 2px; bottom: 2px; left: 2px; height: calc(1px + var(--tool-density, 1) * 1px); background: var(--green); opacity: .72; content: ""; }
+.replay-event[data-tool-density="0"] { --tool-density: 0; }.replay-event[data-tool-density="1"] { --tool-density: 1; }.replay-event[data-tool-density="2"] { --tool-density: 2; }.replay-event[data-tool-density="3"] { --tool-density: 3; }.replay-event[data-tool-density="4"] { --tool-density: 4; }
+.status-bar { min-width: 0; display: flex; align-items: center; gap: .65rem; padding: 0 .55rem; overflow: hidden; border-top: 1px solid var(--line); background: #0e1522; color: var(--muted); font: .58rem/1 monospace; }
+.status-bar > span { min-width: 0; white-space: nowrap; }
+.status-bar .status-title { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.status-bar strong { color: var(--completion-bright); font-weight: 600; }
+.evidence-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: 48px auto minmax(0,1fr); overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
+.evidence-panel[data-open="false"] { visibility: hidden; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; padding: .55rem .7rem; border-bottom: 1px solid var(--line); }
+.inspector-tabs { min-width: 0; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.inspector-tabs button { min-width: 62px; min-height: 34px; padding: 0 .32rem; border: 0; border-right: 1px solid var(--line-soft); background: #101725; color: var(--muted); font-size: .55rem; cursor: pointer; }
+.inspector-tabs button[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.inspector-panel { min-width: 0; min-height: 0; overflow: auto; }
+.kicker { margin: 0 0 .12rem; color: var(--completion); font: .55rem/1 monospace; text-transform: uppercase; }
+.panel-count { color: var(--completion-bright); font: .6rem/1 monospace; }
+.selected-node-summary { padding: .8rem; border-bottom: 1px solid var(--line); }
+.selected-node-summary strong { display: block; color: var(--completion-bright); font-size: .82rem; }
+.selected-node-summary p { color: var(--muted); font-size: .68rem; line-height: 1.5; }
+.selected-node-facts { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; }
+.selected-node-facts span, [data-live-selected-node-evidence] { padding: .2rem .35rem; border: 1px solid var(--line); border-radius: var(--radius-sm); color: #bdd0ec; background: #101725; font: .56rem/1.2 monospace; }
+.selected-node-summary [data-live-selected-node-provenance], .selected-node-summary [data-live-selected-node-prompt] { margin: .38rem 0 0; padding-left: .45rem; border-left: 2px solid #444; overflow-wrap: anywhere; }
+.evidence-drawer { min-height: 0; overflow: auto; padding: .55rem; }
+.evidence-list { display: grid; gap: .35rem; }
+.evidence-item { padding: .55rem; border: 1px solid var(--line); border-left: 2px solid #53647e; border-radius: var(--radius-sm); background: #121a29; }
+.evidence-item[data-associated="true"] { border-left-color: var(--accent); }
+.evidence-item[data-transfer-state="planned"] { border-left-style: dashed; border-left-color: var(--dim); background: #101725; }
+.evidence-item[data-transfer-state="planned"] .evidence-status { color: #aaa; }
+.evidence-item[data-delivery-observed="true"] { border-left-color: var(--green); }
+.history-prompt { border-left-color: #8ecae6; }.history-tool { border-left-color: var(--green); }.history-failure,.history-tool_error { border-left-color: var(--danger); }
+.history-footer { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }.history-source { min-width: 0; overflow: hidden; color: #777; font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.empty-state { height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); }
+.empty-title { color: var(--text); }
+.live-dialog { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(0,0,0,.72); }
+.dialog-card { width: min(640px,100%); max-height: min(78dvh,720px); overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); box-shadow: 0 24px 80px rgba(0,0,0,.6); }
+.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: .65rem .8rem; border-bottom: 1px solid var(--line); background: var(--panel); }
+.dialog-title { margin: 0; font-size: .82rem; }
+.dialog-body { padding: .8rem; }
+.node-card[data-replay-visible="false"] { opacity: 0; pointer-events: none; visibility: hidden; }
+.info-facts { display: grid; gap: .45rem; margin: .2rem 0 1rem; padding: .7rem; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.018); }
+.info-fact-row { display: grid; grid-template-columns: 8rem minmax(0,1fr); gap: .75rem; align-items: baseline; padding-bottom: .35rem; border-bottom: 1px solid rgba(255,255,255,.06); }
+.info-fact-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.info-fact-label { color: var(--subtle); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; }
+.info-fact-value { min-width: 0; color: var(--bright); font-size: .76rem; overflow-wrap: anywhere; }
+.info-fact-prompt { display: grid; gap: .35rem; margin-top: .25rem; }
+.info-fact-prompt p { margin: 0; line-height: 1.45; }
+.hub-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.hub-field { display: grid; gap: .3rem; color: var(--muted); font-size: .65rem; }
+.hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 .5rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--text); }
+.hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .65rem; }
+.session-list { display: grid; gap: .38rem; margin-top: .7rem; }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .28rem .7rem; padding: .65rem; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #101725; color: var(--text); text-align: left; cursor: pointer; }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.05); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--completion-bright); font: .58rem/1.2 monospace; }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .35rem; color: var(--muted); font: .56rem/1.2 monospace; }.session-card-facts span + span::before { margin-right: .35rem; color: var(--dim); content: "·"; }
+.shortcut-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .35rem .8rem; margin: 0; }
+.shortcut-grid div { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: .68rem; }
+kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--completion-bright); text-align: center; font: .58rem/1.2 monospace; }
+.share-panel, .control-panel { margin-top: .7rem; border: 1px solid var(--line); }
+.share-content, .control-content { padding: .7rem; }.share-actions,.control-actions { display: flex; flex-wrap: wrap; gap: .3rem; }.share-status,.control-status,.control-result,.control-error { color: var(--muted); font-size: .65rem; overflow-wrap: anywhere; }.control-error { color: var(--danger); }
+.stage-overview { flex: 0 0 auto; margin: 0; padding: .42rem .55rem .5rem; overflow-x: auto; background: #0d0f13; border: 0; border-bottom: 1px solid #2e2e2e; border-radius: 0; }
+.stage-overview-header { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; margin-bottom: .38rem; }
+.stage-overview-header .kicker { margin: 0; color: var(--completion-bright); font: 600 .55rem/1 monospace; letter-spacing: .08em; }
+.stage-overview-header h2 { margin: 0; color: var(--text); font: 600 .7rem/1.1 monospace; }
+.stage-overview-header > span { color: var(--muted); font: .53rem/1 monospace; }
+.stage-rail { display: grid; grid-template-columns: repeat(8, minmax(110px, 1fr)); gap: .25rem; min-width: 900px; margin: 0; padding: 0; list-style: none; }
+.stage-step { position: relative; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .3rem .34rem; color: var(--muted); background: #131d2c; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+.stage-step[data-state="current"] { color: var(--text); border-color: var(--accent); background: rgba(88,212,207,.07); }
+.stage-step[data-state="completed"] { color: var(--completion-bright); border-color: #3b5381; }
+.stage-step-marker { display: grid; flex: 0 0 1.2rem; width: 1.2rem; height: 1.2rem; place-items: center; color: #111; background: #555; border-radius: 50%; font: 700 .52rem/1 monospace; }
+.stage-step[data-state="current"] .stage-step-marker { background: var(--accent); }.stage-step[data-state="completed"] .stage-step-marker { background: var(--completion); }
+.stage-step-copy { display: grid; min-width: 0; gap: .08rem; }
+.stage-step-name { overflow: hidden; color: inherit; font: 600 .57rem/1 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.stage-step-state { color: var(--muted); font: .5rem/1 monospace; }
+@media (max-width: 720px) {
+  .shell { grid-template-rows: 78px minmax(0,1fr); }
+  .top-run-context, .connection span:last-child { display: none; }
+  .topbar { display: grid; grid-template-columns: auto minmax(0,1fr) auto; grid-template-rows: 40px 32px; gap: 0 .35rem; padding-inline: .4rem; }
+  .brand { min-width: 0; }
+  .work-view-switcher { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; width: 100%; }
+  .work-view-tab { min-width: 0; }
+  .topbar-actions { grid-column: 3; grid-row: 1; min-width: 0; flex: 0 0 auto; gap: .12rem; }
+  .connection { margin: 0 .1rem 0 0; }
+  .topbar-button { min-width: 30px; padding-inline: .3rem; }
+  .workspace-grid, .workspace-grid[data-inspector-open="true"] { display: block; }
+  .work-surface-view { height: 100%; }
+  .work-surface-header { padding: .8rem; }
+  .repository-layout { grid-template-columns: 1fr; }
+  .operational-section { padding: .8rem; }
+  .operational-section + .operational-section { border-top: 1px solid var(--line); border-left: 0; }
+  .run-context { grid-template-columns: minmax(0, 1fr) auto; gap: .45rem; padding: .45rem .5rem .5rem; }
+  .run-context-title { font-size: .82rem; }
+  .run-context-task { font-size: .59rem; }
+  .run-context-facts { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); border-left: 0; border-top: 1px solid var(--line); padding-top: .4rem; }
+  .context-fact { padding: .08rem .4rem; }
+  .run-context-source { justify-self: end; padding-left: 0; }
+  .run-context-source strong { max-width: 86px; text-align: right; }
+  .graph-panel { height: 100%; grid-template-rows: minmax(0,1fr) 104px 26px; }
+  .graph-toolbar { top: .4rem; left: .4rem; right: .4rem; width: auto; overflow-x: auto; flex-wrap: nowrap; }
+  .graph-tool-button { min-width: 40px; min-height: 40px; }
+  [data-live-graph-fit], [data-live-graph-layout], [data-live-graph-zoom-out], [data-live-graph-zoom-in] { display: none; }
+  .graph-canvas { overflow: auto; touch-action: pan-y; }
+  .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
+  .node-list { position: relative; inset: auto; display: grid; gap: .45rem; padding: 3.4rem .5rem .6rem; }
+  .node-card { position: relative !important; top: auto !important; left: auto !important; width: 100% !important; min-height: 84px !important; max-height: none; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: .6rem; overflow: hidden; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius); background: #172131; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: visible; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; height: auto; padding: 0; font: inherit; }
+  .edge-layer, .graph-minimap { display: none; }
+  .replay-panel { grid-template-columns: 1fr; grid-template-rows: 42px 28px 34px; }
+  .replay-dock-header { grid-row: 1; min-width: 0; grid-template-columns: minmax(64px,1fr) auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .replay-range-wrap { grid-column: 1; grid-row: 2; }
+  .replay-events { grid-column: 1; grid-row: 3; }
+  .evidence-panel { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; height: min(76dvh,660px); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0; transform: translateY(102%); transition: transform .18s ease; visibility: visible !important; }
+  .evidence-panel[data-open="true"] { transform: translateY(0); }
+  .inspector-tabs { grid-template-columns: repeat(6,minmax(72px,1fr)); }
+  .status-bar { gap: .45rem; }.status-bar .status-nodes,.status-bar .status-transport { display: none; }
+  .hub-switcher, .shortcut-grid { grid-template-columns: 1fr; }
+  .hub-status { grid-column: 1; }
+}
+@media (max-width: 380px) { .brand-title { display: none; }.top-run-context strong { max-width: 24vw; }.topbar-button { font-size: .62rem; }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: .5rem; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
+`;
+
 export function renderLiveControlRoomPage({
   snapshot = null,
+  catalog = null,
   snapshotEndpoint = DEFAULT_SNAPSHOT_ENDPOINT,
   eventsEndpoint = DEFAULT_EVENTS_ENDPOINT,
   projectsEndpoint = DEFAULT_PROJECTS_ENDPOINT,
@@ -2220,6 +3673,7 @@ export function renderLiveControlRoomPage({
   const configuredControl = normalizeControlConfig({ controlEnabled, commandCapabilities, controlHeader, controlToken });
   const safeControlConfig = hasSnapshotControl ? snapshotControl : configuredControl;
   const initialJson = safeJsonForHtml(snapshot);
+  const initialCatalogJson = safeJsonForHtml(catalog);
   const controlConfigJson = safeJsonForHtml(safeControlConfig);
 
   return `<!doctype html>
@@ -2227,52 +3681,50 @@ export function renderLiveControlRoomPage({
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#070b16">
+  <meta name="theme-color" content="#121212">
   <meta name="description" content="Meta_Kim Live 只读实时运行控制中心">
   <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMic+PHJlY3Qgd2lkdGg9JzMyJyBoZWlnaHQ9JzMyJyByeD0nOCcgZmlsbD0nIzA3MGIxNicvPjxwYXRoIGQ9J004IDIyVjEwaDRsNCA1IDQtNWg0djEyaC00di02bC00IDUtNC01djZ6JyBmaWxsPScjNmVlN2ZmJy8+PC9zdmc+">
   <title>Meta_Kim Live · 控制中心</title>
-  <style>${PAGE_CSS}</style>
+  <style>${GRAPH_FIRST_CSS}</style>
 </head>
 <body>
   <a class="skip-link" id="skip-to-content" href="#live-main" data-i18n-en="Skip to content" data-i18n-zh="跳到主要内容">跳到主要内容</a>
-  <div class="ambient" aria-hidden="true"></div>
   <div id="live-app" class="shell" data-snapshot-endpoint="${escapeHtml(safeSnapshotEndpoint)}" data-events-endpoint="${escapeHtml(safeEventsEndpoint)}" data-projects-endpoint="${escapeHtml(safeProjectsEndpoint)}" data-replay-endpoint="${escapeHtml(safeReplayEndpoint)}" data-share-endpoint="${escapeHtml(safeShareEndpoint)}" data-control-endpoint="${escapeHtml(safeControlEndpoint)}">
     <header class="topbar" aria-label="Meta_Kim Live header">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">✦</span>
-        <div><p class="eyebrow">Meta_Kim / Live</p><p class="brand-title" data-i18n-en="Control room" data-i18n-zh="控制中心">控制中心</p></div>
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <p class="brand-title">Meta_Kim Live</p>
       </div>
-      <div class="topbar-actions"><button class="language-toggle" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div></div>
+      <div class="top-run-context"><strong data-live-run-title>正在等待运行快照</strong><span data-live-run-id>未识别运行</span></div>
+      <div class="work-view-switcher" role="tablist" aria-label="Work surface view"><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作区">工作区</button><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Run" data-i18n-zh="运行">运行</button></div>
+      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Sessions" data-i18n-zh="会话">会话</button><button class="topbar-button" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
-    <section class="hub-switcher" aria-label="Meta_Kim project and session selection">
-      <label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label>
-      <label class="hub-field" for="live-session-select"><span data-i18n-en="Session / run" data-i18n-zh="会话 / 运行">会话 / 运行</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed session" disabled><option value="">请先选择项目</option></select></label>
-      <p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p>
-    </section>
     <main class="main" id="live-main" tabindex="-1">
-      <section class="run-hero" aria-labelledby="run-title">
-        <div>
-          <p class="kicker" data-i18n-en="What is happening now" data-i18n-zh="当前任务">当前任务</p>
-          <h1 class="run-title" id="run-title" data-live-run-title>正在等待运行快照</h1>
-          <p class="run-subtitle"><span class="run-stage-primary" data-live-run-stage>观测中</span><span data-live-source>本地观察器</span><span data-live-run-id>未识别运行</span></p>
-        </div>
-        <div class="state-chip" data-live-state data-state="stale"><span class="status-pulse" aria-hidden="true"></span><span data-live-state-label>未更新</span></div>
-      </section>
-      <dl class="run-facts" aria-label="Run facts">
-        <div class="run-fact run-fact-primary"><dt data-i18n-en="Overall progress" data-i18n-zh="整体进度">整体进度</dt><dd data-live-run-progress>—</dd></div>
-        <div class="run-fact"><dt data-i18n-en="Working now" data-i18n-zh="正在执行">正在执行</dt><dd data-live-run-workers>—</dd></div>
-        <div class="run-fact"><dt data-i18n-en="Started" data-i18n-zh="开始时间">开始时间</dt><dd data-live-run-started>—</dd></div>
-        <div class="run-fact"><dt data-i18n-en="Last update" data-i18n-zh="最近更新">最近更新</dt><dd data-live-run-updated>—</dd></div>
-      </dl>
-      <section class="stage-overview" aria-labelledby="stage-overview-title">
-        <header class="stage-overview-header"><div><p class="kicker" data-i18n-en="Eight-stage path" data-i18n-zh="执行路径">执行路径</p><h2 id="stage-overview-title" data-i18n-en="Where this task is now" data-i18n-zh="这项任务现在走到哪一步">这项任务现在走到哪一步</h2></div><span data-i18n-en="Select a step to inspect it" data-i18n-zh="点击步骤查看详情">点击步骤查看详情</span></header>
-        <ol class="stage-rail" data-live-stage-rail aria-label="Run progress"></ol>
-      </section>
       <div class="sr-only" data-live-region aria-live="polite"></div>
-      <section class="workspace-grid" aria-label="Live execution workspace">
-        <section class="panel graph-panel" aria-labelledby="graph-title">
-          <header class="panel-header"><div><h2 class="panel-title" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h2><p class="panel-note" data-i18n-en="Main stages on top; live execution branches below." data-i18n-zh="上方是主流程，下方是正在执行的工作分支。">上方是主流程，下方是正在执行的工作分支。</p></div><div class="graph-header-actions"><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Toggle graph layout" data-i18n-en="Layout" data-i18n-zh="布局">布局</button><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Fit graph to viewport" data-i18n-en="Fit" data-i18n-zh="适应">适应</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in">+</button></div></header>
+      <section class="run-context" aria-label="Run context">
+        <div class="run-context-heading">
+          <span class="context-kicker" data-i18n-en="Current run" data-i18n-zh="当前运行">当前运行</span>
+          <h1 class="run-context-title" data-live-context-title>正在等待运行快照</h1>
+          <p class="run-context-task" data-live-context-task>正在等待任务摘要</p>
+        </div>
+        <div class="run-context-facts" role="list" aria-label="Run facts">
+          <div class="context-fact" role="listitem"><span data-i18n-en="Status" data-i18n-zh="状态">状态</span><strong data-live-context-status>存疑</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Stage" data-i18n-zh="阶段">阶段</span><strong data-live-context-stage>—</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Nodes" data-i18n-zh="节点">节点</span><strong data-live-context-nodes>0</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Events" data-i18n-zh="事件">事件</span><strong data-live-context-events>0</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Evidence" data-i18n-zh="证据">证据</span><strong data-live-context-evidence>0</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>—</strong></div>
+        </div>
+        <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
+      </section>
+      <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
+        <section class="work-surface-view repository-view" id="repository-view" role="tabpanel" aria-labelledby="work-view-repository" data-live-repository-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</span><h2 data-live-repository-title>已登记项目</h2><p data-live-repository-boundary>仓库边界不可用</p></div><span class="surface-state" data-i18n-en="Observed catalog" data-i18n-zh="已观测目录">已观测目录</span></header><div class="repository-layout"><section class="operational-section" aria-labelledby="repository-facts-title"><h3 id="repository-facts-title" data-i18n-en="Repository facts" data-i18n-zh="仓库事实">仓库事实</h3><div class="operational-list" data-live-repository-facts></div></section><section class="operational-section" aria-labelledby="repository-workspaces-title"><h3 id="repository-workspaces-title" data-i18n-en="Workspace sessions" data-i18n-zh="工作区会话">工作区会话</h3><div class="workspace-children" data-live-repository-sessions></div></section></div></section>
+        <section class="work-surface-view workspace-view" id="workspace-view" role="tabpanel" aria-labelledby="work-view-workspace" data-live-workspace-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Workspace" data-i18n-zh="工作区">工作区</span><h2 data-live-workspace-title>已观测工作区</h2><p data-live-workspace-boundary>工作区边界不可用</p></div><span class="surface-state" data-i18n-en="Run-scoped" data-i18n-zh="运行范围">运行范围</span></header><section class="operational-section workspace-availability" aria-labelledby="workspace-availability-title"><h3 id="workspace-availability-title" data-i18n-en="Available surfaces" data-i18n-zh="可用界面">可用界面</h3><div class="operational-list" data-live-workspace-facts></div></section></section>
+        <section class="graph-panel" id="run-view" role="tabpanel" aria-labelledby="work-view-run" data-live-run-view aria-label="Run view">
           <div class="graph-stage" data-live-graph-viewport>
+            <h1 class="sr-only" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
+            <div class="graph-toolbar" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)" data-i18n-en="Overview" data-i18n-zh="总览">总览</button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="true" aria-pressed="true" aria-label="Follow active node" title="Follow (F)" data-i18n-en="Follow" data-i18n-zh="跟随">跟随</button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)" data-i18n-en="Relayout" data-i18n-zh="重排">重排</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div>
+            <section class="stage-overview" aria-label="Stage progress"><div class="stage-overview-header"><div><p class="kicker" data-i18n-en="Eight-stage spine" data-i18n-zh="八阶段主线">八阶段主线</p><h2 data-i18n-en="Critical to Evolution" data-i18n-zh="从目标确认到经验沉淀">从目标确认到经验沉淀</h2></div><span data-i18n-en="Replay-backed state" data-i18n-zh="状态来自回放事件">状态来自回放事件</span></div><ol class="stage-rail" data-live-stage-rail></ol></section>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
@@ -2282,17 +3734,23 @@ export function renderLiveControlRoomPage({
             </div>
             <div class="graph-empty" data-live-graph-empty hidden><p data-i18n-en="No task nodes in this snapshot." data-i18n-zh="当前快照中没有任务节点。">当前快照中没有任务节点。</p></div>
           </div>
+          <section class="replay-panel replay-dock" aria-labelledby="replay-title">
+            <header class="replay-dock-header"><div class="replay-current"><span class="panel-title" id="replay-title" data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线</span><span class="panel-note" data-replay-status>正在等待回放数据</span></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event" title="Previous">‹</button><button class="replay-button replay-play" type="button" data-replay-play aria-label="Play replay"><span aria-hidden="true">▶</span><span class="sr-only" data-replay-play-label>播放</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event" title="Next">›</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position" data-i18n-en="Live" data-i18n-zh="实时">实时</button><button class="replay-button replay-reset" type="button" data-replay-reset aria-label="Reset replay" data-i18n-en="Reset" data-i18n-zh="重置">重置</button></div></header>
+            <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div></div>
+            <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
+          </section>
+          <div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span class="status-title" data-live-status-title>等待运行</span><span><strong data-live-run-progress>—</strong> · <span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>—</span> · <span data-live-node-count>0 个节点</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>—</span><span class="sr-only" data-live-run-updated>—</span><span class="sr-only" data-live-source>本地观察器</span></div>
         </section>
-        <aside class="panel evidence-panel" aria-labelledby="evidence-title">
-          <header class="panel-header"><div><h2 class="panel-title" id="evidence-title" data-i18n-en="Evidence" data-i18n-zh="证据">证据</h2><p class="panel-note" data-i18n-en="What the observer can substantiate." data-i18n-zh="观察器能够证明的事实。">观察器能够证明的事实。</p></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="drawer-toggle" type="button" data-evidence-toggle aria-controls="evidence-drawer" aria-expanded="true" aria-label="Toggle evidence drawer" data-i18n-en="Details" data-i18n-zh="详情">详情</button></div></header>
-          <div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · —</span><span data-live-selected-node-owner>负责人 · —</span><span data-live-selected-node-runtime>运行时 · —</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示证据详情。</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div>
-          <div class="evidence-drawer" id="evidence-drawer" data-evidence-drawer><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
+        <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
+          <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
+          <div class="inspector-tabs" role="tablist" aria-label="Inspector sections"><button type="button" role="tab" id="inspector-tab-summary" aria-controls="inspector-panel-summary" aria-selected="true" data-live-inspector-tab="summary" data-i18n-en="Summary" data-i18n-zh="摘要">摘要</button><button type="button" role="tab" id="inspector-tab-conversation" aria-controls="inspector-panel-conversation" aria-selected="false" tabindex="-1" data-live-inspector-tab="conversation" data-i18n-en="Conversation" data-i18n-zh="对话">对话</button><button type="button" role="tab" id="inspector-tab-terminal" aria-controls="inspector-panel-terminal" aria-selected="false" tabindex="-1" data-live-inspector-tab="terminal" data-i18n-en="Terminal" data-i18n-zh="终端">终端</button><button type="button" role="tab" id="inspector-tab-changes" aria-controls="inspector-panel-changes" aria-selected="false" tabindex="-1" data-live-inspector-tab="changes" data-i18n-en="Changes" data-i18n-zh="变更">变更</button><button type="button" role="tab" id="inspector-tab-evidence" aria-controls="inspector-panel-evidence" aria-selected="false" tabindex="-1" data-live-inspector-tab="evidence" data-i18n-en="Evidence" data-i18n-zh="证据">证据</button><button type="button" role="tab" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected="false" tabindex="-1" data-live-inspector-tab="context" data-i18n-en="Context" data-i18n-zh="上下文">上下文</button></div>
+          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0"><div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · —</span><span data-live-selected-node-owner>负责人 · —</span><span data-live-selected-node-runtime>运行时 · —</span><span data-live-selected-node-model>模型 · —</span><span data-live-selected-node-duration>耗时 · —</span><span data-live-selected-node-tools>工具 · —</span><span data-live-selected-node-tokens>输出 · —</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · —</p><p data-live-selected-node-prompt>提示词阶段 · —</p><p data-live-selected-node-loadout>能力装载 · —</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-conversation" role="tabpanel" aria-labelledby="inspector-tab-conversation" data-live-inspector-panel="conversation" data-item-count="0" hidden><div class="evidence-list" data-live-conversation-list role="list" aria-label="Conversation summaries"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-terminal" role="tabpanel" aria-labelledby="inspector-tab-terminal" data-live-inspector-panel="terminal" data-item-count="0" hidden><div class="evidence-list" data-live-terminal-list role="list" aria-label="Terminal evidence"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-changes" role="tabpanel" aria-labelledby="inspector-tab-changes" data-live-inspector-panel="changes" data-item-count="0" hidden><div class="evidence-list" data-live-changes-list role="list" aria-label="Observed changes"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-evidence" role="tabpanel" aria-labelledby="inspector-tab-evidence" data-live-inspector-panel="evidence" data-item-count="0" data-evidence-drawer hidden><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-context" role="tabpanel" aria-labelledby="inspector-tab-context" data-live-inspector-panel="context" data-item-count="0" hidden><div class="evidence-list" data-live-context-transfer-list role="list" aria-label="Context transfers"></div></div>
         </aside>
-      </section>
-      <section class="panel replay-panel" aria-labelledby="replay-title">
-          <header class="panel-header"><div><h2 class="panel-title" id="replay-title" data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线</h2><p class="panel-note" data-replay-status>正在等待回放数据</p></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event" data-i18n-en="Prev" data-i18n-zh="上一个">上一个</button><button class="replay-button" type="button" data-replay-play aria-label="Play replay"><span aria-hidden="true">▶</span><span data-replay-play-label>播放</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event" data-i18n-en="Next" data-i18n-zh="下一个">下一个</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position" data-i18n-en="Live" data-i18n-zh="实时">实时</button><button class="replay-button" type="button" data-replay-reset aria-label="Reset replay" data-i18n-en="Reset" data-i18n-zh="重置">重置</button></div></header>
-        <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div></div>
-        <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
       </section>
       <section class="panel share-panel" aria-labelledby="share-title">
         <header class="panel-header"><div><h2 class="panel-title" id="share-title" data-i18n-en="Share locally" data-i18n-zh="本地分享">本地分享</h2><p class="panel-note" data-i18n-en="No upload, no external assets, no mutation." data-i18n-zh="不上传、不加载外部资源、不修改运行。">不上传、不加载外部资源、不修改运行。</p></div><span class="panel-count" data-i18n-en="LOCAL ONLY" data-i18n-zh="仅限本地">仅限本地</span></header>
@@ -2302,11 +3760,14 @@ export function renderLiveControlRoomPage({
         <header class="panel-header"><div><h2 class="panel-title" id="control-title" data-i18n-en="Continuation controls" data-i18n-zh="继续执行控制">继续执行控制</h2><p class="panel-note" data-i18n-en="Opt-in commands require explicit local capabilities and durable verification." data-i18n-zh="可选控制命令需要明确的本地能力与耐久验证。">可选控制命令需要明确的本地能力与耐久验证。</p></div><span class="panel-count" data-i18n-en="AUTHORITY-BOUND" data-i18n-zh="受权限约束">受权限约束</span></header>
         <div class="control-content"><div class="control-actions" data-live-control-actions>${safeControlConfig ? LIVE_CONTROL_ACTIONS.map((action) => `<button class="replay-button control-button" type="button" data-live-control-action="${action}" aria-label="${action[0].toUpperCase() + action.slice(1)} run">${action[0].toUpperCase() + action.slice(1)}</button>`).join("") : ""}</div><p class="control-status" data-live-control-status role="status" aria-live="polite" data-i18n-en="Controls are read-only until the local service declares every action available." data-i18n-zh="在本地服务明确声明所有操作可用前，控制功能保持只读。">在本地服务明确声明所有操作可用前，控制功能保持只读。</p><p class="control-result" data-live-control-result role="status" aria-live="polite"></p><p class="control-error" data-live-control-error role="alert" aria-live="assertive"></p></div>
       </section>
-      <section class="empty-state" data-live-empty hidden aria-labelledby="empty-title"><span class="empty-glyph" aria-hidden="true">◌</span><h2 class="empty-title" id="empty-title" data-i18n-en="No live snapshot yet" data-i18n-zh="尚无实时快照">尚无实时快照</h2><p class="empty-copy" data-live-empty-message>正在等待本地观察器发布 Frozen v1 快照。</p></section>
+      <section class="empty-state" data-live-empty hidden aria-labelledby="empty-title"><span class="empty-glyph" aria-hidden="true">◌</span><h2 class="empty-title" id="empty-title" data-i18n-en="No live snapshot yet" data-i18n-zh="尚无实时快照">尚无实时快照</h2><p class="empty-copy" data-live-empty-message>正在等待本地观察器发布运行快照。</p></section>
     </main>
-    <footer class="footer"><span><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 —</span></span><span data-i18n-en="Read-only surface · no run mutations" data-i18n-zh="只读界面 · 不修改运行">只读界面 · 不修改运行</span></footer>
+    <section class="live-dialog" data-live-dialog data-live-sessions-dialog role="dialog" aria-modal="true" aria-labelledby="sessions-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="sessions-title" data-i18n-en="Sessions" data-i18n-zh="会话">会话</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close sessions">×</button></header><div class="dialog-body"><section class="hub-switcher" aria-label="Meta_Kim project and session selection"><label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label><label class="hub-field" for="live-session-select"><span data-i18n-en="Session / run" data-i18n-zh="会话 / 运行">会话 / 运行</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed session" disabled><option value="">请先选择项目</option></select></label><p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p></section><div class="session-list" data-live-session-list role="list" aria-label="Governed sessions"></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-help-dialog role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="help-title" data-i18n-en="Keyboard and camera" data-i18n-zh="键盘与相机">键盘与相机</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close help">×</button></header><div class="dialog-body"><div class="shortcut-grid"><div><span>Overview</span><kbd>O</kbd></div><div><span>Follow active</span><kbd>F</kbd></div><div><span>Relayout</span><kbd>R</kbd></div><div><span>Play / pause</span><kbd>Space</kbd></div><div><span>Previous event</span><kbd>[</kbd></div><div><span>Next event</span><kbd>]</kbd></div><div><span>Jump live</span><kbd>End</kbd></div><div><span>Session info</span><kbd>I</kbd></div><div><span>Close</span><kbd>Esc</kbd></div><div><span>Help</span><kbd>?</kbd></div></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-info-dialog role="dialog" aria-modal="true" aria-labelledby="info-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="info-title" data-i18n-en="Session info and local tools" data-i18n-zh="会话信息与本地工具">会话信息与本地工具</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close session info">×</button></header><div class="dialog-body"><p class="panel-note"><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 —</span> · <span data-i18n-en="Read-only by default" data-i18n-zh="默认只读">默认只读</span></p><div class="info-facts" data-live-info-facts></div><div data-live-info-tools></div></div></div></section>
   </div>
   <script type="application/json" id="live-initial-snapshot">${initialJson}</script>
+  <script type="application/json" id="live-initial-catalog">${initialCatalogJson}</script>
   <script type="application/json" id="live-control-config">${controlConfigJson}</script>
   <script>${CLIENT_SCRIPT}</script>
 </body>

@@ -92,6 +92,7 @@ describe("43 — Product delivery bundle and reviewer calibration", () => {
     assert.equal(repeated.reusedGovernedRun, true);
     const governedJsonPath = path.join(stateDir, `${summary.governedRunId}.json`);
     const governedMarkdownPath = path.join(stateDir, `${summary.governedRunId}.en.md`);
+    const governedLivePath = path.join(stateDir, `${summary.governedRunId}.live.json`);
     const reservationPath = path.join(stateDir, `${summary.governedRunId}.reservation.json`);
     const sqlitePath = path.join(stateDir, `governed-${summary.bundleIdentity}.sqlite`);
     const reservation = JSON.parse(readFileSync(reservationPath, "utf8"));
@@ -159,9 +160,16 @@ describe("43 — Product delivery bundle and reviewer calibration", () => {
       readdirSync(stateDir).filter((name) => /^product-delivery-bundle-.*\.json$/u.test(name)),
       [
         `${summary.governedRunId}.json`,
+        `${summary.governedRunId}.live.json`,
         `${summary.governedRunId}.reservation.json`,
       ],
     );
+    const liveProjectionText = readFileSync(governedLivePath, "utf8");
+    const liveProjection = JSON.parse(liveProjectionText);
+    assert.equal(liveProjection.schemaVersion, "meta-kim-live-projection-v2");
+    assert.equal(liveProjection.run.runId, summary.governedRunId);
+    assert.ok(Buffer.byteLength(liveProjectionText, "utf8") <= 256 * 1024);
+    assert.equal(hasLocalAbsolutePath(liveProjection), false, liveProjectionText);
     assert.deepEqual(
       existsSync(defaultStateDir) ? readdirSync(defaultStateDir).sort() : [],
       defaultBefore,

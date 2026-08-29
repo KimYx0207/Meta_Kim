@@ -2,10 +2,17 @@ import { createServer } from "node:http";
 import { URL } from "node:url";
 import { randomBytes } from "node:crypto";
 
-import { createLiveControlRoomService } from "../../application/live/live-control-room-service.mjs";
+import {
+  createLiveControlRoomService,
+  LIVE_REPLAY_SCHEMA_VERSION,
+} from "../../application/live/live-control-room-service.mjs";
 import { isLiveRunId } from "./live-read-repository.mjs";
 import { LIVE_HUB_HEALTH_SCHEMA_VERSION } from "./live-hub-lifecycle.mjs";
-import { createLiveHubProjectCatalog } from "./live-hub-project-catalog.mjs";
+import {
+  createLiveHubProjectCatalog,
+  LIVE_HUB_MAX_EVENT_COUNT,
+  LIVE_HUB_MAX_NODE_COUNT,
+} from "./live-hub-project-catalog.mjs";
 import { renderLiveControlRoomPage } from "../../presentation/live/live-control-room-page.mjs";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -13,6 +20,10 @@ const DEFAULT_PORT = 0;
 const CONTROL_HEADER = "x-meta-kim-control-token";
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
 const CONTROL_ACTIONS = Object.freeze(["pause", "resume", "reassign", "handoff"]);
+
+function boundedPublicCount(value, maximum) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
+}
 
 function capabilityAvailable(value) {
   if (value === true) return true;
@@ -462,16 +473,22 @@ export function createLiveControlRoomServer(options = {}) {
       sessionCount: project.sessionCount,
       updatedAt: project.updatedAt,
       sessions: Array.isArray(project.sessions)
-        ? project.sessions.map((session) => ({
-            sessionId: session.sessionId,
-            runId: session.runId,
-            title: session.title,
-            status: session.status,
-            currentStage: session.currentStage,
-            runtime: session.runtime,
-            updatedAt: session.updatedAt,
-            active: session.active === true,
-          }))
+        ? project.sessions.map((session) => {
+            const nodeCount = boundedPublicCount(session.nodeCount, LIVE_HUB_MAX_NODE_COUNT);
+            const eventCount = boundedPublicCount(session.eventCount, LIVE_HUB_MAX_EVENT_COUNT);
+            return {
+              sessionId: session.sessionId,
+              runId: session.runId,
+              title: session.title,
+              status: session.status,
+              currentStage: session.currentStage,
+              runtime: session.runtime,
+              updatedAt: session.updatedAt,
+              ...(nodeCount === null ? {} : { nodeCount }),
+              ...(eventCount === null ? {} : { eventCount }),
+              active: session.active === true,
+            };
+          })
         : [],
     })).sort((left, right) => {
       const activeOrder = Number(right.status === "active") - Number(left.status === "active");
@@ -739,7 +756,7 @@ export function createLiveControlRoomServer(options = {}) {
         const selection = await resolveHubSelection(parsed);
         if (!selection.service) {
           jsonResponse(response, selection.invalidProject || selection.invalidRun ? 404 : 200, {
-            schemaVersion: "meta-kim-live-replay-v1",
+            schemaVersion: LIVE_REPLAY_SCHEMA_VERSION,
             runId: rawRunId,
             replay: [],
             source: { kind: "empty", observedAt: new Date().toISOString(), stale: true },
@@ -750,7 +767,7 @@ export function createLiveControlRoomServer(options = {}) {
         jsonResponse(response, 200, await selection.service.getReplay(rawRunId));
       } catch {
         jsonResponse(response, 200, {
-          schemaVersion: "meta-kim-live-replay-v1",
+          schemaVersion: LIVE_REPLAY_SCHEMA_VERSION,
           runId: rawRunId,
           replay: [],
           source: { kind: "empty", observedAt: new Date().toISOString(), stale: true },
@@ -799,6 +816,7 @@ export function createLiveControlRoomServer(options = {}) {
         .catch(() => null));
       const body = renderLiveControlRoomPage({
         snapshot: withoutControlProjection(snapshot),
+        catalog: selection.catalog || null,
         controlEnabled: exposure.enabled,
         commandCapabilities: exposure.capabilities,
         controlHeader: exposure.enabled ? CONTROL_HEADER : null,

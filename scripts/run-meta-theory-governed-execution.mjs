@@ -75,6 +75,11 @@ import {
 } from "../src/domain/governance/governance-requirement-cutover.mjs";
 import { openDurableRunRepository } from "../src/application/run/open-durable-run-repository.mjs";
 import {
+  buildLiveCompactProjection,
+  LIVE_MAX_COMPACT_BYTES,
+  serializeLiveCompactProjection,
+} from "../src/application/live/live-control-room-service.mjs";
+import {
   digestKnowledgeLifecycleValue,
   validateWardenWritebackApproval as validateExactWardenWritebackApproval,
 } from "../src/domain/evolution/warden-writeback-approval.mjs";
@@ -981,6 +986,16 @@ async function atomicWriteFile(filePath, content) {
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
   }
+}
+
+function prepareCompactLiveProjection(artifact) {
+  const projection = buildLiveCompactProjection(artifact);
+  const content = serializeLiveCompactProjection(projection);
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes > LIVE_MAX_COMPACT_BYTES) {
+    throw new Error(`Live compact projection exceeds ${LIVE_MAX_COMPACT_BYTES} bytes.`);
+  }
+  return { projection, content, bytes, sha256: textSha256(content) };
 }
 
 async function fsyncParentDirectoryBestEffort(filePath) {
@@ -11579,6 +11594,7 @@ export async function runMetaTheoryGovernedExecution({
     throw new Error("A continuation run must use a new runId instead of overwriting its prior artifact.");
   }
   const jsonPath = resolveOutputFile(outputDir, `${effectiveRunId}.json`);
+  const liveProjectionPath = resolveOutputFile(outputDir, `${effectiveRunId}.live.json`);
   const markdownFileName = `${effectiveRunId}.${resolvedOutputLanguage}.md`;
   const markdownPath = resolveOutputFile(outputDir, markdownFileName);
   const stagingRefs = {
@@ -12411,6 +12427,10 @@ export async function runMetaTheoryGovernedExecution({
     },
     ...workflowContractPackets,
   };
+  // Prepare and budget the exact bytes before any primary artifact commit.
+  // Projection construction can therefore never leave a newly committed run
+  // behind an older latest pointer.
+  const liveProjectionRecord = prepareCompactLiveProjection(artifact);
   if (durableCoordinator) {
     let materializationReservation = await readDurableReservation(reservationPath, {
       runId: effectiveRunId,
@@ -12485,6 +12505,7 @@ export async function runMetaTheoryGovernedExecution({
     await atomicWriteFile(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`);
     await atomicWriteFile(markdownPath, userReportMarkdown);
   }
+  await atomicWriteFile(liveProjectionPath, liveProjectionRecord.content);
   await atomicWriteFile(
     latestPath,
     `${JSON.stringify(
@@ -12494,6 +12515,9 @@ export async function runMetaTheoryGovernedExecution({
         resolvedOutputLanguage,
         languageResolution,
         jsonPath: relative(jsonPath),
+        liveProjectionPath: relative(liveProjectionPath),
+        liveProjectionSha256: liveProjectionRecord.sha256,
+        liveProjectionBytes: liveProjectionRecord.bytes,
         markdownPath: relative(markdownPath),
       },
       null,
@@ -12504,6 +12528,7 @@ export async function runMetaTheoryGovernedExecution({
     ...artifact,
     paths: {
       json: jsonPath,
+      liveProjection: liveProjectionPath,
       markdown: markdownPath,
       latest: latestPath,
       db: dbPath,
