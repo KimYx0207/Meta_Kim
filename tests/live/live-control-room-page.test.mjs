@@ -686,7 +686,7 @@ test("splits Inspector into six bounded tabs and distinguishes planned context d
   assert.match(html, /html, body \{[^}]*overflow:\s*hidden/su);
 });
 
-test("keeps the reference-inspired black-gold surface restrained, stateful, and mobile-bounded", () => {
+test("keeps the reference-inspired cool-tech surface restrained, stateful, and mobile-bounded", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const themeCss = html.slice(html.lastIndexOf(":root {"));
   const variable = (name) => themeCss.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "iu"))?.[1].toLowerCase();
@@ -708,9 +708,11 @@ test("keeps the reference-inspired black-gold surface restrained, stateful, and 
   const success = variable("green");
   const danger = variable("danger");
   assert.ok(gold && goldBright && running && success && danger, "the final theme must expose semantic color variables");
-  assert.ok(rgbToHsl(gold).saturation <= 70, "primary gold should remain low-saturation");
-  assert.ok(rgbToHsl(goldBright).saturation <= 70, "highlight gold should remain low-saturation");
-  assert.equal(new Set([gold, running, success, danger]).size, 4, "gold, running, success, and failed states need distinct colors");
+  assert.ok(rgbToHsl(gold).saturation <= 70, "completion color should remain restrained");
+  assert.ok(rgbToHsl(goldBright).saturation <= 70, "completion highlight should remain restrained");
+  assert.equal(new Set([gold, running, success, danger]).size, 4, "completion, running, success, and failed states need distinct colors");
+  assert.doesNotMatch(themeCss, /#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b/iu, "the active theme must not retain warm-gold swatches");
+  assert.match(themeCss, /--accent:\s*#58d4cf/iu);
   assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--teal\)/su);
   assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--gold\)/su);
   assert.match(themeCss, /\.node-failed, \.node-in-doubt\s*\{[^}]*border-left-color:\s*var\(--danger\)/su);
