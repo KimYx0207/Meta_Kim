@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -207,6 +208,56 @@ test("runtime hook state requires an explicit session or run identifier", async 
     }),
     /planning_run_identifier_missing/u,
   );
+});
+
+test("Claude hook CLI reads piped JSON on Windows, emits the real event name, and silently skips unbound input", async (t) => {
+  const root = await fixture();
+  const unboundRoot = await fixture();
+  t.after(() => Promise.all([
+    rm(root, { recursive: true, force: true }),
+    rm(unboundRoot, { recursive: true, force: true }),
+  ]));
+  const hookPath = path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs");
+  const sessionId = "claude-hook-session";
+  await initializePlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+
+  const resumed = spawnSync(process.execPath, [
+    hookPath,
+    "--event", "session-start",
+    "--runtime", "claude",
+  ], {
+    cwd: root,
+    encoding: "utf8",
+    input: JSON.stringify({
+      session_id: sessionId,
+      cwd: root,
+      hook_event_name: "SessionStart",
+      source: "startup",
+    }),
+  });
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.equal(resumed.stderr, "");
+  const output = JSON.parse(resumed.stdout);
+  assert.equal(output.hookSpecificOutput.hookEventName, "SessionStart");
+  assert.match(output.hookSpecificOutput.additionalContext, /FILE task_plan\.md/u);
+
+  const unbound = spawnSync(process.execPath, [
+    hookPath,
+    "--event", "session-start",
+    "--runtime", "claude",
+  ], {
+    cwd: unboundRoot,
+    encoding: "utf8",
+    input: JSON.stringify({
+      cwd: unboundRoot,
+      hook_event_name: "SessionStart",
+      source: "startup",
+    }),
+  });
+  assert.equal(unbound.status, 0, unbound.stderr);
+  assert.equal(unbound.stdout, "");
+  assert.equal(unbound.stderr, "");
+  await assert.rejects(lstat(path.join(unboundRoot, ".meta-kim")), { code: "ENOENT" });
 });
 
 test("completion gate blocks at most twice and requires attested verification plus summary closure", async (t) => {

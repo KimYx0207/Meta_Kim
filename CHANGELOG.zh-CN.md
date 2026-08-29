@@ -8,6 +8,13 @@
 
 ## 未发布
 
+## [3.0.8] - 2026-08-30
+
+### 修复
+
+- **Claude Code 规划连续性 Hook 现在能在原生 Windows 正确读取 JSON。** Hook 改为从 stdin 流读取，不再因文件描述符读取丢失有效 `session_id`，并在 `SessionStart` 错报 `planning_run_identifier_missing`。
+- **规划上下文会返回真实的 Claude Code Hook 事件名。** `SessionStart`、`UserPromptSubmit` 和 `PreCompact` 的上下文输出现在符合 Claude Code 官方 `hookSpecificOutput` 契约；缺少运行绑定的 Hook 输入会安全静默退出，不创建共享权威，也不再显示启动错误。
+
 ## [3.0.7] - 2026-08-30
 
 ### 新增
