@@ -1,6 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -15,6 +16,7 @@ import {
   getGovernedRunSurfaceLabels,
   resolveOutputLanguage,
 } from "../../scripts/meta-kim-i18n.mjs";
+import { serializeLiveCompactProjection } from "../../src/application/live/live-control-room-service.mjs";
 import {
   createInitialState,
   createMetaRunStatusEnvelope,
@@ -768,12 +770,18 @@ describe("55 - governed run identity, language, and chat surface", () => {
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
       });
-      const firstLiveProjection = JSON.parse(await readFile(first.paths.liveProjection, "utf8"));
+      const firstLiveProjectionContent = await readFile(first.paths.liveProjection, "utf8");
+      const firstLiveProjection = JSON.parse(firstLiveProjectionContent);
       const firstPointer = JSON.parse(await readFile(first.paths.latest, "utf8"));
       assert.equal(firstLiveProjection.schemaVersion, "meta-kim-live-projection-v2");
+      assert.equal(firstLiveProjectionContent, serializeLiveCompactProjection(firstLiveProjection));
       assert.equal(firstPointer.liveProjectionPath.endsWith("protected-run.live.json"), true);
+      assert.equal(firstPointer.liveProjectionBytes, Buffer.byteLength(firstLiveProjectionContent, "utf8"));
       assert.equal(firstPointer.liveProjectionBytes <= 256 * 1024, true);
-      assert.match(firstPointer.liveProjectionSha256, /^[a-f0-9]{64}$/u);
+      assert.equal(
+        firstPointer.liveProjectionSha256,
+        createHash("sha256").update(firstLiveProjectionContent, "utf8").digest("hex"),
+      );
       await assert.rejects(
         runMetaTheoryGovernedExecution({
           task: "second explicit run",

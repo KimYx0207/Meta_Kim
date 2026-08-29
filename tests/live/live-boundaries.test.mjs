@@ -15,6 +15,7 @@ import {
   startLiveControlRoom,
 } from "../../scripts/meta-kim-live.mjs";
 import {
+  isLiveRunId,
   isPathInside,
   safeReadJson,
   sanitizeLiveProfile,
@@ -28,6 +29,7 @@ import {
   normalizeStage,
   normalizeStatus,
   safeText,
+  serializeLiveCompactProjection,
 } from "../../src/application/live/live-control-room-service.mjs";
 import { createLiveContinuationCommand } from "../../src/domain/live/live-continuation-command.mjs";
 import { createLiveContinuationCommandStore } from "../../src/infrastructure/live/live-continuation-command-store.mjs";
@@ -133,7 +135,8 @@ test("snapshot allowlists normalize aliases while redacting every sensitive stri
   assert.equal(safeText(123), "123");
   assert.equal(safeText("abcdef", "fallback", 3), "abc");
   assert.equal(emptySnapshot("2026-08-24T00:00:00Z").run, null);
-  assert.equal(emptyReplay("bad-run").runId, null);
+  assert.equal(emptyReplay("bad-run").runId, "bad-run");
+  assert.equal(emptyReplay("../bad-run").runId, null);
 });
 
 test("repository primitives fail closed for malformed, oversized, and out-of-root data", async () => {
@@ -365,6 +368,7 @@ test("compact projection trims optional detail before nodes and records original
       verifyStepRef: `proof-${index}-${"y".repeat(120)}`,
     })),
   }));
+  const startedAt = performance.now();
   const projection = buildLiveCompactProjection({
     runId,
     status: "completed",
@@ -372,7 +376,9 @@ test("compact projection trims optional detail before nodes and records original
     workerResultPackets,
     verificationPacket: { verificationResults: [{ status: "passed" }] },
   }, { maxBytes: 24 * 1024 });
-  assert.ok(Buffer.byteLength(JSON.stringify(projection), "utf8") <= 24 * 1024);
+  const elapsedMs = performance.now() - startedAt;
+  assert.ok(Buffer.byteLength(serializeLiveCompactProjection(projection), "utf8") <= 24 * 1024);
+  assert.ok(elapsedMs < 2_500, `maximum-shape compaction took ${elapsedMs.toFixed(1)}ms`);
   assert.equal(projection.truncated.applied, true);
   assert.ok(projection.counts.nodes > projection.visibleCounts.nodes);
   assert.ok(projection.truncated.omitted.evidence > 0);
@@ -382,8 +388,18 @@ test("compact projection trims optional detail before nodes and records original
   assert.equal(projection.truncated.omitted.prompts, projection.counts.prompts - projection.visibleCounts.prompts);
   assert.equal(projection.truncated.omitted.provenance, projection.counts.provenance - projection.visibleCounts.provenance);
   assert.equal(projection.truncated.omitted.replay, projection.counts.events - projection.visibleCounts.events);
-  assert.equal(projection.truncated.finalBytes, Buffer.byteLength(JSON.stringify(projection), "utf8"));
+  assert.equal(projection.truncated.finalBytes, Buffer.byteLength(serializeLiveCompactProjection(projection), "utf8"));
   assert.equal(projection.nodes.some((node) => node.isMain === true), true);
+});
+
+test("Live accepts every canonical explicit governed run id without weakening path safety", () => {
+  for (const runId of ["protected-run", "explicit-language-run", "A_1.2-run"]) {
+    assert.equal(isLiveRunId(runId), true, runId);
+    assert.equal(buildLiveCompactProjection({ runId, status: "pending" }).run.runId, runId);
+  }
+  for (const runId of ["../escape", "nested/run", "nested\\run", "..", ".", ""]) {
+    assert.equal(isLiveRunId(runId), false, runId);
+  }
 });
 
 test("repository falls back to the same pointer raw artifact when compact data is missing or corrupt", async () => {

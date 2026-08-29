@@ -77,6 +77,7 @@ import { openDurableRunRepository } from "../src/application/run/open-durable-ru
 import {
   buildLiveCompactProjection,
   LIVE_MAX_COMPACT_BYTES,
+  serializeLiveCompactProjection,
 } from "../src/application/live/live-control-room-service.mjs";
 import {
   digestKnowledgeLifecycleValue,
@@ -987,15 +988,14 @@ async function atomicWriteFile(filePath, content) {
   }
 }
 
-async function writeCompactLiveProjection(artifact, liveProjectionPath) {
+function prepareCompactLiveProjection(artifact) {
   const projection = buildLiveCompactProjection(artifact);
-  const content = `${JSON.stringify(projection, null, 2)}\n`;
+  const content = serializeLiveCompactProjection(projection);
   const bytes = Buffer.byteLength(content, "utf8");
   if (bytes > LIVE_MAX_COMPACT_BYTES) {
     throw new Error(`Live compact projection exceeds ${LIVE_MAX_COMPACT_BYTES} bytes.`);
   }
-  await atomicWriteFile(liveProjectionPath, content);
-  return { projection, bytes, sha256: textSha256(content) };
+  return { projection, content, bytes, sha256: textSha256(content) };
 }
 
 async function fsyncParentDirectoryBestEffort(filePath) {
@@ -12427,6 +12427,10 @@ export async function runMetaTheoryGovernedExecution({
     },
     ...workflowContractPackets,
   };
+  // Prepare and budget the exact bytes before any primary artifact commit.
+  // Projection construction can therefore never leave a newly committed run
+  // behind an older latest pointer.
+  const liveProjectionRecord = prepareCompactLiveProjection(artifact);
   if (durableCoordinator) {
     let materializationReservation = await readDurableReservation(reservationPath, {
       runId: effectiveRunId,
@@ -12501,7 +12505,7 @@ export async function runMetaTheoryGovernedExecution({
     await atomicWriteFile(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`);
     await atomicWriteFile(markdownPath, userReportMarkdown);
   }
-  const liveProjectionRecord = await writeCompactLiveProjection(artifact, liveProjectionPath);
+  await atomicWriteFile(liveProjectionPath, liveProjectionRecord.content);
   await atomicWriteFile(
     latestPath,
     `${JSON.stringify(

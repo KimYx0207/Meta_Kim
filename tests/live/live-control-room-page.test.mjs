@@ -6,6 +6,148 @@ import {
   renderLiveControlRoomPage,
 } from "../../src/presentation/live/live-control-room-page.mjs";
 
+function modalBehaviorHarness() {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const modalStart = html.indexOf("  function modalBackgroundElements()");
+  const modalEnd = html.indexOf("\n  function updateMinimap()", modalStart);
+  const keydownStart = html.indexOf('  app.addEventListener("keydown", (event) => {', modalEnd);
+  const keydownEnd = html.indexOf("\n  replayPlay?.addEventListener", keydownStart);
+  assert.ok(modalStart >= 0 && modalEnd > modalStart, "modal controller must remain in the shipped client script");
+  assert.ok(keydownStart >= 0 && keydownEnd > keydownStart, "modal keyboard binding must remain in the shipped client script");
+
+  const document = {
+    activeElement: null,
+    skipLink: null,
+    querySelector(selector) {
+      return selector === ".skip-link" ? this.skipLink : null;
+    },
+  };
+  class FakeElement {
+    constructor(name, { dialog = false } = {}) {
+      this.name = name;
+      this.dialog = dialog;
+      this.hidden = false;
+      this.inert = false;
+      this.children = [];
+      this.focusables = [];
+      this.attributes = new Map();
+      this.focusCount = 0;
+    }
+
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+    }
+
+    getAttribute(name) {
+      return this.attributes.has(name) ? this.attributes.get(name) : null;
+    }
+
+    removeAttribute(name) {
+      this.attributes.delete(name);
+    }
+
+    matches(selector) {
+      return selector === "[data-live-dialog]" && this.dialog;
+    }
+
+    querySelector() {
+      return this.focusables[0] || null;
+    }
+
+    querySelectorAll() {
+      return this.focusables;
+    }
+
+    contains(element) {
+      return element === this || this.focusables.includes(element);
+    }
+
+    focus() {
+      this.focusCount += 1;
+      document.activeElement = this;
+    }
+
+    blur() {
+      if (document.activeElement === this) document.activeElement = null;
+    }
+  }
+
+  const app = new FakeElement("app");
+  const skipLink = new FakeElement("skip-link");
+  const background = new FakeElement("background");
+  const preservedBackground = new FakeElement("preserved-background");
+  preservedBackground.inert = true;
+  preservedBackground.setAttribute("aria-hidden", "legacy");
+  const sessionsDialog = new FakeElement("sessions", { dialog: true });
+  const helpDialog = new FakeElement("help", { dialog: true });
+  const infoDialog = new FakeElement("info", { dialog: true });
+  const first = new FakeElement("first");
+  const last = new FakeElement("last");
+  sessionsDialog.focusables = [first, last];
+  sessionsDialog.setAttribute("aria-hidden", "true");
+  sessionsDialog.hidden = true;
+  helpDialog.setAttribute("aria-hidden", "true");
+  helpDialog.hidden = true;
+  infoDialog.setAttribute("aria-hidden", "true");
+  infoDialog.hidden = true;
+  app.children = [background, preservedBackground, sessionsDialog, helpDialog, infoDialog];
+  document.skipLink = skipLink;
+  app.addEventListener = (type, handler) => {
+    if (type === "keydown") app.keydownHandler = handler;
+  };
+
+  const modalSource = html.slice(modalStart, modalEnd);
+  const keydownSource = html.slice(keydownStart, keydownEnd);
+  const createController = new Function(
+    "document",
+    "app",
+    "sessionsDialog",
+    "helpDialog",
+    "infoDialog",
+    "HTMLInputElement",
+    "HTMLSelectElement",
+    "HTMLTextAreaElement",
+    `${String.raw`
+      let dialogOpener = null;
+      let activeDialog = null;
+      const modalBackgroundState = new Map();
+      const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      let selectedNodeId = null;
+      const updateSelectedNodeVisuals = () => {};
+      const setInspectorOpen = () => {};
+      ${modalSource}
+      ${keydownSource}
+      return {
+        setDialogOpen,
+        trapDialogFocus,
+        keydownHandler: () => app.keydownHandler,
+        activeDialog: () => activeDialog,
+      };
+    `}`,
+  );
+  const controller = createController(
+    document,
+    app,
+    sessionsDialog,
+    helpDialog,
+    infoDialog,
+    class FakeInput extends FakeElement {},
+    class FakeSelect extends FakeElement {},
+    class FakeTextArea extends FakeElement {},
+  );
+  return {
+    controller,
+    document,
+    skipLink,
+    background,
+    preservedBackground,
+    sessionsDialog,
+    first,
+    last,
+    FakeElement,
+  };
+}
+
 const snapshotFixture = {
   schemaVersion: LIVE_SNAPSHOT_SCHEMA_VERSION,
   source: {
@@ -561,9 +703,89 @@ test("adapts service field aliases and safely summarizes structured terminal evi
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#87d787["'][\s\S]*skipped:\s*["']#585858["']/u);
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#58d4cf["'][\s\S]*completed:\s*["']#5b8cff["'][\s\S]*skipped:\s*["']#585858["']/u);
   assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
   assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
+});
+
+test("makes aria-modal dialogs isolate the app, trap focus, and restore the opener", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /const FOCUSABLE_DIALOG_SELECTOR\s*=/u);
+  assert.match(html, /function trapDialogFocus\(event\)[\s\S]{0,1200}event\.key !== "Tab"/u);
+  assert.match(html, /event\.shiftKey[\s\S]{0,500}last\.focus\(\)/u);
+  assert.match(html, /first\.focus\(\)/u);
+  assert.match(html, /background\.inert\s*=\s*active/u);
+  assert.match(html, /background\.setAttribute\("aria-hidden", "true"\)/u);
+  assert.match(html, /restoreModalBackground\(\)/u);
+  assert.match(html, /activeDialog\.contains\(document\.activeElement\)/u);
+  assert.match(html, /dialogOpener\.focus\(\)/u);
+  assert.match(html, /const hadOpenDialog\s*=\s*Boolean\(activeDialog\)/u);
+  assert.match(html, /if \(!hadOpenDialog\) document\.activeElement\?\.blur\?\.\(\)/u);
+
+  const {
+    controller,
+    document,
+    skipLink,
+    background,
+    preservedBackground,
+    sessionsDialog,
+    first,
+    last,
+    FakeElement,
+  } = modalBehaviorHarness();
+  const opener = new FakeElement("opener");
+  opener.focus();
+  controller.setDialogOpen(sessionsDialog, true);
+
+  assert.equal(controller.activeDialog(), sessionsDialog);
+  assert.equal(sessionsDialog.hidden, false);
+  assert.equal(sessionsDialog.getAttribute("aria-hidden"), "false");
+  assert.equal(document.activeElement, first);
+  for (const isolated of [skipLink, background, preservedBackground]) {
+    assert.equal(isolated.inert, true, isolated.name);
+    assert.equal(isolated.getAttribute("aria-hidden"), "true", isolated.name);
+  }
+
+  const tabEvent = (shiftKey = false) => ({
+    key: "Tab",
+    shiftKey,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  last.focus();
+  const forwardTab = tabEvent(false);
+  controller.trapDialogFocus(forwardTab);
+  assert.equal(forwardTab.defaultPrevented, true);
+  assert.equal(document.activeElement, first);
+  const reverseTab = tabEvent(true);
+  controller.trapDialogFocus(reverseTab);
+  assert.equal(reverseTab.defaultPrevented, true);
+  assert.equal(document.activeElement, last);
+
+  const escape = {
+    key: "Escape",
+    target: last,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  controller.keydownHandler()(escape);
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(controller.activeDialog(), null);
+  assert.equal(sessionsDialog.hidden, true);
+  assert.equal(sessionsDialog.getAttribute("aria-hidden"), "true");
+  assert.equal(background.inert, false);
+  assert.equal(background.getAttribute("aria-hidden"), null);
+  assert.equal(skipLink.inert, false);
+  assert.equal(skipLink.getAttribute("aria-hidden"), null);
+  assert.equal(preservedBackground.inert, true);
+  assert.equal(preservedBackground.getAttribute("aria-hidden"), "legacy");
+  assert.equal(document.activeElement, opener);
+
+  controller.setDialogOpen(sessionsDialog, true);
+  controller.setDialogOpen(sessionsDialog, false);
+  assert.equal(document.activeElement, opener);
+  assert.equal(background.inert, false);
 });
 
 test("keeps the desktop workspace bounded and coalesces high-frequency snapshot updates", () => {
@@ -702,19 +924,19 @@ test("keeps the reference-inspired cool-tech surface restrained, stateful, and m
     return { saturation: saturation * 100 };
   };
 
-  const gold = variable("gold");
-  const goldBright = variable("gold-bright");
-  const running = variable("teal");
+  const completion = variable("completion");
+  const completionBright = variable("completion-bright");
+  const running = variable("running");
   const success = variable("green");
   const danger = variable("danger");
-  assert.ok(gold && goldBright && running && success && danger, "the final theme must expose semantic color variables");
-  assert.ok(rgbToHsl(gold).saturation <= 70, "completion color should remain restrained");
-  assert.ok(rgbToHsl(goldBright).saturation <= 70, "completion highlight should remain restrained");
-  assert.equal(new Set([gold, running, success, danger]).size, 4, "completion, running, success, and failed states need distinct colors");
-  assert.doesNotMatch(themeCss, /#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b/iu, "the active theme must not retain warm-gold swatches");
+  assert.ok(completion && completionBright && running && success && danger, "the final theme must expose semantic color variables");
+  assert.equal(completion, "#5b8cff", "completion must use the electric-blue state color");
+  assert.equal(running, "#58d4cf", "running must use the teal state color");
+  assert.equal(new Set([completion, running, success, danger]).size, 4, "completion, running, success, and failed states need distinct colors");
+  assert.doesNotMatch(html, /gold|#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b|#d7af00|#f0d56a|#87d787/iu, "the full generated HTML and script must not retain gold names or warm completion swatches");
   assert.match(themeCss, /--accent:\s*#58d4cf/iu);
-  assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--teal\)/su);
-  assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--gold\)/su);
+  assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--running\)/su);
+  assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--completion\)/su);
   assert.match(themeCss, /\.node-failed, \.node-in-doubt\s*\{[^}]*border-left-color:\s*var\(--danger\)/su);
 
   const pixelRadii = [...themeCss.matchAll(/border-radius:\s*([0-9]+(?:\.[0-9]+)?)px/giu)]

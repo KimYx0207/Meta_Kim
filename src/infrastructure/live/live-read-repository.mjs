@@ -10,7 +10,9 @@ import path from "node:path";
 export const LIVE_DEFAULT_PROFILE = "default";
 export const LIVE_MAX_JSON_BYTES = 8 * 1024 * 1024;
 export const LIVE_MAX_COMPACT_JSON_BYTES = 256 * 1024;
-export const LIVE_RUN_ID_PATTERN = /^meta-[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/u;
+// Keep this aligned with the governed runner's canonical filename-safe run-id
+// contract. A `meta-` prefix is conventional, not required for explicit ids.
+export const LIVE_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 export const LIVE_PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u;
 
 function isPathInside(parent, target) {

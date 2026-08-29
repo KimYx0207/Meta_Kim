@@ -34,6 +34,100 @@ test("does not present an unproven completed node as verified completion", () =>
   assert.equal(snapshot.nodes.some((node) => node.kind === "stage"), false);
 });
 
+test("re-sanitizes hostile compact projections before exposing the public snapshot", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: {
+      schemaVersion: "meta-kim-live-projection-v2",
+      run: {
+        runId: "explicit-safe-run",
+        title: "password=must-not-leak",
+        task: "C:/Users/Kim/private/task.txt",
+        status: "active",
+        currentStage: "execution",
+      },
+      session: {
+        title: "Safe session",
+        runtime: "secret=must-not-leak",
+        mode: "C:/Users/Kim/private/mode",
+      },
+      nodes: [
+        {
+          id: "agent:known",
+          kind: "agent",
+          label: "token=must-not-leak",
+          status: "active",
+          ownerAgent: "C:/Users/Kim/private/owner",
+          runtimeObservation: { state: "observed", value: "C:/Users/Kim/private/runtime" },
+        },
+        { id: "../../escape", kind: "agent", label: "unsafe node" },
+      ],
+      edges: [
+        { from: "agent:known", to: "agent:missing", kind: "contains" },
+        { from: "../../escape", to: "agent:known", kind: "depends_on" },
+      ],
+      evidence: [{ id: "proof:known", nodeId: "agent:known", label: "file:///Users/Kim/private/evidence" }],
+      replay: [{ id: "event:known", nodeId: "agent:missing", at: "2026-08-24T01:00:00.000Z", label: "secret=must-not-leak" }],
+      prompts: [{ nodeId: "agent:known", summary: "password=must-not-leak" }],
+      toolCalls: [{ id: "tool:known", nodeId: "agent:known", name: "C:/Users/Kim/private/tool.exe" }],
+      provenance: [{ nodeId: "agent:known", kind: "secret=must-not-leak" }],
+      contextTransfers: [],
+    },
+  });
+
+  const publicBytes = JSON.stringify(snapshot);
+  assert.doesNotMatch(publicBytes, /must-not-leak|Users[\\/]Kim|private[\\/]|tool\.exe|\.\.\/\.\.\/escape/u);
+  assert.equal(snapshot.run.runId, "explicit-safe-run");
+  assert.deepEqual(snapshot.edges, []);
+  assert.equal(snapshot.nodes.length, 1);
+  assert.equal(snapshot.replay[0].nodeId, null);
+});
+
+test("redacts whitespace-delimited credentials and punctuation-prefixed POSIX paths", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: {
+      schemaVersion: "meta-kim-live-projection-v2",
+      run: {
+        runId: "hostile-public-text-run",
+        title: "Bearer opaqueSecret123456",
+        task: "password hunter2",
+        status: "active",
+        currentStage: "execution",
+      },
+      session: {
+        title: "token abcdefghijklmnop",
+        activity: "path=/home/kim/.ssh/id_rsa",
+        runtime: "codex",
+        mode: "token budget",
+        proofState: "secret sauce",
+      },
+      nodes: [{
+        id: "agent:known",
+        kind: "agent",
+        label: "api key Abcdef12",
+        summary: "password manager",
+        status: "active",
+        ownerAgent: "meta-warden",
+      }],
+      edges: [],
+      evidence: [],
+      replay: [],
+      prompts: [],
+      toolCalls: [],
+      provenance: [],
+      contextTransfers: [],
+    },
+  });
+
+  const publicBytes = JSON.stringify(snapshot);
+  assert.doesNotMatch(publicBytes, /opaqueSecret123456|hunter2|abcdefghijklmnop|home[\\/]kim|id_rsa|Abcdef12/u);
+  assert.equal(snapshot.run.title, "redacted");
+  assert.equal(snapshot.run.task, "redacted");
+  assert.equal(snapshot.session.activity, "[path omitted]");
+  assert.equal(snapshot.session.mode, "token budget");
+  assert.equal(snapshot.session.proofState, "secret sauce");
+  assert.equal(snapshot.nodes[0].summary, "password manager");
+});
+
 test("requires bound passing structured evidence before projecting completion", () => {
   const observedAt = "2026-08-24T01:00:00.000Z";
   const unproven = buildLiveSnapshot({

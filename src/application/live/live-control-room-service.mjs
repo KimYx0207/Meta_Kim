@@ -101,10 +101,29 @@ const SAFE_KINDS = new Set([
   "in_doubt",
 ]);
 
-const SECRET_PATTERN = /(?:api[_-]?key|access[_-]?token|auth(?:entication)?|bearer|credential|password|passphrase|private[_ -]?key|secret|token)\s*[:=]|\b(?:gh[pousr]_|github_pat_|AKIA|ASIA)[A-Za-z0-9_-]{8,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}/iu;
-const ABSOLUTE_PATH_PATTERN = /(?:[A-Za-z]:[\\/]|\\\\|(?:^|\s)\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+)/u;
-const HOME_OR_FILE_URI_PATTERN = /(?:^|\s)(?:~[\\/]|(?:file|vscode|vscode-insiders):\/\/|file%3a%2f%2f)/iu;
+const SECRET_ASSIGNMENT_PATTERN = /(?:api[ _-]?key|access[ _-]?token|auth(?:entication|orization)?|bearer|credential|password|passphrase|private[ _-]?key|secret|token)\s*[:=]/iu;
+const BEARER_CREDENTIAL_PATTERN = /\bbearer\s+[A-Za-z0-9][A-Za-z0-9._~+/-]{3,}(?=$|[\s,;:)\]}])/iu;
+const LABELED_CREDENTIAL_PATTERN = /\b(?:api[ _-]?key|access[ _-]?token|auth(?:entication|orization)?|credential|password|passphrase|private[ _-]?key|secret|token)\s+([A-Za-z0-9][A-Za-z0-9._~+/-]{6,})(?=$|[\s,;:)\]}])/iu;
+const KNOWN_SECRET_VALUE_PATTERN = /\b(?:gh[pousr]_|github_pat_|AKIA|ASIA)[A-Za-z0-9_-]{8,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}|-----BEGIN [A-Z ]+KEY-----|\bsk-[A-Za-z0-9_-]{8,}\b/iu;
+const ABSOLUTE_PATH_PATTERN = /(?:[A-Za-z]:[\\/]|\\\\|(?:^|[\s"'(<\[{=:;,])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+)/u;
+const HOME_OR_FILE_URI_PATTERN = /(?:^|[\s"'(<\[{=:;,])(?:~[\\/]|(?:file|vscode|vscode-insiders):\/\/|file%3a%2f%2f)/iu;
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f]/gu;
+
+function containsSecret(value) {
+  if (
+    SECRET_ASSIGNMENT_PATTERN.test(value) ||
+    BEARER_CREDENTIAL_PATTERN.test(value) ||
+    KNOWN_SECRET_VALUE_PATTERN.test(value)
+  ) {
+    return true;
+  }
+  const labeled = LABELED_CREDENTIAL_PATTERN.exec(value);
+  if (!labeled) return false;
+  const credential = labeled[1];
+  return credential.length >= 16 ||
+    /[0-9._~+/-]/u.test(credential) ||
+    (/[a-z]/u.test(credential) && /[A-Z]/u.test(credential));
+}
 
 function publicId(kind, value) {
   const digest = createHash("sha256").update(String(value ?? "unknown"), "utf8").digest("hex").slice(0, 20);
@@ -382,7 +401,7 @@ function safeText(value, fallback = "in_doubt", max = LIVE_MAX_STRING) {
   if (typeof value !== "string" && typeof value !== "number") return fallback;
   let text = String(value).replace(CONTROL_PATTERN, " ").trim();
   if (!text) return fallback;
-  if (SECRET_PATTERN.test(text) || /-----BEGIN [A-Z ]+KEY-----/u.test(text) || /\bsk-[A-Za-z0-9_-]{8,}\b/u.test(text)) {
+  if (containsSecret(text)) {
     return "redacted";
   }
   if (ABSOLUTE_PATH_PATTERN.test(text) || HOME_OR_FILE_URI_PATTERN.test(text)) return "[path omitted]";
@@ -398,7 +417,7 @@ function safeText(value, fallback = "in_doubt", max = LIVE_MAX_STRING) {
 function safeId(value, fallback = "in_doubt", prefix = "") {
   if (typeof value !== "string") return fallback;
   const text = value.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(text) || SECRET_PATTERN.test(text)) return fallback;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(text) || containsSecret(text)) return fallback;
   return `${prefix}${text}`;
 }
 
@@ -822,8 +841,12 @@ function aggregateNodeStatus(nodes) {
   return "in_doubt";
 }
 
+export function serializeLiveCompactProjection(value) {
+  return `${JSON.stringify(value)}\n`;
+}
+
 function liveProjectionBytes(value) {
-  return Buffer.byteLength(JSON.stringify(value), "utf8");
+  return Buffer.byteLength(serializeLiveCompactProjection(value), "utf8");
 }
 
 function fitLiveProjectionToBudget(value, maxBytes) {
@@ -862,7 +885,7 @@ function fitLiveProjectionToBudget(value, maxBytes) {
     }
     projection.replay = projection.replay.filter((event) => event.nodeId !== nodeId);
   };
-  const removeLowPriorityNode = () => {
+  const lowPriorityNodeIds = () => {
     const ranks = projection.nodes.map((node, index) => {
       if (node.isMain === true) return { index, rank: Number.POSITIVE_INFINITY };
       if (node.kind === "workflow") return { index, rank: 4 };
@@ -872,79 +895,51 @@ function fitLiveProjectionToBudget(value, maxBytes) {
       return { index, rank: 2 };
     }).filter((item) => Number.isFinite(item.rank));
     ranks.sort((left, right) => left.rank - right.rank || right.index - left.index);
-    const selected = ranks[0];
-    if (!selected) return false;
-    const [removed] = projection.nodes.splice(selected.index, 1);
-    removeNodeReferences(removed.id);
-    omitted.nodes += 1;
-    return true;
+    return ranks.map(({ index }) => projection.nodes[index]?.id).filter(Boolean);
   };
-  let guard = 0;
-  while (size() > maxBytes && guard < 4096) {
-    guard += 1;
-    if (projection.toolCalls.length) {
-      projection.toolCalls.pop();
-      omitted.toolCalls += 1;
-      continue;
-    }
-    const nodeWithTool = [...projection.nodes].reverse().find((node) => node.toolCalls?.length);
-    if (nodeWithTool) {
-      nodeWithTool.toolCalls.pop();
-      nodeWithTool.toolCount = nodeWithTool.toolCalls.length;
-      nodeWithTool.latestTool = nodeWithTool.toolCalls.at(-1)?.name || null;
-      omitted.toolCalls += 1;
-      continue;
-    }
-    if (projection.evidence.length) {
-      projection.evidence.pop();
-      omitted.evidence += 1;
-      continue;
-    }
-    const nodeWithEvidence = [...projection.nodes].reverse().find((node) => node.workerExecutionEvidence?.length || node.terminalEvidence?.length);
-    if (nodeWithEvidence?.workerExecutionEvidence?.length) {
-      nodeWithEvidence.workerExecutionEvidence.pop();
-      omitted.evidence += 1;
-      continue;
-    }
-    if (nodeWithEvidence?.terminalEvidence?.length) {
-      nodeWithEvidence.terminalEvidence.pop();
-      omitted.evidence += 1;
-      continue;
-    }
-    if (projection.prompts.length) {
-      projection.prompts.pop();
-      omitted.prompts += 1;
-      continue;
-    }
-    if (projection.provenance.length) {
-      projection.provenance.pop();
-      omitted.provenance += 1;
-      continue;
-    }
-    if (projection.contextTransfers.length) {
-      projection.contextTransfers.pop();
-      omitted.contextTransfers += 1;
-      continue;
-    }
-    const nodeWithPrompt = [...projection.nodes].reverse().find((node) => node.promptEras?.length || node.provenance?.length);
-    if (nodeWithPrompt?.promptEras?.length) {
-      nodeWithPrompt.promptEras.pop();
-      omitted.prompts += 1;
-      continue;
-    }
-    if (nodeWithPrompt?.provenance?.length) {
-      nodeWithPrompt.provenance.pop();
-      omitted.provenance += 1;
-      continue;
-    }
-    if (removeLowPriorityNode()) continue;
-    if (projection.replay.length) {
-      projection.replay.shift();
-      omitted.replay += 1;
-      continue;
-    }
-    break;
+  // Compaction runs on the synchronous governed-run commit path. Trim whole
+  // optional classes before structural nodes so work stays bounded by a small
+  // number of serializations instead of one full stringify per removed item.
+  const coarseTrimmers = [
+    () => {
+      projection.toolCalls = [];
+      for (const node of projection.nodes) {
+        node.toolCalls = [];
+        node.toolCount = 0;
+        node.latestTool = null;
+      }
+    },
+    () => {
+      projection.evidence = [];
+      for (const node of projection.nodes) {
+        node.workerExecutionEvidence = [];
+        node.terminalEvidence = [];
+      }
+    },
+    () => {
+      projection.prompts = [];
+      for (const node of projection.nodes) node.promptEras = [];
+    },
+    () => {
+      projection.provenance = [];
+      for (const node of projection.nodes) node.provenance = [];
+    },
+    () => { projection.contextTransfers = []; },
+  ];
+  for (const trim of coarseTrimmers) {
+    if (size() <= maxBytes) break;
+    trim();
   }
+  if (size() > maxBytes) {
+    const removableIds = lowPriorityNodeIds();
+    while (size() > maxBytes && removableIds.length) {
+      const removeCount = Math.max(1, Math.ceil(removableIds.length / 2));
+      const selected = new Set(removableIds.splice(0, removeCount));
+      projection.nodes = projection.nodes.filter((node) => !selected.has(node.id));
+      for (const nodeId of selected) removeNodeReferences(nodeId);
+    }
+  }
+  if (size() > maxBytes) projection.replay = [];
   projection.replay = projection.replay.map((event, index, events) => ({
     ...event,
     eventIndex: index + 1,
@@ -1533,6 +1528,241 @@ function rawReplayEvents(artifact, durable) {
   return [];
 }
 
+function safeCompactObservation(value, { count = false } = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.state !== "observed") {
+    return unavailableObservation();
+  }
+  return count ? observedCount(value.value, true) : observedValue(value.value, true);
+}
+
+function sanitizeCompactEvidenceItem(item, knownNodeIds) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const nodeId = safeId(item.nodeId, "");
+  return {
+    id: safeId(item.id, publicId("proof", JSON.stringify(item))),
+    type: normalizeKind(item.type || item.kind || "evidence"),
+    label: safeText(item.label, "Evidence", 160),
+    detail: safeNullableText(item.detail, 180),
+    sourceRef: safeNullableText(item.sourceRef, 120),
+    status: normalizeStatus(item.status, "in_doubt"),
+    observedAt: safeTimestamp(item.observedAt || item.occurredAt),
+    nodeId: nodeId && knownNodeIds.has(nodeId) ? nodeId : "",
+  };
+}
+
+function sanitizeCompactToolCall(item, knownNodeIds) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const nodeId = safeId(item.nodeId, "");
+  return {
+    id: safeId(item.id, publicId("tool", JSON.stringify(item))),
+    kind: normalizeKind(item.kind || "tool"),
+    name: safeText(item.name, "tool", 96),
+    status: normalizeStatus(item.status, "in_doubt"),
+    occurredAt: safeTimestamp(item.occurredAt),
+    nodeId: nodeId && knownNodeIds.has(nodeId) ? nodeId : "",
+  };
+}
+
+function sanitizeCompactProjection(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const runId = normalizeLiveRunId(value?.run?.runId || value.runId);
+  if (!runId) return null;
+  const rawNodes = boundedArray(value.nodes, LIVE_MAX_NODES);
+  const nodes = [];
+  const knownNodeIds = new Set();
+  for (const raw of rawNodes) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const id = safeId(raw.id, null);
+    if (!id || knownNodeIds.has(id) || !["agent", "workflow"].includes(raw.kind)) continue;
+    knownNodeIds.add(id);
+    nodes.push({ raw, id });
+  }
+  const sanitizedNodes = nodes.map(({ raw, id }) => {
+    const runtimeObservation = safeCompactObservation(raw.runtimeObservation);
+    const modelObservation = safeCompactObservation(raw.modelObservation);
+    const inputTokens = safeCompactObservation(raw.tokens?.input, { count: true });
+    const outputTokens = safeCompactObservation(raw.tokens?.output, { count: true });
+    const totalTokens = safeCompactObservation(raw.tokens?.total, { count: true });
+    const evidence = boundedArray(raw.workerExecutionEvidence, 24)
+      .map((item) => sanitizeCompactEvidenceItem({ ...item, nodeId: id }, knownNodeIds))
+      .filter(Boolean);
+    const terminalEvidence = boundedArray(raw.terminalEvidence, 24)
+      .map((item) => sanitizeCompactEvidenceItem({ ...item, nodeId: id }, knownNodeIds))
+      .filter(Boolean);
+    const toolCalls = boundedArray(raw.toolCalls, 24)
+      .map((item) => sanitizeCompactToolCall({ ...item, nodeId: id }, knownNodeIds))
+      .filter(Boolean);
+    const parentId = safeId(raw.parentId, null);
+    const startedAt = safeTimestamp(raw.timing?.startedAt || raw.firstAt);
+    const completedAt = safeTimestamp(raw.timing?.completedAt || raw.lastAt);
+    const durationMs = Number.isSafeInteger(raw.timing?.durationMs ?? raw.durationMs)
+      && (raw.timing?.durationMs ?? raw.durationMs) >= 0
+      ? raw.timing?.durationMs ?? raw.durationMs
+      : null;
+    return {
+      id,
+      kind: raw.kind,
+      isMain: raw.isMain === true,
+      label: safeText(raw.label, raw.kind === "workflow" ? "Workflow" : "Agent", 120),
+      task: safeNullableText(raw.task, 240),
+      roleDisplayName: safeNullableText(raw.roleDisplayName, 80),
+      roleInstanceId: safeNullableText(raw.roleInstanceId, 120),
+      stage: normalizeStage(raw.stage),
+      parentId: parentId && knownNodeIds.has(parentId) && parentId !== id ? parentId : null,
+      status: normalizeStatus(raw.status, "in_doubt"),
+      ownerAgent: safeText(raw.ownerAgent, "unavailable", 96),
+      runtime: runtimeObservation.value || "unavailable",
+      runtimeObservation,
+      model: modelObservation.value || "unavailable",
+      modelObservation,
+      tokens: { input: inputTokens, output: outputTokens, total: totalTokens },
+      inputTokens: inputTokens.value,
+      outputTokens: outputTokens.value,
+      totalTokens: totalTokens.value,
+      timing: { startedAt, completedAt, durationMs },
+      firstAt: startedAt,
+      lastAt: completedAt,
+      durationMs,
+      summary: safeText(raw.summary, "No safe execution summary is available", 180),
+      terminalEvidence,
+      workerExecutionEvidence: evidence,
+      toolCalls,
+      toolCount: toolCalls.length,
+      latestTool: toolCalls.at(-1)?.name || null,
+      loadout: {
+        skills: safeTransferCount(raw.loadout?.skills) ?? 0,
+        mcp: safeTransferCount(raw.loadout?.mcp) ?? 0,
+        tools: safeTransferCount(raw.loadout?.tools) ?? 0,
+        commands: safeTransferCount(raw.loadout?.commands) ?? 0,
+        skillNames: safeStringList(raw.loadout?.skillNames, 24),
+        mcpNames: safeStringList(raw.loadout?.mcpNames, 24),
+        toolNames: safeStringList(raw.loadout?.toolNames, 24),
+        commandNames: safeStringList(raw.loadout?.commandNames, 24),
+      },
+      promptEras: boundedArray(raw.promptEras, 8).map((item) => ({
+        era: safeText(item?.era, "prompt", 64),
+        label: safeText(item?.label, "Prompt phase", 120),
+        summary: safeText(item?.summary, "Prompt summary withheld", 180),
+      })),
+      provenance: boundedArray(raw.provenance, 8).map((item) => ({
+        kind: safeText(item?.kind, "provenance", 64),
+        ownerBindingMode: safeNullableText(item?.ownerBindingMode, 64),
+        state: safeText(item?.state, "unavailable", 64),
+      })),
+      evidenceCount: evidence.length + toolCalls.length,
+      childCount: safeTransferCount(raw.childCount),
+    };
+  });
+  const sanitizedEdges = boundedArray(value.edges, LIVE_MAX_EDGES).flatMap((edge) => {
+    const from = safeId(edge?.from, null);
+    const to = safeId(edge?.to, null);
+    if (!from || !to || from === to || !knownNodeIds.has(from) || !knownNodeIds.has(to)) return [];
+    return [{
+      from,
+      to,
+      kind: ["contains", "depends_on", "related"].includes(edge.kind) ? edge.kind : "related",
+    }];
+  });
+  const evidence = boundedArray(value.evidence, LIVE_MAX_EVIDENCE)
+    .map((item) => sanitizeCompactEvidenceItem(item, knownNodeIds))
+    .filter(Boolean);
+  const replay = boundedArray(value.replay, LIVE_MAX_REPLAY).flatMap((event, index) => {
+    const at = safeTimestamp(event?.at || event?.timestamp || event?.occurredAt);
+    if (!at) return [];
+    const nodeId = safeId(event?.nodeId, "");
+    const toolCallId = safeId(event?.toolCallId, null);
+    return [{
+      id: safeId(event?.id, publicId("event", `${runId}:${index}`)),
+      eventIndex: index + 1,
+      eventCount: 0,
+      sequence: index + 1,
+      at,
+      kind: normalizeKind(event?.kind || event?.eventType),
+      chapter: normalizeStage(event?.chapter),
+      stage: normalizeStage(event?.stage),
+      eventType: safeText(event?.eventType, "Event", 64),
+      nodeId: nodeId && knownNodeIds.has(nodeId) ? nodeId : null,
+      toolCallId,
+      status: normalizeStatus(event?.status, "in_doubt"),
+      visibility: event?.visibility === "visible" ? "visible" : "unavailable",
+      label: safeText(event?.label, "Observed event", 160),
+    }];
+  }).map((event, index, events) => ({ ...event, eventIndex: index + 1, eventCount: events.length, sequence: index + 1 }));
+  const sanitizeNodeRecords = (records, max, mapper) => boundedArray(records, max).flatMap((item) => {
+    const nodeId = safeId(item?.nodeId, null);
+    if (!nodeId || !knownNodeIds.has(nodeId)) return [];
+    return [{ nodeId, ...mapper(item) }];
+  });
+  const prompts = sanitizeNodeRecords(value.prompts, LIVE_MAX_EVIDENCE, (item) => ({
+    era: safeText(item?.era, "prompt", 64),
+    label: safeText(item?.label, "Prompt phase", 120),
+    summary: safeText(item?.summary, "Prompt summary withheld", 180),
+  }));
+  const toolCalls = boundedArray(value.toolCalls, LIVE_MAX_EVIDENCE)
+    .map((item) => sanitizeCompactToolCall(item, knownNodeIds))
+    .filter(Boolean);
+  const provenance = sanitizeNodeRecords(value.provenance, LIVE_MAX_EVIDENCE, (item) => ({
+    kind: safeText(item?.kind, "provenance", 64),
+    ownerBindingMode: safeNullableText(item?.ownerBindingMode, 64),
+    state: safeText(item?.state, "unavailable", 64),
+  }));
+  const safeCount = (key, fallback) => safeTransferCount(value.counts?.[key]) ?? fallback;
+  const run = {
+    runId,
+    title: safeText(value.run?.title, "Governed run", 120),
+    task: safeText(value.run?.task, "Governed execution", 240),
+    status: normalizeStatus(value.run?.status, "in_doubt"),
+    currentStage: normalizeStage(value.run?.currentStage),
+    startedAt: safeTimestamp(value.run?.startedAt),
+    updatedAt: safeTimestamp(value.run?.updatedAt),
+    completedAt: safeTimestamp(value.run?.completedAt),
+  };
+  return {
+    schemaVersion: LIVE_COMPACT_PROJECTION_SCHEMA_VERSION,
+    run,
+    session: {
+      sessionId: publicId("session", runId),
+      title: safeText(value.session?.title, run.title, 120),
+      status: normalizeStatus(value.session?.status, run.status),
+      nodeCount: sanitizedNodes.length,
+      eventCount: replay.length,
+      activity: safeText(value.session?.activity, run.task, 240),
+      runtime: safeText(value.session?.runtime, "unavailable", 96),
+      mode: safeText(value.session?.mode, "unavailable", 64),
+      lastPromptSummary: safeText(value.session?.lastPromptSummary, "Prompt summary withheld", 180),
+      fileChangeCount: safeTransferCount(value.session?.fileChangeCount),
+      artifactCount: safeTransferCount(value.session?.artifactCount),
+      plannedCount: safeTransferCount(value.session?.plannedCount),
+      completedCount: safeTransferCount(value.session?.completedCount),
+      failedCount: safeTransferCount(value.session?.failedCount),
+      blockedCount: safeTransferCount(value.session?.blockedCount),
+      proofState: safeText(value.session?.proofState, "unavailable", 96),
+    },
+    nodes: sanitizedNodes,
+    edges: sanitizedEdges,
+    evidence,
+    replay,
+    prompts,
+    toolCalls,
+    provenance,
+    repository: repositoryProjection(value),
+    workspace: workspaceProjection(value),
+    contextTransfers: safeCompactContextTransfers(value.contextTransfers, runId, sanitizedNodes),
+    eventIndex: replay.length,
+    eventCount: replay.length,
+    counts: {
+      nodes: safeCount("nodes", sanitizedNodes.length),
+      edges: safeCount("edges", sanitizedEdges.length),
+      evidence: safeCount("evidence", evidence.length),
+      events: safeCount("events", replay.length),
+      toolCalls: safeCount("toolCalls", toolCalls.length),
+      prompts: safeCount("prompts", prompts.length),
+      provenance: safeCount("provenance", provenance.length),
+      contextTransfers: safeCount("contextTransfers", 0),
+    },
+  };
+}
+
 function buildReplay(artifact, durable, observedAt, stale, knownNodes = []) {
   const events = rawReplayEvents(artifact, durable);
   const expectedRunId = normalizeLiveRunId(artifact?.runId || durable?.runId);
@@ -1613,7 +1843,7 @@ export function buildLiveSnapshot({
   if (compatibleArtifact) {
     try {
       projection = compatibleArtifact.schemaVersion === LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
-        ? compatibleArtifact
+        ? sanitizeCompactProjection(compatibleArtifact)
         : buildLiveCompactProjection(compatibleArtifact);
     } catch {
       projection = null;

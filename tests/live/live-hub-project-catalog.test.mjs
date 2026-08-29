@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,8 +11,10 @@ import {
 import {
   createLiveHubProjectCatalog,
   LIVE_HUB_ACTIVE_FRESHNESS_MS,
+  LIVE_HUB_DISCOVERY_OPERATIONS_PER_SESSION,
   LIVE_HUB_MAX_PROJECTS,
   LIVE_HUB_MAX_SESSIONS,
+  LIVE_HUB_SOURCE_READS_PER_SESSION,
 } from "../../src/infrastructure/live/live-hub-project-catalog.mjs";
 
 async function makeProject(name = "catalog-project") {
@@ -153,6 +155,36 @@ test("lists only public project/session catalog fields and resolves the root ser
   assert.deepEqual(await catalog.listSessions(entry.projectRef), projects[0].sessions);
 });
 
+test("omits hostile credential and punctuation-prefixed path text from the public catalog", async (t) => {
+  const projectRoot = await makeProject("hostile-public-text");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const runId = "meta-hostile-public-text";
+  await writeCompactProjection(projectRoot, runId, {
+    run: {
+      runId,
+      title: "Bearer opaqueSecret123456",
+      status: "completed",
+      updatedAt: "2026-08-26T08:30:00.000Z",
+    },
+    session: {
+      title: "token abcdefghijklmnop",
+      status: "completed",
+    },
+    summaryPacket: { nextStep: "password hunter2" },
+    publicSummary: { title: "path=/home/kim/.ssh/id_rsa" },
+  });
+
+  const entry = registryEntry(projectRoot, { displayName: "Secret Sauce Studio" });
+  const [project] = await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [entry],
+  }).listProjects();
+
+  const publicBytes = JSON.stringify(project);
+  assert.doesNotMatch(publicBytes, /opaqueSecret123456|abcdefghijklmnop|hunter2|home[\\/]kim|id_rsa/u);
+  assert.equal(project.displayName, "Secret Sauce Studio");
+  assert.equal(project.sessions[0].title, `Run ${runId.slice(-8).toUpperCase()}`);
+});
+
 test("rejects missing, markerless, symlinked, and registry-ref-mismatched projects", async (t) => {
   const valid = await makeProject("valid");
   const markerless = await mkdtemp(path.join(os.tmpdir(), "meta-kim-markerless-"));
@@ -271,6 +303,114 @@ test("sorts trusted timestamps before applying the session limit", async (t) => 
     "meta-a-new",
     "meta-y-middle",
   ]);
+});
+
+test("bounds compact, raw, and run-source reads while selecting the newest metadata window", async (t) => {
+  assert.equal(LIVE_HUB_DISCOVERY_OPERATIONS_PER_SESSION, 24);
+  assert.equal(LIVE_HUB_SOURCE_READS_PER_SESSION, 8);
+  const projectRoot = await makeProject("source-read-budget");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const stateRoot = path.join(projectRoot, ".meta-kim", "state", "default");
+
+  for (let index = 0; index < 12; index += 1) {
+    const runId = `meta-budget-${String(index).padStart(2, "0")}`;
+    const updatedAt = `2026-08-26T10:${String(index).padStart(2, "0")}:00.000Z`;
+    let target;
+    if (index % 3 === 0) {
+      await writeCompactProjection(projectRoot, runId, {
+        run: { runId, title: `Compact ${index}`, status: "completed", updatedAt },
+      });
+      target = path.join(stateRoot, "governed-executions", `${runId}.live.json`);
+    } else if (index % 3 === 1) {
+      await writeArtifact(projectRoot, runId, { updatedAt });
+      target = path.join(stateRoot, "governed-executions", `${runId}.json`);
+    } else {
+      const sourceDir = path.join(stateRoot, "runs", runId);
+      await mkdir(sourceDir, { recursive: true });
+      target = path.join(sourceDir, "status.json");
+      await writeFile(target, JSON.stringify({
+        runId,
+        lifecycleStatus: "completed",
+        currentStage: "verification",
+        updatedAt,
+      }), "utf8");
+    }
+    const timestamp = new Date(updatedAt);
+    await utimes(target, timestamp, timestamp);
+  }
+
+  const sourceReads = [];
+  const entry = registryEntry(projectRoot);
+  const sessions = await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [entry],
+    maxSessions: 2,
+    observeSourceRead: (source) => sourceReads.push(source),
+  }).listSessions(entry.projectRef);
+
+  assert.deepEqual(sessions.map((session) => session.runId), [
+    "meta-budget-11",
+    "meta-budget-10",
+  ]);
+  assert.ok(sourceReads.length <= 2 * LIVE_HUB_SOURCE_READS_PER_SESSION);
+  assert.deepEqual(
+    [...new Set(sourceReads.map((source) => source.kind))].sort(),
+    ["artifact", "compact", "status"],
+  );
+  assert.ok(sourceReads.every((source) => source.runId >= "meta-budget-08"));
+});
+
+test("caps hostile many-entry discovery and reports the bounded public window", async (t) => {
+  const projectRoot = await makeProject("hostile-discovery-budget");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const executionDir = path.join(
+    projectRoot,
+    ".meta-kim",
+    "state",
+    "default",
+    "governed-executions",
+  );
+  for (let index = 0; index < 80; index += 1) {
+    const runId = `meta-hostile-${String(index).padStart(3, "0")}`;
+    await writeArtifact(projectRoot, runId, {
+      updatedAt: `2026-08-26T${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}:00.000Z`,
+    });
+    const timestamp = new Date(Date.UTC(2026, 7, 26, 0, index));
+    await utimes(path.join(executionDir, `${runId}.json`), timestamp, timestamp);
+  }
+
+  const operations = [];
+  const entry = registryEntry(projectRoot);
+  const [project] = await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [entry],
+    maxSessions: 1,
+    observeDiscoveryOperation: (operation) => operations.push(operation),
+  }).listProjects();
+
+  assert.equal(project.sessions.length, 1);
+  assert.deepEqual(project.sessionDiscovery, {
+    complete: false,
+    truncated: true,
+    strategy: "bounded-window",
+    discoveryOperations: LIVE_HUB_DISCOVERY_OPERATIONS_PER_SESSION,
+    discoveryOperationLimit: LIVE_HUB_DISCOVERY_OPERATIONS_PER_SESSION,
+    sourceReads: 2,
+    sourceReadLimit: LIVE_HUB_SOURCE_READS_PER_SESSION,
+  });
+  assert.equal(
+    operations.length,
+    LIVE_HUB_DISCOVERY_OPERATIONS_PER_SESSION + project.sessionDiscovery.sourceReads,
+  );
+  assert.ok(operations.some((operation) => operation.operation === "directory_entry"));
+  assert.ok(operations.some((operation) => operation.operation === "metadata"));
+  assert.equal(
+    operations.filter((operation) => operation.operation === "json_read").length,
+    project.sessionDiscovery.sourceReads,
+  );
+  assert.ok(
+    operations.length <=
+      LIVE_HUB_DISCOVERY_OPERATIONS_PER_SESSION + LIVE_HUB_SOURCE_READS_PER_SESSION,
+  );
+  assert.doesNotMatch(JSON.stringify(project.sessionDiscovery), /hostile-discovery-budget|meta-hostile|[A-Z]:[\\/]/iu);
 });
 
 test("includes a fresh root active-run status as the selectable active session", async (t) => {
