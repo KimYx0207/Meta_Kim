@@ -308,13 +308,15 @@ Do not claim a run is public-ready unless verification passed, summary closure e
 
 ## Planning Files
 
-When `planning-with-files` is installed and the task is not a pure query, create persistent planning state at Stage 3:
+When the task is not a pure query, use Meta_Kim's first-party `planning-continuity` runtime at Stage 3 to create or resume persistent planning state:
 
 - `task_plan.md`
 - `findings.md`
 - `progress.md`
 
-Do not infer that `planning-with-files` is missing only because it is absent from `.agents/skills/`. It is a core external dependency declared in `config/skills.json` and normally installed into runtime home skill directories such as `~/.codex/skills/planning-with-files/`, `~/.claude/skills/planning-with-files/`, `~/.cursor/skills/planning-with-files/`, or `~/.openclaw/skills/planning-with-files/`. Check the manifest, global runtime homes, and `npm run discover:global` before declaring it unavailable.
+The external `OthmanAdi/planning-with-files` dependency has been absorbed and retired. It remains only as historical provenance in the dependency registry; it must not appear in `config/skills.json`, install routes, runtime homes, Hook registrations, or execution selection. Meta_Kim's first-party `planning-continuity` runtime is the sole planning authority.
+
+The first-party runtime binds planning state to a trusted project root, runtime, and run digest; preserves existing files; requires explicit owner review before attesting pre-existing content; refuses automatic recovery on hash drift or unsafe control-instruction patterns; never auto-injects `findings.md`; and bounds completion blocking to two attempts before allowing an incomplete stop without a completion claim. Use `npm run meta:planning:validate` for its local contract and absence acceptance.
 
 These files supplement protocol packets. They do not replace `businessFlowBlueprintPacket`, `dispatchEnvelopePacket`, or verification evidence. The Conductor or the main thread acting as Conductor is the sole writer.
 

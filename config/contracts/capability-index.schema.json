@@ -263,6 +263,18 @@
             "properties": {
               "id": { "type": "string" },
               "type": { "const": "plugins" },
+              "dependencyClass": {
+                "type": "string",
+                "enum": ["first_party_project", "third_party_reference"]
+              },
+              "installPolicy": {
+                "type": "string",
+                "enum": ["installable", "explicit_reference_opt_in"]
+              },
+              "routeEligibility": {
+                "type": "string",
+                "enum": ["callable_after_install", "reference_only"]
+              },
               "metadata": { "type": "object" }
             }
           }

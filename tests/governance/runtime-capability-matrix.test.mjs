@@ -13,7 +13,7 @@ test("runtime matrix covers platforms and critical constraints", async () => {
   assert.equal(matrix.evidenceLedger, "config/runtime-capability-evidence.json");
   assert.equal(matrix.schemaVersion, 2);
   assert.equal(Object.hasOwn(matrix, "lastVerifiedAt"), false);
-  assert.equal(matrix.lastReviewedAt, "2026-07-28");
+  assert.equal(matrix.lastReviewedAt, "2026-08-28");
   for (const osName of ["macos", "windows", "wsl2"]) assert.match(raw, new RegExp(osName));
   for (const platform of matrix.platforms) {
     for (const capability of platform.capabilities ?? []) {

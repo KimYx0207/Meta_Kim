@@ -17,7 +17,6 @@ const REQUIRED_PROVIDER_TYPES = [
   "canonical_skill",
   "external_skill",
   "plugin_marketplace",
-  "plugin_bundle",
   "mcp_server",
   "hook_script",
   "command",

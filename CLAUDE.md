@@ -250,7 +250,7 @@ These packets are not UI decoration. They are how the system avoids pretending u
 
 ## Planning Files
 
-When `planning-with-files` is installed and the task is not a pure query, create persistent planning state during Thinking:
+When the task is not a pure query, use Meta_Kim's first-party `planning-continuity` runtime to create or resume persistent planning state during Thinking:
 
 - `task_plan.md`
 - `findings.md`
@@ -309,7 +309,7 @@ Hook behavior differs across runtimes. Do not assume Claude's `SubagentStart`-st
 
 ## Third-Party Meta Skills
 
-Packs such as `findskill`, `gstack`, `superpowers`, `planning-with-files`, and `cli-anything` are installed by `node setup.mjs` and supporting dependency commands.
+Packs such as `findskill`, `gstack`, `superpowers`, and `cli-anything` remain installable through `node setup.mjs` and supporting dependency commands. The absorbed `planning-with-files` dependency is retired from install and execution routes; normal planning continuity is provided only by Meta_Kim's first-party runtime.
 
 Repository policy:
 

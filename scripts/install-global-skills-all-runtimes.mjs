@@ -70,6 +70,7 @@ import {
   resolveTargetContext,
   resolveRuntimeHomeDir,
 } from "./meta-kim-sync-config.mjs";
+import { retirePlanningWithFiles } from "./retire-planning-with-files.mjs";
 import { LANG, t } from "./meta-kim-i18n.mjs";
 import {
   buildCodexHooksJson,
@@ -689,12 +690,24 @@ function normalizeInstallerSkillsFilter(parsedSkills) {
 
 const skillsArg = normalizeInstallerSkillsFilter(parseSkillsArg(cliArgs));
 const skillsFilterActive = skillsArg !== null;
+if (skillsArg === null) {
+  SKILL_REPOS = SKILL_REPOS.filter(
+    (skill) => skill.installPolicy !== "explicit_reference_opt_in",
+  );
+}
 if (skillsArg !== null) {
   const { repos, unknownIds } = applySkillsIdFilter(SKILL_REPOS, skillsArg);
   for (const id of unknownIds) {
     console.warn(`${C.yellow}⚠${C.reset} ${t.skillsFilterUnknown(id)}`);
   }
   SKILL_REPOS = repos;
+  for (const skill of SKILL_REPOS) {
+    if (skill.installPolicy === "explicit_reference_opt_in") {
+      console.warn(
+        `${C.yellow}⚠${C.reset} ${skill.id} is a third-party reference and is outside Meta_Kim's first-party runtime dependency boundary.`,
+      );
+    }
+  }
   if (skillsArg.length > 0 && unknownIds.length === skillsArg.length) {
     console.warn(`${C.yellow}⚠${C.reset} ${t.skillsFilterNoMatches}`);
   } else if (SKILL_REPOS.length === 0) {
@@ -2401,8 +2414,6 @@ async function deployRuntimeHookSupport(spec, runtimeHome, runtimeId, skillsRoot
   await deployHookSubdirs(spec, runtimeHome, runtimeId);
   await deployHookConfigFiles(spec, runtimeHome, runtimeId);
   await deployHookExtraFiles(spec, runtimeHome, runtimeId);
-  await patchPlanningWithFilesPhaseCounters(spec, runtimeHome, runtimeId);
-  await patchCodexPlanningHooksForPlatform(spec, runtimeHome, runtimeId);
   await patchCodexHookPromptForPlatform(spec, runtimeHome, runtimeId);
   await mergeHookSettings(spec, runtimeHome, runtimeId);
 }
@@ -3066,8 +3077,6 @@ async function installPluginBundlesForNonClaudeRuntimes(
       await deployHookSubdirs(spec, runtimeHome, runtimeId);
       await deployHookConfigFiles(spec, runtimeHome, runtimeId);
       await deployHookExtraFiles(spec, runtimeHome, runtimeId);
-      await patchPlanningWithFilesPhaseCounters(spec, runtimeHome, runtimeId);
-      await patchCodexPlanningHooksForPlatform(spec, runtimeHome, runtimeId);
       await patchCodexHookPromptForPlatform(spec, runtimeHome, runtimeId);
       await mergeHookSettings(spec, runtimeHome, runtimeId);
     }
@@ -4283,6 +4292,21 @@ async function main() {
 
   // Clean up known legacy artifacts before any install operations
   await cleanupLegacyGlobalArtifacts(homes);
+  const retiredPlanning = await retirePlanningWithFiles({
+    homes,
+    targets: activeTargets.filter((runtime) =>
+      ["claude", "codex", "cursor", "openclaw"].includes(runtime),
+    ),
+    dryRun,
+  });
+  if (retiredPlanning.preserved.length > 0) {
+    throw new Error(
+      t.planningRetirementPreserved(
+        retiredPlanning.preserved.length,
+        retiredPlanning.preserved.map((entry) => entry.path),
+      ),
+    );
+  }
   await cleanupStaleStagingDirs(homes);
 
   const metaSkillCreatorSpec = SKILL_REPOS.find(
@@ -4652,15 +4676,7 @@ async function deployHookConfigFiles(spec, runtimeHome, runtimeId) {
     const srcPath = path.join(tmp, ...configFile.split("/").filter(Boolean));
     if (await pathExists(srcPath)) {
       const destPath = path.join(runtimeHome, path.basename(configFile));
-      if (
-        spec.id === "planning-with-files" &&
-        path.basename(configFile) === "hooks.json" &&
-        ["codex", "cursor"].includes(runtimeId)
-      ) {
-        await mergePlanningHookConfigFile(srcPath, destPath);
-      } else {
-        await fs.copyFile(srcPath, destPath);
-      }
+      await fs.copyFile(srcPath, destPath);
       console.log(
         `${C.green}✓${C.reset} ${spec.id} ${path.basename(configFile)} -> ${runtimeHome} ${C.dim}(from ${configFile})${C.reset}`,
       );
@@ -4670,783 +4686,6 @@ async function deployHookConfigFiles(spec, runtimeHome, runtimeId) {
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
-}
-
-function normalizeHookCommand(command) {
-  return String(command ?? "").replace(/\\/g, "/").trim();
-}
-
-function hookCommandAlreadyRegistered(existingBlocks, generatedHook) {
-  const generatedCommand = normalizeHookCommand(generatedHook?.command);
-  if (!generatedCommand) {
-    return false;
-  }
-  return existingBlocks.some((block) =>
-    (block.hooks ?? [block]).some(
-      (hook) => normalizeHookCommand(hook?.command) === generatedCommand,
-    ),
-  );
-}
-
-function appendMissingHookBlock(existingBlocks, generatedBlock) {
-  const generatedHooks = generatedBlock.hooks ?? [generatedBlock];
-  const missingHooks = generatedHooks.filter(
-    (hook) => !hookCommandAlreadyRegistered(existingBlocks, hook),
-  );
-  if (missingHooks.length === 0) {
-    return existingBlocks;
-  }
-  if (generatedBlock.hooks && existingBlocks.length > 0) {
-    const targetIndex = existingBlocks.findIndex(
-      (block) => (block.matcher ?? "") === (generatedBlock.matcher ?? ""),
-    );
-    const index = targetIndex >= 0 ? targetIndex : 0;
-    const targetBlock = existingBlocks[index];
-    const targetHooks = targetBlock.hooks ?? [targetBlock];
-    existingBlocks[index] = {
-      ...targetBlock,
-      hooks: [...targetHooks, ...missingHooks],
-    };
-    return existingBlocks;
-  }
-  return [...existingBlocks, ...missingHooks];
-}
-
-function mergePlanningHooksJson(existing, generated) {
-  const next = { ...(generated ?? {}), ...(existing ?? {}) };
-  next.hooks = { ...((generated ?? {}).hooks ?? {}), ...((existing ?? {}).hooks ?? {}) };
-  for (const [event, generatedBlocks] of Object.entries((generated ?? {}).hooks ?? {})) {
-    const existingBlocks = Array.isArray(next.hooks[event])
-      ? [...next.hooks[event]]
-      : [];
-    const blocks = Array.isArray(generatedBlocks) ? generatedBlocks : [generatedBlocks];
-    next.hooks[event] = blocks.reduce(appendMissingHookBlock, existingBlocks);
-  }
-  return next;
-}
-
-async function mergePlanningHookConfigFile(srcPath, destPath) {
-  let generated = {};
-  let existing = {};
-  try {
-    generated = JSON.parse(await fs.readFile(srcPath, "utf8"));
-  } catch {
-    await fs.copyFile(srcPath, destPath);
-    return;
-  }
-  if (await pathExists(destPath)) {
-    try {
-      existing = JSON.parse(await fs.readFile(destPath, "utf8"));
-    } catch {
-      existing = {};
-    }
-  }
-  const merged = mergePlanningHooksJson(existing, generated);
-  await fs.writeFile(destPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
-}
-
-function codexPlanningHookCommand(runtimeHome, scriptName) {
-  const nodePath = process.execPath;
-  const scriptPath = path.join(runtimeHome, "hooks", scriptName);
-  const runnerPath = path.join(runtimeHome, "hooks", "codex_hook_runner.mjs");
-  const shellToken = (value) =>
-    /[\s"]/u.test(value) ? JSON.stringify(value) : value;
-  return `${shellToken(nodePath)} ${shellToken(runnerPath)} ${shellToken(scriptPath)}`;
-}
-
-function buildCodexPlanningHooksJson(runtimeHome) {
-  return {
-    hooks: {
-      SessionStart: [
-        {
-          matcher: "startup|resume",
-          hooks: [
-            {
-              type: "command",
-              command: codexPlanningHookCommand(runtimeHome, "session_start.py"),
-              statusMessage: "Loading planning context",
-            },
-          ],
-        },
-      ],
-      UserPromptSubmit: [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: codexPlanningHookCommand(
-                runtimeHome,
-                "user_prompt_submit.py",
-              ),
-            },
-          ],
-        },
-      ],
-      PreToolUse: [
-        {
-          matcher: "Bash",
-          hooks: [
-            {
-              type: "command",
-              command: codexPlanningHookCommand(runtimeHome, "pre_tool_use.py"),
-              statusMessage: "Checking plan before Bash",
-            },
-          ],
-        },
-      ],
-      PostToolUse: [
-        {
-          matcher: "Bash",
-          hooks: [
-            {
-              type: "command",
-              command: codexPlanningHookCommand(runtimeHome, "post_tool_use.py"),
-              statusMessage: "Reviewing Bash against plan",
-            },
-          ],
-        },
-      ],
-      Stop: [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: codexPlanningHookCommand(runtimeHome, "stop.py"),
-              timeout: 30,
-            },
-          ],
-        },
-      ],
-    },
-  };
-}
-
-function hookCommandContains(block, marker) {
-  return (block.hooks ?? [block]).some((hook) =>
-    String(hook.command ?? "").includes(marker),
-  );
-}
-
-function mergeCodexPlanningHooksJson(existing, generated) {
-  const next = { ...(existing ?? {}), hooks: { ...((existing ?? {}).hooks ?? {}) } };
-  for (const [event, generatedBlocks] of Object.entries(generated.hooks ?? {})) {
-    const existingBlocks = Array.isArray(next.hooks[event])
-      ? [...next.hooks[event]]
-      : [];
-    for (const generatedBlock of generatedBlocks) {
-      const generatedHooks = generatedBlock.hooks ?? [generatedBlock];
-      const missingHooks = generatedHooks.filter((hook) => {
-        const marker = path.basename(String(hook.command ?? ""));
-        return marker && !existingBlocks.some((block) => hookCommandContains(block, marker));
-      });
-      if (missingHooks.length === 0) {
-        continue;
-      }
-
-      const matcher = generatedBlock.matcher;
-      const targetIndex = existingBlocks.findIndex((block) =>
-        matcher ? block.matcher === matcher : !block.matcher,
-      );
-      if (targetIndex >= 0) {
-        const target = existingBlocks[targetIndex];
-        existingBlocks[targetIndex] = {
-          ...target,
-          hooks: [...(target.hooks ?? []), ...missingHooks],
-        };
-      } else {
-        existingBlocks.push({
-          ...generatedBlock,
-          hooks: missingHooks,
-        });
-      }
-    }
-    next.hooks[event] = existingBlocks;
-  }
-  return next;
-}
-
-function buildCodexPlanningHookAdapterPy() {
-  return [
-    "#!/usr/bin/env python3",
-    "from __future__ import annotations",
-    "",
-    "import json",
-    "import re",
-    "import shutil",
-    "import subprocess",
-    "import sys",
-    "from pathlib import Path",
-    "from typing import Any",
-    "",
-    "",
-    "HOOK_DIR = Path(__file__).resolve().parent",
-    "",
-    "",
-    "def load_payload() -> dict[str, Any]:",
-    "    raw = sys.stdin.read().strip()",
-    "    if not raw:",
-    "        return {}",
-    "    try:",
-    "        payload = json.loads(raw)",
-    "    except json.JSONDecodeError:",
-    "        return {}",
-    "    return payload if isinstance(payload, dict) else {}",
-    "",
-    "",
-    "def cwd_from_payload(payload: dict[str, Any]) -> Path:",
-    '    cwd = payload.get("cwd")',
-    "    if isinstance(cwd, str) and cwd:",
-    "        return Path(cwd)",
-    "    return Path.cwd()",
-    "",
-    "",
-    "def emit_json(payload: dict[str, Any]) -> None:",
-    "    if not payload:",
-    "        return",
-    "    json.dump(payload, sys.stdout, ensure_ascii=False)",
-    '    sys.stdout.write("\\n")',
-    "",
-    "",
-    "def parse_json(text: str) -> dict[str, Any]:",
-    "    if not text.strip():",
-    "        return {}",
-    "    try:",
-    "        payload = json.loads(text)",
-    "    except json.JSONDecodeError:",
-    "        return {}",
-    "    return payload if isinstance(payload, dict) else {}",
-    "",
-    "",
-    "def _read_lines(path: Path) -> list[str]:",
-    "    try:",
-    '        return path.read_text(encoding="utf-8", errors="replace").splitlines()',
-    "    except OSError:",
-    "        return []",
-    "",
-    "",
-    "def _head(path: Path, count: int) -> str:",
-    '    return "\\n".join(_read_lines(path)[:count])',
-    "",
-    "",
-    "def _tail(path: Path, count: int) -> str:",
-    '    return "\\n".join(_read_lines(path)[-count:])',
-    "",
-    "",
-    "def _count_statuses(plan_file: Path) -> tuple[int, int, int, int]:",
-    "    lines = _read_lines(plan_file)",
-    '    total = sum(1 for line in lines if re.match(r"^#{2,3}\\s+Phase\\b", line))',
-    '    complete_primary = sum(1 for line in lines if "**Status:** complete" in line)',
-    '    in_progress_primary = sum(1 for line in lines if "**Status:** in_progress" in line)',
-    '    pending_primary = sum(1 for line in lines if "**Status:** pending" in line)',
-    '    complete_inline = sum(1 for line in lines if "[complete]" in line)',
-    '    in_progress_inline = sum(1 for line in lines if "[in_progress]" in line)',
-    '    pending_inline = sum(1 for line in lines if "[pending]" in line)',
-    "    complete = max(complete_primary, complete_inline)",
-    "    in_progress = max(in_progress_primary, in_progress_inline)",
-    "    pending = max(pending_primary, pending_inline)",
-    "    return total, complete, in_progress, pending",
-    "",
-    "",
-    "def _native_user_prompt_submit(cwd: Path) -> tuple[str, str]:",
-    '    plan_file = cwd / "task_plan.md"',
-    "    if not plan_file.is_file():",
-    '        return "", ""',
-    "    parts = [",
-    '        "[planning-with-files] ACTIVE PLAN -- current state:",',
-    "        _head(plan_file, 50),",
-    '        "",',
-    '        "=== recent progress ===",',
-    '        _tail(cwd / "progress.md", 20),',
-    '        "",',
-    '        "[planning-with-files] Read findings.md for research context. Continue from the current phase.",',
-    "    ]",
-    '    return "\\n".join(parts).strip(), ""',
-    "",
-    "",
-    "def _native_session_start(cwd: Path) -> tuple[str, str]:",
-    '    skill_script = HOOK_DIR.parent / "skills" / "planning-with-files" / "scripts" / "session-catchup.py"',
-    "    if skill_script.is_file():",
-    "        subprocess.run(",
-    "            [sys.executable, str(skill_script), str(cwd)],",
-    "            cwd=str(cwd),",
-    "            text=True,",
-    "            capture_output=True,",
-    "            check=False,",
-    "        )",
-    '    return _native_user_prompt_submit(cwd)',
-    "",
-    "",
-    "def _native_pre_tool_use(cwd: Path) -> tuple[str, str]:",
-    '    plan_file = cwd / "task_plan.md"',
-    '    stderr = _head(plan_file, 30) if plan_file.is_file() else ""',
-    '    return json.dumps({"decision": "allow"}), stderr',
-    "",
-    "",
-    "def _native_post_tool_use(cwd: Path) -> tuple[str, str]:",
-    '    if (cwd / "task_plan.md").is_file():',
-    '        return "[planning-with-files] Update progress.md with what you just did. If a phase is now complete, update task_plan.md status.", ""',
-    '    return "", ""',
-    "",
-    "",
-    "def _native_stop(cwd: Path) -> tuple[str, str]:",
-    '    plan_file = cwd / "task_plan.md"',
-    "    if not plan_file.is_file():",
-    '        return "", ""',
-    "    total, complete, _in_progress, _pending = _count_statuses(plan_file)",
-    "    if total <= 0:",
-    '        return "", ""',
-    "    if complete == total and total > 0:",
-    '        message = f"[planning-with-files] ALL PHASES COMPLETE ({complete}/{total}). If the user has additional work, add new phases to task_plan.md before starting."',
-    "    else:",
-    '        message = f"[planning-with-files] Task incomplete ({complete}/{total} phases done). Update progress.md, then read task_plan.md and continue working on the remaining phases."',
-    '    return json.dumps({"followup_message": message}, ensure_ascii=False), ""',
-    "",
-    "",
-    "def _run_native_script(script_name: str, cwd: Path) -> tuple[str, str]:",
-    '    if script_name == "session-start.sh":',
-    "        return _native_session_start(cwd)",
-    '    if script_name == "user-prompt-submit.sh":',
-    "        return _native_user_prompt_submit(cwd)",
-    '    if script_name == "pre-tool-use.sh":',
-    "        return _native_pre_tool_use(cwd)",
-    '    if script_name == "post-tool-use.sh":',
-    "        return _native_post_tool_use(cwd)",
-    '    if script_name == "stop.sh":',
-    "        return _native_stop(cwd)",
-    '    return "", ""',
-    "",
-    "",
-    "def run_shell_script(script_name: str, cwd: Path) -> tuple[str, str]:",
-    '    sh_bin = shutil.which("sh")',
-    "    script_path = HOOK_DIR / script_name",
-    "    if sh_bin and script_path.is_file():",
-    "        result = subprocess.run(",
-    "            [sh_bin, str(script_path)],",
-    "            cwd=str(cwd),",
-    "            text=True,",
-    "            capture_output=True,",
-    "            check=False,",
-    "        )",
-    "        return result.stdout.strip(), result.stderr.strip()",
-    "    return _run_native_script(script_name, cwd)",
-    "",
-    "",
-    "def main_guard(func) -> int:",
-    "    try:",
-    "        func()",
-    "    except Exception as exc:  # pragma: no cover",
-    '        print(f"[planning-with-files hook] {exc}", file=sys.stderr)',
-    "        return 0",
-    "    return 0",
-    "",
-  ].join("\n");
-}
-
-export function collectWindowsPythonCandidatePaths({
-  env,
-  installTimeHint = null,
-  pathApi,
-  pathExists,
-  listDirectoryNames,
-}) {
-  const candidates = [];
-  const seen = new Set();
-  const isSafe = (candidate) => {
-    if (!candidate || !pathApi.isAbsolute(candidate)) return false;
-    const normalized = candidate.replace(/\\/gu, "/").toLowerCase();
-    if (normalized.includes("/windowsapps/")) return false;
-    return /^(?:python|python3)\.exe$/iu.test(pathApi.basename(candidate));
-  };
-  const push = (candidate) => {
-    if (!isSafe(candidate) || !pathExists(candidate)) return;
-    const normalized = candidate.replace(/\\/gu, "/").toLowerCase();
-    if (seen.has(normalized)) return;
-    seen.add(normalized);
-    candidates.push(candidate);
-  };
-  const scanVersionDirectories = (root) => {
-    if (!root || !pathApi.isAbsolute(root)) return;
-    for (const name of listDirectoryNames(root)) {
-      if (!/^Python\d+(?:-32)?$/iu.test(name)) continue;
-      for (const executable of ["python.exe", "python3.exe"]) {
-        push(pathApi.join(root, name, executable));
-      }
-    }
-  };
-
-  for (const key of ["META_KIM_PYTHON", "PYTHON", "PYTHON3"]) push(env[key]);
-  push(installTimeHint?.command);
-  const pathValue = env.PATH || env.Path || env.path || "";
-  for (const dir of String(pathValue).split(pathApi.delimiter).filter(Boolean)) {
-    if (!pathApi.isAbsolute(dir)) continue;
-    for (const executable of ["python.exe", "python3.exe"]) {
-      push(pathApi.join(dir, executable));
-    }
-  }
-
-  if (env.LOCALAPPDATA) {
-    scanVersionDirectories(pathApi.join(env.LOCALAPPDATA, "Programs", "Python"));
-  }
-  for (const key of ["ProgramFiles", "ProgramFiles(x86)"]) {
-    if (env[key]) scanVersionDirectories(env[key]);
-  }
-  scanVersionDirectories("C:\\");
-  return candidates;
-}
-
-export function buildCodexHookRunnerMjs(pythonHint = null) {
-  const hintCommand =
-    pythonHint && typeof pythonHint.command === "string"
-      ? pythonHint.command.trim()
-      : "";
-  const hintBasename = path.basename(hintCommand).toLowerCase();
-  const installTimePythonHint =
-    hintCommand &&
-    !/^py(?:\.exe)?$/iu.test(hintBasename) &&
-    !hintCommand.replace(/\\/gu, "/").toLowerCase().includes("/windowsapps/") &&
-    (process.platform !== "win32" ||
-      (path.isAbsolute(hintCommand) &&
-        /^(?:python|python3|pythonw)\.exe$/iu.test(hintBasename)))
-      ? { command: hintCommand, args: Array.isArray(pythonHint.args) ? pythonHint.args : [] }
-      : null;
-  return [
-    'import { spawnSync } from "node:child_process";',
-    'import { existsSync, readFileSync, readdirSync } from "node:fs";',
-    'import path from "node:path";',
-    'import process from "node:process";',
-    "",
-    "const scriptPath = process.argv[2];",
-    `const INSTALL_TIME_PYTHON_HINT = ${JSON.stringify(installTimePythonHint)};`,
-    "",
-    "function isPyLauncher(filePath) {",
-    "  return /^py(?:\\.exe)?$/i.test(path.basename(String(filePath)));",
-    "}",
-    "",
-    `const collectWindowsPythonCandidatePaths = ${collectWindowsPythonCandidatePaths.toString()};`,
-    "",
-    "function listDirectoryNames(directory) {",
-    "  try {",
-    "    return readdirSync(directory, { withFileTypes: true })",
-    "      .filter((entry) => entry.isDirectory())",
-    "      .map((entry) => entry.name);",
-    "  } catch {",
-    "    return [];",
-    "  }",
-    "}",
-    "",
-    "function commandWorks(command, args = []) {",
-    "  const result = spawnSync(command, [",
-    "    ...args,",
-    "    '-c',",
-    "    'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)',",
-    "  ], {",
-    "    encoding: 'utf8',",
-    "    windowsHide: true,",
-    "    timeout: 750,",
-    "  });",
-    "  return result.status === 0;",
-    "}",
-    "",
-    "function pythonCandidates() {",
-    "  const candidates = [];",
-    "  if (process.platform === 'win32') {",
-    "    const paths = collectWindowsPythonCandidatePaths({",
-    "      env: process.env,",
-    "      installTimeHint: INSTALL_TIME_PYTHON_HINT,",
-    "      pathApi: path.win32,",
-    "      pathExists: existsSync,",
-    "      listDirectoryNames,",
-    "    });",
-    "    candidates.push(...paths.map((command) => ({ command, args: [] })));",
-    "  } else {",
-    "    for (const envKey of ['META_KIM_PYTHON', 'PYTHON', 'PYTHON3']) {",
-    "      const value = process.env[envKey];",
-    "      if (value && !isPyLauncher(value)) candidates.push({ command: value, args: [] });",
-    "    }",
-    "    if (INSTALL_TIME_PYTHON_HINT) candidates.push(INSTALL_TIME_PYTHON_HINT);",
-    "    candidates.push({ command: 'python3', args: [] });",
-    "    candidates.push({ command: 'python', args: [] });",
-    "  }",
-    "",
-    "  const seen = new Set();",
-    "  return candidates.filter((candidate) => {",
-    "    const key = `${candidate.command}\\0${candidate.args.join('\\0')}`;",
-    "    if (seen.has(key)) return false;",
-    "    seen.add(key);",
-    "    return true;",
-    "  });",
-    "}",
-    "",
-    "function findPython() {",
-    "  for (const candidate of pythonCandidates()) {",
-    "    if (commandWorks(candidate.command, candidate.args)) return candidate;",
-    "  }",
-    "  return null;",
-    "}",
-    "",
-    "function main() {",
-    "  if (!scriptPath) return 0;",
-    "  const python = findPython();",
-    "  if (!python) return 0;",
-    "  let input = '';",
-    "  try {",
-    "    input = readFileSync(0, 'utf8');",
-    "  } catch {",
-    "    input = '';",
-    "  }",
-    "  const result = spawnSync(",
-    "    python.command,",
-    "    [...python.args, scriptPath],",
-    "    {",
-    "      input,",
-    "      encoding: 'utf8',",
-    "      env: {",
-    "        ...process.env,",
-    "        PYTHONIOENCODING: 'utf-8',",
-    "        PYTHONUTF8: '1',",
-    "      },",
-    "      windowsHide: true,",
-    "      timeout: 30000,",
-    "    },",
-    "  );",
-    "  if (result.stdout) process.stdout.write(result.stdout);",
-    "  return 0;",
-    "}",
-    "",
-    "process.exitCode = main();",
-    "",
-  ].join("\n");
-}
-
-function buildCodexWrapperPy(scriptName) {
-  return [
-    "#!/usr/bin/env python3",
-    "from __future__ import annotations",
-    "",
-    "import codex_hook_adapter as adapter",
-    "",
-    "",
-    "def main() -> None:",
-    "    payload = adapter.load_payload()",
-    "    root = adapter.cwd_from_payload(payload)",
-    `    stdout, _ = adapter.run_shell_script("${scriptName}", root)`,
-    "    if stdout:",
-    '        adapter.emit_json({"systemMessage": stdout})',
-    "",
-    "",
-    'if __name__ == "__main__":',
-    "    raise SystemExit(adapter.main_guard(main))",
-    "",
-  ].join("\n");
-}
-
-function buildCodexPreToolUseWrapperPy() {
-  return [
-    "#!/usr/bin/env python3",
-    "from __future__ import annotations",
-    "",
-    "import codex_hook_adapter as adapter",
-    "",
-    "",
-    "def main() -> None:",
-    "    payload = adapter.load_payload()",
-    "    root = adapter.cwd_from_payload(payload)",
-    '    stdout, stderr = adapter.run_shell_script("pre-tool-use.sh", root)',
-    "",
-    "    result = adapter.parse_json(stdout)",
-    '    decision = result.get("decision")',
-    '    if decision and decision != "allow":',
-    "        adapter.emit_json(result)",
-    "        return",
-    "",
-    "    if stderr:",
-    '        adapter.emit_json({"systemMessage": stderr})',
-    "",
-    "",
-    'if __name__ == "__main__":',
-    "    raise SystemExit(adapter.main_guard(main))",
-    "",
-  ].join("\n");
-}
-
-function buildCodexStopWrapperPy() {
-  return [
-    "#!/usr/bin/env python3",
-    "from __future__ import annotations",
-    "",
-    "import codex_hook_adapter as adapter",
-    "",
-    "",
-    "def main() -> None:",
-    "    payload = adapter.load_payload()",
-    "    root = adapter.cwd_from_payload(payload)",
-    '    stdout, _ = adapter.run_shell_script("stop.sh", root)',
-    "    result = adapter.parse_json(stdout)",
-    "",
-    '    decision = result.get("decision")',
-    '    if decision and decision != "allow":',
-    "        adapter.emit_json(result)",
-    "        return",
-    "",
-    '    message = result.get("followup_message")',
-    "    if not isinstance(message, str) or not message:",
-    "        return",
-    "",
-    '    if "(0/0" in message:',
-    "        return",
-    "",
-    '    adapter.emit_json({"systemMessage": message})',
-    "",
-    "",
-    'if __name__ == "__main__":',
-    "    raise SystemExit(adapter.main_guard(main))",
-    "",
-  ].join("\n");
-}
-
-async function patchTextFileIfExists(filePath, replacements) {
-  if (!(await pathExists(filePath))) {
-    return false;
-  }
-  let content = await fs.readFile(filePath, "utf8");
-  const original = content;
-  for (const [from, to] of replacements) {
-    content = content.replace(from, to);
-  }
-  if (content === original) {
-    return false;
-  }
-  await fs.writeFile(filePath, content, "utf8");
-  return true;
-}
-
-async function patchPlanningWithFilesPhaseCounters(spec, runtimeHome, runtimeId) {
-  if (spec.id !== "planning-with-files" || dryRun) {
-    return;
-  }
-
-  const shReplacements = [
-    [
-      'TOTAL=$(grep -c "### Phase" "$PLAN_FILE" || true)',
-      'TOTAL=$(grep -Ec "^#{2,3}[[:space:]]+Phase\\b" "$PLAN_FILE" || true)',
-    ],
-  ];
-  const ps1Replacements = [
-    [
-      '$TOTAL = ([regex]::Matches($content, "### Phase")).Count',
-      '$TOTAL = ([regex]::Matches($content, "(?m)^#{2,3}\\s+Phase\\b")).Count',
-    ],
-  ];
-  const candidates = [
-    [path.join(runtimeHome, "hooks", "stop.sh"), shReplacements],
-    [path.join(runtimeHome, "hooks", "stop.ps1"), ps1Replacements],
-    [
-      path.join(
-        runtimeHome,
-        "skills",
-        "planning-with-files",
-        "scripts",
-        "check-complete.sh",
-      ),
-      shReplacements,
-    ],
-    [
-      path.join(
-        runtimeHome,
-        "skills",
-        "planning-with-files",
-        "scripts",
-        "check-complete.ps1",
-      ),
-      ps1Replacements,
-    ],
-  ];
-
-  let patched = 0;
-  for (const [filePath, replacements] of candidates) {
-    if (await patchTextFileIfExists(filePath, replacements)) {
-      patched += 1;
-    }
-  }
-  if (patched > 0) {
-    console.log(
-      `${C.green}✓${C.reset} ${spec.id} phase counters patched for ${runtimeId} (${patched} file${patched === 1 ? "" : "s"})`,
-    );
-  }
-}
-
-async function patchCodexPlanningHooksForPlatform(spec, runtimeHome, runtimeId) {
-  if (
-    runtimeId !== "codex" ||
-    spec.id !== "planning-with-files" ||
-    dryRun
-  ) {
-    return;
-  }
-
-  const hooksDir = path.join(runtimeHome, "hooks");
-  if (!(await pathExists(hooksDir))) {
-    return;
-  }
-
-  const hooksJsonPath = path.join(runtimeHome, "hooks.json");
-  let existingHooksJson = {};
-  if (await pathExists(hooksJsonPath)) {
-    try {
-      existingHooksJson = JSON.parse(await fs.readFile(hooksJsonPath, "utf8"));
-    } catch {
-      existingHooksJson = {};
-    }
-  }
-  const mergedHooksJson = mergeCodexPlanningHooksJson(
-    existingHooksJson,
-    buildCodexPlanningHooksJson(runtimeHome),
-  );
-  await fs.writeFile(
-    hooksJsonPath,
-    `${JSON.stringify(mergedHooksJson, null, 2)}\n`,
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(hooksDir, "codex_hook_adapter.py"),
-    buildCodexPlanningHookAdapterPy(),
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(hooksDir, "codex_hook_runner.mjs"),
-    buildCodexHookRunnerMjs(
-      process.platform === "win32" ? null : detectPython310(),
-    ),
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(hooksDir, "session_start.py"),
-    buildCodexWrapperPy("session-start.sh"),
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(hooksDir, "user_prompt_submit.py"),
-    buildCodexWrapperPy("user-prompt-submit.sh"),
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(hooksDir, "pre_tool_use.py"),
-    buildCodexPreToolUseWrapperPy(),
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(hooksDir, "post_tool_use.py"),
-    buildCodexWrapperPy("post-tool-use.sh"),
-    "utf8",
-  );
-  await fs.writeFile(
-    path.join(hooksDir, "stop.py"),
-    buildCodexStopWrapperPy(),
-    "utf8",
-  );
-  console.log(
-    `${C.green}✓${C.reset} ${spec.id} Codex hooks patched for ${os.platform()}`,
-  );
 }
 
 async function patchCodexHookPromptForPlatform(spec, runtimeHome, runtimeId) {
@@ -5488,6 +4727,7 @@ async function patchCodexHookPromptForPlatform(spec, runtimeHome, runtimeId) {
         (await pathExists(spineHookPath)) ? spineHookPath : "activate-meta-theory-spine.mjs",
     }),
     hookPromptAdapterPath,
+    planningContinuityHookPath: null,
   });
 
   const next = { ...existing, hooks: { ...(existing.hooks ?? {}) } };

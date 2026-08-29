@@ -213,6 +213,7 @@ const GLOBAL_HOOK_PACKAGE_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "activate-meta-theory-spine.mjs",
+  "planning-continuity.mjs",
   // ── canonical/runtime-assets/claude/hooks/ ──
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
@@ -2357,6 +2358,7 @@ function buildCodexGlobalHooksTemplate() {
       "enforce-agent-dispatch.mjs",
     ),
     hookPromptAdapterPath: codexGlobalHookPromptAdapterPath(),
+    planningContinuityHookPath: path.join(absHooks, "planning-continuity.mjs"),
     stopSpineCleanupHookPath: path.join(absHooks, "stop-spine-cleanup.mjs"),
   });
 }
