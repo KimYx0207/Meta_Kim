@@ -25,6 +25,8 @@ export const LIVE_MAX_EDGES = 256;
 export const LIVE_MAX_EVIDENCE = 256;
 export const LIVE_MAX_REPLAY = 512;
 export const LIVE_MAX_STRING = 240;
+export const LIVE_MAX_CONTEXT_TRANSFERS = 128;
+export const LIVE_MAX_CONTEXT_EVIDENCE_REFS = 24;
 
 const STAGES = [
   "critical",
@@ -141,6 +143,229 @@ function observedCount(value, observed) {
     : { state: "unavailable", value: null };
 }
 
+function unavailableObservation() {
+  return { state: "unavailable", value: null };
+}
+
+function safeObservedField(source, keys, { count = false } = {}) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return unavailableObservation();
+  for (const key of keys) {
+    const raw = source[key];
+    const wrapped = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+    const observed = wrapped?.state === "observed" || wrapped?.observed === true || source.observed === true;
+    const value = wrapped ? wrapped.value : raw;
+    if (!observed) continue;
+    if (count) return observedCount(value, true);
+    const projected = safeNullableText(value, 120);
+    if (projected && !["redacted", "[path omitted]"].includes(projected)) {
+      return { state: "observed", value: projected };
+    }
+  }
+  return unavailableObservation();
+}
+
+function repositoryProjection(artifact) {
+  const source = artifact?.repositoryObservation || artifact?.repository;
+  return {
+    name: safeObservedField(source, ["name", "repositoryName"]),
+    branch: safeObservedField(source, ["branch", "branchName"]),
+    worktree: safeObservedField(source, ["worktree", "worktreeState"]),
+    pullRequest: safeObservedField(source, ["pullRequest", "pullRequestNumber", "pr"]),
+    diff: safeObservedField(source, ["diff", "diffSummary", "diffState"]),
+  };
+}
+
+function workspaceProjection(artifact) {
+  const source = artifact?.workspaceObservation || artifact?.workspace;
+  return {
+    name: safeObservedField(source, ["name", "workspaceName"]),
+    workspaceId: safeObservedField(source, ["workspaceId", "id"]),
+    transcript: safeObservedField(source, ["transcript", "transcriptState"]),
+    terminal: safeObservedField(source, ["terminal", "terminalState"]),
+  };
+}
+
+function safeTransferCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 100_000 ? value : null;
+}
+
+function safeTransferRef(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const text = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,159}$/u.test(text)) return null;
+  const projected = safeNullableText(text, 160);
+  return projected && !["redacted", "[path omitted]"].includes(projected) ? projected : null;
+}
+
+function unsafeTransferPayload(value, depth = 0) {
+  if (depth > 4) return true;
+  if (typeof value === "string") {
+    const projected = safeText(value, "", 240);
+    return projected === "redacted" || projected === "[path omitted]";
+  }
+  if (Array.isArray(value)) return value.slice(0, 64).some((item) => unsafeTransferPayload(item, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.entries(value).slice(0, 64).some(([key, item]) =>
+      unsafeTransferPayload(key, depth + 1) || unsafeTransferPayload(item, depth + 1));
+  }
+  return false;
+}
+
+function contextTransferProjection(artifact, runId, packets, nodeByTaskId, knownNodeIds) {
+  const output = [];
+  const byEndpoints = new Map();
+  const append = (transfer) => {
+    const key = `${transfer.fromNodeId}:${transfer.toNodeId}`;
+    const prior = byEndpoints.get(key);
+    if (prior !== undefined) output[prior] = transfer;
+    else {
+      byEndpoints.set(key, output.length);
+      output.push(transfer);
+    }
+  };
+  for (const packet of packets) {
+    const toTaskId = taskIdFrom(packet);
+    const toNodeId = nodeByTaskId.get(toTaskId);
+    if (!toNodeId) continue;
+    for (const dependency of boundedArray(packet?.dependsOn, 32)) {
+      const fromNodeId = nodeByTaskId.get(exactTaskId(dependency));
+      if (!fromNodeId || fromNodeId === toNodeId) continue;
+      append({
+        id: publicId("transfer", `${runId}:${fromNodeId}:${toNodeId}:dependency`),
+        fromNodeId,
+        toNodeId,
+        kind: "dependency",
+        state: "planned",
+        summaryCount: null,
+        decisionCount: null,
+        fileCount: null,
+        evidenceCount: null,
+        observedAt: null,
+        digest: null,
+        bytes: null,
+        compactionState: "unavailable",
+        omittedCount: null,
+        omissionReason: null,
+        downstreamAcceptanceState: "unavailable",
+        evidenceRefs: [],
+      });
+    }
+  }
+
+  const records = [artifact?.contextTransfers, artifact?.contextHandoffs]
+    .filter(Array.isArray)
+    .flat()
+    .slice(0, LIVE_MAX_CONTEXT_TRANSFERS);
+  const resolveNodeId = (record, nodeKeys, taskKeys) => {
+    for (const key of nodeKeys) {
+      const candidate = typeof record?.[key] === "string" ? record[key].trim() : null;
+      if (candidate && knownNodeIds.has(candidate)) return candidate;
+    }
+    for (const key of taskKeys) {
+      const taskId = exactTaskId(record?.[key]);
+      const candidate = taskId ? nodeByTaskId.get(taskId) : null;
+      if (candidate && knownNodeIds.has(candidate)) return candidate;
+    }
+    return null;
+  };
+  for (const record of records) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+    if (recordRunId(record) !== runId || unsafeTransferPayload(record)) continue;
+    const fromNodeId = resolveNodeId(
+      record,
+      ["fromNodeId", "sourceNodeId"],
+      ["fromTaskPacketId", "fromTaskId", "sourceTaskPacketId", "sourceTaskId"],
+    );
+    const toNodeId = resolveNodeId(
+      record,
+      ["toNodeId", "targetNodeId"],
+      ["toTaskPacketId", "toTaskId", "targetTaskPacketId", "targetTaskId"],
+    );
+    if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) continue;
+    const observedAt = safeTimestamp(record.observedAt || record.completedAt || record.updatedAt);
+    if (!observedAt) continue;
+    const acceptance = String(record.downstreamAcceptanceState || record.acceptanceState || "unavailable").trim().toLowerCase();
+    const evidenceRefs = boundedArray(record.evidenceRefs, LIVE_MAX_CONTEXT_EVIDENCE_REFS)
+      .map(safeTransferRef)
+      .filter(Boolean);
+    if (Array.isArray(record.evidenceRefs) && evidenceRefs.length !== Math.min(record.evidenceRefs.length, LIVE_MAX_CONTEXT_EVIDENCE_REFS)) continue;
+    const state = acceptance === "accepted" && evidenceRefs.length > 0 ? "accepted" : "observed";
+    const digest = typeof record.digest === "string" && /^[a-f0-9]{64}$/iu.test(record.digest) ? record.digest.toLowerCase() : null;
+    const bytes = Number.isSafeInteger(record.bytes) && record.bytes >= 0 && record.bytes <= LIVE_MAX_COMPACT_BYTES
+      ? record.bytes
+      : null;
+    const compactionState = ["none", "compacted", "omitted", "unavailable"].includes(record.compactionState)
+      ? record.compactionState
+      : "unavailable";
+    const omissionReason = safeNullableText(record.omissionReason, 160);
+    if (omissionReason && ["redacted", "[path omitted]"].includes(omissionReason)) continue;
+    append({
+      id: publicId("transfer", `${runId}:${fromNodeId}:${toNodeId}:${record.id || record.kind || "handoff"}`),
+      fromNodeId,
+      toNodeId,
+      kind: safeId(record.kind, "context_handoff"),
+      state,
+      summaryCount: safeTransferCount(record.summaryCount),
+      decisionCount: safeTransferCount(record.decisionCount),
+      fileCount: safeTransferCount(record.fileCount),
+      evidenceCount: safeTransferCount(record.evidenceCount),
+      observedAt,
+      digest,
+      bytes,
+      compactionState,
+      omittedCount: safeTransferCount(record.omittedCount),
+      omissionReason,
+      downstreamAcceptanceState: ["accepted", "rejected", "pending", "unavailable"].includes(acceptance)
+        ? acceptance
+        : "unavailable",
+      evidenceRefs,
+    });
+  }
+  return output.slice(0, LIVE_MAX_CONTEXT_TRANSFERS);
+}
+
+function safeCompactContextTransfers(records, runId, nodes) {
+  const known = new Set(boundedArray(nodes, LIVE_MAX_NODES).map((node) => node?.id).filter(Boolean));
+  return boundedArray(records, LIVE_MAX_CONTEXT_TRANSFERS).filter((record) => {
+    if (!record || typeof record !== "object" || Array.isArray(record) || unsafeTransferPayload(record)) return false;
+    if (!known.has(record.fromNodeId) || !known.has(record.toNodeId) || record.fromNodeId === record.toNodeId) return false;
+    if (!/^(?:transfer):[a-f0-9]{20}$/u.test(record.id || "")) return false;
+    if (!["planned", "observed", "accepted"].includes(record.state)) return false;
+    if (record.state !== "planned" && !safeTimestamp(record.observedAt)) return false;
+    if (record.digest !== null && !(typeof record.digest === "string" && /^[a-f0-9]{64}$/u.test(record.digest))) return false;
+    if (record.bytes !== null && !(Number.isSafeInteger(record.bytes) && record.bytes >= 0 && record.bytes <= LIVE_MAX_COMPACT_BYTES)) return false;
+    return boundedArray(record.evidenceRefs, LIVE_MAX_CONTEXT_EVIDENCE_REFS).every((item) => safeTransferRef(item) === item);
+  }).map((record) => ({
+    id: record.id,
+    fromNodeId: record.fromNodeId,
+    toNodeId: record.toNodeId,
+    kind: safeId(record.kind, "context_handoff"),
+    state: record.state === "planned"
+      ? "planned"
+      : record.state === "accepted"
+        && record.downstreamAcceptanceState === "accepted"
+        && boundedArray(record.evidenceRefs, LIVE_MAX_CONTEXT_EVIDENCE_REFS).length > 0
+          ? "accepted"
+          : "observed",
+    summaryCount: safeTransferCount(record.summaryCount),
+    decisionCount: safeTransferCount(record.decisionCount),
+    fileCount: safeTransferCount(record.fileCount),
+    evidenceCount: safeTransferCount(record.evidenceCount),
+    observedAt: safeTimestamp(record.observedAt),
+    digest: record.digest || null,
+    bytes: record.bytes ?? null,
+    compactionState: ["none", "compacted", "omitted", "unavailable"].includes(record.compactionState)
+      ? record.compactionState
+      : "unavailable",
+    omittedCount: safeTransferCount(record.omittedCount),
+    omissionReason: safeNullableText(record.omissionReason, 160),
+    downstreamAcceptanceState: ["accepted", "rejected", "pending", "unavailable"].includes(record.downstreamAcceptanceState)
+      ? record.downstreamAcceptanceState
+      : "unavailable",
+    evidenceRefs: boundedArray(record.evidenceRefs, LIVE_MAX_CONTEXT_EVIDENCE_REFS),
+  }));
+}
+
 function nowIso(clock) {
   const value = typeof clock === "function" ? clock() : new Date();
   const date = value instanceof Date ? value : new Date(value);
@@ -234,6 +459,9 @@ function emptySnapshot(observedAt, kind = "empty", stale = true) {
     edges: [],
     evidence: [],
     replay: [],
+    repository: repositoryProjection(null),
+    workspace: workspaceProjection(null),
+    contextTransfers: [],
     permissions: permissions(),
   };
 }
@@ -601,7 +829,7 @@ function liveProjectionBytes(value) {
 function fitLiveProjectionToBudget(value, maxBytes) {
   let projection = JSON.parse(JSON.stringify(value));
   const originalBytes = liveProjectionBytes(projection);
-  let omitted = { toolCalls: 0, evidence: 0, prompts: 0, provenance: 0, nodes: 0, replay: 0 };
+  let omitted = { toolCalls: 0, evidence: 0, prompts: 0, provenance: 0, contextTransfers: 0, nodes: 0, replay: 0 };
   projection.truncated = {
     applied: originalBytes > maxBytes,
     originalBytes,
@@ -614,6 +842,7 @@ function fitLiveProjectionToBudget(value, maxBytes) {
     evidence: Math.max(0, projection.counts.evidence - visibleCounts.evidence),
     prompts: Math.max(0, projection.counts.prompts - visibleCounts.prompts),
     provenance: Math.max(0, projection.counts.provenance - visibleCounts.provenance),
+    contextTransfers: Math.max(0, projection.counts.contextTransfers - visibleCounts.contextTransfers),
     nodes: Math.max(0, projection.counts.nodes - visibleCounts.nodes),
     replay: Math.max(0, projection.counts.events - visibleCounts.events),
   });
@@ -692,6 +921,11 @@ function fitLiveProjectionToBudget(value, maxBytes) {
       omitted.provenance += 1;
       continue;
     }
+    if (projection.contextTransfers.length) {
+      projection.contextTransfers.pop();
+      omitted.contextTransfers += 1;
+      continue;
+    }
     const nodeWithPrompt = [...projection.nodes].reverse().find((node) => node.promptEras?.length || node.provenance?.length);
     if (nodeWithPrompt?.promptEras?.length) {
       nodeWithPrompt.promptEras.pop();
@@ -729,6 +963,7 @@ function fitLiveProjectionToBudget(value, maxBytes) {
     toolCalls: projection.toolCalls.length,
     prompts: projection.prompts.length,
     provenance: projection.provenance.length,
+    contextTransfers: projection.contextTransfers.length,
   };
   omitted = exactOmitted(projection.visibleCounts);
   projection.truncated.omitted = omitted;
@@ -754,10 +989,13 @@ function fitLiveProjectionToBudget(value, maxBytes) {
       prompts: [],
       toolCalls: [],
       provenance: [],
+      repository: projection.repository,
+      workspace: projection.workspace,
+      contextTransfers: [],
       eventIndex: 0,
       eventCount: 0,
       counts: projection.counts,
-      visibleCounts: { nodes: main ? 1 : 0, edges: 0, evidence: 0, events: 0, toolCalls: 0, prompts: 0, provenance: 0 },
+      visibleCounts: { nodes: main ? 1 : 0, edges: 0, evidence: 0, events: 0, toolCalls: 0, prompts: 0, provenance: 0, contextTransfers: 0 },
       truncated: {
         applied: true,
         originalBytes,
@@ -950,6 +1188,13 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       if (from && target) edges.push({ from, to: target, kind: "depends_on" });
     }
   }
+  const contextTransfers = contextTransferProjection(
+    artifact,
+    runId,
+    packets,
+    nodeByTaskId,
+    new Set(nodes.map((node) => node.id)),
+  );
   const richStageTrace = Array.isArray(artifact?.agUiStageEvents?.events) && artifact.agUiStageEvents.events.length > 1;
   const stageEvents = stageReplay(artifact, runId, richStageTrace ? mainNode.id : null);
   const lifecycleEvents = richStageTrace
@@ -1019,6 +1264,9 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       ...item,
       nodeId: node.id,
     }))).slice(0, LIVE_MAX_EVIDENCE),
+    repository: repositoryProjection(artifact),
+    workspace: workspaceProjection(artifact),
+    contextTransfers,
     eventIndex: replay.length,
     eventCount: replay.length,
     counts: null,
@@ -1031,6 +1279,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     toolCalls: projection.toolCalls.length,
     prompts: projection.prompts.length,
     provenance: projection.provenance.length,
+    contextTransfers: projection.contextTransfers.length,
   };
   return fitLiveProjectionToBudget(projection, maxBytes);
 }
@@ -1402,6 +1651,14 @@ export function buildLiveSnapshot({
       ? "live_projection"
       : "governed_artifact"
     : "durable_status";
+  const contextTransfers = safeCompactContextTransfers(
+    projection.contextTransfers,
+    projection.run.runId,
+    projection.nodes,
+  );
+  const countValue = (key, fallback) => Number.isSafeInteger(projection.counts?.[key]) && projection.counts[key] >= 0
+    ? projection.counts[key]
+    : fallback;
   return {
     schemaVersion: LIVE_SNAPSHOT_SCHEMA_VERSION,
     source: sourceEnvelope(kind, safeObservedAt, stale),
@@ -1417,13 +1674,20 @@ export function buildLiveSnapshot({
     prompts: boundedArray(projection.prompts, LIVE_MAX_EVIDENCE),
     toolCalls: boundedArray(projection.toolCalls, LIVE_MAX_EVIDENCE),
     provenance: boundedArray(projection.provenance, LIVE_MAX_EVIDENCE),
+    repository: repositoryProjection(projection),
+    workspace: workspaceProjection(projection),
+    contextTransfers,
     eventIndex: Number.isSafeInteger(projection.eventIndex) ? projection.eventIndex : projection.replay?.length || 0,
     eventCount: Number.isSafeInteger(projection.eventCount) ? projection.eventCount : projection.replay?.length || 0,
-    counts: projection.counts || {
-      nodes: projection.nodes?.length || 0,
-      edges: projection.edges?.length || 0,
-      evidence: projection.evidence?.length || 0,
-      events: projection.replay?.length || 0,
+    counts: {
+      nodes: countValue("nodes", projection.nodes?.length || 0),
+      edges: countValue("edges", projection.edges?.length || 0),
+      evidence: countValue("evidence", projection.evidence?.length || 0),
+      events: countValue("events", projection.replay?.length || 0),
+      toolCalls: countValue("toolCalls", projection.toolCalls?.length || 0),
+      prompts: countValue("prompts", projection.prompts?.length || 0),
+      provenance: countValue("provenance", projection.provenance?.length || 0),
+      contextTransfers: countValue("contextTransfers", contextTransfers.length),
     },
     permissions: permissions(),
   };

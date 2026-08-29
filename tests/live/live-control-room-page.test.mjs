@@ -608,3 +608,123 @@ test("preserves real edge state without replay evidence and uses valid listbox s
   assert.match(html, /\.activity-chip\s*\{[^}]*min-width:\s*0/su);
   assert.match(html, /graph\.scrollTo\(\{[\s\S]{0,260}behavior:\s*reducedMotion\.matches\s*\?\s*"auto"\s*:\s*"smooth"/u);
 });
+
+test("adds a persistent keyboard-accessible Repository Workspace Run work surface", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /class="work-view-switcher" role="tablist" aria-label="Work surface view"/u);
+  for (const view of ["repository", "workspace", "run"]) {
+    assert.match(html, new RegExp(`role="tab"[^>]+data-live-work-view="${view}"`, "u"));
+    assert.match(html, new RegExp(`data-live-${view === "run" ? "run" : view}-view`, "u"));
+  }
+  assert.match(html, /WORK_VIEW_STORAGE_KEY\s*=\s*"meta-kim-live-work-view"/u);
+  assert.match(html, /window\.sessionStorage\?\.getItem\(key\)/u);
+  assert.match(html, /window\.localStorage\?\.getItem\(key\)/u);
+  assert.match(html, /window\.sessionStorage\?\.setItem\(key, value\)/u);
+  assert.match(html, /bindRovingTabs\(workViewTabs, WORK_VIEWS, setWorkView\)/u);
+  assert.match(html, /\["ArrowLeft", "ArrowRight", "Home", "End"\]/u);
+  assert.match(html, /setWorkView\(currentWorkView, \{ persist: false \}\)/u);
+  assert.match(html, /params\.set\("projectId", selectedProjectId\)[\s\S]*params\.set\("runId", selectedRunId\)/u);
+  assert.doesNotMatch(html, /worktree children|session worktree/iu);
+});
+
+test("renders repository and workspace facts without inventing unavailable source-control data", () => {
+  const html = renderLiveControlRoomPage({
+    snapshot: {
+      ...snapshotFixture,
+      repository: {
+        name: { state: "observed", value: "Meta_Kim" },
+        branch: { state: "observed", value: "codex/live-hub-canvas-first" },
+      },
+      workspace: {
+        workspaceId: { state: "observed", value: "workspace-17" },
+        transcript: { state: "unavailable", value: null },
+        terminal: { state: "unavailable", value: null },
+      },
+    },
+  });
+
+  assert.match(html, /data-live-repository-title/u);
+  assert.match(html, /data-live-repository-boundary/u);
+  assert.match(html, /data-live-repository-sessions/u);
+  assert.match(html, /Active workspace|Observed workspace/u);
+  assert.match(html, /\["Branch", repository\.branch\]/u);
+  assert.match(html, /\["Worktree", repository\.worktree\]/u);
+  assert.match(html, /\["Pull request", repository\.pullRequest\]/u);
+  assert.match(html, /\["Diff", repository\.diff\]/u);
+  assert.match(html, /fact\?\.summary \|\| "Unavailable"/u);
+  assert.match(html, /data-live-workspace-boundary/u);
+  assert.match(html, /\["Plan", plan\].*\["Conversation", thread\].*\["Terminal", terminal\].*\["Changes", changes\].*\["Review", review\]/su);
+  assert.match(html, /Conversation transcript unavailable/u);
+  assert.match(html, /Terminal adapter telemetry unavailable/u);
+  assert.match(html, /Diff telemetry unavailable/u);
+  assert.doesNotMatch(html, /repositoryInput\.(?:root|projectRoot|path)/u);
+});
+
+test("splits Inspector into six bounded tabs and distinguishes planned context delivery", () => {
+  const html = renderLiveControlRoomPage({
+    snapshot: {
+      ...snapshotFixture,
+      contextTransfers: [{ id: "ctx-1", state: "planned", fromNodeId: "critical", toNodeId: "execution" }],
+    },
+  });
+
+  assert.match(html, /class="inspector-tabs" role="tablist" aria-label="Inspector sections"/u);
+  for (const tab of ["summary", "conversation", "terminal", "changes", "evidence", "context"]) {
+    assert.match(html, new RegExp(`data-live-inspector-tab="${tab}"`, "u"));
+    assert.match(html, new RegExp(`data-live-inspector-panel="${tab}"`, "u"));
+  }
+  assert.match(html, /contextTransferInput\.slice\(0, 256\)/u);
+  assert.match(html, /\["observed", "accepted"\]\.includes\(rawState\) \? rawState : "planned"/u);
+  assert.match(html, /nullableCount\(record\.summaryCount\)/u);
+  assert.match(html, /planned · delivery not observed/u);
+  assert.match(html, /entry\.dataset\.transferState = item\.transferState/u);
+  assert.match(html, /entry\.dataset\.deliveryObserved = item\.transferState === "observed" \|\| item\.transferState === "accepted" \? "true" : "false"/u);
+  assert.match(html, /\.evidence-item\[data-transfer-state="planned"\][^}]*border-left-style:\s*dashed/su);
+  assert.doesNotMatch(html, /data-transfer-state="planned"[^}]*animation/isu);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.work-view-switcher[^}]*grid-column:\s*1 \/ -1/su);
+  assert.match(html, /html, body \{[^}]*overflow:\s*hidden/su);
+});
+
+test("keeps the reference-inspired black-gold surface restrained, stateful, and mobile-bounded", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const themeCss = html.slice(html.lastIndexOf(":root {"));
+  const variable = (name) => themeCss.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "iu"))?.[1].toLowerCase();
+  const pixelVariable = (name) => Number(themeCss.match(new RegExp(`--${name}:\\s*([0-9]+(?:\\.[0-9]+)?)px`, "iu"))?.[1]);
+  const rgbToHsl = (hex) => {
+    const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+    const maximum = Math.max(...channels);
+    const minimum = Math.min(...channels);
+    const lightness = (maximum + minimum) / 2;
+    const saturation = maximum === minimum
+      ? 0
+      : (maximum - minimum) / (1 - Math.abs(2 * lightness - 1));
+    return { saturation: saturation * 100 };
+  };
+
+  const gold = variable("gold");
+  const goldBright = variable("gold-bright");
+  const running = variable("teal");
+  const success = variable("green");
+  const danger = variable("danger");
+  assert.ok(gold && goldBright && running && success && danger, "the final theme must expose semantic color variables");
+  assert.ok(rgbToHsl(gold).saturation <= 70, "primary gold should remain low-saturation");
+  assert.ok(rgbToHsl(goldBright).saturation <= 70, "highlight gold should remain low-saturation");
+  assert.equal(new Set([gold, running, success, danger]).size, 4, "gold, running, success, and failed states need distinct colors");
+  assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--teal\)/su);
+  assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--gold\)/su);
+  assert.match(themeCss, /\.node-failed, \.node-in-doubt\s*\{[^}]*border-left-color:\s*var\(--danger\)/su);
+
+  const pixelRadii = [...themeCss.matchAll(/border-radius:\s*([0-9]+(?:\.[0-9]+)?)px/giu)]
+    .map((match) => Number(match[1]));
+  assert.ok(pixelRadii.length > 0, "the final theme should declare a restrained radius hierarchy");
+  assert.ok(Math.max(...pixelRadii) <= 6, "non-circular component radii must not exceed 6px");
+  assert.ok(pixelVariable("radius-sm") <= 6 && pixelVariable("radius") <= 6, "theme radius tokens must not exceed 6px");
+
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.topbar\s*\{[^}]*grid-template-columns:\s*auto\s+minmax\(0,1fr\)\s+auto/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.work-view-switcher\s*\{[^}]*width:\s*100%/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.work-view-tab\s*\{[^}]*min-width:\s*0/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.node-card\s*\{[^}]*width:\s*100%\s*!important/su);
+  assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.graph-toolbar\s*\{[^}]*overflow-x:\s*auto/su);
+  assert.match(themeCss, /\.inspector-tabs\s*\{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/su);
+});

@@ -118,6 +118,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     : { matches: false };
 
   const LANGUAGE_STORAGE_KEY = "meta-kim-live-language";
+  const WORK_VIEW_STORAGE_KEY = "meta-kim-live-work-view";
+  const WORK_VIEWS = ["repository", "workspace", "run"];
+  const INSPECTOR_TABS = ["summary", "conversation", "terminal", "changes", "evidence", "context"];
   const zhText = new Map(Object.entries({
     "Connecting…": "正在连接…",
     "Streaming": "实时连接中",
@@ -342,6 +345,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const sessionSelect = app.querySelector("[data-live-session-select]");
   const sessionList = app.querySelector("[data-live-session-list]");
   const hubStatus = app.querySelector("[data-live-hub-status]");
+  const workViewTabs = [...app.querySelectorAll("[data-live-work-view]")];
+  const repositoryView = app.querySelector("[data-live-repository-view]");
+  const repositoryTitle = app.querySelector("[data-live-repository-title]");
+  const repositoryBoundary = app.querySelector("[data-live-repository-boundary]");
+  const repositoryFacts = app.querySelector("[data-live-repository-facts]");
+  const repositorySessions = app.querySelector("[data-live-repository-sessions]");
+  const workspaceView = app.querySelector("[data-live-workspace-view]");
+  const workspaceTitle = app.querySelector("[data-live-workspace-title]");
+  const workspaceBoundary = app.querySelector("[data-live-workspace-boundary]");
+  const workspaceFacts = app.querySelector("[data-live-workspace-facts]");
   const stateLabel = app.querySelector("[data-live-state-label]");
   const stateChip = app.querySelector("[data-live-state]");
   const title = app.querySelector(".top-run-context [data-live-run-title]");
@@ -376,10 +389,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const selectedNodePrompt = app.querySelector("[data-live-selected-node-prompt]");
   const evidenceList = app.querySelector("[data-live-evidence-list]");
   const evidenceCount = app.querySelector("[data-live-evidence-count]");
-  const evidenceDrawer = app.querySelector("[data-evidence-drawer]");
   const evidenceToggle = app.querySelector("[data-evidence-toggle]");
   const evidencePanel = app.querySelector("[data-live-inspector]");
   const evidenceClose = app.querySelector("[data-live-inspector-close]");
+  const inspectorTabs = [...app.querySelectorAll("[data-live-inspector-tab]")];
+  const inspectorPanels = [...app.querySelectorAll("[data-live-inspector-panel]")];
+  const conversationList = app.querySelector("[data-live-conversation-list]");
+  const terminalList = app.querySelector("[data-live-terminal-list]");
+  const changesList = app.querySelector("[data-live-changes-list]");
+  const contextTransferList = app.querySelector("[data-live-context-transfer-list]");
   const graphFollow = app.querySelector("[data-live-graph-follow]");
   const cameraModeLabel = app.querySelector("[data-live-camera-mode]");
   const sessionsDialog = app.querySelector("[data-live-sessions-dialog]");
@@ -455,6 +473,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let catalogRefreshTimer = null;
   let selectionGeneration = 0;
   let dialogOpener = null;
+  let currentWorkView = "run";
+  let currentInspectorTab = "summary";
 
   const statuses = new Set(["live", "stale", "in_doubt"]);
   const nodeStatuses = new Set(["running", "completed", "skipped", "failed", "blocked", "in_doubt", "queued"]);
@@ -544,6 +564,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return Number.isFinite(number) ? number : fallback;
   }
 
+  function nullableCount(value) {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
   function firstValue(record, keys, fallback) {
     if (!record || typeof record !== "object") return fallback;
     for (const key of keys) {
@@ -588,6 +612,31 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return trusted.length + " terminal evidence · " + [...counts].map(([status, count]) => status + " " + count).join(" · ");
   }
 
+  function normalizedAvailability(value, fallbackSummary) {
+    if (value === true) return { state: "observed", summary: fallbackSummary || "Observed" };
+    if (value === false || value === null || value === undefined) {
+      return { state: "unavailable", summary: fallbackSummary || "Telemetry unavailable" };
+    }
+    if (typeof value === "string" || typeof value === "number") {
+      return { state: "observed", summary: display(value, fallbackSummary || "Observed") };
+    }
+    if (typeof value !== "object" || Array.isArray(value)) {
+      return { state: "unavailable", summary: fallbackSummary || "Telemetry unavailable" };
+    }
+    const rawState = display(firstValue(value, ["state", "status", "availability"], "unavailable"), "unavailable")
+      .toLowerCase().replace(/[\s-]+/gu, "_");
+    const state = ["observed", "accepted", "completed", "available", "active"].includes(rawState)
+      ? "observed"
+      : rawState === "planned" || rawState === "pending"
+        ? "planned"
+        : "unavailable";
+    return {
+      state,
+      summary: display(firstValue(value, ["value", "summary", "label", "detail", "message"], fallbackSummary), fallbackSummary || "Telemetry unavailable"),
+      count: Math.max(0, numberOr(firstValue(value, ["count", "total", "items"], 0), 0)),
+    };
+  }
+
   function normalizeSnapshot(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return null;
     const hasRun = Boolean(input.run && typeof input.run === "object" && !Array.isArray(input.run));
@@ -601,6 +650,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const promptInput = Array.isArray(input.prompts) ? input.prompts : [];
     const toolCallInput = Array.isArray(input.toolCalls) ? input.toolCalls : [];
     const provenanceInput = Array.isArray(input.provenance) ? input.provenance : [];
+    const repositoryInput = input.repository && typeof input.repository === "object" && !Array.isArray(input.repository) ? input.repository : {};
+    const workspaceInput = input.workspace && typeof input.workspace === "object" && !Array.isArray(input.workspace) ? input.workspace : {};
+    const contextTransferInput = Array.isArray(input.contextTransfers) ? input.contextTransfers : [];
     const replayInput = Array.isArray(input.replay)
       ? { events: input.replay }
       : input.replay && typeof input.replay === "object"
@@ -790,6 +842,43 @@ const CLIENT_SCRIPT = String.raw`(() => {
         blockedCount: Math.max(0, numberOr(firstValue(sessionInput, ["blockedCount"], 0), 0)),
         proofState: display(firstValue(sessionInput, ["proofState"], "structural evidence only"), "structural evidence only"),
       },
+      repository: {
+        name: normalizedAvailability(repositoryInput.name, "Repository name unavailable"),
+        branch: normalizedAvailability(repositoryInput.branch, "Branch unavailable"),
+        worktree: normalizedAvailability(repositoryInput.worktree, "Worktree unavailable"),
+        pullRequest: normalizedAvailability(repositoryInput.pullRequest, "Pull request unavailable"),
+        diff: normalizedAvailability(repositoryInput.diff, "Diff telemetry unavailable"),
+      },
+      workspace: {
+        name: normalizedAvailability(workspaceInput.name, "Workspace name unavailable"),
+        workspaceId: normalizedAvailability(workspaceInput.workspaceId, "Workspace identifier unavailable"),
+        transcript: normalizedAvailability(workspaceInput.transcript, "Conversation transcript unavailable"),
+        terminal: normalizedAvailability(workspaceInput.terminal, "Terminal adapter telemetry unavailable"),
+      },
+      contextTransfers: contextTransferInput.slice(0, 256).map((item, index) => {
+        const record = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+        const rawState = display(firstValue(record, ["state", "status", "deliveryState"], "planned"), "planned").toLowerCase().replace(/[\s-]+/gu, "_");
+        const state = ["observed", "accepted"].includes(rawState) ? rawState : "planned";
+        return {
+          id: display(firstValue(record, ["id", "transferId"], "transfer-" + (index + 1)), "transfer-" + (index + 1)),
+          state,
+          fromNodeId: display(firstValue(record, ["fromNodeId", "sourceNodeId"], "unavailable"), "unavailable"),
+          toNodeId: display(firstValue(record, ["toNodeId", "targetNodeId"], "unavailable"), "unavailable"),
+          kind: display(firstValue(record, ["kind"], "context_handoff"), "context_handoff"),
+          summaryCount: nullableCount(record.summaryCount),
+          decisionCount: nullableCount(record.decisionCount),
+          fileCount: nullableCount(record.fileCount),
+          evidenceCount: nullableCount(record.evidenceCount),
+          observedAt: display(firstValue(record, ["observedAt"], ""), ""),
+          digest: display(firstValue(record, ["digest"], ""), ""),
+          bytes: nullableCount(record.bytes),
+          compactionState: display(firstValue(record, ["compactionState"], "unavailable"), "unavailable"),
+          omittedCount: nullableCount(record.omittedCount),
+          omissionReason: display(firstValue(record, ["omissionReason"], ""), ""),
+          downstreamAcceptanceState: display(firstValue(record, ["downstreamAcceptanceState"], "unavailable"), "unavailable"),
+          evidenceRefs: Array.isArray(record.evidenceRefs) ? record.evidenceRefs.slice(0, 24).map((value) => display(value, "")).filter(Boolean) : [],
+        };
+      }),
       nodes,
       edges,
       evidence,
@@ -1194,6 +1283,76 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (changed) repositionCameraAfterInspector(active);
   }
 
+  function safeStoredChoice(key, allowed, fallback) {
+    try {
+      const sessionValue = window.sessionStorage?.getItem(key);
+      if (allowed.includes(sessionValue)) return sessionValue;
+      const localValue = window.localStorage?.getItem(key);
+      if (allowed.includes(localValue)) return localValue;
+    } catch {}
+    return fallback;
+  }
+
+  function persistStoredChoice(key, value) {
+    try { window.sessionStorage?.setItem(key, value); } catch {}
+    try { window.localStorage?.setItem(key, value); } catch {}
+  }
+
+  function setWorkView(view, { focus = false, persist = true } = {}) {
+    currentWorkView = WORK_VIEWS.includes(view) ? view : "run";
+    workViewTabs.forEach((tab) => {
+      const selected = tab.dataset.liveWorkView === currentWorkView;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      tab.dataset.active = selected ? "true" : "false";
+      if (selected && focus) tab.focus();
+    });
+    const graphPanel = app.querySelector("[data-live-run-view]");
+    if (repositoryView) repositoryView.hidden = currentWorkView !== "repository";
+    if (workspaceView) workspaceView.hidden = currentWorkView !== "workspace";
+    if (graphPanel) graphPanel.hidden = currentWorkView !== "run";
+    workspace?.setAttribute("data-work-view", currentWorkView);
+    if (currentWorkView !== "run") setInspectorOpen(false);
+    if (persist) persistStoredChoice(WORK_VIEW_STORAGE_KEY, currentWorkView);
+    if (currentWorkView === "run" && currentSnapshot) {
+      const refreshCamera = () => reconcileCamera();
+      if (window.requestAnimationFrame) window.requestAnimationFrame(refreshCamera);
+      else refreshCamera();
+    }
+  }
+
+  function setInspectorTab(tabName, { focus = false } = {}) {
+    currentInspectorTab = INSPECTOR_TABS.includes(tabName) ? tabName : "summary";
+    inspectorTabs.forEach((tab) => {
+      const selected = tab.dataset.liveInspectorTab === currentInspectorTab;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected && focus) tab.focus();
+    });
+    inspectorPanels.forEach((panel) => {
+      const selected = panel.dataset.liveInspectorPanel === currentInspectorTab;
+      panel.hidden = !selected;
+      if (selected) setText(evidenceCount, String(Number(panel.dataset.itemCount) || 0).padStart(2, "0"), "00");
+    });
+  }
+
+  function bindRovingTabs(tabs, values, select) {
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => select(tab.dataset.liveWorkView || tab.dataset.liveInspectorTab, { focus: false }));
+      tab.addEventListener("keydown", (event) => {
+        const current = values.indexOf(tab.dataset.liveWorkView || tab.dataset.liveInspectorTab);
+        if (current < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? values.length - 1
+            : (current + (event.key === "ArrowRight" ? 1 : -1) + values.length) % values.length;
+        select(values[next], { focus: true });
+      });
+    });
+  }
+
   function repositionCameraAfterInspector(active) {
     const reposition = () => reconcileCamera({ inspectorOpen: active });
     if (window.requestAnimationFrame) {
@@ -1347,32 +1506,28 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(selectedNodeEvidenceDetail, selected?.terminalEvidence || linked[0]?.detail || (selected ? "No terminal evidence is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.");
     setText(selectedNodeProvenance, selected ? "Source · " + (provenance?.reasoningExcerpt || (selected.parentId ? "spawned by " + selected.parentId : "run root")) : "Source · —", "Source · —");
     setText(selectedNodePrompt, selected ? "Prompt era · " + (activePrompt ? activePrompt.label + " · " + activePrompt.excerpt : "—") : "Prompt era · —", "Prompt era · —");
-    evidenceList?.querySelectorAll("[data-evidence-id]").forEach((entry) => {
-      const associated = Boolean(selected && entry.dataset.nodeId === selected.id);
-      entry.dataset.associated = associated ? "true" : "false";
-    });
-    if (selected) renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents });
+    renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents });
   }
 
   function renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents }) {
-    clearChildren(evidenceList);
-    const history = [
-      ...prompts.map((item) => ({ id: item.id, kind: "prompt", label: item.label, detail: item.excerpt, at: item.at, status: "observed", sourceRef: item.id })),
-      ...nodeTools.map((item) => ({ id: item.id, kind: "tool", label: item.name, detail: item.summary, at: item.startedAt || item.endedAt, status: item.state, sourceRef: item.promptId })),
-      ...nodeEvents.map((item) => ({ id: item.id, kind: item.kind, label: item.label, detail: item.toolCallId || item.promptId || "Execution event", at: item.at, status: item.status, sourceRef: item.toolCallId || item.promptId })),
-      ...linked.map((item) => ({ id: item.id, kind: "evidence", label: item.label, detail: item.detail, at: item.at, status: item.status, sourceRef: item.sourceRef })),
-    ].sort((left, right) => String(left.at || "").localeCompare(String(right.at || "")) || left.id.localeCompare(right.id));
-    setText(evidenceCount, String(history.length).padStart(2, "0"), "00");
-    if (!history.length) {
-      evidenceList.append(makeElement("p", "panel-empty", "No safe tool or event history is linked to this node yet."));
-      return;
-    }
-    history.forEach((item) => {
+    const renderItems = (list, panelName, items, emptyMessage) => {
+      clearChildren(list);
+      const panel = inspectorPanels.find((item) => item.dataset.liveInspectorPanel === panelName);
+      if (panel) panel.dataset.itemCount = String(items.length);
+      if (!items.length) {
+        list?.append(makeElement("p", "panel-empty", emptyMessage));
+        return;
+      }
+      items.forEach((item) => {
       const entry = makeElement("article", "evidence-item history-item history-" + item.kind);
       entry.dataset.evidenceId = item.id;
-      entry.dataset.nodeId = selected.id;
-      entry.dataset.associated = "true";
+      entry.dataset.nodeId = item.nodeId || selected?.id || "";
+      entry.dataset.associated = selected && entry.dataset.nodeId === selected.id ? "true" : "false";
       entry.dataset.historyKind = item.kind;
+      if (item.transferState) {
+        entry.dataset.transferState = item.transferState;
+        entry.dataset.deliveryObserved = item.transferState === "observed" || item.transferState === "accepted" ? "true" : "false";
+      }
       entry.setAttribute("role", "listitem");
       const top = makeElement("div", "evidence-item-top");
       const label = makeElement("span", "evidence-kind", item.kind + " · " + item.label);
@@ -1382,15 +1537,54 @@ const CLIENT_SCRIPT = String.raw`(() => {
       footer.append(makeElement("span", "evidence-status evidence-status-" + nodeClass(normalizedNodeStatus(item.status)), item.status));
       if (item.sourceRef) footer.append(makeElement("span", "history-source", item.sourceRef));
       entry.append(top, detail, footer);
-      evidenceList.append(entry);
-    });
+        list?.append(entry);
+      });
+    };
+    const selectedEvidence = selected ? linked : currentSnapshot?.evidence || [];
+    const conversation = (selected ? prompts : currentSnapshot?.prompts || []).map((item) => ({
+      id: item.id, kind: "prompt_summary", label: item.label, detail: "Prompt summary · " + item.excerpt, at: item.at, status: "observed", sourceRef: item.id, nodeId: item.nodeId,
+    }));
+    if (!conversation.length && currentSnapshot?.workspace.transcript.state === "observed") {
+      conversation.push({ id: "transcript-availability", kind: "conversation", label: "Transcript availability", detail: currentSnapshot.workspace.transcript.summary, at: currentSnapshot.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    }
+    const terminal = [
+      ...(selected?.terminalEvidence ? [{ id: selected.id + "-terminal", kind: "terminal", label: "Terminal evidence", detail: selected.terminalEvidence, at: selected.lastAt, status: selected.status, nodeId: selected.id }] : []),
+    ];
+    if (!terminal.length && currentSnapshot?.workspace.terminal.state === "observed") {
+      terminal.push({ id: "terminal-availability", kind: "terminal", label: "Terminal telemetry", detail: currentSnapshot.workspace.terminal.summary, at: currentSnapshot.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    }
+    const changes = [];
+    const changeCount = currentSnapshot?.sessionInfo.fileChangeCount || 0;
+    if (currentSnapshot?.repository.diff.state === "observed") changes.push({ id: "diff-observed", kind: "diff", label: "Diff telemetry", detail: currentSnapshot.repository.diff.summary, at: currentSnapshot.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    if (changeCount > 0) changes.push({ id: "file-snapshots-observed", kind: "file_snapshots", label: changeCount + " file snapshots", detail: "Snapshot count observed; file diff content is not included", at: currentSnapshot?.run.updatedAt, status: "observed", nodeId: selected?.id || "" });
+    const evidence = [
+      ...selectedEvidence.map((item) => ({ id: item.id, kind: "evidence", label: item.label, detail: item.detail, at: item.at, status: item.status, sourceRef: item.sourceRef, nodeId: item.nodeId })),
+      ...(selected ? nodeTools : currentSnapshot?.toolCalls || []).map((item) => ({ id: item.id, kind: "tool_activity", label: item.name, detail: item.summary, at: item.startedAt || item.endedAt, status: item.state, sourceRef: item.promptId, nodeId: item.nodeId })),
+    ];
+    const transfers = (currentSnapshot?.contextTransfers || [])
+      .filter((item) => !selected || item.fromNodeId === selected.id || item.toNodeId === selected.id)
+      .map((item) => {
+        const counts = [["summaries", item.summaryCount], ["decisions", item.decisionCount], ["files", item.fileCount], ["evidence", item.evidenceCount]].filter(([, value]) => Number.isFinite(value)).map(([label, value]) => value + " " + label).join(" · ");
+        const compact = item.compactionState === "omitted"
+          ? "omitted " + (Number.isFinite(item.omittedCount) ? item.omittedCount : "") + (item.omissionReason ? " · " + item.omissionReason : "")
+          : item.compactionState;
+        const proof = [item.downstreamAcceptanceState, counts, compact, Number.isFinite(item.bytes) ? item.bytes + " bytes" : "", item.digest ? "digest " + item.digest.slice(0, 12) : "", item.evidenceRefs.length ? "evidence refs " + item.evidenceRefs.join(", ") : ""].filter(Boolean).join(" · ");
+        return { id: item.id, kind: item.kind, label: item.fromNodeId + " → " + item.toNodeId, detail: proof || (item.state === "planned" ? "Planned dependency; delivery not observed" : "Context delivery observed"), at: item.observedAt, status: item.state, sourceRef: item.state === "planned" ? "planned · delivery not observed" : item.state + " · delivery observed", nodeId: item.toNodeId, transferState: item.state };
+      });
+    renderItems(conversationList, "conversation", conversation, "Conversation transcript unavailable for this selection.");
+    renderItems(terminalList, "terminal", terminal, "Terminal adapter telemetry unavailable for this selection.");
+    renderItems(changesList, "changes", changes, "Diff telemetry unavailable for this selection.");
+    renderItems(evidenceList, "evidence", evidence, "No observed evidence is linked to this selection.");
+    renderItems(contextTransferList, "context", transfers, "No context transfer records are available for this selection.");
+    const summaryPanel = inspectorPanels.find((item) => item.dataset.liveInspectorPanel === "summary");
+    if (summaryPanel) summaryPanel.dataset.itemCount = selected ? "1" : "0";
+    setInspectorTab(currentInspectorTab);
   }
 
   function selectNode(nodeId, { focus = false } = {}) {
     if (!currentSnapshot || !currentSnapshot.nodes.some((node) => node.id === nodeId)) return;
     selectedNodeId = nodeId;
     updateSelectedNodeVisuals();
-    if (evidenceDrawer) evidenceDrawer.hidden = false;
     setInspectorOpen(true);
     if (graphFollowing) centerGraphNode(nodeId);
     const node = currentSnapshot.nodes.find((item) => item.id === nodeId);
@@ -1656,6 +1850,69 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const prompt = makeElement("div", "info-fact-prompt");
     prompt.append(makeElement("span", "info-fact-label", localize("Prompt summary")), makeElement("p", "info-fact-value", session.lastPromptSummary));
     infoFacts.append(prompt);
+  }
+
+  function appendOperationalRow(container, label, value, state = "unavailable") {
+    if (!container) return;
+    const row = makeElement("div", "operational-row");
+    row.dataset.state = state;
+    row.append(makeElement("span", "operational-label", label), makeElement("strong", "operational-value", value));
+    container.append(row);
+  }
+
+  function renderRepositoryView(snapshot) {
+    const project = projectForSelection();
+    const repository = snapshot.repository || {};
+    setText(repositoryTitle, repository.name?.state === "observed" ? repository.name.summary : project?.displayName || "Registered project", "Registered project");
+    setText(repositoryBoundary, "Repository boundary · " + (project?.projectId || "unavailable"), "Repository boundary unavailable");
+    clearChildren(repositoryFacts);
+    for (const [label, fact] of [
+      ["Branch", repository.branch],
+      ["Worktree", repository.worktree],
+      ["Pull request", repository.pullRequest],
+      ["Diff", repository.diff],
+    ]) appendOperationalRow(repositoryFacts, label, fact?.summary || "Unavailable", fact?.state || "unavailable");
+    clearChildren(repositorySessions);
+    const sessions = project?.sessions || [];
+    if (!sessions.length) {
+      repositorySessions?.append(makeElement("p", "panel-empty", "No observed workspace sessions."));
+      return;
+    }
+    sessions.forEach((session) => {
+      const row = makeElement("button", "workspace-child");
+      row.type = "button";
+      row.dataset.runId = session.runId;
+      row.dataset.active = session.runId === selectedRunId ? "true" : "false";
+      row.append(
+        makeElement("span", "workspace-child-title", session.title),
+        makeElement("span", "workspace-child-meta", (session.active ? "Active workspace" : "Observed workspace") + " · " + session.currentStage + " · " + formatSessionTime(session.updatedAt)),
+      );
+      row.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
+      repositorySessions?.append(row);
+    });
+  }
+
+  function renderWorkspaceView(snapshot) {
+    const selectedSession = projectForSelection()?.sessions.find((session) => session.runId === selectedRunId) || null;
+    const workspaceData = snapshot.workspace || {};
+    const session = snapshot.sessionInfo || {};
+    setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace");
+    setText(workspaceBoundary, "Workspace boundary · " + (workspaceData.workspaceId?.state === "observed" ? workspaceData.workspaceId.summary : snapshot.run.id), "Workspace boundary unavailable");
+    clearChildren(workspaceFacts);
+    const plan = session.plannedCount || session.completedCount
+      ? { state: "observed", summary: session.completedCount + " completed · " + session.plannedCount + " queued" }
+      : { state: "unavailable", summary: "Plan telemetry unavailable" };
+    const thread = workspaceData.transcript;
+    const terminal = workspaceData.terminal;
+    const changes = snapshot.repository.diff.state === "observed"
+      ? snapshot.repository.diff
+      : { state: "unavailable", summary: session.fileChangeCount ? session.fileChangeCount + " file snapshots observed · diff telemetry unavailable" : "Diff telemetry unavailable" };
+    const review = snapshot.replay.some((event) => event.stage === "review" || event.chapter === "review")
+        ? { state: "observed", summary: "Review-stage activity observed" }
+        : { state: "unavailable", summary: "Review telemetry unavailable" };
+    for (const [label, fact] of [["Plan", plan], ["Conversation", thread], ["Terminal", terminal], ["Changes", changes], ["Review", review]]) {
+      appendOperationalRow(workspaceFacts, label, fact?.summary || "Telemetry unavailable", fact?.state || "unavailable");
+    }
   }
 
   function renderReplay(snapshot) {
@@ -2295,8 +2552,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     renderGraph(snapshot);
     renderEvidence(snapshot);
     renderSessionInfo(snapshot);
+    renderRepositoryView(snapshot);
+    renderWorkspaceView(snapshot);
     renderReplay(snapshot);
     renderControlPanel(snapshot);
+    setWorkView(currentWorkView, { persist: false });
     if (firstSnapshot) {
       const establishInitialCamera = () => {
         fitGraph();
@@ -2530,6 +2790,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   sessionSelect?.addEventListener("change", () => {
     void switchSelection(selectedProjectId, sessionSelect.value, { updateUrl: true });
   });
+  bindRovingTabs(workViewTabs, WORK_VIEWS, setWorkView);
+  bindRovingTabs(inspectorTabs, INSPECTOR_TABS, setInspectorTab);
 
   app.querySelector("[data-live-graph-fit]")?.addEventListener("click", fitGraph);
   app.querySelector("[data-live-graph-zoom-in]")?.addEventListener("click", () => zoomGraph(1.18));
@@ -2577,6 +2839,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   applyLanguage();
   for (const panel of app.querySelectorAll(".share-panel, .control-panel")) infoTools?.append(panel);
+  currentWorkView = safeStoredChoice(WORK_VIEW_STORAGE_KEY, WORK_VIEWS, "run");
+  setWorkView(currentWorkView, { persist: false });
+  setInspectorTab("summary");
   setCameraMode("overview");
   setInspectorOpen(false);
   closeTransientUi();
@@ -3050,33 +3315,38 @@ body { overflow-x: hidden; background: var(--canvas); }
 `;
 
 const GRAPH_FIRST_CSS = String.raw`
-:root { color-scheme: dark; --ink: #121212; --panel: #1c1c1c; --panel-2: #242424; --gold: #d7af00; --gold-bright: #f0d56a; --green: #87d787; --dim: #777; --line: #353535; --text: #e6e6e6; --muted: #a0a0a0; --danger: #e06c75; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root { color-scheme: dark; --ink: #11100f; --panel: #1b1a18; --panel-2: #23211e; --gold: #a68d5e; --gold-bright: #cfbd96; --accent: #58c8c0; --teal: #62aaa0; --green: #76b88d; --dim: #77736b; --line-soft: #2b2a27; --line: #3a3833; --line-strong: #524e44; --text: #e5e1d9; --muted: #9f9a90; --danger: #c97079; --radius-sm: 4px; --radius: 6px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
 html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
 body { letter-spacing: 0; }
 button, select, input { font: inherit; }
 button { color: inherit; }
 [hidden] { display: none !important; }
-.skip-link { position: fixed; z-index: 100; top: .5rem; left: .5rem; transform: translateY(-160%); padding: .55rem .75rem; background: var(--gold); color: #111; }
+.skip-link { position: fixed; z-index: 100; top: .5rem; left: .5rem; transform: translateY(-160%); padding: .55rem .75rem; border-radius: var(--radius); background: var(--gold); color: #111; }
 .skip-link:focus { transform: none; }
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
 .shell { height: 100dvh; min-width: 0; display: grid; grid-template-rows: 44px minmax(0, 1fr); background: var(--ink); }
-.topbar { min-width: 0; display: flex; align-items: center; gap: .75rem; padding: 0 .75rem; border-bottom: 1px solid var(--line); background: #151515; }
+.topbar { min-width: 0; display: flex; align-items: center; gap: .75rem; padding: 0 .75rem; border-bottom: 1px solid var(--line); background: #171614; }
 .brand { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; }
-.brand-mark { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--gold); color: var(--gold-bright); font: 700 12px/1 monospace; }
+.brand-mark { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--gold); border-radius: var(--radius-sm); color: var(--gold-bright); font: 700 12px/1 monospace; }
 .brand-title { margin: 0; font-size: .78rem; font-weight: 700; }
 .top-run-context { min-width: 0; display: flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .72rem; }
 .top-run-context strong { min-width: 0; max-width: min(40vw, 560px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 600; }
+.work-view-switcher { flex: 0 0 auto; display: inline-grid; grid-template-columns: repeat(3, minmax(0,1fr)); padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: #12110f; }
+.work-view-tab { min-width: 76px; min-height: 27px; padding: 0 .5rem; border: 0; border-right: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: .62rem; cursor: pointer; }
+.work-view-tab:last-child { border-right: 0; }
+.work-view-tab[aria-selected="true"] { border-radius: var(--radius-sm); background: rgba(88,200,192,.08); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.work-view-tab:focus-visible, .inspector-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: .25rem; }
 .connection { display: flex; align-items: center; gap: .35rem; min-width: 0; margin-right: .3rem; color: var(--muted); font-size: .68rem; white-space: nowrap; }
 .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
-.connection-dot[data-connection="live"] { background: var(--green); box-shadow: 0 0 8px rgba(135,215,135,.55); }
+.connection-dot[data-connection="live"] { background: var(--green); box-shadow: 0 0 8px rgba(118,184,141,.42); }
 .connection-dot[data-connection="stale"] { background: var(--gold); }
-.topbar-button, .graph-tool-button, .replay-button { min-height: 30px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--muted); cursor: pointer; }
+.topbar-button, .graph-tool-button, .replay-button { min-height: 30px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
 .topbar-button { padding: 0 .55rem; font-size: .7rem; }
-.topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: #555; background: #262626; color: var(--gold-bright); outline: none; }
+.topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,200,192,.5); background: rgba(88,200,192,.06); color: var(--accent); outline: none; }
 .main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #151515; }
+.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #171614; }
 .run-context-heading { min-width: 0; }
 .context-kicker { display: block; margin-bottom: .2rem; color: var(--gold); font: .55rem/1 monospace; text-transform: uppercase; }
 .run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .98rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -3087,7 +3357,7 @@ button { color: inherit; }
 .context-fact strong { min-width: 0; overflow: hidden; color: var(--gold-bright); font: 600 .65rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .run-context-source { min-width: 0; display: grid; gap: .18rem; padding-left: .3rem; }
 .run-context-source strong { min-width: 0; overflow: hidden; color: var(--muted); font: .58rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #151515; }
+.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #171614; }
 .run-context-heading { min-width: 0; }
 .context-kicker { display: block; margin-bottom: .2rem; color: var(--gold); font: .55rem/1 monospace; text-transform: uppercase; }
 .run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .98rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -3099,6 +3369,28 @@ button { color: inherit; }
 .run-context-source { min-width: 0; display: grid; gap: .18rem; padding-left: .3rem; }
 .run-context-source strong { min-width: 0; overflow: hidden; color: var(--muted); font: .58rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-grid { position: relative; min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 0; overflow: hidden; transition: grid-template-columns .18s ease; }
+.workspace-grid[data-work-view="repository"], .workspace-grid[data-work-view="workspace"] { grid-template-columns: minmax(0,1fr) 0; }
+.work-surface-view { min-width: 0; min-height: 0; overflow: auto; background: #12110f; }
+.work-surface-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.15rem 1.25rem; border-bottom: 1px solid var(--line); background: #171614; }
+.work-surface-header h2 { margin: 0; color: var(--text); font-size: 1rem; }
+.work-surface-header p { max-width: 72ch; margin: .32rem 0 0; overflow-wrap: anywhere; color: var(--muted); font: .62rem/1.45 monospace; }
+.surface-state { flex: 0 0 auto; padding: .25rem .4rem; border: 1px solid #5b503c; border-radius: var(--radius-sm); color: var(--gold-bright); background: rgba(166,141,94,.06); font: .55rem/1.2 monospace; text-transform: uppercase; }
+.repository-layout { display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); min-height: calc(100% - 82px); }
+.operational-section { min-width: 0; padding: 1rem 1.25rem; }
+.operational-section + .operational-section { border-left: 1px solid var(--line); }
+.operational-section h3 { margin: 0 0 .7rem; color: var(--muted); font: 600 .6rem/1 monospace; text-transform: uppercase; }
+.operational-list { border-top: 1px solid var(--line); }
+.operational-row { min-width: 0; display: grid; grid-template-columns: minmax(92px,.4fr) minmax(0,1fr); gap: .75rem; align-items: center; padding: .72rem 0; border-bottom: 1px solid var(--line); }
+.operational-label { color: var(--muted); font-size: .64rem; }
+.operational-value { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: .7rem; font-weight: 600; }
+.operational-row[data-state="unavailable"] .operational-value { color: #777; font-weight: 500; }
+.operational-row[data-state="planned"] .operational-value { color: var(--gold-bright); }
+.workspace-children { display: grid; border-top: 1px solid var(--line); }
+.workspace-child { min-width: 0; display: grid; gap: .24rem; padding: .72rem 0; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; }
+.workspace-child:hover, .workspace-child:focus-visible, .workspace-child[data-active="true"] { background: rgba(88,200,192,.05); outline: none; box-shadow: inset 3px 0 0 var(--accent); }
+.workspace-child-title { overflow: hidden; color: var(--text); font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-child-meta { overflow: hidden; color: var(--muted); font: .56rem/1.35 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-availability { max-width: 920px; }
 .workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(280px, 30%) minmax(0, 70%); }
 .workspace-grid[data-inspector-open="true"] .replay-panel { grid-template-columns: minmax(0,1fr); }
 .workspace-grid[data-inspector-open="true"] .replay-dock-header { grid-column: 1; grid-row: 1; min-width: 0; display: flex; justify-content: center; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -3107,54 +3399,54 @@ button { color: inherit; }
 .workspace-grid[data-inspector-open="true"] .replay-events { grid-column: 1; grid-row: 3; }
 .workspace-grid[data-inspector-open="true"] .replay-live, .workspace-grid[data-inspector-open="true"] .replay-reset { display: none; }
 .workspace-grid[data-inspector-open="true"] .status-title, .workspace-grid[data-inspector-open="true"] .status-nodes, .workspace-grid[data-inspector-open="true"] .status-camera { display: none; }
-.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 92px 24px; border: 0; background: #101010; overflow: hidden; }
+.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 92px 24px; border: 0; background: #12110f; overflow: hidden; }
 .graph-stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.graph-toolbar { position: absolute; z-index: 8; top: .55rem; right: .55rem; display: flex; flex-wrap: wrap; gap: .22rem; max-width: calc(100% - 1.1rem); padding: .25rem; border: 1px solid #3a3a3a; background: rgba(24,24,24,.94); box-shadow: 0 8px 20px rgba(0,0,0,.28); }
+.graph-toolbar { position: absolute; z-index: 8; top: .55rem; right: .55rem; display: flex; flex-wrap: wrap; gap: .22rem; max-width: calc(100% - 1.1rem); padding: .25rem; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(27,26,24,.96); box-shadow: 0 8px 20px rgba(0,0,0,.28); }
 .graph-tool-button { min-width: 31px; padding: 0 .48rem; font-size: .68rem; }
-.graph-tool-button[data-active="true"], .replay-button[data-active="true"] { border-color: var(--gold); color: var(--gold-bright); }
-.graph-canvas { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; cursor: grab; background-color: #111; background-image: linear-gradient(#1b1b1b 1px, transparent 1px), linear-gradient(90deg, #1b1b1b 1px, transparent 1px); background-size: 24px 24px; touch-action: none; }
+.graph-tool-button[data-active="true"], .replay-button[data-active="true"] { border-color: var(--accent); color: var(--accent); background: rgba(88,200,192,.07); }
+.graph-canvas { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; cursor: grab; background-color: #12110f; background-image: linear-gradient(#201e1a 1px, transparent 1px), linear-gradient(90deg, #201e1a 1px, transparent 1px); background-size: 24px 24px; touch-action: none; }
 .graph-canvas[data-panning="true"] { cursor: grabbing; }
 .graph-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform .16s ease-out; }
 .edge-layer, .node-list { position: absolute; inset: 0; width: 100%; height: 100%; }
-.edge { fill: none; stroke: #555; stroke-width: 1.5; opacity: .72; }
-.edge-running { stroke: var(--green); stroke-dasharray: 8 8; animation: live-flow 1.2s linear infinite; }
+.edge { fill: none; stroke: #69655d; stroke-width: 1.5; opacity: .72; }
+.edge-running { stroke: var(--teal); stroke-dasharray: 8 8; animation: live-flow 1.2s linear infinite; }
 .edge-completed { stroke: var(--gold); }
-.edge-skipped, .edge-queued { stroke: #555; }
+.edge-skipped, .edge-queued { stroke: #69655d; }
 .edge-failed, .edge-in-doubt { stroke: var(--danger); }
 .edge-blocked { stroke: var(--gold-bright); }
 @keyframes live-flow { to { stroke-dashoffset: -16; } }
-.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: .28rem; width: 184px; min-height: 116px; max-height: 128px; padding: .58rem; overflow: hidden; border: 1px solid #3d3d3d; border-left: 3px solid #666; border-radius: 3px; background: #1c1c1c; color: var(--text); box-shadow: 0 6px 16px rgba(0,0,0,.24); cursor: pointer; }
-.node-card:hover, .node-card:focus-visible, .node-card[data-selected="true"] { border-color: var(--gold); outline: none; box-shadow: 0 0 0 1px rgba(215,175,0,.24), 0 8px 24px rgba(0,0,0,.35); }
-.node-running { border-left-color: var(--green); }
+.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: .28rem; width: 184px; min-height: 116px; max-height: 128px; padding: .58rem; overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #6e6a62; border-radius: var(--radius); background: #1c1b19; color: var(--text); box-shadow: 0 6px 16px rgba(0,0,0,.24); cursor: pointer; }
+.node-card:hover, .node-card:focus-visible, .node-card[data-selected="true"] { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px rgba(88,200,192,.2), 0 8px 24px rgba(0,0,0,.35); }
+.node-running { border-left-color: var(--teal); }
 .node-completed { border-left-color: var(--gold); }
 .node-skipped { border-left-color: #585858; opacity: .72; }
 .node-failed, .node-in-doubt { border-left-color: var(--danger); }
 .node-blocked { border-left-color: var(--gold-bright); }
 .node-card-top { display: flex; align-items: center; gap: .3rem; color: var(--muted); font: 600 .58rem/1 monospace; text-transform: uppercase; }
 .node-marker { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.node-running .node-marker { color: var(--green); }
+.node-running .node-marker { color: var(--teal); }
 .node-completed .node-marker { color: var(--gold); }
 .node-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
 .node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .63rem; line-height: 1.35; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .node-proof { min-width: 0; overflow: hidden; color: var(--gold-bright); font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .activity-chips { display: flex; flex-wrap: wrap; gap: .18rem; min-width: 0; max-height: 31px; overflow: hidden; }
-.activity-chip { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .12rem .25rem; border: 1px solid #3c3c3c; color: #bdbdbd; font: .5rem/1.2 monospace; }
+.activity-chip { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .12rem .25rem; border: 1px solid var(--line); border-radius: var(--radius-sm); color: #bdb8ae; background: #171614; font: .5rem/1.2 monospace; }
 .chip-owner { color: var(--gold-bright); }
 .chip-runtime { color: var(--green); }
 .chip-tools { color: #e5c07b; }.chip-tokens { color: #8ecae6; }.chip-evidence { color: var(--gold-bright); }.chip-loadout { color: #c8a96b; }
 .node-connection, .node-progress { display: none; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card { height: 116px !important; min-height: 116px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card::after { content: ""; position: absolute; top: 35px; right: 0; left: 0; height: 26px; border-left: 8px solid #666; background: #292929; }
-.graph-canvas[data-semantic-zoom="cell"] .node-running::after { border-left-color: var(--green); }.graph-canvas[data-semantic-zoom="cell"] .node-completed::after { border-left-color: var(--gold); }.graph-canvas[data-semantic-zoom="cell"] .node-failed::after,.graph-canvas[data-semantic-zoom="cell"] .node-blocked::after { border-left-color: var(--danger); }
+.graph-canvas[data-semantic-zoom="cell"] .node-running::after { border-left-color: var(--teal); }.graph-canvas[data-semantic-zoom="cell"] .node-completed::after { border-left-color: var(--gold); }.graph-canvas[data-semantic-zoom="cell"] .node-failed::after,.graph-canvas[data-semantic-zoom="cell"] .node-blocked::after { border-left-color: var(--danger); }
 .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: hidden; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: absolute; z-index: 1; top: 35px; right: 0; left: 8px; height: 26px; visibility: visible; padding: .4rem .45rem; font: 700 11px/1 monospace; }
-.graph-minimap { position: absolute; z-index: 7; top: .55rem; right: .55rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid #454545; background: rgba(18,18,18,.9); pointer-events: none; }
+.graph-minimap { position: absolute; z-index: 7; top: .55rem; right: .55rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: rgba(20,19,17,.92); pointer-events: none; }
 .minimap-scene { position: absolute; transform-origin: 0 0; }
 .minimap-node { position: absolute; border-radius: 1px; background: #666; }
-.minimap-node-running { background: var(--green); }.minimap-node-completed { background: var(--gold); }.minimap-node-failed,.minimap-node-blocked { background: var(--danger); }
-.minimap-viewport { position: absolute; border: 1px solid var(--gold-bright); background: rgba(215,175,0,.08); }
+.minimap-node-running { background: var(--teal); }.minimap-node-completed { background: var(--gold); }.minimap-node-failed,.minimap-node-blocked { background: var(--danger); }
+.minimap-viewport { position: absolute; border: 1px solid var(--accent); background: rgba(88,200,192,.07); }
 .graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
-.replay-panel { min-width: 0; display: grid; grid-template-columns: 300px minmax(0,1fr); grid-template-rows: 34px 28px 28px; border-top: 1px solid var(--line); background: #181818; }
+.replay-panel { min-width: 0; display: grid; grid-template-columns: 300px minmax(0,1fr); grid-template-rows: 34px 28px 28px; border-top: 1px solid var(--line); background: #191816; }
 .replay-dock-header { grid-row: 1 / -1; min-width: 300px; display: grid; grid-template-columns: minmax(74px,1fr) auto; align-items: center; gap: .45rem; padding: .45rem .55rem; border-right: 1px solid var(--line); }
 .replay-current { min-width: 74px; overflow: hidden; }
 .replay-current .panel-title { white-space: nowrap; }
@@ -3163,47 +3455,54 @@ button { color: inherit; }
 .panel-note { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .58rem; }
 .replay-controls { display: flex; flex: 0 0 auto; gap: .15rem; white-space: nowrap; }
 .replay-button { min-width: 27px; min-height: 27px; padding: 0 .38rem; font-size: .62rem; }
-.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; display: flex; align-items: center; padding: 0 .65rem; border-bottom: 1px solid #2b2b2b; }
+.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; display: flex; align-items: center; padding: 0 .65rem; border-bottom: 1px solid var(--line-soft); }
 .replay-range { position: absolute; inset: 0 .65rem; width: calc(100% - 1.3rem); opacity: 0; cursor: ew-resize; z-index: 2; }
-.replay-track { width: 100%; height: 4px; background: #353535; }
-.replay-progress { display: block; height: 100%; background: var(--gold); }
+.replay-track { width: 100%; height: 4px; border-radius: var(--radius-sm); background: var(--line); }
+.replay-progress { display: block; height: 100%; background: var(--accent); }
 .replay-events { grid-column: 2; grid-row: 2 / 4; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(70px,1fr); gap: 1px; margin: 0; padding: 5px .65rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; list-style: none; }
-.replay-event { position: relative; min-width: 0; border-top: 5px solid #555; color: transparent; }
-.replay-event[data-active="true"] { border-color: var(--gold-bright); background: rgba(215,175,0,.12); }
-.replay-event[data-status="running"] { border-color: var(--green); }.replay-event[data-status="completed"] { border-color: var(--gold); }.replay-event[data-status="failed"] { border-color: var(--danger); }
+.replay-event { position: relative; min-width: 0; border-top: 5px solid #69655d; color: transparent; }
+.replay-event[data-active="true"] { border-color: var(--accent); background: rgba(88,200,192,.08); }
+.replay-event[data-status="running"] { border-color: var(--teal); }.replay-event[data-status="completed"] { border-color: var(--gold); }.replay-event[data-status="failed"] { border-color: var(--danger); }
 .replay-event[data-kind="prompt"] { border-top-style: double; border-color: #8ecae6; }.replay-event[data-kind="spawn"] { border-color: var(--gold-bright); }.replay-event[data-kind="failure"],.replay-event[data-kind="tool_error"] { border-color: var(--danger); }
 .replay-event[data-kind^="tool_"]::after { position: absolute; right: 2px; bottom: 2px; left: 2px; height: calc(1px + var(--tool-density, 1) * 1px); background: var(--green); opacity: .72; content: ""; }
 .replay-event[data-tool-density="0"] { --tool-density: 0; }.replay-event[data-tool-density="1"] { --tool-density: 1; }.replay-event[data-tool-density="2"] { --tool-density: 2; }.replay-event[data-tool-density="3"] { --tool-density: 3; }.replay-event[data-tool-density="4"] { --tool-density: 4; }
-.status-bar { min-width: 0; display: flex; align-items: center; gap: .65rem; padding: 0 .55rem; overflow: hidden; border-top: 1px solid var(--line); background: #101010; color: var(--muted); font: .58rem/1 monospace; }
+.status-bar { min-width: 0; display: flex; align-items: center; gap: .65rem; padding: 0 .55rem; overflow: hidden; border-top: 1px solid var(--line); background: #12110f; color: var(--muted); font: .58rem/1 monospace; }
 .status-bar > span { min-width: 0; white-space: nowrap; }
 .status-bar .status-title { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .status-bar strong { color: var(--gold-bright); font-weight: 600; }
 .evidence-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: 48px auto minmax(0,1fr); overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
 .evidence-panel[data-open="false"] { visibility: hidden; }
 .panel-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; padding: .55rem .7rem; border-bottom: 1px solid var(--line); }
+.inspector-tabs { min-width: 0; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.inspector-tabs button { min-width: 62px; min-height: 34px; padding: 0 .32rem; border: 0; border-right: 1px solid var(--line-soft); background: #171614; color: var(--muted); font-size: .55rem; cursor: pointer; }
+.inspector-tabs button[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.inspector-panel { min-width: 0; min-height: 0; overflow: auto; }
 .kicker { margin: 0 0 .12rem; color: var(--gold); font: .55rem/1 monospace; text-transform: uppercase; }
 .panel-count { color: var(--gold-bright); font: .6rem/1 monospace; }
 .selected-node-summary { padding: .8rem; border-bottom: 1px solid var(--line); }
 .selected-node-summary strong { display: block; color: var(--gold-bright); font-size: .82rem; }
 .selected-node-summary p { color: var(--muted); font-size: .68rem; line-height: 1.5; }
 .selected-node-facts { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; }
-.selected-node-facts span, [data-live-selected-node-evidence] { padding: .2rem .35rem; border: 1px solid #3b3b3b; color: #bfbfbf; font: .56rem/1.2 monospace; }
+.selected-node-facts span, [data-live-selected-node-evidence] { padding: .2rem .35rem; border: 1px solid var(--line); border-radius: var(--radius-sm); color: #c0bbb1; background: #171614; font: .56rem/1.2 monospace; }
 .selected-node-summary [data-live-selected-node-provenance], .selected-node-summary [data-live-selected-node-prompt] { margin: .38rem 0 0; padding-left: .45rem; border-left: 2px solid #444; overflow-wrap: anywhere; }
 .evidence-drawer { min-height: 0; overflow: auto; padding: .55rem; }
 .evidence-list { display: grid; gap: .35rem; }
-.evidence-item { padding: .55rem; border: 1px solid #383838; border-left: 2px solid #555; background: #181818; }
-.evidence-item[data-associated="true"] { border-left-color: var(--gold); }
+.evidence-item { padding: .55rem; border: 1px solid var(--line); border-left: 2px solid #69655d; border-radius: var(--radius-sm); background: #191816; }
+.evidence-item[data-associated="true"] { border-left-color: var(--accent); }
+.evidence-item[data-transfer-state="planned"] { border-left-style: dashed; border-left-color: var(--dim); background: #171614; }
+.evidence-item[data-transfer-state="planned"] .evidence-status { color: #aaa; }
+.evidence-item[data-delivery-observed="true"] { border-left-color: var(--green); }
 .history-prompt { border-left-color: #8ecae6; }.history-tool { border-left-color: var(--green); }.history-failure,.history-tool_error { border-left-color: var(--danger); }
 .history-footer { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }.history-source { min-width: 0; overflow: hidden; color: #777; font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .empty-state { height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); }
 .empty-title { color: var(--text); }
 .live-dialog { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(0,0,0,.72); }
-.dialog-card { width: min(640px,100%); max-height: min(78dvh,720px); overflow: auto; border: 1px solid #4a4a4a; background: #1b1b1b; box-shadow: 0 24px 80px rgba(0,0,0,.6); }
-.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: .65rem .8rem; border-bottom: 1px solid var(--line); background: #1b1b1b; }
+.dialog-card { width: min(640px,100%); max-height: min(78dvh,720px); overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); box-shadow: 0 24px 80px rgba(0,0,0,.6); }
+.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: .65rem .8rem; border-bottom: 1px solid var(--line); background: var(--panel); }
 .dialog-title { margin: 0; font-size: .82rem; }
 .dialog-body { padding: .8rem; }
 .node-card[data-replay-visible="false"] { opacity: 0; pointer-events: none; visibility: hidden; }
-.info-facts { display: grid; gap: .45rem; margin: .2rem 0 1rem; padding: .7rem; border: 1px solid var(--line); background: rgba(255,255,255,.025); }
+.info-facts { display: grid; gap: .45rem; margin: .2rem 0 1rem; padding: .7rem; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.018); }
 .info-fact-row { display: grid; grid-template-columns: 8rem minmax(0,1fr); gap: .75rem; align-items: baseline; padding-bottom: .35rem; border-bottom: 1px solid rgba(255,255,255,.06); }
 .info-fact-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .info-fact-label { color: var(--subtle); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; }
@@ -3212,12 +3511,12 @@ button { color: inherit; }
 .info-fact-prompt p { margin: 0; line-height: 1.45; }
 .hub-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
 .hub-field { display: grid; gap: .3rem; color: var(--muted); font-size: .65rem; }
-.hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 .5rem; border: 1px solid #444; background: #111; color: var(--text); }
+.hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 .5rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #131210; color: var(--text); }
 .hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .65rem; }
-.session-list { display: grid; gap: .38rem; margin-top: .7rem; }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .28rem .7rem; padding: .65rem; border: 1px solid #3b3b3b; border-left: 3px solid #555; background: #151515; color: var(--text); text-align: left; cursor: pointer; }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--gold); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--gold-bright); font: .58rem/1.2 monospace; }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .35rem; color: var(--muted); font: .56rem/1.2 monospace; }.session-card-facts span + span::before { margin-right: .35rem; color: #555; content: "·"; }
+.session-list { display: grid; gap: .38rem; margin-top: .7rem; }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .28rem .7rem; padding: .65rem; border: 1px solid var(--line); border-left: 3px solid #69655d; border-radius: var(--radius); background: #171614; color: var(--text); text-align: left; cursor: pointer; }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,200,192,.04); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--gold-bright); font: .58rem/1.2 monospace; }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .35rem; color: var(--muted); font: .56rem/1.2 monospace; }.session-card-facts span + span::before { margin-right: .35rem; color: var(--dim); content: "·"; }
 .shortcut-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .35rem .8rem; margin: 0; }
-.shortcut-grid div { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid #303030; color: var(--muted); font-size: .68rem; }
-kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid #555; background: #111; color: var(--gold-bright); text-align: center; font: .58rem/1.2 monospace; }
+.shortcut-grid div { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: .68rem; }
+kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #131210; color: var(--gold-bright); text-align: center; font: .58rem/1.2 monospace; }
 .share-panel, .control-panel { margin-top: .7rem; border: 1px solid var(--line); }
 .share-content, .control-content { padding: .7rem; }.share-actions,.control-actions { display: flex; flex-wrap: wrap; gap: .3rem; }.share-status,.control-status,.control-result,.control-error { color: var(--muted); font-size: .65rem; overflow-wrap: anywhere; }.control-error { color: var(--danger); }
 .stage-overview { flex: 0 0 auto; margin: 0; padding: .42rem .55rem .5rem; overflow-x: auto; background: #0d0f13; border: 0; border-bottom: 1px solid #2e2e2e; border-radius: 0; }
@@ -3226,23 +3525,30 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid #555; background
 .stage-overview-header h2 { margin: 0; color: var(--text); font: 600 .7rem/1.1 monospace; }
 .stage-overview-header > span { color: var(--muted); font: .53rem/1 monospace; }
 .stage-rail { display: grid; grid-template-columns: repeat(8, minmax(110px, 1fr)); gap: .25rem; min-width: 900px; margin: 0; padding: 0; list-style: none; }
-.stage-step { position: relative; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .3rem .34rem; color: var(--muted); background: #171717; border: 1px solid #2d2d2d; border-radius: 2px; }
-.stage-step[data-state="current"] { color: var(--text); border-color: var(--gold); background: rgba(215,175,0,.08); }
+.stage-step { position: relative; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .3rem .34rem; color: var(--muted); background: #181715; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+.stage-step[data-state="current"] { color: var(--text); border-color: var(--accent); background: rgba(88,200,192,.07); }
 .stage-step[data-state="completed"] { color: var(--gold-bright); border-color: #5a4b08; }
 .stage-step-marker { display: grid; flex: 0 0 1.2rem; width: 1.2rem; height: 1.2rem; place-items: center; color: #111; background: #555; border-radius: 50%; font: 700 .52rem/1 monospace; }
-.stage-step[data-state="current"] .stage-step-marker, .stage-step[data-state="completed"] .stage-step-marker { background: var(--gold); }
+.stage-step[data-state="current"] .stage-step-marker { background: var(--accent); }.stage-step[data-state="completed"] .stage-step-marker { background: var(--gold); }
 .stage-step-copy { display: grid; min-width: 0; gap: .08rem; }
 .stage-step-name { overflow: hidden; color: inherit; font: 600 .57rem/1 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .stage-step-state { color: var(--muted); font: .5rem/1 monospace; }
 @media (max-width: 720px) {
-  .shell { grid-template-rows: 44px minmax(0,1fr); }
+  .shell { grid-template-rows: 78px minmax(0,1fr); }
   .top-run-context, .connection span:last-child { display: none; }
-  .topbar { gap: .35rem; padding-inline: .4rem; }
+  .topbar { display: grid; grid-template-columns: auto minmax(0,1fr) auto; grid-template-rows: 40px 32px; gap: 0 .35rem; padding-inline: .4rem; }
   .brand { min-width: 0; }
-  .topbar-actions { min-width: 0; flex: 0 0 auto; gap: .12rem; }
+  .work-view-switcher { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; width: 100%; }
+  .work-view-tab { min-width: 0; }
+  .topbar-actions { grid-column: 3; grid-row: 1; min-width: 0; flex: 0 0 auto; gap: .12rem; }
   .connection { margin: 0 .1rem 0 0; }
   .topbar-button { min-width: 30px; padding-inline: .3rem; }
   .workspace-grid, .workspace-grid[data-inspector-open="true"] { display: block; }
+  .work-surface-view { height: 100%; }
+  .work-surface-header { padding: .8rem; }
+  .repository-layout { grid-template-columns: 1fr; }
+  .operational-section { padding: .8rem; }
+  .operational-section + .operational-section { border-top: 1px solid var(--line); border-left: 0; }
   .run-context { grid-template-columns: minmax(0, 1fr) auto; gap: .45rem; padding: .45rem .5rem .5rem; }
   .run-context-title { font-size: .82rem; }
   .run-context-task { font-size: .59rem; }
@@ -3258,7 +3564,7 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid #555; background
   .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
   .node-list { position: relative; inset: auto; display: grid; gap: .45rem; padding: 3.4rem .5rem .6rem; }
   .node-card { position: relative !important; top: auto !important; left: auto !important; width: 100% !important; min-height: 84px !important; max-height: none; }
-  .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: .6rem; overflow: hidden; border: 1px solid #3d3d3d; border-left-width: 3px; background: #1c1c1c; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: .6rem; overflow: hidden; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius); background: #1c1b19; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: visible; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; height: auto; padding: 0; font: inherit; }
@@ -3267,13 +3573,14 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid #555; background
   .replay-dock-header { grid-row: 1; min-width: 0; grid-template-columns: minmax(64px,1fr) auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .replay-range-wrap { grid-column: 1; grid-row: 2; }
   .replay-events { grid-column: 1; grid-row: 3; }
-  .evidence-panel { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; height: min(72dvh,620px); border: 1px solid #505050; transform: translateY(102%); transition: transform .18s ease; visibility: visible !important; }
+  .evidence-panel { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; height: min(76dvh,660px); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0; transform: translateY(102%); transition: transform .18s ease; visibility: visible !important; }
   .evidence-panel[data-open="true"] { transform: translateY(0); }
+  .inspector-tabs { grid-template-columns: repeat(6,minmax(72px,1fr)); }
   .status-bar { gap: .45rem; }.status-bar .status-nodes,.status-bar .status-transport { display: none; }
   .hub-switcher, .shortcut-grid { grid-template-columns: 1fr; }
   .hub-status { grid-column: 1; }
 }
-@media (max-width: 380px) { .brand-title { display: none; }.top-run-context strong { max-width: 24vw; }.topbar-button { font-size: .62rem; }.status-bar .status-camera { display: none; } }
+@media (max-width: 380px) { .brand-title { display: none; }.top-run-context strong { max-width: 24vw; }.topbar-button { font-size: .62rem; }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: .5rem; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
 `;
 
@@ -3325,6 +3632,7 @@ export function renderLiveControlRoomPage({
         <p class="brand-title">Meta_Kim Live</p>
       </div>
       <div class="top-run-context"><strong data-live-run-title>正在等待运行快照</strong><span data-live-run-id>未识别运行</span></div>
+      <div class="work-view-switcher" role="tablist" aria-label="Work surface view"><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作区">工作区</button><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Run" data-i18n-zh="运行">运行</button></div>
       <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Sessions" data-i18n-zh="会话">会话</button><button class="topbar-button" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
     <main class="main" id="live-main" tabindex="-1">
@@ -3346,7 +3654,9 @@ export function renderLiveControlRoomPage({
         <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
       </section>
       <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
-        <section class="graph-panel" aria-labelledby="graph-title">
+        <section class="work-surface-view repository-view" id="repository-view" role="tabpanel" aria-labelledby="work-view-repository" data-live-repository-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</span><h2 data-live-repository-title>已登记项目</h2><p data-live-repository-boundary>仓库边界不可用</p></div><span class="surface-state" data-i18n-en="Observed catalog" data-i18n-zh="已观测目录">已观测目录</span></header><div class="repository-layout"><section class="operational-section" aria-labelledby="repository-facts-title"><h3 id="repository-facts-title" data-i18n-en="Repository facts" data-i18n-zh="仓库事实">仓库事实</h3><div class="operational-list" data-live-repository-facts></div></section><section class="operational-section" aria-labelledby="repository-workspaces-title"><h3 id="repository-workspaces-title" data-i18n-en="Workspace sessions" data-i18n-zh="工作区会话">工作区会话</h3><div class="workspace-children" data-live-repository-sessions></div></section></div></section>
+        <section class="work-surface-view workspace-view" id="workspace-view" role="tabpanel" aria-labelledby="work-view-workspace" data-live-workspace-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Workspace" data-i18n-zh="工作区">工作区</span><h2 data-live-workspace-title>已观测工作区</h2><p data-live-workspace-boundary>工作区边界不可用</p></div><span class="surface-state" data-i18n-en="Run-scoped" data-i18n-zh="运行范围">运行范围</span></header><section class="operational-section workspace-availability" aria-labelledby="workspace-availability-title"><h3 id="workspace-availability-title" data-i18n-en="Available surfaces" data-i18n-zh="可用界面">可用界面</h3><div class="operational-list" data-live-workspace-facts></div></section></section>
+        <section class="graph-panel" id="run-view" role="tabpanel" aria-labelledby="work-view-run" data-live-run-view aria-label="Run view">
           <div class="graph-stage" data-live-graph-viewport>
             <h1 class="sr-only" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
             <div class="graph-toolbar" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)" data-i18n-en="Overview" data-i18n-zh="总览">总览</button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="true" aria-pressed="true" aria-label="Follow active node" title="Follow (F)" data-i18n-en="Follow" data-i18n-zh="跟随">跟随</button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)" data-i18n-en="Relayout" data-i18n-zh="重排">重排</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div>
@@ -3369,8 +3679,13 @@ export function renderLiveControlRoomPage({
         </section>
         <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
           <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
-          <div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · —</span><span data-live-selected-node-owner>负责人 · —</span><span data-live-selected-node-runtime>运行时 · —</span><span data-live-selected-node-model>模型 · —</span><span data-live-selected-node-duration>耗时 · —</span><span data-live-selected-node-tools>工具 · —</span><span data-live-selected-node-tokens>输出 · —</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · —</p><p data-live-selected-node-prompt>提示词阶段 · —</p><p data-live-selected-node-loadout>能力装载 · —</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div>
-          <div class="evidence-drawer" id="evidence-drawer" data-evidence-drawer><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
+          <div class="inspector-tabs" role="tablist" aria-label="Inspector sections"><button type="button" role="tab" id="inspector-tab-summary" aria-controls="inspector-panel-summary" aria-selected="true" data-live-inspector-tab="summary" data-i18n-en="Summary" data-i18n-zh="摘要">摘要</button><button type="button" role="tab" id="inspector-tab-conversation" aria-controls="inspector-panel-conversation" aria-selected="false" tabindex="-1" data-live-inspector-tab="conversation" data-i18n-en="Conversation" data-i18n-zh="对话">对话</button><button type="button" role="tab" id="inspector-tab-terminal" aria-controls="inspector-panel-terminal" aria-selected="false" tabindex="-1" data-live-inspector-tab="terminal" data-i18n-en="Terminal" data-i18n-zh="终端">终端</button><button type="button" role="tab" id="inspector-tab-changes" aria-controls="inspector-panel-changes" aria-selected="false" tabindex="-1" data-live-inspector-tab="changes" data-i18n-en="Changes" data-i18n-zh="变更">变更</button><button type="button" role="tab" id="inspector-tab-evidence" aria-controls="inspector-panel-evidence" aria-selected="false" tabindex="-1" data-live-inspector-tab="evidence" data-i18n-en="Evidence" data-i18n-zh="证据">证据</button><button type="button" role="tab" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected="false" tabindex="-1" data-live-inspector-tab="context" data-i18n-en="Context" data-i18n-zh="上下文">上下文</button></div>
+          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0"><div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · —</span><span data-live-selected-node-owner>负责人 · —</span><span data-live-selected-node-runtime>运行时 · —</span><span data-live-selected-node-model>模型 · —</span><span data-live-selected-node-duration>耗时 · —</span><span data-live-selected-node-tools>工具 · —</span><span data-live-selected-node-tokens>输出 · —</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · —</p><p data-live-selected-node-prompt>提示词阶段 · —</p><p data-live-selected-node-loadout>能力装载 · —</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-conversation" role="tabpanel" aria-labelledby="inspector-tab-conversation" data-live-inspector-panel="conversation" data-item-count="0" hidden><div class="evidence-list" data-live-conversation-list role="list" aria-label="Conversation summaries"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-terminal" role="tabpanel" aria-labelledby="inspector-tab-terminal" data-live-inspector-panel="terminal" data-item-count="0" hidden><div class="evidence-list" data-live-terminal-list role="list" aria-label="Terminal evidence"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-changes" role="tabpanel" aria-labelledby="inspector-tab-changes" data-live-inspector-panel="changes" data-item-count="0" hidden><div class="evidence-list" data-live-changes-list role="list" aria-label="Observed changes"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-evidence" role="tabpanel" aria-labelledby="inspector-tab-evidence" data-live-inspector-panel="evidence" data-item-count="0" data-evidence-drawer hidden><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-context" role="tabpanel" aria-labelledby="inspector-tab-context" data-live-inspector-panel="context" data-item-count="0" hidden><div class="evidence-list" data-live-context-transfer-list role="list" aria-label="Context transfers"></div></div>
         </aside>
       </section>
       <section class="panel share-panel" aria-labelledby="share-title">

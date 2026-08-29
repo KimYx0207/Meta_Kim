@@ -15,6 +15,7 @@ import { createLiveContinuationCommand } from "../../src/domain/live/live-contin
 import { createLiveRuntimeAdapterRegistry, createFakeLiveRuntimeAdapter } from "../../src/infrastructure/live/live-runtime-adapter-registry.mjs";
 import { createLiveContinuationCommandStore } from "../../src/infrastructure/live/live-continuation-command-store.mjs";
 import { createLiveContinuationPlanner } from "../../src/application/live/plan-live-continuation.mjs";
+import { buildLiveCompactProjection } from "../../src/application/live/live-control-room-service.mjs";
 import { renderLiveReadmeEmbed } from "../../src/presentation/live/render-live-share-card.mjs";
 
 test("does not present an unproven completed node as verified completion", () => {
@@ -211,6 +212,233 @@ function sampleArtifact(runId = "meta-live-1") {
     ],
   };
 }
+
+test("snapshot v2 exposes stable unavailable repository, workspace, and context transfer fields", () => {
+  const snapshot = buildLiveSnapshot({ observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.deepEqual(snapshot.repository, {
+    name: { state: "unavailable", value: null },
+    branch: { state: "unavailable", value: null },
+    worktree: { state: "unavailable", value: null },
+    pullRequest: { state: "unavailable", value: null },
+    diff: { state: "unavailable", value: null },
+  });
+  assert.deepEqual(snapshot.workspace, {
+    name: { state: "unavailable", value: null },
+    workspaceId: { state: "unavailable", value: null },
+    transcript: { state: "unavailable", value: null },
+    terminal: { state: "unavailable", value: null },
+  });
+  assert.deepEqual(snapshot.contextTransfers, []);
+});
+
+test("depends_on creates a planned context transfer with unavailable payload truth", () => {
+  const artifact = sampleArtifact("meta-context-planned");
+  artifact.workerTaskPackets.push({
+    taskPacketId: "task-frontend-1",
+    roleDisplayName: "frontend",
+    stage: "execution",
+    dependsOn: ["task-backend-1"],
+  });
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.contextTransfers.length, 1);
+  const transfer = snapshot.contextTransfers[0];
+  const backend = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+  const frontend = snapshot.nodes.find((node) => node.roleDisplayName === "frontend");
+  assert.deepEqual(transfer, {
+    id: transfer.id,
+    fromNodeId: backend.id,
+    toNodeId: frontend.id,
+    kind: "dependency",
+    state: "planned",
+    summaryCount: null,
+    decisionCount: null,
+    fileCount: null,
+    evidenceCount: null,
+    observedAt: null,
+    digest: null,
+    bytes: null,
+    compactionState: "unavailable",
+    omittedCount: null,
+    omissionReason: null,
+    downstreamAcceptanceState: "unavailable",
+    evidenceRefs: [],
+  });
+  assert.match(transfer.id, /^transfer:[a-f0-9]{20}$/u);
+  assert.equal(snapshot.counts.contextTransfers, 1);
+});
+
+test("projects same-run observed and accepted structured context handoffs", () => {
+  const artifact = sampleArtifact("meta-context-observed");
+  artifact.workerTaskPackets.push({
+    taskPacketId: "task-frontend-1",
+    roleDisplayName: "frontend",
+    stage: "execution",
+    dependsOn: ["task-backend-1"],
+  });
+  artifact.repository = {
+    branch: { state: "observed", value: "feature/live-context" },
+    worktree: { state: "observed", value: "dirty" },
+  };
+  artifact.workspace = {
+    workspaceId: { state: "observed", value: "workspace-17" },
+    transcript: { state: "observed", value: "available" },
+  };
+  artifact.contextHandoffs = [{
+    runId: artifact.runId,
+    fromTaskPacketId: "task-backend-1",
+    toTaskPacketId: "task-frontend-1",
+    kind: "implementation_handoff",
+    state: "accepted",
+    summaryCount: 3,
+    decisionCount: 2,
+    fileCount: 4,
+    evidenceCount: 2,
+    observedAt: "2026-08-24T01:00:30.000Z",
+    digest: "a".repeat(64),
+    bytes: 4096,
+    compactionState: "compacted",
+    omittedCount: 1,
+    omissionReason: "One duplicate summary omitted",
+    downstreamAcceptanceState: "accepted",
+    evidenceRefs: ["handoff:evidence:1", "handoff:evidence:2"],
+  }];
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.deepEqual(snapshot.repository.branch, { state: "observed", value: "feature/live-context" });
+  assert.deepEqual(snapshot.repository.pullRequest, { state: "unavailable", value: null });
+  assert.deepEqual(snapshot.workspace.workspaceId, { state: "observed", value: "workspace-17" });
+  assert.deepEqual(snapshot.workspace.terminal, { state: "unavailable", value: null });
+  assert.equal(snapshot.contextTransfers.length, 1);
+  assert.deepEqual(snapshot.contextTransfers[0], {
+    ...snapshot.contextTransfers[0],
+    kind: "implementation_handoff",
+    state: "accepted",
+    summaryCount: 3,
+    decisionCount: 2,
+    fileCount: 4,
+    evidenceCount: 2,
+    observedAt: "2026-08-24T01:00:30.000Z",
+    digest: "a".repeat(64),
+    bytes: 4096,
+    compactionState: "compacted",
+    omittedCount: 1,
+    omissionReason: "One duplicate summary omitted",
+    downstreamAcceptanceState: "accepted",
+    evidenceRefs: ["handoff:evidence:1", "handoff:evidence:2"],
+  });
+});
+
+test("accepted context state requires downstream acceptance plus safe evidence", () => {
+  const artifact = sampleArtifact("meta-context-acceptance-proof");
+  artifact.workerTaskPackets.push(
+    {
+      taskPacketId: "task-frontend-1",
+      roleDisplayName: "frontend",
+      stage: "execution",
+      dependsOn: ["task-backend-1"],
+    },
+    {
+      taskPacketId: "task-test-1",
+      roleDisplayName: "test",
+      stage: "execution",
+      dependsOn: ["task-frontend-1"],
+    },
+  );
+  artifact.contextTransfers = [
+    {
+      runId: artifact.runId,
+      fromTaskPacketId: "task-backend-1",
+      toTaskPacketId: "task-frontend-1",
+      state: "accepted",
+      downstreamAcceptanceState: "pending",
+      evidenceRefs: ["proof:raw-state-only"],
+      observedAt: "2026-08-24T01:00:20.000Z",
+    },
+    {
+      runId: artifact.runId,
+      fromTaskPacketId: "task-frontend-1",
+      toTaskPacketId: "task-test-1",
+      state: "accepted",
+      downstreamAcceptanceState: "accepted",
+      evidenceRefs: [],
+      observedAt: "2026-08-24T01:00:30.000Z",
+    },
+  ];
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.deepEqual(snapshot.contextTransfers.map((transfer) => transfer.state), ["observed", "observed"]);
+  assert.deepEqual(snapshot.contextTransfers.map((transfer) => transfer.downstreamAcceptanceState), ["pending", "accepted"]);
+});
+
+test("older compact projections receive a stable numeric context transfer count", () => {
+  const compact = buildLiveCompactProjection(sampleArtifact("meta-old-compact-count"));
+  delete compact.counts.contextTransfers;
+  const snapshot = buildLiveSnapshot({ governedArtifact: compact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.counts.contextTransfers, 0);
+  assert.equal(Number.isSafeInteger(snapshot.counts.contextTransfers), true);
+});
+
+test("older compact projections cannot preserve accepted context without acceptance evidence", () => {
+  const compact = buildLiveCompactProjection(sampleArtifact("meta-old-compact-acceptance"));
+  const backend = compact.nodes.find((node) => node.roleDisplayName === "backend");
+  const main = compact.nodes.find((node) => node.isMain);
+  compact.contextTransfers = [{
+    id: `transfer:${"a".repeat(20)}`,
+    fromNodeId: main.id,
+    toNodeId: backend.id,
+    kind: "context_handoff",
+    state: "accepted",
+    observedAt: "2026-08-24T01:00:30.000Z",
+    digest: null,
+    bytes: null,
+    compactionState: "unavailable",
+    omittedCount: null,
+    omissionReason: null,
+    downstreamAcceptanceState: "accepted",
+    evidenceRefs: [],
+  }];
+  compact.counts.contextTransfers = 1;
+  const snapshot = buildLiveSnapshot({ governedArtifact: compact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.contextTransfers[0].state, "observed");
+});
+
+test("rejects hostile, cross-run, path-bearing, and secret-bearing context handoffs", () => {
+  const artifact = sampleArtifact("meta-context-rejected");
+  artifact.workerTaskPackets.push({
+    taskPacketId: "task-frontend-1",
+    roleDisplayName: "frontend",
+    stage: "execution",
+    dependsOn: ["task-backend-1"],
+  });
+  const base = {
+    runId: artifact.runId,
+    fromTaskPacketId: "task-backend-1",
+    toTaskPacketId: "task-frontend-1",
+    observedAt: "2026-08-24T01:00:30.000Z",
+  };
+  artifact.contextTransfers = [
+    { ...base, runId: "meta-foreign", state: "accepted" },
+    { ...base, fromNodeId: "agent:../hostile", fromTaskPacketId: null, state: "observed" },
+    { ...base, evidenceRefs: ["src/private/context.json"], state: "observed" },
+    { ...base, omissionReason: "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz", state: "observed" },
+  ];
+  artifact.repository = {
+    observed: true,
+    branch: "C:\\private\\repo",
+    pullRequest: "PR 17",
+  };
+  artifact.workspace = {
+    observed: true,
+    transcript: "secret=super-secret",
+    terminal: "C:\\private\\terminal.log",
+  };
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.contextTransfers.length, 1);
+  assert.equal(snapshot.contextTransfers[0].state, "planned");
+  assert.deepEqual(snapshot.repository.branch, { state: "unavailable", value: null });
+  assert.deepEqual(snapshot.repository.pullRequest, { state: "observed", value: "PR 17" });
+  assert.deepEqual(snapshot.workspace.transcript, { state: "unavailable", value: null });
+  assert.deepEqual(snapshot.workspace.terminal, { state: "unavailable", value: null });
+  assert.doesNotMatch(JSON.stringify(snapshot), /super-secret|ghp_|private[\\/]|hostile/iu);
+});
 
 function getWithHost(url, host) {
   return new Promise((resolve, reject) => {
