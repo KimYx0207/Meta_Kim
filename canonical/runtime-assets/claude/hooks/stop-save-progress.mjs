@@ -140,6 +140,49 @@ const TRIVIAL_PROMPTS = new Set([
   "开工", "收工", "继续", "好", "好的", "是", "对", "行", "可以", "嗯",
   "ok", "okay", "yes", "y", "continue", "go", "next",
 ]);
+
+// Client harnesses inject bracketed headers into the prompt *text itself*, so the
+// wrapper arrives as the user's own words. Unlike `<system-reminder>` — an XML block
+// `stripInjectedContext` already handles — these carry no closing tag, so nothing
+// upstream of here removes them. Measured over 10778 `last-prompt` entries across 432
+// transcripts in one operator's ~/.claude/projects: 1589 (14.7%) open with `[`, in
+// seven shapes — a Chinese mobile-client notice 828, [UI_ACTION_TRIGGER] 360,
+// [From Orca Lead] 292, [From Orca Worker] 72, a Chinese plan-reconciliation header 11,
+// [Image #N] 16, [Session context rebuild …] 10.
+// Claude Code truncates `lastPrompt` to ~200 characters when writing the transcript,
+// and the first four headers exceed that on their own. In the session that prompted
+// this fix all 14 entries were the mobile-client boilerplate carrying **zero**
+// characters of the actual request: the wrapper does not merely pollute
+// `current_task`, it replaces it.
+//
+// Two shapes need two treatments. A WRAPPER is prose addressed to the model, with the
+// user's message after a separator; drop it and keep whatever follows. A LABEL is just
+// a marker and the real message starts immediately after it; drop the marker only.
+const WRAPPER_PROMPT_PREFIXES = [
+  "[客户端说明]",
+  "[UI_ACTION_TRIGGER]",
+  "[计划对账]",
+  "[Session context rebuild",
+];
+// The plan-reconciliation header ends with its own end-of-notice line (half-width comma
+// in the real data); a blank line is the general case. Requiring an *explicit* separator
+// is what makes truncation safe: at ~200 chars the wrapper has swallowed the separator
+// too, so no body is found and the entry is dropped instead of being filed as the goal.
+const WRAPPER_BODY_SEPARATOR_RE = /==\s*对账说明结束[^=]*==|\n\s*\n/;
+const LABEL_PROMPT_PREFIX_RE = /^\[(?:Image #\d+|From Orca (?:Lead|Worker))\]\s*/;
+
+// Returns the user's actual words, or "" when the prompt is nothing but harness wrapper.
+function stripHarnessPromptPrefix(prompt) {
+  const text = prompt.trim();
+  if (!text.startsWith("[")) return text;
+  const labelStripped = text.replace(LABEL_PROMPT_PREFIX_RE, "");
+  if (labelStripped !== text) return labelStripped.trim();
+  if (!WRAPPER_PROMPT_PREFIXES.some((p) => text.startsWith(p))) return text;
+  const match = WRAPPER_BODY_SEPARATOR_RE.exec(text);
+  if (!match) return "";
+  return text.slice(match.index + match[0].length).trim();
+}
+
 // A session's goal is neither "the first prompt" nor "the last one". Measured over
 // 783 transcripts: `--continue` / `/resume` append to the *same* JSONL under the same
 // sessionId (0 of 777 files carried a second one), so the first substantive prompt can
@@ -163,9 +206,14 @@ function pickGoalPrompt(prompts) {
 }
 
 function isSubstantivePrompt(prompt) {
-  if (prompt.length <= 6) return false;
-  if (TRIVIAL_PROMPTS.has(prompt.toLowerCase())) return false;
-  return !isSummariserPromptBlock(prompt);
+  // Strip first, then judge. A wrapper defeats every gate below it: a 200-character
+  // client notice ending in "开工" clears `length > 6`, and it is not the literal string
+  // "开工" so `TRIVIAL_PROMPTS` misses it — the wrapper smuggles a trivial prompt through
+  // as a session goal. Stripping restores the bare trigger word the set was written for.
+  const spoken = stripHarnessPromptPrefix(prompt);
+  if (spoken.length <= 6) return false;
+  if (TRIVIAL_PROMPTS.has(spoken.toLowerCase())) return false;
+  return !isSummariserPromptBlock(spoken);
 }
 
 function stripInjectedContext(text) {
@@ -235,7 +283,10 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
       if (entry.type === "last-prompt") {
         if (typeof entry.lastPrompt === "string" && entry.lastPrompt.trim()) {
           lastPrompt = entry.lastPrompt.trim();
-          if (isSubstantivePrompt(lastPrompt)) substantivePrompts.push(lastPrompt);
+          // Push the stripped form, not the raw one: judging on the user's words but
+          // storing the wrapper would file the boilerplate as `current_task` anyway.
+          const spoken = stripHarnessPromptPrefix(lastPrompt);
+          if (isSubstantivePrompt(spoken)) substantivePrompts.push(spoken);
         }
         continue;
       }
@@ -631,7 +682,7 @@ async function main() {
   // kill, re-entering through the back door. Measured over 791 transcripts: 27 sessions
   // on the pre-D7 hook, 32 after D7 raised recall. Guard the fallback, not the
   // assignment — `taskVariants.lastPrompt` stays raw so the diagnostic still shows it.
-  const lastPromptFallback = isSubstantivePrompt(lastPrompt) ? lastPrompt : "";
+  const lastPromptFallback = isSubstantivePrompt(lastPrompt) ? stripHarnessPromptPrefix(lastPrompt) : "";
   const currentTask = goalPrompt || taskFromUser || lastPromptFallback;
   if (handoffMatched && remaining.length === 0) {
     remaining.push(currentTask || "continuation handoff detected");
