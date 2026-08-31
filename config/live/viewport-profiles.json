@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "meta-kim-live-viewport-profiles-v1",
+  "description": "Declared viewport regression profiles for the Meta_Kim Live control room. Layout invariants are asserted against the shipped stylesheet; no resolution is hardcoded in renderer or test code.",
+  "denseLayoutGate": {
+    "condition": "(min-width: 901px) and (min-height: 720px)",
+    "minWidthPx": 901,
+    "minHeightPx": 720
+  },
+  "collapseGates": [
+    { "id": "board-narrow", "condition": "(max-width: 1180px)", "maxWidthPx": 1180 },
+    { "id": "tablet", "condition": "(min-width: 721px) and (max-width: 1024px)", "minWidthPx": 721, "maxWidthPx": 1024 },
+    { "id": "handheld", "condition": "(max-width: 720px)", "maxWidthPx": 720 },
+    { "id": "handheld-tight", "condition": "(max-width: 380px)", "maxWidthPx": 380 }
+  ],
+  "chromeBudget": {
+    "topbarHeightPx": 60,
+    "runContextMinHeightPx": { "dense": 48, "compact": 92 },
+    "replayPanelHeightPx": { "collapsed": 34, "open": 116 },
+    "statusBarHeightPx": 28,
+    "minCanvasHeightPx": 360
+  },
+  "profiles": [
+    {
+      "id": "desktop-2560x1368",
+      "label": "2560 x 1368 primary regression baseline",
+      "widthPx": 2560,
+      "heightPx": 1368,
+      "role": "regression-baseline",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": "docs/images/meta-kim-live-control-room-2560x1368.png"
+    },
+    {
+      "id": "desktop-2048x1094",
+      "label": "2048 x 1094 secondary regression baseline",
+      "widthPx": 2048,
+      "heightPx": 1094,
+      "role": "regression-baseline",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": "docs/images/meta-kim-live-control-room-2048x1094.png"
+    },
+    {
+      "id": "laptop-1440x900",
+      "label": "1440 x 900 dense-layout lower bound",
+      "widthPx": 1440,
+      "heightPx": 900,
+      "role": "dense-lower-bound",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": null
+    },
+    {
+      "id": "laptop-short-1440x700",
+      "label": "1440 x 700 negative control: wide but below dense height gate",
+      "widthPx": 1440,
+      "heightPx": 700,
+      "role": "negative-control",
+      "expectDenseLayout": false,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": null
+    },
+    {
+      "id": "tablet-1024x768",
+      "label": "1024 x 768 overlap control: dense gate and tablet collapse band both apply",
+      "widthPx": 1024,
+      "heightPx": 768,
+      "role": "overlap-control",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": null
+    },
+    {
+      "id": "handheld-390x844",
+      "label": "390 x 844 negative control: handheld stacked fallback",
+      "widthPx": 390,
+      "heightPx": 844,
+      "role": "negative-control",
+      "expectDenseLayout": false,
+      "expectSingleColumnFallback": true,
+      "screenshotRef": null
+    }
+  ]
+}

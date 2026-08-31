@@ -130,6 +130,27 @@ function normalizeRuntime(value) {
   return /^[a-z0-9][a-z0-9._-]{0,39}$/u.test(normalized) ? normalized : "in_doubt";
 }
 
+function publicDisplay(status, { active = false, structuralOnly = false, completionProven = false } = {}) {
+  const normalized = normalizeStatus(status);
+  if (structuralOnly) {
+    return { displayState: "unreported", statusReason: "这是结构规划记录，不是执行证据；尚未发现可信任务回报。" };
+  }
+  if (normalized === "completed" && completionProven) {
+    return { displayState: "completed", statusReason: "已找到同一运行、同一任务的可信完成证据。" };
+  }
+  if (normalized === "failed") return { displayState: "failed", statusReason: "已记录可信失败结果。" };
+  if (normalized === "blocked") return { displayState: "blocked", statusReason: "任务被明确阻塞，尚未完成。" };
+  if (normalized === "cancelled") return { displayState: "cancelled", statusReason: "任务已取消，不能视为完成。" };
+  if (normalized === "active" && active) return { displayState: "active", statusReason: "运行当前仍处于活动状态。" };
+  if (normalized === "pending" && active) {
+    return { displayState: "queued", statusReason: "运行仍在进行，该任务等待执行或等待可信回报。" };
+  }
+  if (["pending", "session_stopped", "archived", "active"].includes(normalized)) {
+    return { displayState: "unreported", statusReason: "运行当前不活跃，尚未发现该任务的可信执行回报。" };
+  }
+  return { displayState: "unknown", statusReason: "现有记录不足以判断该任务是否执行或完成。" };
+}
+
 function recordTimestamp(record) {
   const candidates = [
     record?.updatedAt,
@@ -207,21 +228,163 @@ async function validateProjectEntry(entry) {
   };
 }
 
-function publicSummaryTitle(artifact, runId) {
+function genericRunTitle(value) {
+  const title = String(value || "").trim();
+  return !title || /^(?:run\s+[a-z0-9-]{6,}|active governed run|governed task|live execution|observed execution)$/iu.test(title);
+}
+
+const CONVERSATION_RUNTIMES = new Map([
+  ["claude", "claude"],
+  ["claude-code", "claude"],
+  ["claude_code", "claude"],
+  ["codex", "codex"],
+  ["cursor", "cursor"],
+  ["openclaw", "openclaw"],
+  ["open-claw", "openclaw"],
+]);
+
+function conversationRef(value) {
+  const ref = safePublicText(value, { max: 160 });
+  return ref && /^[a-z0-9][a-z0-9:._-]{3,159}$/iu.test(ref) ? ref : null;
+}
+
+function conversationRuntime(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return CONVERSATION_RUNTIMES.get(normalized) || "unavailable";
+}
+
+function conversationLink(value, matchBasis) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const ref = conversationRef(value.conversationRef || value.conversationId || value.threadId ||
+    value.sessionId || value.composerId || value.sessionKey);
+  if (!ref) return null;
+  const title = safePublicText(value.conversationTitle || value.title, { max: 120 });
+  return {
+    sourceRuntime: conversationRuntime(value.sourceRuntime || value.runtime || value.provider),
+    conversationRef: ref,
+    matchBasis: safePublicText(matchBasis, { fallback: "metadata_candidate", max: 64 }),
+    ...(title && !genericRunTitle(title) ? { conversationTitle: title } : {}),
+    ...(safeTimestamp(value.updatedAt || value.timestamp) ? { updatedAt: safeTimestamp(value.updatedAt || value.timestamp) } : {}),
+  };
+}
+
+function publicConversationIdentity(artifact, expectedRunId = null) {
+  const source = artifact?.sourceConversation && typeof artifact.sourceConversation === "object"
+    ? artifact.sourceConversation
+    : {};
+  const conversation = artifact?.conversation && typeof artifact.conversation === "object"
+    ? artifact.conversation
+    : {};
+  const runtimeCandidates = [
+    source.runtime,
+    source.provider,
+    conversation.runtime,
+    artifact?.run?.runtime,
+    artifact?.session?.runtime,
+    artifact?.runtime,
+  ];
+  let sourceRuntime = "unavailable";
+  for (const candidate of runtimeCandidates) {
+    const normalized = String(candidate || "").trim().toLowerCase();
+    if (CONVERSATION_RUNTIMES.has(normalized)) {
+      sourceRuntime = CONVERSATION_RUNTIMES.get(normalized);
+      break;
+    }
+  }
+  const refCandidates = [
+    source.conversationId,
+    source.threadId,
+    source.sessionId,
+    source.composerId,
+    source.sessionKey,
+    conversation.conversationId,
+    conversation.threadId,
+    conversation.sessionId,
+    conversation.composerId,
+    conversation.sessionKey,
+    artifact?.run?.conversationId,
+    artifact?.session?.conversationId,
+    artifact?.threadId,
+  ];
+  let directConversationRef = null;
+  for (const candidate of refCandidates) {
+    const value = conversationRef(candidate);
+    if (value) {
+      directConversationRef = value;
+      break;
+    }
+  }
+  const title = safePublicText(source.title || conversation.title, { max: 120 });
+  const verifiedLinks = [];
+  const candidateLinks = [];
+  const direct = directConversationRef ? {
+    sourceRuntime,
+    conversationRef: directConversationRef,
+    matchBasis: "exact_metadata",
+    ...(title && !genericRunTitle(title) ? { conversationTitle: title } : {}),
+  } : null;
+  const sourceRun = sourceRunId(source);
+  if (direct) {
+    if (!sourceRun || !expectedRunId || sourceRun === expectedRunId) verifiedLinks.push(direct);
+    else candidateLinks.push({ ...direct, matchBasis: "foreign_run_metadata_candidate" });
+  }
+  for (const record of [artifact?.conversationLinks, artifact?.runtimeConversationLinks].filter(Array.isArray).flat()) {
+    const linkedRunId = sourceRunId(record);
+    const foreignRun = Boolean(expectedRunId && linkedRunId && linkedRunId !== expectedRunId);
+    const verified = !foreignRun && (record?.verified === true || record?.matchState === "verified" ||
+      record?.linkState === "verified" || (expectedRunId && linkedRunId === expectedRunId));
+    const link = conversationLink(record, verified ? (linkedRunId === expectedRunId ? "exact_run_id" : "exact_thread_id") : "metadata_candidate");
+    if (link) (verified ? verifiedLinks : candidateLinks).push(link);
+  }
+  for (const record of [artifact?.conversationCandidates, artifact?.candidateConversationLinks].filter(Array.isArray).flat()) {
+    const link = conversationLink(record, record?.matchBasis || "title_time_project_similarity");
+    if (link) candidateLinks.push(link);
+  }
+  const dedupe = (links) => [...new Map(links.map((link) => [`${link.sourceRuntime}:${link.conversationRef}`, link])).values()];
+  const verified = dedupe(verifiedLinks);
+  const candidates = dedupe(candidateLinks).filter((candidate) => !verified.some((item) =>
+    item.sourceRuntime === candidate.sourceRuntime && item.conversationRef === candidate.conversationRef));
+  const primary = verified[0] || candidates[0] || null;
+  return {
+    sourceRuntime: primary?.sourceRuntime || sourceRuntime,
+    conversationLinkState: verified.length ? "verified" : candidates.length ? "candidate" : "unlinked",
+    verifiedLinks: verified.slice(0, 16),
+    candidateLinks: candidates.slice(0, 16),
+    ...(primary?.conversationRef ? { conversationRef: primary.conversationRef } : {}),
+    ...(primary?.conversationTitle ? { conversationTitle: primary.conversationTitle } : {}),
+  };
+}
+
+function publicSummaryIdentity(artifact, runId) {
+  const conversationIdentity = publicConversationIdentity(artifact, runId);
+  const { conversationRef, conversationTitle } = conversationIdentity;
   const summary = artifact?.summaryPacket;
   const candidates = [
-    artifact?.run?.title,
-    artifact?.session?.title,
-    summary?.title,
-    Array.isArray(summary?.visibleLines) ? summary.visibleLines[0] : null,
-    summary?.nextStep,
-    artifact?.publicSummary?.title,
+    [conversationTitle, "conversation_title"],
+    [artifact?.run?.title, "run_title"],
+    [artifact?.session?.title, "session_title"],
+    [summary?.title, "summary_title"],
+    [Array.isArray(summary?.visibleLines) ? summary.visibleLines[0] : null, "summary_line"],
+    [summary?.nextStep, "summary_next_step"],
+    [artifact?.publicSummary?.title, "public_summary_title"],
   ];
-  for (const candidate of candidates) {
+  for (const [candidate, titleSource] of candidates) {
     const title = safePublicText(candidate, { max: 120 });
-    if (title) return title;
+    if (title && !genericRunTitle(title)) {
+      return {
+        title,
+        titleSource,
+        identificationState: conversationIdentity.conversationLinkState === "verified" ? "conversation_verified" : "descriptive",
+        ...conversationIdentity,
+      };
+    }
   }
-  return `Run ${runId.slice(-8).toUpperCase()}`;
+  return {
+    title: `Run ${runId.slice(-8).toUpperCase()}`,
+    titleSource: "generated_run_id",
+    identificationState: conversationIdentity.conversationLinkState === "verified" ? "conversation_verified" : "unlinked",
+    ...conversationIdentity,
+  };
 }
 
 function sourceRunId(record) {
@@ -293,6 +456,46 @@ function recordRuntime(record) {
   return record?.runtimeFamily || record?.runtime || record?.run?.runtime;
 }
 
+function structuralOnlyRecord(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+  if (record?.run?.executionEvidenceState === "structural_planning_only") return true;
+  if (record?.executionResult?.actualWorkerExecution === false) return true;
+  if (/planned_not_executed/iu.test(String(record?.executionResult?.executionClosure || ""))) return true;
+  const results = [
+    ...(Array.isArray(record.workerResultPackets) ? record.workerResultPackets : []),
+    ...(Array.isArray(record.nodes) ? record.nodes.filter((node) => node?.kind === "agent" && node?.isMain !== true) : []),
+  ];
+  return results.length > 0 && results.every((result) =>
+    /planned_not_executed/iu.test(String(result?.status || result?.resultKind || "")) ||
+    String(result?.evidenceKind || "").toLowerCase().includes("structural") ||
+    (Array.isArray(result?.workerExecutionEvidence) && result.workerExecutionEvidence.some((item) =>
+      item?.observedResult === "not_run_by_structural_artifact_builder" ||
+      String(item?.evidenceKind || "").toLowerCase().includes("structural"))));
+}
+
+function terminalEvidencePassed(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  if (String(item?.evidenceKind || "").toLowerCase().includes("structural")) return false;
+  if (/^not_run_by_/u.test(String(item?.observedResult || "").toLowerCase())) return false;
+  return normalizeStatus(item.status || item.result || item.closeState) === "completed" ||
+    ["verified", "verified_closed"].includes(String(item.status || item.result || item.closeState || "").toLowerCase());
+}
+
+function sameRunEvidence(item, runId) {
+  const explicit = sourceRunId(item);
+  return !explicit || explicit === runId;
+}
+
+function recordCompletionProven(record, runId) {
+  if (!record || typeof record !== "object" || structuralOnlyRecord(record)) return false;
+  if (record?.run?.completionEvidenceState === "trusted_terminal" && sourceRunId(record) === runId) return true;
+  const verification = record?.verificationPacket;
+  return [verification?.verificationResults, verification?.fixEvidence]
+    .filter(Array.isArray)
+    .flat()
+    .some((item) => terminalEvidencePassed(item) && sameRunEvidence(item, runId));
+}
+
 function isFreshActiveRecord(record, nowMs, activeFreshnessMs) {
   const rawStatus = recordStatus(record);
   if (record?.active !== true && normalizeStatus(rawStatus) !== "active") return false;
@@ -314,22 +517,74 @@ function sessionFromRecords(runId, records, { nowMs, activeFreshnessMs }) {
     null;
   const rawStatus = recordStatus(source);
   const normalizedStatus = normalizeStatus(rawStatus);
-  const active = isFreshActiveRecord(source, nowMs, activeFreshnessMs);
-  const status = normalizedStatus === "active" && !active ? "in_doubt" : normalizedStatus;
+  const active = ordered.some((record) => isFreshActiveRecord(record, nowMs, activeFreshnessMs));
+  const completionProven = records.some((record) => recordCompletionProven(record, runId));
+  const structuralOnly = records.some(structuralOnlyRecord);
+  const status = normalizedStatus === "completed" && !completionProven
+    ? "in_doubt"
+    : normalizedStatus === "active" && !active
+      ? "in_doubt"
+      : normalizedStatus;
   const nodeCount = safeRecordCount(artifact, "nodes");
   const eventCount = safeRecordCount(artifact, "replay");
+  const identityRecord = {
+    ...(artifact || source),
+    sourceConversation: ordered.find((record) => record?.sourceConversation)?.sourceConversation,
+    conversationLinks: ordered.flatMap((record) => Array.isArray(record?.conversationLinks) ? record.conversationLinks : []),
+    runtimeConversationLinks: ordered.flatMap((record) => Array.isArray(record?.runtimeConversationLinks) ? record.runtimeConversationLinks : []),
+    conversationCandidates: ordered.flatMap((record) => Array.isArray(record?.conversationCandidates) ? record.conversationCandidates : []),
+    candidateConversationLinks: ordered.flatMap((record) => Array.isArray(record?.candidateConversationLinks) ? record.candidateConversationLinks : []),
+  };
+  const identity = publicSummaryIdentity(identityRecord, runId);
+  const runtime = normalizeRuntime(recordRuntime(source));
+  if (identity.sourceRuntime === "unavailable" && ["claude", "codex", "cursor", "openclaw"].includes(runtime)) {
+    identity.sourceRuntime = runtime;
+  }
+  const conversationDiscovery = identity.sourceRuntime === "unavailable"
+    ? { state: "unsupported", reason: "no_safe_runtime_metadata_source" }
+    : { state: "metadata_only", runtime: identity.sourceRuntime, reason: "run_bound_metadata_only" };
   return {
     sessionId: runId,
     runId,
-    title: publicSummaryTitle(artifact, runId),
+    ...identity,
     status,
+    ...publicDisplay(status, { active, structuralOnly, completionProven }),
     currentStage: normalizeStage(recordStage(source)),
-    runtime: normalizeRuntime(recordRuntime(source)),
+    runtime,
+    conversationDiscovery,
     updatedAt: recordTimestamp(source),
     ...(nodeCount === null ? {} : { nodeCount }),
     ...(eventCount === null ? {} : { eventCount }),
     active,
   };
+}
+
+// This is the production discovery provider.  It deliberately consumes only
+// already-read, run-bound metadata from the explicit Meta_Kim project state:
+// opaque refs, runtime, title, and timestamp.  It never opens a host's
+// conversation store, source files, or message bodies.  A host integration
+// may provide additional candidate metadata through the injected provider,
+// but injection is an extension point—not the only production route.
+function discoverRunBoundConversations({ runIds, recordsByRun }) {
+  const discovered = [];
+  for (const runId of runIds) {
+    for (const record of recordsByRun.get(runId) || []) {
+      if (!record || typeof record !== "object") continue;
+      const source = record.sourceConversation;
+      if (source && sourceRunId(source) === runId) {
+        discovered.push({
+          runId,
+          runtime: source.runtime,
+          conversationId: source.conversationId,
+          title: source.title,
+          updatedAt: source.updatedAt || recordTimestamp(record),
+          verified: true,
+          matchBasis: "exact_run_id",
+        });
+      }
+    }
+  }
+  return discovered;
 }
 
 function observeBudgetOperation(budget, operation) {
@@ -504,6 +759,7 @@ async function listSessionsForProject(project, {
   activeFreshnessMs,
   observeSourceRead,
   observeDiscoveryOperation,
+  discoverRuntimeConversations,
 }) {
   const stateRoot = path.join(project.repoRoot, ".meta-kim", "state", profile);
   const recordsByRun = new Map();
@@ -602,6 +858,35 @@ async function listSessionsForProject(project, {
     }
   }
 
+  if (recordsByRun.size > 0) {
+    try {
+      const discoveryInput = {
+        projectRef: project.projectRef,
+        projectRoot: project.repoRoot,
+        runIds: [...recordsByRun.keys()],
+        recordsByRun,
+      };
+      const defaultDiscovered = await discoverRunBoundConversations(discoveryInput);
+      const injectedDiscovered = typeof discoverRuntimeConversations === "function"
+        ? await discoverRuntimeConversations(discoveryInput)
+        : [];
+      const discovered = [...defaultDiscovered, ...(Array.isArray(injectedDiscovered) ? injectedDiscovered : [])];
+      for (const item of Array.isArray(discovered) ? discovered.slice(0, maxSessions * 16) : []) {
+        const runId = sourceRunId(item);
+        if (!isLiveRunId(runId) || !recordsByRun.has(runId)) continue;
+        const link = conversationLink(item, item?.matchBasis || "title_time_project_similarity");
+        if (!link) continue;
+        const verified = item?.verified === true || item?.matchState === "verified" || item?.linkState === "verified";
+        append(runId, verified
+          ? { __catalogKind: "conversation", conversationLinks: [{ ...link, runId, verified: true }] }
+          : { __catalogKind: "conversation", conversationCandidates: [{ ...link, runId }] });
+      }
+    } catch {
+      // Runtime history discovery is optional and read-only; a provider failure
+      // must not hide the governed-run catalog.
+    }
+  }
+
   const sessions = [...recordsByRun.entries()]
     .map(([runId, records]) => ({
       session: sessionFromRecords(runId, records, { nowMs, activeFreshnessMs }),
@@ -644,6 +929,8 @@ export function createLiveHubProjectCatalog(options = {}) {
   const observeDiscoveryOperation = typeof options.observeDiscoveryOperation === "function"
     ? options.observeDiscoveryOperation
     : null;
+  const discoverRuntimeConversations = options.discoverRuntimeConversations ||
+    options.listRuntimeConversations || options.discoverConversations || null;
 
   const validatedProjects = async () => {
     let entries;
@@ -685,6 +972,7 @@ export function createLiveHubProjectCatalog(options = {}) {
       activeFreshnessMs,
       observeSourceRead,
       observeDiscoveryOperation,
+      discoverRuntimeConversations,
     });
     return result.sessions;
   };
@@ -701,6 +989,7 @@ export function createLiveHubProjectCatalog(options = {}) {
         activeFreshnessMs,
         observeSourceRead,
         observeDiscoveryOperation,
+        discoverRuntimeConversations,
       });
       const activeSession = sessions.find((session) => session.active) || null;
       output.push({

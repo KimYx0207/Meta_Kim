@@ -215,7 +215,7 @@ test("defaults to Chinese and provides a persistent English language switch", ()
   assert.match(html, /<title>Meta_Kim Live · 控制中心<\/title>/u);
   assert.match(html, /data-live-language-toggle/u);
   assert.match(html, /data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图/u);
-  assert.match(html, /data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据/u);
+  assert.match(html, /data-i18n-en="Inspector" data-i18n-zh="检查器">检查器/u);
   assert.match(html, /data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线/u);
   assert.match(html, /LANGUAGE_STORAGE_KEY\s*=\s*"meta-kim-live-language"/u);
   assert.match(html, /localStorage\?\.getItem\(LANGUAGE_STORAGE_KEY\)\s*===\s*"en"/u);
@@ -234,7 +234,8 @@ test("keeps snapshot values out of markup and safely seeds JSON for the text-onl
   };
   const html = renderLiveControlRoomPage({ snapshot: hostile });
 
-  assert.doesNotMatch(html, /<img\b/iu);
+  assert.equal((html.match(/<img\b/giu) || []).length, 1, "only the bundled brand mark may render as an image");
+  assert.match(html, /<img class="brand-mark" src="\/assets\/meta-kim-k-mark\.png" alt=""/u);
   assert.doesNotMatch(html, /onerror\s*=/iu);
   assert.doesNotMatch(html, /<b>untrusted<\/b>/iu);
   assert.match(html, /live-initial-snapshot/iu);
@@ -314,9 +315,25 @@ test("uses a canvas-first control-room hierarchy with an on-demand inspector and
   assert.match(html, /workspace\?\.addEventListener\("transitionend", reposition, \{ once: true \}\)/u);
   assert.match(html, /function reconcileCamera\([\s\S]{0,700}camera\.scale < \.68[\s\S]{0,160}centerGraphNode\(followTargetId\(\)\)/u);
   assert.match(html, /new ResizeObserver\(\(\)\s*=>\s*reconcileCamera\(\)\)/u);
-  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\]\s*\{[^}]*30%[^}]*70%/su);
+  assert.match(html, /if \(firstSnapshot\) \{\s*setInspectorOpen\(false\)/u);
+  assert.doesNotMatch(html, /setInspectorOpen\(currentWorkView === "run"[\s\S]{0,160}Boolean\(selectedNodeId\)\)/u);
+  assert.match(html, /identity\.addEventListener\("click", \(\) => selectNode\(node\.id, \{ inspectorTab: "summary" \}\)\)/u);
+  assert.match(html, /selectNode\(node\.id, \{ inspectorTab: record\.tab \}\)/u);
+  assert.match(html, /evidenceToggle\?\.addEventListener\("click", \(\) => setInspectorOpen\(evidencePanel\?\.dataset\.open !== "true"\)\)/u);
+  assert.match(html, /evidenceClose\?\.addEventListener\("click", \(\) => setInspectorOpen\(false\)\)/u);
+  assert.match(html, /event\.key === "Escape"[\s\S]{0,260}setInspectorOpen\(false\)/u);
+  assert.match(html, /app\.addEventListener\("pointerdown"[\s\S]{0,300}evidencePanel\.contains\(target\)[\s\S]{0,180}setInspectorOpen\(false\)/u);
+  assert.match(html, /\.evidence-panel \.panel-header\s*\{[^}]*position:\s*sticky[^}]*z-index:\s*3[^}]*background:\s*var\(--panel\)/su);
+  assert.match(html, /\.evidence-panel \[data-live-inspector-close\]\s*\{[^}]*width:\s*36px[^}]*height:\s*36px[^}]*place-items:\s*center/su);
+  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\]\s*\{[^}]*minmax\(0,\s*1fr\)[^}]*clamp\(320px,\s*26vw,\s*420px\)/su);
   assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.evidence-panel\s*\{[^}]*position:\s*fixed/su);
-  assert.match(html, /\.graph-panel\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s*92px\s*24px/su);
+  assert.match(html, /\.graph-panel\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s*116px\s*28px/su);
+  assert.match(html, /<img class="brand-mark" src="\/assets\/meta-kim-k-mark\.png" alt=""[^>]*>/u);
+  assert.match(html, /glyph\.setAttribute\("class", "node-glyph"\)/u);
+  assert.match(html, /class="root-entry-path"|rootPath\.setAttribute\("class", "root-entry-path"\)/u);
+  assert.match(html, /class="replay-ticks"/u);
+  assert.match(html, /stageIconPaths/u);
+  assert.match(html, /class="graph-canvas-header"[\s\S]*class="graph-canvas-title"/u);
 });
 
 test("is accessible by keyboard and respects reduced motion", () => {
@@ -367,13 +384,21 @@ test("escapes custom endpoint attributes without changing the runtime contract",
   assert.doesNotMatch(html, /data-(?:snapshot|events)-endpoint="[^"]*<|data-(?:snapshot|events)-endpoint="[^"]*"[^>]*\bon/iu);
 });
 
-test("renders an accessible project and session selector with explicit empty guidance", () => {
+test("renders an accessible project and run-record selector with explicit identity guidance", () => {
   const html = renderLiveControlRoomPage();
 
   assert.match(html, /data-live-project-select/u);
   assert.match(html, /data-live-session-select/u);
   assert.match(html, /aria-label="Choose a Meta_Kim project"/u);
-  assert.match(html, /aria-label="Choose a governed session"/u);
+  assert.match(html, /aria-label="Choose a governed run record"/u);
+  assert.match(html, /data-live-session-search/u);
+  assert.match(html, /这里显示的是 Meta_Kim 运行记录，不是聊天列表/u);
+  assert.match(html, /未关联聊天的运行记录/u);
+  assert.match(html, /还没有可识别的聊天记录/u);
+  assert.match(html, /showUnlinkedSessions = false/u);
+  assert.match(html, /liveShowUnlinked/u);
+  assert.match(html, /\.dialog-card\s*\{[^}]*overflow:\s*hidden[^}]*border-radius:/su);
+  assert.match(html, /\.dialog-body\s*\{[^}]*overflow:\s*auto[^}]*scrollbar-gutter:\s*stable/su);
   assert.match(html, /data-live-hub-status[^>]+aria-live="polite"/u);
   assert.match(html, /No Meta_Kim projects are registered yet/u);
   assert.match(html, /no governed runs yet/iu);
@@ -416,7 +441,8 @@ test("renders catalog labels through bounded text-only DOM operations", () => {
   assert.match(html, /option\.value\s*=/u);
   assert.match(html, /safeIdentifier/u);
   assert.match(html, /formatSessionTime\(session\.updatedAt\)/u);
-  assert.match(html, /session\.runId\.slice\(-6\)/u);
+  assert.match(html, /sessionShortId\(session\)/u);
+  assert.match(html, /sessionIsIdentified\(session\)/u);
   assert.doesNotMatch(html, /\.innerHTML\b/iu);
   assert.doesNotMatch(html, /projectsEndpoint\s*\+|eventsEndpoint\s*\+|snapshotEndpoint\s*\+/u);
 });
@@ -578,7 +604,10 @@ test("uses a compact, zoomable DAG canvas with a minimap and fit controls", () =
   assert.match(html, /graphScene\.style\.transform/u);
   assert.match(html, /data-live-graph-minimap/iu);
   assert.match(html, /dataset\.semanticZoom\s*=\s*camera\.scale\s*<\s*\.42\s*\?\s*"cell"\s*:\s*"card"/u);
-  assert.match(html, /const scale\s*=\s*Math\.max\(\.42,/u);
+  assert.match(html, /const minimumLegibleScale\s*=\s*width\s*<=\s*1024\s*\?\s*1\s*:\s*\.68/u);
+  assert.match(html, /Math\.max\(minimumLegibleScale,/u);
+  assert.match(html, /const wholeGraphFits\s*=\s*fittedScale\s*>=\s*minimumLegibleScale/u);
+  assert.match(html, /wholeGraphFits\s*\?\s*\(width\s*-\s*graphState\.bounds\.width\s*\*\s*scale\)\s*\/\s*2\s*:\s*padding/u);
 });
 
 test("draws curved status-aware edges and a live flow animation with reduced-motion fallback", () => {
@@ -588,6 +617,18 @@ test("draws curved status-aware edges and a live flow animation with reduced-mot
   assert.match(html, /edge-running/iu);
   assert.match(html, /edge-failed/iu);
   assert.match(html, /edge-queued/iu);
+  assert.match(html, /const stageFocusState\s*=\s*executionRelation\s*&&\s*snapshot\.run\?\.active[\s\S]{0,180}targetState\s*===\s*"active"\s*\?\s*"live"\s*:\s*"none"/u);
+  assert.match(html, /EXECUTION_EDGE_KINDS\.has\(edge\.kind \|\| "sequence"\)/u);
+  assert.match(html, /executionRelation \? nodeClass\(edge\.status\) : "structural"/u);
+  assert.match(html, /path\.dataset\.liveFocus\s*=\s*stageFocusState/u);
+  assert.match(html, /\.edge-flow-glow\[data-stage-focus="recorded"\][^{]*\{[^}]*stroke:\s*#d8a84e[^}]*filter:\s*blur\(3px\)/su);
+  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="recorded"\][^{]*\{[^}]*animation:\s*stage-route-flow/su);
+  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="live"\][^{]*\{[^}]*animation:\s*live-flow/su);
+  assert.match(html, /createElementNS\("http:\/\/www\.w3\.org\/2000\/svg", "animateMotion"\)/u);
+  assert.match(html, /!reducedMotion\.matches/u);
+  assert.match(html, /"stage-live":\s*"#58d4cf"[\s\S]{0,80}"stage-recorded":\s*"#d8a84e"/u);
+  assert.match(html, /const replayFocus\s*=\s*executionRelation\s*&&\s*!replayFollowingLive[\s\S]{0,180}\?\s*"recorded"[\s\S]{0,140}path\.dataset\.liveFocus/u);
+  assert.match(html, /replayFocus\s*===\s*"recorded"[\s\S]{0,100}\?\s*"stage-recorded"[\s\S]{0,100}: replayState/u);
   assert.match(html, /march|dash|flow/iu);
   assert.match(html, /prefers-reduced-motion\s*:\s*reduce/iu);
 });
@@ -617,18 +658,78 @@ test("keeps stage chapters out of a v2 entity graph while preserving v1 fallback
 test("lays out worker and workflow entities by spawn depth with a v1 serpentine fallback", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /const cardWidth\s*=\s*168/u);
-  assert.match(html, /const cardHeight\s*=\s*116/u);
+  assert.match(html, /const cardWidth\s*=\s*228/u);
+  assert.match(html, /function estimatedNodeCardHeight\(node\)/u);
+  assert.match(html, /Math\.ceil\(nodeCapabilityCount\(node\) \/ 2\)/u);
+  assert.match(html, /Math\.max\(220, 112 \+ capabilityRows \* 40\)/u);
   assert.match(html, /depthFor\(parentId, seen\) \+ 1/u);
-  assert.match(html, /Math\.ceil\(Math\.sqrt\(lane\.length\)\)/u);
-  assert.match(html, /index % laneColumns/u);
-  assert.match(html, /laneStartX/u);
+  assert.match(html, /const orderedLanes\s*=\s*\[\.\.\.lanes\.entries\(\)\]\.sort/u);
+  assert.match(html, /const maxLaneHeight\s*=\s*Math\.max\(estimatedNodeCardHeight\(nodes\[0\]\), \.\.\.laneHeights\.values\(\)\)/u);
+  assert.match(html, /x:\s*laneX/u);
+  assert.match(html, /y:\s*laneY/u);
+  assert.match(html, /laneY \+= height \+ entityRowGap/u);
+  assert.match(html, /const laneX\s*=\s*52 \+ depth \* entityColumnStep/u);
   assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*4\s*:\s*8/u);
-  assert.match(html, /const rowGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*150\s*:\s*126/u);
+  assert.match(html, /const rowGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*206\s*:\s*190/u);
   assert.match(html, /row\s*%\s*2\s*===\s*0\s*\?\s*withinRow\s*:\s*spineColumns\s*-\s*1\s*-\s*withinRow/u);
   assert.match(html, /function edgeGeometry\(/u);
-  assert.match(html, /vertical\s*=\s*Math\.abs\(deltaY\)/u);
-  assert.match(html, /\.node-card\s*\{[^}]*min-height:\s*116px/su);
+  assert.match(html, /function edgePortSlot\(index, count, span\)/u);
+  assert.match(html, /sourceIndex:\s*Math\.max\(0, outgoing\.indexOf\(edge\)\)/u);
+  assert.match(html, /sourceCount:\s*outgoing\.length/u);
+  assert.match(html, /from\.spine\s*===\s*true\s*&&\s*to\.spine\s*===\s*false[\s\S]{0,100}Math\.abs\(deltaY\)/u);
+  assert.match(html, /\.node-card\s*\{[^}]*min-height:\s*176px/su);
+  assert.match(html, /function syncLayoutToRenderedCards\(layout\)/u);
+  assert.match(html, /Math\.ceil\(card\.scrollHeight\)/u);
+  assert.match(html, /item\.position\.y \+ item\.position\.height \+ 88/u);
+  assert.match(html, /syncLayoutToRenderedCards\(layout\);[\s\S]*for \(const edge of graphEdges\)/u);
+});
+
+test("lays out high-fanout work as one non-crossing row and ships an isolated mixed-state demo", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /const fanoutEntry\s*=\s*\[\.\.\.childrenByParent\.entries\(\)\]/u);
+  assert.match(html, /children\.length\s*>=\s*4/u);
+  assert.match(html, /const childY\s*=\s*chainY/u);
+  assert.match(html, /x:\s*childStartX\s*\+\s*index\s*\*\s*childStep/u);
+  assert.match(html, /kind:\s*"fanout"/u);
+  assert.match(html, /graph\.dataset\.layoutKind\s*=\s*layout\.kind/u);
+  assert.match(html, /demoMode\s*=\s*new URL\(window\.location\.href\)\.searchParams\.get\("demo"\)\s*===\s*"states"/u);
+  assert.match(html, /function buildStateDemoSnapshot\(\)/u);
+  for (const state of ["completed", "active", "queued", "blocked"]) {
+    assert.match(html, new RegExp(`displayState:\\s*"${state}"`, "u"));
+  }
+  for (const [id, from, to, kind] of [
+    ["demo-edge-1", "demo-owner", "demo-requirements", "sequence"],
+    ["demo-edge-2", "demo-requirements", "demo-plan", "sequence"],
+    ["demo-edge-3", "demo-plan", "demo-running-ui", "fork"],
+    ["demo-edge-4", "demo-plan", "demo-running-test", "fork"],
+    ["demo-edge-5", "demo-running-ui", "demo-queued", "depends_on"],
+    ["demo-edge-6", "demo-running-test", "demo-queued", "depends_on"],
+    ["demo-edge-7", "demo-queued", "demo-blocked", "depends_on"],
+  ]) {
+    assert.match(html, new RegExp(`id:\\s*"${id}"[^\\n]+from:\\s*"${from}"[^\\n]+to:\\s*"${to}"[^\\n]+kind:\\s*"${kind}"`, "u"));
+  }
+  assert.match(html, /nodeId:\s*"demo-requirements"/u);
+  assert.match(html, /演示数据 · 非真实运行/u);
+  assert.match(html, /青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属/u);
+  assert.match(html, /\.edge-completed\s*\{[^}]*stroke:\s*var\(--green\)[^}]*stroke-dasharray:\s*none/su);
+  assert.match(html, /\.edge-skipped, \.edge-queued\s*\{[^}]*stroke-dasharray:\s*5 9[^}]*opacity:\s*\.38/su);
+  assert.match(html, /\.node-running\s*\{[^}]*animation:\s*active-node-pulse/su);
+  assert.match(html, /\["active", "in_progress", "executing"\]\.includes\(status\)\) return "running"/u);
+  assert.match(html, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--green\)/su);
+  assert.match(html, /\.node-card\[data-display-state="queued"\][^\{]*\{[^}]*opacity:\s*\.66/su);
+  assert.match(html, /if \(!demoMode\) void \(async \(\) =>/u);
+});
+
+test("separates active pending work from inactive structural work and keeps the flow visible", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /node\?\.active === true[\s\S]*\["pending", "queued"\][\s\S]*return "queued"/u);
+  assert.match(html, /node\?\.active !== true[\s\S]*\["pending", "queued"\][\s\S]*return "unreported"/u);
+  assert.match(html, /node\.statusReason/u);
+  assert.match(html, /node-task/u);
+  assert.match(html, /card\.addEventListener\("click", \(event\) =>/u);
+  assert.match(html, /<details class="stage-overview" open/u);
 });
 
 test("keeps inspector provenance and replay navigation visible and keyboard reachable", () => {
@@ -684,6 +785,39 @@ test("consumes bounded v2 agent, prompt, tool, provenance, and event facts with 
   assert.match(html, /data-kind="prompt"/u);
   assert.match(html, /data-kind="spawn"/u);
   assert.match(html, /data-tool-density/u);
+});
+
+test("renders only present capability truth as dynamic keyboard-accessible ports", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /makeElement\("div", "node-capability-strip"\)/u);
+  assert.match(html, /const NODE_CAPABILITY_KINDS = \["agent", "skill", "mcp", "command", "runtime_tool", "hook", "plugin", "memory_graph", "dependency"\]/u);
+  assert.match(html, /const capabilityLabels = \{ agent: "Agent", skill: "Skill", mcp: "MCP", command: "Command", runtime_tool: "Tool", hook: "Hook", plugin: "Plugin", memory_graph: "Memory\/Graph", dependency: "Dependency" \}/u);
+  assert.match(html, /\(node\.capabilityTruth \|\| \[\]\)\.map\(\(truth\)/u);
+  assert.match(html, /button\.dataset\.capabilityKind = record\.kind/u);
+  assert.match(html, /button\.dataset\.capabilityState = record\.state/u);
+  assert.match(html, /record\.state === "observed"[\s\S]*record\.state === "planned"[\s\S]*"未记录"/u);
+  assert.match(html, /event\.stopPropagation\(\)[\s\S]*selectNode\(node\.id, \{ inspectorTab: record\.tab \}\)/u);
+  assert.match(html, /\["mcp", "command", "runtime_tool", "hook"\]\.includes\(kind\)/u);
+  assert.match(html, /\["memory_graph", "dependency"\]\.includes\(kind\)/u);
+  assert.match(html, /normalizeNodeCapabilityTruth\(item, loadout\)/u);
+  assert.match(html, /record\.state === "observed" && record\.observation === "trusted_host_evidence"/u);
+  assert.match(html, /capabilityNames\(\[\.\.\.plannedNames, \.\.\.capabilityNames\(record\.actualNames\)\]\)/u);
+  assert.match(html, /if \(!downgradedNames\.length && !actualNames\.length\) return \[\]/u);
+  assert.match(html, /filter\(\(record\) => record\.count > 0 && \["observed", "planned"\]\.includes\(record\.state\)\)/u);
+  assert.match(html, /if \(capabilityStrip\.childElementCount\) card\.append\(capabilityStrip\)/u);
+  assert.doesNotMatch(html, /state:\s*usefulNodeMeta\(node\.agent\)\s*\?\s*"observed"/u);
+  assert.match(html, /function selectNode\(nodeId, \{ focus = false, inspectorTab = null \} = \{\}\)/u);
+  assert.match(html, /INSPECTOR_TABS\.includes\(inspectorTab\)/u);
+  assert.match(html, /\.node-capability-strip\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2,minmax\(0,1fr\)\)[^}]*overflow:\s*visible/su);
+  assert.match(html, /\.node-capability:last-child:nth-child\(odd\)\s*\{\s*grid-column:\s*1\s*\/\s*-1;\s*\}/u);
+  assert.match(html, /card\.dataset\.capabilityCount = String\(capabilityRecords\.length\)/u);
+  assert.match(html, /card\.dataset\.hasCapabilities = capabilityRecords\.length \? "true" : "false"/u);
+  assert.match(html, /\.node-card\s*\{[^}]*max-height:\s*none[^}]*overflow:\s*visible/su);
+  assert.match(html, /data-semantic-zoom="cell"\] \.node-card\[data-has-capabilities="true"\][^}]*height:\s*auto !important[^}]*overflow:\s*visible/su);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.node-card[^}]*min-height:\s*166px !important/su);
+  assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.node-capability-strip\s*\{\s*grid-template-columns:\s*1fr/su);
+  assert.match(html, /\.node-capability-kind, \.node-capability-value, \.node-capability-state \{ font-size: 10px; \}/u);
 });
 
 test("adapts service field aliases and safely summarizes structured terminal evidence", () => {
@@ -800,22 +934,31 @@ test("keeps the desktop workspace bounded and coalesces high-frequency snapshot 
   assert.match(html, /beforeunload[\s\S]*clearTimeout\(snapshotCoalesceTimer\)/su);
 });
 
-test("preserves real edge state without replay evidence and uses valid listbox semantics", () => {
+test("preserves real edge state without replay evidence and uses interactive list semantics", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /let replayState\s*=\s*edge\.status/u);
   assert.match(html, /if\s*\(!hasReplayState\)\s*replayState\s*=\s*edge\.status/u);
-  assert.match(html, /data-live-node-list role="listbox"/u);
-  assert.match(html, /setAttribute\(["']role["'],\s*["']option["']\)/u);
-  assert.match(html, /data-live-graph-follow[^>]+aria-pressed="true"/u);
+  assert.match(html, /data-live-node-list role="list"/u);
+  assert.match(html, /setAttribute\(["']role["'],\s*["']listitem["']\)/u);
+  assert.match(html, /makeElement\("button", "node-identity-row node-identity-button"\)/u);
+  assert.match(html, /data-live-graph-follow[^>]+data-active="false"[^>]+aria-pressed="false"/u);
+  assert.match(html, /if \(firstSnapshot\)[\s\S]*fitGraph\(\);[\s\S]*setCameraMode\("overview"\)/u);
+  assert.doesNotMatch(html, /if \(firstSnapshot\)[\s\S]{0,800}centerGraphNode\(selectedNodeId\)/u);
   assert.doesNotMatch(html, /card\.setAttribute\(["']aria-pressed/u);
   assert.match(html, /replayPlay\.disabled\s*=\s*events\.length\s*<\s*2/u);
-  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*220\s*:\s*184/u);
-  assert.match(html, /\.replay-panel\s*\{[^}]*grid-template-columns:\s*300px\s*minmax\(0,1fr\)/su);
-  assert.match(html, /\.replay-dock-header\s*\{[^}]*min-width:\s*300px[^}]*grid-template-columns:\s*minmax\(74px,1fr\)\s*auto/su);
+  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*276\s*:\s*248/u);
+  assert.match(html, /entityColumnStep\s*=\s*layoutMode\s*===\s*"compact"\s*\?\s*356\s*:\s*384/u);
+  assert.match(html, /entityRowGap\s*=\s*layoutMode\s*===\s*"compact"\s*\?\s*88\s*:\s*104/u);
+  assert.match(html, /nextY\s*=\s*item\.position\.y\s*\+\s*item\.position\.height\s*\+\s*88/u);
+  assert.match(html, /\.replay-panel\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%[^}]*grid-template-columns:\s*330px\s*minmax\(0,1fr\)[^}]*overflow:\s*hidden[^}]*contain:\s*inline-size/su);
+  assert.match(html, /\.replay-dock-header\s*\{[^}]*min-width:\s*0[^}]*width:\s*330px[^}]*max-width:\s*100%[^}]*grid-template-columns:\s*minmax\(88px,1fr\)\s*auto[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.replay-range-wrap\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/su);
+  assert.match(html, /\.replay-track\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/su);
+  assert.match(html, /grid-template-columns:\s*minmax\(0,300px\)\s*minmax\(0,1fr\)\s*minmax\(0,410px\)/su);
+  assert.match(html, /\.replay-empty\s*\{[^}]*align-self:\s*end[^}]*height:\s*28px[^}]*min-height:\s*0[^}]*margin:\s*32px\s+0\s+0\s+calc\(100%\s*-\s*410px\)[^}]*overflow:\s*hidden/su);
   assert.match(html, /\.replay-current \.panel-note\s*\{[^}]*display:\s*none/su);
-  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-panel\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\)/su);
-  assert.match(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-current\s*\{[^}]*display:\s*none/su);
+  assert.doesNotMatch(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-current\s*\{[^}]*display:\s*none/su);
   assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.top-run-context, \.connection span:last-child\s*\{\s*display:\s*none/su);
   assert.match(html, /data-live-open-sessions[\s\S]{0,500}data-live-language-toggle[\s\S]{0,500}data-live-open-help[\s\S]{0,500}data-live-open-info/u);
   assert.match(html, /\[data-live-graph-fit\], \[data-live-graph-layout\], \[data-live-graph-zoom-out\], \[data-live-graph-zoom-in\]\s*\{\s*display:\s*none/su);
@@ -824,22 +967,23 @@ test("preserves real edge state without replay evidence and uses valid listbox s
   assert.match(html, /for \(const other of \[sessionsDialog, helpDialog, infoDialog\]\)/u);
   assert.match(html, /dialogOpener = document\.activeElement/u);
   assert.match(html, /dialogOpener\.focus\(\)/u);
-  assert.match(html, /data-semantic-zoom="cell"\] \.node-card\s*\{[^}]*height:\s*116px[^}]*background:\s*transparent/su);
+  assert.match(html, /data-semantic-zoom="cell"\] \.node-card\s*\{[^}]*height:\s*140px[^}]*background:\s*transparent/su);
   assert.match(html, /class="status-bar"/u);
   assert.match(html, /\.activity-chips\s*\{[^}]*display:\s*flex/su);
   assert.match(html, /\.activity-chip\s*\{[^}]*min-width:\s*0/su);
   assert.match(html, /graph\.scrollTo\(\{[\s\S]{0,260}behavior:\s*reducedMotion\.matches\s*\?\s*"auto"\s*:\s*"smooth"/u);
 });
 
-test("adds a persistent keyboard-accessible Repository Workspace Run work surface", () => {
+test("keeps secondary Repository and Workspace surfaces in an on-demand keyboard menu", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /class="work-view-switcher" role="tablist" aria-label="Work surface view"/u);
+  assert.match(html, /class="work-view-menu"/u);
+  assert.match(html, /class="work-view-switcher" role="tablist" aria-label="Optional work surface views"/u);
   for (const view of ["repository", "workspace", "run"]) {
     assert.match(html, new RegExp(`role="tab"[^>]+data-live-work-view="${view}"`, "u"));
     assert.match(html, new RegExp(`data-live-${view === "run" ? "run" : view}-view`, "u"));
   }
-  assert.match(html, /WORK_VIEW_STORAGE_KEY\s*=\s*"meta-kim-live-work-view"/u);
+  assert.match(html, /WORK_VIEW_STORAGE_KEY\s*=\s*"meta-kim-live-work-view-v3"/u);
   assert.match(html, /window\.sessionStorage\?\.getItem\(key\)/u);
   assert.match(html, /window\.localStorage\?\.getItem\(key\)/u);
   assert.match(html, /window\.sessionStorage\?\.setItem\(key, value\)/u);
@@ -876,14 +1020,34 @@ test("renders repository and workspace facts without inventing unavailable sourc
   assert.match(html, /\["Diff", repository\.diff\]/u);
   assert.match(html, /fact\?\.summary \|\| "Unavailable"/u);
   assert.match(html, /data-live-workspace-boundary/u);
-  assert.match(html, /\["Plan", plan\].*\["Conversation", thread\].*\["Terminal", terminal\].*\["Changes", changes\].*\["Review", review\]/su);
-  assert.match(html, /Conversation transcript unavailable/u);
-  assert.match(html, /Terminal adapter telemetry unavailable/u);
-  assert.match(html, /Diff telemetry unavailable/u);
+  assert.match(html, /function renderWorkspaceSessions/u);
+  assert.match(html, /function renderWorkspaceBoard/u);
+  assert.match(html, /function renderWorkspaceDetail/u);
+  assert.match(html, /workspaceColumnForStatus/u);
+  assert.match(html, /legacy status-only record/u);
+  assert.match(html, /snapshot\.repository\.diff\?\.state === "observed"/u);
+  assert.match(html, /No deliverable or verification evidence is linked yet/u);
   assert.doesNotMatch(html, /repositoryInput\.(?:root|projectRoot|path)/u);
 });
 
-test("splits Inspector into six bounded tabs and distinguishes planned context delivery", () => {
+test("uses the execution flow as the default surface while preserving the workspace", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /class="company-workspace"/u);
+  assert.match(html, /class="company-session-rail"/u);
+  assert.match(html, /class="company-board"/u);
+  assert.match(html, /class="company-context-panel"/u);
+  for (const hook of ["workspace-session-list", "workspace-board", "workspace-detail"]) {
+    assert.match(html, new RegExp(`data-live-${hook}`, "u"));
+  }
+  assert.match(html, /currentWorkView\s*=\s*safeStoredChoice\(WORK_VIEW_STORAGE_KEY, WORK_VIEWS, "run"\)/u);
+  assert.match(html, /aria-selected="true"[^>]*data-live-work-view="run"/u);
+  assert.match(html, /data-live-workspace-view hidden/u);
+  assert.match(html, /workspaceOpenRunMap\?\.addEventListener/u);
+  assert.match(html, /New runs preserve that telemetry/u);
+});
+
+test("groups Inspector evidence into four bounded reference-aligned tabs and distinguishes planned context delivery", () => {
   const html = renderLiveControlRoomPage({
     snapshot: {
       ...snapshotFixture,
@@ -892,10 +1056,14 @@ test("splits Inspector into six bounded tabs and distinguishes planned context d
   });
 
   assert.match(html, /class="inspector-tabs" role="tablist" aria-label="Inspector sections"/u);
-  for (const tab of ["summary", "conversation", "terminal", "changes", "evidence", "context"]) {
+  for (const tab of ["summary", "evidence", "terminal", "context"]) {
     assert.match(html, new RegExp(`data-live-inspector-tab="${tab}"`, "u"));
     assert.match(html, new RegExp(`data-live-inspector-panel="${tab}"`, "u"));
   }
+  assert.match(html, /data-live-conversation-list/u);
+  assert.match(html, /data-live-changes-list/u);
+  assert.match(html, /data-i18n-zh="工具"/u);
+  assert.match(html, /data-i18n-zh="决策"/u);
   assert.match(html, /contextTransferInput\.slice\(0, 256\)/u);
   assert.match(html, /\["observed", "accepted"\]\.includes\(rawState\) \? rawState : "planned"/u);
   assert.match(html, /nullableCount\(record\.summaryCount\)/u);
@@ -906,6 +1074,53 @@ test("splits Inspector into six bounded tabs and distinguishes planned context d
   assert.doesNotMatch(html, /data-transfer-state="planned"[^}]*animation/isu);
   assert.match(html, /@media \(max-width: 720px\)[\s\S]*\.work-view-switcher[^}]*grid-column:\s*1 \/ -1/su);
   assert.match(html, /html, body \{[^}]*overflow:\s*hidden/su);
+});
+
+test("annotates planned scheduling waves without turning them into edges or animation", () => {
+  const html = renderLiveControlRoomPage({
+    snapshot: {
+      ...snapshotFixture,
+      scheduling: {
+        schemaVersion: "meta-kim-live-scheduling-v1",
+        provenance: "observed",
+        capacity: {
+          maxParallelAgents: 2,
+          requestedParallelAgents: 8,
+          runtimeCapacity: 2,
+          capacitySourceKind: "active_config",
+          throttled: true,
+        },
+        waves: [
+          { waveId: "wave-1", waveIndex: 1, mode: "primary_parallel_wave", declaredParallelCount: 2, nodeIds: ["critical", "execution"], mappedCount: 2, unmappedCount: 0, mergeOwner: "meta-conductor" },
+          { waveId: "wave-2", waveIndex: 2, mode: "followup_parallel_wave", declaredParallelCount: 2, nodeIds: [], mappedCount: 0, unmappedCount: 2, mergeOwner: "meta-conductor" },
+        ],
+        waveCount: 2,
+        declaredWaveCount: 2,
+        coverage: { declaredTaskCount: 4, mappedNodeCount: 2, complete: false },
+      },
+    },
+  });
+
+  // The page re-pins provenance locally, so a payload claiming its wave order was
+  // observed cannot relabel a declared plan on screen.
+  assert.match(html, /provenance: "planned",/u);
+  assert.doesNotMatch(html, /provenance: display\(/u);
+  // The badge goes into the status strip, never into .node-meta: that row is
+  // display:none in the card layout, so a wave annotation placed there would be
+  // present in the DOM and invisible on screen.
+  assert.match(html, /top\.append\(waveBadge\)/u);
+  assert.doesNotMatch(html, /meta\.append\(wave/u);
+  assert.match(html, /\.node-meta \{ display: none; \}/u);
+  assert.match(html, /waveBadge\.dataset\.waveProvenance = "planned"/u);
+  assert.match(html, /kind: "scheduling_wave"/u);
+  assert.match(html, /kind: "scheduling_capacity"/u);
+  assert.match(html, /planned · declared order, not observed execution/u);
+  assert.match(html, /schedulingRows\.concat\(transfers\)/u);
+  // Waves stay an annotation: no scheduling input reaches edge construction, and
+  // the badge carries neither motion nor a box that could grow the card.
+  assert.doesNotMatch(html, /graphEdgesForSnapshot\([^)]*scheduling/u);
+  assert.match(html, /\.node-wave-badge \{[^}]*flex: 0 0 auto/su);
+  assert.doesNotMatch(html, /\.node-wave-badge \{[^}]*(animation|border-width|border:)/su);
 });
 
 test("keeps the reference-inspired cool-tech surface restrained, stateful, and mobile-bounded", () => {
@@ -930,20 +1145,20 @@ test("keeps the reference-inspired cool-tech surface restrained, stateful, and m
   const success = variable("green");
   const danger = variable("danger");
   assert.ok(completion && completionBright && running && success && danger, "the final theme must expose semantic color variables");
-  assert.equal(completion, "#5b8cff", "completion must use the electric-blue state color");
-  assert.equal(running, "#58d4cf", "running must use the teal state color");
+  assert.equal(completion, "#68a4ff", "completion must use the cool-blue state color");
+  assert.equal(running, "#4fd1c5", "running must use the teal state color");
   assert.equal(new Set([completion, running, success, danger]).size, 4, "completion, running, success, and failed states need distinct colors");
   assert.doesNotMatch(html, /gold|#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b|#d7af00|#f0d56a|#87d787/iu, "the full generated HTML and script must not retain gold names or warm completion swatches");
-  assert.match(themeCss, /--accent:\s*#58d4cf/iu);
+  assert.match(themeCss, /--accent:\s*#4fd1c5/iu);
   assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--running\)/su);
-  assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--completion\)/su);
+  assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--green\)/su);
   assert.match(themeCss, /\.node-failed, \.node-in-doubt\s*\{[^}]*border-left-color:\s*var\(--danger\)/su);
 
   const pixelRadii = [...themeCss.matchAll(/border-radius:\s*([0-9]+(?:\.[0-9]+)?)px/giu)]
     .map((match) => Number(match[1]));
   assert.ok(pixelRadii.length > 0, "the final theme should declare a restrained radius hierarchy");
-  assert.ok(Math.max(...pixelRadii) <= 6, "non-circular component radii must not exceed 6px");
-  assert.ok(pixelVariable("radius-sm") <= 6 && pixelVariable("radius") <= 6, "theme radius tokens must not exceed 6px");
+  assert.ok(Math.max(...pixelRadii) <= 12, "non-circular component radii must stay restrained");
+  assert.ok(pixelVariable("radius-sm") <= 8 && pixelVariable("radius") <= 12, "theme radius tokens must stay restrained");
 
   assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.topbar\s*\{[^}]*grid-template-columns:\s*auto\s+minmax\(0,1fr\)\s+auto/su);
   assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.work-view-switcher\s*\{[^}]*width:\s*100%/su);
@@ -951,4 +1166,15 @@ test("keeps the reference-inspired cool-tech surface restrained, stateful, and m
   assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.node-card\s*\{[^}]*width:\s*100%\s*!important/su);
   assert.match(themeCss, /@media \(max-width: 720px\)[\s\S]*\.graph-toolbar\s*\{[^}]*overflow-x:\s*auto/su);
   assert.match(themeCss, /\.inspector-tabs\s*\{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/su);
+});
+
+test("inactive legacy unknown nodes use the honest no-writeback label and human owner copy", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  assert.match(html, /state === "unknown" && node\?\.active !== true/u);
+  assert.match(html, /normalizedRunDisplayState\(runInput/u);
+  assert.match(html, /"未收到执行回写"/u);
+  assert.match(html, /"角色 · "/u);
+  assert.match(html, /"AI 执行者 · "/u);
+  assert.doesNotMatch(html, /"专业 "/u);
+  assert.match(html, /\.node-owner-line \{[^}]*display:\s*flex[^}]*gap:/su);
 });

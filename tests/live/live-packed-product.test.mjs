@@ -7,8 +7,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { tarExtractCommand } from "../../scripts/tar-extract-command.mjs";
+
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const tarCommand = process.platform === "win32" ? "tar.exe" : "tar";
 
 function npmCliPath() {
   const candidates = [
@@ -64,7 +65,8 @@ test("the real packed CLI serves the read-only control room without a source che
       maxBuffer: 16 * 1024 * 1024,
     }));
     const packageFile = path.join(temp, pack[0].filename);
-    execFileSync(tarCommand, ["-xf", packageFile, "-C", extractRoot], { stdio: "pipe" });
+    const extraction = tarExtractCommand(packageFile, extractRoot);
+    execFileSync(extraction.command, extraction.args, { cwd: extraction.cwd, stdio: "pipe" });
     const cli = path.join(extractRoot, "package", "bin", "meta-kim.mjs");
 
     const help = spawnSync(process.execPath, [cli, "live", "--help"], {

@@ -95,12 +95,14 @@ test("CLI parsing rejects unsafe profiles and every malformed public option", ()
     "--profile", "work-profile",
     "--no-open",
     "--json",
+    "--restart",
   ]), {
     projectRoot: path.resolve("."),
     port: 0,
     profile: "work-profile",
     open: false,
     json: true,
+    restart: true,
   });
   assert.throws(() => parseArgs(["--profile", "../outside"]), /profile/iu);
   assert.throws(() => parseArgs(["--project-root", "."]), /absolute/iu);
@@ -481,7 +483,7 @@ test("snapshot truth handles stale, conflicting, proven, and malformed histories
 
   const proven = artifact("meta-proof");
   proven.status = "completed";
-  proven.verificationPacket = { fixEvidence: [{ result: "passed" }] };
+  proven.verificationPacket = { fixEvidence: [{ runId: "meta-proof", result: "passed" }] };
   proven.events = [
     { sequence: 2, timestamp: "2026-08-24T10:00:02.000Z", stage: "Review", status: "completed" },
     { sequence: 1, timestamp: "2026-08-24T10:00:01.000Z", stage: "Execution", status: "running" },

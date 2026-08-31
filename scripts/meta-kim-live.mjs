@@ -15,6 +15,7 @@ import {
   buildLiveSnapshot,
   createLiveControlRoomService,
 } from "../src/application/live/live-control-room-service.mjs";
+import { loadLiveHubLifecycleBudget } from "../src/application/live/live-hub-lifecycle-budget.mjs";
 import {
   createLiveReadRepository,
   LIVE_PROFILE_PATTERN,
@@ -23,6 +24,7 @@ import {
 import {
   ensureLiveHub,
   removeOwnedLiveHubState,
+  stopLiveHub,
   writeLiveHubState,
 } from "../src/infrastructure/live/live-hub-lifecycle.mjs";
 import {
@@ -74,6 +76,8 @@ function parseArgs(argv) {
       options.enableControl = true;
     } else if (arg === "--ensure") {
       options.ensure = true;
+    } else if (arg === "--restart") {
+      options.restart = true;
     } else if (arg === "--daemon-child") {
       options.daemonChild = true;
     } else if (arg === "--project-ref") {
@@ -94,7 +98,7 @@ function parseArgs(argv) {
 function usage() {
   return [
     "Meta_Kim Live Hub (global singleton, read-only by default, loopback only)",
-    "Usage: meta-kim live [--project-root DIR] [--profile NAME] [--port PORT] [--no-open] [--json] [--enable-control]",
+    "Usage: meta-kim live [--project-root DIR] [--profile NAME] [--port PORT] [--restart] [--no-open] [--json] [--enable-control]",
     "Default mode starts or reuses one user-level Hub on 127.0.0.1, listing only registered projects and governed sessions; it exposes no mutation endpoint.",
     "--enable-control records an explicit control request, but the singleton CLI stays read-only unless a complete authority loadout is injected through the programmatic server API; otherwise it is fail-closed.",
   ].join("\n");
@@ -152,6 +156,18 @@ async function main(argv = process.argv.slice(2)) {
     });
     const { projectRef, runId } = liveSelectionForRegistration(registration, options.runId);
     const profile = options.profile || process.env.META_KIM_PROFILE || "default";
+    const budget = loadLiveHubLifecycleBudget();
+    if (options.restart === true) {
+      const stopped = await stopLiveHub({
+        homeDir: process.env.META_KIM_LIVE_HOME,
+        timeoutMs: budget.stopBudgetMs,
+      });
+      if (["signal_failed", "stop_timeout"].includes(stopped.status)) {
+        const error = new Error(stopped.status);
+        error.code = stopped.status;
+        throw error;
+      }
+    }
     const result = await ensureLiveHub({
       packageRoot: PACKAGE_ROOT,
       homeDir: process.env.META_KIM_LIVE_HOME,
@@ -159,10 +175,11 @@ async function main(argv = process.argv.slice(2)) {
       runId,
       port: options.port,
       profile,
+      timeoutMs: budget.startupBudgetMs,
     });
     if (result.status === "unavailable") {
       const error = new Error(result.reason || "startup_unavailable");
-      error.code = "startup_unavailable";
+      error.code = result.reason || "startup_unavailable";
       throw error;
     }
     const publicResult = {
@@ -202,9 +219,19 @@ async function main(argv = process.argv.slice(2)) {
     instanceId: process.env.META_KIM_LIVE_INSTANCE_ID || null,
     packageIdentity: process.env.META_KIM_LIVE_PACKAGE_IDENTITY || null,
   });
+  let stopping = false;
   const stop = async () => {
-    await controller.close();
-    await removeOwnedLiveHubState();
+    if (stopping) return;
+    stopping = true;
+    try {
+      await controller.close();
+    } finally {
+      await removeOwnedLiveHubState().catch(() => {});
+      // A daemon owns no foreground work after its server is closed. Exit
+      // explicitly so inherited runtime handles cannot leave an unreachable
+      // listener process behind on Windows.
+      process.exit(0);
+    }
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -234,6 +261,12 @@ if (invokedPath && import.meta.url === invokedPath) {
     // exit status without exposing filesystem details.
     const usageError = error instanceof LiveCliUsageError;
     process.stderr.write(`meta-kim-live failed: ${usageError ? error.message : error?.code || "startup_error"}\n`);
+    // A daemon child has no terminal. Its stderr is the user-owned hub log, and
+    // the launcher can only report `daemon_exited_before_ready`, so a bare code
+    // here leaves the singleton's failure with no discoverable cause.
+    if (process.argv.includes("--daemon-child") && !usageError) {
+      process.stderr.write(`${error?.stack || `${error?.name || "Error"}: ${error?.message || "unknown"}`}\n`);
+    }
     process.exitCode = usageError ? 2 : 1;
   });
 }

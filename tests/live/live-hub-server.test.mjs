@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
+import { joinProjectRegistry } from "../../scripts/project-registry.mjs";
 
 function snapshot(runId) {
   return {
@@ -26,7 +30,7 @@ function hubFixture() {
     activeSessionId: "meta-run-2",
     sessionCount: 2,
     sessions: [
-      { sessionId: "meta-run-2", runId: "meta-run-2", title: "Current run", status: "active", currentStage: "execution", runtime: "codex", updatedAt: "2026-08-26T09:00:00.000Z", nodeCount: 10, eventCount: 24, active: true, repoRoot: "C:\\private\\nested" },
+      { sessionId: "meta-run-2", runId: "meta-run-2", title: "Current run", status: "active", displayState: "active", statusReason: "运行当前仍处于活动状态。", sourceRuntime: "codex", conversationLinkState: "verified", verifiedLinks: [{ sourceRuntime: "codex", conversationRef: "codex-thread-20260830", matchBasis: "exact_run_id" }], candidateLinks: [{ sourceRuntime: "claude", conversationRef: "claude-candidate-20260830", matchBasis: "title_time_project_similarity" }], currentStage: "execution", runtime: "codex", updatedAt: "2026-08-26T09:00:00.000Z", nodeCount: 10, eventCount: 24, active: true, repoRoot: "C:\\private\\nested" },
       { sessionId: "meta-run-1", runId: "meta-run-1", title: "Earlier run", status: "completed", currentStage: "verification", runtime: "claude", updatedAt: "2026-08-26T08:00:00.000Z", nodeCount: 129, eventCount: -1, active: false },
     ],
   };
@@ -64,6 +68,11 @@ test("global Hub publishes path-free project catalog and selected session APIs",
   t.after(() => controller.close());
   const address = await controller.start();
 
+  const brandMark = await fetch(`${address.url}/assets/meta-kim-k-mark.png`);
+  assert.equal(brandMark.status, 200);
+  assert.equal(brandMark.headers.get("content-type"), "image/png");
+  assert.deepEqual([...new Uint8Array(await brandMark.arrayBuffer()).slice(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+
   const catalogResponse = await fetch(`${address.url}/api/projects`);
   assert.equal(catalogResponse.status, 200);
   const publicCatalog = await catalogResponse.json();
@@ -73,6 +82,10 @@ test("global Hub publishes path-free project catalog and selected session APIs",
   assert.equal(publicCatalog.selected.runId, "meta-run-2");
   assert.equal(publicCatalog.projects[0].sessions[0].nodeCount, 10);
   assert.equal(publicCatalog.projects[0].sessions[0].eventCount, 24);
+  assert.equal(publicCatalog.projects[0].sessions[0].displayState, "active");
+  assert.equal(publicCatalog.projects[0].sessions[0].conversationLinkState, "verified");
+  assert.deepEqual(publicCatalog.projects[0].sessions[0].verifiedLinks, [{ sourceRuntime: "codex", conversationRef: "codex-thread-20260830", matchBasis: "exact_run_id" }]);
+  assert.deepEqual(publicCatalog.projects[0].sessions[0].candidateLinks, [{ sourceRuntime: "claude", conversationRef: "claude-candidate-20260830", matchBasis: "title_time_project_similarity" }]);
   assert.equal(publicCatalog.projects[0].sessions[1].nodeCount, undefined);
   assert.equal(publicCatalog.projects[0].sessions[1].eventCount, undefined);
   assert.doesNotMatch(JSON.stringify(publicCatalog), /repoRoot|private|C:\\/iu);
@@ -94,6 +107,81 @@ test("global Hub publishes path-free project catalog and selected session APIs",
   replay.searchParams.set("projectId", internal.projectRef);
   replay.searchParams.set("runId", "meta-run-1");
   assert.equal((await (await fetch(replay)).json()).runId, "meta-run-1");
+});
+
+test("mixed-state demo page is server-isolated from real catalog and snapshot data", async (t) => {
+  let catalogCalls = 0;
+  let snapshotCalls = 0;
+  let projectServiceCalls = 0;
+  const controller = createLiveControlRoomServer({
+    globalHub: true,
+    instanceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    service: {
+      getSnapshot: async () => {
+        snapshotCalls += 1;
+        return { ...snapshot("meta-private-run"), marker: "PRIVATE_SNAPSHOT_MARKER" };
+      },
+    },
+    hubCatalog: {
+      listProjects: async () => {
+        catalogCalls += 1;
+        return [{ ...hubFixture().internal, displayName: "PRIVATE_PROJECT_MARKER" }];
+      },
+      resolveProject: async () => hubFixture().internal,
+    },
+    createProjectService: () => {
+      projectServiceCalls += 1;
+      return { getSnapshot: async () => snapshot("meta-private-project-run") };
+    },
+  });
+  t.after(() => controller.close());
+  const address = await controller.start();
+
+  const response = await fetch(`${address.url}/?demo=states`);
+  const page = await response.text();
+  assert.equal(response.status, 200);
+  assert.equal(catalogCalls, 0);
+  assert.equal(snapshotCalls, 0);
+  assert.equal(projectServiceCalls, 0);
+  assert.doesNotMatch(page, /PRIVATE_(?:PROJECT|SNAPSHOT)_MARKER|meta-private/iu);
+  assert.match(page, /const demoMode\s*=.+searchParams\.get\("demo"\)\s*===\s*"states"/u);
+  assert.match(page, /<script type="application\/json" id="live-initial-snapshot">null<\/script>/u);
+  assert.match(page, /<script type="application\/json" id="live-initial-catalog">null<\/script>/u);
+});
+
+test("real loopback Hub serves a registered temporary project without private fields", async (t) => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-hub-home-"));
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-hub-project-"));
+  await mkdir(path.join(projectRoot, ".git"));
+  const executionRoot = path.join(projectRoot, ".meta-kim", "state", "default", "governed-executions");
+  await mkdir(executionRoot, { recursive: true });
+  await writeFile(path.join(executionRoot, "meta-hub-4331.json"), JSON.stringify({
+    schemaVersion: "governed-execution-v1",
+    runId: "meta-hub-4331",
+    status: "pending",
+    updatedAt: "2026-08-30T09:00:00.000Z",
+    sourceConversation: {
+      runtime: "codex",
+      conversationId: "01a04c60-33fe-79f3-a38a-d52fcae64d4d",
+      runId: "meta-hub-4331",
+      title: "Temporary Hub acceptance",
+    },
+  }), "utf8");
+  const registration = await joinProjectRegistry({ homeDir, repoPath: projectRoot });
+  const controller = createLiveControlRoomServer({ globalHub: true, homeDir, port: 0 });
+  t.after(async () => {
+    await controller.close();
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+  const address = await controller.start();
+  const response = await fetch(`${address.url}/api/projects`);
+  assert.equal(response.status, 200);
+  const catalog = await response.json();
+  assert.equal(catalog.projects[0].projectId, registration.projectRef);
+  assert.equal(catalog.projects[0].sessions[0].conversationLinkState, "verified");
+  assert.equal(catalog.projects[0].sessions[0].conversationDiscovery.state, "metadata_only");
+  assert.doesNotMatch(JSON.stringify(catalog), new RegExp(projectRoot.replaceAll("\\", "\\\\"), "u"));
 });
 
 test("global Hub rejects unknown selections and exposes an instance-bound health proof", async (t) => {

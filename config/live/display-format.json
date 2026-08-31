@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "meta-kim-live-display-format-v1",
+  "emptyPlaceholder": "—",
+  "identifierShortForm": {
+    "maxChars": 20,
+    "headChars": 8,
+    "tailChars": 8,
+    "ellipsis": "…"
+  },
+  "nodeTaskLine": {
+    "minChars": 2,
+    "sourceFields": ["task", "description"],
+    "duplicateOfFields": ["label", "summary", "title"]
+  },
+  "nonInformativeValues": [
+    "unknown",
+    "unavailable",
+    "in_doubt",
+    "in doubt",
+    "unassigned",
+    "local"
+  ]
+}

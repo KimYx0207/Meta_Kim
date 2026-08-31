@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { URL } from "node:url";
 import { randomBytes } from "node:crypto";
 
@@ -20,6 +21,7 @@ const DEFAULT_PORT = 0;
 const CONTROL_HEADER = "x-meta-kim-control-token";
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
 const CONTROL_ACTIONS = Object.freeze(["pause", "resume", "reassign", "handoff"]);
+const BRAND_MARK_PNG = readFileSync(new URL("../../presentation/live/assets/meta-kim-k-mark.png", import.meta.url));
 
 function boundedPublicCount(value, maximum) {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
@@ -145,6 +147,15 @@ function textResponse(response, statusCode, body, contentType = "text/plain; cha
   response.setHeader("content-type", contentType);
   response.setHeader("cache-control", "no-store");
   response.setHeader("content-length", Buffer.byteLength(body));
+  response.end(body);
+}
+
+function binaryResponse(response, statusCode, body, contentType) {
+  securityHeaders(response);
+  response.statusCode = statusCode;
+  response.setHeader("content-type", contentType);
+  response.setHeader("cache-control", "public, max-age=3600");
+  response.setHeader("content-length", body.byteLength);
   response.end(body);
 }
 
@@ -480,7 +491,40 @@ export function createLiveControlRoomServer(options = {}) {
               sessionId: session.sessionId,
               runId: session.runId,
               title: session.title,
+              titleSource: session.titleSource,
+              identificationState: session.identificationState,
+              sourceRuntime: session.sourceRuntime,
+              conversationLinkState: session.conversationLinkState,
+              conversationDiscovery: session.conversationDiscovery && typeof session.conversationDiscovery === "object"
+                ? {
+                    state: session.conversationDiscovery.state,
+                    ...(session.conversationDiscovery.runtime ? { runtime: session.conversationDiscovery.runtime } : {}),
+                    reason: session.conversationDiscovery.reason,
+                  }
+                : { state: "unsupported", reason: "no_safe_runtime_metadata_source" },
+              verifiedLinks: Array.isArray(session.verifiedLinks)
+                ? session.verifiedLinks.slice(0, 16).map((link) => ({
+                    sourceRuntime: link.sourceRuntime,
+                    conversationRef: link.conversationRef,
+                    matchBasis: link.matchBasis,
+                    ...(link.conversationTitle ? { conversationTitle: link.conversationTitle } : {}),
+                    ...(link.updatedAt ? { updatedAt: link.updatedAt } : {}),
+                  }))
+                : [],
+              candidateLinks: Array.isArray(session.candidateLinks)
+                ? session.candidateLinks.slice(0, 16).map((link) => ({
+                    sourceRuntime: link.sourceRuntime,
+                    conversationRef: link.conversationRef,
+                    matchBasis: link.matchBasis,
+                    ...(link.conversationTitle ? { conversationTitle: link.conversationTitle } : {}),
+                    ...(link.updatedAt ? { updatedAt: link.updatedAt } : {}),
+                  }))
+                : [],
+              ...(session.conversationRef ? { conversationRef: session.conversationRef } : {}),
+              ...(session.conversationTitle ? { conversationTitle: session.conversationTitle } : {}),
               status: session.status,
+              displayState: session.displayState,
+              statusReason: session.statusReason,
               currentStage: session.currentStage,
               runtime: session.runtime,
               updatedAt: session.updatedAt,
@@ -809,7 +853,23 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
+    if (parsed.pathname === "/assets/meta-kim-k-mark.png") {
+      binaryResponse(response, 200, BRAND_MARK_PNG, "image/png");
+      return;
+    }
     if (parsed.pathname === "/" || parsed.pathname === "/index.html") {
+      if (parsed.searchParams.get("demo") === "states") {
+        const body = renderLiveControlRoomPage({
+          snapshot: null,
+          catalog: null,
+          controlEnabled: false,
+          commandCapabilities: {},
+          controlHeader: null,
+          controlToken: null,
+        });
+        textResponse(response, 200, body, "text/html; charset=utf-8");
+        return;
+      }
       const selection = await resolveHubSelection(parsed);
       const snapshot = withoutControlProjection(await (selection.service || service)
         .getSnapshot(selection.runId)
@@ -826,8 +886,9 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    // Only the root frontend asset is public. This keeps arbitrary project
-    // files and path traversal out of the sidecar's response surface.
+    // Only the root frontend and exact bundled UI assets are public.
+    // This keeps arbitrary project files and path traversal out of the
+    // sidecar's response surface.
     jsonResponse(response, 404, safeError("not_found"));
   });
 

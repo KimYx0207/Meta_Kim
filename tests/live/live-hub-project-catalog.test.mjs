@@ -437,7 +437,20 @@ test("includes a fresh root active-run status as the selectable active session",
     sessionId: "meta-root-active-1",
     runId: "meta-root-active-1",
     title: "Run ACTIVE-1",
+    titleSource: "generated_run_id",
+    identificationState: "unlinked",
+    sourceRuntime: "codex",
+    conversationLinkState: "unlinked",
+    verifiedLinks: [],
+    candidateLinks: [],
+    conversationDiscovery: {
+      state: "metadata_only",
+      runtime: "codex",
+      reason: "run_bound_metadata_only",
+    },
     status: "active",
+    displayState: "active",
+    statusReason: "运行当前仍处于活动状态。",
     currentStage: "execution",
     runtime: "codex",
     updatedAt: "2026-08-26T10:00:00.000Z",
@@ -484,7 +497,19 @@ test("prefers the latest compact projection over a stale active status", async (
     sessionId: "meta-compact-2",
     runId: "meta-compact-2",
     title: "Committed compact run",
-    status: "completed",
+    titleSource: "run_title",
+    identificationState: "descriptive",
+    sourceRuntime: "unavailable",
+    conversationLinkState: "unlinked",
+    verifiedLinks: [],
+    candidateLinks: [],
+    conversationDiscovery: {
+      state: "unsupported",
+      reason: "no_safe_runtime_metadata_source",
+    },
+    status: "in_doubt",
+    displayState: "unknown",
+    statusReason: "现有记录不足以判断该任务是否执行或完成。",
     currentStage: "evolution",
     runtime: "in_doubt",
     updatedAt: "2026-08-26T08:30:00.000Z",
@@ -606,6 +631,7 @@ test("fails closed on registry errors and normalizes alternate governed fields",
     runtime: "unsafe runtime value",
     completedAt: "2026-08-26T09:00:00.000Z",
     publicSummary: { title: "Alternate public title" },
+    sourceConversation: { threadId: "01a04c60-33fe-79f3-a38a-d52fcae64d4d" },
   }), "utf8");
   const entry = registryEntry(projectRoot, { updatedAt: "not-a-date" });
   const projects = await createLiveHubProjectCatalog({
@@ -615,7 +641,177 @@ test("fails closed on registry errors and normalizes alternate governed fields",
   }).listProjects();
   assert.equal(projects[0].updatedAt, "2026-08-26T09:00:00.000Z");
   assert.equal(projects[0].sessions[0].title, "Alternate public title");
+  assert.equal(projects[0].sessions[0].titleSource, "public_summary_title");
+  assert.equal(projects[0].sessions[0].identificationState, "conversation_verified");
+  assert.equal(projects[0].sessions[0].conversationRef, "01a04c60-33fe-79f3-a38a-d52fcae64d4d");
   assert.equal(projects[0].sessions[0].status, "active");
   assert.equal(projects[0].sessions[0].currentStage, "meta-review");
   assert.equal(projects[0].sessions[0].runtime, "in_doubt");
+});
+
+test("normalizes explicit conversation identity for Claude Code, Codex, Cursor, and OpenClaw", async (t) => {
+  const projectRoot = await makeProject("runtime-conversations");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const executionRoot = path.join(projectRoot, ".meta-kim", "state", "default", "governed-executions");
+  const fixtures = [
+    ["claude", "sessionId", "claude-session-20260830", "Claude planning chat"],
+    ["codex", "threadId", "01a04c60-33fe-79f3-a38a-d52fcae64d4d", "Codex implementation chat"],
+    ["cursor", "composerId", "cursor-composer-20260830", "Cursor review chat"],
+    ["openclaw", "sessionKey", "openclaw-session-20260830", "OpenClaw verification chat"],
+  ];
+  for (const [index, [runtime, refField, ref, title]] of fixtures.entries()) {
+    const runId = `meta-runtime-${runtime}-1`;
+    await writeFile(path.join(executionRoot, `${runId}.json`), JSON.stringify({
+      schemaVersion: "governed-execution-v1",
+      run: { runId },
+      status: "completed",
+      stage: "verification",
+      completedAt: `2026-08-26T09:0${index}:00.000Z`,
+      sourceConversation: { runtime, [refField]: ref, title },
+    }), "utf8");
+  }
+
+  const project = (await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [registryEntry(projectRoot)],
+    now: () => Date.parse("2026-08-26T10:00:00.000Z"),
+  }).listProjects())[0];
+  const byRuntime = new Map(project.sessions.map((session) => [session.sourceRuntime, session]));
+  for (const [runtime, , ref, title] of fixtures) {
+    const session = byRuntime.get(runtime);
+    assert.ok(session, `${runtime} conversation must remain visible`);
+    assert.equal(session.conversationRef, ref);
+    assert.equal(session.conversationTitle, title);
+    assert.equal(session.title, title);
+    assert.equal(session.titleSource, "conversation_title");
+    assert.equal(session.conversationLinkState, "verified");
+    assert.equal(session.identificationState, "conversation_verified");
+  }
+});
+
+test("uses conversation identity from a durable status record when no governed artifact exists", async (t) => {
+  const projectRoot = await makeProject("status-conversation");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const runId = "meta-status-conversation-1";
+  const runRoot = path.join(
+    projectRoot,
+    ".meta-kim",
+    "state",
+    "default",
+    "runs",
+    runId,
+  );
+  await mkdir(runRoot, { recursive: true });
+  await writeFile(path.join(runRoot, "status.json"), JSON.stringify({
+    schemaVersion: 2,
+    runId,
+    currentStage: "execution",
+    active: true,
+    updatedAt: "2026-08-26T09:30:00.000Z",
+    sourceConversation: {
+      runtime: "codex",
+      conversationId: "01a04c60-33fe-79f3-a38a-d52fcae64d4d",
+      title: "Repair the Live run selector",
+    },
+  }), "utf8");
+
+  const project = (await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [registryEntry(projectRoot)],
+    now: () => Date.parse("2026-08-26T09:31:00.000Z"),
+  }).listProjects())[0];
+  const session = project.sessions.find((candidate) => candidate.runId === runId);
+
+  assert.ok(session);
+  assert.equal(session.title, "Repair the Live run selector");
+  assert.equal(session.titleSource, "conversation_title");
+  assert.equal(session.conversationRef, "01a04c60-33fe-79f3-a38a-d52fcae64d4d");
+  assert.equal(session.conversationLinkState, "verified");
+  assert.equal(session.identificationState, "conversation_verified");
+  assert.equal(session.sourceRuntime, "codex");
+});
+
+test("discovers verified and candidate conversations across all supported runtimes without promoting candidates", async (t) => {
+  const projectRoot = await makeProject("discovered-runtime-conversations");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const runId = "meta-discovered-runtime-1";
+  const executionRoot = path.join(projectRoot, ".meta-kim", "state", "default", "governed-executions");
+  await writeFile(path.join(executionRoot, `${runId}.json`), JSON.stringify({
+    schemaVersion: "governed-execution-v1",
+    runId,
+    status: "completed",
+    updatedAt: "2026-08-30T09:00:00.000Z",
+    workerTaskPackets: [{ taskPacketId: "discovery-task-1", status: "completed" }],
+    workerResultPackets: [{ taskPacketId: "discovery-task-1", status: "completed" }],
+  }), "utf8");
+
+  const sessions = await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [registryEntry(projectRoot)],
+    now: () => Date.parse("2026-08-30T09:01:00.000Z"),
+    discoverRuntimeConversations: async () => [
+      { runId, runtime: "codex", threadId: "codex-thread-20260830", verified: true },
+      { runId, runtime: "claude", sessionId: "claude-session-20260830", matchBasis: "title_time_project_similarity" },
+      { runId, runtime: "cursor", composerId: "cursor-composer-20260830", matchBasis: "title_time_project_similarity" },
+      { runId, runtime: "openclaw", sessionKey: "openclaw-session-20260830", matchBasis: "title_time_project_similarity" },
+    ],
+  }).listSessions(registryEntry(projectRoot).projectRef);
+
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].conversationLinkState, "verified");
+  assert.deepEqual(sessions[0].verifiedLinks.map((link) => link.sourceRuntime), ["codex"]);
+  assert.deepEqual(sessions[0].candidateLinks.map((link) => link.sourceRuntime).sort(), ["claude", "cursor", "openclaw"]);
+  assert.equal(sessions[0].status, "in_doubt");
+  assert.notEqual(sessions[0].displayState, "completed");
+  assert.doesNotMatch(JSON.stringify(sessions), /[A-Z]:[\\/]|repoRoot|projectRoot/iu);
+});
+
+test("inactive structural-only artifacts are unreported instead of queued", async (t) => {
+  const projectRoot = await makeProject("structural-only-display");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const runId = "meta-structural-only-1";
+  const executionRoot = path.join(projectRoot, ".meta-kim", "state", "default", "governed-executions");
+  await writeFile(path.join(executionRoot, `${runId}.json`), JSON.stringify({
+    schemaVersion: "governed-execution-v1",
+    runId,
+    status: "pending",
+    updatedAt: "2026-08-30T09:00:00.000Z",
+    executionResult: { actualWorkerExecution: false, executionClosure: "planned_not_executed_by_runner" },
+    workerResultPackets: [{
+      taskPacketId: "structural-task-1",
+      status: "planned_not_executed",
+      workerExecutionEvidence: [{
+        observedResult: "not_run_by_structural_artifact_builder",
+        evidenceKind: "structural_worker_plan",
+      }],
+    }],
+  }), "utf8");
+  const [session] = await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [registryEntry(projectRoot)],
+    now: () => Date.parse("2026-08-30T09:01:00.000Z"),
+  }).listSessions(registryEntry(projectRoot).projectRef);
+  assert.equal(session.active, false);
+  assert.equal(session.displayState, "unreported");
+  assert.match(session.statusReason, /结构规划记录/u);
+});
+
+test("legacy compact worker structural evidence is inferred without a run execution state", async (t) => {
+  const projectRoot = await makeProject("legacy-compact-structural-inference");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const runId = "meta-legacy-compact-structural-1";
+  await writeCompactProjection(projectRoot, runId, {
+    run: { runId, status: "completed", updatedAt: "2026-08-30T09:00:00.000Z" },
+    nodes: [{
+      id: "agent:legacy-worker",
+      kind: "agent",
+      isMain: false,
+      status: "completed",
+      workerExecutionEvidence: [{
+        observedResult: "not_run_by_structural_artifact_builder",
+        evidenceKind: "structural_worker_plan",
+      }],
+    }],
+  });
+  const [session] = await createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [registryEntry(projectRoot)],
+  }).listSessions(registryEntry(projectRoot).projectRef);
+  assert.equal(session.status, "in_doubt");
+  assert.equal(session.displayState, "unreported");
 });

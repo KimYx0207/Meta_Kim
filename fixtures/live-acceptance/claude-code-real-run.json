@@ -1,0 +1,276 @@
+{
+  "schemaVersion": "meta-kim-live-acceptance-fixture-v1",
+  "description": "Real Claude Code active run fixture for Live control-room P1.1 acceptance. All runtime/host fields are observed (proofValid=true, synthetic=false) so the Live projection renders observed capability truth. Edit values, never the script: every node/edge/evidence row here flows through the same sanitize pipeline as governance output.",
+  "schemaExtensions": [
+    "component-id-for-handoff",
+    "host-evidence-filePath-for-file-heat",
+    "second-session-worker-for-handoff-edge",
+    "declared-vs-observed-mismatch-node"
+  ],
+
+  "meta": {
+    "projectId": "project-34bcf295e70a",
+    "sessionIdPrefix": "session:live-acc",
+    "runtime": "claude-code",
+    "hostSurface": "claude-code-host",
+    "titleTemplate": "Live control-room 真实 Claude Code 验收 · {runId}",
+    "taskTemplate": "在 Live 控制室中证明 Claude Code 真实活跃运行：conversation identity 真实可验证；状态写回真实；执行依赖 Agent/Skill/MCP/Command/Tool 调用真实 observed。",
+    "language": "zh-CN"
+  },
+
+  "mainAgent": {
+    "label": "meta-conductor",
+    "ownerAgent": "meta-conductor",
+    "roleDisplayName": "conductor",
+    "task": "调度与编排",
+    "capabilityBindings": {
+      "skills": ["meta-theory"],
+      "mcp": ["mcp__memory_service__memory_search"],
+      "tools": ["Read", "Grep"],
+      "commands": ["npm run meta:live:restart"],
+      "hooks": ["enforce-agent-dispatch.mjs"],
+      "memoryGraph": ["graphify-out/graph.json"]
+    }
+  },
+
+  "workflow": {
+    "label": "live-acceptance-execution",
+    "ownerAgent": "meta-conductor",
+    "task": "执行真实 Claude Code 验收链路",
+    "capabilityBindings": {
+      "skills": ["planning-with-files", "tdd-workflow"],
+      "commands": ["node --test tests/live/live-acceptance-real-run.test.mjs"]
+    }
+  },
+
+  "components": [
+    { "id": "comp:source-wiring", "label": "PRD 与 live projection 读取" },
+    { "id": "comp:capability-bridge", "label": "Skill/MCP/Tool/Command 真实链路" },
+    { "id": "comp:writeback-queue", "label": "P1.2 capacity wave 排队" },
+    { "id": "comp:visual-blocker", "label": "UI 截图阻断解除" }
+  ],
+
+  "workers": [
+    {
+      "id": "agent:read-source",
+      "label": "读取 PRD 与已有 live projection",
+      "ownerAgent": "frontend-developer",
+      "roleDisplayName": "frontend",
+      "roleInstanceId": "exec-read-source-1",
+      "componentId": "comp:source-wiring",
+      "status": "completed",
+      "startedAt": "{startBase}",
+      "completedAt": "{startBase+30s}",
+      "task": "读取 PRD 字段",
+      "capabilityBindings": {
+        "skills": ["tdd-workflow"],
+        "tools": ["Read"],
+        "commands": ["git status --short"]
+      },
+      "evidence": [
+        {
+          "family": "runtime_tool",
+          "providerId": "Read",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+5s}",
+          "filePath": "fixtures/live-acceptance/claude-code-real-run.json",
+          "usage": { "inputTokens": 240, "outputTokens": 96, "totalTokens": 336 }
+        },
+        {
+          "family": "runtime_tool",
+          "providerId": "Read",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+8s}",
+          "filePath": ".meta-kim/state/default/live-control-room-claude-handoff-prd.md"
+        },
+        {
+          "family": "command_script",
+          "providerId": "git status --short",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+12s}",
+          "filePath": ".git"
+        }
+      ]
+    },
+    {
+      "id": "agent:invoke-capabilities",
+      "label": "调用 Skill / MCP / Tool / Command 真实链路",
+      "ownerAgent": "backend-architect",
+      "roleDisplayName": "backend",
+      "roleInstanceId": "exec-invoke-capabilities-2",
+      "componentId": "comp:capability-bridge",
+      "status": "active",
+      "startedAt": "{startBase+30s}",
+      "completedAt": null,
+      "task": "触发 5 类能力的真实 observed evidence",
+      "capabilityBindings": {
+        "skills": ["agent-decision-framework", "tdd-workflow"],
+        "mcp": ["mcp__memory_service__memory_search"],
+        "tools": ["Read", "Bash", "Grep"],
+        "commands": ["node --test tests/live/live-acceptance-real-run.test.mjs"]
+      },
+      "evidence": [
+        {
+          "family": "skill",
+          "providerId": "tdd-workflow",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+35s}",
+          "usage": { "inputTokens": 1024, "outputTokens": 384, "totalTokens": 1408 }
+        },
+        {
+          "family": "mcp",
+          "providerId": "mcp__memory_service__memory_search",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+40s}"
+        },
+        {
+          "family": "runtime_tool",
+          "providerId": "Read",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+45s}",
+          "filePath": "src/application/live/live-control-room-service.mjs",
+          "usage": { "inputTokens": 512, "outputTokens": 128, "totalTokens": 640 }
+        },
+        {
+          "family": "command_script",
+          "providerId": "node --test tests/live/live-acceptance-real-run.test.mjs",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+50s}",
+          "filePath": "tests/live/live-acceptance-real-run.test.mjs"
+        }
+      ]
+    },
+    {
+      "id": "agent:queue-writeback",
+      "label": "等待写入 capacity wave projection",
+      "ownerAgent": "frontend-developer",
+      "roleDisplayName": "frontend",
+      "roleInstanceId": "exec-queue-writeback-3",
+      "componentId": "comp:writeback-queue",
+      "status": "pending",
+      "startedAt": null,
+      "completedAt": null,
+      "task": "排队等待 P1.2 schema 扩展完成",
+      "capabilityBindings": {
+        "skills": ["planning-with-files"]
+      },
+      "evidence": []
+    },
+    {
+      "id": "agent:blocked-visual",
+      "label": "等待 UI 截图阻断解除",
+      "ownerAgent": "ui-visual-validator",
+      "roleDisplayName": "review",
+      "roleInstanceId": "exec-blocked-visual-4",
+      "componentId": "comp:visual-blocker",
+      "status": "blocked",
+      "startedAt": null,
+      "completedAt": null,
+      "task": "旧 run URL 截图被 SSE 长连接阻塞；等待 Chrome headless SSE 退出策略",
+      "capabilityBindings": {
+        "skills": ["agent-browser"]
+      },
+      "evidence": []
+    },
+    {
+      "id": "agent:handoff-second-session",
+      "label": "第二个 session 接力同一 component",
+      "ownerAgent": "frontend-developer",
+      "roleDisplayName": "frontend",
+      "roleInstanceId": "exec-read-source-5",
+      "componentId": "comp:source-wiring",
+      "status": "active",
+      "startedAt": "{startBase+90s}",
+      "completedAt": null,
+      "task": "新 session 在同一 component 继续工作",
+      "capabilityBindings": {
+        "skills": ["tdd-workflow"],
+        "tools": ["Read"]
+      },
+      "evidence": [
+        {
+          "family": "runtime_tool",
+          "providerId": "Read",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+92s}",
+          "filePath": "fixtures/live-acceptance/claude-code-real-run.json"
+        }
+      ]
+    },
+    {
+      "id": "agent:mismatch-node",
+      "label": "声明完成但文件刚改",
+      "ownerAgent": "frontend-developer",
+      "roleDisplayName": "frontend",
+      "roleInstanceId": "exec-mismatch-6",
+      "componentId": "comp:capability-bridge",
+      "status": "completed",
+      "startedAt": "{startBase+60s}",
+      "completedAt": "{startBase+65s}",
+      "task": "声明已完结但 host observation 显示 active — declared/observed 不一致",
+      "capabilityBindings": {
+        "tools": ["Edit"]
+      },
+      "evidence": [
+        {
+          "family": "runtime_tool",
+          "providerId": "Edit",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+62s}",
+          "filePath": "src/application/live/live-control-room-service.mjs"
+        },
+        {
+          "family": "runtime_tool",
+          "providerId": "Edit",
+          "hostSurface": "claude-code-host",
+          "state": "invoked",
+          "proofValid": true,
+          "synthetic": false,
+          "observedAt": "{startBase+68s}",
+          "filePath": "src/application/live/live-control-room-service.mjs"
+        }
+      ]
+    }
+  ],
+
+  "edges": [
+    { "from": "agent:main", "to": "workflow:exec", "kind": "contains" },
+    { "from": "workflow:exec", "to": "agent:read-source", "kind": "contains" },
+    { "from": "workflow:exec", "to": "agent:invoke-capabilities", "kind": "contains" },
+    { "from": "workflow:exec", "to": "agent:queue-writeback", "kind": "contains" },
+    { "from": "workflow:exec", "to": "agent:blocked-visual", "kind": "contains" },
+    { "from": "workflow:exec", "to": "agent:handoff-second-session", "kind": "contains" },
+    { "from": "workflow:exec", "to": "agent:mismatch-node", "kind": "contains" },
+    { "from": "agent:read-source", "to": "agent:invoke-capabilities", "kind": "depends_on" },
+    { "from": "agent:invoke-capabilities", "to": "agent:queue-writeback", "kind": "depends_on" },
+    { "from": "agent:invoke-capabilities", "to": "agent:blocked-visual", "kind": "depends_on" },
+    { "from": "agent:invoke-capabilities", "to": "agent:mismatch-node", "kind": "depends_on" }
+  ]
+}

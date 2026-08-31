@@ -7,7 +7,28 @@
  * compromised or malformed observer payload from becoming executable markup.
  */
 
+import {
+  loadLiveDisplayFormat,
+  serializeIdentifierShortener,
+  serializeNodeTaskLineResolver,
+} from "../../application/live/live-display-format.mjs";
+import { serializeReplayNodeViewResolver } from "../../application/live/live-replay-visibility.mjs";
+
 export const LIVE_SNAPSHOT_SCHEMA_VERSION = "meta-kim-live-snapshot-v2";
+
+const REPLAY_NODE_VIEW_SOURCE = serializeReplayNodeViewResolver();
+const IDENTIFIER_SHORTENER_SOURCE = serializeIdentifierShortener();
+const NODE_TASK_LINE_SOURCE = serializeNodeTaskLineResolver();
+
+/**
+ * The display-format policy is resolved once at module load: it is inlined into
+ * the client bundle as a literal, and the pre-hydration HTML shell renders the
+ * same placeholder glyph so the first paint cannot disagree with the first
+ * client render.
+ */
+const PAGE_DISPLAY_FORMAT = loadLiveDisplayFormat();
+const DISPLAY_FORMAT_LITERAL = JSON.stringify(PAGE_DISPLAY_FORMAT);
+const EMPTY_PLACEHOLDER = PAGE_DISPLAY_FORMAT.emptyPlaceholder;
 
 const DEFAULT_SNAPSHOT_ENDPOINT = "/api/snapshot";
 const DEFAULT_EVENTS_ENDPOINT = "/api/events";
@@ -104,6 +125,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const app = document.getElementById("live-app");
   if (!app) return;
 
+  const resolveReplayNodeView = ${REPLAY_NODE_VIEW_SOURCE};
+
+  const DISPLAY_FORMAT = ${DISPLAY_FORMAT_LITERAL};
+  const shortenIdentifier = ${IDENTIFIER_SHORTENER_SOURCE};
+  const resolveNodeTaskLine = ${NODE_TASK_LINE_SOURCE};
+
   const snapshotEndpoint = app.dataset.snapshotEndpoint || "/api/snapshot";
   const eventsEndpoint = app.dataset.eventsEndpoint || "/api/events";
   const projectsEndpoint = app.dataset.projectsEndpoint || "/api/projects";
@@ -118,9 +145,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     : { matches: false };
 
   const LANGUAGE_STORAGE_KEY = "meta-kim-live-language";
-  const WORK_VIEW_STORAGE_KEY = "meta-kim-live-work-view";
+  const WORK_VIEW_STORAGE_KEY = "meta-kim-live-work-view-v3";
   const WORK_VIEWS = ["repository", "workspace", "run"];
-  const INSPECTOR_TABS = ["summary", "conversation", "terminal", "changes", "evidence", "context"];
+  const INSPECTOR_TABS = ["summary", "evidence", "terminal", "context"];
   const zhText = new Map(Object.entries({
     "Connecting…": "正在连接…",
     "Streaming": "实时连接中",
@@ -201,14 +228,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Project catalog refresh paused · showing the last verified list": "项目目录刷新已暂停 · 正在显示上次验证的列表",
     "Current project mode · global catalog unavailable": "当前项目模式 · 全局目录不可用",
     "Waiting for a run snapshot": "正在等待运行快照",
+    "No observation recorded yet": "尚未记录观测",
     "No governed run has been observed in this project yet.": "这个项目中尚未观测到治理运行。",
     "The local observer is not serving a snapshot yet.": "本地观察器尚未提供运行快照。",
     "The embedded snapshot could not be read.": "无法读取页面内嵌的运行快照。",
     "Select a node to inspect provenance": "选择节点查看来源与依据",
     "Evidence stays visible in the drawer": "证据会持续显示在抽屉中",
-    "Status · —": "状态 · —",
-    "Owner · —": "负责人 · —",
-    "Runtime · —": "运行时 · —",
     "Select a node to inspect its execution summary.": "选择节点查看执行摘要。",
     "No evidence detail is linked to this node yet.": "该节点尚未关联证据详情。",
     "Evidence details appear when a node is selected.": "选择节点后将在这里显示证据详情。",
@@ -275,8 +300,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (match) return match[1] + " · " + match[2] + " 次运行";
     match = text.match(/^(.*) · no runs$/u);
     if (match) return match[1] + " · 暂无运行";
-    match = text.match(/^(.*) · (\d+) observed sessions$/u);
-    if (match) return match[1] + " · 已观测 " + match[2] + " 个会话";
+    match = text.match(/^(.*) · (\d+) observed run records$/u);
+    if (match) return match[1] + " · 已观测 " + match[2] + " 条运行记录";
     match = text.match(/^(\d+) of (\d+) steps complete$/u);
     if (match) return "已完成 " + match[1] + " / " + match[2] + " 个步骤";
     match = text.match(/^(\d+) active workers?$/u);
@@ -297,7 +322,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (match) return "已关联 " + match[1] + " 条证据";
     if (text.startsWith("Live · ")) return "实时 · " + text.slice(7);
     if (text.startsWith("Selected · ")) return "已选择 · " + text.slice(11);
-    if (text.startsWith("Run · ")) return "任务 · " + text.slice(6);
+    if (text.startsWith("Run ID · ")) return "运行 ID · " + text.slice(9);
     if (text.startsWith("Status · ")) return "状态 · " + localize(text.slice(9));
     if (text.startsWith("Owner · ")) return "负责人 · " + text.slice(8);
     if (text.startsWith("Runtime · ")) return "运行时 · " + text.slice(10);
@@ -305,6 +330,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (text.startsWith("Duration · ")) return "耗时 · " + text.slice(11);
     if (text.startsWith("Tools · ")) return "工具 · " + text.slice(8);
     if (text.startsWith("Tokens · ")) return "输出 · " + text.slice(9);
+    if (text.startsWith("Loadout · ")) return "能力装载 · " + localize(text.slice(10));
     if (text.startsWith("Prompt era · ")) return "提示词阶段 · " + text.slice(13);
     if (text.startsWith("Source · ")) return "来源 · " + text.slice(9);
     if (text.startsWith("Run snapshot updated: ")) return "运行快照已更新：" + text.slice(22);
@@ -344,6 +370,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const projectSelect = app.querySelector("[data-live-project-select]");
   const sessionSelect = app.querySelector("[data-live-session-select]");
   const sessionList = app.querySelector("[data-live-session-list]");
+  const sessionSearch = app.querySelector("[data-live-session-search]");
   const hubStatus = app.querySelector("[data-live-hub-status]");
   const workViewTabs = [...app.querySelectorAll("[data-live-work-view]")];
   const repositoryView = app.querySelector("[data-live-repository-view]");
@@ -355,6 +382,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const workspaceTitle = app.querySelector("[data-live-workspace-title]");
   const workspaceBoundary = app.querySelector("[data-live-workspace-boundary]");
   const workspaceFacts = app.querySelector("[data-live-workspace-facts]");
+  const workspaceSessionList = app.querySelector("[data-live-workspace-session-list]");
+  const workspaceBoard = app.querySelector("[data-live-workspace-board]");
+  const workspaceDetail = app.querySelector("[data-live-workspace-detail]");
+  const workspaceOpenSessions = app.querySelector("[data-live-workspace-open-sessions]");
+  const workspaceOpenRunMap = app.querySelector("[data-live-workspace-open-run-map]");
   const stateLabel = app.querySelector("[data-live-state-label]");
   const stateChip = app.querySelector("[data-live-state]");
   const title = app.querySelector(".top-run-context [data-live-run-title]");
@@ -461,6 +493,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     positions: new Map(),
     nodeElements: new Map(),
     edgeElements: new Map(),
+    edgeEffects: new Map(),
     bounds: { width: 1, height: 1 },
   };
   let camera = { x: 0, y: 0, scale: 1 };
@@ -468,6 +501,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let projectCatalog = [];
   let selectedProjectId = "";
   let selectedRunId = "";
+  let sessionSearchQuery = "";
+  let showUnlinkedSessions = false;
   let catalogAvailable = false;
   let catalogRequestInFlight = false;
   let catalogRefreshTimer = null;
@@ -477,9 +512,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const modalBackgroundState = new Map();
   let currentWorkView = "run";
   let currentInspectorTab = "summary";
+  const demoMode = new URL(window.location.href).searchParams.get("demo") === "states" ? "states" : "";
 
   const statuses = new Set(["live", "stale", "in_doubt"]);
   const nodeStatuses = new Set(["running", "completed", "skipped", "failed", "blocked", "in_doubt", "queued"]);
+  const EXECUTION_EDGE_KINDS = new Set(["sequence", "depends_on", "dependency", "fork", "join", "blocks", "execution", "invokes"]);
+  const STRUCTURAL_EDGE_KINDS = new Set(["contains"]);
   const controlActions = ["pause", "resume", "reassign", "handoff"];
   const SNAPSHOT_COALESCE_MS = 75;
   const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -556,10 +594,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   initialControlConfig = readEmbeddedControlConfig();
 
+  /**
+   * Render a snapshot value as text. The fallback argument is honoured verbatim,
+   * including an empty string: a caller that asks for "nothing when absent"
+   * must not get
+   * the placeholder glyph back. Substituting the placeholder for every absent
+   * value is what put stray dashes inside structural spans, let "—" flow into
+   * URL parameters and Date parsing, and forced downstream guards to filter the
+   * placeholder string back out in order to recognise a real value.
+   */
   function display(value, fallback) {
-    if (value === null || value === undefined || value === "") return fallback || "—";
+    const placeholder = fallback === undefined ? DISPLAY_FORMAT.emptyPlaceholder : fallback;
+    if (value === null || value === undefined || value === "") return placeholder;
     const text = String(value).normalize("NFKC").replace(/[\u0000-\u001f\u007f]/gu, " ").trim();
-    return text.slice(0, 240) || (fallback || "—");
+    return text.slice(0, 240) || placeholder;
   }
 
   function numberOr(value, fallback) {
@@ -596,6 +644,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (status === "in_doubt") return "in_doubt";
     if (status === "blocked") return "blocked";
     return nodeStatuses.has(status) ? status : "queued";
+  }
+
+  function normalizedRunDisplayState(runInput, fallback) {
+    const state = display(firstValue(runInput, ["displayState", "publicState"], fallback), "unknown")
+      .toLowerCase().replace(/[\s-]+/gu, "_");
+    if (state === "unknown" && runInput?.active !== true) return "unreported";
+    return state;
   }
 
   function summarizeTerminalEvidence(value) {
@@ -640,6 +695,101 @@ const CLIENT_SCRIPT = String.raw`(() => {
     };
   }
 
+  function capabilityNames(value) {
+    return Array.isArray(value)
+      ? [...new Set(value.slice(0, 24).map((item) => display(item, "")).filter(Boolean))]
+      : [];
+  }
+
+  const NODE_CAPABILITY_KINDS = ["agent", "skill", "mcp", "command", "runtime_tool", "hook", "plugin", "memory_graph", "dependency"];
+
+  function normalizeNodeCapabilityTruth(item, loadout) {
+    const rawInput = item?.capabilityTruth;
+    const input = Array.isArray(rawInput)
+      ? rawInput
+      : rawInput && typeof rawInput === "object"
+        ? Object.entries(rawInput).map(([kind, record]) => ({ kind, ...(record && typeof record === "object" ? record : {}) }))
+        : [];
+    const agentName = display(firstValue(item, ["agent", "ownerAgent", "owner"], ""), "");
+    const plannedDefaults = {
+      agent: usefulNodeMeta(agentName) ? [agentName] : [],
+      skill: loadout.skillNames,
+      mcp: loadout.mcpNames,
+      command: loadout.commandNames,
+      runtime_tool: loadout.toolNames,
+      hook: loadout.hookNames,
+      plugin: loadout.pluginNames,
+      memory_graph: loadout.memoryGraphNames,
+      dependency: loadout.dependencyNames,
+    };
+    return NODE_CAPABILITY_KINDS.flatMap((kind) => {
+      const record = input.find((candidate) => candidate?.kind === kind) || {};
+      const explicitPlannedNames = capabilityNames(record.plannedNames);
+      const plannedNames = explicitPlannedNames.length ? explicitPlannedNames : capabilityNames(plannedDefaults[kind]);
+      const actualNames = record.state === "observed" && record.observation === "trusted_host_evidence"
+        ? capabilityNames(record.actualNames)
+        : [];
+      const downgradedNames = actualNames.length
+        ? plannedNames
+        : capabilityNames([...plannedNames, ...capabilityNames(record.actualNames)]);
+      if (!downgradedNames.length && !actualNames.length) return [];
+      return [{
+        kind,
+        state: actualNames.length ? "observed" : downgradedNames.length ? "planned" : "unavailable",
+        plannedNames: downgradedNames,
+        actualNames,
+      }];
+    });
+  }
+
+  /**
+   * Re-normalize the scheduling block the observer sent.
+   *
+   * The page never infers wave order. It only renders what the projection
+   * already resolved, and it pins the provenance label to "planned" locally too:
+   * a wave list is a declared order, so no payload may talk the page into
+   * presenting it as observed execution.
+   */
+  function normalizeScheduling(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+    const capacityInput = input.capacity && typeof input.capacity === "object" && !Array.isArray(input.capacity) ? input.capacity : {};
+    const waves = (Array.isArray(input.waves) ? input.waves : []).slice(0, 32).map((item, index) => {
+      const wave = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+      const nodeIds = (Array.isArray(wave.nodeIds) ? wave.nodeIds : []).slice(0, 32)
+        .map((value) => display(value, ""))
+        .filter(Boolean);
+      return {
+        waveId: display(wave.waveId, "wave-" + (index + 1)),
+        waveIndex: Math.max(1, numberOr(wave.waveIndex, index + 1)),
+        mode: display(wave.mode, "unspecified_wave"),
+        declaredParallelCount: nullableCount(wave.declaredParallelCount),
+        nodeIds,
+        mappedCount: nodeIds.length,
+        unmappedCount: Math.max(0, numberOr(wave.unmappedCount, 0)),
+        mergeOwner: display(wave.mergeOwner, ""),
+      };
+    });
+    if (!waves.length && !Number.isFinite(nullableCount(capacityInput.maxParallelAgents))) return null;
+    return {
+      provenance: "planned",
+      capacity: {
+        maxParallelAgents: nullableCount(capacityInput.maxParallelAgents),
+        requestedParallelAgents: nullableCount(capacityInput.requestedParallelAgents),
+        runtimeCapacity: nullableCount(capacityInput.runtimeCapacity),
+        capacitySourceKind: display(capacityInput.capacitySourceKind, "unspecified"),
+        throttled: capacityInput.throttled === true,
+      },
+      waves,
+      waveCount: waves.length,
+      declaredWaveCount: Math.max(waves.length, numberOr(input.declaredWaveCount, waves.length)),
+      coverage: {
+        declaredTaskCount: Math.max(0, numberOr(input.coverage?.declaredTaskCount, 0)),
+        mappedNodeCount: waves.reduce((total, wave) => total + wave.mappedCount, 0),
+        complete: input.coverage?.complete === true,
+      },
+    };
+  }
+
   function normalizeSnapshot(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return null;
     const hasRun = Boolean(input.run && typeof input.run === "object" && !Array.isArray(input.run));
@@ -677,13 +827,37 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // DOM without limit.
     const nodes = nodeInput.slice(0, 128).map((node, index) => {
       const item = node && typeof node === "object" ? node : {};
+      const loadoutValue = item.loadout && typeof item.loadout === "object" ? item.loadout : {};
+      const loadout = {
+        skills: Math.max(0, numberOr(loadoutValue.skills, 0)),
+        mcp: Math.max(0, numberOr(loadoutValue.mcp, 0)),
+        tools: Math.max(0, numberOr(loadoutValue.tools, 0)),
+        commands: Math.max(0, numberOr(loadoutValue.commands, 0)),
+        hooks: Math.max(0, numberOr(loadoutValue.hooks, 0)),
+        plugins: Math.max(0, numberOr(loadoutValue.plugins, 0)),
+        memoryGraph: Math.max(0, numberOr(loadoutValue.memoryGraph, 0)),
+        dependencies: Math.max(0, numberOr(loadoutValue.dependencies, 0)),
+        skillNames: capabilityNames(loadoutValue.skillNames),
+        mcpNames: capabilityNames(loadoutValue.mcpNames),
+        toolNames: capabilityNames(loadoutValue.toolNames),
+        commandNames: capabilityNames(loadoutValue.commandNames),
+        hookNames: capabilityNames(loadoutValue.hookNames),
+        pluginNames: capabilityNames(loadoutValue.pluginNames),
+        memoryGraphNames: capabilityNames(loadoutValue.memoryGraphNames),
+        dependencyNames: capabilityNames(loadoutValue.dependencyNames),
+      };
       return {
         id: display(firstValue(item, ["id", "nodeId"], "node-" + (index + 1)), "node-" + (index + 1)),
         label: display(firstValue(item, ["label", "title", "name", "nodeId"], "Untitled task"), "Untitled task"),
         kind: display(firstValue(item, ["kind", "nodeKind", "type"], "worker"), "worker").toLowerCase().replace(/[\s-]+/gu, "_"),
+        isMain: item.isMain === true,
+        stage: display(firstValue(item, ["stage", "chapter", "phase"], ""), "").toLowerCase().replace(/[\s_]+/gu, "-"),
         status: normalizedNodeStatus(firstValue(item, ["status", "state"], "queued")),
+        displayState: display(firstValue(item, ["displayState", "publicState"], firstValue(item, ["status", "state"], "unknown")), "unknown").toLowerCase().replace(/[\s-]+/gu, "_"),
+        statusReason: display(firstValue(item, ["statusReason", "stateReason"], ""), ""),
+        active: item.active === true,
         role: display(firstValue(item, ["roleDisplayName", "role", "ownerRole"], "worker"), "worker"),
-        agent: display(firstValue(item, ["agent", "ownerAgent", "owner"], "—"), "—"),
+        agent: display(firstValue(item, ["agent", "ownerAgent", "owner"])),
         runtime: display(firstValue(item, ["runtime", "runtimeId", "runtimeInstanceAlias"], "local"), "local"),
         modelName: display(firstValue(item, ["modelName", "model", "providerModel"], ""), ""),
         summary: display(firstValue(item, ["summary", "description", "message"], "No task detail available"), "No task detail available"),
@@ -698,19 +872,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
         terminalEvidence: summarizeTerminalEvidence(firstValue(item, ["terminalEvidence", "completionEvidence", "resultSummary"], "")),
         toolCount: Math.max(0, numberOr(firstValue(item, ["toolCount", "toolsUsed", "toolCalls"], 0), 0)),
         latestTool: display(firstValue(item, ["latestTool", "lastTool", "activeTool"], ""), ""),
-        loadout: (() => {
-          const value = item.loadout && typeof item.loadout === "object" ? item.loadout : {};
-          return {
-            skills: Math.max(0, numberOr(value.skills, 0)),
-            mcp: Math.max(0, numberOr(value.mcp, 0)),
-            tools: Math.max(0, numberOr(value.tools, 0)),
-            commands: Math.max(0, numberOr(value.commands, 0)),
-            skillNames: Array.isArray(value.skillNames) ? value.skillNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
-            mcpNames: Array.isArray(value.mcpNames) ? value.mcpNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
-            toolNames: Array.isArray(value.toolNames) ? value.toolNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
-            commandNames: Array.isArray(value.commandNames) ? value.commandNames.slice(0, 24).map((item) => display(item, "")).filter(Boolean) : [],
-          };
-        })(),
+        loadout,
+        capabilityTruth: normalizeNodeCapabilityTruth(item, loadout),
         evidenceCount: Math.max(0, numberOr(firstValue(item, ["evidenceCount", "evidenceItems"], 0), 0)),
         progress: numberOr(firstValue(item, ["progress", "progressPercent"], null), null),
         task: display(firstValue(item, ["task", "scope", "purpose"], ""), ""),
@@ -726,6 +889,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         id: display(firstValue(item, ["id", "edgeId"], "edge-" + (index + 1)), "edge-" + (index + 1)),
         from: display(firstValue(item, ["from", "source", "sourceId"], ""), ""),
         to: targetId,
+        kind: display(firstValue(item, ["kind", "relation", "type"], "sequence"), "sequence").toLowerCase().replace(/[\s-]+/gu, "_"),
         // Services commonly omit edge status. The target node is the source
         // of truth for liveness in that case, so running edges still flow.
         status: explicitStatus === null || explicitStatus === undefined || explicitStatus === ""
@@ -738,6 +902,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       id: "parent-edge-" + (index + 1),
       from: node.parentId,
       to: node.id,
+      kind: "contains",
       status: node.status,
     }));
     const edges = [...explicitEdges, ...inferredEdges].slice(0, 256);
@@ -821,13 +986,21 @@ const CLIENT_SCRIPT = String.raw`(() => {
         title: display(firstValue(runInput, ["title", "name", "label"], "Live execution"), "Live execution"),
         task: display(firstValue(runInput, ["task", "description", "summary"], input.task), "Governed execution"),
         status: normalizedStatus(firstValue(runInput, ["status", "state", "runStatus"], input.status)),
+        displayState: normalizedRunDisplayState(runInput, firstValue(runInput, ["status", "state", "runStatus"], input.status)),
+        statusReason: display(firstValue(runInput, ["statusReason", "stateReason"], ""), ""),
+        active: runInput.active === true,
+        sourceRuntime: display(firstValue(runInput, ["sourceRuntime", "runtime"], firstValue(sessionInput, ["sourceRuntime", "runtime"], "unknown")), "unknown"),
+        conversationLinkState: display(firstValue(runInput, ["conversationLinkState"], firstValue(sessionInput, ["conversationLinkState"], "unlinked")), "unlinked").toLowerCase(),
+        verifiedLinks: Array.isArray(runInput.verifiedLinks) ? runInput.verifiedLinks.slice(0, 16) : [],
+        candidateLinks: Array.isArray(runInput.candidateLinks) ? runInput.candidateLinks.slice(0, 16) : [],
         stage: display(firstValue(runInput, ["stage", "currentStage", "phase"], "Observing"), "Observing"),
         currentStage: display(firstValue(runInput, ["currentStage", "stage", "phase"], "Observing"), "Observing"),
-        startedAt: display(firstValue(runInput, ["startedAt", "startTime"], "—"), "—"),
-        updatedAt: display(firstValue(runInput, ["updatedAt", "lastUpdatedAt", "observedAt"], "—"), "—"),
+        startedAt: display(firstValue(runInput, ["startedAt", "startTime"])),
+        updatedAt: display(firstValue(runInput, ["updatedAt", "lastUpdatedAt", "observedAt"])),
         transport: display(firstValue(runInput, ["transport", "sourceTransport"], "snapshot"), "snapshot"),
         eventIndex,
         eventCount,
+        demoMode: runInput.demoMode === true,
       } : null,
       sessionInfo: {
         title: display(firstValue(sessionInput, ["title", "name"], firstValue(runInput, ["title", "name"], "Live execution")), "Live execution"),
@@ -882,6 +1055,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
           evidenceRefs: Array.isArray(record.evidenceRefs) ? record.evidenceRefs.slice(0, 24).map((value) => display(value, "")).filter(Boolean) : [],
         };
       }),
+      scheduling: normalizeScheduling(input.scheduling),
       nodes,
       edges,
       evidence,
@@ -903,6 +1077,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (element) element.textContent = localize(display(value, fallback));
   }
 
+  /**
+   * Compose one "Label · value" inspector fact. An absent value renders the
+   * configured placeholder, so the inspector cannot disagree with the rest of
+   * the page about what "no value" looks like.
+   *
+   * The separator stays literal here on purpose: localize() recognises these
+   * facts by their English prefix and slices past it by a fixed offset, so a
+   * configurable separator would silently break every one of those branches.
+   */
+  function labeledFact(label, value) {
+    return label + " · " + display(value);
+  }
+
   function makeElement(tagName, className, value) {
     const element = document.createElement(tagName);
     if (className) element.className = className;
@@ -910,8 +1097,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return element;
   }
 
+  /**
+   * Format an observed timestamp, or return an empty string when none was
+   * observed. Minting the placeholder here pushed the glyph into time elements,
+   * aria labels and concatenated sentences, where it reads as though a time had
+   * been recorded. Callers that want a visible empty slot ask for one.
+   */
   function formatTime(value) {
-    const text = display(value, "—");
+    const text = display(value, "");
+    if (text === "") return "";
     const date = new Date(text);
     if (!Number.isNaN(date.getTime())) {
       try {
@@ -923,10 +1117,24 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return text;
   }
 
+  /**
+   * Append the observed time of a row, and nothing at all when the row carries no
+   * timestamp. An empty time element has no machine-readable value and announces
+   * the placeholder glyph as if it were a time.
+   */
+  function appendObservedTime(parent, value) {
+    const iso = display(value, "");
+    if (!parent || iso === "") return;
+    const element = makeElement("time", "evidence-time", formatTime(iso));
+    const parsed = new Date(iso);
+    if (!Number.isNaN(parsed.getTime())) element.dateTime = parsed.toISOString();
+    parent.append(element);
+  }
+
   function formatDuration(firstAt, lastAt) {
     const startedAt = new Date(display(firstAt, ""));
     const endedAt = new Date(display(lastAt, ""));
-    if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) return "—";
+    if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) return DISPLAY_FORMAT.emptyPlaceholder;
     const milliseconds = Math.max(0, endedAt.getTime() - startedAt.getTime());
     if (milliseconds < 1000) return milliseconds + " ms";
     const seconds = Math.round(milliseconds / 1000);
@@ -951,6 +1159,67 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
+  function generatedRunTitle(title) {
+    const value = display(title, "").trim();
+    return !value || /^(?:run\s+[a-z0-9-]{6,}|active governed run|governed task|live execution|observed execution)$/iu.test(value);
+  }
+
+  function sessionIsIdentified(session) {
+    return session?.identificationState === "descriptive"
+      || session?.conversationLinkState === "verified"
+      || (!generatedRunTitle(session?.title) && session?.titleSource !== "generated_run_id");
+  }
+
+  function conversationLinkCopy(state) {
+    if (state === "verified") return currentLanguage === "zh" ? "已确认关联" : "Verified link";
+    if (state === "candidate") return currentLanguage === "zh" ? "可能相关 · 未验证" : "Possible match · unverified";
+    return currentLanguage === "zh" ? "未关联聊天" : "Not linked to a chat";
+  }
+
+  function nodeDisplayState(node) {
+    const state = display(node?.displayState, "").toLowerCase().replace(/[\s-]+/gu, "_");
+    if (["active", "queued", "completed", "failed", "blocked", "cancelled", "unreported"].includes(state)) return state;
+    // Legacy structural records often carry a generic unknown value. Once the
+    // run is inactive, the exact public truth is that no execution writeback
+    // was received, rather than an unexplained status.
+    if (state === "unknown" && node?.active !== true && !["completed", "failed", "blocked", "cancelled"].includes(node?.status)) return "unreported";
+    if (state === "unknown") return "unknown";
+    if (node?.active === true && ["pending", "queued"].includes(node?.status)) return "queued";
+    // Inactive pending data is structural planning, not a live queue entry.
+    if (node?.active !== true && ["pending", "queued"].includes(node?.status)) return "unreported";
+    if (node?.status === "running") return "active";
+    if (["completed", "failed", "blocked", "cancelled"].includes(node?.status)) return node.status;
+    return "unknown";
+  }
+
+  function nodeStateCopy(node) {
+    const state = nodeDisplayState(node);
+    if (state === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
+    if (state === "unknown") return currentLanguage === "zh" ? "状态未知" : "Unknown state";
+    if (state === "active") return currentLanguage === "zh" ? "执行中" : "Running";
+    if (state === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
+    return stateCopy(state);
+  }
+
+  function sourceRuntimeLabel(value) {
+    const runtime = display(value, "unknown").toLowerCase();
+    if (runtime === "demo") return currentLanguage === "zh" ? "本地状态演示" : "Local state demo";
+    if (runtime === "claude") return "Claude Code";
+    if (runtime === "codex") return "Codex";
+    if (runtime === "cursor") return "Cursor";
+    if (runtime === "openclaw") return "OpenClaw";
+    return currentLanguage === "zh" ? "来源未知" : "Unknown source";
+  }
+
+  function sessionDisplayTitle(session) {
+    if (sessionIsIdentified(session)) return session.title;
+    return currentLanguage === "zh" ? "未关联聊天的运行记录" : "Run not linked to a chat";
+  }
+
+  function sessionShortId(session) {
+    return shortenIdentifier(display(session?.runId, ""), DISPLAY_FORMAT.identifierShortForm);
+  }
+
   function stateCopy(status) {
     if (status === "live") return localize("Live");
     if (status === "in_doubt") return localize("In doubt");
@@ -960,6 +1229,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (status === "failed") return localize("Failed");
     if (status === "blocked") return localize("Blocked");
     if (status === "skipped") return localize("Skipped");
+    if (status === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
+    if (status === "unknown") return currentLanguage === "zh" ? "状态未知" : "Unknown state";
+    if (status === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
+    if (status === "active") return currentLanguage === "zh" ? "执行中" : "Running";
     return localize("Stale");
   }
 
@@ -972,42 +1245,194 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(title, snapshot.run.title, "Live execution");
     setText(contextTitle, snapshot.run.title, "Live execution");
     setText(statusTitle, snapshot.run.title, "Live execution");
-    setText(runId, "Run · " + snapshot.run.id.slice(-8), "unidentified run");
+    const shortRunId = shortenIdentifier(snapshot.run.id, DISPLAY_FORMAT.identifierShortForm);
+    setText(runId, shortRunId === "" ? "" : "Run ID · " + shortRunId, "unidentified run");
     setText(stage, snapshot.run.stage, "Observing");
-    setText(started, formatTime(snapshot.run.startedAt), "—");
-    setText(updated, formatTime(snapshot.run.updatedAt), "—");
+    setText(started, formatTime(snapshot.run.startedAt));
+    setText(updated, formatTime(snapshot.run.updatedAt));
     setText(source, snapshot.source, "local observer");
     const activeWorkers = new Set(graphNodesForSnapshot(snapshot)
       .filter((node) => ["running", "active"].includes(node.status))
       .map((node) => node.agent)
       .filter(Boolean));
-    setText(runProgress, "Event " + snapshot.run.eventIndex + " of " + snapshot.run.eventCount, "—");
+    setText(runProgress, "Event " + snapshot.run.eventIndex + " of " + snapshot.run.eventCount);
     setText(runWorkers, activeWorkers.size
       ? activeWorkers.size + " active worker" + (activeWorkers.size === 1 ? "" : "s")
-      : "No active workers", "—");
+      : "No active workers");
     setText(nodeCount, graphNodesForSnapshot(snapshot).length + " nodes", "0 nodes");
     setText(contextTask, snapshot.run.task, "Governed execution");
     setText(contextStage, snapshot.run.stage, "in_doubt");
     setText(contextStatus, stateCopy(snapshot.run.status), "In doubt");
-    setText(contextUpdated, formatTime(snapshot.run.updatedAt), "—");
-    setText(contextSource, snapshot.source, "local observer");
+    setText(contextUpdated, formatTime(snapshot.run.updatedAt));
+    setText(contextSource, snapshot.run.demoMode
+      ? (currentLanguage === "zh" ? "演示数据 · 非真实运行" : "Demo data · not a real run")
+      : sourceRuntimeLabel(snapshot.run.sourceRuntime) + " · " + conversationLinkCopy(snapshot.run.conversationLinkState), "local observer");
     setText(contextNodes, String(graphNodesForSnapshot(snapshot).length), "0");
     setText(contextEvents, String(snapshot.run.eventCount || snapshot.replay.length || 0), "0");
     setText(contextEvidence, String(snapshot.evidence.length || 0), "0");
-    const status = snapshot.run.status;
+    const status = snapshot.run.displayState || snapshot.run.status;
     if (stateChip) stateChip.dataset.state = status;
     setText(stateLabel, stateCopy(status), "Stale");
     if (liveRegion) liveRegion.textContent = localize("Run snapshot updated: " + snapshot.run.title);
-    if (lastUpdate) lastUpdate.textContent = localize("Last observed " + formatTime(snapshot.run.updatedAt));
+    if (lastUpdate) {
+      const observedAt = formatTime(snapshot.run.updatedAt);
+      lastUpdate.textContent = observedAt === ""
+        ? localize("No observation recorded yet")
+        : localize("Last observed " + observedAt);
+    }
+  }
+
+  function buildStateDemoSnapshot() {
+    const now = new Date().toISOString();
+    const nodes = [
+      {
+        id: "demo-owner",
+        isMain: true,
+        label: currentLanguage === "zh" ? "任务已受理" : "Request accepted",
+        kind: "main_agent",
+        status: "completed",
+        displayState: "completed",
+        roleDisplayName: "operator",
+        ownerAgent: "meta-warden",
+        summary: currentLanguage === "zh" ? "目标与验收标准已确认" : "Goal and acceptance criteria confirmed",
+        task: currentLanguage === "zh" ? "建立可验证的混合状态执行图" : "Build a verifiable mixed-state execution graph",
+        evidenceCount: 1,
+      },
+      {
+        id: "demo-requirements",
+        parentId: "demo-owner",
+        label: currentLanguage === "zh" ? "需求分析" : "Requirements analysis",
+        kind: "worker",
+        status: "completed",
+        displayState: "completed",
+        roleDisplayName: "analysis",
+        ownerAgent: "business-analyst",
+        summary: currentLanguage === "zh" ? "已完成 · 结果已回写" : "Completed · result written back",
+        task: currentLanguage === "zh" ? "确认业务目标和展示范围" : "Confirm goals and display scope",
+        firstAt: "2026-08-31T00:00:01.000Z",
+        evidenceCount: 2,
+      },
+      {
+        id: "demo-plan",
+        parentId: "demo-requirements",
+        label: currentLanguage === "zh" ? "执行编排" : "Execution orchestration",
+        kind: "workflow",
+        status: "completed",
+        displayState: "completed",
+        roleDisplayName: "conductor",
+        ownerAgent: "meta-conductor",
+        summary: currentLanguage === "zh" ? "串行主链 + 2 条并行执行分支" : "Serial spine with two parallel execution branches",
+        task: currentLanguage === "zh" ? "按真实依赖编排执行顺序" : "Orchestrate execution by real dependencies",
+        evidenceCount: 1,
+      },
+      {
+        id: "demo-running-ui",
+        parentId: "demo-plan",
+        label: currentLanguage === "zh" ? "界面实现" : "UI implementation",
+        kind: "worker",
+        status: "running",
+        displayState: "active",
+        active: true,
+        roleDisplayName: "frontend",
+        ownerAgent: "frontend-developer",
+        summary: currentLanguage === "zh" ? "执行中 · 正在还原界面" : "Running · implementing the interface",
+        task: currentLanguage === "zh" ? "实现节点布局与状态视觉" : "Implement node layout and state visuals",
+        firstAt: "2026-08-31T00:00:02.000Z",
+        toolCount: 2,
+        latestTool: "apply_patch",
+      },
+      {
+        id: "demo-running-test",
+        parentId: "demo-plan",
+        label: currentLanguage === "zh" ? "状态验证" : "State verification",
+        kind: "worker",
+        status: "running",
+        displayState: "active",
+        active: true,
+        roleDisplayName: "test",
+        ownerAgent: "test-automator",
+        summary: currentLanguage === "zh" ? "执行中 · 检查状态与连线" : "Running · checking states and edges",
+        task: currentLanguage === "zh" ? "验证动画只出现在真实执行分支" : "Verify animation only appears on active branches",
+        firstAt: "2026-08-31T00:00:03.000Z",
+        toolCount: 1,
+        latestTool: "browser",
+      },
+      {
+        id: "demo-queued",
+        parentId: "demo-running-test",
+        label: currentLanguage === "zh" ? "独立审查" : "Independent review",
+        kind: "worker",
+        status: "queued",
+        displayState: "queued",
+        active: true,
+        roleDisplayName: "review",
+        ownerAgent: "meta-prism",
+        summary: currentLanguage === "zh" ? "排队 · 等待实现完成" : "Queued · waiting for implementation",
+        task: currentLanguage === "zh" ? "检查布局、状态真值和交互" : "Review layout, state truth, and interaction",
+        firstAt: "2026-08-31T00:00:04.000Z",
+      },
+      {
+        id: "demo-blocked",
+        parentId: "demo-queued",
+        label: currentLanguage === "zh" ? "发布验收" : "Release acceptance",
+        kind: "worker",
+        status: "blocked",
+        displayState: "blocked",
+        roleDisplayName: "verify",
+        ownerAgent: "meta-sentinel",
+        summary: currentLanguage === "zh" ? "已阻塞 · 等待审查证据" : "Blocked · waiting for review evidence",
+        statusReason: currentLanguage === "zh" ? "前置审查尚未完成" : "Prerequisite review has not completed",
+        task: currentLanguage === "zh" ? "完成最终发布验收" : "Complete final release acceptance",
+        firstAt: "2026-08-31T00:00:05.000Z",
+      },
+    ];
+    return {
+      schemaVersion: "state-demo-v1",
+      source: { kind: "demo", label: currentLanguage === "zh" ? "本地状态演示" : "Local state demo" },
+      run: {
+        id: "demo-mixed-states",
+        title: currentLanguage === "zh" ? "状态演示 · 完成、执行中、排队与阻塞" : "State demo · completed, running, queued, and blocked",
+        task: currentLanguage === "zh" ? "这是一条只用于验证界面状态和连线动画的演示数据，不是真实任务。" : "This is demo data for validating UI states and edge animation, not a real task.",
+        status: "live",
+        displayState: "live",
+        active: true,
+        demoMode: true,
+        sourceRuntime: "demo",
+        conversationLinkState: "unlinked",
+        stage: "Execution",
+        currentStage: "Execution",
+        startedAt: now,
+        updatedAt: now,
+        eventIndex: 5,
+        eventCount: 7,
+      },
+      nodes,
+      edges: [
+        { id: "demo-edge-1", from: "demo-owner", to: "demo-requirements", kind: "sequence", status: "completed" },
+        { id: "demo-edge-2", from: "demo-requirements", to: "demo-plan", kind: "sequence", status: "completed" },
+        { id: "demo-edge-3", from: "demo-plan", to: "demo-running-ui", kind: "fork", status: "running" },
+        { id: "demo-edge-4", from: "demo-plan", to: "demo-running-test", kind: "fork", status: "running" },
+        { id: "demo-edge-5", from: "demo-running-ui", to: "demo-queued", kind: "depends_on", status: "queued" },
+        { id: "demo-edge-6", from: "demo-running-test", to: "demo-queued", kind: "depends_on", status: "queued" },
+        { id: "demo-edge-7", from: "demo-queued", to: "demo-blocked", kind: "depends_on", status: "blocked" },
+      ],
+      evidence: [
+        { id: "demo-evidence-1", label: currentLanguage === "zh" ? "需求分析结果" : "Requirements result", status: "verified", nodeId: "demo-requirements", summary: currentLanguage === "zh" ? "演示完成态证据" : "Demo completion evidence" },
+      ],
+      replay: { events: [nodes[0], nodes[1], nodes[2], nodes[5], nodes[6], nodes[3], nodes[4]].map((node, index) => ({ id: "demo-event-" + index, nodeId: node.id, label: node.summary, status: node.status, kind: node.kind, visibility: "visible", timestamp: new Date(Date.now() - (nodes.length - index) * 15000).toISOString() })) },
+      permissions: { readOnly: true, canMutate: false },
+    };
   }
 
   function nodeClass(status) {
+    if (["active", "in_progress", "executing"].includes(status)) return "running";
     return status === "in_doubt" ? "in-doubt" : status;
   }
 
   function usefulNodeMeta(value) {
     const normalized = display(value, "").trim().toLowerCase();
-    return normalized && !["—", "unknown", "unavailable", "in_doubt", "in doubt", "unassigned", "local"].includes(normalized);
+    if (!normalized || normalized === DISPLAY_FORMAT.emptyPlaceholder) return false;
+    return !DISPLAY_FORMAT.nonInformativeValues.includes(normalized);
   }
 
   function edgeMarkerId(status) {
@@ -1042,6 +1467,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return snapshot.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
   }
 
+  function nodeCapabilityCount(node) {
+    return Array.isArray(node?.capabilityTruth)
+      ? node.capabilityTruth.filter((record) => record && ["planned", "observed"].includes(record.state)
+        && (record.plannedNames?.length || record.actualNames?.length)).length
+      : 0;
+  }
+
+  function estimatedNodeCardHeight(node) {
+    const capabilityRows = Math.ceil(nodeCapabilityCount(node) / 2);
+    // Reserve the measured desktop height so the centred fanout child does
+    // not get nudged onto a different row after the cards render.
+    return Math.max(220, 112 + capabilityRows * 40);
+  }
+
   function layoutGraph(snapshot) {
     const nodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, nodes);
@@ -1051,11 +1490,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const stageFor = new Map();
     const branchSlots = new Map();
     const positions = new Map();
-    const cardWidth = 168;
-    const cardHeight = 116;
+    const cardWidth = 228;
+    const entityCardWidth = 252;
+    const entityColumnStep = layoutMode === "compact" ? 356 : 384;
+    const entityRowGap = layoutMode === "compact" ? 88 : 104;
     const spineColumns = layoutMode === "compact" ? 4 : 8;
-    const columnGap = layoutMode === "compact" ? 220 : 184;
-    const rowGap = layoutMode === "compact" ? 150 : 126;
+    const columnGap = layoutMode === "compact" ? 276 : 248;
+    const rowGap = layoutMode === "compact" ? 206 : 190;
     const top = 38;
     const spineRows = Math.ceil(STAGE_ORDER.length / spineColumns);
     const branchTop = top + spineRows * rowGap + 32;
@@ -1068,6 +1509,64 @@ const CLIENT_SCRIPT = String.raw`(() => {
       || nodes.some((node) => ["agent", "worker", "workflow", "group", "main_agent", "subagent"].includes(node.kind));
 
     if (entityGraph) {
+      // A high-fanout execution packet reads best as an organisation chart:
+      // the owner chain stays centred above one ordered row of parallel work.
+      // Keeping siblings on a single row makes their edge order monotonic, so
+      // branch curves cannot cross one another or pass behind sibling cards.
+      const childrenByParent = new Map();
+      for (const edge of graphEdges) {
+        const children = childrenByParent.get(edge.from) || [];
+        children.push(nodeById.get(edge.to));
+        childrenByParent.set(edge.from, children.filter(Boolean));
+      }
+      const fanoutEntry = [...childrenByParent.entries()]
+        .filter(([, children]) => children.length >= 4)
+        .sort((left, right) => right[1].length - left[1].length)[0];
+      if (fanoutEntry) {
+        const [hubId, fanoutChildren] = fanoutEntry;
+        const ancestorIds = [];
+        const ancestorSeen = new Set([hubId]);
+        let ancestorId = parentById.get(hubId) || nodeById.get(hubId)?.parentId;
+        while (ancestorId && nodeById.has(ancestorId) && !ancestorSeen.has(ancestorId)) {
+          ancestorSeen.add(ancestorId);
+          ancestorIds.unshift(ancestorId);
+          ancestorId = parentById.get(ancestorId) || nodeById.get(ancestorId)?.parentId;
+        }
+        const accountedIds = new Set([...ancestorIds, hubId, ...fanoutChildren.map((node) => node.id)]);
+        if (accountedIds.size === nodes.length) {
+          fanoutChildren.sort((left, right) => String(left.firstAt || "").localeCompare(String(right.firstAt || "")) || left.label.localeCompare(right.label));
+          const childStep = layoutMode === "compact" ? 328 : 356;
+          const childStartX = 44;
+          const childSpan = (fanoutChildren.length - 1) * childStep + entityCardWidth;
+          const centerX = childStartX + childSpan / 2 - entityCardWidth / 2;
+          const chain = [...ancestorIds.map((id) => nodeById.get(id)).filter(Boolean), nodeById.get(hubId)].filter(Boolean);
+          let chainY = 44;
+          for (const node of chain) {
+            const height = estimatedNodeCardHeight(node);
+            positions.set(node.id, { x: centerX, y: chainY, width: entityCardWidth, height, spine: true });
+            chainY += height + (layoutMode === "compact" ? 104 : 124);
+          }
+          const childY = chainY + (layoutMode === "compact" ? 28 : 44);
+          fanoutChildren.forEach((node, index) => {
+            positions.set(node.id, {
+              x: childStartX + index * childStep,
+              y: childY,
+              width: entityCardWidth,
+              height: estimatedNodeCardHeight(node),
+              spine: false,
+            });
+          });
+          const maxChildHeight = Math.max(...fanoutChildren.map(estimatedNodeCardHeight));
+          return {
+            kind: "fanout",
+            positions,
+            bounds: {
+              width: Math.max(760, childStartX + childSpan + 96),
+              height: Math.max(420, childY + maxChildHeight + 96),
+            },
+          };
+        }
+      }
       const depthById = new Map();
       function depthFor(id, seen = new Set()) {
         if (depthById.has(id)) return depthById.get(id);
@@ -1085,25 +1584,31 @@ const CLIENT_SCRIPT = String.raw`(() => {
         lane.push(node);
         lanes.set(depth, lane);
       }
-      for (const [depth, lane] of lanes) {
+      const orderedLanes = [...lanes.entries()].sort(([left], [right]) => left - right);
+      // Execution depth reads from left to right. Only nodes that truly share
+      // the same dependency depth are stacked in one column, so the graph
+      // distinguishes serial work from real parallel branches at a glance.
+      const laneHeights = new Map(orderedLanes.map(([depth, lane]) => [
+        depth,
+        lane.reduce((total, node) => total + estimatedNodeCardHeight(node), 0)
+          + Math.max(0, lane.length - 1) * entityRowGap,
+      ]));
+      const maxLaneHeight = Math.max(estimatedNodeCardHeight(nodes[0]), ...laneHeights.values());
+      for (const [depth, lane] of orderedLanes) {
         lane.sort((left, right) => String(left.firstAt || "").localeCompare(String(right.firstAt || "")) || left.label.localeCompare(right.label));
-        const sqrtColumns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(lane.length))));
-        const laneColumns = depth === 0 ? 1 : depth === 1 ? 1 : Math.max(sqrtColumns, Math.min(4, lane.length));
-        const laneStartX = [...lanes.entries()]
-          .filter(([candidateDepth]) => candidateDepth < depth)
-          .sort(([left], [right]) => left - right)
-          .reduce((offset, [, candidateLane]) => {
-            const candidateColumns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(candidateLane.length))));
-            return offset + Math.max(238, candidateColumns * 210 + 28);
-          }, 44);
-        lane.forEach((node, index) => {
+        const laneHeight = laneHeights.get(depth) || estimatedNodeCardHeight(lane[0]);
+        const laneX = 52 + depth * entityColumnStep;
+        let laneY = 44 + (maxLaneHeight - laneHeight) / 2;
+        lane.forEach((node) => {
+          const height = estimatedNodeCardHeight(node);
           positions.set(node.id, {
-            x: laneStartX + (index % laneColumns) * 210,
-            y: 42 + Math.floor(index / laneColumns) * 144,
-            width: 184,
-            height: cardHeight,
-            spine: depth === 0,
+            x: laneX,
+            y: laneY,
+            width: entityCardWidth,
+            height,
+            spine: lane.length === 1,
           });
+          laneY += height + entityRowGap;
         });
       }
       let maxX = 0;
@@ -1113,8 +1618,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
         maxY = Math.max(maxY, position.y + position.height);
       }
       return {
+        kind: "layered",
         positions,
-        bounds: { width: Math.max(680, maxX + 54), height: Math.max(360, maxY + 54) },
+        bounds: { width: Math.max(760, maxX + 96), height: Math.max(420, maxY + 96) },
       };
     }
 
@@ -1149,7 +1655,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
           x: 40 + visualColumn * columnGap,
           y: top + row * rowGap,
           width: cardWidth,
-          height: cardHeight,
+          height: estimatedNodeCardHeight(node),
           spine: true,
         });
       } else {
@@ -1167,7 +1673,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
           x: 40 + branchColumn * columnGap,
           y: branchTop,
           width: cardWidth,
-          height: cardHeight,
+          height: estimatedNodeCardHeight(node),
           spine: false,
         });
       }
@@ -1180,27 +1686,74 @@ const CLIENT_SCRIPT = String.raw`(() => {
       maxY = Math.max(maxY, position.y + position.height);
     }
     return {
+      kind: "stage",
       positions,
       bounds: {
-        width: Math.max(680, maxX + 42),
+        width: Math.max(760, maxX + 48),
         height: Math.max(300, maxY + 42),
       },
     };
   }
 
-  function edgeGeometry(from, to) {
+  function syncLayoutToRenderedCards(layout) {
+    const columns = new Map();
+    for (const [nodeId, position] of layout.positions) {
+      const card = graphState.nodeElements.get(nodeId);
+      if (!card) continue;
+      position.height = Math.max(position.height, Math.ceil(card.scrollHeight), Math.ceil(card.getBoundingClientRect().height));
+      const column = columns.get(position.x) || [];
+      column.push({ card, position });
+      columns.set(position.x, column);
+    }
+    for (const column of columns.values()) {
+      column.sort((left, right) => left.position.y - right.position.y);
+      let nextY = column[0]?.position.y || 0;
+      for (const item of column) {
+        item.position.y = Math.max(item.position.y, nextY);
+        item.card.style.top = item.position.y + "px";
+        item.card.style.minHeight = item.position.height + "px";
+        nextY = item.position.y + item.position.height + 88;
+      }
+    }
+    let maxX = 0;
+    let maxY = 0;
+    for (const position of layout.positions.values()) {
+      maxX = Math.max(maxX, position.x + position.width);
+      maxY = Math.max(maxY, position.y + position.height);
+    }
+    layout.bounds = { width: Math.max(760, maxX + 96), height: Math.max(420, maxY + 96) };
+    graphState.bounds = layout.bounds;
+    if (graphScene) {
+      graphScene.style.width = layout.bounds.width + "px";
+      graphScene.style.height = layout.bounds.height + "px";
+    }
+    if (edgeLayer) edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
+  }
+
+  function edgePortSlot(index, count, span) {
+    if (count <= 1) return span / 2;
+    const margin = Math.min(42, Math.max(24, span * .18));
+    return margin + ((span - margin * 2) * index) / Math.max(1, count - 1);
+  }
+
+  function edgeGeometry(from, to, ports = {}) {
+    const sourceIndex = Math.max(0, Number(ports.sourceIndex) || 0);
+    const sourceCount = Math.max(1, Number(ports.sourceCount) || 1);
+    const targetIndex = Math.max(0, Number(ports.targetIndex) || 0);
+    const targetCount = Math.max(1, Number(ports.targetCount) || 1);
     const fromCenterX = from.x + from.width / 2;
     const fromCenterY = from.y + from.height / 2;
     const toCenterX = to.x + to.width / 2;
     const toCenterY = to.y + to.height / 2;
     const deltaX = toCenterX - fromCenterX;
     const deltaY = toCenterY - fromCenterY;
-    const vertical = Math.abs(deltaY) > Math.abs(deltaX) * .72;
+    const vertical = (ports.layoutKind === "fanout" && deltaY >= 0 && from.spine === true && to.spine === false)
+      || Math.abs(deltaY) > Math.abs(deltaX) * .72;
     if (vertical) {
       const direction = deltaY >= 0 ? 1 : -1;
-      const x1 = fromCenterX;
+      const x1 = from.x + edgePortSlot(sourceIndex, sourceCount, from.width);
       const y1 = direction > 0 ? from.y + from.height : from.y;
-      const x2 = toCenterX;
+      const x2 = to.x + edgePortSlot(targetIndex, targetCount, to.width);
       const y2 = direction > 0 ? to.y : to.y + to.height;
       const distance = Math.max(30, Math.abs(y2 - y1) * .48);
       return {
@@ -1213,9 +1766,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     const direction = deltaX >= 0 ? 1 : -1;
     const x1 = direction > 0 ? from.x + from.width : from.x;
-    const y1 = fromCenterY;
+    const y1 = from.y + edgePortSlot(sourceIndex, sourceCount, from.height);
     const x2 = direction > 0 ? to.x : to.x + to.width;
-    const y2 = toCenterY;
+    const y2 = to.y + edgePortSlot(targetIndex, targetCount, to.height);
     const distance = Math.max(30, Math.abs(x2 - x1) * .48);
     return {
       x1,
@@ -1322,6 +1875,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (window.requestAnimationFrame) window.requestAnimationFrame(refreshCamera);
       else refreshCamera();
     }
+    app.querySelector(".work-view-menu")?.removeAttribute("open");
   }
 
   function setInspectorTab(tabName, { focus = false } = {}) {
@@ -1495,11 +2049,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const width = graph.clientWidth || 760;
     const height = graph.clientHeight || 420;
     const padding = 26;
-    const scale = Math.max(.42, Math.min(1.1, Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height)));
+    const fittedScale = Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height);
+    const minimumLegibleScale = width <= 1024 ? 1 : .68;
+    const scale = Math.max(minimumLegibleScale, Math.min(1.1, fittedScale));
+    const wholeGraphFits = fittedScale >= minimumLegibleScale;
     updateCamera({
       scale,
-      x: (width - graphState.bounds.width * scale) / 2,
-      y: (height - graphState.bounds.height * scale) / 2,
+      x: wholeGraphFits ? (width - graphState.bounds.width * scale) / 2 : padding,
+      y: wholeGraphFits ? (height - graphState.bounds.height * scale) / 2 : padding,
     });
     setCameraMode("overview");
   }
@@ -1520,7 +2077,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     for (const [id, card] of graphState.nodeElements.entries()) {
       const active = Boolean(selected && id === selected.id);
       card.dataset.selected = active ? "true" : "false";
-      card.setAttribute("aria-selected", String(active));
+      const identityButton = card.querySelector(".node-identity-button");
+      if (active) identityButton?.setAttribute("aria-current", "true");
+      else identityButton?.removeAttribute("aria-current");
     }
     const linked = selected
       ? currentSnapshot.evidence.filter((item) => item.nodeId === selected.id)
@@ -1541,13 +2100,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const toolCount = selected ? Math.max(selected.toolCount, nodeTools.length) : 0;
     setText(selectedNodeLabel, selected ? "Selected · " + selected.label : "Select a node to inspect provenance", "Select a node to inspect provenance");
     setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") + " · " + nodeTools.length + " tools · " + nodeEvents.length + " events" : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
-    setText(selectedNodeStatus, selected ? "Status · " + selected.status : "Status · —", "Status · —");
-    setText(selectedNodeOwner, selected ? "Owner · " + selected.agent : "Owner · —", "Owner · —");
-    setText(selectedNodeRuntime, selected ? "Runtime · " + selected.runtime : "Runtime · —", "Runtime · —");
-    setText(selectedNodeModel, selected ? "Model · " + (selected.model || "—") : "Model · —", "Model · —");
-    setText(selectedNodeDuration, selected ? "Duration · " + formatDuration(selected.firstAt, selected.lastAt) : "Duration · —", "Duration · —");
-    setText(selectedNodeTools, selected ? "Tools · " + toolCount + (usefulNodeMeta(selected.latestTool) ? " · " + selected.latestTool : "") : "Tools · —", "Tools · —");
-    setText(selectedNodeTokens, selected ? "Tokens · " + selected.outputTokens : "Tokens · —", "Tokens · —");
+    setText(selectedNodeStatus, labeledFact("Status", selected ? nodeStateCopy(selected) : ""));
+    setText(selectedNodeOwner, labeledFact("Owner", selected ? selected.agent : ""));
+    setText(selectedNodeRuntime, labeledFact("Runtime", selected ? selected.runtime : ""));
+    setText(selectedNodeModel, labeledFact("Model", selected ? selected.model : ""));
+    setText(selectedNodeDuration, labeledFact("Duration", selected ? formatDuration(selected.firstAt, selected.lastAt) : ""));
+    setText(selectedNodeTools, labeledFact("Tools", selected ? toolCount + (usefulNodeMeta(selected.latestTool) ? " · " + selected.latestTool : "") : ""));
+    setText(selectedNodeTokens, labeledFact("Tokens", selected ? selected.outputTokens : ""));
     if (selectedNodeLoadout) {
       const loadout = selected?.loadout || {};
       const labels = [
@@ -1560,12 +2119,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
         const count = Number(loadout[key]) || names?.length || 0;
         return key.toUpperCase() + " " + count + (names?.length ? " · " + names.slice(0, 4).join(", ") : "");
       }).join(" | ");
-      setText(selectedNodeLoadout, selected ? "Loadout · " + (detail || "—") : "Loadout · —", "Loadout · —");
+      setText(selectedNodeLoadout, labeledFact("Loadout", selected ? detail : ""));
     }
     setText(selectedNodeSummary, selected ? selected.summary : "Select a node to inspect its execution summary.", "Select a node to inspect its execution summary.");
-    setText(selectedNodeEvidenceDetail, selected?.terminalEvidence || linked[0]?.detail || (selected ? "No terminal evidence is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.");
-    setText(selectedNodeProvenance, selected ? "Source · " + (provenance?.reasoningExcerpt || (selected.parentId ? "spawned by " + selected.parentId : "run root")) : "Source · —", "Source · —");
-    setText(selectedNodePrompt, selected ? "Prompt era · " + (activePrompt ? activePrompt.label + " · " + activePrompt.excerpt : "—") : "Prompt era · —", "Prompt era · —");
+    setText(selectedNodeEvidenceDetail, selected?.terminalEvidence || linked[0]?.detail || selected?.statusReason || (selected ? "No terminal evidence is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.");
+    setText(selectedNodeProvenance, labeledFact("Source", selected ? (provenance?.reasoningExcerpt || (selected.parentId ? "spawned by " + selected.parentId : "run root")) : ""));
+    setText(selectedNodePrompt, labeledFact("Prompt era", selected && activePrompt ? activePrompt.label + " · " + activePrompt.excerpt : ""));
     renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents });
   }
 
@@ -1579,19 +2138,25 @@ const CLIENT_SCRIPT = String.raw`(() => {
         return;
       }
       items.forEach((item) => {
-      const entry = makeElement("article", "evidence-item history-item history-" + item.kind);
+      // A projection may carry a row without a kind. Concatenating it produced the
+      // literal class name history-null, the dataset value "null", and a heading
+      // that read "null · Worker evidence 1"; compose only the parts that exist.
+      const kindText = display(item.kind, "");
+      const entry = makeElement("article", "evidence-item history-item" + (kindText === "" ? "" : " history-" + kindText));
       entry.dataset.evidenceId = item.id;
       entry.dataset.nodeId = item.nodeId || selected?.id || "";
       entry.dataset.associated = selected && entry.dataset.nodeId === selected.id ? "true" : "false";
-      entry.dataset.historyKind = item.kind;
+      if (kindText !== "") entry.dataset.historyKind = kindText;
       if (item.transferState) {
         entry.dataset.transferState = item.transferState;
         entry.dataset.deliveryObserved = item.transferState === "observed" || item.transferState === "accepted" ? "true" : "false";
       }
       entry.setAttribute("role", "listitem");
       const top = makeElement("div", "evidence-item-top");
-      const label = makeElement("span", "evidence-kind", item.kind + " · " + item.label);
-      top.append(label, makeElement("time", "evidence-time", formatTime(item.at)));
+      const labelText = display(item.label, "");
+      const label = makeElement("span", "evidence-kind", kindText === "" ? labelText : kindText + " · " + labelText);
+      top.append(label);
+      appendObservedTime(top, item.at);
       const detail = makeElement("p", "evidence-detail", item.detail);
       const footer = makeElement("div", "history-footer");
       footer.append(makeElement("span", "evidence-status evidence-status-" + nodeClass(normalizedNodeStatus(item.status)), item.status));
@@ -1631,35 +2196,85 @@ const CLIENT_SCRIPT = String.raw`(() => {
         const proof = [item.downstreamAcceptanceState, counts, compact, Number.isFinite(item.bytes) ? item.bytes + " bytes" : "", item.digest ? "digest " + item.digest.slice(0, 12) : "", item.evidenceRefs.length ? "evidence refs " + item.evidenceRefs.join(", ") : ""].filter(Boolean).join(" · ");
         return { id: item.id, kind: item.kind, label: item.fromNodeId + " → " + item.toNodeId, detail: proof || (item.state === "planned" ? "Planned dependency; delivery not observed" : "Context delivery observed"), at: item.observedAt, status: item.state, sourceRef: item.state === "planned" ? "planned · delivery not observed" : item.state + " · delivery observed", nodeId: item.toNodeId, transferState: item.state };
       });
+    // Scheduling rows sit in the context tab because a planned wave is run
+    // context, not observed execution. They carry no timestamp on purpose: a
+    // declared order has no observation time, and inventing one would let the
+    // row read like something that was watched happening.
+    const scheduling = currentSnapshot?.scheduling || null;
+    const schedulingRows = [];
+    if (scheduling) {
+      const capacity = scheduling.capacity || {};
+      const capacityParts = [
+        Number.isFinite(capacity.maxParallelAgents) ? (currentLanguage === "zh" ? "上限 " : "limit ") + capacity.maxParallelAgents : "",
+        Number.isFinite(capacity.requestedParallelAgents) ? (currentLanguage === "zh" ? "申请 " : "requested ") + capacity.requestedParallelAgents : "",
+        Number.isFinite(capacity.runtimeCapacity) ? (currentLanguage === "zh" ? "运行时容量 " : "runtime capacity ") + capacity.runtimeCapacity : "",
+        capacity.capacitySourceKind,
+        capacity.throttled ? (currentLanguage === "zh" ? "申请数超过上限，已受限" : "requested above limit; throttled") : "",
+        scheduling.declaredWaveCount > scheduling.waveCount
+          ? (currentLanguage === "zh"
+            ? "记录 " + scheduling.declaredWaveCount + " 个波次，可显示 " + scheduling.waveCount + " 个"
+            : scheduling.declaredWaveCount + " waves recorded, " + scheduling.waveCount + " shown")
+          : "",
+      ].filter(Boolean).join(" · ");
+      if (capacityParts) {
+        schedulingRows.push({
+          id: "scheduling-capacity",
+          kind: "scheduling_capacity",
+          label: currentLanguage === "zh" ? "并行容量" : "Parallel capacity",
+          detail: capacityParts,
+          at: "",
+          status: "planned",
+          sourceRef: currentLanguage === "zh" ? "计划 · 记录的容量配置，非观测执行" : "planned · recorded capacity configuration",
+          nodeId: selected?.id || "",
+        });
+      }
+      scheduling.waves
+        .filter((wave) => !selected || wave.nodeIds.includes(selected.id))
+        .forEach((wave) => {
+          const declared = wave.mappedCount + wave.unmappedCount;
+          schedulingRows.push({
+            id: wave.waveId,
+            kind: "scheduling_wave",
+            label: (currentLanguage === "zh" ? "波次 " : "Wave ") + wave.waveIndex + "/" + scheduling.waveCount,
+            detail: [
+              wave.mode,
+              Number.isFinite(wave.declaredParallelCount) ? wave.declaredParallelCount + (currentLanguage === "zh" ? " 个声明并行" : " declared in parallel") : "",
+              wave.mergeOwner ? (currentLanguage === "zh" ? "合并负责人 " : "merge owner ") + wave.mergeOwner : "",
+              wave.mappedCount + "/" + declared + (currentLanguage === "zh" ? " 个成员对应到图上节点" : " members resolve to graph nodes"),
+            ].filter(Boolean).join(" · "),
+            at: "",
+            status: "planned",
+            sourceRef: currentLanguage === "zh" ? "计划 · 声明顺序，非观测执行" : "planned · declared order, not observed execution",
+            nodeId: selected?.id || "",
+          });
+        });
+    }
     renderItems(conversationList, "conversation", conversation, "Conversation transcript unavailable for this selection.");
     renderItems(terminalList, "terminal", terminal, "Terminal adapter telemetry unavailable for this selection.");
     renderItems(changesList, "changes", changes, "Diff telemetry unavailable for this selection.");
     renderItems(evidenceList, "evidence", evidence, "No observed evidence is linked to this selection.");
-    renderItems(contextTransferList, "context", transfers, "No context transfer records are available for this selection.");
+    renderItems(contextTransferList, "context", schedulingRows.concat(transfers), "No context transfer records are available for this selection.");
     const summaryPanel = inspectorPanels.find((item) => item.dataset.liveInspectorPanel === "summary");
     if (summaryPanel) summaryPanel.dataset.itemCount = selected ? "1" : "0";
     setInspectorTab(currentInspectorTab);
   }
 
-  function selectNode(nodeId, { focus = false } = {}) {
+  function selectNode(nodeId, { focus = false, inspectorTab = null } = {}) {
     if (!currentSnapshot || !currentSnapshot.nodes.some((node) => node.id === nodeId)) return;
     selectedNodeId = nodeId;
+    if (INSPECTOR_TABS.includes(inspectorTab)) currentInspectorTab = inspectorTab;
     updateSelectedNodeVisuals();
     setInspectorOpen(true);
     if (graphFollowing) centerGraphNode(nodeId);
     const node = currentSnapshot.nodes.find((item) => item.id === nodeId);
     if (liveRegion && node) liveRegion.textContent = localize("Selected node: " + node.label);
-    if (focus) graphState.nodeElements.get(nodeId)?.focus();
+    if (focus) graphState.nodeElements.get(nodeId)?.querySelector(".node-identity-button")?.focus();
   }
 
   function handleNodeKeydown(event, nodeId) {
+    if (event.target !== event.currentTarget) return;
     const ids = currentSnapshot?.nodes.map((node) => node.id) || [];
     const index = ids.indexOf(nodeId);
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      selectNode(nodeId);
-      return;
-    }
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) || index < 0) return;
     event.preventDefault();
     const next = event.key === "Home"
@@ -1675,18 +2290,31 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function renderGraph(snapshot) {
     const graphNodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, graphNodes);
+    const graphNodeById = new Map(graphNodes.map((node) => [node.id, node]));
+    // Wave membership is read from the projection, never inferred from graph
+    // shape. The page cannot observe scheduling order, so a node the projection
+    // did not place in a wave simply gets no wave chip instead of a guessed one.
+    const waveByNodeId = new Map();
+    (snapshot.scheduling?.waves || []).forEach((wave) => {
+      (wave.nodeIds || []).forEach((nodeId) => {
+        if (!waveByNodeId.has(nodeId)) waveByNodeId.set(nodeId, wave);
+      });
+    });
+    const totalWaveCount = snapshot.scheduling?.waveCount || 0;
+    const terminalRun = ["completed", "failed", "blocked", "cancelled"].includes(String(snapshot.run?.status || "").toLowerCase());
     clearChildren(nodeList);
     clearChildren(edgeLayer);
     clearChildren(graphMinimapScene);
     if (!graphNodes.length) {
       if (graphEmpty) graphEmpty.hidden = false;
-      graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), bounds: { width: 1, height: 1 } };
+      graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), bounds: { width: 1, height: 1 } };
       return;
     }
     if (graphEmpty) graphEmpty.hidden = true;
 
     const layout = layoutGraph(snapshot);
-    graphState = { positions: layout.positions, nodeElements: new Map(), edgeElements: new Map(), bounds: layout.bounds };
+    graphState = { positions: layout.positions, nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), bounds: layout.bounds };
+    if (graph) graph.dataset.layoutKind = layout.kind || "layered";
     if (graphScene) {
       graphScene.style.width = layout.bounds.width + "px";
       graphScene.style.height = layout.bounds.height + "px";
@@ -1694,7 +2322,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (edgeLayer) {
       edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
       const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      const markerColors = { running: "#58d4cf", completed: "#5b8cff", skipped: "#585858", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#a98bff", queued: "#777777" };
+      const markerColors = { running: "#58d4cf", active: "#58d4cf", completed: "#5b8cff", skipped: "#585858", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#a98bff", cancelled: "#697386", queued: "#8996aa", unreported: "#d7a94a", unknown: "#697386", "stage-live": "#58d4cf", "stage-recorded": "#d8a84e" };
       for (const [status, color] of Object.entries(markerColors)) {
         const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         marker.id = edgeMarkerId(status);
@@ -1713,34 +2341,84 @@ const CLIENT_SCRIPT = String.raw`(() => {
       edgeLayer.append(defs);
     }
     graphNodes.forEach((node) => {
-      const card = makeElement("article", "node-card node-" + nodeClass(node.status));
+      const publicState = nodeDisplayState(node);
+      const taskLine = resolveNodeTaskLine(node, DISPLAY_FORMAT);
+      const card = makeElement("article", "node-card node-" + nodeClass(publicState));
       card.dataset.nodeId = node.id;
       card.dataset.status = node.status;
+      card.dataset.displayState = publicState;
       card.dataset.replayStatus = node.status;
       card.dataset.selected = "false";
-      card.title = node.task || node.label;
-      card.setAttribute("role", "option");
-      card.setAttribute("aria-selected", "false");
-      card.setAttribute("aria-label", node.label + ", " + localize(node.status.replaceAll("_", " ")) + ", " + node.toolCount + " tools, " + node.outputTokens + " tokens");
-      card.tabIndex = 0;
+      card.title = taskLine || node.label;
+      card.setAttribute("role", "listitem");
       const position = layout.positions.get(node.id) || { x: 32, y: 32, width: 132, height: 76 };
       card.style.left = position.x + "px";
       card.style.top = position.y + "px";
       card.style.width = position.width + "px";
       card.style.minHeight = position.height + "px";
       const top = makeElement("div", "node-card-top");
-      const marker = makeElement("span", "node-marker", "");
+      const marker = makeElement("span", "node-marker");
       marker.setAttribute("aria-hidden", "true");
-      top.append(marker, makeElement("span", "node-status", localize(node.status.replaceAll("_", " "))));
-      const heading = makeElement("h3", "node-title", node.label);
-      const summary = makeElement("p", "node-summary", node.summary);
-      const proof = makeElement(
-        "div",
-        "node-proof",
-        node.evidenceCount
-          ? (["pending", "queued"].includes(node.status) ? "planned · " : "observed · ") + node.evidenceCount + " evidence"
-          : ["pending", "queued"].includes(node.status) ? "planned · awaiting host evidence" : "no evidence linked",
-      );
+      top.append(marker, makeElement("span", "node-status", nodeStateCopy(node)));
+      const nodeWave = waveByNodeId.get(node.id);
+      if (nodeWave) {
+        // The badge lives in the status strip, not in .node-meta: that chip row
+        // is display:none in the current card layout, so a wave annotation put
+        // there would exist in the DOM and be invisible on screen.
+        const waveBadge = makeElement("span", "node-wave-badge",
+          (currentLanguage === "zh" ? "波" : "W") + nodeWave.waveIndex + "/" + totalWaveCount + (currentLanguage === "zh" ? " 计划" : " plan"));
+        waveBadge.title = currentLanguage === "zh"
+          ? "计划并行波次 " + nodeWave.waveIndex + "/" + totalWaveCount + " · 声明顺序，不是观测到的执行顺序"
+          : "Planned parallel wave " + nodeWave.waveIndex + "/" + totalWaveCount + " · declared order, not observed execution";
+        waveBadge.dataset.waveId = nodeWave.waveId;
+        waveBadge.dataset.waveIndex = String(nodeWave.waveIndex);
+        waveBadge.dataset.waveProvenance = "planned";
+        card.dataset.waveIndex = String(nodeWave.waveIndex);
+        top.append(waveBadge);
+      }
+      const heading = makeElement("span", "node-title", node.label);
+      const summary = makeElement("span", "node-summary", node.summary);
+      const identity = makeElement("button", "node-identity-row node-identity-button");
+      identity.type = "button";
+      identity.setAttribute("aria-label", node.label + ", " + nodeStateCopy(node) + ", " + node.toolCount + " tools, " + node.outputTokens + " tokens");
+      const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      glyph.setAttribute("class", "node-glyph");
+      glyph.setAttribute("viewBox", "0 0 40 40");
+      glyph.setAttribute("aria-hidden", "true");
+      const glyphPaths = [
+        ["circle", { cx: "20", cy: "10", r: "3" }],
+        ["circle", { cx: "10", cy: "29", r: "3" }],
+        ["circle", { cx: "30", cy: "29", r: "3" }],
+        ["path", { d: "M20 13v7M20 20H10v6M20 20h10v6" }],
+      ];
+      glyphPaths.forEach(([tag, attributes]) => {
+        const part = document.createElementNS("http://www.w3.org/2000/svg", tag);
+        Object.entries(attributes).forEach(([name, value]) => part.setAttribute(name, value));
+        glyph.append(part);
+      });
+      const identityCopy = makeElement("div", "node-identity-copy");
+      identityCopy.append(heading, summary);
+      identity.append(glyph, identityCopy);
+      identity.addEventListener("click", () => selectNode(node.id, { inspectorTab: "summary" }));
+      identity.addEventListener("keydown", (event) => handleNodeKeydown(event, node.id));
+      const ownerLine = makeElement("div", "node-owner-line");
+      if (usefulNodeMeta(node.role)) ownerLine.append(makeElement("span", "node-owner-role", (currentLanguage === "zh" ? "角色 · " : "Role · ") + node.role));
+      if (usefulNodeMeta(node.agent)) ownerLine.append(makeElement("span", "node-owner-agent", (currentLanguage === "zh" ? "AI 执行者 · " : "AI worker · ") + node.agent));
+      const outgoingRelations = graphEdges.filter((edge) => edge.from === node.id);
+      const ownershipOnly = outgoingRelations.length > 0 && outgoingRelations.every((edge) => edge.kind === "contains");
+      const proof = makeElement("div", "node-proof", ownershipOnly
+        ? (currentLanguage === "zh" ? "结构归属关系 · 不代表所有任务同时执行" : "Structural ownership · does not mean every task runs at once")
+        : node.statusReason || (
+          publicState === "unreported"
+          ? (currentLanguage === "zh" ? "结构已规划，但没有可信执行回写" : "Structurally planned; no trusted execution report")
+          : publicState === "queued"
+            ? (currentLanguage === "zh" ? "当前运行活跃，等待执行" : "Active run; waiting to execute")
+            : node.evidenceCount
+              ? "observed · " + node.evidenceCount + " evidence"
+              : (currentLanguage === "zh" ? "暂无可信证据" : "No trusted evidence linked")
+        ));
+      const task = taskLine === "" ? null : makeElement("p", "node-task", taskLine);
+      if (task) task.title = taskLine;
       const meta = makeElement("div", "node-meta activity-chips");
       const role = makeElement("span", "node-meta-item activity-chip chip-role", node.role);
       role.title = localize("Role");
@@ -1757,7 +2435,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const evidence = makeElement("span", "node-meta-item activity-chip chip-evidence", node.evidenceCount + " evidence");
       evidence.title = localize("Observed evidence");
       const loadout = node.loadout || {};
-      const loadoutTotal = [loadout.skills, loadout.mcp, loadout.tools, loadout.commands]
+      const loadoutTotal = [loadout.skills, loadout.mcp, loadout.tools, loadout.commands, loadout.hooks, loadout.plugins, loadout.memoryGraph, loadout.dependencies]
         .map((value) => Number(value) || 0)
         .reduce((sum, value) => sum + value, 0);
       const loadoutChip = makeElement("span", "node-meta-item activity-chip chip-loadout", loadoutTotal + " loadout");
@@ -1770,9 +2448,64 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (node.outputTokens) meta.append(tokens);
       if (node.evidenceCount) meta.append(evidence);
       if (loadoutTotal) meta.append(loadoutChip);
-      if (usefulNodeMeta(node.firstAt) || usefulNodeMeta(node.lastAt)) meta.append(makeElement("span", "node-meta-item activity-chip chip-duration", formatDuration(node.firstAt, node.lastAt)));
+      if (usefulNodeMeta(node.firstAt) && usefulNodeMeta(node.lastAt)) meta.append(makeElement("span", "node-meta-item activity-chip chip-duration", formatDuration(node.firstAt, node.lastAt)));
       if (!meta.childElementCount) meta.hidden = true;
-      card.append(top, heading, summary, proof, meta);
+      const capabilityStrip = makeElement("div", "node-capability-strip");
+      capabilityStrip.setAttribute("aria-label", currentLanguage === "zh" ? "节点能力与调用概况" : "Node capability and call summary");
+      const capabilityLabels = { agent: "Agent", skill: "Skill", mcp: "MCP", command: "Command", runtime_tool: "Tool", hook: "Hook", plugin: "Plugin", memory_graph: "Memory/Graph", dependency: "Dependency" };
+      const capabilityRecords = (node.capabilityTruth || []).map((truth) => {
+        const kind = truth.kind;
+        const names = truth.state === "observed" ? truth.actualNames : truth.plannedNames;
+        return {
+          kind,
+          label: capabilityLabels[kind] || kind,
+          names,
+          count: names.length,
+          state: truth.state,
+          tab: ["mcp", "command", "runtime_tool", "hook"].includes(kind)
+            ? "terminal"
+            : ["memory_graph", "dependency"].includes(kind)
+              ? "context"
+              : "summary",
+        };
+      }).filter((record) => record.count > 0 && ["observed", "planned"].includes(record.state));
+      card.dataset.capabilityCount = String(capabilityRecords.length);
+      card.dataset.hasCapabilities = capabilityRecords.length ? "true" : "false";
+      capabilityRecords.forEach((record) => {
+        const button = makeElement("button", "node-capability node-capability-" + record.kind);
+        button.type = "button";
+        button.dataset.capabilityKind = record.kind;
+        button.dataset.capabilityState = record.state;
+        const stateLabel = record.state === "observed"
+          ? (currentLanguage === "zh" ? "已观测" : "observed")
+          : record.state === "planned"
+            ? (currentLanguage === "zh" ? "计划" : "planned")
+            : (currentLanguage === "zh" ? "未记录" : "not recorded");
+        const value = record.names[0] || (record.count ? String(record.count) : stateLabel);
+        const remainder = Math.max(0, record.count - (record.names[0] ? 1 : 0));
+        button.append(
+          makeElement("span", "node-capability-kind", record.label),
+          makeElement("span", "node-capability-value", value + (remainder ? " +" + remainder : "")),
+          makeElement("span", "node-capability-state", stateLabel),
+        );
+        button.title = record.label + " · " + stateLabel + (record.names.length ? " · " + record.names.join(", ") : "");
+        button.setAttribute("aria-label", record.label + ": " + (record.names.join(", ") || stateLabel) + ". " + stateLabel);
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectNode(node.id, { inspectorTab: record.tab });
+        });
+        capabilityStrip.append(button);
+      });
+      card.append(top, identity);
+      if (task) card.append(task);
+      if (ownerLine.childElementCount) card.append(ownerLine);
+      card.append(proof);
+      if (capabilityStrip.childElementCount) card.append(capabilityStrip);
+      card.append(meta);
+      card.addEventListener("click", (event) => {
+        if (event.target?.closest?.("button")) return;
+        selectNode(node.id, { inspectorTab: "summary" });
+      });
       const parent = graphEdges.find((edge) => edge.to === node.id);
       if (parent) {
         const parentNode = graphNodes.find((candidate) => candidate.id === parent.from);
@@ -1786,25 +2519,114 @@ const CLIENT_SCRIPT = String.raw`(() => {
         progress.append(bar);
         card.append(progress);
       }
-      card.addEventListener("click", () => selectNode(node.id));
-      card.addEventListener("keydown", (event) => handleNodeKeydown(event, node.id));
       nodeList.append(card);
       graphState.nodeElements.set(node.id, card);
     });
+
+    syncLayoutToRenderedCards(layout);
+
+    const outgoingEdges = new Map();
+    const incomingEdges = new Map();
+    for (const edge of graphEdges) {
+      const outgoing = outgoingEdges.get(edge.from) || [];
+      outgoing.push(edge);
+      outgoingEdges.set(edge.from, outgoing);
+      const incoming = incomingEdges.get(edge.to) || [];
+      incoming.push(edge);
+      incomingEdges.set(edge.to, incoming);
+    }
+    const sortEdgesByOtherEndpoint = (edges, endpoint) => edges.sort((left, right) => {
+      const leftPosition = layout.positions.get(left[endpoint]) || { x: 0, y: 0 };
+      const rightPosition = layout.positions.get(right[endpoint]) || { x: 0, y: 0 };
+      return leftPosition.y - rightPosition.y || leftPosition.x - rightPosition.x || left.id.localeCompare(right.id);
+    });
+    outgoingEdges.forEach((edges) => sortEdgesByOtherEndpoint(edges, "to"));
+    incomingEdges.forEach((edges) => sortEdgesByOtherEndpoint(edges, "from"));
 
     for (const edge of graphEdges) {
       const from = layout.positions.get(edge.from);
       const to = layout.positions.get(edge.to);
       if (!from || !to || !edgeLayer) continue;
-      const geometry = edgeGeometry(from, to);
+      const outgoing = outgoingEdges.get(edge.from) || [edge];
+      const incoming = incomingEdges.get(edge.to) || [edge];
+      const geometry = edgeGeometry(from, to, {
+        sourceIndex: Math.max(0, outgoing.indexOf(edge)),
+        sourceCount: outgoing.length,
+        targetIndex: Math.max(0, incoming.indexOf(edge)),
+        targetCount: incoming.length,
+        layoutKind: layout.kind,
+      });
+      const executionRelation = EXECUTION_EDGE_KINDS.has(edge.kind || "sequence");
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", geometry.path);
-      path.setAttribute("class", "edge edge-" + nodeClass(edge.status));
+      path.setAttribute("class", "edge edge-" + (executionRelation ? nodeClass(edge.status) : "structural"));
       path.setAttribute("data-edge-id", edge.id);
-      path.setAttribute("marker-end", "url(#" + edgeMarkerId(edge.status) + ")");
+      path.dataset.edgeKind = edge.kind || "sequence";
+      const targetNode = graphNodeById.get(edge.to);
+      const targetState = nodeDisplayState(targetNode);
+      const targetTerminal = ["completed", "failed", "blocked", "cancelled", "skipped"].includes(nodeDisplayState(targetNode));
+      const stageFocusState = executionRelation && snapshot.run?.active && !terminalRun && !targetTerminal && targetState === "active" ? "live" : "none";
+      path.dataset.stageFocus = stageFocusState;
+      path.dataset.liveFocus = stageFocusState;
+      path.setAttribute("marker-end", "url(#" + edgeMarkerId(executionRelation ? (stageFocusState === "none" ? edge.status : "stage-" + stageFocusState) : "queued") + ")");
       path.setAttribute("vector-effect", "non-scaling-stroke");
-      edgeLayer.append(path);
+      const effectGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      effectGroup.setAttribute("class", "edge-effects");
+      effectGroup.dataset.edgeId = edge.id;
+      effectGroup.dataset.stageFocus = stageFocusState;
+      const glow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      glow.setAttribute("d", geometry.path);
+      glow.setAttribute("class", "edge-flow-glow");
+      glow.dataset.stageFocus = stageFocusState;
+      glow.setAttribute("vector-effect", "non-scaling-stroke");
+      const tracer = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      tracer.setAttribute("d", geometry.path);
+      tracer.setAttribute("class", "edge-flow-tracer");
+      tracer.dataset.stageFocus = stageFocusState;
+      tracer.setAttribute("vector-effect", "non-scaling-stroke");
+      effectGroup.append(glow, tracer);
+      if (stageFocusState !== "none" && !reducedMotion.matches) {
+        const particle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        particle.setAttribute("r", stageFocusState === "live" ? "4" : "3.5");
+        particle.setAttribute("class", "edge-flow-particle");
+        particle.dataset.stageFocus = stageFocusState;
+        const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
+        motion.setAttribute("dur", stageFocusState === "live" ? "1.35s" : "1.8s");
+        motion.setAttribute("repeatCount", "indefinite");
+        motion.setAttribute("path", geometry.path);
+        particle.append(motion);
+        effectGroup.append(particle);
+      }
+      edgeLayer.append(path, effectGroup);
       graphState.edgeElements.set(edge.id, path);
+      graphState.edgeEffects.set(edge.id, effectGroup);
+    }
+
+    if (edgeLayer) {
+      const childIds = new Set(graphEdges.map((edge) => edge.to));
+      for (const rootNode of graphNodes.filter((node) => !childIds.has(node.id))) {
+        const position = layout.positions.get(rootNode.id);
+        if (!position) continue;
+        const originX = Math.max(18, position.x - 54);
+        const originY = position.y + Math.min(34, position.height / 3);
+        const targetY = position.y + position.height / 2;
+        const bendX = Math.max(originX + 10, position.x - 18);
+        const rootPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        rootPath.setAttribute("d", "M " + originX + " " + originY + " H " + bendX + " V " + targetY + " H " + position.x);
+        rootPath.setAttribute("class", "root-entry-path");
+        rootPath.setAttribute("vector-effect", "non-scaling-stroke");
+        const rootHalo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        rootHalo.setAttribute("cx", String(originX));
+        rootHalo.setAttribute("cy", String(originY));
+        rootHalo.setAttribute("r", "18");
+        rootHalo.setAttribute("class", "root-entry-halo");
+        const rootDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        rootDot.setAttribute("cx", String(originX));
+        rootDot.setAttribute("cy", String(originY));
+        rootDot.setAttribute("r", "6");
+        rootDot.setAttribute("class", "root-entry-dot");
+        edgeLayer.append(rootPath, rootHalo, rootDot);
+      }
     }
 
     for (const node of graphNodes) {
@@ -1829,6 +2651,32 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const currentIndex = STAGE_ORDER.indexOf(current);
     const terminalRun = ["completed", "failed", "blocked"].includes(String(snapshot.run?.status || "").toLowerCase());
     const events = snapshot.replay || [];
+    const stageIconPaths = [
+      "M8 1v3M8 12v3M1 8h3M12 8h3M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
+      "M1.5 4.5h5l1.4 1.5h6.6v7.5h-13Z M1.5 4.5V3h4l1.2 1.5",
+      "M8 1.5 4.5 14M8 1.5 11.5 14M5.5 10h5M3 14h3M10 14h3",
+      "M4 2.5 13 8 4 13.5Z",
+      "M2 2h10v12H2Z M5 8l2 2 4-5",
+      "M12.5 5A5 5 0 1 0 13 10M12.5 5V1.5M12.5 5H9",
+      "M8 1.5 13 3.5v4.2c0 3-2 5.2-5 6.8-3-1.6-5-3.8-5-6.8V3.5Z M6 8l1.4 1.4L10.5 6",
+      "M2 4c0-1.4 2.7-2.5 6-2.5s6 1.1 6 2.5-2.7 2.5-6 2.5S2 5.4 2 4Zm0 0v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V4M2 8v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V8",
+    ];
+    const makeStageIcon = (index) => {
+      const wrap = makeElement("span", "stage-step-icon");
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", stageIconPaths[index]);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "currentColor");
+      path.setAttribute("stroke-width", "1.25");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.append(path);
+      wrap.append(svg);
+      return wrap;
+    };
     STAGE_ORDER.forEach((stageName, index) => {
       const stageEvents = events.filter((event) => String(event.stage || event.chapter || "").toLowerCase() === stageName);
       const latest = stageEvents.at(-1);
@@ -1840,7 +2688,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       item.setAttribute("role", "listitem");
       item.append(
         makeElement("span", "stage-step-marker", String(index + 1).padStart(2, "0")),
-        makeElement("span", "stage-step-copy", ""),
+        makeStageIcon(index),
+        makeElement("span", "stage-step-copy"),
       );
       const copy = item.lastElementChild;
       copy.append(makeElement("span", "stage-step-name", localize(stageName)), makeElement("span", "stage-step-state", localize(state)));
@@ -1865,7 +2714,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       entry.setAttribute("aria-label", localize(item.label + " evidence"));
       entry.tabIndex = 0;
       const top = makeElement("div", "evidence-item-top");
-      top.append(makeElement("span", "evidence-kind", item.label), makeElement("time", "evidence-time", formatTime(item.at)));
+      top.append(makeElement("span", "evidence-kind", item.label));
+      appendObservedTime(top, item.at);
       const detail = makeElement("p", "evidence-detail", item.detail);
       const status = makeElement("span", "evidence-status evidence-status-" + item.status.toLowerCase().replace(/[^a-z0-9_-]/gu, "-"), item.status);
       entry.append(top, detail, status);
@@ -1904,7 +2754,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     ];
     facts.forEach(([label, value]) => {
       const row = makeElement("div", "info-fact-row");
-      row.append(makeElement("span", "info-fact-label", localize(label)), makeElement("span", "info-fact-value", display(value, "—")));
+      row.append(makeElement("span", "info-fact-label", localize(label)), makeElement("span", "info-fact-value", display(value)));
       infoFacts.append(row);
     });
     const prompt = makeElement("div", "info-fact-prompt");
@@ -1952,27 +2802,184 @@ const CLIENT_SCRIPT = String.raw`(() => {
     });
   }
 
+  function workspaceColumnForStatus(status) {
+    if (status === "completed" || status === "skipped") return "done";
+    if (status === "blocked" || status === "failed" || status === "in_doubt") return "review";
+    if (status === "running") return "doing";
+    return "todo";
+  }
+
+  function appendWorkspaceTag(parent, value, className = "") {
+    if (!parent || !usefulNodeMeta(value)) return;
+    parent.append(makeElement("span", "work-item-tag" + (className ? " " + className : ""), value));
+  }
+
+  function renderWorkspaceSessions(project, selectedSession) {
+    clearChildren(workspaceSessionList);
+    const sessions = project?.sessions || [];
+    const visible = sessions.filter((session) => session.runId === selectedRunId || sessionIsIdentified(session)).slice(0, 24);
+    if (!visible.length) {
+      workspaceSessionList?.append(makeElement("p", "workspace-session-note", currentLanguage === "zh" ? "还没有保存标题和聊天标识的任务。" : "No tasks with a saved title and chat identity yet."));
+      return;
+    }
+    visible.forEach((session) => {
+      const button = makeElement("button", "workspace-session-item");
+      button.type = "button";
+      button.dataset.active = session.runId === selectedRunId ? "true" : "false";
+      button.dataset.running = session.active ? "true" : "false";
+      button.append(
+        makeElement("span", "workspace-session-title", sessionDisplayTitle(session)),
+        makeElement("span", "workspace-session-meta", (session.active ? (currentLanguage === "zh" ? "运行中" : "Running") : localize(session.currentStage)) + " · " + formatSessionTime(session.updatedAt)),
+      );
+      button.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
+      workspaceSessionList?.append(button);
+    });
+    const hidden = Math.max(0, sessions.length - visible.length);
+    if (hidden) workspaceSessionList?.append(makeElement("p", "workspace-session-note", currentLanguage === "zh" ? hidden + " 条无聊天信息的历史运行已隐藏" : hidden + " historical runs without chat metadata hidden"));
+  }
+
+  function renderWorkspaceBoard(snapshot) {
+    clearChildren(workspaceBoard);
+    const columns = [
+      ["todo", currentLanguage === "zh" ? "待处理" : "To do"],
+      ["doing", currentLanguage === "zh" ? "执行中" : "In progress"],
+      ["review", currentLanguage === "zh" ? "审查 / 阻塞" : "Review / blocked"],
+      ["done", currentLanguage === "zh" ? "已完成" : "Done"],
+    ];
+    const grouped = new Map(columns.map(([key]) => [key, []]));
+    snapshot.nodes.forEach((node) => grouped.get(workspaceColumnForStatus(node.status))?.push(node));
+    columns.forEach(([key, label]) => {
+      const column = makeElement("section", "work-column");
+      column.dataset.column = key;
+      const header = makeElement("header", "work-column-header");
+      header.append(makeElement("span", "", label), makeElement("span", "work-column-count", String(grouped.get(key).length)));
+      const list = makeElement("div", "work-column-list");
+      const nodes = grouped.get(key);
+      if (!nodes.length) {
+        const message = key === workspaceColumnForStatus(snapshot.run.status === "live" ? "running" : snapshot.run.status) && !snapshot.nodes.length
+          ? (currentLanguage === "zh" ? "当前只采集到运行状态，尚无工作项明细。" : "Only run status is available; work-item telemetry has not been captured.")
+          : (currentLanguage === "zh" ? "暂无工作项" : "No work items");
+        list.append(makeElement("p", "work-board-empty", message));
+      }
+      nodes.forEach((node) => {
+        const card = makeElement("button", "work-item-card");
+        card.type = "button";
+        card.dataset.nodeId = node.id;
+        card.dataset.status = node.status;
+        card.dataset.selected = node.id === selectedNodeId ? "true" : "false";
+        const kicker = makeElement("span", "work-item-kicker");
+        kicker.append(makeElement("span", "", node.kind || "work item"), makeElement("span", "", localize(node.status)));
+        const tags = makeElement("span", "work-item-tags");
+        appendWorkspaceTag(tags, node.agent, "work-item-tag-owner");
+        appendWorkspaceTag(tags, node.runtime);
+        appendWorkspaceTag(tags, node.latestTool, "work-item-tag-tool");
+        card.append(kicker, makeElement("h3", "work-item-title", node.label), makeElement("p", "work-item-summary", node.summary), tags);
+        card.addEventListener("click", () => {
+          selectedNodeId = node.id;
+          updateSelectedNodeVisuals();
+          renderWorkspaceView(currentSnapshot);
+        });
+        list.append(card);
+      });
+      column.append(header, list);
+      workspaceBoard?.append(column);
+    });
+  }
+
+  function appendWorkspaceDetailRow(parent, label, value) {
+    const row = makeElement("div", "workspace-detail-row");
+    const labelText = display(label, "");
+    // A label is structure, not observed data. An absent one used to render the
+    // placeholder in the label column, so the row read as though "—" were the
+    // name of the fact; drop the column instead and let the value span the row.
+    if (labelText === "") row.dataset.unlabelled = "true";
+    else row.append(makeElement("span", "", labelText));
+    row.append(makeElement("strong", "", usefulNodeMeta(value) ? value : DISPLAY_FORMAT.emptyPlaceholder));
+    parent?.append(row);
+  }
+
+  function renderWorkspaceDetail(snapshot) {
+    clearChildren(workspaceDetail);
+    const selected = snapshot.nodes.find((node) => node.id === selectedNodeId) || null;
+    const hero = makeElement("section", "workspace-detail-hero");
+    const detailTitle = selected?.label || snapshot.run.title;
+    const detailSummary = selected?.summary || snapshot.run.task || (currentLanguage === "zh" ? "这条运行没有保存可读的任务说明。" : "This run did not preserve a readable task brief.");
+    const tags = makeElement("div", "workspace-detail-tags");
+    appendWorkspaceTag(tags, localize(selected?.status || snapshot.run.status), "work-item-tag-owner");
+    appendWorkspaceTag(tags, selected?.agent || snapshot.sessionInfo?.runtime);
+    appendWorkspaceTag(tags, selected?.latestTool, "work-item-tag-tool");
+    hero.append(makeElement("h3", "", detailTitle), makeElement("p", "", detailSummary), tags);
+    workspaceDetail?.append(hero);
+
+    const factsSection = makeElement("section", "workspace-detail-section");
+    factsSection.append(makeElement("h3", "", currentLanguage === "zh" ? "运行信息" : "Run information"));
+    const facts = makeElement("div", "workspace-detail-list");
+    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "负责人" : "Owner", selected?.agent);
+    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "运行时" : "Runtime", selected?.runtime || snapshot.sessionInfo?.runtime);
+    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前阶段" : "Stage", localize(snapshot.run.stage));
+    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前工具" : "Current tool", selected?.latestTool);
+    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "上级工作项" : "Depends on", selected?.parentId);
+    factsSection.append(facts);
+    workspaceDetail?.append(factsSection);
+
+    const relevantEvents = (selected ? snapshot.replay.filter((event) => event.nodeId === selected.id) : snapshot.replay).slice(-8).reverse();
+    const activitySection = makeElement("section", "workspace-detail-section");
+    activitySection.append(makeElement("h3", "", currentLanguage === "zh" ? "最新活动" : "Latest activity"));
+    const activity = makeElement("div", "workspace-detail-list");
+    if (!relevantEvents.length) activity.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "尚未采集到工具、交接或评审活动。" : "No tool, handoff, or review activity has been captured."));
+    relevantEvents.forEach((event) => {
+      const item = makeElement("article", "workspace-activity");
+      item.dataset.kind = event.kind;
+      const copy = makeElement("div", "");
+      const kindCopy = localize(display(event.kind, "").replaceAll("_", " "));
+      const observedAt = formatTime(event.at);
+      copy.append(
+        makeElement("strong", "", event.label),
+        makeElement("span", "", [kindCopy, observedAt].filter((part) => part !== "").join(" · ")),
+      );
+      item.append(copy);
+      activity.append(item);
+    });
+    activitySection.append(activity);
+    workspaceDetail?.append(activitySection);
+
+    const linkedEvidence = selected ? snapshot.evidence.filter((item) => item.nodeId === selected.id) : snapshot.evidence;
+    const outputSection = makeElement("section", "workspace-detail-section");
+    outputSection.append(makeElement("h3", "", currentLanguage === "zh" ? "产出与证据" : "Outputs and evidence"));
+    const outputs = makeElement("div", "workspace-detail-list");
+    if (snapshot.repository.diff?.state === "observed") appendWorkspaceDetailRow(outputs, currentLanguage === "zh" ? "代码变更" : "Changes", snapshot.repository.diff.summary);
+    // The projection may omit the kind while still carrying a row label.
+    // Preferring the kind and falling back to the label keeps a real name in the
+    // label column instead of discarding it and printing the placeholder there.
+    linkedEvidence.slice(0, 6).forEach((item) => appendWorkspaceDetailRow(
+      outputs,
+      localize(display(usefulNodeMeta(item.kind) ? item.kind : item.label, "")),
+      item.detail,
+    ));
+    if (!outputs.children.length) outputs.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "尚未关联交付物或验证证据。" : "No deliverable or verification evidence is linked yet."));
+    outputSection.append(outputs);
+    workspaceDetail?.append(outputSection);
+
+    if (!snapshot.nodes.length || (!snapshot.replay.length && !snapshot.evidence.length)) {
+      workspaceDetail?.append(makeElement("p", "workspace-telemetry-warning", currentLanguage === "zh"
+        ? "这是一条旧式状态记录：只能确认运行阶段和更新时间，无法还原参与的 Agent、工具过程和产出。新运行会保存这些信息。"
+        : "This is a legacy status-only record. It confirms stage and update time, but cannot reconstruct agents, tools, or outputs. New runs preserve that telemetry."));
+    }
+  }
+
   function renderWorkspaceView(snapshot) {
-    const selectedSession = projectForSelection()?.sessions.find((session) => session.runId === selectedRunId) || null;
+    const project = projectForSelection();
+    const selectedSession = project?.sessions.find((session) => session.runId === selectedRunId) || null;
     const workspaceData = snapshot.workspace || {};
     const session = snapshot.sessionInfo || {};
     setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace");
-    setText(workspaceBoundary, "Workspace boundary · " + (workspaceData.workspaceId?.state === "observed" ? workspaceData.workspaceId.summary : snapshot.run.id), "Workspace boundary unavailable");
+    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(snapshot.run.stage) + " · " + localize(snapshot.run.status), "Workspace telemetry unavailable");
     clearChildren(workspaceFacts);
-    const plan = session.plannedCount || session.completedCount
-      ? { state: "observed", summary: session.completedCount + " completed · " + session.plannedCount + " queued" }
-      : { state: "unavailable", summary: "Plan telemetry unavailable" };
-    const thread = workspaceData.transcript;
-    const terminal = workspaceData.terminal;
-    const changes = snapshot.repository.diff.state === "observed"
-      ? snapshot.repository.diff
-      : { state: "unavailable", summary: session.fileChangeCount ? session.fileChangeCount + " file snapshots observed · diff telemetry unavailable" : "Diff telemetry unavailable" };
-    const review = snapshot.replay.some((event) => event.stage === "review" || event.chapter === "review")
-        ? { state: "observed", summary: "Review-stage activity observed" }
-        : { state: "unavailable", summary: "Review telemetry unavailable" };
-    for (const [label, fact] of [["Plan", plan], ["Conversation", thread], ["Terminal", terminal], ["Changes", changes], ["Review", review]]) {
-      appendOperationalRow(workspaceFacts, label, fact?.summary || "Telemetry unavailable", fact?.state || "unavailable");
-    }
+    appendOperationalRow(workspaceFacts, "Work items", String(snapshot.nodes.length), snapshot.nodes.length ? "observed" : "unavailable");
+    appendOperationalRow(workspaceFacts, "Events", String(snapshot.replay.length), snapshot.replay.length ? "observed" : "unavailable");
+    renderWorkspaceSessions(project, selectedSession);
+    renderWorkspaceBoard(snapshot);
+    renderWorkspaceDetail(snapshot);
   }
 
   function renderReplay(snapshot) {
@@ -2002,10 +3009,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
       item.dataset.kind = event.kind;
       const nearbyToolActivity = events.slice(Math.max(0, index - 2), Math.min(events.length, index + 3)).filter((candidate) => candidate.kind === "tool_start" || candidate.kind === "tool_end" || candidate.toolCallId).length;
       item.dataset.toolDensity = String(Math.min(4, nearbyToolActivity));
-      const marker = makeElement("span", "replay-event-marker", "");
+      const marker = makeElement("span", "replay-event-marker");
       marker.setAttribute("aria-hidden", "true");
       marker.title = localize(event.kind.replaceAll("_", " "));
-      item.append(marker, makeElement("span", "replay-event-time", formatTime(event.at)), makeElement("span", "replay-event-label", event.label));
+      item.append(marker);
+      const observedAt = formatTime(event.at);
+      if (observedAt !== "") item.append(makeElement("span", "replay-event-time", observedAt));
+      item.append(makeElement("span", "replay-event-label", event.label));
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("aria-label", localize("Replay " + event.label));
@@ -2227,25 +3237,21 @@ const CLIENT_SCRIPT = String.raw`(() => {
       replayLive.disabled = events.length < 1;
       replayLive.dataset.active = replayFollowingLive ? "true" : "false";
     }
-    const visibleNodeIds = new Set();
-    for (const event of events.slice(0, currentReplayIndex + 1)) {
-      if (event.nodeId && (event.visibility === "visible" || ["agent", "workflow", "spawn", "stage"].includes(event.kind))) {
-        visibleNodeIds.add(event.nodeId);
-      }
-    }
-    const mainNode = currentSnapshot.nodes.find((node) => node.isMain);
-    if (mainNode && currentReplayIndex >= 0) visibleNodeIds.add(mainNode.id);
+    const replayView = resolveReplayNodeView({
+      nodes: currentSnapshot.nodes,
+      edges: currentSnapshot.edges,
+      events,
+      cursorIndex: currentReplayIndex,
+      structuralEdgeKinds: Array.from(STRUCTURAL_EDGE_KINDS),
+    });
+    const visibleNodeIds = new Set(replayView.visibleNodeIds);
     nodeList?.querySelectorAll("[data-node-id]").forEach((element) => {
       const active = events[currentReplayIndex]?.nodeId && element.dataset.nodeId === events[currentReplayIndex].nodeId;
       element.dataset.replayActive = active ? "true" : "false";
       const visible = visibleNodeIds.has(element.dataset.nodeId);
       element.dataset.replayVisible = visible ? "true" : "false";
       element.setAttribute("aria-hidden", String(!visible));
-      let replayState = visible ? "queued" : "queued";
-      for (const event of events.slice(0, currentReplayIndex + 1)) {
-        if (event.nodeId === element.dataset.nodeId) replayState = event.status;
-      }
-      element.dataset.replayStatus = replayState;
+      element.dataset.replayStatus = replayView.statusByNodeId[element.dataset.nodeId] || "queued";
     });
     if (events[currentReplayIndex]?.nodeId && currentSnapshot.nodes.some((node) => node.id === events[currentReplayIndex].nodeId)) {
       selectedNodeId = events[currentReplayIndex].nodeId;
@@ -2255,9 +3261,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
     for (const edge of currentSnapshot.edges) {
       const path = graphState.edgeElements.get(edge.id);
       if (!path) continue;
+      const effects = graphState.edgeEffects.get(edge.id);
       const edgeVisible = visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to);
       path.dataset.replayVisible = edgeVisible ? "true" : "false";
       path.style.opacity = edgeVisible ? "" : "0";
+      if (effects) {
+        effects.dataset.replayVisible = edgeVisible ? "true" : "false";
+        effects.style.opacity = edgeVisible ? "" : "0";
+      }
       let replayState = edge.status;
       let hasReplayState = false;
       for (const event of events.slice(0, currentReplayIndex + 1)) {
@@ -2267,8 +3278,24 @@ const CLIENT_SCRIPT = String.raw`(() => {
         }
       }
       if (!hasReplayState) replayState = edge.status;
-      path.setAttribute("class", "edge edge-" + nodeClass(replayState));
-      path.setAttribute("marker-end", "url(#" + edgeMarkerId(replayState) + ")");
+      const executionRelation = EXECUTION_EDGE_KINDS.has(edge.kind || "sequence");
+      path.setAttribute("class", "edge edge-" + (executionRelation ? nodeClass(replayState) : "structural"));
+      const replayFocus = executionRelation && !replayFollowingLive && edgeVisible && events[currentReplayIndex]?.nodeId === edge.to
+        ? "recorded"
+        : executionRelation ? (path.dataset.liveFocus || "none") : "none";
+      path.dataset.stageFocus = replayFocus;
+      if (effects) {
+        effects.dataset.stageFocus = replayFocus;
+        effects.querySelectorAll("[data-stage-focus]").forEach((effect) => { effect.dataset.stageFocus = replayFocus; });
+      }
+      const stageMarkerState = !executionRelation
+        ? "queued"
+        : replayFocus === "live"
+          ? "stage-live"
+        : replayFocus === "recorded"
+          ? "stage-recorded"
+          : replayState;
+      path.setAttribute("marker-end", "url(#" + edgeMarkerId(stageMarkerState) + ")");
     }
   }
 
@@ -2314,11 +3341,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
           sessionId: safeIdentifier(session.sessionId) || runId,
           runId,
           title: display(session.title, "Session " + runId.slice(0, 12)),
+          titleSource: display(session.titleSource, generatedRunTitle(session.title) ? "generated_run_id" : "unknown"),
+          identificationState: display(session.identificationState, generatedRunTitle(session.title) ? "unlinked" : "descriptive"),
+          conversationRef: safeIdentifier(session.conversationRef || session.threadId || session.conversationId),
+          conversationTitle: display(session.conversationTitle, ""),
+          conversationLinkState: display(session.conversationLinkState, session.conversationRef ? "candidate" : "unlinked").toLowerCase(),
+          verifiedLinks: Array.isArray(session.verifiedLinks) ? session.verifiedLinks.slice(0, 16) : [],
+          candidateLinks: Array.isArray(session.candidateLinks) ? session.candidateLinks.slice(0, 16) : [],
+          sourceRuntime: safeIdentifier(session.sourceRuntime) || "unknown",
           status: display(session.status, "observed"),
-          currentStage: display(session.currentStage, "—"),
+          currentStage: display(session.currentStage),
           runtime: display(session.runtime, "local"),
           updatedAt: display(session.updatedAt, ""),
-          activity: display(firstValue(session, ["activity", "latestActivity", "summary"], session.currentStage), "—"),
+          activity: display(firstValue(session, ["activity", "latestActivity", "summary"], session.currentStage)),
           workerCount: Math.max(0, numberOr(firstValue(session, ["workerCount", "agentCount", "nodeCount"], 0), 0)),
           eventCount: Math.max(0, numberOr(firstValue(session, ["eventCount", "totalEvents"], 0), 0)),
           active: session.active === true,
@@ -2390,17 +3425,22 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function populateSessionSelect() {
     const project = projectForSelection();
     const sessions = project?.sessions || [];
+    const selectedSession = sessions.find((session) => session.runId === selectedRunId);
+    const selectableSessions = sessions.filter(sessionIsIdentified);
+    if (selectedSession && !selectableSessions.some((session) => session.runId === selectedSession.runId)) {
+      selectableSessions.unshift(selectedSession);
+    }
     replaceSelectOptions(
       sessionSelect,
-      sessions.map((session) => ({
+      selectableSessions.map((session) => ({
         value: session.runId,
-        label: (session.active ? "Live · " : "")
+        label: (session.runId === selectedRunId && !sessionIsIdentified(session) ? (currentLanguage === "zh" ? "当前运行 · " : "Current run · ") : session.active ? "Live · " : "")
           + formatSessionTime(session.updatedAt)
+          + " · " + sessionDisplayTitle(session)
           + " · " + localize(session.currentStage)
-          + " · " + session.title
           + (session.workerCount ? " · " + session.workerCount + " workers" : "")
           + (session.eventCount ? " · " + session.eventCount + " events" : "")
-          + " · #" + session.runId.slice(-6),
+          + " · " + sessionShortId(session),
       })),
       selectedRunId,
       project ? "No governed runs yet" : "Select a project first",
@@ -2415,32 +3455,117 @@ const CLIENT_SCRIPT = String.raw`(() => {
       sessionList.append(makeElement("p", "panel-empty", "No governed runs yet"));
       return;
     }
-    const visibleSessions = sessions.slice(0, 64);
+    const query = sessionSearchQuery.trim().toLocaleLowerCase();
+    const matchingSessions = sessions.filter((session) => !query || [
+      session.title,
+      session.runId,
+      session.currentStage,
+      session.status,
+      session.runtime,
+      session.sourceRuntime,
+      session.conversationTitle,
+      session.conversationRef,
+      formatSessionTime(session.updatedAt),
+    ].join(" ").toLocaleLowerCase().includes(query));
+    if (!matchingSessions.length) {
+      sessionList.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "没有找到匹配的运行记录" : "No matching run records"));
+      return;
+    }
+    const orderedSessions = [...matchingSessions].sort((left, right) =>
+      Number(sessionIsIdentified(right)) - Number(sessionIsIdentified(left))
+      || String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")),
+    );
+    const identifiedSessions = orderedSessions.filter(sessionIsIdentified);
+    const unlinkedSessions = orderedSessions.filter((session) => !sessionIsIdentified(session));
+    const shouldShowUnlinked = Boolean(query) || showUnlinkedSessions;
+    const visibleSessions = [...identifiedSessions, ...(shouldShowUnlinked ? unlinkedSessions : [])].slice(0, 64);
+    if (!identifiedSessions.length && unlinkedSessions.length && !shouldShowUnlinked) {
+      const empty = makeElement("section", "session-identity-empty");
+      empty.append(
+        makeElement("strong", "", currentLanguage === "zh" ? "还没有可识别的聊天记录" : "No identifiable chat records yet"),
+        makeElement("p", "", currentLanguage === "zh"
+          ? "这些历史运行没有保存聊天标题和会话标识，因此无法告诉你对应的是哪次聊天。"
+          : "These historical runs did not preserve a chat title and conversation identifier, so they cannot be mapped back to a chat."),
+      );
+      const reveal = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh"
+        ? "仍要查看 " + unlinkedSessions.length + " 条未关联历史记录"
+        : "Show " + unlinkedSessions.length + " unlinked historical runs anyway");
+      reveal.type = "button";
+      reveal.dataset.liveShowUnlinked = "true";
+      reveal.addEventListener("click", () => {
+        showUnlinkedSessions = true;
+        renderSessionCards(sessions);
+      });
+      empty.append(reveal);
+      sessionList.append(empty);
+      return;
+    }
+    let lastGroup = "";
     visibleSessions.forEach((session) => {
+      const group = sessionIsIdentified(session) ? "identified" : "unlinked";
+      if (!query && group !== lastGroup) {
+        const groupHeading = makeElement("div", "session-group-heading");
+        groupHeading.append(
+          makeElement("strong", "", group === "identified"
+            ? (currentLanguage === "zh" ? "可识别的聊天 / 任务" : "Identified chats / tasks")
+            : (currentLanguage === "zh" ? "未关联聊天的运行记录" : "Runs not linked to chats")),
+          makeElement("span", "", group === "identified"
+            ? (currentLanguage === "zh" ? "可按标题定位" : "Locate by title")
+            : (currentLanguage === "zh" ? "只能按时间和运行 ID 定位" : "Locate by time and run ID only")),
+        );
+        sessionList.append(groupHeading);
+        lastGroup = group;
+      }
       const card = makeElement("button", "session-card");
       card.type = "button";
       card.dataset.runId = session.runId;
       card.dataset.active = session.runId === selectedRunId ? "true" : "false";
-      const heading = makeElement("span", "session-card-title", session.title);
-      const activity = makeElement("span", "session-card-activity", session.activity || session.currentStage || "Observed");
+      card.dataset.identity = group;
+      const heading = makeElement("span", "session-card-title", sessionDisplayTitle(session));
+      const sourceLabel = sourceRuntimeLabel(session.sourceRuntime);
+      const activity = makeElement("span", "session-card-activity", sourceLabel + " · " + conversationLinkCopy(session.conversationLinkState));
+      activity.dataset.linkState = session.conversationLinkState;
       const facts = makeElement("span", "session-card-facts");
       facts.append(
         makeElement("span", "", formatSessionTime(session.updatedAt)),
+        makeElement("span", "", (currentLanguage === "zh" ? "运行 ID " : "Run ID ") + sessionShortId(session)),
+        makeElement("span", "", localize(session.currentStage)),
         makeElement("span", "", session.workerCount + " workers"),
         makeElement("span", "", session.eventCount + " events"),
-        makeElement("span", "", session.runtime),
+        makeElement("span", "", sourceLabel),
+        makeElement("span", "", conversationLinkCopy(session.conversationLinkState)),
       );
       card.append(heading, activity, facts);
       card.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
       sessionList.append(card);
     });
-    if (sessions.length > visibleSessions.length) {
+    if (unlinkedSessions.length && !shouldShowUnlinked) {
+      const reveal = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh"
+        ? "另有 " + unlinkedSessions.length + " 条未关联记录（默认隐藏）"
+        : unlinkedSessions.length + " unlinked runs hidden by default");
+      reveal.type = "button";
+      reveal.dataset.liveShowUnlinked = "true";
+      reveal.addEventListener("click", () => {
+        showUnlinkedSessions = true;
+        renderSessionCards(sessions);
+      });
+      sessionList.append(reveal);
+    } else if (unlinkedSessions.length && showUnlinkedSessions && !query) {
+      const hide = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh" ? "收起未关联记录" : "Hide unlinked runs");
+      hide.type = "button";
+      hide.addEventListener("click", () => {
+        showUnlinkedSessions = false;
+        renderSessionCards(sessions);
+      });
+      sessionList.append(hide);
+    }
+    if (matchingSessions.length > visibleSessions.length) {
       sessionList.append(makeElement(
         "p",
         "panel-empty",
         currentLanguage === "zh"
-          ? "显示最近 " + visibleSessions.length + "/" + sessions.length + " 个会话"
-          : "Showing the newest " + visibleSessions.length + " of " + sessions.length + " sessions",
+          ? "显示最近 " + visibleSessions.length + "/" + matchingSessions.length + " 条运行记录"
+          : "Showing the newest " + visibleSessions.length + " of " + matchingSessions.length + " run records",
       ));
     }
   }
@@ -2501,7 +3626,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return;
     }
     showEmpty("Loading the selected run…");
-    setHubStatus(project.displayName + " · " + project.sessions.length + " observed sessions");
+    setHubStatus(project.displayName + " · " + project.sessions.length + " observed run records");
     await loadSnapshot(false, generation);
     if (generation === selectionGeneration) connectEvents(generation);
   }
@@ -2514,7 +3639,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         if (currentProject && currentProject.sessions.some((session) => session.runId === selectedRunId)) {
           populateProjectSelect();
           populateSessionSelect();
-          setHubStatus(currentProject.displayName + " · " + currentProject.sessions.length + " observed sessions");
+          setHubStatus(currentProject.displayName + " · " + currentProject.sessions.length + " observed run records");
           return true;
         }
       }
@@ -2579,13 +3704,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function renderSnapshot(input) {
     const selectedSession = projectForSelection()?.sessions.find((session) => session.runId === selectedRunId) || null;
     const inputRun = input?.run && typeof input.run === "object" && !Array.isArray(input.run) ? input.run : null;
-    const genericTitle = ["", "Live execution", "Observed execution"].includes(display(inputRun?.title, ""));
+    const genericTitle = generatedRunTitle(inputRun?.title);
+    const genericTask = generatedRunTitle(inputRun?.task);
     const enrichedInput = selectedSession && input && typeof input === "object" && !Array.isArray(input)
       ? {
           ...input,
           run: {
             ...(inputRun || {}),
-            title: genericTitle ? selectedSession.title : inputRun?.title,
+            title: genericTitle ? sessionDisplayTitle(selectedSession) : inputRun?.title,
+            task: genericTask && !sessionIsIdentified(selectedSession)
+              ? (currentLanguage === "zh"
+                  ? "这条运行记录没有保存聊天标题或首条用户消息，只能按时间和运行 ID 定位。"
+                  : "This run did not preserve a chat title or first user message; locate it by time and run ID.")
+              : inputRun?.task,
             stage: selectedSession.currentStage || inputRun?.stage,
             status: selectedSession.active ? "live" : inputRun?.status,
             updatedAt: selectedSession.updatedAt || inputRun?.updatedAt,
@@ -2606,6 +3737,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     const firstSnapshot = !currentSnapshot;
     currentSnapshot = snapshot;
+    if (!selectedNodeId || !snapshot.nodes.some((node) => node.id === selectedNodeId)) {
+      selectedNodeId = snapshot.nodes.find((node) => node.status === "running")?.id || snapshot.nodes[0]?.id || null;
+    }
     hideEmpty();
     updateHeader(snapshot);
     renderStageRail(snapshot);
@@ -2618,6 +3752,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     renderControlPanel(snapshot);
     setWorkView(currentWorkView, { persist: false });
     if (firstSnapshot) {
+      setInspectorOpen(false);
       const establishInitialCamera = () => {
         fitGraph();
         setCameraMode("overview");
@@ -2760,7 +3895,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   evidenceToggle?.addEventListener("click", () => setInspectorOpen(evidencePanel?.dataset.open !== "true"));
   evidenceClose?.addEventListener("click", () => setInspectorOpen(false));
+  app.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (evidencePanel?.dataset.open !== "true" || evidencePanel.contains(target)) return;
+    if (target?.closest?.("[data-node-id], [data-evidence-toggle]")) return;
+    setInspectorOpen(false);
+  });
   app.querySelector("[data-live-open-sessions]")?.addEventListener("click", () => setDialogOpen(sessionsDialog, true));
+  workspaceOpenSessions?.addEventListener("click", () => setDialogOpen(sessionsDialog, true));
+  workspaceOpenRunMap?.addEventListener("click", () => setWorkView("run", { focus: true }));
   app.querySelector("[data-live-open-help]")?.addEventListener("click", () => setDialogOpen(helpDialog, true));
   app.querySelector("[data-live-open-info]")?.addEventListener("click", () => setDialogOpen(infoDialog, true));
   app.querySelectorAll("[data-live-dialog-close]").forEach((button) => button.addEventListener("click", () => setDialogOpen(button.closest("[data-live-dialog]"), false)));
@@ -2771,6 +3914,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setCameraMode("follow");
     centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId || currentSnapshot?.nodes.find((node) => node.status === "running")?.id);
   });
+  app.querySelector("[data-live-graph-live]")?.addEventListener("click", () => {
+    setCameraMode("follow");
+    centerGraphNode(selectedNodeId || currentSnapshot?.replay[currentReplayIndex]?.nodeId || currentSnapshot?.nodes.find((node) => node.status === "running")?.id);
+  });
+  app.querySelector("[data-live-graph-reset]")?.addEventListener("click", fitGraph);
   app.addEventListener("keydown", (event) => {
     trapDialogFocus(event);
     if (event.defaultPrevented) return;
@@ -2849,10 +3997,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
     window.location.reload();
   });
   projectSelect?.addEventListener("change", () => {
+    showUnlinkedSessions = false;
     void switchSelection(projectSelect.value, "", { updateUrl: true });
   });
   sessionSelect?.addEventListener("change", () => {
     void switchSelection(selectedProjectId, sessionSelect.value, { updateUrl: true });
+  });
+  sessionSearch?.addEventListener("input", () => {
+    sessionSearchQuery = display(sessionSearch.value, "").slice(0, 120);
+    renderSessionCards(projectForSelection()?.sessions || []);
   });
   bindRovingTabs(workViewTabs, WORK_VIEWS, setWorkView);
   bindRovingTabs(inspectorTabs, INSPECTOR_TABS, setInspectorTab);
@@ -2910,7 +4063,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
   setInspectorOpen(false);
   closeTransientUi();
   const snapshotText = initialElement?.textContent?.trim();
-  if (snapshotText && snapshotText !== "null") {
+  if (demoMode === "states") {
+    renderSnapshot(buildStateDemoSnapshot());
+    setHubStatus(currentLanguage === "zh" ? "演示数据 · 不连接真实项目或聊天" : "Demo data · not connected to a real project or chat");
+    updateConnection("live", currentLanguage === "zh" ? "状态演示" : "State demo");
+  } else if (snapshotText && snapshotText !== "null") {
     try {
       renderSnapshot(JSON.parse(snapshotText));
     } catch {
@@ -2919,7 +4076,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   } else {
     showEmpty("Waiting for a run snapshot");
   }
-  void (async () => {
+  if (!demoMode) void (async () => {
     let startedFromCatalog = false;
     const initialCatalogText = initialCatalogElement?.textContent?.trim();
     if (initialCatalogText && initialCatalogText !== "null") {
@@ -2957,429 +4114,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }, { once: true });
 })();`;
 
-const PAGE_CSS = String.raw`
-:root {
-  color-scheme: dark;
-  --ink: #eef2ff;
-  --muted: #8d99b8;
-  --subtle: #596682;
-  --line: rgba(155, 169, 205, .16);
-  --panel: rgba(14, 19, 34, .84);
-  --panel-strong: #11192d;
-  --canvas: #070b16;
-  --cyan: #55e6d0;
-  --blue: #6d8dff;
-  --amber: #ffca73;
-  --red: #ff7e92;
-  --green: #75e5aa;
-  --shadow: 0 24px 80px rgba(0, 0, 0, .34);
-  font-family: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  font-synthesis: none;
-}
-
-* { box-sizing: border-box; }
-html { min-width: 320px; background: var(--canvas); }
-body { min-width: 320px; min-height: 100vh; margin: 0; color: var(--ink); background: radial-gradient(circle at 70% -10%, rgba(57, 90, 172, .2), transparent 34rem), var(--canvas); }
-button, input, select { font: inherit; }
-button { cursor: pointer; }
-button:focus-visible, [type="range"]:focus-visible, [tabindex]:focus-visible, a:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
-.skip-link { position: fixed; z-index: 20; top: 1rem; left: 1rem; padding: .65rem .9rem; color: var(--canvas); background: var(--cyan); border-radius: .55rem; transform: translateY(-160%); transition: transform .2s ease; }
-.skip-link:focus { transform: translateY(0); }
-.ambient { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .32; background-image: linear-gradient(rgba(104, 125, 183, .05) 1px, transparent 1px), linear-gradient(90deg, rgba(104, 125, 183, .05) 1px, transparent 1px); background-size: 36px 36px; mask-image: linear-gradient(to bottom, black, transparent 80%); }
-.shell { width: min(1440px, 100%); margin: 0 auto; padding: 0 2.2rem 2rem; }
-.topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 88px; border-bottom: 1px solid var(--line); }
-.topbar-actions { display: flex; align-items: center; gap: .7rem; }
-.language-toggle { min-width: 3rem; min-height: 2rem; border: 1px solid var(--line); border-radius: .55rem; color: var(--ink); background: rgba(15, 24, 45, .78); font: inherit; font-size: .72rem; font-weight: 750; letter-spacing: .04em; cursor: pointer; }
-.language-toggle:hover, .language-toggle:focus-visible { border-color: var(--cyan); color: var(--cyan); outline: none; }
-.brand { display: flex; align-items: center; gap: .75rem; }
-.brand-mark { display: grid; width: 2rem; height: 2rem; place-items: center; color: var(--canvas); background: linear-gradient(145deg, var(--cyan), #8ad7ff); border-radius: .55rem; box-shadow: 0 0 34px rgba(85, 230, 208, .28); }
-.eyebrow, .brand-title { margin: 0; }
-.eyebrow { color: var(--muted); font-size: .68rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
-.brand-title { margin-top: .15rem; font-size: .95rem; font-weight: 650; letter-spacing: .01em; }
-.connection { display: inline-flex; align-items: center; gap: .52rem; color: var(--muted); font-size: .78rem; }
-.connection-dot, .status-pulse { width: .48rem; height: .48rem; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 5px rgba(255, 202, 115, .1); }
-.connection-dot[data-connection="live"] { background: var(--cyan); box-shadow: 0 0 0 5px rgba(85, 230, 208, .1); animation: pulse 2.2s ease-in-out infinite; }
-.connection-dot[data-connection="stale"] { background: var(--amber); }
-.hub-switcher { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(260px, 1.2fr) minmax(180px, auto); align-items: end; gap: .8rem; margin-top: 1rem; padding: .85rem; background: rgba(14, 19, 34, .62); border: 1px solid var(--line); border-radius: .9rem; }
-.hub-field { display: grid; min-width: 0; gap: .38rem; color: var(--subtle); font-size: .64rem; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
-.hub-select { width: 100%; min-height: 42px; padding: .58rem 2rem .58rem .72rem; overflow: hidden; color: var(--ink); background: var(--panel-strong); border: 1px solid rgba(155, 169, 205, .24); border-radius: .6rem; text-overflow: ellipsis; white-space: nowrap; }
-.hub-select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
-.hub-select:disabled { color: var(--subtle); cursor: not-allowed; }
-.hub-status { min-width: 0; margin: 0; padding: .6rem .2rem; overflow-wrap: anywhere; color: var(--muted); font-size: .72rem; line-height: 1.45; }
-.main { padding-top: 2.2rem; }
-.run-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 2rem; padding: 1.25rem 0 2rem; }
-.run-hero > * { min-width: 0; }
-.kicker { margin: 0 0 .65rem; color: var(--cyan); font-size: .7rem; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; }
-.run-title { max-width: 850px; margin: 0; color: var(--ink); font-size: clamp(1.8rem, 3.5vw, 3.25rem); font-weight: 650; line-height: 1.04; letter-spacing: -.04em; text-wrap: balance; }
-.run-subtitle { display: flex; flex-wrap: wrap; gap: .55rem 1rem; margin: 1rem 0 0; color: var(--muted); font-size: .88rem; }
-.run-subtitle span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
-.run-subtitle span + span::before { margin-right: 1rem; color: var(--subtle); content: "/"; }
-.run-stage-primary { color: var(--cyan); font-weight: 750; }
-.state-chip { display: inline-flex; align-items: center; gap: .58rem; padding: .62rem .82rem; color: var(--amber); background: rgba(255, 202, 115, .08); border: 1px solid rgba(255, 202, 115, .26); border-radius: 999px; font-size: .78rem; font-weight: 720; white-space: nowrap; }
-.state-chip[data-state="live"] { color: var(--cyan); background: rgba(85, 230, 208, .08); border-color: rgba(85, 230, 208, .26); }
-.state-chip[data-state="in_doubt"] { color: var(--red); background: rgba(255, 126, 146, .08); border-color: rgba(255, 126, 146, .26); }
-.state-chip[data-state="live"] .status-pulse { background: var(--cyan); box-shadow: 0 0 0 5px rgba(85, 230, 208, .1); animation: pulse 2.2s ease-in-out infinite; }
-.state-chip[data-state="in_doubt"] .status-pulse { background: var(--red); box-shadow: 0 0 0 5px rgba(255, 126, 146, .1); }
-.run-facts { display: grid; grid-template-columns: repeat(4, minmax(115px, 1fr)); gap: .55rem; margin: 0; padding: 0; }
-.run-fact { min-width: 0; padding: .8rem .9rem; background: rgba(14, 19, 34, .6); border: 1px solid var(--line); border-radius: .7rem; }
-.run-fact dt { margin-bottom: .35rem; color: var(--subtle); font-size: .63rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
-.run-fact dd { margin: 0; overflow: hidden; color: var(--muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
-.run-fact-primary { border-color: rgba(85, 230, 208, .28); background: rgba(85, 230, 208, .06); }
-.run-fact-primary dd { color: var(--ink); font-weight: 700; }
-.stage-overview { margin: .75rem 0 1rem; padding: .9rem 1rem 1rem; background: rgba(14, 19, 34, .62); border: 1px solid var(--line); border-radius: .9rem; }
-.stage-overview-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
-.stage-overview-header .kicker { margin-bottom: .22rem; }
-.stage-overview-header h2 { margin: 0; font-size: .95rem; }
-.stage-overview-header > span { color: var(--subtle); font-size: .68rem; }
-.stage-rail { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: .35rem; margin: 0; padding: 0; list-style: none; }
-.stage-step { position: relative; display: flex; align-items: center; min-width: 0; gap: .45rem; padding: .48rem .5rem; color: var(--subtle); background: rgba(7, 11, 22, .45); border: 1px solid transparent; border-radius: .55rem; }
-.stage-step[role="button"] { cursor: pointer; }
-.stage-step[role="button"]:hover, .stage-step[role="button"]:focus-visible { color: var(--ink); border-color: rgba(85, 230, 208, .38); }
-.stage-step[data-state="current"] { color: var(--ink); background: rgba(85, 230, 208, .1); border-color: rgba(85, 230, 208, .36); }
-.stage-step[data-state="completed"] { color: var(--muted); }
-.stage-step-marker { display: grid; flex: 0 0 1.35rem; width: 1.35rem; height: 1.35rem; place-items: center; color: var(--subtle); background: rgba(109, 141, 255, .12); border-radius: 50%; font-size: .58rem; font-weight: 800; }
-.stage-step[data-state="completed"] .stage-step-marker { color: #06130e; background: var(--green); }
-.stage-step[data-state="current"] .stage-step-marker { color: #061512; background: var(--cyan); box-shadow: 0 0 0 5px rgba(85, 230, 208, .1); }
-.stage-step-copy { display: grid; min-width: 0; gap: .1rem; }
-.stage-step-name { overflow: hidden; font-size: .67rem; text-overflow: ellipsis; white-space: nowrap; }
-.stage-step-state { color: inherit; font-size: .55rem; font-weight: 650; opacity: .7; }
-.workspace-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .7fr); align-items: start; gap: 1rem; }
-.panel { position: relative; min-width: 0; background: linear-gradient(150deg, rgba(22, 29, 51, .88), rgba(10, 14, 27, .9)); border: 1px solid var(--line); border-radius: 1.1rem; box-shadow: var(--shadow); }
-.panel-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.05rem 1.15rem; border-bottom: 1px solid var(--line); }
-.panel-title { margin: 0; color: var(--ink); font-size: .92rem; font-weight: 700; letter-spacing: -.01em; }
-.panel-note { margin: .35rem 0 0; color: var(--subtle); font-size: .72rem; }
-.panel-count { color: var(--cyan); font-family: "SFMono-Regular", Consolas, monospace; font-size: .72rem; }
-.graph-stage { position: relative; min-height: 470px; overflow: hidden; padding: 1.1rem; }
-.edge-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.edge { stroke: rgba(109, 141, 255, .32); stroke-width: 1.4; stroke-dasharray: 5 7; }
-.edge-running { stroke: var(--cyan); stroke-dasharray: 1 7; animation: dash 1.5s linear infinite; }
-.edge-completed { stroke: rgba(117, 229, 170, .48); }
-.node-list { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: .7rem; }
-.node-card { min-width: 0; padding: .85rem; background: rgba(18, 25, 45, .94); border: 1px solid rgba(140, 159, 207, .16); border-radius: .8rem; box-shadow: 0 10px 30px rgba(0, 0, 0, .15); transition: border-color .2s ease, transform .2s ease, background .2s ease; }
-.node-card:hover, .node-card:focus-visible { background: rgba(25, 36, 63, .98); border-color: rgba(85, 230, 208, .42); transform: translateY(-2px); }
-.node-card[data-replay-active="true"] { border-color: var(--cyan); box-shadow: 0 0 0 1px rgba(85, 230, 208, .25), 0 14px 40px rgba(45, 214, 192, .12); }
-.node-card[data-replay-status="completed"] { border-left-color: var(--green); }
-.node-card[data-replay-status="failed"], .node-card[data-replay-status="in_doubt"] { border-left-color: var(--red); }
-.node-card[data-replay-status="running"] { border-left-color: var(--cyan); }
-.node-card-top, .evidence-item-top { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
-.node-marker { display: inline-block; width: .48rem; height: .48rem; margin-right: .38rem; border-radius: 50%; background: var(--subtle); vertical-align: middle; }
-.node-status { color: var(--muted); font-size: .63rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-.node-running .node-marker { background: var(--cyan); box-shadow: 0 0 13px rgba(85, 230, 208, .8); animation: pulse 1.6s ease-in-out infinite; }
-.node-completed .node-marker { background: var(--green); }
-.node-failed .node-marker, .node-in-doubt .node-marker { background: var(--red); }
-.node-blocked .node-marker { background: var(--amber); }
-.node-title { margin: .7rem 0 .35rem; overflow: hidden; color: var(--ink); font-size: .94rem; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
-.node-summary { min-height: 2.45em; margin: 0; overflow: hidden; color: var(--muted); font-size: .73rem; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.node-meta { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .85rem; }
-.node-meta-item { max-width: 100%; padding: .25rem .42rem; overflow: hidden; color: var(--subtle); background: rgba(5, 9, 18, .42); border-radius: .35rem; font-family: "SFMono-Regular", Consolas, monospace; font-size: .61rem; text-overflow: ellipsis; white-space: nowrap; }
-.node-progress { height: 3px; margin-top: .8rem; overflow: hidden; background: rgba(141, 153, 184, .15); border-radius: 4px; }
-.node-progress-bar { display: block; height: 100%; background: linear-gradient(90deg, var(--blue), var(--cyan)); border-radius: inherit; transition: width .45s ease; }
-.graph-empty, .panel-empty, .replay-empty { color: var(--subtle); font-size: .8rem; }
-.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 2rem; text-align: center; }
-.evidence-panel { overflow: hidden; }
-.drawer-toggle, .replay-button { display: inline-flex; align-items: center; gap: .45rem; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: .55rem; font-size: .73rem; }
-.drawer-toggle { padding: .45rem .6rem; }
-.drawer-toggle:hover, .replay-button:hover { color: var(--ink); border-color: rgba(85, 230, 208, .45); }
-.evidence-drawer { max-height: 530px; overflow: auto; padding: .65rem; }
-.evidence-list { display: grid; gap: .5rem; margin: 0; }
-.evidence-item { padding: .75rem; background: rgba(7, 11, 22, .44); border: 1px solid rgba(140, 159, 207, .11); border-radius: .7rem; }
-.evidence-kind { color: var(--ink); font-size: .75rem; font-weight: 650; }
-.evidence-time { color: var(--subtle); font-family: "SFMono-Regular", Consolas, monospace; font-size: .62rem; }
-.evidence-detail { margin: .55rem 0; color: var(--muted); font-size: .72rem; line-height: 1.45; }
-.evidence-status { display: inline-block; padding: .24rem .42rem; color: var(--cyan); background: rgba(85, 230, 208, .08); border-radius: .32rem; font-size: .62rem; font-weight: 700; }
-.evidence-status-in\ doubt, .evidence-status-rejected { color: var(--red); background: rgba(255, 126, 146, .08); }
-.replay-panel { margin-top: 1rem; }
-.replay-controls { display: flex; align-items: center; gap: .55rem; }
-.replay-button { padding: .44rem .62rem; }
-.replay-button[data-playing="true"] { color: var(--cyan); border-color: rgba(85, 230, 208, .4); }
-.replay-range-wrap { display: grid; gap: .5rem; padding: 1rem 1.15rem .3rem; }
-.replay-range { width: 100%; accent-color: var(--cyan); }
-.replay-track { position: relative; height: 3px; background: rgba(141, 153, 184, .15); border-radius: 99px; }
-.replay-progress { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--blue), var(--cyan)); border-radius: inherit; }
-.replay-events { display: flex; gap: .8rem; margin: 0; padding: 1rem 1.15rem 1.15rem; overflow-x: auto; list-style: none; }
-.replay-event { display: grid; grid-template-columns: auto auto; gap: .2rem .45rem; min-width: 145px; padding: .6rem .68rem; color: var(--muted); background: rgba(7, 11, 22, .42); border: 1px solid var(--line); border-radius: .6rem; }
-.replay-event[data-active="true"] { color: var(--ink); border-color: rgba(85, 230, 208, .46); background: rgba(85, 230, 208, .08); }
-.replay-event-marker { grid-row: span 2; align-self: center; width: .48rem; height: .48rem; border-radius: 50%; background: var(--subtle); }
-.replay-event[data-active="true"] .replay-event-marker { background: var(--cyan); box-shadow: 0 0 10px rgba(85, 230, 208, .7); }
-.replay-event-time { color: var(--subtle); font-family: "SFMono-Regular", Consolas, monospace; font-size: .6rem; }
-.replay-event-label { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
-.replay-status { margin: 0; color: var(--muted); font-size: .72rem; }
-.share-panel, .control-panel { margin-top: 1rem; }
-.share-content, .control-content { padding: 1rem 1.15rem 1.15rem; }
-.share-actions, .control-actions { display: flex; flex-wrap: wrap; gap: .55rem; }
-.share-status, .control-status, .control-result, .control-error { margin: .8rem 0 0; color: var(--muted); font-size: .72rem; line-height: 1.45; }
-.control-result { color: var(--cyan); }
-.control-error { color: var(--red); }
-.control-button:disabled { cursor: wait; opacity: .55; }
-.control-panel[hidden] { display: none; }
-.empty-state { margin-top: 1rem; padding: 2.4rem; text-align: center; background: rgba(14, 19, 34, .72); border: 1px dashed rgba(141, 153, 184, .25); border-radius: 1rem; }
-.empty-state[hidden], .graph-empty[hidden], .evidence-drawer[hidden] { display: none; }
-.empty-glyph { display: inline-grid; width: 2.3rem; height: 2.3rem; place-items: center; margin-bottom: .8rem; color: var(--cyan); background: rgba(85, 230, 208, .1); border-radius: .7rem; }
-.empty-title { margin: 0; font-size: 1rem; }
-.empty-copy { max-width: 36rem; margin: .5rem auto 0; color: var(--muted); font-size: .8rem; line-height: 1.5; }
-.footer { display: flex; justify-content: space-between; gap: 1rem; padding: 1.2rem 0 0; color: var(--subtle); font-size: .68rem; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.main { padding-top: 1.15rem; }
-.run-hero { padding: .55rem 0 .7rem; gap: 1rem; }
-.run-title { max-width: 980px; font-size: clamp(1.45rem, 2.2vw, 2.15rem); line-height: 1.12; letter-spacing: -.03em; }
-.run-subtitle { margin-top: .65rem; font-size: .78rem; }
-.run-facts { margin-bottom: .65rem; }
-.stage-overview { margin-top: .55rem; padding: .72rem .8rem .8rem; }
-.stage-overview-header { margin-bottom: .55rem; }
-.workspace-grid { grid-template-columns: minmax(0, 3fr) minmax(260px, 300px); align-items: stretch; height: 560px; }
-.graph-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 560px; overflow: hidden; }
-.evidence-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 560px; min-height: 0; overflow: hidden; }
-.evidence-drawer { min-height: 0; max-height: none; overflow: auto; }
-.graph-header-actions { display: inline-flex; align-items: center; gap: .35rem; }
-.graph-tool-button { min-width: 2rem; padding: .35rem .5rem; color: var(--muted); background: rgba(7, 11, 22, .45); border: 1px solid var(--line); border-radius: .45rem; font-size: .68rem; }
-.graph-tool-button:hover { color: var(--ink); border-color: rgba(85, 230, 208, .5); }
-.graph-stage { min-height: 0; height: 100%; padding: 0; background: rgba(5, 9, 18, .24); }
-.graph-canvas { position: relative; min-height: 0; height: 100%; overflow: hidden; cursor: grab; background: radial-gradient(circle at 15% 18%, rgba(85, 230, 208, .065), transparent 22rem), linear-gradient(rgba(113, 135, 190, .045) 1px, transparent 1px), linear-gradient(90deg, rgba(113, 135, 190, .045) 1px, transparent 1px); background-size: auto, 28px 28px, 28px 28px; }
-.graph-canvas[data-panning="true"] { cursor: grabbing; }
-.graph-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
-.edge-layer { inset: 0; width: 100%; height: 100%; }
-.edge { fill: none; color: rgba(109, 141, 255, .36); stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 3 8; }
-.edge-running { color: var(--cyan); stroke-width: 2.1; stroke-dasharray: 1 8; animation: edge-flow 1.05s linear infinite; }
-.edge-completed { color: var(--green); stroke-dasharray: 5 6; opacity: .7; }
-.edge-failed, .edge-in-doubt { color: var(--red); stroke-dasharray: 2 5; }
-.edge-blocked { color: var(--amber); stroke-dasharray: 2 6; }
-.edge-queued { color: rgba(109, 141, 255, .32); }
-.node-list { position: absolute; inset: 0; display: block; }
-.node-card { position: absolute; height: 96px; min-height: 96px; overflow: hidden; padding: .52rem .65rem; border-radius: .7rem; box-shadow: 0 8px 22px rgba(0, 0, 0, .24); }
-.node-card:hover, .node-card:focus-visible { transform: translateY(-2px) scale(1.015); }
-.node-card[data-selected="true"] { border-color: var(--cyan); box-shadow: 0 0 0 1px rgba(85, 230, 208, .45), 0 12px 32px rgba(45, 214, 192, .18); }
-.node-card[data-selected="true"]::after { position: absolute; top: -.3rem; right: .5rem; width: .35rem; height: .35rem; content: ""; background: var(--cyan); border-radius: 50%; box-shadow: 0 0 0 4px rgba(85, 230, 208, .13); }
-.node-title { margin: .34rem 0 .14rem; font-size: .88rem; }
-.node-summary { min-height: 1.25em; font-size: .68rem; -webkit-line-clamp: 1; }
-.node-meta { flex-wrap: nowrap; gap: .12rem; margin-top: .3rem; }
-.node-meta-item { min-width: 0; padding: .12rem .22rem; font-size: .53rem; }
-.node-agent { max-width: 100%; color: var(--muted); background: rgba(109, 141, 255, .09); }
-.node-progress { margin-top: .15rem; }
-.node-connection { display: none; margin: .22rem 0 0; overflow: hidden; color: var(--blue); font-size: .58rem; text-overflow: ellipsis; white-space: nowrap; }
-.graph-minimap { position: absolute; right: .75rem; bottom: .75rem; z-index: 3; width: 190px; height: 104px; overflow: hidden; background: rgba(7, 11, 22, .8); border: 1px solid rgba(140, 159, 207, .28); border-radius: .55rem; box-shadow: 0 8px 26px rgba(0, 0, 0, .28); pointer-events: none; }
-.minimap-scene { position: absolute; top: 6px; left: 6px; transform-origin: 0 0; }
-.minimap-node { position: absolute; display: block; background: rgba(109, 141, 255, .55); border: 1px solid rgba(210, 220, 255, .4); border-radius: 2px; }
-.minimap-node-running { background: var(--cyan); box-shadow: 0 0 6px rgba(85, 230, 208, .9); }
-.minimap-node-completed { background: var(--green); }
-.minimap-node-failed, .minimap-node-in-doubt { background: var(--red); }
-.minimap-node-blocked { background: var(--amber); }
-.minimap-viewport { position: absolute; z-index: 2; display: block; border: 1px solid var(--cyan); border-radius: 2px; box-shadow: 0 0 0 1px rgba(85, 230, 208, .2); }
-.selected-node-summary { display: grid; gap: .3rem; padding: .7rem .8rem; color: var(--muted); background: rgba(7, 11, 22, .38); border-bottom: 1px solid var(--line); font-size: .69rem; }
-.selected-node-summary strong { overflow: hidden; color: var(--ink); font-size: .73rem; text-overflow: ellipsis; white-space: nowrap; }
-.selected-node-facts { display: flex; flex-wrap: wrap; gap: .28rem .55rem; color: var(--subtle); font-family: "SFMono-Regular", Consolas, monospace; font-size: .59rem; }
-.selected-node-summary p { margin: 0; overflow: hidden; color: var(--muted); line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.evidence-item[data-associated="true"] { border-color: rgba(85, 230, 208, .42); background: rgba(85, 230, 208, .08); }
-.replay-panel { margin-top: .55rem; }
-.replay-range-wrap { padding-top: .55rem; }
-.replay-events { gap: .5rem; padding-top: .55rem; padding-bottom: .65rem; }
-@keyframes pulse { 0%, 100% { opacity: .55; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
-@keyframes dash { to { stroke-dashoffset: -16; } }
-@keyframes edge-flow { to { stroke-dashoffset: -18; } }
-@media (max-width: 980px) { .hub-switcher { grid-template-columns: repeat(2, minmax(0, 1fr)); } .hub-status { grid-column: 1 / -1; } .run-hero { grid-template-columns: 1fr; gap: 1.2rem; } .run-facts { max-width: 700px; } .workspace-grid { grid-template-columns: 1fr; height: auto; } .graph-panel { height: 430px; } .evidence-panel { height: auto; max-height: 360px; } .evidence-drawer { max-height: 210px; } }
-@media (max-width: 620px) { .shell { padding: 0 1rem 1.4rem; } .topbar { min-height: 72px; } .hub-switcher { grid-template-columns: 1fr; } .hub-status { grid-column: auto; } .connection [data-live-connection] { display: none; } .run-title { font-size: clamp(1.65rem, 10vw, 2.65rem); } .run-subtitle span { flex-basis: 100%; } .run-subtitle span + span::before { display: none; } .run-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .state-chip { justify-self: start; } .graph-panel .panel-header { flex-wrap: wrap; } .graph-header-actions { width: 100%; justify-content: flex-end; } .graph-header-actions .panel-count, .graph-header-actions [data-live-graph-layout] { display: none; } .graph-tool-button, .replay-button { min-width: 44px; min-height: 44px; } .graph-panel { height: auto; } .graph-stage, .graph-canvas { min-height: 330px; height: auto; } .graph-canvas { overflow: auto; cursor: default; } .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; } .node-list { position: relative; inset: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; padding: .55rem; } .node-card { position: relative !important; top: auto !important; left: auto !important; width: auto !important; height: auto !important; min-height: 92px !important; max-height: none; } .node-summary { -webkit-line-clamp: 1; } .node-connection { display: block; } .edge-layer, .graph-minimap { display: none; } .panel-header { padding: .9rem; } .replay-events, .replay-range-wrap { padding-left: .9rem; padding-right: .9rem; } .footer { flex-direction: column; } }
-@media (max-width: 980px) { .stage-rail { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 620px) { .stage-overview-header { align-items: start; flex-direction: column; } .stage-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
-`;
-
-const CANVAS_FIRST_CSS = String.raw`
-:root {
-  --ink: #f3f4f6;
-  --muted: #a1a6b0;
-  --subtle: #707681;
-  --line: rgba(255, 255, 255, .1);
-  --line-strong: rgba(255, 255, 255, .17);
-  --panel: #111318;
-  --panel-strong: #171a20;
-  --canvas: #090a0d;
-  --cyan: #48d8c6;
-  --blue: #7aa2ff;
-  --amber: #e9b85f;
-  --red: #f27689;
-  --green: #72d99c;
-  --shadow: 0 18px 48px rgba(0, 0, 0, .3);
-}
-
-html, body { height: 100%; }
-body { overflow-x: hidden; background: var(--canvas); }
-.ambient { opacity: .18; background-size: 48px 48px; mask-image: linear-gradient(to bottom, black, transparent 68%); }
-.shell { width: 100%; min-height: 100dvh; padding: 0 .9rem .8rem; }
-.topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 62px; gap: .9rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
-.brand { min-width: 146px; gap: .6rem; }
-.brand-mark { width: 1.8rem; height: 1.8rem; color: #06110f; background: var(--cyan); border-radius: 6px; box-shadow: none; font-size: .72rem; font-weight: 900; }
-.eyebrow { color: var(--subtle); font-size: .56rem; letter-spacing: .11em; }
-.brand-title { margin-top: .08rem; font-size: .78rem; }
-.topbar-actions { justify-content: flex-end; }
-.language-toggle { min-width: 2.5rem; min-height: 34px; border-radius: 6px; background: transparent; }
-.connection { font-size: .7rem; white-space: nowrap; }
-.connection-dot, .status-pulse { width: .42rem; height: .42rem; box-shadow: none; }
-.connection-dot[data-connection="live"], .state-chip[data-state="live"] .status-pulse { box-shadow: 0 0 0 4px rgba(72, 216, 198, .09); }
-.hub-switcher { display: grid; grid-template-columns: minmax(150px, .72fr) minmax(260px, 1.28fr); gap: .55rem; min-width: 0; margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; }
-.hub-field { gap: .2rem; font-size: .53rem; letter-spacing: .08em; }
-.hub-select { min-height: 36px; padding: .42rem 1.8rem .42rem .58rem; color: var(--ink); background: #13161c; border-color: var(--line); border-radius: 6px; font-size: .7rem; }
-.hub-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-.main { padding-top: .65rem; }
-.run-hero { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(440px, auto) auto; align-items: center; gap: .85rem; min-height: 70px; padding: .45rem .6rem .6rem; border-bottom: 1px solid var(--line); }
-.run-heading { min-width: 0; }
-.kicker { margin: 0 0 .25rem; color: var(--cyan); font-size: .55rem; letter-spacing: .1em; }
-.run-title { max-width: none; font-size: 1.05rem; line-height: 1.2; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.run-subtitle { gap: .25rem .65rem; margin-top: .3rem; font-size: .65rem; }
-.run-subtitle span + span::before { margin-right: .65rem; }
-.state-chip { justify-self: end; padding: .42rem .58rem; border-radius: 999px; font-size: .66rem; }
-.run-facts { grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 0; margin: 0; border-left: 1px solid var(--line); }
-.run-fact { padding: .3rem .65rem; background: transparent; border: 0; border-right: 1px solid var(--line); border-radius: 0; }
-.run-fact-primary { background: transparent; }
-.run-fact dt { margin-bottom: .18rem; font-size: .51rem; letter-spacing: .08em; }
-.run-fact dd { color: var(--ink); font-size: .66rem; }
-.workspace-grid { position: relative; display: block; height: clamp(560px, calc(100dvh - 150px), 980px); min-height: 560px; margin-top: .65rem; overflow: hidden; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: none; }
-.graph-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; width: 100%; height: 100%; overflow: hidden; }
-.panel-header { min-height: 48px; padding: .62rem .75rem; }
-.panel-title { font-size: .78rem; letter-spacing: 0; }
-.panel-note { margin-top: .15rem; font-size: .61rem; }
-.graph-header { background: #101216; }
-.graph-header-actions { flex-wrap: nowrap; }
-.graph-tool-button { display: inline-grid; min-width: 32px; min-height: 32px; padding: .28rem .45rem; place-items: center; color: var(--muted); background: transparent; border-color: var(--line); border-radius: 6px; }
-.graph-tool-button:hover, .graph-tool-button:focus-visible, .graph-tool-button[data-active="true"] { color: var(--cyan); border-color: rgba(72, 216, 198, .44); background: rgba(72, 216, 198, .06); }
-.stage-overview { margin: 0; padding: .45rem .55rem; overflow-x: auto; background: #0d0f13; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
-.stage-rail { grid-template-columns: repeat(8, minmax(112px, 1fr)); gap: .28rem; min-width: 930px; }
-.stage-step { min-height: 34px; padding: .34rem .4rem; background: transparent; border: 1px solid transparent; border-radius: 6px; }
-.stage-step::after { position: absolute; top: 50%; right: -.3rem; width: .3rem; height: 1px; background: var(--line-strong); content: ""; }
-.stage-step:last-child::after { display: none; }
-.stage-step[data-state="current"] { background: rgba(72, 216, 198, .07); border-color: rgba(72, 216, 198, .32); }
-.stage-step-marker { flex-basis: 1.15rem; width: 1.15rem; height: 1.15rem; font-size: .5rem; }
-.stage-step-name { font-size: .59rem; }
-.stage-step-state { font-size: .49rem; }
-.graph-stage { min-height: 0; height: 100%; background: #0b0d11; }
-.graph-canvas { min-height: 0; height: 100%; background: radial-gradient(circle at 50% 35%, rgba(72, 216, 198, .045), transparent 34rem), linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .028) 1px, transparent 1px); background-size: auto, 32px 32px, 32px 32px; }
-.graph-canvas[data-following="true"] .graph-scene { transition: transform .24s cubic-bezier(.2, .75, .3, 1); }
-.node-card { height: 100px; min-height: 100px; padding: .55rem .65rem; background: #171a21; border-color: rgba(255,255,255,.11); border-radius: 7px; box-shadow: 0 10px 26px rgba(0, 0, 0, .24); }
-.node-card::before { position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--subtle); content: ""; }
-.node-running::before { background: var(--cyan); }
-.node-completed::before { background: var(--green); }
-.node-failed::before, .node-in-doubt::before { background: var(--red); }
-.node-blocked::before { background: var(--amber); }
-.node-card:hover, .node-card:focus-visible { transform: translateY(-1px); background: #1b1f27; border-color: var(--line-strong); }
-.node-card[data-selected="true"], .node-card[data-replay-active="true"] { border-color: rgba(72, 216, 198, .68); box-shadow: 0 0 0 1px rgba(72, 216, 198, .18), 0 14px 32px rgba(0, 0, 0, .32); }
-.node-card[data-replay-active="true"]::after { position: absolute; inset: -1px; border: 1px solid rgba(72, 216, 198, .55); border-radius: 7px; content: ""; animation: node-breathe 1.4s ease-in-out infinite; pointer-events: none; }
-.node-title { margin: .45rem 0 .25rem; font-size: .78rem; }
-.node-summary { min-height: 1.35em; font-size: .61rem; line-height: 1.35; -webkit-line-clamp: 1; }
-.node-meta { margin-top: .45rem; }
-.node-meta-item { padding: .18rem .3rem; color: var(--muted); background: #0e1014; border: 1px solid rgba(255,255,255,.07); border-radius: 4px; font-size: .52rem; }
-.node-progress { margin-top: .45rem; }
-.edge { color: rgba(122, 162, 255, .38); stroke-width: 1.35; }
-.edge-running { color: var(--cyan); stroke-width: 2; animation: edge-flow .9s linear infinite; }
-.graph-minimap { right: .65rem; bottom: .65rem; width: 158px; height: 86px; background: rgba(12, 14, 18, .92); border-color: var(--line-strong); border-radius: 6px; box-shadow: 0 10px 26px rgba(0,0,0,.3); }
-.evidence-panel { position: absolute; z-index: 9; top: 56px; right: .65rem; display: grid; grid-template-rows: auto auto minmax(0, 1fr); width: min(360px, calc(100% - 1.3rem)); height: calc(100% - 174px); min-height: 0; overflow: hidden; background: rgba(17, 19, 24, .98); border-color: var(--line-strong); box-shadow: var(--shadow); transform: translateX(calc(100% + 1.2rem)); opacity: 0; pointer-events: none; transition: transform .22s ease, opacity .16s ease; }
-.evidence-panel[data-open="true"] { transform: translateX(0); opacity: 1; pointer-events: auto; }
-.evidence-panel .kicker { margin-bottom: .18rem; }
-.selected-node-summary { gap: .55rem; padding: .75rem; background: #14171d; }
-.selected-node-summary strong { font-size: .78rem; white-space: normal; }
-.selected-node-summary p { color: var(--muted); font-size: .66rem; line-height: 1.45; white-space: normal; overflow: visible; }
-.selected-node-facts { gap: .35rem; }
-.evidence-drawer { min-height: 0; max-height: none; padding: .55rem; }
-.evidence-item { border-radius: 6px; }
-.replay-panel { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(230px, auto) minmax(0, 1fr); grid-template-rows: auto auto; min-height: 112px; margin: 0; }
-.replay-dock { margin: 0; background: #101216; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
-.replay-dock-header { grid-row: 1 / span 2; display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .48rem .65rem; border-right: 1px solid var(--line); }
-.replay-current { display: flex; min-width: 0; align-items: baseline; gap: .55rem; }
-.replay-current .panel-note { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.replay-controls { gap: .3rem; }
-.replay-button { min-height: 32px; padding: .3rem .48rem; border-radius: 6px; font-size: .62rem; }
-.replay-play { min-width: 34px; justify-content: center; }
-.replay-range-wrap, .replay-events { grid-column: 2; }
-.replay-range-wrap { gap: .28rem; padding: .35rem .65rem .2rem; }
-.replay-range { height: 12px; margin: 0; }
-.replay-events { gap: .35rem; padding: .3rem .65rem .55rem; scrollbar-width: thin; }
-.replay-event { grid-template-columns: auto minmax(0, 1fr); min-width: 128px; max-width: 180px; padding: .38rem .45rem; background: transparent; border-radius: 5px; }
-.replay-event-time { font-size: .5rem; }
-.replay-event-label { font-size: .58rem; }
-.graph-minimap[hidden] { display: none; }
-.share-panel, .control-panel { margin-top: .55rem; border-color: rgba(255,255,255,.08); box-shadow: none; }
-.share-panel .panel-header, .control-panel .panel-header { min-height: 42px; }
-.share-content, .control-content { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .55rem .7rem; }
-.share-status, .control-status, .control-result, .control-error { margin: 0; }
-.empty-state { border-radius: 8px; }
-.footer { padding-top: .65rem; }
-
-@keyframes node-breathe { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
-
-@media (max-width: 1100px) {
-  .topbar { grid-template-columns: auto minmax(0, 1fr); }
-  .topbar-actions { grid-column: 1 / -1; position: absolute; top: .9rem; right: .9rem; }
-  .hub-switcher { padding-right: 7.5rem; }
-  .run-hero { grid-template-columns: minmax(220px, 1fr) minmax(400px, auto) auto; }
-  .run-facts { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
-  .run-fact:nth-child(2) { border-right: 0; }
-  .run-fact:nth-child(n+3) { border-top: 1px solid var(--line); }
-}
-
-@media (max-width: 760px) {
-  .shell { padding: 0 .55rem .7rem; }
-  .topbar { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .45rem; min-height: 0; padding: .55rem 0; }
-  .brand { min-width: 0; }
-  .topbar-actions { position: static; grid-column: 2; grid-row: 1; }
-  .connection [data-live-connection] { display: none; }
-  .hub-switcher { grid-column: 1 / -1; grid-row: 2; grid-template-columns: 1fr; width: 100%; padding: 0; }
-  .hub-field { grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: .45rem; }
-  .hub-field > span { padding-left: .15rem; }
-  .hub-select { min-height: 38px; }
-  .main { padding-top: .4rem; }
-  .run-hero { grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; min-height: 0; padding: .4rem .2rem .5rem; }
-  .run-heading { grid-column: 1; }
-  .run-title { font-size: .94rem; }
-  .run-subtitle { font-size: .59rem; }
-  .state-chip { grid-column: 2; grid-row: 1; }
-  .run-facts { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; border-top: 1px solid var(--line); border-left: 0; }
-  .run-fact { padding: .35rem .45rem; }
-  .run-fact:nth-child(1), .run-fact:nth-child(3) { border-left: 0; }
-  .workspace-grid { height: calc(100dvh - 272px); min-height: 500px; margin-top: .4rem; }
-  .graph-panel { grid-template-rows: auto auto minmax(240px, 1fr) auto; }
-  .graph-header { flex-wrap: nowrap; padding: .5rem; }
-  .graph-header .panel-note { display: none; }
-  .graph-header-actions { gap: .2rem; }
-  .graph-header-actions [data-live-graph-layout] { display: none; }
-  .graph-tool-button, .replay-button { min-width: 44px; min-height: 44px; }
-  .stage-overview { padding: .35rem .4rem; }
-  .stage-rail { display: flex; min-width: max-content; }
-  .stage-step { width: 108px; }
-  .graph-canvas { overflow: auto; cursor: default; }
-  .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
-  .node-list { position: relative; inset: auto; display: grid; grid-template-columns: 1fr; gap: .45rem; padding: .55rem; }
-  .node-card { position: relative !important; top: auto !important; left: auto !important; width: auto !important; height: auto !important; min-height: 88px !important; max-height: none; }
-  .node-summary { -webkit-line-clamp: 2; }
-  .node-connection { display: block; }
-  .edge-layer, .graph-minimap { display: none; }
-  .replay-panel { grid-template-columns: 1fr; min-height: 126px; }
-  .replay-dock-header { grid-row: auto; align-items: flex-start; padding: .4rem .5rem; border-right: 0; border-bottom: 1px solid var(--line); }
-  .replay-range-wrap, .replay-events { grid-column: 1; }
-  .replay-current { display: grid; gap: .1rem; }
-  .replay-controls { flex-wrap: wrap; justify-content: flex-end; }
-  .replay-reset { display: none; }
-  .replay-events { display: none; padding-inline: .5rem; }
-  .evidence-panel { position: fixed; top: auto; right: .5rem; bottom: .5rem; left: .5rem; width: auto; max-height: min(72dvh, 620px); transform: translateY(calc(100% + 1rem)); }
-  .evidence-panel[data-open="true"] { transform: translateY(0); }
-  .share-content, .control-content { align-items: flex-start; flex-direction: column; }
-  .footer { flex-direction: column; }
-}
-
-@media (max-width: 420px) {
-  .workspace-grid { height: calc(100dvh - 288px); min-height: 470px; }
-  .run-facts { display: flex; overflow-x: auto; }
-  .run-fact { flex: 0 0 132px; border-top: 0 !important; }
-  .run-fact + .run-fact { border-left: 1px solid var(--line); }
-  .graph-header-actions [data-live-graph-zoom-out], .graph-header-actions [data-live-graph-zoom-in] { display: none; }
-  .replay-current .panel-note { max-width: 150px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .graph-canvas[data-following="true"] .graph-scene, .evidence-panel { transition: none !important; }
-  .node-card[data-replay-active="true"]::after { animation: none !important; opacity: 1; }
-}
-`;
-
 const GRAPH_FIRST_CSS = String.raw`
-:root { color-scheme: dark; --ink: #0b101a; --panel: #141b29; --panel-2: #1b2638; --completion: #5b8cff; --completion-bright: #a9c2ff; --accent: #58d4cf; --running: #58d4cf; --green: #76d59c; --dim: #65748e; --line-soft: #202c40; --line: #30415b; --line-strong: #466080; --text: #e4ecfb; --muted: #96a7c1; --danger: #dc788f; --radius-sm: 4px; --radius: 6px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root { color-scheme: dark; --ink: #0b0e14; --panel: #111620; --panel-2: #151b26; --completion: #68a4ff; --completion-bright: #a7c7ff; --accent: #4fd1c5; --running: #4fd1c5; --green: #63ca9b; --amber: #d8a84e; --dim: #606b7d; --line-soft: #1d2634; --line: #273043; --line-strong: #3a465c; --text: #e8edf5; --muted: #929db0; --danger: #df7a8f; --radius-sm: 7px; --radius: 11px; font-family: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
 body { letter-spacing: 0; }
@@ -3389,15 +4125,15 @@ button { color: inherit; }
 .skip-link { position: fixed; z-index: 100; top: .5rem; left: .5rem; transform: translateY(-160%); padding: .55rem .75rem; border-radius: var(--radius); background: var(--completion); color: #07101f; }
 .skip-link:focus { transform: none; }
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
-.shell { height: 100dvh; min-width: 0; display: grid; grid-template-rows: 44px minmax(0, 1fr); background: var(--ink); }
-.topbar { min-width: 0; display: flex; align-items: center; gap: .75rem; padding: 0 .75rem; border-bottom: 1px solid var(--line); background: #101725; }
+.shell { height: 100dvh; min-width: 0; display: grid; grid-template-rows: 60px minmax(0, 1fr); background: var(--ink); }
+.topbar { min-width: 0; display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem; border-bottom: 1px solid var(--line); background: #0d121b; }
 .brand { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; }
-.brand-mark { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--completion); border-radius: var(--radius-sm); color: var(--completion-bright); font: 700 12px/1 monospace; }
-.brand-title { margin: 0; font-size: .78rem; font-weight: 700; }
+.brand-mark { display: block; width: 30px; height: 30px; object-fit: contain; background: transparent; border-radius: 0; box-shadow: none; filter: brightness(0) saturate(100%) invert(87%) sepia(29%) saturate(1025%) hue-rotate(120deg) brightness(96%) contrast(90%); }
+.brand-title { margin: 0; font-size: .9rem; font-weight: 720; letter-spacing: .01em; }
 .top-run-context { min-width: 0; display: flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .72rem; }
 .top-run-context strong { min-width: 0; max-width: min(40vw, 560px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 600; }
-.work-view-switcher { flex: 0 0 auto; display: inline-grid; grid-template-columns: repeat(3, minmax(0,1fr)); padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: #0e1522; }
-.work-view-tab { min-width: 76px; min-height: 27px; padding: 0 .5rem; border: 0; border-right: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: .62rem; cursor: pointer; }
+.work-view-switcher { flex: 0 0 auto; display: inline-grid; grid-template-columns: repeat(3, minmax(0,1fr)); padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: #0b1018; }
+.work-view-tab { min-width: 92px; min-height: 34px; padding: 0 .75rem; border: 0; border-right: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: .72rem; cursor: pointer; }
 .work-view-tab:last-child { border-right: 0; }
 .work-view-tab[aria-selected="true"] { border-radius: var(--radius-sm); background: rgba(88,212,207,.08); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .work-view-tab:focus-visible, .inspector-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -3407,29 +4143,19 @@ button { color: inherit; }
 .connection-dot[data-connection="live"] { background: var(--green); box-shadow: 0 0 8px rgba(118,184,141,.42); }
 .connection-dot[data-connection="stale"] { background: var(--completion); }
 .topbar-button, .graph-tool-button, .replay-button { min-height: 30px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.ui-icon, .empty-state-icon { width: 1rem; height: 1rem; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .topbar-button { padding: 0 .55rem; font-size: .7rem; }
 .topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
 .main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #101725; }
+.run-context { min-width: 0; min-height: 92px; display: grid; grid-template-columns: minmax(320px, 1.2fr) minmax(500px, 2fr) minmax(150px, .45fr); align-items: center; gap: 1.1rem; padding: .8rem 1.5rem; border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-context-heading { min-width: 0; }
-.context-kicker { display: block; margin-bottom: .2rem; color: var(--completion); font: .55rem/1 monospace; text-transform: uppercase; }
-.run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .98rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.run-context-task { min-width: 0; margin: .25rem 0 0; overflow: hidden; color: var(--muted); font-size: .65rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.context-kicker { display: block; margin-bottom: .28rem; color: var(--completion); font: .58rem/1 monospace; text-transform: uppercase; letter-spacing: .08em; }
+.run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: 1.05rem; font-weight: 730; text-overflow: ellipsis; white-space: nowrap; }
+.run-context-task { min-width: 0; margin: .3rem 0 0; overflow: hidden; color: var(--muted); font-size: .69rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .run-context-facts { min-width: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-left: 1px solid var(--line); }
-.context-fact { min-width: 0; display: grid; gap: .18rem; padding: .08rem .55rem; border-right: 1px solid var(--line); }
+.context-fact { min-width: 0; display: grid; gap: .28rem; padding: .12rem .72rem; border-right: 1px solid var(--line); }
 .context-fact span, .run-context-source span { color: var(--muted); font: .52rem/1 monospace; text-transform: uppercase; }
-.context-fact strong { min-width: 0; overflow: hidden; color: var(--completion-bright); font: 600 .65rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.run-context-source { min-width: 0; display: grid; gap: .18rem; padding-left: .3rem; }
-.run-context-source strong { min-width: 0; overflow: hidden; color: var(--muted); font: .58rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.run-context { min-width: 0; display: grid; grid-template-columns: minmax(280px, 1.35fr) minmax(420px, 2fr) minmax(150px, .55fr); align-items: center; gap: .9rem; padding: .55rem .75rem .62rem; border-bottom: 1px solid var(--line); background: #101725; }
-.run-context-heading { min-width: 0; }
-.context-kicker { display: block; margin-bottom: .2rem; color: var(--completion); font: .55rem/1 monospace; text-transform: uppercase; }
-.run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .98rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.run-context-task { min-width: 0; margin: .25rem 0 0; overflow: hidden; color: var(--muted); font-size: .65rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.run-context-facts { min-width: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-left: 1px solid var(--line); }
-.context-fact { min-width: 0; display: grid; gap: .18rem; padding: .08rem .55rem; border-right: 1px solid var(--line); }
-.context-fact span, .run-context-source span { color: var(--muted); font: .52rem/1 monospace; text-transform: uppercase; }
-.context-fact strong { min-width: 0; overflow: hidden; color: var(--completion-bright); font: 600 .65rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.context-fact strong { min-width: 0; overflow: hidden; color: var(--text); font: 650 .74rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .run-context-source { min-width: 0; display: grid; gap: .18rem; padding-left: .3rem; }
 .run-context-source strong { min-width: 0; overflow: hidden; color: var(--muted); font: .58rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-grid { position: relative; min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 0; overflow: hidden; transition: grid-template-columns .18s ease; }
@@ -3455,43 +4181,132 @@ button { color: inherit; }
 .workspace-child-title { overflow: hidden; color: var(--text); font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-child-meta { overflow: hidden; color: var(--muted); font: .56rem/1.35 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-availability { max-width: 920px; }
-.workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(280px, 30%) minmax(0, 70%); }
-.workspace-grid[data-inspector-open="true"] .replay-panel { grid-template-columns: minmax(0,1fr); }
-.workspace-grid[data-inspector-open="true"] .replay-dock-header { grid-column: 1; grid-row: 1; min-width: 0; display: flex; justify-content: center; border-right: 0; border-bottom: 1px solid var(--line); }
-.workspace-grid[data-inspector-open="true"] .replay-current { display: none; }
-.workspace-grid[data-inspector-open="true"] .replay-range-wrap { grid-column: 1; grid-row: 2; }
-.workspace-grid[data-inspector-open="true"] .replay-events { grid-column: 1; grid-row: 3; }
-.workspace-grid[data-inspector-open="true"] .replay-live, .workspace-grid[data-inspector-open="true"] .replay-reset { display: none; }
-.workspace-grid[data-inspector-open="true"] .status-title, .workspace-grid[data-inspector-open="true"] .status-nodes, .workspace-grid[data-inspector-open="true"] .status-camera { display: none; }
-.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 92px 24px; border: 0; background: #12110f; overflow: hidden; }
+.workspace-view { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+.company-workspace { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-columns: 228px minmax(0,1fr) 348px; background: #0b1018; }
+.company-session-rail, .company-context-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: #0d131c; }
+.company-session-rail { border-right: 1px solid var(--line); }
+.company-context-panel { border-left: 1px solid var(--line); }
+.company-rail-header, .company-context-header, .company-board-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 66px; padding: .72rem .8rem; border-bottom: 1px solid var(--line); background: #0f1621; }
+.company-rail-header h2, .company-context-header h2, .company-board-header h2 { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.company-board-header p { max-width: 72ch; margin: .22rem 0 0; overflow: hidden; color: var(--muted); font: .55rem/1.25 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.company-board-actions { flex: 0 0 auto; display: flex; align-items: center; gap: .4rem; }
+.workspace-secondary-button { min-height: 30px; padding: 0 .5rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #121a27; color: var(--muted); font-size: .6rem; cursor: pointer; }
+.workspace-secondary-button:hover, .workspace-secondary-button:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+.workspace-session-list { min-height: 0; display: grid; align-content: start; gap: .28rem; padding: .55rem; overflow: auto; }
+.workspace-session-item { min-width: 0; display: grid; gap: .28rem; padding: .62rem; border: 1px solid transparent; border-left: 3px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.workspace-session-item:hover, .workspace-session-item:focus-visible { background: #121a27; outline: none; }
+.workspace-session-item[data-active="true"] { border-color: #403831; border-left-color: var(--accent); background: #171b21; }
+.workspace-session-title { min-width: 0; overflow: hidden; font-size: .68rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-session-meta { display: flex; align-items: center; gap: .35rem; color: var(--muted); font: .52rem/1.2 monospace; }
+.workspace-session-meta::before { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--dim); content: ""; }
+.workspace-session-item[data-running="true"] .workspace-session-meta::before { background: var(--green); }
+.workspace-session-note { margin: .35rem; color: var(--muted); font-size: .58rem; line-height: 1.45; }
+.company-board-shell { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: #0b1018; }
+.company-board { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(4,minmax(190px,1fr)); gap: .45rem; padding: .6rem; overflow: auto; }
+.work-column { min-width: 190px; min-height: 100%; display: grid; grid-template-rows: auto minmax(0,1fr); border: 1px solid var(--line); border-radius: var(--radius-sm); background: #0d141e; }
+.work-column-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 38px; padding: 0 .6rem; border-bottom: 1px solid var(--line); color: var(--muted); font: 600 .57rem/1 monospace; text-transform: uppercase; letter-spacing: .04em; }
+.work-column-header span:first-child { display: inline-flex; align-items: center; gap: .4rem; }
+.work-column-header span:first-child::before { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); content: ""; }
+.work-column[data-column="doing"] .work-column-header span:first-child::before { background: var(--accent); }
+.work-column[data-column="review"] .work-column-header span:first-child::before { background: var(--amber); }
+.work-column[data-column="done"] .work-column-header span:first-child::before { background: var(--green); }
+.work-column-count { display: grid; min-width: 20px; height: 20px; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--text); background: #090e15; }
+.work-column-list { display: grid; align-content: start; gap: .42rem; padding: .48rem; overflow: auto; }
+.work-item-card { min-width: 0; display: grid; gap: .42rem; padding: .62rem; border: 1px solid #2a3445; border-left: 3px solid #53647e; border-radius: var(--radius-sm); background: #141b25; color: var(--text); text-align: left; cursor: pointer; }
+.work-item-card:hover, .work-item-card:focus-visible, .work-item-card[data-selected="true"] { border-color: var(--accent); background: #17222d; outline: none; }
+.work-item-card[data-status="running"] { border-left-color: var(--accent); }
+.work-item-card[data-status="completed"] { border-left-color: var(--green); }
+.work-item-card[data-status="blocked"], .work-item-card[data-status="failed"], .work-item-card[data-status="in_doubt"] { border-left-color: var(--amber); }
+.work-item-kicker { display: flex; justify-content: space-between; gap: .4rem; color: var(--muted); font: .5rem/1.2 monospace; text-transform: uppercase; }
+.work-item-title { margin: 0; overflow-wrap: anywhere; font-size: .7rem; line-height: 1.38; }
+.work-item-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .58rem; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.work-item-tags { display: flex; flex-wrap: wrap; gap: .25rem; }
+.work-item-tag { max-width: 100%; padding: .15rem .3rem; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; color: #b7c7dd; font: .5rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.work-item-tag-owner { color: var(--accent); border-color: rgba(79,209,197,.34); }
+.work-item-tag-tool { color: var(--green); }
+.work-board-empty { margin: .35rem; padding: .8rem; border: 1px dashed var(--line); border-radius: var(--radius-sm); color: var(--muted); font-size: .58rem; line-height: 1.45; }
+.company-context-body { min-height: 0; overflow: auto; }
+.workspace-detail-hero { display: grid; gap: .45rem; padding: .8rem; border-bottom: 1px solid var(--line); }
+.workspace-detail-hero h3 { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: .86rem; line-height: 1.4; }
+.workspace-detail-hero p { margin: 0; color: var(--muted); font-size: .64rem; line-height: 1.5; }
+.workspace-detail-tags { display: flex; flex-wrap: wrap; gap: .3rem; }
+.workspace-detail-section { padding: .75rem .8rem; border-bottom: 1px solid var(--line); }
+.workspace-detail-section h3 { margin: 0 0 .55rem; color: var(--muted); font: 600 .55rem/1 monospace; text-transform: uppercase; letter-spacing: .05em; }
+.workspace-detail-list { display: grid; gap: .38rem; }
+.workspace-detail-row { display: grid; grid-template-columns: 74px minmax(0,1fr); gap: .55rem; color: var(--muted); font-size: .59rem; line-height: 1.45; }
+.workspace-detail-row[data-unlabelled="true"] { grid-template-columns: minmax(0,1fr); }
+.workspace-detail-row strong { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-weight: 600; }
+.workspace-activity { display: grid; grid-template-columns: 9px minmax(0,1fr); gap: .45rem; padding: .4rem 0; border-bottom: 1px solid var(--line-soft); }
+.workspace-activity::before { width: 7px; height: 7px; margin-top: .22rem; border-radius: 50%; background: var(--dim); content: ""; }
+.workspace-activity[data-kind^="tool"]::before { background: var(--green); }
+.workspace-activity[data-kind="failure"]::before, .workspace-activity[data-kind="tool_error"]::before { background: var(--danger); }
+.workspace-activity strong { display: block; color: var(--text); font-size: .6rem; line-height: 1.4; }
+.workspace-activity span { color: var(--muted); font: .5rem/1.3 monospace; }
+.workspace-telemetry-warning { margin: .8rem; padding: .7rem; border: 1px solid rgba(216,168,78,.35); border-radius: var(--radius-sm); background: rgba(216,168,78,.06); color: #d9bb78; font-size: .6rem; line-height: 1.5; }
+.workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 420px); }
+.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 116px 28px; border: 0; background: var(--ink); overflow: hidden; }
 .graph-stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.graph-toolbar { position: absolute; z-index: 8; top: .55rem; right: .55rem; display: flex; flex-wrap: wrap; gap: .22rem; max-width: calc(100% - 1.1rem); padding: .25rem; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(20,27,41,.96); box-shadow: 0 8px 20px rgba(0,0,0,.28); }
-.graph-tool-button { min-width: 31px; padding: 0 .48rem; font-size: .68rem; }
+.graph-canvas-header { position: absolute; z-index: 8; top: .75rem; right: .75rem; left: .85rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; pointer-events: none; }
+.graph-canvas-title { display: inline-flex; align-items: center; gap: .5rem; color: var(--text); font-size: .82rem; font-weight: 720; }
+.graph-canvas-title .ui-icon { width: 1.05rem; height: 1.05rem; color: var(--muted); }
+.graph-edge-legend { margin-right: auto; color: var(--muted); font-size: .66rem; white-space: nowrap; }
+.graph-edge-legend::before { content: ""; display: inline-block; width: 24px; margin-right: .4rem; border-top: 1px dashed #53647e; vertical-align: middle; }
+.graph-toolbar { display: flex; flex-wrap: wrap; gap: .28rem; max-width: calc(100% - 1.1rem); padding: .28rem; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,22,32,.94); box-shadow: 0 8px 24px rgba(0,0,0,.24); pointer-events: auto; }
+.graph-tool-button { min-width: 34px; display: inline-flex; align-items: center; justify-content: center; gap: .32rem; padding: 0 .55rem; font-size: .68rem; }
 .graph-tool-button[data-active="true"], .replay-button[data-active="true"] { border-color: var(--accent); color: var(--accent); background: rgba(88,212,207,.07); }
-.graph-canvas { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; cursor: grab; background-color: #0f1623; background-image: linear-gradient(#1c2a3d 1px, transparent 1px), linear-gradient(90deg, #1c2a3d 1px, transparent 1px); background-size: 24px 24px; touch-action: none; }
+.graph-canvas { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; cursor: grab; background-color: #0d131d; background-image: linear-gradient(rgba(39,48,67,.48) 1px, transparent 1px), linear-gradient(90deg, rgba(39,48,67,.48) 1px, transparent 1px); background-size: 28px 28px; touch-action: none; }
 .graph-canvas[data-panning="true"] { cursor: grabbing; }
 .graph-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform .16s ease-out; }
 .edge-layer, .node-list { position: absolute; inset: 0; width: 100%; height: 100%; }
 .edge { fill: none; stroke: #53647e; stroke-width: 1.5; opacity: .72; }
-.edge-running { stroke: var(--running); stroke-dasharray: 8 8; animation: live-flow 1.2s linear infinite; }
-.edge-completed { stroke: var(--completion); }
-.edge-skipped, .edge-queued { stroke: #53647e; }
+.edge-running { animation: none; }
+.edge[data-edge-kind="contains"], .edge-structural { stroke: #40506a; stroke-width: 1.25; stroke-dasharray: 2 9; opacity: .4; animation: none; }
+.edge[data-stage-focus="recorded"] { stroke: #8f753d; stroke-width: 2.1; opacity: .88; }
+.edge[data-stage-focus="live"], .edge-running { stroke: #3faaa8; stroke-width: 2.35; opacity: .95; }
+.edge-completed { stroke: var(--green); stroke-width: 2.1; stroke-dasharray: none; opacity: .9; }
+.edge-skipped, .edge-queued { stroke: #53647e; stroke-width: 1.35; stroke-dasharray: 5 9; opacity: .38; }
 .edge-failed, .edge-in-doubt { stroke: var(--danger); }
-.edge-blocked { stroke: var(--completion-bright); }
-@keyframes live-flow { to { stroke-dashoffset: -16; } }
-.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: .28rem; width: 184px; min-height: 116px; max-height: 128px; padding: .58rem; overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #172131; color: var(--text); box-shadow: 0 6px 16px rgba(0,0,0,.24); cursor: pointer; }
+.edge-blocked { stroke: var(--amber); stroke-width: 2.1; stroke-dasharray: 3 6; opacity: .9; }
+.edge-effects { pointer-events: none; }
+.edge-flow-glow, .edge-flow-tracer { fill: none; stroke-linecap: round; opacity: 0; pointer-events: none; }
+.edge-flow-glow[data-stage-focus="recorded"] { stroke: #d8a84e; stroke-width: 10; opacity: .18; filter: blur(3px); }
+.edge-flow-glow[data-stage-focus="live"] { stroke: #58d4cf; stroke-width: 11; opacity: .24; filter: blur(3px); }
+.edge-flow-tracer { stroke-width: 3.4; stroke-dasharray: 24 96; stroke-dashoffset: 0; }
+.edge-flow-tracer[data-stage-focus="recorded"] { stroke: #ffd86b; opacity: 1; filter: drop-shadow(0 0 4px rgba(255,216,107,.95)); animation: stage-route-flow 1.35s linear infinite; }
+.edge-flow-tracer[data-stage-focus="live"] { stroke: #b8fffb; opacity: 1; filter: drop-shadow(0 0 5px rgba(88,212,207,1)); animation: live-flow .95s linear infinite; }
+.edge-flow-particle { opacity: 0; pointer-events: none; }
+.edge-flow-particle[data-stage-focus="recorded"] { fill: #fff3b5; stroke: #d8a84e; stroke-width: 1.5; opacity: 1; filter: drop-shadow(0 0 6px rgba(255,216,107,1)); }
+.edge-flow-particle[data-stage-focus="live"] { fill: #e9fffd; stroke: #58d4cf; stroke-width: 1.5; opacity: 1; filter: drop-shadow(0 0 7px rgba(88,212,207,1)); }
+@keyframes live-flow { to { stroke-dashoffset: -120; } }
+@keyframes stage-route-flow { to { stroke-dashoffset: -120; } }
+.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: .36rem; width: 232px; min-height: 140px; max-height: 152px; padding: .72rem; overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #151d29; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.28); cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, opacity .18s ease; }
 .node-card:hover, .node-card:focus-visible, .node-card[data-selected="true"] { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px rgba(88,212,207,.2), 0 8px 24px rgba(0,0,0,.35); }
-.node-running { border-left-color: var(--running); }
-.node-completed { border-left-color: var(--completion); }
+.node-running { z-index: 2; border-color: rgba(88,212,207,.9); border-left-color: var(--running); background: linear-gradient(135deg, rgba(88,212,207,.16), #151d29 58%); box-shadow: 0 0 0 1px rgba(88,212,207,.3), 0 0 30px rgba(88,212,207,.2), 0 10px 28px rgba(0,0,0,.42); animation: active-node-pulse 1.8s ease-in-out infinite; }
+.node-completed { border-color: rgba(99,202,155,.5); border-left-color: var(--green); background: linear-gradient(135deg, rgba(99,202,155,.09), #151d29 58%); }
+.node-card[data-display-state="running"] .node-card-top { color: var(--running); }
+.node-card[data-display-state="completed"] .node-card-top { color: var(--green); }
+.node-card[data-display-state="queued"], .node-card[data-display-state="unreported"] { border-color: rgba(83,100,126,.5); border-left-color: #53647e; background: #111925; opacity: .66; }
+.node-card[data-display-state="unreported"] .node-card-top { color: #d8a84e; }
 .node-skipped { border-left-color: #585858; opacity: .72; }
 .node-failed, .node-in-doubt { border-left-color: var(--danger); }
-.node-blocked { border-left-color: var(--completion-bright); }
+.node-blocked { border-color: rgba(216,168,78,.72); border-left-color: var(--amber); background: linear-gradient(135deg, rgba(216,168,78,.13), #181a21 60%); box-shadow: 0 0 0 1px rgba(216,168,78,.12), 0 8px 24px rgba(0,0,0,.32); }
 .node-card-top { display: flex; align-items: center; gap: .3rem; color: var(--muted); font: 600 .58rem/1 monospace; text-transform: uppercase; }
 .node-marker { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.node-running .node-marker { color: var(--running); }
-.node-completed .node-marker { color: var(--completion); }
-.node-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
-.node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .63rem; line-height: 1.35; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.node-running .node-marker { width: 9px; height: 9px; color: var(--running); box-shadow: 0 0 0 5px rgba(88,212,207,.1), 0 0 14px rgba(88,212,207,.95); }
+.node-completed .node-marker { color: var(--green); box-shadow: 0 0 0 3px rgba(99,202,155,.1); }
+.node-blocked .node-marker { color: var(--amber); box-shadow: 0 0 0 3px rgba(216,168,78,.1); }
+.node-wave-badge { flex: 0 0 auto; margin-left: auto; padding: 0 .18rem; border-radius: 3px; color: #9aa7bd; background: rgba(154,167,189,.1); font: inherit; }
+.node-card[data-wave-index] .node-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes active-node-pulse { 0%,100% { box-shadow: 0 0 0 1px rgba(88,212,207,.25), 0 0 22px rgba(88,212,207,.14), 0 10px 28px rgba(0,0,0,.42); } 50% { box-shadow: 0 0 0 2px rgba(88,212,207,.55), 0 0 38px rgba(88,212,207,.28), 0 10px 30px rgba(0,0,0,.46); } }
+.node-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .84rem; }
+.node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .67rem; line-height: 1.45; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.node-task { min-width: 0; margin: 0; overflow: hidden; color: var(--completion-bright); font: .58rem/1.25 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.node-identity-row { min-width: 0; display: grid; grid-template-columns: 48px minmax(0,1fr); gap: .65rem; align-items: center; }
+.node-identity-copy { min-width: 0; display: grid; gap: .26rem; }
+.node-glyph { display: block; width: 42px; height: 42px; padding: 8px; color: var(--accent); border: 1px solid rgba(88,212,207,.34); border-radius: 50%; background: rgba(88,212,207,.08); fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.root-entry-path { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 2 5; opacity: .78; }
+.root-entry-halo { fill: rgba(79,209,197,.05); stroke: rgba(79,209,197,.28); stroke-width: 1; }
+.root-entry-dot { fill: var(--accent); stroke: #0e151f; stroke-width: 3; filter: drop-shadow(0 0 5px rgba(79,209,197,.72)); }
 .node-proof { min-width: 0; overflow: hidden; color: var(--completion-bright); font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .activity-chips { display: flex; flex-wrap: wrap; gap: .18rem; min-width: 0; max-height: 31px; overflow: hidden; }
 .activity-chip { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .12rem .25rem; border: 1px solid var(--line); border-radius: var(--radius-sm); color: #b5c4dd; background: #101725; font: .5rem/1.2 monospace; }
@@ -3499,19 +4314,19 @@ button { color: inherit; }
 .chip-runtime { color: var(--green); }
 .chip-tools { color: #7cc7ef; }.chip-tokens { color: #8ecae6; }.chip-evidence { color: var(--completion-bright); }.chip-loadout { color: #9fb8e8; }
 .node-connection, .node-progress { display: none; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card { height: 116px !important; min-height: 116px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card { height: 140px !important; min-height: 140px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card::after { content: ""; position: absolute; top: 35px; right: 0; left: 0; height: 26px; border-left: 8px solid #666; background: #292929; }
-.graph-canvas[data-semantic-zoom="cell"] .node-running::after { border-left-color: var(--running); }.graph-canvas[data-semantic-zoom="cell"] .node-completed::after { border-left-color: var(--completion); }.graph-canvas[data-semantic-zoom="cell"] .node-failed::after,.graph-canvas[data-semantic-zoom="cell"] .node-blocked::after { border-left-color: var(--danger); }
+.graph-canvas[data-semantic-zoom="cell"] .node-running::after { border-left-color: var(--running); background: rgba(88,212,207,.2); box-shadow: 0 0 18px rgba(88,212,207,.5); }.graph-canvas[data-semantic-zoom="cell"] .node-completed::after { border-left-color: var(--green); background: rgba(99,202,155,.14); }.graph-canvas[data-semantic-zoom="cell"] .node-failed::after,.graph-canvas[data-semantic-zoom="cell"] .node-blocked::after { border-left-color: var(--amber); background: rgba(216,168,78,.14); }
 .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: hidden; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: absolute; z-index: 1; top: 35px; right: 0; left: 8px; height: 26px; visibility: visible; padding: .4rem .45rem; font: 700 11px/1 monospace; }
-.graph-minimap { position: absolute; z-index: 7; top: .55rem; right: .55rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: rgba(16,23,37,.94); pointer-events: none; }
+.graph-minimap { position: absolute; z-index: 7; right: .75rem; bottom: .75rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: rgba(13,18,27,.94); pointer-events: none; }
 .minimap-scene { position: absolute; transform-origin: 0 0; }
 .minimap-node { position: absolute; border-radius: 1px; background: #666; }
 .minimap-node-running { background: var(--running); }.minimap-node-completed { background: var(--completion); }.minimap-node-failed,.minimap-node-blocked { background: var(--danger); }
 .minimap-viewport { position: absolute; border: 1px solid var(--accent); background: rgba(88,212,207,.07); }
 .graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
-.replay-panel { min-width: 0; display: grid; grid-template-columns: 300px minmax(0,1fr); grid-template-rows: 34px 28px 28px; border-top: 1px solid var(--line); background: #121a29; }
-.replay-dock-header { grid-row: 1 / -1; min-width: 300px; display: grid; grid-template-columns: minmax(74px,1fr) auto; align-items: center; gap: .45rem; padding: .45rem .55rem; border-right: 1px solid var(--line); }
+.replay-panel { min-width: 0; width: 100%; max-width: 100%; display: grid; grid-template-columns: 330px minmax(0,1fr); grid-template-rows: 40px 34px 34px; overflow: hidden; contain: inline-size; border-top: 1px solid var(--line); background: #111823; }
+.replay-dock-header { grid-row: 1 / -1; min-width: 0; width: 330px; max-width: 100%; display: grid; grid-template-columns: minmax(88px,1fr) auto; align-items: center; gap: .55rem; padding: .55rem .72rem; overflow: hidden; border-right: 1px solid var(--line); }
 .replay-current { min-width: 74px; overflow: hidden; }
 .replay-current .panel-title { white-space: nowrap; }
 .replay-current .panel-note { display: none; }
@@ -3519,24 +4334,28 @@ button { color: inherit; }
 .panel-note { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .58rem; }
 .replay-controls { display: flex; flex: 0 0 auto; gap: .15rem; white-space: nowrap; }
 .replay-button { min-width: 27px; min-height: 27px; padding: 0 .38rem; font-size: .62rem; }
-.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; display: flex; align-items: center; padding: 0 .65rem; border-bottom: 1px solid var(--line-soft); }
-.replay-range { position: absolute; inset: 0 .65rem; width: calc(100% - 1.3rem); opacity: 0; cursor: ew-resize; z-index: 2; }
-.replay-track { width: 100%; height: 4px; border-radius: var(--radius-sm); background: var(--line); }
+.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; min-width: 0; max-width: 100%; display: flex; align-items: center; overflow: hidden; padding: 0 .65rem; border-bottom: 1px solid var(--line-soft); }
+.replay-range { position: absolute; inset: 0 .65rem; width: calc(100% - 1.3rem); max-width: calc(100% - 1.3rem); opacity: 0; cursor: ew-resize; z-index: 2; }
+.replay-track { min-width: 0; width: 100%; max-width: 100%; height: 4px; overflow: hidden; border-radius: var(--radius-sm); background: var(--line); }
 .replay-progress { display: block; height: 100%; background: var(--accent); }
-.replay-events { grid-column: 2; grid-row: 2 / 4; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(70px,1fr); gap: 1px; margin: 0; padding: 5px .65rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; list-style: none; }
+.replay-ticks { position: absolute; right: .65rem; bottom: -33px; left: .65rem; min-width: 0; max-width: calc(100% - 1.3rem); display: flex; justify-content: space-between; overflow: hidden; color: var(--muted); font: .5rem/1 monospace; pointer-events: none; }
+.replay-ticks span::before { display: block; width: 1px; height: 7px; margin: 0 auto 4px; background: #53647e; content: ""; }
+.replay-events { grid-column: 2; grid-row: 2 / 4; min-width: 0; width: 100%; max-width: 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(70px,1fr); gap: 1px; margin: 0; padding: 5px .65rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; list-style: none; }
 .replay-event { position: relative; min-width: 0; border-top: 5px solid #53647e; color: transparent; }
 .replay-event[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.08); }
 .replay-event[data-status="running"] { border-color: var(--running); }.replay-event[data-status="completed"] { border-color: var(--completion); }.replay-event[data-status="failed"] { border-color: var(--danger); }
 .replay-event[data-kind="prompt"] { border-top-style: double; border-color: #8ecae6; }.replay-event[data-kind="spawn"] { border-color: var(--completion-bright); }.replay-event[data-kind="failure"],.replay-event[data-kind="tool_error"] { border-color: var(--danger); }
 .replay-event[data-kind^="tool_"]::after { position: absolute; right: 2px; bottom: 2px; left: 2px; height: calc(1px + var(--tool-density, 1) * 1px); background: var(--green); opacity: .72; content: ""; }
 .replay-event[data-tool-density="0"] { --tool-density: 0; }.replay-event[data-tool-density="1"] { --tool-density: 1; }.replay-event[data-tool-density="2"] { --tool-density: 2; }.replay-event[data-tool-density="3"] { --tool-density: 3; }.replay-event[data-tool-density="4"] { --tool-density: 4; }
-.status-bar { min-width: 0; display: flex; align-items: center; gap: .65rem; padding: 0 .55rem; overflow: hidden; border-top: 1px solid var(--line); background: #0e1522; color: var(--muted); font: .58rem/1 monospace; }
+.status-bar { min-width: 0; display: flex; align-items: center; gap: .75rem; padding: 0 .75rem; overflow: hidden; border-top: 1px solid var(--line); background: #0d121b; color: var(--muted); font: .58rem/1 monospace; }
 .status-bar > span { min-width: 0; white-space: nowrap; }
 .status-bar .status-title { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .status-bar strong { color: var(--completion-bright); font-weight: 600; }
-.evidence-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: 48px auto minmax(0,1fr); overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
+.evidence-panel { position: relative; z-index: 20; min-width: 0; min-height: 0; display: grid; grid-template-rows: 54px 40px minmax(0,1fr); overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
 .evidence-panel[data-open="false"] { visibility: hidden; }
 .panel-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; padding: .55rem .7rem; border-bottom: 1px solid var(--line); }
+.evidence-panel .panel-header { position: sticky; top: 0; z-index: 3; background: var(--panel); }
+.evidence-panel [data-live-inspector-close] { position: relative; z-index: 4; display: grid; flex: 0 0 36px; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; place-items: center; border: 1px solid var(--line-strong); color: var(--accent); background: #101722; font-size: 1rem; line-height: 1; }
 .inspector-tabs { min-width: 0; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); border-bottom: 1px solid var(--line); overflow-x: auto; }
 .inspector-tabs button { min-width: 62px; min-height: 34px; padding: 0 .32rem; border: 0; border-right: 1px solid var(--line-soft); background: #101725; color: var(--muted); font-size: .55rem; cursor: pointer; }
 .inspector-tabs button[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
@@ -3559,12 +4378,14 @@ button { color: inherit; }
 .history-prompt { border-left-color: #8ecae6; }.history-tool { border-left-color: var(--green); }.history-failure,.history-tool_error { border-left-color: var(--danger); }
 .history-footer { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }.history-source { min-width: 0; overflow: hidden; color: #777; font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .empty-state { height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); }
+.empty-glyph { display: grid; width: 52px; height: 44px; margin: 0 auto .7rem; place-items: center; border: 1px solid var(--line); border-radius: var(--radius); background: #111925; color: var(--muted); }
+.empty-state-icon { width: 1.65rem; height: 1.65rem; }
 .empty-title { color: var(--text); }
-.live-dialog { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(0,0,0,.72); }
-.dialog-card { width: min(640px,100%); max-height: min(78dvh,720px); overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); box-shadow: 0 24px 80px rgba(0,0,0,.6); }
+.live-dialog { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: clamp(20px,3vw,36px); overflow: auto; background: rgba(0,0,0,.72); }
+.dialog-card { width: min(640px,calc(100vw - 48px)); max-height: calc(100dvh - 48px); display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); background-clip: padding-box; box-shadow: 0 24px 80px rgba(0,0,0,.6); }
 .dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: .65rem .8rem; border-bottom: 1px solid var(--line); background: var(--panel); }
 .dialog-title { margin: 0; font-size: .82rem; }
-.dialog-body { padding: .8rem; }
+.dialog-body { min-height: 0; padding: .8rem; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .node-card[data-replay-visible="false"] { opacity: 0; pointer-events: none; visibility: hidden; }
 .info-facts { display: grid; gap: .45rem; margin: .2rem 0 1rem; padding: .7rem; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.018); }
 .info-fact-row { display: grid; grid-template-columns: 8rem minmax(0,1fr); gap: .75rem; align-items: baseline; padding-bottom: .35rem; border-bottom: 1px solid rgba(255,255,255,.06); }
@@ -3574,22 +4395,31 @@ button { color: inherit; }
 .info-fact-prompt { display: grid; gap: .35rem; margin-top: .25rem; }
 .info-fact-prompt p { margin: 0; line-height: 1.45; }
 .hub-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.run-record-dialog { width: min(760px,100%); }
+.run-record-guide { display: grid; gap: .3rem; margin-bottom: .8rem; padding: .72rem .8rem; border: 1px solid rgba(79,209,197,.28); border-radius: var(--radius); background: rgba(79,209,197,.055); }
+.run-record-guide strong { color: var(--text); font-size: .72rem; }
+.run-record-guide span { color: var(--muted); font-size: .63rem; line-height: 1.5; }
+.hub-search { grid-column: 1 / -1; }
 .hub-field { display: grid; gap: .3rem; color: var(--muted); font-size: .65rem; }
 .hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 .5rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--text); }
 .hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .65rem; }
-.session-list { display: grid; gap: .38rem; margin-top: .7rem; }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .28rem .7rem; padding: .65rem; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #101725; color: var(--text); text-align: left; cursor: pointer; }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.05); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--completion-bright); font: .58rem/1.2 monospace; }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .35rem; color: var(--muted); font: .56rem/1.2 monospace; }.session-card-facts span + span::before { margin-right: .35rem; color: var(--dim); content: "·"; }
+.session-list { display: grid; gap: .38rem; margin-top: .7rem; }.session-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; margin-top: .45rem; padding: .45rem .1rem .25rem; border-bottom: 1px solid var(--line); }.session-group-heading strong { color: var(--text); font-size: .68rem; }.session-group-heading span { color: var(--muted); font-size: .57rem; }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .28rem .7rem; padding: .65rem; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #101725; color: var(--text); text-align: left; cursor: pointer; }.session-card[data-identity="unlinked"] { border-left-color: var(--amber); background: rgba(216,168,78,.035); }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.05); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--completion-bright); font: .58rem/1.2 monospace; }.session-card[data-identity="unlinked"] .session-card-activity { color: var(--amber); }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .35rem; color: var(--muted); font: .56rem/1.2 monospace; }.session-card-facts span + span::before { margin-right: .35rem; color: var(--dim); content: "·"; }
+.session-identity-empty { display: grid; justify-items: start; gap: .55rem; padding: 1rem; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: #101725; }
+.session-identity-empty strong { color: var(--text); font-size: .8rem; }.session-identity-empty p { max-width: 64ch; margin: 0; color: var(--muted); font-size: .66rem; line-height: 1.55; }
+.session-unlinked-toggle { width: 100%; min-height: 36px; padding: .5rem .7rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--muted); text-align: left; font-size: .65rem; cursor: pointer; }
+.session-unlinked-toggle:hover,.session-unlinked-toggle:focus-visible { border-color: var(--accent); color: var(--accent); background: rgba(88,212,207,.05); outline: 2px solid rgba(88,212,207,.22); outline-offset: 2px; }
 .shortcut-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .35rem .8rem; margin: 0; }
 .shortcut-grid div { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: .68rem; }
 kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--completion-bright); text-align: center; font: .58rem/1.2 monospace; }
 .share-panel, .control-panel { margin-top: .7rem; border: 1px solid var(--line); }
 .share-content, .control-content { padding: .7rem; }.share-actions,.control-actions { display: flex; flex-wrap: wrap; gap: .3rem; }.share-status,.control-status,.control-result,.control-error { color: var(--muted); font-size: .65rem; overflow-wrap: anywhere; }.control-error { color: var(--danger); }
-.stage-overview { flex: 0 0 auto; margin: 0; padding: .42rem .55rem .5rem; overflow-x: auto; background: #0d0f13; border: 0; border-bottom: 1px solid #2e2e2e; border-radius: 0; }
+.stage-overview { flex: 0 0 auto; margin: 0; padding: .72rem 1.5rem .78rem; overflow-x: auto; background: #0c1119; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
 .stage-overview-header { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; margin-bottom: .38rem; }
 .stage-overview-header .kicker { margin: 0; color: var(--completion-bright); font: 600 .55rem/1 monospace; letter-spacing: .08em; }
 .stage-overview-header h2 { margin: 0; color: var(--text); font: 600 .7rem/1.1 monospace; }
 .stage-overview-header > span { color: var(--muted); font: .53rem/1 monospace; }
-.stage-rail { display: grid; grid-template-columns: repeat(8, minmax(110px, 1fr)); gap: .25rem; min-width: 900px; margin: 0; padding: 0; list-style: none; }
-.stage-step { position: relative; display: flex; align-items: center; gap: .35rem; min-width: 0; padding: .3rem .34rem; color: var(--muted); background: #131d2c; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+.stage-rail { display: grid; grid-template-columns: repeat(8, minmax(128px, 1fr)); gap: .38rem; min-width: 1050px; margin: 0; padding: 0; list-style: none; }
+.stage-step { position: relative; display: flex; align-items: center; gap: .45rem; min-width: 0; min-height: 48px; padding: .42rem .5rem; color: var(--muted); background: #121923; border: 1px solid var(--line-soft); border-radius: 8px; }
 .stage-step[data-state="current"] { color: var(--text); border-color: var(--accent); background: rgba(88,212,207,.07); }
 .stage-step[data-state="completed"] { color: var(--completion-bright); border-color: #3b5381; }
 .stage-step-marker { display: grid; flex: 0 0 1.2rem; width: 1.2rem; height: 1.2rem; place-items: center; color: #111; background: #555; border-radius: 50%; font: 700 .52rem/1 monospace; }
@@ -3597,6 +4427,72 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
 .stage-step-copy { display: grid; min-width: 0; gap: .08rem; }
 .stage-step-name { overflow: hidden; color: inherit; font: 600 .57rem/1 monospace; text-overflow: ellipsis; white-space: nowrap; }
 .stage-step-state { color: var(--muted); font: .5rem/1 monospace; }
+@media (min-width: 901px) and (min-height: 720px) {
+  .shell { --line: #2c3749; --line-soft: #202a39; --text: #eef2f8; --muted: #9aa5b7; grid-template-rows: 60px minmax(0,1fr); background: #0b1018; }
+  .topbar { position: relative; gap: 1.35rem; padding: 0 25px; background: #0c121b; }
+  .brand { gap: .75rem; }
+  .brand-mark { width: 31px; height: 31px; }
+  .brand-title { font-size: .98rem; }
+  .top-run-context { font-size: .82rem; }
+  .work-view-switcher { position: absolute; left: 50%; width: 426px; height: 39px; transform: translateX(-50%); }
+  .work-view-tab { font-size: .82rem; }
+  .run-context { min-height: 90px; grid-template-columns: minmax(430px,1.1fr) minmax(610px,1.9fr) 150px; gap: 1rem; padding: .75rem 25px; }
+  .run-context-title { font-size: 1.04rem; }
+  .run-context-task { font-size: .7rem; }
+  .run-context-heading .context-kicker { display: none; }
+  .context-fact { padding-inline: 1rem; }
+  .context-fact span, .run-context-source span { font-size: .57rem; }
+  .context-fact strong { font-size: .77rem; }
+  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(0,1fr) 428px; grid-template-rows: minmax(0,1fr) 116px 62px; gap: 8px; padding: 0 24px; background: #0b1018; }
+  .workspace-grid[data-inspector-open="false"] { grid-template-columns: minmax(0,1fr) 0; }
+  .graph-panel { display: contents; }
+  .graph-stage { grid-column: 1; grid-row: 1; margin-left: 0; overflow: visible; }
+  .stage-overview { z-index: 12; flex-basis: 88px; width: calc(100vw - 48px); height: 88px; padding: 13px 0 12px; overflow: hidden; background: #0b1018; border-bottom: 0; }
+  .stage-overview-header { display: none; }
+  .stage-rail { grid-template-columns: repeat(8,minmax(0,1fr)); gap: 7px; min-width: 0; }
+  .stage-step { min-height: 60px; gap: .58rem; padding: .55rem .65rem; border-color: #2a3445; border-radius: 4px; background: #121923; }
+  .stage-step[data-state="current"] { border-color: var(--accent); box-shadow: inset 0 3px 0 rgba(79,209,197,.55); }
+  .stage-step-marker { flex-basis: 1.25rem; width: 1.25rem; height: 1.25rem; font-size: .58rem; }
+  .stage-step-icon { flex: 0 0 1.55rem; color: #7f8999; font: 400 1.35rem/1 monospace; text-align: center; }
+  .stage-step-icon svg { display: block; width: 1.55rem; height: 1.55rem; }
+  .stage-step[data-state="current"] .stage-step-icon { color: var(--accent); }
+  .stage-step-name { font-size: .68rem; }
+  .stage-step-state { display: none; }
+  .graph-canvas { border: 1px solid var(--line); border-radius: 3px; background-color: #0e151f; background-size: 28px 28px; }
+  .graph-canvas-header { top: 13px; right: 13px; left: 15px; }
+  .graph-canvas-title { font-size: .88rem; }
+  .graph-toolbar { min-width: 460px; padding: 0; border-radius: 3px; background: #111925; box-shadow: none; }
+  .graph-toolbar > .graph-tool-button { flex: 1 1 0; }
+  .graph-tool-button { min-height: 34px; padding-inline: .75rem; border-right: 1px solid var(--line-soft); border-radius: 0; font-size: .7rem; }
+  .graph-tool-button:last-child { border-right: 0; }
+  .graph-precision-control, .graph-toolbar [data-evidence-toggle] { display: none; }
+  .graph-minimap { display: none; }
+  .node-card { width: 256px; min-height: 140px; padding: .8rem; border-radius: 5px; background: #17202d; }
+  .node-title { font-size: .86rem; }
+  .node-summary { font-size: .69rem; }
+  .replay-panel { grid-column: 1 / -1; grid-row: 2; grid-template-columns: minmax(0,300px) minmax(0,1fr) minmax(0,410px); grid-template-rows: 43px 34px 39px; margin-top: 0; border: 1px solid var(--line); border-radius: 3px; background: #101722; }
+  .replay-dock-header { width: 300px; min-width: 0; max-width: 100%; padding: .7rem .8rem; }
+  .replay-current .panel-title { font-size: .84rem; }
+  .replay-range-wrap { grid-column: 2; grid-row: 1; }
+  .replay-events { grid-column: 2 / 4; grid-row: 2 / 4; border-top: 0; }
+  .replay-empty { display: grid; grid-column: 1 / -1; place-items: center; align-self: end; height: 28px; min-height: 0; margin: 32px 0 0 calc(100% - 410px); padding: 0 .6rem; overflow: hidden; border: 1px solid var(--line); color: var(--muted); font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
+  .status-bar { grid-column: 1 / -1; grid-row: 3; width: calc(100% + 48px); margin-left: -24px; padding: 0 25px; border-top: 1px solid var(--line); font-size: .62rem; }
+  .evidence-panel { z-index: 20; grid-column: 2; grid-row: 1; align-self: stretch; min-height: 0; margin-top: 88px; border: 1px solid var(--line); border-radius: 3px; background: #121925; }
+  .evidence-panel .panel-header { height: 50px; padding: .65rem .9rem; }
+  .evidence-panel .panel-header .kicker { display: none; }
+  .evidence-panel .panel-title { font-size: .9rem; }
+  .evidence-panel .panel-count { display: none; }
+  .inspector-tabs { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .inspector-tabs button { min-height: 40px; font-size: .7rem; }
+  .selected-node-summary { padding: 1rem; }
+  .selected-node-summary strong { font-size: .9rem; }
+  .selected-node-summary p { font-size: .72rem; }
+}
+@media (max-width: 1180px) {
+  .company-workspace { grid-template-columns: 200px minmax(0,1fr) 300px; }
+  .company-board { grid-template-columns: repeat(4,minmax(176px,1fr)); }
+  .work-column { min-width: 176px; }
+}
 @media (max-width: 720px) {
   .shell { grid-template-rows: 78px minmax(0,1fr); }
   .top-run-context, .connection span:last-child { display: none; }
@@ -3608,6 +4504,14 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
   .connection { margin: 0 .1rem 0 0; }
   .topbar-button { min-width: 30px; padding-inline: .3rem; }
   .workspace-grid, .workspace-grid[data-inspector-open="true"] { display: block; }
+  .company-workspace { height: auto; min-height: 100%; grid-template-columns: 1fr; grid-template-rows: auto minmax(520px,1fr) auto; }
+  .company-session-rail { max-height: 190px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .workspace-session-list { display: flex; overflow-x: auto; }
+  .workspace-session-item { flex: 0 0 210px; }
+  .company-board { grid-template-columns: repeat(4,minmax(210px,1fr)); }
+  .company-context-panel { min-height: 360px; border-top: 1px solid var(--line); border-left: 0; }
+  .company-board-header { align-items: flex-start; }
+  .company-board-actions .surface-state { display: none; }
   .work-surface-view { height: 100%; }
   .work-surface-header { padding: .8rem; }
   .repository-layout { grid-template-columns: 1fr; }
@@ -3621,9 +4525,12 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
   .run-context-source { justify-self: end; padding-left: 0; }
   .run-context-source strong { max-width: 86px; text-align: right; }
   .graph-panel { height: 100%; grid-template-rows: minmax(0,1fr) 104px 26px; }
-  .graph-toolbar { top: .4rem; left: .4rem; right: .4rem; width: auto; overflow-x: auto; flex-wrap: nowrap; }
+  .graph-canvas-header { top: .4rem; right: .4rem; left: .4rem; }
+  .graph-canvas-title { display: none; }
+  .graph-toolbar { width: 100%; max-width: none; overflow-x: auto; flex-wrap: nowrap; }
   .graph-tool-button { min-width: 40px; min-height: 40px; }
   [data-live-graph-fit], [data-live-graph-layout], [data-live-graph-zoom-out], [data-live-graph-zoom-in] { display: none; }
+  [data-live-graph-live], [data-live-graph-reset] { display: none; }
   .graph-canvas { overflow: auto; touch-action: pan-y; }
   .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
   .node-list { position: relative; inset: auto; display: grid; gap: .45rem; padding: 3.4rem .5rem .6rem; }
@@ -3634,19 +4541,138 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; height: auto; padding: 0; font: inherit; }
   .edge-layer, .graph-minimap { display: none; }
   .replay-panel { grid-template-columns: 1fr; grid-template-rows: 42px 28px 34px; }
-  .replay-dock-header { grid-row: 1; min-width: 0; grid-template-columns: minmax(64px,1fr) auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .replay-dock-header { grid-row: 1; width: 100%; min-width: 0; grid-template-columns: minmax(64px,1fr) auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .replay-range-wrap { grid-column: 1; grid-row: 2; }
   .replay-events { grid-column: 1; grid-row: 3; }
   .evidence-panel { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; height: min(76dvh,660px); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0; transform: translateY(102%); transition: transform .18s ease; visibility: visible !important; }
   .evidence-panel[data-open="true"] { transform: translateY(0); }
-  .inspector-tabs { grid-template-columns: repeat(6,minmax(72px,1fr)); }
+  .inspector-tabs { grid-template-columns: repeat(4,minmax(72px,1fr)); }
   .status-bar { gap: .45rem; }.status-bar .status-nodes,.status-bar .status-transport { display: none; }
   .hub-switcher, .shortcut-grid { grid-template-columns: 1fr; }
   .hub-status { grid-column: 1; }
 }
+/* Flow-first surface: secondary views, stages, replay, and records stay available
+   without competing with the execution graph. */
+.work-view-menu { position: relative; z-index: 40; flex: 0 0 auto; }
+.work-view-menu > summary { display: inline-flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
+.work-view-menu > summary::-webkit-details-marker { display: none; }
+.work-view-menu > summary::after { margin-left: .35rem; content: "⌄"; color: var(--subtle); }
+.work-view-menu[open] > summary { border-color: var(--accent); color: var(--accent); }
+.work-view-menu .work-view-switcher { position: absolute; top: calc(100% + .45rem); right: 0; left: auto; width: 164px; height: auto; display: grid; grid-template-columns: 1fr; padding: .3rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: #101722; box-shadow: 0 16px 40px rgba(0,0,0,.42); transform: none; }
+.work-view-menu .work-view-tab { width: 100%; min-width: 0; min-height: 36px; border: 0; border-radius: var(--radius-sm); text-align: left; }
+.work-view-menu .work-view-tab[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--accent); }
+.run-context { min-height: 48px; grid-template-columns: minmax(260px,1fr) minmax(460px,1.8fr) minmax(110px,.4fr); gap: .65rem; padding: .35rem 1.5rem; }
+.run-context-heading .context-kicker, .run-context-task { display: none; }
+.run-context-title { font-size: .86rem; }
+.run-context-facts { grid-template-columns: repeat(6,minmax(0,1fr)); }
+.context-fact { gap: .15rem; padding-block: 0; }
+.stage-overview { flex: 0 0 auto; width: 100%; height: auto; margin: 0; padding: 0; overflow: visible; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: #0c1119; }
+.stage-overview-toggle, .replay-collapse-summary { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: 0 .85rem; list-style: none; color: var(--muted); background: #101722; cursor: pointer; font: 600 .58rem/1 monospace; }
+.stage-overview-toggle::-webkit-details-marker, .replay-collapse-summary::-webkit-details-marker { display: none; }
+.stage-overview-toggle span:last-child, .replay-collapse-summary span:last-child { color: var(--accent); font-weight: 500; }
+.stage-overview-body { padding: .55rem .85rem .65rem; }
+.stage-overview-header { display: none; }
+.workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0,1fr) auto 28px; }
+.node-card { min-height: 176px; max-height: none; height: auto; grid-template-rows: auto auto auto auto; gap: .32rem; overflow: visible; }
+.node-owner-line { min-width: 0; display: flex; flex-wrap: wrap; gap: .2rem .55rem; color: var(--muted); font: 600 .58rem/1.25 monospace; }
+.node-owner-line span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-identity-row { grid-template-columns: 34px minmax(0,1fr); gap: .5rem; }
+.node-identity-button { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.node-identity-button:hover .node-title, .node-identity-button:focus-visible .node-title { color: var(--accent); }
+.node-identity-button:focus-visible { border-radius: 4px; outline: 2px solid rgba(79,209,197,.42); outline-offset: 2px; }
+.node-glyph { width: 32px; height: 32px; padding: 6px; }
+.node-summary { -webkit-line-clamp: 1; }
+.node-proof { font-size: .5rem; }
+.node-capability-strip { min-width: 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .25rem; overflow: visible; }
+.node-capability:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.node-capability { min-width: 0; max-width: 100%; min-height: 36px; display: grid; grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto auto; align-items: center; gap: .16rem .28rem; padding: .24rem .34rem; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: #101722; color: var(--text); text-align: left; cursor: pointer; }
+.node-capability:hover, .node-capability:focus-visible { border-color: var(--accent); background: rgba(79,209,197,.06); outline: 2px solid rgba(79,209,197,.2); outline-offset: 1px; }
+.node-capability-kind { min-width: 0; overflow: hidden; color: var(--completion-bright); font: 700 .64rem/1 monospace; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.node-capability-value { grid-column: 1 / -1; min-width: 0; max-width: none; overflow: hidden; color: var(--text); font: 600 .65rem/1.1 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.node-capability-state { color: var(--muted); font: .62rem/1 monospace; }
+.node-capability[data-capability-state="planned"] .node-capability-state { color: var(--completion-bright); }
+.node-capability[data-capability-state="observed"] .node-capability-state { color: var(--green); }
+.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"] { height: auto !important; min-height: 176px !important; padding: .72rem; overflow: visible; border: 1px solid var(--line); border-left-width: 3px; background: #151d29; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"]::after { display: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"] > * { visibility: visible; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"] .node-title { position: static; height: auto; padding: 0; font: inherit; }
+.node-meta { display: none; }
+.replay-panel { position: relative; min-height: 34px; height: 34px; display: block; border-top: 1px solid var(--line); }
+.replay-panel:not([open]) > :not(summary) { display: none !important; }
+.replay-panel[open] { height: 116px; display: grid; }
+.replay-collapse-summary { position: absolute; z-index: 4; top: 0; left: 0; width: 116px; height: 34px; border-right: 1px solid var(--line); }
+.replay-panel[open] .replay-dock-header { padding-left: 124px; }
+
+@media (min-width: 901px) and (min-height: 720px) {
+  .topbar { gap: .75rem; }
+  .work-view-menu { margin-left: auto; }
+  .topbar-actions { margin-left: 0; }
+  .run-context { min-height: 48px; grid-template-columns: minmax(300px,1fr) minmax(560px,1.9fr) 130px; padding: .35rem 25px; }
+  .run-context-title { font-size: .9rem; }
+  .context-fact span, .run-context-source span { font-size: .5rem; }
+  .context-fact strong { font-size: .68rem; }
+  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0,1fr) auto 28px; }
+  .stage-overview { z-index: 12; flex-basis: auto; width: calc(100vw - 48px); height: auto; padding: 0; overflow: visible; }
+  .stage-overview-body { padding: 7px 0; }
+  .stage-step { min-height: 52px; }
+  .node-card { min-height: 176px; max-height: none; padding: .72rem; overflow: visible; }
+  .replay-panel { grid-column: 1 / -1; grid-row: 2; height: 34px; grid-template-columns: minmax(0,300px) minmax(0,1fr) minmax(0,410px); grid-template-rows: 43px 34px 39px; }
+  .replay-panel[open] { height: 116px; }
+  .evidence-panel { margin-top: 0; }
+}
+
+@media (max-width: 720px) {
+  .shell { grid-template-rows: 58px minmax(0,1fr); }
+  .topbar { display: flex; min-height: 58px; padding-inline: .45rem; }
+  .top-run-context { display: none; }
+  .work-view-menu { margin-left: auto; }
+  .work-view-menu .work-view-switcher { right: 0; width: 150px; }
+  .topbar-actions { margin-left: 0; }
+  .connection, [data-live-open-help], [data-live-open-info] { display: none; }
+  .run-context { min-height: 42px; display: flex; align-items: center; padding: .3rem .55rem; }
+  .run-context-heading { flex: 1; }
+  .run-context-facts, .run-context-source { display: none; }
+  .graph-panel { grid-template-rows: minmax(0,1fr) auto 26px; }
+  .stage-overview-toggle { min-height: 32px; }
+  .stage-overview-body { overflow-x: auto; }
+  .node-list { grid-template-columns: 1fr; }
+  .node-card, .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 166px !important; }
+  .node-capability-strip { grid-template-columns: 1fr; }
+  .node-capability { min-height: 34px; }
+  .node-capability-kind, .node-capability-value, .node-capability-state { font-size: 10px; }
+  .replay-panel, .replay-panel:not([open]) { min-height: 34px; height: 34px; }
+  .replay-panel[open] { height: 126px; grid-template-columns: 1fr; grid-template-rows: 42px 28px 34px; }
+  .replay-panel[open] .replay-dock-header { padding-left: 124px; }
+}
 @media (max-width: 380px) { .brand-title { display: none; }.top-run-context strong { max-width: 24vw; }.topbar-button { font-size: .62rem; }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: .5rem; } }
+@media (min-width: 721px) and (max-width: 1024px) {
+  .node-card { padding: 14px; gap: 7px; }
+  .node-summary { display: none; }
+  .node-owner-line { display: grid; grid-template-columns: minmax(0,1fr); gap: 4px; }
+  .node-card-top, .node-owner-line, .node-task, .node-proof { font-size: 11px; }
+  .node-capability-strip { gap: 6px; }
+  .node-capability { min-height: 38px; padding: 6px 8px; }
+  .node-capability-kind, .node-capability-value, .node-capability-state { font-size: 10.5px; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
 `;
+
+const FIXED_UI_ICONS = Object.freeze({
+  overview: '<rect x="4" y="4" width="5" height="5" rx="1"/><rect x="15" y="4" width="5" height="5" rx="1"/><rect x="4" y="15" width="5" height="5" rx="1"/><rect x="15" y="15" width="5" height="5" rx="1"/>',
+  follow: '<circle cx="12" cy="12" r="5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="1.5"/>',
+  relayout: '<path d="M7 5v14M17 5v14M4 8h6M14 16h6"/><path d="m5 6 2-2 2 2M15 18l2 2 2-2"/>',
+  live: '<path d="M2 13h4l2.2-6 3.4 11L15 9l2 4h5"/>',
+  reset: '<path d="M4 8V3m0 0h5M4 3l4 4"/><path d="M5.5 17.5A8 8 0 1 0 6 6"/>',
+  graph: '<circle cx="5" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="12" r="2"/><path d="m7 11 3.5-4.5M13.5 6.5 17 11M7 13h10"/>',
+  previous: '<path d="m15 6-6 6 6 6"/><path d="M7 6v12"/>',
+  play: '<path d="m9 6 9 6-9 6Z"/>',
+  next: '<path d="m9 6 6 6-6 6"/><path d="M17 6v12"/>',
+  inbox: '<path d="M5 4h14l2 9v7H3v-7Z"/><path d="M3 13h5l2 3h4l2-3h5"/>',
+});
+
+function fixedUiIcon(name, className = "ui-icon") {
+  return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${FIXED_UI_ICONS[name] || ""}</svg>`;
+}
 
 export function renderLiveControlRoomPage({
   snapshot = null,
@@ -3692,12 +4718,12 @@ export function renderLiveControlRoomPage({
   <div id="live-app" class="shell" data-snapshot-endpoint="${escapeHtml(safeSnapshotEndpoint)}" data-events-endpoint="${escapeHtml(safeEventsEndpoint)}" data-projects-endpoint="${escapeHtml(safeProjectsEndpoint)}" data-replay-endpoint="${escapeHtml(safeReplayEndpoint)}" data-share-endpoint="${escapeHtml(safeShareEndpoint)}" data-control-endpoint="${escapeHtml(safeControlEndpoint)}">
     <header class="topbar" aria-label="Meta_Kim Live header">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">M</span>
+        <img class="brand-mark" src="/assets/meta-kim-k-mark.png" alt="" aria-hidden="true" width="30" height="30">
         <p class="brand-title">Meta_Kim Live</p>
       </div>
       <div class="top-run-context"><strong data-live-run-title>正在等待运行快照</strong><span data-live-run-id>未识别运行</span></div>
-      <div class="work-view-switcher" role="tablist" aria-label="Work surface view"><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作区">工作区</button><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Run" data-i18n-zh="运行">运行</button></div>
-      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Sessions" data-i18n-zh="会话">会话</button><button class="topbar-button" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
+      <details class="work-view-menu"><summary class="topbar-button" data-i18n-en="Other views" data-i18n-zh="其他视图">其他视图</summary><div class="work-view-switcher" role="tablist" aria-label="Optional work surface views"><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Flow map" data-i18n-zh="流程图">流程图</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</button><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button></div></details>
+      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</button><button class="topbar-button" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
     <main class="main" id="live-main" tabindex="-1">
       <div class="sr-only" data-live-region aria-live="polite"></div>
@@ -3709,46 +4735,61 @@ export function renderLiveControlRoomPage({
         </div>
         <div class="run-context-facts" role="list" aria-label="Run facts">
           <div class="context-fact" role="listitem"><span data-i18n-en="Status" data-i18n-zh="状态">状态</span><strong data-live-context-status>存疑</strong></div>
-          <div class="context-fact" role="listitem"><span data-i18n-en="Stage" data-i18n-zh="阶段">阶段</span><strong data-live-context-stage>—</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Stage" data-i18n-zh="阶段">阶段</span><strong data-live-context-stage>${EMPTY_PLACEHOLDER}</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Nodes" data-i18n-zh="节点">节点</span><strong data-live-context-nodes>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Events" data-i18n-zh="事件">事件</span><strong data-live-context-events>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Evidence" data-i18n-zh="证据">证据</span><strong data-live-context-evidence>0</strong></div>
-          <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>—</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
         </div>
         <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
       </section>
       <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
         <section class="work-surface-view repository-view" id="repository-view" role="tabpanel" aria-labelledby="work-view-repository" data-live-repository-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</span><h2 data-live-repository-title>已登记项目</h2><p data-live-repository-boundary>仓库边界不可用</p></div><span class="surface-state" data-i18n-en="Observed catalog" data-i18n-zh="已观测目录">已观测目录</span></header><div class="repository-layout"><section class="operational-section" aria-labelledby="repository-facts-title"><h3 id="repository-facts-title" data-i18n-en="Repository facts" data-i18n-zh="仓库事实">仓库事实</h3><div class="operational-list" data-live-repository-facts></div></section><section class="operational-section" aria-labelledby="repository-workspaces-title"><h3 id="repository-workspaces-title" data-i18n-en="Workspace sessions" data-i18n-zh="工作区会话">工作区会话</h3><div class="workspace-children" data-live-repository-sessions></div></section></div></section>
-        <section class="work-surface-view workspace-view" id="workspace-view" role="tabpanel" aria-labelledby="work-view-workspace" data-live-workspace-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Workspace" data-i18n-zh="工作区">工作区</span><h2 data-live-workspace-title>已观测工作区</h2><p data-live-workspace-boundary>工作区边界不可用</p></div><span class="surface-state" data-i18n-en="Run-scoped" data-i18n-zh="运行范围">运行范围</span></header><section class="operational-section workspace-availability" aria-labelledby="workspace-availability-title"><h3 id="workspace-availability-title" data-i18n-en="Available surfaces" data-i18n-zh="可用界面">可用界面</h3><div class="operational-list" data-live-workspace-facts></div></section></section>
+        <section class="work-surface-view workspace-view" id="workspace-view" role="tabpanel" aria-labelledby="work-view-workspace" data-live-workspace-view hidden>
+          <div class="company-workspace">
+            <aside class="company-session-rail" aria-labelledby="workspace-sessions-title">
+              <header class="company-rail-header"><div><span class="context-kicker" data-i18n-en="Chats" data-i18n-zh="任务与会话">任务与会话</span><h2 id="workspace-sessions-title" data-i18n-en="Recent work" data-i18n-zh="最近工作">最近工作</h2></div><button class="workspace-secondary-button" type="button" data-live-workspace-open-sessions data-i18n-en="All runs" data-i18n-zh="全部运行">全部运行</button></header>
+              <div class="workspace-session-list" data-live-workspace-session-list role="list" aria-label="Recent governed work"></div>
+            </aside>
+            <main class="company-board-shell">
+              <header class="company-board-header"><div><span class="context-kicker" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</span><h2 data-live-workspace-title>正在等待任务</h2><p data-live-workspace-boundary>等待真实运行数据</p></div><div class="company-board-actions"><span class="surface-state" data-i18n-en="Run-scoped" data-i18n-zh="运行范围">运行范围</span><button class="workspace-secondary-button" type="button" data-live-workspace-open-run-map data-i18n-en="Run map" data-i18n-zh="查看运行图">查看运行图</button></div></header>
+              <div class="company-board" data-live-workspace-board aria-label="Run work-item board"></div>
+            </main>
+            <aside class="company-context-panel" aria-labelledby="workspace-detail-title">
+              <header class="company-context-header"><span class="context-kicker" data-i18n-en="Selected work" data-i18n-zh="当前任务">当前任务</span><h2 id="workspace-detail-title" data-i18n-en="Task details" data-i18n-zh="任务详情">任务详情</h2></header>
+              <div class="company-context-body" data-live-workspace-detail></div>
+            </aside>
+          </div>
+          <div class="sr-only" data-live-workspace-facts></div>
+        </section>
         <section class="graph-panel" id="run-view" role="tabpanel" aria-labelledby="work-view-run" data-live-run-view aria-label="Run view">
           <div class="graph-stage" data-live-graph-viewport>
             <h1 class="sr-only" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
-            <div class="graph-toolbar" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)" data-i18n-en="Overview" data-i18n-zh="总览">总览</button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="true" aria-pressed="true" aria-label="Follow active node" title="Follow (F)" data-i18n-en="Follow" data-i18n-zh="跟随">跟随</button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)" data-i18n-en="Relayout" data-i18n-zh="重排">重排</button><button class="graph-tool-button" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div>
-            <section class="stage-overview" aria-label="Stage progress"><div class="stage-overview-header"><div><p class="kicker" data-i18n-en="Eight-stage spine" data-i18n-zh="八阶段主线">八阶段主线</p><h2 data-i18n-en="Critical to Evolution" data-i18n-zh="从目标确认到经验沉淀">从目标确认到经验沉淀</h2></div><span data-i18n-en="Replay-backed state" data-i18n-zh="状态来自回放事件">状态来自回放事件</span></div><ol class="stage-rail" data-live-stage-rail></ol></section>
+            <details class="stage-overview" open aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-i18n-en="Collapse" data-i18n-zh="收起">收起</span></summary><div class="stage-overview-body"><div class="stage-overview-header"><div><p class="kicker" data-i18n-en="Eight-stage spine" data-i18n-zh="八阶段主线">八阶段主线</p><h2 data-i18n-en="Critical to Evolution" data-i18n-zh="从目标确认到经验沉淀">从目标确认到经验沉淀</h2></div><span data-i18n-en="Replay-backed state" data-i18n-zh="状态来自回放事件">状态来自回放事件</span></div><ol class="stage-rail" data-live-stage-rail></ol></div></details>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
+              <div class="graph-canvas-header"><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}实时运行图</span><span class="graph-edge-legend" data-i18n-en="Glow = running · Green solid = done · Gray dashed = queued · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属</span><div class="graph-toolbar" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div>
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
-                <div class="node-list" data-live-node-list role="listbox" aria-label="Execution nodes"></div>
+                <div class="node-list" data-live-node-list role="list" aria-label="Execution nodes"></div>
               </div>
               <div class="graph-minimap" data-live-graph-minimap aria-label="Graph minimap" role="img"><div class="minimap-scene" data-live-minimap-scene></div><span class="minimap-viewport" data-live-minimap-viewport aria-hidden="true"></span></div>
             </div>
             <div class="graph-empty" data-live-graph-empty hidden><p data-i18n-en="No task nodes in this snapshot." data-i18n-zh="当前快照中没有任务节点。">当前快照中没有任务节点。</p></div>
           </div>
-          <section class="replay-panel replay-dock" aria-labelledby="replay-title">
-            <header class="replay-dock-header"><div class="replay-current"><span class="panel-title" id="replay-title" data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线</span><span class="panel-note" data-replay-status>正在等待回放数据</span></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event" title="Previous">‹</button><button class="replay-button replay-play" type="button" data-replay-play aria-label="Play replay"><span aria-hidden="true">▶</span><span class="sr-only" data-replay-play-label>播放</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event" title="Next">›</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position" data-i18n-en="Live" data-i18n-zh="实时">实时</button><button class="replay-button replay-reset" type="button" data-replay-reset aria-label="Reset replay" data-i18n-en="Reset" data-i18n-zh="重置">重置</button></div></header>
-            <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div></div>
+          <details class="replay-panel replay-dock" aria-labelledby="replay-title">
+            <summary class="replay-collapse-summary"><span data-i18n-en="Replay" data-i18n-zh="回放">回放</span><span data-i18n-en="Open timeline" data-i18n-zh="展开时间线">展开时间线</span></summary>
+            <header class="replay-dock-header"><div class="replay-current"><span class="panel-title" id="replay-title" data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线</span><span class="panel-note" data-replay-status>正在等待回放数据</span></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event" title="Previous">${fixedUiIcon("previous")}</button><button class="replay-button replay-play" type="button" data-replay-play aria-label="Play replay">${fixedUiIcon("play")}<span class="sr-only" data-replay-play-label>播放</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event" title="Next">${fixedUiIcon("next")}</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="replay-button replay-reset" type="button" data-replay-reset aria-label="Reset replay">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button></div></header>
+            <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div><div class="replay-ticks" aria-hidden="true"><span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span><span>01:15</span><span>01:30</span><span>01:45</span><span>02:00</span></div></div>
             <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
-          </section>
-          <div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span class="status-title" data-live-status-title>等待运行</span><span><strong data-live-run-progress>—</strong> · <span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>—</span> · <span data-live-node-count>0 个节点</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>—</span><span class="sr-only" data-live-run-updated>—</span><span class="sr-only" data-live-source>本地观察器</span></div>
+          </details>
+          <div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span class="status-title" data-live-status-title>等待运行</span><span><strong data-live-run-progress>${EMPTY_PLACEHOLDER}</strong> · <span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>${EMPTY_PLACEHOLDER}</span> · <span data-live-node-count>0 个节点</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-run-updated>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-source>本地观察器</span></div>
         </section>
         <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
-          <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Node provenance" data-i18n-zh="节点来源与依据">节点来源与依据</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
-          <div class="inspector-tabs" role="tablist" aria-label="Inspector sections"><button type="button" role="tab" id="inspector-tab-summary" aria-controls="inspector-panel-summary" aria-selected="true" data-live-inspector-tab="summary" data-i18n-en="Summary" data-i18n-zh="摘要">摘要</button><button type="button" role="tab" id="inspector-tab-conversation" aria-controls="inspector-panel-conversation" aria-selected="false" tabindex="-1" data-live-inspector-tab="conversation" data-i18n-en="Conversation" data-i18n-zh="对话">对话</button><button type="button" role="tab" id="inspector-tab-terminal" aria-controls="inspector-panel-terminal" aria-selected="false" tabindex="-1" data-live-inspector-tab="terminal" data-i18n-en="Terminal" data-i18n-zh="终端">终端</button><button type="button" role="tab" id="inspector-tab-changes" aria-controls="inspector-panel-changes" aria-selected="false" tabindex="-1" data-live-inspector-tab="changes" data-i18n-en="Changes" data-i18n-zh="变更">变更</button><button type="button" role="tab" id="inspector-tab-evidence" aria-controls="inspector-panel-evidence" aria-selected="false" tabindex="-1" data-live-inspector-tab="evidence" data-i18n-en="Evidence" data-i18n-zh="证据">证据</button><button type="button" role="tab" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected="false" tabindex="-1" data-live-inspector-tab="context" data-i18n-en="Context" data-i18n-zh="上下文">上下文</button></div>
-          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0"><div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · —</span><span data-live-selected-node-owner>负责人 · —</span><span data-live-selected-node-runtime>运行时 · —</span><span data-live-selected-node-model>模型 · —</span><span data-live-selected-node-duration>耗时 · —</span><span data-live-selected-node-tools>工具 · —</span><span data-live-selected-node-tokens>输出 · —</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · —</p><p data-live-selected-node-prompt>提示词阶段 · —</p><p data-live-selected-node-loadout>能力装载 · —</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div></div>
-          <div class="inspector-panel evidence-drawer" id="inspector-panel-conversation" role="tabpanel" aria-labelledby="inspector-tab-conversation" data-live-inspector-panel="conversation" data-item-count="0" hidden><div class="evidence-list" data-live-conversation-list role="list" aria-label="Conversation summaries"></div></div>
+          <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
+          <div class="inspector-tabs" role="tablist" aria-label="Inspector sections"><button type="button" role="tab" id="inspector-tab-summary" aria-controls="inspector-panel-summary" aria-selected="true" data-live-inspector-tab="summary" data-i18n-en="Summary" data-i18n-zh="摘要">摘要</button><button type="button" role="tab" id="inspector-tab-evidence" aria-controls="inspector-panel-evidence" aria-selected="false" tabindex="-1" data-live-inspector-tab="evidence" data-i18n-en="Evidence" data-i18n-zh="证据">证据</button><button type="button" role="tab" id="inspector-tab-terminal" aria-controls="inspector-panel-terminal" aria-selected="false" tabindex="-1" data-live-inspector-tab="terminal" data-i18n-en="Tools" data-i18n-zh="工具">工具</button><button type="button" role="tab" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected="false" tabindex="-1" data-live-inspector-tab="context" data-i18n-en="Decisions" data-i18n-zh="决策">决策</button></div>
+          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0"><div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-owner>负责人 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-runtime>运行时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-model>模型 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-duration>耗时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tools>工具 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tokens>输出 · ${EMPTY_PLACEHOLDER}</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-prompt>提示词阶段 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-loadout>能力装载 · ${EMPTY_PLACEHOLDER}</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div></div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-terminal" role="tabpanel" aria-labelledby="inspector-tab-terminal" data-live-inspector-panel="terminal" data-item-count="0" hidden><div class="evidence-list" data-live-terminal-list role="list" aria-label="Terminal evidence"></div></div>
-          <div class="inspector-panel evidence-drawer" id="inspector-panel-changes" role="tabpanel" aria-labelledby="inspector-tab-changes" data-live-inspector-panel="changes" data-item-count="0" hidden><div class="evidence-list" data-live-changes-list role="list" aria-label="Observed changes"></div></div>
-          <div class="inspector-panel evidence-drawer" id="inspector-panel-evidence" role="tabpanel" aria-labelledby="inspector-tab-evidence" data-live-inspector-panel="evidence" data-item-count="0" data-evidence-drawer hidden><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
+          <div class="inspector-panel evidence-drawer" id="inspector-panel-evidence" role="tabpanel" aria-labelledby="inspector-tab-evidence" data-live-inspector-panel="evidence" data-item-count="0" data-evidence-drawer hidden><div class="evidence-list" data-live-conversation-list role="list" aria-label="Conversation summaries"></div><div class="evidence-list" data-live-changes-list role="list" aria-label="Observed changes"></div><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-context" role="tabpanel" aria-labelledby="inspector-tab-context" data-live-inspector-panel="context" data-item-count="0" hidden><div class="evidence-list" data-live-context-transfer-list role="list" aria-label="Context transfers"></div></div>
         </aside>
       </section>
@@ -3760,11 +4801,25 @@ export function renderLiveControlRoomPage({
         <header class="panel-header"><div><h2 class="panel-title" id="control-title" data-i18n-en="Continuation controls" data-i18n-zh="继续执行控制">继续执行控制</h2><p class="panel-note" data-i18n-en="Opt-in commands require explicit local capabilities and durable verification." data-i18n-zh="可选控制命令需要明确的本地能力与耐久验证。">可选控制命令需要明确的本地能力与耐久验证。</p></div><span class="panel-count" data-i18n-en="AUTHORITY-BOUND" data-i18n-zh="受权限约束">受权限约束</span></header>
         <div class="control-content"><div class="control-actions" data-live-control-actions>${safeControlConfig ? LIVE_CONTROL_ACTIONS.map((action) => `<button class="replay-button control-button" type="button" data-live-control-action="${action}" aria-label="${action[0].toUpperCase() + action.slice(1)} run">${action[0].toUpperCase() + action.slice(1)}</button>`).join("") : ""}</div><p class="control-status" data-live-control-status role="status" aria-live="polite" data-i18n-en="Controls are read-only until the local service declares every action available." data-i18n-zh="在本地服务明确声明所有操作可用前，控制功能保持只读。">在本地服务明确声明所有操作可用前，控制功能保持只读。</p><p class="control-result" data-live-control-result role="status" aria-live="polite"></p><p class="control-error" data-live-control-error role="alert" aria-live="assertive"></p></div>
       </section>
-      <section class="empty-state" data-live-empty hidden aria-labelledby="empty-title"><span class="empty-glyph" aria-hidden="true">◌</span><h2 class="empty-title" id="empty-title" data-i18n-en="No live snapshot yet" data-i18n-zh="尚无实时快照">尚无实时快照</h2><p class="empty-copy" data-live-empty-message>正在等待本地观察器发布运行快照。</p></section>
+      <section class="empty-state" data-live-empty hidden aria-labelledby="empty-title"><span class="empty-glyph" aria-hidden="true">${fixedUiIcon("inbox", "empty-state-icon")}</span><h2 class="empty-title" id="empty-title" data-i18n-en="No live snapshot yet" data-i18n-zh="尚无实时快照">尚无实时快照</h2><p class="empty-copy" data-live-empty-message>正在等待本地观察器发布运行快照。</p></section>
     </main>
-    <section class="live-dialog" data-live-dialog data-live-sessions-dialog role="dialog" aria-modal="true" aria-labelledby="sessions-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="sessions-title" data-i18n-en="Sessions" data-i18n-zh="会话">会话</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close sessions">×</button></header><div class="dialog-body"><section class="hub-switcher" aria-label="Meta_Kim project and session selection"><label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label><label class="hub-field" for="live-session-select"><span data-i18n-en="Session / run" data-i18n-zh="会话 / 运行">会话 / 运行</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed session" disabled><option value="">请先选择项目</option></select></label><p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p></section><div class="session-list" data-live-session-list role="list" aria-label="Governed sessions"></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-sessions-dialog role="dialog" aria-modal="true" aria-labelledby="sessions-title" aria-hidden="true" hidden>
+      <div class="dialog-card run-record-dialog">
+        <header class="dialog-header"><h2 class="dialog-title" id="sessions-title" data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close run records">×</button></header>
+        <div class="dialog-body">
+          <div class="run-record-guide"><strong data-i18n-en="These are Meta_Kim run records, not your chat list." data-i18n-zh="这里显示的是 Meta_Kim 运行记录，不是聊天列表。">这里显示的是 Meta_Kim 运行记录，不是聊天列表。</strong><span data-i18n-en="Claude Code, Codex, Cursor, and OpenClaw records are linked only when the runtime saved a title and conversation identifier. Otherwise they stay in the unlinked group and can be located by time and run ID." data-i18n-zh="Claude Code、Codex、Cursor、OpenClaw 只有在运行时保存了标题和会话标识后才会关联；否则会留在未关联分组，只能按时间和运行 ID 定位。">Claude Code、Codex、Cursor、OpenClaw 只有在运行时保存了标题和会话标识后才会关联；否则会留在未关联分组，只能按时间和运行 ID 定位。</span></div>
+          <section class="hub-switcher" aria-label="Meta_Kim project and run record selection">
+            <label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label>
+            <label class="hub-field" for="live-session-select"><span data-i18n-en="Current run record" data-i18n-zh="当前运行记录">当前运行记录</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed run record" disabled><option value="">请先选择项目</option></select></label>
+            <label class="hub-field hub-search" for="live-session-search"><span data-i18n-en="Search title, date, or run ID" data-i18n-zh="搜索标题、日期或运行 ID">搜索标题、日期或运行 ID</span><input class="hub-select" id="live-session-search" data-live-session-search type="search" maxlength="120" autocomplete="off" placeholder="例如：课程、08/30、E126426F"></label>
+            <p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p>
+          </section>
+          <div class="session-list" data-live-session-list role="list" aria-label="Governed run records"></div>
+        </div>
+      </div>
+    </section>
     <section class="live-dialog" data-live-dialog data-live-help-dialog role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="help-title" data-i18n-en="Keyboard and camera" data-i18n-zh="键盘与相机">键盘与相机</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close help">×</button></header><div class="dialog-body"><div class="shortcut-grid"><div><span>Overview</span><kbd>O</kbd></div><div><span>Follow active</span><kbd>F</kbd></div><div><span>Relayout</span><kbd>R</kbd></div><div><span>Play / pause</span><kbd>Space</kbd></div><div><span>Previous event</span><kbd>[</kbd></div><div><span>Next event</span><kbd>]</kbd></div><div><span>Jump live</span><kbd>End</kbd></div><div><span>Session info</span><kbd>I</kbd></div><div><span>Close</span><kbd>Esc</kbd></div><div><span>Help</span><kbd>?</kbd></div></div></div></div></section>
-    <section class="live-dialog" data-live-dialog data-live-info-dialog role="dialog" aria-modal="true" aria-labelledby="info-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="info-title" data-i18n-en="Session info and local tools" data-i18n-zh="会话信息与本地工具">会话信息与本地工具</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close session info">×</button></header><div class="dialog-body"><p class="panel-note"><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 —</span> · <span data-i18n-en="Read-only by default" data-i18n-zh="默认只读">默认只读</span></p><div class="info-facts" data-live-info-facts></div><div data-live-info-tools></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-info-dialog role="dialog" aria-modal="true" aria-labelledby="info-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="info-title" data-i18n-en="Session info and local tools" data-i18n-zh="会话信息与本地工具">会话信息与本地工具</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close session info">×</button></header><div class="dialog-body"><p class="panel-note"><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 ${EMPTY_PLACEHOLDER}</span> · <span data-i18n-en="Read-only by default" data-i18n-zh="默认只读">默认只读</span></p><div class="info-facts" data-live-info-facts></div><div data-live-info-tools></div></div></div></section>
   </div>
   <script type="application/json" id="live-initial-snapshot">${initialJson}</script>
   <script type="application/json" id="live-initial-catalog">${initialCatalogJson}</script>

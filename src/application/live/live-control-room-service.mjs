@@ -14,6 +14,10 @@ import {
   executeLiveContinuation,
   planLiveContinuation,
 } from "./plan-live-continuation.mjs";
+import {
+  buildLiveSchedulingProjection,
+  sanitizeLiveSchedulingProjection,
+} from "./live-scheduling-projection.mjs";
 
 export const LIVE_SNAPSHOT_SCHEMA_VERSION = "meta-kim-live-snapshot-v2";
 export const LIVE_REPLAY_SCHEMA_VERSION = "meta-kim-live-replay-v2";
@@ -128,6 +132,12 @@ function containsSecret(value) {
 function publicId(kind, value) {
   const digest = createHash("sha256").update(String(value ?? "unknown"), "utf8").digest("hex").slice(0, 20);
   return `${kind}:${digest}`;
+}
+
+function publicTaskBinding(value) {
+  const taskId = exactTaskId(value);
+  if (!taskId) return null;
+  return /^task:[a-f0-9]{20}$/u.test(taskId) ? taskId : publicId("task", taskId);
 }
 
 function exactTaskId(value) {
@@ -481,6 +491,7 @@ function emptySnapshot(observedAt, kind = "empty", stale = true) {
     repository: repositoryProjection(null),
     workspace: workspaceProjection(null),
     contextTransfers: [],
+    scheduling: null,
     permissions: permissions(),
   };
 }
@@ -525,22 +536,200 @@ function structuredEvidencePassed(value) {
   return normalizeStatus(rawStatus) === "completed" || normalized === "verified" || normalized === "verified_closed";
 }
 
-function passingVerificationEvidence(artifact) {
+function evidenceIsStructuralOnly(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const evidenceKind = String(value.evidenceKind || value.resultKind || "").trim().toLowerCase();
+  const observedResult = String(value.observedResult || "").trim().toLowerCase();
+  const detail = String(value.detail || "").trim().toLowerCase();
+  const runBy = String(value.runBy || "").trim().toLowerCase();
+  return evidenceKind.includes("structural") ||
+    observedResult === "not_run_by_structural_artifact_builder" ||
+    observedResult === "not_run_by_governed_runner" ||
+    detail === "not_run_by_structural_artifact_builder" ||
+    detail === "not_run_by_governed_runner" ||
+    runBy === "not_run";
+}
+
+function evidenceMatchesBinding(value, { runId = null, taskId = null } = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const explicitRunId = recordRunId(value);
+  if (runId && explicitRunId !== runId) return false;
+  const explicitTaskId = taskIdFrom(value);
+  if (taskId && explicitTaskId !== taskId) return false;
+  return true;
+}
+
+const TRUSTED_TERMINAL_STATUSES = new Set(["completed", "failed", "blocked", "cancelled"]);
+
+function terminalEvidenceRecords(result, { runId = null, taskId = null } = {}) {
+  const records = [
+    ...boundedArray(result?.workerExecutionEvidence, 24),
+    ...boundedArray(result?.terminalEvidence, 24),
+  ];
+  return records.filter((item) => {
+    if (evidenceIsStructuralOnly(item) || !evidenceMatchesBinding(item, { runId, taskId })) return false;
+    return TRUSTED_TERMINAL_STATUSES.has(normalizeStatus(firstString(item, ["status", "resultStatus", "result"])));
+  });
+}
+
+function terminalStatusIsProven(result, expectedStatus, binding = {}) {
+  const normalized = normalizeStatus(expectedStatus, "in_doubt");
+  return terminalEvidenceRecords(result, binding)
+    .some((item) => normalizeStatus(firstString(item, ["status", "resultStatus", "result"])) === normalized);
+}
+
+function passingVerificationEvidence(artifact, runId = null) {
   const verification = artifact?.verificationPacket;
   if (!verification || typeof verification !== "object") return [];
   return [verification.verificationResults, verification.fixEvidence]
     .filter(Array.isArray)
     .flat()
-    .filter(structuredEvidencePassed);
+    .filter((item) => structuredEvidencePassed(item) && !evidenceIsStructuralOnly(item) && evidenceMatchesBinding(item, { runId }));
 }
 
-function passingWorkerEvidence(result) {
-  return (Array.isArray(result?.workerExecutionEvidence) ? result.workerExecutionEvidence : [])
-    .filter(structuredEvidencePassed);
+function passingWorkerEvidence(result, { runId = null, taskId = null } = {}) {
+  const boundTaskId = taskId || taskIdFrom(result);
+  return terminalEvidenceRecords(result, { runId, taskId: boundTaskId })
+    .filter((item) => normalizeStatus(firstString(item, ["status", "resultStatus", "result"])) === "completed");
 }
 
-function completionIsProven(artifact) {
-  return passingVerificationEvidence(artifact).length > 0;
+function completionIsProven(artifact, runId = null) {
+  return passingVerificationEvidence(artifact, runId).length > 0;
+}
+
+function runTerminalStatusIsProven(artifact, runId, status) {
+  const normalized = normalizeStatus(status, "in_doubt");
+  if (normalized === "completed") return completionIsProven(artifact, runId);
+  if (!TRUSTED_TERMINAL_STATUSES.has(normalized)) return false;
+  return boundedArray(artifact?.workerResultPackets, LIVE_MAX_NODES)
+    .some((result) => {
+      const taskId = taskIdFrom(result);
+      return Boolean(taskId) && terminalStatusIsProven(result, normalized, { runId, taskId });
+    });
+}
+
+function artifactIsStructuralOnly(artifact) {
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return false;
+  if (artifact?.run?.executionEvidenceState === "structural_planning_only") return true;
+  if (artifact?.executionResult?.actualWorkerExecution === false) return true;
+  if (/planned_not_executed/iu.test(String(artifact?.executionResult?.executionClosure || ""))) return true;
+  const results = [
+    ...(Array.isArray(artifact.workerResultPackets) ? artifact.workerResultPackets : []),
+    ...(Array.isArray(artifact.nodes) ? artifact.nodes.filter((node) => node?.kind === "agent" && node?.isMain !== true) : []),
+  ];
+  return results.length > 0 && results.every((result) =>
+    /planned_not_executed/iu.test(String(result?.status || result?.resultKind || "")) ||
+    String(result?.evidenceKind || "").toLowerCase().includes("structural") ||
+    boundedArray(result?.workerExecutionEvidence, 24).some(evidenceIsStructuralOnly));
+}
+
+function publicDisplay(status, { active = false, structuralOnly = false } = {}) {
+  const normalized = normalizeStatus(status, "in_doubt");
+  if (structuralOnly) {
+    return { displayState: "unreported", statusReason: "这是结构规划记录，不是执行证据；尚未发现可信任务回报。" };
+  }
+  if (normalized === "completed") {
+    return { displayState: "completed", statusReason: "已找到同一运行、同一任务的可信完成证据。" };
+  }
+  if (normalized === "failed") return { displayState: "failed", statusReason: "已记录可信失败结果。" };
+  if (normalized === "blocked") return { displayState: "blocked", statusReason: "任务被明确阻塞，尚未完成。" };
+  if (normalized === "cancelled") return { displayState: "cancelled", statusReason: "任务已取消，不能视为完成。" };
+  if (normalized === "active") return { displayState: "active", statusReason: "运行当前仍处于活动状态。" };
+  if (normalized === "pending" && active) {
+    return { displayState: "queued", statusReason: "运行仍在进行，该任务等待执行或等待可信回报。" };
+  }
+  if (["pending", "session_stopped", "archived"].includes(normalized)) {
+    return { displayState: "unreported", statusReason: "运行当前不活跃，尚未发现该任务的可信执行回报。" };
+  }
+  return { displayState: "unknown", statusReason: "现有记录不足以判断该任务是否执行或完成。" };
+}
+
+const CONVERSATION_RUNTIME_ALIASES = new Map([
+  ["claude", "claude"], ["claude-code", "claude"], ["claude_code", "claude"],
+  ["codex", "codex"], ["cursor", "cursor"], ["openclaw", "openclaw"], ["open-claw", "openclaw"],
+]);
+
+function safeConversationRuntime(value) {
+  return CONVERSATION_RUNTIME_ALIASES.get(String(value || "").trim().toLowerCase()) || "unavailable";
+}
+
+function safeConversationRef(value) {
+  if (typeof value !== "string") return null;
+  const ref = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9:._-]{3,159}$/u.test(ref) && !containsSecret(ref) ? ref : null;
+}
+
+function conversationRefFrom(value) {
+  return safeConversationRef(firstString(value, [
+    "conversationId", "threadId", "sessionId", "composerId", "sessionKey", "conversationRef",
+  ]));
+}
+
+function conversationLinkProjection(artifact, runId) {
+  const verifiedLinks = [];
+  const candidateLinks = [];
+  const seen = new Set();
+  const append = (target, value, matchBasis) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const conversationRef = conversationRefFrom(value);
+    if (!conversationRef) return;
+    const sourceRuntime = safeConversationRuntime(value.runtime || value.provider || value.sourceRuntime);
+    const key = `${sourceRuntime}:${conversationRef}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const title = safeNullableText(value.title || value.conversationTitle, 120);
+    const updatedAt = safeTimestamp(value.updatedAt || value.timestamp || value.occurredAt);
+    target.push({
+      sourceRuntime,
+      conversationRef,
+      matchBasis,
+      ...(title ? { conversationTitle: title } : {}),
+      ...(updatedAt ? { updatedAt } : {}),
+    });
+  };
+  const source = artifact?.sourceConversation && typeof artifact.sourceConversation === "object"
+    ? artifact.sourceConversation
+    : null;
+  if (source && (!recordRunId(source) || recordRunId(source) === runId)) append(verifiedLinks, source, "exact_metadata");
+  const exactRecords = [artifact?.conversationLinks, artifact?.runtimeConversationLinks].filter(Array.isArray).flat();
+  for (const record of exactRecords) {
+    const exactRun = recordRunId(record) === runId;
+    const exactRef = record?.verified === true || record?.matchState === "verified" || record?.linkState === "verified";
+    append(exactRun || exactRef ? verifiedLinks : candidateLinks, record, exactRun ? "exact_run_id" : exactRef ? "exact_thread_id" : "metadata_candidate");
+  }
+  const candidates = [artifact?.conversationCandidates, artifact?.candidateConversationLinks].filter(Array.isArray).flat();
+  for (const record of candidates) append(candidateLinks, record, safeId(record?.matchBasis, "title_time_project_similarity"));
+  const primary = verifiedLinks[0] || candidateLinks[0] || null;
+  return {
+    sourceRuntime: primary?.sourceRuntime || "unavailable",
+    conversationLinkState: verifiedLinks.length ? "verified" : candidateLinks.length ? "candidate" : "unlinked",
+    verifiedLinks: verifiedLinks.slice(0, 16),
+    candidateLinks: candidateLinks.slice(0, 16),
+    ...(primary?.conversationRef ? { conversationRef: primary.conversationRef } : {}),
+    ...(primary?.conversationTitle ? { conversationTitle: primary.conversationTitle } : {}),
+  };
+}
+
+function sanitizeConversationLinks(value) {
+  const seen = new Set();
+  return boundedArray(value, 16).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const conversationRef = safeConversationRef(item.conversationRef || item.threadId || item.sessionId);
+    if (!conversationRef) return [];
+    const sourceRuntime = safeConversationRuntime(item.sourceRuntime || item.runtime || item.provider);
+    const key = `${sourceRuntime}:${conversationRef}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    const conversationTitle = safeNullableText(item.conversationTitle || item.title, 120);
+    const updatedAt = safeTimestamp(item.updatedAt || item.timestamp);
+    return [{
+      sourceRuntime,
+      conversationRef,
+      matchBasis: safeText(item.matchBasis, "metadata_candidate", 64),
+      ...(conversationTitle ? { conversationTitle } : {}),
+      ...(updatedAt ? { updatedAt } : {}),
+    }];
+  });
 }
 
 function recordTime(record) {
@@ -593,6 +782,17 @@ function liveWorkerResultMap(artifact, runId) {
     const taskId = taskIdFrom(result);
     if (taskId) results.set(taskId, result);
   }
+  for (const lifecycle of boundedArray(artifact?.workerLifecycle, LIVE_MAX_NODES)) {
+    if (!recordBelongsToRun(lifecycle, runId)) continue;
+    const taskId = taskIdFrom(lifecycle);
+    if (!taskId || results.has(taskId)) continue;
+    const status = lifecycle?.status === "queued" ? "pending" : lifecycle?.status;
+    results.set(taskId, {
+      ...lifecycle,
+      status,
+      workerExecutionEvidence: boundedArray(lifecycle?.terminalEvidence, 8),
+    });
+  }
   return results;
 }
 
@@ -623,12 +823,18 @@ function safeExecutionEvidence(result, taskId) {
     label: `Worker evidence ${index + 1}`,
     detail: safeText(item?.observedResult || item?.expectedResult || item?.skipReason, "Evidence recorded by the governed run", 180),
     sourceRef: safeText(item?.verifyStepRef, null, 120),
+    runId: normalizeLiveRunId(item?.runId || result?.runId),
+    taskPacketId: publicTaskBinding(item?.taskPacketId || item?.taskId || result?.taskPacketId || result?.taskId || taskId),
+    proofValid: item?.proofValid === true,
+    synthetic: item?.synthetic === true,
+    evidenceKind: safeNullableText(item?.evidenceKind, 80),
   }));
 }
 
 function safeToolCalls(hostEvidence, taskId) {
   return evidenceForTask(hostEvidence, taskId)
-    .filter((item) => !["agent_subagent", "agent_teams_playbook", "durable_agent"].includes(item?.family))
+    .filter((item) => ["command_script", "runtime_tool"].includes(String(item?.family || "").trim().toLowerCase()))
+    .filter(evidenceShowsActualInvocation)
     .slice(0, 24)
     .map((item, index) => ({
       id: publicId("tool", `${taskId}:${item?.eventId ?? item?.evidenceRef ?? index}`),
@@ -640,7 +846,7 @@ function safeToolCalls(hostEvidence, taskId) {
 }
 
 function safeTelemetry(hostEvidence, taskId) {
-  const observed = evidenceForTask(hostEvidence, taskId).find((item) => item?.proofValid === true);
+  const observed = evidenceForTask(hostEvidence, taskId).find(evidenceShowsActualInvocation);
   const usage = observed?.usage && typeof observed.usage === "object" ? observed.usage : {};
   const inputTokens = usage.inputTokens ?? usage.input_tokens;
   const outputTokens = usage.outputTokens ?? usage.output_tokens;
@@ -670,16 +876,202 @@ function plannedLoadout(packet) {
   const mcp = bindings.mcp ?? packet?.mcpLoadout;
   const tools = bindings.tools ?? packet?.toolLoadout;
   const commands = bindings.commands ?? packet?.commandLoadout;
+  const hooks = bindings.hooks ?? packet?.hookLoadout;
+  const plugins = bindings.plugins ?? packet?.pluginLoadout;
+  const memoryGraph = bindings.memoryGraph ?? bindings.memory_graph ?? packet?.memoryGraphLoadout;
+  const dependencies = bindings.dependencies ?? packet?.dependencyLoadout;
   return {
     skills: count(skills),
     mcp: count(mcp),
     tools: count(tools),
     commands: count(commands),
+    hooks: count(hooks),
+    plugins: count(plugins),
+    memoryGraph: count(memoryGraph),
+    dependencies: count(dependencies),
     skillNames: names(skills),
     mcpNames: names(mcp),
     toolNames: names(tools),
     commandNames: names(commands),
+    hookNames: names(hooks),
+    pluginNames: names(plugins),
+    memoryGraphNames: names(memoryGraph),
+    dependencyNames: names(dependencies),
   };
+}
+
+const LIVE_CAPABILITY_FAMILIES = Object.freeze({
+  agent: new Set(["agent_subagent", "durable_agent"]),
+  skill: new Set(["skill"]),
+  mcp: new Set(["mcp"]),
+  command: new Set(["command_script"]),
+  runtime_tool: new Set(["runtime_tool"]),
+  hook: new Set(["hook"]),
+  plugin: new Set(["plugin"]),
+  memory_graph: new Set(["memory_graph", "memory-graph"]),
+  dependency: new Set(["dependency"]),
+});
+
+const LIVE_CAPABILITY_KINDS = Object.freeze(Object.keys(LIVE_CAPABILITY_FAMILIES));
+
+const LIVE_OBSERVED_INVOCATION_STATES = new Set([
+  "invoked",
+  "returned",
+  "verified",
+  "applied",
+  "completed",
+  "accepted",
+  "started",
+  "running",
+  "in_progress",
+  "failed",
+]);
+
+function uniqueCapabilityNames(values) {
+  return [...new Set(values.map((value) => safeText(value, "", 96)).filter(Boolean))].slice(0, 24);
+}
+
+function evidenceShowsActualInvocation(item) {
+  const state = String(item?.state || "").trim().toLowerCase();
+  if (state === "selected_not_invoked") return false;
+  const resultStatus = String(item?.resultStatus || "").trim().toLowerCase();
+  return LIVE_OBSERVED_INVOCATION_STATES.has(state) || LIVE_OBSERVED_INVOCATION_STATES.has(resultStatus);
+}
+
+const OBSERVED_ACTIVE_STATES = new Set(["invoked", "returned", "started", "running", "in_progress", "accepted"]);
+const OBSERVED_TERMINAL_STATES = new Set(["completed", "verified", "applied"]);
+const OBSERVED_FAILED_STATES = new Set(["failed"]);
+
+function aggregateObservedStatusForTask(hostEvidence, taskId) {
+  const rows = evidenceForTask(hostEvidence, taskId).filter(evidenceShowsActualInvocation);
+  if (!rows.length) return { state: null, count: 0, lastAt: null };
+  let active = 0;
+  let terminal = 0;
+  let failed = 0;
+  let lastAt = null;
+  for (const row of rows) {
+    const state = String(row?.state || row?.resultStatus || "").trim().toLowerCase();
+    if (OBSERVED_FAILED_STATES.has(state)) failed += 1;
+    else if (OBSERVED_TERMINAL_STATES.has(state)) terminal += 1;
+    else if (OBSERVED_ACTIVE_STATES.has(state)) active += 1;
+    const at = Date.parse(row?.occurredAt || row?.observedAt);
+    if (Number.isFinite(at) && (lastAt === null || at > lastAt)) lastAt = at;
+  }
+  let observed = null;
+  if (failed > 0 && active === 0 && terminal === 0) observed = "failed";
+  else if (active > 0) observed = "active";
+  else if (terminal > 0 && failed === 0) observed = "completed";
+  else if (terminal > 0) observed = "completed";
+  return { state: observed, count: rows.length, lastAt: lastAt ? new Date(lastAt).toISOString() : null };
+}
+
+function aggregateFileHeatForTask(hostEvidence, taskId, { cap = 6 } = {}) {
+  const map = new Map();
+  for (const row of evidenceForTask(hostEvidence, taskId)) {
+    const path = safeText(row?.filePath, null, 240);
+    if (!path) continue;
+    const at = safeTimestamp(row?.occurredAt || row?.observedAt);
+    const existing = map.get(path);
+    if (existing && Date.parse(existing.at) >= Date.parse(at || 0)) {
+      existing.n += 1;
+    } else {
+      map.set(path, { path, at, n: existing ? existing.n + 1 : 1 });
+    }
+  }
+  return [...map.values()]
+    .sort((left, right) => Date.parse(right.at || 0) - Date.parse(left.at || 0))
+    .slice(0, cap);
+}
+
+function computeHandoffEdges(workerNodes) {
+  const byComponent = new Map();
+  for (const node of workerNodes) {
+    const componentId = node?.componentId || null;
+    if (!componentId) continue;
+    if (!byComponent.has(componentId)) byComponent.set(componentId, []);
+    byComponent.get(componentId).push(node);
+  }
+  const edges = [];
+  const seen = new Set();
+  for (const [componentId, nodes] of byComponent.entries()) {
+    if (nodes.length < 2) continue;
+    const ordered = nodes
+      .filter((node) => node?.timing?.startedAt)
+      .sort((left, right) => Date.parse(left.timing.startedAt) - Date.parse(right.timing.startedAt));
+    for (let index = 1; index < ordered.length; index += 1) {
+      const prev = ordered[index - 1];
+      const next = ordered[index];
+      const key = `${prev.id} ${next.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({
+        from: prev.id,
+        to: next.id,
+        kind: "handoff",
+        componentId: prev.componentId,
+        fromRoleInstance: prev.roleInstanceId,
+        toRoleInstance: next.roleInstanceId,
+        gapMs: Math.max(0, Date.parse(next.timing.startedAt) - Date.parse(prev.timing.completedAt || prev.timing.startedAt)),
+      });
+      if (edges.length >= LIVE_MAX_EDGES) return edges;
+    }
+  }
+  return edges;
+}
+
+function trustTierRank(node) {
+  if (node?.isMain === true) return Number.POSITIVE_INFINITY;
+  if (node?.kind === "workflow") return 4;
+  if (node?.status === "pending") return 0;
+  if (node?.status === "in_doubt") return 1;
+  if (node?.status === "active") return node?.observedStatus ? 3 : 1;
+  if (["completed", "failed", "blocked", "cancelled"].includes(node?.status)) {
+    return node?.terminalProofValid ? 4 : 2;
+  }
+  return 2;
+}
+
+function capabilityFamilyKind(family) {
+  const normalized = String(family || "").trim().toLowerCase();
+  return Object.entries(LIVE_CAPABILITY_FAMILIES)
+    .find(([, families]) => families.has(normalized))?.[0] || null;
+}
+
+function capabilityTruthRecord(kind, plannedNames, actualNames) {
+  const planned = uniqueCapabilityNames(plannedNames);
+  const actual = uniqueCapabilityNames(actualNames);
+  if (!planned.length && !actual.length) return null;
+  return {
+    kind,
+    state: actual.length ? "observed" : planned.length ? "planned" : "unavailable",
+    plannedNames: planned,
+    actualNames: actual,
+    ...(actual.length ? { observation: "trusted_host_evidence" } : {}),
+  };
+}
+
+function capabilityTruthForTask(hostEvidence, taskId, { ownerAgent = null, loadout = {} } = {}) {
+  const actualByKind = Object.fromEntries(LIVE_CAPABILITY_KINDS.map((kind) => [kind, []]));
+  for (const item of evidenceForTask(hostEvidence, taskId)) {
+    const kind = capabilityFamilyKind(item?.family);
+    if (!kind || !evidenceShowsActualInvocation(item)) continue;
+    const name = firstString(item, ["providerId", "nativeAgentType", "hostSurface"]);
+    if (name) actualByKind[kind].push(name);
+  }
+  const plannedByKind = {
+    agent: ownerAgent ? [ownerAgent] : [],
+    skill: loadout.skillNames || [],
+    mcp: loadout.mcpNames || [],
+    command: loadout.commandNames || [],
+    runtime_tool: loadout.toolNames || [],
+    hook: loadout.hookNames || [],
+    plugin: loadout.pluginNames || [],
+    memory_graph: loadout.memoryGraphNames || [],
+    dependency: loadout.dependencyNames || [],
+  };
+  return LIVE_CAPABILITY_KINDS
+    .map((kind) => capabilityTruthRecord(kind, plannedByKind[kind], actualByKind[kind]))
+    .filter(Boolean);
 }
 
 function firstArtifactTimestamp(artifact) {
@@ -849,6 +1241,29 @@ function liveProjectionBytes(value) {
   return Buffer.byteLength(serializeLiveCompactProjection(value), "utf8");
 }
 
+// Budget compaction can remove a structural node after the scheduling block was
+// built. A wave must never keep naming a node the projection no longer carries,
+// so membership is pruned here and the loss shows up as reduced coverage rather
+// than as a dangling reference.
+function dropSchedulingNode(scheduling, nodeId) {
+  if (!scheduling || !Array.isArray(scheduling.waves)) return;
+  let mappedNodeCount = 0;
+  for (const wave of scheduling.waves) {
+    if (!wave || !Array.isArray(wave.nodeIds)) continue;
+    const kept = wave.nodeIds.filter((id) => id !== nodeId);
+    wave.unmappedCount += wave.nodeIds.length - kept.length;
+    wave.nodeIds = kept;
+    wave.mappedCount = kept.length;
+    mappedNodeCount += kept.length;
+  }
+  scheduling.coverage = {
+    ...scheduling.coverage,
+    mappedNodeCount,
+    complete: scheduling.coverage?.declaredTaskCount > 0
+      && mappedNodeCount === scheduling.coverage.declaredTaskCount,
+  };
+}
+
 function fitLiveProjectionToBudget(value, maxBytes) {
   let projection = JSON.parse(JSON.stringify(value));
   const originalBytes = liveProjectionBytes(projection);
@@ -884,15 +1299,12 @@ function fitLiveProjectionToBudget(value, maxBytes) {
       projection[key] = projection[key].filter((item) => item.nodeId !== nodeId);
     }
     projection.replay = projection.replay.filter((event) => event.nodeId !== nodeId);
+    dropSchedulingNode(projection.scheduling, nodeId);
   };
   const lowPriorityNodeIds = () => {
     const ranks = projection.nodes.map((node, index) => {
-      if (node.isMain === true) return { index, rank: Number.POSITIVE_INFINITY };
-      if (node.kind === "workflow") return { index, rank: 4 };
-      if (node.status === "pending") return { index, rank: 0 };
-      if (["completed", "in_doubt", "cancelled", "archived"].includes(node.status)) return { index, rank: 1 };
-      if (node.status === "active") return { index, rank: 3 };
-      return { index, rank: 2 };
+      const rank = trustTierRank(node);
+      return { index, rank };
     }).filter((item) => Number.isFinite(item.rank));
     ranks.sort((left, right) => left.rank - right.rank || right.index - left.index);
     return ranks.map(({ index }) => projection.nodes[index]?.id).filter(Boolean);
@@ -987,6 +1399,7 @@ function fitLiveProjectionToBudget(value, maxBytes) {
       repository: projection.repository,
       workspace: projection.workspace,
       contextTransfers: [],
+      scheduling: null,
       eventIndex: 0,
       eventCount: 0,
       counts: projection.counts,
@@ -1012,11 +1425,24 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       : null
   );
   if (!runId) throw new Error("Live projection requires a valid governed runId.");
-  const packets = boundedArray(artifact?.workerTaskPackets, LIVE_MAX_NODES - 2);
+  const packets = boundedArray(
+    Array.isArray(artifact?.workerTaskPackets) && artifact.workerTaskPackets.length
+      ? artifact.workerTaskPackets
+      : boundedArray(artifact?.workerLifecycle, LIVE_MAX_NODES - 2).map((record) => ({
+          taskPacketId: record?.taskPacketId,
+          roleDisplayName: record?.roleDisplayName || "worker",
+          roleInstanceId: record?.roleInstanceId,
+          stage: "execution",
+          status: record?.status === "queued" ? "pending" : record?.status,
+        })),
+    LIVE_MAX_NODES - 2,
+  );
   const runTask = readableRunTask(artifact);
   const runTitle = readableRunTitle(artifact, runTask);
   const results = liveWorkerResultMap(artifact, runId);
   const hostEvidence = trustedHostEvidence(artifact, runId);
+  const structuralOnly = artifactIsStructuralOnly(artifact);
+  const conversation = conversationLinkProjection(artifact, runId);
   const nodeByTaskId = new Map();
   const workerNodes = packets.map((packet, index) => {
     const taskId = taskIdFrom(packet) || `${runId}:worker:${index + 1}`;
@@ -1026,7 +1452,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       firstString(result, ["status", "resultStatus"]) || firstString(packet, ["status"]),
       "pending",
     );
-    if (status === "completed" && !taskEvidence.some((item) => item.status === "completed")) {
+    if (TRUSTED_TERMINAL_STATUSES.has(status) && !terminalStatusIsProven(result, status, { runId, taskId })) {
       status = "in_doubt";
     }
     const nodeId = publicId("agent", taskId);
@@ -1034,12 +1460,22 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     const telemetry = safeTelemetry(hostEvidence, taskId);
     const toolCalls = safeToolCalls(hostEvidence, taskId);
     const loadout = plannedLoadout(packet);
+    const ownerAgent = safeText(firstString(packet, ["ownerAgent", "owner", "agent"]), "unavailable", 96);
+    const capabilityTruth = capabilityTruthForTask(hostEvidence, taskId, { ownerAgent, loadout });
     const startedAt = safeTimestamp(result?.startedAt || packet?.startedAt || packet?.createdAt);
     const completedAt = safeTimestamp(result?.completedAt || result?.updatedAt);
     const startMs = startedAt ? Date.parse(startedAt) : NaN;
     const endMs = completedAt ? Date.parse(completedAt) : NaN;
     const role = firstString(packet, ["roleDisplayName", "businessRoleId", "ownerAgent", "owner"]);
     const scope = readableWorkerScope(packet);
+    const display = publicDisplay(status, {
+      active: false,
+      structuralOnly: structuralOnly || evidenceIsStructuralOnly(result),
+    });
+    const observed = aggregateObservedStatusForTask(hostEvidence, taskId);
+    const fileHeat = aggregateFileHeatForTask(hostEvidence, taskId);
+    const declaredObservedMismatch = observed.state !== null && observed.state !== status && observed.state !== "completed" && status !== "in_doubt";
+    const terminalProofValid = taskEvidence.some((item) => item?.proofValid === true && ["completed", "failed", "blocked", "cancelled"].includes(item?.status));
     return {
       id: nodeId,
       kind: "agent",
@@ -1048,12 +1484,23 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       task: scope || `${safeText(role, `worker ${index + 1}`, 80)} worker lane`,
       roleDisplayName: safeText(role, "worker", 80),
       roleInstanceId: safeText(firstString(packet, ["roleInstanceId"]), null, 120),
+      taskPacketId: publicTaskBinding(taskId),
+      componentId: safeText(firstString(packet, ["componentId"]), null, 96),
       stage: normalizeStage(firstString(packet, ["stage", "currentStage", "stageKey"])) === "in_doubt"
         ? "execution"
         : normalizeStage(firstString(packet, ["stage", "currentStage", "stageKey"])),
       parentId: null,
       status,
-      ownerAgent: safeText(firstString(packet, ["ownerAgent", "owner", "agent"]), "unavailable", 96),
+      active: false,
+      ...display,
+      declaredStatus: status,
+      observedStatus: observed.state,
+      observedCount: observed.count,
+      observedAt: observed.lastAt,
+      declaredObservedMismatch,
+      terminalProofValid,
+      fileHeat,
+      ownerAgent,
       runtime: telemetry.runtime.value || "unavailable",
       runtimeObservation: telemetry.runtime,
       model: telemetry.model.value || "unavailable",
@@ -1073,12 +1520,13 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       summary: status === "pending"
         ? `${safeText(role, "worker", 80)} lane · awaiting real host execution evidence`
         : "Worker state projected from governed evidence",
-      terminalEvidence: taskEvidence.filter((item) => ["completed", "failed", "blocked"].includes(item.status)),
+      terminalEvidence: taskEvidence.filter((item) => ["completed", "failed", "blocked", "cancelled"].includes(item.status)),
       workerExecutionEvidence: taskEvidence,
       toolCalls,
       toolCount: toolCalls.length,
       latestTool: toolCalls.at(-1)?.name || null,
       loadout,
+      capabilityTruth,
       promptEras: [
         { era: "assignment", label: "Task assigned", summary: "Governed worker scope selected" },
         {
@@ -1111,6 +1559,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     label: groupKey === "execution" ? "Execution lanes" : safeText(groupKey, `Workflow ${index + 1}`, 80),
     stage: "execution",
     status: aggregateNodeStatus(workerNodes.filter((node) => childIds.includes(node.id))),
+    active: false,
     parentId: null,
     ownerAgent: safeText(artifact?.dispatchEnvelopePacket?.ownerAgent, "meta-conductor", 96),
     runtime: "unavailable",
@@ -1130,6 +1579,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     task: runTask,
     stage: normalizeStage(artifact?.currentStage || artifact?.currentStageKey),
     status: normalizeStatus(artifact?.status, workerNodes.length ? aggregateNodeStatus(workerNodes) : "in_doubt"),
+    active: false,
     ownerAgent: safeText(rootOwner, "meta-conductor", 96),
     runtime: "unavailable",
     runtimeObservation: { state: "unavailable", value: null },
@@ -1154,6 +1604,8 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     toolCalls: [],
     toolCount: 0,
     latestTool: null,
+    loadout: { skills: 0, mcp: 0, tools: 0, commands: 0, hooks: 0, plugins: 0, memoryGraph: 0, dependencies: 0, skillNames: [], mcpNames: [], toolNames: [], commandNames: [], hookNames: [], pluginNames: [], memoryGraphNames: [], dependencyNames: [] },
+    capabilityTruth: [capabilityTruthRecord("agent", [rootOwner], [])].filter(Boolean),
     inputTokens: null,
     outputTokens: null,
     totalTokens: null,
@@ -1183,6 +1635,8 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       if (from && target) edges.push({ from, to: target, kind: "depends_on" });
     }
   }
+  const handoffEdges = computeHandoffEdges(workerNodes);
+  for (const edge of handoffEdges) edges.push(edge);
   const contextTransfers = contextTransferProjection(
     artifact,
     runId,
@@ -1206,7 +1660,28 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   mainNode.firstAt = mainNode.firstAt || startedAt;
   mainNode.timing.startedAt = mainNode.timing.startedAt || startedAt;
   let runStatus = normalizeStatus(artifact?.status, aggregateNodeStatus(workerNodes));
-  if (runStatus === "completed" && !completionIsProven(artifact)) runStatus = "in_doubt";
+  if (TRUSTED_TERMINAL_STATUSES.has(runStatus) && !runTerminalStatusIsProven(artifact, runId, runStatus)) runStatus = "in_doubt";
+  mainNode.status = runStatus;
+  const runDisplay = publicDisplay(runStatus, { active: false, structuralOnly });
+  const applyInactiveDisplay = (node) => Object.assign(node, publicDisplay(node.status, {
+    active: false,
+    structuralOnly,
+  }));
+  applyInactiveDisplay(mainNode);
+  for (const workflow of workflowNodes) applyInactiveDisplay(workflow);
+  // Wave membership is resolved through the same task-id-to-node map the graph
+  // already used, so a wave can only ever name a node that exists here. A
+  // malformed scheduling policy degrades this one block instead of failing the
+  // whole projection and taking a running hub with it.
+  let scheduling = null;
+  try {
+    scheduling = buildLiveSchedulingProjection({
+      playbook: artifact?.coreLoop?.agentTeamsPlaybookPacket,
+      resolveNodeId: (taskPacketId) => nodeByTaskId.get(taskPacketId) || null,
+    });
+  } catch {
+    scheduling = null;
+  }
   const projection = {
     schemaVersion: LIVE_COMPACT_PROJECTION_SCHEMA_VERSION,
     run: {
@@ -1214,6 +1689,11 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       title: runTitle,
       task: runTask,
       status: runStatus,
+      active: false,
+      ...runDisplay,
+      ...conversation,
+      executionEvidenceState: structuralOnly ? "structural_planning_only" : "recorded",
+      completionEvidenceState: completionIsProven(artifact, runId) ? "trusted_terminal" : "unproven",
       currentStage,
       startedAt,
       updatedAt,
@@ -1223,6 +1703,9 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       sessionId: publicId("session", runId),
       title: runTitle,
       status: runStatus,
+      active: false,
+      ...runDisplay,
+      ...conversation,
       nodeCount: nodes.length,
       eventCount: replay.length,
       activity: runTask,
@@ -1262,6 +1745,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     repository: repositoryProjection(artifact),
     workspace: workspaceProjection(artifact),
     contextTransfers,
+    scheduling,
     eventIndex: replay.length,
     eventCount: replay.length,
     counts: null,
@@ -1298,7 +1782,7 @@ function normalizeRun(durable, artifact, stale) {
   let status = stale
     ? "in_doubt"
     : normalizeStatus(lifecycle || (source?.active === true ? "active" : source?.active === false ? "session_stopped" : null));
-  if (status === "completed" && !completionIsProven(artifact)) status = "in_doubt";
+  if (TRUSTED_TERMINAL_STATUSES.has(status) && !runTerminalStatusIsProven(artifact, runId, status)) status = "in_doubt";
 
   return {
     runId,
@@ -1321,17 +1805,17 @@ function stageEvidenceCount(artifact, stage) {
   for (const packet of packets) {
     if (normalizeStage(firstString(packet, ["stage", "currentStage", "stageKey"])) === stage) {
       const taskId = safeId(firstString(packet, ["taskPacketId", "taskId", "roleInstanceId", "businessRoleId"]), null);
-      if (taskId) count += passingWorkerEvidence(results.get(taskId)).length;
+      if (taskId) count += passingWorkerEvidence(results.get(taskId), { runId: artifact?.runId, taskId }).length;
     }
   }
-  if (stage === "verification") count += passingVerificationEvidence(artifact).length;
+  if (stage === "verification") count += passingVerificationEvidence(artifact, artifact?.runId).length;
   return Math.min(count, Number.MAX_SAFE_INTEGER);
 }
 
 function nodeFromStage(stage, durable, artifact, stale) {
   const evidenceCount = stageEvidenceCount(artifact, stage);
   let status = stageStatus(durable, stage, stale);
-  if (status === "completed" && evidenceCount === 0) status = "in_doubt";
+  if (TRUSTED_TERMINAL_STATUSES.has(status) && evidenceCount === 0) status = "in_doubt";
   return {
     id: `stage:${stage}`,
     label: STAGE_LABELS[stage],
@@ -1363,9 +1847,9 @@ function workerNodes(artifact, stale) {
     const result = results.get(taskId);
     const stage = normalizeStage(firstString(packet, ["stage", "currentStage", "stageKey"]));
     const role = firstString(packet, ["roleDisplayName", "businessRoleId", "ownerAgent"]);
-    const evidenceCount = passingWorkerEvidence(result).length;
+    const evidenceCount = passingWorkerEvidence(result, { runId: artifact?.runId, taskId }).length;
     let status = stale ? "in_doubt" : normalizeStatus(firstString(result, ["status", "resultStatus"]) || firstString(packet, ["status"]));
-    if (status === "completed" && evidenceCount === 0) status = "in_doubt";
+    if (TRUSTED_TERMINAL_STATUSES.has(status) && !terminalStatusIsProven(result, status, { runId: artifact?.runId, taskId })) status = "in_doubt";
     return {
       id: `worker:${taskId}`,
       label: safeId(role, "worker"),
@@ -1385,7 +1869,7 @@ function artifactStageNodes(artifact, stale) {
     const event = [...events].reverse().find((item) => normalizeStage(firstString(item, ["stage", "stageKey"])) === stage);
     const evidenceCount = stageEvidenceCount(artifact, stage);
     let status = stale ? "in_doubt" : normalizeStatus(event?.status || event?.state, event ? "in_doubt" : "pending");
-    if (status === "completed" && evidenceCount === 0) status = "in_doubt";
+    if (TRUSTED_TERMINAL_STATUSES.has(status) && evidenceCount === 0) status = "in_doubt";
     return {
       id: `stage:${stage}`,
       label: STAGE_LABELS[stage],
@@ -1410,7 +1894,7 @@ function uniqueEdges(edges, nodes) {
     const key = `${from}\u0000${to}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    output.push({ from, to });
+    output.push({ ...edge, from, to });
     if (output.length >= LIVE_MAX_EDGES) break;
   }
   return output;
@@ -1547,6 +2031,11 @@ function sanitizeCompactEvidenceItem(item, knownNodeIds) {
     status: normalizeStatus(item.status, "in_doubt"),
     observedAt: safeTimestamp(item.observedAt || item.occurredAt),
     nodeId: nodeId && knownNodeIds.has(nodeId) ? nodeId : "",
+    runId: normalizeLiveRunId(item.runId),
+    taskPacketId: publicTaskBinding(item.taskPacketId || item.taskId),
+    proofValid: item.proofValid === true,
+    synthetic: item.synthetic === true,
+    evidenceKind: safeNullableText(item.evidenceKind, 80),
   };
 }
 
@@ -1568,6 +2057,12 @@ function sanitizeCompactProjection(value) {
   const runId = normalizeLiveRunId(value?.run?.runId || value.runId);
   if (!runId) return null;
   const rawNodes = boundedArray(value.nodes, LIVE_MAX_NODES);
+  const compactWorkers = rawNodes.filter((node) => node?.kind === "agent" && node?.isMain !== true);
+  const structuralOnly = value?.run?.executionEvidenceState === "structural_planning_only" || (
+    compactWorkers.length > 0 && compactWorkers.every((node) =>
+      boundedArray(node?.workerExecutionEvidence, 24).some(evidenceIsStructuralOnly) ||
+      boundedArray(node?.terminalEvidence, 24).some(evidenceIsStructuralOnly))
+  );
   const nodes = [];
   const knownNodeIds = new Set();
   for (const raw of rawNodes) {
@@ -1599,6 +2094,17 @@ function sanitizeCompactProjection(value) {
       && (raw.timing?.durationMs ?? raw.durationMs) >= 0
       ? raw.timing?.durationMs ?? raw.durationMs
       : null;
+    let status = normalizeStatus(raw.status, "in_doubt");
+    const rawTaskId = safeId(raw.taskPacketId || raw.taskId, null);
+    const terminalProven = raw.kind === "agent" && raw.isMain !== true && rawTaskId
+      ? boundedArray(raw.terminalEvidence, 24).some((item) =>
+          evidenceMatchesBinding(item, { runId, taskId: rawTaskId }) &&
+          !evidenceIsStructuralOnly(item) &&
+          normalizeStatus(firstString(item, ["status", "resultStatus", "result"])) === status)
+      : false;
+    if (TRUSTED_TERMINAL_STATUSES.has(status) && raw.kind === "agent" && raw.isMain !== true && !terminalProven) {
+      status = "in_doubt";
+    }
     return {
       id,
       kind: raw.kind,
@@ -1607,9 +2113,12 @@ function sanitizeCompactProjection(value) {
       task: safeNullableText(raw.task, 240),
       roleDisplayName: safeNullableText(raw.roleDisplayName, 80),
       roleInstanceId: safeNullableText(raw.roleInstanceId, 120),
+      taskPacketId: publicTaskBinding(rawTaskId),
       stage: normalizeStage(raw.stage),
       parentId: parentId && knownNodeIds.has(parentId) && parentId !== id ? parentId : null,
-      status: normalizeStatus(raw.status, "in_doubt"),
+      status,
+      active: false,
+      ...publicDisplay(status, { active: false, structuralOnly }),
       ownerAgent: safeText(raw.ownerAgent, "unavailable", 96),
       runtime: runtimeObservation.value || "unavailable",
       runtimeObservation,
@@ -1634,11 +2143,34 @@ function sanitizeCompactProjection(value) {
         mcp: safeTransferCount(raw.loadout?.mcp) ?? 0,
         tools: safeTransferCount(raw.loadout?.tools) ?? 0,
         commands: safeTransferCount(raw.loadout?.commands) ?? 0,
+        hooks: safeTransferCount(raw.loadout?.hooks) ?? 0,
+        plugins: safeTransferCount(raw.loadout?.plugins) ?? 0,
+        memoryGraph: safeTransferCount(raw.loadout?.memoryGraph) ?? 0,
+        dependencies: safeTransferCount(raw.loadout?.dependencies) ?? 0,
         skillNames: safeStringList(raw.loadout?.skillNames, 24),
         mcpNames: safeStringList(raw.loadout?.mcpNames, 24),
         toolNames: safeStringList(raw.loadout?.toolNames, 24),
         commandNames: safeStringList(raw.loadout?.commandNames, 24),
+        hookNames: safeStringList(raw.loadout?.hookNames, 24),
+        pluginNames: safeStringList(raw.loadout?.pluginNames, 24),
+        memoryGraphNames: safeStringList(raw.loadout?.memoryGraphNames, 24),
+        dependencyNames: safeStringList(raw.loadout?.dependencyNames, 24),
       },
+      capabilityTruth: boundedArray(raw.capabilityTruth, LIVE_CAPABILITY_KINDS.length).flatMap((record) => {
+        if (!record || typeof record !== "object") return [];
+        const kind = LIVE_CAPABILITY_KINDS.includes(record.kind) ? record.kind : null;
+        if (!kind) return [];
+        const plannedNames = safeStringList(record.plannedNames, 24);
+        const actualNames = safeStringList(record.actualNames, 24);
+        const downgradedNames = uniqueCapabilityNames([...plannedNames, ...actualNames]);
+        if (!downgradedNames.length) return [];
+        return [{
+          kind,
+          state: "planned",
+          plannedNames: downgradedNames,
+          actualNames: [],
+        }];
+      }),
       promptEras: boundedArray(raw.promptEras, 8).map((item) => ({
         era: safeText(item?.era, "prompt", 64),
         label: safeText(item?.label, "Prompt phase", 120),
@@ -1707,23 +2239,66 @@ function sanitizeCompactProjection(value) {
     state: safeText(item?.state, "unavailable", 64),
   }));
   const safeCount = (key, fallback) => safeTransferCount(value.counts?.[key]) ?? fallback;
+  let runStatus = normalizeStatus(value.run?.status, "in_doubt");
+  if (TRUSTED_TERMINAL_STATUSES.has(runStatus)) {
+    const matchingWorkerTerminal = sanitizedNodes.some((node) => node.kind === "agent" && node.isMain !== true && node.status === runStatus);
+    if (!matchingWorkerTerminal || (runStatus === "completed" && value.run?.completionEvidenceState !== "trusted_terminal")) {
+      runStatus = "in_doubt";
+    }
+  }
+  const verifiedLinks = sanitizeConversationLinks(value.run?.verifiedLinks || value.session?.verifiedLinks);
+  const candidateLinks = sanitizeConversationLinks(value.run?.candidateLinks || value.session?.candidateLinks)
+    .filter((candidate) => !verifiedLinks.some((verified) =>
+      verified.sourceRuntime === candidate.sourceRuntime && verified.conversationRef === candidate.conversationRef));
+  const conversationLinkState = verifiedLinks.length ? "verified" : candidateLinks.length ? "candidate" : "unlinked";
+  const primaryLink = verifiedLinks[0] || candidateLinks[0] || null;
   const run = {
     runId,
     title: safeText(value.run?.title, "Governed run", 120),
     task: safeText(value.run?.task, "Governed execution", 240),
-    status: normalizeStatus(value.run?.status, "in_doubt"),
+    status: runStatus,
+    active: false,
+    ...publicDisplay(runStatus, { active: false, structuralOnly }),
+    sourceRuntime: primaryLink?.sourceRuntime || safeConversationRuntime(value.run?.sourceRuntime),
+    conversationLinkState,
+    verifiedLinks,
+    candidateLinks,
+    ...(primaryLink?.conversationRef ? { conversationRef: primaryLink.conversationRef } : {}),
+    ...(primaryLink?.conversationTitle ? { conversationTitle: primaryLink.conversationTitle } : {}),
+    executionEvidenceState: structuralOnly ? "structural_planning_only" : "recorded",
+    completionEvidenceState: value.run?.completionEvidenceState === "trusted_terminal" ? "trusted_terminal" : "unproven",
     currentStage: normalizeStage(value.run?.currentStage),
     startedAt: safeTimestamp(value.run?.startedAt),
     updatedAt: safeTimestamp(value.run?.updatedAt),
     completedAt: safeTimestamp(value.run?.completedAt),
   };
+  // A stored projection is untrusted input: it may name nodes this pass just
+  // dropped, and it may claim its wave order was observed. Re-validating against
+  // the surviving node ids is what keeps a stale file from drawing a wave for a
+  // node that is no longer on screen.
+  let scheduling = null;
+  try {
+    scheduling = sanitizeLiveSchedulingProjection(value.scheduling, {
+      knownNodeIds: new Set(sanitizedNodes.map((node) => node.id)),
+    });
+  } catch {
+    scheduling = null;
+  }
   return {
     schemaVersion: LIVE_COMPACT_PROJECTION_SCHEMA_VERSION,
     run,
     session: {
       sessionId: publicId("session", runId),
       title: safeText(value.session?.title, run.title, 120),
-      status: normalizeStatus(value.session?.status, run.status),
+      status: run.status,
+      active: false,
+      ...publicDisplay(run.status, { active: false, structuralOnly }),
+      sourceRuntime: run.sourceRuntime,
+      conversationLinkState,
+      verifiedLinks,
+      candidateLinks,
+      ...(run.conversationRef ? { conversationRef: run.conversationRef } : {}),
+      ...(run.conversationTitle ? { conversationTitle: run.conversationTitle } : {}),
       nodeCount: sanitizedNodes.length,
       eventCount: replay.length,
       activity: safeText(value.session?.activity, run.task, 240),
@@ -1748,6 +2323,7 @@ function sanitizeCompactProjection(value) {
     repository: repositoryProjection(value),
     workspace: workspaceProjection(value),
     contextTransfers: safeCompactContextTransfers(value.contextTransfers, runId, sanitizedNodes),
+    scheduling,
     eventIndex: replay.length,
     eventCount: replay.length,
     counts: {
@@ -1876,6 +2452,21 @@ export function buildLiveSnapshot({
       : normalizeStage(projection.run.currentStage),
     updatedAt: sameRunDurable && durableFresh ? durableUpdatedAt : safeTimestamp(projection.run.updatedAt),
   };
+  const runActive = Boolean(sameRunDurable && durableActive);
+  const structuralOnly = projection.run.executionEvidenceState === "structural_planning_only";
+  run.active = runActive;
+  Object.assign(run, publicDisplay(run.status, { active: runActive, structuralOnly }));
+  const nodes = boundedArray(projection.nodes, LIVE_MAX_NODES).map((node) => ({
+    ...node,
+    active: runActive && normalizeStatus(node.status) === "active",
+    ...publicDisplay(node.status, { active: runActive, structuralOnly }),
+  }));
+  const session = projection.session ? {
+    ...projection.session,
+    status: run.status,
+    active: runActive,
+    ...publicDisplay(run.status, { active: runActive, structuralOnly }),
+  } : null;
   const kind = compatibleArtifact
     ? compatibleArtifact.__source === "live_projection" || compatibleArtifact.schemaVersion === LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
       ? "live_projection"
@@ -1889,12 +2480,23 @@ export function buildLiveSnapshot({
   const countValue = (key, fallback) => Number.isSafeInteger(projection.counts?.[key]) && projection.counts[key] >= 0
     ? projection.counts[key]
     : fallback;
+  // The public read model bounds nodes again, so wave membership is re-checked
+  // against the nodes that actually reach the page rather than the ones the
+  // projection started with.
+  let scheduling = null;
+  try {
+    scheduling = sanitizeLiveSchedulingProjection(projection.scheduling, {
+      knownNodeIds: new Set(nodes.map((node) => node.id)),
+    });
+  } catch {
+    scheduling = null;
+  }
   return {
     schemaVersion: LIVE_SNAPSHOT_SCHEMA_VERSION,
     source: sourceEnvelope(kind, safeObservedAt, stale),
     run,
-    session: projection.session || null,
-    nodes: boundedArray(projection.nodes, LIVE_MAX_NODES),
+    session,
+    nodes,
     edges: boundedArray(projection.edges, LIVE_MAX_EDGES),
     evidence: boundedArray(projection.evidence, LIVE_MAX_EVIDENCE),
     replay: boundedArray(projection.replay, LIVE_MAX_REPLAY),
@@ -1907,6 +2509,7 @@ export function buildLiveSnapshot({
     repository: repositoryProjection(projection),
     workspace: workspaceProjection(projection),
     contextTransfers,
+    scheduling,
     eventIndex: Number.isSafeInteger(projection.eventIndex) ? projection.eventIndex : projection.replay?.length || 0,
     eventCount: Number.isSafeInteger(projection.eventCount) ? projection.eventCount : projection.replay?.length || 0,
     counts: {

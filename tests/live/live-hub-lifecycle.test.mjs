@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   ensureLiveHub,
   getLiveHubPaths,
+  LIVE_HUB_DEFAULT_PORT,
   LIVE_HUB_RUNTIME_IDENTITY_PATHS,
   readReusableLiveHub,
   removeOwnedLiveHubState,
@@ -16,6 +17,10 @@ import {
   validateLiveHubState,
   writeLiveHubState,
 } from "../../src/infrastructure/live/live-hub-lifecycle.mjs";
+
+test("uses one stable default browser entry port", () => {
+  assert.equal(LIVE_HUB_DEFAULT_PORT, 4331);
+});
 
 async function withTempHome(run) {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-hub-"));
@@ -148,8 +153,72 @@ test("reuses state only when PID identity and matching health instance are prove
     readProcessStartIdentity: () => "identity-2",
   };
   assert.equal((await readReusableLiveHub({ ...common, healthProbe: async () => true }))?.instanceId, instanceId);
-  assert.equal(await readReusableLiveHub({ ...common, readProcessStartIdentity: () => "reused-pid", healthProbe: async () => true }), null);
   assert.equal(await readReusableLiveHub({ ...common, healthProbe: async () => false }), null);
+  // Reuse only ever talks to the hub over loopback, and the health probe already
+  // binds that endpoint to this instanceId, so reuse does not pay for the PID
+  // creation-time query. Callers that ask for PID-level proof still get it.
+  assert.equal(
+    (await readReusableLiveHub({
+      ...common,
+      readProcessStartIdentity: () => "reused-pid",
+      healthProbe: async () => true,
+    }))?.instanceId,
+    instanceId,
+  );
+  assert.equal(
+    await readReusableLiveHub({
+      ...common,
+      requireProcessIdentity: true,
+      readProcessStartIdentity: () => "reused-pid",
+      healthProbe: async () => true,
+    }),
+    null,
+  );
+}));
+
+test("stop refuses to signal a PID whose creation identity no longer matches", async () => withTempHome(async (homeDir) => {
+  const instanceId = "22222222-2222-4222-8222-222222222223";
+  await writeLiveHubState({
+    homeDir,
+    address,
+    instanceId,
+    pid: process.pid,
+    processStartIdentity: "identity-3",
+  });
+  const common = {
+    homeDir,
+    isProcessAlive: () => true,
+    healthProbe: async () => true,
+  };
+  const signalled = [];
+  // A recycled PID that answers the health endpoint must never be signalled:
+  // stopping is the one path that acts on the PID itself.
+  const recycled = await stopLiveHub({
+    ...common,
+    readProcessStartIdentity: () => "reused-pid",
+    signalProcess: (pid) => signalled.push(pid),
+  });
+  assert.equal(recycled.stopped, false);
+  assert.equal(recycled.status, "not_running");
+  assert.deepEqual(signalled, []);
+
+  // An unobtainable identity is equally not proof, so it must not authorise a kill.
+  const unavailable = await stopLiveHub({
+    ...common,
+    readProcessStartIdentity: () => null,
+    signalProcess: (pid) => signalled.push(pid),
+  });
+  assert.equal(unavailable.stopped, false);
+  assert.deepEqual(signalled, []);
+
+  // A matching identity does authorise the signal.
+  await stopLiveHub({
+    ...common,
+    timeoutMs: 50,
+    readProcessStartIdentity: () => "identity-3",
+    signalProcess: (pid) => signalled.push(pid),
+  });
+  assert.deepEqual(signalled, [process.pid]);
 }));
 
 test("rejects malformed or symlink-like state input without throwing", async () => withTempHome(async (homeDir) => {
@@ -306,10 +375,90 @@ test("startup timeout terminates the exact child instead of leaving an orphan da
     healthProbe: async () => false,
     isProcessAlive: () => false,
     readProcessStartIdentity: () => "identity-timeout",
+    portOccupiedProbe: async () => false,
     spawnProcess: () => child,
   });
   assert.equal(result.reason, "startup_timeout");
   assert.equal(killCount, 1);
+}));
+
+// The harness timeout must outlast the startup budget configured below, otherwise a
+// loaded machine trips the harness clock before the assertion can judge the result.
+test("Windows-sized startup fuse accepts a daemon that becomes healthy just after two seconds", { timeout: 20_000 }, async () => withTempHome(async (homeDir) => {
+  const identity = "slow-windows-start";
+  const child = {
+    pid: 4245,
+    exitCode: null,
+    once() {},
+    off() {},
+    unref() {},
+  };
+  const startedAt = Date.now();
+  const result = await ensureLiveHub({
+    packageRoot: path.resolve("."),
+    homeDir,
+    timeoutMs: 8_000,
+    healthProbe: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 175));
+      return true;
+    },
+    isProcessAlive: () => true,
+    readProcessStartIdentity: () => identity,
+    spawnProcess: (_command, _args, options) => {
+      setTimeout(() => {
+        void writeLiveHubState({
+          homeDir,
+          address,
+          instanceId: options.env.META_KIM_LIVE_INSTANCE_ID,
+          pid: process.pid,
+          processStartIdentity: identity,
+          packageVersion: options.env.META_KIM_LIVE_PACKAGE_VERSION,
+          packageIdentity: options.env.META_KIM_LIVE_PACKAGE_IDENTITY,
+        });
+      }, 1_900);
+      return child;
+    },
+  });
+  assert.equal(result.status, "started");
+  assert.ok(Date.now() - startedAt >= 2_000, "startup proof must cross the former two-second fuse");
+}));
+
+test("a real child exit fails quickly and distinguishes an occupied fixed port", async () => withTempHome(async (homeDir) => {
+  const makeExitedChild = () => {
+    const handlers = new Map();
+    const child = {
+      pid: 4246,
+      exitCode: null,
+      once(event, handler) { handlers.set(event, handler); },
+      off(event, handler) { if (handlers.get(event) === handler) handlers.delete(event); },
+      unref() {},
+      kill() { this.exitCode = 1; return true; },
+    };
+    setTimeout(() => {
+      child.exitCode = 1;
+      handlers.get("exit")?.(1, null);
+    }, 10);
+    return child;
+  };
+  const base = {
+    packageRoot: path.resolve("."),
+    homeDir,
+    timeoutMs: 5_000,
+    healthProbe: async () => false,
+    isProcessAlive: () => false,
+    readProcessStartIdentity: () => "exited-child",
+    spawnProcess: makeExitedChild,
+  };
+  const startedAt = Date.now();
+  const exited = await ensureLiveHub({ ...base, port: 43128, portOccupiedProbe: async () => false });
+  assert.equal(exited.reason, "daemon_exited_before_ready");
+  // The invariant is that a dead child is noticed by its exit event rather than by the
+  // startup budget expiring, so the bound stays well inside timeoutMs above instead of
+  // pinning an absolute wall clock that a loaded machine cannot meet.
+  assert.ok(Date.now() - startedAt < 2_500, "child exit must not wait for the full startup timeout");
+
+  const occupied = await ensureLiveHub({ ...base, port: 43129, portOccupiedProbe: async () => true });
+  assert.equal(occupied.reason, "port_in_use");
 }));
 
 test("start lock reports live owners, waits on fresh residue, and recovers stale residue", async () => {
@@ -482,3 +631,30 @@ test("invalid package roots and incomplete package authority fail before spawnin
   await writeFile(path.join(incompleteRoot, "scripts", "meta-kim-live.mjs"), "// launcher\n", "utf8");
   assert.equal((await ensureLiveHub({ packageRoot: incompleteRoot, homeDir })).reason, "package_identity_unavailable");
 }));
+
+test("refuses a junctioned Live Hub root without writing outside the home", async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-hub-home-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-hub-outside-"));
+  try {
+    await mkdir(path.join(homeDir, ".meta-kim"), { recursive: true });
+    await symlink(outsideDir, path.join(homeDir, ".meta-kim", "live"), process.platform === "win32" ? "junction" : "dir");
+
+    await assert.rejects(() => writeLiveHubState({
+      homeDir,
+      address,
+      instanceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      pid: process.pid,
+      processStartIdentity: "junction-test",
+    }), /plain directory|symlink|junction/iu);
+    await assert.rejects(() => ensureLiveHub({
+      packageRoot: path.resolve("."),
+      homeDir,
+      timeoutMs: 100,
+      healthProbe: async () => false,
+    }), /plain directory|symlink|junction/iu);
+    assert.deepEqual(await readdir(outsideDir), []);
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
+  }
+});
