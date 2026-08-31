@@ -70,6 +70,37 @@ const KNOWLEDGE_LIFECYCLE_SOURCE_FILES = [
   "src/domain/evolution/knowledge-lifecycle.mjs",
   "src/domain/evolution/warden-writeback-approval.mjs",
 ];
+const GOVERNANCE_REQUIREMENT_CUTOVER_SOURCE_FILES = [
+  "src/data/schemas/governance-requirement-plan.schema.json",
+  "src/domain/governance/governance-requirement-cutover.mjs",
+];
+const LIVE_SOURCE_FILES = [
+  "src/application/live/build-live-share-artifact.mjs",
+  "src/application/live/live-acceptance-fixture-loader.mjs",
+  "src/application/live/live-control-room-service.mjs",
+  "src/application/live/live-display-format.mjs",
+  "src/application/live/live-hub-lifecycle-budget.mjs",
+  "src/application/live/live-replay-visibility.mjs",
+  "src/application/live/live-scheduling-projection.mjs",
+  "src/application/live/plan-live-continuation.mjs",
+  "src/domain/live/live-continuation-command.mjs",
+  "src/domain/live/live-share-artifact.mjs",
+  "src/infrastructure/live/live-continuation-command-store.mjs",
+  "src/infrastructure/live/live-control-room-server.mjs",
+  "src/infrastructure/live/live-hub-lifecycle.mjs",
+  "src/infrastructure/live/live-hub-project-catalog.mjs",
+  "src/infrastructure/live/live-read-repository.mjs",
+  "src/infrastructure/live/live-runtime-adapter-registry.mjs",
+  "src/presentation/live/assets/meta-kim-k-mark.png",
+  "src/presentation/live/assets/meta-kim-live.ico",
+  "src/presentation/live/live-control-room-page.mjs",
+  "src/presentation/live/render-live-share-card.mjs",
+  "src/sdk/live/common.mjs",
+  "src/sdk/live/evidence-card.mjs",
+  "src/sdk/live/index.mjs",
+  "src/sdk/live/replay-theme.mjs",
+  "src/sdk/live/runtime-adapter.mjs",
+];
 const PACKAGE_SOURCE_FILES = [
   ...DECISION_PACKAGE_FILES,
   LEASE_CLAIM_AUTHORITY_DOMAIN,
@@ -84,6 +115,8 @@ const PACKAGE_SOURCE_FILES = [
   ...DATA_EVENT_REPOSITORY_SOURCE_FILES,
   ...SETUP_INSTALLER_DECOMPOSITION_SOURCE_FILES,
   ...KNOWLEDGE_LIFECYCLE_SOURCE_FILES,
+  ...GOVERNANCE_REQUIREMENT_CUTOVER_SOURCE_FILES,
+  ...LIVE_SOURCE_FILES,
   ...CANDIDATE_RUNTIME_ADAPTER_FILES,
   ...BETA_RUNTIME_ADAPTER_BUNDLE_FILES,
 ].sort();

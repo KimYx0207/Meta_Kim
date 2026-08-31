@@ -23,7 +23,12 @@ function run(script, args = [], env = {}, cwd = repoRoot) {
   return spawnSync(process.execPath, [script, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    // Most assertions below match the English copy. Without this pin the CLI
+    // resolves its language from the host LANG/LC_* variables, so the same tree
+    // passes on an English machine and fails on a localized one. Per-call `env`
+    // is spread last and an explicit `--lang=` argument outranks the variable,
+    // so the locale-fallback cases stay valid.
+    env: { ...process.env, METAKIM_LANG: "en", ...env },
     maxBuffer: 32 * 1024 * 1024,
   });
 }

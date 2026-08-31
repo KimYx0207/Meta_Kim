@@ -68,7 +68,12 @@ const LIVE_L02_L04_SOURCE_PATHS = [
   "src/domain/live/live-continuation-command.mjs",
   "src/domain/live/live-share-artifact.mjs",
   "src/application/live/build-live-share-artifact.mjs",
+  "src/application/live/live-acceptance-fixture-loader.mjs",
   "src/application/live/live-control-room-service.mjs",
+  "src/application/live/live-display-format.mjs",
+  "src/application/live/live-hub-lifecycle-budget.mjs",
+  "src/application/live/live-replay-visibility.mjs",
+  "src/application/live/live-scheduling-projection.mjs",
   "src/application/live/plan-live-continuation.mjs",
   "src/infrastructure/live/live-continuation-command-store.mjs",
   "src/infrastructure/live/live-control-room-server.mjs",
@@ -83,6 +88,10 @@ const LIVE_L02_L04_SOURCE_PATHS = [
   "src/sdk/live/index.mjs",
   "src/sdk/live/replay-theme.mjs",
   "src/sdk/live/runtime-adapter.mjs",
+];
+const LIVE_PRESENTATION_ASSET_PATHS = [
+  "src/presentation/live/assets/meta-kim-k-mark.png",
+  "src/presentation/live/assets/meta-kim-live.ico",
 ];
 const LIVE_L02_L04_PACKAGE_FILES = [
   "config/contracts/meta-kim-live-share-schema.json",
@@ -127,6 +136,7 @@ const APPROVED_SOURCE_CLOSURE = [
   ...SETUP_INSTALLER_DECOMPOSITION_SOURCE_PATHS,
   ...KNOWLEDGE_LIFECYCLE_SOURCE_PATHS,
   ...LIVE_L02_L04_SOURCE_PATHS,
+  ...LIVE_PRESENTATION_ASSET_PATHS,
   ...CANDIDATE_RUNTIME_ADAPTER_PATHS,
   ...BETA_RUNTIME_ADAPTER_BUNDLE_PATHS,
   ...APPROVED_DECISION_CLOSURE,

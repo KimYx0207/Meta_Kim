@@ -75,6 +75,11 @@ function runUninstall(userHome, args) {
         ...process.env,
         HOME: userHome,
         USERPROFILE: userHome,
+        // Assertions below match the English copy. Without this pin the CLI would
+        // resolve its language from the host LANG/LC_* variables, so the same tree
+        // would pass on an English machine and fail on a localized one. An explicit
+        // `--lang=` argument still wins, which keeps the per-language cases valid.
+        METAKIM_LANG: "en",
         META_KIM_CLAUDE_HOME: path.join(userHome, ".claude"),
         META_KIM_CODEX_HOME: path.join(userHome, ".codex"),
       },

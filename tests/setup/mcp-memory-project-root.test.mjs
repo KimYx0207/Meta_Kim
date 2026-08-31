@@ -46,7 +46,11 @@ function resolvedProjectRoot(cwd) {
     "spec.loader.exec_module(module)",
     "print(json.dumps({'root': os.path.realpath(module.project_root())}))",
   ].join("; ");
-  return JSON.parse(run(python, ["-c", script, hookPath, cwd], cwd)).root;
+  // -B keeps CPython from writing __pycache__ next to the canonical hook. That
+  // bytecode would join canonical/runtime-assets/claude, whose tree digest is
+  // pinned in config/runtime-capability-evidence.json, so leaving it behind makes
+  // every later runtime-evidence check fail depending on test order.
+  return JSON.parse(run(python, ["-B", "-c", script, hookPath, cwd], cwd)).root;
 }
 
 function comparable(filePath) {

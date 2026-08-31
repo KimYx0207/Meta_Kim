@@ -115,7 +115,7 @@ describe("setup update default flow", () => {
     );
     assert.match(
       packageJson.scripts["meta:deps:update"],
-      /--update --targets claude,codex$/,
+      /--update\b.*--targets claude,codex$/u,
     );
     assert.match(
       packageJson.scripts["meta:deps:install:all-runtimes"],
@@ -123,7 +123,7 @@ describe("setup update default flow", () => {
     );
     assert.match(
       packageJson.scripts["meta:deps:update:all-runtimes"],
-      /--update --targets claude,codex,openclaw,cursor$/,
+      /--update\b.*--targets claude,codex,openclaw,cursor$/u,
     );
     assert.match(
       source,
