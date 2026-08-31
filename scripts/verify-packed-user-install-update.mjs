@@ -51,6 +51,7 @@ import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capabi
 import { loadRuntimeCapabilityAcceptanceAttempts } from "./runtime-capability-acceptance.mjs";
 import { assertExactStandardRuntimeObservationSet } from "./runtime-execution-gate.mjs";
 import { resolveWindowsCliInvocation } from "./runtime-cli-invocation.mjs";
+import { tarExtractCommand } from "./tar-extract-command.mjs";
 import {
   PACKED_SYNC_MANIFEST,
   PACKED_USER_TARGETS,
@@ -670,10 +671,11 @@ function packAndExtract({ sourceRoot, destinationRoot, environment, timeoutMs })
     }),
   );
   const tarball = path.join(packDir, parsePackResult(packed));
+  const candidateExtraction = tarExtractCommand(tarball, extractDir);
   requireSuccess(
     "candidate tar extraction",
-    run("tar", ["-xf", tarball, "-C", extractDir], {
-      cwd: sourceRoot,
+    run(candidateExtraction.command, candidateExtraction.args, {
+      cwd: candidateExtraction.cwd,
       env: environment,
       timeoutMs,
     }),
@@ -3209,10 +3211,11 @@ function extractHistoricalSource(repoRoot, root, historicalRef, environment, tim
       timeoutMs,
     }),
   );
+  const historicalExtraction = tarExtractCommand(archivePath, sourceRoot);
   requireSuccess(
     `extract ${historicalRef}`,
-    run("tar", ["-xf", archivePath, "-C", sourceRoot], {
-      cwd: repoRoot,
+    run(historicalExtraction.command, historicalExtraction.args, {
+      cwd: historicalExtraction.cwd,
       env: environment,
       timeoutMs,
     }),

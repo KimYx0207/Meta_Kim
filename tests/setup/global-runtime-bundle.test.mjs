@@ -20,6 +20,7 @@ import {
   resolveDurableMetaKimRuntimeLayout,
   resolvePortableMetaKimPackageIdentity,
 } from "../../scripts/global-runtime-mcp.mjs";
+import { tarExtractCommand } from "../../scripts/tar-extract-command.mjs";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..", "..");
 const DISTRIBUTION = JSON.parse(
@@ -88,10 +89,11 @@ function preparePackedCandidate(testRoot) {
   ));
   const packResult = JSON.parse(packed.stdout);
   assert.ok(Array.isArray(packResult) && packResult[0]?.filename);
+  const extraction = tarExtractCommand(path.join(packDir, packResult[0].filename), extractDir);
   requireSuccess("candidate tgz extraction", run(
-    "tar",
-    ["-xf", path.join(packDir, packResult[0].filename), "-C", extractDir],
-    { cwd: REPO_ROOT },
+    extraction.command,
+    extraction.args,
+    { cwd: extraction.cwd },
   ));
   const workspace = path.join(extractDir, "package");
   assert.ok(existsSync(path.join(workspace, "scripts", "sync-global-meta-theory.mjs")));
