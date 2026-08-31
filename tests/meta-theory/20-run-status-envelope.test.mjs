@@ -203,6 +203,145 @@ describe("meta-theory run status envelope", () => {
     }
   });
 
+  test("run status preserves a bounded cross-runtime conversation identity", async () => {
+    const spine = await import(
+      `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?conversation=${Date.now()}`
+    );
+    const state = spine.createInitialState({
+      taskClassification: "meta_theory_auto",
+      sourceConversation: {
+        runtime: "codex",
+        threadId: "01a04c60-33fe-79f3-a38a-d52fcae64d4d",
+        title: "修复 Meta_Kim Live 运行记录",
+      },
+    });
+    assert.deepEqual(state.sourceConversation, {
+      runtime: "codex",
+      conversationId: "01a04c60-33fe-79f3-a38a-d52fcae64d4d",
+      runId: state.runId,
+      title: "修复 Meta_Kim Live 运行记录",
+    });
+    assert.equal(state.sourceRuntime, "codex");
+    assert.equal(state.conversationLinkState, "verified");
+    assert.deepEqual(
+      spine.createMetaRunStatusEnvelope(state).sourceConversation,
+      state.sourceConversation,
+    );
+    const unknown = spine.createInitialState({
+      sourceConversation: { runtime: "unknown", sessionId: "session-1" },
+    });
+    assert.equal(unknown.sourceConversation, undefined);
+    assert.equal(unknown.sourceRuntime, "unavailable");
+    assert.equal(unknown.conversationLinkState, "unlinked");
+  });
+
+  test("worker lifecycle requires exact same-run task and trusted host evidence", async () => {
+    const spine = await import(
+      `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?workerLifecycle=${Date.now()}`
+    );
+    let state = spine.createInitialState({
+      taskClassification: "worker_lifecycle",
+      sourceConversation: {
+        runtime: "codex",
+        threadId: "thread-worker-lifecycle-1",
+      },
+    });
+    state.workerTaskPackets = [
+      { taskPacketId: "task-backend-1", roleDisplayName: "backend" },
+      { taskPacketId: "task-test-1", roleDisplayName: "test" },
+    ];
+
+    assert.deepEqual(
+      spine.projectWorkerLifecycle(state).map((entry) => entry.status),
+      ["queued", "queued"],
+    );
+    assert.equal(spine.recordWorkerLifecycleEvent(state, {
+      runId: state.runId,
+      taskPacketId: "task-backend-1",
+      runtime: "codex",
+      status: "completed",
+    }), state);
+    assert.equal(spine.recordWorkerLifecycleEvent(state, {
+      runId: "meta-foreign-run",
+      taskPacketId: "task-backend-1",
+      runtime: "codex",
+      status: "completed",
+    }, { trustedHostEvent: true }), state);
+
+    state = spine.recordWorkerLifecycleEvent(state, {
+      runId: state.runId,
+      taskPacketId: "task-backend-1",
+      runtime: "codex",
+      status: "active",
+      invocationId: "call-backend-1",
+      eventId: "event-backend-start",
+    }, { trustedHostEvent: true });
+    assert.equal(spine.projectWorkerLifecycle(state)[0].status, "active");
+    assert.deepEqual(spine.projectWorkerLifecycle(state)[0].invocationIds, ["call-backend-1"]);
+
+    state = spine.recordWorkerLifecycleEvent(state, {
+      runId: state.runId,
+      taskPacketId: "task-backend-1",
+      runtime: "codex",
+      status: "completed",
+      invocationId: "call-backend-1",
+      eventId: "event-backend-complete",
+    }, { trustedHostEvent: true });
+    const completed = spine.projectWorkerLifecycle(state)[0];
+    assert.equal(completed.status, "completed");
+    assert.deepEqual(completed.terminalEvidence.map((entry) => ({
+      runId: entry.runId,
+      taskPacketId: entry.taskPacketId,
+      runtime: entry.runtime,
+      status: entry.status,
+      proofValid: entry.proofValid,
+      synthetic: entry.synthetic,
+    })), [{
+      runId: state.runId,
+      taskPacketId: "task-backend-1",
+      runtime: "codex",
+      status: "completed",
+      proofValid: true,
+      synthetic: false,
+    }]);
+
+    assert.equal(spine.recordWorkerLifecycleEvent(state, {
+      runId: state.runId,
+      taskPacketId: "task-backend-1",
+      runtime: "codex",
+      status: "failed",
+    }, { trustedHostEvent: true }), state);
+    const envelope = spine.createMetaRunStatusEnvelope(state);
+    assert.equal(envelope.conversationLinkState, "verified");
+    assert.equal(envelope.sourceConversation.runId, state.runId);
+    assert.equal(envelope.workerLifecycle[0].status, "completed");
+    assert.equal(envelope.workerLifecycle[1].status, "queued");
+  });
+
+  test("Claude Codex and Cursor production hooks register exact lifecycle observation surfaces", async () => {
+    const { buildCodexHooksJson, buildCursorHooksJson } = await import(
+      `../../scripts/runtime-hook-mapping.mjs?lifecycleHooks=${Date.now()}`
+    );
+    const codex = buildCodexHooksJson();
+    for (const event of ["PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop"]) {
+      assert.match(
+        JSON.stringify(codex.hooks[event]),
+        /activate-meta-theory-spine\.mjs/u,
+        `Codex ${event} must observe exact host lifecycle payloads when the host exposes them`,
+      );
+    }
+    const cursor = buildCursorHooksJson();
+    for (const event of ["preToolUse", "postToolUse", "subagentStart", "stop"]) {
+      assert.match(
+        JSON.stringify(cursor.hooks[event]),
+        /activate-meta-theory-spine\.mjs/u,
+        `Cursor ${event} must observe only the exact fields its hook payload emits`,
+      );
+    }
+    assert.equal("openclaw" in codex.hooks, false);
+    assert.equal("openclaw" in cursor.hooks, false);
+  });
+
   test("task identity uses one protected project/profile HMAC key", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-task-identity-"));
     const spine = await import(
@@ -1364,6 +1503,9 @@ describe("meta-theory run status envelope", () => {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-status-stop-"));
       try {
         const state = spine.createInitialState({ taskClassification: "stop_test" });
+        state.workerTaskPackets = [
+          { taskPacketId: "task-still-waiting", roleDisplayName: "backend" },
+        ];
         if (evolutionCompleted) {
           state.currentStage = "evolution";
           state.stages.evolution = { status: "completed", completedAt: new Date().toISOString() };
@@ -1394,6 +1536,11 @@ describe("meta-theory run status envelope", () => {
         assert.equal(
           status.deactivationReason,
           evolutionCompleted ? "evolution_completed" : "session_stop",
+        );
+        assert.equal(
+          status.workerLifecycle[0].status,
+          "queued",
+          "ending a conversation must not fabricate worker completion",
         );
         const spinePath = path.join(
           tempDir,

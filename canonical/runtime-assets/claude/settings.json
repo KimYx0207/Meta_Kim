@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/activate-meta-theory-spine.mjs"
+            "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
           }
         ]
       }
@@ -39,16 +39,34 @@
         ]
       },
       {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
+          }
+        ]
+      },
+      {
         "matcher": "Skill",
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/activate-meta-theory-spine.mjs"
+            "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
           }
         ]
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
+          }
+        ]
+      },
       {
         "matcher": "Edit|Write",
         "hooks": [
@@ -69,11 +87,31 @@
     ],
     "SubagentStart": [
       {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
+          }
+        ]
+      },
+      {
         "matcher": "meta-*",
         "hooks": [
           {
             "type": "command",
             "command": "node .claude/hooks/subagent-context.mjs"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
           }
         ]
       }

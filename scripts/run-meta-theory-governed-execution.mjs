@@ -86,7 +86,10 @@ import {
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
 import {
   readMetaRunStatus,
+  readSpineState,
   sanitizeStateProfile,
+  writeSpineState,
+  validateRunId as validateSpineCanonicalRunId,
 } from "../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -145,6 +148,84 @@ const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const SELECT_EXECUTION_ROUTE_SCRIPT = path.join(scriptDir, "select-execution-route.mjs");
 const WINDOWS_TRANSIENT_RENAME_ERRORS = new Set(["EACCES", "EBUSY", "EPERM"]);
 const WINDOWS_RENAME_RETRY_DELAYS_MS = Object.freeze([10, 25, 50, 100]);
+
+function spineWorkerTaskPacket(packet) {
+  if (!packet || typeof packet !== "object" || Array.isArray(packet)) return null;
+  const taskPacketId = typeof packet.taskPacketId === "string" ? packet.taskPacketId.trim() : "";
+  if (!/^[a-z0-9][a-z0-9:._-]{2,239}$/iu.test(taskPacketId)) return null;
+  const text = (value, maximum = 160) => typeof value === "string" && value.trim() && value.trim().length <= maximum
+    ? value.trim()
+    : null;
+  const values = {
+    taskPacketId,
+    roleInstanceId: text(packet.roleInstanceId),
+    roleDisplayName: text(packet.roleDisplayName, 96),
+    businessRoleId: text(packet.businessRoleId, 96),
+    ownerAgent: text(packet.ownerAgent || packet.owner, 120),
+    stage: text(packet.stage, 32) || "execution",
+  };
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value != null));
+}
+
+function spineCanonicalRunId(runId) {
+  try {
+    return validateSpineCanonicalRunId(runId);
+  } catch {
+    return null;
+  }
+}
+
+function mergeSpineWorkerTaskPackets(existingPackets, runnerPackets) {
+  const merged = Array.isArray(existingPackets)
+    ? existingPackets.filter((packet) => spineWorkerTaskPacket(packet) != null)
+    : [];
+  const known = new Set(merged.map((packet) => packet.taskPacketId));
+  // enforce-agent-dispatch matches a live dispatch against these packet IDs, so an
+  // already recorded identity keeps its exact fields and the runner may only widen
+  // the set. Replacing a recorded packet would move the gate under an in-flight
+  // dispatch.
+  return [...merged, ...runnerPackets.filter((packet) => !known.has(packet.taskPacketId))];
+}
+
+async function publishRunnerWorkerBindingsToSpine({ projectRoot, runId, runtime, workerTaskPackets }) {
+  const packets = (Array.isArray(workerTaskPackets) ? workerTaskPackets : [])
+    .map(spineWorkerTaskPacket)
+    .filter(Boolean);
+  if (packets.length === 0) return { status: "not_published", reason: "no_valid_worker_task_packets" };
+  // A governed artifact runId only has to be a safe file identity, so it accepts
+  // shapes the spine rejects. Publishing means spine runId and artifact runId are
+  // the same join key, so a runId outside the canonical spine namespace cannot be
+  // published under a shared identity and is reported instead of coerced.
+  const spineRunId = spineCanonicalRunId(runId);
+  if (spineRunId == null) {
+    return { status: "not_published", reason: "run_id_outside_canonical_spine_namespace", runId: String(runId ?? "") };
+  }
+  const existing = await readSpineState(projectRoot);
+  // The runner enriches a spine run that the host already activated. Minting one
+  // here would arm the dispatch gate in a project that never triggered the spine,
+  // and stage or lifecycle edits belong to the spine's own stage machine.
+  if (!existing) return { status: "not_published", reason: "no_active_spine_run" };
+  if (existing.runId !== spineRunId) {
+    return { status: "not_published", reason: "different_active_run", activeRunId: existing.runId };
+  }
+  const now = new Date().toISOString();
+  const state = {
+    ...existing,
+    workerTaskPackets: mergeSpineWorkerTaskPackets(existing.workerTaskPackets, packets),
+    runnerDispatchBindingEnvelope: {
+      schemaVersion: "governed-runner-spine-bindings-v1",
+      runId: spineRunId,
+      runtime,
+      taskPacketIds: packets.map((packet) => packet.taskPacketId),
+      publishedAt: now,
+      source: "run-meta-theory-governed-execution",
+    },
+  };
+  const write = await writeSpineState(projectRoot, state, { expectedRunId: spineRunId });
+  return write.written === true
+    ? { status: "published", taskPacketIds: packets.map((packet) => packet.taskPacketId) }
+    : { status: "not_published", reason: write.reason || "compare_and_swap_failed", activeRunId: write.runId || null };
+}
 
 const RUNTIME_FAILURE_TAXONOMY = Object.freeze({
   pass: "pass",
@@ -11939,6 +12020,20 @@ export async function runMetaTheoryGovernedExecution({
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
   }
+  const spineWorkerBinding = await publishRunnerWorkerBindingsToSpine({
+    projectRoot: path.resolve(projectRoot),
+    runId: effectiveRunId,
+    runtime: routeRuntime,
+    workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets,
+  });
+  coreLoop = {
+    ...coreLoop,
+    runnerSpineBindingPacket: {
+      schemaVersion: "governed-runner-spine-bindings-v1",
+      runId: effectiveRunId,
+      ...spineWorkerBinding,
+    },
+  };
   let durableCoordinator = null;
   let durableExecution = null;
   let durableBodyError = null;

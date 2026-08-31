@@ -63,6 +63,8 @@ const TASK_FINGERPRINT_RE = /^hmac-sha256:[a-f0-9]{64}$/u;
 const TASK_IDENTITY_KEY_SCHEMA = "task-identity-key-v1";
 const HISTORICAL_MIGRATION_ENVELOPE = Symbol("historical-migration-envelope");
 const taskIdentityKeyInflight = new Map();
+const SOURCE_RUNTIMES = new Set(["claude", "codex", "cursor", "openclaw"]);
+const WORKER_LIFECYCLE_STATUSES = new Set(["queued", "active", "completed", "failed", "cancelled"]);
 
 export const RUN_LIFECYCLE_STATUSES = [
   "active",
@@ -1118,6 +1120,7 @@ export async function readSpineStateIncludingInactive(cwd) {
 
 export async function writeSpineState(cwd, state, options = {}) {
   const safeState = stripRawPromptFields(state);
+  safeState.workerLifecycle = lifecycleRecords(safeState);
   // Resolve the file and profile together. A legacy custom spine directory is
   // still honored, but its first state-root segment becomes the status profile
   // so spine/status readers cannot be routed to different tenants.
@@ -1189,6 +1192,7 @@ export async function reconcileLegacyRunStatuses(cwd, options = {}) {
  */
 export async function activateSpineState(cwd, state, options = {}) {
   const safeState = stripRawPromptFields(state);
+  safeState.workerLifecycle = lifecycleRecords(safeState);
   const { filePath, profile } = resolveSpineStateRoute(cwd, safeState);
   validateRunId(safeState?.runId);
   if (!isValidSpineState(safeState)) {
@@ -1351,8 +1355,11 @@ export function createInitialState({
   executionLeasePolicy = null,
   taskFingerprint = null,
   taskIdentitySource = null,
+  sourceConversation = null,
+  sourceRuntime = null,
 } = {}) {
   const triggeredAt = new Date().toISOString();
+  const runId = createRunId(triggeredAt);
   const stageRuntimeControl = {
     activationMode,
     driverMode,
@@ -1372,10 +1379,14 @@ export function createInitialState({
     createdAt: triggeredAt,
   };
   const normalizedTaskFingerprint = normalizeTaskFingerprint(taskFingerprint);
+  const normalizedSourceConversation = normalizeSourceConversation(sourceConversation, runId);
+  const normalizedSourceRuntime = normalizeSourceRuntime(
+    normalizedSourceConversation?.runtime || sourceRuntime,
+  );
   return {
     active: true,
     version: 2,
-    runId: createRunId(triggeredAt),
+    runId,
     triggeredAt,
     stageRuntimeControl,
     lifecycleStatus: "active",
@@ -1415,7 +1426,152 @@ export function createInitialState({
     intentCorrectionPayload: null,
     // Audit trail for skipped hooks
     skippedHooks: [],
+    sourceRuntime: normalizedSourceRuntime || "unavailable",
+    conversationLinkState: normalizedSourceConversation ? "verified" : "unlinked",
+    ...(normalizedSourceConversation ? { sourceConversation: normalizedSourceConversation } : {}),
   };
+}
+
+function normalizeSourceRuntime(value) {
+  const runtime = String(value || "").trim().toLowerCase();
+  return SOURCE_RUNTIMES.has(runtime) ? runtime : null;
+}
+
+function normalizeSourceConversation(value, expectedRunId = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const runtime = normalizeSourceRuntime(value.runtime);
+  if (!runtime) return null;
+  const conversationId = String(value.conversationId || value.threadId || value.sessionId || value.composerId || value.sessionKey || "").trim();
+  if (!/^[a-z0-9][a-z0-9:._-]{3,159}$/iu.test(conversationId)) return null;
+  const explicitRunId = typeof value.runId === "string" ? value.runId : null;
+  if (explicitRunId && expectedRunId && explicitRunId !== expectedRunId) return null;
+  const rawTitle = typeof value.title === "string" ? value.title.trim() : "";
+  const title = rawTitle && rawTitle.length <= 120 && !/[\u0000-\u001f\u007f]/u.test(rawTitle)
+    ? rawTitle
+    : null;
+  return {
+    runtime,
+    conversationId,
+    ...(expectedRunId ? { runId: expectedRunId } : explicitRunId ? { runId: explicitRunId } : {}),
+    ...(title ? { title } : {}),
+  };
+}
+
+export function bindSourceConversation(state, sourceConversation, { sourceRuntime = null } = {}) {
+  if (!state || typeof state !== "object") return state;
+  const runtime = normalizeSourceRuntime(sourceConversation?.runtime || sourceRuntime);
+  const normalized = normalizeSourceConversation(sourceConversation, state.runId);
+  if (!normalized) {
+    if (state.sourceConversation) return state;
+    return {
+      ...state,
+      sourceRuntime: runtime || state.sourceRuntime || "unavailable",
+      conversationLinkState: "unlinked",
+    };
+  }
+  return {
+    ...state,
+    sourceRuntime: normalized.runtime,
+    conversationLinkState: "verified",
+    sourceConversation: normalized,
+  };
+}
+
+function safeWorkerTaskId(value) {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  return /^[a-z0-9][a-z0-9:._-]{2,239}$/iu.test(candidate) ? candidate : null;
+}
+
+function safeHostEventId(value) {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  return /^[a-z0-9][a-z0-9:._-]{2,159}$/iu.test(candidate) ? candidate : null;
+}
+
+function safeHostInvocationIds(values) {
+  return [...new Set((Array.isArray(values) ? values : [values])
+    .map((value) => safeHostEventId(value))
+    .filter(Boolean))].slice(-8);
+}
+
+function lifecycleRecords(state) {
+  const existing = Array.isArray(state?.workerLifecycle) ? state.workerLifecycle : [];
+  const byTask = new Map(existing.flatMap((record) => {
+    const taskPacketId = safeWorkerTaskId(record?.taskPacketId);
+    if (!taskPacketId || record?.runId !== state?.runId || !WORKER_LIFECYCLE_STATUSES.has(record?.status)) return [];
+    return [[taskPacketId, record]];
+  }));
+  for (const packet of Array.isArray(state?.workerTaskPackets) ? state.workerTaskPackets : []) {
+    const taskPacketId = safeWorkerTaskId(packet?.taskPacketId);
+    if (!taskPacketId || byTask.has(taskPacketId)) continue;
+    byTask.set(taskPacketId, {
+      runId: state.runId,
+      taskPacketId,
+      status: "queued",
+      updatedAt: state.triggeredAt || new Date().toISOString(),
+      terminalEvidence: [],
+      ...(typeof packet.roleDisplayName === "string" ? { roleDisplayName: packet.roleDisplayName.slice(0, 80) } : {}),
+      ...(typeof packet.roleInstanceId === "string" ? { roleInstanceId: packet.roleInstanceId.slice(0, 120) } : {}),
+    });
+  }
+  return [...byTask.values()];
+}
+
+export function projectWorkerLifecycle(state) {
+  return lifecycleRecords(state).map((record) => ({ ...record }));
+}
+
+export function recordWorkerLifecycleEvent(state, event = {}, options = {}) {
+  if (!state || typeof state !== "object" || state.active !== true) return state;
+  if (options.trustedHostEvent !== true) return state;
+  const runId = typeof event.runId === "string" ? event.runId : state.runId;
+  if (runId !== state.runId) return state;
+  const taskPacketId = safeWorkerTaskId(event.taskPacketId);
+  const packet = (Array.isArray(state.workerTaskPackets) ? state.workerTaskPackets : [])
+    .find((candidate) => candidate?.taskPacketId === taskPacketId);
+  if (!taskPacketId || !packet) return state;
+  const status = String(event.status || "").trim().toLowerCase();
+  if (!WORKER_LIFECYCLE_STATUSES.has(status) || status === "queued") return state;
+  const runtime = normalizeSourceRuntime(event.runtime);
+  if (!runtime) return state;
+  const records = lifecycleRecords(state);
+  const index = records.findIndex((record) => record.taskPacketId === taskPacketId);
+  const current = records[index];
+  if (!current || ["completed", "failed", "cancelled"].includes(current.status)) return state;
+  const now = isValidTimestamp(event.occurredAt) ? new Date(event.occurredAt).toISOString() : new Date().toISOString();
+  const terminal = ["completed", "failed", "cancelled"].includes(status);
+  const eventId = safeHostEventId(event.eventId);
+  const invocationIds = safeHostInvocationIds([
+    ...(Array.isArray(current.invocationIds) ? current.invocationIds : []),
+    event.invocationId,
+    ...(Array.isArray(event.invocationIds) ? event.invocationIds : []),
+  ]);
+  const next = {
+    ...current,
+    runId: state.runId,
+    taskPacketId,
+    status,
+    runtime,
+    updatedAt: now,
+    ...(current.startedAt ? {} : { startedAt: now }),
+    ...(terminal ? { completedAt: now } : {}),
+    ...(invocationIds.length > 0 ? { invocationIds } : {}),
+    terminalEvidence: terminal
+      ? [...(Array.isArray(current.terminalEvidence) ? current.terminalEvidence : []), {
+          runId: state.runId,
+          taskPacketId,
+          status,
+          resultStatus: status,
+          runtime,
+          occurredAt: now,
+          proofValid: true,
+          synthetic: false,
+          evidenceKind: "host_worker_lifecycle",
+          ...(eventId ? { eventId } : {}),
+        }].slice(-8)
+      : Array.isArray(current.terminalEvidence) ? current.terminalEvidence : [],
+  };
+  records[index] = next;
+  return { ...state, workerLifecycle: records };
 }
 
 export function isHookObservedState(state) {
@@ -1496,6 +1652,10 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
           reason:
             "Inactive run status is history only. A later prompt may start a new run or offline audit, but it must not claim this run is still active.",
         });
+  const sourceConversation = normalizeSourceConversation(safeState?.sourceConversation, runId);
+  const sourceRuntime = normalizeSourceRuntime(sourceConversation?.runtime || safeState?.sourceRuntime) || "unavailable";
+  const conversationLinkState = sourceConversation ? "verified" : "unlinked";
+  const workerLifecycle = lifecycleRecords({ ...safeState, runId });
 
   return {
     schemaVersion: RUN_STATUS_SCHEMA_VERSION,
@@ -1551,12 +1711,17 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     publicLabels: safeState?.publicLabels || null,
     stagePurpose,
     stagePurposeKey: currentStage,
+    sourceRuntime,
+    conversationLinkState,
+    workerLifecycle,
+    ...(sourceConversation ? { sourceConversation } : {}),
   };
 }
 
 export async function writeMetaRunStatus(cwd, state, options = {}) {
   if (!state || typeof state !== "object") return null;
   const safeState = stripRawPromptFields(state);
+  safeState.workerLifecycle = lifecycleRecords(safeState);
   const profile = sanitizeStateProfile(
     ownEnumerableDataField(options, "profile") || profileFromState(safeState),
   );

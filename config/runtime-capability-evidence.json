@@ -251,8 +251,8 @@
         "setup.mjs"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "37d2408d6e6e14ea68601c8af3501d72d3be16c2b72b3ec0e270eca60fd12948" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "3e8e9f39e4ab2534a6ad13a47ae3cbfa5938aef6d3cead711207c5a16559744c" },
+        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "473cd8a9be3874aca51c7342f8f36f9ea1839f788c56931633a75d52c7f75c39" },
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "76e94ff2ca305489d08a7952627eef59908adf4d77ede3377a0c468087b0438b" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "172c35cf333eedc2aa1ddead6e2c4a5ac889d274d7ba24ef757848e3add5a93b" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
@@ -563,7 +563,7 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "5cb91cf2adf020ae3e13c21bc419e08ce6527f29072561177a189464680a39ed" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "3e8e9f39e4ab2534a6ad13a47ae3cbfa5938aef6d3cead711207c5a16559744c" },
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "76e94ff2ca305489d08a7952627eef59908adf4d77ede3377a0c468087b0438b" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "172c35cf333eedc2aa1ddead6e2c4a5ac889d274d7ba24ef757848e3add5a93b" },
         { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "4102187ead53505f50ecd84635cf3e8904019de5b60cc108fa05cb006876f1a7" }
       ],
@@ -939,7 +939,7 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/openclaw", "digestKind": "sha256", "sha256": "ca04424ae285491a8284b1af7bd19375df3e281d75818c48aa25ee27b1fc3287" },
-        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "7e8c00f90dffde5a89ff00029a0e79cf77d9d27f1814f142f8bafb69f27a3e0d" },
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "099eb5d3e6a094b3bcbbc4084937af3fb891422cdf08e2a0c779a444db4e7e75" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "172c35cf333eedc2aa1ddead6e2c4a5ac889d274d7ba24ef757848e3add5a93b" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
@@ -1293,7 +1293,7 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/cursor", "digestKind": "sha256", "sha256": "786f610efc8d8f2c3e61e8260c4ce9b4f00da6af82701958fb46097b8c8c3780" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "3e8e9f39e4ab2534a6ad13a47ae3cbfa5938aef6d3cead711207c5a16559744c" },
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "76e94ff2ca305489d08a7952627eef59908adf4d77ede3377a0c468087b0438b" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "172c35cf333eedc2aa1ddead6e2c4a5ac889d274d7ba24ef757848e3add5a93b" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",

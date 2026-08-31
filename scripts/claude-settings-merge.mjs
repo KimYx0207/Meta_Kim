@@ -88,6 +88,10 @@ export function buildMetaKimHooksTemplate(
   });
 
   const userPromptHooks = [];
+  const spineHook = () => cmd(
+    "activate-meta-theory-spine.mjs",
+    ["--runtime", "claude", ...(packageRoot ? ["--package-root", packageRoot] : [])],
+  );
   if (hookPromptCommand) {
     userPromptHooks.push({
       type: "command",
@@ -98,10 +102,7 @@ export function buildMetaKimHooksTemplate(
     userPromptHooks.push(cmd("hookprompt-adapter.mjs"));
   }
   userPromptHooks.push(
-    cmd(
-      "activate-meta-theory-spine.mjs",
-      packageRoot ? ["--package-root", packageRoot] : [],
-    ),
+    spineHook(),
   );
 
   return {
@@ -120,11 +121,34 @@ export function buildMetaKimHooksTemplate(
           "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|TaskStop|EnterPlanMode|ExitPlanMode|MultiEdit|NotebookEdit",
         hooks: [cmd("enforce-agent-dispatch.mjs", ["--runtime", "claude"])],
       },
+      {
+        matcher: "Agent|Task",
+        hooks: [spineHook()],
+      },
+    ],
+    PostToolUse: [
+      {
+        matcher: "Agent|Task",
+        hooks: [spineHook()],
+      },
+    ],
+    SubagentStart: [
+      {
+        matcher: "*",
+        hooks: [spineHook()],
+      },
+    ],
+    SubagentStop: [
+      {
+        matcher: "*",
+        hooks: [spineHook()],
+      },
     ],
     Stop: [
       {
         matcher: "*",
         hooks: [
+          spineHook(),
           cmd("stop-compaction.mjs"),
           cmd("stop-console-log-audit.mjs"),
           cmd("stop-completion-guard.mjs"),

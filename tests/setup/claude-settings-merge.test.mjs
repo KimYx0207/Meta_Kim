@@ -65,6 +65,14 @@ describe("Claude settings hook command rendering", () => {
       commands.some((entry) => entry.includes("stop-compaction.mjs")),
       true,
     );
+    for (const event of ["PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop"]) {
+      assert.match(
+        JSON.stringify(template[event]),
+        /activate-meta-theory-spine\.mjs/u,
+        `${event} must feed exact worker lifecycle evidence into the active run`,
+      );
+    }
+    assert.ok(commands.some((entry) => entry.includes('"--runtime" "claude"')));
   });
 
   test("Claude enforcement matchers cover the queryBypass control-plane deny contract", () => {
@@ -110,6 +118,41 @@ describe("Claude settings hook command rendering", () => {
       [],
       "every machine-contract deny tool must be reachable through the Claude matcher",
     );
+  });
+
+  test("canonical Claude project hooks preserve lifecycle format context and user hooks", () => {
+    const canonical = JSON.parse(
+      readFileSync(
+        new URL("canonical/runtime-assets/claude/settings.json", REPO_ROOT),
+        "utf8",
+      ),
+    );
+    const merged = mergeRepoClaudeSettings(
+      {
+        hooks: {
+          PostToolUse: [{
+            matcher: "CustomTool",
+            hooks: [{ type: "command", command: "node .claude/hooks/user-post-tool.mjs" }],
+          }],
+          SubagentStart: [{
+            matcher: "custom-*",
+            hooks: [{ type: "command", command: "node .claude/hooks/user-custom-start.mjs" }],
+          }],
+        },
+      },
+      canonical,
+      "D:/Meta_Kim",
+    );
+
+    for (const event of ["PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop"]) {
+      const serialized = JSON.stringify(merged.hooks[event]);
+      assert.match(serialized, /activate-meta-theory-spine\.mjs/u);
+      assert.match(serialized, /--runtime claude/u);
+    }
+    assert.match(JSON.stringify(merged.hooks.PostToolUse), /post-format\.mjs/u);
+    assert.match(JSON.stringify(merged.hooks.SubagentStart), /subagent-context\.mjs/u);
+    assert.match(JSON.stringify(merged.hooks.PostToolUse), /user-post-tool\.mjs/u);
+    assert.match(JSON.stringify(merged.hooks.SubagentStart), /user-custom-start\.mjs/u);
   });
 
   test("global update adds the missing enforcement hook and stays idempotent", () => {
@@ -249,7 +292,7 @@ describe("Claude settings hook command rendering", () => {
     assert.doesNotMatch(JSON.stringify(merged), /pre-git-push-confirm\.mjs/u);
   });
 
-  test("global settings merge removes old managed events no longer in the template", () => {
+  test("global settings merge replaces retired PostToolUse commands with lifecycle writeback", () => {
     const template = buildMetaKimHooksTemplate(
       "C:\\Users\\Example\\.claude\\hooks\\meta-kim",
     );
@@ -272,7 +315,14 @@ describe("Claude settings hook command rendering", () => {
       template,
     );
 
-    assert.equal(merged.hooks.PostToolUse, undefined);
+    assert.match(
+      JSON.stringify(merged.hooks.PostToolUse),
+      /activate-meta-theory-spine\.mjs/u,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(merged.hooks.PostToolUse),
+      /post-format\.mjs/u,
+    );
     assert.match(
       JSON.stringify(merged.hooks),
       /block-dangerous-bash\.mjs/,
@@ -329,11 +379,10 @@ describe("Claude settings hook command rendering", () => {
       commands.some((entry) => entry.includes(".claude/hooks/block-dangerous-bash.mjs")),
       false,
     );
-    assert.ok(
-      commands.includes(
-        'node "C:/Users/Example/.claude/hooks/meta-kim/activate-meta-theory-spine.mjs"',
-      ),
-    );
+    assert.ok(commands.some((entry) =>
+      entry.includes('node "C:/Users/Example/.claude/hooks/meta-kim/activate-meta-theory-spine.mjs"') &&
+      entry.includes('"--runtime" "claude"'),
+    ));
     assert.ok(
       commands.includes(
         'node "C:/Users/Example/.claude/hooks/meta-kim/block-dangerous-bash.mjs"',

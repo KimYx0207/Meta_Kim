@@ -15,12 +15,175 @@ import {
   createInitialState,
   createProjectTaskIdentity,
   readExistingTaskIdentityBinding,
+  writeSpineState,
+  recordWorkerLifecycleEvent,
 } from "./spine-state.mjs";
 
 const cwd = process.cwd();
 const payload = await readJsonFromStdin();
 const toolName = payload?.tool_name ?? "";
 const toolInput = payload?.tool_input ?? {};
+
+function argumentValue(name) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : null;
+}
+
+function sourceConversationFromPayload() {
+  const runtimeCandidate = String(
+    argumentValue("--runtime") ||
+    process.env.META_KIM_HOOK_RUNTIME ||
+    payload?.runtime ||
+    "",
+  ).trim().toLowerCase();
+  const runtime = runtimeCandidate === "claude-code" ? "claude" : runtimeCandidate;
+  if (!["claude", "codex", "cursor", "openclaw"].includes(runtime)) return null;
+  const conversationId = [
+    payload?.conversation_id,
+    payload?.conversationId,
+    payload?.thread_id,
+    payload?.threadId,
+    payload?.session_id,
+    payload?.sessionId,
+    payload?.composer_id,
+    payload?.composerId,
+    payload?.session_key,
+    payload?.sessionKey,
+  ].find((value) => typeof value === "string" && /^[a-z0-9][a-z0-9:._-]{3,159}$/iu.test(value.trim()));
+  if (!conversationId) return null;
+  const title = [payload?.conversation_title, payload?.conversationTitle, payload?.thread_title, payload?.threadTitle, payload?.session_title, payload?.sessionTitle]
+    .find((value) => typeof value === "string" && value.trim() && value.trim().length <= 120 && !/[\u0000-\u001f\u007f]/u.test(value));
+  return {
+    runtime,
+    conversationId: conversationId.trim(),
+    ...(title ? { title: title.trim() } : {}),
+  };
+}
+
+function sourceRuntimeFromPayload() {
+  const candidate = String(
+    argumentValue("--runtime") || process.env.META_KIM_HOOK_RUNTIME || payload?.runtime || "",
+  ).trim().toLowerCase();
+  const runtime = candidate === "claude-code" ? "claude" : candidate;
+  return ["claude", "codex", "cursor", "openclaw"].includes(runtime) ? runtime : null;
+}
+
+function hookEventName() {
+  return String(payload?.hook_event_name || payload?.hookEventName || payload?.event || "").trim();
+}
+
+function hostInvocationIds() {
+  return [...new Set([
+    payload?.tool_use_id,
+    payload?.toolUseId,
+    payload?.call_id,
+    payload?.callId,
+    payload?.invocation_id,
+    payload?.invocationId,
+    payload?.parent_tool_use_id,
+    payload?.parentToolUseId,
+    payload?.agent_id,
+    payload?.agentId,
+    payload?.subagent_id,
+    payload?.subagentId,
+    payload?.tool_response?.agent_id,
+    payload?.toolResponse?.agentId,
+  ].filter((value) => typeof value === "string" && /^[a-z0-9][a-z0-9:._-]{2,159}$/iu.test(value.trim()))
+    .map((value) => value.trim()))];
+}
+
+function lifecycleTaskPacketId(state) {
+  const candidates = [
+    payload?.task_packet_id,
+    payload?.taskPacketId,
+    payload?.worker_task_id,
+    payload?.workerTaskId,
+    toolInput?.task_packet_id,
+    toolInput?.taskPacketId,
+    toolInput?.dispatchEnvelopePacket?.taskPacketId,
+    toolInput?.metaKimBinding?.taskPacketId,
+    payload?.invocation?.taskPacketId,
+    payload?.tool_response?.taskPacketId,
+    payload?.toolResponse?.taskPacketId,
+  ].filter((value) => typeof value === "string");
+  const known = new Set((Array.isArray(state?.workerTaskPackets) ? state.workerTaskPackets : [])
+    .map((packet) => packet?.taskPacketId)
+    .filter(Boolean));
+  const exact = candidates.find((candidate) => known.has(candidate));
+  if (exact) return exact;
+  const invocationIds = new Set(hostInvocationIds());
+  if (invocationIds.size === 0) return null;
+  return (Array.isArray(state?.workerLifecycle) ? state.workerLifecycle : [])
+    .find((record) => Array.isArray(record?.invocationIds) &&
+      record.invocationIds.some((invocationId) => invocationIds.has(invocationId)))
+    ?.taskPacketId || null;
+}
+
+function lifecycleStatusFromPayload() {
+  const event = hookEventName().toLowerCase();
+  if (["pretooluse", "subagentstart", "subagent_start"].includes(event)) return "active";
+  if (!["posttooluse", "subagentstop", "subagent_stop"].includes(event)) return null;
+  const response = payload?.tool_response || payload?.toolResponse || payload?.tool_result || payload?.toolResult || payload?.result || {};
+  const raw = String(response?.status || response?.resultStatus || payload?.status || "").trim().toLowerCase();
+  if (response?.cancelled === true || response?.canceled === true || raw === "cancelled" || raw === "canceled") return "cancelled";
+  if (response?.is_error === true || response?.isError === true || response?.success === false || ["failed", "failure", "error"].includes(raw)) return "failed";
+  const explicitlyCompleted = response?.success === true ||
+    ["completed", "complete", "succeeded", "success", "passed"].includes(raw);
+  if (explicitlyCompleted) return "completed";
+  if (["subagentstop", "subagent_stop"].includes(event)) return null;
+  const asyncDispatch = ["spawn_agent", "followup_task", "collaboration.spawn_agent", "collaboration.followup_task"]
+    .includes(String(toolName || "").trim().toLowerCase());
+  return asyncDispatch ? "active" : null;
+}
+
+function hasVerifiedLifecycleAssociation() {
+  // Hook stdin and runtime environment variables are caller-controlled hints.
+  // No current adapter supplies an independently verified run + task + event
+  // association here, so this raw hook must remain advisory and must not mint
+  // host lifecycle proof. A future adapter must verify that association before
+  // routing a terminal event through recordWorkerLifecycleEvent.
+  return false;
+}
+
+function isLifecycleHookPayload() {
+  const event = hookEventName().toLowerCase();
+  if (["stop", "sessionend", "session_end"].includes(event)) return true;
+  if (["subagentstart", "subagent_start", "subagentstop", "subagent_stop"].includes(event)) return true;
+  if (!["pretooluse", "posttooluse"].includes(event)) return false;
+  return ["agent", "task", "spawn_agent", "followup_task", "collaboration.spawn_agent", "collaboration.followup_task"]
+    .includes(String(toolName || "").trim().toLowerCase());
+}
+
+async function recordLifecycleHook(root) {
+  const state = await readSpineState(root);
+  if (!state?.active) return;
+  // Raw Hook stdin is caller-controlled. It may identify the runtime for
+  // diagnostics, but it cannot promote a conversation/thread hint to a
+  // verified run binding.
+  const observedRuntime = sourceRuntimeFromPayload();
+  let updated = observedRuntime && !state.sourceConversation
+    ? { ...state, sourceRuntime: observedRuntime, conversationLinkState: "unlinked" }
+    : state;
+  const taskPacketId = lifecycleTaskPacketId(updated);
+  const status = lifecycleStatusFromPayload();
+  const trustedHostEvent = hasVerifiedLifecycleAssociation();
+  if (taskPacketId && status && trustedHostEvent) {
+    const invocationIds = hostInvocationIds();
+    updated = recordWorkerLifecycleEvent(updated, {
+      runId: payload?.run_id || payload?.runId || updated.runId,
+      taskPacketId,
+      status,
+      runtime: sourceRuntimeFromPayload(),
+      eventId: payload?.event_id || payload?.eventId || payload?.tool_use_id || payload?.toolUseId,
+      invocationId: invocationIds[0],
+      invocationIds,
+      occurredAt: payload?.occurred_at || payload?.occurredAt || payload?.timestamp,
+    }, { trustedHostEvent });
+  }
+  if (updated !== state) {
+    await writeSpineState(root, updated, { expectedRunId: state.runId });
+  }
+}
 
 // 开源场景：sync/setup 曾把 canonical 仓库根占位标记渲染成绝对路径，写到
 // 全局/项目 settings 后跨机器即死路径。candidate 在用户机器不存在时，从脚本
@@ -322,9 +485,17 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
     "live",
     "live-hub-lifecycle.mjs",
   );
-  if (!existsSync(lifecycleModule)) return null;
+  const budgetModule = join(
+    packageRoot,
+    "src",
+    "application",
+    "live",
+    "live-hub-lifecycle-budget.mjs",
+  );
+  if (!existsSync(lifecycleModule) || !existsSync(budgetModule)) return null;
   try {
     const { ensureLiveHub } = await import(pathToFileURL(lifecycleModule).href);
+    const { loadLiveHubLifecycleBudget } = await import(pathToFileURL(budgetModule).href);
     const { ensureGovernedLiveProjectRegistration } = await import(
       pathToFileURL(join(packageRoot, "scripts", "project-registry.mjs")).href
     );
@@ -341,7 +512,11 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
       projectRef,
       runId: projectRef ? runId : null,
       profile,
-      timeoutMs: 2_000,
+      // A fresh hub child indexes every governed run before it reports ready, so
+      // the fuse belongs with the other measured budgets in the live config
+      // rather than in a per-platform guess here. An already-running hub is
+      // reused without spawning, so this is paid at most once per session.
+      timeoutMs: loadLiveHubLifecycleBudget().hookAutostartBudgetMs,
     });
     return result?.started === true && typeof result.deepLink === "string"
       ? result
@@ -372,7 +547,8 @@ function emitLiveHubStartedContext(live, language = "en") {
 }
 
 const activation = isMetaTheoryTrigger();
-if (!activation.triggered) {
+const lifecycleHook = isLifecycleHookPayload();
+if (!activation.triggered && !lifecycleHook) {
   process.exit(0);
 }
 
@@ -390,6 +566,11 @@ if (!projectRoot) {
 
 startPostCopyAutoInit(projectRoot);
 
+if (lifecycleHook) {
+  await recordLifecycleHook(projectRoot);
+  process.exit(0);
+}
+
 const rawPromptText = getRawPromptText();
 const rawExisting = await readSpineStateIncludingInactive(projectRoot);
 const existing = rawExisting?.active === false ? null : rawExisting || (await readSpineState(projectRoot));
@@ -403,13 +584,17 @@ if (["existing_key_missing", "existing_key_invalid"].includes(taskIdentity.statu
   process.exit(0);
 }
 const promptFingerprint = taskIdentity.taskFingerprint;
-if (existing && existing.active && !shouldReplaceActiveState(existing, promptFingerprint)) {
+  if (existing && existing.active && !shouldReplaceActiveState(existing, promptFingerprint)) {
   const existingFingerprint =
     existing?.stageRuntimeControl?.promptFingerprint ||
     existing?.promptFingerprint ||
     null;
   if (existingFingerprint && existingFingerprint === promptFingerprint) {
-    await activateSpineState(projectRoot, existing, {
+    const observedRuntime = sourceRuntimeFromPayload();
+    const refreshedState = observedRuntime && !existing.sourceConversation
+      ? { ...existing, sourceRuntime: observedRuntime, conversationLinkState: "unlinked" }
+      : existing;
+    await activateSpineState(projectRoot, refreshedState, {
       expectedRunId: existing.runId || null,
       refreshExisting: true,
     });
@@ -433,6 +618,10 @@ const state = createInitialState({
   latestUserInputLanguage: detectPromptLanguage(rawPromptText),
   factGatePolicy: "managed_gate_required_for_public_ready",
   executionLeasePolicy: "advisory_until_managed_stage_driver",
+  // Hook payload conversation IDs remain advisory until a runtime adapter
+  // independently proves the run + conversation association.
+  sourceConversation: null,
+  sourceRuntime: sourceRuntimeFromPayload(),
 });
 
 const continuationBoundary = buildContinuationBoundary(rawExisting, rawPromptText);

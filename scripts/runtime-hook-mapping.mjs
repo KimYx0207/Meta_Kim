@@ -18,6 +18,7 @@ export const RUNTIME_HOOK_CAPABILITIES = {
       preToolUse: "PreToolUse",
       postToolUse: "PostToolUse",
       subagentStart: "SubagentStart",
+      subagentStop: "SubagentStop",
       stop: "Stop",
     },
   },
@@ -32,6 +33,7 @@ export const RUNTIME_HOOK_CAPABILITIES = {
       preToolUse: "PreToolUse",
       postToolUse: "PostToolUse",
       subagentStart: "SubagentStart",
+      subagentStop: "SubagentStop",
       skill: "Skill",
       stop: "Stop",
     },
@@ -379,7 +381,8 @@ export function buildCodexHooksJson({
   stopSpineCleanupHookPath = null,
 } = {}) {
   const userPromptHooks = [];
-  const spineHookArgs = packageRoot ? ["--package-root", packageRoot] : [];
+  const spineHookArgs = ["--runtime", "codex", ...(packageRoot ? ["--package-root", packageRoot] : [])];
+  const lifecycleHook = () => hookCommand(nodeHookCommand(spineHookPath, spineHookArgs), 5);
   if (spineHookPath) {
     userPromptHooks.push(hookCommand(nodeHookCommand(spineHookPath, spineHookArgs), 5));
   }
@@ -411,8 +414,30 @@ export function buildCodexHooksJson({
         ],
       },
       {
+        matcher: "Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
+        hooks: [lifecycleHook()],
+      },
+      {
         matcher: "Bash",
         hooks: [hookCommand(nodeHookCommand(graphifyHookPath))],
+      },
+    ],
+    PostToolUse: [
+      {
+        matcher: "Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
+        hooks: [lifecycleHook()],
+      },
+    ],
+    SubagentStart: [
+      {
+        matcher: "*",
+        hooks: [lifecycleHook()],
+      },
+    ],
+    SubagentStop: [
+      {
+        matcher: "*",
+        hooks: [lifecycleHook()],
       },
     ],
     Skill: [
@@ -436,6 +461,7 @@ export function buildCodexHooksJson({
     ];
   }
   const stopHooks = [];
+  if (spineHookPath) stopHooks.push(lifecycleHook());
   if (memoryHookPath) {
     stopHooks.push(
       hookCommand(nodeHookCommand(memoryHookPath, ["--event", "stop"]), 10),
@@ -471,7 +497,11 @@ export function buildCursorHooksJson({
   enforceAgentDispatchHookPath = ".cursor/hooks/enforce-agent-dispatch.mjs",
   hookPromptAdapterPath = null,
 } = {}) {
-  const spineHookArgs = packageRoot ? ["--package-root", packageRoot] : [];
+  const spineHookArgs = ["--runtime", "cursor", ...(packageRoot ? ["--package-root", packageRoot] : [])];
+  const lifecycleHook = () => ({
+    command: nodeHookCommand(spineHookPath, spineHookArgs),
+    timeout: 5,
+  });
   const beforeSubmitPromptHooks = [
     {
       command: nodeHookCommand(spineHookPath, spineHookArgs),
@@ -504,7 +534,16 @@ export function buildCursorHooksJson({
       {
         command: nodeHookCommand(graphifyHookPath),
       },
+      lifecycleHook(),
     ],
+    postToolUse: [
+      {
+        matcher: "Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
+        hooks: [lifecycleHook()],
+      },
+    ],
+    subagentStart: [lifecycleHook()],
+    stop: [lifecycleHook()],
   };
   if (memoryHookPath) {
     hooks.sessionStart = [
@@ -513,12 +552,10 @@ export function buildCursorHooksJson({
         timeout: 10,
       },
     ];
-    hooks.stop = [
-      {
-        command: nodeHookCommand(memoryHookPath, ["--event", "stop"]),
-        timeout: 10,
-      },
-    ];
+    hooks.stop.push({
+      command: nodeHookCommand(memoryHookPath, ["--event", "stop"]),
+      timeout: 10,
+    });
   }
 
   return {

@@ -86,3 +86,72 @@ test("formal governed entrypoint records a synthetic bridge result without claim
   assert.ok(prompts.length > 0);
   assert.ok(prompts.every((prompt) => prompt.includes(`Original user task: ${task}`)));
 });
+
+function stageStatuses(stages) {
+  return Object.fromEntries(Object.entries(stages).map(([stage, value]) => [stage, value.status]));
+}
+
+async function governedRunnerSpineFixture(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-runner-spine-project-"));
+  const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-runner-spine-output-"));
+  t.after(async () => Promise.all([
+    fs.rm(root, { recursive: true, force: true }),
+    fs.rm(outputRoot, { recursive: true, force: true }),
+  ]));
+  const spine = await import("../../canonical/runtime-assets/shared/hooks/spine-state.mjs");
+  return { root, outputRoot, spine };
+}
+
+function governedRunnerSpineRun({ root, outputRoot, runId }) {
+  return runMetaTheoryGovernedExecution({
+    task: "Inspect package metadata and prepare a read-only verification summary.",
+    runId,
+    runtime: "codex",
+    osTarget: "windows",
+    stateDir: outputRoot,
+    artifactDir: outputRoot,
+    dbPath: path.join(outputRoot, "runs.sqlite"),
+    projectRoot: root,
+    projectCapabilityMutationMode: "read_only",
+    emitConversationNotice: false,
+  });
+}
+
+test("real governed runner publishes its exact worker task IDs into the host-activated spine run", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const activated = spine.createInitialState({ triggerReason: "user_invocation", sourceRuntime: "codex" });
+  const activation = await spine.activateSpineState(root, activated);
+  assert.equal(activation.activated, true);
+  const report = await governedRunnerSpineRun({ root, outputRoot, runId: activated.runId });
+  const state = await spine.readSpineState(root);
+  const taskPacketIds = report.workerTaskPackets.map((packet) => packet.taskPacketId);
+  assert.equal(report.coreLoop.runnerSpineBindingPacket.status, "published");
+  assert.equal(state.runId, activated.runId);
+  assert.deepEqual(state.workerTaskPackets.map((packet) => packet.taskPacketId), taskPacketIds);
+  assert.deepEqual(state.runnerDispatchBindingEnvelope.taskPacketIds, taskPacketIds);
+  assert.equal(state.currentStage, activated.currentStage);
+  assert.deepEqual(stageStatuses(state.stages), stageStatuses(activated.stages));
+});
+
+test("governed runner never mints a spine run when the host has not activated one", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const report = await governedRunnerSpineRun({ root, outputRoot, runId: "meta-runner-spine-unbound-1" });
+  assert.equal(report.coreLoop.runnerSpineBindingPacket.status, "not_published");
+  assert.equal(report.coreLoop.runnerSpineBindingPacket.reason, "no_active_spine_run");
+  assert.equal(await spine.readSpineStateIncludingInactive(root), null);
+});
+
+test("governed runner reports a runId outside the canonical spine namespace instead of coercing it", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const activated = spine.createInitialState({ triggerReason: "user_invocation", sourceRuntime: "codex" });
+  await spine.activateSpineState(root, activated);
+  const report = await governedRunnerSpineRun({ root, outputRoot, runId: "P118-Runner-Spine-Artifact" });
+  assert.equal(report.coreLoop.runnerSpineBindingPacket.status, "not_published");
+  assert.equal(
+    report.coreLoop.runnerSpineBindingPacket.reason,
+    "run_id_outside_canonical_spine_namespace",
+  );
+  const state = await spine.readSpineState(root);
+  assert.equal(state.runId, activated.runId);
+  assert.equal(Object.hasOwn(state, "runnerDispatchBindingEnvelope"), false);
+});

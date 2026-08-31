@@ -2834,6 +2834,7 @@ export function buildCodexProjectHooksJson({
     packageRoot,
   });
   config.hooks.PostToolUse = [
+    ...(config.hooks.PostToolUse ?? []),
     {
       matcher: "Edit|Write",
       hooks: [
@@ -2844,6 +2845,7 @@ export function buildCodexProjectHooksJson({
     },
   ];
   config.hooks.SubagentStart = [
+    ...(config.hooks.SubagentStart ?? []),
     {
       matcher: "*",
       hooks: [hookCommand(nodeHookCommand(".codex/hooks/subagent-context.mjs"))],
@@ -2892,6 +2894,7 @@ export function buildCursorProjectHooksJson({
     packageRoot,
   });
   config.hooks.postToolUse = [
+    ...(config.hooks.postToolUse ?? []),
     {
       matcher: "Edit|Write",
       hooks: [
@@ -2902,6 +2905,7 @@ export function buildCursorProjectHooksJson({
     },
   ];
   config.hooks.subagentStart = [
+    ...(config.hooks.subagentStart ?? []),
     {
       command: nodeHookCommand(".cursor/hooks/subagent-context.mjs"),
     },
