@@ -22,7 +22,17 @@ function npmCliPath() {
   return resolved;
 }
 
-function waitForJsonLine(child, timeoutMs = 10_000) {
+/**
+ * Wait for the packed daemon to announce its address.
+ *
+ * The budget is generous on purpose. This test packs the npm artifact, extracts
+ * it and cold-starts a daemon, and it runs inside a 28-file parallel suite; the
+ * previous 10s budget was only ~1.4s above the 8.6s the same start takes on an
+ * idle machine, so the suite failed with `daemon_exited_before_ready` while the
+ * packed product was healthy. A start that is merely slow under load is not the
+ * defect this test exists to catch.
+ */
+function waitForJsonLine(child, timeoutMs = 20_000) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
@@ -50,7 +60,7 @@ function waitForJsonLine(child, timeoutMs = 10_000) {
   });
 }
 
-test("the real packed CLI serves the read-only control room without a source checkout", { timeout: 30_000 }, async () => {
+test("the real packed CLI serves the read-only control room without a source checkout", { timeout: 60_000 }, async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-packed-"));
   const extractRoot = path.join(temp, "extract");
   const projectRoot = path.join(temp, "project");
@@ -115,6 +125,15 @@ test("the real packed CLI serves the read-only control room without a source che
     assert.equal(Object.prototype.hasOwnProperty.call(catalog.projects[0], "repoRoot"), false);
     const health = await (await fetch(`${address.url}/api/health`)).json();
     assert.equal(health.profile, "packed-profile");
+    // The launcher hands the daemon the version of the root it started from, so
+    // this is the only place the whole chain is proven. A daemon that answers with
+    // a version it was never handed leaves its serving build unidentifiable, which
+    // is what made a Hub on stale code impossible to spot.
+    const packedManifest = JSON.parse(await readFile(
+      path.join(extractRoot, "package", "package.json"),
+      "utf8",
+    ));
+    assert.equal(health.packageVersion, packedManifest.version);
     const response = await fetch(`${address.url}/api/snapshot`);
     assert.equal(response.status, 200);
     const snapshot = await response.json();

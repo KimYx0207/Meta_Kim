@@ -13,11 +13,26 @@
     { "id": "handheld-tight", "condition": "(max-width: 380px)", "maxWidthPx": 380 }
   ],
   "chromeBudget": {
+    "comment": "Every band that consumes vertical space above or below the graph canvas, measured in a browser at the narrowest dense profile (1024x768) so the budget is a worst case rather than an optimistic minimum. Omitting a band makes the floor assertion pass while the shipped canvas is below it. The dense run-context figure is the two-line worst case, measured at 105.65px by replacing the run title with one long enough to fill the clamp: the band renders 65.16px on a one-line title, and reading that number off the screen in front of you is how the previous 100px got written down.",
     "topbarHeightPx": 60,
-    "runContextMinHeightPx": { "dense": 48, "compact": 92 },
+    "runContextHeightPx": { "dense": 106, "compact": 148 },
+    "stageOverviewHeightPx": { "open": 101, "collapsed": 35 },
+    "graphStageBarHeightPx": 95,
     "replayPanelHeightPx": { "collapsed": 34, "open": 116 },
     "statusBarHeightPx": 28,
+    "workspaceRowGapPx": 8,
+    "workspaceRowGapCount": 2,
     "minCanvasHeightPx": 360
+  },
+  "dockBudget": {
+    "comment": "Horizontal geometry inside the replay dock. The collapsed summary is absolutely positioned over the dock's first column, so the open dock header must be inset far enough to clear it. Only the shared quantity is declared: the stylesheet derives the header inset from this width plus its own spacing step, rather than carrying a second literal that can drift out of step. This width applies to the OPEN dock only. It was 116px and also governed the collapsed state, where 92px of usable width had to hold `回放` (26px) plus a 12px gap plus `展开时间线` (65px) = 103px; both spans flex-shrank and then wrapped, so the handle rendered two lines 33.21px tall inside a 1659.33px panel row that was otherwise empty. Collapsed now spans the row it stands in and this number only has to clear the open handle's own label. Measured in both locales: `回放` + gap + `收起` is 64.41px of text, English `Replay` + gap + `Collapse` is 104.35px, and 24px of padding puts the worse locale at 128.35px. 160px keeps a fifth of the width in reserve for a longer translation, which is the margin below which a one-line handle is only accidentally one line.",
+    "replayCollapseSummaryWidthPx": 160
+  },
+  "replayTickBand": {
+    "comment": "How many labels the replay time axis may print. The axis used to ship nine literal labels reading 00:00 to 02:00 regardless of how long the run actually took, and the ninth was clipped 26px at 1024x768. minLabelWidthPx is a measured worst case for the widest label a long run produces (mmm:ss at the micro font's upper clamp), not a CSS lower bound: an optimistic label width overflows the band the same way an optimistic band height clipped the drawer. Below minLabelCount the axis hides rather than rendering a clipped one, because a clipped axis is the defect.",
+    "minLabelWidthPx": 48,
+    "minLabelCount": 2,
+    "maxLabelCount": 9
   },
   "profiles": [
     {

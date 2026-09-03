@@ -160,6 +160,10 @@ async function main(argv = process.argv.slice(2)) {
     if (options.restart === true) {
       const stopped = await stopLiveHub({
         homeDir: process.env.META_KIM_LIVE_HOME,
+        // A person typing --restart is asking for whichever singleton is
+        // recorded to be replaced, and no instance id is knowable at the command
+        // line. Every other caller must name the Hub it intends to stop.
+        allowAnyInstance: true,
         timeoutMs: budget.stopBudgetMs,
       });
       if (["signal_failed", "stop_timeout"].includes(stopped.status)) {
@@ -175,9 +179,22 @@ async function main(argv = process.argv.slice(2)) {
       runId,
       port: options.port,
       profile,
+      // Naming the profile on the command line is a person asking for that
+      // scope. An inherited META_KIM_PROFILE is not: that is how a governed run
+      // silently replaced the Hub someone was watching.
+      allowProfileTakeover: typeof options.profile === "string",
+      // A person running this command is the one asking for their own build to
+      // serve the port. An autostart cannot make that claim: it is pinned to
+      // whichever package root installed the hook.
+      allowBuildTakeover: true,
       timeoutMs: budget.startupBudgetMs,
     });
     if (result.status === "unavailable") {
+      if (result.reason === "profile_in_use") {
+        process.stderr.write(
+          `Live Hub is serving profile "${result.profile}". Run with --profile ${result.profile} to watch it, or --restart to replace it.\n`,
+        );
+      }
       const error = new Error(result.reason || "startup_unavailable");
       error.code = result.reason || "startup_unavailable";
       throw error;
@@ -218,6 +235,9 @@ async function main(argv = process.argv.slice(2)) {
     homeDir: process.env.META_KIM_LIVE_HOME,
     instanceId: process.env.META_KIM_LIVE_INSTANCE_ID || null,
     packageIdentity: process.env.META_KIM_LIVE_PACKAGE_IDENTITY || null,
+    // The lifecycle hands the child both halves of its build authority. Passing
+    // only the digest is what left /api/health unable to name the build it serves.
+    packageVersion: process.env.META_KIM_LIVE_PACKAGE_VERSION || null,
   });
   let stopping = false;
   const stop = async () => {

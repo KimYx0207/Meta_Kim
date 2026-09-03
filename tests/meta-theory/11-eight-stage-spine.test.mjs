@@ -16,7 +16,6 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -50,6 +49,10 @@ import {
   fileExists,
 } from "./_helpers.mjs";
 import { buildCodexHooksJson } from "../../scripts/runtime-hook-mapping.mjs";
+import {
+  assertHookResolvedItsModules,
+  copyHookClosure,
+} from "../helpers/hook-fixture.mjs";
 
 const DEV_GOV_PATH = `${REPO_ROOT}/canonical/skills/meta-theory/references/dev-governance.md`;
 const SKILL_PATH = `${REPO_ROOT}/canonical/skills/meta-theory/SKILL.md`;
@@ -315,21 +318,7 @@ function runEnforceHook(state, payload, options = {}) {
   try {
     const hookDir = join(cwd, "canonical", "runtime-assets", "claude", "hooks");
     mkdirSync(hookDir, { recursive: true });
-    for (const fileName of [
-      "enforce-agent-dispatch.mjs",
-      "bash-readonly-whitelist.mjs",
-    ]) {
-      copyFileSync(
-        join(REPO_ROOT, "canonical/runtime-assets/claude/hooks", fileName),
-        join(hookDir, fileName),
-      );
-    }
-    for (const fileName of ["utils.mjs", "skip-reminder.mjs", "spine-state-utils.mjs", "spine-state-gates.mjs", "spine-state.mjs"]) {
-      copyFileSync(
-        join(REPO_ROOT, "canonical/runtime-assets/shared/hooks", fileName),
-        join(hookDir, fileName),
-      );
-    }
+    copyHookClosure(REPO_ROOT, hookDir, ["enforce-agent-dispatch.mjs"]);
     const spineDir = join(cwd, ".meta-kim", "state", "test", "spine");
     mkdirSync(spineDir, { recursive: true });
     writeFileSync(
@@ -407,21 +396,7 @@ function runEnforceHookWithState(state, payload, options = {}) {
   try {
     const hookDir = join(cwd, "canonical", "runtime-assets", "claude", "hooks");
     mkdirSync(hookDir, { recursive: true });
-    for (const fileName of [
-      "enforce-agent-dispatch.mjs",
-      "bash-readonly-whitelist.mjs",
-    ]) {
-      copyFileSync(
-        join(REPO_ROOT, "canonical/runtime-assets/claude/hooks", fileName),
-        join(hookDir, fileName),
-      );
-    }
-    for (const fileName of ["utils.mjs", "skip-reminder.mjs", "spine-state-utils.mjs", "spine-state-gates.mjs", "spine-state.mjs"]) {
-      copyFileSync(
-        join(REPO_ROOT, "canonical/runtime-assets/shared/hooks", fileName),
-        join(hookDir, fileName),
-      );
-    }
+    copyHookClosure(REPO_ROOT, hookDir, ["enforce-agent-dispatch.mjs"]);
     const spineDir = join(cwd, ".meta-kim", "state", "test", "spine");
     mkdirSync(spineDir, { recursive: true });
     const spinePath = join(spineDir, "spine-state.json");
@@ -459,23 +434,7 @@ function runActivateHook(existingState, payload, options = {}) {
     // dir as a legit project (.git) so the project-root gate activates the
     // spine here instead of correctly skipping an unmarked temp dir.
     mkdirSync(join(cwd, ".git"), { recursive: true });
-    const sourceDir = "canonical/runtime-assets/shared/hooks";
-    for (const fileName of [
-      "activate-meta-theory-spine.mjs",
-      "project-root.mjs",
-      "spine-state-gates.mjs",
-      "spine-state.mjs",
-      "utils.mjs",
-    ]) {
-      copyFileSync(
-        join(REPO_ROOT, sourceDir, fileName),
-        join(hookDir, fileName),
-      );
-    }
-    copyFileSync(
-      join(REPO_ROOT, "canonical/runtime-assets/shared/hooks/spine-state-utils.mjs"),
-      join(hookDir, "spine-state-utils.mjs"),
-    );
+    copyHookClosure(REPO_ROOT, hookDir, ["activate-meta-theory-spine.mjs"]);
     const spineDir = join(cwd, ".meta-kim", "state", "test", "spine");
     mkdirSync(spineDir, { recursive: true });
     const spinePath = join(spineDir, "spine-state.json");
@@ -508,6 +467,7 @@ function runActivateHook(existingState, payload, options = {}) {
         },
       },
     );
+    assertHookResolvedItsModules(result, "activate-meta-theory-spine.mjs");
     const nextState = JSON.parse(readFileSync(spinePath, "utf8"));
     const statusRoot = join(cwd, ".meta-kim", "state", "test");
     const readStatus = (filePath) => {
@@ -1455,13 +1415,20 @@ describe("Part F2: choice surface runtime gate", async () => {
   });
 
   test("auto prompt activation rotates stale legacy active state for a new prompt", () => {
+    const legacyBase = createInitialState({
+      taskClassification: "meta_theory_auto",
+      triggerReason: "legacy-test",
+    });
     const legacy = {
-      ...createInitialState({
-        taskClassification: "meta_theory_auto",
-        triggerReason: "legacy-test",
-      }),
+      ...legacyBase,
       runId: "meta-stale-legacy",
       triggeredAt: "2000-01-01T00:00:00.000Z",
+      // Supersede bookkeeping is only observable on a run that earned a durable
+      // entry, so the stale run carries the completed stage that earns one.
+      stages: {
+        ...legacyBase.stages,
+        critical: { status: "completed", completedAt: "2000-01-01T00:00:00.000Z" },
+      },
     };
     delete legacy.stageRuntimeControl;
 
@@ -1499,8 +1466,13 @@ describe("Part F2: choice surface runtime gate", async () => {
     });
     assert.equal(replay.result.status, 0, replay.result.stderr);
     assert.equal(replay.nextState.runId, first.nextState.runId);
-    assert.equal(replay.previousRunStatus.runId, first.nextState.runId);
-    assert.equal(replay.previousRunStatus.active, true);
+    assert.equal(replay.activeRunStatus.runId, first.nextState.runId);
+    assert.equal(replay.activeRunStatus.active, true);
+    assert.equal(
+      replay.previousRunStatus,
+      null,
+      "both activations stayed at Critical, so neither earned a run directory entry",
+    );
 
     const managed = {
       ...observed,
@@ -1521,25 +1493,96 @@ describe("Part F2: choice surface runtime gate", async () => {
     assert.equal(conservative.nextState.runId, managed.runId);
   });
 
+  test("a stopped activation-only run about the same task is reused instead of re-minted", () => {
+    const prompt = "critical and fetch thinking and review 请继续排查同一个任务的挂载问题";
+    const first = runActivateHook(null, { prompt });
+    assert.equal(first.result.status, 0, first.result.stderr);
+    assert.match(first.nextState.taskFingerprint, /^hmac-sha256:[0-9a-f]{64}$/u);
+
+    const stopped = {
+      ...first.nextState,
+      active: false,
+      lifecycleStatus: "session_stopped",
+      deactivatedAt: new Date().toISOString(),
+      deactivationReason: "session_stop",
+    };
+    const reused = runActivateHook(stopped, { prompt }, {
+      taskIdentityKey: first.taskIdentityKey,
+    });
+
+    assert.equal(reused.result.status, 0, reused.result.stderr);
+    assert.equal(
+      reused.nextState.runId,
+      first.nextState.runId,
+      "repeated prompts about one task collapse onto one run id, not one id per prompt",
+    );
+    assert.deepEqual(reused.nextState.stageRuntimeControl.runIdentityReuse, {
+      basis: "same_task_fingerprint_activation_only_run",
+      previousStage: "critical",
+      previousDeactivationReason: "session_stop",
+      previousSubstanceClass: "activation_only",
+    });
+    assert.equal(reused.nextState.continuationBoundary, undefined);
+  });
+
+  test("a stopped run that produced work keeps its own id and history", () => {
+    const prompt = "critical and fetch thinking and review 请继续排查同一个任务的挂载问题";
+    const first = runActivateHook(null, { prompt });
+    assert.equal(first.result.status, 0, first.result.stderr);
+
+    const stoppedWithWork = {
+      ...first.nextState,
+      active: false,
+      lifecycleStatus: "session_stopped",
+      deactivatedAt: new Date().toISOString(),
+      deactivationReason: "session_stop",
+      stages: {
+        ...first.nextState.stages,
+        critical: { status: "completed", completedAt: new Date().toISOString() },
+      },
+    };
+    const fresh = runActivateHook(stoppedWithWork, { prompt }, {
+      taskIdentityKey: first.taskIdentityKey,
+    });
+
+    assert.equal(fresh.result.status, 0, fresh.result.stderr);
+    assert.notEqual(
+      fresh.nextState.runId,
+      first.nextState.runId,
+      "a run that completed a stage owns durable history a new activation must not overwrite",
+    );
+    assert.equal(fresh.nextState.stageRuntimeControl.runIdentityReuse, undefined);
+    assert.equal(fresh.previousRunStatus.runId, first.nextState.runId);
+    assert.equal(fresh.previousRunStatus.substanceClass, "substantive");
+  });
+
+  test("a different task never reuses a stopped activation-only run id", () => {
+    const first = runActivateHook(null, {
+      prompt: "critical and fetch thinking and review 请处理第一个任务",
+    });
+    const stopped = {
+      ...first.nextState,
+      active: false,
+      lifecycleStatus: "session_stopped",
+      deactivatedAt: new Date().toISOString(),
+      deactivationReason: "session_stop",
+    };
+    const other = runActivateHook(stopped, {
+      prompt: "critical and fetch thinking and review 请处理另一个完全不同的任务",
+    }, { taskIdentityKey: first.taskIdentityKey });
+
+    assert.equal(other.result.status, 0, other.result.stderr);
+    assert.notEqual(other.nextState.runId, first.nextState.runId);
+    assert.equal(other.nextState.stageRuntimeControl.runIdentityReuse, undefined);
+  });
+
   test("production hook preserves an HMAC-bound run when its identity key is missing or corrupt", () => {
     const cwd = mkdtempSync(join(tmpdir(), "meta-kim-identity-recovery-"));
     try {
       const hookDir = join(cwd, "hooks");
       mkdirSync(hookDir, { recursive: true });
       mkdirSync(join(cwd, ".git"), { recursive: true });
-      for (const fileName of [
-        "activate-meta-theory-spine.mjs",
-        "project-root.mjs",
-        "spine-state-gates.mjs",
-        "spine-state.mjs",
-        "spine-state-utils.mjs",
-        "utils.mjs",
-      ]) {
-        copyFileSync(
-          join(REPO_ROOT, "canonical/runtime-assets/shared/hooks", fileName),
-          join(hookDir, fileName),
-        );
-      }
+      copyHookClosure(REPO_ROOT, hookDir, ["activate-meta-theory-spine.mjs"]);
       const prompt = "元理论：继续处理当前任务";
       const invoke = () => spawnSync(
         process.execPath,
@@ -1565,7 +1608,9 @@ describe("Part F2: choice surface runtime gate", async () => {
       const originalRunId = JSON.parse(originalSpineBytes).runId;
       const runStatusPath = join(stateRoot, "runs", originalRunId, "status.json");
       const originalActiveBytes = readFileSync(activePath, "utf8");
-      const originalRunStatusBytes = readFileSync(runStatusPath, "utf8");
+      // A bare activation earns no directory entry, so "state unchanged" here also
+      // means no entry appears on the recovery paths below.
+      assert.equal(existsSync(runStatusPath), false);
 
       unlinkSync(keyPath);
       const missing = invoke();
@@ -1574,7 +1619,7 @@ describe("Part F2: choice surface runtime gate", async () => {
       assert.match(missing.stderr, /保持原运行不变/u);
       assert.equal(readFileSync(spinePath, "utf8"), originalSpineBytes);
       assert.equal(readFileSync(activePath, "utf8"), originalActiveBytes);
-      assert.equal(readFileSync(runStatusPath, "utf8"), originalRunStatusBytes);
+      assert.equal(existsSync(runStatusPath), false);
       assert.equal(existsSync(keyPath), false);
 
       const corruptKeyBytes = "{broken-key";
@@ -1585,7 +1630,7 @@ describe("Part F2: choice surface runtime gate", async () => {
       assert.match(corrupt.stderr, /保持原运行不变/u);
       assert.equal(readFileSync(spinePath, "utf8"), originalSpineBytes);
       assert.equal(readFileSync(activePath, "utf8"), originalActiveBytes);
-      assert.equal(readFileSync(runStatusPath, "utf8"), originalRunStatusBytes);
+      assert.equal(existsSync(runStatusPath), false);
       assert.equal(readFileSync(keyPath, "utf8"), corruptKeyBytes);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -2293,21 +2338,7 @@ describe("Part F2: choice surface runtime gate", async () => {
     try {
       const hookDir = join(cwd, "canonical", "runtime-assets", "claude", "hooks");
       mkdirSync(hookDir, { recursive: true });
-      for (const fileName of [
-        "enforce-agent-dispatch.mjs",
-        "bash-readonly-whitelist.mjs",
-      ]) {
-        copyFileSync(
-          join(REPO_ROOT, "canonical/runtime-assets/claude/hooks", fileName),
-          join(hookDir, fileName),
-        );
-      }
-      for (const fileName of ["utils.mjs", "skip-reminder.mjs", "spine-state-utils.mjs", "spine-state-gates.mjs", "spine-state.mjs"]) {
-        copyFileSync(
-          join(REPO_ROOT, "canonical/runtime-assets/shared/hooks", fileName),
-          join(hookDir, fileName),
-        );
-      }
+      copyHookClosure(REPO_ROOT, hookDir, ["enforce-agent-dispatch.mjs"]);
       const spineDir = join(cwd, ".meta-kim", "state", "test", "spine");
       mkdirSync(spineDir, { recursive: true });
       writeFileSync(
@@ -2365,21 +2396,7 @@ describe("Part F2: choice surface runtime gate", async () => {
     try {
       const hookDir = join(cwd, "canonical", "runtime-assets", "claude", "hooks");
       mkdirSync(hookDir, { recursive: true });
-      for (const fileName of [
-        "enforce-agent-dispatch.mjs",
-        "bash-readonly-whitelist.mjs",
-      ]) {
-        copyFileSync(
-          join(REPO_ROOT, "canonical/runtime-assets/claude/hooks", fileName),
-          join(hookDir, fileName),
-        );
-      }
-      for (const fileName of ["utils.mjs", "skip-reminder.mjs", "spine-state-utils.mjs", "spine-state-gates.mjs", "spine-state.mjs"]) {
-        copyFileSync(
-          join(REPO_ROOT, "canonical/runtime-assets/shared/hooks", fileName),
-          join(hookDir, fileName),
-        );
-      }
+      copyHookClosure(REPO_ROOT, hookDir, ["enforce-agent-dispatch.mjs"]);
       const spineDir = join(cwd, ".meta-kim", "state", "test", "spine");
       mkdirSync(spineDir, { recursive: true });
       writeFileSync(
@@ -2437,21 +2454,7 @@ describe("Part F2: choice surface runtime gate", async () => {
     try {
       const hookDir = join(cwd, "canonical", "runtime-assets", "claude", "hooks");
       mkdirSync(hookDir, { recursive: true });
-      for (const fileName of [
-        "enforce-agent-dispatch.mjs",
-        "bash-readonly-whitelist.mjs",
-      ]) {
-        copyFileSync(
-          join(REPO_ROOT, "canonical/runtime-assets/claude/hooks", fileName),
-          join(hookDir, fileName),
-        );
-      }
-      for (const fileName of ["utils.mjs", "skip-reminder.mjs", "spine-state-utils.mjs", "spine-state-gates.mjs", "spine-state.mjs"]) {
-        copyFileSync(
-          join(REPO_ROOT, "canonical/runtime-assets/shared/hooks", fileName),
-          join(hookDir, fileName),
-        );
-      }
+      copyHookClosure(REPO_ROOT, hookDir, ["enforce-agent-dispatch.mjs"]);
       const spineDir = join(cwd, ".meta-kim", "state", "test", "spine");
       mkdirSync(spineDir, { recursive: true });
       const stateFile = join(spineDir, "spine-state.json");

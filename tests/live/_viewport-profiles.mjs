@@ -7,15 +7,20 @@
  * declared profile, and whether the remaining vertical space still fits the
  * graph canvas.
  *
- * This is verification machinery, not shipped runtime code, which is why it sits
- * beside its test rather than under src/. The control room emits its own media
- * queries; nothing in the shipped tree reads a viewport profile. Living under
- * src/application/live would put it inside the set of modules that
- * tests/live/live-hub-lifecycle.test.mjs requires the hub package identity to
- * hash, and hashing a module the tarball omits makes the packed hub unable to
- * identify itself. Move it back only together with a real shipped importer and a
- * package.json `files` entry.
+ * The media-query machinery is verification-only, which is why it sits beside its
+ * test rather than under src/: the control room emits its own media queries and
+ * nothing in the shipped tree reads a viewport profile. The chrome budget is the
+ * exception. `src/presentation/live/live-control-room-page.mjs` now consumes it to
+ * decide whether the eight-stage rail can afford to ship expanded, so the budget
+ * arithmetic lives in `src/application/live/live-viewport-budget.mjs` and this
+ * module delegates to it. Keeping a second copy here is what let the budget omit
+ * two chrome bands while the contract test stayed green.
  */
+import {
+  normalizeLiveChromeBudget,
+  resolveGraphCanvasBudget,
+} from "../../src/application/live/live-viewport-budget.mjs";
+
 export const LIVE_VIEWPORT_PROFILES_SCHEMA_VERSION = "meta-kim-live-viewport-profiles-v1";
 
 const FEATURE_PATTERN = /\(\s*(min|max)-(width|height)\s*:\s*(-?\d+(?:\.\d+)?)px\s*\)/giu;
@@ -37,24 +42,7 @@ function requiredString(value, label) {
 }
 
 function normalizeChromeBudget(raw) {
-  if (!raw || typeof raw !== "object") fail("chromeBudget must be an object");
-  const runContext = raw.runContextMinHeightPx;
-  const replay = raw.replayPanelHeightPx;
-  if (!runContext || typeof runContext !== "object") fail("chromeBudget.runContextMinHeightPx must be an object");
-  if (!replay || typeof replay !== "object") fail("chromeBudget.replayPanelHeightPx must be an object");
-  return Object.freeze({
-    topbarHeightPx: positiveInteger(raw.topbarHeightPx, "chromeBudget.topbarHeightPx"),
-    runContextMinHeightPx: Object.freeze({
-      dense: positiveInteger(runContext.dense, "chromeBudget.runContextMinHeightPx.dense"),
-      compact: positiveInteger(runContext.compact, "chromeBudget.runContextMinHeightPx.compact"),
-    }),
-    replayPanelHeightPx: Object.freeze({
-      collapsed: positiveInteger(replay.collapsed, "chromeBudget.replayPanelHeightPx.collapsed"),
-      open: positiveInteger(replay.open, "chromeBudget.replayPanelHeightPx.open"),
-    }),
-    statusBarHeightPx: positiveInteger(raw.statusBarHeightPx, "chromeBudget.statusBarHeightPx"),
-    minCanvasHeightPx: positiveInteger(raw.minCanvasHeightPx, "chromeBudget.minCanvasHeightPx"),
-  });
+  return normalizeLiveChromeBudget(raw);
 }
 
 function normalizeGate(raw, label) {
@@ -169,24 +157,17 @@ export function resolveApplicableMediaBlocks(css, profile) {
 
 /**
  * Compute the vertical space left for the graph canvas after fixed chrome.
- * `replayOpen` selects the expanded replay drawer height.
+ * `replayOpen` selects the expanded replay drawer height; `stageOverviewOpen`
+ * selects the expanded eight-stage rail.
  */
-export function evaluateViewportChromeBudget(profile, chromeBudget, { replayOpen = false, dense = true } = {}) {
-  const runContextHeight = dense
-    ? chromeBudget.runContextMinHeightPx.dense
-    : chromeBudget.runContextMinHeightPx.compact;
-  const replayHeight = replayOpen
-    ? chromeBudget.replayPanelHeightPx.open
-    : chromeBudget.replayPanelHeightPx.collapsed;
-  const consumedPx = chromeBudget.topbarHeightPx + runContextHeight + replayHeight + chromeBudget.statusBarHeightPx;
-  const canvasHeightPx = profile.heightPx - consumedPx;
-  return Object.freeze({
-    profileId: profile.id,
-    dense,
-    replayOpen,
-    consumedPx,
-    canvasHeightPx,
-    minCanvasHeightPx: chromeBudget.minCanvasHeightPx,
-    fits: canvasHeightPx >= chromeBudget.minCanvasHeightPx,
-  });
+export function evaluateViewportChromeBudget(
+  profile,
+  chromeBudget,
+  { replayOpen = false, dense = true, stageOverviewOpen = true } = {},
+) {
+  return resolveGraphCanvasBudget(
+    { viewportHeightPx: profile.heightPx, profileId: profile.id },
+    chromeBudget,
+    { dense, replayOpen, stageOverviewOpen },
+  );
 }

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-25T02:54:10.201Z",
+  "generatedAt": "2026-09-02T01:28:32.719Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -20,7 +20,7 @@
   "summary": {
     "totalAgents": 9,
     "totalSkills": 17,
-    "totalHooks": 25,
+    "totalHooks": 26,
     "totalMcpServers": 1,
     "totalMcpTools": 6,
     "totalPlugins": 4,
@@ -365,10 +365,20 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs",
         "relativePath": "activate-meta-theory-spine.mjs",
-        "size": 19983,
-        "modified": "2026-08-01T11:26:09.358Z",
+        "size": 32714,
+        "modified": "2026-09-01T22:26:42.554Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs",
         "adapterPath": "canonical/runtime-assets/claude/hooks/activate-meta-theory-spine.mjs"
+      },
+      "repo:canonical-runtime-assets:conversation-binding.mjs": {
+        "id": "conversation-binding.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/shared/hooks/conversation-binding.mjs",
+        "relativePath": "conversation-binding.mjs",
+        "size": 5235,
+        "modified": "2026-09-01T15:15:54.328Z",
+        "canonicalPath": "canonical/runtime-assets/shared/hooks/conversation-binding.mjs"
       },
       "repo:canonical-runtime-assets:meta-kim-memory-save.mjs": {
         "id": "meta-kim-memory-save.mjs",
@@ -427,8 +437,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "relativePath": "spine-state.mjs",
-        "size": 60857,
-        "modified": "2026-08-04T12:54:29.675Z",
+        "size": 73093,
+        "modified": "2026-09-01T22:31:56.809Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "adapterPath": "canonical/runtime-assets/claude/hooks/spine-state.mjs"
       },
@@ -589,8 +599,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/claude/hooks/stop-save-progress.mjs",
         "relativePath": "stop-save-progress.mjs",
-        "size": 16652,
-        "modified": "2026-08-01T21:34:45.874Z",
+        "size": 30406,
+        "modified": "2026-08-28T12:20:43.180Z",
         "canonicalPath": "canonical/runtime-assets/claude/hooks/stop-save-progress.mjs"
       },
       "repo:canonical-claude-hooks:stop-spine-cleanup.mjs": {

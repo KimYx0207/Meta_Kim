@@ -7,12 +7,56 @@
  * compromised or malformed observer payload from becoming executable markup.
  */
 
+import { LIVE_GRAPH_AVAILABILITY_REASONS } from "../../application/live/live-control-room-service.mjs";
+import {
+  serializeConversationDiscoveryCopyForClient,
+  serializeConversationLinkRefusalCopyForClient,
+} from "../../application/live/live-conversation-link-vocabulary.mjs";
+import {
+  loadLiveDefaultSelectionPolicy,
+  serializeDefaultSelectionPolicyForClient,
+  serializeDefaultSelectionResolvers,
+} from "../../application/live/live-default-selection.mjs";
 import {
   loadLiveDisplayFormat,
   serializeIdentifierShortener,
   serializeNodeTaskLineResolver,
 } from "../../application/live/live-display-format.mjs";
+import {
+  loadLiveGraphCameraPolicy,
+  serializeCameraLegibilityCustomProperties,
+  serializeGraphCameraPolicyForClient,
+  serializeOverviewCameraResolver,
+  serializeSemanticZoomResolver,
+} from "../../application/live/live-graph-camera.mjs";
+import {
+  LIVE_DEFAULT_RECORD_ORIGIN,
+  LIVE_RECORD_ORIGINS,
+} from "../../application/live/live-record-origin.mjs";
 import { serializeReplayNodeViewResolver } from "../../application/live/live-replay-visibility.mjs";
+import {
+  loadLiveSpacingScale,
+  serializeSpacingCustomProperties,
+} from "../../application/live/live-spacing-scale.mjs";
+import {
+  loadLiveStreamPolicy,
+  serializeLiveStreamPolicyForClient,
+} from "../../application/live/live-stream-policy.mjs";
+import {
+  loadLiveTypographyScale,
+  serializeTypographyCustomProperties,
+} from "../../application/live/live-typography-scale.mjs";
+import {
+  loadLiveChromeBudget,
+  loadLiveDockBudget,
+  loadLiveReplayTickBand,
+  serializeChromeBudgetCustomProperties,
+  serializeDockBudgetCustomProperties,
+  serializeReplayTickBandForClient,
+  serializeReplayTickCountResolver,
+  serializeReplayTickOffsetsResolver,
+  serializeViewportBudgetForClient,
+} from "../../application/live/live-viewport-budget.mjs";
 
 export const LIVE_SNAPSHOT_SCHEMA_VERSION = "meta-kim-live-snapshot-v2";
 
@@ -29,6 +73,167 @@ const NODE_TASK_LINE_SOURCE = serializeNodeTaskLineResolver();
 const PAGE_DISPLAY_FORMAT = loadLiveDisplayFormat();
 const DISPLAY_FORMAT_LITERAL = JSON.stringify(PAGE_DISPLAY_FORMAT);
 const EMPTY_PLACEHOLDER = PAGE_DISPLAY_FORMAT.emptyPlaceholder;
+
+/**
+ * Copy for every reason the snapshot service can give for an empty graph. The
+ * keys come from the service's own vocabulary rather than from string literals
+ * repeated here, so renaming a reason cannot leave the page printing a generic
+ * sentence for a cause the server took the trouble to distinguish.
+ */
+const GRAPH_EMPTY_REASON_COPY = Object.freeze({
+  [LIVE_GRAPH_AVAILABILITY_REASONS.noReadableRunRecord]:
+    "No run record could be read for this session.",
+  [LIVE_GRAPH_AVAILABILITY_REASONS.noGovernedArtifactForRun]:
+    "This session only recorded its activation. No governed run artifact was written, so there is nothing to draw.",
+  [LIVE_GRAPH_AVAILABILITY_REASONS.artifactDeclaredNoNodes]:
+    "This run wrote a governed artifact, and that artifact declares no task nodes.",
+});
+const GRAPH_EMPTY_REASON_LITERAL = JSON.stringify(GRAPH_EMPTY_REASON_COPY);
+
+/**
+ * Why a run has no chat link, in the reader's terms.
+ *
+ * The generic sentence is honest but unactionable: every unlinked run reads the
+ * same whether the runtime never reported a chat id or the transcript was
+ * deleted afterwards. The reasons come from the shared vocabulary rather than
+ * literals repeated here, so a reason the hook can write cannot silently lose
+ * its sentence.
+ */
+const CONVERSATION_REFUSAL_LITERAL = JSON.stringify(serializeConversationLinkRefusalCopyForClient());
+
+/**
+ * How far the chat lookup got, for the runs that carry no refusal at all.
+ *
+ * Only a run that attempted a binding records a refusal, so every record written
+ * before that hook falls straight through to the generic sentence. The catalog
+ * still reports whether the run ever named a tool, which separates "there was
+ * nowhere to look" from "only what the run saved was read" — the reader's next
+ * step differs, and one sentence for both hid that.
+ */
+const CONVERSATION_DISCOVERY_LITERAL = JSON.stringify(serializeConversationDiscoveryCopyForClient());
+
+/**
+ * What a row says about where its record came from.
+ *
+ * A real governed run carries no badge, because badging everything makes the
+ * badge stop meaning anything. Every other origin has to say so on the row: a
+ * fixture projection reaches the browser through the same catalog as a real run
+ * and is shaped the same way, and a fixture always carries the worker counts and
+ * resolved runtime a real activation often lacks, so an unlabelled fixture reads
+ * as the healthiest row in the panel.
+ *
+ * The keys come from the shared vocabulary rather than from literals repeated
+ * here, and a newly declared origin with no copy fails the render instead of
+ * shipping an unmarked row that asserts the record is real.
+ */
+const RECORD_ORIGIN_COPY = Object.freeze({
+  governed_run: "",
+  acceptance_fixture: "Acceptance fixture, not a real run",
+  demo: "Demo data, not a real run",
+});
+const RECORD_ORIGIN_LITERAL = JSON.stringify(
+  Object.fromEntries(LIVE_RECORD_ORIGINS.map((origin) => {
+    if (typeof RECORD_ORIGIN_COPY[origin] !== "string") {
+      const error = new TypeError(`Live control room page: record origin ${origin} has no visible copy`);
+      error.code = "LIVE_PAGE_RECORD_ORIGIN_COPY_MISSING";
+      throw error;
+    }
+    return [origin, RECORD_ORIGIN_COPY[origin]];
+  })),
+);
+
+/**
+ * Every text size in the stylesheet is derived from this ladder. Emitting it
+ * into the same `:root` block that carries the colour tokens keeps one place
+ * where a reader can see the whole design contract, and keeps the size tokens
+ * from being defined after a rule that already consumed them.
+ */
+const TYPOGRAPHY_TOKENS = serializeTypographyCustomProperties(loadLiveTypographyScale());
+
+/**
+ * Distances the stylesheet is allowed to use, as custom properties. Sizing text
+ * and spacing boxes are separate axes with separate failure modes - a readable
+ * size crammed against its container edge still reads as painful - so the
+ * ladders stay separate documents rather than one table of "design tokens".
+ */
+const SPACING_TOKENS = serializeSpacingCustomProperties(loadLiveSpacingScale());
+
+/**
+ * Band heights the stylesheet shares with the vertical budget, as custom
+ * properties. Writing them as literals gave one quantity two authorities, and
+ * the literal for the replay row was the drawer's open height charged to the
+ * canvas while the drawer sat collapsed.
+ */
+const PAGE_CHROME_BUDGET = loadLiveChromeBudget();
+const CHROME_BUDGET_TOKENS = serializeChromeBudgetCustomProperties(PAGE_CHROME_BUDGET);
+
+/**
+ * The width of the collapsed replay summary. The open dock header derives its
+ * left inset from this token, because the inset exists only to clear the
+ * absolutely positioned summary — as two literals they drifted apart and
+ * overlapped the header's first control.
+ */
+const DOCK_BUDGET_TOKENS = serializeDockBudgetCustomProperties(loadLiveDockBudget());
+
+/**
+ * The eight-stage rail costs 66px of canvas height while expanded. Shipping it
+ * expanded is a height decision taken without knowing the viewport, and at
+ * 1024x768 it left the canvas at 337px against a declared 360px floor — the run's
+ * shape rendered off-screen in the default view. The rail therefore ships
+ * collapsed and the client expands it only above this measured threshold.
+ */
+const VIEWPORT_BUDGET_LITERAL = JSON.stringify(serializeViewportBudgetForClient(PAGE_CHROME_BUDGET));
+
+/**
+ * Camera bounds and the two resolvers that consume them. The resolvers are
+ * inlined by their own source rather than reimplemented here, so the fit
+ * arithmetic the tests exercise is byte-for-byte the arithmetic the browser
+ * runs.
+ *
+ * The policy is read once and shared by the client literal and the stylesheet
+ * tokens. Two reads would let the CSS the reader sees drift from the bounds the
+ * client enforces, and the divisor in the cell rules is the same number as the
+ * floor the client clamps to.
+ */
+const PAGE_GRAPH_CAMERA = loadLiveGraphCameraPolicy();
+const GRAPH_CAMERA_LITERAL = JSON.stringify(serializeGraphCameraPolicyForClient(PAGE_GRAPH_CAMERA));
+const CAMERA_LEGIBILITY_TOKENS = serializeCameraLegibilityCustomProperties(PAGE_GRAPH_CAMERA);
+const OVERVIEW_CAMERA_SOURCE = serializeOverviewCameraResolver();
+const SEMANTIC_ZOOM_SOURCE = serializeSemanticZoomResolver();
+
+/**
+ * Which run the page opens on when the URL names none.
+ *
+ * The client had its own fallback chain — first live project, then first
+ * session — and that chain is what put an activation receipt on screen instead
+ * of a graph. It now shares the hub's ordering by inlining the same functions,
+ * because a second copy of the rule in this file would be free to disagree with
+ * the copy the hub serves and the tests exercise.
+ */
+const DEFAULT_SELECTION_LITERAL = JSON.stringify(
+  serializeDefaultSelectionPolicyForClient(loadLiveDefaultSelectionPolicy()),
+);
+const DEFAULT_SELECTION_SOURCE = serializeDefaultSelectionResolvers();
+
+/**
+ * The two network waits. The snapshot fetch was unbounded and the event stream
+ * lived as long as its tab, so a handful of open tabs consumed the origin's
+ * connection allowance and the next page's fetch was queued instead of refused:
+ * no error, no repaint, "Loading the selected run..." forever.
+ */
+const STREAM_POLICY_LITERAL = JSON.stringify(serializeLiveStreamPolicyForClient(loadLiveStreamPolicy()));
+
+/**
+ * The replay axis used to ship nine labels written into the markup, reading
+ * `00:00` through `02:00` no matter how long the run took, and the ninth was
+ * clipped at 1024x768. Both the count and the values are now resolved at render
+ * time: the count from the width the band actually has, the values from the
+ * run's own first and last replay timestamps.
+ */
+const PAGE_REPLAY_TICK_BAND = loadLiveReplayTickBand();
+const REPLAY_TICK_BAND_LITERAL = JSON.stringify(serializeReplayTickBandForClient(PAGE_REPLAY_TICK_BAND));
+const REPLAY_TICK_COUNT_SOURCE = serializeReplayTickCountResolver();
+const REPLAY_TICK_OFFSETS_SOURCE = serializeReplayTickOffsetsResolver();
 
 const DEFAULT_SNAPSHOT_ENDPOINT = "/api/snapshot";
 const DEFAULT_EVENTS_ENDPOINT = "/api/events";
@@ -128,8 +333,25 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const resolveReplayNodeView = ${REPLAY_NODE_VIEW_SOURCE};
 
   const DISPLAY_FORMAT = ${DISPLAY_FORMAT_LITERAL};
+  const GRAPH_EMPTY_REASON_TEXT = ${GRAPH_EMPTY_REASON_LITERAL};
+  const CONVERSATION_REFUSAL_TEXT = ${CONVERSATION_REFUSAL_LITERAL};
+  const CONVERSATION_DISCOVERY_TEXT = ${CONVERSATION_DISCOVERY_LITERAL};
+  const RECORD_ORIGIN_TEXT = ${RECORD_ORIGIN_LITERAL};
   const shortenIdentifier = ${IDENTIFIER_SHORTENER_SOURCE};
   const resolveNodeTaskLine = ${NODE_TASK_LINE_SOURCE};
+
+  const GRAPH_CAMERA = ${GRAPH_CAMERA_LITERAL};
+  const resolveOverviewCamera = ${OVERVIEW_CAMERA_SOURCE};
+  const resolveSemanticZoom = ${SEMANTIC_ZOOM_SOURCE};
+
+  const DEFAULT_SELECTION = ${DEFAULT_SELECTION_LITERAL};
+  ${DEFAULT_SELECTION_SOURCE}
+
+  const REPLAY_TICK_BAND = ${REPLAY_TICK_BAND_LITERAL};
+  const resolveReplayTickCount = ${REPLAY_TICK_COUNT_SOURCE};
+  const resolveReplayTickOffsetsMs = ${REPLAY_TICK_OFFSETS_SOURCE};
+
+  const STREAM_POLICY = ${STREAM_POLICY_LITERAL};
 
   const snapshotEndpoint = app.dataset.snapshotEndpoint || "/api/snapshot";
   const eventsEndpoint = app.dataset.eventsEndpoint || "/api/events";
@@ -148,12 +370,34 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const WORK_VIEW_STORAGE_KEY = "meta-kim-live-work-view-v3";
   const WORK_VIEWS = ["repository", "workspace", "run"];
   const INSPECTOR_TABS = ["summary", "evidence", "terminal", "context"];
+  const GRAPH_TOOLS_STORAGE_KEY = "meta-kim-live-graph-tools-position-v1";
+  const GRAPH_TOOLS_KEYBOARD_STEP = 12;
+  const GRAPH_TOOLS_EDGE_MARGIN = 8;
+  const GRAPH_TOOLS_DRAG_THRESHOLD = 3;
   const zhText = new Map(Object.entries({
+    "Started": "开始于",
+    "File time": "文件时间",
+    "This record reports no time of its own; the value shown is when its file was last written.": "这条记录本身没有报告时间，显示的是记录文件最后一次写入的时间。",
+    "Time reported by the record": "记录报告的时间",
+    "The record does not say where this time came from.": "记录没有说明这个时间的来源。",
+    "The tool that started this run did not identify itself": "没认出这次运行是哪个工具发起的",
+    "No chat id came through when this run started": "这次运行启动时没拿到聊天编号",
+    "The tool did not say where the chat transcript is": "工具没说聊天记录存在哪里",
+    "The chat transcript path was not a full path": "聊天记录的路径不是完整路径",
+    "The transcript on record belongs to a different chat": "记录里的聊天记录属于另一个会话",
+    "The chat transcript file is no longer on disk": "聊天记录文件已经不在磁盘上了",
+    "The chat transcript file was empty": "聊天记录文件是空的",
+    "No tool was recorded for this run, so there is no chat to look up": "没记下是哪个工具跑的，无从查起",
+    "Only the run record was checked, not the tool chat history": "只查了运行记录，没查工具里的聊天",
     "Connecting…": "正在连接…",
     "Streaming": "实时连接中",
     "Reconnecting": "正在重新连接",
     "Polling snapshot": "正在轮询运行快照",
+    "Paused while hidden": "标签页隐藏，已暂停连接",
+    "The snapshot request timed out. Other open control room tabs hold this origin's connections. Close one, or wait for them to release.": "快照请求超时。其他已打开的控制室标签页占用了本源的连接，关掉一个，或等它们释放。",
+    "Snapshot loaded": "已载入快照",
     "Snapshot unavailable": "运行快照不可用",
+    "State demo": "状态演示",
     "No run observed": "尚未观测到运行",
     "Live": "实时",
     "In doubt": "存疑",
@@ -213,6 +457,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "JSON export unavailable; the local share endpoint did not provide a safe artifact.": "无法导出 JSON；本地分享接口没有提供安全产物。",
     "Preparing a local share card…": "正在准备本地分享卡片…",
     "PR card copied locally.": "PR 卡片已复制到本地剪贴板。",
+    "Chat id copied locally.": "聊天标识已复制到本地剪贴板。",
+    "Chat id copy unavailable; the clipboard was not ready.": "无法复制聊天标识：剪贴板未就绪。",
+    "Copy the full chat id": "复制完整聊天标识",
     "README embed copied locally.": "README 嵌入内容已复制到本地剪贴板。",
     "Share copy unavailable; the local endpoint or clipboard was not ready.": "无法复制分享内容；本地接口或剪贴板尚未就绪。",
     "No registered projects": "没有已登记的项目",
@@ -247,6 +494,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Toggle graph layout": "切换运行图布局",
     "Fit graph to viewport": "让运行图适应视口",
     "Follow active node": "跟随当前节点",
+    "Move graph controls: drag, or arrow keys to nudge, Enter to dock": "移动图控件：拖动，或用方向键微调，回车归位",
+    "Drag to move · arrow keys to nudge · Enter to dock": "拖动移动 · 方向键微调 · 回车归位",
+    "Graph camera controls": "运行图相机控件",
+    "Overview (O)": "总览（O）",
+    "Follow (F)": "跟随（F）",
+    "Relayout (R)": "重排（R）",
+    "Relayout graph": "重排运行图",
+    "Follow live execution": "跟随实时执行",
+    "Reset graph camera": "重置运行图相机",
+    "Zoom out": "缩小",
+    "Zoom in": "放大",
     "Zoom graph out": "缩小运行图",
     "Zoom graph in": "放大运行图",
     "Read-only execution graph": "只读执行运行图",
@@ -264,6 +522,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Replay position": "回放位置",
     "Replay events": "回放事件"
     ,"Overview": "总览"
+    ,"Overview · partial": "总览 · 局部"
     ,"Follow": "跟随"
     ,"Manual": "手动"
     ,"Relayout": "重排"
@@ -283,11 +542,46 @@ const CLIENT_SCRIPT = String.raw`(() => {
     ,"structural evidence only": "仅结构化证据"
     ,"Prompt summary withheld": "提示词摘要未展示"
     ,"No accepted host execution evidence": "没有已接受的主机执行证据"
+    ,"No worker report": "未收到执行者回报"
+    ,"No event report": "未收到事件回报"
+    ,"Stage unconfirmed": "阶段未确认"
+    ,"Observed run": "已观测运行"
+    ,"Background run records": "次要运行记录"
+    ,"Acceptance fixture, not a real run": "验收样例数据，不是真实运行"
+    ,"Demo data, not a real run": "演示数据，不是真实运行"
+    ,"Activation only, or no chat link": "只登记了启动，或没有聊天关联"
+    ,"No task nodes in this snapshot.": "当前快照中没有任务节点。"
+    ,"This run registered stages but never reported execution nodes.": "这次运行登记了阶段，但没有回报执行节点。"
+    ,"Nodes were dropped to stay inside the snapshot budget.": "为控制快照体积，部分节点未被下发。"
+    ,"No run record could be read for this session.": "这个会话读不到运行记录。"
+    ,"This session only recorded its activation. No governed run artifact was written, so there is nothing to draw.": "这个会话只登记了启动，没有写出受治理的运行产物，所以没有可画的内容。"
+    ,"This run wrote a governed artifact, and that artifact declares no task nodes.": "这次运行写出了受治理的产物，产物里没有声明任务节点。"
   }));
-  let currentLanguage = (() => {
-    try { return window.localStorage?.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh"; }
-    catch { return "zh"; }
-  })();
+  let currentLanguage = initialLanguage();
+
+  /**
+   * A stored value is the reader's own answer and outranks everything else, but
+   * only when it names a language this page renders — any other string is not a
+   * choice the toggle ever wrote. With nothing stored, the browser has already
+   * stated a preference, and defaulting to Chinese regardless made an English
+   * visitor hunt for the toggle to repeat what the browser had said. Locale tags
+   * arrive region-coded ("zh-Hans-CN", "en-GB"), so the primary subtag decides.
+   * A browser that states no locale at all falls to the shipped default.
+   */
+  function initialLanguage() {
+    const PAGE_LANGUAGES = ["zh", "en"];
+    const DEFAULT_LANGUAGE = PAGE_LANGUAGES[0];
+    let stored = null;
+    try { stored = window.localStorage?.getItem(LANGUAGE_STORAGE_KEY); }
+    catch { stored = null; }
+    if (PAGE_LANGUAGES.includes(stored)) return stored;
+    const offered = window.navigator?.languages?.length
+      ? window.navigator.languages
+      : [window.navigator?.language];
+    const stated = offered.map((tag) => String(tag || "").trim().toLowerCase()).filter(Boolean);
+    if (!stated.length) return DEFAULT_LANGUAGE;
+    return stated[0].split("-")[0] === "zh" ? "zh" : "en";
+  }
 
   function localize(value) {
     const text = display(value);
@@ -306,6 +600,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (match) return "已完成 " + match[1] + " / " + match[2] + " 个步骤";
     match = text.match(/^(\d+) active workers?$/u);
     if (match) return match[1] + " 个执行者正在工作";
+    match = text.match(/^(\d+) workers?$/u);
+    if (match) return match[1] + " 个执行者";
+    match = text.match(/^(\d+) events?$/u);
+    if (match) return match[1] + " 条事件";
     match = text.match(/^(\d+) nodes?$/u);
     if (match) return match[1] + " 个节点";
     match = text.match(/^Event (\d+) of (\d+)$/u);
@@ -357,6 +655,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (!element.dataset.i18nAriaEn) element.dataset.i18nAriaEn = element.getAttribute("aria-label") || "";
       element.setAttribute("aria-label", currentLanguage === "zh" ? localize(element.dataset.i18nAriaEn) : element.dataset.i18nAriaEn);
     });
+    // A control whose affordance is an icon carries its instruction in aria and
+    // title only, so leaving titles English-only would hide that instruction
+    // from a Chinese reader entirely. Unmapped text passes through unchanged.
+    document.querySelectorAll("[title]").forEach((element) => {
+      if (!element.dataset.i18nTitleEn) element.dataset.i18nTitleEn = element.getAttribute("title") || "";
+      element.setAttribute("title", currentLanguage === "zh" ? localize(element.dataset.i18nTitleEn) : element.dataset.i18nTitleEn);
+    });
     const toggle = app.querySelector("[data-live-language-toggle]");
     if (toggle) {
       toggle.textContent = currentLanguage === "zh" ? "EN" : "中文";
@@ -399,6 +704,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const graph = app.querySelector("[data-live-graph]");
   const stageRail = app.querySelector("[data-live-stage-rail]");
   const graphScene = app.querySelector("[data-live-graph-scene]");
+  const graphStage = app.querySelector("[data-live-graph-viewport]");
+  const graphTools = app.querySelector("[data-live-graph-tools]");
+  const graphToolsHandle = app.querySelector("[data-live-graph-tools-handle]");
   const edgeLayer = app.querySelector("[data-live-edge-layer]");
   const nodeList = app.querySelector("[data-live-node-list]");
   const graphEmpty = app.querySelector("[data-live-graph-empty]");
@@ -438,6 +746,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const infoTools = app.querySelector("[data-live-info-tools]");
   const infoFacts = app.querySelector("[data-live-info-facts]");
   const replayRange = app.querySelector("[data-replay-range]");
+  const replayTicks = app.querySelector("[data-replay-ticks]");
   const replayEvents = app.querySelector("[data-replay-events]");
   const replayProgress = app.querySelector("[data-replay-progress]");
   const replayPlay = app.querySelector("[data-replay-play]");
@@ -468,6 +777,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const controlStatus = app.querySelector("[data-live-control-status]");
   const controlError = app.querySelector("[data-live-control-error]");
   const controlResult = app.querySelector("[data-live-control-result]");
+  const contextChat = app.querySelector("[data-live-context-chat]");
+  const contextChatCopy = app.querySelector("[data-live-context-chat-copy]");
 
   let currentSnapshot = null;
   let currentReplayIndex = 0;
@@ -484,6 +795,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let initialControlConfig = null;
   let selectedNodeId = null;
   let replayFollowingLive = true;
+  // The events the axis was last drawn from, so a resize can recount labels
+  // against the new band width without waiting for the next snapshot.
+  let replayTickEvents = [];
   let layoutMode = "compact";
   // Start in a full-graph overview so the run topology is legible before the
   // user opts into following a replay target.
@@ -498,6 +812,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
   };
   let camera = { x: 0, y: 0, scale: 1 };
   let pointerPan = null;
+  let graphToolsPosition = null;
+  let graphToolsDrag = null;
+  let graphToolsClickEndsDrag = false;
   let projectCatalog = [];
   let selectedProjectId = "";
   let selectedRunId = "";
@@ -617,6 +934,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function nullableCount(value) {
     return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
+  /**
+   * Absent and zero are different observations. Collapsing a missing count into 0
+   * made "we never received a worker report" read as "this run had no workers",
+   * which is the one claim the page must not invent.
+   */
+  function nullableCountOf(record, keys) {
+    const raw = firstValue(record, keys, null);
+    return raw === null ? null : nullableCount(Number(raw));
   }
 
   function firstValue(record, keys, fallback) {
@@ -806,6 +1133,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const repositoryInput = input.repository && typeof input.repository === "object" && !Array.isArray(input.repository) ? input.repository : {};
     const workspaceInput = input.workspace && typeof input.workspace === "object" && !Array.isArray(input.workspace) ? input.workspace : {};
     const contextTransferInput = Array.isArray(input.contextTransfers) ? input.contextTransfers : [];
+    const availabilityInput = input.graphAvailability && typeof input.graphAvailability === "object" && !Array.isArray(input.graphAvailability) ? input.graphAvailability : {};
     const replayInput = Array.isArray(input.replay)
       ? { events: input.replay }
       : input.replay && typeof input.replay === "object"
@@ -977,6 +1305,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
     const eventCount = Math.max(replay.length, numberOr(firstValue(runInput, ["eventCount", "totalEvents"], replay.length), replay.length));
     const eventIndex = Math.max(0, Math.min(eventCount, numberOr(firstValue(runInput, ["eventIndex", "currentEventIndex"], replay.length), replay.length)));
+    // Rebuilt on the same terms as the session row's copy below: the wire value is
+    // untrusted and a header only needs the reason. It has to be named explicitly
+    // because the run object here is built field by field, so a field this
+    // normalizer omits is gone before the header renders — indistinguishable from
+    // a server that never sent one, which lands back on the generic sentence.
+    const discoveryInput = firstValue(runInput, ["conversationDiscovery"], firstValue(sessionInput, ["conversationDiscovery"], null));
+    const runConversationDiscovery = discoveryInput && typeof discoveryInput === "object"
+      ? { state: display(discoveryInput.state, ""), reason: display(discoveryInput.reason, "") }
+      : null;
 
     return {
       schemaVersion: display(input.schemaVersion, "unknown"),
@@ -991,6 +1328,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
         active: runInput.active === true,
         sourceRuntime: display(firstValue(runInput, ["sourceRuntime", "runtime"], firstValue(sessionInput, ["sourceRuntime", "runtime"], "unknown")), "unknown"),
         conversationLinkState: display(firstValue(runInput, ["conversationLinkState"], firstValue(sessionInput, ["conversationLinkState"], "unlinked")), "unlinked").toLowerCase(),
+        conversationLinkRefusal: display(firstValue(runInput, ["conversationLinkRefusal"], firstValue(sessionInput, ["conversationLinkRefusal"], "")), ""),
+        // Named for the same reason as the link state above, and measurably
+        // needed: the server ships run.conversationRef, this normalizer omitted
+        // it, so the header could only ever print the verdict and never the chat
+        // it points at. Passed through safeIdentifier because it reaches the DOM.
+        conversationRef: safeIdentifier(firstValue(runInput, ["conversationRef", "threadId", "conversationId"], firstValue(sessionInput, ["conversationRef", "threadId", "conversationId"], ""))),
+        conversationTitle: display(firstValue(runInput, ["conversationTitle"], firstValue(sessionInput, ["conversationTitle"], "")), ""),
+        conversationDiscovery: runConversationDiscovery,
         verifiedLinks: Array.isArray(runInput.verifiedLinks) ? runInput.verifiedLinks.slice(0, 16) : [],
         candidateLinks: Array.isArray(runInput.candidateLinks) ? runInput.candidateLinks.slice(0, 16) : [],
         stage: display(firstValue(runInput, ["stage", "currentStage", "phase"], "Observing"), "Observing"),
@@ -1001,6 +1346,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         eventIndex,
         eventCount,
         demoMode: runInput.demoMode === true,
+        executionEvidenceState: display(firstValue(runInput, ["executionEvidenceState"], "unavailable"), "unavailable"),
       } : null,
       sessionInfo: {
         title: display(firstValue(sessionInput, ["title", "name"], firstValue(runInput, ["title", "name"], "Live execution")), "Live execution"),
@@ -1056,6 +1402,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
         };
       }),
       scheduling: normalizeScheduling(input.scheduling),
+      graphAvailability: {
+        state: display(firstValue(availabilityInput, ["state"], "unavailable"), "unavailable"),
+        reason: display(firstValue(availabilityInput, ["reason"], ""), ""),
+      },
+      truncated: { applied: input.truncated?.applied === true },
       nodes,
       edges,
       evidence,
@@ -1170,10 +1521,87 @@ const CLIENT_SCRIPT = String.raw`(() => {
       || (!generatedRunTitle(session?.title) && session?.titleSource !== "generated_run_id");
   }
 
-  function conversationLinkCopy(state) {
+  /**
+   * The read model always hands over a task string, so absence arrives here as
+   * one of its substitutes rather than as an empty value: "Governed execution"
+   * when the record named no task, and the redaction marker when the text was
+   * withheld. Printing either verbatim would caption a silent record with what
+   * reads as its summary, so each is named for what it is.
+   */
+  function runTaskCopy(task) {
+    const text = display(task, "").trim();
+    if (!text || text === "Governed execution") {
+      return currentLanguage === "zh" ? "未保存任务摘要" : "No task summary saved";
+    }
+    if (text === "[path omitted]" || text === "redacted") {
+      return currentLanguage === "zh" ? "任务摘要因含敏感内容未显示" : "Task summary withheld as sensitive";
+    }
+    return text;
+  }
+
+  function conversationLinkCopy(state, refusal, discovery) {
     if (state === "verified") return currentLanguage === "zh" ? "已确认关联" : "Verified link";
     if (state === "candidate") return currentLanguage === "zh" ? "可能相关 · 未验证" : "Possible match · unverified";
-    return currentLanguage === "zh" ? "未关联聊天" : "Not linked to a chat";
+    // A recorded reason replaces the generic sentence rather than joining it: the
+    // reason already says no link exists, and stacking both doubles the row for
+    // no added fact.
+    const reason = CONVERSATION_REFUSAL_TEXT[refusal];
+    if (reason) return localize(reason);
+    // A refusal names the step that failed and only exists once a binding was
+    // attempted. Discovery names how far the lookup could reach at all, so it is
+    // the coarser answer and yields to a refusal whenever a run carries both.
+    const reach = discovery && typeof discovery === "object" ? CONVERSATION_DISCOVERY_TEXT[discovery.reason] : null;
+    if (reach) return localize(reach);
+    // No record in this history stored a conversation id, so no link was lost —
+    // one was never written. Saying which is the difference between a reader
+    // hunting for a broken link and a reader knowing there is nothing to find.
+    return currentLanguage === "zh" ? "这次运行没有保存聊天标识" : "No chat id was saved for this run";
+  }
+
+  /**
+   * The run header and the session card print the same fact about the same run,
+   * and each used to assemble the arguments itself. The header passed two of the
+   * three, so 42 of 46 measured rows said "only the run record was checked" in
+   * the list and "no chat id was saved" in the header — a run contradicting
+   * itself on two surfaces a reader sees at once. Taking the record instead of
+   * loose fields is what makes "this call site forgot one" unrepresentable, so
+   * this is the only place allowed to call conversationLinkCopy.
+   */
+  function conversationLinkCopyFor(record) {
+    return conversationLinkCopy(
+      record && record.conversationLinkState,
+      record && record.conversationLinkRefusal,
+      record && record.conversationDiscovery,
+    );
+  }
+
+  /**
+   * The whole chat id behind a verified or candidate link. The label below prints
+   * a shortened form so it fits a fact row, which leaves a reader who wants to
+   * open that chat with nothing to search on. Keeping the full value in one
+   * helper is what stops the shortened form from becoming the only stored answer,
+   * and what stops the two surfaces from normalising the field differently.
+   */
+  function conversationChatIdentityValue(record) {
+    const state = record && record.conversationLinkState;
+    if (state !== "verified" && state !== "candidate") return "";
+    const ref = record && record.conversationRef;
+    return typeof ref === "string" ? ref.trim() : "";
+  }
+
+  /**
+   * Name the chat a verified or candidate link points at. Without it the verdict
+   * is a claim the reader cannot check: the one verified row measured in the
+   * browser rendered no chat id anywhere on the page and offered nothing to
+   * click, so the only way to see which chat had been found was to read the
+   * projection off disk. Empty for every other state, and empty when the state
+   * says verified but no ref was saved — a placeholder there would move the
+   * uncheckable claim one layer down instead of removing it.
+   */
+  function conversationChatIdentityCopy(record) {
+    const ref = shortenIdentifier(conversationChatIdentityValue(record), DISPLAY_FORMAT.identifierShortForm);
+    if (ref === "") return "";
+    return (currentLanguage === "zh" ? "聊天 " : "Chat ") + ref;
   }
 
   function nodeDisplayState(node) {
@@ -1202,22 +1630,126 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function sourceRuntimeLabel(value) {
-    const runtime = display(value, "unknown").toLowerCase();
+    const runtime = display(value, "unavailable").toLowerCase();
     if (runtime === "demo") return currentLanguage === "zh" ? "本地状态演示" : "Local state demo";
     if (runtime === "claude") return "Claude Code";
     if (runtime === "codex") return "Codex";
     if (runtime === "cursor") return "Cursor";
     if (runtime === "openclaw") return "OpenClaw";
-    return currentLanguage === "zh" ? "来源未知" : "Unknown source";
+    // The runtime is either absent from the record or a name this surface is not
+    // allowed to attribute. Either way the honest statement is about the record,
+    // not about a source that supposedly exists but cannot be identified.
+    return currentLanguage === "zh" ? "未记录运行来源" : "Runtime not recorded";
   }
 
   function sessionDisplayTitle(session) {
     if (sessionIsIdentified(session)) return session.title;
-    return currentLanguage === "zh" ? "未关联聊天的运行记录" : "Run not linked to a chat";
+    return currentLanguage === "zh" ? "没有保存聊天标识的运行记录" : "Run without a saved chat id";
   }
 
   function sessionShortId(session) {
     return shortenIdentifier(display(session?.runId, ""), DISPLAY_FORMAT.identifierShortForm);
+  }
+
+  /**
+   * The substance judgement is made upstream and shipped on the catalog session,
+   * so no surface here re-derives a threshold for "did anything happen".
+   */
+  function sessionIsSubstantive(session) {
+    return session?.substanceClass !== "activation_only";
+  }
+
+  /**
+   * Which origin a row is allowed to claim. An origin nobody registered ranks
+   * and renders as a real governed run, so a record cannot promote itself by
+   * declaring a label of its own, and an absent origin means a real run so
+   * existing history needs no migration.
+   */
+  function sessionRecordOrigin(session) {
+    const declared = display(session?.recordOrigin, "");
+    return typeof RECORD_ORIGIN_TEXT[declared] === "string" ? declared : "${LIVE_DEFAULT_RECORD_ORIGIN}";
+  }
+
+  function sessionIsGovernedRun(session) {
+    return sessionRecordOrigin(session) === "${LIVE_DEFAULT_RECORD_ORIGIN}";
+  }
+
+  function sessionOriginCopy(session) {
+    const copy = RECORD_ORIGIN_TEXT[sessionRecordOrigin(session)];
+    return copy ? localize(copy) : "";
+  }
+
+  function sessionIsForeground(session) {
+    return sessionIsIdentified(session) && sessionIsSubstantive(session);
+  }
+
+  /**
+   * One ordering and one grouping rule for every session list. The repository
+   * view sorted by nothing and the session cards sorted by identity alone, so the
+   * two lists disagreed about which run mattered and a run that only recorded its
+   * activation could outrank one that actually executed.
+   *
+   * Provenance leads, for the same reason it leads the default-selection policy:
+   * a fixture is substantive and identified by construction, so every other term
+   * ranks it above the real runs it was generated to exercise.
+   */
+  function sessionGroups(sessions) {
+    const ordered = [...(sessions || [])].sort((left, right) =>
+      Number(sessionIsGovernedRun(right)) - Number(sessionIsGovernedRun(left))
+      || Number(sessionIsSubstantive(right)) - Number(sessionIsSubstantive(left))
+      || Number(sessionIsIdentified(right)) - Number(sessionIsIdentified(left))
+      || String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")),
+    );
+    return {
+      ordered,
+      foreground: ordered.filter(sessionIsForeground),
+      background: ordered.filter((session) => !sessionIsForeground(session)),
+    };
+  }
+
+  /**
+   * What a run row is allowed to claim about its own outcome. The catalog has
+   * already judged the record, so displayState leads and the raw status is only
+   * a fallback for rows that predate the judgement. A row whose record states an
+   * executed, verified, release-refused run must not read as an unjudged one,
+   * and a row that states no outcome drops the segment rather than borrowing
+   * the shared fallback word, which would put a verdict on a silent record.
+   */
+  function sessionStateCopy(session) {
+    const state = display(session?.displayState, "") || display(session?.status, "");
+    return state ? stateCopy(state) : "";
+  }
+
+  function sessionRowMeta(session) {
+    return [
+      session.active ? "Running" : "Observed run",
+      informativeValue(session.currentStage, "Stage unconfirmed"),
+      formatSessionTime(session.updatedAt),
+    ].filter(Boolean).map(localize).concat(sessionStateCopy(session) || []).join(" · ");
+  }
+
+  // The updatedAt value carries two very different claims. Either the run
+  // reported that time, or the run reported none and the value is when its record
+  // file was last written. Counted on the panel itself, not on the artifact
+  // directory: 22 of the 37 rows this repo's own project publishes are the second
+  // kind, and they read as plausible only by luck — rewriting one of those files
+  // today would make its row claim the run was touched just now.
+  function sessionTimeCopy(session) {
+    const shown = formatSessionTime(session?.updatedAt);
+    const hint = [];
+    const started = display(session?.startedAt, "");
+    if (started) hint.push(localize("Started") + " " + formatSessionTime(started));
+    const basis = display(session?.updatedAtBasis, "");
+    if (basis === "record_file_write_time") {
+      hint.push(localize("This record reports no time of its own; the value shown is when its file was last written."));
+      return { text: localize("File time") + " " + shown, hint: hint.join(" · ") };
+    }
+    // An unstated basis is an open question, not a reported time. Reading it as
+    // reported is the one direction that turns a missing field into reassurance.
+    hint.push(basis === "recorded"
+      ? localize("Time reported by the record")
+      : localize("The record does not say where this time came from."));
+    return { text: shown, hint: hint.join(" · ") };
   }
 
   function stateCopy(status) {
@@ -1229,15 +1761,34 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (status === "failed") return localize("Failed");
     if (status === "blocked") return localize("Blocked");
     if (status === "skipped") return localize("Skipped");
+    if (status === "partial") return currentLanguage === "zh" ? "已执行并验证 · 未达发布标准" : "Executed and verified · below release bar";
+    if (status === "superseded") return currentLanguage === "zh" ? "被新任务替代" : "Replaced by a newer task";
+    if (status === "archived_legacy") return currentLanguage === "zh" ? "早期版本的归档记录" : "Archived record from an earlier version";
     if (status === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
-    if (status === "unknown") return currentLanguage === "zh" ? "状态未知" : "Unknown state";
+    // Reserved for records that really do say nothing decisive. Every outcome the
+    // record does name has its own branch above, so this reaching the screen means
+    // the record is genuinely silent rather than merely unread.
+    if (status === "unknown") return currentLanguage === "zh" ? "记录不足以判断" : "Record is not enough to judge";
     if (status === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
     if (status === "active") return currentLanguage === "zh" ? "执行中" : "Running";
     return localize("Stale");
   }
 
   function updateConnection(kind, message) {
-    if (connectionLabel) connectionLabel.textContent = localize(message);
+    if (connectionLabel) {
+      // The transport status is clipped at narrow widths, so the full text has
+      // to stay reachable on hover. The markup declares an i18n text pair for the
+      // initial "Connecting…", which every later status invalidates: refreshing
+      // the pair keeps the declared translation matching the rendered text, so a
+      // second applyLanguage() pass could not resurrect the initial status. The
+      // message must be the English source with its translation in zhText — a
+      // caller that localizes first would cache Chinese as the English original.
+      connectionLabel.dataset.i18nEn = message;
+      connectionLabel.dataset.i18nZh = zhText.get(message) || message;
+      connectionLabel.dataset.i18nTitleEn = message;
+      connectionLabel.textContent = localize(message);
+      connectionLabel.title = localize(message);
+    }
     if (connectionDot) connectionDot.dataset.connection = kind;
   }
 
@@ -1247,7 +1798,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(statusTitle, snapshot.run.title, "Live execution");
     const shortRunId = shortenIdentifier(snapshot.run.id, DISPLAY_FORMAT.identifierShortForm);
     setText(runId, shortRunId === "" ? "" : "Run ID · " + shortRunId, "unidentified run");
-    setText(stage, snapshot.run.stage, "Observing");
+    setText(stage, informativeValue(snapshot.run.stage, "Observing"), "Observing");
     setText(started, formatTime(snapshot.run.startedAt));
     setText(updated, formatTime(snapshot.run.updatedAt));
     setText(source, snapshot.source, "local observer");
@@ -1260,13 +1811,30 @@ const CLIENT_SCRIPT = String.raw`(() => {
       ? activeWorkers.size + " active worker" + (activeWorkers.size === 1 ? "" : "s")
       : "No active workers");
     setText(nodeCount, graphNodesForSnapshot(snapshot).length + " nodes", "0 nodes");
-    setText(contextTask, snapshot.run.task, "Governed execution");
-    setText(contextStage, snapshot.run.stage, "in_doubt");
+    setText(contextTask, runTaskCopy(snapshot.run.task));
+    setText(contextStage, informativeValue(snapshot.run.stage, "Stage unconfirmed"), "Stage unconfirmed");
     setText(contextStatus, stateCopy(snapshot.run.status), "In doubt");
     setText(contextUpdated, formatTime(snapshot.run.updatedAt));
+    // Joined from the parts that exist rather than a fixed two-part string: the
+    // chat id is absent for every run that was never bound, and a trailing
+    // separator in front of nothing reads as a value that failed to load.
+    const contextSourceParts = [
+      sourceRuntimeLabel(snapshot.run.sourceRuntime),
+      conversationLinkCopyFor(snapshot.run),
+    ].filter((part) => part !== "");
     setText(contextSource, snapshot.run.demoMode
       ? (currentLanguage === "zh" ? "演示数据 · 非真实运行" : "Demo data · not a real run")
-      : sourceRuntimeLabel(snapshot.run.sourceRuntime) + " · " + conversationLinkCopy(snapshot.run.conversationLinkState), "local observer");
+      : contextSourceParts.join(" · "), "local observer");
+    // The id lives in its own row rather than the source sentence because a
+    // reader who wants to open that chat needs the whole value, and the sentence
+    // can only carry the shortened form. Hidden rather than emptied: an empty
+    // control still takes focus and reads as an id that failed to load.
+    const chatIdentity = conversationChatIdentityValue(snapshot.run);
+    if (contextChat) contextChat.hidden = snapshot.run.demoMode === true || chatIdentity === "";
+    if (contextChatCopy) {
+      contextChatCopy.textContent = conversationChatIdentityCopy(snapshot.run);
+      contextChatCopy.dataset.chatId = chatIdentity;
+    }
     setText(contextNodes, String(graphNodesForSnapshot(snapshot).length), "0");
     setText(contextEvents, String(snapshot.run.eventCount || snapshot.replay.length || 0), "0");
     setText(contextEvidence, String(snapshot.evidence.length || 0), "0");
@@ -1433,6 +2001,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const normalized = display(value, "").trim().toLowerCase();
     if (!normalized || normalized === DISPLAY_FORMAT.emptyPlaceholder) return false;
     return !DISPLAY_FORMAT.nonInformativeValues.includes(normalized);
+  }
+
+  /**
+   * Machine sentinels such as "in_doubt" and "unknown" are already listed as
+   * non-informative for node chips. Session rows, repository rows and the run
+   * context printed them verbatim, so the same policy has to gate them too
+   * rather than each surface keeping its own idea of an empty value.
+   */
+  function informativeValue(value, absentCopy) {
+    return usefulNodeMeta(value) ? value : absentCopy;
   }
 
   function edgeMarkerId(status) {
@@ -1783,16 +2361,25 @@ const CLIENT_SCRIPT = String.raw`(() => {
     camera = {
       x: Number.isFinite(nextCamera.x) ? nextCamera.x : 0,
       y: Number.isFinite(nextCamera.y) ? nextCamera.y : 0,
-      scale: Math.max(.28, Math.min(1.6, Number.isFinite(nextCamera.scale) ? nextCamera.scale : 1)),
+      scale: Math.max(GRAPH_CAMERA.minScale, Math.min(GRAPH_CAMERA.maxScale, Number.isFinite(nextCamera.scale) ? nextCamera.scale : 1)),
     };
     if (graphScene) {
       graphScene.style.transform = "translate(" + camera.x + "px, " + camera.y + "px) scale(" + camera.scale + ")";
     }
-    if (graph) graph.dataset.semanticZoom = camera.scale < .42 ? "cell" : "card";
+    if (graph) {
+      graph.dataset.semanticZoom = resolveSemanticZoom(camera.scale, GRAPH_CAMERA);
+      graph.style.setProperty("--camera-scale", String(camera.scale));
+    }
     updateMinimap();
   }
 
-  function setCameraMode(mode) {
+  /**
+   * wholeGraphFits defaults to true because every mode other than overview
+   * makes no claim about showing the whole graph. Overview does, so a clipped
+   * overview says so in the status bar rather than reading identically to a
+   * complete one.
+   */
+  function setCameraMode(mode, wholeGraphFits = true) {
     cameraMode = ["overview", "follow", "manual"].includes(mode) ? mode : "manual";
     graphFollowing = cameraMode === "follow";
     if (graphFollow) {
@@ -1800,7 +2387,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       graphFollow.setAttribute("aria-pressed", String(graphFollowing));
     }
     if (graph) graph.dataset.following = graphFollowing ? "true" : "false";
-    setText(cameraModeLabel, cameraMode[0].toUpperCase() + cameraMode.slice(1), "Manual");
+    const overviewClipped = cameraMode === "overview" && wholeGraphFits === false;
+    if (graph) graph.dataset.overviewClipped = overviewClipped ? "true" : "false";
+    const label = cameraMode[0].toUpperCase() + cameraMode.slice(1);
+    setText(cameraModeLabel, overviewClipped ? "Overview · partial" : label, "Manual");
   }
 
   function setGraphFollowing(active) {
@@ -1852,6 +2442,43 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function persistStoredChoice(key, value) {
     try { window.sessionStorage?.setItem(key, value); } catch {}
     try { window.localStorage?.setItem(key, value); } catch {}
+  }
+
+  /**
+   * A stored point is user-authored state that survives reloads, so a corrupted
+   * or hand-edited entry has to degrade to the default placement rather than
+   * throw during startup and leave the rest of the controller unwired.
+   */
+  function safeStoredPoint(key) {
+    const readPoint = (raw) => {
+      if (typeof raw !== "string" || raw === "") return null;
+      try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
+        return { x: parsed.x, y: parsed.y };
+      } catch {
+        return null;
+      }
+    };
+    try {
+      const sessionPoint = readPoint(window.sessionStorage?.getItem(key));
+      if (sessionPoint) return sessionPoint;
+      return readPoint(window.localStorage?.getItem(key));
+    } catch {}
+    return null;
+  }
+
+  function persistStoredPoint(key, point) {
+    const raw = point === null ? null : JSON.stringify({ x: Math.round(point.x), y: Math.round(point.y) });
+    try {
+      if (raw === null) window.sessionStorage?.removeItem(key);
+      else window.sessionStorage?.setItem(key, raw);
+    } catch {}
+    try {
+      if (raw === null) window.localStorage?.removeItem(key);
+      else window.localStorage?.setItem(key, raw);
+    } catch {}
   }
 
   function setWorkView(view, { focus = false, persist = true } = {}) {
@@ -1927,14 +2554,101 @@ const CLIENT_SCRIPT = String.raw`(() => {
       || null;
   }
 
+  /**
+   * The cluster is positioned against the graph stage because that is its nearest
+   * positioned ancestor, but it may only travel inside the canvas viewport, which
+   * begins below the stage bar. Bounds are therefore derived from the canvas rect
+   * and expressed in stage coordinates.
+   */
+  function graphToolsBounds() {
+    if (!graphStage || !graph || !graphTools) return null;
+    const stageRect = graphStage.getBoundingClientRect();
+    const canvasRect = graph.getBoundingClientRect();
+    const toolsRect = graphTools.getBoundingClientRect();
+    if (!canvasRect.width || !canvasRect.height) return null;
+    const minX = canvasRect.left - stageRect.left + GRAPH_TOOLS_EDGE_MARGIN;
+    const minY = canvasRect.top - stageRect.top + GRAPH_TOOLS_EDGE_MARGIN;
+    return {
+      minX,
+      minY,
+      maxX: Math.max(minX, minX + canvasRect.width - toolsRect.width - GRAPH_TOOLS_EDGE_MARGIN * 2),
+      maxY: Math.max(minY, minY + canvasRect.height - toolsRect.height - GRAPH_TOOLS_EDGE_MARGIN * 2),
+    };
+  }
+
+  function clampGraphToolsPoint(point) {
+    const bounds = graphToolsBounds();
+    if (!bounds) return point;
+    return {
+      x: Math.min(Math.max(point.x, bounds.minX), bounds.maxX),
+      y: Math.min(Math.max(point.y, bounds.minY), bounds.maxY),
+    };
+  }
+
+  /** Current on-screen offset of the cluster in stage coordinates, docked or not. */
+  function graphToolsStagePoint() {
+    if (!graphStage || !graphTools) return { x: 0, y: 0 };
+    const stageRect = graphStage.getBoundingClientRect();
+    const toolsRect = graphTools.getBoundingClientRect();
+    return { x: toolsRect.left - stageRect.left, y: toolsRect.top - stageRect.top };
+  }
+
+  function applyGraphToolsPosition() {
+    if (!graphTools) return;
+    if (!graphToolsPosition) {
+      graphTools.dataset.floating = "false";
+      graphTools.style.removeProperty("--tools-x");
+      graphTools.style.removeProperty("--tools-y");
+      return;
+    }
+    graphTools.dataset.floating = "true";
+    graphTools.style.setProperty("--tools-x", Math.round(graphToolsPosition.x) + "px");
+    graphTools.style.setProperty("--tools-y", Math.round(graphToolsPosition.y) + "px");
+  }
+
+  function announceGraphTools(message) {
+    if (liveRegion) liveRegion.textContent = message;
+  }
+
+  function moveGraphTools(point, { persist = true } = {}) {
+    graphToolsPosition = clampGraphToolsPoint(point);
+    applyGraphToolsPosition();
+    if (persist) persistStoredPoint(GRAPH_TOOLS_STORAGE_KEY, graphToolsPosition);
+  }
+
+  function dockGraphTools() {
+    graphToolsPosition = null;
+    applyGraphToolsPosition();
+    persistStoredPoint(GRAPH_TOOLS_STORAGE_KEY, null);
+    announceGraphTools(currentLanguage === "zh" ? "图控件已回到工具条" : "Graph controls docked to the bar");
+  }
+
+  /** Keep a floating cluster reachable after the canvas viewport changes size. */
+  function reclampGraphTools() {
+    if (!graphToolsPosition) return;
+    moveGraphTools(graphToolsPosition, { persist: false });
+  }
+
+  function nudgeGraphTools(dx, dy) {
+    const origin = graphToolsPosition || graphToolsStagePoint();
+    moveGraphTools({ x: origin.x + dx, y: origin.y + dy });
+    if (!graphToolsPosition) return;
+    const x = Math.round(graphToolsPosition.x);
+    const y = Math.round(graphToolsPosition.y);
+    announceGraphTools(currentLanguage === "zh"
+      ? "图控件位置 " + x + " × " + y
+      : "Graph controls at " + x + " by " + y);
+  }
+
   function reconcileCamera({ inspectorOpen = evidencePanel?.dataset.open === "true" } = {}) {
+    reclampGraphTools();
     if (!graph || !currentSnapshot) return;
     if (cameraMode === "overview") {
       fitGraph();
       return;
     }
     if (cameraMode === "follow") {
-      if (inspectorOpen && camera.scale < .68) updateCamera({ ...camera, scale: .68 });
+      if (inspectorOpen && camera.scale < GRAPH_CAMERA.semanticZoomCellMaxScale) updateCamera({ ...camera, scale: GRAPH_CAMERA.semanticZoomCellMaxScale });
       centerGraphNode(followTargetId());
       return;
     }
@@ -2044,21 +2758,40 @@ const CLIENT_SCRIPT = String.raw`(() => {
     graphMinimapViewport.style.top = Math.max(0, -camera.y / camera.scale * miniScale) + "px";
   }
 
+  /**
+   * The minimap is an overlay pinned to the bottom-right of the canvas, so a
+   * symmetric fit padding parks the last node card underneath it. Reserving its
+   * measured box keeps the overview state clear of it; the axis that loses the
+   * smaller share of the canvas carries the reserve, because a short canvas can
+   * afford the width and a narrow one can afford the height.
+   */
+  function graphFitInset() {
+    const pad = GRAPH_CAMERA.fitPaddingPx;
+    const inset = { top: pad, right: pad, bottom: pad, left: pad };
+    if (!graph || !graphMinimap || graphMinimap.offsetParent === null) return inset;
+    const canvas = graph.getBoundingClientRect?.();
+    const overlay = graphMinimap.getBoundingClientRect?.();
+    if (!canvas?.width || !canvas?.height || !overlay?.width || !overlay?.height) return inset;
+    const right = canvas.right - overlay.left + pad;
+    const bottom = canvas.bottom - overlay.top + pad;
+    if (right / canvas.width <= bottom / canvas.height) {
+      return { ...inset, right: Math.max(inset.right, right) };
+    }
+    return { ...inset, bottom: Math.max(inset.bottom, bottom) };
+  }
+
+  /**
+   * Overview shows the whole run. The scale it needs comes from the shared
+   * resolver, and when even the floor cannot fit the graph the caller is told so
+   * the status bar can say "partial" instead of claiming an overview it is not
+   * showing.
+   */
   function fitGraph() {
     if (!graph || !graphState.bounds.width) return;
-    const width = graph.clientWidth || 760;
-    const height = graph.clientHeight || 420;
-    const padding = 26;
-    const fittedScale = Math.min((width - padding * 2) / graphState.bounds.width, (height - padding * 2) / graphState.bounds.height);
-    const minimumLegibleScale = width <= 1024 ? 1 : .68;
-    const scale = Math.max(minimumLegibleScale, Math.min(1.1, fittedScale));
-    const wholeGraphFits = fittedScale >= minimumLegibleScale;
-    updateCamera({
-      scale,
-      x: wholeGraphFits ? (width - graphState.bounds.width * scale) / 2 : padding,
-      y: wholeGraphFits ? (height - graphState.bounds.height * scale) / 2 : padding,
-    });
-    setCameraMode("overview");
+    const canvas = { width: graph.clientWidth || 760, height: graph.clientHeight || 420 };
+    const fit = resolveOverviewCamera(canvas, graphState.bounds, graphFitInset(), GRAPH_CAMERA);
+    updateCamera({ scale: fit.scale, x: fit.x, y: fit.y });
+    setCameraMode("overview", fit.wholeGraphFits);
   }
 
   function zoomGraph(factor, anchorX, anchorY) {
@@ -2067,7 +2800,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const localY = Number.isFinite(anchorY) ? anchorY : graph.clientHeight / 2;
     const worldX = (localX - camera.x) / camera.scale;
     const worldY = (localY - camera.y) / camera.scale;
-    const scale = Math.max(.28, Math.min(1.6, camera.scale * factor));
+    const scale = Math.max(GRAPH_CAMERA.minScale, Math.min(GRAPH_CAMERA.maxScale, camera.scale * factor));
     updateCamera({ scale, x: localX - worldX * scale, y: localY - worldY * scale });
     setCameraMode("manual");
   }
@@ -2287,6 +3020,31 @@ const CLIENT_SCRIPT = String.raw`(() => {
     selectNode(ids[next], { focus: true });
   }
 
+  /**
+   * Several unrelated facts used to print the same "no task nodes" sentence: a
+   * run with nothing recorded, a run that only registered stages, a run whose
+   * artifact declares nothing, and a projection that dropped nodes to stay
+   * inside the byte budget. The actionable causes are named first, and the
+   * server's own reason is used for the rest, so the operator is never left to
+   * guess whether the run was empty or the payload was trimmed.
+   */
+  function graphEmptyReason(snapshot) {
+    if (snapshot?.truncated?.applied === true) return "Nodes were dropped to stay inside the snapshot budget.";
+    if (snapshot?.run?.executionEvidenceState === "structural_planning_only") return "This run registered stages but never reported execution nodes.";
+    const reason = snapshot?.graphAvailability?.reason;
+    return GRAPH_EMPTY_REASON_TEXT[reason] || "No task nodes in this snapshot.";
+  }
+
+  function showGraphEmpty(copy) {
+    graphEmpty.hidden = false;
+    const paragraph = graphEmpty.firstElementChild || graphEmpty.appendChild(document.createElement("p"));
+    if (paragraph.dataset.i18nEn === copy) return;
+    paragraph.dataset.i18nEn = copy;
+    paragraph.dataset.i18nZh = zhText.get(copy) || copy;
+    paragraph.textContent = localize(copy);
+    if (liveRegion) liveRegion.textContent = localize(copy);
+  }
+
   function renderGraph(snapshot) {
     const graphNodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, graphNodes);
@@ -2306,7 +3064,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     clearChildren(edgeLayer);
     clearChildren(graphMinimapScene);
     if (!graphNodes.length) {
-      if (graphEmpty) graphEmpty.hidden = false;
+      if (graphEmpty) showGraphEmpty(graphEmptyReason(snapshot));
       graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), bounds: { width: 1, height: 1 } };
       return;
     }
@@ -2469,8 +3227,6 @@ const CLIENT_SCRIPT = String.raw`(() => {
               : "summary",
         };
       }).filter((record) => record.count > 0 && ["observed", "planned"].includes(record.state));
-      card.dataset.capabilityCount = String(capabilityRecords.length);
-      card.dataset.hasCapabilities = capabilityRecords.length ? "true" : "false";
       capabilityRecords.forEach((record) => {
         const button = makeElement("button", "node-capability node-capability-" + record.kind);
         button.type = "button";
@@ -2783,23 +3539,58 @@ const CLIENT_SCRIPT = String.raw`(() => {
       ["Diff", repository.diff],
     ]) appendOperationalRow(repositoryFacts, label, fact?.summary || "Unavailable", fact?.state || "unavailable");
     clearChildren(repositorySessions);
-    const sessions = project?.sessions || [];
-    if (!sessions.length) {
+    const foldedAway = Number(project?.omittedSessionCount) > 0
+      ? Number(project.omittedSessionCount)
+      : 0;
+    // A fold is reported, never silent: the read layer hides activation receipts
+    // past their retention window, so the count of what it hid stays on screen.
+    const appendFoldNote = () => {
+      if (!foldedAway) return;
+      repositorySessions?.append(makeElement(
+        "p",
+        "workspace-session-note",
+        currentLanguage === "zh"
+          ? foldedAway + " 条仅激活记录已折叠（超出保留窗口，可用 npm run meta:live:compact 归档）"
+          : foldedAway + " activation-only records folded away (outside the retention window)",
+      ));
+    };
+    const groups = sessionGroups(project?.sessions);
+    if (!groups.ordered.length) {
       repositorySessions?.append(makeElement("p", "panel-empty", "No observed workspace sessions."));
+      appendFoldNote();
       return;
     }
-    sessions.forEach((session) => {
+    const appendSessionRow = (parent, session) => {
       const row = makeElement("button", "workspace-child");
       row.type = "button";
       row.dataset.runId = session.runId;
       row.dataset.active = session.runId === selectedRunId ? "true" : "false";
       row.append(
-        makeElement("span", "workspace-child-title", session.title),
-        makeElement("span", "workspace-child-meta", (session.active ? "Active workspace" : "Observed workspace") + " · " + session.currentStage + " · " + formatSessionTime(session.updatedAt)),
+        makeElement("span", "workspace-child-title", sessionDisplayTitle(session)),
+        makeElement("span", "workspace-child-meta", sessionRowMeta(session)),
       );
       row.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
-      repositorySessions?.append(row);
-    });
+      parent?.append(row);
+    };
+    groups.foreground.forEach((session) => appendSessionRow(repositorySessions, session));
+    if (!groups.background.length) {
+      appendFoldNote();
+      return;
+    }
+
+    // Background records stay one click away with their count on screen. Dropping
+    // them silently is what made the repository view disagree with the session
+    // list about how many runs the project has.
+    const collapsed = makeElement("details", "workspace-child-group");
+    const summary = makeElement("summary", "workspace-child-group-summary");
+    summary.append(
+      makeElement("span", "", "Background run records"),
+      makeElement("span", "", String(groups.background.length)),
+    );
+    collapsed.append(summary);
+    groups.background.forEach((session) => appendSessionRow(collapsed, session));
+    repositorySessions?.append(collapsed);
+    appendFoldNote();
   }
 
   function workspaceColumnForStatus(status) {
@@ -2829,7 +3620,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       button.dataset.running = session.active ? "true" : "false";
       button.append(
         makeElement("span", "workspace-session-title", sessionDisplayTitle(session)),
-        makeElement("span", "workspace-session-meta", (session.active ? (currentLanguage === "zh" ? "运行中" : "Running") : localize(session.currentStage)) + " · " + formatSessionTime(session.updatedAt)),
+        makeElement("span", "workspace-session-meta", sessionRowMeta(session)),
       );
       button.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
       workspaceSessionList?.append(button);
@@ -2916,7 +3707,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const facts = makeElement("div", "workspace-detail-list");
     appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "负责人" : "Owner", selected?.agent);
     appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "运行时" : "Runtime", selected?.runtime || snapshot.sessionInfo?.runtime);
-    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前阶段" : "Stage", localize(snapshot.run.stage));
+    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前阶段" : "Stage", informativeValue(snapshot.run.stage, "Stage unconfirmed"));
     appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前工具" : "Current tool", selected?.latestTool);
     appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "上级工作项" : "Depends on", selected?.parentId);
     factsSection.append(facts);
@@ -2973,7 +3764,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const workspaceData = snapshot.workspace || {};
     const session = snapshot.sessionInfo || {};
     setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace");
-    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(snapshot.run.stage) + " · " + localize(snapshot.run.status), "Workspace telemetry unavailable");
+    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(informativeValue(snapshot.run.stage, "Stage unconfirmed")) + " · " + stateCopy(snapshot.run.status), "Workspace telemetry unavailable");
     clearChildren(workspaceFacts);
     appendOperationalRow(workspaceFacts, "Work items", String(snapshot.nodes.length), snapshot.nodes.length ? "observed" : "unavailable");
     appendOperationalRow(workspaceFacts, "Events", String(snapshot.replay.length), snapshot.replay.length ? "observed" : "unavailable");
@@ -2982,8 +3773,50 @@ const CLIENT_SCRIPT = String.raw`(() => {
     renderWorkspaceDetail(snapshot);
   }
 
+  /**
+   * One axis label, as elapsed time from the run's first replay event.
+   *
+   * The unit is chosen from the whole run and applied to every label, so the
+   * axis reads consistently: minutes and seconds for a run under an hour, hours
+   * and minutes beyond that. Both forms stay inside the label width the tick
+   * budget declares, which is what keeps the last label on screen.
+   */
+  function formatTickOffset(offsetMs, durationMs) {
+    const totalSeconds = Math.max(0, Math.round(offsetMs / 1000));
+    if (durationMs >= 3600000) {
+      return Math.floor(totalSeconds / 3600) + ":" + String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+    }
+    return String(Math.floor(totalSeconds / 60)).padStart(2, "0") + ":" + String(totalSeconds % 60).padStart(2, "0");
+  }
+
+  /**
+   * Draw the replay axis from the run's own timeline.
+   *
+   * The band used to carry nine labels written into the markup, so a run of any
+   * length displayed the same two-minute ruler and the ninth label was clipped by
+   * the band's own overflow rule. Both numbers are now resolved: the count from
+   * the width the band actually has, the values from the observed first and last
+   * event. Below the declared minimum the axis renders nothing, because a clipped
+   * axis is worse than no axis.
+   */
+  function renderReplayTicks() {
+    if (!replayTicks) return;
+    clearChildren(replayTicks);
+    const events = replayTickEvents;
+    if (events.length < 2) return;
+    const startedAt = new Date(display(events[0].at, ""));
+    const endedAt = new Date(display(events[events.length - 1].at, ""));
+    if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) return;
+    const durationMs = Math.max(0, endedAt.getTime() - startedAt.getTime());
+    const count = resolveReplayTickCount(replayTicks.clientWidth, REPLAY_TICK_BAND);
+    resolveReplayTickOffsetsMs(durationMs, count).forEach((offsetMs) => {
+      replayTicks.append(makeElement("span", "", formatTickOffset(offsetMs, durationMs)));
+    });
+  }
+
   function renderReplay(snapshot) {
     const events = snapshot.replay;
+    replayTickEvents = events;
     clearChildren(replayEvents);
     const max = Math.max(0, events.length - 1);
     if (replayPlay) replayPlay.disabled = events.length < 2;
@@ -2994,6 +3827,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       replayRange.value = String(Math.min(currentReplayIndex, max));
       replayRange.disabled = events.length < 2;
     }
+    renderReplayTicks();
     if (!events.length) {
       replayEvents.append(makeElement("li", "replay-empty", "No replay events in this snapshot."));
       setText(replayStatus, "Waiting for replay data", "Waiting for replay data");
@@ -3201,6 +4035,25 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
+  /**
+   * Hand the reader the whole chat id. The row shows a shortened form so it fits
+   * one line, which is enough to recognise a chat and not enough to open one, so
+   * what gets copied is deliberately the untruncated id rather than the text on
+   * screen. Silent when nothing is bound: a status line claiming a copy happened
+   * would be the same uncheckable claim this row exists to remove.
+   */
+  async function copyChatIdentity() {
+    const ref = conversationChatIdentityValue(currentSnapshot && currentSnapshot.run);
+    if (ref === "") return;
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(ref);
+      if (liveRegion) liveRegion.textContent = localize("Chat id copied locally.");
+    } catch {
+      if (liveRegion) liveRegion.textContent = localize("Chat id copy unavailable; the clipboard was not ready.");
+    }
+  }
+
   async function copyShareValue(kind) {
     setShareStatus("Preparing a local share card…");
     try {
@@ -3346,16 +4199,38 @@ const CLIENT_SCRIPT = String.raw`(() => {
           conversationRef: safeIdentifier(session.conversationRef || session.threadId || session.conversationId),
           conversationTitle: display(session.conversationTitle, ""),
           conversationLinkState: display(session.conversationLinkState, session.conversationRef ? "candidate" : "unlinked").toLowerCase(),
+          conversationLinkRefusal: display(session.conversationLinkRefusal, ""),
+          // Rebuilt rather than passed through: the wire value is untrusted, and
+          // a row only ever needs the reason. Dropping it here would leave every
+          // pre-refusal record reading as if the server had sent no reason at all.
+          conversationDiscovery: session.conversationDiscovery && typeof session.conversationDiscovery === "object"
+            ? { state: display(session.conversationDiscovery.state, ""), reason: display(session.conversationDiscovery.reason, "") }
+            : null,
           verifiedLinks: Array.isArray(session.verifiedLinks) ? session.verifiedLinks.slice(0, 16) : [],
           candidateLinks: Array.isArray(session.candidateLinks) ? session.candidateLinks.slice(0, 16) : [],
           sourceRuntime: safeIdentifier(session.sourceRuntime) || "unknown",
           status: display(session.status, "observed"),
+          // The catalog judges a record once and ships the verdict. Dropping it
+          // here would leave the row re-deriving an outcome from a raw status the
+          // server already decided was not the whole story.
+          displayState: display(session.displayState, ""),
           currentStage: display(session.currentStage),
           runtime: display(session.runtime, "local"),
           updatedAt: display(session.updatedAt, ""),
+          // Kept beside the value it qualifies: a row that drops this shows a
+          // file's write time and a run's own report as the same bare chip.
+          updatedAtBasis: display(session.updatedAtBasis, ""),
+          startedAt: display(session.startedAt, ""),
           activity: display(firstValue(session, ["activity", "latestActivity", "summary"], session.currentStage)),
-          workerCount: Math.max(0, numberOr(firstValue(session, ["workerCount", "agentCount", "nodeCount"], 0), 0)),
-          eventCount: Math.max(0, numberOr(firstValue(session, ["eventCount", "totalEvents"], 0), 0)),
+          workerCount: nullableCountOf(session, ["workerCount", "agentCount", "nodeCount"]),
+          eventCount: nullableCountOf(session, ["eventCount", "totalEvents"]),
+          substanceClass: display(session.substanceClass, "unclassified"),
+          // Kept as its own field even though workerCount already folds it in:
+          // a measured node count is the strongest drawability signal the default
+          // choice has, and collapsing it into a display counter left the client
+          // ordering blind to the one fact that decides whether a graph exists.
+          nodeCount: nullableCountOf(session, ["nodeCount"]),
+          recordOrigin: sessionRecordOrigin(session),
           active: session.active === true,
         };
       }).filter(Boolean);
@@ -3365,6 +4240,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
         status: display(project.status, "observed"),
         activeSessionId: safeIdentifier(project.activeSessionId),
         sessionCount: Number.isFinite(Number(project.sessionCount)) ? Number(project.sessionCount) : sessions.length,
+        omittedSessionCount: Number.isFinite(Number(project.omittedSessionCount))
+          ? Math.max(0, Number(project.omittedSessionCount))
+          : 0,
         updatedAt: display(project.updatedAt, ""),
         sessions,
       };
@@ -3375,14 +4253,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
           runId: safeIdentifier(input.selected.runId || input.selected.sessionId),
         }
       : { projectId: "", runId: "" };
-    projects.sort((left, right) => {
-      const activeOrder = Number(right.status === "active" || right.sessions.some((session) => session.active))
-        - Number(left.status === "active" || left.sessions.some((session) => session.active));
-      if (activeOrder !== 0) return activeOrder;
-      return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))
-        || left.projectId.localeCompare(right.projectId);
-    });
-    return { projects, selected };
+    // The catalog order is the same question the default view answers, so it runs
+    // through the same policy. The inline "active first, then newest" comparator
+    // this replaces is the exact ordering that policy rejects: it put a project
+    // whose only activity was an activation receipt above one holding real runs.
+    const ranked = projects
+      .map((project) => projectSelectionRow(project, DEFAULT_SELECTION))
+      .sort((left, right) => compareSelectionRows(left, right, DEFAULT_SELECTION))
+      .map((row) => row.project);
+    return { projects: ranked, selected };
   }
 
   function replaceSelectOptions(select, options, selectedValue, emptyLabel) {
@@ -3437,9 +4316,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
         label: (session.runId === selectedRunId && !sessionIsIdentified(session) ? (currentLanguage === "zh" ? "当前运行 · " : "Current run · ") : session.active ? "Live · " : "")
           + formatSessionTime(session.updatedAt)
           + " · " + sessionDisplayTitle(session)
-          + " · " + localize(session.currentStage)
-          + (session.workerCount ? " · " + session.workerCount + " workers" : "")
-          + (session.eventCount ? " · " + session.eventCount + " events" : "")
+          + " · " + localize(informativeValue(session.currentStage, "Stage unconfirmed"))
+          + (session.workerCount === null ? "" : " · " + localize(session.workerCount + " workers"))
+          + (session.eventCount === null ? "" : " · " + localize(session.eventCount + " events"))
           + " · " + sessionShortId(session),
       })),
       selectedRunId,
@@ -3471,12 +4350,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       sessionList.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "没有找到匹配的运行记录" : "No matching run records"));
       return;
     }
-    const orderedSessions = [...matchingSessions].sort((left, right) =>
-      Number(sessionIsIdentified(right)) - Number(sessionIsIdentified(left))
-      || String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")),
-    );
-    const identifiedSessions = orderedSessions.filter(sessionIsIdentified);
-    const unlinkedSessions = orderedSessions.filter((session) => !sessionIsIdentified(session));
+    const orderedSessions = sessionGroups(matchingSessions).ordered;
+    const identifiedSessions = orderedSessions.filter(sessionIsForeground);
+    const unlinkedSessions = orderedSessions.filter((session) => !sessionIsForeground(session));
     const shouldShowUnlinked = Boolean(query) || showUnlinkedSessions;
     const visibleSessions = [...identifiedSessions, ...(shouldShowUnlinked ? unlinkedSessions : [])].slice(0, 64);
     if (!identifiedSessions.length && unlinkedSessions.length && !shouldShowUnlinked) {
@@ -3484,12 +4360,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
       empty.append(
         makeElement("strong", "", currentLanguage === "zh" ? "还没有可识别的聊天记录" : "No identifiable chat records yet"),
         makeElement("p", "", currentLanguage === "zh"
-          ? "这些历史运行没有保存聊天标题和会话标识，因此无法告诉你对应的是哪次聊天。"
-          : "These historical runs did not preserve a chat title and conversation identifier, so they cannot be mapped back to a chat."),
+          ? "这些运行要么只登记了启动，要么没有保存聊天标题和会话标识，因此无法按标题告诉你对应的是哪次聊天。"
+          : "These runs either only recorded an activation or did not preserve a chat title and conversation identifier, so they cannot be located by title."),
       );
       const reveal = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh"
-        ? "仍要查看 " + unlinkedSessions.length + " 条未关联历史记录"
-        : "Show " + unlinkedSessions.length + " unlinked historical runs anyway");
+        ? "仍要查看 " + unlinkedSessions.length + " 条次要运行记录"
+        : "Show " + unlinkedSessions.length + " background run records anyway");
       reveal.type = "button";
       reveal.dataset.liveShowUnlinked = "true";
       reveal.addEventListener("click", () => {
@@ -3502,16 +4378,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     let lastGroup = "";
     visibleSessions.forEach((session) => {
-      const group = sessionIsIdentified(session) ? "identified" : "unlinked";
+      const group = sessionIsForeground(session) ? "identified" : "unlinked";
       if (!query && group !== lastGroup) {
         const groupHeading = makeElement("div", "session-group-heading");
         groupHeading.append(
           makeElement("strong", "", group === "identified"
             ? (currentLanguage === "zh" ? "可识别的聊天 / 任务" : "Identified chats / tasks")
-            : (currentLanguage === "zh" ? "未关联聊天的运行记录" : "Runs not linked to chats")),
+            : "Background run records"),
           makeElement("span", "", group === "identified"
             ? (currentLanguage === "zh" ? "可按标题定位" : "Locate by title")
-            : (currentLanguage === "zh" ? "只能按时间和运行 ID 定位" : "Locate by time and run ID only")),
+            : "Activation only, or no chat link"),
         );
         sessionList.append(groupHeading);
         lastGroup = group;
@@ -3521,28 +4397,47 @@ const CLIENT_SCRIPT = String.raw`(() => {
       card.dataset.runId = session.runId;
       card.dataset.active = session.runId === selectedRunId ? "true" : "false";
       card.dataset.identity = group;
+      card.dataset.recordOrigin = sessionRecordOrigin(session);
       const heading = makeElement("span", "session-card-title", sessionDisplayTitle(session));
       const sourceLabel = sourceRuntimeLabel(session.sourceRuntime);
-      const activity = makeElement("span", "session-card-activity", sourceLabel + " · " + conversationLinkCopy(session.conversationLinkState));
+      const activity = makeElement("span", "session-card-activity", sourceLabel + " · " + conversationLinkCopyFor(session));
       activity.dataset.linkState = session.conversationLinkState;
+      const originCopy = sessionOriginCopy(session);
       const facts = makeElement("span", "session-card-facts");
+      // The tool name and the link verdict already sit in the activity line above.
+      // Repeating them here printed both twice on all 21 measured cards, so the
+      // row carries the chat id instead — the one fact that line cannot show, and
+      // the only thing that makes a verified verdict checkable rather than a claim.
+      const chatIdentity = conversationChatIdentityCopy(session);
+      const timeCopy = sessionTimeCopy(session);
+      const timeFact = makeElement("span", "", timeCopy.text);
+      timeFact.title = timeCopy.hint;
       facts.append(
-        makeElement("span", "", formatSessionTime(session.updatedAt)),
+        timeFact,
         makeElement("span", "", (currentLanguage === "zh" ? "运行 ID " : "Run ID ") + sessionShortId(session)),
-        makeElement("span", "", localize(session.currentStage)),
-        makeElement("span", "", session.workerCount + " workers"),
-        makeElement("span", "", session.eventCount + " events"),
-        makeElement("span", "", sourceLabel),
-        makeElement("span", "", conversationLinkCopy(session.conversationLinkState)),
+        makeElement("span", "", localize(informativeValue(session.currentStage, "Stage unconfirmed"))),
+        makeElement("span", "", session.workerCount === null ? "No worker report" : session.workerCount + " workers"),
+        makeElement("span", "", session.eventCount === null ? "No event report" : session.eventCount + " events"),
       );
-      card.append(heading, activity, facts);
+      if (chatIdentity) {
+        // The card is itself a button, so the id cannot host a second control
+        // here. It carries the whole value on the element instead: hover and
+        // selection reach it, and the run header keeps the control that copies it.
+        const chatFact = makeElement("span", "", chatIdentity);
+        chatFact.dataset.chatId = conversationChatIdentityValue(session);
+        chatFact.title = chatFact.dataset.chatId;
+        facts.append(chatFact);
+      }
+      card.append(heading, activity);
+      if (originCopy) card.append(makeElement("span", "session-card-origin", originCopy));
+      card.append(facts);
       card.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
       sessionList.append(card);
     });
     if (unlinkedSessions.length && !shouldShowUnlinked) {
       const reveal = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh"
-        ? "另有 " + unlinkedSessions.length + " 条未关联记录（默认隐藏）"
-        : unlinkedSessions.length + " unlinked runs hidden by default");
+        ? "另有 " + unlinkedSessions.length + " 条只登记了启动或没有聊天关联的运行记录（默认收起）"
+        : unlinkedSessions.length + " runs that only recorded an activation or have no chat link, hidden by default");
       reveal.type = "button";
       reveal.dataset.liveShowUnlinked = "true";
       reveal.addEventListener("click", () => {
@@ -3551,7 +4446,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       });
       sessionList.append(reveal);
     } else if (unlinkedSessions.length && showUnlinkedSessions && !query) {
-      const hide = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh" ? "收起未关联记录" : "Hide unlinked runs");
+      const hide = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh" ? "收起这些运行记录" : "Hide these runs");
       hide.type = "button";
       hide.addEventListener("click", () => {
         showUnlinkedSessions = false;
@@ -3570,14 +4465,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
+  // An explicit runId still wins, because a shared link has to land where it
+  // points. Everything else defers to the shared ordering: the previous chain
+  // read project.activeSessionId first, and the hub derives that field from
+  // sessions.find((session) => session.active), so the liveness term the policy
+  // already ranks below drawability was silently overriding it here.
   function defaultSessionFor(project, preferredRunId = "") {
     if (!project) return "";
     if (preferredRunId && project.sessions.some((session) => session.runId === preferredRunId)) return preferredRunId;
-    if (project.activeSessionId) {
-      const activeById = project.sessions.find((session) => session.sessionId === project.activeSessionId || session.runId === project.activeSessionId);
-      if (activeById) return activeById.runId;
-    }
-    return project.sessions.find((session) => session.active)?.runId || project.sessions[0]?.runId || "";
+    const row = pickDefaultRow(
+      project.sessions.map((session) => sessionSelectionRow(session)),
+      DEFAULT_SELECTION,
+    );
+    return row?.identity || "";
   }
 
   function setHubStatus(message) {
@@ -3588,6 +4488,40 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (eventSource) eventSource.close();
     eventSource = null;
   }
+
+  let hiddenSuspendTimer = null;
+
+  document.addEventListener("visibilitychange", () => {
+    // A browser allows about six connections per origin and an open stream holds
+    // one for the life of its tab, so tabs left in the background were spending
+    // the allowance the foreground page needed to fetch its first snapshot. A
+    // stream nobody is looking at is given back; the grace period exists because
+    // switching away and straight back should not cost a reconnect and a refetch.
+    if (hiddenSuspendTimer !== null) {
+      window.clearTimeout(hiddenSuspendTimer);
+      hiddenSuspendTimer = null;
+    }
+    if (document.hidden) {
+      hiddenSuspendTimer = setTimeout(() => {
+        hiddenSuspendTimer = null;
+        if (!document.hidden) return;
+        disconnectEvents();
+        updateConnection("stale", "Paused while hidden");
+      }, STREAM_POLICY.hiddenSuspendGraceMs);
+      return;
+    }
+    if (unloading) return;
+    // The poll that maintains the run list skips every tick while the page is
+    // hidden, and Chrome calls a tab hidden whenever its window sits behind
+    // another one, so coming back to the window is the only catch-up there is.
+    // It runs before the stream check because switching away and straight back
+    // keeps the stream and would otherwise take that early return — leaving the
+    // list stale for exactly the person who just looked at it.
+    void loadProjectCatalog({ refresh: true });
+    if (!selectedRunId || eventSource) return;
+    connectEvents();
+    scheduleSnapshotUpdate();
+  });
 
   async function switchSelection(projectId, runIdentifier, { updateUrl = true } = {}) {
     const generation = ++selectionGeneration;
@@ -3645,10 +4579,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
       }
       const requested = selectionFromLocation();
       const preferredProjectId = requested.projectId || catalog.selected.projectId;
-      const project = projectCatalog.find((item) => item.projectId === preferredProjectId)
-        || projectCatalog.find((item) => item.status === "live" || item.sessions.some((session) => session.active))
-        || projectCatalog[0]
-        || null;
+      const project = pickDefaultRow(
+        projectCatalog.map((item) => projectSelectionRow(item, DEFAULT_SELECTION)),
+        DEFAULT_SELECTION,
+        preferredProjectId,
+      )?.project || null;
       if (!project) {
         populateProjectSelect();
         populateSessionSelect();
@@ -3755,7 +4690,6 @@ const CLIENT_SCRIPT = String.raw`(() => {
       setInspectorOpen(false);
       const establishInitialCamera = () => {
         fitGraph();
-        setCameraMode("overview");
         if (window.matchMedia?.("(max-width: 720px)").matches) {
           graph?.scrollTo({ top: 0, left: 0, behavior: "auto" });
         }
@@ -3825,6 +4759,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     snapshotRequestInFlight = true;
     if (abortController) abortController.abort();
     abortController = new AbortController();
+    // Two different reasons abort this controller and both surface as AbortError,
+    // so the reason is recorded before the abort. A superseded request must stay
+    // silent because a newer selection is already painting; a timed-out request
+    // must replace the loading copy, because nothing else will.
+    const snapshotRequestController = abortController;
+    let snapshotTimedOut = false;
+    const snapshotRequestTimer = setTimeout(() => {
+      snapshotTimedOut = true;
+      snapshotRequestController.abort();
+    }, STREAM_POLICY.snapshotRequestTimeoutMs);
     try {
       const response = await fetch(endpointForSelection(snapshotEndpoint), {
         headers: { accept: "application/json" },
@@ -3855,10 +4799,21 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (silent) scheduleSnapshotUpdate(payload);
       else renderSnapshot(payload);
     } catch (error) {
+      if (snapshotTimedOut) {
+        updateConnection("stale", "Reconnecting");
+        // A background refresh that times out while a snapshot is on screen must
+        // leave it there: stale content plus a stale badge is more use than a
+        // blank panel. The message is for the case that has nothing to keep.
+        if (!currentSnapshot) {
+          showEmpty("The snapshot request timed out. Other open control room tabs hold this origin's connections. Close one, or wait for them to release.");
+        }
+        return;
+      }
       if (error?.name === "AbortError") return;
       updateConnection("stale", "Reconnecting");
       if (!silent) showEmpty("The local observer is not serving a snapshot yet.");
     } finally {
+      clearTimeout(snapshotRequestTimer);
       if (generation !== selectionGeneration) return;
       snapshotRequestInFlight = false;
       if (refreshAfterRequest && !unloading) {
@@ -3991,6 +4946,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   app.querySelector("[data-live-share-export-json]")?.addEventListener("click", exportShareJson);
   app.querySelector("[data-live-share-copy-pr]")?.addEventListener("click", () => copyShareValue("pr"));
   app.querySelector("[data-live-share-copy-readme]")?.addEventListener("click", () => copyShareValue("readme"));
+  contextChatCopy?.addEventListener("click", () => void copyChatIdentity());
   app.querySelector("[data-live-language-toggle]")?.addEventListener("click", () => {
     currentLanguage = currentLanguage === "zh" ? "en" : "zh";
     try { window.localStorage?.setItem(LANGUAGE_STORAGE_KEY, currentLanguage); } catch {}
@@ -4011,8 +4967,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   bindRovingTabs(inspectorTabs, INSPECTOR_TABS, setInspectorTab);
 
   app.querySelector("[data-live-graph-fit]")?.addEventListener("click", fitGraph);
-  app.querySelector("[data-live-graph-zoom-in]")?.addEventListener("click", () => zoomGraph(1.18));
-  app.querySelector("[data-live-graph-zoom-out]")?.addEventListener("click", () => zoomGraph(.84));
+  app.querySelector("[data-live-graph-zoom-in]")?.addEventListener("click", () => zoomGraph(GRAPH_CAMERA.zoomInFactor));
+  app.querySelector("[data-live-graph-zoom-out]")?.addEventListener("click", () => zoomGraph(GRAPH_CAMERA.zoomOutFactor));
   app.querySelector("[data-live-graph-layout]")?.addEventListener("click", () => {
     layoutMode = layoutMode === "flow" ? "compact" : "flow";
     if (currentSnapshot) {
@@ -4022,7 +4978,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   });
   graph?.addEventListener("pointerdown", (event) => {
     const target = event.target;
-    if (target?.closest?.("[data-node-id], button, .graph-minimap")) return;
+    if (graphToolsDrag) return;
+    if (target?.closest?.("[data-node-id], button, .graph-canvas-tools")) return;
     pointerPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
     setCameraMode("manual");
     graph.setPointerCapture?.(event.pointerId);
@@ -4041,22 +4998,129 @@ const CLIENT_SCRIPT = String.raw`(() => {
   graph?.addEventListener("pointerup", stopPointerPan);
   graph?.addEventListener("pointercancel", stopPointerPan);
   graph?.addEventListener("wheel", (event) => {
-    if (event.target?.closest?.(".graph-minimap")) return;
+    if (event.target?.closest?.(".graph-canvas-tools")) return;
     event.preventDefault();
     setCameraMode("manual");
     const rect = graph.getBoundingClientRect();
-    zoomGraph(event.deltaY < 0 ? 1.1 : .9, event.clientX - rect.left, event.clientY - rect.top);
+    const factor = event.deltaY < 0 ? GRAPH_CAMERA.wheelZoomInFactor : GRAPH_CAMERA.wheelZoomOutFactor;
+    zoomGraph(factor, event.clientX - rect.left, event.clientY - rect.top);
   }, { passive: false });
-  window.addEventListener("resize", reconcileCamera, { passive: true });
+  graphToolsHandle?.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    const origin = graphToolsPosition || graphToolsStagePoint();
+    graphToolsDrag = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      originX: origin.x,
+      originY: origin.y,
+      moved: false,
+    };
+    if (graphTools) graphTools.dataset.dragging = "true";
+    graphToolsHandle.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    graphToolsHandle.focus?.();
+  });
+  graphToolsHandle?.addEventListener("pointermove", (event) => {
+    if (!graphToolsDrag || graphToolsDrag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - graphToolsDrag.x;
+    const dy = event.clientY - graphToolsDrag.y;
+    if (!graphToolsDrag.moved && Math.abs(dx) + Math.abs(dy) < GRAPH_TOOLS_DRAG_THRESHOLD) return;
+    graphToolsDrag = { ...graphToolsDrag, moved: true };
+    moveGraphTools({ x: graphToolsDrag.originX + dx, y: graphToolsDrag.originY + dy }, { persist: false });
+  });
+  const stopGraphToolsDrag = (event) => {
+    if (!graphToolsDrag || (event.pointerId !== undefined && graphToolsDrag.pointerId !== event.pointerId)) return;
+    graphToolsHandle?.releasePointerCapture?.(graphToolsDrag.pointerId);
+    const dragged = graphToolsDrag.moved;
+    graphToolsDrag = null;
+    graphToolsClickEndsDrag = dragged;
+    if (graphTools) graphTools.dataset.dragging = "false";
+    if (dragged && graphToolsPosition) persistStoredPoint(GRAPH_TOOLS_STORAGE_KEY, graphToolsPosition);
+  };
+  graphToolsHandle?.addEventListener("pointerup", stopGraphToolsDrag);
+  graphToolsHandle?.addEventListener("pointercancel", stopGraphToolsDrag);
+  graphToolsHandle?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (graphToolsClickEndsDrag) {
+      graphToolsClickEndsDrag = false;
+      return;
+    }
+    dockGraphTools();
+  });
+  graphToolsHandle?.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? GRAPH_TOOLS_KEYBOARD_STEP * 3 : GRAPH_TOOLS_KEYBOARD_STEP;
+    const nudges = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    const nudge = nudges[event.key];
+    if (nudge) {
+      event.preventDefault();
+      nudgeGraphTools(nudge[0], nudge[1]);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      dockGraphTools();
+    }
+  });
+  /**
+   * The eight-stage rail is a disclosure widget whose expanded height competes
+   * with the graph canvas. Its default state is resolved from the same measured
+   * chrome budget the viewport contract asserts, so a short viewport never opens
+   * with the run's shape pushed off-screen. An explicit user toggle wins for the
+   * rest of the session and is deliberately not persisted: a stored preference
+   * would reintroduce the too-small canvas on the next visit to a short display.
+   */
+  const stageOverview = app.querySelector("details.stage-overview");
+  const viewportBudget = ${VIEWPORT_BUDGET_LITERAL};
+  let stageRailUserChoice = null;
+  let stageRailBudgetState = null;
+
+  function applyStageRailBudget() {
+    if (!stageOverview || stageRailUserChoice !== null) return;
+    const next = window.innerHeight >= viewportBudget.stageOverviewOpenMinViewportHeightPx;
+    stageRailBudgetState = next;
+    if (stageOverview.open === next) return;
+    stageOverview.open = next;
+    reconcileCamera();
+  }
+
+  stageOverview?.addEventListener("toggle", () => {
+    if (stageOverview.open === stageRailBudgetState) return;
+    stageRailUserChoice = stageOverview.open;
+    reconcileCamera();
+  });
+  applyStageRailBudget();
+
+  window.addEventListener("resize", () => {
+    applyStageRailBudget();
+    reconcileCamera();
+    renderReplayTicks();
+  }, { passive: true });
   if (window.ResizeObserver && graph) {
     const graphResizeObserver = new ResizeObserver(() => reconcileCamera());
     graphResizeObserver.observe(graph);
     window.addEventListener("beforeunload", () => graphResizeObserver.disconnect(), { once: true });
   }
+  // The axis label count depends on the band's own width, which changes when the
+  // drawer is disclosed as well as when the window resizes. Observing the band
+  // covers both without a second code path, and appending labels does not change
+  // the band's box, so this cannot feed itself.
+  if (window.ResizeObserver && replayTicks) {
+    const tickResizeObserver = new ResizeObserver(() => renderReplayTicks());
+    tickResizeObserver.observe(replayTicks);
+    window.addEventListener("beforeunload", () => tickResizeObserver.disconnect(), { once: true });
+  }
 
   applyLanguage();
   for (const panel of app.querySelectorAll(".share-panel, .control-panel")) infoTools?.append(panel);
   currentWorkView = safeStoredChoice(WORK_VIEW_STORAGE_KEY, WORK_VIEWS, "run");
+  graphToolsPosition = safeStoredPoint(GRAPH_TOOLS_STORAGE_KEY);
+  applyGraphToolsPosition();
   setWorkView(currentWorkView, { persist: false });
   setInspectorTab("summary");
   setCameraMode("overview");
@@ -4066,7 +5130,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   if (demoMode === "states") {
     renderSnapshot(buildStateDemoSnapshot());
     setHubStatus(currentLanguage === "zh" ? "演示数据 · 不连接真实项目或聊天" : "Demo data · not connected to a real project or chat");
-    updateConnection("live", currentLanguage === "zh" ? "状态演示" : "State demo");
+    updateConnection("live", "State demo");
   } else if (snapshotText && snapshotText !== "null") {
     try {
       renderSnapshot(JSON.parse(snapshotText));
@@ -4115,144 +5179,156 @@ const CLIENT_SCRIPT = String.raw`(() => {
 })();`;
 
 const GRAPH_FIRST_CSS = String.raw`
-:root { color-scheme: dark; --ink: #0b0e14; --panel: #111620; --panel-2: #151b26; --completion: #68a4ff; --completion-bright: #a7c7ff; --accent: #4fd1c5; --running: #4fd1c5; --green: #63ca9b; --amber: #d8a84e; --dim: #606b7d; --line-soft: #1d2634; --line: #273043; --line-strong: #3a465c; --text: #e8edf5; --muted: #929db0; --danger: #df7a8f; --radius-sm: 7px; --radius: 11px; font-family: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; }
+:root { color-scheme: dark; --ink: #0b0e14; --panel: #111620; --panel-2: #151b26; --completion: #68a4ff; --completion-bright: #a7c7ff; --accent: #4fd1c5; --running: #4fd1c5; --green: #63ca9b; --amber: #d8a84e; --dim: #606b7d; --line-soft: #1d2634; --line: #273043; --line-strong: #3a465c; --text: #e8edf5; --muted: #929db0; --danger: #df7a8f; --radius-sm: 7px; --radius: 11px; ${TYPOGRAPHY_TOKENS} ${SPACING_TOKENS} ${CAMERA_LEGIBILITY_TOKENS} ${CHROME_BUDGET_TOKENS} ${DOCK_BUDGET_TOKENS} font-family: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
-body { letter-spacing: 0; }
+body { font-size: var(--fs-body); letter-spacing: 0; }
 button, select, input { font: inherit; }
 button { color: inherit; }
 [hidden] { display: none !important; }
-.skip-link { position: fixed; z-index: 100; top: .5rem; left: .5rem; transform: translateY(-160%); padding: .55rem .75rem; border-radius: var(--radius); background: var(--completion); color: #07101f; }
+.skip-link { position: fixed; z-index: 100; top: .5rem; left: .5rem; transform: translateY(-160%); padding: var(--sp-cozy) var(--sp-default); border-radius: var(--radius); background: var(--completion); color: #07101f; }
 .skip-link:focus { transform: none; }
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
 .shell { height: 100dvh; min-width: 0; display: grid; grid-template-rows: 60px minmax(0, 1fr); background: var(--ink); }
-.topbar { min-width: 0; display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem; border-bottom: 1px solid var(--line); background: #0d121b; }
-.brand { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; }
+.topbar { min-width: 0; display: flex; align-items: center; gap: var(--sp-roomy); padding: 0 var(--sp-section); border-bottom: 1px solid var(--line); background: #0d121b; }
+.brand { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-cozy); }
 .brand-mark { display: block; width: 30px; height: 30px; object-fit: contain; background: transparent; border-radius: 0; box-shadow: none; filter: brightness(0) saturate(100%) invert(87%) sepia(29%) saturate(1025%) hue-rotate(120deg) brightness(96%) contrast(90%); }
-.brand-title { margin: 0; font-size: .9rem; font-weight: 720; letter-spacing: .01em; }
-.top-run-context { min-width: 0; display: flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .72rem; }
+.brand-title { margin: 0; font-size: var(--fs-view-title); font-weight: 720; letter-spacing: .01em; }
+.top-run-context { min-width: 0; display: flex; align-items: center; gap: var(--sp-cozy); color: var(--muted); font-size: var(--fs-body); }
 .top-run-context strong { min-width: 0; max-width: min(40vw, 560px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 600; }
-.work-view-switcher { flex: 0 0 auto; display: inline-grid; grid-template-columns: repeat(3, minmax(0,1fr)); padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: #0b1018; }
-.work-view-tab { min-width: 92px; min-height: 34px; padding: 0 .75rem; border: 0; border-right: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: .72rem; cursor: pointer; }
+.work-view-switcher { flex: 0 0 auto; display: inline-grid; grid-template-columns: repeat(3, minmax(0,1fr)); padding: var(--sp-hairline); border: 1px solid var(--line); border-radius: 8px; background: #0b1018; }
+.work-view-tab { min-width: 92px; min-height: 34px; padding: 0 var(--sp-default); border: 0; border-right: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-size: var(--fs-body); cursor: pointer; }
 .work-view-tab:last-child { border-right: 0; }
 .work-view-tab[aria-selected="true"] { border-radius: var(--radius-sm); background: rgba(88,212,207,.08); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .work-view-tab:focus-visible, .inspector-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: .25rem; }
-.connection { display: flex; align-items: center; gap: .35rem; min-width: 0; margin-right: .3rem; color: var(--muted); font-size: .68rem; white-space: nowrap; }
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--sp-snug); }
+.connection { display: flex; align-items: center; gap: var(--sp-snug); min-width: 0; margin-right: var(--sp-tight); color: var(--muted); font-size: var(--fs-label); white-space: nowrap; }
+.connection span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
 .connection-dot[data-connection="live"] { background: var(--green); box-shadow: 0 0 8px rgba(118,184,141,.42); }
 .connection-dot[data-connection="stale"] { background: var(--completion); }
 .topbar-button, .graph-tool-button, .replay-button { min-height: 30px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
 .ui-icon, .empty-state-icon { width: 1rem; height: 1rem; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.topbar-button { padding: 0 .55rem; font-size: .7rem; }
+.topbar-button { padding: 0 var(--sp-cozy); font-size: var(--fs-body); }
 .topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
 .main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.run-context { min-width: 0; min-height: 92px; display: grid; grid-template-columns: minmax(320px, 1.2fr) minmax(500px, 2fr) minmax(150px, .45fr); align-items: center; gap: 1.1rem; padding: .8rem 1.5rem; border-bottom: 1px solid var(--line); background: #0f141d; }
+.run-context { min-width: 0; display: grid; grid-template-columns: minmax(min(100%, 18rem), 1fr) auto auto; align-items: center; gap: var(--sp-section); padding: var(--sp-default) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-context-heading { min-width: 0; }
-.context-kicker { display: block; margin-bottom: .28rem; color: var(--completion); font: .58rem/1 monospace; text-transform: uppercase; letter-spacing: .08em; }
-.run-context-title { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: 1.05rem; font-weight: 730; text-overflow: ellipsis; white-space: nowrap; }
-.run-context-task { min-width: 0; margin: .3rem 0 0; overflow: hidden; color: var(--muted); font-size: .69rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.run-context-facts { min-width: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-left: 1px solid var(--line); }
-.context-fact { min-width: 0; display: grid; gap: .28rem; padding: .12rem .72rem; border-right: 1px solid var(--line); }
-.context-fact span, .run-context-source span { color: var(--muted); font: .52rem/1 monospace; text-transform: uppercase; }
-.context-fact strong { min-width: 0; overflow: hidden; color: var(--text); font: 650 .74rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.run-context-source { min-width: 0; display: grid; gap: .18rem; padding-left: .3rem; }
-.run-context-source strong { min-width: 0; overflow: hidden; color: var(--muted); font: .58rem/1.15 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.context-kicker { display: block; margin-bottom: var(--sp-tight); color: var(--completion); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; letter-spacing: .08em; }
+.run-context-title { min-width: 0; margin: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text); font-size: var(--fs-hero); font-weight: 730; line-height: var(--lh-snug); overflow-wrap: anywhere; }
+.run-context-task { min-width: 0; margin: var(--sp-tight) 0 0; overflow: hidden; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); text-overflow: ellipsis; white-space: nowrap; }
+.run-context-facts { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-cozy) var(--sp-section); padding-left: var(--sp-section); border-left: 1px solid var(--line); }
+.context-fact { min-width: 0; display: flex; align-items: baseline; gap: var(--sp-cozy); }
+.context-fact span, .run-context-source span { color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
+.context-fact strong { min-width: 0; color: var(--text); font-weight: 650; font-size: var(--fs-body); line-height: var(--lh-snug); font-family: monospace; overflow-wrap: anywhere; }
+.context-fact-copy { min-width: 0; padding: 0; border: 0; border-bottom: 1px dashed var(--line-strong); background: none; color: var(--text); font-weight: 650; font-size: var(--fs-body); line-height: var(--lh-snug); font-family: monospace; overflow-wrap: anywhere; cursor: pointer; }
+.context-fact-copy:hover, .context-fact-copy:focus-visible { border-bottom-color: var(--accent); color: var(--accent); outline: none; }
+.run-context-source { min-width: 0; display: flex; align-items: baseline; gap: var(--sp-cozy); padding-left: var(--sp-section); border-left: 1px solid var(--line); }
+.run-context-source strong { min-width: 0; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; overflow-wrap: anywhere; }
 .workspace-grid { position: relative; min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 0; overflow: hidden; transition: grid-template-columns .18s ease; }
 .workspace-grid[data-work-view="repository"], .workspace-grid[data-work-view="workspace"] { grid-template-columns: minmax(0,1fr) 0; }
 .work-surface-view { min-width: 0; min-height: 0; overflow: auto; background: #0f1623; }
-.work-surface-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.15rem 1.25rem; border-bottom: 1px solid var(--line); background: #101725; }
-.work-surface-header h2 { margin: 0; color: var(--text); font-size: 1rem; }
-.work-surface-header p { max-width: 72ch; margin: .32rem 0 0; overflow-wrap: anywhere; color: var(--muted); font: .62rem/1.45 monospace; }
-.surface-state { flex: 0 0 auto; padding: .25rem .4rem; border: 1px solid #385275; border-radius: var(--radius-sm); color: var(--completion-bright); background: rgba(91,140,255,.08); font: .55rem/1.2 monospace; text-transform: uppercase; }
-.repository-layout { display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); min-height: calc(100% - 82px); }
-.operational-section { min-width: 0; padding: 1rem 1.25rem; }
+.work-surface-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-roomy); padding: var(--sp-roomy) var(--sp-section); border-bottom: 1px solid var(--line); background: #101725; }
+.work-surface-header h2 { margin: 0; color: var(--text); font-size: var(--fs-view-title); }
+.work-surface-header p { max-width: 72ch; margin: var(--sp-snug) 0 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); font-family: monospace; }
+.surface-state { flex: 0 0 auto; padding: var(--sp-tight) var(--sp-snug); border: 1px solid #385275; border-radius: var(--radius-sm); color: var(--completion-bright); background: rgba(91,140,255,.08); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
+.repository-view { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.repository-layout { display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); min-height: 0; }
+.operational-section { --section-inline: var(--sp-section); min-width: 0; padding: var(--sp-roomy) var(--section-inline); }
 .operational-section + .operational-section { border-left: 1px solid var(--line); }
-.operational-section h3 { margin: 0 0 .7rem; color: var(--muted); font: 600 .6rem/1 monospace; text-transform: uppercase; }
+.operational-section h3 { margin: 0 0 var(--sp-default); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
 .operational-list { border-top: 1px solid var(--line); }
-.operational-row { min-width: 0; display: grid; grid-template-columns: minmax(92px,.4fr) minmax(0,1fr); gap: .75rem; align-items: center; padding: .72rem 0; border-bottom: 1px solid var(--line); }
-.operational-label { color: var(--muted); font-size: .64rem; }
-.operational-value { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: .7rem; font-weight: 600; }
+.operational-row { min-width: 0; display: grid; grid-template-columns: minmax(92px,.4fr) minmax(0,1fr); gap: var(--sp-default); align-items: center; padding: var(--sp-default) 0; border-bottom: 1px solid var(--line); }
+.operational-label { color: var(--muted); font-size: var(--fs-label); }
+.operational-value { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-body); font-weight: 600; }
 .operational-row[data-state="unavailable"] .operational-value { color: #777; font-weight: 500; }
 .operational-row[data-state="planned"] .operational-value { color: var(--completion-bright); }
-.workspace-children { display: grid; border-top: 1px solid var(--line); }
-.workspace-child { min-width: 0; display: grid; gap: .24rem; padding: .72rem 0; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; }
-.workspace-child:hover, .workspace-child:focus-visible, .workspace-child[data-active="true"] { background: rgba(88,212,207,.05); outline: none; box-shadow: inset 3px 0 0 var(--accent); }
-.workspace-child-title { overflow: hidden; color: var(--text); font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-child-meta { overflow: hidden; color: var(--muted); font: .56rem/1.35 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-children { display: grid; margin-inline: calc(var(--section-inline, 0px) * -1); border-top: 1px solid var(--line); }
+.workspace-child { min-width: 0; display: grid; gap: var(--sp-cozy); padding: var(--sp-default) var(--section-inline, 0px); text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; }
+.workspace-child:hover, .workspace-child[data-active="true"] { background: rgba(88,212,207,.05); box-shadow: inset 3px 0 0 var(--accent); }
+.workspace-child:focus-visible { background: rgba(88,212,207,.05); outline: 2px solid var(--accent); outline-offset: -2px; }
+.workspace-child-title { overflow: hidden; color: var(--text); font-size: var(--fs-entity-title); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-child-meta { overflow: hidden; color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-availability { max-width: 920px; }
 .workspace-view { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .company-workspace { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-columns: 228px minmax(0,1fr) 348px; background: #0b1018; }
 .company-session-rail, .company-context-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: #0d131c; }
 .company-session-rail { border-right: 1px solid var(--line); }
 .company-context-panel { border-left: 1px solid var(--line); }
-.company-rail-header, .company-context-header, .company-board-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 66px; padding: .72rem .8rem; border-bottom: 1px solid var(--line); background: #0f1621; }
-.company-rail-header h2, .company-context-header h2, .company-board-header h2 { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
-.company-board-header p { max-width: 72ch; margin: .22rem 0 0; overflow: hidden; color: var(--muted); font: .55rem/1.25 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.company-board-actions { flex: 0 0 auto; display: flex; align-items: center; gap: .4rem; }
-.workspace-secondary-button { min-height: 30px; padding: 0 .5rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #121a27; color: var(--muted); font-size: .6rem; cursor: pointer; }
+.company-rail-header, .company-context-header, .company-board-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-default); min-height: 66px; padding: var(--sp-default) var(--sp-default); border-bottom: 1px solid var(--line); background: #0f1621; }
+.company-rail-header h2, .company-context-header h2, .company-board-header h2 { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: var(--fs-view-title); text-overflow: ellipsis; white-space: nowrap; }
+.company-board-header p { max-width: 72ch; margin: var(--sp-tight) 0 0; overflow: hidden; color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.company-board-actions { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-snug); }
+.workspace-secondary-button { min-height: 30px; padding: 0 var(--sp-cozy); border: 1px solid var(--line); border-radius: var(--radius-sm); background: #121a27; color: var(--muted); font-size: var(--fs-label); cursor: pointer; }
 .workspace-secondary-button:hover, .workspace-secondary-button:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
-.workspace-session-list { min-height: 0; display: grid; align-content: start; gap: .28rem; padding: .55rem; overflow: auto; }
-.workspace-session-item { min-width: 0; display: grid; gap: .28rem; padding: .62rem; border: 1px solid transparent; border-left: 3px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.workspace-session-list { min-height: 0; display: grid; align-content: start; gap: var(--sp-snug); padding: var(--sp-cozy); overflow: auto; }
+.workspace-session-item { min-width: 0; display: grid; gap: var(--sp-cozy); padding: var(--sp-cozy); border: 1px solid transparent; border-left: 3px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .workspace-session-item:hover, .workspace-session-item:focus-visible { background: #121a27; outline: none; }
 .workspace-session-item[data-active="true"] { border-color: #403831; border-left-color: var(--accent); background: #171b21; }
-.workspace-session-title { min-width: 0; overflow: hidden; font-size: .68rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-session-meta { display: flex; align-items: center; gap: .35rem; color: var(--muted); font: .52rem/1.2 monospace; }
+.workspace-session-title { min-width: 0; overflow: hidden; font-size: var(--fs-entity-title); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-session-meta { display: flex; align-items: center; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; }
 .workspace-session-meta::before { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--dim); content: ""; }
 .workspace-session-item[data-running="true"] .workspace-session-meta::before { background: var(--green); }
-.workspace-session-note { margin: .35rem; color: var(--muted); font-size: .58rem; line-height: 1.45; }
+.workspace-session-note { margin: var(--sp-snug); color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-normal); }
 .company-board-shell { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: #0b1018; }
-.company-board { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(4,minmax(190px,1fr)); gap: .45rem; padding: .6rem; overflow: auto; }
+.company-board { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(4,minmax(190px,1fr)); gap: var(--sp-cozy); padding: var(--sp-cozy); overflow: auto; }
 .work-column { min-width: 190px; min-height: 100%; display: grid; grid-template-rows: auto minmax(0,1fr); border: 1px solid var(--line); border-radius: var(--radius-sm); background: #0d141e; }
-.work-column-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 38px; padding: 0 .6rem; border-bottom: 1px solid var(--line); color: var(--muted); font: 600 .57rem/1 monospace; text-transform: uppercase; letter-spacing: .04em; }
-.work-column-header span:first-child { display: inline-flex; align-items: center; gap: .4rem; }
+.work-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); min-height: 38px; padding: 0 var(--sp-cozy); border-bottom: 1px solid var(--line); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; letter-spacing: .04em; }
+.work-column-header span:first-child { display: inline-flex; align-items: center; gap: var(--sp-snug); }
 .work-column-header span:first-child::before { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); content: ""; }
 .work-column[data-column="doing"] .work-column-header span:first-child::before { background: var(--accent); }
 .work-column[data-column="review"] .work-column-header span:first-child::before { background: var(--amber); }
 .work-column[data-column="done"] .work-column-header span:first-child::before { background: var(--green); }
 .work-column-count { display: grid; min-width: 20px; height: 20px; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--text); background: #090e15; }
-.work-column-list { display: grid; align-content: start; gap: .42rem; padding: .48rem; overflow: auto; }
-.work-item-card { min-width: 0; display: grid; gap: .42rem; padding: .62rem; border: 1px solid #2a3445; border-left: 3px solid #53647e; border-radius: var(--radius-sm); background: #141b25; color: var(--text); text-align: left; cursor: pointer; }
+.work-column-list { display: grid; align-content: start; gap: var(--sp-snug); padding: var(--sp-cozy); overflow: auto; }
+.work-item-card { min-width: 0; display: grid; gap: var(--sp-snug); padding: var(--sp-cozy); border: 1px solid #2a3445; border-left: 3px solid #53647e; border-radius: var(--radius-sm); background: #141b25; color: var(--text); text-align: left; cursor: pointer; }
 .work-item-card:hover, .work-item-card:focus-visible, .work-item-card[data-selected="true"] { border-color: var(--accent); background: #17222d; outline: none; }
 .work-item-card[data-status="running"] { border-left-color: var(--accent); }
 .work-item-card[data-status="completed"] { border-left-color: var(--green); }
 .work-item-card[data-status="blocked"], .work-item-card[data-status="failed"], .work-item-card[data-status="in_doubt"] { border-left-color: var(--amber); }
-.work-item-kicker { display: flex; justify-content: space-between; gap: .4rem; color: var(--muted); font: .5rem/1.2 monospace; text-transform: uppercase; }
-.work-item-title { margin: 0; overflow-wrap: anywhere; font-size: .7rem; line-height: 1.38; }
-.work-item-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .58rem; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.work-item-tags { display: flex; flex-wrap: wrap; gap: .25rem; }
-.work-item-tag { max-width: 100%; padding: .15rem .3rem; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; color: #b7c7dd; font: .5rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
+.work-item-kicker { display: flex; justify-content: space-between; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
+.work-item-title { margin: 0; overflow-wrap: anywhere; font-size: var(--fs-entity-title); line-height: var(--lh-snug); }
+.work-item-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.work-item-tags { display: flex; flex-wrap: wrap; gap: var(--sp-snug); }
+.work-item-tag { max-width: 100%; padding: var(--sp-hairline) var(--sp-tight); overflow: hidden; border: 1px solid var(--line); border-radius: 4px; color: #b7c7dd; font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
 .work-item-tag-owner { color: var(--accent); border-color: rgba(79,209,197,.34); }
 .work-item-tag-tool { color: var(--green); }
-.work-board-empty { margin: .35rem; padding: .8rem; border: 1px dashed var(--line); border-radius: var(--radius-sm); color: var(--muted); font-size: .58rem; line-height: 1.45; }
+.work-board-empty { margin: var(--sp-snug); padding: var(--sp-default); border: 1px dashed var(--line); border-radius: var(--radius-sm); color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-normal); }
 .company-context-body { min-height: 0; overflow: auto; }
-.workspace-detail-hero { display: grid; gap: .45rem; padding: .8rem; border-bottom: 1px solid var(--line); }
-.workspace-detail-hero h3 { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: .86rem; line-height: 1.4; }
-.workspace-detail-hero p { margin: 0; color: var(--muted); font-size: .64rem; line-height: 1.5; }
-.workspace-detail-tags { display: flex; flex-wrap: wrap; gap: .3rem; }
-.workspace-detail-section { padding: .75rem .8rem; border-bottom: 1px solid var(--line); }
-.workspace-detail-section h3 { margin: 0 0 .55rem; color: var(--muted); font: 600 .55rem/1 monospace; text-transform: uppercase; letter-spacing: .05em; }
-.workspace-detail-list { display: grid; gap: .38rem; }
-.workspace-detail-row { display: grid; grid-template-columns: 74px minmax(0,1fr); gap: .55rem; color: var(--muted); font-size: .59rem; line-height: 1.45; }
+.workspace-detail-hero { display: grid; gap: var(--sp-cozy); padding: var(--sp-default); border-bottom: 1px solid var(--line); }
+.workspace-detail-hero h3 { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-view-title); line-height: var(--lh-snug); }
+.workspace-detail-hero p { margin: 0; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
+.workspace-detail-tags { display: flex; flex-wrap: wrap; gap: var(--sp-snug); }
+.workspace-detail-section { padding: var(--sp-default) var(--sp-default); border-bottom: 1px solid var(--line); }
+.workspace-detail-section h3 { margin: 0 0 var(--sp-cozy); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; letter-spacing: .05em; }
+.workspace-detail-list { display: grid; gap: var(--sp-snug); }
+.workspace-detail-row { display: grid; grid-template-columns: 74px minmax(0,1fr); gap: var(--sp-cozy); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
 .workspace-detail-row[data-unlabelled="true"] { grid-template-columns: minmax(0,1fr); }
 .workspace-detail-row strong { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-weight: 600; }
-.workspace-activity { display: grid; grid-template-columns: 9px minmax(0,1fr); gap: .45rem; padding: .4rem 0; border-bottom: 1px solid var(--line-soft); }
-.workspace-activity::before { width: 7px; height: 7px; margin-top: .22rem; border-radius: 50%; background: var(--dim); content: ""; }
+.workspace-activity { display: grid; grid-template-columns: 9px minmax(0,1fr); gap: var(--sp-cozy); padding: var(--sp-snug) 0; border-bottom: 1px solid var(--line-soft); }
+.workspace-activity::before { width: 7px; height: 7px; margin-top: var(--sp-tight); border-radius: 50%; background: var(--dim); content: ""; }
 .workspace-activity[data-kind^="tool"]::before { background: var(--green); }
 .workspace-activity[data-kind="failure"]::before, .workspace-activity[data-kind="tool_error"]::before { background: var(--danger); }
-.workspace-activity strong { display: block; color: var(--text); font-size: .6rem; line-height: 1.4; }
-.workspace-activity span { color: var(--muted); font: .5rem/1.3 monospace; }
-.workspace-telemetry-warning { margin: .8rem; padding: .7rem; border: 1px solid rgba(216,168,78,.35); border-radius: var(--radius-sm); background: rgba(216,168,78,.06); color: #d9bb78; font-size: .6rem; line-height: 1.5; }
+.workspace-activity strong { display: block; color: var(--text); font-size: var(--fs-entity-body); line-height: var(--lh-snug); }
+.workspace-activity span { color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-snug); font-family: monospace; }
+.workspace-telemetry-warning { margin: var(--sp-default); padding: var(--sp-default); border: 1px solid rgba(216,168,78,.35); border-radius: var(--radius-sm); background: rgba(216,168,78,.06); color: #d9bb78; font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
 .workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 420px); }
-.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 116px 28px; border: 0; background: var(--ink); overflow: hidden; }
+.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto var(--h-status-bar); border: 0; background: var(--ink); overflow: hidden; }
 .graph-stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.graph-canvas-header { position: absolute; z-index: 8; top: .75rem; right: .75rem; left: .85rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; pointer-events: none; }
-.graph-canvas-title { display: inline-flex; align-items: center; gap: .5rem; color: var(--text); font-size: .82rem; font-weight: 720; }
+.graph-stage-bar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-roomy); min-height: 40px; padding: var(--sp-cozy) var(--sp-default); border-bottom: 1px solid var(--line-soft); background: #0e141e; }
+.graph-canvas-title { display: inline-flex; align-items: center; gap: var(--sp-cozy); color: var(--text); font-size: var(--fs-view-title); font-weight: 720; }
 .graph-canvas-title .ui-icon { width: 1.05rem; height: 1.05rem; color: var(--muted); }
-.graph-edge-legend { margin-right: auto; color: var(--muted); font-size: .66rem; white-space: nowrap; }
-.graph-edge-legend::before { content: ""; display: inline-block; width: 24px; margin-right: .4rem; border-top: 1px dashed #53647e; vertical-align: middle; }
-.graph-toolbar { display: flex; flex-wrap: wrap; gap: .28rem; max-width: calc(100% - 1.1rem); padding: .28rem; border: 1px solid var(--line); border-radius: 9px; background: rgba(17,22,32,.94); box-shadow: 0 8px 24px rgba(0,0,0,.24); pointer-events: auto; }
-.graph-tool-button { min-width: 34px; display: inline-flex; align-items: center; justify-content: center; gap: .32rem; padding: 0 .55rem; font-size: .68rem; }
+.graph-edge-legend { min-width: 0; margin-right: auto; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-snug); }
+.graph-edge-legend::before { content: ""; display: inline-block; width: 24px; margin-right: var(--sp-snug); border-top: 1px dashed #53647e; vertical-align: middle; }
+.graph-canvas-tools { min-width: 0; flex: 0 1 auto; display: flex; align-items: stretch; gap: var(--sp-snug); transition: box-shadow .18s ease; }
+.graph-canvas-tools[data-floating="true"] { position: absolute; z-index: 9; top: var(--tools-y, 0px); left: var(--tools-x, 0px); }
+.graph-canvas-tools[data-dragging="true"] { box-shadow: 0 12px 30px rgba(0,0,0,.45); }
+.graph-tools-handle { flex: 0 0 auto; min-width: 22px; display: inline-flex; align-items: center; justify-content: center; padding: 0 var(--sp-tight); border: 1px solid var(--line); border-radius: 6px; background: rgba(17,22,32,.94); color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-flat); cursor: grab; touch-action: none; user-select: none; }
+.graph-tools-handle:hover { color: var(--text); border-color: var(--line-strong); }
+.graph-tools-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.graph-canvas-tools[data-dragging="true"] .graph-tools-handle { cursor: grabbing; color: var(--accent); }
+.graph-toolbar { display: flex; flex-wrap: wrap; gap: var(--sp-snug); max-width: 100%; padding: var(--sp-tight); border: 1px solid var(--line); border-radius: 9px; background: rgba(17,22,32,.94); box-shadow: 0 8px 24px rgba(0,0,0,.24); pointer-events: auto; }
+.graph-tool-button { min-width: 34px; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-snug); padding: 0 var(--sp-cozy); font-size: var(--fs-label); }
 .graph-tool-button[data-active="true"], .replay-button[data-active="true"] { border-color: var(--accent); color: var(--accent); background: rgba(88,212,207,.07); }
 .graph-canvas { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; cursor: grab; background-color: #0d131d; background-image: linear-gradient(rgba(39,48,67,.48) 1px, transparent 1px), linear-gradient(90deg, rgba(39,48,67,.48) 1px, transparent 1px); background-size: 28px 28px; touch-action: none; }
 .graph-canvas[data-panning="true"] { cursor: grabbing; }
@@ -4279,7 +5355,7 @@ button { color: inherit; }
 .edge-flow-particle[data-stage-focus="live"] { fill: #e9fffd; stroke: #58d4cf; stroke-width: 1.5; opacity: 1; filter: drop-shadow(0 0 7px rgba(88,212,207,1)); }
 @keyframes live-flow { to { stroke-dashoffset: -120; } }
 @keyframes stage-route-flow { to { stroke-dashoffset: -120; } }
-.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: .36rem; width: 232px; min-height: 140px; max-height: 152px; padding: .72rem; overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #151d29; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.28); cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, opacity .18s ease; }
+.node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: var(--sp-snug); width: 232px; min-height: 140px; max-height: 152px; padding: var(--sp-default); overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #151d29; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.28); cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, opacity .18s ease; }
 .node-card:hover, .node-card:focus-visible, .node-card[data-selected="true"] { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px rgba(88,212,207,.2), 0 8px 24px rgba(0,0,0,.35); }
 .node-running { z-index: 2; border-color: rgba(88,212,207,.9); border-left-color: var(--running); background: linear-gradient(135deg, rgba(88,212,207,.16), #151d29 58%); box-shadow: 0 0 0 1px rgba(88,212,207,.3), 0 0 30px rgba(88,212,207,.2), 0 10px 28px rgba(0,0,0,.42); animation: active-node-pulse 1.8s ease-in-out infinite; }
 .node-completed { border-color: rgba(99,202,155,.5); border-left-color: var(--green); background: linear-gradient(135deg, rgba(99,202,155,.09), #151d29 58%); }
@@ -4290,203 +5366,177 @@ button { color: inherit; }
 .node-skipped { border-left-color: #585858; opacity: .72; }
 .node-failed, .node-in-doubt { border-left-color: var(--danger); }
 .node-blocked { border-color: rgba(216,168,78,.72); border-left-color: var(--amber); background: linear-gradient(135deg, rgba(216,168,78,.13), #181a21 60%); box-shadow: 0 0 0 1px rgba(216,168,78,.12), 0 8px 24px rgba(0,0,0,.32); }
-.node-card-top { display: flex; align-items: center; gap: .3rem; color: var(--muted); font: 600 .58rem/1 monospace; text-transform: uppercase; }
+.node-card-top { display: flex; align-items: center; gap: var(--sp-snug); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
 .node-marker { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .node-running .node-marker { width: 9px; height: 9px; color: var(--running); box-shadow: 0 0 0 5px rgba(88,212,207,.1), 0 0 14px rgba(88,212,207,.95); }
 .node-completed .node-marker { color: var(--green); box-shadow: 0 0 0 3px rgba(99,202,155,.1); }
 .node-blocked .node-marker { color: var(--amber); box-shadow: 0 0 0 3px rgba(216,168,78,.1); }
-.node-wave-badge { flex: 0 0 auto; margin-left: auto; padding: 0 .18rem; border-radius: 3px; color: #9aa7bd; background: rgba(154,167,189,.1); font: inherit; }
+.node-wave-badge { flex: 0 0 auto; margin-left: auto; padding: 0 var(--sp-hairline); border-radius: 3px; color: #9aa7bd; background: rgba(154,167,189,.1); font: inherit; }
 .node-card[data-wave-index] .node-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes active-node-pulse { 0%,100% { box-shadow: 0 0 0 1px rgba(88,212,207,.25), 0 0 22px rgba(88,212,207,.14), 0 10px 28px rgba(0,0,0,.42); } 50% { box-shadow: 0 0 0 2px rgba(88,212,207,.55), 0 0 38px rgba(88,212,207,.28), 0 10px 30px rgba(0,0,0,.46); } }
-.node-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .84rem; }
-.node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: .67rem; line-height: 1.45; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.node-task { min-width: 0; margin: 0; overflow: hidden; color: var(--completion-bright); font: .58rem/1.25 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.node-identity-row { min-width: 0; display: grid; grid-template-columns: 48px minmax(0,1fr); gap: .65rem; align-items: center; }
-.node-identity-copy { min-width: 0; display: grid; gap: .26rem; }
-.node-glyph { display: block; width: 42px; height: 42px; padding: 8px; color: var(--accent); border: 1px solid rgba(88,212,207,.34); border-radius: 50%; background: rgba(88,212,207,.08); fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.node-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-entity-title); }
+.node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.node-task { min-width: 0; margin: 0; overflow: hidden; color: var(--completion-bright); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.node-identity-row { min-width: 0; display: grid; grid-template-columns: 48px minmax(0,1fr); gap: var(--sp-default); align-items: center; }
+.node-identity-copy { min-width: 0; display: grid; gap: var(--sp-cozy); }
+.node-glyph { display: block; width: 42px; height: 42px; padding: var(--sp-cozy); color: var(--accent); border: 1px solid rgba(88,212,207,.34); border-radius: 50%; background: rgba(88,212,207,.08); fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .root-entry-path { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; stroke-dasharray: 2 5; opacity: .78; }
 .root-entry-halo { fill: rgba(79,209,197,.05); stroke: rgba(79,209,197,.28); stroke-width: 1; }
 .root-entry-dot { fill: var(--accent); stroke: #0e151f; stroke-width: 3; filter: drop-shadow(0 0 5px rgba(79,209,197,.72)); }
-.node-proof { min-width: 0; overflow: hidden; color: var(--completion-bright); font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.activity-chips { display: flex; flex-wrap: wrap; gap: .18rem; min-width: 0; max-height: 31px; overflow: hidden; }
-.activity-chip { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: .12rem .25rem; border: 1px solid var(--line); border-radius: var(--radius-sm); color: #b5c4dd; background: #101725; font: .5rem/1.2 monospace; }
+.node-proof { min-width: 0; overflow: hidden; color: var(--completion-bright); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.activity-chips { display: flex; flex-wrap: wrap; gap: var(--sp-snug); min-width: 0; max-height: 31px; overflow: hidden; }
+.activity-chip { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: var(--sp-hairline) var(--sp-tight); border: 1px solid var(--line); border-radius: var(--radius-sm); color: #b5c4dd; background: #101725; font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; }
 .chip-owner { color: var(--completion-bright); }
 .chip-runtime { color: var(--green); }
 .chip-tools { color: #7cc7ef; }.chip-tokens { color: #8ecae6; }.chip-evidence { color: var(--completion-bright); }.chip-loadout { color: #9fb8e8; }
 .node-connection, .node-progress { display: none; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card { height: 140px !important; min-height: 140px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card::after { content: ""; position: absolute; top: 35px; right: 0; left: 0; height: 26px; border-left: 8px solid #666; background: #292929; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card { --cell-title-fs: max(var(--fs-entity-body), calc(var(--min-onscreen-text-px) / var(--camera-scale))); --cell-band-h: max(26px, calc(var(--cell-title-fs) * var(--lh-flat) + var(--sp-snug) * 2)); height: 140px !important; min-height: 140px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card::after { content: ""; position: absolute; top: 35px; right: 0; left: 0; height: var(--cell-band-h); border-left: 8px solid #666; background: #292929; }
 .graph-canvas[data-semantic-zoom="cell"] .node-running::after { border-left-color: var(--running); background: rgba(88,212,207,.2); box-shadow: 0 0 18px rgba(88,212,207,.5); }.graph-canvas[data-semantic-zoom="cell"] .node-completed::after { border-left-color: var(--green); background: rgba(99,202,155,.14); }.graph-canvas[data-semantic-zoom="cell"] .node-failed::after,.graph-canvas[data-semantic-zoom="cell"] .node-blocked::after { border-left-color: var(--amber); background: rgba(216,168,78,.14); }
 .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: hidden; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: absolute; z-index: 1; top: 35px; right: 0; left: 8px; height: 26px; visibility: visible; padding: .4rem .45rem; font: 700 11px/1 monospace; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: absolute; z-index: 1; top: 35px; right: 0; left: 8px; height: var(--cell-band-h); visibility: visible; padding: var(--sp-snug) var(--sp-cozy); font-weight: 700; font-size: var(--cell-title-fs); line-height: var(--lh-flat); font-family: monospace; }
 .graph-minimap { position: absolute; z-index: 7; right: .75rem; bottom: .75rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: rgba(13,18,27,.94); pointer-events: none; }
 .minimap-scene { position: absolute; transform-origin: 0 0; }
 .minimap-node { position: absolute; border-radius: 1px; background: #666; }
 .minimap-node-running { background: var(--running); }.minimap-node-completed { background: var(--completion); }.minimap-node-failed,.minimap-node-blocked { background: var(--danger); }
 .minimap-viewport { position: absolute; border: 1px solid var(--accent); background: rgba(88,212,207,.07); }
-.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
-.replay-panel { min-width: 0; width: 100%; max-width: 100%; display: grid; grid-template-columns: 330px minmax(0,1fr); grid-template-rows: 40px 34px 34px; overflow: hidden; contain: inline-size; border-top: 1px solid var(--line); background: #111823; }
-.replay-dock-header { grid-row: 1 / -1; min-width: 0; width: 330px; max-width: 100%; display: grid; grid-template-columns: minmax(88px,1fr) auto; align-items: center; gap: .55rem; padding: .55rem .72rem; overflow: hidden; border-right: 1px solid var(--line); }
+.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--muted); font-size: var(--fs-label); }
+.replay-panel { min-width: 0; width: 100%; max-width: 100%; grid-template-columns: 330px minmax(0,1fr); grid-template-rows: 40px 34px minmax(0,1fr); overflow: hidden; contain: inline-size; background: #111823; }
+.replay-dock-header { grid-row: 1 / -1; min-width: 0; width: 330px; max-width: 100%; display: grid; grid-template-columns: minmax(88px,1fr) auto; align-items: center; gap: var(--sp-cozy); padding: var(--sp-cozy) var(--sp-default); overflow: hidden; border-right: 1px solid var(--line); }
 .replay-current { min-width: 74px; overflow: hidden; }
 .replay-current .panel-title { white-space: nowrap; }
 .replay-current .panel-note { display: none; }
-.panel-title { display: block; color: var(--text); font-size: .68rem; font-weight: 700; }
-.panel-note { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .58rem; }
-.replay-controls { display: flex; flex: 0 0 auto; gap: .15rem; white-space: nowrap; }
-.replay-button { min-width: 27px; min-height: 27px; padding: 0 .38rem; font-size: .62rem; }
-.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; min-width: 0; max-width: 100%; display: flex; align-items: center; overflow: hidden; padding: 0 .65rem; border-bottom: 1px solid var(--line-soft); }
+.panel-title { display: block; color: var(--text); font-size: var(--fs-entity-title); font-weight: 700; }
+.panel-note { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--fs-entity-body); }
+.replay-controls { display: flex; flex: 0 0 auto; gap: var(--sp-snug); white-space: nowrap; }
+.replay-button { min-width: 27px; min-height: 27px; padding: 0 var(--sp-snug); font-size: var(--fs-label); line-height: var(--lh-flat); }
+.replay-range-wrap { position: relative; grid-column: 2; grid-row: 1; min-width: 0; max-width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; padding: 0 var(--sp-default); border-bottom: 1px solid var(--line-soft); }
 .replay-range { position: absolute; inset: 0 .65rem; width: calc(100% - 1.3rem); max-width: calc(100% - 1.3rem); opacity: 0; cursor: ew-resize; z-index: 2; }
 .replay-track { min-width: 0; width: 100%; max-width: 100%; height: 4px; overflow: hidden; border-radius: var(--radius-sm); background: var(--line); }
 .replay-progress { display: block; height: 100%; background: var(--accent); }
-.replay-ticks { position: absolute; right: .65rem; bottom: -33px; left: .65rem; min-width: 0; max-width: calc(100% - 1.3rem); display: flex; justify-content: space-between; overflow: hidden; color: var(--muted); font: .5rem/1 monospace; pointer-events: none; }
-.replay-ticks span::before { display: block; width: 1px; height: 7px; margin: 0 auto 4px; background: #53647e; content: ""; }
-.replay-events { grid-column: 2; grid-row: 2 / 4; min-width: 0; width: 100%; max-width: 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(70px,1fr); gap: 1px; margin: 0; padding: 5px .65rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; list-style: none; }
+.replay-ticks { min-width: 0; width: 100%; max-width: 100%; display: flex; justify-content: space-between; overflow: hidden; color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; pointer-events: none; }
+.replay-ticks span::before { display: block; width: 1px; height: 7px; margin: 0 auto var(--sp-tight); background: #53647e; content: ""; }
+.replay-events { grid-column: 2; grid-row: 2 / 4; min-width: 0; width: 100%; max-width: 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(70px,1fr); gap: var(--sp-snug); margin: 0; padding: var(--sp-snug) var(--sp-default); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; list-style: none; }
 .replay-event { position: relative; min-width: 0; border-top: 5px solid #53647e; color: transparent; }
 .replay-event[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.08); }
 .replay-event[data-status="running"] { border-color: var(--running); }.replay-event[data-status="completed"] { border-color: var(--completion); }.replay-event[data-status="failed"] { border-color: var(--danger); }
 .replay-event[data-kind="prompt"] { border-top-style: double; border-color: #8ecae6; }.replay-event[data-kind="spawn"] { border-color: var(--completion-bright); }.replay-event[data-kind="failure"],.replay-event[data-kind="tool_error"] { border-color: var(--danger); }
 .replay-event[data-kind^="tool_"]::after { position: absolute; right: 2px; bottom: 2px; left: 2px; height: calc(1px + var(--tool-density, 1) * 1px); background: var(--green); opacity: .72; content: ""; }
 .replay-event[data-tool-density="0"] { --tool-density: 0; }.replay-event[data-tool-density="1"] { --tool-density: 1; }.replay-event[data-tool-density="2"] { --tool-density: 2; }.replay-event[data-tool-density="3"] { --tool-density: 3; }.replay-event[data-tool-density="4"] { --tool-density: 4; }
-.status-bar { min-width: 0; display: flex; align-items: center; gap: .75rem; padding: 0 .75rem; overflow: hidden; border-top: 1px solid var(--line); background: #0d121b; color: var(--muted); font: .58rem/1 monospace; }
+.status-bar { min-width: 0; display: flex; align-items: center; gap: var(--sp-default); padding: 0 var(--sp-default); overflow: hidden; border-top: 1px solid var(--line); background: #0d121b; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }
 .status-bar > span { min-width: 0; white-space: nowrap; }
 .status-bar .status-title { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 .status-bar strong { color: var(--completion-bright); font-weight: 600; }
 .evidence-panel { position: relative; z-index: 20; min-width: 0; min-height: 0; display: grid; grid-template-rows: 54px 40px minmax(0,1fr); overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
 .evidence-panel[data-open="false"] { visibility: hidden; }
-.panel-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; padding: .55rem .7rem; border-bottom: 1px solid var(--line); }
+.panel-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); min-width: 0; padding: var(--sp-cozy) var(--sp-default); border-bottom: 1px solid var(--line); }
 .evidence-panel .panel-header { position: sticky; top: 0; z-index: 3; background: var(--panel); }
-.evidence-panel [data-live-inspector-close] { position: relative; z-index: 4; display: grid; flex: 0 0 36px; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; place-items: center; border: 1px solid var(--line-strong); color: var(--accent); background: #101722; font-size: 1rem; line-height: 1; }
+.evidence-panel [data-live-inspector-close] { position: relative; z-index: 4; display: grid; flex: 0 0 36px; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; place-items: center; border: 1px solid var(--line-strong); color: var(--accent); background: #101722; font-size: var(--fs-view-title); line-height: var(--lh-display); }
 .inspector-tabs { min-width: 0; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); border-bottom: 1px solid var(--line); overflow-x: auto; }
-.inspector-tabs button { min-width: 62px; min-height: 34px; padding: 0 .32rem; border: 0; border-right: 1px solid var(--line-soft); background: #101725; color: var(--muted); font-size: .55rem; cursor: pointer; }
+.inspector-tabs button { min-width: 62px; min-height: 34px; padding: 0 var(--sp-snug); border: 0; border-right: 1px solid var(--line-soft); background: #101725; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-flat); cursor: pointer; }
 .inspector-tabs button[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .inspector-panel { min-width: 0; min-height: 0; overflow: auto; }
-.kicker { margin: 0 0 .12rem; color: var(--completion); font: .55rem/1 monospace; text-transform: uppercase; }
-.panel-count { color: var(--completion-bright); font: .6rem/1 monospace; }
-.selected-node-summary { padding: .8rem; border-bottom: 1px solid var(--line); }
-.selected-node-summary strong { display: block; color: var(--completion-bright); font-size: .82rem; }
-.selected-node-summary p { color: var(--muted); font-size: .68rem; line-height: 1.5; }
-.selected-node-facts { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; }
-.selected-node-facts span, [data-live-selected-node-evidence] { padding: .2rem .35rem; border: 1px solid var(--line); border-radius: var(--radius-sm); color: #bdd0ec; background: #101725; font: .56rem/1.2 monospace; }
-.selected-node-summary [data-live-selected-node-provenance], .selected-node-summary [data-live-selected-node-prompt] { margin: .38rem 0 0; padding-left: .45rem; border-left: 2px solid #444; overflow-wrap: anywhere; }
-.evidence-drawer { min-height: 0; overflow: auto; padding: .55rem; }
-.evidence-list { display: grid; gap: .35rem; }
-.evidence-item { padding: .55rem; border: 1px solid var(--line); border-left: 2px solid #53647e; border-radius: var(--radius-sm); background: #121a29; }
+.kicker { margin: 0 0 var(--sp-hairline); color: var(--completion); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
+.panel-count { color: var(--completion-bright); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }
+.selected-node-summary { padding: var(--sp-default); border-bottom: 1px solid var(--line); }
+.selected-node-summary strong { display: block; color: var(--completion-bright); font-size: var(--fs-view-title); }
+.selected-node-summary p { color: var(--muted); font-size: var(--fs-body); line-height: var(--lh-normal); }
+.selected-node-facts { display: flex; flex-wrap: wrap; gap: var(--sp-snug); margin-top: var(--sp-cozy); }
+.selected-node-facts span, [data-live-selected-node-evidence] { padding: var(--sp-tight) var(--sp-snug); border: 1px solid var(--line); border-radius: var(--radius-sm); color: #bdd0ec; background: #101725; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }
+.selected-node-summary [data-live-selected-node-provenance], .selected-node-summary [data-live-selected-node-prompt] { margin: var(--sp-snug) 0 0; padding-left: var(--sp-cozy); border-left: 2px solid #444; overflow-wrap: anywhere; }
+.evidence-drawer { min-height: 0; overflow: auto; padding: var(--sp-cozy); }
+.evidence-list { display: grid; gap: var(--sp-snug); }
+.evidence-item { padding: var(--sp-cozy); border: 1px solid var(--line); border-left: 2px solid #53647e; border-radius: var(--radius-sm); background: #121a29; }
 .evidence-item[data-associated="true"] { border-left-color: var(--accent); }
 .evidence-item[data-transfer-state="planned"] { border-left-style: dashed; border-left-color: var(--dim); background: #101725; }
 .evidence-item[data-transfer-state="planned"] .evidence-status { color: #aaa; }
 .evidence-item[data-delivery-observed="true"] { border-left-color: var(--green); }
 .history-prompt { border-left-color: #8ecae6; }.history-tool { border-left-color: var(--green); }.history-failure,.history-tool_error { border-left-color: var(--danger); }
-.history-footer { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }.history-source { min-width: 0; overflow: hidden; color: #777; font: .52rem/1.2 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.empty-state { height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); }
-.empty-glyph { display: grid; width: 52px; height: 44px; margin: 0 auto .7rem; place-items: center; border: 1px solid var(--line); border-radius: var(--radius); background: #111925; color: var(--muted); }
+.history-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-snug); }.history-source { min-width: 0; overflow: hidden; color: #777; font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.empty-state { height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); font-size: var(--fs-micro); }
+.empty-glyph { display: grid; width: 52px; height: 44px; margin: 0 auto var(--sp-default); place-items: center; border: 1px solid var(--line); border-radius: var(--radius); background: #111925; color: var(--muted); }
 .empty-state-icon { width: 1.65rem; height: 1.65rem; }
-.empty-title { color: var(--text); }
+.empty-title { color: var(--text); font-size: var(--fs-view-title); }.empty-copy { margin: 0; font-size: var(--fs-micro); }
 .live-dialog { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: clamp(20px,3vw,36px); overflow: auto; background: rgba(0,0,0,.72); }
 .dialog-card { width: min(640px,calc(100vw - 48px)); max-height: calc(100dvh - 48px); display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); background-clip: padding-box; box-shadow: 0 24px 80px rgba(0,0,0,.6); }
-.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: .65rem .8rem; border-bottom: 1px solid var(--line); background: var(--panel); }
-.dialog-title { margin: 0; font-size: .82rem; }
-.dialog-body { min-height: 0; padding: .8rem; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: var(--sp-default) var(--sp-default); border-bottom: 1px solid var(--line); background: var(--panel); }
+.dialog-title { margin: 0; font-size: var(--fs-view-title); }
+.dialog-body { min-height: 0; padding: var(--sp-default); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .node-card[data-replay-visible="false"] { opacity: 0; pointer-events: none; visibility: hidden; }
-.info-facts { display: grid; gap: .45rem; margin: .2rem 0 1rem; padding: .7rem; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.018); }
-.info-fact-row { display: grid; grid-template-columns: 8rem minmax(0,1fr); gap: .75rem; align-items: baseline; padding-bottom: .35rem; border-bottom: 1px solid rgba(255,255,255,.06); }
+.info-facts { display: grid; gap: var(--sp-cozy); margin: var(--sp-tight) 0 var(--sp-roomy); padding: var(--sp-default); border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.018); }
+.info-fact-row { display: grid; grid-template-columns: 8rem minmax(0,1fr); gap: var(--sp-default); align-items: baseline; padding-bottom: var(--sp-snug); border-bottom: 1px solid rgba(255,255,255,.06); }
 .info-fact-row:last-child { border-bottom: 0; padding-bottom: 0; }
-.info-fact-label { color: var(--subtle); font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; }
-.info-fact-value { min-width: 0; color: var(--bright); font-size: .76rem; overflow-wrap: anywhere; }
-.info-fact-prompt { display: grid; gap: .35rem; margin-top: .25rem; }
-.info-fact-prompt p { margin: 0; line-height: 1.45; }
-.hub-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.info-fact-label { color: var(--subtle); font-size: var(--fs-label); text-transform: uppercase; letter-spacing: .04em; }
+.info-fact-value { min-width: 0; color: var(--bright); font-size: var(--fs-body); overflow-wrap: anywhere; }
+.info-fact-prompt { display: grid; gap: var(--sp-cozy); margin-top: var(--sp-tight); }
+.info-fact-prompt p { margin: 0; line-height: var(--lh-normal); }
+.hub-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-default); }
 .run-record-dialog { width: min(760px,100%); }
-.run-record-guide { display: grid; gap: .3rem; margin-bottom: .8rem; padding: .72rem .8rem; border: 1px solid rgba(79,209,197,.28); border-radius: var(--radius); background: rgba(79,209,197,.055); }
-.run-record-guide strong { color: var(--text); font-size: .72rem; }
-.run-record-guide span { color: var(--muted); font-size: .63rem; line-height: 1.5; }
+.run-record-guide { display: grid; gap: var(--sp-cozy); margin-bottom: var(--sp-default); padding: var(--sp-default) var(--sp-default); border: 1px solid rgba(79,209,197,.28); border-radius: var(--radius); background: rgba(79,209,197,.055); }
+.run-record-guide strong { color: var(--text); font-size: var(--fs-entity-title); }
+.run-record-guide span { color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
 .hub-search { grid-column: 1 / -1; }
-.hub-field { display: grid; gap: .3rem; color: var(--muted); font-size: .65rem; }
-.hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 .5rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--text); }
-.hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .65rem; }
-.session-list { display: grid; gap: .38rem; margin-top: .7rem; }.session-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; margin-top: .45rem; padding: .45rem .1rem .25rem; border-bottom: 1px solid var(--line); }.session-group-heading strong { color: var(--text); font-size: .68rem; }.session-group-heading span { color: var(--muted); font-size: .57rem; }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .28rem .7rem; padding: .65rem; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #101725; color: var(--text); text-align: left; cursor: pointer; }.session-card[data-identity="unlinked"] { border-left-color: var(--amber); background: rgba(216,168,78,.035); }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.05); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--completion-bright); font: .58rem/1.2 monospace; }.session-card[data-identity="unlinked"] .session-card-activity { color: var(--amber); }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .35rem; color: var(--muted); font: .56rem/1.2 monospace; }.session-card-facts span + span::before { margin-right: .35rem; color: var(--dim); content: "·"; }
-.session-identity-empty { display: grid; justify-items: start; gap: .55rem; padding: 1rem; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: #101725; }
-.session-identity-empty strong { color: var(--text); font-size: .8rem; }.session-identity-empty p { max-width: 64ch; margin: 0; color: var(--muted); font-size: .66rem; line-height: 1.55; }
-.session-unlinked-toggle { width: 100%; min-height: 36px; padding: .5rem .7rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--muted); text-align: left; font-size: .65rem; cursor: pointer; }
+.hub-field { display: grid; gap: var(--sp-cozy); color: var(--muted); font-size: var(--fs-body); }
+.hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 var(--sp-cozy); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--text); }
+.hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: var(--fs-body); }
+.session-list { display: grid; gap: var(--sp-snug); margin-top: var(--sp-default); }.session-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-default); margin-top: var(--sp-cozy); padding: var(--sp-cozy) var(--sp-hairline) var(--sp-tight); border-bottom: 1px solid var(--line); }.session-group-heading strong { color: var(--text); font-size: var(--fs-entity-title); }.session-group-heading span { color: var(--muted); font-size: var(--fs-label); }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--sp-cozy) var(--sp-default); padding: var(--sp-default); border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #101725; color: var(--text); text-align: left; cursor: pointer; }.session-card[data-identity="unlinked"] { border-left-color: var(--amber); background: rgba(216,168,78,.035); }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.05); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: var(--fs-entity-title); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--completion-bright); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }.session-card[data-identity="unlinked"] .session-card-activity { color: var(--amber); }.session-card-origin { grid-column: 1 / -1; justify-self: start; padding: var(--sp-hairline) var(--sp-tight); border: 1px solid var(--amber); border-radius: var(--radius-sm); color: var(--amber); font-size: var(--fs-micro); line-height: var(--lh-flat); }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; }.session-card-facts span + span::before { margin-right: var(--sp-snug); color: var(--dim); content: "·"; }
+.session-identity-empty { display: grid; justify-items: start; gap: var(--sp-cozy); padding: var(--sp-roomy); border: 1px dashed var(--line-strong); border-radius: var(--radius); background: #101725; }
+.session-identity-empty strong { color: var(--text); font-size: var(--fs-view-title); }.session-identity-empty p { max-width: 64ch; margin: 0; color: var(--muted); font-size: var(--fs-body); line-height: var(--lh-normal); }
+.session-unlinked-toggle { width: 100%; min-height: 36px; padding: var(--sp-cozy) var(--sp-default); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--muted); text-align: left; font-size: var(--fs-body); cursor: pointer; }
 .session-unlinked-toggle:hover,.session-unlinked-toggle:focus-visible { border-color: var(--accent); color: var(--accent); background: rgba(88,212,207,.05); outline: 2px solid rgba(88,212,207,.22); outline-offset: 2px; }
-.shortcut-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .35rem .8rem; margin: 0; }
-.shortcut-grid div { display: flex; justify-content: space-between; gap: 1rem; padding: .35rem 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: .68rem; }
-kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--completion-bright); text-align: center; font: .58rem/1.2 monospace; }
-.share-panel, .control-panel { margin-top: .7rem; border: 1px solid var(--line); }
-.share-content, .control-content { padding: .7rem; }.share-actions,.control-actions { display: flex; flex-wrap: wrap; gap: .3rem; }.share-status,.control-status,.control-result,.control-error { color: var(--muted); font-size: .65rem; overflow-wrap: anywhere; }.control-error { color: var(--danger); }
-.stage-overview { flex: 0 0 auto; margin: 0; padding: .72rem 1.5rem .78rem; overflow-x: auto; background: #0c1119; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
-.stage-overview-header { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; margin-bottom: .38rem; }
-.stage-overview-header .kicker { margin: 0; color: var(--completion-bright); font: 600 .55rem/1 monospace; letter-spacing: .08em; }
-.stage-overview-header h2 { margin: 0; color: var(--text); font: 600 .7rem/1.1 monospace; }
-.stage-overview-header > span { color: var(--muted); font: .53rem/1 monospace; }
-.stage-rail { display: grid; grid-template-columns: repeat(8, minmax(128px, 1fr)); gap: .38rem; min-width: 1050px; margin: 0; padding: 0; list-style: none; }
-.stage-step { position: relative; display: flex; align-items: center; gap: .45rem; min-width: 0; min-height: 48px; padding: .42rem .5rem; color: var(--muted); background: #121923; border: 1px solid var(--line-soft); border-radius: 8px; }
+.shortcut-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--sp-snug) var(--sp-default); margin: 0; }
+.shortcut-grid div { display: flex; justify-content: space-between; gap: var(--sp-roomy); padding: var(--sp-cozy) 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: var(--fs-body); }
+kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--completion-bright); text-align: center; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }
+.share-panel, .control-panel { margin-top: var(--sp-default); border: 1px solid var(--line); }
+.share-content, .control-content { padding: var(--sp-default); }.share-actions,.control-actions { display: flex; flex-wrap: wrap; gap: var(--sp-snug); }.share-status,.control-status,.control-result,.control-error { color: var(--muted); font-size: var(--fs-body); overflow-wrap: anywhere; }.control-error { color: var(--danger); }
+.stage-rail { display: grid; grid-template-columns: repeat(8, minmax(128px, 1fr)); gap: var(--sp-snug); min-width: min-content; margin: 0; padding: 0; list-style: none; }
+.stage-step { position: relative; display: flex; align-items: center; gap: var(--sp-cozy); min-width: 0; min-height: 48px; padding: var(--sp-snug) var(--sp-cozy); color: var(--muted); background: #121923; border: 1px solid var(--line-soft); border-radius: 8px; }
 .stage-step[data-state="current"] { color: var(--text); border-color: var(--accent); background: rgba(88,212,207,.07); }
 .stage-step[data-state="completed"] { color: var(--completion-bright); border-color: #3b5381; }
-.stage-step-marker { display: grid; flex: 0 0 1.2rem; width: 1.2rem; height: 1.2rem; place-items: center; color: #111; background: #555; border-radius: 50%; font: 700 .52rem/1 monospace; }
+.stage-step-marker { display: grid; flex: 0 0 1.2rem; width: 1.2rem; height: 1.2rem; place-items: center; color: #111; background: #555; border-radius: 50%; font-weight: 700; font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; }
 .stage-step[data-state="current"] .stage-step-marker { background: var(--accent); }.stage-step[data-state="completed"] .stage-step-marker { background: var(--completion); }
-.stage-step-copy { display: grid; min-width: 0; gap: .08rem; }
-.stage-step-name { overflow: hidden; color: inherit; font: 600 .57rem/1 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.stage-step-state { color: var(--muted); font: .5rem/1 monospace; }
+.stage-step-copy { display: grid; min-width: 0; gap: var(--sp-cozy); }
+.stage-step-name { overflow: hidden; color: inherit; font-weight: 600; font-size: var(--fs-body); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.stage-step-state { color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; }
 @media (min-width: 901px) and (min-height: 720px) {
   .shell { --line: #2c3749; --line-soft: #202a39; --text: #eef2f8; --muted: #9aa5b7; grid-template-rows: 60px minmax(0,1fr); background: #0b1018; }
-  .topbar { position: relative; gap: 1.35rem; padding: 0 25px; background: #0c121b; }
-  .brand { gap: .75rem; }
+  .topbar { position: relative; gap: var(--sp-section); padding: 0 var(--sp-section); background: #0c121b; }
+  .brand { gap: var(--sp-default); }
   .brand-mark { width: 31px; height: 31px; }
-  .brand-title { font-size: .98rem; }
-  .top-run-context { font-size: .82rem; }
-  .work-view-switcher { position: absolute; left: 50%; width: 426px; height: 39px; transform: translateX(-50%); }
-  .work-view-tab { font-size: .82rem; }
-  .run-context { min-height: 90px; grid-template-columns: minmax(430px,1.1fr) minmax(610px,1.9fr) 150px; gap: 1rem; padding: .75rem 25px; }
-  .run-context-title { font-size: 1.04rem; }
-  .run-context-task { font-size: .7rem; }
-  .run-context-heading .context-kicker { display: none; }
-  .context-fact { padding-inline: 1rem; }
-  .context-fact span, .run-context-source span { font-size: .57rem; }
-  .context-fact strong { font-size: .77rem; }
-  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(0,1fr) 428px; grid-template-rows: minmax(0,1fr) 116px 62px; gap: 8px; padding: 0 24px; background: #0b1018; }
+  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(0,1fr) 428px; gap: var(--sp-cozy); padding: 0 var(--sp-section); background: #0b1018; }
   .workspace-grid[data-inspector-open="false"] { grid-template-columns: minmax(0,1fr) 0; }
   .graph-panel { display: contents; }
   .graph-stage { grid-column: 1; grid-row: 1; margin-left: 0; overflow: visible; }
-  .stage-overview { z-index: 12; flex-basis: 88px; width: calc(100vw - 48px); height: 88px; padding: 13px 0 12px; overflow: hidden; background: #0b1018; border-bottom: 0; }
-  .stage-overview-header { display: none; }
-  .stage-rail { grid-template-columns: repeat(8,minmax(0,1fr)); gap: 7px; min-width: 0; }
-  .stage-step { min-height: 60px; gap: .58rem; padding: .55rem .65rem; border-color: #2a3445; border-radius: 4px; background: #121923; }
+  .stage-rail { grid-template-columns: repeat(8,minmax(0,1fr)); gap: var(--sp-cozy); min-width: 0; }
+  .stage-step { min-height: 60px; gap: var(--sp-cozy); padding: var(--sp-cozy) var(--sp-default); border-color: #2a3445; border-radius: 4px; background: #121923; }
   .stage-step[data-state="current"] { border-color: var(--accent); box-shadow: inset 0 3px 0 rgba(79,209,197,.55); }
-  .stage-step-marker { flex-basis: 1.25rem; width: 1.25rem; height: 1.25rem; font-size: .58rem; }
+  .stage-step-marker { flex-basis: 1.25rem; width: 1.25rem; height: 1.25rem; }
   .stage-step-icon { flex: 0 0 1.55rem; color: #7f8999; font: 400 1.35rem/1 monospace; text-align: center; }
   .stage-step-icon svg { display: block; width: 1.55rem; height: 1.55rem; }
   .stage-step[data-state="current"] .stage-step-icon { color: var(--accent); }
-  .stage-step-name { font-size: .68rem; }
   .stage-step-state { display: none; }
   .graph-canvas { border: 1px solid var(--line); border-radius: 3px; background-color: #0e151f; background-size: 28px 28px; }
-  .graph-canvas-header { top: 13px; right: 13px; left: 15px; }
-  .graph-canvas-title { font-size: .88rem; }
-  .graph-toolbar { min-width: 460px; padding: 0; border-radius: 3px; background: #111925; box-shadow: none; }
+  .graph-stage-bar { padding: var(--sp-cozy) var(--sp-roomy); }
+  .graph-toolbar { padding: 0; border-radius: 3px; background: #111925; box-shadow: none; }
   .graph-toolbar > .graph-tool-button { flex: 1 1 0; }
-  .graph-tool-button { min-height: 34px; padding-inline: .75rem; border-right: 1px solid var(--line-soft); border-radius: 0; font-size: .7rem; }
+  .graph-tool-button { min-height: 34px; padding-inline: var(--sp-default); border-right: 1px solid var(--line-soft); border-radius: 0; }
   .graph-tool-button:last-child { border-right: 0; }
   .graph-precision-control, .graph-toolbar [data-evidence-toggle] { display: none; }
   .graph-minimap { display: none; }
-  .node-card { width: 256px; min-height: 140px; padding: .8rem; border-radius: 5px; background: #17202d; }
-  .node-title { font-size: .86rem; }
-  .node-summary { font-size: .69rem; }
-  .replay-panel { grid-column: 1 / -1; grid-row: 2; grid-template-columns: minmax(0,300px) minmax(0,1fr) minmax(0,410px); grid-template-rows: 43px 34px 39px; margin-top: 0; border: 1px solid var(--line); border-radius: 3px; background: #101722; }
-  .replay-dock-header { width: 300px; min-width: 0; max-width: 100%; padding: .7rem .8rem; }
-  .replay-current .panel-title { font-size: .84rem; }
+  .node-card { width: 256px; padding: var(--sp-default); border-radius: 5px; background: #17202d; }
+  .replay-panel { margin-top: 0; border: 1px solid var(--line); border-radius: 3px; background: #101722; }
+  .replay-dock-header { width: 300px; min-width: 0; max-width: 100%; padding: var(--sp-default) var(--sp-default); }
   .replay-range-wrap { grid-column: 2; grid-row: 1; }
   .replay-events { grid-column: 2 / 4; grid-row: 2 / 4; border-top: 0; }
-  .replay-empty { display: grid; grid-column: 1 / -1; place-items: center; align-self: end; height: 28px; min-height: 0; margin: 32px 0 0 calc(100% - 410px); padding: 0 .6rem; overflow: hidden; border: 1px solid var(--line); color: var(--muted); font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
-  .status-bar { grid-column: 1 / -1; grid-row: 3; width: calc(100% + 48px); margin-left: -24px; padding: 0 25px; border-top: 1px solid var(--line); font-size: .62rem; }
-  .evidence-panel { z-index: 20; grid-column: 2; grid-row: 1; align-self: stretch; min-height: 0; margin-top: 88px; border: 1px solid var(--line); border-radius: 3px; background: #121925; }
-  .evidence-panel .panel-header { height: 50px; padding: .65rem .9rem; }
+  .replay-empty { display: grid; grid-column: 1 / -1; place-items: center; align-self: end; height: 28px; min-height: 0; margin: var(--sp-band) 0 0 calc(100% - 410px); padding: 0 var(--sp-cozy); overflow: hidden; border: 1px solid var(--line); color: var(--muted); font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+  .status-bar { grid-column: 1 / -1; grid-row: 3; width: calc(100% + 48px); margin-left: calc(var(--sp-section) * -1); padding: 0 var(--sp-section); border-top: 1px solid var(--line); }
+  .evidence-panel { z-index: 20; grid-column: 2; grid-row: 1; align-self: stretch; min-height: 0; border: 1px solid var(--line); border-radius: 3px; background: #121925; }
+  .evidence-panel .panel-header { height: 50px; padding: var(--sp-default) var(--sp-roomy); }
   .evidence-panel .panel-header .kicker { display: none; }
-  .evidence-panel .panel-title { font-size: .9rem; }
   .evidence-panel .panel-count { display: none; }
   .inspector-tabs { grid-template-columns: repeat(4,minmax(0,1fr)); }
-  .inspector-tabs button { min-height: 40px; font-size: .7rem; }
-  .selected-node-summary { padding: 1rem; }
-  .selected-node-summary strong { font-size: .9rem; }
-  .selected-node-summary p { font-size: .72rem; }
+  .inspector-tabs button { min-height: 40px; }
+  .selected-node-summary { padding: var(--sp-roomy); }
 }
 @media (max-width: 1180px) {
   .company-workspace { grid-template-columns: 200px minmax(0,1fr) 300px; }
@@ -4495,14 +5545,13 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
 }
 @media (max-width: 720px) {
   .shell { grid-template-rows: 78px minmax(0,1fr); }
-  .top-run-context, .connection span:last-child { display: none; }
-  .topbar { display: grid; grid-template-columns: auto minmax(0,1fr) auto; grid-template-rows: 40px 32px; gap: 0 .35rem; padding-inline: .4rem; }
+  .connection span:last-child { display: none; }
+  .topbar { display: grid; grid-template-columns: auto minmax(0,1fr) auto; grid-template-rows: 40px 32px; gap: 0 var(--sp-snug); padding-inline: var(--sp-snug); }
   .brand { min-width: 0; }
-  .work-view-switcher { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; width: 100%; }
   .work-view-tab { min-width: 0; }
-  .topbar-actions { grid-column: 3; grid-row: 1; min-width: 0; flex: 0 0 auto; gap: .12rem; }
-  .connection { margin: 0 .1rem 0 0; }
-  .topbar-button { min-width: 30px; padding-inline: .3rem; }
+  .topbar-actions { grid-column: 3; grid-row: 1; min-width: 0; flex: 0 0 auto; gap: var(--sp-snug); }
+  .connection { margin: 0 var(--sp-hairline) 0 0; }
+  .topbar-button { min-width: 30px; padding-inline: var(--sp-tight); }
   .workspace-grid, .workspace-grid[data-inspector-open="true"] { display: block; }
   .company-workspace { height: auto; min-height: 100%; grid-template-columns: 1fr; grid-template-rows: auto minmax(520px,1fr) auto; }
   .company-session-rail { max-height: 190px; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -4513,19 +5562,16 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
   .company-board-header { align-items: flex-start; }
   .company-board-actions .surface-state { display: none; }
   .work-surface-view { height: 100%; }
-  .work-surface-header { padding: .8rem; }
+  .work-surface-header { padding: var(--sp-default); }
   .repository-layout { grid-template-columns: 1fr; }
-  .operational-section { padding: .8rem; }
+  .operational-section { --section-inline: var(--sp-default); padding: var(--sp-default) var(--section-inline); }
   .operational-section + .operational-section { border-top: 1px solid var(--line); border-left: 0; }
-  .run-context { grid-template-columns: minmax(0, 1fr) auto; gap: .45rem; padding: .45rem .5rem .5rem; }
-  .run-context-title { font-size: .82rem; }
-  .run-context-task { font-size: .59rem; }
-  .run-context-facts { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); border-left: 0; border-top: 1px solid var(--line); padding-top: .4rem; }
-  .context-fact { padding: .08rem .4rem; }
-  .run-context-source { justify-self: end; padding-left: 0; }
+  .run-context-facts { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: var(--sp-cozy); }
+  .run-context-source { justify-self: end; padding-left: 0; border-left: 0; }
   .run-context-source strong { max-width: 86px; text-align: right; }
-  .graph-panel { height: 100%; grid-template-rows: minmax(0,1fr) 104px 26px; }
-  .graph-canvas-header { top: .4rem; right: .4rem; left: .4rem; }
+  .graph-panel { height: 100%; }
+  .graph-stage-bar { flex-wrap: wrap; gap: var(--sp-snug); padding: var(--sp-snug); }
+  .graph-canvas-tools { flex: 1 1 100%; }
   .graph-canvas-title { display: none; }
   .graph-toolbar { width: 100%; max-width: none; overflow-x: auto; flex-wrap: nowrap; }
   .graph-tool-button { min-width: 40px; min-height: 40px; }
@@ -4533,21 +5579,20 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
   [data-live-graph-live], [data-live-graph-reset] { display: none; }
   .graph-canvas { overflow: auto; touch-action: pan-y; }
   .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
-  .node-list { position: relative; inset: auto; display: grid; gap: .45rem; padding: 3.4rem .5rem .6rem; }
-  .node-card { position: relative !important; top: auto !important; left: auto !important; width: 100% !important; min-height: 84px !important; max-height: none; }
-  .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: .6rem; overflow: hidden; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius); background: #172131; }
+  .node-list { position: relative; inset: auto; display: grid; gap: var(--sp-cozy); padding: var(--sp-cozy) var(--sp-cozy); }
+  .node-card { position: relative !important; top: auto !important; left: auto !important; width: 100% !important; min-height: 84px !important; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: var(--sp-cozy); overflow: hidden; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius); background: #172131; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: visible; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; height: auto; padding: 0; font: inherit; }
   .edge-layer, .graph-minimap { display: none; }
-  .replay-panel { grid-template-columns: 1fr; grid-template-rows: 42px 28px 34px; }
   .replay-dock-header { grid-row: 1; width: 100%; min-width: 0; grid-template-columns: minmax(64px,1fr) auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .replay-range-wrap { grid-column: 1; grid-row: 2; }
   .replay-events { grid-column: 1; grid-row: 3; }
   .evidence-panel { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; height: min(76dvh,660px); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0; transform: translateY(102%); transition: transform .18s ease; visibility: visible !important; }
   .evidence-panel[data-open="true"] { transform: translateY(0); }
   .inspector-tabs { grid-template-columns: repeat(4,minmax(72px,1fr)); }
-  .status-bar { gap: .45rem; }.status-bar .status-nodes,.status-bar .status-transport { display: none; }
+  .status-bar { gap: var(--sp-cozy); }.status-bar .status-nodes,.status-bar .status-transport { display: none; }
   .hub-switcher, .shortcut-grid { grid-template-columns: 1fr; }
   .hub-status { grid-column: 1; }
 }
@@ -4556,103 +5601,96 @@ kbd { min-width: 28px; padding: .16rem .3rem; border: 1px solid var(--line-stron
 .work-view-menu { position: relative; z-index: 40; flex: 0 0 auto; }
 .work-view-menu > summary { display: inline-flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
 .work-view-menu > summary::-webkit-details-marker { display: none; }
-.work-view-menu > summary::after { margin-left: .35rem; content: "⌄"; color: var(--subtle); }
+.work-view-menu > summary::after { margin-left: var(--sp-snug); content: "⌄"; color: var(--subtle); }
 .work-view-menu[open] > summary { border-color: var(--accent); color: var(--accent); }
-.work-view-menu .work-view-switcher { position: absolute; top: calc(100% + .45rem); right: 0; left: auto; width: 164px; height: auto; display: grid; grid-template-columns: 1fr; padding: .3rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: #101722; box-shadow: 0 16px 40px rgba(0,0,0,.42); transform: none; }
+.work-view-menu .work-view-switcher { position: absolute; top: calc(100% + .45rem); right: 0; left: auto; width: 164px; height: auto; display: grid; grid-template-columns: 1fr; padding: var(--sp-tight); border: 1px solid var(--line-strong); border-radius: var(--radius); background: #101722; box-shadow: 0 16px 40px rgba(0,0,0,.42); transform: none; }
 .work-view-menu .work-view-tab { width: 100%; min-width: 0; min-height: 36px; border: 0; border-radius: var(--radius-sm); text-align: left; }
 .work-view-menu .work-view-tab[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--accent); }
-.run-context { min-height: 48px; grid-template-columns: minmax(260px,1fr) minmax(460px,1.8fr) minmax(110px,.4fr); gap: .65rem; padding: .35rem 1.5rem; }
-.run-context-heading .context-kicker, .run-context-task { display: none; }
-.run-context-title { font-size: .86rem; }
-.run-context-facts { grid-template-columns: repeat(6,minmax(0,1fr)); }
-.context-fact { gap: .15rem; padding-block: 0; }
+.run-context-heading .context-kicker { display: none; }
 .stage-overview { flex: 0 0 auto; width: 100%; height: auto; margin: 0; padding: 0; overflow: visible; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: #0c1119; }
-.stage-overview-toggle, .replay-collapse-summary { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: 0 .85rem; list-style: none; color: var(--muted); background: #101722; cursor: pointer; font: 600 .58rem/1 monospace; }
+.stage-overview-toggle, .replay-collapse-summary { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-default); padding: 0 var(--sp-default); list-style: none; color: var(--muted); background: #101722; cursor: pointer; font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }
 .stage-overview-toggle::-webkit-details-marker, .replay-collapse-summary::-webkit-details-marker { display: none; }
 .stage-overview-toggle span:last-child, .replay-collapse-summary span:last-child { color: var(--accent); font-weight: 500; }
-.stage-overview-body { padding: .55rem .85rem .65rem; }
-.stage-overview-header { display: none; }
-.workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0,1fr) auto 28px; }
-.node-card { min-height: 176px; max-height: none; height: auto; grid-template-rows: auto auto auto auto; gap: .32rem; overflow: visible; }
-.node-owner-line { min-width: 0; display: flex; flex-wrap: wrap; gap: .2rem .55rem; color: var(--muted); font: 600 .58rem/1.25 monospace; }
+.stage-overview-body { padding: var(--sp-cozy) var(--sp-default) var(--sp-default); overflow-x: auto; }
+.stage-overview-toggle [data-stage-rail-state] { color: var(--accent); font-weight: 500; }
+.stage-overview-toggle [data-stage-rail-state="expand"] { display: none; }
+.stage-overview:not([open]) .stage-overview-toggle [data-stage-rail-state="collapse"] { display: none; }
+.stage-overview:not([open]) .stage-overview-toggle [data-stage-rail-state="expand"] { display: inline; }
+.workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0, 1fr); }
+.node-card { min-height: 176px; max-height: none; height: auto; grid-template-rows: auto auto auto auto; overflow: visible; }
+.node-owner-line { min-width: 0; display: flex; flex-wrap: wrap; gap: var(--sp-cozy); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }
 .node-owner-line span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-identity-row { grid-template-columns: 34px minmax(0,1fr); gap: .5rem; }
+.node-identity-row { grid-template-columns: 34px minmax(0,1fr); gap: var(--sp-cozy); }
 .node-identity-button { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .node-identity-button:hover .node-title, .node-identity-button:focus-visible .node-title { color: var(--accent); }
 .node-identity-button:focus-visible { border-radius: 4px; outline: 2px solid rgba(79,209,197,.42); outline-offset: 2px; }
-.node-glyph { width: 32px; height: 32px; padding: 6px; }
+.node-glyph { width: 32px; height: 32px; padding: var(--sp-snug); }
 .node-summary { -webkit-line-clamp: 1; }
-.node-proof { font-size: .5rem; }
-.node-capability-strip { min-width: 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .25rem; overflow: visible; }
+.node-capability-strip { min-width: 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--sp-snug); overflow: visible; }
 .node-capability:last-child:nth-child(odd) { grid-column: 1 / -1; }
-.node-capability { min-width: 0; max-width: 100%; min-height: 36px; display: grid; grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto auto; align-items: center; gap: .16rem .28rem; padding: .24rem .34rem; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: #101722; color: var(--text); text-align: left; cursor: pointer; }
+.node-capability { min-width: 0; max-width: 100%; min-height: 36px; display: grid; grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto auto; align-items: center; gap: var(--sp-snug); padding: var(--sp-tight) var(--sp-snug); overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: #101722; color: var(--text); text-align: left; cursor: pointer; }
 .node-capability:hover, .node-capability:focus-visible { border-color: var(--accent); background: rgba(79,209,197,.06); outline: 2px solid rgba(79,209,197,.2); outline-offset: 1px; }
-.node-capability-kind { min-width: 0; overflow: hidden; color: var(--completion-bright); font: 700 .64rem/1 monospace; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.node-capability-value { grid-column: 1 / -1; min-width: 0; max-width: none; overflow: hidden; color: var(--text); font: 600 .65rem/1.1 monospace; text-overflow: ellipsis; white-space: nowrap; }
-.node-capability-state { color: var(--muted); font: .62rem/1 monospace; }
+.node-capability-kind { min-width: 0; overflow: hidden; color: var(--completion-bright); font-weight: 700; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.node-capability-value { grid-column: 1 / -1; min-width: 0; max-width: none; overflow: hidden; color: var(--text); font-weight: 600; font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.node-capability-state { color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; }
 .node-capability[data-capability-state="planned"] .node-capability-state { color: var(--completion-bright); }
 .node-capability[data-capability-state="observed"] .node-capability-state { color: var(--green); }
-.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"] { height: auto !important; min-height: 176px !important; padding: .72rem; overflow: visible; border: 1px solid var(--line); border-left-width: 3px; background: #151d29; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
-.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"]::after { display: none; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"] > * { visibility: visible; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card[data-has-capabilities="true"] .node-title { position: static; height: auto; padding: 0; font: inherit; }
 .node-meta { display: none; }
-.replay-panel { position: relative; min-height: 34px; height: 34px; display: block; border-top: 1px solid var(--line); }
+.replay-panel { position: relative; min-height: var(--h-replay-collapsed); height: var(--h-replay-collapsed); display: block; border-top: 1px solid var(--line); }
 .replay-panel:not([open]) > :not(summary) { display: none !important; }
-.replay-panel[open] { height: 116px; display: grid; }
-.replay-collapse-summary { position: absolute; z-index: 4; top: 0; left: 0; width: 116px; height: 34px; border-right: 1px solid var(--line); }
-.replay-panel[open] .replay-dock-header { padding-left: 124px; }
+.replay-panel[open] { height: var(--h-replay-open); display: grid; }
+.replay-panel::details-content { display: contents; }
+.replay-collapse-summary { position: absolute; z-index: 4; top: 0; left: 0; width: 100%; height: var(--h-replay-collapsed); }
+.replay-collapse-summary span { white-space: nowrap; }
+.replay-collapse-summary [data-replay-dock-state] { color: var(--accent); font-weight: 500; }
+.replay-collapse-summary [data-replay-dock-state="collapse"] { display: none; }
+.replay-panel[open] .replay-collapse-summary { width: var(--w-replay-collapse); border-right: 1px solid var(--line); }
+.replay-panel[open] .replay-collapse-summary [data-replay-dock-state="expand"] { display: none; }
+.replay-panel[open] .replay-collapse-summary [data-replay-dock-state="collapse"] { display: inline; }
+.replay-panel[open] .replay-dock-header { padding-left: calc(var(--w-replay-collapse) + var(--sp-cozy)); }
 
 @media (min-width: 901px) and (min-height: 720px) {
-  .topbar { gap: .75rem; }
+  .topbar { gap: var(--sp-default); }
   .work-view-menu { margin-left: auto; }
   .topbar-actions { margin-left: 0; }
-  .run-context { min-height: 48px; grid-template-columns: minmax(300px,1fr) minmax(560px,1.9fr) 130px; padding: .35rem 25px; }
-  .run-context-title { font-size: .9rem; }
-  .context-fact span, .run-context-source span { font-size: .5rem; }
-  .context-fact strong { font-size: .68rem; }
-  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0,1fr) auto 28px; }
-  .stage-overview { z-index: 12; flex-basis: auto; width: calc(100vw - 48px); height: auto; padding: 0; overflow: visible; }
-  .stage-overview-body { padding: 7px 0; }
+  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0, 1fr) auto var(--h-status-bar); }
+  .stage-overview { z-index: 12; }
+  .stage-overview-body { padding: var(--sp-cozy) 0; }
   .stage-step { min-height: 52px; }
-  .node-card { min-height: 176px; max-height: none; padding: .72rem; overflow: visible; }
-  .replay-panel { grid-column: 1 / -1; grid-row: 2; height: 34px; grid-template-columns: minmax(0,300px) minmax(0,1fr) minmax(0,410px); grid-template-rows: 43px 34px 39px; }
-  .replay-panel[open] { height: 116px; }
-  .evidence-panel { margin-top: 0; }
+  .node-card { min-height: 176px; max-height: none; overflow: visible; }
+  .replay-panel { grid-column: 1 / -1; grid-row: 2; height: var(--h-replay-collapsed); grid-template-columns: minmax(0,300px) minmax(0,1fr) minmax(0,410px); grid-template-rows: 43px 34px minmax(0,1fr); }
 }
 
 @media (max-width: 720px) {
   .shell { grid-template-rows: 58px minmax(0,1fr); }
-  .topbar { display: flex; min-height: 58px; padding-inline: .45rem; }
+  .topbar { display: flex; min-height: 58px; padding-inline: var(--sp-cozy); }
   .top-run-context { display: none; }
   .work-view-menu { margin-left: auto; }
   .work-view-menu .work-view-switcher { right: 0; width: 150px; }
   .topbar-actions { margin-left: 0; }
   .connection, [data-live-open-help], [data-live-open-info] { display: none; }
-  .run-context { min-height: 42px; display: flex; align-items: center; padding: .3rem .55rem; }
+  .run-context { min-height: 42px; display: flex; align-items: center; gap: var(--sp-cozy); padding: var(--sp-tight) var(--sp-cozy); }
   .run-context-heading { flex: 1; }
   .run-context-facts, .run-context-source { display: none; }
-  .graph-panel { grid-template-rows: minmax(0,1fr) auto 26px; }
   .stage-overview-toggle { min-height: 32px; }
-  .stage-overview-body { overflow-x: auto; }
   .node-list { grid-template-columns: 1fr; }
   .node-card, .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 166px !important; }
   .node-capability-strip { grid-template-columns: 1fr; }
   .node-capability { min-height: 34px; }
-  .node-capability-kind, .node-capability-value, .node-capability-state { font-size: 10px; }
-  .replay-panel, .replay-panel:not([open]) { min-height: 34px; height: 34px; }
-  .replay-panel[open] { height: 126px; grid-template-columns: 1fr; grid-template-rows: 42px 28px 34px; }
-  .replay-panel[open] .replay-dock-header { padding-left: 124px; }
+  .node-capability-kind, .node-capability-value, .node-capability-state { font-size: var(--fs-entity-body); }
+  .replay-panel, .replay-panel:not([open]) { min-height: var(--h-replay-collapsed); height: var(--h-replay-collapsed); }
+  .replay-panel[open] { height: auto; grid-template-columns: 1fr; grid-template-rows: 42px 28px auto; }
+  .replay-panel[open] .replay-dock-header { padding-left: calc(var(--w-replay-collapse) + var(--sp-cozy)); }
 }
-@media (max-width: 380px) { .brand-title { display: none; }.top-run-context strong { max-width: 24vw; }.topbar-button { font-size: .62rem; }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: .5rem; } }
+@media (max-width: 380px) { .brand-title { display: none; }.topbar-button { font-size: var(--fs-label); }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: var(--sp-cozy); } }
 @media (min-width: 721px) and (max-width: 1024px) {
-  .node-card { padding: 14px; gap: 7px; }
+  .node-card { padding: var(--sp-roomy); gap: var(--sp-cozy); }
   .node-summary { display: none; }
-  .node-owner-line { display: grid; grid-template-columns: minmax(0,1fr); gap: 4px; }
-  .node-card-top, .node-owner-line, .node-task, .node-proof { font-size: 11px; }
-  .node-capability-strip { gap: 6px; }
-  .node-capability { min-height: 38px; padding: 6px 8px; }
-  .node-capability-kind, .node-capability-value, .node-capability-state { font-size: 10.5px; }
+  .node-owner-line { display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-cozy); }
+  .node-card-top, .node-owner-line, .node-task, .node-proof { font-size: var(--fs-entity-body); }
+  .node-capability-strip { gap: var(--sp-snug); }
+  .node-capability { min-height: 38px; padding: var(--sp-snug) var(--sp-cozy); }
+  .node-capability-kind, .node-capability-value, .node-capability-state { font-size: var(--fs-entity-body); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
 `;
@@ -4664,6 +5702,7 @@ const FIXED_UI_ICONS = Object.freeze({
   live: '<path d="M2 13h4l2.2-6 3.4 11L15 9l2 4h5"/>',
   reset: '<path d="M4 8V3m0 0h5M4 3l4 4"/><path d="M5.5 17.5A8 8 0 1 0 6 6"/>',
   graph: '<circle cx="5" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="12" r="2"/><path d="m7 11 3.5-4.5M13.5 6.5 17 11M7 13h10"/>',
+  grip: '<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>',
   previous: '<path d="m15 6-6 6 6 6"/><path d="M7 6v12"/>',
   play: '<path d="m9 6 9 6-9 6Z"/>',
   next: '<path d="m9 6 6 6-6 6"/><path d="M17 6v12"/>',
@@ -4740,6 +5779,7 @@ export function renderLiveControlRoomPage({
           <div class="context-fact" role="listitem"><span data-i18n-en="Events" data-i18n-zh="事件">事件</span><strong data-live-context-events>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Evidence" data-i18n-zh="证据">证据</span><strong data-live-context-evidence>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
+          <div class="context-fact" role="listitem" data-live-context-chat hidden><button class="context-fact-copy" type="button" data-live-context-chat-copy title="Copy the full chat id">${EMPTY_PLACEHOLDER}</button></div>
         </div>
         <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
       </section>
@@ -4765,21 +5805,21 @@ export function renderLiveControlRoomPage({
         <section class="graph-panel" id="run-view" role="tabpanel" aria-labelledby="work-view-run" data-live-run-view aria-label="Run view">
           <div class="graph-stage" data-live-graph-viewport>
             <h1 class="sr-only" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
-            <details class="stage-overview" open aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-i18n-en="Collapse" data-i18n-zh="收起">收起</span></summary><div class="stage-overview-body"><div class="stage-overview-header"><div><p class="kicker" data-i18n-en="Eight-stage spine" data-i18n-zh="八阶段主线">八阶段主线</p><h2 data-i18n-en="Critical to Evolution" data-i18n-zh="从目标确认到经验沉淀">从目标确认到经验沉淀</h2></div><span data-i18n-en="Replay-backed state" data-i18n-zh="状态来自回放事件">状态来自回放事件</span></div><ol class="stage-rail" data-live-stage-rail></ol></div></details>
+            <details class="stage-overview" aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-stage-rail-state="collapse" data-i18n-en="Collapse" data-i18n-zh="收起">收起</span><span data-stage-rail-state="expand" data-i18n-en="Expand" data-i18n-zh="展开">展开</span></summary><div class="stage-overview-body"><ol class="stage-rail" data-live-stage-rail></ol></div></details>
+            <div class="graph-stage-bar"><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><span class="graph-edge-legend" data-i18n-en="Glow = running · Green solid = done · Gray dashed = queued · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属</span><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
-              <div class="graph-canvas-header"><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}实时运行图</span><span class="graph-edge-legend" data-i18n-en="Glow = running · Green solid = done · Gray dashed = queued · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属</span><div class="graph-toolbar" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div>
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
                 <div class="node-list" data-live-node-list role="list" aria-label="Execution nodes"></div>
               </div>
               <div class="graph-minimap" data-live-graph-minimap aria-label="Graph minimap" role="img"><div class="minimap-scene" data-live-minimap-scene></div><span class="minimap-viewport" data-live-minimap-viewport aria-hidden="true"></span></div>
+              <div class="graph-empty" data-live-graph-empty hidden><p data-i18n-en="No task nodes in this snapshot." data-i18n-zh="当前快照中没有任务节点。">当前快照中没有任务节点。</p></div>
             </div>
-            <div class="graph-empty" data-live-graph-empty hidden><p data-i18n-en="No task nodes in this snapshot." data-i18n-zh="当前快照中没有任务节点。">当前快照中没有任务节点。</p></div>
           </div>
           <details class="replay-panel replay-dock" aria-labelledby="replay-title">
-            <summary class="replay-collapse-summary"><span data-i18n-en="Replay" data-i18n-zh="回放">回放</span><span data-i18n-en="Open timeline" data-i18n-zh="展开时间线">展开时间线</span></summary>
+            <summary class="replay-collapse-summary"><span data-i18n-en="Replay" data-i18n-zh="回放">回放</span><span data-replay-dock-state="expand" data-i18n-en="Open timeline" data-i18n-zh="展开时间线">展开时间线</span><span data-replay-dock-state="collapse" data-i18n-en="Collapse" data-i18n-zh="收起">收起</span></summary>
             <header class="replay-dock-header"><div class="replay-current"><span class="panel-title" id="replay-title" data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线</span><span class="panel-note" data-replay-status>正在等待回放数据</span></div><div class="replay-controls"><button class="replay-button" type="button" data-replay-prev aria-label="Previous replay event" title="Previous">${fixedUiIcon("previous")}</button><button class="replay-button replay-play" type="button" data-replay-play aria-label="Play replay">${fixedUiIcon("play")}<span class="sr-only" data-replay-play-label>播放</span></button><button class="replay-button" type="button" data-replay-next aria-label="Next replay event" title="Next">${fixedUiIcon("next")}</button><button class="replay-button" type="button" data-replay-live aria-label="Go to live replay position">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="replay-button replay-reset" type="button" data-replay-reset aria-label="Reset replay">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button></div></header>
-            <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div><div class="replay-ticks" aria-hidden="true"><span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span><span>01:15</span><span>01:30</span><span>01:45</span><span>02:00</span></div></div>
+            <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div><div class="replay-ticks" data-replay-ticks aria-hidden="true"></div></div>
             <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
           </details>
           <div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span class="status-title" data-live-status-title>等待运行</span><span><strong data-live-run-progress>${EMPTY_PLACEHOLDER}</strong> · <span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>${EMPTY_PLACEHOLDER}</span> · <span data-live-node-count>0 个节点</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-run-updated>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-source>本地观察器</span></div>

@@ -6,6 +6,7 @@ import {
   buildMetaKimHooksTemplate,
   hookCommandNode,
   mergeGlobalMetaKimHooksIntoSettings,
+  mergeHookMatcherBlocks,
   mergeRepoClaudeSettings,
 } from "../../scripts/claude-settings-merge.mjs";
 
@@ -524,6 +525,71 @@ describe("Claude settings hook command rendering", () => {
     assert.match(JSON.stringify(merged.hooks), /user-session-start\.mjs/);
     assert.doesNotMatch(JSON.stringify(merged.hooks), /meta-kim-memory-save\.mjs/);
     assert.match(JSON.stringify(merged.hooks), /graphify-context\.mjs/);
+  });
+
+  // Cursor's hooks.json declares commands directly on the event block instead of
+  // nesting them under a matcher. Both shapes reach this one merge helper.
+  test("keeps every flat command block instead of collapsing them by absent matcher", () => {
+    const merged = mergeHookMatcherBlocks(
+      [{ command: "node .cursor/hooks/stop-compaction.mjs" }],
+      [
+        { command: "node /home/u/.cursor/hooks/meta-kim/spine.mjs", timeout: 5 },
+        { command: "node /home/u/.cursor/hooks/meta-kim/memory.mjs --event stop", timeout: 10 },
+      ],
+    );
+
+    assert.deepEqual(
+      merged.map((block) => block.command),
+      [
+        "node .cursor/hooks/stop-compaction.mjs",
+        "node /home/u/.cursor/hooks/meta-kim/spine.mjs",
+        "node /home/u/.cursor/hooks/meta-kim/memory.mjs --event stop",
+      ],
+      "a matcher-less addition must not be swallowed by an unrelated flat block",
+    );
+    assert.equal(merged[1].timeout, 5, "flat additions keep their own fields");
+    assert.equal(
+      merged.some((block) => Array.isArray(block.hooks)),
+      false,
+      "flat blocks must not grow a nested hooks array",
+    );
+  });
+
+  test("merging flat blocks twice does not duplicate a command", () => {
+    const additions = [
+      { command: "node /home/u/.cursor/hooks/meta-kim/spine.mjs", timeout: 5 },
+      { command: "node /home/u/.cursor/hooks/hookprompt-adapter.mjs", timeout: 10 },
+    ];
+    const once = mergeHookMatcherBlocks([], additions);
+    const twice = mergeHookMatcherBlocks(once, additions);
+
+    assert.deepEqual(twice, once, "flat merge must be idempotent");
+  });
+
+  // A matcher-keyed addition can carry `matcher: undefined` (Codex's
+  // UserPromptSubmit block does). Without an explicit shape check it matches any
+  // flat block and grafts a nested hooks array onto a block that already
+  // declares its own command, producing a block no runtime can read.
+  test("a matcher-less nested addition does not graft onto a flat command block", () => {
+    const merged = mergeHookMatcherBlocks(
+      [{ command: "node .cursor/hooks/subagent-context.mjs" }],
+      [{ hooks: [{ command: "node /home/u/.claude/hooks/meta-kim/spine.mjs" }] }],
+    );
+
+    assert.equal(merged.length, 2, "the nested addition becomes its own block");
+    assert.equal(
+      merged[0].command,
+      "node .cursor/hooks/subagent-context.mjs",
+      "the flat block is left intact",
+    );
+    assert.equal(
+      Array.isArray(merged[0].hooks),
+      false,
+      "the flat block must not gain a nested hooks array",
+    );
+    assert.deepEqual(merged[1].hooks.map((hook) => hook.command), [
+      "node /home/u/.claude/hooks/meta-kim/spine.mjs",
+    ]);
   });
 
 });

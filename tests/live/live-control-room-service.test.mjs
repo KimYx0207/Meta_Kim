@@ -32,6 +32,11 @@ test("does not present an unproven completed node as verified completion", () =>
   });
   assert.equal(snapshot.run.status, "in_doubt");
   assert.equal(snapshot.nodes.some((node) => node.kind === "stage"), false);
+  assert.equal(
+    snapshot.nodes.length,
+    0,
+    "a durable status with no artifact is not evidence of any agent, so no node may be synthesized",
+  );
 });
 
 test("re-sanitizes hostile compact projections before exposing the public snapshot", () => {
@@ -656,6 +661,90 @@ test("omits the scheduling block for a run that recorded no wave plan", () => {
   assert.equal(buildLiveCompactProjection(sampleArtifact()).scheduling, null);
 });
 
+// A projection built from an acceptance fixture is byte-shaped exactly like one
+// built from a real run and lands in the same governed-executions directory. A
+// reader cannot recover the difference afterwards, so origin has to travel with
+// the record. Measured on this repo before the fix: the only two rows in a
+// 44-row directory that carried worker counts and a resolved runtime were both
+// fixtures, and they sorted above every real run.
+test("record origin travels with a projection instead of being unrecoverable", () => {
+  const real = buildLiveCompactProjection(sampleArtifact("meta-origin-real"));
+  assert.equal(real.session.recordOrigin, "governed_run");
+  assert.equal(real.run.recordOrigin, "governed_run");
+
+  const fixture = sampleArtifact("meta-origin-fixture");
+  fixture.recordOrigin = "acceptance_fixture";
+  const projected = buildLiveCompactProjection(fixture);
+  assert.equal(projected.session.recordOrigin, "acceptance_fixture");
+  assert.equal(projected.run.recordOrigin, "acceptance_fixture");
+
+  const spoofed = sampleArtifact("meta-origin-spoof");
+  spoofed.recordOrigin = "definitely-real";
+  assert.equal(
+    buildLiveCompactProjection(spoofed).session.recordOrigin,
+    "governed_run",
+    "an unknown origin must fall back to the neutral default rather than reach the reader verbatim",
+  );
+});
+
+// `sanitizeCompactProjection` rebuilds a stored projection from an allow-list, so
+// a field registered only in the builder is silently dropped on read-back. The
+// fixture would then be marked at write time and unmarked in the detail view.
+test("a stored fixture projection keeps its origin through snapshot read-back", () => {
+  const fixture = sampleArtifact("meta-origin-readback");
+  fixture.recordOrigin = "acceptance_fixture";
+  const stored = JSON.parse(JSON.stringify(buildLiveCompactProjection(fixture)));
+
+  const snapshot = buildLiveSnapshot({ governedArtifact: stored });
+  assert.equal(snapshot.session.recordOrigin, "acceptance_fixture");
+  assert.equal(snapshot.run.recordOrigin, "acceptance_fixture");
+
+  const storedReal = JSON.parse(JSON.stringify(buildLiveCompactProjection(sampleArtifact("meta-origin-readback-real"))));
+  assert.equal(buildLiveSnapshot({ governedArtifact: storedReal }).session.recordOrigin, "governed_run");
+});
+
+// The discovery block became an additive field on an already-shipped projection
+// version, so a stored file now carries a key its own schemaVersion does not
+// announce. That is only safe because the reader re-derives it, and nothing
+// asserted the write half.
+//
+// Load-bearing on one mutation and one only: strip `state` from the emitted block.
+// Coarser breaks (dropping either `...conversation` spread, or the whole emission)
+// red this together with the snapshot-side tests, because both surfaces share one
+// producer — so those breaks prove the producer, not this assertion.
+test("a stored projection persists the discovery block it was built with", () => {
+  const artifact = sampleArtifact("meta-discovery-persisted");
+  artifact.sourceConversation = { runtime: "claude", conversationRef: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" };
+  const stored = JSON.parse(JSON.stringify(buildLiveCompactProjection(artifact)));
+
+  assert.deepEqual(stored.run.conversationDiscovery, {
+    state: "metadata_only",
+    runtime: "claude",
+    reason: "run_bound_metadata_only",
+  });
+  assert.deepEqual(stored.session.conversationDiscovery, stored.run.conversationDiscovery,
+    "the header and the list row read from different halves of the same file, so a block on only one of them puts them on different answers");
+});
+
+// Pinned deliberately: the discovery block above shipped as an additive field on
+// an already-released version, and that is only safe because the reader re-derives
+// it. The re-derive itself is guarded in live-conversation-discovery.test.mjs —
+// present-and-wrong there, absent-in-older-builds next to it. A copy of either one
+// here would mean a single mutation reds two files and neither is load-bearing.
+//
+// This is not the only test that reds on a bump: the fixtures above hardcode the
+// same literal and fail first. It stays because a bumper landing on a sanitizer
+// test learns nothing about why the last additive field travelled without one, and
+// this assertion's message is where that reason is written down.
+test("the projection version that carried an additive field is pinned as a literal", () => {
+  const artifact = sampleArtifact("meta-discovery-version-pin");
+  artifact.sourceConversation = { runtime: "claude", conversationRef: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" };
+  const stored = JSON.parse(JSON.stringify(buildLiveCompactProjection(artifact)));
+
+  assert.equal(stored.schemaVersion, "meta-kim-live-projection-v2",
+    "conversationDiscovery travelled on this version with no bump; changing it means re-deciding whether blocks stored by that version are still re-derived on read");
+});
+
 test("depends_on creates a planned context transfer with unavailable payload truth", () => {
   const artifact = sampleArtifact("meta-context-planned");
   artifact.workerTaskPackets.push({
@@ -1005,7 +1094,125 @@ test("projects selected capability bindings as planned until trusted host eviden
     runtime_tool: ["view_image"], hook: ["dispatch-gate"], plugin: ["browser"], memory_graph: ["graphify"], dependency: ["undici"],
   });
   const main = snapshot.nodes.find((node) => node.isMain === true);
-  assert.deepEqual(main.capabilityTruth, [{ kind: "agent", state: "planned", plannedNames: ["meta-conductor"], actualNames: [] }]);
+  assert.deepEqual(
+    main.capabilityTruth,
+    [],
+    "this artifact declares no dispatch owner, so the root node must not claim a planned agent binding",
+  );
+  assert.equal(main.ownerAgent, "in_doubt");
+});
+
+test("a declared dispatch owner still reaches the root node as a planned agent binding", () => {
+  const artifact = sampleArtifact("meta-capability-root-owner");
+  artifact.dispatchEnvelopePacket = { ownerAgent: "meta-warden", runId: "meta-capability-root-owner" };
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
+  const main = snapshot.nodes.find((node) => node.isMain === true);
+
+  assert.equal(main.ownerAgent, "meta-warden");
+  assert.deepEqual(main.capabilityTruth, [
+    { kind: "agent", state: "planned", plannedNames: ["meta-warden"], actualNames: [] },
+  ]);
+});
+
+test("an artifact that declared nothing draws no graph, but any real declaration still does", () => {
+  const bare = {
+    schemaVersion: "governed-execution-v1",
+    runId: "meta-graph-evidence",
+    status: "in_progress",
+    updatedAt: "2026-08-24T01:00:00.000Z",
+  };
+  const nodesFor = (artifact) =>
+    buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" }).nodes;
+
+  assert.deepEqual(
+    nodesFor(bare),
+    [],
+    "no owner, no worker, no workflow and no replay is nothing to draw, not a one-agent run",
+  );
+
+  const owned = nodesFor({ ...bare, dispatchEnvelopePacket: { ownerAgent: "meta-warden" } });
+  assert.equal(owned.length, 1);
+  assert.equal(owned[0].ownerAgent, "meta-warden", "a declared owner is evidence and keeps its node");
+
+  const replayed = nodesFor({
+    ...bare,
+    replay: [{
+      sequence: 1,
+      at: "2026-08-24T00:59:00.000Z",
+      kind: "stage",
+      nodeId: "stage:execution",
+      status: "in_progress",
+      label: "Execution",
+      runId: bare.runId,
+    }],
+  });
+  assert.equal(replayed.length, 1, "a recorded event is evidence, and dropping the node would orphan it");
+
+  const worked = nodesFor({
+    ...bare,
+    workerTaskPackets: [{ taskPacketId: "t1", ownerAgent: "frontend-developer", stage: "execution", dependsOn: [] }],
+  });
+  assert.equal(worked.some((node) => node.isMain === true), true);
+  assert.equal(worked.some((node) => node.ownerAgent === "frontend-developer"), true);
+});
+
+test("the root node's own copy never asserts an owner the artifact did not declare", () => {
+  const undeclared = buildLiveSnapshot({
+    governedArtifact: sampleArtifact("meta-root-summary-undeclared"),
+    observedAt: "2026-08-24T01:01:00.000Z",
+  }).nodes.find((node) => node.isMain === true);
+
+  assert.equal(
+    undeclared.summary.includes("owner"),
+    false,
+    "an artifact with no dispatch owner must not carry a summary that claims one",
+  );
+  assert.deepEqual(undeclared.provenance, [{ kind: "dispatch_owner", state: "unreported" }]);
+
+  const artifact = sampleArtifact("meta-root-summary-declared");
+  artifact.dispatchEnvelopePacket = { ownerAgent: "meta-warden", runId: "meta-root-summary-declared" };
+  const declared = buildLiveSnapshot({
+    governedArtifact: artifact,
+    observedAt: "2026-08-24T01:01:00.000Z",
+  }).nodes.find((node) => node.isMain === true);
+
+  assert.equal(declared.summary.startsWith("Main governed run owner · "), true);
+  assert.deepEqual(declared.provenance, [{ kind: "dispatch_owner", state: "declared" }]);
+});
+
+test("the root node's summary never keeps a separator whose value side is empty", () => {
+  // `safeText` strips angle brackets *after* its own emptiness guard, so a title
+  // built only from them survives the guard and comes back as "" or " ". The
+  // owner clause is real in that case, so only the separator has to go.
+  const mainNodeFor = (title) => {
+    const artifact = sampleArtifact("meta-root-summary-empty-title");
+    artifact.dispatchEnvelopePacket = { ownerAgent: "meta-conductor", runId: "meta-root-summary-empty-title" };
+    artifact.title = title;
+    return buildLiveSnapshot({
+      governedArtifact: artifact,
+      observedAt: "2026-08-24T01:01:00.000Z",
+    }).nodes.find((node) => node.isMain === true);
+  };
+
+  for (const title of ["<>", "< >"]) {
+    const main = mainNodeFor(title);
+    assert.equal(
+      main.summary,
+      "Main governed run owner",
+      `a title of ${JSON.stringify(title)} carries no value, so the owner clause must stand alone`,
+    );
+    assert.equal(
+      /·\s*$/u.test(main.summary),
+      false,
+      "a trailing separator reads as a value the projection failed to load",
+    );
+  }
+
+  assert.equal(
+    mainNodeFor("Ship the control room").summary,
+    "Main governed run owner · Ship the control room",
+    "a title that survives normalization still joins to the owner clause",
+  );
 });
 
 test("projects actual Agent Skill MCP and Tool names only from trusted same-run invocation evidence", () => {
@@ -1624,4 +1831,158 @@ test("capacity wave: budget compaction prunes wave membership instead of leaving
   assert.equal(fitted.scheduling.coverage.mappedNodeCount, wave.mappedCount);
   assert.equal(fitted.scheduling.coverage.declaredTaskCount, 6);
   assert.equal(fitted.scheduling.coverage.complete, false);
+});
+
+test("an activation-only durable status projects no node and states why the graph is empty", () => {
+  const durableStatus = {
+    schemaVersion: 2,
+    active: true,
+    lifecycleStatus: "active",
+    runId: "meta-activation-only-1",
+    currentStage: "Critical",
+    currentStageKey: "critical",
+    updatedAt: "2026-08-24T01:00:00.000Z",
+    startedAt: "2026-08-24T01:00:00.000Z",
+    stages: { critical: { status: "in_progress" } },
+  };
+  const snapshot = buildLiveSnapshot({
+    durableStatus,
+    governedArtifact: null,
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+
+  assert.equal(snapshot.run.runId, "meta-activation-only-1");
+  assert.equal(snapshot.run.substanceClass, "activation_only");
+  assert.equal("title" in snapshot.run, false, "no title may be invented for a run that declared none");
+  assert.deepEqual(snapshot.nodes, [], "an activation receipt must not mint a synthetic owner node");
+  assert.deepEqual(snapshot.edges, []);
+  assert.deepEqual(snapshot.replay, []);
+  assert.equal(snapshot.counts.nodes, 0);
+  assert.equal(snapshot.counts.events, 0);
+  assert.equal(snapshot.graphAvailability.state, "no_graph_evidence");
+  assert.equal(snapshot.graphAvailability.reason, "no_governed_artifact_for_run");
+  assert.equal(snapshot.graphAvailability.substanceClass, "activation_only");
+  assert.equal(snapshot.graphAvailability.substanceSource, "derived_from_status_fields");
+  assert.equal(snapshot.graphAvailability.substanceSignals.completedStages, 0);
+  assert.equal(snapshot.graphAvailability.substanceSignals.advancedBeyondEntryStage, false);
+});
+
+test("an activation-only durable status carries its verified chat link into the run header", () => {
+  const snapshot = buildLiveSnapshot({
+    durableStatus: {
+      schemaVersion: 2,
+      active: true,
+      lifecycleStatus: "active",
+      runId: "meta-activation-linked-1",
+      currentStage: "Critical",
+      currentStageKey: "critical",
+      updatedAt: "2026-09-02T05:01:09.483Z",
+      startedAt: "2026-09-02T05:01:09.474Z",
+      stages: { critical: { status: "in_progress" } },
+      sourceRuntime: "claude",
+      conversationLinkState: "verified",
+      sourceConversation: {
+        runtime: "claude",
+        conversationId: "b5799d00-ef7a-4882-818d-d9053cacba71",
+        runId: "meta-activation-linked-1",
+        matchBasis: "transcript_file_verified",
+      },
+    },
+    governedArtifact: null,
+    observedAt: "2026-09-02T05:01:30.000Z",
+  });
+
+  assert.equal(snapshot.source.kind, "durable_status");
+  assert.equal(snapshot.run.substanceClass, "activation_only");
+  assert.equal(snapshot.run.conversationLinkState, "verified");
+  assert.equal(snapshot.run.conversationRef, "b5799d00-ef7a-4882-818d-d9053cacba71");
+  assert.equal(snapshot.run.sourceRuntime, "claude");
+  assert.equal(snapshot.run.verifiedLinks.length, 1);
+  assert.equal(snapshot.run.verifiedLinks[0].sourceRuntime, "claude");
+  assert.equal("conversationLinkRefusal" in snapshot.run, false, "a bound run must not also print why binding failed");
+});
+
+test("an activation-only durable status carries the refusal reason when no chat link was bound", () => {
+  const snapshot = buildLiveSnapshot({
+    durableStatus: {
+      schemaVersion: 2,
+      active: true,
+      lifecycleStatus: "active",
+      runId: "meta-activation-refused-1",
+      currentStage: "Critical",
+      currentStageKey: "critical",
+      updatedAt: "2026-09-02T05:01:09.483Z",
+      startedAt: "2026-09-02T05:01:09.474Z",
+      stages: { critical: { status: "in_progress" } },
+      sourceRuntime: "codex",
+      conversationLinkRefusal: "transcript_file_absent",
+    },
+    governedArtifact: null,
+    observedAt: "2026-09-02T05:01:30.000Z",
+  });
+
+  assert.equal(snapshot.run.conversationLinkState, "unlinked");
+  assert.equal(snapshot.run.conversationLinkRefusal, "transcript_file_absent");
+  assert.equal(snapshot.run.sourceRuntime, "codex", "a run that named its tool must not read as an unrecorded source");
+  assert.deepEqual(snapshot.run.verifiedLinks, []);
+  assert.equal("conversationRef" in snapshot.run, false);
+});
+
+test("a governed run names the runtime its own request record proves, on both surfaces", () => {
+  const runId = "meta-runtime-family-1";
+  const artifact = {
+    ...sampleArtifact(runId),
+    requestRecord: { runtimeContext: { runtimeFamily: "codex", os: "windows" } },
+  };
+
+  const projection = buildLiveCompactProjection(artifact, runId);
+  assert.equal(projection.run.sourceRuntime, "codex", "the projection is where the runtime family is lost");
+
+  const fromRaw = buildLiveSnapshot({
+    durableStatus: null,
+    governedArtifact: artifact,
+    observedAt: "2026-09-02T05:01:30.000Z",
+  });
+  assert.equal(fromRaw.source.kind, "governed_artifact");
+  assert.equal(fromRaw.run.sourceRuntime, "codex", "the session list and the run header must name the same runtime");
+
+  const fromProjection = buildLiveSnapshot({
+    durableStatus: null,
+    governedArtifact: projection,
+    observedAt: "2026-09-02T05:01:30.000Z",
+  });
+  assert.equal(fromProjection.source.kind, "live_projection");
+  assert.equal(fromProjection.run.sourceRuntime, "codex", "a stored projection must not lose the runtime either");
+});
+
+test("a substantive durable status keeps the nodes its own record declares", () => {
+  const durableStatus = {
+    ...sampleStatus("meta-substantive-durable-1"),
+    workerTaskPackets: [
+      {
+        taskPacketId: "task-backend-1",
+        roleDisplayName: "backend",
+        ownerAgent: "backend-developer",
+        stage: "execution",
+        dependsOn: [],
+      },
+    ],
+  };
+  const snapshot = buildLiveSnapshot({
+    durableStatus,
+    governedArtifact: null,
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+
+  assert.equal(snapshot.run.substanceClass, "substantive", "substance rides on every snapshot path");
+  assert.ok(snapshot.nodes.length > 0, "declared worker packets are real records and must stay visible");
+  assert.equal(snapshot.graphAvailability.state, "graph_available");
+  assert.equal(snapshot.graphAvailability.substanceClass, "substantive");
+});
+
+test("a run with no readable record reports no selection rather than an empty graph claim", () => {
+  const snapshot = buildLiveSnapshot({ observedAt: "2026-08-24T01:01:00.000Z" });
+  assert.equal(snapshot.run, null);
+  assert.equal(snapshot.graphAvailability.state, "no_run_selected");
+  assert.equal(snapshot.graphAvailability.substanceClass, null);
 });

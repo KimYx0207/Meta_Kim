@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "meta-kim-live-spacing-scale-v1",
+  "grid": {
+    "rootFontSizePx": 16,
+    "stepPx": 2,
+    "rationale": "Every step must land on a whole even pixel at the standard root, because the stylesheet shipped 52 distinct spacing values of which sixteen sat inside a 4.48px-to-8.8px window - 5.6px next to 5.76px next to 6.08px. Differences that small are not a design decision anyone can review or a reader can perceive; they are only a guarantee that two boxes meant to align never quite do. A grid makes the near-miss unrepresentable rather than discouraged."
+  },
+  "hierarchy": {
+    "minimumAdjacentRatio": 1.3,
+    "minimumAdjacentDeltaPx": 2,
+    "rationale": "Spacing communicates grouping, so two steps only earn separate names if a reader groups differently under them. Both bounds are needed and each catches the end the other misses: the ratio catches the top, where 24px and 25px both ship today and read as one level, and the pixel delta catches the bottom, where a ratio alone would permit 2px next to 2.6px."
+  },
+  "textAdjacency": {
+    "minimumPx": 8,
+    "appliesToLeadingFamilies": ["snug", "normal", "display"],
+    "rationale": "The mass of this stylesheet's spacing sat under 8px - 111 of 322 static components landed between 4.48px and 8.8px - and that is the density the maintainer described as painful to look at, with chrome butting into text. 8px is roughly half the em box at the body step, which is the conventional lower bound for padding that still reads as a margin rather than as a clipped edge, and it is deliberately a named step so a rule that respects the floor stays on the ladder instead of drifting onto a literal.",
+    "scopeRationale": "The floor is scoped by how the text wraps, not by how large it is, because a padded box means two different things. Around wrapped prose the padding is the gap between a text block and the container holding it, and 4px there is the defect. Around a single-line label the padding IS the control - a status pill, a tab, a kbd cap - and its height is the line box plus that padding, so an 8px floor would make a status pill taller than the buttons beside it and would spend vertical budget the chrome does not have. Which case a rule is in is already written down as its leading family, so this names the families rather than listing selectors, and any rule that pads its own text below the floor without declaring a family has to declare one before the exemption applies."
+  },
+  "boxSeparation": {
+    "minimumPx": 6,
+    "rationale": "textAdjacency governs padding, which only a rule that sizes its own text can declare. The distance between a label and the value under it is not padding on either of them - it is a gap on the container, and the container declares no font size at all, so it is structurally invisible to a padding sweep. That is how `.context-fact { gap: 2px }` shipped and measured 0.00px between the bottom of one value and the top of the next label: the floor's own role already claimed 'between two lines of one field', and half of it had never been enforced. 6px is the separation floor for any gap, including gaps between controls that the 8px text floor deliberately exempts, because below the snug step a gap stops reading as a grouping level and starts reading as a rendering artifact. Text-run gaps are held to textAdjacency.minimumPx on top of this, and a literal 0 stays legal because collapsing one axis of a shorthand is a reset rather than a distance."
+  },
+  "stepPropertyPrefix": "--sp-",
+  "steps": [
+    { "name": "hairline", "length": "0.125rem", "role": "optical nudge against a border or an icon's own baseline. A padding or offset step only: it is below boxSeparation.minimumPx, so it is never a gap and never a distance between two text runs." },
+    { "name": "tight", "length": "0.25rem", "role": "the interior padding of a chip, pill, or the smallest control, where the padding is what gives the control its height. A padding step only, for the same reason as hairline: this step shipped as the gap in twenty-four rules - toolbars, tag rows, capability strips, label-over-value stacks - and 4px between two boxes reads as a rendering artifact rather than as a grouping level, which is most of what made the room painful to look at." },
+    { "name": "snug", "length": "0.375rem", "role": "between sibling controls or chips in one row, where neither side is padded text" },
+    { "name": "cozy", "length": "0.5rem", "role": "the text-adjacency floor - text to its own container edge, and between two lines of one field" },
+    { "name": "default", "length": "0.75rem", "role": "card and panel interior padding, and the distance from one field to the next" },
+    { "name": "roomy", "length": "1rem", "role": "between sibling cards in a column, and around a panel's primary content block" },
+    { "name": "section", "length": "1.5rem", "role": "between labelled sections inside one panel" },
+    { "name": "band", "length": "2rem", "role": "between top-level bands of the control room" }
+  ]
+}

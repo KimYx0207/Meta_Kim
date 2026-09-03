@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,6 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { copyHookClosure } from "../helpers/hook-fixture.mjs";
 
 // Regression coverage for the project-root gate shared by the meta-theory spine
 // activate hook and the post-copy init script. Neither may bootstrap/project
@@ -29,13 +29,6 @@ import path from "node:path";
 // otherwise shell out to pip/graphify.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
-const SHARED_HOOKS = path.join(
-  REPO_ROOT,
-  "canonical",
-  "runtime-assets",
-  "shared",
-  "hooks",
-);
 const POST_COPY_SCRIPT = path.join(
   REPO_ROOT,
   "scripts",
@@ -80,16 +73,7 @@ function writeFakeExecutable(dir, name, source) {
 function stageActivateHook(dir) {
   const hookDir = path.join(dir, "hooks");
   mkdirSync(hookDir, { recursive: true });
-  for (const fileName of [
-    "activate-meta-theory-spine.mjs",
-    "project-root.mjs",
-    "spine-state-gates.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
-    "utils.mjs",
-  ]) {
-    copyFileSync(path.join(SHARED_HOOKS, fileName), path.join(hookDir, fileName));
-  }
+  copyHookClosure(REPO_ROOT, hookDir, ["activate-meta-theory-spine.mjs"]);
   return path.join(hookDir, "activate-meta-theory-spine.mjs");
 }
 

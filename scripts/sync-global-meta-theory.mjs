@@ -61,6 +61,7 @@ import {
 } from "./global-runtime-mcp.mjs";
 import {
   buildCodexHooksJson,
+  buildCursorHooksJson,
   buildHookPromptAdapterSource,
   runtimeHookSourceOwner,
 } from "./runtime-hook-mapping.mjs";
@@ -123,7 +124,9 @@ function printHelp() {
   console.log(`Usage: node scripts/sync-global-meta-theory.mjs [options]
 
 Options:
-  --check                 Check selected global projections without writing
+  --check                 Check selected global projections without writing.
+                          An already installed global Hook package is audited
+                          for staleness even without --with-global-hooks.
   --print-targets         Print resolved runtime homes and selected targets
   --targets <ids>         Comma-separated runtime ids
   --with-global-hooks     Include global Hook files and runtime registration
@@ -209,6 +212,7 @@ const GLOBAL_HOOK_PACKAGE_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -1739,6 +1743,42 @@ async function fingerprintInstalledGlobalHooks(rootDir) {
   };
 }
 
+// `--with-global-hooks` gates *writing* into a runtime home, which is why an
+// absent package stays a non-failure by default. An installed package is a
+// different object: it executes on every prompt entry, and reading it costs
+// nothing. So the default check reports an absent package as skipped and fails
+// on an installed package that no longer matches canonical, rather than
+// declaring the one file that actually runs out of scope.
+async function auditInstalledGlobalHookPackage(runtimeId, label, hooksPath) {
+  const installed = await fingerprintInstalledGlobalHooks(hooksPath);
+  if (installed === null) {
+    console.log(
+      `${C.yellow}⊘${C.reset} ${C.dim}${label} global hooks skipped (use --with-global-hooks to check them): ${hooksPath}${C.reset}`,
+    );
+    return true;
+  }
+
+  const canonicalHooks = await fingerprintGlobalHookSources(runtimeId);
+  const inSync =
+    canonicalHooks !== null &&
+    canonicalHooks.hash === installed.hash &&
+    canonicalHooks.fileCount === installed.fileCount;
+  if (inSync) {
+    console.log(
+      `${C.green}✓${C.reset} ${C.dim}${label} global hooks (meta-kim, installed package audited): ${hooksPath}${C.reset}`,
+    );
+    return true;
+  }
+
+  console.log(
+    `${C.yellow}⊘${C.reset} ${C.dim}${label} global hooks (meta-kim) are installed but stale: ${hooksPath}${C.reset}`,
+  );
+  console.log(
+    `  ${C.dim}canonical ${canonicalHooks?.fileCount ?? 0} file(s), installed ${installed.fileCount} file(s); repair with: npm run meta:sync:global:release${C.reset}`,
+  );
+  return false;
+}
+
 async function copyCanonicalSkill(targetDir, targetId) {
   assertHomeBound(targetDir);
   await assertRealHomeBound(targetDir);
@@ -2098,12 +2138,24 @@ async function isOwnedRetiredMetaKimHook(filePath, fileName) {
   ].every((marker) => source.includes(marker));
 }
 
+function runtimeGlobalMetaKimHooksDir(runtimeId) {
+  const home = runtimeHomes[runtimeId]?.dir;
+  if (!home) {
+    throw new Error(`No resolved runtime home for ${runtimeId}`);
+  }
+  return path.join(home, "hooks", "meta-kim");
+}
+
 function globalMetaKimHooksDir() {
-  return path.join(runtimeHomes.claude.dir, "hooks", "meta-kim");
+  return runtimeGlobalMetaKimHooksDir("claude");
 }
 
 function codexGlobalMetaKimHooksDir() {
-  return path.join(runtimeHomes.codex.dir, "hooks", "meta-kim");
+  return runtimeGlobalMetaKimHooksDir("codex");
+}
+
+function cursorGlobalMetaKimHooksDir() {
+  return runtimeGlobalMetaKimHooksDir("cursor");
 }
 
 async function copyCanonicalHooksToGlobal() {
@@ -2185,21 +2237,25 @@ async function copyCanonicalHooksToGlobal() {
   }
 }
 
-async function copyCanonicalHooksToCodexGlobal() {
-  const dest = codexGlobalMetaKimHooksDir();
+// Claude keeps its own copier above because it must also migrate the
+// pre-meta-kim-subdir layout that older installs left in the hooks root. Codex
+// and Cursor both post-date that layout, so they share one body rather than
+// carrying a second and third copy of it.
+async function copyCanonicalHooksToRuntimeGlobal(runtimeId, label) {
+  const dest = runtimeGlobalMetaKimHooksDir(runtimeId);
   assertHomeBound(dest);
   await assertRealHomeBound(dest);
   await fs.mkdir(path.dirname(dest), { recursive: true });
   await backupExistingPath(dest, {
     family: "hook-package",
-    label: "Codex global hook package",
+    label: `${label} global hook package`,
   });
   await fs.rm(dest, { recursive: true, force: true });
   await fs.mkdir(dest, { recursive: true });
   for (const fileName of GLOBAL_HOOK_PACKAGE_FILES) {
-    const sourcePath = await canonicalHookSourcePath(fileName, "codex");
+    const sourcePath = await canonicalHookSourcePath(fileName, runtimeId);
     if (!sourcePath) {
-      throw new Error(`Missing canonical Hook source for codex:${fileName}`);
+      throw new Error(`Missing canonical Hook source for ${runtimeId}:${fileName}`);
     }
     const destPath = path.join(dest, fileName);
     await assertRealHomeBound(destPath);
@@ -2217,7 +2273,7 @@ async function copyCanonicalHooksToCodexGlobal() {
   recordSafe((rec) =>
     rec.recordDir(dest, {
       source: "sync-global-meta-theory",
-      purpose: "codex-global-hooks-dir",
+      purpose: `${runtimeId}-global-hooks-dir`,
       category: CATEGORIES.B,
     }),
   );
@@ -2228,7 +2284,7 @@ async function copyCanonicalHooksToCodexGlobal() {
       recordSafe((rec) =>
         rec.recordFile(path.join(dest, entry.name), {
           source: "sync-global-meta-theory",
-          purpose: "codex-global-hook",
+          purpose: `${runtimeId}-global-hook`,
           category: CATEGORIES.B,
         }),
       );
@@ -2236,6 +2292,14 @@ async function copyCanonicalHooksToCodexGlobal() {
   } catch {
     /* directory iteration best-effort */
   }
+}
+
+async function copyCanonicalHooksToCodexGlobal() {
+  await copyCanonicalHooksToRuntimeGlobal("codex", "Codex");
+}
+
+async function copyCanonicalHooksToCursorGlobal() {
+  await copyCanonicalHooksToRuntimeGlobal("cursor", "Cursor");
 }
 
 async function syncClaudeGlobalSettingsHooks() {
@@ -2361,7 +2425,48 @@ function buildCodexGlobalHooksTemplate() {
   });
 }
 
-function stripGlobalMetaKimHooksFromCodexConfig(config = {}) {
+function cursorGlobalHooksJsonPath() {
+  return path.join(runtimeHomes.cursor.dir, "hooks.json");
+}
+
+function cursorGlobalHookPromptAdapterPath() {
+  return path.join(runtimeHomes.cursor.dir, "hooks", "hookprompt-adapter.mjs");
+}
+
+async function ensureCursorGlobalHookPromptAdapter() {
+  const adapterPath = cursorGlobalHookPromptAdapterPath();
+  assertHomeBound(adapterPath);
+  await assertRealHomeBound(adapterPath);
+  await fs.mkdir(path.dirname(adapterPath), { recursive: true });
+  await fs.writeFile(adapterPath, buildHookPromptAdapterSource("cursor"), "utf8");
+  recordSafe((rec) =>
+    rec.recordFile(adapterPath, {
+      source: "sync-global-meta-theory",
+      purpose: "cursor-global-hookprompt-adapter",
+      category: CATEGORIES.B,
+    }),
+  );
+  return adapterPath;
+}
+
+function buildCursorGlobalHooksTemplate() {
+  const absHooks = cursorGlobalMetaKimHooksDir();
+  return buildCursorHooksJson({
+    graphifyHookPath: path.join(absHooks, "graphify-context.mjs"),
+    memoryHookPath: path.join(absHooks, "meta-kim-memory-save.mjs"),
+    spineHookPath: path.join(absHooks, "activate-meta-theory-spine.mjs"),
+    packageRoot: repoRoot,
+    enforceAgentDispatchHookPath: path.join(
+      absHooks,
+      "enforce-agent-dispatch.mjs",
+    ),
+    hookPromptAdapterPath: cursorGlobalHookPromptAdapterPath(),
+  });
+}
+
+// Codex hooks.json and Cursor hooks.json share the same event -> blocks shape,
+// so ownership stripping is keyed on the command, not on the runtime.
+function stripGlobalMetaKimHooksFromRuntimeHooksConfig(config = {}) {
   const next = structuredClone(config && typeof config === "object" ? config : {});
   const hooks = {};
   for (const [event, blocks] of Object.entries(next.hooks ?? {})) {
@@ -2397,8 +2502,8 @@ function stripGlobalMetaKimHooksFromCodexConfig(config = {}) {
   return next;
 }
 
-function mergeCodexGlobalHooksIntoConfig(config, template) {
-  const next = stripGlobalMetaKimHooksFromCodexConfig(config);
+function mergeRuntimeGlobalHooksIntoConfig(config, template) {
+  const next = stripGlobalMetaKimHooksFromRuntimeHooksConfig(config);
   next.hooks ??= {};
   for (const [event, additionBlocks] of Object.entries(template.hooks ?? {})) {
     next.hooks[event] = mergeHookMatcherBlocks(
@@ -2421,13 +2526,16 @@ async function readJsonConfig(configPath, label) {
   }
 }
 
-async function syncCodexGlobalHooksJson() {
-  const hooksJsonPath = codexGlobalHooksJsonPath();
+async function syncRuntimeGlobalHooksJson({
+  runtimeId,
+  label,
+  hooksJsonPath,
+  template,
+}) {
   assertHomeBound(hooksJsonPath);
   await assertRealHomeBound(hooksJsonPath);
-  const template = buildCodexGlobalHooksTemplate();
   const base = await readJsonConfig(hooksJsonPath, hooksJsonPath);
-  const merged = mergeCodexGlobalHooksIntoConfig(base, template);
+  const merged = mergeRuntimeGlobalHooksIntoConfig(base, template);
   const out = `${JSON.stringify(merged, null, 2)}\n`;
   const prev = (await pathExists(hooksJsonPath))
     ? await fs.readFile(hooksJsonPath, "utf8")
@@ -2438,7 +2546,7 @@ async function syncCodexGlobalHooksJson() {
     recordSafe((rec) =>
       rec.recordSettingsMerge(hooksJsonPath, managedCommands, {
         source: "sync-global-meta-theory",
-        purpose: "codex-global-hooks-json-merge",
+        purpose: `${runtimeId}-global-hooks-json-merge`,
         category: CATEGORIES.C,
         managedHookFragments: flattenHookFragments(template.hooks),
       }),
@@ -2446,7 +2554,7 @@ async function syncCodexGlobalHooksJson() {
   };
 
   if (prev === out) {
-    console.log(`Codex hooks.json already up to date: ${hooksJsonPath}`);
+    console.log(`${label} hooks.json already up to date: ${hooksJsonPath}`);
     recordHooksJsonMerge();
     return;
   }
@@ -2455,13 +2563,31 @@ async function syncCodexGlobalHooksJson() {
   if (prev !== null) {
     await backupExistingPath(hooksJsonPath, {
       family: "settings",
-      label: "Codex hooks.json",
+      label: `${label} hooks.json`,
     });
   }
 
-  await writeUtf8FileAtomic(hooksJsonPath, out, "codex-hooks");
+  await writeUtf8FileAtomic(hooksJsonPath, out, `${runtimeId}-hooks`);
   console.log(`Merged Meta_Kim hooks into ${hooksJsonPath}`);
   recordHooksJsonMerge();
+}
+
+async function syncCodexGlobalHooksJson() {
+  await syncRuntimeGlobalHooksJson({
+    runtimeId: "codex",
+    label: "Codex",
+    hooksJsonPath: codexGlobalHooksJsonPath(),
+    template: buildCodexGlobalHooksTemplate(),
+  });
+}
+
+async function syncCursorGlobalHooksJson() {
+  await syncRuntimeGlobalHooksJson({
+    runtimeId: "cursor",
+    label: "Cursor",
+    hooksJsonPath: cursorGlobalHooksJsonPath(),
+    template: buildCursorGlobalHooksTemplate(),
+  });
 }
 
 async function readClaudeGlobalSettings(settingsPath) {
@@ -2559,11 +2685,9 @@ async function checkClaudeGlobalSettingsHooks() {
   return inSync;
 }
 
-async function checkCodexGlobalHooksJson() {
-  const hooksJsonPath = codexGlobalHooksJsonPath();
-  const template = buildCodexGlobalHooksTemplate();
+async function checkRuntimeGlobalHooksJson({ label, hooksJsonPath, template }) {
   const config = await readJsonConfig(hooksJsonPath, hooksJsonPath);
-  const expected = mergeCodexGlobalHooksIntoConfig(config, template);
+  const expected = mergeRuntimeGlobalHooksIntoConfig(config, template);
 
   // Object insertion order is not semantic JSON state; array order is. Node's
   // deep strict comparison preserves that boundary without stringifying keys.
@@ -2585,14 +2709,30 @@ async function checkCodexGlobalHooksJson() {
   }
 
   console.log(
-    `${inSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Codex global hooks.json: ${hooksJsonPath}${C.reset}`,
+    `${inSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}${label} global hooks.json: ${hooksJsonPath}${C.reset}`,
   );
   if (!inSync && missingCommands.length > 0) {
     console.log(
-      `${C.yellow}⊘${C.reset} ${C.dim}Missing registered Meta_Kim Codex hook scripts: ${missingCommands.length}${C.reset}`,
+      `${C.yellow}⊘${C.reset} ${C.dim}Missing registered Meta_Kim ${label} hook scripts: ${missingCommands.length}${C.reset}`,
     );
   }
   return inSync;
+}
+
+async function checkCodexGlobalHooksJson() {
+  return checkRuntimeGlobalHooksJson({
+    label: "Codex",
+    hooksJsonPath: codexGlobalHooksJsonPath(),
+    template: buildCodexGlobalHooksTemplate(),
+  });
+}
+
+async function checkCursorGlobalHooksJson() {
+  return checkRuntimeGlobalHooksJson({
+    label: "Cursor",
+    hooksJsonPath: cursorGlobalHooksJsonPath(),
+    template: buildCursorGlobalHooksTemplate(),
+  });
 }
 
 function isOwnedGlobalMetaKimHookCommand(command) {
@@ -2741,9 +2881,9 @@ async function runCheck() {
       failed = true;
     }
   } else if (selectedTargetIds.includes("claude")) {
-    console.log(
-      `${C.yellow}⊘${C.reset} ${C.dim}Claude Code global hooks skipped (use --with-global-hooks to check them): ${globalMetaKimHooksDir()}${C.reset}`,
-    );
+    if (!(await auditInstalledGlobalHookPackage("claude", "Claude Code", globalMetaKimHooksDir()))) {
+      failed = true;
+    }
   }
 
   if (selectedTargetIds.includes("codex") && withGlobalHooks) {
@@ -2766,9 +2906,34 @@ async function runCheck() {
       failed = true;
     }
   } else if (selectedTargetIds.includes("codex")) {
+    if (!(await auditInstalledGlobalHookPackage("codex", "Codex", codexGlobalMetaKimHooksDir()))) {
+      failed = true;
+    }
+  }
+
+  if (selectedTargetIds.includes("cursor") && withGlobalHooks) {
+    const repoHooksFp = await fingerprintGlobalHookSources("cursor");
+    const cursorHooksPath = cursorGlobalMetaKimHooksDir();
+    const cursorHooksFp = await fingerprintInstalledGlobalHooks(cursorHooksPath);
+    const hooksInSync =
+      repoHooksFp !== null &&
+      cursorHooksFp !== null &&
+      repoHooksFp.hash === cursorHooksFp.hash &&
+      repoHooksFp.fileCount === cursorHooksFp.fileCount;
     console.log(
-      `${C.yellow}⊘${C.reset} ${C.dim}Codex global hooks skipped (use --with-global-hooks to check them): ${codexGlobalMetaKimHooksDir()}${C.reset}`,
+      `${hooksInSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Cursor global hooks (meta-kim): ${cursorHooksPath}${C.reset}`,
     );
+    if (!hooksInSync) {
+      failed = true;
+    }
+    const hooksJsonInSync = await checkCursorGlobalHooksJson();
+    if (!hooksJsonInSync) {
+      failed = true;
+    }
+  } else if (selectedTargetIds.includes("cursor")) {
+    if (!(await auditInstalledGlobalHookPackage("cursor", "Cursor", cursorGlobalMetaKimHooksDir()))) {
+      failed = true;
+    }
   }
 
   if (selectedTargetIds.includes("claude")) {
@@ -3058,6 +3223,19 @@ async function runSync() {
     );
   }
 
+  if (selectedTargetIds.includes("cursor") && withGlobalHooks) {
+    await copyCanonicalHooksToCursorGlobal();
+    await ensureCursorGlobalHookPromptAdapter();
+    console.log(
+      `${C.green}✓${C.reset} ${C.dim}Synced Cursor global hooks: ${cursorGlobalMetaKimHooksDir()}${C.reset}`,
+    );
+    await syncCursorGlobalHooksJson();
+  } else if (selectedTargetIds.includes("cursor")) {
+    console.log(
+      `${C.yellow}⊘${C.reset} ${C.dim}Skipped Cursor global hooks (opt in with --with-global-hooks).${C.reset}`,
+    );
+  }
+
   if (selectedTargetIds.includes("claude")) {
     const commandPaths = await copyRuntimeCommands("claude", claudeCommandsSourceDir);
     console.log(
@@ -3246,6 +3424,8 @@ function printTargets() {
   console.log("Runtime hooks (only with --with-global-hooks):");
   console.log(`- Codex scripts: ${codexGlobalMetaKimHooksDir()}`);
   console.log(`- Codex merged into: ${codexGlobalHooksJsonPath()}`);
+  console.log(`- Cursor scripts: ${cursorGlobalMetaKimHooksDir()}`);
+  console.log(`- Cursor merged into: ${cursorGlobalHooksJsonPath()}`);
   console.log(`- Scripts: ${globalMetaKimHooksDir()}`);
   console.log(
     `- Claude Code merged into: ${path.join(runtimeHomes.claude.dir, "settings.json")}`,

@@ -87,10 +87,21 @@ import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters
 import {
   readMetaRunStatus,
   readSpineState,
+  readSpineStateIncludingInactive,
   sanitizeStateProfile,
   writeSpineState,
   validateRunId as validateSpineCanonicalRunId,
 } from "../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import {
+  detectHostSessionConversationId,
+  governedRunStateProfile,
+  resolveGovernedRunProvenance,
+  resolveSpineConversationBinding,
+} from "./governed-execution/host-runtime-provenance.mjs";
+import {
+  conversationRuntimeFamily,
+  CONVERSATION_RUNTIME_UNAVAILABLE,
+} from "../src/application/live/live-conversation-link-vocabulary.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -225,6 +236,77 @@ async function publishRunnerWorkerBindingsToSpine({ projectRoot, runId, runtime,
   return write.written === true
     ? { status: "published", taskPacketIds: packets.map((packet) => packet.taskPacketId) }
     : { status: "not_published", reason: write.reason || "compare_and_swap_failed", activeRunId: write.runId || null };
+}
+
+/**
+ * Which host produced this run, and does a live chat belong to it.
+ *
+ * Both answers come out of one read of spine state so they cannot disagree: the
+ * binding that lends the chat is also the strongest available evidence of the
+ * host, and resolving them independently would let a run file one host's chat
+ * under another host's name.
+ */
+async function resolveGovernedRunHostProvenance({ projectRoot, runId, declaredRuntime, hostEnv }) {
+  const spineState = await readSpineStateIncludingInactive(projectRoot);
+  const binding = resolveSpineConversationBinding({
+    spineState,
+    runId,
+    runProfile: governedRunStateProfile(hostEnv),
+    hostSessionId: detectHostSessionConversationId(hostEnv),
+  });
+  const provenance = resolveGovernedRunProvenance({
+    declaredRuntime,
+    spineRuntime: binding.linked ? binding.sourceRuntime : null,
+    spineBindingBasis: binding.bindingBasis,
+    env: hostEnv,
+  });
+  return {
+    sourceRuntime: provenance.sourceRuntime,
+    provenanceBasis: provenance.basis,
+    observedHostMarkers: provenance.observedMarkers,
+    conversationLinkState: binding.linked ? "verified" : "unlinked",
+    sourceConversation: binding.sourceConversation,
+    conversationBindingRefusal: binding.refusal,
+    conversationBindingBasis: binding.bindingBasis,
+    spineRunId: binding.spineRunId,
+  };
+}
+
+/**
+ * The read surface treats a `sourceConversation` carrying this run's id as a
+ * proven link, so the field is written only when the spine binding proved one. A
+ * record written without that proof is indistinguishable on the panel from a
+ * verified link, which is why nothing here fills the gap with a guess.
+ *
+ * The refusal comes from the existing reader-facing vocabulary: an unproven host
+ * is `runtime_not_identified` ("the tool that started this run did not identify
+ * itself"), which is the fact, and a known host with no live binding is
+ * `conversation_id_not_identified`.
+ */
+function governedRunConversationFields(hostProvenance) {
+  const refusal = hostProvenance.sourceRuntime === CONVERSATION_RUNTIME_UNAVAILABLE
+    ? "runtime_not_identified"
+    : hostProvenance.conversationLinkState === "verified"
+      ? null
+      : "conversation_id_not_identified";
+  return {
+    sourceRuntime: hostProvenance.sourceRuntime,
+    conversationLinkState: hostProvenance.conversationLinkState,
+    ...(hostProvenance.sourceConversation
+      ? { sourceConversation: hostProvenance.sourceConversation }
+      : {}),
+    ...(refusal ? { conversationLinkRefusal: refusal } : {}),
+    hostProvenancePacket: {
+      schemaVersion: "governed-run-host-provenance-v1",
+      sourceRuntime: hostProvenance.sourceRuntime,
+      provenanceBasis: hostProvenance.provenanceBasis,
+      observedHostMarkers: [...hostProvenance.observedHostMarkers],
+      conversationLinkState: hostProvenance.conversationLinkState,
+      conversationBindingRefusal: hostProvenance.conversationBindingRefusal,
+      conversationBindingBasis: hostProvenance.conversationBindingBasis,
+      spineRunId: hostProvenance.spineRunId,
+    },
+  };
 }
 
 const RUNTIME_FAILURE_TAXONOMY = Object.freeze({
@@ -9062,6 +9144,7 @@ function buildCoreLoopArtifact({
   outputLanguage = "zh-CN",
   executionAllowed = false,
   preDecisionOptionFrame = null,
+  hostProvenance = null,
 }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
@@ -9535,7 +9618,13 @@ function buildCoreLoopArtifact({
       entry: "meta:theory:run",
       requestType: "ordinary natural-language durable task or explicit meta-theory shortcut",
       runtimeContext: {
-        runtimeFamily: routeRuntime,
+        // Which host produced this record, and which runtime the route plans
+        // against, are two different questions. They were the same field, and
+        // the route's `"codex"` default is what filed every run started from a
+        // Claude Code session under Codex on the Live panel. An unproven host is
+        // `unavailable`, never a vendor name.
+        runtimeFamily: conversationRuntimeFamily(hostProvenance?.sourceRuntime),
+        routeTarget: routeRuntime,
         os: routeOs,
       },
       entryClassification,
@@ -11587,6 +11676,11 @@ export async function runMetaTheoryGovernedExecution({
   artifactDir = null,
   dbPath = DEFAULT_DB_PATH,
   runtime = "codex",
+  // `runtime` is the route's planning target and keeps its default. Provenance
+  // must be able to tell "the caller named a host" from "nobody named one", so
+  // the declared host is a separate option with no default.
+  declaredRuntime = null,
+  hostEnv = process.env,
   osTarget = "windows",
   approvalEvidence = null,
   approvalPacket = null,
@@ -11988,6 +12082,12 @@ export async function runMetaTheoryGovernedExecution({
     path.join(os.tmpdir(), "meta-kim-project-capability-candidates-"),
   );
   let coreLoop;
+  const hostProvenance = await resolveGovernedRunHostProvenance({
+    projectRoot: path.resolve(projectRoot),
+    runId: effectiveRunId,
+    declaredRuntime,
+    hostEnv,
+  });
   try {
     coreLoop = buildCoreLoopArtifact({
       runId: effectiveRunId,
@@ -12016,6 +12116,7 @@ export async function runMetaTheoryGovernedExecution({
       outputLanguage: resolvedOutputLanguage,
       executionAllowed,
       preDecisionOptionFrame: planChallengePreview,
+      hostProvenance,
     });
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
@@ -12380,6 +12481,7 @@ export async function runMetaTheoryGovernedExecution({
     status: artifactStatus,
     partialReasons,
     task: normalizedTask,
+    ...governedRunConversationFields(hostProvenance),
     coreLoop,
     requestRecord: coreLoop.requestRecord,
     intentPacket: coreLoop.intentPacket,
@@ -12850,7 +12952,11 @@ async function main() {
   const artifactDirArg = argValue("--artifact-dir", null);
   const dbArg = argValue("--db", null);
   const durableDbArg = argValue("--durable-db", null);
-  const runtimeArg = argValue("--runtime", process.env.META_KIM_RUNTIME ?? "codex");
+  // Route planning keeps its default; provenance must not inherit it. Reading the
+  // flag once and letting the default apply only to the route is what keeps a run
+  // nobody declared a host for from being recorded as that default vendor.
+  const declaredRuntimeArg = argValue("--runtime", process.env.META_KIM_RUNTIME ?? null);
+  const runtimeArg = declaredRuntimeArg ?? "codex";
   const osArg = argValue("--os", process.env.META_KIM_OS ?? "windows");
   const cliOutputLanguage = argValue(
     "--output-language",
@@ -12938,6 +13044,7 @@ async function main() {
         : dbArg ?? (taskArg ? DEFAULT_DB_PATH : positional[3] ?? DEFAULT_DB_PATH)
     ),
     runtime,
+    declaredRuntime: declaredRuntimeArg,
     osTarget,
     approvalEvidence: argValue("--approval-evidence", null),
     approvalPacket,

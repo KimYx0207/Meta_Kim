@@ -156,6 +156,7 @@ describe("meta-theory run status envelope", () => {
       "publicReadyBoundary",
       "deactivatedAt",
       "deactivationReason",
+      "deactivationTrigger",
       "supersededByRunId",
       "archivedAt",
       "archiveReason",
@@ -233,6 +234,61 @@ describe("meta-theory run status envelope", () => {
     assert.equal(unknown.sourceConversation, undefined);
     assert.equal(unknown.sourceRuntime, "unavailable");
     assert.equal(unknown.conversationLinkState, "unlinked");
+  });
+
+  test("an unlinked run records why the conversation binding was refused", async () => {
+    const stamp = Date.now();
+    const spine = await import(
+      `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?refusal=${stamp}`
+    );
+    const { CONVERSATION_BINDING_REFUSAL_REASONS } = await import(
+      `../../canonical/runtime-assets/shared/hooks/conversation-binding.mjs?refusal=${stamp}`
+    );
+    const base = spine.createInitialState({ taskClassification: "meta_theory_auto" });
+    assert.equal(base.conversationLinkState, "unlinked");
+
+    // Without the reason an operator cannot tell a missing transcript from a
+    // runtime the adapter never identified, and both read as the same row.
+    const refused = spine.bindSourceConversation(base, null, {
+      sourceRuntime: "claude",
+      refusalReason: "transcript_file_absent",
+    });
+    assert.equal(refused.conversationLinkState, "unlinked");
+    assert.equal(refused.sourceRuntime, "claude");
+    assert.equal(refused.conversationLinkRefusal, "transcript_file_absent");
+    assert.equal(
+      spine.createMetaRunStatusEnvelope(refused).conversationLinkRefusal,
+      "transcript_file_absent",
+    );
+
+    // The whole shared vocabulary must survive, so adding a reason to
+    // conversation-binding.mjs cannot silently fall out of the persisted state.
+    for (const reason of CONVERSATION_BINDING_REFUSAL_REASONS) {
+      assert.equal(
+        spine.bindSourceConversation(base, null, { refusalReason: reason }).conversationLinkRefusal,
+        reason,
+        `refusal reason ${reason} must persist`,
+      );
+    }
+    assert.equal(
+      spine.bindSourceConversation(base, null, { refusalReason: "invented_reason" })
+        .conversationLinkRefusal,
+      undefined,
+    );
+
+    // A later hook of the same run can still earn the proof; the stale reason
+    // must not outlive the refusal it explained.
+    const verified = spine.bindSourceConversation(refused, {
+      runtime: "claude",
+      sessionId: "b5799d00-ef7a-4882-818d-d9053cacba71",
+      matchBasis: "transcript_file_verified",
+    });
+    assert.equal(verified.conversationLinkState, "verified");
+    assert.equal(verified.conversationLinkRefusal, undefined);
+    assert.equal(
+      spine.createMetaRunStatusEnvelope(verified).conversationLinkRefusal,
+      undefined,
+    );
   });
 
   test("worker lifecycle requires exact same-run task and trusted host evidence", async () => {
@@ -595,12 +651,16 @@ describe("meta-theory run status envelope", () => {
         active.runId,
         "status.json",
       );
-      const perRun = JSON.parse(await readFile(perRunPath, "utf8"));
-      assert.equal(perRun.runId, active.runId);
+      // A bare activation is not a run yet, so it must not claim a directory entry.
+      await assert.rejects(readFile(perRunPath, "utf8"), { code: "ENOENT" });
 
       state = spine.advanceStage(state, "fetch");
       await spine.writeSpineState(tempDir, state);
       active = JSON.parse(await readFile(activePath, "utf8"));
+
+      const perRun = JSON.parse(await readFile(perRunPath, "utf8"));
+      assert.equal(perRun.runId, active.runId);
+      assert.equal(perRun.substanceClass, "substantive");
 
       assert.equal(active.currentStage, "Fetch");
       assert.equal(active.stageIndex, 2);
@@ -614,6 +674,78 @@ describe("meta-theory run status envelope", () => {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
+    }
+  });
+
+  test("a run directory entry is earned by substance and stays once earned", async () => {
+    const spine = await import(
+      `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?minting=${Date.now()}`
+    );
+    assert.deepEqual(spine.RUN_DIRECTORY_MINTING_MODES, ["substantive", "always"]);
+    assert.equal(spine.runDirectoryMintingMode({}), "substantive");
+    assert.equal(
+      spine.runDirectoryMintingMode({ META_KIM_RUN_DIRECTORY_MINTING: " ALWAYS " }),
+      "always",
+    );
+    assert.equal(
+      spine.runDirectoryMintingMode({ META_KIM_RUN_DIRECTORY_MINTING: "nonsense" }),
+      "substantive",
+    );
+
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-run-minting-"));
+    const stateDir = path.join(tempDir, ".meta-kim", "state", "default");
+    try {
+      const bare = spine.createInitialState({ taskClassification: "minting_bare" });
+      await spine.writeSpineState(tempDir, bare);
+
+      await assert.rejects(readdir(path.join(stateDir, "runs")), { code: "ENOENT" });
+      const active = JSON.parse(await readFile(path.join(stateDir, "active-run.json"), "utf8"));
+      assert.equal(active.runId, bare.runId);
+      assert.equal(active.substanceClass, "activation_only");
+      assert.equal(active.substanceSignals.advancedBeyondEntryStage, false);
+      assert.equal(active.substanceSignals.completedStages, 0);
+
+      const runStatusPath = path.join(stateDir, "runs", bare.runId, "status.json");
+      const advanced = spine.advanceStage(bare, "fetch");
+      await spine.writeSpineState(tempDir, advanced);
+      const earned = JSON.parse(await readFile(runStatusPath, "utf8"));
+      assert.equal(earned.substanceClass, "substantive");
+      assert.deepEqual(earned.completed, ["Critical"]);
+
+      // Promotion is monotone: a run that proved substance keeps its entry through
+      // the terminal write, or it would lose its own closing record.
+      await spine.terminalizeSpineState(tempDir, {
+        expectedRunId: bare.runId,
+        reason: "session_stop",
+      });
+      const closed = JSON.parse(await readFile(runStatusPath, "utf8"));
+      assert.equal(closed.lifecycleStatus, "session_stopped");
+      assert.equal(closed.active, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("the always minting mode restores write-every-activation for debugging", async () => {
+    const spine = await import(
+      `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?mintingAlways=${Date.now()}`
+    );
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-run-minting-always-"));
+    const saved = process.env.META_KIM_RUN_DIRECTORY_MINTING;
+    process.env.META_KIM_RUN_DIRECTORY_MINTING = "always";
+    try {
+      const bare = spine.createInitialState({ taskClassification: "minting_always" });
+      await spine.writeSpineState(tempDir, bare);
+      const forced = JSON.parse(await readFile(
+        path.join(tempDir, ".meta-kim", "state", "default", "runs", bare.runId, "status.json"),
+        "utf8",
+      ));
+      assert.equal(forced.runId, bare.runId);
+      assert.equal(forced.substanceClass, "activation_only");
+    } finally {
+      if (saved === undefined) delete process.env.META_KIM_RUN_DIRECTORY_MINTING;
+      else process.env.META_KIM_RUN_DIRECTORY_MINTING = saved;
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 
@@ -1050,15 +1182,16 @@ describe("meta-theory run status envelope", () => {
       assert.equal(report.archived, 1);
       assert.equal(activated.activated, true);
       assert.equal((await spine.readSpineState(tempDir)).runId, runB.runId);
+      // The activation pointer, not a per-run directory entry, is what proves the
+      // new run was published: a run still at Critical has not earned a directory.
       const runBStatus = JSON.parse(await readFile(path.join(
         tempDir,
         ".meta-kim",
         "state",
         "default",
-        "runs",
-        runB.runId,
-        "status.json",
+        "active-run.json",
       ), "utf8"));
+      assert.equal(runBStatus.runId, runB.runId);
       assert.equal(runBStatus.lifecycleStatus, "active");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -1217,10 +1350,13 @@ describe("meta-theory run status envelope", () => {
       };
       await spine.writeSpineState(tempDir, authority);
       const escapedRun = path.join(stateRoot, "default", "runs", "meta-escaped-run");
+      await mkdir(path.dirname(escapedRun), { recursive: true });
       await createDirectoryLink(outsideDir, escapedRun);
       await assert.rejects(
         spine.writeMetaRunStatus(tempDir, {
-          ...authority,
+          // A run that advanced a stage earns a directory entry, so the escape
+          // refusal is exercised on the path that actually attempts a write.
+          ...spine.advanceStage(authority, "fetch"),
           runId: "meta-escaped-run",
         }),
         /Unsafe|symlink|reparse|Refusing/iu,
@@ -1335,6 +1471,9 @@ describe("meta-theory run status envelope", () => {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-terminal-repair-"));
       try {
         const state = spine.createInitialState({ taskClassification: "terminal_repair" });
+        // Terminal repair only matters for a run that owns a durable directory
+        // entry, so this run completes a stage and earns one.
+        state.stages.critical = { status: "completed", completedAt: new Date().toISOString() };
         if (originalReason === "evolution_completed") {
           state.currentStage = "evolution";
           state.stages.evolution = { status: "completed", completedAt: new Date().toISOString() };
@@ -1398,6 +1537,9 @@ describe("meta-theory run status envelope", () => {
         `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?terminalBeforeActivate=${Date.now()}`
       );
       const stopped = spine.createInitialState({ taskClassification: "stopped_before_new" });
+      // Repair operates on durable run records, so this run completes a stage and
+      // earns the directory entry the repair path is expected to correct.
+      stopped.stages.critical = { status: "completed", completedAt: new Date().toISOString() };
       await spine.writeSpineState(tempDir, stopped);
       await assert.rejects(
         spine.terminalizeSpineState(tempDir, {
@@ -1561,6 +1703,180 @@ describe("meta-theory run status envelope", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     }
+  });
+
+  test("every deactivation records which event ended the run, so session_stop cannot be read as the conversation ending", async () => {
+    // The only writer of deactivationReason "session_stop" is the Stop hook, and
+    // Stop fires at every turn boundary, not when the conversation ends. Readers
+    // that decide anything from the reason alone are leaning on that accident.
+    // The trigger states the event, so a later real session-end writer cannot
+    // silently inherit permissions granted to a turn boundary.
+    const spine = await import(
+      `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?trigger=${Date.now()}`
+    );
+    const stopEntrypoints = [
+      ["shared", path.join(__dirname, "..", "..", "canonical", "runtime-assets", "shared", "hooks", "stop-spine-cleanup.mjs")],
+      ["claude", path.join(__dirname, "..", "..", "canonical", "runtime-assets", "claude", "hooks", "stop-spine-cleanup.mjs")],
+    ];
+    const observedTriggers = new Set();
+
+    for (const [runtime, stopScript] of stopEntrypoints) {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-status-trigger-"));
+      try {
+        // The run directory is minted only for runs that proved substance, so a
+        // bare activation has no status projection to assert against. Advancing
+        // one stage earns the projection without touching the Stop path.
+        const state = spine.advanceStage(
+          spine.createInitialState({ taskClassification: "trigger_test" }),
+          "fetch",
+        );
+        await spine.writeSpineState(tempDir, state);
+        const result = spawnSync(process.execPath, [stopScript], {
+          cwd: tempDir,
+          input: "{}",
+          encoding: "utf8",
+        });
+        assert.equal(result.status, 0, result.stderr);
+
+        const stopped = JSON.parse(
+          await readFile(
+            path.join(tempDir, ".meta-kim", "state", "default", "spine", "spine-state.json"),
+            "utf8",
+          ),
+        );
+        assert.equal(stopped.deactivationReason, "session_stop");
+        assert.equal(
+          stopped.deactivationTrigger,
+          "stop_hook_turn_boundary",
+          `the ${runtime} Stop entrypoint left the record unable to say whether the conversation actually ended`,
+        );
+
+        const status = JSON.parse(
+          await readFile(
+            path.join(tempDir, ".meta-kim", "state", "default", "runs", state.runId, "status.json"),
+            "utf8",
+          ),
+        );
+        assert.equal(
+          status.deactivationTrigger,
+          "stop_hook_turn_boundary",
+          `the ${runtime} status projection dropped the trigger, so every reader outside the spine file is back to trusting the reason name`,
+        );
+        observedTriggers.add(stopped.deactivationTrigger);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    }
+
+    const supersedeDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-status-trigger-sup-"));
+    try {
+      const first = spine.advanceStage(
+        spine.createInitialState({ taskClassification: "trigger_first" }),
+        "fetch",
+      );
+      await spine.activateSpineState(supersedeDir, first);
+      const replaced = await spine.activateSpineState(
+        supersedeDir,
+        spine.createInitialState({ taskClassification: "trigger_second" }),
+        { replaceActive: true, expectedRunId: first.runId },
+      );
+      assert.equal(replaced.activated, true, "the second prompt never took over the spine");
+      const runsDir = path.join(supersedeDir, ".meta-kim", "state", "default", "runs");
+      const statuses = await Promise.all(
+        (await readdir(runsDir)).map(async (runId) =>
+          JSON.parse(await readFile(path.join(runsDir, runId, "status.json"), "utf8")),
+        ),
+      );
+      const superseded = statuses.find(
+        (entry) => entry.deactivationReason === "superseded_by_new_prompt",
+      );
+      assert.ok(superseded, "expected the first run to be superseded by the second prompt");
+      assert.equal(
+        superseded.deactivationTrigger,
+        "prompt_supersede",
+        "a run replaced by a new prompt is indistinguishable from a turn boundary, so both would be granted the same trust",
+      );
+      observedTriggers.add(superseded.deactivationTrigger);
+    } finally {
+      await rm(supersedeDir, { recursive: true, force: true });
+    }
+
+    const migrationDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-status-trigger-mig-"));
+    try {
+      const legacyPath = path.join(
+        migrationDir,
+        ".meta-kim",
+        "state",
+        "default",
+        "runs",
+        "meta-legacy-trigger",
+        "status.json",
+      );
+      await mkdir(path.dirname(legacyPath), { recursive: true });
+      // Migration refuses to touch anything until the profile has a proven
+      // authority, and a thinner hand-rolled record is rejected as unknown schema
+      // and preserved, so neither would reach the archive branch asserted below.
+      await spine.writeSpineState(migrationDir, {
+        ...spine.createInitialState({ taskClassification: "trigger_authority" }),
+        runId: "meta-trigger-authority",
+      });
+      await writeFile(
+        legacyPath,
+        JSON.stringify(createLegacyEnvelope(spine, "meta-legacy-trigger", {
+          withoutAuthority: true,
+        })),
+        "utf8",
+      );
+      const report = await spine.reconcileLegacyRunStatuses(migrationDir, { profile: "default" });
+      assert.equal(report.archived, 1, "the legacy record was preserved instead of archived");
+      const archived = JSON.parse(await readFile(legacyPath, "utf8"));
+      assert.equal(archived.deactivationReason, "legacy_reconciled");
+      assert.equal(
+        archived.deactivationTrigger,
+        "state_migration",
+        "a record retired by migration looks like a live runtime event",
+      );
+      observedTriggers.add(archived.deactivationTrigger);
+    } finally {
+      await rm(migrationDir, { recursive: true, force: true });
+    }
+
+    // Both directions at once: no contract value that no writer can produce (a
+    // reader could whitelist against it forever and never be exercised), and no
+    // writer producing a value the contract never declared.
+    const contract = await readJson("config/contracts/workflow-contract.json");
+    assert.deepEqual(
+      [...observedTriggers].sort(),
+      [...contract.runDiscipline.runStatusEnvelope.deactivationTriggerEnum].sort(),
+      "the declared trigger values and the values real writers actually produce have drifted apart",
+    );
+  });
+
+  test("a record written before the trigger existed reads as unknown rather than as a turn boundary", async () => {
+    // Records already on disk carry no trigger. Defaulting them to the turn
+    // boundary would hand historical records a permission that was never proven
+    // for them; defaulting them to a session end would retroactively break the
+    // links the panel already shows. Unknown gets its own value.
+    const spine = await import(
+      `../../canonical/runtime-assets/shared/hooks/spine-state.mjs?legacytrigger=${Date.now()}`
+    );
+    const envelope = spine.createMetaRunStatusEnvelope({
+      active: false,
+      runId: "meta-pre-trigger-record",
+      currentStage: "review",
+      lifecycleStatus: "session_stopped",
+      deactivationReason: "session_stop",
+      deactivatedAt: "2026-09-01T00:00:00.000Z",
+    });
+
+    assert.equal(envelope.deactivationReason, "session_stop");
+    // strictEqual, not equal: undefined == null, so a loose check would pass even
+    // if the field were simply missing from the envelope.
+    assert.strictEqual(
+      envelope.deactivationTrigger,
+      null,
+      "an absent trigger was filled in from the reason, which is exactly the inference the field exists to remove",
+    );
   });
 
   test("hook-observed advisory status is not managed runtime or public-ready authority", async () => {

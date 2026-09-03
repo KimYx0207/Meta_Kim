@@ -6,6 +6,16 @@
 //     expects. It owns no domain value of its own.
 //   - Time placeholders (`{startBase}`, `{startBase+30s}`, …) resolve against a
 //     caller-provided ISO base so re-runs produce a stable, monotonic timeline.
+//
+// Every artifact this loader produces is stamped as a fixture. The stamp lives
+// here rather than in the CLI because this is the only function that turns a
+// fixture into an artifact: stamping at the source makes an unmarked fixture
+// unrepresentable, instead of depending on each caller to remember. Without it a
+// fixture is indistinguishable from a real run once written, and it reads as the
+// healthier record of the two, because a fixture declares by construction the
+// worker counts and runtime a real activation often has not produced yet.
+
+import { LIVE_ACCEPTANCE_FIXTURE_RECORD_ORIGIN } from "./live-record-origin.mjs";
 
 const PLACEHOLDER_PATTERN = /\{startBase(?:\+(\d+)(s|ms))?\}/gu;
 
@@ -137,6 +147,29 @@ export function buildHostInvocationEvidence(fixture, runId, baseIso) {
   return rows;
 }
 
+// A fixture link declares its standing, because that is the scenario it exists to
+// exercise, but it must not declare a `matchBasis`. That field answers "how do we
+// know this run belongs to this chat", and the one producer that earns it —
+// `canonical/runtime-assets/shared/hooks/conversation-binding.mjs` — earns it from
+// eight filesystem checks against the transcript the host named. Nothing in this
+// path opens a transcript: the identifier below is templated from the fixture's own
+// prefix, so a basis written here is a claim the loader manufactures about itself.
+//
+// Nothing downstream repeats that claim today. Every reader folds a stored basis
+// against one derived from the record's own facts through
+// `conversationMatchBasisFor`, and for this link — whose run id equals the run's —
+// the derivation is `exact_run_id`, which out-ranks `exact_metadata`; that
+// function's clamp separately keeps a stored verifying basis off a record whose
+// at-hand facts are unproven. Measured: the record
+// `scripts/run-live-acceptance-fixture.mjs` serialises is identical in that field
+// with the value and without it.
+//
+// It is removed at the source anyway, because that fold is what makes the claim
+// invisible, not what makes it true. And the claim has reached a reader: a record
+// this loader produced earlier the same day names `exact_metadata` on both
+// `run.verifiedLinks` and `session.verifiedLinks`, so some revision between this
+// function and those two arrays did carry it through.
+// `buildSourceConversation` below has always omitted it for the same reason.
 export function buildConversationLinks(fixture, runId, baseIso) {
   return [
     {
@@ -145,7 +178,6 @@ export function buildConversationLinks(fixture, runId, baseIso) {
       sourceRuntime: fixture.meta.runtime,
       verified: true,
       matchState: "verified",
-      matchBasis: "exact_metadata",
       title: templateTitle(fixture.meta.titleTemplate, runId),
       updatedAt: baseIso,
     },
@@ -177,6 +209,7 @@ export function buildGovernedArtifact(fixture, runId, baseIso) {
     runId,
     title,
     task: fixture.meta.taskTemplate,
+    recordOrigin: LIVE_ACCEPTANCE_FIXTURE_RECORD_ORIGIN,
     status: "active",
     currentStage: "execution",
     startedAt: baseIso,

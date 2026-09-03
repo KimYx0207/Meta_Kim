@@ -1221,6 +1221,12 @@ export function normalizeCodexConfigMutations(mutations = []) {
       // desired managed result stayed exact. Rebase the reversible journal to
       // the latest baseline so cleanup restores current host state.
       chained = next;
+    } else if (previous.kind === "replace" && next.kind === "insert") {
+      // The host deleted the locator Meta_Kim previously replaced, so the fresh
+      // insert is the only reversible ownership record. Inverting the stale
+      // replace would restore a key the host itself removed, and refusing the
+      // chain would fail the whole manifest flush over a host-side deletion.
+      chained = next;
     } else if (previous.kind === "replace" && next.kind === "remove" && previous.afterFragment === next.beforeFragment) {
       chained = { ...previous, kind: "remove", afterFragment: "" };
     } else if (previous.kind === "remove" && next.kind === "insert") {

@@ -437,7 +437,27 @@ describe(
       assert.match(row, /release_complete/);
       assert.match(row, /v3\.0\.2/);
     }
-    assert.equal(activeRows.length, 0, "M3-P3 completion must leave no fake ACTIVE work");
+    assert.equal(
+      activeRows.length,
+      1,
+      "only the single genuinely in-flight M3-L05 item may hold ACTIVE; any extra ACTIVE row is fake work",
+    );
+    const activeLiveId = activeRows[0].match(/^\| ACTIVE \| (M3-[ALP]\d{2}) \|/)?.[1];
+    assert.equal(
+      activeLiveId,
+      "M3-L05",
+      "after the M3-A/M3-P3 release closure only M3-L05 may occupy ACTIVE",
+    );
+    assert.match(
+      activeRows[0],
+      /implementation_active/,
+      "the ACTIVE row must declare implementation_active instead of a release or acceptance state",
+    );
+    assert.doesNotMatch(
+      activeRows[0],
+      /release_complete|released_complete|acceptance_candidate|已发布|已完成/,
+      "an ACTIVE row must not carry completion or release semantics",
+    );
     assert.equal(nextRows.length, 0, "M3-P3 must not leave a competing NEXT row");
     assert.equal(parkedRows.length, 1, "external parked work remains explicitly parked");
     assert.equal(deferredRows.length, 0, "M3-P3 is complete rather than deferred");

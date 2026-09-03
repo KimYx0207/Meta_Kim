@@ -153,6 +153,7 @@ test("cross-runtime hook core has one canonical owner", () => {
     "project-root.mjs",
     "utils.mjs",
     "skip-reminder.mjs",
+    "conversation-binding.mjs",
     "spine-state-utils.mjs",
     "spine-state-gates.mjs",
     "spine-state.mjs",
@@ -346,9 +347,15 @@ test("global hook sync projects universal core and runtime-owned memory entrypoi
         META_KIM_PROFILE: profile,
         META_KIM_DISABLE_MEMORY_AUTOSTART: "1",
         META_KIM_POST_COPY_AUTO: "off",
+        // The subject here is the projected hook lifecycle, not the minting
+        // policy. A bare activation is `activation_only` and earns no run
+        // directory by default, so the run envelopes read below need minting
+        // forced on the same way 20-run-status-envelope.test.mjs forces it.
+        META_KIM_RUN_DIRECTORY_MINTING: "always",
       };
       for (const dependency of [
         "activate-meta-theory-spine.mjs",
+        "conversation-binding.mjs",
         "project-root.mjs",
         "spine-state-gates.mjs",
         "spine-state.mjs",

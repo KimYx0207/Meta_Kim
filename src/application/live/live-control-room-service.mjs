@@ -7,6 +7,17 @@ import {
 } from "../../infrastructure/live/live-read-repository.mjs";
 import { buildLiveShareArtifact } from "./build-live-share-artifact.mjs";
 import {
+  conversationDiscoveryForRuntime,
+  conversationLinkPlacementForRun,
+  conversationLinkRefusalFor,
+  conversationMatchBasisFor,
+  conversationRuntimeFamily,
+  declaredLinkPlacementForRun,
+  mergeConversationLinkBuckets,
+  normalizeConversationMatchBasis,
+  recordConversationRuntime,
+} from "./live-conversation-link-vocabulary.mjs";
+import {
   renderLiveReadmeEmbed,
   renderLiveShareCard,
 } from "../../presentation/live/render-live-share-card.mjs";
@@ -18,6 +29,14 @@ import {
   buildLiveSchedulingProjection,
   sanitizeLiveSchedulingProjection,
 } from "./live-scheduling-projection.mjs";
+import { RUN_SUBSTANCE_CLASSES, runSubstance } from "./live-run-substance.mjs";
+import { LIVE_RECORD_ORIGINS, liveRecordOrigin } from "./live-record-origin.mjs";
+import {
+  liveTerminalStatusDisplay,
+  normalizeLiveStatus,
+} from "./live-status-vocabulary.mjs";
+
+export { RUN_SUBSTANCE_CLASSES, runSubstance };
 
 export const LIVE_SNAPSHOT_SCHEMA_VERSION = "meta-kim-live-snapshot-v2";
 export const LIVE_REPLAY_SCHEMA_VERSION = "meta-kim-live-replay-v2";
@@ -31,6 +50,18 @@ export const LIVE_MAX_REPLAY = 512;
 export const LIVE_MAX_STRING = 240;
 export const LIVE_MAX_CONTEXT_TRANSFERS = 128;
 export const LIVE_MAX_CONTEXT_EVIDENCE_REFS = 24;
+
+/**
+ * Why a snapshot carries no task nodes. A reader cannot act on "the graph is
+ * empty"; they can act on knowing whether the run never wrote an artifact, wrote
+ * one that declares nothing, or could not be read at all. The presentation layer
+ * imports this vocabulary so every value it can receive is forced to carry copy.
+ */
+export const LIVE_GRAPH_AVAILABILITY_REASONS = Object.freeze({
+  noReadableRunRecord: "no_readable_run_record",
+  noGovernedArtifactForRun: "no_governed_artifact_for_run",
+  artifactDeclaredNoNodes: "artifact_declared_no_nodes",
+});
 
 const STAGES = [
   "critical",
@@ -53,40 +84,6 @@ const STAGE_LABELS = {
   verification: "Verification",
   evolution: "Evolution",
 };
-
-const STATUS_ALIASES = new Map([
-  ["running", "active"],
-  ["in_progress", "active"],
-  ["in-progress", "active"],
-  ["started", "active"],
-  ["success", "completed"],
-  ["succeeded", "completed"],
-  ["pass", "completed"],
-  ["passed", "completed"],
-  ["done", "completed"],
-  ["failure", "failed"],
-  ["error", "failed"],
-  ["planned_not_executed", "pending"],
-  ["pending_execution", "pending"],
-  ["selected_not_invoked", "pending"],
-  ["skipped", "pending"],
-  ["partial", "in_doubt"],
-  ["unknown", "in_doubt"],
-  ["stale", "in_doubt"],
-  ["uncertain", "in_doubt"],
-]);
-
-const SAFE_STATUS = new Set([
-  "active",
-  "completed",
-  "pending",
-  "failed",
-  "blocked",
-  "cancelled",
-  "session_stopped",
-  "archived",
-  "in_doubt",
-]);
 
 const SAFE_KINDS = new Set([
   "stage",
@@ -432,10 +429,7 @@ function safeId(value, fallback = "in_doubt", prefix = "") {
 }
 
 function normalizeStatus(value, fallback = "in_doubt") {
-  if (typeof value !== "string") return fallback;
-  const normalized = value.trim().toLowerCase().replace(/\s+/gu, "_");
-  const alias = STATUS_ALIASES.get(normalized) || normalized;
-  return SAFE_STATUS.has(alias) ? alias : fallback;
+  return normalizeLiveStatus(value, fallback);
 }
 
 function normalizeKind(value) {
@@ -478,6 +472,67 @@ function permissions() {
   };
 }
 
+/**
+ * Snapshot for a run whose durable status record exists but whose governed
+ * artifact does not. The collections are genuinely empty, so the counts are real
+ * zeros rather than guesses, and `graphAvailability` states why they are zero so
+ * a reader is never left to infer that the run had one agent and lost it.
+ */
+function durableOnlySnapshot(durable, { observedAt, stale, active }) {
+  const run = normalizeRun(durable, null, stale);
+  if (!run) return emptySnapshot(observedAt);
+  const substance = runSubstance(durable);
+  const runActive = active === true;
+  // The activation hook writes the chat binding onto the status record before any
+  // governed artifact exists, so this path is the only one that can carry it for a
+  // run that has just started. Dropping it here is what made a bound run render as
+  // "no chat id was saved" on the very surface that proves the run is live.
+  const publicRun = {
+    ...run,
+    active: runActive,
+    substanceClass: substance.substanceClass,
+    ...conversationLinkProjection(durable, run.runId),
+    ...publicDisplay(run.status, { active: runActive, structuralOnly: false }),
+  };
+  return {
+    schemaVersion: LIVE_SNAPSHOT_SCHEMA_VERSION,
+    source: sourceEnvelope("durable_status", observedAt, stale),
+    run: publicRun,
+    session: null,
+    nodes: [],
+    edges: [],
+    evidence: [],
+    replay: [],
+    prompts: [],
+    toolCalls: [],
+    provenance: [],
+    repository: repositoryProjection(null),
+    workspace: workspaceProjection(null),
+    contextTransfers: [],
+    scheduling: null,
+    eventIndex: 0,
+    eventCount: 0,
+    counts: {
+      nodes: 0,
+      edges: 0,
+      evidence: 0,
+      events: 0,
+      toolCalls: 0,
+      prompts: 0,
+      provenance: 0,
+      contextTransfers: 0,
+    },
+    graphAvailability: {
+      state: "no_graph_evidence",
+      reason: LIVE_GRAPH_AVAILABILITY_REASONS.noGovernedArtifactForRun,
+      substanceClass: substance.substanceClass,
+      substanceSource: substance.substanceSource,
+      substanceSignals: substance.substanceSignals,
+    },
+    permissions: permissions(),
+  };
+}
+
 function emptySnapshot(observedAt, kind = "empty", stale = true) {
   const safeObservedAt = safeTimestamp(observedAt) || new Date().toISOString();
   return {
@@ -493,6 +548,13 @@ function emptySnapshot(observedAt, kind = "empty", stale = true) {
     contextTransfers: [],
     scheduling: null,
     permissions: permissions(),
+    graphAvailability: {
+      state: "no_run_selected",
+      reason: LIVE_GRAPH_AVAILABILITY_REASONS.noReadableRunRecord,
+      substanceClass: null,
+      substanceSource: null,
+      substanceSignals: null,
+    },
   };
 }
 
@@ -608,6 +670,23 @@ function runTerminalStatusIsProven(artifact, runId, status) {
     });
 }
 
+/**
+ * Where a persisted run record came from.
+ *
+ * A projection built from an acceptance fixture runs through the same pipeline
+ * as a real run and lands in the same governed-executions directory, so the two
+ * files are indistinguishable once written. Origin therefore has to be declared
+ * by the producer and carried on the record: a reader cannot recover it later,
+ * and an unmarked fixture reads as the most complete row in the directory
+ * because a fixture always has the worker counts and runtime a real activation
+ * often lacks.
+ *
+ * Absent means governed run, so existing real records need no migration, and an
+ * unrecognized value collapses to the same neutral default rather than reaching
+ * a reader as a self-declared label.
+ */
+export { LIVE_RECORD_ORIGINS, liveRecordOrigin };
+
 function artifactIsStructuralOnly(artifact) {
   if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return false;
   if (artifact?.run?.executionEvidenceState === "structural_planning_only") return true;
@@ -628,12 +707,8 @@ function publicDisplay(status, { active = false, structuralOnly = false } = {}) 
   if (structuralOnly) {
     return { displayState: "unreported", statusReason: "这是结构规划记录，不是执行证据；尚未发现可信任务回报。" };
   }
-  if (normalized === "completed") {
-    return { displayState: "completed", statusReason: "已找到同一运行、同一任务的可信完成证据。" };
-  }
-  if (normalized === "failed") return { displayState: "failed", statusReason: "已记录可信失败结果。" };
-  if (normalized === "blocked") return { displayState: "blocked", statusReason: "任务被明确阻塞，尚未完成。" };
-  if (normalized === "cancelled") return { displayState: "cancelled", statusReason: "任务已取消，不能视为完成。" };
+  const terminal = liveTerminalStatusDisplay(normalized);
+  if (terminal) return { ...terminal };
   if (normalized === "active") return { displayState: "active", statusReason: "运行当前仍处于活动状态。" };
   if (normalized === "pending" && active) {
     return { displayState: "queued", statusReason: "运行仍在进行，该任务等待执行或等待可信回报。" };
@@ -644,13 +719,8 @@ function publicDisplay(status, { active = false, structuralOnly = false } = {}) 
   return { displayState: "unknown", statusReason: "现有记录不足以判断该任务是否执行或完成。" };
 }
 
-const CONVERSATION_RUNTIME_ALIASES = new Map([
-  ["claude", "claude"], ["claude-code", "claude"], ["claude_code", "claude"],
-  ["codex", "codex"], ["cursor", "cursor"], ["openclaw", "openclaw"], ["open-claw", "openclaw"],
-]);
-
 function safeConversationRuntime(value) {
-  return CONVERSATION_RUNTIME_ALIASES.get(String(value || "").trim().toLowerCase()) || "unavailable";
+  return conversationRuntimeFamily(value);
 }
 
 function safeConversationRef(value) {
@@ -668,15 +738,11 @@ function conversationRefFrom(value) {
 function conversationLinkProjection(artifact, runId) {
   const verifiedLinks = [];
   const candidateLinks = [];
-  const seen = new Set();
   const append = (target, value, matchBasis) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     const conversationRef = conversationRefFrom(value);
     if (!conversationRef) return;
     const sourceRuntime = safeConversationRuntime(value.runtime || value.provider || value.sourceRuntime);
-    const key = `${sourceRuntime}:${conversationRef}`;
-    if (seen.has(key)) return;
-    seen.add(key);
     const title = safeNullableText(value.title || value.conversationTitle, 120);
     const updatedAt = safeTimestamp(value.updatedAt || value.timestamp || value.occurredAt);
     target.push({
@@ -690,42 +756,85 @@ function conversationLinkProjection(artifact, runId) {
   const source = artifact?.sourceConversation && typeof artifact.sourceConversation === "object"
     ? artifact.sourceConversation
     : null;
-  if (source && (!recordRunId(source) || recordRunId(source) === runId)) append(verifiedLinks, source, "exact_metadata");
+  // Every basis below is the strongest fact this pass can observe, and the record
+  // may already carry a stronger one: the activation hook writes
+  // `transcript_file_verified` after it opens the transcript file and matches its
+  // identity, which no read of metadata can reach. Hardcoding a literal here threw
+  // that away and then persisted the weaker value into the compact projection, so
+  // one run had two provenance claims on disk and the surviving one was the guess.
+  if (source) {
+    // One call decides both the array and the basis. Naming another run is a fact
+    // about the reference, not a reason to have nothing to show: dropping it left
+    // this surface on the unlinked sentence with no refusal to explain it, while
+    // the session list showed the same reference as a candidate — one file, and a
+    // reader who opens both is told the chat is unknown in one place and possibly
+    // relevant in the other.
+    const placement = conversationLinkPlacementForRun(source, runId);
+    append(
+      placement.proven ? verifiedLinks : candidateLinks,
+      source,
+      conversationMatchBasisFor(source.matchBasis, placement.derivedBasis),
+    );
+  }
   const exactRecords = [artifact?.conversationLinks, artifact?.runtimeConversationLinks].filter(Array.isArray).flat();
   for (const record of exactRecords) {
-    const exactRun = recordRunId(record) === runId;
-    const exactRef = record?.verified === true || record?.matchState === "verified" || record?.linkState === "verified";
-    append(exactRun || exactRef ? verifiedLinks : candidateLinks, record, exactRun ? "exact_run_id" : exactRef ? "exact_thread_id" : "metadata_candidate");
+    // Standing and basis come from one call. A stored verified flag cannot outrank
+    // the record's own statement that it belongs to a different run — letting it
+    // win is how a link proven for one run became another run's confirmed chat —
+    // and a flag with no run id beside it cannot name a thread-id match either,
+    // because nothing here compares a thread id.
+    const placement = declaredLinkPlacementForRun(record, runId);
+    append(
+      placement.proven ? verifiedLinks : candidateLinks,
+      record,
+      conversationMatchBasisFor(record?.matchBasis, placement.derivedBasis),
+    );
   }
-  const candidates = [artifact?.conversationCandidates, artifact?.candidateConversationLinks].filter(Array.isArray).flat();
-  for (const record of candidates) append(candidateLinks, record, safeId(record?.matchBasis, "title_time_project_similarity"));
-  const primary = verifiedLinks[0] || candidateLinks[0] || null;
+  const candidateRecords = [artifact?.conversationCandidates, artifact?.candidateConversationLinks].filter(Array.isArray).flat();
+  for (const record of candidateRecords) {
+    append(candidateLinks, record, conversationMatchBasisFor(record?.matchBasis, "title_time_project_similarity"));
+  }
+  // One record can describe one chat more than once, and this pass reads those
+  // descriptions in its own order while the session list reads them in another. A
+  // fold that resolves duplicates by which arrived first is therefore a fold that
+  // lets the two surfaces disagree about one file, so both call the same one.
+  const { verified, candidates } = mergeConversationLinkBuckets(verifiedLinks, candidateLinks);
+  const primary = verified[0] || candidates[0] || null;
+  const conversationLinkState = verified.length ? "verified" : candidates.length ? "candidate" : "unlinked";
+  const refusal = conversationLinkRefusalFor(conversationLinkState, artifact?.conversationLinkRefusal);
+  const sourceRuntime = primary?.sourceRuntime || recordConversationRuntime(artifact);
   return {
-    sourceRuntime: primary?.sourceRuntime || "unavailable",
-    conversationLinkState: verifiedLinks.length ? "verified" : candidateLinks.length ? "candidate" : "unlinked",
-    verifiedLinks: verifiedLinks.slice(0, 16),
-    candidateLinks: candidateLinks.slice(0, 16),
+    sourceRuntime,
+    conversationLinkState,
+    // The session list derived this and the run header did not, so one run
+    // explained how far its chat lookup reached in the list and fell back to the
+    // generic sentence in its own header. Emitting it beside the runtime it is
+    // derived from is what keeps the two surfaces on one answer.
+    conversationDiscovery: conversationDiscoveryForRuntime(sourceRuntime),
+    verifiedLinks: verified.slice(0, 16),
+    candidateLinks: candidates.slice(0, 16),
+    ...(refusal ? { conversationLinkRefusal: refusal } : {}),
     ...(primary?.conversationRef ? { conversationRef: primary.conversationRef } : {}),
     ...(primary?.conversationTitle ? { conversationTitle: primary.conversationTitle } : {}),
   };
 }
 
 function sanitizeConversationLinks(value) {
-  const seen = new Set();
   return boundedArray(value, 16).flatMap((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const conversationRef = safeConversationRef(item.conversationRef || item.threadId || item.sessionId);
     if (!conversationRef) return [];
     const sourceRuntime = safeConversationRuntime(item.sourceRuntime || item.runtime || item.provider);
-    const key = `${sourceRuntime}:${conversationRef}`;
-    if (seen.has(key)) return [];
-    seen.add(key);
     const conversationTitle = safeNullableText(item.conversationTitle || item.title, 120);
     const updatedAt = safeTimestamp(item.updatedAt || item.timestamp);
     return [{
       sourceRuntime,
       conversationRef,
-      matchBasis: safeText(item.matchBasis, "metadata_candidate", 64),
+      // This path forwards a link another surface already decided, so there is no
+      // fact at hand to compare against and the stored value stands. It is still
+      // whitelisted: `safeText` accepted any 64-character string, so a basis from a
+      // newer build reached a reader as a raw enum.
+      matchBasis: normalizeConversationMatchBasis(item.matchBasis) ?? "metadata_candidate",
       ...(conversationTitle ? { conversationTitle } : {}),
       ...(updatedAt ? { updatedAt } : {}),
     }];
@@ -741,6 +850,19 @@ function taskIdFrom(record) {
   return exactTaskId(firstString(record, ["taskPacketId", "taskId", "roleInstanceId", "businessRoleId"]));
 }
 
+/**
+ * Not the reader the conversation surfaces use. This one answers a different
+ * question — does this event, evidence binding, result, or lifecycle record
+ * belong to the run being projected — where the format gate is wanted: an
+ * unparseable id is not a claim worth honouring when the record is being
+ * admitted into a run's own counts.
+ *
+ * `conversationRecordRunId` deliberately drops that gate, because for a chat
+ * reference an unparseable id is still the record saying the chat belongs
+ * elsewhere, and resolving it to nothing is what read as 已确认. Left as-is
+ * rather than unified: sharing one reader across both questions would carry the
+ * conversation surface's tolerance into the counts.
+ */
 function recordRunId(record) {
   return normalizeLiveRunId(firstString(record, ["runId", "governedRunId", "sessionRunId"]));
 }
@@ -1561,7 +1683,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     status: aggregateNodeStatus(workerNodes.filter((node) => childIds.includes(node.id))),
     active: false,
     parentId: null,
-    ownerAgent: safeText(artifact?.dispatchEnvelopePacket?.ownerAgent, "meta-conductor", 96),
+    ownerAgent: safeText(artifact?.dispatchEnvelopePacket?.ownerAgent, "in_doubt", 96),
     runtime: "unavailable",
     runtimeObservation: { state: "unavailable", value: null },
     model: "unavailable",
@@ -1570,17 +1692,22 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     childCount: childIds.length,
     evidenceCount: 0,
   }));
-  const rootOwner = firstString(artifact?.dispatchEnvelopePacket, ["ownerAgent", "owner"]) || "meta-conductor";
+  // An artifact that never declared a dispatch owner leaves the root owner
+  // unknown. `in_doubt` is the read model's existing marker for that, and the
+  // page already treats it as non-informative. Defaulting to a real agent name
+  // instead used to put a governance agent on the graph that nothing had run.
+  const declaredRootOwner = firstString(artifact?.dispatchEnvelopePacket, ["ownerAgent", "owner"]);
+  const rootOwner = declaredRootOwner || "in_doubt";
   const mainNode = {
     id: publicId("agent", `${runId}:main:${rootOwner}`),
     kind: "agent",
     isMain: true,
-    label: safeText(rootOwner, "main agent", 96),
+    label: safeText(declaredRootOwner, "main agent", 96),
     task: runTask,
     stage: normalizeStage(artifact?.currentStage || artifact?.currentStageKey),
     status: normalizeStatus(artifact?.status, workerNodes.length ? aggregateNodeStatus(workerNodes) : "in_doubt"),
     active: false,
-    ownerAgent: safeText(rootOwner, "meta-conductor", 96),
+    ownerAgent: safeText(declaredRootOwner, "in_doubt", 96),
     runtime: "unavailable",
     runtimeObservation: { state: "unavailable", value: null },
     model: "unavailable",
@@ -1598,19 +1725,30 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     firstAt: safeTimestamp(artifact?.startedAt || artifact?.createdAt),
     lastAt: safeTimestamp(artifact?.completedAt),
     durationMs: null,
-    summary: "Main governed run owner · " + runTitle,
+    // Both the summary and the provenance state used to assert a declared owner
+    // unconditionally, which reads as evidence on exactly the runs that never
+    // named one. The owner clause is dropped rather than reworded so this layer
+    // does not grow more display copy. The separator is joined rather than
+    // interpolated because `runTitle` can normalize to nothing, and a trailing
+    // "·" reads as a value the projection failed to load.
+    summary: [declaredRootOwner ? "Main governed run owner" : "", runTitle]
+      .map((clause) => clause.trim())
+      .filter((clause) => clause !== "")
+      .join(" · "),
     terminalEvidence: [],
     workerExecutionEvidence: [],
     toolCalls: [],
     toolCount: 0,
     latestTool: null,
     loadout: { skills: 0, mcp: 0, tools: 0, commands: 0, hooks: 0, plugins: 0, memoryGraph: 0, dependencies: 0, skillNames: [], mcpNames: [], toolNames: [], commandNames: [], hookNames: [], pluginNames: [], memoryGraphNames: [], dependencyNames: [] },
-    capabilityTruth: [capabilityTruthRecord("agent", [rootOwner], [])].filter(Boolean),
+    capabilityTruth: [
+      declaredRootOwner ? capabilityTruthRecord("agent", [declaredRootOwner], []) : null,
+    ].filter(Boolean),
     inputTokens: null,
     outputTokens: null,
     totalTokens: null,
     promptEras: [{ era: "run", label: "Run intent", summary: "Governed task accepted" }],
-    provenance: [{ kind: "dispatch_owner", state: "declared" }],
+    provenance: [{ kind: "dispatch_owner", state: declaredRootOwner ? "declared" : "unreported" }],
     evidenceCount: 0,
   };
   for (const workflow of workflowNodes) workflow.parentId = mainNode.id;
@@ -1621,7 +1759,19 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     const workflow = workflowNodes.find((candidate) => candidate.id === publicId("workflow", `${runId}:${groupKey}`));
     if (node) node.parentId = workflow?.id || mainNode.id;
   }
-  const nodes = [mainNode, ...workflowNodes, ...workerNodes].slice(0, LIVE_MAX_NODES);
+  // An artifact that named no owner, declared no worker, built no workflow and
+  // recorded no replay evidence has nothing to put on the graph. Emitting the
+  // root node regardless turned every such record into a one-agent session.
+  // A declared owner or any recorded event is real evidence and still draws it,
+  // so this drops only the fully synthesized case; budget-driven shrinking to a
+  // lone main node is a different thing and stays reachable via `truncated`.
+  const graphEvidenceDeclared =
+    Boolean(declaredRootOwner) ||
+    workerNodes.length > 0 ||
+    workflowNodes.length > 0 ||
+    (Array.isArray(artifact?.replay) && artifact.replay.length > 0) ||
+    (Array.isArray(artifact?.agUiStageEvents?.events) && artifact.agUiStageEvents.events.length > 0);
+  const nodes = (graphEvidenceDeclared ? [mainNode, ...workflowNodes, ...workerNodes] : []).slice(0, LIVE_MAX_NODES);
   const edges = [];
   for (const workflow of workflowNodes) edges.push({ from: mainNode.id, to: workflow.id, kind: "contains" });
   for (const [groupKey, childIds] of groupRecords.entries()) {
@@ -1694,6 +1844,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       ...conversation,
       executionEvidenceState: structuralOnly ? "structural_planning_only" : "recorded",
       completionEvidenceState: completionIsProven(artifact, runId) ? "trusted_terminal" : "unproven",
+      recordOrigin: liveRecordOrigin(artifact),
       currentStage,
       startedAt,
       updatedAt,
@@ -1706,6 +1857,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       active: false,
       ...runDisplay,
       ...conversation,
+      recordOrigin: liveRecordOrigin(artifact),
       nodeCount: nodes.length,
       eventCount: replay.length,
       activity: runTask,
@@ -2246,12 +2398,26 @@ function sanitizeCompactProjection(value) {
       runStatus = "in_doubt";
     }
   }
-  const verifiedLinks = sanitizeConversationLinks(value.run?.verifiedLinks || value.session?.verifiedLinks);
-  const candidateLinks = sanitizeConversationLinks(value.run?.candidateLinks || value.session?.candidateLinks)
-    .filter((candidate) => !verifiedLinks.some((verified) =>
-      verified.sourceRuntime === candidate.sourceRuntime && verified.conversationRef === candidate.conversationRef));
+  // Reading back a stored projection, so the duplicates here come from whichever
+  // build wrote the file rather than from this pass. The fold is the same one both
+  // producers use, because a third wording of it is how the two producers came to
+  // disagree in the first place.
+  const { verified: verifiedLinks, candidates: candidateLinks } = mergeConversationLinkBuckets(
+    sanitizeConversationLinks(value.run?.verifiedLinks || value.session?.verifiedLinks),
+    sanitizeConversationLinks(value.run?.candidateLinks || value.session?.candidateLinks),
+  );
   const conversationLinkState = verifiedLinks.length ? "verified" : candidateLinks.length ? "candidate" : "unlinked";
+  const conversationLinkRefusal = conversationLinkRefusalFor(
+    conversationLinkState,
+    value.run?.conversationLinkRefusal || value.session?.conversationLinkRefusal,
+  );
   const primaryLink = verifiedLinks[0] || candidateLinks[0] || null;
+  // Derived rather than read back from the stored file. A projection written by an
+  // older build carries no discovery block at all, and one written by a newer
+  // build may name a reason this build cannot print — both would land on the
+  // generic sentence, which is the defect this field exists to remove.
+  const sourceRuntime = primaryLink?.sourceRuntime || safeConversationRuntime(value.run?.sourceRuntime);
+  const conversationDiscovery = conversationDiscoveryForRuntime(sourceRuntime);
   const run = {
     runId,
     title: safeText(value.run?.title, "Governed run", 120),
@@ -2259,14 +2425,17 @@ function sanitizeCompactProjection(value) {
     status: runStatus,
     active: false,
     ...publicDisplay(runStatus, { active: false, structuralOnly }),
-    sourceRuntime: primaryLink?.sourceRuntime || safeConversationRuntime(value.run?.sourceRuntime),
+    sourceRuntime,
     conversationLinkState,
+    conversationDiscovery,
     verifiedLinks,
     candidateLinks,
+    ...(conversationLinkRefusal ? { conversationLinkRefusal } : {}),
     ...(primaryLink?.conversationRef ? { conversationRef: primaryLink.conversationRef } : {}),
     ...(primaryLink?.conversationTitle ? { conversationTitle: primaryLink.conversationTitle } : {}),
     executionEvidenceState: structuralOnly ? "structural_planning_only" : "recorded",
     completionEvidenceState: value.run?.completionEvidenceState === "trusted_terminal" ? "trusted_terminal" : "unproven",
+    recordOrigin: liveRecordOrigin(value),
     currentStage: normalizeStage(value.run?.currentStage),
     startedAt: safeTimestamp(value.run?.startedAt),
     updatedAt: safeTimestamp(value.run?.updatedAt),
@@ -2295,10 +2464,13 @@ function sanitizeCompactProjection(value) {
       ...publicDisplay(run.status, { active: false, structuralOnly }),
       sourceRuntime: run.sourceRuntime,
       conversationLinkState,
+      conversationDiscovery,
       verifiedLinks,
       candidateLinks,
+      ...(conversationLinkRefusal ? { conversationLinkRefusal } : {}),
       ...(run.conversationRef ? { conversationRef: run.conversationRef } : {}),
       ...(run.conversationTitle ? { conversationTitle: run.conversationTitle } : {}),
+      recordOrigin: run.recordOrigin,
       nodeCount: sanitizedNodes.length,
       eventCount: replay.length,
       activity: safeText(value.session?.activity, run.task, 240),
@@ -2425,18 +2597,36 @@ export function buildLiveSnapshot({
       projection = null;
     }
   }
+  // A durable status record proves that a run exists and how far it got. When it
+  // also declares worker task packets or lifecycle records, a graph derived from
+  // those declarations is honest, because every node traces back to something the
+  // record actually says. When it declares nothing, building a projection out of
+  // it used to mint one synthetic root node per artifact-less run, so all 994
+  // measured activation-only runs read as one-agent sessions that had already
+  // lost confidence in themselves.
   if (!projection && selectedDurable) {
-    try {
-      projection = buildLiveCompactProjection({
-        ...selectedDurable,
-        task: "Active governed run",
-        title: "Active governed run",
+    if (runSubstance(selectedDurable).substanceClass === "activation_only") {
+      return durableOnlySnapshot(selectedDurable, {
+        observedAt: safeObservedAt,
+        stale: !durableFresh,
+        active: durableActive,
       });
+    }
+    try {
+      projection = buildLiveCompactProjection(selectedDurable);
     } catch {
-      return emptySnapshot(safeObservedAt);
+      projection = null;
     }
   }
-  if (!projection?.run) return emptySnapshot(safeObservedAt);
+  if (!projection?.run) {
+    return selectedDurable
+      ? durableOnlySnapshot(selectedDurable, {
+          observedAt: safeObservedAt,
+          stale: !durableFresh,
+          active: durableActive,
+        })
+      : emptySnapshot(safeObservedAt);
+  }
 
   const sameRunDurable = selectedDurable && durableRunId === projection.run.runId;
   const stale = Boolean(sameRunDurable && !durableFresh && !compatibleArtifact);
@@ -2456,6 +2646,14 @@ export function buildLiveSnapshot({
   const structuralOnly = projection.run.executionEvidenceState === "structural_planning_only";
   run.active = runActive;
   Object.assign(run, publicDisplay(run.status, { active: runActive, structuralOnly }));
+  // Substance rides on every snapshot path, not only the artifact-less one, so a
+  // reader never has to work out which path produced the record it is holding.
+  const substance = runSubstance(selectedDurable || {}, {
+    artifactPresent: Boolean(compatibleArtifact),
+    eventCount: projection.replay?.length || 0,
+  });
+  run.substanceClass = substance.substanceClass;
+
   const nodes = boundedArray(projection.nodes, LIVE_MAX_NODES).map((node) => ({
     ...node,
     active: runActive && normalizeStatus(node.status) === "active",
@@ -2522,6 +2720,13 @@ export function buildLiveSnapshot({
       provenance: countValue("provenance", projection.provenance?.length || 0),
       contextTransfers: countValue("contextTransfers", contextTransfers.length),
     },
+    graphAvailability: {
+      state: nodes.length > 0 ? "graph_available" : "no_graph_evidence",
+      reason: nodes.length > 0 ? null : LIVE_GRAPH_AVAILABILITY_REASONS.artifactDeclaredNoNodes,
+      substanceClass: substance.substanceClass,
+      substanceSource: "derived_with_artifact_evidence",
+      substanceSignals: substance.substanceSignals,
+    },
     permissions: permissions(),
   };
 }
@@ -2568,6 +2773,16 @@ export function createLiveControlRoomService(options = {}) {
       return null;
     }
   };
+  // A run the catalog listed from `runs/<runId>/status.json` has a durable record
+  // even when it is neither the active run nor artifact-backed. Reading that file
+  // is what keeps the two endpoints from disagreeing about whether the run exists.
+  const readRunStatus = async (runId) => {
+    try {
+      return typeof repository.readRunStatus === "function" ? await repository.readRunStatus(runId) : null;
+    } catch {
+      return null;
+    }
+  };
 
   const getSnapshot = async (requestedRunId = null) => {
     const observedAt = nowIso(clock);
@@ -2584,7 +2799,7 @@ export function createLiveControlRoomService(options = {}) {
       }
       const matchingDurable = normalizeLiveRunId(durable?.runId) === requestedRunId
         ? durable
-        : null;
+        : await readRunStatus(requestedRunId);
       return buildLiveSnapshot({
         durableStatus: matchingDurable,
         governedArtifact: artifact,

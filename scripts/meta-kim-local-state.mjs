@@ -16,6 +16,29 @@ export const repoRoot = path.resolve(__dirname, "..");
 export const localStateRoot = path.join(repoRoot, ".meta-kim", "state");
 export const SHARED_RUNTIME_FAMILY = "shared";
 
+/**
+ * The variables Claude Code actually exports to a child process.
+ *
+ * The previous single check read `CLAUDE_SESSION_ID`, a name no supported host
+ * sets, so it never once fired while both real markers were ignored — a wrong
+ * name and an absent variable are the same shape at the read site. Codex was
+ * detected from its own real markers on the branch above, so a governed run
+ * started by an npm script inside a Claude Code session fell through to the
+ * shared family and wrote its state under a different profile key than the
+ * hooks of the very same session.
+ *
+ * `scripts/governed-execution/host-runtime-provenance.mjs` keeps the
+ * provenance-facing copy of these names. That module reaches the spine reader,
+ * which this low-level path resolver must not depend on, so the lists are
+ * deliberately separate — consolidating them is tracked as follow-up rather
+ * than done by importing upward.
+ */
+const CLAUDE_HOST_ENV_MARKERS = Object.freeze([
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SESSION_ID",
+]);
+
 function repoPathHash(repoPath = repoRoot) {
   return crypto
     .createHash("sha256")
@@ -65,7 +88,7 @@ export function resolveRuntimeFamily(
   }
   if (
     environment.CLAUDE_PROJECT_DIR ||
-    environment.CLAUDE_SESSION_ID ||
+    CLAUDE_HOST_ENV_MARKERS.some((name) => environment[name]) ||
     entrypointMatches("claude")
   ) {
     return "claude";
@@ -146,19 +169,86 @@ export async function readProfileMetadata(options = {}) {
   return JSON.parse(raw);
 }
 
-export async function ensureProfileState(options = {}) {
-  const paths = getProfilePaths(options);
-  const existing = await readProfileMetadata(options);
+/**
+ * `shared` is what the resolver returns when it could not identify a runtime, so
+ * it never conflicts with an identified family — the stronger evidence wins in
+ * both directions. Two *identified* families in one profile is the real
+ * collision, and that is what `classifyProfileIdentity` still refuses.
+ *
+ * `getGlobalProfilePaths` also passes `shared` deliberately for runtime-neutral
+ * global state, and that case is unaffected: it supplies `shared` on both sides,
+ * so reconciliation returns `shared` and the global profile is never relabelled
+ * by whichever runtime happens to touch it.
+ */
+function reconcileRuntimeFamily(recordedFamily, requestedFamily) {
+  return requestedFamily === SHARED_RUNTIME_FAMILY ? recordedFamily : requestedFamily;
+}
+
+/**
+ * The one decision about whether a recorded profile and the current run may share
+ * a state directory. `ensureProfileState` acts on it and `detectProfileCollision`
+ * reports it, so the governance doctor — which gates on the report and asks
+ * before the write happens — cannot call a difference fatal that the writer would
+ * have reconciled without complaint.
+ */
+function classifyProfileIdentity(existing, requestedPaths) {
+  const requestedFamily = requestedPaths.runtimeFamily;
+  if (!existing) {
+    return { exists: false, collision: false, mismatches: [], runtimeFamily: requestedFamily };
+  }
+  // Absent metadata predates the family field, which makes it a record that could
+  // not name its runtime rather than one claiming a different runtime.
+  const recordedFamily = existing.runtimeFamily ?? SHARED_RUNTIME_FAMILY;
+  const mismatches = [];
+  // Rebuilding the key from the family already on disk isolates the repo-path
+  // half, so a reconcilable family cannot read as a path collision.
   if (
-    existing &&
-    (existing.profileKey !== paths.profileKey || existing.runtimeFamily !== paths.runtimeFamily)
+    existing.profileKey !==
+    buildProfileKey({ repoPath: requestedPaths.repoPath, runtimeFamily: recordedFamily })
   ) {
+    mismatches.push("profileKey");
+  }
+  if (
+    recordedFamily !== SHARED_RUNTIME_FAMILY &&
+    requestedFamily !== SHARED_RUNTIME_FAMILY &&
+    recordedFamily !== requestedFamily
+  ) {
+    mismatches.push("runtimeFamily");
+  }
+  // Compared against the root the caller asked about, not this module's own:
+  // a profile living outside the repo is not evidence of a mixed-up profile.
+  if (existing.repoRoot !== requestedPaths.repoPath) {
+    mismatches.push("repoRoot");
+  }
+  return {
+    exists: true,
+    collision: mismatches.length > 0,
+    mismatches,
+    runtimeFamily: reconcileRuntimeFamily(recordedFamily, requestedFamily),
+  };
+}
+
+export async function ensureProfileState(options = {}) {
+  const requestedPaths = getProfilePaths(options);
+  const existing = await readProfileMetadata(options);
+  const identity = classifyProfileIdentity(existing, requestedPaths);
+  if (identity.collision) {
     throw new Error(
-      `profile collision detected for ${paths.profile}: expected ${paths.profileKey}/${paths.runtimeFamily}, ` +
+      `profile collision detected for ${requestedPaths.profile}: expected ${requestedPaths.profileKey}/${requestedPaths.runtimeFamily}, ` +
         `found ${existing.profileKey ?? "unknown"}/${existing.runtimeFamily ?? "unknown"}. ` +
         `Set META_KIM_PROFILE to a distinct name for each concurrently used runtime (for example codex or claude).`,
     );
   }
+  const paths = identity.runtimeFamily === requestedPaths.runtimeFamily
+    ? requestedPaths
+    : {
+        ...requestedPaths,
+        runtimeFamily: identity.runtimeFamily,
+        profileKey: buildProfileKey({
+          repoPath: requestedPaths.repoPath,
+          runtimeFamily: identity.runtimeFamily,
+        }),
+      };
   await fs.mkdir(paths.profileDir, { recursive: true });
   await fs.mkdir(paths.compactionDir, { recursive: true });
   await fs.mkdir(paths.doctorCacheDir, { recursive: true });
@@ -204,32 +294,13 @@ export async function ensureGlobalProfileState({ profile, canonicalProfile } = {
 export async function detectProfileCollision(options = {}) {
   const paths = getProfilePaths(options);
   const existing = await readProfileMetadata(options);
-  if (!existing) {
-    return {
-      exists: false,
-      collision: false,
-      expectedProfileKey: paths.profileKey,
-      expectedRuntimeFamily: paths.runtimeFamily,
-    };
-  }
-
-  const mismatches = [];
-  if (existing.profileKey !== paths.profileKey) {
-    mismatches.push("profileKey");
-  }
-  if (existing.runtimeFamily !== paths.runtimeFamily) {
-    mismatches.push("runtimeFamily");
-  }
-  if (existing.repoRoot !== repoRoot) {
-    mismatches.push("repoRoot");
-  }
-
+  const identity = classifyProfileIdentity(existing, paths);
   return {
-    exists: true,
-    collision: mismatches.length > 0,
-    mismatches,
+    exists: identity.exists,
+    collision: identity.collision,
+    mismatches: identity.mismatches,
     expectedProfileKey: paths.profileKey,
     expectedRuntimeFamily: paths.runtimeFamily,
-    existing,
+    existing: existing ?? null,
   };
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildLiveCompactProjection } from "../../src/application/live/live-control-room-service.mjs";
+import { normalizeConversationMatchBasis } from "../../src/application/live/live-conversation-link-vocabulary.mjs";
 
 const BASE_TIME = "2026-08-30T00:00:00.000Z";
 
@@ -63,7 +64,7 @@ function baseArtifact({ runtime, hostSurface, observed, missingReason }) {
       sourceRuntime: runtime,
       verified: observed?.conversationVerified === true,
       matchState: observed?.conversationVerified === true ? "verified" : "unverified",
-      matchBasis: observed?.conversationVerified === true ? "exact_metadata" : "declared_only",
+      matchBasis: observed?.conversationVerified === true ? "exact_metadata" : "metadata_candidate",
       title: "cross-runtime smoke",
       updatedAt: BASE_TIME,
     }],
@@ -337,4 +338,39 @@ test("Cross-runtime: synthetic evidence must never promote capability to observe
   const toolTruth = (worker.capabilityTruth || []).find((entry) => entry.kind === "runtime_tool");
   assert.notEqual(toolTruth.state, "observed", "synthetic evidence must not promote runtime_tool to observed");
   assert.equal((projection.toolCalls || []).length, 0, "synthetic evidence must not leak into toolCalls");
+});
+
+test("Cross-runtime: a fixture may only declare a basis the reader can still read back", () => {
+  // `normalizeConversationMatchBasis` answers "I do not recognise this" with
+  // `null`, and every production reader spends that `null` on a derived fallback.
+  // So a fixture that invents a basis name does not fail — it silently becomes
+  // whatever the reader was going to say anyway, and the branch the fixture meant
+  // to exercise ("unverified, but here is why we still matched it") is never
+  // actually exercised. `declared_only` sat on the unverified branch here and was
+  // that shape.
+  //
+  // Closure: `baseArtifact` above is the only place this file declares a basis,
+  // so walking both of its branches covers this file completely. It says nothing
+  // about fixtures built in other files.
+  const variants = [
+    { label: "verified", conversationVerified: true, expected: "exact_metadata" },
+    { label: "unverified", conversationVerified: false, expected: "metadata_candidate" },
+  ];
+  for (const variant of variants) {
+    const artifact = baseArtifact({
+      runtime: "claude-code",
+      hostSurface: "claude-code-host",
+      observed: { conversationVerified: variant.conversationVerified },
+    });
+    const links = artifact.conversationLinks || [];
+    assert.equal(links.length, 1, `the ${variant.label} fixture must still carry the link this test inspects`);
+    // Hardcoded, not read back off the fixture: an expectation derived from the
+    // fixture would agree with whatever it happens to say, including a made-up name.
+    assert.equal(links[0].matchBasis, variant.expected, `the ${variant.label} fixture must declare ${variant.expected}`);
+    assert.equal(
+      normalizeConversationMatchBasis(links[0].matchBasis),
+      variant.expected,
+      `the ${variant.label} fixture's basis must survive the reader instead of collapsing to null`,
+    );
+  }
 });

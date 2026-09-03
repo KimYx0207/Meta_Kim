@@ -246,7 +246,24 @@ export function stripRepoMetaKimHooksFromSettings(settings) {
 export function mergeHookMatcherBlocks(existing, additions) {
   const result = structuredClone(existing);
   for (const addBlock of additions) {
-    const idx = result.findIndex((b) => b.matcher === addBlock.matcher);
+    // Cursor's hooks.json declares `{command, timeout}` directly on the event,
+    // with no matcher and no inner hooks array. Keying those by matcher collapses
+    // every one of them onto the first matcher-less block, and the inner loop
+    // below then iterates an absent `hooks` array — so each addition after the
+    // first is discarded with no error. Identify flat blocks by their command.
+    if (!Array.isArray(addBlock.hooks) && typeof addBlock.command === "string") {
+      if (!result.some((block) => block.command === addBlock.command)) {
+        result.push(structuredClone(addBlock));
+      }
+      continue;
+    }
+    // A nested addition may itself carry `matcher: undefined` (Codex's
+    // UserPromptSubmit block does). Without the shape check it adopts a flat
+    // block as its target and grafts a `hooks` array onto a block that already
+    // declares its own command, producing a block no runtime can read.
+    const idx = result.findIndex(
+      (b) => b.matcher === addBlock.matcher && typeof b.command !== "string",
+    );
     if (idx === -1) {
       result.push(structuredClone(addBlock));
       continue;

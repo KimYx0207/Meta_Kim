@@ -95,6 +95,7 @@ export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -182,10 +183,11 @@ export function hookCommand(command, timeout, extra = {}) {
   };
 }
 
-const PROJECT_META_KIM_HOOK_FILES = new Set([
+export const PROJECT_META_KIM_HOOK_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",

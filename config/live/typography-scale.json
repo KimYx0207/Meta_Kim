@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "meta-kim-live-typography-scale-v2",
+  "base": {
+    "customProperty": "--fs-base",
+    "min": "0.9375rem",
+    "preferred": "0.82rem + 0.17vw",
+    "max": "1.12rem"
+  },
+  "legibility": {
+    "rootFontSizePx": 16,
+    "minimumRenderedPixels": 11,
+    "rationale": "The floor is claimed against the standard 16px root, which is the worst case: a reader who enlarges their root only gets larger text. 11px is where dense monospace annotation stops being scannable on a 1x display, and clamp() can never resolve below base.min, so the smallest size the ladder can ever render is a property of this document alone."
+  },
+  "hierarchy": {
+    "minimumAdjacentRatio": 1.09,
+    "minimumAdjacentDeltaPx": 1,
+    "rationale": "Ordering and hierarchy are different properties. The previous ladder stepped 0.79 / 0.83 / 0.87 / 0.93 / 1, which is strictly increasing and still resolved 54% of on-screen text to one size with 64% inside a 1.17px band; adjacent deltas of 0.88px and 1.02px are below the threshold at which a size difference reads as a level difference. Both constraints are needed because each is blind at one end: a pixel delta lets the large end drift together, a ratio lets the small end collapse. Two of these constraints plus the 11px floor is also why the ladder carries seven steps rather than eight - five levels at or below the base cannot all separate above an 11px floor without pushing the base past the density this view needs, so decorative chips and dense machine-readable annotation share one size and separate by weight, colour and letter-spacing instead."
+  },
+  "stepPropertyPrefix": "--fs-",
+  "steps": [
+    { "name": "micro", "ratio": 0.74, "role": "decorative chips, tags, placeholder copy and dense machine-readable annotation lines" },
+    { "name": "label", "ratio": 0.81, "role": "field labels, kickers and control captions" },
+    { "name": "entity-body", "ratio": 0.9, "role": "description text inside an entity card" },
+    { "name": "body", "ratio": 1, "role": "default readable prose and values" },
+    { "name": "entity-title", "ratio": 1.22, "role": "title of a single entity such as a graph node card" },
+    { "name": "view-title", "ratio": 1.34, "role": "title of a view, panel or dialog" },
+    { "name": "hero", "ratio": 1.78, "role": "the run identity line - the largest text on screen, and the only element allowed at this tier. It was named \"metric\" and sized six counters at once, which made six things compete to be the most important text in the band while the run title beside them was ellipsised at a smaller tier." }
+  ],
+  "leading": {
+    "customPropertyPrefix": "--lh-",
+    "minimumRatio": 1.2,
+    "rationale": "A line box equal to the glyph em box has no leading, so the text touches whatever is stacked against it regardless of the container's padding. That was the mechanical cause of text butting into adjacent chrome: 19 of 55 line-height declarations were exactly 1, and the two largest text populations measured a line box equal to their font size to the pixel. Families are keyed by wrapping behaviour rather than by type step, because the same step serves both a single-line uppercase monospace label and a wrapped caption and those need different leading - a step name cannot know which.",
+    "families": [
+      { "name": "display", "ratio": 1.2, "role": "large single-line display text - run metrics and view titles, where a tall line box would read as a gap rather than as leading" },
+      { "name": "flat", "ratio": 1.28, "role": "single-line labels, chips, status pills and truncated monospace lines that never wrap" },
+      { "name": "snug", "ratio": 1.42, "role": "titles and values that may wrap onto a second line" },
+      { "name": "normal", "ratio": 1.55, "role": "wrapped prose - summaries, descriptions and any run of more than two lines" }
+    ]
+  }
+}

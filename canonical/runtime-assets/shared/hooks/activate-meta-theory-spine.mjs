@@ -8,15 +8,19 @@ import {
   projectRootCandidatesFromPayload,
   resolveProjectRoot,
 } from "./project-root.mjs";
+import { resolveVerifiedSourceConversation } from "./conversation-binding.mjs";
 import {
   readSpineState,
   readSpineStateIncludingInactive,
   activateSpineState,
+  bindSourceConversation,
+  classifyRunSubstance,
   createInitialState,
   createProjectTaskIdentity,
   readExistingTaskIdentityBinding,
   writeSpineState,
   recordWorkerLifecycleEvent,
+  STAGE_ORDER,
 } from "./spine-state.mjs";
 
 const cwd = process.cwd();
@@ -29,35 +33,11 @@ function argumentValue(name) {
   return index >= 0 ? process.argv[index + 1] : null;
 }
 
-function sourceConversationFromPayload() {
-  const runtimeCandidate = String(
-    argumentValue("--runtime") ||
-    process.env.META_KIM_HOOK_RUNTIME ||
-    payload?.runtime ||
-    "",
-  ).trim().toLowerCase();
-  const runtime = runtimeCandidate === "claude-code" ? "claude" : runtimeCandidate;
-  if (!["claude", "codex", "cursor", "openclaw"].includes(runtime)) return null;
-  const conversationId = [
-    payload?.conversation_id,
-    payload?.conversationId,
-    payload?.thread_id,
-    payload?.threadId,
-    payload?.session_id,
-    payload?.sessionId,
-    payload?.composer_id,
-    payload?.composerId,
-    payload?.session_key,
-    payload?.sessionKey,
-  ].find((value) => typeof value === "string" && /^[a-z0-9][a-z0-9:._-]{3,159}$/iu.test(value.trim()));
-  if (!conversationId) return null;
-  const title = [payload?.conversation_title, payload?.conversationTitle, payload?.thread_title, payload?.threadTitle, payload?.session_title, payload?.sessionTitle]
-    .find((value) => typeof value === "string" && value.trim() && value.trim().length <= 120 && !/[\u0000-\u001f\u007f]/u.test(value));
-  return {
-    runtime,
-    conversationId: conversationId.trim(),
-    ...(title ? { title: title.trim() } : {}),
-  };
+// The run + conversation association is proved on disk, not asserted by the
+// caller: conversation-binding.mjs requires the payload transcript to exist and
+// to be named after the very session id the payload claims.
+function verifiedConversationBinding() {
+  return resolveVerifiedSourceConversation(payload, { runtime: sourceRuntimeFromPayload() });
 }
 
 function sourceRuntimeFromPayload() {
@@ -157,13 +137,17 @@ function isLifecycleHookPayload() {
 async function recordLifecycleHook(root) {
   const state = await readSpineState(root);
   if (!state?.active) return;
-  // Raw Hook stdin is caller-controlled. It may identify the runtime for
-  // diagnostics, but it cannot promote a conversation/thread hint to a
-  // verified run binding.
+  // A run may start before its transcript is on disk, so every later hook of the
+  // same run retries the binding. Runs that never earn the proof keep the runtime
+  // for diagnostics and stay unlinked.
   const observedRuntime = sourceRuntimeFromPayload();
-  let updated = observedRuntime && !state.sourceConversation
-    ? { ...state, sourceRuntime: observedRuntime, conversationLinkState: "unlinked" }
-    : state;
+  const lifecycleBinding = verifiedConversationBinding();
+  let updated = state.sourceConversation
+    ? state
+    : bindSourceConversation(state, lifecycleBinding.conversation, {
+      sourceRuntime: observedRuntime,
+      refusalReason: lifecycleBinding.binding?.reason,
+    });
   const taskPacketId = lifecycleTaskPacketId(updated);
   const status = lifecycleStatusFromPayload();
   const trustedHostEvent = hasVerifiedLifecycleAssociation();
@@ -441,6 +425,41 @@ function buildContinuationBoundary(previousState, promptText) {
   };
 }
 
+/**
+ * The spine already computes an HMAC task fingerprint on every activation, but a
+ * deactivated prior run used to be discarded outright, so the next prompt about
+ * the same task always minted a fresh run id. Reusing the id collapses repeated
+ * prompts on one task onto one run record instead of one record per prompt.
+ *
+ * Reuse only applies when the prior run never produced anything. A run with
+ * completed stages, worker records or a recorded blocker owns durable history,
+ * and a new activation must not overwrite it.
+ */
+function resolveReusableRunIdentity(previous, taskFingerprint) {
+  if (typeof taskFingerprint !== "string" || !taskFingerprint) return null;
+  if (!previous || typeof previous !== "object") return null;
+  if (previous.active !== false) return null;
+  if (previous.taskFingerprint !== taskFingerprint) return null;
+  const runId = typeof previous.runId === "string" ? previous.runId : "";
+  if (!/^meta-[a-z0-9][a-z0-9._-]{0,115}$/u.test(runId)) return null;
+
+  const stages = previous.stages || {};
+  const { substanceClass } = classifyRunSubstance({
+    completed: STAGE_ORDER.filter((stage) => stages?.[stage]?.status === "completed"),
+    workerLifecycle: previous.workerLifecycle,
+    stageIndex: STAGE_ORDER.indexOf(previous.currentStage) + 1,
+    blockedOn: previous.blockedOn,
+  });
+  if (substanceClass !== "activation_only") return null;
+
+  return {
+    runId,
+    basis: "same_task_fingerprint_activation_only_run",
+    previousStage: previous.currentStage || null,
+    previousDeactivationReason: previous.deactivationReason || null,
+  };
+}
+
 function startPostCopyAutoInit(root) {
   if (process.env.META_KIM_POST_COPY_AUTO === "off") return;
 
@@ -591,9 +610,13 @@ const promptFingerprint = taskIdentity.taskFingerprint;
     null;
   if (existingFingerprint && existingFingerprint === promptFingerprint) {
     const observedRuntime = sourceRuntimeFromPayload();
-    const refreshedState = observedRuntime && !existing.sourceConversation
-      ? { ...existing, sourceRuntime: observedRuntime, conversationLinkState: "unlinked" }
-      : existing;
+    const refreshBinding = verifiedConversationBinding();
+    const refreshedState = existing.sourceConversation
+      ? existing
+      : bindSourceConversation(existing, refreshBinding.conversation, {
+        sourceRuntime: observedRuntime,
+        refusalReason: refreshBinding.binding?.reason,
+      });
     await activateSpineState(projectRoot, refreshedState, {
       expectedRunId: existing.runId || null,
       refreshExisting: true,
@@ -606,6 +629,11 @@ const promptFingerprint = taskIdentity.taskFingerprint;
   process.exit(0);
 }
 
+const reusableRunIdentity = resolveReusableRunIdentity(
+  rawExisting,
+  taskIdentity.taskFingerprint,
+);
+const activationBinding = verifiedConversationBinding();
 const state = createInitialState({
   taskClassification: activation.taskClassification,
   triggerReason: activation.triggerReason,
@@ -618,15 +646,25 @@ const state = createInitialState({
   latestUserInputLanguage: detectPromptLanguage(rawPromptText),
   factGatePolicy: "managed_gate_required_for_public_ready",
   executionLeasePolicy: "advisory_until_managed_stage_driver",
-  // Hook payload conversation IDs remain advisory until a runtime adapter
-  // independently proves the run + conversation association.
-  sourceConversation: null,
+  sourceConversation: activationBinding.conversation,
   sourceRuntime: sourceRuntimeFromPayload(),
+  conversationLinkRefusal: activationBinding.binding?.reason,
 });
 
-const continuationBoundary = buildContinuationBoundary(rawExisting, rawPromptText);
+const continuationBoundary = reusableRunIdentity
+  ? null
+  : buildContinuationBoundary(rawExisting, rawPromptText);
 if (continuationBoundary) {
   state.continuationBoundary = continuationBoundary;
+}
+if (reusableRunIdentity) {
+  state.runId = reusableRunIdentity.runId;
+  state.stageRuntimeControl.runIdentityReuse = {
+    basis: reusableRunIdentity.basis,
+    previousStage: reusableRunIdentity.previousStage,
+    previousDeactivationReason: reusableRunIdentity.previousDeactivationReason,
+    previousSubstanceClass: "activation_only",
+  };
 }
 
 // 命中可并行的入口信号时只标记 fanout_eligible。

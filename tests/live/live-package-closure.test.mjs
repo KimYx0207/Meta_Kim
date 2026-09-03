@@ -188,6 +188,41 @@ test("every runtime identity path is present, packed, and actually loaded", () =
   );
 });
 
+/**
+ * The hub runs as a detached child of `scripts/meta-kim-live.mjs`, so the modules
+ * whose bytes decide its behaviour are that script's import closure — not the five
+ * "live" source directories the identity list was first derived from. Those two
+ * rules diverge on every non-live module the daemon pulls in: editing one of them
+ * leaves the package identity unchanged, so the fast-reuse path reports a hub
+ * running stale bytes as an expected build match. The assertion above only covers
+ * the opposite direction, hashed-but-never-loaded.
+ */
+test("the runtime identity covers every module the hub daemon executes", () => {
+  const { visited: daemonModules } = importClosure(["scripts/meta-kim-live.mjs"]);
+  const hashed = new Set(LIVE_HUB_RUNTIME_IDENTITY_PATHS);
+  const unhashed = [...daemonModules].filter((file) => /\.mjs$/u.test(file) && !hashed.has(file)).sort();
+  assert.deepEqual(
+    unhashed,
+    [],
+    `executed by the hub daemon but absent from the runtime identity, so editing it cannot force a stale hub to be replaced:\n${unhashed.join("\n")}`,
+  );
+});
+
+test("the daemon closure is wide enough to make the identity coverage check meaningful", () => {
+  const { visited: daemonModules } = importClosure(["scripts/meta-kim-live.mjs"]);
+  assert.ok(
+    daemonModules.size >= 25,
+    `negative control: a truncated daemon closure would make the coverage assertion vacuous, found ${daemonModules.size}`,
+  );
+  const outsideLiveDirectories = [...daemonModules]
+    .filter((file) => file.startsWith("src/") && !file.includes("/live/"))
+    .sort();
+  assert.ok(
+    outsideLiveDirectories.length > 0,
+    "negative control: the daemon must reach modules outside the */live/ directories, or covering the closure adds nothing to the directory-derived list",
+  );
+});
+
 test("the identity audit reads a real closure rather than the whole tree", () => {
   const { visited } = importClosure(liveEntryPoints);
   assert.ok(LIVE_HUB_RUNTIME_IDENTITY_PATHS.length >= 20, "the identity set must stay broad enough to be meaningful");

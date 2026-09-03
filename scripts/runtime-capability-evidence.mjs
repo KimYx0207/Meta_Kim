@@ -156,7 +156,7 @@ function digestRepositoryFile(filePath) {
   return sha256(Buffer.from(bytes.toString("utf8").replace(/\r\n?/gu, "\n"), "utf8"));
 }
 
-function repositorySourcePath(ref) {
+export function repositorySourcePath(ref) {
   const normalized = String(ref ?? "").replaceAll("\\", "/").replace(/^\.\//u, "");
   if (!REPOSITORY_EVIDENCE_FILES.has(normalized) && !REPOSITORY_EVIDENCE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return null;
   const requested = path.resolve(repoRoot, normalized);

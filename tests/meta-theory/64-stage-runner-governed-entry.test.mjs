@@ -102,7 +102,7 @@ async function governedRunnerSpineFixture(t) {
   return { root, outputRoot, spine };
 }
 
-function governedRunnerSpineRun({ root, outputRoot, runId }) {
+function governedRunnerSpineRun({ root, outputRoot, runId, hostEnv }) {
   return runMetaTheoryGovernedExecution({
     task: "Inspect package metadata and prepare a read-only verification summary.",
     runId,
@@ -114,6 +114,20 @@ function governedRunnerSpineRun({ root, outputRoot, runId }) {
     projectRoot: root,
     projectCapabilityMutationMode: "read_only",
     emitConversationNotice: false,
+    ...(hostEnv ? { hostEnv } : {}),
+  });
+}
+
+const HOST_PROVENANCE_CHAT_ID = "b5799d00-ef7a-4882-818d-d9053cacba71";
+
+function verifiedChatSpineState(spine) {
+  return spine.createInitialState({
+    triggerReason: "user_invocation",
+    sourceConversation: {
+      runtime: "claude",
+      sessionId: HOST_PROVENANCE_CHAT_ID,
+      matchBasis: "transcript_file_verified",
+    },
   });
 }
 
@@ -154,4 +168,163 @@ test("governed runner reports a runId outside the canonical spine namespace inst
   const state = await spine.readSpineState(root);
   assert.equal(state.runId, activated.runId);
   assert.equal(Object.hasOwn(state, "runnerDispatchBindingEnvelope"), false);
+});
+
+test("a governed run under a live chat records that chat and the host it came from", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const activated = verifiedChatSpineState(spine);
+  assert.equal(activated.conversationLinkState, "verified");
+  await spine.activateSpineState(root, activated);
+
+  const report = await governedRunnerSpineRun({
+    root,
+    outputRoot,
+    runId: "meta-runner-hostprov-linked-1",
+    hostEnv: {},
+  });
+
+  assert.equal(report.conversationLinkState, "verified");
+  assert.equal(report.sourceRuntime, "claude");
+  assert.equal(report.sourceConversation.conversationId, HOST_PROVENANCE_CHAT_ID);
+  assert.equal(report.sourceConversation.runId, "meta-runner-hostprov-linked-1");
+  assert.equal(report.sourceConversation.matchBasis, "transcript_file_verified");
+  assert.equal(report.requestRecord.runtimeContext.runtimeFamily, "claude");
+  assert.equal(report.coreLoop.requestRecord.runtimeContext.runtimeFamily, "claude");
+  // Which host produced the record and which runtime the route plans against are
+  // two questions. Collapsing them is what stamped every run as Codex.
+  assert.equal(report.requestRecord.runtimeContext.routeTarget, "codex");
+  assert.equal(report.sourceArtifacts.orchestrationReport.runtimeContext.runtimeFamily, "codex");
+
+  // The panel reads the compact projection, not the artifact. An artifact that
+  // names the chat while the projection drops it leaves every row reading
+  // "unlinked" exactly as before.
+  const projection = JSON.parse(await fs.readFile(
+    path.join(outputRoot, "meta-runner-hostprov-linked-1.live.json"),
+    "utf8",
+  ));
+  assert.equal(projection.run.conversationLinkState, "verified");
+  assert.equal(projection.run.sourceRuntime, "claude");
+  assert.equal(projection.run.conversationRef, HOST_PROVENANCE_CHAT_ID);
+});
+
+test("a governed run outside any live chat records the host without inventing a link", async (t) => {
+  const { root, outputRoot } = await governedRunnerSpineFixture(t);
+
+  const report = await governedRunnerSpineRun({
+    root,
+    outputRoot,
+    runId: "meta-runner-hostprov-unlinked-1",
+    hostEnv: { CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli" },
+  });
+
+  assert.equal(report.conversationLinkState, "unlinked");
+  assert.equal(report.sourceConversation, undefined);
+  assert.equal(report.sourceRuntime, "claude");
+  assert.equal(report.requestRecord.runtimeContext.runtimeFamily, "claude");
+  assert.equal(report.hostProvenancePacket.conversationBindingRefusal, "no_spine_state");
+  // A known host with no chat to attach is a different sentence from a host that
+  // never identified itself, and the panel already has copy for both.
+  assert.equal(report.conversationLinkRefusal, "conversation_id_not_identified");
+});
+
+test("a deactivated chat is not lent to a later governed run", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const activated = verifiedChatSpineState(spine);
+  await spine.activateSpineState(root, activated);
+  await spine.terminalizeSpineState(root, { expectedRunId: activated.runId });
+  const stored = await spine.readSpineStateIncludingInactive(root);
+  assert.equal(stored.active, false);
+  assert.equal(stored.sourceConversation.conversationId, HOST_PROVENANCE_CHAT_ID);
+
+  const report = await governedRunnerSpineRun({
+    root,
+    outputRoot,
+    runId: "meta-runner-hostprov-stale-1",
+    hostEnv: {},
+  });
+
+  assert.equal(report.conversationLinkState, "unlinked");
+  assert.equal(report.sourceConversation, undefined);
+  assert.equal(
+    report.hostProvenancePacket.conversationBindingRefusal,
+    "spine_conversation_host_session_absent",
+  );
+  // No host marker and no live binding leaves the run unattributed, which the
+  // panel already has copy for. A vendor name here would be a guess.
+  assert.equal(report.sourceRuntime, "unavailable");
+  assert.equal(report.requestRecord.runtimeContext.runtimeFamily, "unavailable");
+  assert.equal(report.conversationLinkRefusal, "runtime_not_identified");
+});
+
+test("a deactivated chat is not lent to a host running under a different chat", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const activated = verifiedChatSpineState(spine);
+  await spine.activateSpineState(root, activated);
+  await spine.terminalizeSpineState(root, { expectedRunId: activated.runId });
+
+  // The concrete case is a long-lived daemon started from another session: it
+  // keeps exporting that session's chat id for as long as it lives, so equality
+  // against the recorded chat is the only thing separating it from the real host.
+  const report = await governedRunnerSpineRun({
+    root,
+    outputRoot,
+    runId: "meta-runner-hostprov-otherchat-1",
+    hostEnv: {
+      CLAUDECODE: "1",
+      CLAUDE_CODE_SESSION_ID: "39a0b1c2-0000-4000-8000-000000000000",
+    },
+  });
+
+  assert.equal(report.conversationLinkState, "unlinked");
+  assert.equal(report.sourceConversation, undefined);
+  assert.equal(
+    report.hostProvenancePacket.conversationBindingRefusal,
+    "spine_conversation_host_session_mismatch",
+  );
+  assert.equal(report.sourceRuntime, "claude");
+  assert.equal(report.conversationLinkRefusal, "conversation_id_not_identified");
+});
+
+/**
+ * Claude Code's `Stop` hook fires at every turn boundary rather than at session
+ * end, so a spine terminalized with `session_stop` routinely belongs to a chat
+ * that is still open. Refusing all of them is what left every governed run after
+ * the first turn boundary reading "unlinked" on the panel.
+ */
+test("a deactivated chat is revived for a host provably running under that same chat", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const activated = verifiedChatSpineState(spine);
+  await spine.activateSpineState(root, activated);
+  await spine.terminalizeSpineState(root, { expectedRunId: activated.runId });
+  const stored = await spine.readSpineStateIncludingInactive(root);
+  assert.equal(stored.active, false);
+  assert.equal(stored.deactivationReason, "session_stop");
+
+  const report = await governedRunnerSpineRun({
+    root,
+    outputRoot,
+    runId: "meta-runner-hostprov-revived-1",
+    hostEnv: { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: HOST_PROVENANCE_CHAT_ID },
+  });
+
+  assert.equal(report.conversationLinkState, "verified");
+  assert.equal(report.sourceConversation.conversationId, HOST_PROVENANCE_CHAT_ID);
+  assert.equal(report.sourceConversation.runId, "meta-runner-hostprov-revived-1");
+  assert.equal(report.sourceConversation.matchBasis, "transcript_file_verified");
+  // The record has to say which route proved it, or a reader cannot tell a live
+  // binding from a revived one.
+  assert.equal(
+    report.hostProvenancePacket.conversationBindingBasis,
+    "revived_host_session_binding",
+  );
+  assert.equal(report.hostProvenancePacket.provenanceBasis, "revived_host_session_binding");
+  assert.equal(report.sourceRuntime, "claude");
+  assert.equal(report.requestRecord.runtimeContext.routeTarget, "codex");
+
+  const projection = JSON.parse(await fs.readFile(
+    path.join(outputRoot, "meta-runner-hostprov-revived-1.live.json"),
+    "utf8",
+  ));
+  assert.equal(projection.run.conversationLinkState, "verified");
+  assert.equal(projection.run.conversationRef, HOST_PROVENANCE_CHAT_ID);
 });

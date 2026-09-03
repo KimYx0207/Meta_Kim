@@ -11,6 +11,7 @@ import {
   openRunStateStore,
 } from "../../scripts/capability-gap-mvp.mjs";
 import {
+  detectProfileCollision,
   ensureProfileState,
   getProfilePaths,
   resolveProfileName,
@@ -135,6 +136,44 @@ test("runtime-family inference reads the real entrypoint, not business argument 
         "--targets",
         "claude,codex",
       ],
+    }),
+    "codex",
+  );
+});
+
+/**
+ * Measured in a live Claude Code session: `CLAUDECODE=1` and
+ * `CLAUDE_CODE_SESSION_ID=<chat id>` are both present, and `CLAUDE_PROJECT_DIR`
+ * is not. A governed run started by an npm script also has no `claude` segment
+ * in its entrypoint, so without these two markers the only Claude signals the
+ * host actually exports are ignored and the run files its state under the
+ * shared family. Codex is recognized from its own real markers on the branch
+ * directly above, so the gap was one-sided.
+ */
+test("a real Claude Code environment is recognized from the markers the host exports", () => {
+  const neutralArgv = [process.execPath, path.join(REPO_ROOT, "scripts", "run-meta-theory-governed-execution.mjs")];
+  for (const environment of [
+    { CLAUDECODE: "1" },
+    { CLAUDE_CODE_SESSION_ID: "b5799d00-ef7a-4882-818d-d9053cacba71" },
+    { CLAUDE_CODE_ENTRYPOINT: "cli" },
+  ]) {
+    assert.equal(
+      resolveRuntimeFamily(undefined, { environment, argv: neutralArgv }),
+      "claude",
+      `${Object.keys(environment)[0]} is exported by the host and must identify the runtime`,
+    );
+  }
+});
+
+/**
+ * A nested launch keeps the outer host's variables, so the inner runtime has to
+ * win or a Codex run inside a Claude session would write to the Claude profile.
+ */
+test("an inner runtime outranks the outer host's inherited markers", () => {
+  assert.equal(
+    resolveRuntimeFamily(undefined, {
+      environment: { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "b5799d00", CODEX_HOME: "/codex" },
+      argv: [process.execPath, path.join(REPO_ROOT, "scripts", "run-meta-theory-governed-execution.mjs")],
     }),
     "codex",
   );
@@ -409,19 +448,122 @@ test("runtime-family inference reads the real entrypoint, not business argument 
     }
   });
 
-  test("profile state refuses a second runtime family before overwriting metadata", async () => {
-    const profile = `collision-${process.pid}-${Date.now()}`;
-    const paths = getProfilePaths({ profile, runtimeFamily: "shared" });
+  /**
+   * The guard exists so two *runtimes* cannot share one profile, which is what
+   * its own error message tells the reader to fix. `shared` is not a runtime: it
+   * is what the resolver returns when it could not identify one. Refusing to
+   * sharpen an unidentified family into an identified one would make correct
+   * detection a breaking change — the repo's own `default` profile was written
+   * as `shared` while Claude markers went unread, so the first run after
+   * detection improves would have died on a collision instead of recording the
+   * runtime it finally knew.
+   */
+  test("an unidentified profile family is sharpened by a runtime that can name itself", async () => {
+    const profile = `sharpen-${process.pid}-${Date.now()}`;
+    const paths = getProfilePaths({ profile, runtimeFamily: "claude" });
     try {
-      await ensureProfileState({ profile, runtimeFamily: "shared" });
+      const seeded = await ensureProfileState({ profile, runtimeFamily: SHARED_RUNTIME_FAMILY });
+      assert.equal(seeded.metadata.runtimeFamily, SHARED_RUNTIME_FAMILY);
+
+      const sharpened = await ensureProfileState({ profile, runtimeFamily: "claude" });
+      assert.equal(sharpened.metadata.runtimeFamily, "claude");
+      assert.equal(sharpened.metadata.profileKey, paths.profileKey);
+      assert.equal(
+        sharpened.metadata.createdAt,
+        seeded.metadata.createdAt,
+        "sharpening records the runtime without presenting the profile as newly created",
+      );
+    } finally {
+      await fs.rm(paths.profileDir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The reverse must not erase what is already proven. A process that cannot see
+   * its own markers knows less than the record does, so treating its `shared`
+   * result as an update would let one unidentified run downgrade a profile that
+   * a previous identified run had labelled correctly.
+   */
+  test("a run that cannot identify its runtime keeps the family already recorded", async () => {
+    const profile = `preserve-${process.pid}-${Date.now()}`;
+    const paths = getProfilePaths({ profile, runtimeFamily: "codex" });
+    try {
+      await ensureProfileState({ profile, runtimeFamily: "codex" });
+      const later = await ensureProfileState({ profile, runtimeFamily: SHARED_RUNTIME_FAMILY });
+      assert.equal(later.metadata.runtimeFamily, "codex");
+      assert.equal(later.metadata.profileKey, paths.profileKey);
+    } finally {
+      await fs.rm(paths.profileDir, { recursive: true, force: true });
+    }
+  });
+
+  test("profile state refuses a second identified runtime before overwriting metadata", async () => {
+    const profile = `collision-${process.pid}-${Date.now()}`;
+    const paths = getProfilePaths({ profile, runtimeFamily: "claude" });
+    try {
+      await ensureProfileState({ profile, runtimeFamily: "claude" });
       await assert.rejects(
         ensureProfileState({ profile, runtimeFamily: "codex" }),
         /profile collision detected/,
       );
       const metadata = JSON.parse(await fs.readFile(paths.profileFile, "utf8"));
-      assert.equal(metadata.runtimeFamily, "shared");
+      assert.equal(metadata.runtimeFamily, "claude");
     } finally {
       await fs.rm(paths.profileDir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The governance doctor asks this same question through a different function,
+   * and it asks first — so a difference the writer reconciles without complaint
+   * still fails the gate if the reporter calls it a collision. Two answers to one
+   * question is how the repo's own `default` profile would keep failing
+   * `meta:doctor:governance` after the writer stopped rejecting it.
+   */
+  test("the collision report agrees with what writing the profile would actually do", async () => {
+    const profile = `agree-${process.pid}-${Date.now()}`;
+    const paths = getProfilePaths({ profile, runtimeFamily: "claude" });
+    try {
+      await ensureProfileState({ profile, runtimeFamily: SHARED_RUNTIME_FAMILY });
+      const reconcilable = await detectProfileCollision({ profile, runtimeFamily: "claude" });
+      assert.deepEqual(
+        reconcilable.mismatches,
+        [],
+        "a runtime naming itself over an unidentified record is what the writer accepts",
+      );
+      assert.equal(reconcilable.collision, false);
+
+      await ensureProfileState({ profile, runtimeFamily: "claude" });
+      const genuine = await detectProfileCollision({ profile, runtimeFamily: "codex" });
+      assert.deepEqual(genuine.mismatches, ["runtimeFamily"]);
+      assert.equal(
+        genuine.collision,
+        true,
+        "two runtimes that can both name themselves are the collision the gate exists for",
+      );
+    } finally {
+      await fs.rm(paths.profileDir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The repo-path half was compared against this module's own repo root rather
+   * than the root the caller asked about, so every profile living outside the
+   * repo — the global one included — read as a repo mismatch. Nothing calls it
+   * that way today, which is exactly why the wrong reference survived.
+   */
+  test("a profile rooted outside the repo is not reported as a repo mismatch", async () => {
+    const stateRoot = await fs.mkdtemp(path.join(os.tmpdir(), "metakim-elsewhere-"));
+    const foreignRepo = await fs.mkdtemp(path.join(os.tmpdir(), "metakim-foreign-repo-"));
+    try {
+      const options = { profile: "default", repoPath: foreignRepo, stateRoot };
+      await ensureProfileState({ ...options, runtimeFamily: "claude" });
+      const report = await detectProfileCollision({ ...options, runtimeFamily: "claude" });
+      assert.deepEqual(report.mismatches, []);
+      assert.equal(report.collision, false);
+    } finally {
+      await fs.rm(stateRoot, { recursive: true, force: true });
+      await fs.rm(foreignRepo, { recursive: true, force: true });
     }
   });
 
