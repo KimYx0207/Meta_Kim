@@ -1986,3 +1986,128 @@ test("a run with no readable record reports no selection rather than an empty gr
   assert.equal(snapshot.graphAvailability.state, "no_run_selected");
   assert.equal(snapshot.graphAvailability.substanceClass, null);
 });
+
+function plannedStageDagArtifact(overrides = {}) {
+  return {
+    ...sampleArtifact("meta-live-planned-dag"),
+    coreLoop: {
+      stageDagPacket: {
+        authority: "config/contracts/core-loop-contract.json",
+        status: "planned_not_invoked",
+        nodes: [
+          {
+            nodeId: "stage:critical:lane:support-1",
+            stage: "Critical",
+            laneKind: "support",
+            ownerBindingRef: "meta-warden",
+            dependsOn: [],
+            status: "planned_not_invoked",
+          },
+          {
+            nodeId: "stage:critical:merge",
+            stage: "Critical",
+            laneKind: "merge",
+            ownerBindingRef: "meta-conductor",
+            dependsOn: ["stage:critical:lane:support-1"],
+            mergeNodeId: "stage:critical:merge",
+            status: "pending_merge",
+          },
+          {
+            nodeId: "stage:execution:lane:backend",
+            stage: "Execution",
+            laneKind: "execution",
+            ownerBindingRef: "backend-architect",
+            dependsOn: ["stage:critical:merge"],
+            status: "planned_not_invoked",
+          },
+        ],
+      },
+      ...overrides,
+    },
+  };
+}
+
+test("records a declared stage plan without drawing it as executed graph nodes", () => {
+  const projection = buildLiveCompactProjection(plannedStageDagArtifact());
+  assert.equal(
+    projection.nodes.length,
+    3,
+    "the graph holds only executed evidence: one main node, one workflow group and one worker",
+  );
+  assert.equal(
+    projection.nodes.some((node) => String(node.id).includes("stage:")),
+    false,
+    "a planned stage lane is not an execution node and may not enter the graph",
+  );
+  assert.equal(projection.session.nodeCount, 3, "a recorded plan must not inflate the executed node count");
+  assert.equal(projection.declaredPlan.declaredNodeCount, 3);
+  assert.equal(projection.declaredPlan.invokedNodeCount, 0);
+  assert.equal(projection.declaredPlan.status, "planned_not_invoked");
+  assert.equal(projection.declaredPlan.authority, "config/contracts/core-loop-contract.json");
+  assert.deepEqual(projection.declaredPlan.stages, [
+    { stage: "critical", label: "Critical", declaredNodeCount: 2, invokedNodeCount: 0 },
+    { stage: "execution", label: "Execution", declaredNodeCount: 1, invokedNodeCount: 0 },
+  ]);
+});
+
+test("refuses to count a node as invoked when the plan itself was never invoked", () => {
+  const artifact = plannedStageDagArtifact();
+  artifact.coreLoop.stageDagPacket.nodes[2].status = "completed";
+  const projection = buildLiveCompactProjection(artifact);
+  assert.equal(
+    projection.declaredPlan.invokedNodeCount,
+    0,
+    "a plan that declares itself planned_not_invoked cannot contain a completed lane",
+  );
+  assert.equal(projection.declaredPlan.stages[1].invokedNodeCount, 0);
+});
+
+test("counts invoked plan lanes once the plan itself reports invocation", () => {
+  const artifact = plannedStageDagArtifact();
+  artifact.coreLoop.stageDagPacket.status = "invoked";
+  artifact.coreLoop.stageDagPacket.nodes[2].status = "completed";
+  const projection = buildLiveCompactProjection(artifact);
+  assert.equal(projection.declaredPlan.status, "invoked");
+  assert.equal(projection.declaredPlan.declaredNodeCount, 3);
+  assert.equal(projection.declaredPlan.invokedNodeCount, 1);
+  assert.deepEqual(projection.declaredPlan.stages, [
+    { stage: "critical", label: "Critical", declaredNodeCount: 2, invokedNodeCount: 0 },
+    { stage: "execution", label: "Execution", declaredNodeCount: 1, invokedNodeCount: 1 },
+  ]);
+});
+
+test("reports no declared plan when the artifact recorded none", () => {
+  const projection = buildLiveCompactProjection(sampleArtifact("meta-live-no-dag"));
+  assert.strictEqual(projection.declaredPlan, null);
+  assert.equal(projection.nodes.length, 3);
+});
+
+test("keeps the declared plan when a stored compact projection is read back", () => {
+  const stored = buildLiveCompactProjection(plannedStageDagArtifact());
+  assert.equal(stored.declaredPlan.declaredNodeCount, 3, "guard precondition: the freshly built projection carries the plan");
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: JSON.parse(JSON.stringify(stored)),
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+  assert.equal(snapshot.declaredPlan.declaredNodeCount, 3);
+  assert.equal(snapshot.declaredPlan.invokedNodeCount, 0);
+  assert.equal(snapshot.declaredPlan.status, "planned_not_invoked");
+  assert.deepEqual(snapshot.declaredPlan.stages, [
+    { stage: "critical", label: "Critical", declaredNodeCount: 2, invokedNodeCount: 0 },
+    { stage: "execution", label: "Execution", declaredNodeCount: 1, invokedNodeCount: 0 },
+  ]);
+});
+
+test("refuses a stored plan whose lane counts exceed the count it declared", () => {
+  const stored = buildLiveCompactProjection(plannedStageDagArtifact());
+  stored.declaredPlan.stages[0].invokedNodeCount = 99;
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: JSON.parse(JSON.stringify(stored)),
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+  assert.equal(
+    snapshot.declaredPlan.stages[0].invokedNodeCount,
+    2,
+    "a stored file claiming more invoked lanes than it declared is clamped to what it declared",
+  );
+});

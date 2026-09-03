@@ -1,6 +1,6 @@
 {
   "schemaVersion": "meta-kim-live-default-selection-v1",
-  "rankOrder": ["provenance", "drawability", "active", "recency", "commitment", "identity"],
+  "rankOrder": ["provenance", "drawability", "identified", "active", "recency", "commitment", "identity"],
   "provenanceRank": {
     "governed_run": 20,
     "acceptance_fixture": 10,

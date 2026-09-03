@@ -20,6 +20,7 @@ import {
   VERIFICATION_REPORT_POINTER_SCHEMA_VERSION,
   VERIFICATION_REPORT_SCHEMA_VERSION,
   resolveVerificationHistoryDir,
+  selectNewerProjection,
   writeVerificationReportAttempt,
 } from "../../scripts/verification-report-history.mjs";
 
@@ -548,4 +549,19 @@ test("concurrent processes preserve all attempts and one valid latest projection
       retryDelay: 100,
     });
   }
+});
+
+test("published verification projection never regresses to an older attempt", () => {
+  const older = { attemptId: "20260727T050004-older", completedAt: "2026-07-27T05:00:04.000Z" };
+  const newer = { attemptId: "20260727T050005-newer", completedAt: "2026-07-27T05:00:05.000Z" };
+
+  assert.strictEqual(selectNewerProjection(newer, older), newer);
+  assert.strictEqual(selectNewerProjection(older, newer), newer);
+
+  const sameInstant = { attemptId: "20260727T050005-zzzz", completedAt: newer.completedAt };
+  assert.strictEqual(selectNewerProjection(newer, sameInstant), sameInstant);
+  assert.strictEqual(selectNewerProjection(sameInstant, newer), sameInstant);
+
+  assert.strictEqual(selectNewerProjection(null, older), older);
+  assert.strictEqual(selectNewerProjection({ attemptId: 7, completedAt: null }, older), older);
 });

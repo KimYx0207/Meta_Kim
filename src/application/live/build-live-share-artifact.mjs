@@ -13,5 +13,4 @@ export function buildLiveShareArtifact(input) {
   return assertValidLiveShareArtifact(artifact);
 }
 
-export const buildShareArtifact = buildLiveShareArtifact;
 export const createLiveShareArtifact = buildLiveShareArtifact;

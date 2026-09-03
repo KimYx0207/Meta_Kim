@@ -58,6 +58,7 @@ export const LIVE_DRAWABILITY_CLASSES = Object.freeze([
 export const LIVE_SELECTION_RANK_KEYS = Object.freeze([
   "provenance",
   "drawability",
+  "identified",
   "active",
   "recency",
   "commitment",
@@ -128,7 +129,7 @@ export function normalizeLiveDefaultSelectionPolicy(raw) {
     );
   }
   const provenanceIndex = rankOrder.indexOf("provenance");
-  for (const key of ["drawability", "active", "recency", "commitment"]) {
+  for (const key of ["drawability", "identified", "active", "recency", "commitment"]) {
     if (rankOrder.indexOf(key) < provenanceIndex) {
       fail(
         `${key} must not outrank provenance: an acceptance fixture carries the node collections and resolved `
@@ -139,7 +140,7 @@ export function normalizeLiveDefaultSelectionPolicy(raw) {
     }
   }
   const drawabilityIndex = rankOrder.indexOf("drawability");
-  for (const key of ["active", "recency"]) {
+  for (const key of ["identified", "active", "recency"]) {
     if (rankOrder.indexOf(key) < drawabilityIndex) {
       fail(
         `${key} must not outrank drawability: that ordering is what opened the control room on a run with zero `
@@ -207,6 +208,7 @@ export function sessionSelectionRow(session, extra = {}) {
     drawabilityClass: resolveDrawabilityClass(session),
     recordOrigin: typeof session?.recordOrigin === "string" ? session.recordOrigin : "governed_run",
     active: session?.active === true,
+    identified: extra?.identified === undefined ? session?.identified === true : extra.identified === true,
     updatedAt: typeof session?.updatedAt === "string" ? session.updatedAt : "",
     commitmentRank: Number.isFinite(committed) ? committed : 0,
     session,
@@ -239,6 +241,9 @@ export function projectSelectionRow(project, policy) {
     recordOrigin: bestOrigin === null ? "governed_run" : bestOrigin,
     active: project?.status === "active" || project?.status === "live"
       || sessions.some((session) => session?.active === true),
+    // Best-of, like drawability and provenance: one run worth naming is enough to
+    // keep the project ahead of one holding nothing but unnamed records.
+    identified: sessions.some((session) => session?.identified === true),
     updatedAt: typeof project?.updatedAt === "string" ? project.updatedAt : "",
     commitmentRank: sessions.length,
     project,
@@ -267,6 +272,11 @@ export function compareSelectionRows(left, right, policy) {
       delta = policy.drawabilityRank[right.drawabilityClass] - policy.drawabilityRank[left.drawabilityClass];
     } else if (key === "active") {
       delta = Number(right.active === true) - Number(left.active === true);
+    } else if (key === "identified") {
+      // Whether a run is identified is a judgement about its title and its linked
+      // conversation, which only the surface rendering those has. The row builder
+      // takes it as supplied rather than deriving it, exactly like commitment.
+      delta = Number(right.identified === true) - Number(left.identified === true);
     } else if (key === "recency") {
       delta = String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
     } else if (key === "commitment") {

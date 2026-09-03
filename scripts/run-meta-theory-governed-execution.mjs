@@ -74,11 +74,7 @@ import {
   buildGovernanceRequirementPlan,
 } from "../src/domain/governance/governance-requirement-cutover.mjs";
 import { openDurableRunRepository } from "../src/application/run/open-durable-run-repository.mjs";
-import {
-  buildLiveCompactProjection,
-  LIVE_MAX_COMPACT_BYTES,
-  serializeLiveCompactProjection,
-} from "../src/application/live/live-control-room-service.mjs";
+import { prepareLiveProjectionRecord } from "../src/application/live/prepare-live-projection-record.mjs";
 import {
   digestKnowledgeLifecycleValue,
   validateWardenWritebackApproval as validateExactWardenWritebackApproval,
@@ -1149,16 +1145,6 @@ async function atomicWriteFile(filePath, content) {
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
   }
-}
-
-function prepareCompactLiveProjection(artifact) {
-  const projection = buildLiveCompactProjection(artifact);
-  const content = serializeLiveCompactProjection(projection);
-  const bytes = Buffer.byteLength(content, "utf8");
-  if (bytes > LIVE_MAX_COMPACT_BYTES) {
-    throw new Error(`Live compact projection exceeds ${LIVE_MAX_COMPACT_BYTES} bytes.`);
-  }
-  return { projection, content, bytes, sha256: textSha256(content) };
 }
 
 async function fsyncParentDirectoryBestEffort(filePath) {
@@ -12627,7 +12613,7 @@ export async function runMetaTheoryGovernedExecution({
   // Prepare and budget the exact bytes before any primary artifact commit.
   // Projection construction can therefore never leave a newly committed run
   // behind an older latest pointer.
-  const liveProjectionRecord = prepareCompactLiveProjection(artifact);
+  const liveProjectionRecord = prepareLiveProjectionRecord(artifact);
   if (durableCoordinator) {
     let materializationReservation = await readDurableReservation(reservationPath, {
       runId: effectiveRunId,

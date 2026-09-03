@@ -4,8 +4,17 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { shortenIdentifier } from "../../src/application/live/live-display-format.mjs";
+import {
+  compareSelectionRows,
+  pickDefaultRow,
+  sessionSelectionRow,
+} from "../../src/application/live/live-default-selection.mjs";
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
+import {
+  loadLiveTypographyScale,
+  resolveTypographyBasePx,
+} from "../../src/application/live/live-typography-scale.mjs";
 import {
   LIVE_VIEWPORT_PROFILES_CONFIG_URL,
   loadLiveChromeBudget,
@@ -343,6 +352,66 @@ function resolveInlinePadding(rules, value) {
 }
 
 /**
+ * The value `:root` publishes for one custom property.
+ *
+ * A count shared by three rules has to be declared once or the copies drift
+ * apart one edit at a time, which moves the number a guard used to read at the
+ * use site behind a `var()` reference. Following the reference to its
+ * declaration is the difference between checking the count and reading `NaN`,
+ * and `NaN >= 2` is false, so the loose form fails loudly rather than passing.
+ */
+function rootCustomProperty(rules, name) {
+  const declared = rules
+    .filter((rule) => rule.selectors.includes(":root") && rule.conditions.length === 0)
+    .flatMap((rule) => rule.declarations.filter(([property]) => property === name).map(([, value]) => value));
+  assert.equal(declared.length, 1, `:root must declare ${name} exactly once, found ${declared.length}`);
+  return declared[0].trim();
+}
+
+/** A line count, whether written at the use site or held in a token. */
+function lineClampCount(rules, value) {
+  assert.ok(value, "a wrapped run must bound how many lines it may take");
+  const reference = /^var\((--[\w-]+)\)$/u.exec(value.trim());
+  const count = Number(reference ? rootCustomProperty(rules, reference[1]) : value);
+  assert.ok(Number.isInteger(count) && count > 0, `line clamp ${value} does not resolve to a line count`);
+  return count;
+}
+
+const TYPOGRAPHY_SCALE = loadLiveTypographyScale();
+const TYPOGRAPHY_STEP_RATIOS = new Map(
+  TYPOGRAPHY_SCALE.steps.map((step) => [step.customProperty, step.ratio]),
+);
+const TYPOGRAPHY_LEADING_RATIOS = new Map(
+  TYPOGRAPHY_SCALE.leading.families.map((family) => [family.customProperty, family.ratio]),
+);
+
+/**
+ * The height of one line of an element's text at one viewport width.
+ *
+ * A tier comparison cannot be made from `font-size` alone. The status title sat
+ * one ladder step *above* the legend caption and still rendered shorter, because
+ * leading multiplies the step and the caption carried the looser family: a
+ * 0.81x step at 1.42 leading is a taller line box than a 0.81x step at 1.28. The
+ * line box is what the reader's eye measures a hierarchy against, so it is what
+ * gets ordered here.
+ */
+function renderedLineBoxPx(rules, selector, viewportWidth) {
+  const fontSize = resolvedDeclaration(rules, { selector, property: "font-size" });
+  const lineHeight = resolvedDeclaration(rules, { selector, property: "line-height" });
+  assert.ok(fontSize, `${selector} must declare its own step, or its tier is whatever it inherits`);
+  assert.ok(lineHeight, `${selector} must declare its own leading, or its line box is whatever it inherits`);
+  const step = /^var\((--fs-[a-z0-9-]+)\)$/u.exec(fontSize.trim());
+  const family = /^var\((--lh-[a-z0-9-]+)\)$/u.exec(lineHeight.trim());
+  assert.ok(step, `${selector} sizes with ${fontSize} instead of a ladder step`);
+  assert.ok(family, `${selector} leads with ${lineHeight} instead of a leading family`);
+  const ratio = TYPOGRAPHY_STEP_RATIOS.get(step[1]);
+  const leading = TYPOGRAPHY_LEADING_RATIOS.get(family[1]);
+  assert.ok(ratio !== undefined, `${step[1]} is not a step the ladder publishes`);
+  assert.ok(leading !== undefined, `${family[1]} is not a leading family the ladder publishes`);
+  return resolveTypographyBasePx(TYPOGRAPHY_SCALE, viewportWidth) * ratio * leading;
+}
+
+/**
  * Whether one at-rule condition holds at a viewport size. Unsupported features
  * (`prefers-reduced-motion`, `@supports`, comma lists) resolve to "does not
  * match": a width invariant that silently absorbed a preference band would report
@@ -568,10 +637,15 @@ function sessionCopyHarness({ language = "zh" } = {}) {
     "formatSessionTime",
     "currentLanguage",
     "shortenIdentifier",
+    "DEFAULT_SELECTION",
+    "sessionSelectionRow",
+    "compareSelectionRows",
     `${SESSION_COPY_HELPERS.map((name) => shippedHelper(html, name)).join("\n")}
       return { ${SESSION_COPY_HELPERS.join(", ")} };
     `,
   );
+  const selectionLiteral = html.match(/const DEFAULT_SELECTION = (\{.*?\});\n/su);
+  assert.ok(selectionLiteral, "the shipped script must embed the policy its session ordering ranks with");
   const helpers = build(
     displayFormat,
     originText,
@@ -583,6 +657,9 @@ function sessionCopyHarness({ language = "zh" } = {}) {
     // The page serializes this same export into the shipped script, so the harness
     // importing it is the one form that cannot drift from what ships.
     shortenIdentifier,
+    JSON.parse(selectionLiteral[1]),
+    sessionSelectionRow,
+    compareSelectionRows,
   );
   return { html, displayFormat, originText, refusalText, discoveryText, ...helpers };
 }
@@ -2990,6 +3067,57 @@ test("the hidden-record footer names both reasons a record is folded away", () =
   );
 });
 
+// A run the panel lists first and a run the panel opens are decided by two
+// different comparators: the list order is hand-written here, while the run that
+// actually opens goes through the configured default-selection policy. They agree
+// on the terms both happen to carry and disagree on every term only one of them
+// has, so the panel can open a run that is not the row at the top of its own list.
+test("the run listed first is the run the page opens", () => {
+  const { html, sessionGroups } = sessionCopyHarness();
+  const policyLiteral = html.match(/const DEFAULT_SELECTION = (\{.*?\});\n/su);
+  assert.ok(policyLiteral, "the shipped script must embed the default-selection policy it ranks with");
+  const policy = JSON.parse(policyLiteral[1]);
+
+  // Identical provenance, identical drawability class, both identified: the only
+  // term left to separate them is one the two comparators do not share.
+  const sessions = [
+    {
+      runId: "idle-newer",
+      title: "Rebuild the canvas",
+      identificationState: "descriptive",
+      substanceClass: "recorded",
+      nodeCount: 5,
+      active: false,
+      updatedAt: "2026-08-24T10:00:00.000Z",
+    },
+    {
+      runId: "active-older",
+      title: "Ship the spine",
+      identificationState: "descriptive",
+      substanceClass: "recorded",
+      nodeCount: 5,
+      active: true,
+      updatedAt: "2026-08-24T08:00:00.000Z",
+    },
+  ];
+
+  // Hard-written from config/live/default-selection.json, where `active` precedes
+  // `recency`. Reading the expected order back off either comparator would pass
+  // while both of them rank a stale run above a live one.
+  assert.deepEqual(
+    sessionGroups(sessions).ordered.map((session) => session.runId),
+    ["active-older", "idle-newer"],
+    "a live run must be listed above a stale one that merely recorded more recently",
+  );
+
+  const opened = pickDefaultRow(sessions.map((session) => sessionSelectionRow(session)), policy);
+  assert.equal(
+    sessionGroups(sessions).ordered[0].runId,
+    opened.session.runId,
+    "the row the panel puts first must be the row the panel opens",
+  );
+});
+
 test("one ordering rule puts substantive identified runs first and collapses the rest", () => {
   const { html, sessionGroups } = sessionCopyHarness();
   const sessions = [
@@ -3255,7 +3383,7 @@ test("the run context band gives its width to the title and its top tier to the 
   });
   assert.ok(clamp, ".run-context-title must bound how many lines it may take");
   assert.ok(
-    Number.parseInt(clamp, 10) >= 2,
+    lineClampCount(rules, clamp) >= 2,
     `-webkit-line-clamp is ${clamp}; a one-line clamp is the ellipsis again under another property`,
   );
   assert.match(
@@ -3750,5 +3878,244 @@ test("the withheld-run notice row cannot be picked or become a run id", () => {
     withSelection.map((option) => option.selected),
     [false, true, false],
     "adding the notice row must not break ordinary preselection",
+  );
+});
+
+/**
+ * Ten text runs were measured deleting their own content at 1512px while the
+ * space to hold it sat free directly below. `p.run-context-task` carried 1685px
+ * of text in a 648px box; eight `span.node-title` cells each lost their tail.
+ *
+ * `text-overflow` is not a fit strategy. It is a decision to discard whatever did
+ * not reach the end of line one, taken before a second line has been offered, and
+ * on a title the discarded part is the identity the reader came for.
+ *
+ * The bound the ellipsis was providing still has to hold, so the clamp is
+ * asserted beside its absence: wrapping with no line cap trades a deleted title
+ * for a card that grows until it collides with the row beneath it.
+ */
+test("a title too long for one line takes a second line instead of deleting its tail", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const rules = stylesheetRules(html);
+  const wrapped = [".node-title", ".run-context-task"];
+
+  // `.node-title` is reached by five selectors across three conditions, and the
+  // cell band and the hover state are two of them. Collecting them by base
+  // selector rather than by the one spelling this guard was written against is
+  // what keeps a `nowrap` from coming back inside a media branch unseen.
+  const decorated = rules
+    .flatMap((rule) => rule.selectors)
+    .filter((selector) => wrapped.includes(baseSelectorOf(selector)));
+  assert.ok(
+    decorated.length >= 6,
+    `every rule reaching a wrapped run must be checked, found only ${decorated.length}`,
+  );
+  for (const selector of decorated) {
+    assert.deepEqual(
+      declaredValues(rules, { selector, property: "text-overflow" }),
+      [],
+      `${selector} declares text-overflow, which discards the tail before line two is offered`,
+    );
+    for (const value of declaredValues(rules, { selector, property: "white-space" })) {
+      assert.notEqual(
+        normalizedValue(value),
+        "nowrap",
+        `${selector} refuses to wrap, so any clamp on it can never reach a second line`,
+      );
+    }
+  }
+
+  for (const selector of wrapped) {
+    assert.equal(
+      resolvedDeclaration(rules, { selector, property: "display" }),
+      "-webkit-box",
+      `${selector} needs the box display, or -webkit-line-clamp is inert and the run grows unbounded`,
+    );
+    assert.equal(resolvedDeclaration(rules, { selector, property: "-webkit-box-orient" }), "vertical");
+    assert.equal(resolvedDeclaration(rules, { selector, property: "overflow" }), "hidden");
+    assert.equal(
+      lineClampCount(rules, resolvedDeclaration(rules, { selector, property: "-webkit-line-clamp" })),
+      2,
+      `${selector} must clamp at two lines: one is the ellipsis again, none is an unbounded box`,
+    );
+  }
+
+  // The second line is only free if the layout already reserved it. Node cards
+  // are absolutely positioned from a JS height estimate, so a card that grows
+  // past that estimate overlaps the row below instead of showing more title —
+  // the same defect with a different symptom.
+  const reserve = /function estimatedNodeCardHeight\(node\) \{[\s\S]*?Math\.max\((\d+),/u.exec(html);
+  assert.ok(reserve, "the layout must keep its reserved card height in a named function");
+  const cardFloor = lengthToPixels(resolvedDeclaration(rules, { selector: ".node-card", property: "min-height" }));
+  const widestBase = resolveTypographyBasePx(TYPOGRAPHY_SCALE, 4000);
+  const secondTitleLine = widestBase * TYPOGRAPHY_STEP_RATIOS.get("--fs-entity-title")
+    * TYPOGRAPHY_LEADING_RATIOS.get("--lh-snug");
+  assert.ok(
+    cardFloor + secondTitleLine <= Number(reserve[1]),
+    `a ${cardFloor}px card plus a ${secondTitleLine.toFixed(2)}px second title line exceeds the `
+      + `${reserve[1]}px the layout reserved, so the wrapped title overlaps the next row`,
+  );
+});
+
+/**
+ * `h1.run-context-title` was measured showing 2 of its 4 lines. The clamp was
+ * doing exactly what it said, and what it said was written when the title shared
+ * its row with six counters at the ladder's top tier. The counters have since
+ * been demoted and the row is the title's, so the clamp is the only thing still
+ * holding the old layout's shape.
+ *
+ * Two of four lines is not a shortened title. It is a different title.
+ */
+test("the run title shows its whole identity instead of the first half of it", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
+
+  assert.equal(
+    rootCustomProperty(rules, "--clamp-lines-hero"),
+    "3",
+    "the hero clamp is the shipped value this fix was measured against",
+  );
+  assert.ok(
+    lineClampCount(rules, resolvedDeclaration(rules, { selector: ".run-context-title", property: "-webkit-line-clamp" })) >= 3,
+    "a two-line clamp is what hid two of the four lines that were measured",
+  );
+
+  // Clamping wider is half of it. A container that caps its own height crops the
+  // lines the clamp now permits, and that crop leaves no ellipsis behind to hint
+  // anything is missing.
+  for (const selector of [".run-context", ".run-context-heading", ".run-context-title"]) {
+    for (const property of ["height", "max-height"]) {
+      const capped = resolvedDeclaration(rules, { selector, property });
+      assert.ok(
+        capped === null || /auto|none|fit-content|min-content|max-content/u.test(capped),
+        `${selector} caps ${property} at ${capped}, so the third line is clipped rather than shown`,
+      );
+    }
+  }
+});
+
+/**
+ * The measured type scale ran backwards: a legend caption rendered a 17.3px line
+ * against a 13.3px status title. The caption explains the diagram; the status
+ * title names what the reader is looking at.
+ *
+ * Ordering cannot be read off `font-size`, which is why this shipped green. The
+ * caption sat a step *below* the title on the ladder and still rendered taller,
+ * because leading multiplies the step and the caption carried the looser family.
+ * So the tokens are pinned as literals and the resulting line boxes are ordered.
+ */
+test("the type scale runs from the brand mark down to the legend caption, not back up", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
+
+  // Hand-written, not derived: every one of these four is a tier decision that a
+  // future edit can only make by disagreeing with this list out loud.
+  assert.deepEqual(
+    [".brand-title", ".status-bar .status-title", ".stage-step-name", ".graph-edge-legend"].map((selector) => [
+      selector,
+      resolvedDeclaration(rules, { selector, property: "font-size" }),
+      resolvedDeclaration(rules, { selector, property: "line-height" }),
+    ]),
+    [
+      [".brand-title", "var(--fs-view-title)", "var(--lh-display)"],
+      [".status-bar .status-title", "var(--fs-entity-title)", "var(--lh-display)"],
+      [".stage-step-name", "var(--fs-body)", "var(--lh-flat)"],
+      [".graph-edge-legend", "var(--fs-label)", "var(--lh-snug)"],
+    ],
+    "each of these four carries a declared tier, and a legend caption is not one of the top two",
+  );
+
+  // The products are ordered at every width, because the fluid base is a common
+  // positive factor and cancels out of the comparison. One width is therefore the
+  // whole claim rather than a sample of it.
+  const descending = [".brand-title", ".status-bar .status-title", ".stage-step-name", ".graph-edge-legend"]
+    .map((selector) => [selector, renderedLineBoxPx(rules, selector, 1512)]);
+  for (let index = 1; index < descending.length; index += 1) {
+    const [above, taller] = descending[index - 1];
+    const [below, shorter] = descending[index];
+    assert.ok(
+      taller > shorter,
+      `${above} renders a ${taller.toFixed(2)}px line and ${below} renders ${shorter.toFixed(2)}px, `
+        + "so the smaller thing is at least as large as the thing above it",
+    );
+  }
+
+  // Raising a tier inside a fixed-height bar is how a legible title becomes a
+  // clipped one. The bar is one track with no vertical padding, so the worst case
+  // is the widest base the clamp can reach.
+  const barHeight = loadLiveChromeBudget().statusBarHeightPx;
+  const titleLine = renderedLineBoxPx(rules, ".status-bar .status-title", 4000);
+  assert.ok(
+    titleLine <= barHeight,
+    `the status title renders a ${titleLine.toFixed(2)}px line box in a ${barHeight}px bar`,
+  );
+});
+
+/**
+ * "紧凑到眼睛疼 ui和文字都贴到一起了" — the run task summary sat 4px under the
+ * title it belongs to, on 1.28 leading. The ladder already says both are wrong:
+ * `--sp-tight` documents itself as a padding step, because 4px between two boxes
+ * reads as a rendering artifact rather than as a grouping level, and the text
+ * floor is `--sp-cozy`.
+ *
+ * The two move together. The 8px floor is declared to apply only to the wrapped
+ * leading families, so a run still on `--lh-flat` would satisfy the letter of the
+ * spacing contract while staying the cramped single-line row that was reported.
+ */
+test("the run task summary is spaced and led as prose rather than as a one-line label", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
+  const spacing = loadLiveSpacingScale();
+
+  const margin = resolvedDeclaration(rules, { selector: ".run-context-task", property: "margin" });
+  assert.ok(margin, ".run-context-task must declare its own separation from the title above it");
+  const topMargin = lengthToPixels(splitTopLevel(margin)[0]);
+  assert.equal(topMargin, 8, "the gap under the run title is the measured value this fix was written for");
+  assert.ok(
+    topMargin >= spacing.textAdjacency.minimumPx,
+    `${topMargin}px is under the ${spacing.textAdjacency.minimumPx}px the ladder declares as the text floor`,
+  );
+
+  const leading = resolvedDeclaration(rules, { selector: ".run-context-task", property: "line-height" });
+  const family = /^var\(--lh-([a-z0-9-]+)\)$/u.exec(String(leading).trim());
+  assert.ok(family, `.run-context-task leads with ${leading} instead of a leading family`);
+  assert.ok(
+    spacing.textAdjacency.appliesToLeadingFamilies.includes(family[1]),
+    `.run-context-task wraps to two lines on the "${family[1]}" leading, which the text floor does not `
+      + `cover (it covers ${spacing.textAdjacency.appliesToLeadingFamilies.join(", ")}), so the 8px above `
+      + "it is unguarded and the lines inside it stay pressed together",
+  );
+});
+
+/**
+ * The cell band is the eight measured node titles. Its height was derived for one
+ * line, so a two-line clamp inside it renders the second line behind the band's
+ * own bottom edge — legible text, invisible.
+ *
+ * `--cell-band-h` is the counter-scaled one-line height and stays untouched: it
+ * is the quantity the camera contract is written against. The band the reader
+ * sees is a second property derived from it and from the same line count the
+ * clamp uses, so the two cannot disagree about how many lines exist.
+ */
+test("the cell band is as tall as the number of lines its title is allowed to take", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
+  const cellCard = '.graph-canvas[data-semantic-zoom="cell"] .node-card';
+
+  assert.equal(
+    rootCustomProperty(rules, "--clamp-lines-title"),
+    "2",
+    "the band derivation and the clamp have to read one count, and this is its shipped value",
+  );
+  assert.equal(
+    resolvedDeclaration(rules, { selector: cellCard, property: "--cell-band-box-h" }),
+    "calc(var(--cell-band-h) + (var(--clamp-lines-title) - 1) * var(--cell-title-fs) * var(--lh-flat))",
+    "the visible band must be the one-line band plus the extra lines the clamp permits",
+  );
+
+  const bandHeight = resolvedDeclaration(rules, { selector: `${cellCard}::after`, property: "height" });
+  const titleHeight = resolvedDeclaration(rules, { selector: `${cellCard} .node-title`, property: "height" });
+  assert.equal(bandHeight, "var(--cell-band-box-h)", "the painted band must take the derived height");
+  assert.equal(
+    titleHeight,
+    bandHeight,
+    `the title box is ${titleHeight} and the band behind it is ${bandHeight}; whichever is shorter `
+      + "decides which line the reader loses",
   );
 });

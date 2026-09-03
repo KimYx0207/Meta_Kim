@@ -50,6 +50,22 @@ export const LIVE_MAX_REPLAY = 512;
 export const LIVE_MAX_STRING = 240;
 export const LIVE_MAX_CONTEXT_TRANSFERS = 128;
 export const LIVE_MAX_CONTEXT_EVIDENCE_REFS = 24;
+export const LIVE_MAX_DECLARED_PLAN_NODES = 512;
+
+/**
+ * Statuses a stage-DAG packet or one of its lanes uses to say it has not run.
+ * The shipped records carry `planned_not_invoked` for lanes and `pending_merge`
+ * for merge nodes; the other three appear in older packets. Anything outside
+ * this set is treated as a real invocation claim, so adding a member here makes
+ * a lane stop counting as invoked.
+ */
+const DECLARED_PLAN_UNINVOKED_STATUSES = new Set([
+  "planned_not_invoked",
+  "pending_merge",
+  "pending",
+  "queued",
+  "planned",
+]);
 
 /**
  * Why a snapshot carries no task nodes. A reader cannot act on "the graph is
@@ -1898,6 +1914,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     workspace: workspaceProjection(artifact),
     contextTransfers,
     scheduling,
+    declaredPlan: declaredStagePlan(artifact),
     eventIndex: replay.length,
     eventCount: replay.length,
     counts: null,
@@ -2015,24 +2032,97 @@ function workerNodes(artifact, stale) {
   });
 }
 
-function artifactStageNodes(artifact, stale) {
-  const events = rawReplayEvents(artifact, null);
-  return STAGES.map((stage) => {
-    const event = [...events].reverse().find((item) => normalizeStage(firstString(item, ["stage", "stageKey"])) === stage);
-    const evidenceCount = stageEvidenceCount(artifact, stage);
-    let status = stale ? "in_doubt" : normalizeStatus(event?.status || event?.state, event ? "in_doubt" : "pending");
-    if (TRUSTED_TERMINAL_STATUSES.has(status) && evidenceCount === 0) status = "in_doubt";
-    return {
-      id: `stage:${stage}`,
-      label: STAGE_LABELS[stage],
+/**
+ * A governed artifact records the stage DAG it planned — lanes, owners,
+ * dependencies and merge nodes, often forty to fifty of them. None of that is
+ * executed work: the packet states its own `status`, and the shipped records
+ * all say `planned_not_invoked`. Putting those lanes on the graph would draw a
+ * plan as finished execution, so the plan stays out of `nodes` and is reported
+ * here as what it is — a declared count the reader can compare against the
+ * executed node count. A lane may only be called invoked when the plan itself
+ * reports invocation; otherwise a lane claiming `completed` inside an
+ * un-invoked plan would be promoted into a completion this run never had.
+ */
+/**
+ * Re-validate a declared plan that came back from a stored projection file.
+ * The compact read-back rebuilds every field explicitly, so a plan that is not
+ * named here is dropped and the panel silently loses it. A stored file is also
+ * untrusted: clamping each lane count to the count the same file declared stops
+ * an edited or truncated record from reporting more invoked lanes than it ever
+ * planned, which would read as execution the run cannot evidence.
+ */
+function sanitizeDeclaredPlan(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const count = (input) => safeTransferCount(input) ?? 0;
+  const stages = [];
+  for (const entry of boundedArray(value.stages, STAGES.length)) {
+    const stage = normalizeStage(entry?.stage);
+    if (stage === "in_doubt" || stages.some((item) => item.stage === stage)) continue;
+    const declaredNodeCount = count(entry?.declaredNodeCount);
+    if (declaredNodeCount === 0) continue;
+    stages.push({
       stage,
-      status,
-      ownerAgent: safeId(firstString(event, ["owner", "ownerAgent"]), "in_doubt"),
-      runtime: "in_doubt",
-      summary: "Stage state projected from governed artifact",
-      evidenceCount,
-    };
-  });
+      label: STAGE_LABELS[stage],
+      declaredNodeCount,
+      invokedNodeCount: Math.min(count(entry?.invokedNodeCount), declaredNodeCount),
+    });
+  }
+  stages.sort((left, right) => STAGES.indexOf(left.stage) - STAGES.indexOf(right.stage));
+  const declaredNodeCount = count(value.declaredNodeCount);
+  if (declaredNodeCount === 0 && stages.length === 0) return null;
+  return {
+    authority: safeText(value.authority, "unreported", 200),
+    status: declaredPlanStatus(value, ["status", "state"]) || "unreported",
+    declaredNodeCount,
+    invokedNodeCount: Math.min(count(value.invokedNodeCount), declaredNodeCount),
+    omittedNodeCount: count(value.omittedNodeCount),
+    unrecognizedStageNodeCount: count(value.unrecognizedStageNodeCount),
+    stages,
+  };
+}
+
+function declaredPlanStatus(value, keys) {
+  const raw = firstString(value, keys);
+  return typeof raw === "string" ? raw.trim().toLowerCase().replace(/[ -]+/gu, "_") : "";
+}
+
+function declaredStagePlan(artifact) {
+  const packet = artifact?.coreLoop?.stageDagPacket;
+  if (!packet || typeof packet !== "object" || Array.isArray(packet)) return null;
+  const totalDeclared = Array.isArray(packet.nodes) ? packet.nodes.length : 0;
+  const declared = boundedArray(packet.nodes, LIVE_MAX_DECLARED_PLAN_NODES);
+  if (declared.length === 0) return null;
+
+  const status = declaredPlanStatus(packet, ["status", "state"]) || "unreported";
+  const planInvoked = !DECLARED_PLAN_UNINVOKED_STATUSES.has(status);
+  const perStage = new Map();
+  let unrecognizedStageNodeCount = 0;
+  let invokedNodeCount = 0;
+
+  for (const node of declared) {
+    const stage = normalizeStage(firstString(node, ["stage", "stageKey"]));
+    const nodeStatus = declaredPlanStatus(node, ["status", "state"]);
+    const invoked = planInvoked && nodeStatus !== "" && !DECLARED_PLAN_UNINVOKED_STATUSES.has(nodeStatus);
+    if (invoked) invokedNodeCount += 1;
+    if (stage === "in_doubt") {
+      unrecognizedStageNodeCount += 1;
+      continue;
+    }
+    const bucket = perStage.get(stage) || { stage, label: STAGE_LABELS[stage], declaredNodeCount: 0, invokedNodeCount: 0 };
+    bucket.declaredNodeCount += 1;
+    if (invoked) bucket.invokedNodeCount += 1;
+    perStage.set(stage, bucket);
+  }
+
+  return {
+    authority: firstString(packet, ["authority", "contract"])?.trim() || "unreported",
+    status,
+    declaredNodeCount: declared.length,
+    invokedNodeCount,
+    omittedNodeCount: Math.max(0, totalDeclared - declared.length),
+    unrecognizedStageNodeCount,
+    stages: STAGES.map((stage) => perStage.get(stage)).filter(Boolean),
+  };
 }
 
 function uniqueEdges(edges, nodes) {
@@ -2496,6 +2586,7 @@ function sanitizeCompactProjection(value) {
     workspace: workspaceProjection(value),
     contextTransfers: safeCompactContextTransfers(value.contextTransfers, runId, sanitizedNodes),
     scheduling,
+    declaredPlan: sanitizeDeclaredPlan(value.declaredPlan),
     eventIndex: replay.length,
     eventCount: replay.length,
     counts: {
@@ -2708,6 +2799,7 @@ export function buildLiveSnapshot({
     workspace: workspaceProjection(projection),
     contextTransfers,
     scheduling,
+    declaredPlan: sanitizeDeclaredPlan(projection.declaredPlan),
     eventIndex: Number.isSafeInteger(projection.eventIndex) ? projection.eventIndex : projection.replay?.length || 0,
     eventCount: Number.isSafeInteger(projection.eventCount) ? projection.eventCount : projection.replay?.length || 0,
     counts: {

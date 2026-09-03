@@ -581,15 +581,9 @@ export function isLiveShareArtifactValid(artifact) {
 
 export const createLiveShareArtifact = buildLiveShareArtifact;
 
-// Compatibility names for callers that use the shorter Live contract terms.
-export const LIVE_SHARE_SCHEMA_VERSION = LIVE_SHARE_ARTIFACT_SCHEMA_VERSION;
-export const PUBLIC_REPLAY_SCHEMA_VERSION = LIVE_PUBLIC_REPLAY_SCHEMA_VERSION;
-export const buildLiveShareExport = buildLiveShareArtifact;
-export const validateLiveShareArtifact = assertValidLiveShareArtifact;
 export function canonicalizeLiveShareArtifact(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("canonicalization input must be an object");
   const payload = artifactPayload(value);
   boundedInput(payload);
   return canonicalize(payload);
 }
-export const sha256ShareDigest = canonicalShareDigest;

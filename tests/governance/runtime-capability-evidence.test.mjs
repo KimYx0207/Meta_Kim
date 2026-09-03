@@ -29,9 +29,27 @@ function row(matrix, runtime, capability) {
     .capabilities.find((entry) => entry.capability === capability);
 }
 
+/**
+ * The clock every claim is validated against.
+ *
+ * A date literal here goes red the moment the matrix is re-reviewed past it: the
+ * review dates move forward, the frozen clock does not, and all 120 rows read as
+ * future-dated at once. Measured: a clock pinned a month before the last review
+ * produced 241 issues in documents that are internally consistent. So the clock is
+ * the shipped matrix's own declared review date, read from disk rather than from
+ * the caller's copy so a test that mutates the matrix cannot move its own clock.
+ *
+ * What that still enforces is the invariant worth enforcing: a review has to cite
+ * evidence gathered within the staleness window of the review itself. Whether the
+ * review is recent in real time is a separate question, answered against the real
+ * clock below, where it cannot flake because a document cannot become future-dated
+ * on its own.
+ */
+const REVIEW_CLOCK = `${JSON.parse(readFileSync(matrixPath, "utf8")).lastReviewedAt}T12:00:00.000Z`;
+
 function issuesFor(matrix, ledger, allowedEvidenceRoots = undefined) {
   return validateRuntimeCapabilityClaims(matrix, ledger, {
-    now: "2026-07-31T12:00:00.000Z",
+    now: REVIEW_CLOCK,
     staleAfterDays: 30,
     timeZone: "Asia/Shanghai",
     allowedEvidenceRoots,
@@ -106,6 +124,28 @@ test("P-130 repository evidence digest is stable across LF and CRLF distribution
   const firstBinaryDigest = digestRepositorySource(root);
   writeFileSync(sourcePath, Buffer.from([0xff, 0xfe, 0xfc]));
   assert.notEqual(digestRepositorySource(root), firstBinaryDigest);
+});
+
+test("the review clock is the shipped review date and still enforces its staleness window", () => {
+  const { matrix, ledger } = fixtures();
+  assert.equal(
+    REVIEW_CLOCK.startsWith(`${matrix.lastReviewedAt}T`),
+    true,
+    "the clock the claims are validated against has to be the review the documents declare",
+  );
+  assert.ok(
+    Date.parse(`${matrix.lastReviewedAt}T00:00:00.000Z`) <= Date.now(),
+    "a review cannot be dated after the day it is read, and no frozen clock can catch that",
+  );
+  const agedOut = validateRuntimeCapabilityClaims(matrix, ledger, {
+    now: new Date(Date.parse(REVIEW_CLOCK) + 31 * 86_400_000).toISOString(),
+    staleAfterDays: 30,
+    timeZone: "Asia/Shanghai",
+  });
+  assert.ok(
+    agedOut.some((issue) => issue.includes("must be fresh")),
+    "deriving the clock from the documents must not stop an aged-out review from being reported",
+  );
 });
 
 test("P-130 v2 baseline separates host, integration, acceptance, and legacy summaries", () => {
@@ -236,7 +276,12 @@ test("P-130 rejects arbitrary HTTPS official sources and future evidence", () =>
   assert.match(issuesFor(matrix, ledger).join("\n"), /non-allowlisted official documentation URL/u);
 
   const second = fixtures();
-  second.ledger.observations[0].observedAt = "2026-08-01";
+  // A literal date here means the same thing as a literal clock: it stops being in
+  // the future the moment the documents are re-reviewed past it, and this
+  // assertion silently starts proving nothing. Derive the day after the clock.
+  second.ledger.observations[0].observedAt = new Date(Date.parse(REVIEW_CLOCK) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
   assert.match(issuesFor(second.matrix, second.ledger).join("\n"), /future-dated/u);
 
   for (const invalidUrl of [

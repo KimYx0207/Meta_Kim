@@ -33,7 +33,11 @@ const INSTANCE_ID_PATTERN = /^[a-f0-9-]{16,64}$/u;
  * decided by that closure, not by directory name, which is why data-layer and
  * shared-domain modules belong here alongside the Live ones. Conversely a file
  * belongs here only if shipped code loads it: hashing a module nothing imports
- * forces hub replacements that cannot change any behaviour. And every entry must
+ * forces hub replacements that cannot change any behaviour. "Shipped code" is the
+ * whole packed Live surface, not the daemon alone, so a module only a maintenance
+ * entry point such as `scripts/backfill-live-projections.mjs` imports still belongs
+ * here — the daemon closure is the lower bound on this set, never the upper one.
+ * And every entry must
  * be covered by the `files` whitelist in package.json, because a path the tarball
  * omits makes the hash unobtainable and the packed hub then refuses to start with
  * `package_identity_unavailable`. All three rules are asserted by
@@ -55,6 +59,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/application/live/live-display-format.mjs",
   "src/application/live/live-graph-camera.mjs",
   "src/application/live/live-hub-lifecycle-budget.mjs",
+  "src/application/live/live-projection-backfill-policy.mjs",
   "src/application/live/live-record-origin.mjs",
   "src/application/live/live-replay-visibility.mjs",
   "src/application/live/live-run-retention.mjs",
@@ -67,12 +72,14 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/application/live/live-typography-scale.mjs",
   "src/application/live/live-viewport-budget.mjs",
   "src/application/live/plan-live-continuation.mjs",
+  "src/application/live/prepare-live-projection-record.mjs",
   "src/data/sqlite/runtime.mjs",
   "src/data/sqlite/transaction.mjs",
   "src/infrastructure/live/live-continuation-command-store.mjs",
   "src/infrastructure/live/live-control-room-server.mjs",
   "src/infrastructure/live/live-hub-lifecycle.mjs",
   "src/infrastructure/live/live-hub-project-catalog.mjs",
+  "src/infrastructure/live/live-projection-backfill.mjs",
   "src/infrastructure/live/live-read-repository.mjs",
   "src/infrastructure/live/live-run-retention-store.mjs",
   "src/infrastructure/live/live-runtime-adapter-registry.mjs",
