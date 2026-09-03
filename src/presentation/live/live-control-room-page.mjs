@@ -394,6 +394,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Reconnecting": "正在重新连接",
     "Polling snapshot": "正在轮询运行快照",
     "Paused while hidden": "标签页隐藏，已暂停连接",
+    "Catching up after pause": "正在补齐暂停期间的进度",
     "The snapshot request timed out. Other open control room tabs hold this origin's connections. Close one, or wait for them to release.": "快照请求超时。其他已打开的控制室标签页占用了本源的连接，关掉一个，或等它们释放。",
     "Snapshot loaded": "已载入快照",
     "Snapshot unavailable": "运行快照不可用",
@@ -590,6 +591,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (direct) return direct;
     let match = text.match(/^Run ([A-Z0-9-]+)$/u);
     if (match) return "任务 " + match[1];
+    match = text.match(/^(.*) · (\d+) of (\d+) runs$/u);
+    if (match) return match[1] + " · 共 " + match[3] + " 次运行（可打开 " + match[2] + " 条）";
+    match = text.match(/^\+ (\d+) runs without an openable record$/u);
+    if (match) return "另有 " + match[1] + " 条没有可打开的记录";
     match = text.match(/^(.*) · (\d+) runs$/u);
     if (match) return match[1] + " · " + match[2] + " 次运行";
     match = text.match(/^(.*) · no runs$/u);
@@ -790,6 +795,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let refreshQueued = false;
   let snapshotRequestInFlight = false;
   let refreshAfterRequest = false;
+  // True from the moment a page that lost its stream becomes visible again until
+  // the replacement snapshot paints or the refetch fails. The graph on screen for
+  // that stretch is whatever it showed when the person looked away, and the
+  // stream reports itself open before its replacement arrives, so this is what
+  // keeps the connection badge from claiming live over pre-pause numbers.
+  let catchingUpAfterPause = false;
   let unloading = false;
   let controlBusy = false;
   let initialControlConfig = null;
@@ -1681,6 +1692,48 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function sessionIsForeground(session) {
     return sessionIsIdentified(session) && sessionIsSubstantive(session);
+  }
+
+  /**
+   * One tally for every surface that prints how many runs a project has. Three
+   * renderers each derived their own: the project option printed the shipped
+   * session count, the run picker printed how many rows survived
+   * sessionIsIdentified, and the run list printed how many failed
+   * sessionIsForeground. Measured on the real repository with the panel open,
+   * that read "Meta_Kim · 36 次运行" beside a picker holding 23 rows, and nothing
+   * on the panel named the other 13.
+   */
+  function projectRunTally(project) {
+    const sessions = Array.isArray(project?.sessions) ? project.sessions : [];
+    const openable = sessions.filter(sessionIsIdentified).length;
+    return {
+      held: sessions.length,
+      openable,
+      unopenable: Math.max(0, sessions.length - openable),
+    };
+  }
+
+  /**
+   * The picker is the only control a run can be opened from, so the label reports
+   * what it can reach alongside what the project holds. The plain form survives
+   * for a project withholding nothing: "4 of 4 runs" reads as a withheld run that
+   * does not exist.
+   */
+  function projectOptionLabel(project) {
+    const tally = projectRunTally(project);
+    const name = project?.displayName || "";
+    if (!tally.held) return name + " · no runs";
+    if (!tally.unopenable) return name + " · " + tally.held + " runs";
+    return name + " · " + tally.openable + " of " + tally.held + " runs";
+  }
+
+  /**
+   * Named inside the picker itself. The run list explains the same records, but
+   * only after the reader opens a disclosure at the bottom of a different list,
+   * so the picker used to look complete rather than filtered.
+   */
+  function unopenableRunNoticeLabel(count) {
+    return "+ " + count + " runs without an openable record";
   }
 
   /**
@@ -4280,7 +4333,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const option = document.createElement("option");
       option.value = item.value;
       option.textContent = localize(item.label);
-      if (item.value === selectedValue) option.selected = true;
+      // A notice row states what the list withholds. It carries no value, so
+      // selecting it cannot navigate anywhere and cannot become a run id.
+      if (item.selectable === false) {
+        option.disabled = true;
+        option.value = "";
+      } else if (item.value === selectedValue) option.selected = true;
       select.append(option);
     }
   }
@@ -4294,7 +4352,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       projectSelect,
       projectCatalog.map((project) => ({
         value: project.projectId,
-        label: project.displayName + (project.sessionCount ? " · " + project.sessionCount + " runs" : " · no runs"),
+        label: projectOptionLabel(project),
       })),
       selectedProjectId,
       "No registered projects",
@@ -4309,18 +4367,24 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (selectedSession && !selectableSessions.some((session) => session.runId === selectedSession.runId)) {
       selectableSessions.unshift(selectedSession);
     }
+    const withheld = projectRunTally(project).unopenable;
     replaceSelectOptions(
       sessionSelect,
-      selectableSessions.map((session) => ({
-        value: session.runId,
-        label: (session.runId === selectedRunId && !sessionIsIdentified(session) ? (currentLanguage === "zh" ? "当前运行 · " : "Current run · ") : session.active ? "Live · " : "")
-          + formatSessionTime(session.updatedAt)
-          + " · " + sessionDisplayTitle(session)
-          + " · " + localize(informativeValue(session.currentStage, "Stage unconfirmed"))
-          + (session.workerCount === null ? "" : " · " + localize(session.workerCount + " workers"))
-          + (session.eventCount === null ? "" : " · " + localize(session.eventCount + " events"))
-          + " · " + sessionShortId(session),
-      })),
+      [
+        ...selectableSessions.map((session) => ({
+          value: session.runId,
+          label: (session.runId === selectedRunId && !sessionIsIdentified(session) ? (currentLanguage === "zh" ? "当前运行 · " : "Current run · ") : session.active ? "Live · " : "")
+            + formatSessionTime(session.updatedAt)
+            + " · " + sessionDisplayTitle(session)
+            + " · " + localize(informativeValue(session.currentStage, "Stage unconfirmed"))
+            + (session.workerCount === null ? "" : " · " + localize(session.workerCount + " workers"))
+            + (session.eventCount === null ? "" : " · " + localize(session.eventCount + " events"))
+            + " · " + sessionShortId(session),
+        })),
+        ...(projectRunTally(project).unopenable
+          ? [{ value: "", selectable: false, label: unopenableRunNoticeLabel(projectRunTally(project).unopenable) }]
+          : []),
+      ],
       selectedRunId,
       project ? "No governed runs yet" : "Select a project first",
     );
@@ -4519,6 +4583,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // list stale for exactly the person who just looked at it.
     void loadProjectCatalog({ refresh: true });
     if (!selectedRunId || eventSource) return;
+    // Order matters: the reconnect reports itself open before the snapshot that
+    // replaces the pre-pause graph arrives, so the catch-up is marked first and
+    // the badge stays honest until something paints.
+    beginPauseCatchUp();
     connectEvents();
     scheduleSnapshotUpdate();
   });
@@ -4637,6 +4705,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function renderSnapshot(input) {
+    // Any paint ends the catch-up: every branch below writes the badge from what
+    // it actually put on screen, so holding the flag past this point would keep
+    // suppressing the badge for the rest of the page's life.
+    catchingUpAfterPause = false;
     const selectedSession = projectForSelection()?.sessions.find((session) => session.runId === selectedRunId) || null;
     const inputRun = input?.run && typeof input.run === "object" && !Array.isArray(input.run) ? input.run : null;
     const genericTitle = generatedRunTitle(inputRun?.title);
@@ -4712,6 +4784,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
+  function beginPauseCatchUp() {
+    catchingUpAfterPause = true;
+    updateConnection("stale", "Catching up after pause");
+  }
+
   function flushSnapshotUpdate() {
     snapshotCoalesceTimer = null;
     if (unloading) return;
@@ -4730,6 +4807,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (unloading) return;
     if (snapshot && typeof snapshot === "object") pendingSnapshot = snapshot;
     else refreshQueued = true;
+    // Coalescing absorbs bursts of stream events, which arrive faster than anyone
+    // can read them. A catch-up has no burst to absorb — one refetch, then the
+    // payload it returns — and someone is watching the badge, so both of those
+    // hops skip the window. An already-armed timer is left to fire into a drained
+    // queue rather than cancelled, which costs one no-op callback.
+    if (catchingUpAfterPause) {
+      flushSnapshotUpdate();
+      return;
+    }
     if (snapshotCoalesceTimer === null) {
       snapshotCoalesceTimer = window.setTimeout(flushSnapshotUpdate, SNAPSHOT_COALESCE_MS);
     }
@@ -4799,6 +4885,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (silent) scheduleSnapshotUpdate(payload);
       else renderSnapshot(payload);
     } catch (error) {
+      // A catch-up that failed is over. The badge below is written from the
+      // failure, which is honest about the pre-pause graph still being on screen,
+      // and leaving the flag set would suppress every later live report.
+      catchingUpAfterPause = false;
       if (snapshotTimedOut) {
         updateConnection("stale", "Reconnecting");
         // A background refresh that times out while a snapshot is on screen must
@@ -4835,7 +4925,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
         if (generation === selectionGeneration) handleEvent(event);
       };
       eventSource.addEventListener("open", () => {
-        if (generation === selectionGeneration) updateConnection("live", "Streaming");
+        if (generation !== selectionGeneration) return;
+        // The stream is genuinely open, but during a catch-up the graph under the
+        // badge is still the pre-pause one. Whatever paints next owns the badge.
+        if (catchingUpAfterPause) return;
+        updateConnection("live", "Streaming");
       });
       eventSource.addEventListener("snapshot", handleScopedEvent);
       eventSource.addEventListener("event", handleScopedEvent);

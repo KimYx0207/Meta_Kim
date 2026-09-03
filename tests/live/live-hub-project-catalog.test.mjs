@@ -10,6 +10,10 @@ import {
 } from "../../scripts/project-registry.mjs";
 import { buildLiveCompactProjection } from "../../src/application/live/live-control-room-service.mjs";
 import {
+  LIVE_CATALOG_SCAN_SCHEMA_VERSION,
+  normalizeLiveCatalogScanPolicy,
+} from "../../src/application/live/live-catalog-scan-policy.mjs";
+import {
   createLiveHubProjectCatalog,
   LIVE_HUB_ACTIVE_FRESHNESS_MS,
   LIVE_HUB_DISCOVERY_OPERATIONS_PER_SESSION,
@@ -1838,3 +1842,76 @@ test("when both a status file and the artifact are past the cap, the artifact is
   assert.equal(session.countsAvailability.reason, "governed_artifact_over_read_cap");
 });
 
+
+// The Hub serves one catalog covering every registered project, and the control
+// room asks for it on first paint and on every project or run switch. Measured
+// in-process before this test existed: 19 projects took 1614ms and 1657ms on two
+// consecutive calls, walked one after another, while a concurrent /api/health
+// answered in 1ms — the wall clock was independent file I/O waiting in line, not
+// a busy event loop. Parallel walks finish out of registry order, so the second
+// half of this test is the part that keeps the project list from reshuffling
+// itself under the reader every time disk timing changes.
+test("listProjects walks independent projects at once and answers in registry order", async (t) => {
+  const names = ["scan-a", "scan-b", "scan-c", "scan-d"];
+  const roots = [];
+  for (const [index, name] of names.entries()) {
+    const root = await makeProject(name);
+    roots.push(root);
+    await writeArtifact(root, `meta-scan-${index + 1}`);
+  }
+  t.after(() => Promise.all(roots.map((root) => rm(root, { recursive: true, force: true }))));
+
+  const entries = roots.map((root, index) => registryEntry(root, { displayName: `Project ${index}` }));
+  // Descending, so completion order is the reverse of registry order whenever the
+  // walks overlap. Equal delays would let a push-as-you-finish implementation pass.
+  const delayByRef = new Map(entries.map((entry, index) => [entry.projectRef, 200 - index * 50]));
+
+  async function walk(scanPolicy) {
+    const log = [];
+    const catalog = createLiveHubProjectCatalog({
+      listJoinedProjects: async () => entries,
+      now: () => Date.parse("2026-08-26T08:25:00.000Z"),
+      ...(scanPolicy ? { scanPolicy } : {}),
+      discoverRuntimeConversations: async ({ projectRef }) => {
+        log.push(`enter ${projectRef}`);
+        await new Promise((resolve) => setTimeout(resolve, delayByRef.get(projectRef)));
+        log.push(`exit ${projectRef}`);
+        return [];
+      },
+    });
+    const projects = await catalog.listProjects();
+    return { log, names: projects.map((project) => project.displayName) };
+  }
+
+  const registryOrder = entries.map((entry, index) => `Project ${index}`);
+
+  const serial = await walk(normalizeLiveCatalogScanPolicy({
+    schemaVersion: LIVE_CATALOG_SCAN_SCHEMA_VERSION,
+    cacheTtlMs: 2000,
+    staleWhileRevalidateMs: 60_000,
+    projectScanConcurrency: 1,
+  }));
+  assert.deepEqual(
+    serial.log,
+    entries.flatMap((entry) => [`enter ${entry.projectRef}`, `exit ${entry.projectRef}`]),
+    "one lane must still finish each project before starting the next, or the policy value is being ignored",
+  );
+  assert.deepEqual(serial.names, registryOrder);
+
+  const shipped = await walk(null);
+  assert.deepEqual(
+    [...shipped.log.slice(0, entries.length)].sort(),
+    entries.map((entry) => `enter ${entry.projectRef}`).sort(),
+    "the shipped policy has to reach the catalog: every project must be in flight before the first one finishes",
+  );
+  assert.deepEqual(
+    shipped.log.slice(entries.length),
+    [...entries].reverse().map((entry) => `exit ${entry.projectRef}`),
+    "this fixture makes the earliest-registered project the slowest, so completion order is the reverse of registry order",
+  );
+  assert.deepEqual(
+    shipped.names,
+    registryOrder,
+    "the answer is ordered by the registry, not by which disk finished first; otherwise the project list reshuffles between two identical requests",
+  );
+});

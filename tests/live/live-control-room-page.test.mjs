@@ -3575,3 +3575,180 @@ test("a session row says when its time is only the record file's write time", ()
   assert.match(startedToo.hint, /2026-08-26T07:05:00\.000Z/u,
     "a recorded start instant belongs in the tooltip; the card already carries five chips and cannot take a sixth");
 });
+
+/**
+ * Measured on the real repository at 127.0.0.1:4331 with the run-records panel
+ * open: the project picker read "Meta_Kim · 36 次运行" while the run picker beside
+ * it offered 23 rows, and the 13 missing runs were named nowhere on that panel.
+ * The two numbers came from two independent derivations — one printed the shipped
+ * session count, the other filtered the same array by sessionIsIdentified — so
+ * neither could see that it disagreed with its neighbour.
+ *
+ * The label alone is not the guard. A label built from one number would still
+ * pass an assertion that only reads the total, so the openable count is mutated
+ * independently below: the two counters must both reach the string.
+ */
+test("the project label and the run picker report one reconciled tally", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const { projectRunTally, projectOptionLabel, unopenableRunNoticeLabel } = new Function(
+    "sessionIsIdentified",
+    `${shippedHelper(html, "projectRunTally")}
+      ${shippedHelper(html, "projectOptionLabel")}
+      ${shippedHelper(html, "unopenableRunNoticeLabel")}
+      return { projectRunTally, projectOptionLabel, unopenableRunNoticeLabel };
+    `,
+  )((session) => session?.identificationState === "descriptive" || session?.conversationLinkState === "verified");
+
+  const openable = { identificationState: "descriptive" };
+  const unopenable = { identificationState: "unlinked" };
+  const project = (openableCount, unopenableCount) => ({
+    displayName: "Meta_Kim",
+    sessions: [
+      ...Array.from({ length: openableCount }, () => openable),
+      ...Array.from({ length: unopenableCount }, () => unopenable),
+    ],
+  });
+
+  const measured = projectRunTally(project(23, 13));
+  assert.deepEqual(
+    { held: measured.held, openable: measured.openable, unopenable: measured.unopenable },
+    { held: 36, openable: 23, unopenable: 13 },
+    "the tally must publish all three counters; a surface given only the total cannot disclose the gap",
+  );
+
+  assert.equal(
+    projectOptionLabel(project(23, 13)),
+    "Meta_Kim · 23 of 36 runs",
+    "the label must state both counts, or the panel claims 36 runs while offering 23",
+  );
+  // Mutating only the openable count must move the label. Both counters are read
+  // off the same array, so a label that derived one from the other would be
+  // green on the assertion above and blind to the defect it exists to catch.
+  assert.equal(
+    projectOptionLabel(project(9, 27)),
+    "Meta_Kim · 9 of 36 runs",
+    "the openable count must reach the label independently of the total",
+  );
+  assert.equal(
+    projectOptionLabel(project(4, 0)),
+    "Meta_Kim · 4 runs",
+    "a project whose every run is openable keeps the plain form, or the existing zh mapping goes dead",
+  );
+  assert.equal(
+    projectOptionLabel(project(0, 0)),
+    "Meta_Kim · no runs",
+    "an empty project keeps its own sentence rather than reading 0 of 0",
+  );
+
+  assert.equal(
+    unopenableRunNoticeLabel(13),
+    "+ 13 runs without an openable record",
+    "the runs the picker withholds must be named inside the picker, not only in another panel",
+  );
+});
+
+/**
+ * The label is English at the call site because the renderer localizes on output.
+ * A new English form with no zh pattern falls through `localize` unchanged, which
+ * is the failure the fallback is built to hide: the sentence renders in English
+ * on a Chinese page instead of raising anything.
+ */
+test("both new run-count sentences have a Chinese form", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const zhLiteral = html.match(/const zhText = new Map\(Object\.entries\((\{.*?\})\)\);\n/su);
+  assert.ok(zhLiteral, "the shipped script must embed the zh dictionary");
+  const localize = new Function(
+    "display",
+    "currentLanguage",
+    "zhText",
+    `${shippedHelper(html, "localize")}
+      return localize;
+    `,
+  )(
+    (value, fallback = "") => (value === undefined || value === null || value === "" ? fallback : String(value)),
+    "zh",
+    new Map(Object.entries(JSON.parse(zhLiteral[1]))),
+  );
+
+  assert.equal(
+    localize("Meta_Kim · 23 of 36 runs"),
+    "Meta_Kim · 共 36 次运行（可打开 23 条）",
+    "the split form must localize; falling through leaves English on a Chinese page",
+  );
+  assert.equal(
+    localize("+ 13 runs without an openable record"),
+    "另有 13 条没有可打开的记录",
+    "the picker's withheld-run row must localize",
+  );
+  assert.equal(
+    localize("Meta_Kim · 4 runs"),
+    "Meta_Kim · 4 次运行",
+    "the plain form must keep working; a more specific new pattern must not shadow it",
+  );
+});
+
+test("the withheld-run notice row cannot be picked or become a run id", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const options = [];
+  const select = {
+    disabled: null,
+    append(option) {
+      options.push(option);
+    },
+  };
+  const replaceSelectOptions = new Function(
+    "clearChildren",
+    "document",
+    "localize",
+    `${shippedHelper(html, "replaceSelectOptions")}
+      return replaceSelectOptions;
+    `,
+  )(
+    () => {},
+    { createElement: () => ({ value: null, textContent: null, disabled: false, selected: false }) },
+    (value) => value,
+  );
+
+  replaceSelectOptions(
+    select,
+    [
+      { value: "RUN-A", label: "first run" },
+      { value: "RUN-B", label: "second run" },
+      { value: "", selectable: false, label: "+ 13 runs without an openable record" },
+    ],
+    "",
+  );
+
+  assert.equal(options.length, 3, "every supplied row must reach the select");
+  assert.deepEqual(
+    options.map((option) => option.disabled),
+    [false, false, true],
+    "only the notice row is disabled; disabling a real run would make it unopenable",
+  );
+  assert.equal(
+    options[2].value,
+    "",
+    "the notice row must carry no run id, or selecting it navigates to a run that does not exist",
+  );
+  assert.equal(
+    options[2].selected,
+    false,
+    "the notice row must not be preselected even when the selected run id is empty, which is the state before any run is chosen",
+  );
+
+  const withSelection = [];
+  replaceSelectOptions(
+    { disabled: null, append: (option) => withSelection.push(option) },
+    [
+      { value: "RUN-A", label: "first run" },
+      { value: "RUN-B", label: "second run" },
+      { value: "", selectable: false, label: "+ 13 runs without an openable record" },
+    ],
+    "RUN-B",
+  );
+  assert.deepEqual(
+    withSelection.map((option) => option.selected),
+    [false, true, false],
+    "adding the notice row must not break ordinary preselection",
+  );
+});

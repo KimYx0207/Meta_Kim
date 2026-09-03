@@ -14,6 +14,7 @@ import {
   sessionSelectionRow,
   sortProjectsForDefault,
 } from "../../application/live/live-default-selection.mjs";
+import { loadLiveCatalogScanPolicy } from "../../application/live/live-catalog-scan-policy.mjs";
 import { liveRecordOrigin } from "../../application/live/live-record-origin.mjs";
 import { isLiveRunId } from "./live-read-repository.mjs";
 import { LIVE_HUB_HEALTH_SCHEMA_VERSION } from "./live-hub-lifecycle.mjs";
@@ -461,9 +462,16 @@ export function createLiveControlRoomServer(options = {}) {
       ? options.profile
       : "default";
   const projectServices = new Map();
-  const hubCatalogTtlMs = Number.isInteger(options.hubCatalogTtlMs) && options.hubCatalogTtlMs >= 250
-    ? Math.min(options.hubCatalogTtlMs, 60_000)
-    : 2_000;
+  // How long a built project list stays current, how much longer it may still be
+  // served while a replacement is built, and how many projects may be walked at
+  // once. All three live in config/live/catalog-scan.json: the walk cost is a
+  // property of the machine and the registry, not of this file.
+  const catalogScanPolicy = options.scanPolicy || loadLiveCatalogScanPolicy();
+  const hubCatalogTtlMs = catalogScanPolicy.cacheTtlMs;
+  const hubCatalogStaleWindowMs = catalogScanPolicy.staleWhileRevalidateMs;
+  const hubCatalogClock = typeof options.hubCatalogClock === "function"
+    ? options.hubCatalogClock
+    : Date.now;
   let hubCatalogCache = null;
   let hubCatalogCacheExpiresAt = 0;
   let hubCatalogReadPromise = null;
@@ -506,14 +514,12 @@ export function createLiveControlRoomServer(options = {}) {
     observer = null;
   };
 
-  const readHubProjects = async ({ refresh = false } = {}) => {
-    const now = Date.now();
-    if (!refresh && hubCatalogCache && hubCatalogCacheExpiresAt > now) return hubCatalogCache;
+  const rebuildHubProjects = () => {
     if (!hubCatalogReadPromise) {
       hubCatalogReadPromise = Promise.resolve(hubCatalog.listProjects())
         .then((projects) => {
           hubCatalogCache = Array.isArray(projects) ? projects : [];
-          hubCatalogCacheExpiresAt = Date.now() + hubCatalogTtlMs;
+          hubCatalogCacheExpiresAt = hubCatalogClock() + hubCatalogTtlMs;
           return hubCatalogCache;
         })
         .finally(() => {
@@ -521,6 +527,21 @@ export function createLiveControlRoomServer(options = {}) {
         });
     }
     return hubCatalogReadPromise;
+  };
+
+  const readHubProjects = async ({ refresh = false } = {}) => {
+    const now = hubCatalogClock();
+    if (refresh || !hubCatalogCache) return rebuildHubProjects();
+    if (hubCatalogCacheExpiresAt > now) return hubCatalogCache;
+    if (hubCatalogCacheExpiresAt + hubCatalogStaleWindowMs > now) {
+      // Answer with the list already in hand and build the replacement behind the
+      // reader. A rebuild that fails leaves the previous list in place, and the
+      // request that finds it past the stale window waits for a real walk, so the
+      // failure surfaces there instead of being served forever.
+      rebuildHubProjects().catch(() => {});
+      return hubCatalogCache;
+    }
+    return rebuildHubProjects();
   };
 
   const publicHubCatalog = async ({ requestedProjectId = null, requestedRunId = null, refresh = false } = {}) => {
@@ -731,10 +752,13 @@ export function createLiveControlRoomServer(options = {}) {
         return;
       }
       try {
+        // No forced refresh. Building this catalog walks every registered
+        // project's run directory, and the page asks for it on first paint and on
+        // every project or run switch, so forcing a fresh read put the whole walk
+        // in front of each click while the cache above was never read.
         jsonResponse(response, 200, await publicHubCatalog({
           requestedProjectId: parsed.searchParams.get("projectId"),
           requestedRunId: parsed.searchParams.get("runId"),
-          refresh: true,
         }));
       } catch {
         jsonResponse(response, 200, {

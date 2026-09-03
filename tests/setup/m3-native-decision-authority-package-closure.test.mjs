@@ -77,6 +77,7 @@ const GOVERNANCE_REQUIREMENT_CUTOVER_SOURCE_FILES = [
 const LIVE_SOURCE_FILES = [
   "src/application/live/build-live-share-artifact.mjs",
   "src/application/live/live-acceptance-fixture-loader.mjs",
+  "src/application/live/live-catalog-scan-policy.mjs",
   "src/application/live/live-control-room-service.mjs",
   "src/application/live/live-conversation-link-vocabulary.mjs",
   "src/application/live/live-default-selection.mjs",

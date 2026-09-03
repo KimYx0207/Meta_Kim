@@ -69,6 +69,7 @@ const LIVE_L02_L04_SOURCE_PATHS = [
   "src/domain/live/live-share-artifact.mjs",
   "src/application/live/build-live-share-artifact.mjs",
   "src/application/live/live-acceptance-fixture-loader.mjs",
+  "src/application/live/live-catalog-scan-policy.mjs",
   "src/application/live/live-control-room-service.mjs",
   "src/application/live/live-conversation-link-vocabulary.mjs",
   "src/application/live/live-default-selection.mjs",

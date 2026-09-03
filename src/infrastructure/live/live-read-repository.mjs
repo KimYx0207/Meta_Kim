@@ -124,6 +124,30 @@ function digest(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+/**
+ * A successful read, with its digest left as work the caller can decline.
+ *
+ * Only the durable-record path below compares this digest against a declared
+ * one. The project catalog is the other reader, and it walks every run of every
+ * registered project on first paint without ever looking at the digest, so
+ * hashing every file on the spot charged that walk for a checksum nobody was
+ * going to be shown.
+ */
+function validRead(value, raw) {
+  return {
+    status: "valid",
+    value,
+    raw,
+    get sha256() {
+      const computed = digest(raw);
+      // Leave the answer behind, so a second reader of the same record does not
+      // pay for the same hash again.
+      Object.defineProperty(this, "sha256", { value: computed, enumerable: true, configurable: true });
+      return computed;
+    },
+  };
+}
+
 function digestFrom(record) {
   const candidates = [
     record?.sha256,
@@ -203,7 +227,7 @@ async function safeReadJson(root, targetPath, { maxBytes = LIVE_MAX_JSON_BYTES }
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return { status: "unknown", value: null };
     }
-    return { status: "valid", value, raw, sha256: digest(raw) };
+    return validRead(value, raw);
   } catch (error) {
     if (error?.code === "ENOENT") return { status: "missing", value: null };
     return { status: "malformed", value: null };

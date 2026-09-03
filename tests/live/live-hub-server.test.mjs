@@ -5,6 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
+import {
+  LIVE_CATALOG_SCAN_SCHEMA_VERSION,
+  normalizeLiveCatalogScanPolicy,
+} from "../../src/application/live/live-catalog-scan-policy.mjs";
 import { joinProjectRegistry } from "../../scripts/project-registry.mjs";
 
 function snapshot(runId) {
@@ -618,4 +622,145 @@ test("the published session carries where its time came from", async (t) => {
   // No time means no basis; publishing one here would invent a provenance claim
   // for a record that makes none.
   assert.strictEqual(sessions.get("meta-basis-3").updatedAtBasis, undefined);
+});
+
+// Building the project catalog walks every registered project's run directory:
+// 19 projects measured 1614ms and 1657ms in-process, and this endpoint used to
+// pass refresh:true on every request, so it paid that walk again for each click
+// while holding its own cache unread. The reader saw a panel that did not answer.
+test("the project catalog endpoint reuses a list it just built, and stops when the window closes", async (t) => {
+  const { internal } = hubFixture();
+  const listCalls = [];
+  let clock = 1_000_000;
+  const controller = createLiveControlRoomServer({
+    globalHub: true,
+    instanceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    scanPolicy: normalizeLiveCatalogScanPolicy({
+      schemaVersion: LIVE_CATALOG_SCAN_SCHEMA_VERSION,
+      // Deliberately not the shipped 2000: the window has to come from the policy
+      // this Hub was handed, or the configured value is decoration over a literal.
+      cacheTtlMs: 5000,
+      // No stale window here, so "past the window" means the reader waits for a
+      // fresh walk. The stale path is a separate contract, tested below.
+      staleWhileRevalidateMs: 0,
+      projectScanConcurrency: 4,
+    }),
+    hubCatalogClock: () => clock,
+    hubCatalog: {
+      listProjects: async () => {
+        listCalls.push(clock);
+        return [{ ...internal, displayName: `walk ${listCalls.length}` }];
+      },
+      resolveProject: async (projectRef) => (projectRef === internal.projectRef ? { ...internal } : null),
+    },
+    createProjectService: () => ({
+      getSnapshot: async (runId) => snapshot(runId),
+      getReplay: async (runId) => ({ schemaVersion: "meta-kim-live-replay-v2", runId, replay: [] }),
+      getShare: async () => ({ schemaVersion: "meta-kim-live-share-v1" }),
+    }),
+  });
+  t.after(() => controller.close());
+  const address = await controller.start();
+
+  const first = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(listCalls.length, 1, "the first request has nothing to reuse");
+
+  clock += 4999;
+  const second = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(
+    listCalls.length,
+    1,
+    "a second request inside the window must be served from what the first one built, or every click pays the whole walk again",
+  );
+  assert.deepEqual(second, first, "reuse has to answer the same catalog, not an emptied one");
+
+  clock += 2;
+  const third = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(
+    listCalls.length,
+    2,
+    "past the window the list must be rebuilt, or a run that just started never appears without a restart",
+  );
+  assert.equal(
+    third.projects[0].displayName,
+    "walk 2",
+    "this Hub was handed no stale window, so the rebuilt list has to be what gets served; answering from the old one means the configured window is decoration over a literal",
+  );
+});
+
+// A freshness window shorter than the gap between two clicks is a cache the
+// reader never lands in: the shipped window is 2s and people click every 5-15s,
+// so each click fell past it and waited out the ~900ms walk again. Past the
+// freshness window the list in hand is still worth showing while a new one is
+// built behind the reader.
+test("past the freshness window the catalog is served from what is in hand while it rebuilds behind the reader", async (t) => {
+  const { internal } = hubFixture();
+  const listCalls = [];
+  const SECOND_WALK_MS = 200;
+  let clock = 1_000_000;
+  const controller = createLiveControlRoomServer({
+    globalHub: true,
+    instanceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    scanPolicy: normalizeLiveCatalogScanPolicy({
+      schemaVersion: LIVE_CATALOG_SCAN_SCHEMA_VERSION,
+      cacheTtlMs: 5000,
+      staleWhileRevalidateMs: 60_000,
+      projectScanConcurrency: 4,
+    }),
+    hubCatalogClock: () => clock,
+    hubCatalog: {
+      listProjects: async () => {
+        listCalls.push(clock);
+        const walk = listCalls.length;
+        // Hold the second walk open. A stale answer does not wait on it, so it
+        // still says "walk 1"; an answer that waited would say "walk 2".
+        if (walk === 2) await new Promise((resolve) => { setTimeout(resolve, SECOND_WALK_MS); });
+        return [{ ...internal, displayName: `walk ${walk}` }];
+      },
+      resolveProject: async (projectRef) => (projectRef === internal.projectRef ? { ...internal } : null),
+    },
+    createProjectService: () => ({
+      getSnapshot: async (runId) => snapshot(runId),
+      getReplay: async (runId) => ({ schemaVersion: "meta-kim-live-replay-v2", runId, replay: [] }),
+      getShare: async () => ({ schemaVersion: "meta-kim-live-share-v1" }),
+    }),
+  });
+  t.after(() => controller.close());
+  const address = await controller.start();
+
+  const first = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(first.projects[0].displayName, "walk 1");
+
+  clock += 5001;
+  const stale = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(
+    stale.projects[0].displayName,
+    "walk 1",
+    "the reader past the window has to get the list already in hand; waiting for a new walk is the wait this window exists to remove",
+  );
+  assert.equal(
+    listCalls.length,
+    2,
+    "serving a stale list has to start the rebuild, or the panel keeps showing the same list until someone restarts",
+  );
+
+  await new Promise((resolve) => { setTimeout(resolve, SECOND_WALK_MS + 50); });
+
+  clock += 1;
+  const refreshed = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(
+    refreshed.projects[0].displayName,
+    "walk 2",
+    "the rebuild that ran behind the reader has to be what the next reader sees",
+  );
+  assert.equal(listCalls.length, 2, "the list rebuilt inside the new window must not be rebuilt again");
+
+  // Past the stale window there is nothing worth showing, so the reader waits.
+  clock += 65_001;
+  const rebuilt = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(
+    rebuilt.projects[0].displayName,
+    "walk 3",
+    "a list older than the stale window has to be replaced before it is served, or a finished run stays on the panel forever",
+  );
 });

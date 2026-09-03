@@ -13,6 +13,7 @@ import {
   sessionSelectionRow,
 } from "../../application/live/live-default-selection.mjs";
 import { buildLiveCompactProjection } from "../../application/live/live-control-room-service.mjs";
+import { loadLiveCatalogScanPolicy } from "../../application/live/live-catalog-scan-policy.mjs";
 import {
   conversationDiscoveryForRuntime,
   conversationLinkPlacementForRun,
@@ -1238,6 +1239,7 @@ export function createLiveHubProjectCatalog(options = {}) {
     options.listRuntimeConversations || options.discoverConversations || null;
   const visibilityPolicy = options.visibilityPolicy || loadLiveRunRetentionPolicy();
   const selectionPolicy = options.selectionPolicy || loadLiveDefaultSelectionPolicy();
+  const scanPolicy = options.scanPolicy || loadLiveCatalogScanPolicy();
 
   const validatedProjects = async () => {
     let entries;
@@ -1288,34 +1290,51 @@ export function createLiveHubProjectCatalog(options = {}) {
 
   const listProjects = async () => {
     const projects = await validatedProjects();
-    const output = [];
-    for (const project of projects) {
-      const { sessions, omittedSessionCount, discovery } = await listSessionsForProject(project, {
-        profile,
-        maxSessions,
-        maxJsonBytes,
-        nowMs: now(),
-        activeFreshnessMs,
-        observeSourceRead,
-        observeDiscoveryOperation,
-        discoverRuntimeConversations,
-        visibilityPolicy,
-        selectionPolicy,
-      });
-      const activeSession = sessions.find((session) => session.active) || null;
-      output.push({
-        projectRef: project.projectRef,
-        displayName: project.displayName,
-        updatedAt: newestTimestamp(project.updatedAt, sessions[0]?.updatedAt),
-        status: activeSession ? "active" : sessions.length > 0 ? "idle" : "empty",
-        sessionCount: sessions.length,
-        omittedSessionCount,
-        activeSessionId: activeSession?.sessionId || null,
-        sessions,
-        ...(discovery.truncated ? { sessionDiscovery: discovery } : {}),
-      });
-    }
-    return output;
+    // One instant for the whole catalog. Reading the clock per project would date
+    // the last project later than the first for no reason a reader could act on,
+    // and "is this run still active" is answered against it.
+    const nowMs = now();
+    const described = new Array(projects.length);
+    let nextIndex = 0;
+    const walkLane = async () => {
+      while (nextIndex < projects.length) {
+        const index = nextIndex++;
+        // Indexed assignment, not push: the lanes finish in whatever order disk
+        // timing gives them, and the reader's project list must not reshuffle
+        // between two identical requests.
+        described[index] = await describeProject(projects[index], nowMs);
+      }
+    };
+    const lanes = Math.min(scanPolicy.projectScanConcurrency, projects.length);
+    await Promise.all(Array.from({ length: lanes }, walkLane));
+    return described;
+  };
+
+  const describeProject = async (project, nowMs) => {
+    const { sessions, omittedSessionCount, discovery } = await listSessionsForProject(project, {
+      profile,
+      maxSessions,
+      maxJsonBytes,
+      nowMs,
+      activeFreshnessMs,
+      observeSourceRead,
+      observeDiscoveryOperation,
+      discoverRuntimeConversations,
+      visibilityPolicy,
+      selectionPolicy,
+    });
+    const activeSession = sessions.find((session) => session.active) || null;
+    return {
+      projectRef: project.projectRef,
+      displayName: project.displayName,
+      updatedAt: newestTimestamp(project.updatedAt, sessions[0]?.updatedAt),
+      status: activeSession ? "active" : sessions.length > 0 ? "idle" : "empty",
+      sessionCount: sessions.length,
+      omittedSessionCount,
+      activeSessionId: activeSession?.sessionId || null,
+      sessions,
+      ...(discovery.truncated ? { sessionDiscovery: discovery } : {}),
+    };
   };
 
   return {

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "meta-kim-live-catalog-scan-v1",
+  "description": "How the Hub reads the registered project list, and how long it may reuse what it read. Building the catalog means walking each project's governed-run directory: measured in-process on this machine, 19 registered projects holding 47 discoverable runs took 1614ms and then 1657ms on two consecutive calls. The control room asks for that catalog on first paint and again on every project or run switch, so the whole walk sits in front of the reader, who sees a panel that does not answer. It is not a busy event loop -- a concurrent /api/health replied in 1ms while a catalog request was 1619ms into its work -- so the wait is file I/O over independent directories, and two settings remove it. projectScanConcurrency walks several projects at once. cacheTtlMs lets the next request, or the same reader switching runs, reuse a list that was just built.",
+  "cacheTtlMs": 2000,
+  "staleWhileRevalidateMs": 60000,
+  "projectScanConcurrency": 8,
+  "policyNotes": {
+    "cacheTtlMs": "How long a served project list counts as current. It must be positive: the catalog endpoint used to force a fresh read on every single request, which made its own cache unreachable and charged the reader the full walk for each click. Two seconds of staleness is indistinguishable from current to the person reading the panel.",
+    "staleWhileRevalidateMs": "How much longer a list past its freshness window may still be served, while a replacement is built behind the reader. A freshness window short enough to call current is shorter than the gap between two clicks -- clicks arrive 5-15s apart, the window is 2s -- so without this the reader paid the walk on every click anyway. Serving what is in hand answers immediately and the next reader gets the rebuilt list. It stays finite because after a long idle there is nothing on the panel worth showing: a finished run would still be listed as running, so that reader waits for a real walk. Zero turns the stale path off and restores strict freshness.",
+    "projectScanConcurrency": "How many projects may be walked at the same time. Above one because the walk is file I/O and the projects are independent, so a serial loop spends most of its wall clock waiting. Bounded because every project in flight holds open directory handles and buffered record JSON, and an unbounded fan-out over a large registry would trade the wait for memory."
+  }
+}

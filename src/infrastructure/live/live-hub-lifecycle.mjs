@@ -48,6 +48,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/domain/shared/canonical-digest.mjs",
   "src/application/live/build-live-share-artifact.mjs",
   "src/application/live/live-acceptance-fixture-loader.mjs",
+  "src/application/live/live-catalog-scan-policy.mjs",
   "src/application/live/live-control-room-service.mjs",
   "src/application/live/live-conversation-link-vocabulary.mjs",
   "src/application/live/live-default-selection.mjs",
