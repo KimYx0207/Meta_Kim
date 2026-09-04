@@ -1860,6 +1860,12 @@ async function collectRepoCanonicalCapabilities() {
           ? `plugin-marketplace-${skill.id}`
           : `plugin-bundle-${skill.id}`,
         pluginIds,
+        ...(skill.dependencyClass ? { dependencyClass: skill.dependencyClass } : {}),
+        ...(skill.installPolicy ? { installPolicy: skill.installPolicy } : {}),
+        routeEligibility:
+          skill.installPolicy === "explicit_reference_opt_in"
+            ? "reference_only"
+            : "callable_after_install",
         evidence: `config/skills.json skills[id=${skill.id}]`,
       };
     });

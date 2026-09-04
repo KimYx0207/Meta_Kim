@@ -1025,7 +1025,7 @@ flowchart TB
 | `npm run discover:global` | 扫描全局能力 |
 | `npm run meta:sync:global` | 同步 meta-theory 到用户级 |
 
-`planning-with-files` 是核心外部依赖，不是项目内 `.agents/skills/` 镜像。安装依赖后应检查工具端 home，例如 `~/.codex/skills/planning-with-files/`、`~/.claude/skills/planning-with-files/`、`~/.cursor/skills/planning-with-files/` 或 `~/.openclaw/skills/planning-with-files/`。不能只因为 `.agents/skills/planning-with-files/` 不存在就判断它没装。
+规划连续性现在由 Meta_Kim 自有的 `planning-continuity` 运行时负责。它不依赖外部 skill、缓存、Hook bundle 或网络回退，也能初始化或恢复 `task_plan.md`、`findings.md` 和 `progress.md`。外部 `OthmanAdi/planning-with-files` 依赖已完成吸收，并从清单、安装路线、运行时目录、Hook 注册和 Provider 选择中退役；仓库仅保留历史来源证据。
 
 #### Plugin 市场类 skill（Superpowers、Everything Claude Code、cli-anything）
 

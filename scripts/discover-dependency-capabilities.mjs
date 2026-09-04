@@ -301,6 +301,7 @@ async function discover() {
     const existing = registryProjects.find((project) => project.id === skill.id);
     if (existing) return null;
     const installed = skillDirs.find((entry) => entry.id === skill.id);
+    const referenceOnly = skill.installPolicy === "explicit_reference_opt_in";
     return annotateMissing(normalizeProject({
       id: skill.id,
       name: skill.id,
@@ -313,16 +314,27 @@ async function discover() {
         triggerConditions: [skill.id],
         verificationMethod: "npm run meta:deps:compat",
         risk: ["third_party_skill_requires_trust_review"],
-        routeEligibility: installed ? "installed_skill_candidate" : "external_reference",
+        routeEligibility: referenceOnly
+          ? "reference_only"
+          : installed
+            ? "installed_skill_candidate"
+            : "external_reference",
         notFor: ["automatic execution without trust review"],
         taskShapes: ["external_capability"],
         writebackKey: `dependency:${skill.id}`,
       },
-      interface: { invokeAs: installed ? "skill" : "reference", invocationPath: installed?.path ?? null },
-      scoring: { overall: installed ? 78 : 62 },
+      interface: {
+        invokeAs: referenceOnly ? "reference" : installed ? "skill" : "reference",
+        invocationPath: referenceOnly ? null : installed?.path ?? null,
+      },
+      scoring: { overall: referenceOnly ? 0 : installed ? 78 : 62 },
       runtimeSupport: Object.fromEntries(RUNTIMES.map((runtime) => [runtime, (skill.targets ?? []).includes(runtime.replace("_code", "")) || (skill.targets ?? []).includes(runtime) ? "partial" : "unknown"])),
       osSupport: Object.fromEntries(OS_TARGETS.map((target) => [target, "partial"])),
-    }, { installedStatus: installed?.installedStatus ?? "external_reference" }));
+    }, {
+      installedStatus: referenceOnly
+        ? "reference_only"
+        : installed?.installedStatus ?? "external_reference",
+    }));
   }).filter(Boolean);
   const dynamicProjects = [];
   if (!registryProjects.some((project) => project.id === "kim-decision")) {

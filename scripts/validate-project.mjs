@@ -2082,12 +2082,9 @@ async function validateSkillsManifest() {
     "hookprompt platformSupport must distinguish native, adapter-required, and degraded runtimes.",
   );
 
-  const planning = manifest.skills?.find(
-    (skill) => skill.id === "planning-with-files",
-  );
   assert(
-    planning?.globalHookSubdirs?.cursor && planning?.globalHookConfigFiles?.cursor,
-    "planning-with-files must install Cursor lifecycle hooks globally.",
+    !manifest.skills?.some((skill) => skill.id === "planning-with-files"),
+    "retired planning-with-files dependency must stay absent; first-party planning continuity owns runtime lifecycle behavior.",
   );
 }
 

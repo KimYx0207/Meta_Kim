@@ -17,6 +17,7 @@ export const RUNTIME_HOOK_CAPABILITIES = {
       sessionStart: "SessionStart",
       preToolUse: "PreToolUse",
       postToolUse: "PostToolUse",
+      preCompact: "PreCompact",
       subagentStart: "SubagentStart",
       subagentStop: "SubagentStop",
       stop: "Stop",
@@ -32,6 +33,7 @@ export const RUNTIME_HOOK_CAPABILITIES = {
       sessionStart: "SessionStart",
       preToolUse: "PreToolUse",
       postToolUse: "PostToolUse",
+      preCompact: "PreCompact",
       subagentStart: "SubagentStart",
       subagentStop: "SubagentStop",
       skill: "Skill",
@@ -100,6 +102,7 @@ export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "activate-meta-theory-spine.mjs",
+  "planning-continuity.mjs",
 ]);
 
 const CLAUDE_COMPATIBLE_HOOK_FILES = Object.freeze([
@@ -380,6 +383,7 @@ export function buildCodexHooksJson({
   packageRoot = null,
   enforceAgentDispatchHookPath = ".codex/hooks/enforce-agent-dispatch.mjs",
   hookPromptAdapterPath = null,
+  planningContinuityHookPath = ".codex/hooks/planning-continuity.mjs",
   stopSpineCleanupHookPath = null,
 } = {}) {
   const userPromptHooks = [];
@@ -387,6 +391,11 @@ export function buildCodexHooksJson({
   const lifecycleHook = () => hookCommand(nodeHookCommand(spineHookPath, spineHookArgs), 5);
   if (spineHookPath) {
     userPromptHooks.push(hookCommand(nodeHookCommand(spineHookPath, spineHookArgs), 5));
+  }
+  if (planningContinuityHookPath) {
+    userPromptHooks.push(hookCommand(nodeHookCommand(planningContinuityHookPath, [
+      "--event", "user-prompt", "--runtime", "codex",
+    ]), 10));
   }
   if (memoryHookPath) {
     userPromptHooks.push(
@@ -450,20 +459,48 @@ export function buildCodexHooksJson({
     ],
   };
 
-  if (memoryHookPath) {
+  if (memoryHookPath || planningContinuityHookPath) {
+    const sessionHooks = [];
+    if (planningContinuityHookPath) {
+      sessionHooks.push(hookCommand(nodeHookCommand(planningContinuityHookPath, [
+        "--event", "session-start", "--runtime", "codex",
+      ]), 10, { statusMessage: "Loading Meta_Kim planning continuity" }));
+    }
+    if (memoryHookPath) {
+      sessionHooks.push(
+        hookCommand(nodeHookCommand(memoryHookPath, ["--event", "session-start"]), 10, {
+          statusMessage: "Loading Meta_Kim memory",
+        }),
+      );
+    }
     hooks.SessionStart = [
       {
         matcher: "startup|resume",
-        hooks: [
-          hookCommand(nodeHookCommand(memoryHookPath, ["--event", "session-start"]), 10, {
-            statusMessage: "Loading Meta_Kim memory",
-          }),
-        ],
+        hooks: sessionHooks,
       },
     ];
   }
+  if (planningContinuityHookPath) {
+    hooks.PreCompact = [{
+      matcher: "*",
+      hooks: [hookCommand(nodeHookCommand(planningContinuityHookPath, [
+        "--event", "pre-compact", "--runtime", "codex",
+      ]), 10)],
+    }];
+    hooks.PostToolUse = [...(hooks.PostToolUse ?? []), {
+      matcher: "Edit|Write",
+      hooks: [hookCommand(nodeHookCommand(planningContinuityHookPath, [
+        "--event", "post-tool", "--runtime", "codex",
+      ]), 10)],
+    }];
+  }
   const stopHooks = [];
   if (spineHookPath) stopHooks.push(lifecycleHook());
+  if (planningContinuityHookPath) {
+    stopHooks.push(hookCommand(nodeHookCommand(planningContinuityHookPath, [
+      "--event", "stop", "--runtime", "codex",
+    ]), 10));
+  }
   if (memoryHookPath) {
     stopHooks.push(
       hookCommand(nodeHookCommand(memoryHookPath, ["--event", "stop"]), 10),
@@ -498,6 +535,7 @@ export function buildCursorHooksJson({
   packageRoot = null,
   enforceAgentDispatchHookPath = ".cursor/hooks/enforce-agent-dispatch.mjs",
   hookPromptAdapterPath = null,
+  planningContinuityHookPath = null,
 } = {}) {
   const spineHookArgs = ["--runtime", "cursor", ...(packageRoot ? ["--package-root", packageRoot] : [])];
   const lifecycleHook = () => ({
@@ -510,6 +548,14 @@ export function buildCursorHooksJson({
       timeout: 5,
     },
   ];
+  if (planningContinuityHookPath) {
+    beforeSubmitPromptHooks.push({
+      command: nodeHookCommand(planningContinuityHookPath, [
+        "--event", "user-prompt", "--runtime", "cursor",
+      ]),
+      timeout: 10,
+    });
+  }
   if (memoryHookPath) {
     beforeSubmitPromptHooks.push({
       command: nodeHookCommand(memoryHookPath, ["--event", "user-prompt"]),
@@ -538,26 +584,49 @@ export function buildCursorHooksJson({
       },
       lifecycleHook(),
     ],
+    // Cursor declares the command directly on the event and carries the matcher
+    // as a sibling field. A nested `hooks` array is Claude's shape: Cursor reads
+    // no command out of it, so the lifecycle hook would be registered on paper
+    // and never invoked. Every other event in this builder is already flat.
     postToolUse: [
       {
+        ...lifecycleHook(),
         matcher: "Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
-        hooks: [lifecycleHook()],
       },
     ],
     subagentStart: [lifecycleHook()],
     stop: [lifecycleHook()],
   };
-  if (memoryHookPath) {
-    hooks.sessionStart = [
-      {
+  if (memoryHookPath || planningContinuityHookPath) {
+    hooks.sessionStart = [];
+    if (planningContinuityHookPath) {
+      hooks.sessionStart.push({
+        command: nodeHookCommand(planningContinuityHookPath, [
+          "--event", "session-start", "--runtime", "cursor",
+        ]),
+        timeout: 10,
+      });
+    }
+    if (memoryHookPath) {
+      hooks.sessionStart.push({
         command: nodeHookCommand(memoryHookPath, ["--event", "session-start"]),
         timeout: 10,
-      },
-    ];
-    hooks.stop.push({
-      command: nodeHookCommand(memoryHookPath, ["--event", "stop"]),
-      timeout: 10,
-    });
+      });
+    }
+    if (planningContinuityHookPath) {
+      hooks.stop.push({
+        command: nodeHookCommand(planningContinuityHookPath, [
+          "--event", "stop", "--runtime", "cursor",
+        ]),
+        timeout: 10,
+      });
+    }
+    if (memoryHookPath) {
+      hooks.stop.push({
+        command: nodeHookCommand(memoryHookPath, ["--event", "stop"]),
+        timeout: 10,
+      });
+    }
   }
 
   return {

@@ -7024,9 +7024,9 @@ function buildCapabilityInvocationTruthPacket({
       state:
         familyFullyObserved("agent_teams_playbook")
           ? "invoked"
-          : agentTeamsPlaybookPacket?.status === "pass"
+          : agentTeamsPlaybookPacket?.selected === true
           ? "selected_not_invoked"
-          : agentTeamsPlaybookPacket?.status === "not_required"
+          : ["pass", "not_required"].includes(agentTeamsPlaybookPacket?.status)
             ? "not_required"
             : "unavailable",
       selectedCount: agentTeamsPlaybookPacket?.selected ? 1 : 0,

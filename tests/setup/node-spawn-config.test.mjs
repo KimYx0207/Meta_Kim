@@ -101,7 +101,7 @@ describe("setup child CLI contracts", () => {
   test("packed acceptance can explicitly route dependency installs to local fixtures", () => {
     const args = buildGlobalSkillsInstallerArgs({
       targets: ["claude", "codex"],
-      skillIds: ["planning-with-files"],
+      skillIds: ["findskill"],
       update: true,
       preferLocalDependencies: true,
     });

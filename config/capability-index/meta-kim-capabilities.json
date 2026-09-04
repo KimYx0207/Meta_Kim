@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-02T01:28:32.719Z",
+  "generatedAt": "2026-09-04T12:56:55.292Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -20,10 +20,10 @@
   "summary": {
     "totalAgents": 9,
     "totalSkills": 17,
-    "totalHooks": 26,
+    "totalHooks": 27,
     "totalMcpServers": 1,
     "totalMcpTools": 6,
-    "totalPlugins": 4,
+    "totalPlugins": 3,
     "totalCommands": 7,
     "countSemantics": {
       "totalHooks": "canonical_inventory_entries",
@@ -377,7 +377,7 @@
         "path": "canonical/runtime-assets/shared/hooks/conversation-binding.mjs",
         "relativePath": "conversation-binding.mjs",
         "size": 5235,
-        "modified": "2026-09-01T15:15:54.328Z",
+        "modified": "2026-09-02T11:53:00.781Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/conversation-binding.mjs"
       },
       "repo:canonical-runtime-assets:meta-kim-memory-save.mjs": {
@@ -389,6 +389,16 @@
         "size": 30413,
         "modified": "2026-08-08T18:25:26.238Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/meta-kim-memory-save.mjs"
+      },
+      "repo:canonical-runtime-assets:planning-continuity.mjs": {
+        "id": "planning-continuity.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/shared/hooks/planning-continuity.mjs",
+        "relativePath": "planning-continuity.mjs",
+        "size": 28774,
+        "modified": "2026-09-04T12:14:54.457Z",
+        "canonicalPath": "canonical/runtime-assets/shared/hooks/planning-continuity.mjs"
       },
       "repo:canonical-runtime-assets:project-root.mjs": {
         "id": "project-root.mjs",
@@ -437,8 +447,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "relativePath": "spine-state.mjs",
-        "size": 73093,
-        "modified": "2026-09-01T22:31:56.809Z",
+        "size": 75004,
+        "modified": "2026-09-02T11:53:23.705Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "adapterPath": "canonical/runtime-assets/claude/hooks/spine-state.mjs"
       },
@@ -704,6 +714,7 @@
           "superpowers",
           "superpowers"
         ],
+        "routeEligibility": "callable_after_install",
         "evidence": "config/skills.json skills[id=superpowers]"
       },
       "manifest:plugin-marketplace:ecc": {
@@ -728,23 +739,8 @@
         "pluginIds": [
           "ecc@ecc"
         ],
+        "routeEligibility": "callable_after_install",
         "evidence": "config/skills.json skills[id=ecc]"
-      },
-      "manifest:plugin-bundle:planning-with-files": {
-        "id": "planning-with-files",
-        "type": "pluginBundles",
-        "namespace": "plugin-bundle",
-        "path": "config/skills.json",
-        "runtimeTargets": [
-          "claude",
-          "codex",
-          "openclaw",
-          "cursor"
-        ],
-        "installMethod": "subdirExtraction",
-        "providerRegistryId": "plugin-bundle-planning-with-files",
-        "pluginIds": [],
-        "evidence": "config/skills.json skills[id=planning-with-files]"
       },
       "manifest:plugin-marketplace:cli-anything": {
         "id": "cli-anything",
@@ -760,6 +756,7 @@
         "installMethod": "pluginMarketplace",
         "providerRegistryId": "plugin-marketplace-cli-anything",
         "pluginIds": [],
+        "routeEligibility": "callable_after_install",
         "evidence": "config/skills.json skills[id=cli-anything]"
       }
     },

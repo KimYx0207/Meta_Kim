@@ -656,7 +656,9 @@ describe("sync-runtimes / Codex project hooks", () => {
     const config = buildCodexProjectHooksJson({
       memoryHookPath: hookPath,
     });
-    const command = config.hooks.SessionStart[0].hooks[0].command;
+    const command = config.hooks.SessionStart[0].hooks.find((hook) =>
+      hook.command.includes("meta-kim-memory-save.mjs"),
+    ).command;
 
     assert.equal(command, `node ${JSON.stringify(hookPath)} --event session-start`);
     assert.doesNotMatch(command, /Program Files/);
@@ -879,6 +881,9 @@ describe("sync-runtimes / Cursor project hooks", () => {
       /activate-meta-theory-spine\.mjs/,
     );
     assert.equal(config.hooks.beforeSubmitPrompt.length, 1);
+    assert.doesNotMatch(JSON.stringify(config), /planning-continuity\.mjs/);
+    assert.ok(config.hooks.postToolUse.every((hook) => hook.command && hook.matcher));
+    assert.ok(config.hooks.postToolUse.every((hook) => hook.hooks === undefined));
 
     const preToolUse = config.hooks.preToolUse;
 
@@ -909,13 +914,13 @@ describe("sync-runtimes / Cursor project hooks", () => {
 
     assert.ok(
       config.hooks.postToolUse.some((entry) =>
-        entry.hooks?.some((hook) => hook.command?.includes("activate-meta-theory-spine.mjs")),
+        entry.command?.includes("activate-meta-theory-spine.mjs"),
       ),
       "Cursor project postToolUse must preserve exact lifecycle observation",
     );
     assert.ok(
       config.hooks.postToolUse.some((entry) =>
-        entry.hooks?.some((hook) => hook.command?.includes("post-format.mjs")),
+        entry.command?.includes("post-format.mjs"),
       ),
       "Cursor project postToolUse must still append formatting hooks",
     );

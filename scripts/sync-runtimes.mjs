@@ -1420,6 +1420,7 @@ const GLOBAL_META_KIM_HOOK_PACKAGE_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "activate-meta-theory-spine.mjs",
+  "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
   "ecc-permission-cache-wrapper.mjs",
@@ -1444,6 +1445,7 @@ const PROJECT_CLAUDE_HOOK_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
@@ -2822,6 +2824,7 @@ export function buildCodexProjectHooksJson({
   spineHookPath = ".codex/hooks/activate-meta-theory-spine.mjs",
   enforceAgentDispatchHookPath = ".codex/hooks/enforce-agent-dispatch.mjs",
   hookPromptAdapterPath = null,
+  planningContinuityHookPath = ".codex/hooks/planning-continuity.mjs",
   stopSpineCleanupHookPath = ".codex/hooks/stop-spine-cleanup.mjs",
   packageRoot = null,
 } = {}) {
@@ -2831,6 +2834,7 @@ export function buildCodexProjectHooksJson({
     spineHookPath,
     enforceAgentDispatchHookPath,
     hookPromptAdapterPath,
+    planningContinuityHookPath,
     stopSpineCleanupHookPath,
     packageRoot,
   });
@@ -2839,6 +2843,9 @@ export function buildCodexProjectHooksJson({
     {
       matcher: "Edit|Write",
       hooks: [
+        hookCommand(nodeHookCommand(planningContinuityHookPath, [
+          "--event", "post-tool", "--runtime", "codex",
+        ]), 10),
         hookCommand(nodeHookCommand(".codex/hooks/post-format.mjs")),
         hookCommand(nodeHookCommand(".codex/hooks/post-typecheck.mjs")),
         hookCommand(nodeHookCommand(".codex/hooks/post-console-log-warn.mjs")),
@@ -2884,6 +2891,7 @@ export function buildCursorProjectHooksJson({
   spineHookPath = ".cursor/hooks/activate-meta-theory-spine.mjs",
   enforceAgentDispatchHookPath = ".cursor/hooks/enforce-agent-dispatch.mjs",
   hookPromptAdapterPath = null,
+  planningContinuityHookPath = null,
   packageRoot = null,
 } = {}) {
   const config = buildCursorHooksJson({
@@ -2892,17 +2900,22 @@ export function buildCursorProjectHooksJson({
     spineHookPath,
     enforceAgentDispatchHookPath,
     hookPromptAdapterPath,
+    planningContinuityHookPath,
     packageRoot,
   });
   config.hooks.postToolUse = [
     ...(config.hooks.postToolUse ?? []),
     {
+      command: nodeHookCommand(".cursor/hooks/post-format.mjs"),
       matcher: "Edit|Write",
-      hooks: [
-        { command: nodeHookCommand(".cursor/hooks/post-format.mjs") },
-        { command: nodeHookCommand(".cursor/hooks/post-typecheck.mjs") },
-        { command: nodeHookCommand(".cursor/hooks/post-console-log-warn.mjs") },
-      ],
+    },
+    {
+      command: nodeHookCommand(".cursor/hooks/post-typecheck.mjs"),
+      matcher: "Edit|Write",
+    },
+    {
+      command: nodeHookCommand(".cursor/hooks/post-console-log-warn.mjs"),
+      matcher: "Edit|Write",
     },
   ];
   config.hooks.subagentStart = [
@@ -3007,6 +3020,7 @@ const CLAUDE_PROJECT_HOOK_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "activate-meta-theory-spine.mjs",
+  "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
   "ecc-permission-cache-wrapper.mjs",
@@ -3070,6 +3084,7 @@ const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "activate-meta-theory-spine.mjs",
+  "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
@@ -4024,6 +4039,10 @@ Examples:
         scope === "global"
           ? path.join(dirs.codexHooksDir, "meta-kim-memory-save.mjs")
           : ".codex/hooks/meta-kim-memory-save.mjs";
+      const codexPlanningContinuityHookPath =
+        scope === "global"
+          ? path.join(dirs.codexHooksDir, "planning-continuity.mjs")
+          : ".codex/hooks/planning-continuity.mjs";
       const codexHookPromptAdapterPath =
         scope === "global"
           ? path.join(path.dirname(dirs.codexHooksDir), "hookprompt-adapter.mjs")
@@ -4042,6 +4061,7 @@ Examples:
               spineHookPath,
               enforceAgentDispatchHookPath,
               hookPromptAdapterPath: codexHookPromptAdapterPath,
+              planningContinuityHookPath: codexPlanningContinuityHookPath,
               stopSpineCleanupHookPath: codexStopSpineCleanupHookPath,
               packageRoot: repoRoot,
             }),

@@ -41,6 +41,14 @@
             "minLength": 1,
             "description": "Repository source as owner/repo, HTTPS URL, or trusted SSH URL. Can use ${skillOwner} placeholder."
           },
+          "dependencyClass": {
+            "type": "string",
+            "enum": ["first_party_project", "third_party_reference"]
+          },
+          "installPolicy": {
+            "type": "string",
+            "enum": ["installable", "explicit_reference_opt_in"]
+          },
           "subdir": {
             "type": "string",
             "description": "Static subdirectory path where the skill is located"

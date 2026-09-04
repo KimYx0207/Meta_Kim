@@ -380,17 +380,19 @@ const RUNTIME_CHOICES = Object.freeze(
 
 const skillsManifest = {
   skillOwner: metaKimConfig.skills.skillOwner,
-  skills: metaKimConfig.skills.skills.map((skill) => ({
-    name: skill.id,
-    repo: skill.repository.source,
-    repoUrl: skill.repository.cloneUrl,
-    subdir: resolveManifestSkillSubdir(skill, platform(), {
-      fallbackToFindskillPack: true,
-    }),
-    claudePlugin: skill.claudePlugin,
-    defaultSelected: skill.defaultSelected ?? true,
-    targets: skill.targets,
-  })),
+  skills: metaKimConfig.skills.skills
+    .filter((skill) => skill.installPolicy !== "explicit_reference_opt_in")
+    .map((skill) => ({
+      name: skill.id,
+      repo: skill.repository.source,
+      repoUrl: skill.repository.cloneUrl,
+      subdir: resolveManifestSkillSubdir(skill, platform(), {
+        fallbackToFindskillPack: true,
+      }),
+      claudePlugin: skill.claudePlugin,
+      defaultSelected: skill.defaultSelected ?? true,
+      targets: skill.targets,
+    })),
 };
 const SKILL_OWNER = skillsManifest.skillOwner;
 const SKILLS = skillsManifest.skills;

@@ -79,6 +79,7 @@ export const INSTALL_STATUS_MESSAGE_CLASSES = Object.freeze({
   reverseModeAborted: "failed",
   warnGraphifySkillFailed: "failed",
   warnGraphifyPipFailed: "failed",
+  planningRetirementPreserved: "failed",
 });
 
 export function installStatusClassForMessageKey(messageKey) {
@@ -806,6 +807,8 @@ const STRINGS = {
       "Loopback proxy env stripped. Use --proxy <url> or set META_KIM_GIT_PROXY to configure proxy.",
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `Ignoring loopback proxy env for install: ${entries.join(", ")}`,
+    planningRetirementPreserved: (count, paths) =>
+      `planning-with-files retirement stopped because ${count} path(s) could not be verified as Meta_Kim-owned: ${paths.join(", ")}`,
     // sync-runtimes.mjs — incremental summary + --check
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] Skipping missing canonical file: ${filePath}`,
@@ -1077,6 +1080,8 @@ const STRINGS = {
       "已移除回环代理环境变量。使用 --proxy <url> 或设置 META_KIM_GIT_PROXY 环境变量来配置代理。",
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `已忽略安装流程中的回环代理环境变量：${entries.join(", ")}`,
+    planningRetirementPreserved: (count, paths) =>
+      `planning-with-files 退役已停止：${count} 个路径无法证明归 Meta_Kim 所有：${paths.join("，")}`,
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] 跳过缺失的 canonical 源文件：${filePath}`,
     syncRuntimesSummaryTitle: "── meta:sync（本轮增量写入摘要）──",
@@ -1328,6 +1333,8 @@ const STRINGS = {
       "ループバックプロキシ環境変数を削除しました。--proxy <url> または META_KIM_GIT_PROXY 環境変数でプロキシを設定してください。",
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `インストール用のループバックプロキシ環境変数を無視しました: ${entries.join(", ")}`,
+    planningRetirementPreserved: (count, paths) =>
+      `planning-with-files の廃止を停止しました。Meta_Kim 所有と確認できないパスが ${count} 件あります: ${paths.join("、")}`,
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] 欠落している canonical ファイルをスキップ: ${filePath}`,
     syncRuntimesSummaryTitle: "── meta:sync（増分書き込み要約）──",
@@ -1592,6 +1599,8 @@ const STRINGS = {
       "루프백 프록시 환경변수가 제거되었습니다. --proxy <url> 또는 META_KIM_GIT_PROXY 환경변수로 프록시를 설정하세요.",
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `설치에서 루프백 프록시 환경변수를 무시했습니다: ${entries.join(", ")}`,
+    planningRetirementPreserved: (count, paths) =>
+      `planning-with-files 사용 중단을 멈췄습니다. Meta_Kim 소유로 확인할 수 없는 경로가 ${count}개 있습니다: ${paths.join(", ")}`,
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] 누락된 canonical 파일을 건너뜁니다: ${filePath}`,
     syncRuntimesSummaryTitle: "── meta:sync（증분 쓰기 요약）──",

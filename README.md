@@ -1036,7 +1036,7 @@ Start with `package.json` scripts. The supported maintenance paths are the `meta
 
 Global dependency install/update commands refresh `.meta-kim/state/{profile}/capability-index/global-capabilities.json` after they modify runtime homes, so newly installed agents, skills, commands, MCP providers, hooks, plugins, and runtime tools are available to capability-first routing without a separate manual scan.
 
-`planning-with-files` is a core external dependency, not a project-local `.agents/skills/` mirror. After dependency install, check runtime home directories such as `~/.codex/skills/planning-with-files/`, `~/.claude/skills/planning-with-files/`, `~/.cursor/skills/planning-with-files/`, or `~/.openclaw/skills/planning-with-files/`. Do not conclude it is missing from the absence of `.agents/skills/planning-with-files/` alone.
+Planning continuity is now owned by Meta_Kim's first-party `planning-continuity` runtime. It initializes or resumes `task_plan.md`, `findings.md`, and `progress.md` without requiring an external skill, cache, Hook bundle, or network lookup. The external `OthmanAdi/planning-with-files` dependency has been absorbed and retired from manifests, install routes, runtime homes, Hook registrations, and provider selection; only historical provenance remains.
 
 #### Native dependency installs (Superpowers, ECC, cli-anything)
 

@@ -3,9 +3,6 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
 import {
   parseRuntimeCapabilityMatrix,
   parseRuntimeCapabilityEvidenceLedger,
@@ -292,21 +289,20 @@ async function runGovernedDispatch({ agent, scope, payload }) {
   });
 }
 
-const runtimeData = await loadRuntimeData();
-
 if (process.argv.includes("--effective-runtime-self-test")) {
   process.stdout.write(`${currentEffectiveRuntimeCapabilities()}\n`);
   process.exit(0);
 }
 
 if (process.argv.includes("--self-test")) {
+  const agents = await loadAgents();
   process.stdout.write(
     `${JSON.stringify(
       {
         ok: true,
-        agentCount: runtimeData.agents.length,
-        agentIds: runtimeData.agents.map((agent) => agent.id),
-        agentSources: runtimeData.agents.map((agent) => agent.sourceFile),
+        agentCount: agents.length,
+        agentIds: agents.map((agent) => agent.id),
+        agentSources: agents.map((agent) => agent.sourceFile),
         resources: [
           "meta://theory",
           "meta://runtime-matrix",
@@ -329,6 +325,13 @@ if (process.argv.includes("--self-test")) {
   );
   process.exit(0);
 }
+
+const runtimeData = await loadRuntimeData();
+const [{ McpServer }, { StdioServerTransport }, { z }] = await Promise.all([
+  import("@modelcontextprotocol/sdk/server/mcp.js"),
+  import("@modelcontextprotocol/sdk/server/stdio.js"),
+  import("zod"),
+]);
 
 const server = new McpServer({
   name: "meta-kim-runtime",

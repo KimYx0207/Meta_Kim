@@ -212,7 +212,11 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       assert.equal(report.defaultRuntimePath.langGraphRunPacket.status, "pass");
       assert.equal(report.defaultRuntimePath.peerAgentMeshPacket.status, "pass");
       assert.equal(report.defaultRuntimePath.agentTeamsPlaybookPacket.status, "pass");
-      assert.equal(report.defaultRuntimePath.agentTeamsPlaybookPacket.selected, true);
+      assert.equal(report.defaultRuntimePath.agentTeamsPlaybookPacket.selected, false);
+      assert.equal(
+        report.defaultRuntimePath.agentTeamsPlaybookPacket.acceptance.optionalProviderDoesNotGateNativeFanout,
+        true,
+      );
       assert.deepEqual(
         [
           ...new Set(
@@ -259,7 +263,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       assert.equal(invocationByFamily.get("app_visible_subagent").state, "not_required");
       assert.equal(invocationByFamily.get("worker_task").state, "blocked");
       assert.equal(invocationByFamily.get("prompt_rule").state, "applied");
-      assert.equal(invocationByFamily.get("agent_teams_playbook").state, "selected_not_invoked");
+      assert.equal(invocationByFamily.get("agent_teams_playbook").state, "not_required");
       assert.equal(report.defaultRuntimePath.capabilityInvocationProbePacket.status, "not_run");
       assert.equal(
         report.capabilityInvocationTruthPacket.realInvocationCoverage.status,
@@ -953,10 +957,10 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     );
     assert.equal(
       output.defaultBoundaryRun.capabilityInvocationTruth.agentTeamsPlaybookState,
-      "selected_not_invoked",
+      "not_required",
     );
     assert.equal(output.agentTeamsPlaybook.status, "pass");
-    assert.equal(output.agentTeamsPlaybook.selected, true);
+    assert.equal(output.agentTeamsPlaybook.selected, false);
     assert.equal(output.defaultBoundaryRun.visibleMetaTheorySurface, "partial");
     assert.ok(output.userPerceptionCues >= 6);
   });

@@ -104,8 +104,15 @@ export function buildMetaKimHooksTemplate(
   userPromptHooks.push(
     spineHook(),
   );
+  userPromptHooks.push(cmd("planning-continuity.mjs", ["--event", "user-prompt", "--runtime", "claude"]));
 
   return {
+    SessionStart: [
+      {
+        matcher: "startup|resume",
+        hooks: [cmd("planning-continuity.mjs", ["--event", "session-start", "--runtime", "claude"])],
+      },
+    ],
     UserPromptSubmit: [
       {
         hooks: userPromptHooks,
@@ -131,6 +138,10 @@ export function buildMetaKimHooksTemplate(
         matcher: "Agent|Task",
         hooks: [spineHook()],
       },
+      {
+        matcher: "Edit|Write",
+        hooks: [cmd("planning-continuity.mjs", ["--event", "post-tool", "--runtime", "claude"])],
+      },
     ],
     SubagentStart: [
       {
@@ -144,11 +155,18 @@ export function buildMetaKimHooksTemplate(
         hooks: [spineHook()],
       },
     ],
+    PreCompact: [
+      {
+        matcher: "*",
+        hooks: [cmd("planning-continuity.mjs", ["--event", "pre-compact", "--runtime", "claude"])],
+      },
+    ],
     Stop: [
       {
         matcher: "*",
         hooks: [
           spineHook(),
+          cmd("planning-continuity.mjs", ["--event", "stop", "--runtime", "claude"]),
           cmd("stop-compaction.mjs"),
           cmd("stop-console-log-audit.mjs"),
           cmd("stop-completion-guard.mjs"),
@@ -185,6 +203,7 @@ const REPO_META_KIM_HOOK_FILES = [
   "enforce-agent-dispatch.mjs",
   "graphify-context.mjs",
   "meta-kim-memory-save.mjs",
+  "planning-continuity.mjs",
   "post-format.mjs",
   "post-typecheck.mjs",
   "post-console-log-warn.mjs",

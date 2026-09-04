@@ -15,6 +15,21 @@
           {
             "type": "command",
             "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/planning-continuity.mjs --event user-prompt --runtime claude"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/planning-continuity.mjs --event session-start --runtime claude"
           }
         ]
       }
@@ -72,6 +87,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "node .claude/hooks/planning-continuity.mjs --event post-tool --runtime claude"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
             "command": "node .claude/hooks/post-format.mjs"
           },
           {
@@ -81,6 +105,17 @@
           {
             "type": "command",
             "command": "node .claude/hooks/post-console-log-warn.mjs"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/planning-continuity.mjs --event pre-compact --runtime claude"
           }
         ]
       }
@@ -120,6 +155,10 @@
       {
         "matcher": "*",
         "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/planning-continuity.mjs --event stop --runtime claude"
+          },
           {
             "type": "command",
             "command": "node .claude/hooks/stop-compaction.mjs"

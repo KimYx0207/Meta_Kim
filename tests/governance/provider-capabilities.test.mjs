@@ -42,15 +42,16 @@ test("provider registry covers all provider kinds and required modeled providers
     "graph_provider",
   ]) {
     assert.ok(registry.providerTypes.includes(type), `missing ${type}`);
-    assert.ok(
-      registry.providers.some((provider) => provider.providerType === type),
-      `missing provider instance for ${type}`,
-    );
+    if (type !== "plugin_bundle") {
+      assert.ok(
+        registry.providers.some((provider) => provider.providerType === type),
+        `missing provider instance for ${type}`,
+      );
+    }
   }
 
   for (const id of [
     "external-skill-hookprompt",
-    "external-skill-planning-with-files",
     "plugin-marketplace-superpowers",
     "plugin-marketplace-ecc",
     "mcp-server-meta-kim-runtime",

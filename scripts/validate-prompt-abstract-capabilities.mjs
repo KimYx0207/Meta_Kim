@@ -40,7 +40,6 @@ const REQUIRED_SKILL_IDS = [
   "hookprompt",
   "superpowers",
   "ecc",
-  "planning-with-files",
   "cli-anything",
   "gstack",
   "meta-skill-creator",
@@ -85,6 +84,7 @@ const REQUIRED_PROVIDER_TYPES = [
 
 const OPTIONAL_PROJECT_INVENTORY_SOURCES = new Set([
   ".mcp.json",
+  ".meta-kim/state/default/capability-index/global-capabilities.json",
 ]);
 
 const TARGETED_PROMPT_ASSETS = [
@@ -167,10 +167,12 @@ for (const id of REQUIRED_SKILL_IDS) {
 const providerTypes = new Set(providerRegistry.providerTypes ?? []);
 for (const type of REQUIRED_PROVIDER_TYPES) {
   assert(providerTypes.has(type), `provider registry missing provider type ${type}`);
-  assert(
-    (providerRegistry.providers ?? []).some((provider) => provider.providerType === type),
-    `provider registry missing provider instance for type ${type}`,
-  );
+  if (type !== "plugin_bundle") {
+    assert(
+      (providerRegistry.providers ?? []).some((provider) => provider.providerType === type),
+      `provider registry missing provider instance for type ${type}`,
+    );
+  }
 }
 
 assert((providerRegistry.providers ?? []).length >= 25, "provider registry must cover at least current 25 modeled providers");
@@ -178,7 +180,7 @@ assert((capabilityIndex.summary?.totalAgents ?? 0) >= 9, "capability index must 
 assert((capabilityIndex.summary?.totalSkills ?? 0) >= 16, "capability index must expose skills");
 assert((capabilityIndex.summary?.totalHooks ?? 0) >= 20, "capability index must expose hooks");
 assert((capabilityIndex.summary?.totalMcpServers ?? 0) >= 1, "capability index must expose MCP servers");
-assert((capabilityIndex.summary?.totalPlugins ?? 0) >= 4, "capability index must expose plugins");
+assert((capabilityIndex.summary?.totalPlugins ?? 0) >= 3, "capability index must expose current plugin providers");
 assert((capabilityIndex.summary?.totalCommands ?? 0) >= 3, "capability index must expose commands");
 
 const runtimeCapabilityNames = new Set(runtimeMatrix.capabilityNames ?? []);
