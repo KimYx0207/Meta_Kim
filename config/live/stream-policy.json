@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "meta-kim-live-stream-policy-v1",
+  "description": "How long the control room waits for the network, and how long a hidden tab keeps its event stream. A browser allows about six simultaneous connections per origin and a Server-Sent Events stream holds one of them open for as long as the tab lives. Measured on this machine: with several control room tabs left open, a freshly opened page sat on 'Loading the selected run...' indefinitely while the same snapshot request took 13ms from Node -- the request was queued behind the streams, never refused, so nothing threw and nothing repainted. Two waits fix that: a visible tab stops waiting after snapshotRequestTimeoutMs and says so, and a hidden tab gives its stream back after hiddenSuspendGraceMs.",
+  "snapshotRequestTimeoutMs": 8000,
+  "hiddenSuspendGraceMs": 2000,
+  "policyNotes": {
+    "snapshotRequestTimeoutMs": "How long a visible tab waits for its snapshot before it stops claiming to be loading. It is generous because the observer reads governed-run directories off disk and a large project takes seconds, but it is finite because an unbounded wait is indistinguishable from a hang to the only person who can act on it.",
+    "hiddenSuspendGraceMs": "How long a tab may stay hidden before its event stream is closed. It is not zero: switching tabs to read something and switching straight back would otherwise tear down and rebuild the stream, and the reconnect costs a full snapshot fetch. It must stay shorter than snapshotRequestTimeoutMs so the tabs holding the origin's connections release them before the tab waiting on one gives up; normalization rejects the other order rather than leaving it to review."
+  }
+}

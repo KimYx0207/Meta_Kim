@@ -18,6 +18,7 @@ import {
 } from "./observe-host-events.mjs";
 import { buildExactBindingCandidateFromFiles } from "./build-exact-binding-candidate.mjs";
 import { resolveWindowsCliInvocation } from "../runtime-cli-invocation.mjs";
+import { tarExtractCommand } from "../tar-extract-command.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -517,7 +518,8 @@ async function packAndExtract(tempRoot) {
   const packResult = JSON.parse(packed.stdout);
   const tarball = path.join(packDir, packResult[0].filename);
   const tarballBytes = await fs.readFile(tarball);
-  const extracted = run("tar", ["-xf", tarball, "-C", extractDir], { timeoutMs: 120_000 });
+  const extraction = tarExtractCommand(tarball, extractDir);
+  const extracted = run(extraction.command, extraction.args, { cwd: extraction.cwd, timeoutMs: 120_000 });
   if (extracted.status !== 0) throw new Error(extracted.stderr || extracted.stdout || "tar extract failed");
   return {
     workspace: path.join(extractDir, "package"),

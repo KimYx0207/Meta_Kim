@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "meta-kim-live-viewport-profiles-v1",
+  "description": "Declared viewport regression profiles for the Meta_Kim Live control room. Layout invariants are asserted against the shipped stylesheet; no resolution is hardcoded in renderer or test code.",
+  "denseLayoutGate": {
+    "condition": "(min-width: 901px) and (min-height: 720px)",
+    "minWidthPx": 901,
+    "minHeightPx": 720
+  },
+  "collapseGates": [
+    { "id": "board-narrow", "condition": "(max-width: 1180px)", "maxWidthPx": 1180 },
+    { "id": "tablet", "condition": "(min-width: 721px) and (max-width: 1024px)", "minWidthPx": 721, "maxWidthPx": 1024 },
+    { "id": "handheld", "condition": "(max-width: 720px)", "maxWidthPx": 720 },
+    { "id": "handheld-tight", "condition": "(max-width: 380px)", "maxWidthPx": 380 }
+  ],
+  "chromeBudget": {
+    "comment": "Three quantities, each with exactly one consumer. This block used to inventory every band above the canvas so their sum could be subtracted from the window height, deciding whether the eight-stage rail could afford to ship expanded. That inventory is gone. It was a second authority for a height the browser already computes -- `.main` gives the run-context band `auto` and the canvas `minmax(0, 1fr)` -- and it could not be right at every width, because the `(max-width: 1180px)` gate restacks the run context, so one field named `dense` described two different band compositions. The client now expands the rail, forces layout, reads the canvas back, and keeps the rail open only if what remains clears minCanvasHeightPx. What is left here is what production reads: that floor, plus the two replay-drawer heights and the status-bar height the stylesheet needs as shared custom properties. A band the stylesheet sizes from its own content is deliberately absent; declaring it would put a number back in two places.",
+    "replayPanelHeightPx": { "collapsed": 34, "open": 116 },
+    "statusBarHeightPx": 28,
+    "minCanvasHeightPx": 360
+  },
+  "dockBudget": {
+    "comment": "Horizontal geometry inside the replay dock. The collapsed summary is absolutely positioned over the dock's first column, so the open dock header must be inset far enough to clear it. Only the shared quantity is declared: the stylesheet derives the header inset from this width plus its own spacing step, rather than carrying a second literal that can drift out of step. This width applies to the OPEN dock only. It was 116px and also governed the collapsed state, where 92px of usable width had to hold `回放` (26px) plus a 12px gap plus `展开时间线` (65px) = 103px; both spans flex-shrank and then wrapped, so the handle rendered two lines 33.21px tall inside a 1659.33px panel row that was otherwise empty. Collapsed now spans the row it stands in and this number only has to clear the open handle's own label. Measured in both locales: `回放` + gap + `收起` is 64.41px of text, English `Replay` + gap + `Collapse` is 104.35px, and 24px of padding puts the worse locale at 128.35px. 160px keeps a fifth of the width in reserve for a longer translation, which is the margin below which a one-line handle is only accidentally one line.",
+    "replayCollapseSummaryWidthPx": 160
+  },
+  "replayTickBand": {
+    "comment": "How many labels the replay time axis may print. The axis used to ship nine literal labels reading 00:00 to 02:00 regardless of how long the run actually took, and the ninth was clipped 26px at 1024x768. minLabelWidthPx is a measured worst case for the widest label a long run produces (mmm:ss at the micro font's upper clamp), not a CSS lower bound: an optimistic label width overflows the band the same way an optimistic band height clipped the drawer. Below minLabelCount the axis hides rather than rendering a clipped one, because a clipped axis is the defect.",
+    "minLabelWidthPx": 48,
+    "minLabelCount": 2,
+    "maxLabelCount": 9
+  },
+  "profiles": [
+    {
+      "id": "desktop-2560x1368",
+      "label": "2560 x 1368 primary regression baseline",
+      "widthPx": 2560,
+      "heightPx": 1368,
+      "role": "regression-baseline",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": "docs/images/meta-kim-live-control-room-2560x1368.png"
+    },
+    {
+      "id": "desktop-2048x1094",
+      "label": "2048 x 1094 secondary regression baseline",
+      "widthPx": 2048,
+      "heightPx": 1094,
+      "role": "regression-baseline",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": "docs/images/meta-kim-live-control-room-2048x1094.png"
+    },
+    {
+      "id": "laptop-1440x900",
+      "label": "1440 x 900 dense-layout lower bound",
+      "widthPx": 1440,
+      "heightPx": 900,
+      "role": "dense-lower-bound",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": null
+    },
+    {
+      "id": "laptop-short-1440x700",
+      "label": "1440 x 700 negative control: wide but below dense height gate",
+      "widthPx": 1440,
+      "heightPx": 700,
+      "role": "negative-control",
+      "expectDenseLayout": false,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": null
+    },
+    {
+      "id": "tablet-1024x768",
+      "label": "1024 x 768 overlap control: dense gate and tablet collapse band both apply",
+      "widthPx": 1024,
+      "heightPx": 768,
+      "role": "overlap-control",
+      "expectDenseLayout": true,
+      "expectSingleColumnFallback": false,
+      "screenshotRef": null
+    },
+    {
+      "id": "handheld-390x844",
+      "label": "390 x 844 negative control: handheld stacked fallback",
+      "widthPx": 390,
+      "heightPx": 844,
+      "role": "negative-control",
+      "expectDenseLayout": false,
+      "expectSingleColumnFallback": true,
+      "screenshotRef": null
+    }
+  ]
+}

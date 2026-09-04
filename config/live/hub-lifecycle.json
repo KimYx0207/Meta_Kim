@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "meta-kim-live-hub-lifecycle-v1",
+  "description": "Wait budgets for the Meta_Kim Live singleton hub. A freshly spawned hub child indexes every governed run artifact before it publishes its state, so its ready time is a property of the project and the machine rather than a constant the launcher can carry. On a 256-run project three consecutive fresh starts took 2175ms, 2368ms and 4175ms, and an already-published hub is re-verified in 2-3ms. An earlier series on the same project read 5889ms to 15574ms, but those samples timed the launcher rather than the child: every 75ms poll then ran a Windows process creation-time query costing 1867-5020ms, so a hub that was ready at two seconds went unnoticed for several more and the 5000ms budget in force at the time reported startup_timeout. A dead child is detected from its exit code rather than from this budget, so a generous ceiling costs nothing when startup genuinely fails.",
+  "startupBudgetMs": 45000,
+  "hookAutostartBudgetMs": 12000,
+  "stopBudgetMs": 10000,
+  "budgetNotes": {
+    "startupBudgetMs": "The user asked for the hub directly, so waiting is what they want. Bounded only so a hung child still reports a failure.",
+    "hookAutostartBudgetMs": "Live is an optional observation surface started alongside a governed run, so this fuse is short enough not to hold the run hostage. It is paid at most once per session: an already-running hub is reused in 2-3ms. It keeps close to a threefold margin over the slowest measured 4175ms start, because a false startup_timeout costs the feature while a wedged child costs this wait once.",
+    "stopBudgetMs": "Waits for a process to exit rather than for it to index, so it does not need the startup budget."
+  }
+}

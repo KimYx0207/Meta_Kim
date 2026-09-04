@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 import test from "node:test";
+
+import { loadLiveHubLifecycleBudget } from "../../src/application/live/live-hub-lifecycle-budget.mjs";
 
 const repoRoot = path.resolve(".");
 const hookPath = path.join(
@@ -16,7 +18,26 @@ const hookPath = path.join(
   "activate-meta-theory-spine.mjs",
 );
 
-function runHook({ started, registryStatus = "joined" }) {
+/**
+ * The hook reads its fuse from the package it was pointed at, so the fixture
+ * ships the real budget module and the real document at the same relative
+ * layout a published package uses. Stubbing the number instead would pass even
+ * if the module stopped resolving its own config.
+ */
+function installBudgetLayer(packageRoot) {
+  mkdirSync(path.join(packageRoot, "src", "application", "live"), { recursive: true });
+  mkdirSync(path.join(packageRoot, "config", "live"), { recursive: true });
+  copyFileSync(
+    path.join(repoRoot, "src", "application", "live", "live-hub-lifecycle-budget.mjs"),
+    path.join(packageRoot, "src", "application", "live", "live-hub-lifecycle-budget.mjs"),
+  );
+  copyFileSync(
+    path.join(repoRoot, "config", "live", "hub-lifecycle.json"),
+    path.join(packageRoot, "config", "live", "hub-lifecycle.json"),
+  );
+}
+
+function runHook({ started, registryStatus = "joined", withBudget = true }) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-live-hook-"));
   const projectRoot = path.join(root, "project");
   const packageRoot = path.join(root, "package");
@@ -24,6 +45,7 @@ function runHook({ started, registryStatus = "joined" }) {
   mkdirSync(path.join(projectRoot, ".git"), { recursive: true });
   mkdirSync(path.join(packageRoot, "scripts"), { recursive: true });
   mkdirSync(path.join(packageRoot, "src", "infrastructure", "live"), { recursive: true });
+  if (withBudget) installBudgetLayer(packageRoot);
   writeFileSync(
     path.join(packageRoot, "src", "infrastructure", "live", "live-hub-lifecycle.mjs"),
     [
@@ -85,7 +107,7 @@ test("first governed use starts the Hub and injects a normal-chat link instructi
     assert.equal(options.projectRef, "project-a1b2c3d4e5f6");
     assert.match(options.runId, /^meta-/u);
     assert.equal(options.profile, "hook-profile");
-    assert.equal(options.timeoutMs, 2000);
+    assert.equal(options.timeoutMs, loadLiveHubLifecycleBudget().hookAutostartBudgetMs);
   } finally {
     fixture.cleanup();
   }
@@ -108,6 +130,25 @@ test("an already-running Hub is reused silently instead of spamming every prompt
   try {
     assert.equal(fixture.result.status, 0, fixture.result.stderr);
     assert.equal(fixture.result.stdout.trim(), "");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a package missing the budget layer does not autostart on a guessed fuse", () => {
+  const fixture = runHook({ started: true, withBudget: false });
+  try {
+    assert.equal(fixture.result.status, 0, fixture.result.stderr);
+    assert.equal(
+      existsSync(fixture.invocationPath),
+      false,
+      "the hub must not be started on a fuse the data layer never supplied",
+    );
+    assert.equal(
+      fixture.result.stdout.trim(),
+      "",
+      "no Live link may be announced when the measured fuse cannot be read",
+    );
   } finally {
     fixture.cleanup();
   }

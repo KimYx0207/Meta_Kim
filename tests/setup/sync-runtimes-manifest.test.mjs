@@ -531,6 +531,30 @@ describe("sync-runtimes / Codex project hooks", () => {
     );
     assert.ok(Array.isArray(config.hooks.Stop));
     assert.match(JSON.stringify(config.hooks.Stop), /stop-compaction\.mjs/);
+    assert.ok(
+      config.hooks.PostToolUse.some((entry) =>
+        entry.hooks?.some((hook) => hook.command.includes("activate-meta-theory-spine.mjs")),
+      ),
+      "Codex project PostToolUse must preserve worker lifecycle writeback",
+    );
+    assert.ok(
+      config.hooks.PostToolUse.some((entry) =>
+        entry.hooks?.some((hook) => hook.command.includes("post-format.mjs")),
+      ),
+      "Codex project PostToolUse must still append formatting hooks",
+    );
+    assert.ok(
+      config.hooks.SubagentStart.some((entry) =>
+        entry.hooks?.some((hook) => hook.command.includes("activate-meta-theory-spine.mjs")),
+      ),
+      "Codex project SubagentStart must preserve worker lifecycle binding",
+    );
+    assert.ok(
+      config.hooks.SubagentStart.some((entry) =>
+        entry.hooks?.some((hook) => hook.command.includes("subagent-context.mjs")),
+      ),
+      "Codex project SubagentStart must still append context injection",
+    );
     const stopCommands = config.hooks.Stop.flatMap((entry) => entry.hooks ?? [])
       .map((hook) => hook.command);
     assert.equal(stopCommands.filter((command) => command.includes("meta-kim-memory-save.mjs")).length, 1);
@@ -887,6 +911,36 @@ describe("sync-runtimes / Cursor project hooks", () => {
       entry.command?.includes("graphify-context.mjs"),
     );
     assert(graphifyEntry, "graphify-context should still be registered");
+
+    assert.ok(
+      config.hooks.postToolUse.some((entry) =>
+        entry.command?.includes("activate-meta-theory-spine.mjs"),
+      ),
+      "Cursor project postToolUse must preserve exact lifecycle observation",
+    );
+    assert.ok(
+      config.hooks.postToolUse.some((entry) =>
+        entry.command?.includes("post-format.mjs"),
+      ),
+      "Cursor project postToolUse must still append formatting hooks",
+    );
+    assert.ok(
+      config.hooks.subagentStart.some((entry) =>
+        entry.command?.includes("activate-meta-theory-spine.mjs"),
+      ),
+      "Cursor project subagentStart must preserve exact lifecycle observation",
+    );
+    assert.ok(
+      config.hooks.subagentStart.some((entry) =>
+        entry.command?.includes("subagent-context.mjs"),
+      ),
+      "Cursor project subagentStart must still append context injection",
+    );
+    assert.equal(
+      config.hooks.subagentStop,
+      undefined,
+      "Cursor must not claim a SubagentStop surface that Meta_Kim has not verified",
+    );
 
     assert.ok(Array.isArray(config.hooks.stop));
     assert.match(JSON.stringify(config.hooks.stop), /stop-compaction\.mjs/);

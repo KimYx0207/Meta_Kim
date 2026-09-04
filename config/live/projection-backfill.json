@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "meta-kim-live-projection-backfill-v1",
+  "description": "Rebuild policy for compact live projections already written under .meta-kim/state/<profile>/governed-executions/. A projection is a fold of its governed-execution artifact, so a projection written before the builder learned a field keeps serving the old shape forever: the artifact still holds the input, but nothing re-reads it. One measured project held 8 such projections while 11 of its artifacts carried a declared stage plan of 36 to 50 nodes, every node marked planned_not_invoked, and the panel drew those runs as a single node because declaredPlan was absent from the projection the reader actually serves. This policy governs rebuilding those files from their own artifacts. It never invents a projection for an artifact that has none, never touches an artifact, and never removes a projection it could not rebuild.",
+  "maxRuns": 200,
+  "maxArtifactBytes": 33554432,
+  "backupDirName": "projection-backfill-backups",
+  "backupRetainedPasses": 3,
+  "policyNotes": {
+    "maxRuns": "One pass is bounded so a long-lived project with thousands of projections converges over several explicit invocations instead of one unbounded sweep. The pointer target is always planned first, so the record the panel serves can never be the one a bound drops, and whatever the bound leaves out is reported as omittedRunCount rather than silently skipped.",
+    "maxArtifactBytes": "How large an artifact this pass will re-read to rebuild its projection. The live reader caps artifacts at 8MB to bound a panel request, but a projection is a fold of that same artifact, so sharing the reader's cap makes the pass blind to precisely the largest runs. Measured on one project: the record latest.json pointed at carried a 15.5MB artifact, so a pass bounded at the reader's cap left the served run stale while rebuilding six others. This bound applies only to the explicitly invoked maintenance read, never to the panel's request path. An artifact beyond it is reported as artifact_unreadable and left exactly as it is.",
+    "backupDirName": "A directory name under .meta-kim/state/<profile>/, deliberately outside governed-executions/ so a backed-up <runId>.live.json can never be mistaken for a live projection by a later scan.",
+    "backupRetainedPasses": "Replaced projections are copied into a timestamped batch before being rewritten, so a pass can be reversed by copying a batch back. Older batches beyond this count are dropped once newer passes have proven stable."
+  },
+  "ownershipNotes": {
+    "scope": "Only <runId>.live.json files under .meta-kim/state/<profile>/governed-executions/, plus the liveProjection* fields of latest.json when the pointer target is rebuilt.",
+    "artifacts": "The <runId>.json artifact is the input and is never written. A projection whose artifact is missing or unreadable is reported and left exactly as it is.",
+    "pointerConsistency": "latest.json carries a digest and byte count for the projection it points at, and the reader silently falls back to the raw artifact when either disagrees. Rebuilding the pointer target therefore updates the pointer in the same pass; unrelated pointer fields are preserved."
+  }
+}

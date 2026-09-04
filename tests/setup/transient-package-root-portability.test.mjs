@@ -25,6 +25,7 @@ import {
   verifyGlobalProjectionPackage,
 } from "../../scripts/global-projection-package-store.mjs";
 import { recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
+import { tarExtractCommand } from "../../scripts/tar-extract-command.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const PACKAGE_MANIFEST = JSON.parse(
@@ -244,8 +245,9 @@ function packCandidate(layout, env) {
   const archives = readdirSync(layout.pack).filter((name) => name.endsWith(".tgz"));
   assert.equal(archives.length, 1, `expected one candidate archive, found ${archives.length}`);
   const archive = path.join(layout.pack, archives[0]);
-  const extract = spawnSync("tar", ["-xf", archive, "-C", layout.extract], {
-    cwd: layout.cwd,
+  const extraction = tarExtractCommand(archive, layout.extract);
+  const extract = spawnSync(extraction.command, extraction.args, {
+    cwd: extraction.cwd,
     env,
     encoding: "utf8",
     timeout: 120_000,

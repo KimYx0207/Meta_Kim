@@ -1304,6 +1304,7 @@
         "publicReadyBoundary",
         "deactivatedAt",
         "deactivationReason",
+        "deactivationTrigger",
         "supersededByRunId",
         "archivedAt",
         "archiveReason",
@@ -1333,6 +1334,12 @@
         "superseded_by_new_prompt",
         "legacy_reconciled"
       ],
+      "deactivationTriggerEnum": [
+        "stop_hook_turn_boundary",
+        "prompt_supersede",
+        "state_migration"
+      ],
+      "deactivationTriggerPolicy": "deactivationTrigger names the event that retired the run and is independent of deactivationReason. session_stop is written by the Stop hook, which fires at every turn boundary rather than when a conversation ends, so readers deciding whether a chat may still be open must read the trigger and never infer it from the reason. There is deliberately no real-session-end value: no writer can produce one, and a declared-but-unreachable value invites readers to trust a branch that never runs. Records written before this field existed carry null, which means unknown and must not be widened to any declared value.",
       "lifecycleCombinationRules": {
         "active": { "active": true, "deactivationReason": null },
         "inactive": { "active": false },

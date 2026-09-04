@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { tarExtractCommand } from "../../scripts/tar-extract-command.mjs";
+
 import {
   LIVE_SDK_VERSION,
   RUNTIME_ADAPTER_SCHEMA_VERSION,
@@ -326,9 +328,11 @@ test("packed publication has an explicit L02/L03/L04 closure and a stable SDK su
   const temp = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-sdk-packed-"));
   try {
     const packed = packMetadata({ destination: temp, dryRun: false });
-    const tarball = path.join(temp, packed.filename);
-    const extract = path.join(temp, "extract");
-    await execFileSync(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", tarball, "-C", temp]);
+    const extraction = tarExtractCommand(path.join(temp, packed.filename), temp);
+    execFileSync(extraction.command, extraction.args, {
+      cwd: extraction.cwd,
+      windowsHide: true,
+    });
     await mkdir(path.join(temp, "consumer", "node_modules"), { recursive: true });
     await cp(path.join(temp, "package"), path.join(temp, "consumer", "node_modules", "meta-kim"), { recursive: true });
     const consumer = path.join(temp, "consumer");
@@ -349,7 +353,6 @@ test("packed publication has an explicit L02/L03/L04 closure and a stable SDK su
     assert.ok(await readFile(path.join(temp, "package", "docs", "live-sdk.md"), "utf8"));
     assert.ok(await readFile(path.join(temp, "package", "examples", "live-sdk", "adapter-example.mjs"), "utf8"));
     assert.ok(pathToFileURL(path.join(temp, "package", "src", "sdk", "live", "index.mjs")).href.startsWith("file:"));
-    await rm(extract, { recursive: true, force: true });
   } finally {
     await rm(temp, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
   }

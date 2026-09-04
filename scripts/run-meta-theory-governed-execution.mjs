@@ -74,11 +74,7 @@ import {
   buildGovernanceRequirementPlan,
 } from "../src/domain/governance/governance-requirement-cutover.mjs";
 import { openDurableRunRepository } from "../src/application/run/open-durable-run-repository.mjs";
-import {
-  buildLiveCompactProjection,
-  LIVE_MAX_COMPACT_BYTES,
-  serializeLiveCompactProjection,
-} from "../src/application/live/live-control-room-service.mjs";
+import { prepareLiveProjectionRecord } from "../src/application/live/prepare-live-projection-record.mjs";
 import {
   digestKnowledgeLifecycleValue,
   validateWardenWritebackApproval as validateExactWardenWritebackApproval,
@@ -86,8 +82,22 @@ import {
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
 import {
   readMetaRunStatus,
+  readSpineState,
+  readSpineStateIncludingInactive,
   sanitizeStateProfile,
+  writeSpineState,
+  validateRunId as validateSpineCanonicalRunId,
 } from "../canonical/runtime-assets/shared/hooks/spine-state.mjs";
+import {
+  detectHostSessionConversationId,
+  governedRunStateProfile,
+  resolveGovernedRunProvenance,
+  resolveSpineConversationBinding,
+} from "./governed-execution/host-runtime-provenance.mjs";
+import {
+  conversationRuntimeFamily,
+  CONVERSATION_RUNTIME_UNAVAILABLE,
+} from "../src/application/live/live-conversation-link-vocabulary.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -145,6 +155,155 @@ const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const SELECT_EXECUTION_ROUTE_SCRIPT = path.join(scriptDir, "select-execution-route.mjs");
 const WINDOWS_TRANSIENT_RENAME_ERRORS = new Set(["EACCES", "EBUSY", "EPERM"]);
 const WINDOWS_RENAME_RETRY_DELAYS_MS = Object.freeze([10, 25, 50, 100]);
+
+function spineWorkerTaskPacket(packet) {
+  if (!packet || typeof packet !== "object" || Array.isArray(packet)) return null;
+  const taskPacketId = typeof packet.taskPacketId === "string" ? packet.taskPacketId.trim() : "";
+  if (!/^[a-z0-9][a-z0-9:._-]{2,239}$/iu.test(taskPacketId)) return null;
+  const text = (value, maximum = 160) => typeof value === "string" && value.trim() && value.trim().length <= maximum
+    ? value.trim()
+    : null;
+  const values = {
+    taskPacketId,
+    roleInstanceId: text(packet.roleInstanceId),
+    roleDisplayName: text(packet.roleDisplayName, 96),
+    businessRoleId: text(packet.businessRoleId, 96),
+    ownerAgent: text(packet.ownerAgent || packet.owner, 120),
+    stage: text(packet.stage, 32) || "execution",
+  };
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value != null));
+}
+
+function spineCanonicalRunId(runId) {
+  try {
+    return validateSpineCanonicalRunId(runId);
+  } catch {
+    return null;
+  }
+}
+
+function mergeSpineWorkerTaskPackets(existingPackets, runnerPackets) {
+  const merged = Array.isArray(existingPackets)
+    ? existingPackets.filter((packet) => spineWorkerTaskPacket(packet) != null)
+    : [];
+  const known = new Set(merged.map((packet) => packet.taskPacketId));
+  // enforce-agent-dispatch matches a live dispatch against these packet IDs, so an
+  // already recorded identity keeps its exact fields and the runner may only widen
+  // the set. Replacing a recorded packet would move the gate under an in-flight
+  // dispatch.
+  return [...merged, ...runnerPackets.filter((packet) => !known.has(packet.taskPacketId))];
+}
+
+async function publishRunnerWorkerBindingsToSpine({ projectRoot, runId, runtime, workerTaskPackets }) {
+  const packets = (Array.isArray(workerTaskPackets) ? workerTaskPackets : [])
+    .map(spineWorkerTaskPacket)
+    .filter(Boolean);
+  if (packets.length === 0) return { status: "not_published", reason: "no_valid_worker_task_packets" };
+  // A governed artifact runId only has to be a safe file identity, so it accepts
+  // shapes the spine rejects. Publishing means spine runId and artifact runId are
+  // the same join key, so a runId outside the canonical spine namespace cannot be
+  // published under a shared identity and is reported instead of coerced.
+  const spineRunId = spineCanonicalRunId(runId);
+  if (spineRunId == null) {
+    return { status: "not_published", reason: "run_id_outside_canonical_spine_namespace", runId: String(runId ?? "") };
+  }
+  const existing = await readSpineState(projectRoot);
+  // The runner enriches a spine run that the host already activated. Minting one
+  // here would arm the dispatch gate in a project that never triggered the spine,
+  // and stage or lifecycle edits belong to the spine's own stage machine.
+  if (!existing) return { status: "not_published", reason: "no_active_spine_run" };
+  if (existing.runId !== spineRunId) {
+    return { status: "not_published", reason: "different_active_run", activeRunId: existing.runId };
+  }
+  const now = new Date().toISOString();
+  const state = {
+    ...existing,
+    workerTaskPackets: mergeSpineWorkerTaskPackets(existing.workerTaskPackets, packets),
+    runnerDispatchBindingEnvelope: {
+      schemaVersion: "governed-runner-spine-bindings-v1",
+      runId: spineRunId,
+      runtime,
+      taskPacketIds: packets.map((packet) => packet.taskPacketId),
+      publishedAt: now,
+      source: "run-meta-theory-governed-execution",
+    },
+  };
+  const write = await writeSpineState(projectRoot, state, { expectedRunId: spineRunId });
+  return write.written === true
+    ? { status: "published", taskPacketIds: packets.map((packet) => packet.taskPacketId) }
+    : { status: "not_published", reason: write.reason || "compare_and_swap_failed", activeRunId: write.runId || null };
+}
+
+/**
+ * Which host produced this run, and does a live chat belong to it.
+ *
+ * Both answers come out of one read of spine state so they cannot disagree: the
+ * binding that lends the chat is also the strongest available evidence of the
+ * host, and resolving them independently would let a run file one host's chat
+ * under another host's name.
+ */
+async function resolveGovernedRunHostProvenance({ projectRoot, runId, declaredRuntime, hostEnv }) {
+  const spineState = await readSpineStateIncludingInactive(projectRoot);
+  const binding = resolveSpineConversationBinding({
+    spineState,
+    runId,
+    runProfile: governedRunStateProfile(hostEnv),
+    hostSessionId: detectHostSessionConversationId(hostEnv),
+  });
+  const provenance = resolveGovernedRunProvenance({
+    declaredRuntime,
+    spineRuntime: binding.linked ? binding.sourceRuntime : null,
+    spineBindingBasis: binding.bindingBasis,
+    env: hostEnv,
+  });
+  return {
+    sourceRuntime: provenance.sourceRuntime,
+    provenanceBasis: provenance.basis,
+    observedHostMarkers: provenance.observedMarkers,
+    conversationLinkState: binding.linked ? "verified" : "unlinked",
+    sourceConversation: binding.sourceConversation,
+    conversationBindingRefusal: binding.refusal,
+    conversationBindingBasis: binding.bindingBasis,
+    spineRunId: binding.spineRunId,
+  };
+}
+
+/**
+ * The read surface treats a `sourceConversation` carrying this run's id as a
+ * proven link, so the field is written only when the spine binding proved one. A
+ * record written without that proof is indistinguishable on the panel from a
+ * verified link, which is why nothing here fills the gap with a guess.
+ *
+ * The refusal comes from the existing reader-facing vocabulary: an unproven host
+ * is `runtime_not_identified` ("the tool that started this run did not identify
+ * itself"), which is the fact, and a known host with no live binding is
+ * `conversation_id_not_identified`.
+ */
+function governedRunConversationFields(hostProvenance) {
+  const refusal = hostProvenance.sourceRuntime === CONVERSATION_RUNTIME_UNAVAILABLE
+    ? "runtime_not_identified"
+    : hostProvenance.conversationLinkState === "verified"
+      ? null
+      : "conversation_id_not_identified";
+  return {
+    sourceRuntime: hostProvenance.sourceRuntime,
+    conversationLinkState: hostProvenance.conversationLinkState,
+    ...(hostProvenance.sourceConversation
+      ? { sourceConversation: hostProvenance.sourceConversation }
+      : {}),
+    ...(refusal ? { conversationLinkRefusal: refusal } : {}),
+    hostProvenancePacket: {
+      schemaVersion: "governed-run-host-provenance-v1",
+      sourceRuntime: hostProvenance.sourceRuntime,
+      provenanceBasis: hostProvenance.provenanceBasis,
+      observedHostMarkers: [...hostProvenance.observedHostMarkers],
+      conversationLinkState: hostProvenance.conversationLinkState,
+      conversationBindingRefusal: hostProvenance.conversationBindingRefusal,
+      conversationBindingBasis: hostProvenance.conversationBindingBasis,
+      spineRunId: hostProvenance.spineRunId,
+    },
+  };
+}
 
 const RUNTIME_FAILURE_TAXONOMY = Object.freeze({
   pass: "pass",
@@ -986,16 +1145,6 @@ async function atomicWriteFile(filePath, content) {
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
   }
-}
-
-function prepareCompactLiveProjection(artifact) {
-  const projection = buildLiveCompactProjection(artifact);
-  const content = serializeLiveCompactProjection(projection);
-  const bytes = Buffer.byteLength(content, "utf8");
-  if (bytes > LIVE_MAX_COMPACT_BYTES) {
-    throw new Error(`Live compact projection exceeds ${LIVE_MAX_COMPACT_BYTES} bytes.`);
-  }
-  return { projection, content, bytes, sha256: textSha256(content) };
 }
 
 async function fsyncParentDirectoryBestEffort(filePath) {
@@ -8981,6 +9130,7 @@ function buildCoreLoopArtifact({
   outputLanguage = "zh-CN",
   executionAllowed = false,
   preDecisionOptionFrame = null,
+  hostProvenance = null,
 }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
@@ -9454,7 +9604,13 @@ function buildCoreLoopArtifact({
       entry: "meta:theory:run",
       requestType: "ordinary natural-language durable task or explicit meta-theory shortcut",
       runtimeContext: {
-        runtimeFamily: routeRuntime,
+        // Which host produced this record, and which runtime the route plans
+        // against, are two different questions. They were the same field, and
+        // the route's `"codex"` default is what filed every run started from a
+        // Claude Code session under Codex on the Live panel. An unproven host is
+        // `unavailable`, never a vendor name.
+        runtimeFamily: conversationRuntimeFamily(hostProvenance?.sourceRuntime),
+        routeTarget: routeRuntime,
         os: routeOs,
       },
       entryClassification,
@@ -11506,6 +11662,11 @@ export async function runMetaTheoryGovernedExecution({
   artifactDir = null,
   dbPath = DEFAULT_DB_PATH,
   runtime = "codex",
+  // `runtime` is the route's planning target and keeps its default. Provenance
+  // must be able to tell "the caller named a host" from "nobody named one", so
+  // the declared host is a separate option with no default.
+  declaredRuntime = null,
+  hostEnv = process.env,
   osTarget = "windows",
   approvalEvidence = null,
   approvalPacket = null,
@@ -11907,6 +12068,12 @@ export async function runMetaTheoryGovernedExecution({
     path.join(os.tmpdir(), "meta-kim-project-capability-candidates-"),
   );
   let coreLoop;
+  const hostProvenance = await resolveGovernedRunHostProvenance({
+    projectRoot: path.resolve(projectRoot),
+    runId: effectiveRunId,
+    declaredRuntime,
+    hostEnv,
+  });
   try {
     coreLoop = buildCoreLoopArtifact({
       runId: effectiveRunId,
@@ -11935,10 +12102,25 @@ export async function runMetaTheoryGovernedExecution({
       outputLanguage: resolvedOutputLanguage,
       executionAllowed,
       preDecisionOptionFrame: planChallengePreview,
+      hostProvenance,
     });
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
   }
+  const spineWorkerBinding = await publishRunnerWorkerBindingsToSpine({
+    projectRoot: path.resolve(projectRoot),
+    runId: effectiveRunId,
+    runtime: routeRuntime,
+    workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets,
+  });
+  coreLoop = {
+    ...coreLoop,
+    runnerSpineBindingPacket: {
+      schemaVersion: "governed-runner-spine-bindings-v1",
+      runId: effectiveRunId,
+      ...spineWorkerBinding,
+    },
+  };
   let durableCoordinator = null;
   let durableExecution = null;
   let durableBodyError = null;
@@ -12285,6 +12467,7 @@ export async function runMetaTheoryGovernedExecution({
     status: artifactStatus,
     partialReasons,
     task: normalizedTask,
+    ...governedRunConversationFields(hostProvenance),
     coreLoop,
     requestRecord: coreLoop.requestRecord,
     intentPacket: coreLoop.intentPacket,
@@ -12430,7 +12613,7 @@ export async function runMetaTheoryGovernedExecution({
   // Prepare and budget the exact bytes before any primary artifact commit.
   // Projection construction can therefore never leave a newly committed run
   // behind an older latest pointer.
-  const liveProjectionRecord = prepareCompactLiveProjection(artifact);
+  const liveProjectionRecord = prepareLiveProjectionRecord(artifact);
   if (durableCoordinator) {
     let materializationReservation = await readDurableReservation(reservationPath, {
       runId: effectiveRunId,
@@ -12755,7 +12938,11 @@ async function main() {
   const artifactDirArg = argValue("--artifact-dir", null);
   const dbArg = argValue("--db", null);
   const durableDbArg = argValue("--durable-db", null);
-  const runtimeArg = argValue("--runtime", process.env.META_KIM_RUNTIME ?? "codex");
+  // Route planning keeps its default; provenance must not inherit it. Reading the
+  // flag once and letting the default apply only to the route is what keeps a run
+  // nobody declared a host for from being recorded as that default vendor.
+  const declaredRuntimeArg = argValue("--runtime", process.env.META_KIM_RUNTIME ?? null);
+  const runtimeArg = declaredRuntimeArg ?? "codex";
   const osArg = argValue("--os", process.env.META_KIM_OS ?? "windows");
   const cliOutputLanguage = argValue(
     "--output-language",
@@ -12843,6 +13030,7 @@ async function main() {
         : dbArg ?? (taskArg ? DEFAULT_DB_PATH : positional[3] ?? DEFAULT_DB_PATH)
     ),
     runtime,
+    declaredRuntime: declaredRuntimeArg,
     osTarget,
     approvalEvidence: argValue("--approval-evidence", null),
     approvalPacket,

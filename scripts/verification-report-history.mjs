@@ -217,6 +217,26 @@ function compareAttempts(left, right) {
   return String(left.attemptId).localeCompare(String(right.attemptId));
 }
 
+function comparableProjection(value) {
+  if (typeof value?.attemptId !== "string" || typeof value?.completedAt !== "string") return null;
+  return value;
+}
+
+function publishedProjection(filePath) {
+  try {
+    return comparableProjection(safeJsonRead(filePath));
+  } catch {
+    return null;
+  }
+}
+
+export function selectNewerProjection(published, candidate) {
+  const existing = comparableProjection(published);
+  if (!existing) return candidate;
+  if (!comparableProjection(candidate)) return existing;
+  return compareAttempts(existing, candidate) > 0 ? existing : candidate;
+}
+
 function validatedAttempt(report) {
   if (
     report?.schemaVersion !== REPORT_SCHEMA_VERSION ||
@@ -417,25 +437,37 @@ export function writeVerificationReportAttempt(options) {
     const latestReleaseGrade = attempts
       .filter((attempt) => attempt.ok === true && attempt.releaseGrade === true)
       .at(-1) ?? null;
-    atomicWrite(path.join(historyDir, "latest-attempt.json"), jsonText(pointerFor(latest)));
+
+    const pointerPath = path.join(historyDir, "latest-attempt.json");
+    const publishedLatest = selectNewerProjection(publishedProjection(reportPath), latest);
+    if (publishedLatest === latest) {
+      atomicWrite(pointerPath, jsonText(pointerFor(latest)));
+      atomicWrite(reportPath, jsonText(latest));
+    }
+
+    let publishedReleaseGrade = latestReleaseGrade;
     let latestReleaseGradePath = null;
     if (latestReleaseGrade) {
-      atomicWrite(
-        path.join(historyDir, "latest-release-grade.json"),
-        jsonText(pointerFor(latestReleaseGrade)),
-      );
+      const releaseGradePath = path.join(historyDir, "latest-release-grade.json");
+      const winner = selectNewerProjection(publishedProjection(releaseGradePath), latestReleaseGrade);
+      if (winner === latestReleaseGrade) {
+        atomicWrite(releaseGradePath, jsonText(pointerFor(latestReleaseGrade)));
+      } else {
+        publishedReleaseGrade = attempts.find((attempt) => attempt.attemptId === winner.attemptId)
+          ?? publishedProjection(path.join(attemptsDir, `${validateAttemptId(winner.attemptId)}.json`))
+          ?? latestReleaseGrade;
+      }
       latestReleaseGradePath = path.join(
         attemptsDir,
-        `${validateAttemptId(latestReleaseGrade.attemptId)}.json`,
+        `${validateAttemptId(publishedReleaseGrade.attemptId)}.json`,
       );
     }
-    atomicWrite(reportPath, jsonText(latest));
     return {
       report: record,
       recordPath,
-      latestReport: latest,
+      latestReport: publishedLatest,
       latestReportPath: reportPath,
-      latestReleaseGrade,
+      latestReleaseGrade: publishedReleaseGrade,
       latestReleaseGradePath,
       historyDir,
       corruptAttempts,

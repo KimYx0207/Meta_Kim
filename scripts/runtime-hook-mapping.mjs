@@ -19,6 +19,7 @@ export const RUNTIME_HOOK_CAPABILITIES = {
       postToolUse: "PostToolUse",
       preCompact: "PreCompact",
       subagentStart: "SubagentStart",
+      subagentStop: "SubagentStop",
       stop: "Stop",
     },
   },
@@ -34,6 +35,7 @@ export const RUNTIME_HOOK_CAPABILITIES = {
       postToolUse: "PostToolUse",
       preCompact: "PreCompact",
       subagentStart: "SubagentStart",
+      subagentStop: "SubagentStop",
       skill: "Skill",
       stop: "Stop",
     },
@@ -95,6 +97,7 @@ export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -183,10 +186,11 @@ export function hookCommand(command, timeout, extra = {}) {
   };
 }
 
-const PROJECT_META_KIM_HOOK_FILES = new Set([
+export const PROJECT_META_KIM_HOOK_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -383,7 +387,8 @@ export function buildCodexHooksJson({
   stopSpineCleanupHookPath = null,
 } = {}) {
   const userPromptHooks = [];
-  const spineHookArgs = packageRoot ? ["--package-root", packageRoot] : [];
+  const spineHookArgs = ["--runtime", "codex", ...(packageRoot ? ["--package-root", packageRoot] : [])];
+  const lifecycleHook = () => hookCommand(nodeHookCommand(spineHookPath, spineHookArgs), 5);
   if (spineHookPath) {
     userPromptHooks.push(hookCommand(nodeHookCommand(spineHookPath, spineHookArgs), 5));
   }
@@ -420,8 +425,30 @@ export function buildCodexHooksJson({
         ],
       },
       {
+        matcher: "Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
+        hooks: [lifecycleHook()],
+      },
+      {
         matcher: "Bash",
         hooks: [hookCommand(nodeHookCommand(graphifyHookPath))],
+      },
+    ],
+    PostToolUse: [
+      {
+        matcher: "Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
+        hooks: [lifecycleHook()],
+      },
+    ],
+    SubagentStart: [
+      {
+        matcher: "*",
+        hooks: [lifecycleHook()],
+      },
+    ],
+    SubagentStop: [
+      {
+        matcher: "*",
+        hooks: [lifecycleHook()],
       },
     ],
     Skill: [
@@ -460,7 +487,7 @@ export function buildCodexHooksJson({
         "--event", "pre-compact", "--runtime", "codex",
       ]), 10)],
     }];
-    hooks.PostToolUse = [{
+    hooks.PostToolUse = [...(hooks.PostToolUse ?? []), {
       matcher: "Edit|Write",
       hooks: [hookCommand(nodeHookCommand(planningContinuityHookPath, [
         "--event", "post-tool", "--runtime", "codex",
@@ -468,6 +495,7 @@ export function buildCodexHooksJson({
     }];
   }
   const stopHooks = [];
+  if (spineHookPath) stopHooks.push(lifecycleHook());
   if (planningContinuityHookPath) {
     stopHooks.push(hookCommand(nodeHookCommand(planningContinuityHookPath, [
       "--event", "stop", "--runtime", "codex",
@@ -509,7 +537,11 @@ export function buildCursorHooksJson({
   hookPromptAdapterPath = null,
   planningContinuityHookPath = null,
 } = {}) {
-  const spineHookArgs = packageRoot ? ["--package-root", packageRoot] : [];
+  const spineHookArgs = ["--runtime", "cursor", ...(packageRoot ? ["--package-root", packageRoot] : [])];
+  const lifecycleHook = () => ({
+    command: nodeHookCommand(spineHookPath, spineHookArgs),
+    timeout: 5,
+  });
   const beforeSubmitPromptHooks = [
     {
       command: nodeHookCommand(spineHookPath, spineHookArgs),
@@ -550,7 +582,20 @@ export function buildCursorHooksJson({
       {
         command: nodeHookCommand(graphifyHookPath),
       },
+      lifecycleHook(),
     ],
+    // Cursor declares the command directly on the event and carries the matcher
+    // as a sibling field. A nested `hooks` array is Claude's shape: Cursor reads
+    // no command out of it, so the lifecycle hook would be registered on paper
+    // and never invoked. Every other event in this builder is already flat.
+    postToolUse: [
+      {
+        ...lifecycleHook(),
+        matcher: "Agent|spawn_agent|followup_task|collaboration\\.spawn_agent|collaboration\\.followup_task",
+      },
+    ],
+    subagentStart: [lifecycleHook()],
+    stop: [lifecycleHook()],
   };
   if (memoryHookPath || planningContinuityHookPath) {
     hooks.sessionStart = [];
@@ -568,7 +613,6 @@ export function buildCursorHooksJson({
         timeout: 10,
       });
     }
-    hooks.stop = [];
     if (planningContinuityHookPath) {
       hooks.stop.push({
         command: nodeHookCommand(planningContinuityHookPath, [

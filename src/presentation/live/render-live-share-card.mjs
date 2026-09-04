@@ -139,6 +139,3 @@ export function renderLiveReadmeEmbed(artifact, options = {}) {
 }
 
 export const renderLivePrCard = renderLiveShareCard;
-export const renderPrCard = renderLiveShareCard;
-export const renderReadmeEmbed = renderLiveReadmeEmbed;
-export const renderLiveReadmeSection = renderLiveReadmeEmbed;

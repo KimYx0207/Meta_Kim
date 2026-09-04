@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "meta-kim-live-run-retention-v1",
+  "description": "Retention policy for persisted governed-run directory entries under .meta-kim/state/<profile>/runs/. A single full scan of one long-lived project found 1004 run directories spanning 50 days, with daily peaks of 77, 68 and 61: one persisted entry per governance prompt. 994 of those 1004 sat at Critical with zero completed stages, 1004 of 1004 carried zero worker lifecycle records, and 1004 of 1004 had zero replay events, so the session directory read as a wall of identical empty rows. Nothing in the state writer expired them, so the directory grew without bound. Retention here compacts activation-only shells only. A run that advanced a stage, recorded a worker, produced an artifact or is still the active authority is protected regardless of age, because deleting it would destroy the only durable record of real work.",
+  "activationOnlyRetentionDays": 3,
+  "activationOnlyMaxEntries": 40,
+  "activationOnlyVisibleDays": 1,
+  "activationOnlyVisibleMaxEntries": 5,
+  "substantiveRetentionDays": 180,
+  "substantiveMaxEntries": 512,
+  "maxPrunePerPass": 200,
+  "backupRetainedPasses": 3,
+  "policyNotes": {
+    "activationOnlyRetentionDays": "An activation-only entry is a receipt that a prompt started the spine. It stays readable for a few days so a user can still audit yesterday's session, then stops competing for directory space with real runs.",
+    "activationOnlyMaxEntries": "A cap independent of age, because the measured daily peak of 77 activations means three days alone can produce over 200 shells. The newest entries are kept.",
+    "activationOnlyVisibleDays": "How long a receipt stays in the default session list, which is a separate question from how long it stays on disk. Measured on one machine: of 690 sessions the reader could see, 653 were receipts, and the shipped three-day read window put 47 of them in front of 37 sessions that had actually recorded work, leaving eleven of nineteen projects showing a list made entirely of rows with no conversation to open and no graph to draw. A receipt's only information is recency - it says a prompt started the spine - so one day keeps that signal and drops the rest to 9. Narrowing this field cannot delete anything: the same measurement showed all 37 substantive sessions surviving in every arm, and the currently active run is returned before any policy check runs.",
+    "activationOnlyVisibleMaxEntries": "A per-project bound on how many receipts the list will show even inside the visible window. On the measured machine this is currently inert - one day already leaves under five per project - so it exists for the peak day, where 77 activations in a single project would otherwise refill the list the age window just cleared. Must not exceed activationOnlyMaxEntries, so the list can never promise a row the prune pass is already free to remove.",
+    "substantiveRetentionDays": "Runs that did work are history worth keeping. Six months is long enough that expiry is a housekeeping event rather than data loss, and short enough that an abandoned project directory does not grow forever.",
+    "substantiveMaxEntries": "Twice the hub's 256-session read window, so compaction never removes an entry the catalog would still be willing to show.",
+    "maxPrunePerPass": "One pass is bounded so a machine with a thousand stale shells converges over several explicit `meta:live:compact:apply` invocations instead of doing one long unbounded sweep while the user waits. Pass `--until-done` to drain in one sitting.",
+    "backupRetainedPasses": "Pruned records are moved into a timestamped backup batch rather than deleted, so a pass can be reversed by copying a batch back. Older batches beyond this count are dropped once newer passes have proven stable."
+  },
+  "protectionNotes": {
+    "activeAuthority": "The run named by spine-state.json or active-run.json is never pruned, whatever its age or substance.",
+    "substanceSignals": "completedStages, workerRecords, stageIndex beyond Critical, a recorded blocker, a governed-execution artifact, or replay events. Any one of them makes a run substantive.",
+    "unreadableRecords": "A malformed or unrecognized status record is reported and left in place. Retention never removes something it could not classify.",
+    "readWindow": "The activationOnlyVisible* fields govern the session list only and never authorize removal. Two field families exist because conflating them was a live defect: while one pair drove both the list and the prune cutoff, the only way to quiet a receipt-heavy panel was to also authorize deleting the records behind it, and the validator would not accept a window of zero in either role.",
+    "ownership": "Retention only touches .meta-kim/state/<profile>/runs/**. Install projections, runtime-sedimented project copies and user configuration are different ownership classes and are out of scope."
+  }
+}

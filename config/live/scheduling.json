@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "meta-kim-live-scheduling-v1",
+  "limits": {
+    "maxWaves": 32,
+    "maxNodeIdsPerWave": 32,
+    "maxParallelAgents": 512,
+    "maxRequestedParallelAgents": 4096
+  },
+  "waveModes": [
+    "primary_parallel_wave",
+    "followup_parallel_wave",
+    "serial_wave",
+    "recovery_wave"
+  ],
+  "capacitySourceKinds": [
+    "active_config",
+    "runtime_default",
+    "explicit_request",
+    "host_probe"
+  ],
+  "display": {
+    "minWavesToAnnotate": 2,
+    "showCapacityWithoutWaves": true
+  }
+}

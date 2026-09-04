@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { URL } from "node:url";
 import { randomBytes } from "node:crypto";
 
@@ -6,6 +7,15 @@ import {
   createLiveControlRoomService,
   LIVE_REPLAY_SCHEMA_VERSION,
 } from "../../application/live/live-control-room-service.mjs";
+import {
+  loadLiveDefaultSelectionPolicy,
+  pickDefaultRow,
+  projectSelectionRow,
+  sessionSelectionRow,
+  sortProjectsForDefault,
+} from "../../application/live/live-default-selection.mjs";
+import { loadLiveCatalogScanPolicy } from "../../application/live/live-catalog-scan-policy.mjs";
+import { liveRecordOrigin } from "../../application/live/live-record-origin.mjs";
 import { isLiveRunId } from "./live-read-repository.mjs";
 import { LIVE_HUB_HEALTH_SCHEMA_VERSION } from "./live-hub-lifecycle.mjs";
 import {
@@ -20,9 +30,44 @@ const DEFAULT_PORT = 0;
 const CONTROL_HEADER = "x-meta-kim-control-token";
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
 const CONTROL_ACTIONS = Object.freeze(["pause", "resume", "reassign", "handoff"]);
+const BRAND_MARK_PNG = readFileSync(new URL("../../presentation/live/assets/meta-kim-k-mark.png", import.meta.url));
+const DEFAULT_SELECTION = loadLiveDefaultSelectionPolicy();
 
 function boundedPublicCount(value, maximum) {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
+}
+
+function publicSubstanceClass(value) {
+  return value === "substantive" || value === "activation_only" ? value : "unknown";
+}
+
+/**
+ * The public shape re-derives count availability from the counts that survived
+ * bounding, so a count dropped for being out of range is reported as unavailable
+ * rather than silently reappearing as an absent key the reader would read as zero.
+ *
+ * Each count is weighed on its own. A record can measure its worker roster and
+ * still declare no replay collection — every schema-version-1 artifact does —
+ * and folding those together would republish a measured count as no report.
+ */
+function publicCountsAvailability(declared, counts) {
+  const state = declared && typeof declared === "object" && !Array.isArray(declared)
+    ? declared.state
+    : null;
+  const reason = declared && typeof declared === "object" && !Array.isArray(declared)
+    ? declared.reason
+    : null;
+  const measured = counts.filter((count) => count !== null).length;
+  if (measured === 0) {
+    return { state: "unavailable", reason: reason || "no_measured_counts_available" };
+  }
+  if (measured < counts.length) {
+    return { state: "partial", reason: reason || "some_counts_outside_public_bounds" };
+  }
+  return {
+    state: state === "measured" ? "measured" : "partial",
+    reason: reason || "governed_artifact_collections",
+  };
 }
 
 function capabilityAvailable(value) {
@@ -145,6 +190,15 @@ function textResponse(response, statusCode, body, contentType = "text/plain; cha
   response.setHeader("content-type", contentType);
   response.setHeader("cache-control", "no-store");
   response.setHeader("content-length", Buffer.byteLength(body));
+  response.end(body);
+}
+
+function binaryResponse(response, statusCode, body, contentType) {
+  securityHeaders(response);
+  response.statusCode = statusCode;
+  response.setHeader("content-type", contentType);
+  response.setHeader("cache-control", "public, max-age=3600");
+  response.setHeader("content-length", body.byteLength);
   response.end(body);
 }
 
@@ -392,6 +446,13 @@ export function createLiveControlRoomServer(options = {}) {
   }
   const instanceId = typeof options.instanceId === "string" ? options.instanceId : null;
   const packageIdentity = typeof options.packageIdentity === "string" ? options.packageIdentity : null;
+  // The identity digest proves a match but cannot be compared to anything a person
+  // knows, so a Hub serving an older install answered /api/health exactly like the
+  // working tree and rendered hours-old code with nothing anywhere saying so. The
+  // value is whatever the start path was handed: re-reading package.json per
+  // request would report the file as it is now rather than the build this Hub was
+  // started from, and a default would read as a real version.
+  const packageVersion = typeof options.packageVersion === "string" ? options.packageVersion : null;
   const hubCatalog = globalHub
     ? (options.hubCatalog || createLiveHubProjectCatalog(options))
     : null;
@@ -401,9 +462,16 @@ export function createLiveControlRoomServer(options = {}) {
       ? options.profile
       : "default";
   const projectServices = new Map();
-  const hubCatalogTtlMs = Number.isInteger(options.hubCatalogTtlMs) && options.hubCatalogTtlMs >= 250
-    ? Math.min(options.hubCatalogTtlMs, 60_000)
-    : 2_000;
+  // How long a built project list stays current, how much longer it may still be
+  // served while a replacement is built, and how many projects may be walked at
+  // once. All three live in config/live/catalog-scan.json: the walk cost is a
+  // property of the machine and the registry, not of this file.
+  const catalogScanPolicy = options.scanPolicy || loadLiveCatalogScanPolicy();
+  const hubCatalogTtlMs = catalogScanPolicy.cacheTtlMs;
+  const hubCatalogStaleWindowMs = catalogScanPolicy.staleWhileRevalidateMs;
+  const hubCatalogClock = typeof options.hubCatalogClock === "function"
+    ? options.hubCatalogClock
+    : Date.now;
   let hubCatalogCache = null;
   let hubCatalogCacheExpiresAt = 0;
   let hubCatalogReadPromise = null;
@@ -446,14 +514,12 @@ export function createLiveControlRoomServer(options = {}) {
     observer = null;
   };
 
-  const readHubProjects = async ({ refresh = false } = {}) => {
-    const now = Date.now();
-    if (!refresh && hubCatalogCache && hubCatalogCacheExpiresAt > now) return hubCatalogCache;
+  const rebuildHubProjects = () => {
     if (!hubCatalogReadPromise) {
       hubCatalogReadPromise = Promise.resolve(hubCatalog.listProjects())
         .then((projects) => {
           hubCatalogCache = Array.isArray(projects) ? projects : [];
-          hubCatalogCacheExpiresAt = Date.now() + hubCatalogTtlMs;
+          hubCatalogCacheExpiresAt = hubCatalogClock() + hubCatalogTtlMs;
           return hubCatalogCache;
         })
         .finally(() => {
@@ -463,47 +529,121 @@ export function createLiveControlRoomServer(options = {}) {
     return hubCatalogReadPromise;
   };
 
+  const readHubProjects = async ({ refresh = false } = {}) => {
+    const now = hubCatalogClock();
+    if (refresh || !hubCatalogCache) return rebuildHubProjects();
+    if (hubCatalogCacheExpiresAt > now) return hubCatalogCache;
+    if (hubCatalogCacheExpiresAt + hubCatalogStaleWindowMs > now) {
+      // Answer with the list already in hand and build the replacement behind the
+      // reader. A rebuild that fails leaves the previous list in place, and the
+      // request that finds it past the stale window waits for a real walk, so the
+      // failure surfaces there instead of being served forever.
+      rebuildHubProjects().catch(() => {});
+      return hubCatalogCache;
+    }
+    return rebuildHubProjects();
+  };
+
   const publicHubCatalog = async ({ requestedProjectId = null, requestedRunId = null, refresh = false } = {}) => {
     const internalProjects = await readHubProjects({ refresh });
-    const projects = internalProjects.map((project) => ({
+    const unorderedProjects = internalProjects.map((project) => ({
       projectId: project.projectRef,
       displayName: project.displayName,
       status: project.status,
       activeSessionId: project.activeSessionId,
       sessionCount: project.sessionCount,
+      omittedSessionCount: Number.isFinite(Number(project.omittedSessionCount))
+        ? Number(project.omittedSessionCount)
+        : 0,
       updatedAt: project.updatedAt,
       sessions: Array.isArray(project.sessions)
         ? project.sessions.map((session) => {
+            const workerCount = boundedPublicCount(session.workerCount, LIVE_HUB_MAX_NODE_COUNT);
             const nodeCount = boundedPublicCount(session.nodeCount, LIVE_HUB_MAX_NODE_COUNT);
             const eventCount = boundedPublicCount(session.eventCount, LIVE_HUB_MAX_EVENT_COUNT);
             return {
               sessionId: session.sessionId,
               runId: session.runId,
               title: session.title,
+              titleSource: session.titleSource,
+              identificationState: session.identificationState,
+              recordOrigin: liveRecordOrigin(session),
+              sourceRuntime: session.sourceRuntime,
+              conversationLinkState: session.conversationLinkState,
+              ...(session.conversationLinkRefusal
+                ? { conversationLinkRefusal: session.conversationLinkRefusal }
+                : {}),
+              // The discovery reasons are statements about what was inspected, and
+              // this surface inspects nothing — it republishes the catalog. A record
+              // that carries no discovery block is published without one so the
+              // reader gets the plain sentence instead of a claim nobody made.
+              ...(session.conversationDiscovery && typeof session.conversationDiscovery === "object"
+                ? {
+                    conversationDiscovery: {
+                      state: session.conversationDiscovery.state,
+                      ...(session.conversationDiscovery.runtime ? { runtime: session.conversationDiscovery.runtime } : {}),
+                      ...(session.conversationDiscovery.reason ? { reason: session.conversationDiscovery.reason } : {}),
+                    },
+                  }
+                : {}),
+              verifiedLinks: Array.isArray(session.verifiedLinks)
+                ? session.verifiedLinks.slice(0, 16).map((link) => ({
+                    sourceRuntime: link.sourceRuntime,
+                    conversationRef: link.conversationRef,
+                    matchBasis: link.matchBasis,
+                    ...(link.conversationTitle ? { conversationTitle: link.conversationTitle } : {}),
+                    ...(link.updatedAt ? { updatedAt: link.updatedAt } : {}),
+                  }))
+                : [],
+              candidateLinks: Array.isArray(session.candidateLinks)
+                ? session.candidateLinks.slice(0, 16).map((link) => ({
+                    sourceRuntime: link.sourceRuntime,
+                    conversationRef: link.conversationRef,
+                    matchBasis: link.matchBasis,
+                    ...(link.conversationTitle ? { conversationTitle: link.conversationTitle } : {}),
+                    ...(link.updatedAt ? { updatedAt: link.updatedAt } : {}),
+                  }))
+                : [],
+              ...(session.conversationRef ? { conversationRef: session.conversationRef } : {}),
+              ...(session.conversationTitle ? { conversationTitle: session.conversationTitle } : {}),
               status: session.status,
+              displayState: session.displayState,
+              statusReason: session.statusReason,
               currentStage: session.currentStage,
               runtime: session.runtime,
               updatedAt: session.updatedAt,
+              // Two very different claims share this one value: a time the run
+              // reported, and a time read off the record file because the run
+              // reported none. The basis has to travel with it or the browser
+              // shows both identically.
+              ...(session.updatedAtBasis ? { updatedAtBasis: session.updatedAtBasis } : {}),
+              // `updatedAt` folds several distinct instants into one, so it cannot
+              // answer "did this run start long ago". The start instant is published
+              // only when the record states one.
+              ...(session.startedAt ? { startedAt: session.startedAt } : {}),
+              substanceClass: publicSubstanceClass(session.substanceClass),
+              countsAvailability: publicCountsAvailability(session.countsAvailability, [workerCount, nodeCount, eventCount]),
+              ...(workerCount === null ? {} : { workerCount }),
               ...(nodeCount === null ? {} : { nodeCount }),
               ...(eventCount === null ? {} : { eventCount }),
               active: session.active === true,
             };
           })
         : [],
-    })).sort((left, right) => {
-      const activeOrder = Number(right.status === "active") - Number(left.status === "active");
-      if (activeOrder !== 0) return activeOrder;
-      const updatedOrder = String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
-      return updatedOrder || String(left.projectId || "").localeCompare(String(right.projectId || ""));
-    });
-    const selectedProject = projects.find((project) => project.projectId === requestedProjectId)
-      || projects.find((project) => project.status === "active")
-      || projects[0]
-      || null;
-    const selectedRun = selectedProject?.sessions?.find((session) => session.runId === requestedRunId)
-      || selectedProject?.sessions?.find((session) => session.active)
-      || selectedProject?.sessions?.[0]
-      || null;
+    }));
+    // Drawability first, then liveness. Ranking liveness first is what opened
+    // the control room on a project whose every run was an activation receipt.
+    const projects = sortProjectsForDefault(unorderedProjects, DEFAULT_SELECTION);
+    const selectedProject = pickDefaultRow(
+      projects.map((project) => projectSelectionRow(project, DEFAULT_SELECTION)),
+      DEFAULT_SELECTION,
+      requestedProjectId || "",
+    )?.project || null;
+    const selectedRun = pickDefaultRow(
+      (selectedProject?.sessions || []).map((session) => sessionSelectionRow(session)),
+      DEFAULT_SELECTION,
+      requestedRunId || "",
+    )?.session || null;
     return {
       schemaVersion: "meta-kim-live-hub-catalog-v1",
       projects,
@@ -593,6 +733,7 @@ export function createLiveControlRoomServer(options = {}) {
         status: "ok",
         instanceId,
         packageIdentity,
+        packageVersion,
         profile: hubProfile,
         singleton: globalHub,
         readOnly: !exposure.enabled,
@@ -611,10 +752,13 @@ export function createLiveControlRoomServer(options = {}) {
         return;
       }
       try {
+        // No forced refresh. Building this catalog walks every registered
+        // project's run directory, and the page asks for it on first paint and on
+        // every project or run switch, so forcing a fresh read put the whole walk
+        // in front of each click while the cache above was never read.
         jsonResponse(response, 200, await publicHubCatalog({
           requestedProjectId: parsed.searchParams.get("projectId"),
           requestedRunId: parsed.searchParams.get("runId"),
-          refresh: true,
         }));
       } catch {
         jsonResponse(response, 200, {
@@ -809,7 +953,23 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
+    if (parsed.pathname === "/assets/meta-kim-k-mark.png") {
+      binaryResponse(response, 200, BRAND_MARK_PNG, "image/png");
+      return;
+    }
     if (parsed.pathname === "/" || parsed.pathname === "/index.html") {
+      if (parsed.searchParams.get("demo") === "states") {
+        const body = renderLiveControlRoomPage({
+          snapshot: null,
+          catalog: null,
+          controlEnabled: false,
+          commandCapabilities: {},
+          controlHeader: null,
+          controlToken: null,
+        });
+        textResponse(response, 200, body, "text/html; charset=utf-8");
+        return;
+      }
       const selection = await resolveHubSelection(parsed);
       const snapshot = withoutControlProjection(await (selection.service || service)
         .getSnapshot(selection.runId)
@@ -826,8 +986,9 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    // Only the root frontend asset is public. This keeps arbitrary project
-    // files and path traversal out of the sidecar's response surface.
+    // Only the root frontend and exact bundled UI assets are public.
+    // This keeps arbitrary project files and path traversal out of the
+    // sidecar's response surface.
     jsonResponse(response, 404, safeError("not_found"));
   });
 

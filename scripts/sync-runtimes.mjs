@@ -1415,6 +1415,7 @@ const GLOBAL_META_KIM_HOOK_PACKAGE_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -2838,6 +2839,7 @@ export function buildCodexProjectHooksJson({
     packageRoot,
   });
   config.hooks.PostToolUse = [
+    ...(config.hooks.PostToolUse ?? []),
     {
       matcher: "Edit|Write",
       hooks: [
@@ -2851,6 +2853,7 @@ export function buildCodexProjectHooksJson({
     },
   ];
   config.hooks.SubagentStart = [
+    ...(config.hooks.SubagentStart ?? []),
     {
       matcher: "*",
       hooks: [hookCommand(nodeHookCommand(".codex/hooks/subagent-context.mjs"))],
@@ -2901,6 +2904,7 @@ export function buildCursorProjectHooksJson({
     packageRoot,
   });
   config.hooks.postToolUse = [
+    ...(config.hooks.postToolUse ?? []),
     {
       command: nodeHookCommand(".cursor/hooks/post-format.mjs"),
       matcher: "Edit|Write",
@@ -2915,6 +2919,7 @@ export function buildCursorProjectHooksJson({
     },
   ];
   config.hooks.subagentStart = [
+    ...(config.hooks.subagentStart ?? []),
     {
       command: nodeHookCommand(".cursor/hooks/subagent-context.mjs"),
     },
@@ -3010,6 +3015,7 @@ const CLAUDE_PROJECT_HOOK_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -3040,6 +3046,7 @@ const CODEX_PROJECT_HOOK_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -3072,6 +3079,7 @@ const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -3096,6 +3104,7 @@ const CURSOR_PROJECT_HOOK_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
@@ -3121,6 +3130,7 @@ const CURSOR_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "project-root.mjs",
   "utils.mjs",
   "skip-reminder.mjs",
+  "conversation-binding.mjs",
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",

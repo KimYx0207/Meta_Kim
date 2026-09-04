@@ -88,6 +88,10 @@ export function buildMetaKimHooksTemplate(
   });
 
   const userPromptHooks = [];
+  const spineHook = () => cmd(
+    "activate-meta-theory-spine.mjs",
+    ["--runtime", "claude", ...(packageRoot ? ["--package-root", packageRoot] : [])],
+  );
   if (hookPromptCommand) {
     userPromptHooks.push({
       type: "command",
@@ -98,10 +102,7 @@ export function buildMetaKimHooksTemplate(
     userPromptHooks.push(cmd("hookprompt-adapter.mjs"));
   }
   userPromptHooks.push(
-    cmd(
-      "activate-meta-theory-spine.mjs",
-      packageRoot ? ["--package-root", packageRoot] : [],
-    ),
+    spineHook(),
   );
   userPromptHooks.push(cmd("planning-continuity.mjs", ["--event", "user-prompt", "--runtime", "claude"]));
 
@@ -127,11 +128,31 @@ export function buildMetaKimHooksTemplate(
           "Write|Edit|Bash|Agent|Task|TaskCreate|TaskUpdate|TodoWrite|TaskStop|EnterPlanMode|ExitPlanMode|MultiEdit|NotebookEdit",
         hooks: [cmd("enforce-agent-dispatch.mjs", ["--runtime", "claude"])],
       },
+      {
+        matcher: "Agent|Task",
+        hooks: [spineHook()],
+      },
     ],
     PostToolUse: [
       {
+        matcher: "Agent|Task",
+        hooks: [spineHook()],
+      },
+      {
         matcher: "Edit|Write",
         hooks: [cmd("planning-continuity.mjs", ["--event", "post-tool", "--runtime", "claude"])],
+      },
+    ],
+    SubagentStart: [
+      {
+        matcher: "*",
+        hooks: [spineHook()],
+      },
+    ],
+    SubagentStop: [
+      {
+        matcher: "*",
+        hooks: [spineHook()],
       },
     ],
     PreCompact: [
@@ -144,6 +165,7 @@ export function buildMetaKimHooksTemplate(
       {
         matcher: "*",
         hooks: [
+          spineHook(),
           cmd("planning-continuity.mjs", ["--event", "stop", "--runtime", "claude"]),
           cmd("stop-compaction.mjs"),
           cmd("stop-console-log-audit.mjs"),
@@ -243,7 +265,24 @@ export function stripRepoMetaKimHooksFromSettings(settings) {
 export function mergeHookMatcherBlocks(existing, additions) {
   const result = structuredClone(existing);
   for (const addBlock of additions) {
-    const idx = result.findIndex((b) => b.matcher === addBlock.matcher);
+    // Cursor's hooks.json declares `{command, timeout}` directly on the event,
+    // with no matcher and no inner hooks array. Keying those by matcher collapses
+    // every one of them onto the first matcher-less block, and the inner loop
+    // below then iterates an absent `hooks` array — so each addition after the
+    // first is discarded with no error. Identify flat blocks by their command.
+    if (!Array.isArray(addBlock.hooks) && typeof addBlock.command === "string") {
+      if (!result.some((block) => block.command === addBlock.command)) {
+        result.push(structuredClone(addBlock));
+      }
+      continue;
+    }
+    // A nested addition may itself carry `matcher: undefined` (Codex's
+    // UserPromptSubmit block does). Without the shape check it adopts a flat
+    // block as its target and grafts a `hooks` array onto a block that already
+    // declares its own command, producing a block no runtime can read.
+    const idx = result.findIndex(
+      (b) => b.matcher === addBlock.matcher && typeof b.command !== "string",
+    );
     if (idx === -1) {
       result.push(structuredClone(addBlock));
       continue;

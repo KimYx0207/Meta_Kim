@@ -10,6 +10,14 @@ import process from "node:process";
 
 const OWN_PROCESS_IDENTITY_CACHE = new Map();
 
+function rememberOwnIdentity(cacheKey, cacheable, identity) {
+  // Only a successful probe is cached. The Windows query times out under load,
+  // and caching that failure would disable identity for the rest of this
+  // process's life with no way to recover.
+  if (cacheable && identity !== null) OWN_PROCESS_IDENTITY_CACHE.set(cacheKey, identity);
+  return identity;
+}
+
 export const RELEASE_STATE_DURABILITY = Object.freeze({
   crashRecovery: "hash_bound_atomic_replace",
   fileDataFlush: "fsync_before_publish",
@@ -56,8 +64,7 @@ export function getProcessStartIdentity(pid, {
       const fieldsAfterComm = stat.slice(closeParen + 2).trim().split(/\s+/u);
       const startTicks = fieldsAfterComm[19];
       const identity = /^\d+$/u.test(startTicks || "") ? `linux-proc-startticks:${startTicks}` : null;
-      if (cacheable) OWN_PROCESS_IDENTITY_CACHE.set(cacheKey, identity);
-      return identity;
+      return rememberOwnIdentity(cacheKey, cacheable, identity);
     }
     if (platform === "win32") {
       const script = [
@@ -73,8 +80,7 @@ export function getProcessStartIdentity(pid, {
       const identity = result?.status === 0 && /^\d+$/u.test(ticks)
         ? `windows-creation-ticks:${ticks}`
         : null;
-      if (cacheable) OWN_PROCESS_IDENTITY_CACHE.set(cacheKey, identity);
-      return identity;
+      return rememberOwnIdentity(cacheKey, cacheable, identity);
     }
     if (platform === "darwin") {
       const result = runCommand(
@@ -84,8 +90,7 @@ export function getProcessStartIdentity(pid, {
       );
       const started = String(result?.stdout ?? "").trim().replace(/\s+/gu, " ");
       const identity = result?.status === 0 && started ? `darwin-ps-lstart:${started}` : null;
-      if (cacheable) OWN_PROCESS_IDENTITY_CACHE.set(cacheKey, identity);
-      return identity;
+      return rememberOwnIdentity(cacheKey, cacheable, identity);
     }
   } catch {
     // A missing reliable identity makes lock recovery fail safe for a live PID.

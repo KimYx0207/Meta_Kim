@@ -45,19 +45,29 @@ Meta_Kim is not a new model and it does not replace Claude Code or Codex. It add
 - The thing you asked for: code, a fix, a PR review, a PRD, documentation, or a release-ready change.
 - A readable explanation of what changed and why.
 - Test and verification evidence, with unknown or unproven claims kept visible instead of being called “done.”
-- A local Live view of the execution graph, workers, evidence, and replay history.
+- A local Live control room whose default view is one execution graph, with named sessions, work-item status, AI roles, tool activity, blockers, outputs, evidence, and replay history.
 
 ### What it looks like while running
 
 <p align="center">
   <a href="docs/images/meta-kim-live-demo.png">
-    <img alt="Meta_Kim Live showing the eight-stage execution graph, worker branches, evidence drawer, minimap, and replay timeline" src="docs/images/meta-kim-live-demo.png" width="100%"/>
+    <img alt="Meta_Kim Live work board view: named sessions on the left, a four-column work board in the center, and AI role, tool, activity, blocker, output, and evidence labels" src="docs/images/meta-kim-live-demo.png" width="100%"/>
   </a>
 </p>
 
-<p align="center"><sub>The real Meta_Kim Live renderer with representative demo data. The page is local and read-only by default.</sub></p>
+<p align="center"><sub>The real Meta_Kim Live renderer with representative demo data, shown on the work board view. The page is local and read-only by default.</sub></p>
 
-The top row is the governed path from understanding the request to verification and learning. Worker branches show who owns each bounded task. Animated edges show active flow; the evidence drawer and replay timeline show why a node has its current status.
+The default view is one execution graph: named sessions on the left, the run's dependency graph on the canvas, and an Inspector that holds secondary evidence when you open it. A four-column work board and a project/session repository view are one click away when you want work-item status or project facts instead of dependencies. Historical status-only records are labeled honestly; new runtime projections preserve conversation identity and richer work telemetry.
+
+### Recent upgrades on `main`
+
+| Upgrade | What changed |
+| --- | --- |
+| One Hub, many projects | One user-level loopback Hub lists explicitly registered Meta_Kim projects and sessions without scanning the disk. |
+| Graph-first default view | One execution graph answers what depends on what, which stage is live, who owns each node, and what evidence exists — with stage progress, minimap, fit/follow/zoom, and replay on the same canvas. |
+| Board and repository views | A four-column work board and a project/session repository view stay one click away for work-item status, ownership, active tool, and project facts. |
+| Cross-runtime conversation identity | Claude Code, Codex, Cursor, and OpenClaw can attach supported conversation metadata to new run records; unsupported legacy records stay visibly unlinked. |
+| Evidence-first and local | Missing telemetry stays visibly unavailable; the UI is loopback-only, has no third-party assets, and remains read-only by default. |
 
 ### What the final handoff looks like
 

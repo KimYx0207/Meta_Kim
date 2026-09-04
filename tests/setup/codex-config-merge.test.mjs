@@ -262,6 +262,37 @@ describe("Codex config merge", () => {
     );
   });
 
+  test("mutation normalization rebases onto a host-deleted locator instead of failing the journal", () => {
+    // Codex can regenerate config.toml and drop a whole managed table, so the
+    // next sync plans a fresh insert where the journal recorded a replace. With
+    // no chain rule for that pair the manifest flush throws and global sync
+    // cannot close even though hooks, skills, and commands were already written.
+    const previous = {
+      kind: "replace",
+      locator: { table: "features", key: "js_repl" },
+      beforeFragment: "js_repl = false",
+      afterFragment: "js_repl = true",
+    };
+    const reinserted = {
+      kind: "insert",
+      locator: { table: "features", key: "js_repl" },
+      beforeFragment: "",
+      afterFragment: '\n[features]\njs_repl = true\n',
+    };
+    assert.deepEqual(normalizeCodexConfigMutations([previous, reinserted]), [reinserted]);
+
+    // Rebasing is the only reversible choice: uninstall has to restore what the
+    // host actually holds, and the stale replace would write back a key the
+    // host itself deleted.
+    const written = 'model = "gpt-5"\n\n[features]\njs_repl = true\n';
+    const restored = invertCodexConfigMutations(written, [previous, reinserted]);
+    assert.ok(
+      !/js_repl/u.test(restored),
+      `uninstall must not leave a host-deleted key behind: ${JSON.stringify(restored)}`,
+    );
+    assert.match(restored, /model = "gpt-5"/u);
+  });
+
   test("Windows planner journals notify marketplace and MCP semantic changes", () => {
     const source = "C:\\Program Files\\WindowsApps\\OpenAI.Codex_test\\app\\resources\\plugins\\openai-bundled";
     const input = [

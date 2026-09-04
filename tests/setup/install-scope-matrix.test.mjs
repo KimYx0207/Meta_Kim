@@ -55,7 +55,7 @@ test("install scope verification proves global/project target boundaries", () =>
   );
   assert.deepEqual(
     sorted(summary.classification.globalLayer.platformSupportTiers.candidateProbeTargets),
-    ["cline", "continue", "kiro", "qoder", "roo-code", "trae", "windsurf"],
+    ["cline", "continue", "kiro", "roo-code", "windsurf"],
   );
   assert.match(
     summary.classification.globalLayer.platformSupportTiers.boundary,

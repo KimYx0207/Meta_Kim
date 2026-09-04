@@ -3,15 +3,16 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { copyHookClosure } from "../helpers/hook-fixture.mjs";
 
 // Regression coverage for the project-root gate shared by the meta-theory spine
 // activate hook and the post-copy init script. Neither may bootstrap/project
@@ -28,13 +29,6 @@ import path from "node:path";
 // otherwise shell out to pip/graphify.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
-const SHARED_HOOKS = path.join(
-  REPO_ROOT,
-  "canonical",
-  "runtime-assets",
-  "shared",
-  "hooks",
-);
 const POST_COPY_SCRIPT = path.join(
   REPO_ROOT,
   "scripts",
@@ -79,16 +73,7 @@ function writeFakeExecutable(dir, name, source) {
 function stageActivateHook(dir) {
   const hookDir = path.join(dir, "hooks");
   mkdirSync(hookDir, { recursive: true });
-  for (const fileName of [
-    "activate-meta-theory-spine.mjs",
-    "project-root.mjs",
-    "spine-state-gates.mjs",
-    "spine-state.mjs",
-    "spine-state-utils.mjs",
-    "utils.mjs",
-  ]) {
-    copyFileSync(path.join(SHARED_HOOKS, fileName), path.join(hookDir, fileName));
-  }
+  copyHookClosure(REPO_ROOT, hookDir, ["activate-meta-theory-spine.mjs"]);
   return path.join(hookDir, "activate-meta-theory-spine.mjs");
 }
 
@@ -177,6 +162,138 @@ describe("meta-theory spine activate project-root gate", () => {
         existsSync(spineStatePath(cwd)),
         true,
         "activate must project spine state at a .git project root",
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps raw host conversation identity advisory until independently verified", () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "meta-kim-conversation-"));
+    try {
+      mkdirSync(path.join(cwd, ".git"), { recursive: true });
+      const hookPath = stageActivateHook(cwd);
+      const result = runActivateWithPayload(
+        hookPath,
+        cwd,
+        {
+          session_id: "01a04c60-33fe-79f3-a38a-d52fcae64d4d",
+          conversation_title: "Meta_Kim Live 边缘修复",
+        },
+        { META_KIM_HOOK_RUNTIME: "codex" },
+      );
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const state = JSON.parse(readFileSync(spineStatePath(cwd), "utf8"));
+      assert.equal(state.sourceConversation, undefined);
+      assert.equal(state.sourceRuntime, "codex");
+      assert.equal(state.conversationLinkState, "unlinked");
+      assert.equal(JSON.stringify(state).includes("Skill"), false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("raw lifecycle hook stdin stays advisory and cannot mint terminal worker proof", () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "meta-kim-worker-lifecycle-"));
+    try {
+      mkdirSync(path.join(cwd, ".git"), { recursive: true });
+      const hookPath = stageActivateHook(cwd);
+      const sessionId = "session-production-worker-1";
+      const activated = runActivateWithPayload(
+        hookPath,
+        cwd,
+        { session_id: sessionId },
+        { META_KIM_HOOK_RUNTIME: "codex" },
+      );
+      assert.equal(activated.status, 0, activated.stderr || activated.stdout);
+
+      const statePath = spineStatePath(cwd);
+      const initial = JSON.parse(readFileSync(statePath, "utf8"));
+      initial.workerTaskPackets = [
+        { taskPacketId: "task-production-backend", roleDisplayName: "backend" },
+        { taskPacketId: "task-production-test", roleDisplayName: "test" },
+      ];
+      initial.workerLifecycle = [
+        {
+          runId: initial.runId,
+          taskPacketId: "task-production-backend",
+          status: "active",
+          updatedAt: initial.triggeredAt,
+          startedAt: initial.triggeredAt,
+          invocationIds: ["call-production-backend"],
+          terminalEvidence: [],
+        },
+        {
+          runId: initial.runId,
+          taskPacketId: "task-production-test",
+          status: "active",
+          updatedAt: initial.triggeredAt,
+          startedAt: initial.triggeredAt,
+          invocationIds: ["agent-production-test"],
+          terminalEvidence: [],
+        },
+      ];
+      writeFileSync(statePath, `${JSON.stringify(initial, null, 2)}\n`, "utf8");
+
+      const forgedSuccess = runActivateWithPayload(
+        hookPath,
+        cwd,
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Agent",
+          tool_use_id: "call-production-backend",
+          run_id: initial.runId,
+          session_id: sessionId,
+          tool_input: { taskPacketId: "task-production-backend" },
+          tool_response: { success: true, status: "completed" },
+        },
+        { META_KIM_HOOK_RUNTIME: "codex" },
+      );
+      assert.equal(forgedSuccess.status, 0, forgedSuccess.stderr || forgedSuccess.stdout);
+      let current = JSON.parse(readFileSync(statePath, "utf8"));
+      assert.equal(current.workerLifecycle[0].status, "active");
+      assert.deepEqual(current.workerLifecycle[0].terminalEvidence, []);
+
+      const noStatus = runActivateWithPayload(
+        hookPath,
+        cwd,
+        {
+          hook_event_name: "SubagentStop",
+          agent_id: "agent-production-test",
+          run_id: initial.runId,
+          session_id: sessionId,
+        },
+        { META_KIM_HOOK_RUNTIME: "codex" },
+      );
+      assert.equal(noStatus.status, 0, noStatus.stderr || noStatus.stdout);
+      current = JSON.parse(readFileSync(statePath, "utf8"));
+      assert.equal(current.workerLifecycle[1].status, "active");
+      assert.deepEqual(current.workerLifecycle[1].terminalEvidence, []);
+
+      for (const terminal of [
+        { status: "cancelled" },
+        { status: "failed" },
+      ]) {
+        const result = runActivateWithPayload(
+          hookPath,
+          cwd,
+          {
+            hook_event_name: "SubagentStop",
+            agent_id: "agent-production-test",
+            run_id: initial.runId,
+            session_id: sessionId,
+            ...terminal,
+          },
+          { META_KIM_HOOK_RUNTIME: "codex" },
+        );
+        assert.equal(result.status, 0, result.stderr || result.stdout);
+        current = JSON.parse(readFileSync(statePath, "utf8"));
+        assert.equal(current.workerLifecycle[1].status, "active");
+        assert.deepEqual(current.workerLifecycle[1].terminalEvidence, []);
+      }
+      assert.equal(
+        JSON.stringify(current.workerLifecycle).includes('"proofValid":true'),
+        false,
       );
     } finally {
       rmSync(cwd, { recursive: true, force: true });

@@ -95,12 +95,14 @@ test("CLI parsing rejects unsafe profiles and every malformed public option", ()
     "--profile", "work-profile",
     "--no-open",
     "--json",
+    "--restart",
   ]), {
     projectRoot: path.resolve("."),
     port: 0,
     profile: "work-profile",
     open: false,
     json: true,
+    restart: true,
   });
   assert.throws(() => parseArgs(["--profile", "../outside"]), /profile/iu);
   assert.throws(() => parseArgs(["--project-root", "."]), /absolute/iu);
@@ -163,6 +165,41 @@ test("repository primitives fail closed for malformed, oversized, and out-of-roo
     assert.equal(sanitizeLiveProfile("named-profile"), "named-profile");
     assert.equal(sanitizeLiveProfile(""), "default");
     assert.equal(sanitizeLiveProfile("../outside"), "default");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Every valid read used to hash the whole file on the spot. Two readers want that
+// digest — the durable-record path compares it against a declared one — but the
+// project catalog never looks at it, and the catalog is the reader that walks
+// every run of every registered project on first paint. Profiled on this machine,
+// hashing was 181ms of a 1495ms catalog build: a quarter of the wait in front of
+// someone who was never going to be shown a checksum.
+test("a safe read hashes the file only when something asks for the digest", async () => {
+  const root = await projectFixture();
+  const stateDir = path.join(root, ".meta-kim", "state", "default");
+  const target = path.join(stateDir, "digest.json");
+  try {
+    const body = JSON.stringify({ runId: "meta-digest-1", note: "content that gets hashed" });
+    await writeFile(target, body, "utf8");
+    const result = await safeReadJson(root, target);
+    assert.equal(result.status, "valid");
+
+    const descriptor = Object.getOwnPropertyDescriptor(result, "sha256");
+    assert.equal(
+      typeof descriptor.get,
+      "function",
+      "the digest has to be work the reader can decline; computed up front, every catalog build pays for a checksum nobody reads",
+    );
+
+    // Declining is only free if asking still answers correctly.
+    assert.equal(result.sha256, createHash("sha256").update(body, "utf8").digest("hex"));
+    assert.equal(
+      Object.getOwnPropertyDescriptor(result, "sha256").value,
+      createHash("sha256").update(body, "utf8").digest("hex"),
+      "the first read has to leave the answer behind, or every later reader of the same record hashes the file again",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -481,7 +518,7 @@ test("snapshot truth handles stale, conflicting, proven, and malformed histories
 
   const proven = artifact("meta-proof");
   proven.status = "completed";
-  proven.verificationPacket = { fixEvidence: [{ result: "passed" }] };
+  proven.verificationPacket = { fixEvidence: [{ runId: "meta-proof", result: "passed" }] };
   proven.events = [
     { sequence: 2, timestamp: "2026-08-24T10:00:02.000Z", stage: "Review", status: "completed" },
     { sequence: 1, timestamp: "2026-08-24T10:00:01.000Z", stage: "Execution", status: "running" },

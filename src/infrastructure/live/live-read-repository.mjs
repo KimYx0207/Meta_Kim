@@ -124,6 +124,30 @@ function digest(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+/**
+ * A successful read, with its digest left as work the caller can decline.
+ *
+ * Only the durable-record path below compares this digest against a declared
+ * one. The project catalog is the other reader, and it walks every run of every
+ * registered project on first paint without ever looking at the digest, so
+ * hashing every file on the spot charged that walk for a checksum nobody was
+ * going to be shown.
+ */
+function validRead(value, raw) {
+  return {
+    status: "valid",
+    value,
+    raw,
+    get sha256() {
+      const computed = digest(raw);
+      // Leave the answer behind, so a second reader of the same record does not
+      // pay for the same hash again.
+      Object.defineProperty(this, "sha256", { value: computed, enumerable: true, configurable: true });
+      return computed;
+    },
+  };
+}
+
 function digestFrom(record) {
   const candidates = [
     record?.sha256,
@@ -203,7 +227,7 @@ async function safeReadJson(root, targetPath, { maxBytes = LIVE_MAX_JSON_BYTES }
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return { status: "unknown", value: null };
     }
-    return { status: "valid", value, raw, sha256: digest(raw) };
+    return validRead(value, raw);
   } catch (error) {
     if (error?.code === "ENOENT") return { status: "missing", value: null };
     return { status: "malformed", value: null };
@@ -235,6 +259,18 @@ function isArtifact(value, expectedRunId = null) {
   return Boolean(value?.schemaVersion || value?.status || value?.workerTaskPackets || value?.coreLoop || value?.verificationPacket);
 }
 
+function durableRecordEnvelope(value, sourcePath, sha256) {
+  return {
+    ...value,
+    __sourcePath: sourcePath,
+    __rawSha256: sha256,
+    __source: "durable_status",
+    __updatedAt: metadataTimestamp(
+      value.updatedAt || value.deactivatedAt || value.startedAt || value.triggeredAt,
+    ),
+  };
+}
+
 function stateDirFor(root, profile) {
   return path.join(root, ".meta-kim", "state", sanitizeLiveProfile(profile));
 }
@@ -244,6 +280,7 @@ function stateDirFor(root, profile) {
  * @property {string|null} projectRoot
  * @property {string} profile
  * @property {() => Promise<object|null>} readDurableStatus
+ * @property {(runId:string) => Promise<object|null>} readRunStatus
  * @property {() => Promise<object|null>} readLatestArtifact
  * @property {(runId:string) => Promise<object|null>} readArtifact
  */
@@ -281,15 +318,7 @@ export function createLiveReadRepository(options = {}) {
     for (const candidate of candidates) {
       const result = await safeReadJson(root, candidate);
       if (result.status === "valid" && isDurableStatus(result.value)) {
-        return {
-          ...result.value,
-          __sourcePath: candidate,
-          __rawSha256: result.sha256,
-          __source: "durable_status",
-          __updatedAt: metadataTimestamp(
-            result.value.updatedAt || result.value.deactivatedAt || result.value.startedAt || result.value.triggeredAt,
-          ),
-        };
+        return durableRecordEnvelope(result.value, candidate, result.sha256);
       }
     }
 
@@ -318,18 +347,29 @@ export function createLiveReadRepository(options = {}) {
       records.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
       const newest = records[0];
       if (newest) {
-        return {
-          ...newest.value,
-          __sourcePath: newest.candidate,
-          __rawSha256: newest.sha256,
-          __source: "durable_status",
-          __updatedAt: newest.updatedAt,
-        };
+        return durableRecordEnvelope(newest.value, newest.candidate, newest.sha256);
       }
     } catch {
       // A missing runs directory is an ordinary empty-project state.
     }
     return null;
+  };
+
+  // The project catalog lists a session whenever `runs/<runId>/status.json`
+  // exists, so a snapshot read has to be able to reach that exact file. Without
+  // this reader, any run that is neither the active durable record nor backed by
+  // a governed artifact was reported as unreadable while its record sat on disk.
+  const readRunStatus = async (runId) => {
+    if (!isLiveRunId(runId)) return null;
+    const root = await getProjectRoot();
+    if (!root) return null;
+    const candidate = path.join(stateDirFor(root, profile), "runs", runId, "status.json");
+    const result = await safeReadJson(root, candidate);
+    if (result.status !== "valid" || !isDurableStatus(result.value)) return null;
+    // Bind identity the way artifact reads do. A record that names a different
+    // run must not be rendered under the requested run's row.
+    if (readRecordRunId(result.value) !== runId) return null;
+    return durableRecordEnvelope(result.value, candidate, result.sha256);
   };
 
   const readArtifactAt = async (targetPath, expectedRunId, pointer = null, {
@@ -455,6 +495,7 @@ export function createLiveReadRepository(options = {}) {
     profile,
     getProjectRoot,
     readDurableStatus,
+    readRunStatus,
     readLatestArtifact,
     readArtifact,
   };

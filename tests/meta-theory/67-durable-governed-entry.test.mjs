@@ -41,6 +41,25 @@ function workerCounter(counter) {
   };
 }
 
+const CLI_FLAG_GUARD_TIMEOUT_MS = 120_000;
+
+// The CLI rejects these flag combinations before doing any work, so a healthy
+// child exits in well under a second. The generous budget is a hang fuse only,
+// and the killed assertion keeps a starved child from reading as a wrong message.
+async function rejectsCliFlags(args, pattern) {
+  const failure = await execFileAsync(process.execPath, [ENTRY, ...args], {
+    cwd: process.cwd(),
+    timeout: CLI_FLAG_GUARD_TIMEOUT_MS,
+  }).then(() => null, (error) => error);
+  assert.ok(failure, `expected the CLI to reject: ${args.join(" ")}`);
+  assert.notEqual(
+    failure.killed,
+    true,
+    `CLI was killed by the ${CLI_FLAG_GUARD_TIMEOUT_MS}ms harness budget instead of rejecting: ${args.join(" ")}`,
+  );
+  assert.match(`${failure.message}\n${failure.stderr ?? ""}`, pattern);
+}
+
 function durableStageRunner(root, counter, mode = "fresh") {
   return {
     enabled: true,
@@ -61,43 +80,16 @@ function durableStageRunner(root, counter, mode = "fresh") {
 
 test("67 — CLI keeps planned-only default and validates durable fresh/resume flags before work", async (t) => {
   const root = await tempRoot(t);
-  await assert.rejects(
-    execFileAsync(process.execPath, [ENTRY, "--execute-stage-dag", "--resume-stage-dag", "--task", TASK], {
-      cwd: process.cwd(),
-      timeout: 10_000,
-    }),
-    /mutually exclusive|cannot be used together/iu,
-  );
-  await assert.rejects(
-    execFileAsync(process.execPath, [ENTRY, "--resume-stage-dag", "--task", TASK], {
-      cwd: process.cwd(),
-      timeout: 10_000,
-    }),
-    /resume-stage-dag.*run-id|run-id.*required/iu,
-  );
-  await assert.rejects(
-    execFileAsync(process.execPath, [
-      ENTRY,
-      "--execute-stage-dag",
-      "--overwrite-run",
-      "--task",
-      TASK,
-      "--state-dir",
-      root,
-    ], { cwd: process.cwd(), timeout: 10_000 }),
+  await rejectsCliFlags(["--execute-stage-dag", "--resume-stage-dag", "--task", TASK],
+    /mutually exclusive|cannot be used together/iu);
+  await rejectsCliFlags(["--resume-stage-dag", "--task", TASK],
+    /resume-stage-dag.*run-id|run-id.*required/iu);
+  await rejectsCliFlags(
+    ["--execute-stage-dag", "--overwrite-run", "--task", TASK, "--state-dir", root],
     /durable.*overwrite|overwrite.*durable/iu,
   );
-  await assert.rejects(
-    execFileAsync(process.execPath, [
-      ENTRY,
-      "--execute-stage-dag",
-      "--stage-runner-orchestrator",
-      "stategraph",
-      "--task",
-      TASK,
-      "--state-dir",
-      root,
-    ], { cwd: process.cwd(), timeout: 10_000 }),
+  await rejectsCliFlags(
+    ["--execute-stage-dag", "--stage-runner-orchestrator", "stategraph", "--task", TASK, "--state-dir", root],
     /unsupported stage-runner orchestrator|stategraph/iu,
   );
 

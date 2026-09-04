@@ -10,6 +10,10 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { join, dirname, resolve, relative, isAbsolute } from "node:path";
 import { atomicWriteJson, withFileLock } from "./spine-state-utils.mjs";
 import {
+  CONVERSATION_BINDING_MATCH_BASIS,
+  CONVERSATION_BINDING_REFUSAL_REASONS,
+} from "./conversation-binding.mjs";
+import {
   CHOICE_SURFACE_STATES,
   checkCapabilityNodeBindings,
   checkChoiceSurfaceGate,
@@ -63,6 +67,24 @@ const TASK_FINGERPRINT_RE = /^hmac-sha256:[a-f0-9]{64}$/u;
 const TASK_IDENTITY_KEY_SCHEMA = "task-identity-key-v1";
 const HISTORICAL_MIGRATION_ENVELOPE = Symbol("historical-migration-envelope");
 const taskIdentityKeyInflight = new Map();
+const SOURCE_RUNTIMES = new Set(["claude", "codex", "cursor", "openclaw"]);
+// How a run learned its conversation. Whitelisted so a caller cannot write free
+// text into a field that later reads as evidence of verification: the consumer in
+// `scripts/governed-execution/host-runtime-provenance.mjs` refuses a run whose
+// basis is absent, so membership here is an admission decision and not a label.
+//
+// Derived from the verifier's own constant rather than restated, because a member
+// with no producer is pre-opened permission — nothing can earn it, and the one
+// consumer that reads this field would still accept it from any caller that wrote
+// it by hand. `host_reported_binding` sat here exactly that way: zero producers,
+// zero consumers, and eight filesystem checks standing behind the only value next
+// to it. Deriving also makes the opposite drift unrepresentable — a verifier
+// cannot earn a basis this gate then silently strips at the normalizer below,
+// which would read downstream as a run that failed to verify.
+export const SOURCE_CONVERSATION_MATCH_BASIS = Object.freeze([CONVERSATION_BINDING_MATCH_BASIS]);
+
+const ADMISSIBLE_MATCH_BASIS = new Set(SOURCE_CONVERSATION_MATCH_BASIS);
+const WORKER_LIFECYCLE_STATUSES = new Set(["queued", "active", "completed", "failed", "cancelled"]);
 
 export const RUN_LIFECYCLE_STATUSES = [
   "active",
@@ -78,6 +100,66 @@ export const TASK_IDENTITY_SOURCES = [
   "not_available",
   "unrecoverable_legacy",
 ];
+
+export const RUN_SUBSTANCE_CLASSES = ["activation_only", "substantive"];
+
+export const RUN_DIRECTORY_MINTING_MODES = ["substantive", "always"];
+
+/**
+ * Substance is an axis orthogonal to lifecycleStatus. lifecycleStatus answers
+ * "is this run still running", substanceClass answers "did this run ever do
+ * anything". A measured scan of one long-lived project found 994 of 1004
+ * persisted run directories sitting at Critical with zero completed stages,
+ * zero worker records and zero replay events: activation receipts, not runs.
+ * Collapsing both questions into lifecycleStatus would force a reader to guess,
+ * so the two stay separate and the reader is told which one it is looking at.
+ *
+ * Evidence-bearing signals only. Absence of a signal is never upgraded into a
+ * positive claim, and a value that cannot be read is treated as absent.
+ */
+export function classifyRunSubstance(record) {
+  const completedStages = Array.isArray(record?.completed) ? record.completed.length : 0;
+  const workerRecords = Array.isArray(record?.workerLifecycle)
+    ? record.workerLifecycle.length
+    : 0;
+  const declaredWorkerPackets = Array.isArray(record?.workerTaskPackets)
+    ? record.workerTaskPackets.length
+    : 0;
+  const stageIndex = Number.isInteger(record?.stageIndex)
+    ? record.stageIndex
+    : STAGE_ORDER.indexOf(normalizeStage(record?.currentStageKey || record?.currentStage)) + 1;
+  const advancedBeyondEntryStage = stageIndex > 1;
+  const recordedBlocker = typeof record?.blockedOn === "string" && record.blockedOn.trim() !== "";
+  const substantive =
+    completedStages > 0 ||
+    workerRecords > 0 ||
+    declaredWorkerPackets > 0 ||
+    advancedBeyondEntryStage ||
+    recordedBlocker;
+  return {
+    substanceClass: substantive ? "substantive" : "activation_only",
+    substanceSignals: {
+      completedStages,
+      workerRecords,
+      declaredWorkerPackets,
+      stageIndex: stageIndex > 0 ? stageIndex : null,
+      advancedBeyondEntryStage,
+      recordedBlocker,
+    },
+  };
+}
+
+/**
+ * `substantive` (default) keeps bare activations out of the run directory so the
+ * directory stays a list of runs that did something. `always` restores the older
+ * write-every-activation behavior for debugging a specific machine.
+ */
+export function runDirectoryMintingMode(env = process.env) {
+  const raw = typeof env?.META_KIM_RUN_DIRECTORY_MINTING === "string"
+    ? env.META_KIM_RUN_DIRECTORY_MINTING.trim().toLowerCase()
+    : "";
+  return RUN_DIRECTORY_MINTING_MODES.includes(raw) ? raw : "substantive";
+}
 
 const STAGE_PROGRESS_PERCENT = {
   critical: 12,
@@ -664,13 +746,30 @@ function lifecycleStatusForReason(active, reason) {
   return "inactive";
 }
 
-function terminalState(state, reason, details = {}) {
+// Which event retired the run, kept separate from why. "session_stop" is written
+// by the Stop hook, and Stop fires at every turn boundary rather than when the
+// conversation ends, so the reason alone cannot answer "is that chat still open".
+// There is deliberately no real-session-end value here: no writer can produce one
+// yet, and a declared-but-unreachable value invites readers to trust a branch that
+// never runs. Absent means unknown, never assumed.
+const DEACTIVATION_TRIGGERS = Object.freeze([
+  "stop_hook_turn_boundary",
+  "prompt_supersede",
+  "state_migration",
+]);
+
+function normalizeDeactivationTrigger(value) {
+  return DEACTIVATION_TRIGGERS.includes(value) ? value : null;
+}
+
+function terminalState(state, reason, trigger, details = {}) {
   return stripRawPromptFields({
     ...state,
     active: false,
     lifecycleStatus: lifecycleStatusForReason(false, reason),
     deactivatedAt: new Date().toISOString(),
     deactivationReason: reason,
+    deactivationTrigger: normalizeDeactivationTrigger(trigger),
     ...details,
   });
 }
@@ -844,10 +943,30 @@ function isSupportedStatusEnvelope(value) {
   );
 }
 
+/**
+ * A run directory entry is a durable, user-visible claim that a run exists.
+ * Bare activations do not earn one, but promotion is monotone: once a run has
+ * proven substance and been materialized, every later write keeps updating it,
+ * including the terminal write. Otherwise a run that finished its work would
+ * lose its own closing record and the directory would show stale progress.
+ */
+async function shouldMaterializeRunDirectory(runStatusPath, envelope) {
+  if (runDirectoryMintingMode() === "always") return true;
+  if (envelope.substanceClass === "substantive") return true;
+  try {
+    await lstat(runStatusPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function writeMetaRunStatusUnlocked(cwd, state, profile, options = {}) {
   const envelope = createMetaRunStatusEnvelope(state, options);
   const paths = runStatusPaths(cwd, profile, envelope.runId);
-  await safeAtomicWriteJson(cwd, paths.runStatus, envelope);
+  if (await shouldMaterializeRunDirectory(paths.runStatus, envelope)) {
+    await safeAtomicWriteJson(cwd, paths.runStatus, envelope);
+  }
   if (options.skipActivePointer !== true) {
     await safeAtomicWriteJson(cwd, paths.activeRun, envelope);
   }
@@ -907,6 +1026,7 @@ function archivedLegacyEnvelope(value, archivedAt) {
     triggeredAt: value.startedAt || archivedAt,
     deactivatedAt: archivedAt,
     deactivationReason: "legacy_reconciled",
+    deactivationTrigger: "state_migration",
     archivedAt,
     archiveReason: "non_authoritative_historical_active_status",
   };
@@ -1118,6 +1238,7 @@ export async function readSpineStateIncludingInactive(cwd) {
 
 export async function writeSpineState(cwd, state, options = {}) {
   const safeState = stripRawPromptFields(state);
+  safeState.workerLifecycle = lifecycleRecords(safeState);
   // Resolve the file and profile together. A legacy custom spine directory is
   // still honored, but its first state-root segment becomes the status profile
   // so spine/status readers cannot be routed to different tenants.
@@ -1189,6 +1310,7 @@ export async function reconcileLegacyRunStatuses(cwd, options = {}) {
  */
 export async function activateSpineState(cwd, state, options = {}) {
   const safeState = stripRawPromptFields(state);
+  safeState.workerLifecycle = lifecycleRecords(safeState);
   const { filePath, profile } = resolveSpineStateRoute(cwd, safeState);
   validateRunId(safeState?.runId);
   if (!isValidSpineState(safeState)) {
@@ -1239,7 +1361,7 @@ export async function activateSpineState(cwd, state, options = {}) {
 
     let supersededRunId = null;
     if (current?.active === true) {
-      const superseded = terminalState(current, "superseded_by_new_prompt", {
+      const superseded = terminalState(current, "superseded_by_new_prompt", "prompt_supersede", {
         supersededByRunId: safeState.runId,
       });
       await safeAtomicWriteJson(cwd, filePath, superseded);
@@ -1319,7 +1441,7 @@ export async function terminalizeSpineState(cwd, options = {}) {
     const reason = options.reason === "evolution_completed"
       ? "evolution_completed"
       : "session_stop";
-    const terminal = terminalState(current, reason);
+    const terminal = terminalState(current, reason, "stop_hook_turn_boundary");
     await safeAtomicWriteJson(cwd, filePath, terminal);
     if (options.interruptAfter === "spine") {
       throw new Error("Injected interruption after authoritative terminal write.");
@@ -1351,8 +1473,12 @@ export function createInitialState({
   executionLeasePolicy = null,
   taskFingerprint = null,
   taskIdentitySource = null,
+  sourceConversation = null,
+  sourceRuntime = null,
+  conversationLinkRefusal = null,
 } = {}) {
   const triggeredAt = new Date().toISOString();
+  const runId = createRunId(triggeredAt);
   const stageRuntimeControl = {
     activationMode,
     driverMode,
@@ -1372,10 +1498,14 @@ export function createInitialState({
     createdAt: triggeredAt,
   };
   const normalizedTaskFingerprint = normalizeTaskFingerprint(taskFingerprint);
+  const normalizedSourceConversation = normalizeSourceConversation(sourceConversation, runId);
+  const normalizedSourceRuntime = normalizeSourceRuntime(
+    normalizedSourceConversation?.runtime || sourceRuntime,
+  );
   return {
     active: true,
     version: 2,
-    runId: createRunId(triggeredAt),
+    runId,
     triggeredAt,
     stageRuntimeControl,
     lifecycleStatus: "active",
@@ -1415,7 +1545,163 @@ export function createInitialState({
     intentCorrectionPayload: null,
     // Audit trail for skipped hooks
     skippedHooks: [],
+    sourceRuntime: normalizedSourceRuntime || "unavailable",
+    conversationLinkState: normalizedSourceConversation ? "verified" : "unlinked",
+    ...(normalizedSourceConversation ? { sourceConversation: normalizedSourceConversation } : {}),
+    ...(!normalizedSourceConversation && normalizeConversationLinkRefusal(conversationLinkRefusal)
+      ? { conversationLinkRefusal: normalizeConversationLinkRefusal(conversationLinkRefusal) }
+      : {}),
   };
+}
+
+function normalizeSourceRuntime(value) {
+  const runtime = String(value || "").trim().toLowerCase();
+  return SOURCE_RUNTIMES.has(runtime) ? runtime : null;
+}
+
+function normalizeConversationLinkRefusal(value) {
+  return CONVERSATION_BINDING_REFUSAL_REASONS.includes(value) ? value : null;
+}
+
+function normalizeSourceConversation(value, expectedRunId = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const runtime = normalizeSourceRuntime(value.runtime);
+  if (!runtime) return null;
+  const conversationId = String(value.conversationId || value.threadId || value.sessionId || value.composerId || value.sessionKey || "").trim();
+  if (!/^[a-z0-9][a-z0-9:._-]{3,159}$/iu.test(conversationId)) return null;
+  const explicitRunId = typeof value.runId === "string" ? value.runId : null;
+  if (explicitRunId && expectedRunId && explicitRunId !== expectedRunId) return null;
+  const rawTitle = typeof value.title === "string" ? value.title.trim() : "";
+  const title = rawTitle && rawTitle.length <= 120 && !/[\u0000-\u001f\u007f]/u.test(rawTitle)
+    ? rawTitle
+    : null;
+  return {
+    runtime,
+    conversationId,
+    ...(expectedRunId ? { runId: expectedRunId } : explicitRunId ? { runId: explicitRunId } : {}),
+    ...(title ? { title } : {}),
+    ...(ADMISSIBLE_MATCH_BASIS.has(value.matchBasis) ? { matchBasis: value.matchBasis } : {}),
+  };
+}
+
+export function bindSourceConversation(state, sourceConversation, { sourceRuntime = null, refusalReason = null } = {}) {
+  if (!state || typeof state !== "object") return state;
+  const runtime = normalizeSourceRuntime(sourceConversation?.runtime || sourceRuntime);
+  const normalized = normalizeSourceConversation(sourceConversation, state.runId);
+  if (!normalized) {
+    if (state.sourceConversation) return state;
+    const refusal = normalizeConversationLinkRefusal(refusalReason);
+    return {
+      ...state,
+      sourceRuntime: runtime || state.sourceRuntime || "unavailable",
+      conversationLinkState: "unlinked",
+      ...(refusal ? { conversationLinkRefusal: refusal } : {}),
+    };
+  }
+  const { conversationLinkRefusal: _resolved, ...linked } = state;
+  return {
+    ...linked,
+    sourceRuntime: normalized.runtime,
+    conversationLinkState: "verified",
+    sourceConversation: normalized,
+  };
+}
+
+function safeWorkerTaskId(value) {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  return /^[a-z0-9][a-z0-9:._-]{2,239}$/iu.test(candidate) ? candidate : null;
+}
+
+function safeHostEventId(value) {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  return /^[a-z0-9][a-z0-9:._-]{2,159}$/iu.test(candidate) ? candidate : null;
+}
+
+function safeHostInvocationIds(values) {
+  return [...new Set((Array.isArray(values) ? values : [values])
+    .map((value) => safeHostEventId(value))
+    .filter(Boolean))].slice(-8);
+}
+
+function lifecycleRecords(state) {
+  const existing = Array.isArray(state?.workerLifecycle) ? state.workerLifecycle : [];
+  const byTask = new Map(existing.flatMap((record) => {
+    const taskPacketId = safeWorkerTaskId(record?.taskPacketId);
+    if (!taskPacketId || record?.runId !== state?.runId || !WORKER_LIFECYCLE_STATUSES.has(record?.status)) return [];
+    return [[taskPacketId, record]];
+  }));
+  for (const packet of Array.isArray(state?.workerTaskPackets) ? state.workerTaskPackets : []) {
+    const taskPacketId = safeWorkerTaskId(packet?.taskPacketId);
+    if (!taskPacketId || byTask.has(taskPacketId)) continue;
+    byTask.set(taskPacketId, {
+      runId: state.runId,
+      taskPacketId,
+      status: "queued",
+      updatedAt: state.triggeredAt || new Date().toISOString(),
+      terminalEvidence: [],
+      ...(typeof packet.roleDisplayName === "string" ? { roleDisplayName: packet.roleDisplayName.slice(0, 80) } : {}),
+      ...(typeof packet.roleInstanceId === "string" ? { roleInstanceId: packet.roleInstanceId.slice(0, 120) } : {}),
+    });
+  }
+  return [...byTask.values()];
+}
+
+export function projectWorkerLifecycle(state) {
+  return lifecycleRecords(state).map((record) => ({ ...record }));
+}
+
+export function recordWorkerLifecycleEvent(state, event = {}, options = {}) {
+  if (!state || typeof state !== "object" || state.active !== true) return state;
+  if (options.trustedHostEvent !== true) return state;
+  const runId = typeof event.runId === "string" ? event.runId : state.runId;
+  if (runId !== state.runId) return state;
+  const taskPacketId = safeWorkerTaskId(event.taskPacketId);
+  const packet = (Array.isArray(state.workerTaskPackets) ? state.workerTaskPackets : [])
+    .find((candidate) => candidate?.taskPacketId === taskPacketId);
+  if (!taskPacketId || !packet) return state;
+  const status = String(event.status || "").trim().toLowerCase();
+  if (!WORKER_LIFECYCLE_STATUSES.has(status) || status === "queued") return state;
+  const runtime = normalizeSourceRuntime(event.runtime);
+  if (!runtime) return state;
+  const records = lifecycleRecords(state);
+  const index = records.findIndex((record) => record.taskPacketId === taskPacketId);
+  const current = records[index];
+  if (!current || ["completed", "failed", "cancelled"].includes(current.status)) return state;
+  const now = isValidTimestamp(event.occurredAt) ? new Date(event.occurredAt).toISOString() : new Date().toISOString();
+  const terminal = ["completed", "failed", "cancelled"].includes(status);
+  const eventId = safeHostEventId(event.eventId);
+  const invocationIds = safeHostInvocationIds([
+    ...(Array.isArray(current.invocationIds) ? current.invocationIds : []),
+    event.invocationId,
+    ...(Array.isArray(event.invocationIds) ? event.invocationIds : []),
+  ]);
+  const next = {
+    ...current,
+    runId: state.runId,
+    taskPacketId,
+    status,
+    runtime,
+    updatedAt: now,
+    ...(current.startedAt ? {} : { startedAt: now }),
+    ...(terminal ? { completedAt: now } : {}),
+    ...(invocationIds.length > 0 ? { invocationIds } : {}),
+    terminalEvidence: terminal
+      ? [...(Array.isArray(current.terminalEvidence) ? current.terminalEvidence : []), {
+          runId: state.runId,
+          taskPacketId,
+          status,
+          resultStatus: status,
+          runtime,
+          occurredAt: now,
+          proofValid: true,
+          synthetic: false,
+          evidenceKind: "host_worker_lifecycle",
+          ...(eventId ? { eventId } : {}),
+        }].slice(-8)
+      : Array.isArray(current.terminalEvidence) ? current.terminalEvidence : [],
+  };
+  records[index] = next;
+  return { ...state, workerLifecycle: records };
 }
 
 export function isHookObservedState(state) {
@@ -1470,6 +1756,9 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
   const active = safeState?.active !== false;
   const deactivatedAt = active ? null : safeState?.deactivatedAt || null;
   const deactivationReason = active ? null : safeState?.deactivationReason || null;
+  const deactivationTrigger = active
+    ? null
+    : normalizeDeactivationTrigger(safeState?.deactivationTrigger);
   const lifecycleStatus = lifecycleStatusForReason(active, deactivationReason);
   const taskFingerprint = normalizeTaskFingerprint(safeState?.taskFingerprint);
   const taskIdentitySource = TASK_IDENTITY_SOURCES.includes(
@@ -1496,6 +1785,19 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
           reason:
             "Inactive run status is history only. A later prompt may start a new run or offline audit, but it must not claim this run is still active.",
         });
+  const sourceConversation = normalizeSourceConversation(safeState?.sourceConversation, runId);
+  const sourceRuntime = normalizeSourceRuntime(sourceConversation?.runtime || safeState?.sourceRuntime) || "unavailable";
+  const conversationLinkState = sourceConversation ? "verified" : "unlinked";
+  const conversationLinkRefusal = sourceConversation
+    ? null
+    : normalizeConversationLinkRefusal(safeState?.conversationLinkRefusal);
+  const workerLifecycle = lifecycleRecords({ ...safeState, runId });
+  const substance = classifyRunSubstance({
+    completed,
+    workerLifecycle,
+    stageIndex,
+    blockedOn: safeState?.blockedOn || null,
+  });
 
   return {
     schemaVersion: RUN_STATUS_SCHEMA_VERSION,
@@ -1526,6 +1828,7 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     },
     deactivatedAt,
     deactivationReason,
+    deactivationTrigger,
     supersededByRunId: safeState?.supersededByRunId || null,
     archivedAt: safeState?.archivedAt || null,
     archiveReason: safeState?.archiveReason || null,
@@ -1551,12 +1854,20 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     publicLabels: safeState?.publicLabels || null,
     stagePurpose,
     stagePurposeKey: currentStage,
+    sourceRuntime,
+    conversationLinkState,
+    workerLifecycle,
+    substanceClass: substance.substanceClass,
+    substanceSignals: substance.substanceSignals,
+    ...(sourceConversation ? { sourceConversation } : {}),
+    ...(conversationLinkRefusal ? { conversationLinkRefusal } : {}),
   };
 }
 
 export async function writeMetaRunStatus(cwd, state, options = {}) {
   if (!state || typeof state !== "object") return null;
   const safeState = stripRawPromptFields(state);
+  safeState.workerLifecycle = lifecycleRecords(safeState);
   const profile = sanitizeStateProfile(
     ownEnumerableDataField(options, "profile") || profileFromState(safeState),
   );

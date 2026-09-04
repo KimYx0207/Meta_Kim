@@ -14,6 +14,14 @@ test("runtime matrix covers platforms and critical constraints", async () => {
   assert.equal(matrix.schemaVersion, 2);
   assert.equal(Object.hasOwn(matrix, "lastVerifiedAt"), false);
   assert.equal(matrix.lastReviewedAt, "2026-08-28");
+  const nestedReviewDates = new Set();
+  const collectReviewDates = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.lastReviewedAt === "string") nestedReviewDates.add(value.lastReviewedAt);
+    for (const nested of Object.values(value)) collectReviewDates(nested);
+  };
+  collectReviewDates(matrix);
+  assert.deepEqual([...nestedReviewDates], [matrix.lastReviewedAt]);
   for (const osName of ["macos", "windows", "wsl2"]) assert.match(raw, new RegExp(osName));
   for (const platform of matrix.platforms) {
     for (const capability of platform.capabilities ?? []) {
