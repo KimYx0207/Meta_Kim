@@ -9,6 +9,10 @@ import {
   pickDefaultRow,
   sessionSelectionRow,
 } from "../../src/application/live/live-default-selection.mjs";
+import {
+  loadLiveGraphLayoutPolicy,
+  serializeGraphLayoutPolicyForClient,
+} from "../../src/application/live/live-graph-layout.mjs";
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
 import {
@@ -446,6 +450,135 @@ function resolvedForViewport(rules, { selector, property, viewport }) {
     .flatMap((rule) => rule.declarations.filter(([name]) => name === property).map(([, value]) => value));
   return applied.length > 0 ? applied.at(-1) : null;
 }
+
+/** An sRGB triple plus alpha, from `#rgb`, `#rrggbb`, `rgb()` or `rgba()`. */
+function parseCssColor(value) {
+  const text = value.trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/iu.exec(text);
+  if (hex) {
+    const digits = hex[1].length === 3 ? [...hex[1]].map((digit) => digit + digit) : [0, 2, 4].map((at) => hex[1].slice(at, at + 2));
+    return { rgb: digits.map((pair) => Number.parseInt(pair, 16)), alpha: 1 };
+  }
+  const functional = /^rgba?\(([^)]+)\)$/iu.exec(text);
+  assert.ok(functional, `${value} is not a colour this guard can measure`);
+  const parts = functional[1].split(/[,/]/u).map((part) => Number.parseFloat(part.trim()));
+  assert.ok(parts.length === 3 || parts.length === 4, `${value} does not carry three or four components`);
+  const [red, green, blue, alpha = 1] = parts;
+  for (const component of [red, green, blue, alpha]) {
+    assert.ok(Number.isFinite(component), `${value} has a component this guard cannot read as a number`);
+  }
+  return { rgb: [red, green, blue], alpha };
+}
+
+/**
+ * WCAG relative luminance of an opaque sRGB triple.
+ *
+ * Written out rather than approximated by averaging channels: green carries 72% of
+ * perceived lightness and blue 7%, so a channel average ranks a blue-gray ink and a
+ * green-gray ink as equally visible when the eye does not.
+ */
+function relativeLuminance([red, green, blue]) {
+  const linear = [red, green, blue].map((component) => {
+    const ratio = component / 255;
+    return ratio <= 0.03928 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+/** A translucent colour laid over an opaque one, as the opaque triple it becomes. */
+function compositeOver(foreground, background, alpha) {
+  return foreground.map((component, index) => background[index] + (component - background[index]) * alpha);
+}
+
+/** WCAG contrast ratio between two opaque sRGB triples, always at least 1. */
+function contrastRatio(one, other) {
+  const [bright, dark] = [relativeLuminance(one), relativeLuminance(other)].sort((left, right) => right - left);
+  return (bright + 0.05) / (dark + 0.05);
+}
+
+/**
+ * Every background an edge can actually be drawn over at one viewport.
+ *
+ * The canvas fill is declared twice — once unconditionally and once inside the
+ * desktop band — so reading the first declaration measures a colour that never
+ * paints on a desktop window. On top of the fill the canvas paints a 28px grid, and
+ * a dashed edge lands on a grid line for part of its length, where the local
+ * backdrop is lighter than the fill. Both the fill and each grid stop are returned
+ * so the ratio is checked against all of them instead of against whichever one the
+ * guard's author happened to look at.
+ */
+function graphCanvasBackdrops(rules, viewport) {
+  const fill = resolvedForViewport(rules, { selector: ".graph-canvas", property: "background-color", viewport });
+  assert.ok(fill, `the canvas declares no background-color at ${viewport.width}x${viewport.height}`);
+  const base = parseCssColor(fill);
+  assert.equal(base.alpha, 1, `the canvas fill ${fill} is translucent, so what an edge sits on is not knowable from this sheet alone`);
+  const backdrops = [[fill, base.rgb]];
+  const image = resolvedForViewport(rules, { selector: ".graph-canvas", property: "background-image", viewport });
+  for (const stop of image ? image.match(/rgba?\([^)]+\)/gu) ?? [] : []) {
+    const overlay = parseCssColor(stop);
+    if (overlay.alpha === 0) continue;
+    backdrops.push([`${fill} under ${stop}`, compositeOver(overlay.rgb, base.rgb, overlay.alpha)]);
+  }
+  return backdrops;
+}
+
+/**
+ * Selectors that paint a readable line in the edge layer, taken from the sheet
+ * rather than kept as a list here: a state added later owes the same ratio, and a
+ * hand-written list would not know it exists.
+ *
+ * `.edge-flow-*` is left out on purpose. Those are the blur-filtered glow and
+ * tracer overlays drawn on top of an edge that already carries the ratio, and
+ * several sit at `opacity: 0` until a run animates them. Holding a glow to a
+ * reading threshold would force it to stop being a glow. The test asserts the page
+ * never puts those classes on a base edge, so the exclusion is checked rather than
+ * trusted.
+ */
+function edgeStrokeSelectors(rules) {
+  const painted = [];
+  for (const rule of rules) {
+    if (!rule.declarations.some(([property]) => property === "stroke")) continue;
+    for (const selector of rule.selectors) {
+      if (/^\.edge(?:$|\[|-)/u.test(selector) && !painted.includes(selector)) painted.push(selector);
+    }
+  }
+  const lines = painted.filter((selector) => !selector.startsWith(".edge-flow-"));
+  assert.ok(
+    lines.length >= 8,
+    `only ${lines.length} edge selectors carry a stroke, so either the sheet lost most of its states or this filter stopped matching them`,
+  );
+  return lines;
+}
+
+/**
+ * The ink and opacity a browser paints one edge selector with.
+ *
+ * Opacity falls back to `.edge` when a state does not declare its own, which is not
+ * a convenience: `.edge-failed` sets only a stroke, so its ratio moves whenever the
+ * base rule's opacity moves, and reading it as fully opaque would report a state
+ * that is legible when it is not.
+ */
+function resolvedEdgePaint(rules, selector, viewport) {
+  const stroke = resolvedForViewport(rules, { selector, property: "stroke", viewport });
+  assert.ok(stroke, `${selector} declares no stroke at ${viewport.width}x${viewport.height}`);
+  const token = /^var\((--[\w-]+)\)$/u.exec(stroke.trim());
+  const ink = parseCssColor(token ? rootCustomProperty(rules, token[1]) : stroke);
+  const opacity = resolvedForViewport(rules, { selector, property: "opacity", viewport })
+    ?? resolvedForViewport(rules, { selector: ".edge", property: "opacity", viewport });
+  assert.ok(opacity, `neither ${selector} nor .edge declares an opacity, so the painted ink is not knowable`);
+  const alpha = Number.parseFloat(opacity) * ink.alpha;
+  assert.ok(alpha > 0 && alpha <= 1, `${selector} resolves to alpha ${alpha}, which paints nothing a reader can follow`);
+  return { source: token ? `${stroke} -> ${ink.rgb.join()}` : stroke, rgb: ink.rgb, alpha };
+}
+
+/**
+ * WCAG 2.2 success criterion 1.4.11, Non-text Contrast.
+ *
+ * An execution edge is a graphical object a reader has to perceive to understand
+ * the content — the line is the only thing saying which node feeds which — so it
+ * owes 3:1 against what it is drawn on, the same as an icon or a form border.
+ */
+const NON_TEXT_CONTRAST_MINIMUM = 3;
 
 function splitTrackList(value) {
   assert.ok(value, "track list must be declared");
@@ -1141,12 +1274,14 @@ test("keeps the stage rail horizontally reachable in the base band", () => {
   );
 
   // An unconditionally collapsed rail would hide this defect instead of fixing it,
-  // so the collapse must be a viewport-height decision and nothing else: the page
-  // ships the derived chrome-budget threshold and the client expands the rail
-  // wherever the height affords it, which keeps the scroll port above load-bearing.
-  const page = renderLiveControlRoomPage({ snapshot: snapshotFixture });
-  assert.match(page, /window\.innerHeight >= viewportBudget\.stageOverviewOpenMinViewportHeightPx/u);
-  assert.match(page, /stageOverview\.open = next/u);
+  // so the scroll port above is only load-bearing while the rail can actually be
+  // open. That claim moved: the client used to compare the window height against a
+  // predicted sum of chrome bands, and it now measures the canvas the page rendered.
+  // Both cases -- a viewport with room defaulting the rail open, and one without room
+  // collapsing it -- are asserted by "the stage rail's default state is measured from
+  // the rendered canvas", which executes the shipped decision rather than matching its
+  // source. Repeating them here would give two guards one behaviour, and either could
+  // then be deleted without anything going red.
 
   // The claim above is only true while `.graph-stage` actually clips. It flips to
   // `overflow: visible` in the dense band, so the scroll port cannot be delegated
@@ -1817,6 +1952,69 @@ test("draws curved status-aware edges and a live flow animation with reduced-mot
   assert.match(html, /prefers-reduced-motion\s*:\s*reduce/iu);
 });
 
+test("every edge state clears the non-text contrast floor against whatever the canvas paints", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const rules = stylesheetRules(html);
+
+  // The blurred glow, tracer and particle layers are left out of the floor below,
+  // and that exclusion is only sound while those classes stay on their own overlay
+  // elements. Put one on a base edge and a decorative opacity of .18 becomes the
+  // edge's own paint — the floor would have been quietly opted out of rather than
+  // met, and every ratio here would still read green.
+  assert.doesNotMatch(html, /"edge edge-flow/u, "flow effect classes must stay off the base edge element");
+
+  // Every ink below is read from the unconditional `:root` block. A media band
+  // re-declaring one, or re-declaring it on `.shell`, which wraps the canvas,
+  // would paint a colour this test never looks at: the ratios would all be
+  // computed against a token that does not apply where the reader is looking.
+  for (const token of ["--edge-ink-dim", "--edge-ink-idle", "--green", "--amber", "--danger"]) {
+    const shadowing = rules
+      .filter((rule) => rule.conditions.length > 0 || !rule.selectors.includes(":root"))
+      .filter((rule) => rule.declarations.some(([property]) => property === token))
+      .map((rule) => [...rule.conditions, ...rule.selectors].join(" "));
+    assert.deepEqual(shadowing, [], `${token} is declared outside the unconditional :root block, so the measured ink is not the painted one`);
+  }
+
+  // Probes sit on the sheet's own band boundaries rather than on round numbers: the
+  // canvas fill is declared twice and the second declaration only applies from
+  // 901x720 up, so a single wide probe would never measure the darker fill and a
+  // single narrow one would never measure the lighter.
+  const probes = [
+    { width: 1707, height: 825, note: "a window size the reporter actually ran" },
+    { width: 901, height: 720, note: "the desktop band's own floor" },
+    { width: 900, height: 719, note: "one pixel outside the desktop band" },
+    { width: 721, height: 900, note: "one pixel above the width that hides the edge layer" },
+  ];
+
+  for (const viewport of probes) {
+    // Below 721px the edge layer is display:none, so there is no line to read and
+    // nothing to hold to a ratio. Asserting it here keeps the probe list and that
+    // cutoff from drifting apart: move the cutoff up and this fails rather than
+    // silently measuring a layer the reader cannot see.
+    assert.notEqual(
+      resolvedForViewport(rules, { selector: ".edge-layer", property: "display", viewport }),
+      "none",
+      `the edge layer is hidden at ${viewport.width}x${viewport.height} (${viewport.note}), so this probe proves nothing about legibility`,
+    );
+
+    const backdrops = graphCanvasBackdrops(rules, viewport);
+    for (const selector of edgeStrokeSelectors(rules)) {
+      const paint = resolvedEdgePaint(rules, selector, viewport);
+      // Checked against every backdrop rather than against whichever one looks
+      // worst. Which one binds depends on whether the ink is lighter or darker
+      // than the canvas, and that is a fact about a colour someone may change
+      // later, not a fact this test should assume today.
+      for (const [label, backdrop] of backdrops) {
+        const ratio = contrastRatio(compositeOver(paint.rgb, backdrop, paint.alpha), backdrop);
+        assert.ok(
+          ratio >= NON_TEXT_CONTRAST_MINIMUM,
+          `${selector} paints ${paint.source} at alpha ${paint.alpha} over ${label}, giving ${ratio.toFixed(3)}:1 at ${viewport.width}x${viewport.height} — under the ${NON_TEXT_CONTRAST_MINIMUM}:1 a reader needs to follow the line`,
+        );
+      }
+    }
+  }
+});
+
 test("binds node selection to evidence and replay state without unbounded DOM growth", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
@@ -1842,19 +2040,31 @@ test("keeps stage chapters out of a v2 entity graph while preserving v1 fallback
 test("lays out worker and workflow entities by spawn depth with a v1 serpentine fallback", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /const cardWidth\s*=\s*228/u);
+  // Every distance the layout uses now comes from configuration, so the guard is
+  // the round trip rather than a per-number regex: the object the page ships must
+  // be exactly what the serializer exports for the loaded policy. Dropping a
+  // field on the way to the browser leaves the page reading `undefined` and
+  // computing NaN geometry, which nothing else here would notice.
+  const shipped = /^\s*const GRAPH_LAYOUT = (\{.*\});$/mu.exec(html);
+  assert.ok(shipped, "the page must ship the layout policy as one serialized object");
+  assert.deepEqual(
+    JSON.parse(shipped[1]),
+    JSON.parse(JSON.stringify(serializeGraphLayoutPolicyForClient(loadLiveGraphLayoutPolicy()))),
+    "the policy the browser receives must match the one the tests exercise",
+  );
+
+  assert.match(html, /const cardWidth\s*=\s*GRAPH_LAYOUT\.card\.stageWidthPx/u);
   assert.match(html, /function estimatedNodeCardHeight\(node\)/u);
-  assert.match(html, /Math\.ceil\(nodeCapabilityCount\(node\) \/ 2\)/u);
-  assert.match(html, /Math\.max\(220, 112 \+ capabilityRows \* 40\)/u);
+  assert.match(html, /resolveNodeCardHeight\(nodeCapabilityCount\(node\), GRAPH_LAYOUT\.card\)/u);
   assert.match(html, /depthFor\(parentId, seen\) \+ 1/u);
   assert.match(html, /const orderedLanes\s*=\s*\[\.\.\.lanes\.entries\(\)\]\.sort/u);
   assert.match(html, /const maxLaneHeight\s*=\s*Math\.max\(estimatedNodeCardHeight\(nodes\[0\]\), \.\.\.laneHeights\.values\(\)\)/u);
   assert.match(html, /x:\s*laneX/u);
   assert.match(html, /y:\s*laneY/u);
   assert.match(html, /laneY \+= height \+ entityRowGap/u);
-  assert.match(html, /const laneX\s*=\s*52 \+ depth \* entityColumnStep/u);
-  assert.match(html, /const spineColumns\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*4\s*:\s*8/u);
-  assert.match(html, /const rowGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*206\s*:\s*190/u);
+  assert.match(html, /const laneX\s*=\s*scenePad\.left \+ depth \* entityColumnStep/u);
+  assert.match(html, /const spineColumns\s*=\s*mode\.stageColumns/u);
+  assert.match(html, /const rowGap\s*=\s*mode\.stageRowGapPx/u);
   assert.match(html, /row\s*%\s*2\s*===\s*0\s*\?\s*withinRow\s*:\s*spineColumns\s*-\s*1\s*-\s*withinRow/u);
   assert.match(html, /function edgeGeometry\(/u);
   assert.match(html, /function edgePortSlot\(index, count, span\)/u);
@@ -1864,17 +2074,25 @@ test("lays out worker and workflow entities by spawn depth with a v1 serpentine 
   assert.match(html, /\.node-card\s*\{[^}]*min-height:\s*176px/su);
   assert.match(html, /function syncLayoutToRenderedCards\(layout\)/u);
   assert.match(html, /Math\.ceil\(card\.scrollHeight\)/u);
-  assert.match(html, /item\.position\.y \+ item\.position\.height \+ 88/u);
+  assert.match(html, /nextY = previousBottom \+ GRAPH_LAYOUT\.renderedColumnGapPx/u);
   assert.match(html, /syncLayoutToRenderedCards\(layout\);[\s\S]*for \(const edge of graphEdges\)/u);
 });
 
-test("lays out high-fanout work as one non-crossing row and ships an isolated mixed-state demo", () => {
+test("lays out high-fanout work as a searched non-crossing grid and ships an isolated mixed-state demo", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /const fanoutEntry\s*=\s*\[\.\.\.childrenByParent\.entries\(\)\]/u);
-  assert.match(html, /children\.length\s*>=\s*4/u);
-  assert.match(html, /const childY\s*=\s*chainY/u);
-  assert.match(html, /x:\s*childStartX\s*\+\s*index\s*\*\s*childStep/u);
+  assert.match(html, /children\.length\s*>=\s*GRAPH_LAYOUT\.fanout\.minimumChildren/u);
+  // The block used to be one unwrapped row of literal steps, which produced a
+  // scene the camera could not fit at all. The shape is now searched against the
+  // canvas the browser reports, and siblings are filled row by row so edge order
+  // inside a row stays monotonic and sibling lines still cannot cross.
+  assert.match(html, /const arrangement = resolveFanoutArrangement\(\{/u);
+  assert.match(html, /canvas:\s*graphCanvasBox\(\)/u);
+  assert.match(html, /const column = index % arrangement\.columns/u);
+  assert.match(html, /const row = Math\.floor\(index \/ arrangement\.columns\)/u);
+  assert.match(html, /x:\s*blockX \+ column \* mode\.childColumnStepPx/u);
+  assert.match(html, /y:\s*rowTop/u);
   assert.match(html, /kind:\s*"fanout"/u);
   assert.match(html, /graph\.dataset\.layoutKind\s*=\s*layout\.kind/u);
   assert.match(html, /demoMode\s*=\s*new URL\(window\.location\.href\)\.searchParams\.get\("demo"\)\s*===\s*"states"/u);
@@ -1897,7 +2115,12 @@ test("lays out high-fanout work as one non-crossing row and ships an isolated mi
   assert.match(html, /演示数据 · 非真实运行/u);
   assert.match(html, /青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属/u);
   assert.match(html, /\.edge-completed\s*\{[^}]*stroke:\s*var\(--green\)[^}]*stroke-dasharray:\s*none/su);
-  assert.match(html, /\.edge-skipped, \.edge-queued\s*\{[^}]*stroke-dasharray:\s*5 9[^}]*opacity:\s*\.38/su);
+  // Only the dash is pinned here. The opacity used to be pinned at .38 alongside it,
+  // and .38 was the defect: 1.41:1 against the canvas, a line the reporter could not
+  // follow. What a queued edge owes is a ratio, and a ratio is asserted by computing
+  // it from the sheet's own declared values, not by freezing one number at the use
+  // site where any replacement number looks equally correct.
+  assert.match(html, /\.edge-skipped, \.edge-queued\s*\{[^}]*stroke-dasharray:\s*5 9/su);
   assert.match(html, /\.node-running\s*\{[^}]*animation:\s*active-node-pulse/su);
   assert.match(html, /\["active", "in_progress", "executing"\]\.includes\(status\)\) return "running"/u);
   assert.match(html, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--green\)/su);
@@ -1915,11 +2138,18 @@ test("separates active pending work from inactive structural work and keeps the 
   assert.match(html, /card\.addEventListener\("click", \(event\) =>/u);
   // The stage rail must stay discoverable, but `open` in the markup was a height
   // decision taken without knowing the viewport: at 1024x768 it left the graph
-  // canvas at 337px against a declared 360px floor. Assert the disclosure and its
-  // budget-driven expansion instead of pinning a hardcoded expanded state.
+  // canvas at 337px against a declared 360px floor. Assert the disclosure and the
+  // control that expands it, not a hardcoded expanded state.
+  //
+  // A third assertion here used to match the name of a predicted viewport threshold
+  // in the page source. That threshold is gone: the client now expands the rail,
+  // forces layout, and reads the rendered canvas back. The claim it stood for --
+  // that the expanded state answers to a budget rather than to markup -- is owned
+  // by the two guards that run the shipped decision function against a short and a
+  // roomy canvas. Restating it as a source-token match would put two guards on one
+  // behaviour, and either could then be deleted without a red run.
   assert.match(html, /<details class="stage-overview" aria-label="Stage progress">/u);
   assert.match(html, /data-stage-rail-state="expand"/u);
-  assert.match(html, /stageOverviewOpenMinViewportHeightPx/u);
 });
 
 test("keeps inspector provenance and replay navigation visible and keyboard reachable", () => {
@@ -2154,10 +2384,10 @@ test("preserves real edge state without replay evidence and uses interactive lis
   assert.doesNotMatch(html, /if \(firstSnapshot\)[\s\S]{0,800}centerGraphNode\(selectedNodeId\)/u);
   assert.doesNotMatch(html, /card\.setAttribute\(["']aria-pressed/u);
   assert.match(html, /replayPlay\.disabled\s*=\s*events\.length\s*<\s*2/u);
-  assert.match(html, /columnGap\s*=\s*layoutMode\s*===\s*["']compact["']\s*\?\s*276\s*:\s*248/u);
-  assert.match(html, /entityColumnStep\s*=\s*layoutMode\s*===\s*"compact"\s*\?\s*356\s*:\s*384/u);
-  assert.match(html, /entityRowGap\s*=\s*layoutMode\s*===\s*"compact"\s*\?\s*88\s*:\s*104/u);
-  assert.match(html, /nextY\s*=\s*item\.position\.y\s*\+\s*item\.position\.height\s*\+\s*88/u);
+  assert.match(html, /columnGap\s*=\s*mode\.stageColumnGapPx/u);
+  assert.match(html, /entityColumnStep\s*=\s*mode\.entityColumnStepPx/u);
+  assert.match(html, /entityRowGap\s*=\s*mode\.entityRowGapPx/u);
+  assert.match(html, /nextY\s*=\s*previousBottom\s*\+\s*GRAPH_LAYOUT\.renderedColumnGapPx/u);
   assert.match(html, /\.replay-panel\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%[^}]*grid-template-columns:\s*330px\s*minmax\(0,1fr\)[^}]*overflow:\s*hidden[^}]*contain:\s*inline-size/su);
   assert.match(html, /\.replay-dock-header\s*\{[^}]*min-width:\s*0[^}]*width:\s*330px[^}]*max-width:\s*100%[^}]*grid-template-columns:\s*minmax\(88px,1fr\)\s*auto[^}]*overflow:\s*hidden/su);
   assert.match(html, /\.replay-range-wrap\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow:\s*hidden/su);
@@ -3941,19 +4171,35 @@ test("a title too long for one line takes a second line instead of deleting its 
   }
 
   // The second line is only free if the layout already reserved it. Node cards
-  // are absolutely positioned from a JS height estimate, so a card that grows
-  // past that estimate overlaps the row below instead of showing more title —
-  // the same defect with a different symptom.
-  const reserve = /function estimatedNodeCardHeight\(node\) \{[\s\S]*?Math\.max\((\d+),/u.exec(html);
-  assert.ok(reserve, "the layout must keep its reserved card height in a named function");
+  // are absolutely positioned from a height the layout computes before they
+  // render, so a card that grows past that reservation overlaps the row below
+  // instead of showing more title — the same defect with a different symptom.
+  //
+  // The reserve used to be scraped out of the page with a regex anchored on a
+  // literal inside `estimatedNodeCardHeight`. Once that literal moved into
+  // configuration the unbounded scan ran past the end of the function and matched
+  // an unrelated `Math.max(0,` further down the page, so the guard read a reserve
+  // of 0 and failed as though the cards really did overlap. It now reads the
+  // configured number and proves that number is the one shipped to the browser.
+  const reservePx = loadLiveGraphLayoutPolicy().card.measuredMinHeightPx;
+  assert.match(
+    html,
+    /resolveNodeCardHeight\(nodeCapabilityCount\(node\), GRAPH_LAYOUT\.card\)/u,
+    "card height must come from the configured resolver, or this reserve is not the one the page uses",
+  );
+  assert.match(
+    html,
+    new RegExp(`"measuredMinHeightPx":\\s*${reservePx}\\b`, "u"),
+    "the configured card floor must reach the browser, or the reserve asserted here is not the shipped one",
+  );
   const cardFloor = lengthToPixels(resolvedDeclaration(rules, { selector: ".node-card", property: "min-height" }));
   const widestBase = resolveTypographyBasePx(TYPOGRAPHY_SCALE, 4000);
   const secondTitleLine = widestBase * TYPOGRAPHY_STEP_RATIOS.get("--fs-entity-title")
     * TYPOGRAPHY_LEADING_RATIOS.get("--lh-snug");
   assert.ok(
-    cardFloor + secondTitleLine <= Number(reserve[1]),
+    cardFloor + secondTitleLine <= reservePx,
     `a ${cardFloor}px card plus a ${secondTitleLine.toFixed(2)}px second title line exceeds the `
-      + `${reserve[1]}px the layout reserved, so the wrapped title overlaps the next row`,
+      + `${reservePx}px the layout reserved, so the wrapped title overlaps the next row`,
   );
 });
 
@@ -4117,5 +4363,535 @@ test("the cell band is as tall as the number of lines its title is allowed to ta
     bandHeight,
     `the title box is ${titleHeight} and the band behind it is ${bandHeight}; whichever is shorter `
       + "decides which line the reader loses",
+  );
+});
+
+/**
+ * The stage rail's default state used to be predicted: the client compared the
+ * window height against a sum of hand-measured chrome bands kept in config. A
+ * predicted sum is a second authority for a quantity the browser already knows,
+ * and it had drifted -- the run-context band was written down at 106px while the
+ * rule that sizes it clamps to three lines of the largest step on the ladder.
+ * Worse, one number cannot describe the band at every width, because a media
+ * gate restacks it below 1180px, so the composition the number describes is not
+ * the composition that renders there.
+ *
+ * The decision is now taken from the canvas the page actually rendered. That
+ * needs no band inventory and cannot drift, because there is nothing to keep in
+ * step. The measurement has to happen after layout is forced, so the fake below
+ * only commits a new height when the page asks for a reflow: an implementation
+ * that reads the height first sees the stale value and decides the other way.
+ */
+test("the stage rail's default state is measured from the rendered canvas, not predicted from the window", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const resolveStageRailOpenState = new Function(
+    `${shippedHelper(html, "resolveStageRailOpenState")}
+return resolveStageRailOpenState;`,
+  )();
+
+  function harness({ openCanvasHeightPx, closedCanvasHeightPx, railStartsOpen = false }) {
+    const transitions = [];
+    const rail = {
+      state: railStartsOpen,
+      get open() {
+        return this.state;
+      },
+      set open(next) {
+        this.state = next;
+        transitions.push(next);
+      },
+    };
+    let committed = railStartsOpen ? openCanvasHeightPx : closedCanvasHeightPx;
+    return {
+      rail,
+      transitions,
+      canvas: {
+        get clientHeight() {
+          return committed;
+        },
+      },
+      reflow() {
+        committed = rail.open ? openCanvasHeightPx : closedCanvasHeightPx;
+      },
+    };
+  }
+
+  const tight = harness({ openCanvasHeightPx: 281, closedCanvasHeightPx: 394 });
+  const tightResult = resolveStageRailOpenState({
+    rail: tight.rail,
+    canvas: tight.canvas,
+    minCanvasHeightPx: 360,
+    reflow: tight.reflow,
+  });
+  assert.equal(
+    tightResult.openCanvasHeightPx,
+    281,
+    "the decision must be taken on the height the canvas renders with the rail expanded, "
+      + "which is only knowable after layout is forced",
+  );
+  assert.equal(tightResult.open, false, "281px of canvas is under the 360px floor, so the rail must not default open");
+  assert.deepEqual(
+    tight.transitions,
+    [true, false],
+    "the rail must be expanded to be measured and then left in the state the measurement decided",
+  );
+
+  const roomy = harness({ openCanvasHeightPx: 512, closedCanvasHeightPx: 606 });
+  const roomyResult = resolveStageRailOpenState({
+    rail: roomy.rail,
+    canvas: roomy.canvas,
+    minCanvasHeightPx: 360,
+    reflow: roomy.reflow,
+  });
+  assert.equal(roomyResult.openCanvasHeightPx, 512);
+  assert.equal(roomyResult.open, true, "512px of canvas clears the floor, so the rail may default open");
+  assert.deepEqual(roomy.transitions, [true], "the rail must still be expanded to be measured");
+
+  assert.ok(
+    !/window\.innerHeight\s*>=\s*viewportBudget\./u.test(html),
+    "the rail decision must not go back to comparing the window height against a predicted chrome sum",
+  );
+});
+
+/**
+ * Measuring the rail means expanding it, so the page now moves the widget itself
+ * before it has decided anything. A `details` element reports that move as a
+ * toggle event, and the listener that captures a real user preference cannot tell
+ * the two apart on its own -- it compares against the state the page last decided
+ * on. So the decision has to be written back to that baseline, or the page's own
+ * probe reads as a click and pins the rail for the rest of the session.
+ *
+ * This runs the caller, not the measurement, with a stubbed measurement whose
+ * answer differs from where the rail started. If the caller forgets to record the
+ * answer, the baseline stays at its initial value and the mismatch shows up here.
+ */
+test("the measured rail state becomes the baseline the toggle listener compares against", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const start = html.indexOf("  function applyStageRailBudget(");
+  assert.ok(start >= 0, "applyStageRailBudget() must remain in the shipped script");
+  const end = html.indexOf("\n  stageOverview?.addEventListener", start);
+  assert.ok(end > start, "applyStageRailBudget() must still be followed by the toggle listener it feeds");
+  const source = html.slice(start, end);
+
+  function runCaller({ decided }) {
+    const cameraReconciles = [];
+    const scope = new Function(
+      `const { rail, canvas, decided, reconcileCamera } = arguments[0];
+const stageOverview = rail;
+const graph = canvas;
+const viewportBudget = { minCanvasHeightPx: 360 };
+let stageRailUserChoice = null;
+let stageRailBudgetState = null;
+function resolveStageRailOpenState({ rail: target }) {
+  target.open = true;
+  target.open = decided;
+  return { open: decided, openCanvasHeightPx: decided ? 512 : 281 };
+}
+${source}
+return { run: applyStageRailBudget, baseline: () => stageRailBudgetState };`,
+    )({
+      rail: { open: false, clientHeight: 0 },
+      canvas: { clientHeight: 0, offsetHeight: 0 },
+      decided,
+      reconcileCamera: () => cameraReconciles.push(true),
+    });
+    scope.run();
+    return { baseline: scope.baseline(), cameraReconciles: cameraReconciles.length };
+  }
+
+  const collapsed = runCaller({ decided: false });
+  assert.strictEqual(
+    collapsed.baseline,
+    false,
+    "a rail the measurement left closed must be recorded as closed, so the probe's own toggle is not read as a click",
+  );
+  assert.strictEqual(
+    collapsed.cameraReconciles,
+    0,
+    "a rail that starts closed and is measured closed did not change, so the camera has nothing to redo",
+  );
+
+  const expanded = runCaller({ decided: true });
+  assert.strictEqual(expanded.baseline, true, "a rail the measurement left open must be recorded as open");
+  assert.strictEqual(
+    expanded.cameraReconciles,
+    1,
+    "a rail that ends in a different state than it started changed the canvas, so the camera must be redone once",
+  );
+});
+
+/**
+ * The grid arrangement reserves gutters between the columns and a lane above each
+ * row, then routes every child edge through them. Two assertions elsewhere pin the
+ * routing function's name and the order it runs in relative to the edge loop, which
+ * is not the same as knowing where the line goes: a corner-to-corner curve satisfies
+ * both and still passes behind every sibling sharing the target's row.
+ *
+ * These run the shipped geometry against hand-computed coordinates. Each case is a
+ * separate branch, so a mutation that collapses one leaves the others green and the
+ * failure names the branch that broke.
+ */
+test("a child in the searched grid is routed along its reserved gutters, not corner to corner", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const edgeGeometry = new Function(
+    `${shippedHelper(html, "edgePortSlot")}
+${shippedHelper(html, "edgeGeometry")}
+return edgeGeometry;`,
+  )();
+
+  // The bus is inside the source's own width, so there is no sideways run to make:
+  // the line leaves the bottom edge at the bus and drops to the lane.
+  const throughSource = edgeGeometry(
+    { x: 100, y: 100, width: 200, height: 60 },
+    { x: 500, y: 400, width: 200, height: 60, busX: 180, laneY: 360 },
+  );
+  assert.strictEqual(
+    throughSource.path,
+    "M 180 160 V 360 H 600 V 400",
+    "a bus inside the source's span must be entered from the source's bottom edge, with no sideways run first",
+  );
+  assert.strictEqual(throughSource.x1, 180, "the line must start on the bus, not at the card's centre");
+  assert.strictEqual(throughSource.y1, 160, "the line must leave the source's bottom edge");
+
+  // The bus is to the right and outside the source, so the line has to travel out
+  // of the side first. It leaves at the source's vertical centre, not a port slot.
+  const busRight = edgeGeometry(
+    { x: 100, y: 100, width: 200, height: 60 },
+    { x: 500, y: 400, width: 200, height: 60, busX: 420, laneY: 360 },
+  );
+  assert.strictEqual(
+    busRight.path,
+    "M 300 130 H 420 V 360 H 600 V 400",
+    "a bus to the right must be reached from the source's right edge along a horizontal run",
+  );
+
+  // Mirror image. If the exit side were fixed rather than chosen, this line would
+  // start at the far edge and cross the whole card to get to the bus.
+  const busLeft = edgeGeometry(
+    { x: 400, y: 100, width: 200, height: 60 },
+    { x: 100, y: 400, width: 200, height: 60, busX: 60, laneY: 360 },
+  );
+  assert.strictEqual(
+    busLeft.path,
+    "M 400 130 H 60 V 360 H 200 V 400",
+    "a bus to the left must be reached from the source's left edge, not by crossing the card",
+  );
+  assert.strictEqual(busLeft.x1, 400, "the exit side must follow the bus, so a left-hand bus exits left");
+
+  for (const [label, routed] of [["through-source", throughSource], ["right", busRight], ["left", busLeft]]) {
+    assert.ok(
+      !routed.path.includes("C"),
+      label + " routing must stay orthogonal: a curve cuts the corner and passes behind the target's siblings",
+    );
+  }
+
+  // The layered path has no bus to follow, so it must keep its curve. Without this
+  // case an implementation that always routed orthogonally would satisfy every
+  // assertion above, and the gate that picks between the two would be untested.
+  const layered = edgeGeometry(
+    { x: 100, y: 100, width: 200, height: 60, spine: true },
+    { x: 100, y: 400, width: 200, height: 60, spine: false },
+    { layoutKind: "fanout" },
+  );
+  assert.ok(
+    layered.path.includes("C"),
+    "an edge with no reserved bus must fall back to the curve, so the orthogonal route stays gated on the arrangement",
+  );
+  assert.ok(
+    !layered.path.includes("undefined"),
+    "the fallback must not read bus coordinates that were never reserved",
+  );
+});
+
+/**
+ * The lane a child's horizontal run travels down is reserved while the cards are
+ * still nominal heights. A card that renders taller than budgeted swallows the gap
+ * the lane was placed in, which would send the run straight across it. The page
+ * re-centres the lane in the gap that exists after measuring.
+ *
+ * The function under test writes to the DOM, so its closure values are injected as
+ * parameters. That couples this guard to the set of names it closes over: a new
+ * dependency shows up here as a reference error rather than a behavioural failure,
+ * and the fix is to inject the new name, not to loosen an assertion.
+ */
+test("a lane reserved before measuring is re-centred into the gap the rendered cards leave", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const graphLayout = {
+    scenePaddingPx: { right: 48, bottom: 42 },
+    sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
+    renderedColumnGapPx: 24,
+  };
+  const positions = new Map([
+    ["a", { x: 0, y: 0, width: 200, height: 60 }],
+    ["b", { x: 0, y: 120, width: 200, height: 60, laneY: 90 }],
+    ["c", { x: 400, y: 0, width: 200, height: 60 }],
+    ["d", { x: 400, y: 120, width: 200, height: 60 }],
+  ]);
+  const renderedHeights = { a: 200, b: 60, c: 300, d: 60 };
+  const graphState = {
+    nodeElements: new Map(
+      Object.entries(renderedHeights).map(([id, height]) => [id, {
+        scrollHeight: height,
+        style: {},
+        getBoundingClientRect: () => ({ height }),
+      }]),
+    ),
+  };
+  const syncLayoutToRenderedCards = new Function(
+    "GRAPH_LAYOUT",
+    "graphState",
+    "graphScene",
+    "edgeLayer",
+    `${shippedHelper(html, "syncLayoutToRenderedCards")}
+return syncLayoutToRenderedCards;`,
+  )(graphLayout, graphState, null, null);
+
+  const layout = { positions, bounds: { width: 0, height: 0 } };
+  syncLayoutToRenderedCards(layout);
+
+  // The card above renders 200 tall instead of 60, so its bottom lands at 200 and
+  // the next card is pushed to 200 + 24. The only gap left is 200..224.
+  assert.strictEqual(positions.get("a").height, 200, "a card's measured height must replace the budgeted one");
+  assert.strictEqual(positions.get("b").y, 224, "the card below must be pushed clear of the measured card above it");
+  assert.strictEqual(
+    positions.get("b").laneY,
+    212,
+    "the lane must be re-centred in the gap the measured cards leave, not left at the 90 the layout budgeted",
+  );
+  assert.ok(
+    positions.get("b").laneY > 200 && positions.get("b").laneY < 224,
+    "a lane outside the real gap would put the horizontal run inside a card",
+  );
+
+  assert.ok(
+    !Object.hasOwn(positions.get("d"), "laneY"),
+    "a position that reserved no lane must not be given one, or the edge router reads a bus route that was never planned",
+  );
+
+  // Both columns grew, so the scene has to grow with them. Bounds taken from the
+  // budgeted heights would be 222 tall and the camera would fit against a block
+  // the render then overflows.
+  assert.deepEqual(
+    layout.bounds,
+    { width: 648, height: 426 },
+    "the scene bounds must be recomputed from the measured cards, so the camera fits what is actually drawn",
+  );
+  assert.deepEqual(graphState.bounds, layout.bounds, "the camera reads bounds off graphState, so both must agree");
+});
+
+/**
+ * "上面的文字 为啥要一行显示省略号 … 下面明明有空隙但是非得弄成两行" — the
+ * workspace board header's run-boundary line deleted its own tail on one line while
+ * the header it sits in was a `min-height` box with room to grow directly under it.
+ *
+ * That line names which part of a run the board is scoped to, so the discarded part
+ * is the scope the reader came to read. Four claims move together here and each is
+ * separately breakable, so they are asserted separately:
+ *
+ *  - nothing reaching the line may discard its tail, in any media branch
+ *  - a wrapped run still needs a line cap, or the header grows without bound
+ *  - the gap to the title above it is the ladder's text floor, not the padding step
+ *  - the leading has to be a family the text floor governs, or the two lines the
+ *    clamp now permits sit pressed together and the fix trades one defect for another
+ */
+test("the board header's run boundary wraps to a second line instead of deleting its tail", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
+  const spacing = loadLiveSpacingScale();
+  const selector = ".company-board-header p";
+
+  // Collected by descendant match rather than by this one spelling, so a `nowrap`
+  // reintroduced through a narrow-width branch cannot slip past.
+  const reaching = rules
+    .flatMap((rule) => rule.selectors)
+    .filter((candidate) => /\.company-board-header\b[\s>]+p\b/u.test(candidate));
+  assert.ok(reaching.length >= 1, `no rule reaches ${selector}, so this guard checks nothing`);
+  for (const candidate of reaching) {
+    assert.deepEqual(
+      declaredValues(rules, { selector: candidate, property: "text-overflow" }),
+      [],
+      `${candidate} declares text-overflow, which throws away the run scope before line two is offered`,
+    );
+    for (const value of declaredValues(rules, { selector: candidate, property: "white-space" })) {
+      assert.notEqual(
+        normalizedValue(value),
+        "nowrap",
+        `${candidate} refuses to wrap, so any clamp on it can never reach a second line`,
+      );
+    }
+  }
+
+  assert.equal(
+    resolvedDeclaration(rules, { selector, property: "display" }),
+    "-webkit-box",
+    `${selector} needs the box display, or -webkit-line-clamp is inert and the header grows unbounded`,
+  );
+  assert.equal(resolvedDeclaration(rules, { selector, property: "-webkit-box-orient" }), "vertical");
+  assert.equal(resolvedDeclaration(rules, { selector, property: "overflow" }), "hidden");
+  assert.equal(
+    lineClampCount(rules, resolvedDeclaration(rules, { selector, property: "-webkit-line-clamp" })),
+    2,
+    `${selector} must clamp at two lines: one is the ellipsis again, none is an unbounded header`,
+  );
+
+  const margin = resolvedDeclaration(rules, { selector, property: "margin" });
+  assert.ok(margin, `${selector} must declare its own separation from the title above it`);
+  const topMargin = lengthToPixels(splitTopLevel(margin)[0]);
+  assert.equal(topMargin, 8, "the gap under the board title is the measured value this fix was written for");
+  assert.ok(
+    topMargin >= spacing.textAdjacency.minimumPx,
+    `${topMargin}px is under the ${spacing.textAdjacency.minimumPx}px the ladder declares as the text floor`,
+  );
+
+  const leading = resolvedDeclaration(rules, { selector, property: "line-height" });
+  const family = /^var\(--lh-([a-z0-9-]+)\)$/u.exec(String(leading).trim());
+  assert.ok(family, `${selector} leads with ${leading} instead of a leading family`);
+  assert.ok(
+    spacing.textAdjacency.appliesToLeadingFamilies.includes(family[1]),
+    `${selector} now wraps to two lines on the "${family[1]}" leading, which the text floor does not cover `
+      + `(it covers ${spacing.textAdjacency.appliesToLeadingFamilies.join(", ")}), so the two lines stay pressed together`,
+  );
+});
+
+/**
+ * The same board header measured 1803px of content inside a 1075px box, which put
+ * its "查看运行图" button 728px past the header's right edge — off a 1707px screen
+ * entirely. The button was unreachable and the title's ellipsis never fired, so the
+ * title overflowed instead of shortening.
+ *
+ * Nothing about the title rule was wrong. A flex item's `min-width` defaults to
+ * `auto`, which is its min-content width, and a `nowrap` title has no min-content
+ * width smaller than the whole string. So the block holding the title refused to
+ * shrink and pushed its sibling out. The top bar already carries the fix as
+ * `.run-context-heading { min-width: 0 }`; these headers never got it.
+ *
+ * Two claims, each breakable on its own:
+ *
+ *  - whatever element directly holds an ellipsizing title must be allowed to shrink,
+ *    or the ellipsis is decoration and the header overflows in its place
+ *  - the cluster beside the title must stay pinned, which is what makes the title
+ *    block the only place the shrinking can come from
+ *
+ * The headers are collected from the rule that grants the ellipsis rather than from
+ * a list written here, so a fourth header joining that rule is covered on the day it
+ * joins rather than on the day someone remembers to extend this test.
+ */
+test("a header that shortens its title lets the title block shrink, so its own actions stay inside it", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const rules = stylesheetRules(html);
+
+  const declares = (rule, property, expected) =>
+    rule.declarations.some(([name, value]) => name === property && normalizedValue(value) === expected);
+  const ellipsizedTitles = rules
+    .filter((rule) => declares(rule, "text-overflow", "ellipsis") && declares(rule, "white-space", "nowrap"))
+    .flatMap((rule) => rule.selectors)
+    .filter((selector) => /^\.company-[a-z-]+-header h2$/u.test(selector));
+  assert.ok(
+    ellipsizedTitles.length >= 1,
+    "no company header shortens its title any more, so this guard is checking nothing",
+  );
+
+  // The element that directly holds the title, read off the markup rather than
+  // assumed, because the wrapper is exactly the thing that goes missing.
+  const holderOfTitle = (block) => {
+    const stack = [];
+    const tag = /<(\/?)([a-z0-9]+)((?:[^>"]|"[^"]*")*)>/giu;
+    for (let match = tag.exec(block); match !== null; match = tag.exec(block)) {
+      const [, closing, name, attributes] = match;
+      if (name === "h2" && !closing) return stack.at(-1) ?? null;
+      if (closing) stack.pop();
+      else if (!attributes.trimEnd().endsWith("/")) stack.push(attributes);
+    }
+    return null;
+  };
+
+  for (const titleSelector of ellipsizedTitles) {
+    const headerClass = titleSelector.replace(/ h2$/u, "").slice(1);
+    const block = new RegExp(`<header class="${headerClass}"[^>]*>.*?</header>`, "su").exec(html)?.[0] ?? null;
+    assert.ok(block, `${headerClass} has a rule but no markup, so the rule shortens nothing`);
+
+    const holder = holderOfTitle(block);
+    assert.ok(holder !== null, `no element in ${headerClass} holds the title the rule shortens`);
+    const holderClasses = (/class="([^"]*)"/u.exec(holder)?.[1] ?? "").split(/\s+/u).filter(Boolean);
+    const shrinkable = holderClasses.filter(
+      (name) => normalizedValue(resolvedDeclaration(rules, { selector: `.${name}`, property: "min-width" }) ?? "") === "0",
+    );
+    assert.ok(
+      shrinkable.length >= 1,
+      `the block holding ${headerClass}'s title (${holderClasses.join(".") || "unclassed"}) keeps its automatic minimum `
+        + "width, so it cannot shrink below the whole title and pushes the header's own actions out of it instead of shortening",
+    );
+  }
+
+  // The shrink has to come from somewhere. If the cluster beside the title were
+  // allowed to give way, it would be the button that collapsed rather than the
+  // title that shortened, and the fix above would be pointing at the wrong item.
+  const actions = resolvedDeclaration(rules, { selector: ".company-board-actions", property: "flex" });
+  assert.equal(
+    normalizedValue(String(actions)),
+    "0 0 auto",
+    `.company-board-actions declares flex: ${actions}, so it absorbs the shrink instead of the title block`,
+  );
+});
+
+/**
+ * `.work-surface-header p` sat 6px under the title it explains, on a leading family
+ * the ladder's 8px text floor covers. It shipped because the spacing guards sweep
+ * `padding` and `gap` and never `margin`, and the ladder's own words are that
+ * "Text-run gaps are held to textAdjacency.minimumPx on top of this" — which a top
+ * margin on the lower run is, expressed on the child instead of on the container.
+ *
+ * The set is derived from the stylesheet, not written here, so the next text run
+ * added under the floor turns this red without anyone remembering to extend it.
+ * Two things put a rule in scope and both are read off the rule itself:
+ *
+ *  - it declares a leading family the floor governs, which is how the ladder already
+ *    separates wrapped prose from a single-line control whose padding IS its height
+ *  - its top margin is directional — `margin-top`, or a shorthand whose other sides
+ *    collapse to 0 — which is a deliberate separation from whatever precedes it. A
+ *    uniform `margin: X` is an inset from a container, and the ladder holds that to
+ *    the 6px box floor instead, which is why the two bordered empty-state boxes that
+ *    also carry 6px are not defects and are not dragged in here.
+ */
+test("no text run sits closer to the run above it than the ladder's own text floor", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
+  const spacing = loadLiveSpacingScale();
+  const governed = new Set(spacing.textAdjacency.appliesToLeadingFamilies);
+
+  const directionalTopMargin = (rule) => {
+    const explicit = rule.declarations.findLast(([name]) => name === "margin-top")?.[1];
+    if (explicit !== undefined) return explicit;
+    const shorthand = rule.declarations.findLast(([name]) => name === "margin")?.[1];
+    if (shorthand === undefined) return null;
+    const sides = splitTopLevel(shorthand);
+    if (sides.length === 1) return null;
+    return sides.slice(1).every((side) => lengthToPixels(side) === 0) ? sides[0] : null;
+  };
+
+  const separated = [];
+  for (const rule of rules) {
+    const leading = rule.declarations.findLast(([name]) => name === "line-height")?.[1];
+    const family = /^var\(--lh-([a-z0-9-]+)\)$/u.exec(String(leading ?? "").trim())?.[1];
+    if (!family || !governed.has(family)) continue;
+    const declared = directionalTopMargin(rule);
+    if (declared === null) continue;
+    const top = lengthToPixels(declared);
+    if (top === null || top === 0) continue;
+    separated.push({ selectors: rule.selectors.join(", "), declared, top });
+  }
+
+  assert.ok(
+    separated.length >= 3,
+    `only ${separated.length} text runs declare their own separation from the run above them, which is fewer than `
+      + "the page shipped with, so this sweep has stopped seeing them rather than found them all compliant",
+  );
+  assert.ok(
+    separated.some((entry) => entry.selectors === ".work-surface-header p"),
+    "the rule this sweep was written for is no longer in scope, so a green result here says nothing about it",
+  );
+  assert.deepEqual(
+    separated.filter((entry) => entry.top < spacing.textAdjacency.minimumPx),
+    [],
+    `these text runs sit closer to the run above them than the ${spacing.textAdjacency.minimumPx}px the ladder `
+      + "declares for a text-run gap, which is the density the maintainer called painful to look at",
   );
 });

@@ -13,15 +13,9 @@
     { "id": "handheld-tight", "condition": "(max-width: 380px)", "maxWidthPx": 380 }
   ],
   "chromeBudget": {
-    "comment": "Every band that consumes vertical space above or below the graph canvas, measured in a browser at the narrowest dense profile (1024x768) so the budget is a worst case rather than an optimistic minimum. Omitting a band makes the floor assertion pass while the shipped canvas is below it. The dense run-context figure is the two-line worst case, measured at 105.65px by replacing the run title with one long enough to fill the clamp: the band renders 65.16px on a one-line title, and reading that number off the screen in front of you is how the previous 100px got written down.",
-    "topbarHeightPx": 60,
-    "runContextHeightPx": { "dense": 106, "compact": 148 },
-    "stageOverviewHeightPx": { "open": 101, "collapsed": 35 },
-    "graphStageBarHeightPx": 95,
+    "comment": "Three quantities, each with exactly one consumer. This block used to inventory every band above the canvas so their sum could be subtracted from the window height, deciding whether the eight-stage rail could afford to ship expanded. That inventory is gone. It was a second authority for a height the browser already computes -- `.main` gives the run-context band `auto` and the canvas `minmax(0, 1fr)` -- and it could not be right at every width, because the `(max-width: 1180px)` gate restacks the run context, so one field named `dense` described two different band compositions. The client now expands the rail, forces layout, reads the canvas back, and keeps the rail open only if what remains clears minCanvasHeightPx. What is left here is what production reads: that floor, plus the two replay-drawer heights and the status-bar height the stylesheet needs as shared custom properties. A band the stylesheet sizes from its own content is deliberately absent; declaring it would put a number back in two places.",
     "replayPanelHeightPx": { "collapsed": 34, "open": 116 },
     "statusBarHeightPx": 28,
-    "workspaceRowGapPx": 8,
-    "workspaceRowGapCount": 2,
     "minCanvasHeightPx": 360
   },
   "dockBudget": {

@@ -6,23 +6,17 @@ import test from "node:test";
 import {
   LIVE_VIEWPORT_PROFILES_SCHEMA_VERSION,
   evaluateMediaCondition,
-  evaluateViewportChromeBudget,
   extractMediaBlocks,
   normalizeLiveViewportProfiles,
   resolveApplicableMediaBlocks,
 } from "./_viewport-profiles.mjs";
 import {
   loadLiveReplayTickBand,
-  replayOpenCanvasFloorPx,
-  resolveChromeConsumedPx,
-  resolveDefaultLayoutState,
   resolveReplayTickCount,
   resolveReplayTickOffsetsMs,
   serializeReplayTickBandForClient,
   serializeReplayTickCountResolver,
   serializeReplayTickOffsetsResolver,
-  stageOverviewOpenMinViewportHeightPx,
-  stageRailExpandedCanvasFloorPx,
 } from "../../src/application/live/live-viewport-budget.mjs";
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
 
@@ -171,124 +165,43 @@ test("regression baselines keep the canvas-first grid and never collapse to the 
   }
 });
 
-test("dense profiles leave enough vertical space for the graph canvas in both replay states", () => {
-  for (const profile of config.profiles.filter((entry) => entry.expectDenseLayout)) {
-    const layout = resolveDefaultLayoutState(profile.heightPx, config.chromeBudget);
-    for (const replayOpen of [false, true]) {
-      const budget = evaluateViewportChromeBudget(profile, config.chromeBudget, {
-        replayOpen,
-        dense: true,
-        stageOverviewOpen: layout.stageOverviewOpen,
-      });
-      assert.ok(
-        budget.fits,
-        `${profile.label}: replayOpen=${replayOpen} leaves ${budget.canvasHeightPx}px, below the ${budget.minCanvasHeightPx}px canvas floor`,
-      );
-    }
-  }
-});
-
-test("the stage-rail auto-collapse policy is load-bearing, not decorative", () => {
-  // Without this assertion the previous test could pass because every dense
-  // profile happens to afford an expanded rail, which would make the collapse
-  // policy untested rather than satisfied. At least one declared dense profile
-  // must genuinely be unable to afford the expanded rail.
-  const forcedOpenFailures = config.profiles
-    .filter((entry) => entry.expectDenseLayout)
-    .map((profile) => ({
-      profile,
-      budget: evaluateViewportChromeBudget(profile, config.chromeBudget, {
-        replayOpen: false,
-        dense: true,
-        stageOverviewOpen: true,
-      }),
-    }))
-    .filter((entry) => !entry.budget.fits);
-
-  assert.ok(
-    forcedOpenFailures.length > 0,
-    "config must keep a dense profile short enough that an always-expanded stage rail breaks the canvas floor, "
-      + "otherwise the auto-collapse contract is vacuous",
-  );
-
-  for (const { profile, budget } of forcedOpenFailures) {
-    const collapsed = evaluateViewportChromeBudget(profile, config.chromeBudget, {
-      replayOpen: false,
-      dense: true,
-      stageOverviewOpen: false,
-    });
-    assert.ok(
-      collapsed.fits,
-      `${profile.label}: collapsing the stage rail recovers only ${collapsed.canvasHeightPx}px, still below the `
-        + `${collapsed.minCanvasHeightPx}px floor (${budget.canvasHeightPx}px while expanded)`,
-    );
-    assert.equal(
-      resolveDefaultLayoutState(profile.heightPx, config.chromeBudget).stageOverviewOpen,
-      false,
-      `${profile.label}: default layout must ship the stage rail collapsed at a height that cannot afford it`,
-    );
-  }
-});
-
-test("the shipped page defers the stage rail's expanded state to the measured chrome budget", () => {
+test("the shipped page defers the stage rail's expanded state to the measured canvas", () => {
   // `<details open>` in the markup is a height decision taken without knowing the
   // viewport. At 1024x768 it rendered a 337px canvas against a declared 360px
   // floor, so the run's shape was off-screen in the default view. The rail must
-  // ship collapsed and expand only where the budget affords it.
+  // ship collapsed and expand only where the rendered canvas affords it.
+  //
+  // The client's decision is measured, not predicted, so this file no longer owns
+  // the arithmetic. What it still owns is the markup: an `open` attribute here
+  // would pre-empt the measurement entirely, and nothing downstream would notice.
   const railMatch = /<details\b[^>]*\bclass="stage-overview"[^>]*>/iu.exec(html);
   assert.ok(railMatch, "page must ship the eight-stage rail as a details element");
   assert.doesNotMatch(
     railMatch[0],
     /\sopen(?=[\s>=])/iu,
-    "stage rail must not hardcode `open`; the expanded state depends on viewport height",
-  );
-
-  const threshold = stageOverviewOpenMinViewportHeightPx(config.chromeBudget);
-  assert.ok(
-    html.includes(String(threshold)),
-    `page must carry the derived stage-rail threshold (${threshold}px) so the client applies the same budget as this test`,
+    "stage rail must not hardcode `open`; the expanded state depends on the rendered canvas height",
   );
 });
 
-test("the replay-open canvas floor is derived from the drawer's own cost", () => {
-  // A second declared floor could be tuned downward until a failing profile
-  // passed. Deriving it pins the concession to exactly the drawer's height.
+test("the page ships the canvas floor its client measures against", () => {
+  // The client compares the measured canvas height against
+  // `viewportBudget.minCanvasHeightPx`. If the serializer stopped shipping that
+  // field the comparison becomes `height >= undefined`, which is false at every
+  // viewport, so the rail would silently collapse everywhere and no arithmetic
+  // would look wrong. Assert the value reaches the browser, and that the client
+  // reads that exact key.
   const { chromeBudget } = config;
-  const drawerCost = chromeBudget.replayPanelHeightPx.open - chromeBudget.replayPanelHeightPx.collapsed;
+  const shippedFloor = /"?minCanvasHeightPx"?\s*:\s*(\d+)/u.exec(html);
+  assert.ok(shippedFloor, "page must serialize the canvas floor into its client budget");
   assert.equal(
-    replayOpenCanvasFloorPx(chromeBudget),
-    chromeBudget.minCanvasHeightPx - drawerCost,
-    "opening the replay drawer may cost the canvas the drawer's height and nothing more",
+    Number(shippedFloor[1]),
+    chromeBudget.minCanvasHeightPx,
+    "the floor the browser measures against must be the one config declares",
   );
-});
-
-test("chrome budget counts every band that renders above the graph canvas", () => {
-  // The budget that shipped before this contract summed four bands and omitted
-  // the eight-stage rail, the graph tool bar and the workspace row gaps, so it
-  // could not fail. Assert the sum reacts to each band instead of trusting the
-  // field list.
-  const { chromeBudget } = config;
-  const baseline = resolveChromeConsumedPx(chromeBudget, { dense: true, replayOpen: false, stageOverviewOpen: true });
-  const collapsedRail = resolveChromeConsumedPx(chromeBudget, {
-    dense: true,
-    replayOpen: false,
-    stageOverviewOpen: false,
-  });
-  assert.equal(
-    baseline - collapsedRail,
-    chromeBudget.stageOverviewHeightPx.open - chromeBudget.stageOverviewHeightPx.collapsed,
-    "consumed height must track the stage rail's expanded/collapsed delta",
-  );
-  assert.ok(
-    baseline > chromeBudget.topbarHeightPx
-      + chromeBudget.runContextHeightPx.dense
-      + chromeBudget.replayPanelHeightPx.collapsed
-      + chromeBudget.statusBarHeightPx,
-    "consumed height must exceed the four bands the original budget counted",
-  );
-  assert.ok(
-    chromeBudget.graphStageBarHeightPx > 0 && chromeBudget.workspaceRowGapCount > 0,
-    "the graph tool bar and workspace row gaps must be declared, not assumed away",
+  assert.match(
+    html,
+    /viewportBudget\.minCanvasHeightPx/u,
+    "the client's rail decision must read the shipped floor rather than a literal of its own",
   );
 });
 
@@ -305,46 +218,6 @@ test("inspector rail stays width-capped so extra horizontal space goes to the ca
       `${profile.label}: canvas must retain at least 900px after the inspector rail`,
     );
   }
-});
-
-test("an explicit stage-rail expansion costs the canvas exactly the rail's own height and nothing more", () => {
-  // The budget-driven default keeps the full canvas floor, but an explicit user
-  // expansion below the threshold pins the rail open for the rest of the session
-  // and the canvas pays for it. Left unbounded that is a floor with no contract:
-  // any future band could be charged to the same state. Derive the concession
-  // from the rail's own declared delta, exactly as the replay drawer does, so it
-  // cannot be tuned downward until a failing profile passes.
-  const { chromeBudget } = config;
-  const railCost = chromeBudget.stageOverviewHeightPx.open - chromeBudget.stageOverviewHeightPx.collapsed;
-  assert.equal(
-    stageRailExpandedCanvasFloorPx(chromeBudget),
-    chromeBudget.minCanvasHeightPx - railCost,
-    "expanding the stage rail may cost the canvas the rail's own height and nothing more",
-  );
-
-  const expanded = config.profiles
-    .filter((entry) => entry.expectDenseLayout)
-    .map((profile) => ({
-      profile,
-      budget: evaluateViewportChromeBudget(profile, chromeBudget, {
-        replayOpen: false,
-        dense: true,
-        stageOverviewOpen: true,
-      }),
-    }));
-  assert.ok(expanded.length > 0, "config must declare dense profiles for this obligation to apply to");
-  for (const { profile, budget } of expanded) {
-    assert.ok(
-      budget.canvasHeightPx >= stageRailExpandedCanvasFloorPx(chromeBudget),
-      `${profile.label}: a user-expanded rail leaves ${budget.canvasHeightPx}px, below the `
-        + `${stageRailExpandedCanvasFloorPx(chromeBudget)}px concession floor`,
-    );
-  }
-  assert.ok(
-    expanded.some(({ budget }) => budget.canvasHeightPx < chromeBudget.minCanvasHeightPx),
-    "at least one dense profile must fail the full canvas floor while the rail is user-expanded, otherwise the "
-      + "concession is decoration and must be deleted instead of asserted",
-  );
 });
 
 test("the replay drawer's open height comes from one authority in every band", () => {

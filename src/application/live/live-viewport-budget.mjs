@@ -1,28 +1,27 @@
 /**
- * Vertical space budget for the Meta_Kim Live control room graph canvas, plus the
- * replay dock's horizontal geometry.
+ * The graph canvas floor and the replay dock's geometry, for the Meta_Kim Live
+ * control room.
  *
- * The canvas is the default view, so the run's shape is only visible when the
- * canvas keeps a usable height. `config/live/viewport-profiles.json` has
- * declared `chromeBudget.minCanvasHeightPx` from the start, but the budget only
- * counted the topbar, run context, replay dock and status bar. Two bands sit
- * between the run context and the canvas and were never counted: the eight-stage
- * rail (`.stage-overview`, 101px while expanded) and the graph tool bar
- * (`.graph-stage-bar`, up to 95px once its controls wrap). The grid row gaps
- * were missing too. A budget that omits bands cannot fail, which is why the
- * contract test stayed green while a browser at 1024x768 rendered a 337px canvas
- * against a declared 360px floor.
+ * This module used to carry a predicted chrome inventory: a hand-measured height
+ * for every band that renders above the canvas, summed and subtracted from the
+ * window height to decide whether the eight-stage rail could afford to ship
+ * expanded. That model is gone, and not because its numbers were wrong. It was a
+ * second authority for a height the browser already computes -- `.main` gives the
+ * run-context band `auto` and the canvas `minmax(0, 1fr)`, so the layout was
+ * always dynamic and the inventory existed only to feed one JS comparison. Worse,
+ * it could not be right at every width: the `(max-width: 1180px)` gate restacks
+ * the run context, so one field named `dense` described two different band
+ * compositions and drifted from both.
  *
- * Every height here is a measured worst case rather than a CSS `min-height`.
- * `min-height` is a lower bound on what a band may occupy, so subtracting it
- * overstates what is left for the canvas -- exactly the direction that hides the
- * defect. The numbers live in config; this module only resolves them.
+ * The client now expands the rail, forces layout, reads the canvas back, and
+ * keeps the rail open only if what remains clears `minCanvasHeightPx`. A measured
+ * decision needs no band inventory, because it measures whatever actually
+ * rendered.
  *
- * The resolver returns one derived threshold,
- * `stageOverviewOpenMinViewportHeightPx`, instead of exporting the affordability
- * predicate itself. The control-room client script is serialized into a page
- * string and cannot import this module, so shipping a threshold keeps a single
- * implementation of the arithmetic; shipping a predicate would fork it.
+ * What survives is what production consumes: the floor the client compares
+ * against, and the two heights the stylesheet cannot derive from its own content
+ * because a collapsed row must cost what it renders rather than what it could
+ * expand to.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -45,11 +44,6 @@ function positiveInteger(value, label) {
   return value;
 }
 
-function nonNegativeInteger(value, label) {
-  if (!Number.isInteger(value) || value < 0) fail(`${label} must be a non-negative integer`);
-  return value;
-}
-
 function requiredObject(value, label) {
   if (!value || typeof value !== "object") fail(`${label} must be an object`);
   return value;
@@ -58,42 +52,24 @@ function requiredObject(value, label) {
 /**
  * Validate and freeze the chrome budget.
  *
- * The band names are deliberately `...HeightPx` rather than `...MinHeightPx`:
- * the previous name invited callers to supply a CSS floor, and a floor is the
- * wrong quantity for a subtraction that has to be conservative.
+ * Only three quantities remain, and each has exactly one consumer: the canvas
+ * floor the client measures against, and the two replay-drawer heights plus the
+ * status bar height the stylesheet needs as shared custom properties. A band the
+ * stylesheet sizes from its own content is deliberately absent -- declaring it
+ * here would put a number back in two places, which is the drift this module was
+ * trimmed to remove.
  */
 export function normalizeLiveChromeBudget(raw) {
   const budget = requiredObject(raw, "chromeBudget");
-  const runContext = requiredObject(budget.runContextHeightPx, "chromeBudget.runContextHeightPx");
-  const stageOverview = requiredObject(budget.stageOverviewHeightPx, "chromeBudget.stageOverviewHeightPx");
   const replay = requiredObject(budget.replayPanelHeightPx, "chromeBudget.replayPanelHeightPx");
   const normalized = Object.freeze({
-    topbarHeightPx: positiveInteger(budget.topbarHeightPx, "chromeBudget.topbarHeightPx"),
-    runContextHeightPx: Object.freeze({
-      dense: positiveInteger(runContext.dense, "chromeBudget.runContextHeightPx.dense"),
-      compact: positiveInteger(runContext.compact, "chromeBudget.runContextHeightPx.compact"),
-    }),
-    stageOverviewHeightPx: Object.freeze({
-      open: positiveInteger(stageOverview.open, "chromeBudget.stageOverviewHeightPx.open"),
-      collapsed: positiveInteger(stageOverview.collapsed, "chromeBudget.stageOverviewHeightPx.collapsed"),
-    }),
-    graphStageBarHeightPx: positiveInteger(budget.graphStageBarHeightPx, "chromeBudget.graphStageBarHeightPx"),
     replayPanelHeightPx: Object.freeze({
       collapsed: positiveInteger(replay.collapsed, "chromeBudget.replayPanelHeightPx.collapsed"),
       open: positiveInteger(replay.open, "chromeBudget.replayPanelHeightPx.open"),
     }),
     statusBarHeightPx: positiveInteger(budget.statusBarHeightPx, "chromeBudget.statusBarHeightPx"),
-    workspaceRowGapPx: nonNegativeInteger(budget.workspaceRowGapPx, "chromeBudget.workspaceRowGapPx"),
-    workspaceRowGapCount: nonNegativeInteger(budget.workspaceRowGapCount, "chromeBudget.workspaceRowGapCount"),
     minCanvasHeightPx: positiveInteger(budget.minCanvasHeightPx, "chromeBudget.minCanvasHeightPx"),
   });
-  if (normalized.stageOverviewHeightPx.collapsed >= normalized.stageOverviewHeightPx.open) {
-    fail(
-      "chromeBudget.stageOverviewHeightPx.collapsed must be smaller than .open, otherwise collapsing the stage rail "
-        + "cannot recover canvas height and the auto-collapse policy is a no-op",
-      "LIVE_VIEWPORT_BUDGET_COLLAPSE_USELESS",
-    );
-  }
   if (normalized.replayPanelHeightPx.collapsed >= normalized.replayPanelHeightPx.open) {
     fail(
       "chromeBudget.replayPanelHeightPx.collapsed must be smaller than .open",
@@ -103,106 +79,9 @@ export function normalizeLiveChromeBudget(raw) {
   return normalized;
 }
 
-/**
- * The floor that applies while the replay drawer is open.
- *
- * Derived rather than declared: opening the timeline is a user action that may
- * cost the canvas exactly the drawer's own extra height and nothing more. A
- * second literal in config could be tuned downward until a failing profile
- * passed, which is the failure mode this whole module exists to remove.
- */
-export function replayOpenCanvasFloorPx(chromeBudget) {
-  const drawerCost = chromeBudget.replayPanelHeightPx.open - chromeBudget.replayPanelHeightPx.collapsed;
-  return Math.max(1, chromeBudget.minCanvasHeightPx - drawerCost);
-}
-
-/**
- * The floor that applies while the eight-stage rail is expanded by explicit user
- * choice below the affordability threshold.
- *
- * Derived for the same reason as the replay drawer's floor: expanding the rail is
- * a user action that may cost the canvas exactly the rail's own extra height and
- * nothing more. The alternative -- overriding the user's explicit expansion --
- * would be a refusal rather than a degradation, and a second declared floor could
- * be tuned downward until a failing profile passed.
- */
-export function stageRailExpandedCanvasFloorPx(chromeBudget) {
-  const railCost = chromeBudget.stageOverviewHeightPx.open - chromeBudget.stageOverviewHeightPx.collapsed;
-  return Math.max(1, chromeBudget.minCanvasHeightPx - railCost);
-}
-
-/** Sum every band that competes with the canvas for vertical space. */
-export function resolveChromeConsumedPx(
-  chromeBudget,
-  { dense = true, replayOpen = false, stageOverviewOpen = true } = {},
-) {
-  return (
-    chromeBudget.topbarHeightPx
-    + (dense ? chromeBudget.runContextHeightPx.dense : chromeBudget.runContextHeightPx.compact)
-    + (stageOverviewOpen ? chromeBudget.stageOverviewHeightPx.open : chromeBudget.stageOverviewHeightPx.collapsed)
-    + chromeBudget.graphStageBarHeightPx
-    + (replayOpen ? chromeBudget.replayPanelHeightPx.open : chromeBudget.replayPanelHeightPx.collapsed)
-    + chromeBudget.statusBarHeightPx
-    + chromeBudget.workspaceRowGapPx * chromeBudget.workspaceRowGapCount
-  );
-}
-
-/**
- * Resolve the canvas height one layout state leaves, and whether it clears the
- * floor that applies to that state.
- */
-export function resolveGraphCanvasBudget(
-  { viewportHeightPx, profileId = null },
-  chromeBudget,
-  { dense = true, replayOpen = false, stageOverviewOpen = true } = {},
-) {
-  positiveInteger(viewportHeightPx, "viewportHeightPx");
-  const consumedPx = resolveChromeConsumedPx(chromeBudget, { dense, replayOpen, stageOverviewOpen });
-  const canvasHeightPx = viewportHeightPx - consumedPx;
-  const minCanvasHeightPx = replayOpen ? replayOpenCanvasFloorPx(chromeBudget) : chromeBudget.minCanvasHeightPx;
-  return Object.freeze({
-    profileId,
-    dense,
-    replayOpen,
-    stageOverviewOpen,
-    consumedPx,
-    canvasHeightPx,
-    minCanvasHeightPx,
-    fits: canvasHeightPx >= minCanvasHeightPx,
-  });
-}
-
-/**
- * The smallest viewport height at which the eight-stage rail can stay expanded
- * without pushing the canvas below its floor.
- *
- * This single number is what the shipped client script consumes. The rail then
- * ships collapsed and expands only where the height is affordable, so a short
- * viewport never renders a canvas too small to show the run.
- */
-export function stageOverviewOpenMinViewportHeightPx(chromeBudget) {
-  return (
-    resolveChromeConsumedPx(chromeBudget, { dense: true, replayOpen: false, stageOverviewOpen: true })
-    + chromeBudget.minCanvasHeightPx
-  );
-}
-
-/**
- * The layout state the control room actually ships at one viewport height:
- * the rail expands only when the budget affords it.
- */
-export function resolveDefaultLayoutState(viewportHeightPx, chromeBudget) {
-  positiveInteger(viewportHeightPx, "viewportHeightPx");
-  return Object.freeze({
-    stageOverviewOpen: viewportHeightPx >= stageOverviewOpenMinViewportHeightPx(chromeBudget),
-    replayOpen: false,
-  });
-}
-
 /** The budget facts the shipped page hands to its client script. */
 export function serializeViewportBudgetForClient(chromeBudget) {
   return Object.freeze({
-    stageOverviewOpenMinViewportHeightPx: stageOverviewOpenMinViewportHeightPx(chromeBudget),
     minCanvasHeightPx: chromeBudget.minCanvasHeightPx,
   });
 }

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "meta-kim-live-graph-layout-v1",
+  "comment": "Every distance the execution-graph layout uses, so the arrangement is computed from the canvas the browser actually reports rather than from literals typed into the page module. The defect this replaces: a parent with fifteen children was placed in one unwrapped row, producing a 4984x1180 scene against a measured 1651x334 canvas. That needs 0.257x, which is below the camera's 0.28 minScale, so the camera declared the graph unfittable, kept scale 1 with no translate, and left the owner chain and most of the row outside the viewport. Wrapping alone does not fix it: at that canvas height two rows score 0.192, worse than one row, because the owner chain stacked vertically already consumed 720px of a 671-829px height budget. The orientation is therefore chosen too, not just the column count.",
+  "card": {
+    "entityWidthPx": 252,
+    "stageWidthPx": 228,
+    "baseHeightPx": 112,
+    "capabilityRowHeightPx": 40,
+    "capabilitiesPerRow": 2,
+    "measuredMinHeightPx": 333
+  },
+  "defaultMode": "compact",
+  "modes": {
+    "compact": {
+      "childColumnStepPx": 328,
+      "childRowGapPx": 88,
+      "chainColumnStepPx": 328,
+      "chainRowGapPx": 104,
+      "chainToBlockGapPx": 28,
+      "entityColumnStepPx": 356,
+      "entityRowGapPx": 88,
+      "stageColumns": 4,
+      "stageColumnGapPx": 276,
+      "stageRowGapPx": 206
+    },
+    "flow": {
+      "childColumnStepPx": 356,
+      "childRowGapPx": 104,
+      "chainColumnStepPx": 356,
+      "chainRowGapPx": 124,
+      "chainToBlockGapPx": 44,
+      "entityColumnStepPx": 384,
+      "entityRowGapPx": 104,
+      "stageColumns": 8,
+      "stageColumnGapPx": 248,
+      "stageRowGapPx": 190
+    }
+  },
+  "scenePaddingPx": {
+    "top": 44,
+    "right": 96,
+    "bottom": 96,
+    "left": 44
+  },
+  "sceneMinimumPx": {
+    "entityWidth": 760,
+    "entityHeight": 420,
+    "stageWidth": 760,
+    "stageHeight": 300
+  },
+  "stageScenePaddingPx": {
+    "top": 38,
+    "right": 48,
+    "bottom": 42,
+    "left": 40,
+    "branchGap": 32
+  },
+  "renderedColumnGapPx": 88,
+  "fanout": {
+    "minimumChildren": 4,
+    "chainOrientations": ["chain-horizontal", "chain-vertical"]
+  },
+  "policyNotes": {
+    "card.measuredMinHeightPx": "The tallest node card measured in a browser on the run that exposed the defect: 333px at 1707x825 dpr 1.5. The previous floor was 220, which made the layout promise the camera a shorter block than the cards would occupy, so the fit was computed against bounds the render then invalidated. An optimistic floor is worse than a large one: it produces a scale the content does not honour.",
+    "card.baseHeightPx": "Card chrome above the capability grid. Height is baseHeightPx + ceil(capabilities / capabilitiesPerRow) * capabilityRowHeightPx, floored at measuredMinHeightPx.",
+    "card.capabilityRowHeightPx": "Height one row of capability chips adds to a card. It multiplies the row count in the height formula on card.baseHeightPx, so understating it makes the layout reserve a shorter card than the browser then renders, which is the same failure mode as an optimistic measuredMinHeightPx.",
+    "card.capabilitiesPerRow": "How many capability chips share one row inside a card. It divides the capability count in the same height formula, so raising it shortens cards and lowering it grows them. It is a layout input, not a purely visual choice.",
+    "card.entityWidthPx": "Width of an agent or worker card. All three column steps are validated against it, so this is the number that decides whether a grid can overlap: raising the width without raising the steps fails the load instead of rendering cards on top of each other.",
+    "card.stageWidthPx": "Width of a stage card in the eight-stage spine. Narrower than an entity card because a stage card carries a name and a state rather than a capability grid, which is what lets the spine fit more columns in the same canvas.",
+    "defaultMode": "Which of modes the canvas opens on before the viewer touches the toggle. It is validated against the mode names, so renaming a mode and forgetting this key fails the load rather than silently leaving the canvas on the page's own fallback.",
+    "modes": "The two arrangements the canvas toggle switches between, named after the page's own layoutMode values. compact is the default. These are two layout algorithms, not a tight-versus-loose spacing ladder: compact runs four spine columns and flow runs eight, which is why compact's stage gaps are the larger pair. Nothing orders one mode's steps against the other's, so the validator does not pretend to.",
+    "modes.*.chainToBlockGapPx": "Separation between the owner chain and the fanout block. In chain-horizontal orientation this is the horizontal gutter the edge bus runs down, so it must stay wide enough for a routed line plus its stroke.",
+    "modes.*.childColumnStepPx": "Centre-to-centre horizontal step between sibling columns. The validator requires it to exceed card.entityWidthPx, which makes an overlapping grid unrepresentable rather than something a reviewer has to notice.",
+    "modes.*.childRowGapPx": "Gap between rows of the sibling grid: block height is rows * cardHeight + (rows - 1) * this. It also caps renderedColumnGapPx, because the post-render pass may not push cards further apart than the lane the layout reserved for their edges.",
+    "modes.*.chainColumnStepPx": "Centre-to-centre horizontal step along the owner chain when the chain runs left to right. Validated against card.entityWidthPx for the same reason as the child step.",
+    "modes.*.chainRowGapPx": "Gap between owner-chain cards when the chain is stacked vertically. Only the chain-vertical orientation crosses it, so it does not participate in the horizontal arrangement's score.",
+    "modes.*.entityColumnStepPx": "Centre-to-centre horizontal step per dependency depth on the layered path — the arrangement used when no parent has enough children to be a fanout hub. Validated against card.entityWidthPx.",
+    "modes.*.entityRowGapPx": "Gap between cards stacked inside one depth lane on the layered path. Lane heights are computed from it and then centred against the tallest lane, so it changes vertical alignment and not only density.",
+    "modes.*.stageColumns": "How many stage cards share one row of the eight-stage spine. This is the value that differs most between the modes and is why their stage steps differ: four columns need wider steps than eight in the same canvas.",
+    "modes.*.stageColumnGapPx": "Horizontal step between stage columns. Despite the name it is multiplied by the column index rather than added between cards, so it is centre-to-centre and already includes the card width.",
+    "modes.*.stageRowGapPx": "Vertical step between spine rows, also multiplied by the row index rather than added between them. The branch block starts one branchGap below the last spine row, so this value moves the branches as well as the spine.",
+    "scenePaddingPx": "Scene margin around laid-out content. The left and top values also give the first row and column their routing lane, so an edge entering the top row from above has gutter to travel in; right and bottom are added to the furthest card to report the scene box, which is why they are the larger pair.",
+    "sceneMinimumPx": "Floors on the scene box the layout reports to the camera, applied with Math.max after the content is placed, so they bind only when a graph is smaller than the floor. Without them a one-node run would report a scene barely larger than its own card and the camera would magnify it. entityWidth and entityHeight cover the two entity arrangements; stageWidth and stageHeight are shorter because the spine carries no capability grids beneath it.",
+    "stageScenePaddingPx": "Scene margin for the stage-spine layout, kept separate from scenePaddingPx because the spine has no owner chain entering from the left and needs less gutter on that side. top and left are the origin the first spine card is placed at; right and bottom are added to the furthest card to report the scene box.",
+    "stageScenePaddingPx.branchGap": "Vertical separation between the last spine row and the first branch row. It is the only distance here that may legally be 0, because a run with no branches never crosses it, which is why the loader validates it as non-negative while the four sides must be positive.",
+    "renderedColumnGapPx": "Vertical separation enforced after the cards render and their real heights are known. It is deliberately smaller than the layout row gaps because it only has to keep measured boxes apart, not reserve a routing lane.",
+    "fanout.minimumChildren": "A parent with fewer children than this is laid out by the layered path instead. Below four siblings the grid search has nothing to choose and the layered arrangement reads the dependency depth more directly.",
+    "fanout.chainOrientations": "Both arrangements are scored and the higher fitted scale wins. chain-horizontal places the owner chain as a left-to-right spine with the child grid to its right; chain-vertical keeps the historical centred column above the grid. On a short wide canvas the horizontal chain wins by a wide margin because a vertical chain spends the scarce axis on two cards."
+  }
+}

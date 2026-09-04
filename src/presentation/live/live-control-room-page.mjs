@@ -30,6 +30,12 @@ import {
   serializeSemanticZoomResolver,
 } from "../../application/live/live-graph-camera.mjs";
 import {
+  loadLiveGraphLayoutPolicy,
+  serializeFanoutArrangementResolver,
+  serializeGraphLayoutPolicyForClient,
+  serializeNodeCardHeightResolver,
+} from "../../application/live/live-graph-layout.mjs";
+import {
   LIVE_DEFAULT_RECORD_ORIGIN,
   LIVE_RECORD_ORIGINS,
 } from "../../application/live/live-record-origin.mjs";
@@ -202,6 +208,21 @@ const OVERVIEW_CAMERA_SOURCE = serializeOverviewCameraResolver();
 const SEMANTIC_ZOOM_SOURCE = serializeSemanticZoomResolver();
 
 /**
+ * Every distance the execution graph is laid out with.
+ *
+ * The arrangement used to be typed here as literals, and the high-fanout branch
+ * placed all siblings in one unwrapped row no matter how much canvas the browser
+ * reported. The search that replaces it lives in the application layer so the
+ * tests can exercise the same code the browser runs; the client script is inlined
+ * into a page string and cannot import it, so the resolvers arrive as serialized
+ * source rather than as a second copy written by hand.
+ */
+const PAGE_GRAPH_LAYOUT = loadLiveGraphLayoutPolicy();
+const GRAPH_LAYOUT_LITERAL = JSON.stringify(serializeGraphLayoutPolicyForClient(PAGE_GRAPH_LAYOUT));
+const NODE_CARD_HEIGHT_SOURCE = serializeNodeCardHeightResolver();
+const FANOUT_ARRANGEMENT_SOURCE = serializeFanoutArrangementResolver();
+
+/**
  * Which run the page opens on when the URL names none.
  *
  * The client had its own fallback chain — first live project, then first
@@ -343,6 +364,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const GRAPH_CAMERA = ${GRAPH_CAMERA_LITERAL};
   const resolveOverviewCamera = ${OVERVIEW_CAMERA_SOURCE};
   const resolveSemanticZoom = ${SEMANTIC_ZOOM_SOURCE};
+
+  const GRAPH_LAYOUT = ${GRAPH_LAYOUT_LITERAL};
+  const resolveNodeCardHeight = ${NODE_CARD_HEIGHT_SOURCE};
+  const resolveFanoutArrangement = ${FANOUT_ARRANGEMENT_SOURCE};
 
   const DEFAULT_SELECTION = ${DEFAULT_SELECTION_LITERAL};
   ${DEFAULT_SELECTION_SOURCE}
@@ -2106,10 +2131,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function estimatedNodeCardHeight(node) {
-    const capabilityRows = Math.ceil(nodeCapabilityCount(node) / 2);
-    // Reserve the measured desktop height so the centred fanout child does
-    // not get nudged onto a different row after the cards render.
-    return Math.max(220, 112 + capabilityRows * 40);
+    return resolveNodeCardHeight(nodeCapabilityCount(node), GRAPH_LAYOUT.card);
+  }
+
+  /**
+   * What the browser says the canvas is, with no substitute when it says nothing.
+   *
+   * A zero here is honest: the arrangement search has its own declared fallback
+   * for an unmeasurable canvas, and inventing a plausible box at this call site
+   * would hide the fact that the layout never saw the real one.
+   */
+  function graphCanvasBox() {
+    return { width: graph?.clientWidth || 0, height: graph?.clientHeight || 0 };
   }
 
   function layoutGraph(snapshot) {
@@ -2121,16 +2154,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const stageFor = new Map();
     const branchSlots = new Map();
     const positions = new Map();
-    const cardWidth = 228;
-    const entityCardWidth = 252;
-    const entityColumnStep = layoutMode === "compact" ? 356 : 384;
-    const entityRowGap = layoutMode === "compact" ? 88 : 104;
-    const spineColumns = layoutMode === "compact" ? 4 : 8;
-    const columnGap = layoutMode === "compact" ? 276 : 248;
-    const rowGap = layoutMode === "compact" ? 206 : 190;
-    const top = 38;
+    const mode = GRAPH_LAYOUT.modes[layoutMode] || GRAPH_LAYOUT.modes[GRAPH_LAYOUT.defaultMode];
+    const scenePad = GRAPH_LAYOUT.scenePaddingPx;
+    const stagePad = GRAPH_LAYOUT.stageScenePaddingPx;
+    const sceneMin = GRAPH_LAYOUT.sceneMinimumPx;
+    const cardWidth = GRAPH_LAYOUT.card.stageWidthPx;
+    const entityCardWidth = GRAPH_LAYOUT.card.entityWidthPx;
+    const entityColumnStep = mode.entityColumnStepPx;
+    const entityRowGap = mode.entityRowGapPx;
+    const spineColumns = mode.stageColumns;
+    const columnGap = mode.stageColumnGapPx;
+    const rowGap = mode.stageRowGapPx;
+    const top = stagePad.top;
     const spineRows = Math.ceil(STAGE_ORDER.length / spineColumns);
-    const branchTop = top + spineRows * rowGap + 32;
+    const branchTop = top + spineRows * rowGap + stagePad.branchGap;
     // A live projection is an entity graph whenever it has explicit edges or
     // parent links. Older snapshots omitted kind on some nodes, which made
     // the previous heuristic fall through to the stage layout and stack all
@@ -2140,10 +2177,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
       || nodes.some((node) => ["agent", "worker", "workflow", "group", "main_agent", "subagent"].includes(node.kind));
 
     if (entityGraph) {
-      // A high-fanout execution packet reads best as an organisation chart:
-      // the owner chain stays centred above one ordered row of parallel work.
-      // Keeping siblings on a single row makes their edge order monotonic, so
-      // branch curves cannot cross one another or pass behind sibling cards.
+      // A high-fanout execution packet reads as an owner chain plus a block of
+      // parallel work. How that block is shaped is computed, not typed: the
+      // arrangement search scores every column count against both chain
+      // orientations and returns the one that needs the least zoom, because the
+      // previous single unwrapped row produced a scene the camera could not fit
+      // at all and left most of the run outside the viewport.
+      //
+      // Siblings are filled row by row, so edge order inside a row stays
+      // monotonic and sibling curves still cannot cross one another.
       const childrenByParent = new Map();
       for (const edge of graphEdges) {
         const children = childrenByParent.get(edge.from) || [];
@@ -2151,7 +2193,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         childrenByParent.set(edge.from, children.filter(Boolean));
       }
       const fanoutEntry = [...childrenByParent.entries()]
-        .filter(([, children]) => children.length >= 4)
+        .filter(([, children]) => children.length >= GRAPH_LAYOUT.fanout.minimumChildren)
         .sort((left, right) => right[1].length - left[1].length)[0];
       if (fanoutEntry) {
         const [hubId, fanoutChildren] = fanoutEntry;
@@ -2166,34 +2208,77 @@ const CLIENT_SCRIPT = String.raw`(() => {
         const accountedIds = new Set([...ancestorIds, hubId, ...fanoutChildren.map((node) => node.id)]);
         if (accountedIds.size === nodes.length) {
           fanoutChildren.sort((left, right) => String(left.firstAt || "").localeCompare(String(right.firstAt || "")) || left.label.localeCompare(right.label));
-          const childStep = layoutMode === "compact" ? 328 : 356;
-          const childStartX = 44;
-          const childSpan = (fanoutChildren.length - 1) * childStep + entityCardWidth;
-          const centerX = childStartX + childSpan / 2 - entityCardWidth / 2;
           const chain = [...ancestorIds.map((id) => nodeById.get(id)).filter(Boolean), nodeById.get(hubId)].filter(Boolean);
-          let chainY = 44;
-          for (const node of chain) {
+          const childRowHeight = Math.max(...fanoutChildren.map(estimatedNodeCardHeight));
+          const chainCardHeight = chain.length ? Math.max(...chain.map(estimatedNodeCardHeight)) : 0;
+          const arrangement = resolveFanoutArrangement({
+            childCount: fanoutChildren.length,
+            chainLength: chain.length,
+            mode: layoutMode,
+            canvas: graphCanvasBox(),
+            inset: graphFitInset(),
+            childWidth: entityCardWidth,
+            childHeight: childRowHeight,
+            chainWidth: entityCardWidth,
+            chainHeight: chainCardHeight,
+          }, GRAPH_LAYOUT);
+          const horizontalChain = arrangement.orientation === "chain-horizontal";
+          const rowStep = childRowHeight + mode.childRowGapPx;
+          // Where a parent-to-child line is allowed to travel. Both orientations
+          // reserve empty space for it: the horizontal chain routes down the
+          // gutter between the chain and the block, the vertical chain drops
+          // straight out of the chain's own centre. Either way the line reaches a
+          // child through the lane above its row rather than across the siblings
+          // sharing that row.
+          const blockX = horizontalChain
+            ? scenePad.left + arrangement.chainWidth + arrangement.chainGap
+            : scenePad.left + Math.max(0, arrangement.chainWidth - arrangement.blockWidth) / 2;
+          const blockY = horizontalChain
+            ? scenePad.top
+            : scenePad.top + arrangement.chainHeight + arrangement.chainGap;
+          const verticalChainX = scenePad.left + Math.max(0, arrangement.blockWidth - entityCardWidth) / 2;
+          const busX = horizontalChain
+            ? blockX - arrangement.chainGap / 2
+            : verticalChainX + entityCardWidth / 2;
+          const firstRowGapAbove = horizontalChain ? scenePad.top : arrangement.chainGap;
+          let chainY = scenePad.top;
+          chain.forEach((node, index) => {
             const height = estimatedNodeCardHeight(node);
-            positions.set(node.id, { x: centerX, y: chainY, width: entityCardWidth, height, spine: true });
-            chainY += height + (layoutMode === "compact" ? 104 : 124);
-          }
-          const childY = chainY + (layoutMode === "compact" ? 28 : 44);
-          fanoutChildren.forEach((node, index) => {
+            const chainX = horizontalChain
+              ? scenePad.left + index * mode.chainColumnStepPx
+              : verticalChainX;
             positions.set(node.id, {
-              x: childStartX + index * childStep,
-              y: childY,
+              x: chainX,
+              y: horizontalChain ? scenePad.top : chainY,
+              width: entityCardWidth,
+              height,
+              spine: true,
+            });
+            chainY += height + mode.chainRowGapPx;
+          });
+          fanoutChildren.forEach((node, index) => {
+            const column = index % arrangement.columns;
+            const row = Math.floor(index / arrangement.columns);
+            const rowTop = blockY + row * rowStep;
+            positions.set(node.id, {
+              x: blockX + column * mode.childColumnStepPx,
+              y: rowTop,
               width: entityCardWidth,
               height: estimatedNodeCardHeight(node),
               spine: false,
+              column,
+              row,
+              busX,
+              laneY: rowTop - (row === 0 ? firstRowGapAbove : mode.childRowGapPx) / 2,
             });
           });
-          const maxChildHeight = Math.max(...fanoutChildren.map(estimatedNodeCardHeight));
           return {
             kind: "fanout",
+            arrangement,
             positions,
             bounds: {
-              width: Math.max(760, childStartX + childSpan + 96),
-              height: Math.max(420, childY + maxChildHeight + 96),
+              width: Math.max(sceneMin.entityWidth, arrangement.sceneWidth),
+              height: Math.max(sceneMin.entityHeight, arrangement.sceneHeight),
             },
           };
         }
@@ -2228,8 +2313,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       for (const [depth, lane] of orderedLanes) {
         lane.sort((left, right) => String(left.firstAt || "").localeCompare(String(right.firstAt || "")) || left.label.localeCompare(right.label));
         const laneHeight = laneHeights.get(depth) || estimatedNodeCardHeight(lane[0]);
-        const laneX = 52 + depth * entityColumnStep;
-        let laneY = 44 + (maxLaneHeight - laneHeight) / 2;
+        const laneX = scenePad.left + depth * entityColumnStep;
+        let laneY = scenePad.top + (maxLaneHeight - laneHeight) / 2;
         lane.forEach((node) => {
           const height = estimatedNodeCardHeight(node);
           positions.set(node.id, {
@@ -2251,7 +2336,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return {
         kind: "layered",
         positions,
-        bounds: { width: Math.max(760, maxX + 96), height: Math.max(420, maxY + 96) },
+        bounds: {
+          width: Math.max(sceneMin.entityWidth, maxX + scenePad.right),
+          height: Math.max(sceneMin.entityHeight, maxY + scenePad.bottom),
+        },
       };
     }
 
@@ -2283,7 +2371,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         const withinRow = column % spineColumns;
         const visualColumn = row % 2 === 0 ? withinRow : spineColumns - 1 - withinRow;
         positions.set(node.id, {
-          x: 40 + visualColumn * columnGap,
+          x: stagePad.left + visualColumn * columnGap,
           y: top + row * rowGap,
           width: cardWidth,
           height: estimatedNodeCardHeight(node),
@@ -2301,7 +2389,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
           Math.min(spineColumns - 1, visualColumn + branchDirection * slot),
         );
         positions.set(node.id, {
-          x: 40 + branchColumn * columnGap,
+          x: stagePad.left + branchColumn * columnGap,
           y: branchTop,
           width: cardWidth,
           height: estimatedNodeCardHeight(node),
@@ -2320,13 +2408,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
       kind: "stage",
       positions,
       bounds: {
-        width: Math.max(760, maxX + 48),
-        height: Math.max(300, maxY + 42),
+        width: Math.max(sceneMin.stageWidth, maxX + stagePad.right),
+        height: Math.max(sceneMin.stageHeight, maxY + stagePad.bottom),
       },
     };
   }
 
   function syncLayoutToRenderedCards(layout) {
+    const scenePad = GRAPH_LAYOUT.scenePaddingPx;
+    const sceneMin = GRAPH_LAYOUT.sceneMinimumPx;
     const columns = new Map();
     for (const [nodeId, position] of layout.positions) {
       const card = graphState.nodeElements.get(nodeId);
@@ -2339,11 +2429,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
     for (const column of columns.values()) {
       column.sort((left, right) => left.position.y - right.position.y);
       let nextY = column[0]?.position.y || 0;
+      let previousBottom = null;
       for (const item of column) {
         item.position.y = Math.max(item.position.y, nextY);
         item.card.style.top = item.position.y + "px";
         item.card.style.minHeight = item.position.height + "px";
-        nextY = item.position.y + item.position.height + 88;
+        // A routing lane reserved before the cards were measured can end up
+        // inside the card above it once that card turns out taller than the
+        // layout budgeted, which would send the horizontal run straight across
+        // it. Re-centre the lane in the gap that actually exists.
+        if (previousBottom !== null && Number.isFinite(item.position.laneY)) {
+          item.position.laneY = (previousBottom + item.position.y) / 2;
+        }
+        previousBottom = item.position.y + item.position.height;
+        nextY = previousBottom + GRAPH_LAYOUT.renderedColumnGapPx;
       }
     }
     let maxX = 0;
@@ -2352,7 +2451,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       maxX = Math.max(maxX, position.x + position.width);
       maxY = Math.max(maxY, position.y + position.height);
     }
-    layout.bounds = { width: Math.max(760, maxX + 96), height: Math.max(420, maxY + 96) };
+    layout.bounds = {
+      width: Math.max(sceneMin.entityWidth, maxX + scenePad.right),
+      height: Math.max(sceneMin.entityHeight, maxY + scenePad.bottom),
+    };
     graphState.bounds = layout.bounds;
     if (graphScene) {
       graphScene.style.width = layout.bounds.width + "px";
@@ -2378,6 +2480,36 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const toCenterY = to.y + to.height / 2;
     const deltaX = toCenterX - fromCenterX;
     const deltaY = toCenterY - fromCenterY;
+    // A child in the searched grid is reached along the gutters the arrangement
+    // reserved: down or across to the routing bus, along the lane above the
+    // child's row, then straight down into it. A curve drawn corner to corner
+    // would pass behind the siblings sharing that row.
+    if (Number.isFinite(to.busX) && Number.isFinite(to.laneY)) {
+      const busX = to.busX;
+      const x2 = toCenterX;
+      const y2 = to.y;
+      const busRunsThroughSource = busX >= from.x && busX <= from.x + from.width;
+      if (busRunsThroughSource) {
+        const y1 = from.y + from.height;
+        return {
+          x1: busX,
+          y1,
+          x2,
+          y2,
+          path: "M " + busX + " " + y1 + " V " + to.laneY + " H " + x2 + " V " + y2,
+        };
+      }
+      const exitRight = busX > from.x;
+      const x1 = exitRight ? from.x + from.width : from.x;
+      const y1 = fromCenterY;
+      return {
+        x1,
+        y1,
+        x2,
+        y2,
+        path: "M " + x1 + " " + y1 + " H " + busX + " V " + to.laneY + " H " + x2 + " V " + y2,
+      };
+    }
     const vertical = (ports.layoutKind === "fanout" && deltaY >= 0 && from.spine === true && to.spine === false)
       || Math.abs(deltaY) > Math.abs(deltaX) * .72;
     if (vertical) {
@@ -5163,23 +5295,47 @@ const CLIENT_SCRIPT = String.raw`(() => {
   });
   /**
    * The eight-stage rail is a disclosure widget whose expanded height competes
-   * with the graph canvas. Its default state is resolved from the same measured
-   * chrome budget the viewport contract asserts, so a short viewport never opens
-   * with the run's shape pushed off-screen. An explicit user toggle wins for the
-   * rest of the session and is deliberately not persisted: a stored preference
-   * would reintroduce the too-small canvas on the next visit to a short display.
+   * with the graph canvas. Its default state used to be predicted by comparing
+   * the window height against a sum of chrome band heights written down in
+   * config. That sum was a second authority for a height the browser already
+   * knows, and it could not be right at every width, because a media gate
+   * restacks the run-context band and changes the composition the sum describes.
+   *
+   * The state is now decided from the canvas the page actually rendered: expand
+   * the rail, force layout, read the canvas back, and keep the rail open only if
+   * what is left still clears the canvas floor. Opening and measuring inside one
+   * task costs no visible flicker, because forcing layout does not paint. An
+   * explicit user toggle wins for the rest of the session and is deliberately
+   * not persisted: a stored preference would reintroduce the too-small canvas on
+   * the next visit to a short display.
    */
   const stageOverview = app.querySelector("details.stage-overview");
   const viewportBudget = ${VIEWPORT_BUDGET_LITERAL};
   let stageRailUserChoice = null;
   let stageRailBudgetState = null;
 
+  function resolveStageRailOpenState({ rail, canvas, minCanvasHeightPx, reflow }) {
+    rail.open = true;
+    reflow();
+    const openCanvasHeightPx = canvas.clientHeight;
+    const open = openCanvasHeightPx >= minCanvasHeightPx;
+    if (rail.open !== open) rail.open = open;
+    return { open, openCanvasHeightPx };
+  }
+
   function applyStageRailBudget() {
-    if (!stageOverview || stageRailUserChoice !== null) return;
-    const next = window.innerHeight >= viewportBudget.stageOverviewOpenMinViewportHeightPx;
-    stageRailBudgetState = next;
-    if (stageOverview.open === next) return;
-    stageOverview.open = next;
+    if (!stageOverview || !graph || stageRailUserChoice !== null) return;
+    const previous = stageOverview.open;
+    const decision = resolveStageRailOpenState({
+      rail: stageOverview,
+      canvas: graph,
+      minCanvasHeightPx: viewportBudget.minCanvasHeightPx,
+      reflow: () => {
+        void graph.offsetHeight;
+      },
+    });
+    stageRailBudgetState = decision.open;
+    if (decision.open === previous) return;
     reconcileCamera();
   }
 
@@ -5273,7 +5429,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 })();`;
 
 const GRAPH_FIRST_CSS = String.raw`
-:root { color-scheme: dark; --ink: #0b0e14; --panel: #111620; --panel-2: #151b26; --completion: #68a4ff; --completion-bright: #a7c7ff; --accent: #4fd1c5; --running: #4fd1c5; --green: #63ca9b; --amber: #d8a84e; --dim: #606b7d; --line-soft: #1d2634; --line: #273043; --line-strong: #3a465c; --text: #e8edf5; --muted: #929db0; --danger: #df7a8f; --radius-sm: 7px; --radius: 11px; --clamp-lines-title: 2; --clamp-lines-hero: 3; ${TYPOGRAPHY_TOKENS} ${SPACING_TOKENS} ${CAMERA_LEGIBILITY_TOKENS} ${CHROME_BUDGET_TOKENS} ${DOCK_BUDGET_TOKENS} font-family: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; }
+:root { color-scheme: dark; --ink: #0b0e14; --panel: #111620; --panel-2: #151b26; --completion: #68a4ff; --completion-bright: #a7c7ff; --accent: #4fd1c5; --running: #4fd1c5; --green: #63ca9b; --amber: #d8a84e; --dim: #606b7d; --edge-ink-dim: #6b7a94; --edge-ink-idle: #79899f; --line-soft: #1d2634; --line: #273043; --line-strong: #3a465c; --text: #e8edf5; --muted: #929db0; --danger: #df7a8f; --radius-sm: 7px; --radius: 11px; --clamp-lines-title: 2; --clamp-lines-hero: 3; ${TYPOGRAPHY_TOKENS} ${SPACING_TOKENS} ${CAMERA_LEGIBILITY_TOKENS} ${CHROME_BUDGET_TOKENS} ${DOCK_BUDGET_TOKENS} font-family: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
 body { font-size: var(--fs-body); letter-spacing: 0; }
@@ -5324,7 +5480,7 @@ button { color: inherit; }
 .work-surface-view { min-width: 0; min-height: 0; overflow: auto; background: #0f1623; }
 .work-surface-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-roomy); padding: var(--sp-roomy) var(--sp-section); border-bottom: 1px solid var(--line); background: #101725; }
 .work-surface-header h2 { margin: 0; color: var(--text); font-size: var(--fs-view-title); }
-.work-surface-header p { max-width: 72ch; margin: var(--sp-snug) 0 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); font-family: monospace; }
+.work-surface-header p { max-width: 72ch; margin: var(--sp-cozy) 0 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); font-family: monospace; }
 .surface-state { flex: 0 0 auto; padding: var(--sp-tight) var(--sp-snug); border: 1px solid #385275; border-radius: var(--radius-sm); color: var(--completion-bright); background: rgba(91,140,255,.08); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
 .repository-view { display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .repository-layout { display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); min-height: 0; }
@@ -5350,8 +5506,9 @@ button { color: inherit; }
 .company-session-rail { border-right: 1px solid var(--line); }
 .company-context-panel { border-left: 1px solid var(--line); }
 .company-rail-header, .company-context-header, .company-board-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-default); min-height: 66px; padding: var(--sp-default) var(--sp-default); border-bottom: 1px solid var(--line); background: #0f1621; }
+.company-header-heading { min-width: 0; }
 .company-rail-header h2, .company-context-header h2, .company-board-header h2 { min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: var(--fs-view-title); text-overflow: ellipsis; white-space: nowrap; }
-.company-board-header p { max-width: 72ch; margin: var(--sp-tight) 0 0; overflow: hidden; color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
+.company-board-header p { min-width: 0; max-width: 72ch; margin: var(--sp-cozy) 0 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--clamp-lines-title); overflow: hidden; color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-normal); font-family: monospace; white-space: normal; overflow-wrap: anywhere; }
 .company-board-actions { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-snug); }
 .workspace-secondary-button { min-height: 30px; padding: 0 var(--sp-cozy); border: 1px solid var(--line); border-radius: var(--radius-sm); background: #121a27; color: var(--muted); font-size: var(--fs-label); cursor: pointer; }
 .workspace-secondary-button:hover, .workspace-secondary-button:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
@@ -5428,13 +5585,33 @@ button { color: inherit; }
 .graph-canvas[data-panning="true"] { cursor: grabbing; }
 .graph-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform .16s ease-out; }
 .edge-layer, .node-list { position: absolute; inset: 0; width: 100%; height: 100%; }
-.edge { fill: none; stroke: #53647e; stroke-width: 1.5; opacity: .72; }
+/*
+ * Edge ink is held in two ordered tokens rather than per-rule hexes because the
+ * obligation is a ratio, not a colour: a graph edge is a non-text graphical object,
+ * so it owes 3:1 against what it is drawn on. What it is drawn on is not the fill
+ * at the top of this sheet — the desktop band re-declares the canvas to #0e151f and
+ * the canvas paints a 28px grid, so the binding background is a grid line over the
+ * desktop fill. Measured there, the previous values were 1.28 (structural), 2.00
+ * (base) and 1.41 (queued): all three failed, and raising opacity alone could not
+ * fix them because #40506a tops out at 1.96. Opacity is pinned at 1 on every rule
+ * below so it cannot quietly re-enter the ratio later.
+ */
+.edge { fill: none; stroke: var(--edge-ink-idle); stroke-width: 1.5; opacity: 1; }
 .edge-running { animation: none; }
-.edge[data-edge-kind="contains"], .edge-structural { stroke: #40506a; stroke-width: 1.25; stroke-dasharray: 2 9; opacity: .4; animation: none; }
-.edge[data-stage-focus="recorded"] { stroke: #8f753d; stroke-width: 2.1; opacity: .88; }
+/*
+ * Dots, not dashes: the legend promises 点线 for structural ownership, so the 2px
+ * dot length is kept and only the gap closes. The non-scaling-stroke vector effect
+ * holds the pattern in screen units, so at the graph's ~0.31 camera scale this is
+ * literally 2px on / 4px off — duty cycle is a legibility axis of its own, and 18%
+ * of a hairline stayed hard to follow even once the ink cleared 3:1.
+ */
+.edge[data-edge-kind="contains"], .edge-structural { stroke: var(--edge-ink-dim); stroke-width: 1.25; stroke-dasharray: 2 4; opacity: 1; animation: none; }
+/* 3.12 at the old .88, inside the margin of error on how much of a grid line a dot covers. */
+.edge[data-stage-focus="recorded"] { stroke: #8f753d; stroke-width: 2.1; opacity: 1; }
 .edge[data-stage-focus="live"], .edge-running { stroke: #3faaa8; stroke-width: 2.35; opacity: .95; }
 .edge-completed { stroke: var(--green); stroke-width: 2.1; stroke-dasharray: none; opacity: .9; }
-.edge-skipped, .edge-queued { stroke: #53647e; stroke-width: 1.35; stroke-dasharray: 5 9; opacity: .38; }
+/* Same dim ink as structural; the long dash and the heavier stroke carry the difference. */
+.edge-skipped, .edge-queued { stroke: var(--edge-ink-dim); stroke-width: 1.35; stroke-dasharray: 5 9; opacity: 1; }
 .edge-failed, .edge-in-doubt { stroke: var(--danger); }
 .edge-blocked { stroke: var(--amber); stroke-width: 2.1; stroke-dasharray: 3 6; opacity: .9; }
 .edge-effects { pointer-events: none; }
@@ -5882,11 +6059,11 @@ export function renderLiveControlRoomPage({
         <section class="work-surface-view workspace-view" id="workspace-view" role="tabpanel" aria-labelledby="work-view-workspace" data-live-workspace-view hidden>
           <div class="company-workspace">
             <aside class="company-session-rail" aria-labelledby="workspace-sessions-title">
-              <header class="company-rail-header"><div><span class="context-kicker" data-i18n-en="Chats" data-i18n-zh="任务与会话">任务与会话</span><h2 id="workspace-sessions-title" data-i18n-en="Recent work" data-i18n-zh="最近工作">最近工作</h2></div><button class="workspace-secondary-button" type="button" data-live-workspace-open-sessions data-i18n-en="All runs" data-i18n-zh="全部运行">全部运行</button></header>
+              <header class="company-rail-header"><div class="company-header-heading"><span class="context-kicker" data-i18n-en="Chats" data-i18n-zh="任务与会话">任务与会话</span><h2 id="workspace-sessions-title" data-i18n-en="Recent work" data-i18n-zh="最近工作">最近工作</h2></div><button class="workspace-secondary-button" type="button" data-live-workspace-open-sessions data-i18n-en="All runs" data-i18n-zh="全部运行">全部运行</button></header>
               <div class="workspace-session-list" data-live-workspace-session-list role="list" aria-label="Recent governed work"></div>
             </aside>
             <main class="company-board-shell">
-              <header class="company-board-header"><div><span class="context-kicker" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</span><h2 data-live-workspace-title>正在等待任务</h2><p data-live-workspace-boundary>等待真实运行数据</p></div><div class="company-board-actions"><span class="surface-state" data-i18n-en="Run-scoped" data-i18n-zh="运行范围">运行范围</span><button class="workspace-secondary-button" type="button" data-live-workspace-open-run-map data-i18n-en="Run map" data-i18n-zh="查看运行图">查看运行图</button></div></header>
+              <header class="company-board-header"><div class="company-header-heading"><span class="context-kicker" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</span><h2 data-live-workspace-title>正在等待任务</h2><p data-live-workspace-boundary>等待真实运行数据</p></div><div class="company-board-actions"><span class="surface-state" data-i18n-en="Run-scoped" data-i18n-zh="运行范围">运行范围</span><button class="workspace-secondary-button" type="button" data-live-workspace-open-run-map data-i18n-en="Run map" data-i18n-zh="查看运行图">查看运行图</button></div></header>
               <div class="company-board" data-live-workspace-board aria-label="Run work-item board"></div>
             </main>
             <aside class="company-context-panel" aria-labelledby="workspace-detail-title">

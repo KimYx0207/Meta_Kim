@@ -4,22 +4,18 @@
  * Pure functions only. Profiles and chrome budgets arrive as injected data so
  * that no resolution, breakpoint, or panel height is hardcoded here. The
  * evaluator resolves which top-level `@media` blocks of a stylesheet apply to a
- * declared profile, and whether the remaining vertical space still fits the
- * graph canvas.
+ * declared profile.
  *
  * The media-query machinery is verification-only, which is why it sits beside its
  * test rather than under src/: the control room emits its own media queries and
- * nothing in the shipped tree reads a viewport profile. The chrome budget is the
- * exception. `src/presentation/live/live-control-room-page.mjs` now consumes it to
- * decide whether the eight-stage rail can afford to ship expanded, so the budget
- * arithmetic lives in `src/application/live/live-viewport-budget.mjs` and this
- * module delegates to it. Keeping a second copy here is what let the budget omit
- * two chrome bands while the contract test stayed green.
+ * nothing in the shipped tree reads a viewport profile.
+ *
+ * This module used to also compute the vertical space left for the canvas after
+ * chrome, by delegating to a predicted band inventory. That inventory is gone --
+ * the client measures the rendered canvas instead -- so the only budget work left
+ * here is validating the three quantities production still consumes.
  */
-import {
-  normalizeLiveChromeBudget,
-  resolveGraphCanvasBudget,
-} from "../../src/application/live/live-viewport-budget.mjs";
+import { normalizeLiveChromeBudget } from "../../src/application/live/live-viewport-budget.mjs";
 
 export const LIVE_VIEWPORT_PROFILES_SCHEMA_VERSION = "meta-kim-live-viewport-profiles-v1";
 
@@ -155,19 +151,3 @@ export function resolveApplicableMediaBlocks(css, profile) {
     .filter((block) => block.applies);
 }
 
-/**
- * Compute the vertical space left for the graph canvas after fixed chrome.
- * `replayOpen` selects the expanded replay drawer height; `stageOverviewOpen`
- * selects the expanded eight-stage rail.
- */
-export function evaluateViewportChromeBudget(
-  profile,
-  chromeBudget,
-  { replayOpen = false, dense = true, stageOverviewOpen = true } = {},
-) {
-  return resolveGraphCanvasBudget(
-    { viewportHeightPx: profile.heightPx, profileId: profile.id },
-    chromeBudget,
-    { dense, replayOpen, stageOverviewOpen },
-  );
-}

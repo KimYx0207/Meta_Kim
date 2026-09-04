@@ -58,6 +58,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/application/live/live-default-selection.mjs",
   "src/application/live/live-display-format.mjs",
   "src/application/live/live-graph-camera.mjs",
+  "src/application/live/live-graph-layout.mjs",
   "src/application/live/live-hub-lifecycle-budget.mjs",
   "src/application/live/live-projection-backfill-policy.mjs",
   "src/application/live/live-record-origin.mjs",
