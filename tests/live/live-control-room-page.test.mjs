@@ -11,6 +11,8 @@ import {
 } from "../../src/application/live/live-default-selection.mjs";
 import {
   loadLiveGraphLayoutPolicy,
+  resolveFanoutArrangement,
+  resolveNodeCardHeight,
   serializeGraphLayoutPolicyForClient,
 } from "../../src/application/live/live-graph-layout.mjs";
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
@@ -2056,7 +2058,13 @@ test("lays out worker and workflow entities by spawn depth with a v1 serpentine 
   assert.match(html, /const cardWidth\s*=\s*GRAPH_LAYOUT\.card\.stageWidthPx/u);
   assert.match(html, /function estimatedNodeCardHeight\(node\)/u);
   assert.match(html, /resolveNodeCardHeight\(nodeCapabilityCount\(node\), GRAPH_LAYOUT\.card\)/u);
-  assert.match(html, /depthFor\(parentId, seen\) \+ 1/u);
+  // The claim that used to live here matched the source line `depthFor(parentId,
+  // seen) + 1`. That expression is gone, and it was never the claim worth making:
+  // it read as "one deeper than the parent" while the parent it consumed was
+  // whichever edge happened to land last in the array. The behaviour it was
+  // reaching for -- one more than the deepest thing upstream, over every edge --
+  // is asserted directly against the shipped helper in "ranks each node one step
+  // past the deepest thing upstream of it".
   assert.match(html, /const orderedLanes\s*=\s*\[\.\.\.lanes\.entries\(\)\]\.sort/u);
   assert.match(html, /const maxLaneHeight\s*=\s*Math\.max\(estimatedNodeCardHeight\(nodes\[0\]\), \.\.\.laneHeights\.values\(\)\)/u);
   assert.match(html, /x:\s*laneX/u);
@@ -2126,6 +2134,251 @@ test("lays out high-fanout work as a searched non-crossing grid and ships an iso
   assert.match(html, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--green\)/su);
   assert.match(html, /\.node-card\[data-display-state="queued"\][^\{]*\{[^}]*opacity:\s*\.66/su);
   assert.match(html, /if \(!demoMode\) void \(async \(\) =>/u);
+});
+
+/**
+ * Evaluate the shipped `layoutGraph` and `graphRankById` against a canvas the
+ * caller declares.
+ *
+ * Position is the only thing a reader can use to infer structure, so the claims
+ * worth testing are geometric. Matching the placement expression in the page
+ * source cannot make them: `index % arrangement.columns` reads as a correct grid
+ * fill and is still wrong, because the index it consumes is array order.
+ */
+function graphLayoutHarness({ width, height }) {
+  const html = renderLiveControlRoomPage({
+    snapshot: { generatedAt: new Date(0).toISOString(), sessions: [], nodes: [], edges: [] },
+  });
+  const evalLiteral = (source) => new Function("return " + source + ";")();
+  const shippedConstant = (name) => {
+    const match = html.match(
+      new RegExp("\\n  const " + name + " = (\\{[\\s\\S]*?\\}|\\[[\\s\\S]*?\\]);\\n", "u"),
+    );
+    assert.ok(match, name + " must remain a literal in the shipped script");
+    return evalLiteral(match[1]);
+  };
+  const helpers = [
+    "stageIndex",
+    "graphNodesForSnapshot",
+    "graphEdgesForSnapshot",
+    "nodeCapabilityCount",
+    "estimatedNodeCardHeight",
+    "graphCanvasBox",
+    "graphFitInset",
+    "graphRankById",
+    "layoutGraph",
+  ];
+  const layout = shippedConstant("GRAPH_LAYOUT");
+  const canvas = {
+    clientWidth: width,
+    clientHeight: height,
+    getBoundingClientRect: () => ({ width, height, right: width, bottom: height }),
+  };
+  return new Function(
+    "GRAPH_LAYOUT",
+    "GRAPH_CAMERA",
+    "STAGE_ORDER",
+    "layoutMode",
+    "graph",
+    "graphMinimap",
+    "resolveNodeCardHeight",
+    "resolveFanoutArrangement",
+    `${helpers.map((name) => shippedHelper(html, name)).join("\n")}\nreturn { layoutGraph, graphRankById };`,
+  )(
+    layout,
+    shippedConstant("GRAPH_CAMERA"),
+    shippedConstant("STAGE_ORDER"),
+    layout.defaultMode,
+    canvas,
+    null,
+    resolveNodeCardHeight,
+    resolveFanoutArrangement,
+  );
+}
+
+const RANK_FIXTURE_WORKER = (id, second) => ({
+  id,
+  label: id.toUpperCase(),
+  kind: "worker",
+  firstAt: `2026-01-01T00:00:0${second}Z`,
+});
+
+/**
+ * Five siblings under one hub, so the fanout branch takes the layout. This is
+ * the shape a real governed run produces, and the shape a reporter complained
+ * about: `d -> c -> b -> a` is a four-deep chain and `e` depends on nothing.
+ *
+ * `expectedRank` is the longest path to each node over containment and execution
+ * together. Containment counts because a run whose only edges are `contains` --
+ * the common case, and the case in the browser session that prompted this -- has
+ * no other way to separate a hub from the work it holds.
+ */
+const RANK_FIXTURE_FANOUT = {
+  label: "fanout",
+  expectedRank: { p: 0, d: 1, e: 1, c: 2, b: 3, a: 4 },
+  nodes: [
+    { id: "p", label: "workflow", kind: "workflow" },
+    RANK_FIXTURE_WORKER("a", 1),
+    RANK_FIXTURE_WORKER("b", 2),
+    RANK_FIXTURE_WORKER("c", 3),
+    RANK_FIXTURE_WORKER("d", 4),
+    RANK_FIXTURE_WORKER("e", 5),
+  ],
+  edges: [
+    { id: "s1", from: "p", to: "a", kind: "contains" },
+    { id: "s2", from: "p", to: "b", kind: "contains" },
+    { id: "s3", from: "p", to: "c", kind: "contains" },
+    { id: "s4", from: "p", to: "d", kind: "contains" },
+    { id: "s5", from: "p", to: "e", kind: "contains" },
+    { id: "x1", from: "d", to: "c", kind: "depends_on" },
+    { id: "x2", from: "c", to: "b", kind: "depends_on" },
+    { id: "x3", from: "b", to: "a", kind: "depends_on" },
+  ],
+};
+
+/** The same dependency claim below `fanout.minimumChildren`, so the layered branch runs. */
+const RANK_FIXTURE_LAYERED = {
+  label: "layered",
+  expectedRank: { p: 0, b: 1, e: 1, a: 2 },
+  nodes: [
+    { id: "p", label: "workflow", kind: "workflow" },
+    RANK_FIXTURE_WORKER("a", 1),
+    RANK_FIXTURE_WORKER("b", 2),
+    RANK_FIXTURE_WORKER("e", 5),
+  ],
+  edges: [
+    { id: "s1", from: "p", to: "a", kind: "contains" },
+    { id: "s2", from: "p", to: "b", kind: "contains" },
+    { id: "s5", from: "p", to: "e", kind: "contains" },
+    { id: "x3", from: "b", to: "a", kind: "depends_on" },
+  ],
+};
+
+test("places every node at the column its longest dependency path earns", () => {
+  // Asserted at two canvases because rank is a property of the graph, not of the
+  // viewport. The short one is what a browser actually reported for a 17-node run;
+  // at that height a single card row barely fits, so any arrangement search is
+  // under maximum pressure to wrap -- and wrapping must still not move a node out
+  // of its rank band.
+  //
+  // Asserted with the edge array reversed as well, and that variant is the reason
+  // the layered case is here at all. Its ranks come out right today, but only
+  // because `contains` happens to precede `depends_on` in the fixture and the last
+  // write to a single-parent map wins. Reverse the array and the chain collapses,
+  // which makes edge order -- not the graph -- the thing that decides the picture.
+  for (const canvas of [{ width: 1651, height: 900 }, { width: 1704, height: 476 }]) {
+    const { layoutGraph } = graphLayoutHarness(canvas);
+    for (const fixture of [RANK_FIXTURE_FANOUT, RANK_FIXTURE_LAYERED]) {
+      for (const edgeOrder of ["declared", "reversed"]) {
+        const where = `${fixture.label} at ${canvas.width}x${canvas.height} with ${edgeOrder} edges`;
+        const result = layoutGraph({
+          ...fixture,
+          edges: edgeOrder === "declared" ? fixture.edges : [...fixture.edges].reverse(),
+        });
+        const placed = (id) => {
+          const position = result.positions.get(id);
+          assert.ok(position, `${id} must be placed in ${where}`);
+          return position;
+        };
+
+        // Rank is monotone in x, which is the whole claim a left-to-right graph
+        // makes. Equality is deliberately not required of a shared rank: a rank
+        // wider than the canvas may wrap into more than one column, and demanding
+        // one x would forbid the wrap rather than the wrong order.
+        const ranked = Object.entries(fixture.expectedRank);
+        for (const [earlier, earlierRank] of ranked) {
+          for (const [later, laterRank] of ranked) {
+            if (earlierRank >= laterRank) continue;
+            assert.ok(
+              placed(earlier).x < placed(later).x,
+              `${where}: ${earlier} is rank ${earlierRank} and ${later} is rank ${laterRank}, so `
+                + `x(${earlier})=${placed(earlier).x} must be below x(${later})=${placed(later).x}`,
+            );
+          }
+        }
+
+        // A column that stacks a rank has to keep its members apart, otherwise
+        // ranking would trade a wrong order for unreadable overlap.
+        const byColumn = new Map();
+        for (const [id, position] of result.positions) {
+          const column = byColumn.get(position.x) || [];
+          column.push({ id, top: position.y, bottom: position.y + position.height });
+          byColumn.set(position.x, column);
+        }
+        for (const [columnX, members] of byColumn) {
+          const ordered = [...members].sort((left, right) => left.top - right.top);
+          for (let index = 1; index < ordered.length; index += 1) {
+            assert.ok(
+              ordered[index].top >= ordered[index - 1].bottom,
+              `${where}: column x=${columnX} overlaps ${ordered[index - 1].id} and ${ordered[index].id}`,
+            );
+          }
+        }
+      }
+    }
+  }
+});
+
+test("ranks each node one step past the deepest thing upstream of it", () => {
+  // Exact ranks, which the placement test deliberately does not assert: it only
+  // requires x to increase with rank, so that a rank too wide for the canvas may
+  // still wrap. That leaves the arithmetic itself unguarded, and the arithmetic is
+  // where the original defect lived -- a node took one more than *a* parent rather
+  // than one more than its deepest predecessor.
+  const { graphRankById } = graphLayoutHarness({ width: 1651, height: 900 });
+  const rankOf = (nodes, edges) => Object.fromEntries(graphRankById(nodes, edges));
+  const node = (id) => ({ id, label: id, kind: "worker" });
+
+  // A diamond: `late` waits on both a one-hop and a two-hop path. Shortest path
+  // would call it 2, and then it would sit level with the work it waits on.
+  assert.deepEqual(
+    rankOf(
+      ["root", "quick", "slow", "slower", "late"].map(node),
+      [
+        { id: "e1", from: "root", to: "quick", kind: "contains" },
+        { id: "e2", from: "root", to: "slow", kind: "contains" },
+        { id: "e3", from: "slow", to: "slower", kind: "depends_on" },
+        { id: "e4", from: "quick", to: "late", kind: "depends_on" },
+        { id: "e5", from: "slower", to: "late", kind: "depends_on" },
+      ],
+    ),
+    { root: 0, quick: 1, slow: 1, slower: 2, late: 3 },
+    "a node waiting on two paths takes the longer one",
+  );
+
+  // Containment alone has to separate a hub from what it holds. A run whose only
+  // edges are `contains` is the ordinary case, and ranking a subset of edge kinds
+  // that excluded it would flatten every such run into one column.
+  assert.deepEqual(
+    rankOf(
+      ["hub", "held"].map(node),
+      [{ id: "e1", from: "hub", to: "held", kind: "contains" }],
+    ),
+    { hub: 0, held: 1 },
+    "containment is an ordering claim like any other edge",
+  );
+
+  // An edge naming a node outside the set contributes nothing rather than
+  // throwing, because the snapshot filter can drop a node an edge still names.
+  assert.deepEqual(
+    rankOf([node("kept")], [{ id: "e1", from: "dropped", to: "kept", kind: "depends_on" }]),
+    { kept: 0 },
+    "an edge from a node that was filtered out cannot raise a rank",
+  );
+
+  // A cycle has no rank. It must still render: returning something finite for
+  // every node beats refusing to lay out a malformed projection.
+  const cyclic = rankOf(
+    ["x", "y"].map(node),
+    [
+      { id: "e1", from: "x", to: "y", kind: "depends_on" },
+      { id: "e2", from: "y", to: "x", kind: "depends_on" },
+    ],
+  );
+  assert.deepEqual(Object.keys(cyclic).sort(), ["x", "y"], "a cycle still ranks every node");
+  for (const [id, rank] of Object.entries(cyclic)) {
+    assert.ok(Number.isFinite(rank) && rank >= 0, `${id} must take a finite rank inside a cycle`);
+  }
 });
 
 test("separates active pending work from inactive structural work and keeps the flow visible", () => {

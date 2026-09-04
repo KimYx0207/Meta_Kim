@@ -2145,11 +2145,66 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return { width: graph?.clientWidth || 0, height: graph?.clientHeight || 0 };
   }
 
+  /**
+   * The longest path to each node over every declared edge.
+   *
+   * Position is the only thing in a left-to-right graph that can carry structure,
+   * so x has to answer to the graph. It answered to the edge array instead: a
+   * single-parent map kept the last edge that named a node as its target, and
+   * depth counted hops up that one chain. With containment and dependency edges
+   * both present the winner was whichever appeared later in the array, so
+   * reversing the array reversed the picture -- measured on a four-deep chain,
+   * d -> c -> b -> a laid out at x = 1308, 980, 652, 324, exactly backwards, and
+   * an independent sibling took a column of its own to the right of work that
+   * waited on three predecessors.
+   *
+   * Every edge kind counts, because "from" is upstream of "to" in all of them:
+   * containment says the hub holds the child, the execution kinds say a
+   * predecessor finishes first, and a handoff says the giver goes first. Ranking
+   * a named subset would silently drop any kind added later, and dropping
+   * containment is worse still -- a run whose only edges are containment, which is
+   * the ordinary case, would collapse into a single column.
+   *
+   * Longest path rather than shortest, so a node is never placed left of something
+   * it waits on. A cycle has no rank; a node already on the stack contributes
+   * nothing instead of recursing, which keeps a malformed projection renderable
+   * rather than trading a wrong picture for no picture.
+   *
+   * No backticks or dollar-brace in this comment: the whole browser script is a
+   * template literal, so either one ends it early and the module stops parsing.
+   */
+  function graphRankById(nodes, graphEdges) {
+    const upstream = new Map(nodes.map((node) => [node.id, []]));
+    for (const edge of graphEdges) {
+      if (upstream.has(edge.to) && upstream.has(edge.from)) upstream.get(edge.to).push(edge.from);
+    }
+    for (const node of nodes) {
+      const declared = node.parentId;
+      if (!declared || !upstream.has(declared) || !upstream.has(node.id)) continue;
+      if (!upstream.get(node.id).includes(declared)) upstream.get(node.id).push(declared);
+    }
+    const rankById = new Map();
+    const settling = new Set();
+    function rankOf(id) {
+      if (rankById.has(id)) return rankById.get(id);
+      if (settling.has(id)) return 0;
+      settling.add(id);
+      let rank = 0;
+      for (const from of upstream.get(id) || []) rank = Math.max(rank, rankOf(from) + 1);
+      settling.delete(id);
+      rankById.set(id, rank);
+      return rank;
+    }
+    for (const node of nodes) rankOf(node.id);
+    return rankById;
+  }
+
   function layoutGraph(snapshot) {
     const nodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, nodes);
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const parentById = new Map(graphEdges.map((edge) => [edge.to, edge.from]));
+    const rankById = graphRankById(nodes, graphEdges);
     const stageNodes = new Map();
     const stageFor = new Map();
     const branchSlots = new Map();
@@ -2206,7 +2261,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
           ancestorId = parentById.get(ancestorId) || nodeById.get(ancestorId)?.parentId;
         }
         const accountedIds = new Set([...ancestorIds, hubId, ...fanoutChildren.map((node) => node.id)]);
-        if (accountedIds.size === nodes.length) {
+        // A fanout is a hub whose children are genuinely parallel, and only then
+        // may they be dealt into a grid by array position: filling by index asserts
+        // nothing about order, which is correct for siblings that wait on the same
+        // thing and a lie for siblings that wait on each other. Children spanning
+        // more than one rank have real structure between them, so they go to the
+        // layered branch, where the rank decides the column.
+        const childRanks = new Set(fanoutChildren.map((node) => rankById.get(node.id) ?? 0));
+        if (accountedIds.size === nodes.length && childRanks.size === 1) {
           fanoutChildren.sort((left, right) => String(left.firstAt || "").localeCompare(String(right.firstAt || "")) || left.label.localeCompare(right.label));
           const chain = [...ancestorIds.map((id) => nodeById.get(id)).filter(Boolean), nodeById.get(hubId)].filter(Boolean);
           const childRowHeight = Math.max(...fanoutChildren.map(estimatedNodeCardHeight));
@@ -2283,19 +2345,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
           };
         }
       }
-      const depthById = new Map();
-      function depthFor(id, seen = new Set()) {
-        if (depthById.has(id)) return depthById.get(id);
-        if (seen.has(id)) return 0;
-        seen.add(id);
-        const parentId = parentById.get(id) || nodeById.get(id)?.parentId;
-        const depth = parentId && nodeById.has(parentId) ? depthFor(parentId, seen) + 1 : 0;
-        depthById.set(id, depth);
-        return depth;
-      }
       const lanes = new Map();
       for (const node of nodes) {
-        const depth = depthFor(node.id);
+        const depth = rankById.get(node.id) ?? 0;
         const lane = lanes.get(depth) || [];
         lane.push(node);
         lanes.set(depth, lane);
