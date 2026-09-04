@@ -242,6 +242,72 @@ test("the camera declares an on-screen text floor, and that floor is measurably 
   );
 });
 
+/**
+ * The smallest world-space text a full node card can declare, in CSS pixels,
+ * derived rather than remembered. `clamp()` cannot resolve below `base.min`, so
+ * that bound is the worst case a reader can reach, and the ladder's smallest
+ * step is the smallest size any card child can name. Deriving from the ladder
+ * instead of enumerating `.node-*` selectors keeps this honest when a card gains
+ * a child: a new selector can only pick an existing step, and every step is
+ * already covered by the minimum.
+ */
+function smallestCardTextPx(typography) {
+  const baseMinPx = Number.parseFloat(typography.base.min) * typography.legibility.rootFontSizePx;
+  return baseMinPx * Math.min(...typography.steps.map((step) => step.ratio));
+}
+
+test("full cards are never drawn at a scale where their own smallest step is below the floor", () => {
+  const camera = loadLiveGraphCameraPolicy();
+  const typography = loadLiveTypographyScale();
+
+  // The symmetric half of the guard above, and the half that was missing. A cell
+  // title counter-scales, so it holds the floor by construction. A full card
+  // declares world-space sizes, so the only thing between it and sub-floor text
+  // is the scale at which the camera stops drawing full cards -- and that
+  // threshold was hand-set, so nothing tied it to the sizes it protects.
+  //
+  // Measured in a browser at 1760x900 before this guard existed: the fitted
+  // scale was 0.4582, just above a 0.42 threshold, so `data-semantic-zoom` read
+  // "card" and all 12 text elements in a node rendered between 5.46px and
+  // 9.01px against a declared 11px floor. The threshold was not too small by a
+  // rounding error; it was below every scale a card is legible at.
+  const requiredScale = camera.minOnScreenTextPx / smallestCardTextPx(typography);
+
+  assert.ok(
+    camera.semanticZoomCellMaxScale >= requiredScale,
+    `full cards begin at scale ${camera.semanticZoomCellMaxScale}, where the smallest card step renders `
+      + `${(smallestCardTextPx(typography) * camera.semanticZoomCellMaxScale).toFixed(2)}px against a `
+      + `${camera.minOnScreenTextPx}px floor. Cards need scale ${requiredScale.toFixed(4)}; every scale `
+      + "between the two is a band that draws a full card no reader can read",
+  );
+});
+
+test("normalization rejects a card boundary below the scale the type ladder requires", () => {
+  const base = loadLiveGraphCameraPolicy();
+  const typography = loadLiveTypographyScale();
+  const requiredScale = base.minOnScreenTextPx / smallestCardTextPx(typography);
+
+  // Unrepresentable rather than discouraged, the same way `minScale` above the
+  // cell boundary is unrepresentable. A boundary below this value is exactly the
+  // defect shape: a legibility floor with a rendering mode that ignores it.
+  assert.throws(
+    () => normalizeLiveGraphCameraPolicy({
+      ...base,
+      minScale: requiredScale / 4,
+      semanticZoomCellMaxScale: requiredScale / 2,
+    }),
+    /full card at that scale renders text below minOnScreenTextPx/u,
+    "a card boundary under the derived requirement must be rejected, not merely noted",
+  );
+
+  // And the accepted side has to stay accepted, or the guard would be refusing
+  // the only value that satisfies it.
+  assert.doesNotThrow(() => normalizeLiveGraphCameraPolicy({
+    ...base,
+    semanticZoomCellMaxScale: requiredScale,
+  }));
+});
+
 test("the legibility custom properties carry the floor and a scale that defaults to 1", () => {
   const camera = loadLiveGraphCameraPolicy();
   const css = serializeCameraLegibilityCustomProperties(camera);

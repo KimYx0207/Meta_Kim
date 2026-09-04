@@ -89,6 +89,39 @@ function resolveBasePx(scale, viewportWidth) {
 }
 
 /**
+ * The largest on-screen size a camera-owned font size can reach, in CSS pixels.
+ *
+ * These sizes are `max(<ladder step>, floor / camera scale)`, so the reader sees
+ * whichever branch is bigger, and the on-screen size is the one that belongs in
+ * the map below: every other entry is a world-space size at camera scale 1, and a
+ * cell title never coexists with scale 1. The ladder branch is largest at the top
+ * of cell mode, which is `semanticZoomCellMaxScale`, and the floor is the other
+ * end of the same range.
+ *
+ * Modelled as the maximum rather than as the floor because the only consumer asks
+ * which selector renders biggest. Pinning the floor was safe only while the cell
+ * boundary was small enough to keep the ladder branch under it; once the boundary
+ * rose to the scale a full card is legible at, the floor understates this size by
+ * about a third and the ceiling guard stops seeing it grow.
+ *
+ * The step name is read out of the shipped definition rather than named here, so
+ * the two cannot drift apart.
+ */
+function cameraOwnedOnScreenMaxPx(css, property, basePx, ratioOf, camera) {
+  const definition = css.match(new RegExp(`${property}:\\s*([^;}]+)`, "u"));
+  assert.ok(definition, `${property} is applied as a font-size but never defined`);
+  const step = definition[1].match(/var\(--fs-([a-z-]+)\)/u);
+  assert.ok(
+    step && ratioOf.has(step[1]),
+    `${property} must keep a ladder step as one branch of its own definition`,
+  );
+  return Math.max(
+    basePx * ratioOf.get(step[1]) * camera.semanticZoomCellMaxScale,
+    camera.minOnScreenTextPx,
+  );
+}
+
+/**
  * Every selector that declares a `font-size`, paired with the largest size that
  * declaration resolves to. A bare value is kept as its literal pixel size so a
  * reintroduced hardcode is measured rather than skipped.
@@ -96,18 +129,19 @@ function resolveBasePx(scale, viewportWidth) {
  * One declaration is not on the ladder at all. The cell-mode node title is sized
  * `max(var(--fs-entity-body), calc(var(--min-onscreen-text-px) / var(--camera-scale)))`,
  * which is a world-space size that varies with the camera so that its *on-screen*
- * size stays fixed. Cell mode only exists below `semanticZoomCellMaxScale`, and
- * `entityBody * semanticZoomCellMaxScale` is under the floor at every viewport,
- * so throughout cell mode the `max()` resolves to the floor branch and the reader
- * sees exactly `minOnScreenTextPx`. That is the number this guard must compare,
- * because on-screen pixels are the only pixels a reader has.
+ * size never falls under the floor. On-screen pixels are the only pixels a reader
+ * has, so that is what this map records for it -- see
+ * `cameraOwnedOnScreenMaxPx` for which end of its range is the right one.
  */
 function appliedTextSizes(css, scale, viewportWidth) {
   const base = resolveBasePx(scale, viewportWidth);
   const remPx = scale.legibility.rootFontSizePx;
   const ratioOf = new Map(scale.steps.map((step) => [step.name, step.ratio]));
   const camera = loadLiveGraphCameraPolicy();
-  const cameraOwnedPx = new Map(CAMERA_OWNED_FONT_SIZES.map((property) => [property, camera.minOnScreenTextPx]));
+  const cameraOwnedPx = new Map(CAMERA_OWNED_FONT_SIZES.map((property) => [
+    property,
+    cameraOwnedOnScreenMaxPx(css, property, base, ratioOf, camera),
+  ]));
   const applied = new Map();
   for (const rule of css.matchAll(/([^{}\n]+)\{([^}]*)\}/gu)) {
     const selectors = rule[1].split(",").map((part) => part.trim()).filter((part) => !part.startsWith("@"));

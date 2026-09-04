@@ -29,6 +29,16 @@
  * unrepresentable rather than merely discouraged: a floor above the cell
  * boundary is exactly a floor with no rendering behind it.
  *
+ * The boundary has a second, symmetric obligation, and it was violated for as
+ * long as it was hand-set. A cell title counter-scales, so it holds the floor by
+ * construction; a full card declares world-space sizes, so the only thing between
+ * it and sub-floor text is the scale at which full cards start being drawn. That
+ * scale sat at 0.42 while cards needed 0.991, and a browser at 1760x900 fitted a
+ * 17-node run at 0.4582 -- inside the gap, so `data-semantic-zoom` read "card"
+ * and all twelve text elements in a node rendered between 5.46px and 9.01px.
+ * `resolveCardLegibleMinScale` derives the requirement from the type ladder and
+ * normalization rejects anything under it, so the gap cannot reopen.
+ *
  * The resolvers are exported as functions and serialized into the browser
  * bundle by their own `toString()`. The client script is inlined into a page
  * string and cannot import this module, and a second copy of the fit arithmetic
@@ -36,6 +46,8 @@
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+import { loadLiveTypographyScale } from "./live-typography-scale.mjs";
 
 export const LIVE_GRAPH_CAMERA_SCHEMA_VERSION = "meta-kim-live-graph-camera-v1";
 
@@ -60,8 +72,32 @@ function nonNegativeNumber(value, label) {
   return value;
 }
 
+/**
+ * The lowest scale at which a full node card can still honour the on-screen text
+ * floor.
+ *
+ * Derived rather than declared, because the two numbers it sits between are both
+ * owned elsewhere: the floor belongs to this document and the smallest card text
+ * belongs to the type ladder. A hand-set boundary between them is a number that
+ * can only be right by coincidence, and it was wrong -- measured in a browser at
+ * 1760x900, a fitted scale of 0.4582 cleared a 0.42 boundary, so full cards
+ * rendered with every one of their twelve text elements between 5.46px and
+ * 9.01px against an 11px floor.
+ *
+ * `clamp()` cannot resolve below `base.min`, so that bound is the smallest base a
+ * reader can reach, and the ladder's smallest ratio is the smallest size any card
+ * child can name. The product is therefore the worst case across every viewport,
+ * which is what a single boundary has to survive.
+ */
+export function resolveCardLegibleMinScale(minOnScreenTextPx, typographyScale) {
+  const rootPx = typographyScale.legibility.rootFontSizePx;
+  const baseMinPx = Number.parseFloat(typographyScale.base.min) * rootPx;
+  const smallestStepRatio = Math.min(...typographyScale.steps.map((step) => step.ratio));
+  return minOnScreenTextPx / (baseMinPx * smallestStepRatio);
+}
+
 /** Validate and freeze a raw graph-camera document. */
-export function normalizeLiveGraphCameraPolicy(raw) {
+export function normalizeLiveGraphCameraPolicy(raw, typographyScale = loadLiveTypographyScale()) {
   if (!raw || typeof raw !== "object") fail("document must be an object");
   if (raw.schemaVersion !== LIVE_GRAPH_CAMERA_SCHEMA_VERSION) {
     fail(
@@ -90,6 +126,19 @@ export function normalizeLiveGraphCameraPolicy(raw) {
       "minScale must not exceed semanticZoomCellMaxScale, otherwise the cell rendering is unreachable and the "
         + "floor is a legibility claim with nothing behind it -- the exact shape of the overview defect",
       "LIVE_GRAPH_CAMERA_CELL_LOD_UNREACHABLE",
+    );
+  }
+  const cardLegibleMinScale = resolveCardLegibleMinScale(
+    normalized.minOnScreenTextPx,
+    typographyScale,
+  );
+  if (normalized.semanticZoomCellMaxScale < cardLegibleMinScale) {
+    fail(
+      `semanticZoomCellMaxScale ${normalized.semanticZoomCellMaxScale} is below `
+        + `${cardLegibleMinScale.toFixed(4)}, so a full card at that scale renders text below `
+        + "minOnScreenTextPx. Every scale between the two draws a full card whose smallest step is "
+        + "under the floor, which is a legibility floor with a rendering mode that ignores it",
+      "LIVE_GRAPH_CAMERA_CARD_BELOW_TEXT_FLOOR",
     );
   }
   if (normalized.semanticZoomCellMaxScale > normalized.overviewMaxScale) {
