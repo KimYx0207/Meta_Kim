@@ -10,6 +10,7 @@ import {
   parseGraphifyHookCommand,
   rewriteHookToDirectSpawn,
 } from "./doctor-hooks.mjs";
+import { renameWithTransientRetry } from "./transient-rename.mjs";
 
 function isoStamp(now = new Date()) {
   return now.toISOString().replace(/[:.]/g, "-");
@@ -112,7 +113,10 @@ export function sanitizeGraphifyWindowsHooks(settingsPath, options = {}) {
       encoding: "utf8",
       flag: "wx",
     });
-    renameFile(temporary, settingsPath);
+    renameWithTransientRetry(temporary, settingsPath, {
+      rename: renameFile,
+      platform: runtimePlatform,
+    });
   } catch (error) {
     try {
       if (fileExists(temporary)) removeFile(temporary);

@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -221,6 +222,63 @@ describe("sanitizeGraphifyWindowsHooks()", () => {
       }),
       /original backup is/,
     );
+    assert.equal(readFileSync(settingsPath, "utf8"), original);
+  });
+
+  test("retries the atomic replacement through a transient Windows lock", () => {
+    const dir = mkdtempSync(join(tmpdir(), "graphify-sanitize-"));
+    const settingsPath = writeHookSettings(dir, {
+      hooks: { PreToolUse: [{ matcher: "Read|Glob", hooks: [BACKSLASH_HOOK] }] },
+    });
+
+    let attempts = 0;
+    const result = sanitizeGraphifyWindowsHooks(settingsPath, {
+      platform: "win32",
+      graphifyExecutable: GRAPHIFY_EXE,
+      renameFile(source, target) {
+        attempts += 1;
+        if (attempts === 1) {
+          const locked = new Error("simulated Defender lock");
+          locked.code = "EPERM";
+          throw locked;
+        }
+        return renameSync(source, target);
+      },
+    });
+
+    assert.equal(attempts, 2, "a transient lock must be retried, not surfaced");
+    assert.equal(result.changed, true);
+    assert.equal(result.count, 1);
+    const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const hook = written.hooks.PreToolUse[0].hooks[0];
+    assert.equal(hook.command, GRAPHIFY_EXE);
+    assert.deepEqual(hook.args, ["hook-guard", "read"]);
+    assert.equal(existsSync(result.backup), true);
+  });
+
+  test("still fails closed when the Windows lock never clears", () => {
+    const dir = mkdtempSync(join(tmpdir(), "graphify-sanitize-"));
+    const settingsPath = writeHookSettings(dir, {
+      hooks: { PreToolUse: [{ matcher: "Read|Glob", hooks: [BACKSLASH_HOOK] }] },
+    });
+    const original = readFileSync(settingsPath, "utf8");
+
+    let attempts = 0;
+    assert.throws(
+      () => sanitizeGraphifyWindowsHooks(settingsPath, {
+        platform: "win32",
+        graphifyExecutable: GRAPHIFY_EXE,
+        renameFile() {
+          attempts += 1;
+          const locked = new Error("simulated permanent lock");
+          locked.code = "EBUSY";
+          throw locked;
+        },
+      }),
+      /original backup is/,
+    );
+    assert.ok(attempts > 1, "a lock code must be retried at least once");
+    assert.ok(attempts <= 8, "the retry must stay bounded, not spin");
     assert.equal(readFileSync(settingsPath, "utf8"), original);
   });
 

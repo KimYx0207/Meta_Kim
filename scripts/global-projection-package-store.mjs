@@ -1509,9 +1509,14 @@ export async function runGlobalProjectionPackageChild(
   {
     env = process.env,
     sourceRoot = null,
+    callerCwd = null,
     homeRoot = verifiedPackage?.homeRoot ?? os.homedir(),
   } = {},
 ) {
+  const resolvedSourceRoot = sourceRoot ?? env.INIT_CWD ?? process.cwd();
+  const resolvedCallerCwd = path.resolve(
+    callerCwd ?? env.META_KIM_CALLER_CWD ?? resolvedSourceRoot,
+  );
   return await withProjectionDigestLock(
     verifiedPackage,
     async () => {
@@ -1525,11 +1530,17 @@ export async function runGlobalProjectionPackageChild(
       if (pathKey(fresh.packageRoot) !== pathKey(verifiedPackage.packageRoot)) {
         throw new Error("Projection package changed before stable child launch");
       }
+      if (pathKey(resolvedCallerCwd) === pathKey(fresh.packageRoot)) {
+        throw new Error(
+          "Stable child launch requires a caller project root outside the projection package; anchoring local project state on the package root silently narrows runtime target selection",
+        );
+      }
       const childEnv = sanitizeProjectionPackageEnvironment(env, {
-        sourceRoot: sourceRoot ?? env.INIT_CWD ?? process.cwd(),
+        sourceRoot: resolvedSourceRoot,
         storeRoot: fresh.storeRoot,
       });
       childEnv.META_KIM_REPO_ROOT = fresh.packageRoot;
+      childEnv.META_KIM_CALLER_CWD = resolvedCallerCwd;
       return spawnSync(
         process.execPath,
         [fresh.syncScriptPath, ...args],

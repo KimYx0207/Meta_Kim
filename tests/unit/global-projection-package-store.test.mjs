@@ -868,6 +868,70 @@ test("mixed-case NODE_OPTIONS cannot execute preload code during materialization
   });
 });
 
+test("the stable child launch anchors local project state on the caller, never on the package root", async () => {
+  await withFixture(async ({ root, homeRoot, sourceRoot, env }) => {
+    const markerPath = path.join(root, "child-env.json");
+    writeFileSync(
+      path.join(sourceRoot, "scripts", "sync-global-meta-theory.mjs"),
+      [
+        'import { writeFileSync } from "node:fs";',
+        `writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({`,
+        "  callerCwd: process.env.META_KIM_CALLER_CWD ?? null,",
+        "  repoRoot: process.env.META_KIM_REPO_ROOT ?? null,",
+        "  cwd: process.cwd(),",
+        '}), "utf8");',
+        "process.exit(0);",
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const childEnv = { ...env };
+    delete childEnv.META_KIM_CALLER_CWD;
+
+    const stablePackage = await materializeGlobalProjectionPackage({
+      sourceRoot,
+      homeRoot,
+      env: childEnv,
+    });
+    const callerRoot = path.join(root, "caller-project");
+    mkdirSync(callerRoot, { recursive: true });
+
+    const explicit = await runGlobalProjectionPackageChild(stablePackage, [], {
+      env: childEnv,
+      sourceRoot,
+      callerCwd: callerRoot,
+    });
+    assert.equal(explicit.status, 0, "the fixture child must run to completion");
+    const withCaller = JSON.parse(readFileSync(markerPath, "utf8"));
+    assert.equal(
+      withCaller.callerCwd,
+      callerRoot,
+      "an explicit caller project root must reach the packaged child, or the child resolves local overrides against the package and silently narrows its runtime targets",
+    );
+    assert.equal(
+      path.resolve(withCaller.repoRoot),
+      path.resolve(stablePackage.packageRoot),
+    );
+    assert.notEqual(
+      path.resolve(withCaller.callerCwd),
+      path.resolve(withCaller.cwd),
+      "the caller project root must stay distinct from the child working directory",
+    );
+
+    rmSync(markerPath, { force: true });
+    const inferred = await runGlobalProjectionPackageChild(stablePackage, [], {
+      env: childEnv,
+      sourceRoot,
+    });
+    assert.equal(inferred.status, 0);
+    const withoutCaller = JSON.parse(readFileSync(markerPath, "utf8"));
+    assert.equal(
+      path.resolve(withoutCaller.callerCwd ?? ""),
+      path.resolve(sourceRoot),
+      "a caller that omits the project root must still anchor the child on its own source root, never on the package root",
+    );
+  });
+});
+
 test("Windows authority lookup accepts manifest paths whose case differs only lexically", {
   skip: process.platform !== "win32",
 }, async () => {

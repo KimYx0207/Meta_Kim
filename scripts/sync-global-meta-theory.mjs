@@ -28,6 +28,7 @@ import {
   resolveGlobalAgentProjectionTargets,
   resolveTargetContext,
   resolveRuntimeHomeInfo,
+  localStateRoot,
 } from "./meta-kim-sync-config.mjs";
 import {
   CODEX_REQUEST_USER_INPUT_FEATURE,
@@ -3362,6 +3363,7 @@ async function handOffToStableProjectionPackage() {
       await runGlobalProjectionPackageChild(authority, cliArgs, {
         env: process.env,
         sourceRoot: repoRoot,
+        callerCwd: localStateRoot,
       }),
     );
     return true;
@@ -3381,6 +3383,7 @@ async function handOffToStableProjectionPackage() {
     await runGlobalProjectionPackageChild(stablePackage, cliArgs, {
       env: process.env,
       sourceRoot: repoRoot,
+      callerCwd: localStateRoot,
     }),
   );
   return true;
