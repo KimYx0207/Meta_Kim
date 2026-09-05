@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -144,6 +145,135 @@ test("a target changed after precommit is restored and retained for recovery", (
     assert.equal(result.status, "recovery_required");
     assert.match(result.originalFailure, /commit_rollback_hash_drift:hook\.mjs/u);
     assert.deepEqual(readFileSync(target), concurrent);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a transient Windows lock on the published target is retried instead of rolling the transaction back", () => {
+  const root = tempRoot("meta-kim-managed-transient-publish-");
+  try {
+    const target = path.join(root, "hook.mjs");
+    const original = Buffer.from("managed old\n", "utf8");
+    writeFileSync(target, original);
+
+    // Windows lets a scanner or indexer hold a handle on the managed file for a few
+    // milliseconds, and the rename that publishes the staged content is where that
+    // shows up as EPERM. Fail that one rename once and let every later attempt
+    // through, so nothing but a retry can carry this transaction to a commit. Only
+    // the platform and the failing primitive are supplied here; the attempt count
+    // and the backoff are whatever a real install would use.
+    let publishAttempts = 0;
+    const result = executeSafeManagedFileTransaction({
+      trustedRoot: root,
+      backupRoot: path.join(root, ".meta-kim", "backups"),
+      operations: [{
+        kind: "write",
+        relPath: "hook.mjs",
+        content: "managed new\n",
+        expectedOldHash: sha256Buffer(original),
+      }],
+      injectRenameOptions: {
+        platform: "win32",
+        rename(fromPath, toPath) {
+          if (!fromPath.endsWith(".stage")) {
+            renameSync(fromPath, toPath);
+            return;
+          }
+          publishAttempts += 1;
+          if (publishAttempts === 1) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+          renameSync(fromPath, toPath);
+        },
+      },
+    });
+
+    assert.equal(publishAttempts, 2, "the injected lock must reach the publish rename and be retried exactly once");
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "committed");
+    assert.equal(readFileSync(target, "utf8"), "managed new\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a transient Windows lock is retried when the managed file is being created rather than replaced", () => {
+  const root = tempRoot("meta-kim-managed-transient-create-");
+  try {
+    const target = path.join(root, "hook.mjs");
+
+    // A first install creates the file, so there is no prior hash and none of the
+    // rollback renames run: the staged publish is the only rename in the commit.
+    // Wiring the retry into the replace branch alone would leave exactly this path
+    // — the common one on a fresh machine — failing on the first scanner handle.
+    let publishAttempts = 0;
+    const result = executeSafeManagedFileTransaction({
+      trustedRoot: root,
+      backupRoot: path.join(root, ".meta-kim", "backups"),
+      operations: [{ kind: "write", relPath: "hook.mjs", content: "managed new\n" }],
+      injectRenameOptions: {
+        platform: "win32",
+        initialDelayMs: 0,
+        rename(fromPath, toPath) {
+          publishAttempts += 1;
+          if (publishAttempts === 1) throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+          renameSync(fromPath, toPath);
+        },
+      },
+    });
+
+    assert.equal(publishAttempts, 2, "creating a managed file must retry the publish rename too");
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "committed");
+    assert.equal(readFileSync(target, "utf8"), "managed new\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a rename failure outside the Windows lock set still rolls the transaction back", () => {
+  const root = tempRoot("meta-kim-managed-persistent-rename-");
+  try {
+    const target = path.join(root, "hook.mjs");
+    const original = Buffer.from("managed old\n", "utf8");
+    writeFileSync(target, original);
+
+    // Retrying a code that is not a transient directory lock would turn a real disk
+    // failure into a slow one, so the boundary matters as much as the retry: a full
+    // disk has to fail on its first attempt and leave the managed file untouched.
+    // The sleep is recorded rather than thrown from, because throwing out of the
+    // backoff would look exactly like the rename itself failing and would let a
+    // widened transient set pass this test.
+    let attempts = 0;
+    const waits = [];
+    const result = executeSafeManagedFileTransaction({
+      trustedRoot: root,
+      backupRoot: path.join(root, ".meta-kim", "backups"),
+      operations: [{
+        kind: "write",
+        relPath: "hook.mjs",
+        content: "managed new\n",
+        expectedOldHash: sha256Buffer(original),
+      }],
+      injectRenameOptions: {
+        platform: "win32",
+        initialDelayMs: 0,
+        wait: (delayMs) => waits.push(delayMs),
+        rename() {
+          attempts += 1;
+          throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+        },
+      },
+    });
+
+    assert.equal(attempts, 1, "a code outside the transient set must be raised on its first attempt");
+    assert.deepEqual(waits, [], "a full disk must not be waited on and retried");
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "rolled_back");
+    // The caller has to learn the disk is full. Swallowing the rename failure would
+    // still roll back, but only via a later internal drift check, so the reported
+    // reason would send an operator after the wrong fault.
+    assert.equal(result.reason, "ENOSPC");
+    assert.equal(readFileSync(target, "utf8"), "managed old\n");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

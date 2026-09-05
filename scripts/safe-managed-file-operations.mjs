@@ -12,7 +12,6 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  renameSync,
   rmdirSync,
   rmSync,
   unlinkSync,
@@ -20,6 +19,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
+import { renameWithTransientRetry } from "./transient-rename.mjs";
 
 const HASH_RE = /^[a-f0-9]{64}$/iu;
 const JOURNAL_SCHEMA = "meta-kim-managed-file-journal-v1";
@@ -155,8 +155,13 @@ function fsyncFile(filePath) {
   }
 }
 
-function renameDurable(fromPath, toPath) {
-  renameSync(fromPath, toPath);
+function renameDurable(fromPath, toPath, renameOptions = undefined) {
+  // Windows hands out EPERM, EBUSY, and EACCES while a scanner or indexer still
+  // holds a handle on a file this transaction is about to move. Those clear on
+  // their own within milliseconds, so failing the whole transaction on the first
+  // one turns a passing install into a spurious rollback. Every other code stays
+  // fail-closed.
+  renameWithTransientRetry(fromPath, toPath, renameOptions);
   fsyncParentDirectory(fromPath);
   if (dirname(fromPath) !== dirname(toPath)) fsyncParentDirectory(toPath);
 }
@@ -674,6 +679,7 @@ export function executeSafeManagedFileTransaction({
   injectCrashAt = process.env.META_KIM_TEST_CRASH_MANAGED_AT || "",
   injectPauseAfterLockMs = Number(process.env.META_KIM_TEST_PAUSE_MANAGED_AFTER_LOCK_MS || 0),
   injectBeforeCommitItem = null,
+  injectRenameOptions = null,
 }) {
   if (!Array.isArray(operations)) {
     return resultWithGuidance({ ok: false, status: "blocked", reason: "invalid_operations" });
@@ -882,15 +888,16 @@ export function executeSafeManagedFileTransaction({
         }
       }
 
+      const commitRename = (fromPath, toPath) => renameDurable(fromPath, toPath, injectRenameOptions ?? undefined);
       for (const [index, item] of commitItems.entries()) {
         if (injectFailureAtCommit === index + 1) throw new Error(`injected_commit_failure:${index + 1}`);
         injectBeforeCommitItem?.(item, index);
         const entryPaths = journalEntryPaths(root, journal, journalEntries[index]);
         if (item.oldHash) {
-          renameDurable(item.target, entryPaths.rollbackRelPath);
+          commitRename(item.target, entryPaths.rollbackRelPath);
           if (sha256ManagedFile(entryPaths.rollbackRelPath) !== item.oldHash) {
             if (!existsSync(item.target)) {
-              renameDurable(entryPaths.rollbackRelPath, item.target);
+              commitRename(entryPaths.rollbackRelPath, item.target);
             }
             throw new Error(`commit_rollback_hash_drift:${item.relPath}`);
           }
@@ -900,13 +907,13 @@ export function executeSafeManagedFileTransaction({
             portableMode(lstatSync(entryPaths.rollbackRelPath)) !== item.oldMode
           ) {
             if (!existsSync(item.target)) {
-              renameDurable(entryPaths.rollbackRelPath, item.target);
+              commitRename(entryPaths.rollbackRelPath, item.target);
             }
             throw new Error(`commit_rollback_permission_drift:${item.relPath}`);
           }
         }
         maybeCrash("after_first_rollback_rename", index === 0 ? injectCrashAt : "");
-        if (item.kind === "write") renameDurable(entryPaths.stageRelPath, item.target);
+        if (item.kind === "write") commitRename(entryPaths.stageRelPath, item.target);
         maybeCrash("after_first_target_commit", index === 0 ? injectCrashAt : "");
         maybeCrash("after_manifest_commit", item.phase === "manifest" ? injectCrashAt : "");
       }
