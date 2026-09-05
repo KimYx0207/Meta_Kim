@@ -34,6 +34,7 @@ import {
   loadLiveGraphLayoutPolicy,
   serializeFanoutArrangementResolver,
   serializeGraphLayoutPolicyForClient,
+  serializeMeasuredCardMetricsResolver,
   serializeNodeCardHeightResolver,
 } from "../../application/live/live-graph-layout.mjs";
 import {
@@ -222,6 +223,7 @@ const INSPECTOR_CAMERA_LIFT_SOURCE = serializeInspectorCameraLiftResolver();
 const PAGE_GRAPH_LAYOUT = loadLiveGraphLayoutPolicy();
 const GRAPH_LAYOUT_LITERAL = JSON.stringify(serializeGraphLayoutPolicyForClient(PAGE_GRAPH_LAYOUT));
 const NODE_CARD_HEIGHT_SOURCE = serializeNodeCardHeightResolver();
+const MEASURED_CARD_METRICS_SOURCE = serializeMeasuredCardMetricsResolver();
 const FANOUT_ARRANGEMENT_SOURCE = serializeFanoutArrangementResolver();
 
 /**
@@ -370,6 +372,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   const GRAPH_LAYOUT = ${GRAPH_LAYOUT_LITERAL};
   const resolveNodeCardHeight = ${NODE_CARD_HEIGHT_SOURCE};
+  const resolveMeasuredCardMetrics = ${MEASURED_CARD_METRICS_SOURCE};
   const resolveFanoutArrangement = ${FANOUT_ARRANGEMENT_SOURCE};
 
   const DEFAULT_SELECTION = ${DEFAULT_SELECTION_LITERAL};
@@ -850,6 +853,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     bounds: { width: 1, height: 1 },
   };
   let camera = { x: 0, y: 0, scale: 1 };
+  // Lives outside graphState because graphState is rebuilt from scratch on every
+  // render. The whole point of these metrics is that one render teaches the next
+  // one what a card really costs, so they have to outlive the render that took them.
+  let cardMetrics = resolveMeasuredCardMetrics(null, GRAPH_LAYOUT.card);
   let inspectorCameraLiftOrigin = null;
   let pointerPan = null;
   let graphToolsPosition = null;
@@ -2135,7 +2142,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function estimatedNodeCardHeight(node) {
-    return resolveNodeCardHeight(nodeCapabilityCount(node), GRAPH_LAYOUT.card);
+    return resolveNodeCardHeight(nodeCapabilityCount(node), cardMetrics);
   }
 
   /**
@@ -2484,6 +2491,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
    * The previous pass's reservation is cleared first because it was written back
    * onto the card as an inline min-height. Measuring over it reads that answer
    * back as though it were the card, so the height could only ever climb.
+   *
+   * The capability strips are read in the same sweep, and for the same reason:
+   * these are the only conditions under which a strip states its own geometry
+   * rather than whatever the last reservation clamped it to. What comes out is the
+   * per-row step and the card chrome the next layout will reserve with, replacing
+   * the configured estimate the arrangement search has to start from.
    */
   function measureRenderedCardHeights(layout) {
     const cards = [];
@@ -2495,9 +2508,32 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (graph) graph.dataset.semanticZoom = "card";
     for (const entry of cards) entry[1].style.minHeight = "";
     const heights = new Map();
+    const strips = [];
     for (const [nodeId, card] of cards) {
       heights.set(nodeId, Math.max(Math.ceil(card.offsetHeight), Math.ceil(card.scrollHeight)));
+      const strip = card.querySelector(".node-capability-strip");
+      if (!strip) continue;
+      // The grid's own track lists say how many rows and columns CSS put there at
+      // this viewport, which is the fact the configured estimate cannot know: the
+      // narrow band collapses the strip to a single column. Split on a plain space
+      // rather than a whitespace class -- this source is inlined into a template
+      // literal, where a backslash escape would be eaten before it ever reached the
+      // browser.
+      const stripStyle = getComputedStyle(strip);
+      const rowTracks = stripStyle.gridTemplateRows === "none" ? [] : stripStyle.gridTemplateRows.trim().split(" ");
+      const columnTracks = stripStyle.gridTemplateColumns === "none"
+        ? []
+        : stripStyle.gridTemplateColumns.trim().split(" ");
+      strips.push({
+        cardHeightPx: heights.get(nodeId),
+        stripHeightPx: Math.max(Math.ceil(strip.offsetHeight), Math.ceil(strip.scrollHeight)),
+        rowGapPx: Number.parseFloat(stripStyle.rowGap) || 0,
+        renderedRows: rowTracks.filter(Boolean).length,
+        renderedColumns: columnTracks.filter(Boolean).length,
+      });
     }
+    cardMetrics = resolveMeasuredCardMetrics(strips, GRAPH_LAYOUT.card);
+    if (graph) graph.dataset.cardMetrics = cardMetrics.basis;
     if (graph) {
       if (presentation === undefined) delete graph.dataset.semanticZoom;
       else graph.dataset.semanticZoom = presentation;

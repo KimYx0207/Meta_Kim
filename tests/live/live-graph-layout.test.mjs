@@ -9,9 +9,11 @@ import {
   loadLiveGraphLayoutPolicy,
   normalizeLiveGraphLayoutPolicy,
   resolveFanoutArrangement,
+  resolveMeasuredCardMetrics,
   resolveNodeCardHeight,
   serializeFanoutArrangementResolver,
   serializeGraphLayoutPolicyForClient,
+  serializeMeasuredCardMetricsResolver,
   serializeNodeCardHeightResolver,
 } from "../../src/application/live/live-graph-layout.mjs";
 import { loadLiveGraphCameraPolicy } from "../../src/application/live/live-graph-camera.mjs";
@@ -33,6 +35,28 @@ const MEASURED_CHILD_COUNT = 15;
 const MEASURED_CHAIN_LENGTH = 2;
 const DEFECT_SINGLE_ROW_SCENE = Object.freeze({ width: 4984, height: 1180 });
 const SYMMETRIC_INSET = Object.freeze({ top: 26, right: 26, bottom: 26, left: 26 });
+
+/**
+ * Capability strips as a browser rendered them, at innerWidth 1738 dpr 1 with the
+ * graph in card presentation and each card's previous reservation cleared off it
+ * first. Untransformed box heights, so these are world px -- the unit the layout
+ * reserves in -- not the post-transform screen px a bounding rect would report.
+ *
+ * Both row counts agree on the geometry: 74 = 1*74 + 0*6 and 154 = 2*74 + 1*6, so a
+ * chip row is 74px tall, rows sit 6px apart, and the step one row adds is 80. The
+ * configuration estimates that step at 40, which is half of it. What is left of a
+ * card once its strip and the folded gap are removed is its chrome, and that does
+ * legitimately vary -- 175 to 203 here -- because a long node name wraps to a
+ * second line.
+ */
+const MEASURED_CAPABILITY_STRIPS = Object.freeze([
+  Object.freeze({ cardHeightPx: 278, stripHeightPx: 74, rowGapPx: 6, renderedRows: 1, renderedColumns: 2, chips: 1 }),
+  Object.freeze({ cardHeightPx: 255, stripHeightPx: 74, rowGapPx: 6, renderedRows: 1, renderedColumns: 2, chips: 1 }),
+  Object.freeze({ cardHeightPx: 363, stripHeightPx: 154, rowGapPx: 6, renderedRows: 2, renderedColumns: 2, chips: 4 }),
+  Object.freeze({ cardHeightPx: 335, stripHeightPx: 154, rowGapPx: 6, renderedRows: 2, renderedColumns: 2, chips: 4 }),
+]);
+const MEASURED_CAPABILITY_ROW_STEP = 80;
+const MEASURED_CARD_CHROME = 203;
 
 function arrangementRequest(overrides = {}) {
   const policy = overrides.policy || loadLiveGraphLayoutPolicy();
@@ -447,6 +471,123 @@ test("the client-facing policy carries every field the serialized resolvers read
   assert.ok(expected.length >= 7, `only ${expected.length} policy fields reached this guard, which is fewer than the loader returns`);
   assert.deepEqual(Object.keys(clientPolicy).sort(), expected.sort());
   assert.deepEqual(Object.keys(clientPolicy.modes).sort(), ["compact", "flow"]);
+});
+
+test("the card reservation covers the card the browser rendered, which the configured estimate does not", () => {
+  const policy = loadLiveGraphLayoutPolicy();
+  const metrics = resolveMeasuredCardMetrics(MEASURED_CAPABILITY_STRIPS, policy.card);
+
+  assert.equal(metrics.basis, "measured");
+  assert.equal(metrics.sampleCount, MEASURED_CAPABILITY_STRIPS.length);
+  assert.equal(metrics.capabilityRowHeightPx, MEASURED_CAPABILITY_ROW_STEP);
+  assert.equal(metrics.baseHeightPx, MEASURED_CARD_CHROME);
+  assert.equal(metrics.capabilitiesPerRow, 2);
+  assert.equal(metrics.measuredMinHeightPx, policy.card.measuredMinHeightPx, "the floor is not derived and must survive");
+
+  // The claim worth making is not that the numbers moved but that the reservation
+  // now covers the render. Asserting only the first direction would pass for any
+  // absurdly large step, so the second direction pins the fixture to a case the
+  // configured estimate actually fails -- if the configuration is ever brought into
+  // line, this fails and says so rather than quietly guarding nothing.
+  const understated = [];
+  for (const sample of MEASURED_CAPABILITY_STRIPS) {
+    assert.ok(
+      resolveNodeCardHeight(sample.chips, metrics) >= sample.cardHeightPx,
+      `the measured reservation was shorter than the ${sample.cardHeightPx}px card the browser rendered`,
+    );
+    if (resolveNodeCardHeight(sample.chips, policy.card) < sample.cardHeightPx) understated.push(sample.cardHeightPx);
+  }
+  assert.ok(
+    understated.length > 0,
+    "the configured estimate already covered every measured card, so this fixture no longer shows the defect it was taken for",
+  );
+});
+
+test("a strip CSS collapsed to one column decides the column count, because fewer chips per row means a taller card", () => {
+  const policy = loadLiveGraphLayoutPolicy();
+
+  // Not part of the measured population: every card the browser reported at 1738px wide
+  // had two columns. The narrow band in the stylesheet drops .node-capability-strip to a
+  // single column, so both counts are reachable and the resolver has to choose between
+  // them. Row height and chrome are held at the values the two-column cards already
+  // produce, so nothing but the column count can satisfy what follows.
+  const collapsed = { cardHeightPx: 283, stripHeightPx: 74, rowGapPx: 6, renderedRows: 1, renderedColumns: 1, chips: 1 };
+  const metrics = resolveMeasuredCardMetrics([...MEASURED_CAPABILITY_STRIPS, collapsed], policy.card);
+  const wider = resolveMeasuredCardMetrics(MEASURED_CAPABILITY_STRIPS, policy.card);
+
+  assert.equal(metrics.basis, "measured");
+  assert.equal(metrics.capabilitiesPerRow, 1, "the smaller count is the conservative one and must win over the two-column cards");
+  assert.equal(wider.capabilitiesPerRow, 2, "without the collapsed strip the two-column cards are all there is to read");
+  assert.equal(metrics.capabilityRowHeightPx, wider.capabilityRowHeightPx, "the fixture must not move the step, or the count is not what this proves");
+  assert.equal(metrics.baseHeightPx, wider.baseHeightPx, "the fixture must not move the chrome either");
+
+  // The count only matters through the height it produces, so state that consequence
+  // rather than the field alone: taking the larger count would halve the rows for a
+  // four-chip node and hand the arrangement a card shorter than one column can render.
+  assert.ok(
+    resolveNodeCardHeight(4, metrics) > resolveNodeCardHeight(4, wider),
+    "a four-chip node must reserve more once a column has been taken away, or the count is not reaching the height",
+  );
+});
+
+test("a strip the browser never rendered leaves the configured estimate in place", () => {
+  const policy = loadLiveGraphLayoutPolicy();
+  const configured = { ...policy.card, basis: "configured", sampleCount: 0 };
+  const valid = MEASURED_CAPABILITY_STRIPS[2];
+
+  // One request only walks one of these arms, and the page calls this before any
+  // card exists as well as after, so each refusal is exercised separately rather
+  // than trusting that whichever one the happy path skips would also hold.
+  const arms = [
+    ["nothing measured at all", []],
+    ["no measurement passed", null],
+    ["a measurement that is not a list", { ...valid }],
+    ["a hole in the list", [null]],
+    ["a strip with no rows", [{ ...valid, renderedRows: 0 }]],
+    ["a strip with no columns", [{ ...valid, renderedColumns: 0 }]],
+    ["a card the browser reported as zero-height", [{ ...valid, cardHeightPx: 0 }]],
+    ["a strip the browser reported as zero-height", [{ ...valid, stripHeightPx: 0 }]],
+    ["a strip as tall as the card holding it", [{ ...valid, stripHeightPx: valid.cardHeightPx }]],
+    ["a gap that is not a number", [{ ...valid, rowGapPx: Number.NaN }]],
+    ["a negative gap", [{ ...valid, rowGapPx: -6 }]],
+  ];
+  for (const [label, measurement] of arms) {
+    assert.deepEqual(
+      resolveMeasuredCardMetrics(measurement, policy.card),
+      configured,
+      `${label} must leave the estimate where the configuration put it`,
+    );
+  }
+
+  // A single unusable strip must not discard the usable ones. The page measures
+  // every card on screen, so one card caught mid-transition would otherwise drop
+  // the whole run back to the configured guess.
+  const mixed = resolveMeasuredCardMetrics([{ ...valid, renderedRows: 0 }, ...MEASURED_CAPABILITY_STRIPS], policy.card);
+  assert.equal(mixed.basis, "measured");
+  assert.equal(mixed.sampleCount, MEASURED_CAPABILITY_STRIPS.length);
+  assert.equal(mixed.capabilityRowHeightPx, MEASURED_CAPABILITY_ROW_STEP);
+});
+
+test("the serialized measured-metrics resolver runs outside this module on every branch", () => {
+  const policy = loadLiveGraphLayoutPolicy();
+  const clientPolicy = serializeGraphLayoutPolicyForClient(policy);
+  const compiled = new Function(`"use strict"; return ${serializeMeasuredCardMetricsResolver()};`)();
+
+  const branches = [
+    ["the measured path", MEASURED_CAPABILITY_STRIPS],
+    ["nothing measured", []],
+    ["no measurement passed", null],
+    ["a measurement that is not a list", { ...MEASURED_CAPABILITY_STRIPS[2] }],
+    ["a strip with no rows", [{ ...MEASURED_CAPABILITY_STRIPS[2], renderedRows: 0 }]],
+    ["a strip taller than its card", [{ ...MEASURED_CAPABILITY_STRIPS[2], stripHeightPx: 999 }]],
+  ];
+  for (const [label, measurement] of branches) {
+    assert.deepEqual(
+      compiled(measurement, clientPolicy.card),
+      resolveMeasuredCardMetrics(measurement, policy.card),
+      `the compiled copy disagreed on ${label}`,
+    );
+  }
 });
 
 /**

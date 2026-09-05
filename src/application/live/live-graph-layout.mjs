@@ -241,6 +241,70 @@ export function resolveNodeCardHeight(capabilityCount, card) {
 }
 
 /**
+ * Card chrome and capability-row step recovered from cards the browser rendered.
+ *
+ * The configuration has to carry an estimate for both, because the arrangement
+ * search runs before any card exists. Once cards are on screen their capability
+ * strips state the truth, and that truth is viewport-dependent: CSS drops the strip
+ * from two columns to one in the narrow band and changes the chip's minimum height
+ * per band, so a literal is wrong in at least one band whatever value it holds.
+ *
+ * The arithmetic is exact rather than fitted. A strip of `rows` rows with gap `g`
+ * occupies rows*rowHeight + (rows-1)*g, so (strip + g) / rows is the step one row
+ * adds including its gap, and whatever the card has left over is its chrome.
+ * Nothing here divides one card's height by another card's, so a long name wrapping
+ * in one card cannot tilt the step read from a different one.
+ *
+ * Where cards disagree the larger reservation wins, because the two directions are
+ * not symmetric. Over-reserving costs vertical space. Under-reserving hands the
+ * arrangement search a shorter block than the browser then renders, which is the
+ * defect this replaces. Chrome legitimately differs per card -- a wrapped node name
+ * adds a line -- so the maximum is the only value that covers every card. Column
+ * count goes the other way: fewer chips per row means more rows, so the smallest
+ * count observed is the conservative one.
+ *
+ * Serialized into the browser bundle, so it must stay self-contained: no imports,
+ * no module-scope references, no closures.
+ */
+export function resolveMeasuredCardMetrics(measurement, card) {
+  const samples = Array.isArray(measurement) ? measurement : [];
+  let rowStep = 0;
+  let chrome = 0;
+  let perRow = 0;
+  let used = 0;
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index];
+    if (!sample || typeof sample !== "object") continue;
+    const rows = Number(sample.renderedRows);
+    const columns = Number(sample.renderedColumns);
+    const cardHeight = Number(sample.cardHeightPx);
+    const stripHeight = Number(sample.stripHeightPx);
+    const gap = Number(sample.rowGapPx);
+    if (!Number.isFinite(rows) || rows < 1) continue;
+    if (!Number.isFinite(columns) || columns < 1) continue;
+    if (!Number.isFinite(cardHeight) || cardHeight <= 0) continue;
+    if (!Number.isFinite(stripHeight) || stripHeight <= 0) continue;
+    if (!Number.isFinite(gap) || gap < 0) continue;
+    const step = (stripHeight + gap) / Math.floor(rows);
+    const base = cardHeight - stripHeight - gap;
+    if (!(step > 0) || !(base > 0)) continue;
+    used += 1;
+    if (step > rowStep) rowStep = step;
+    if (base > chrome) chrome = base;
+    if (perRow === 0 || Math.floor(columns) < perRow) perRow = Math.floor(columns);
+  }
+  if (used === 0) return { ...card, basis: "configured", sampleCount: 0 };
+  return {
+    ...card,
+    baseHeightPx: chrome,
+    capabilityRowHeightPx: rowStep,
+    capabilitiesPerRow: perRow,
+    basis: "measured",
+    sampleCount: used,
+  };
+}
+
+/**
  * Choose the fanout arrangement that needs the least zoom.
  *
  * Every column count from one to the child count is scored against every
@@ -333,6 +397,10 @@ export function resolveFanoutArrangement(request, layout) {
 
 export function serializeNodeCardHeightResolver() {
   return resolveNodeCardHeight.toString();
+}
+
+export function serializeMeasuredCardMetricsResolver() {
+  return resolveMeasuredCardMetrics.toString();
 }
 
 export function serializeFanoutArrangementResolver() {

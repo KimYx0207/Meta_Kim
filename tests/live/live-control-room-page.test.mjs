@@ -12,6 +12,7 @@ import {
 import {
   loadLiveGraphLayoutPolicy,
   resolveFanoutArrangement,
+  resolveMeasuredCardMetrics,
   resolveNodeCardHeight,
   serializeGraphLayoutPolicyForClient,
 } from "../../src/application/live/live-graph-layout.mjs";
@@ -2059,7 +2060,8 @@ test("lays out worker and workflow entities by spawn depth with a v1 serpentine 
 
   assert.match(html, /const cardWidth\s*=\s*GRAPH_LAYOUT\.card\.stageWidthPx/u);
   assert.match(html, /function estimatedNodeCardHeight\(node\)/u);
-  assert.match(html, /resolveNodeCardHeight\(nodeCapabilityCount\(node\), GRAPH_LAYOUT\.card\)/u);
+  assert.match(html, /resolveNodeCardHeight\(nodeCapabilityCount\(node\), cardMetrics\)/u);
+  assert.match(html, /cardMetrics = resolveMeasuredCardMetrics\(strips, GRAPH_LAYOUT\.card\)/u);
   // The claim that used to live here matched the source line `depthFor(parentId,
   // seen) + 1`. That expression is gone, and it was never the claim worth making:
   // it read as "one deeper than the parent" while the parent it consumed was
@@ -2185,6 +2187,7 @@ function graphLayoutHarness({ width, height }) {
     "graphMinimap",
     "resolveNodeCardHeight",
     "resolveFanoutArrangement",
+    "cardMetrics",
     `${helpers.map((name) => shippedHelper(html, name)).join("\n")}\nreturn { layoutGraph, graphRankById };`,
   )(
     layout,
@@ -2195,6 +2198,10 @@ function graphLayoutHarness({ width, height }) {
     null,
     resolveNodeCardHeight,
     resolveFanoutArrangement,
+    // The state the page is in before any card has been rendered, spelled the way the
+    // page spells it. Nothing here has been measured, so the configured card is what
+    // the arrangement runs on -- which is the state these guards describe.
+    resolveMeasuredCardMetrics(null, layout.card),
   );
 }
 
@@ -4436,11 +4443,21 @@ test("a title too long for one line takes a second line instead of deleting its 
   // an unrelated `Math.max(0,` further down the page, so the guard read a reserve
   // of 0 and failed as though the cards really did overlap. It now reads the
   // configured number and proves that number is the one shipped to the browser.
+  //
+  // The estimate reads a measured holder rather than the shipped configuration,
+  // because the configured row step is only a starting guess — but the floor
+  // asserted here is not derived from anything, so it survives into the holder and
+  // is still the reserve the page uses.
   const reservePx = loadLiveGraphLayoutPolicy().card.measuredMinHeightPx;
   assert.match(
     html,
-    /resolveNodeCardHeight\(nodeCapabilityCount\(node\), GRAPH_LAYOUT\.card\)/u,
-    "card height must come from the configured resolver, or this reserve is not the one the page uses",
+    /resolveNodeCardHeight\(nodeCapabilityCount\(node\), cardMetrics\)/u,
+    "card height must come from the measured card metrics, or this reserve is not the one the page uses",
+  );
+  assert.match(
+    html,
+    /let cardMetrics = resolveMeasuredCardMetrics\(null, GRAPH_LAYOUT\.card\)/u,
+    "the measured holder must start from the configured card, or the floor asserted here never reaches the estimate",
   );
   assert.match(
     html,
@@ -4859,6 +4876,51 @@ return edgeGeometry;`,
 });
 
 /**
+ * Lift `syncLayoutToRenderedCards`, and the measurement it drives, out of the shipped
+ * script with their closure values injected.
+ *
+ * The guards below each need the same scope, and each used to carry its own copy of
+ * the injection list. Growing the measurement by one closed-over name therefore
+ * reddened all of them and had to be answered four times. The list lives here now, so
+ * a new name is one edit -- and it still arrives as a reference error rather than as a
+ * quietly weakened assertion, which is the property those guards were written for.
+ *
+ * `readCardMetrics` hands back the holder the measurement writes. Inside the lifted
+ * body that holder is a local, so without this the derived numbers would be
+ * unobservable and only their `basis` label would reach a caller.
+ *
+ * `getComputedStyle` is a browser global the measurement calls on a card's capability
+ * strip. A stub strip states its own answer through a `computedStyle` property, which
+ * keeps the geometry each guard wants to describe next to the element it describes.
+ */
+function liftSyncLayoutToRenderedCards({ graphLayout, nodeElements, graph, graphState }) {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const state = graphState ?? { nodeElements };
+  const lifted = new Function(
+    "GRAPH_LAYOUT",
+    "graphState",
+    "graphScene",
+    "edgeLayer",
+    "graph",
+    "resolveMeasuredCardMetrics",
+    "getComputedStyle",
+    `let cardMetrics = resolveMeasuredCardMetrics(null, GRAPH_LAYOUT.card);
+${shippedHelper(html, "measureRenderedCardHeights")}
+${shippedHelper(html, "syncLayoutToRenderedCards")}
+return { syncLayoutToRenderedCards, readCardMetrics: () => cardMetrics };`,
+  )(
+    graphLayout,
+    state,
+    null,
+    null,
+    graph,
+    resolveMeasuredCardMetrics,
+    (element) => element.computedStyle,
+  );
+  return { ...lifted, graphState: state };
+}
+
+/**
  * The lane a child's horizontal run travels down is reserved while the cards are
  * still nominal heights. A card that renders taller than budgeted swallows the gap
  * the lane was placed in, which would send the run straight across it. The page
@@ -4870,7 +4932,6 @@ return edgeGeometry;`,
  * and the fix is to inject the new name, not to loosen an assertion.
  */
 test("a lane reserved before measuring is re-centred into the gap the rendered cards leave", () => {
-  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const graphLayout = {
     scenePaddingPx: { right: 48, bottom: 42 },
     sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
@@ -4890,19 +4951,15 @@ test("a lane reserved before measuring is re-centred into the gap the rendered c
         scrollHeight: height,
         style: {},
         getBoundingClientRect: () => ({ height }),
+        querySelector: () => null,
       }]),
     ),
   };
-  const syncLayoutToRenderedCards = new Function(
-    "GRAPH_LAYOUT",
-    "graphState",
-    "graphScene",
-    "edgeLayer",
-    "graph",
-    `${shippedHelper(html, "measureRenderedCardHeights")}
-${shippedHelper(html, "syncLayoutToRenderedCards")}
-return syncLayoutToRenderedCards;`,
-  )(graphLayout, graphState, null, null, { dataset: { semanticZoom: "card" } });
+  const { syncLayoutToRenderedCards } = liftSyncLayoutToRenderedCards({
+    graphLayout,
+    graphState,
+    graph: { dataset: { semanticZoom: "card" } },
+  });
 
   const layout = { positions, bounds: { width: 0, height: 0 } };
   syncLayoutToRenderedCards(layout);
@@ -4947,7 +5004,6 @@ return syncLayoutToRenderedCards;`,
  * both is satisfied by the contaminated expression and by the correct one alike.
  */
 test("a card's reservation is its layout height, not its height after the camera's transform", () => {
-  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const graphLayout = {
     scenePaddingPx: { right: 48, bottom: 42 },
     sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
@@ -4960,18 +5016,14 @@ test("a card's reservation is its layout height, not its height after the camera
     scrollHeight: layoutHeight,
     style: {},
     getBoundingClientRect: () => ({ height: layoutHeight * cameraScale }),
+    querySelector: () => null,
   };
   const positions = new Map([["a", { x: 0, y: 0, width: 200, height: 333 }]]);
-  const syncLayoutToRenderedCards = new Function(
-    "GRAPH_LAYOUT",
-    "graphState",
-    "graphScene",
-    "edgeLayer",
-    "graph",
-    `${shippedHelper(html, "measureRenderedCardHeights")}
-${shippedHelper(html, "syncLayoutToRenderedCards")}
-return syncLayoutToRenderedCards;`,
-  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, { dataset: { semanticZoom: "card" } });
+  const { syncLayoutToRenderedCards } = liftSyncLayoutToRenderedCards({
+    graphLayout,
+    nodeElements: new Map([["a", card]]),
+    graph: { dataset: { semanticZoom: "card" } },
+  });
 
   syncLayoutToRenderedCards({ positions, bounds: { width: 0, height: 0 } });
 
@@ -4989,7 +5041,6 @@ return syncLayoutToRenderedCards;`,
  * measurement has to name the presentation it wants rather than inherit one.
  */
 test("a card is measured as a card even while the canvas is drawing cells", () => {
-  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const graphLayout = {
     scenePaddingPx: { right: 48, bottom: 42 },
     sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
@@ -5004,18 +5055,14 @@ test("a card is measured as a card even while the canvas is drawing cells", () =
     get scrollHeight() { return heightForPresentation(); },
     style: {},
     getBoundingClientRect: () => ({ height: heightForPresentation() }),
+    querySelector: () => null,
   };
   const positions = new Map([["a", { x: 0, y: 0, width: 200, height: 60 }]]);
-  const syncLayoutToRenderedCards = new Function(
-    "GRAPH_LAYOUT",
-    "graphState",
-    "graphScene",
-    "edgeLayer",
-    "graph",
-    `${shippedHelper(html, "measureRenderedCardHeights")}
-${shippedHelper(html, "syncLayoutToRenderedCards")}
-return syncLayoutToRenderedCards;`,
-  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, graph);
+  const { syncLayoutToRenderedCards } = liftSyncLayoutToRenderedCards({
+    graphLayout,
+    nodeElements: new Map([["a", card]]),
+    graph,
+  });
 
   syncLayoutToRenderedCards({ positions, bounds: { width: 0, height: 0 } });
 
@@ -5027,24 +5074,24 @@ return syncLayoutToRenderedCards;`,
 });
 
 test("measuring restores the presentation the camera had chosen", () => {
-  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const graphLayout = {
     scenePaddingPx: { right: 48, bottom: 42 },
     sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
     renderedColumnGapPx: 24,
   };
   const graph = { dataset: { semanticZoom: "cell" } };
-  const card = { offsetHeight: 362, scrollHeight: 362, style: {}, getBoundingClientRect: () => ({ height: 362 }) };
-  const syncLayoutToRenderedCards = new Function(
-    "GRAPH_LAYOUT",
-    "graphState",
-    "graphScene",
-    "edgeLayer",
-    "graph",
-    `${shippedHelper(html, "measureRenderedCardHeights")}
-${shippedHelper(html, "syncLayoutToRenderedCards")}
-return syncLayoutToRenderedCards;`,
-  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, graph);
+  const card = {
+    offsetHeight: 362,
+    scrollHeight: 362,
+    style: {},
+    getBoundingClientRect: () => ({ height: 362 }),
+    querySelector: () => null,
+  };
+  const { syncLayoutToRenderedCards } = liftSyncLayoutToRenderedCards({
+    graphLayout,
+    nodeElements: new Map([["a", card]]),
+    graph,
+  });
 
   syncLayoutToRenderedCards({ positions: new Map([["a", { x: 0, y: 0, width: 200, height: 60 }]]), bounds: {} });
 
@@ -5062,7 +5109,6 @@ return syncLayoutToRenderedCards;`,
  * later pass reads its own old answer back as if it were a measurement.
  */
 test("a reservation left on the card by an earlier pass does not floor the next measurement", () => {
-  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const graphLayout = {
     scenePaddingPx: { right: 48, bottom: 42 },
     sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
@@ -5076,18 +5122,14 @@ test("a reservation left on the card by an earlier pass does not floor the next 
     get scrollHeight() { return heightUnderStyle(); },
     style,
     getBoundingClientRect: () => ({ height: heightUnderStyle() }),
+    querySelector: () => null,
   };
   const positions = new Map([["a", { x: 0, y: 0, width: 200, height: 60 }]]);
-  const syncLayoutToRenderedCards = new Function(
-    "GRAPH_LAYOUT",
-    "graphState",
-    "graphScene",
-    "edgeLayer",
-    "graph",
-    `${shippedHelper(html, "measureRenderedCardHeights")}
-${shippedHelper(html, "syncLayoutToRenderedCards")}
-return syncLayoutToRenderedCards;`,
-  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, { dataset: { semanticZoom: "card" } });
+  const { syncLayoutToRenderedCards } = liftSyncLayoutToRenderedCards({
+    graphLayout,
+    nodeElements: new Map([["a", card]]),
+    graph: { dataset: { semanticZoom: "card" } },
+  });
 
   syncLayoutToRenderedCards({ positions, bounds: { width: 0, height: 0 } });
 
@@ -5097,6 +5139,100 @@ return syncLayoutToRenderedCards;`,
     "a reservation that reads back its own previous answer can only ratchet upward",
   );
   assert.strictEqual(style.minHeight, naturalHeight + "px", "the card must be left holding the height that was measured");
+});
+
+/**
+ * The arrangement search runs before any card exists, so it has to start from a
+ * configured guess at what one capability row costs. A browser then said the guess was
+ * half the truth: at 1738px wide, dpr 1, a chip row measured 74px with a 6px gap, so a
+ * row really costs 80 against the 40 the configuration carries. Understating it hands
+ * the search a shorter block than the render produces, and the search is what decides
+ * column count and chain orientation.
+ *
+ * So the measurement sweep reads each card's strip while it is already forcing card
+ * presentation, and the numbers it recovers replace the guess for the next pass. This
+ * asserts the recovered numbers rather than the label alone: a sweep that collected
+ * nothing would still be able to say "configured", and a sweep that collected the
+ * wrong fields would produce a basis of "measured" over numbers nobody checked.
+ *
+ * A strip of `rows` rows with gap `g` occupies rows*rowHeight + (rows-1)*g. Both cards
+ * below agree that a row is 74 tall -- 74 = 1*74 + 0*6 and 154 = 2*74 + 1*6 -- which is
+ * what makes 80 a reading and not a fit through one point.
+ */
+test("what a rendered capability strip costs replaces the configured guess for the next pass", () => {
+  const rowGapPx = 6;
+  const graphLayout = {
+    scenePaddingPx: { right: 48, bottom: 42 },
+    sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
+    renderedColumnGapPx: 24,
+    card: {
+      baseHeightPx: 112,
+      capabilityRowHeightPx: 40,
+      capabilitiesPerRow: 2,
+      measuredMinHeightPx: 333,
+    },
+  };
+  const stripCard = (cardHeightPx, stripHeightPx, tracks) => ({
+    offsetHeight: cardHeightPx,
+    scrollHeight: cardHeightPx,
+    style: {},
+    getBoundingClientRect: () => ({ height: cardHeightPx }),
+    querySelector: (selector) => (selector === ".node-capability-strip"
+      ? {
+        offsetHeight: stripHeightPx,
+        scrollHeight: stripHeightPx,
+        computedStyle: {
+          rowGap: rowGapPx + "px",
+          gridTemplateRows: tracks.rows,
+          gridTemplateColumns: tracks.columns,
+        },
+      }
+      : null),
+  });
+  const graph = { dataset: { semanticZoom: "card" } };
+  const { syncLayoutToRenderedCards, readCardMetrics } = liftSyncLayoutToRenderedCards({
+    graphLayout,
+    nodeElements: new Map([
+      ["one", stripCard(278, 74, { rows: "74px", columns: "123px 123px" })],
+      ["two", stripCard(363, 154, { rows: "74px 74px", columns: "123px 123px" })],
+    ]),
+    graph,
+  });
+
+  assert.strictEqual(readCardMetrics().basis, "configured", "nothing has been measured before the sweep runs");
+
+  syncLayoutToRenderedCards({
+    positions: new Map([
+      ["one", { x: 0, y: 0, width: 200, height: 333 }],
+      ["two", { x: 400, y: 0, width: 200, height: 333 }],
+    ]),
+    bounds: { width: 0, height: 0 },
+  });
+
+  const metrics = readCardMetrics();
+  assert.strictEqual(metrics.basis, "measured");
+  assert.strictEqual(metrics.sampleCount, 2, "both strips state their geometry, so both must be read");
+  assert.strictEqual(metrics.capabilityRowHeightPx, 80, "a 74px row plus its 6px gap is what one more row costs");
+  assert.strictEqual(metrics.baseHeightPx, 203, "the chrome is whatever the taller card has left once its strip and gap come off");
+  assert.strictEqual(metrics.capabilitiesPerRow, 2, "the column count is the grid's own track list, not a configured constant");
+  assert.strictEqual(
+    metrics.measuredMinHeightPx,
+    graphLayout.card.measuredMinHeightPx,
+    "the floor is not derived from anything measured here, so it has to survive the sweep",
+  );
+  assert.strictEqual(graph.dataset.cardMetrics, "measured", "the basis must reach the DOM, or a browser cannot be asked which one it used");
+
+  // The reservation the search would now make covers the card the browser drew. The
+  // configured guess does not, which is the defect being closed: without both halves
+  // this passes on a fixture that never showed a problem.
+  assert.ok(
+    resolveNodeCardHeight(4, metrics) >= 363,
+    "the measured reservation must cover the 363px card that produced it",
+  );
+  assert.ok(
+    resolveNodeCardHeight(4, graphLayout.card) < 363,
+    "the configured guess must fall short of that card, or this fixture no longer carries the defect",
+  );
 });
 
 /**
