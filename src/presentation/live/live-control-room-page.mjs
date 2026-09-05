@@ -26,6 +26,7 @@ import {
   loadLiveGraphCameraPolicy,
   serializeCameraLegibilityCustomProperties,
   serializeGraphCameraPolicyForClient,
+  serializeInspectorCameraLiftResolver,
   serializeOverviewCameraResolver,
   serializeSemanticZoomResolver,
 } from "../../application/live/live-graph-camera.mjs";
@@ -206,6 +207,7 @@ const GRAPH_CAMERA_LITERAL = JSON.stringify(serializeGraphCameraPolicyForClient(
 const CAMERA_LEGIBILITY_TOKENS = serializeCameraLegibilityCustomProperties(PAGE_GRAPH_CAMERA);
 const OVERVIEW_CAMERA_SOURCE = serializeOverviewCameraResolver();
 const SEMANTIC_ZOOM_SOURCE = serializeSemanticZoomResolver();
+const INSPECTOR_CAMERA_LIFT_SOURCE = serializeInspectorCameraLiftResolver();
 
 /**
  * Every distance the execution graph is laid out with.
@@ -364,6 +366,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const GRAPH_CAMERA = ${GRAPH_CAMERA_LITERAL};
   const resolveOverviewCamera = ${OVERVIEW_CAMERA_SOURCE};
   const resolveSemanticZoom = ${SEMANTIC_ZOOM_SOURCE};
+  const resolveInspectorCameraLift = ${INSPECTOR_CAMERA_LIFT_SOURCE};
 
   const GRAPH_LAYOUT = ${GRAPH_LAYOUT_LITERAL};
   const resolveNodeCardHeight = ${NODE_CARD_HEIGHT_SOURCE};
@@ -847,6 +850,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     bounds: { width: 1, height: 1 },
   };
   let camera = { x: 0, y: 0, scale: 1 };
+  let inspectorCameraLiftOrigin = null;
   let pointerPan = null;
   let graphToolsPosition = null;
   let graphToolsDrag = null;
@@ -2916,12 +2920,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function reconcileCamera({ inspectorOpen = evidencePanel?.dataset.open === "true" } = {}) {
     reclampGraphTools();
     if (!graph || !currentSnapshot) return;
+    const lift = resolveInspectorCameraLift(
+      { inspectorOpen: inspectorOpen && cameraMode === "follow", scale: camera.scale, liftedFrom: inspectorCameraLiftOrigin },
+      GRAPH_CAMERA,
+    );
+    inspectorCameraLiftOrigin = lift.liftedFrom;
+    if (lift.scale !== camera.scale) updateCamera({ ...camera, scale: lift.scale });
     if (cameraMode === "overview") {
       fitGraph();
       return;
     }
     if (cameraMode === "follow") {
-      if (inspectorOpen && camera.scale < GRAPH_CAMERA.semanticZoomCellMaxScale) updateCamera({ ...camera, scale: GRAPH_CAMERA.semanticZoomCellMaxScale });
       centerGraphNode(followTargetId());
       return;
     }

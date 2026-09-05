@@ -967,8 +967,10 @@ test("uses a canvas-first control-room hierarchy with an on-demand inspector and
   // The lift used to be a literal `.68`, a number with no relationship to any
   // declared bound. It is now the cell/card boundary itself: opening the
   // inspector means the reader wants to read one node, and the card rendering is
-  // by definition the smallest scale at which a node is readable.
-  assert.match(html, /function reconcileCamera\([\s\S]{0,700}camera\.scale < GRAPH_CAMERA\.semanticZoomCellMaxScale[\s\S]{0,220}centerGraphNode\(followTargetId\(\)\)/u);
+  // by definition the smallest scale at which a node is readable. It also has to
+  // be reversible, so the decision lives in the shared resolver and the origin it
+  // reports is kept for the close.
+  assert.match(html, /function reconcileCamera\([\s\S]{0,700}inspectorCameraLiftOrigin = lift\.liftedFrom;[\s\S]{0,320}centerGraphNode\(followTargetId\(\)\)/u);
   assert.match(html, /new ResizeObserver\(\(\)\s*=>\s*reconcileCamera\(\)\)/u);
   assert.match(html, /if \(firstSnapshot\) \{\s*setInspectorOpen\(false\)/u);
   assert.doesNotMatch(html, /setInspectorOpen\(currentWorkView === "run"[\s\S]{0,160}Boolean\(selectedNodeId\)\)/u);

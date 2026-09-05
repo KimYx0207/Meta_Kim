@@ -222,6 +222,29 @@ export function resolveSemanticZoom(scale, policy) {
   return scale < policy.semanticZoomCellMaxScale ? "cell" : "card";
 }
 
+/**
+ * Follow mode lifts the camera to the card boundary while the inspector is open,
+ * because the inspector narrows the canvas and the focused node has to stay
+ * readable. The lift used to be one-way: closing the inspector left the camera
+ * at the boundary and the scale the user had chosen was gone for the rest of the
+ * session (measured 0.5884 -> 0.991, no return).
+ *
+ * `liftedFrom` is the caller's record of the replaced scale, or null when no
+ * lift is outstanding. The restore is deliberately conditional on the scale
+ * still being the value the lift wrote: anything else is a scale the user picked
+ * after the lift, and theirs wins.
+ */
+export function resolveInspectorCameraLift({ inspectorOpen, scale, liftedFrom }, policy) {
+  const target = policy.semanticZoomCellMaxScale;
+  const outstanding = Number.isFinite(liftedFrom) ? liftedFrom : null;
+  if (inspectorOpen) {
+    if (!(scale < target)) return { scale, liftedFrom: outstanding };
+    return { scale: target, liftedFrom: outstanding === null ? scale : outstanding };
+  }
+  if (outstanding === null) return { scale, liftedFrom: null };
+  return { scale: scale === target ? outstanding : scale, liftedFrom: null };
+}
+
 /** Serialize the overview resolver for inlining into the browser bundle. */
 export function serializeOverviewCameraResolver() {
   return resolveOverviewCamera.toString();
@@ -230,6 +253,11 @@ export function serializeOverviewCameraResolver() {
 /** Serialize the semantic-zoom resolver for inlining into the browser bundle. */
 export function serializeSemanticZoomResolver() {
   return resolveSemanticZoom.toString();
+}
+
+/** Serialize the inspector-lift resolver for inlining into the browser bundle. */
+export function serializeInspectorCameraLiftResolver() {
+  return resolveInspectorCameraLift.toString();
 }
 
 /**

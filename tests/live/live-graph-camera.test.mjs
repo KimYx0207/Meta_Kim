@@ -5,10 +5,12 @@ import {
   LIVE_GRAPH_CAMERA_SCHEMA_VERSION,
   loadLiveGraphCameraPolicy,
   normalizeLiveGraphCameraPolicy,
+  resolveInspectorCameraLift,
   resolveOverviewCamera,
   resolveSemanticZoom,
   serializeCameraLegibilityCustomProperties,
   serializeGraphCameraPolicyForClient,
+  serializeInspectorCameraLiftResolver,
   serializeOverviewCameraResolver,
   serializeSemanticZoomResolver,
 } from "../../src/application/live/live-graph-camera.mjs";
@@ -183,6 +185,10 @@ test("the shipped page inlines the resolvers rather than forking their arithmeti
   assert.ok(script.includes(serializeOverviewCameraResolver()), "overview resolver source must be inlined verbatim");
   assert.ok(script.includes(serializeSemanticZoomResolver()), "semantic-zoom resolver source must be inlined verbatim");
   assert.ok(
+    script.includes(serializeInspectorCameraLiftResolver()),
+    "inspector-lift resolver source must be inlined verbatim",
+  );
+  assert.ok(
     script.includes(JSON.stringify(serializeGraphCameraPolicyForClient(loadLiveGraphCameraPolicy()))),
     "the camera policy literal must come from config, not from a second copy in the page",
   );
@@ -194,8 +200,11 @@ test("the client script keeps no camera scale literal of its own", () => {
   // The two resolver sources are inlined at separate sites, so each is removed
   // on its own. Stripping their concatenation would match nothing and silently
   // widen the assertion to the resolver bodies too.
-  const pageOwned = [serializeOverviewCameraResolver(), serializeSemanticZoomResolver()]
-    .reduce((rest, source) => rest.split(source).join(""), script);
+  const pageOwned = [
+    serializeOverviewCameraResolver(),
+    serializeSemanticZoomResolver(),
+    serializeInspectorCameraLiftResolver(),
+  ].reduce((rest, source) => rest.split(source).join(""), script);
 
   assert.ok(pageOwned.length < script.length, "both resolver sources must actually be found and stripped");
   for (const literal of [
@@ -385,10 +394,98 @@ test("the follow-mode zoom floor comes from the cell boundary in config", () => 
 
   assert.match(
     html,
-    /inspectorOpen && camera\.scale < GRAPH_CAMERA\.semanticZoomCellMaxScale\) updateCamera\(\{ \.\.\.camera, scale: GRAPH_CAMERA\.semanticZoomCellMaxScale \}\)/u,
-    "follow mode must lift the camera to the declared card boundary, not to a literal",
+    /resolveInspectorCameraLift\(\s*\{ inspectorOpen: inspectorOpen && cameraMode === "follow", scale: camera\.scale, liftedFrom: inspectorCameraLiftOrigin \},\s*GRAPH_CAMERA,\s*\)/u,
+    "follow mode must lift the camera through the shared resolver, not through its own comparison",
   );
   assert.doesNotMatch(html, /camera\.scale < \.68/u, "the 0.68 literal must be gone from the page");
+  assert.doesNotMatch(
+    html,
+    /camera\.scale < GRAPH_CAMERA\.semanticZoomCellMaxScale\) updateCamera/u,
+    "the page must not keep its own one-way lift beside the reversible resolver",
+  );
+});
+
+/**
+ * The lift was measured in a real browser as 0.5884 -> 0.991 on opening the
+ * inspector, and closing it left the camera at 0.991: the scale the user had
+ * chosen was gone for the rest of the session. These cases pin the round trip.
+ */
+test("opening the inspector lifts the camera and closing it gives the scale back", () => {
+  const policy = loadLiveGraphCameraPolicy();
+  const target = policy.semanticZoomCellMaxScale;
+  const chosen = target - 0.4;
+
+  const lifted = resolveInspectorCameraLift({ inspectorOpen: true, scale: chosen, liftedFrom: null }, policy);
+  assert.equal(lifted.scale, target, "an inspector open below the card boundary must lift to the boundary");
+  assert.equal(lifted.liftedFrom, chosen, "the lift must remember the scale it replaced");
+
+  const held = resolveInspectorCameraLift(
+    { inspectorOpen: true, scale: lifted.scale, liftedFrom: lifted.liftedFrom },
+    policy,
+  );
+  assert.equal(held.scale, target, "a reconcile while the inspector stays open must not move the camera again");
+  assert.equal(held.liftedFrom, chosen, "the memory must survive every reconcile the open inspector triggers");
+
+  const restored = resolveInspectorCameraLift(
+    { inspectorOpen: false, scale: held.scale, liftedFrom: held.liftedFrom },
+    policy,
+  );
+  assert.equal(restored.scale, chosen, "closing the inspector must return the camera to the user's own scale");
+  assert.equal(restored.liftedFrom, null, "a completed round trip must leave no memory to replay");
+});
+
+test("a scale the user chose while the inspector was open is theirs to keep", () => {
+  const policy = loadLiveGraphCameraPolicy();
+  const target = policy.semanticZoomCellMaxScale;
+  const chosen = target - 0.4;
+  const theirs = policy.maxScale;
+
+  const kept = resolveInspectorCameraLift({ inspectorOpen: false, scale: theirs, liftedFrom: chosen }, policy);
+  assert.equal(kept.scale, theirs, "a scale that is no longer the lifted value must not be overwritten on close");
+  assert.equal(kept.liftedFrom, null, "the stale memory must be dropped rather than kept for the next close");
+
+  const noop = resolveInspectorCameraLift({ inspectorOpen: false, scale: chosen, liftedFrom: null }, policy);
+  assert.equal(noop.scale, chosen, "a close with no outstanding lift must leave the camera alone");
+  assert.equal(noop.liftedFrom, null);
+});
+
+test("an inspector opened at or above the card boundary records no lift to undo", () => {
+  const policy = loadLiveGraphCameraPolicy();
+  const target = policy.semanticZoomCellMaxScale;
+
+  const atBoundary = resolveInspectorCameraLift({ inspectorOpen: true, scale: target, liftedFrom: null }, policy);
+  assert.equal(atBoundary.scale, target);
+  assert.equal(atBoundary.liftedFrom, null, "no lift happened, so closing must not pull the camera down to it");
+
+  const above = resolveInspectorCameraLift({ inspectorOpen: true, scale: policy.maxScale, liftedFrom: null }, policy);
+  assert.equal(above.scale, policy.maxScale, "a camera already past the boundary must not be dragged back to it");
+  assert.equal(above.liftedFrom, null);
+});
+
+/**
+ * A second lift while the inspector is still open — a resize or a mode round trip
+ * can drop the scale below the boundary again — must not renumber the origin. The
+ * scale worth restoring is the one the user had before the inspector took over,
+ * not whatever the camera happened to be showing between two lifts.
+ */
+test("a second lift keeps the origin the first one recorded", () => {
+  const policy = loadLiveGraphCameraPolicy();
+  const target = policy.semanticZoomCellMaxScale;
+  const chosen = target - 0.4;
+  const intermediate = target - 0.1;
+
+  const relifted = resolveInspectorCameraLift(
+    { inspectorOpen: true, scale: intermediate, liftedFrom: chosen },
+    policy,
+  );
+  assert.equal(relifted.scale, target, "a scale back below the boundary must be lifted again");
+  assert.equal(relifted.liftedFrom, chosen, "the origin must stay the pre-inspector scale, not the intermediate one");
+
+  const restored = resolveInspectorCameraLift(
+    { inspectorOpen: false, scale: relifted.scale, liftedFrom: relifted.liftedFrom },
+    policy,
+  );
+  assert.equal(restored.scale, chosen, "closing after two lifts must still land on the user's own scale");
 });
 
 test("a clipped overview is labelled as clipped in both locales", () => {
