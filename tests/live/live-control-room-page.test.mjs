@@ -4884,6 +4884,7 @@ test("a lane reserved before measuring is re-centred into the gap the rendered c
   const graphState = {
     nodeElements: new Map(
       Object.entries(renderedHeights).map(([id, height]) => [id, {
+        offsetHeight: height,
         scrollHeight: height,
         style: {},
         getBoundingClientRect: () => ({ height }),
@@ -4895,9 +4896,11 @@ test("a lane reserved before measuring is re-centred into the gap the rendered c
     "graphState",
     "graphScene",
     "edgeLayer",
-    `${shippedHelper(html, "syncLayoutToRenderedCards")}
+    "graph",
+    `${shippedHelper(html, "measureRenderedCardHeights")}
+${shippedHelper(html, "syncLayoutToRenderedCards")}
 return syncLayoutToRenderedCards;`,
-  )(graphLayout, graphState, null, null);
+  )(graphLayout, graphState, null, null, { dataset: { semanticZoom: "card" } });
 
   const layout = { positions, bounds: { width: 0, height: 0 } };
   syncLayoutToRenderedCards(layout);
@@ -4930,6 +4933,168 @@ return syncLayoutToRenderedCards;`,
     "the scene bounds must be recomputed from the measured cards, so the camera fits what is actually drawn",
   );
   assert.deepEqual(graphState.bounds, layout.bounds, "the camera reads bounds off graphState, so both must agree");
+});
+
+/**
+ * The scene carries the camera's transform, so a client rect taken inside it answers
+ * in screen pixels while the layout it feeds is written in world pixels. Mixing the
+ * two makes the reservation - and therefore the spacing between rows - a function of
+ * wherever the zoom happened to be sitting when the layout last ran.
+ *
+ * The fixture has to make the two disagree. A stub that returns the same number for
+ * both is satisfied by the contaminated expression and by the correct one alike.
+ */
+test("a card's reservation is its layout height, not its height after the camera's transform", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const graphLayout = {
+    scenePaddingPx: { right: 48, bottom: 42 },
+    sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
+    renderedColumnGapPx: 24,
+  };
+  const cameraScale = 1.0799;
+  const layoutHeight = 362;
+  const card = {
+    offsetHeight: layoutHeight,
+    scrollHeight: layoutHeight,
+    style: {},
+    getBoundingClientRect: () => ({ height: layoutHeight * cameraScale }),
+  };
+  const positions = new Map([["a", { x: 0, y: 0, width: 200, height: 333 }]]);
+  const syncLayoutToRenderedCards = new Function(
+    "GRAPH_LAYOUT",
+    "graphState",
+    "graphScene",
+    "edgeLayer",
+    "graph",
+    `${shippedHelper(html, "measureRenderedCardHeights")}
+${shippedHelper(html, "syncLayoutToRenderedCards")}
+return syncLayoutToRenderedCards;`,
+  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, { dataset: { semanticZoom: "card" } });
+
+  syncLayoutToRenderedCards({ positions, bounds: { width: 0, height: 0 } });
+
+  assert.strictEqual(
+    positions.get("a").height,
+    layoutHeight,
+    "reserving the transformed height makes row spacing depend on the zoom at relayout time",
+  );
+});
+
+/**
+ * Cell presentation clamps every card to the cell band, so a height read while the
+ * canvas is drawing cells is the band's height and not the card's. The camera picks
+ * the presentation and the layout does not control when that happens, so the
+ * measurement has to name the presentation it wants rather than inherit one.
+ */
+test("a card is measured as a card even while the canvas is drawing cells", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const graphLayout = {
+    scenePaddingPx: { right: 48, bottom: 42 },
+    sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
+    renderedColumnGapPx: 24,
+  };
+  const graph = { dataset: { semanticZoom: "cell" } };
+  const cellBandHeight = 140;
+  const cardHeight = 362;
+  const heightForPresentation = () => (graph.dataset.semanticZoom === "cell" ? cellBandHeight : cardHeight);
+  const card = {
+    get offsetHeight() { return heightForPresentation(); },
+    get scrollHeight() { return heightForPresentation(); },
+    style: {},
+    getBoundingClientRect: () => ({ height: heightForPresentation() }),
+  };
+  const positions = new Map([["a", { x: 0, y: 0, width: 200, height: 60 }]]);
+  const syncLayoutToRenderedCards = new Function(
+    "GRAPH_LAYOUT",
+    "graphState",
+    "graphScene",
+    "edgeLayer",
+    "graph",
+    `${shippedHelper(html, "measureRenderedCardHeights")}
+${shippedHelper(html, "syncLayoutToRenderedCards")}
+return syncLayoutToRenderedCards;`,
+  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, graph);
+
+  syncLayoutToRenderedCards({ positions, bounds: { width: 0, height: 0 } });
+
+  assert.strictEqual(
+    positions.get("a").height,
+    cardHeight,
+    "reserving the cell band leaves the card short of room the moment the viewer zooms in",
+  );
+});
+
+test("measuring restores the presentation the camera had chosen", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const graphLayout = {
+    scenePaddingPx: { right: 48, bottom: 42 },
+    sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
+    renderedColumnGapPx: 24,
+  };
+  const graph = { dataset: { semanticZoom: "cell" } };
+  const card = { offsetHeight: 362, scrollHeight: 362, style: {}, getBoundingClientRect: () => ({ height: 362 }) };
+  const syncLayoutToRenderedCards = new Function(
+    "GRAPH_LAYOUT",
+    "graphState",
+    "graphScene",
+    "edgeLayer",
+    "graph",
+    `${shippedHelper(html, "measureRenderedCardHeights")}
+${shippedHelper(html, "syncLayoutToRenderedCards")}
+return syncLayoutToRenderedCards;`,
+  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, graph);
+
+  syncLayoutToRenderedCards({ positions: new Map([["a", { x: 0, y: 0, width: 200, height: 60 }]]), bounds: {} });
+
+  assert.strictEqual(
+    graph.dataset.semanticZoom,
+    "cell",
+    "leaving the forced presentation behind would draw full cards at a scale the camera rejected as illegible",
+  );
+});
+
+/**
+ * The reservation is written back onto the card as an inline min-height, so the next
+ * pass measures a card the previous pass already inflated. Without clearing it first
+ * the height can only ever climb: one relayout at the wrong zoom raises it, and every
+ * later pass reads its own old answer back as if it were a measurement.
+ */
+test("a reservation left on the card by an earlier pass does not floor the next measurement", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const graphLayout = {
+    scenePaddingPx: { right: 48, bottom: 42 },
+    sceneMinimumPx: { entityWidth: 100, entityHeight: 100 },
+    renderedColumnGapPx: 24,
+  };
+  const naturalHeight = 200;
+  const style = { minHeight: "500px" };
+  const heightUnderStyle = () => Math.max(naturalHeight, Number.parseFloat(style.minHeight) || 0);
+  const card = {
+    get offsetHeight() { return heightUnderStyle(); },
+    get scrollHeight() { return heightUnderStyle(); },
+    style,
+    getBoundingClientRect: () => ({ height: heightUnderStyle() }),
+  };
+  const positions = new Map([["a", { x: 0, y: 0, width: 200, height: 60 }]]);
+  const syncLayoutToRenderedCards = new Function(
+    "GRAPH_LAYOUT",
+    "graphState",
+    "graphScene",
+    "edgeLayer",
+    "graph",
+    `${shippedHelper(html, "measureRenderedCardHeights")}
+${shippedHelper(html, "syncLayoutToRenderedCards")}
+return syncLayoutToRenderedCards;`,
+  )(graphLayout, { nodeElements: new Map([["a", card]]) }, null, null, { dataset: { semanticZoom: "card" } });
+
+  syncLayoutToRenderedCards({ positions, bounds: { width: 0, height: 0 } });
+
+  assert.strictEqual(
+    positions.get("a").height,
+    naturalHeight,
+    "a reservation that reads back its own previous answer can only ratchet upward",
+  );
+  assert.strictEqual(style.minHeight, naturalHeight + "px", "the card must be left holding the height that was measured");
 });
 
 /**

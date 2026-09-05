@@ -2466,14 +2466,50 @@ const CLIENT_SCRIPT = String.raw`(() => {
     };
   }
 
+  /**
+   * A card only states its own height while the canvas is drawing cards. Cell
+   * presentation clamps every one of them to the cell band, and the camera owns
+   * which of the two is showing, so a measurement that inherits the presentation
+   * reserves the band and leaves the card short the moment the viewer zooms in.
+   * The scene also carries the camera transform, so a client rect answers in
+   * screen pixels while this layout is written in world pixels; reserving that
+   * made the spacing between rows depend on where the zoom happened to be when
+   * the layout last ran. Reading the layout box under a named presentation
+   * removes both.
+   *
+   * The previous pass's reservation is cleared first because it was written back
+   * onto the card as an inline min-height. Measuring over it reads that answer
+   * back as though it were the card, so the height could only ever climb.
+   */
+  function measureRenderedCardHeights(layout) {
+    const cards = [];
+    for (const nodeId of layout.positions.keys()) {
+      const card = graphState.nodeElements.get(nodeId);
+      if (card) cards.push([nodeId, card]);
+    }
+    const presentation = graph ? graph.dataset.semanticZoom : undefined;
+    if (graph) graph.dataset.semanticZoom = "card";
+    for (const entry of cards) entry[1].style.minHeight = "";
+    const heights = new Map();
+    for (const [nodeId, card] of cards) {
+      heights.set(nodeId, Math.max(Math.ceil(card.offsetHeight), Math.ceil(card.scrollHeight)));
+    }
+    if (graph) {
+      if (presentation === undefined) delete graph.dataset.semanticZoom;
+      else graph.dataset.semanticZoom = presentation;
+    }
+    return heights;
+  }
+
   function syncLayoutToRenderedCards(layout) {
     const scenePad = GRAPH_LAYOUT.scenePaddingPx;
     const sceneMin = GRAPH_LAYOUT.sceneMinimumPx;
     const columns = new Map();
+    const measured = measureRenderedCardHeights(layout);
     for (const [nodeId, position] of layout.positions) {
       const card = graphState.nodeElements.get(nodeId);
       if (!card) continue;
-      position.height = Math.max(position.height, Math.ceil(card.scrollHeight), Math.ceil(card.getBoundingClientRect().height));
+      position.height = Math.max(position.height, measured.get(nodeId));
       const column = columns.get(position.x) || [];
       column.push({ card, position });
       columns.set(position.x, column);
