@@ -1552,6 +1552,79 @@ describe("MCP memory cross-runtime hooks", () => {
     }
   });
 
+  // Harness-injected headers arrive inside `lastPrompt` itself, so they read as the
+  // user's own words. Each case pins one branch: a wrapper whose separator was lost to
+  // the ~200-character truncation must be dropped rather than filed as the goal, a
+  // wrapper hiding a trivial trigger must reduce to that trigger so TRIVIAL_PROMPTS
+  // still catches it, and an unrecognized bracket must survive untouched — otherwise
+  // the strip would eat real requests that merely happen to open with "[".
+  test("Claude stop save progress files the user's words, not the harness wrapper", () => {
+    const wrapper =
+      "[客户端说明] 这是客户端注入的说明文本，占据整条提示的开头部分，用户本人一个字都没有说。";
+    const request = "把剩余的重命名单元全部处理完再交付";
+    const cases = [
+      { name: "truncated wrapper keeps no task", lastPrompt: wrapper, expected: null },
+      { name: "wrapper hiding a trivial trigger keeps no task", lastPrompt: `${wrapper}\n\n开工`, expected: null },
+      { name: "wrapper before a real request keeps only the request", lastPrompt: `${wrapper}\n\n${request}`, expected: request },
+      { name: "label prefix is dropped", lastPrompt: `[Image #1] ${request}`, expected: request },
+      { name: "unrecognized bracket survives", lastPrompt: `[SomethingElse] ${request}`, expected: `[SomethingElse] ${request}` },
+    ];
+
+    const hookPath = path.join(
+      repoRoot,
+      "canonical",
+      "runtime-assets",
+      "claude",
+      "hooks",
+      "stop-save-progress.mjs",
+    );
+
+    for (const { name, lastPrompt, expected } of cases) {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-stop-save-wrapper-"));
+      try {
+        writeFileSync(path.join(tempDir, "AGENTS.md"), "test project marker\n", "utf8");
+        writeFileSync(
+          path.join(tempDir, "transcript.jsonl"),
+          [
+            JSON.stringify({ type: "last-prompt", lastPrompt }),
+            // Five prose lines clear the content gate; fewer exits before any task is built,
+            // which would make every case report "no task" and hide a broken strip.
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "已经完成当前阶段的代码检查。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "接下来继续 Fetch 并核对运行时状态。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "还需要检查 stop-save-progress 的回归测试。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "这是真实进度记录，足以通过 Stop hook 的内容阈值。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "完成后继续验证并整理结果。" }] } }),
+          ].join("\n"),
+          "utf8",
+        );
+
+        const result = spawnSync(
+          process.execPath,
+          [hookPath],
+          {
+            input: JSON.stringify({ transcript_path: path.join(tempDir, "transcript.jsonl") }),
+            encoding: "utf8",
+            env: { ...process.env, META_KIM_DRY_RUN: "1" },
+            cwd: tempDir,
+            timeout: 20000,
+          },
+        );
+
+        assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+        const args = JSON.parse(result.stdout.trim()).args ?? [];
+        const taskIndex = args.indexOf("--task");
+        if (expected === null) {
+          assert.equal(taskIndex, -1, `${name}: harness wrapper must not become the task`);
+        } else {
+          assert.notEqual(taskIndex, -1, `${name}: expected a task to be saved`);
+          assert.equal(args[taskIndex + 1], expected, name);
+        }
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("Claude spine state dir rejects META_KIM_SPINE_STATE_DIR outside .meta-kim/state", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-spine-"));
     const outsideDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-outside-"));
