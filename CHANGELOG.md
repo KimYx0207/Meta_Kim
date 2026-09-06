@@ -22,6 +22,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Packaged commands retain the caller's project context.** Launching from the stable package store no longer uses the package directory as the caller's project, which could narrow runtime target selection.
 - **Package extraction handles Windows drive paths.** Archive extraction uses a local filename from its parent directory, avoiding drive-letter interpretation as a remote host across the supported tar implementations.
 - **Runtime Hook wiring preserves lifecycle and planning handlers together.** Codex retains both sets of handlers, and Cursor receives its native flat event format. Codex configuration cleanup also respects keys the host has deleted.
+- **Saved progress records what the user asked for, not the client's injected header.** Claude Code's stop Hook strips known harness wrappers and label prefixes before deciding whether a prompt is a real goal, so an injected preamble no longer becomes the recorded task. A wrapper whose separator was lost to truncation is dropped rather than filed, and a bracket the Hook does not recognize is left untouched so genuine requests that open with `[` survive.
 
 ### Maintenance
 
