@@ -939,7 +939,7 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/openclaw", "digestKind": "sha256", "sha256": "ca04424ae285491a8284b1af7bd19375df3e281d75818c48aa25ee27b1fc3287" },
-        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "92ddabec95835892157cc8ee453a83dcc9ab3ad1eda5d6391a38ea8bfbcbf916" },
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "450035eb4f7df2991ce141d5824bf46c8dfe8029d67b911f7609622dd6a80ef9" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "84d174aa0703c7c33fd8e4677c23df0ee749023642dda7a9568a4ab752d50a70" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",

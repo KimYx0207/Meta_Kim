@@ -8,6 +8,25 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.0.9] - 2026-09-05
+
+### Changed
+
+- **Live lays out work by its dependencies and rendered size.** Graph placement follows dependency depth, while card and capability-row measurements inform spacing and readable zoom levels. Closing the inspector restores the previous camera scale.
+- **Live keeps historical runs easier to navigate.** Configurable retention, consistent session ordering, stale-projection backfill and visible catch-up after a pause help distinguish current work from older records without rescanning the catalog on every click.
+- **Worker lifecycle observations retain their evidence limits.** Run records distinguish Hook observations, session stops and completed work; observing a worker event does not manufacture proof of host execution.
+
+### Fixed
+
+- **Windows installs retry short-lived file locks.** Managed-file transactions reuse the shared retry helper when moving files, including publishing a newly created or replacement file. Errors outside the Windows lock set still fail the transaction and preserve the reported cause. Global Hook replacement also retries transient rename failures.
+- **Packaged commands retain the caller's project context.** Launching from the stable package store no longer uses the package directory as the caller's project, which could narrow runtime target selection.
+- **Package extraction handles Windows drive paths.** Archive extraction uses a local filename from its parent directory, avoiding drive-letter interpretation as a remote host across the supported tar implementations.
+- **Runtime Hook wiring preserves lifecycle and planning handlers together.** Codex retains both sets of handlers, and Cursor receives its native flat event format. Codex configuration cleanup also respects keys the host has deleted.
+
+### Maintenance
+
+- Updated GitHub Actions checkout and Node setup dependencies to v7.
+
 ## [3.0.8] - 2026-08-30
 
 ### Fixed

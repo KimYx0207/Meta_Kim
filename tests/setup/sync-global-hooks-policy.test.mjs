@@ -10,6 +10,7 @@ import { recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-exec
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.join(import.meta.dirname, "..", "..");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "sync-global-meta-theory.mjs");
+const RUNTIME_SYNC_SCRIPT = path.join(REPO_ROOT, "scripts", "sync-runtimes.mjs");
 const PROJECTION_PACKAGE_RECEIPT_PURPOSE =
   "primary-runtime-global-projection-package-runtime-bundle:receipt";
 
@@ -158,6 +159,29 @@ async function runScript(args, env) {
     env,
     maxBuffer: 1024 * 1024 * 8,
   });
+}
+
+async function runRuntimeSync(args, env) {
+  return execFileAsync(process.execPath, [RUNTIME_SYNC_SCRIPT, ...args], {
+    cwd: REPO_ROOT,
+    env,
+    maxBuffer: 1024 * 1024 * 8,
+  });
+}
+
+// A failing --check exits 1, which rejects execFile before any assertion runs.
+// Capturing the exit code keeps the reported check line assertable on both sides.
+async function runScriptCapturingExit(args, env) {
+  try {
+    const result = await runScript(args, env);
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+  } catch (error) {
+    return {
+      stdout: error.stdout ?? "",
+      stderr: error.stderr ?? "",
+      exitCode: typeof error.code === "number" ? error.code : 1,
+    };
+  }
 }
 
 describe("sync-global-meta-theory hook policy", () => {
@@ -496,6 +520,110 @@ console.log("About to git push");
           `global ${runtime.label} hooks after a Codex+Cursor sync`,
         );
       }
+    });
+  });
+
+  test("Cursor global check accepts the native flat config emitted by runtime sync", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      await runScript(["--targets", "cursor", "--with-global-hooks"], env);
+      await runRuntimeSync(
+        ["--scope", "global", "--targets", "cursor", "--global-assets", "hooks"],
+        env,
+      );
+
+      const hooksPath = path.join(root, "cursor", "hooks.json");
+      const config = JSON.parse(await readFile(hooksPath, "utf8"));
+      assert.ok(
+        config.hooks.postToolUse.some((entry) =>
+          entry.command?.includes("post-format.mjs"),
+        ),
+        "runtime sync must retain its native flat postToolUse hook",
+      );
+      // A relative command resolves against whatever directory Cursor starts
+      // in, so a global registration would run another project's copy or
+      // nothing at all. Global scope must register absolute script paths.
+      const globalCommands = Object.values(config.hooks)
+        .flat()
+        .map((entry) => entry?.command)
+        .filter((command) => typeof command === "string");
+      assert.deepEqual(
+        globalCommands.filter((command) =>
+          /node\s+"?\.[\\/]?cursor[\\/]hooks[\\/]/u.test(command),
+        ),
+        [],
+        `global Cursor hook commands must not be project-relative:\n${globalCommands.join("\n")}`,
+      );
+      config.hooks.beforeSubmitPrompt.unshift({
+        command: "node user-owned-cursor-hook.mjs",
+        timeout: 3,
+      });
+      config.hooks.postToolUse.unshift({
+        command: "node .cursor/hooks/post-format.mjs",
+        matcher: "Read",
+        timeout: 17,
+      });
+      await writeFile(hooksPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+      const beforeCheck = await readFile(hooksPath, "utf8");
+
+      const check = await runScriptCapturingExit(
+        ["--check", "--targets", "cursor", "--with-global-hooks"],
+        env,
+      );
+      assert.match(
+        check.stdout,
+        /✓[^\n]*Cursor global hooks\.json: [^\n]*cursor[\\/]hooks\.json/,
+        `Cursor global hooks.json must be reported in sync:\n${check.stdout}`,
+      );
+      assert.equal(check.exitCode, 0, check.stderr);
+      const afterCheck = await readFile(hooksPath, "utf8");
+      assert.equal(afterCheck, beforeCheck, "global hooks check must be read-only");
+      assert.match(afterCheck, /user-owned-cursor-hook\.mjs/);
+    });
+  });
+
+  // Cursor assigns its global `hooks` asset to sync-runtimes, so the hook files
+  // it drops under ~/.cursor/hooks/meta-kim must carry that one source. A second
+  // manifest claim from sync-global-meta-theory leaves uninstall and drift
+  // repair reading whichever record they hit first.
+  test("Cursor global hook files land in the manifest under exactly one source", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      await runScript(["--targets", "cursor", "--with-global-hooks"], env);
+      await runRuntimeSync(
+        ["--scope", "global", "--targets", "cursor", "--global-assets", "hooks"],
+        env,
+      );
+
+      const manifest = JSON.parse(
+        await readFile(path.join(root, ".meta-kim", "install-manifest.json"), "utf8"),
+      );
+      const sourcesByPath = new Map();
+      for (const entry of manifest.entries) {
+        if (entry.kind !== "file") continue;
+        const key = path.resolve(entry.path);
+        if (!sourcesByPath.has(key)) sourcesByPath.set(key, new Set());
+        sourcesByPath.get(key).add(entry.source);
+      }
+      const contested = [...sourcesByPath]
+        .filter(([, sources]) => sources.size > 1)
+        .map(([filePath, sources]) => `${filePath} <- ${[...sources].sort().join(" + ")}`)
+        .sort();
+      assert.deepEqual(contested, [], `contested global files:\n${contested.join("\n")}`);
+
+      const cursorHookDir = path.join(root, "cursor", "hooks", "meta-kim");
+      const cursorHookEntries = manifest.entries.filter(
+        (entry) =>
+          entry.kind === "file" &&
+          path.resolve(entry.path).startsWith(path.resolve(cursorHookDir) + path.sep),
+      );
+      assert.ok(
+        cursorHookEntries.length > 0,
+        "the Cursor global hook package must stay recorded, not merely uncontested",
+      );
+      assert.deepEqual(
+        [...new Set(cursorHookEntries.map((entry) => entry.source))],
+        ["sync-runtimes"],
+        "Cursor assigns its global hooks asset to sync-runtimes",
+      );
     });
   });
 

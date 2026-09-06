@@ -93,6 +93,12 @@ __pycache__/
 # machine-local log while release verification is running.
 /debug.log
 
+# A PowerShell 7 spawn that inherits the repository cwd can drop its
+# machine-local module-analysis cache here. The producing call site is not
+# identified; the path is ignored on the observed artifact, not on a known
+# mechanism. Leaving it untracked would bind the graph identity proof to
+# the same scratch files.
+/Microsoft/
 
 # ========== Root-level images ==========
 /images/

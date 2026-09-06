@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import { runCodexCompositeEngineeringProducer, runCodexDesktopEngineeringSessionProducer, runCodexDesktopSessionCapabilityProducer, runControlledRuntimeCapabilityProducer } from "../../scripts/runtime-capability-producers.mjs";
+import { codexLiveInvocationArgs, runCodexCompositeEngineeringProducer, runCodexDesktopEngineeringSessionProducer, runCodexDesktopSessionCapabilityProducer, runControlledRuntimeCapabilityProducer } from "../../scripts/runtime-capability-producers.mjs";
 import { readCodexDesktopEngineeringEvidence, readCodexDesktopSessionEvidence } from "../../scripts/live-acceptance/read-codex-session-evidence.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "../../scripts/effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
@@ -370,6 +370,48 @@ test("controlled producer binds Claude to the fail-closed provider resolver whil
   assert.match(producerExecutor, /copyFileSync\(authSource, path\.join\(isolatedRuntimeHome, "auth\.json"\)\);/u);
   assert.match(producerExecutor, /CODEX_HOME: isolatedRuntimeHome,/u);
   assert.match(producerExecutor, /CODEX_SKILLS_DIR: path\.join\(isolatedRuntimeHome, "skills"\),/u);
+});
+
+test("the codex controlled invocation keeps workspace-write while selecting a host-supported Windows sandbox flavor", () => {
+  const workspace = path.join(packageRoot, "codex-invocation-probe-workspace");
+  const win32Args = codexLiveInvocationArgs({ workspace, platform: "win32" });
+  const posixArgs = codexLiveInvocationArgs({ workspace, platform: "linux" });
+
+  for (const args of [win32Args, posixArgs]) {
+    assert.equal(args[0], "exec");
+    assert.equal(args[args.indexOf("-s") + 1], "workspace-write");
+    assert.equal(args[args.indexOf("-C") + 1], workspace);
+    assert.equal(args.at(-1), "-");
+    assert.ok(args.includes("--ignore-user-config"));
+    assert.ok(!args.includes("--ephemeral"), "--ephemeral withholds the collaboration thread spawn_agent needs, so agent and subagent can never complete; isolation comes from the temporary CODEX_HOME instead");
+    assert.ok(!args.includes("--dangerously-bypass-approvals-and-sandbox"));
+    assert.ok(!args.includes("--dangerously-bypass-hook-trust"));
+    assert.ok(!args.includes("--ignore-rules"));
+    assert.ok(!args.some((arg) => String(arg).includes("danger-full-access")));
+  }
+
+  const overrideIndex = win32Args.indexOf("windows.sandbox=unelevated");
+  assert.ok(overrideIndex > 0, "win32 must pin a host-supported Windows sandbox flavor instead of inheriting the discarded user config");
+  assert.equal(win32Args[overrideIndex - 1], "-c");
+  assert.ok(!posixArgs.some((arg) => String(arg).includes("windows.sandbox")));
+  assert.equal(codexLiveInvocationArgs({ workspace, argsPrefix: ["--prefix-probe"], platform: "win32" })[0], "--prefix-probe");
+});
+
+test("the production codex composite path builds its invocation through the shared codex builder", () => {
+  const projectRoot = fixtureProject();
+  const captured = [];
+  runCodexCompositeEngineeringProducer({
+    projectRoot,
+    executor: (request) => {
+      captured.push(request);
+      return injectedCodexEngineeringExecutor(request);
+    },
+  });
+  assert.equal(captured.length, 1);
+  const args = captured[0].args;
+  assert.deepEqual(args, codexLiveInvocationArgs({ workspace: captured[0].workspace, platform: process.platform }));
+  assert.equal(args[args.indexOf("-s") + 1], "workspace-write");
+  if (process.platform === "win32") assert.ok(args.includes("windows.sandbox=unelevated"));
 });
 
 test("Claude 2.1.202 async Agent and subagent producers accept only marker-bound closed child lifecycles", () => {

@@ -158,6 +158,7 @@ test("cross-runtime hook core has one canonical owner", () => {
     "spine-state-gates.mjs",
     "spine-state.mjs",
     "activate-meta-theory-spine.mjs",
+    "planning-continuity.mjs",
   ]);
 
   for (const fileName of SHARED_RUNTIME_HOOK_FILES) {

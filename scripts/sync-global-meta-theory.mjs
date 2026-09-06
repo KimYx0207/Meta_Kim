@@ -25,10 +25,12 @@ import {
   canonicalRuntimeAssetsDir,
   canonicalSkillRoot,
   globalAgentProjectionFileName,
+  globalProjectionIsOwnedBy,
   resolveGlobalAgentProjectionTargets,
   resolveTargetContext,
   resolveRuntimeHomeInfo,
   localStateRoot,
+  GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL,
 } from "./meta-kim-sync-config.mjs";
 import {
   CODEX_REQUEST_USER_INPUT_FEATURE,
@@ -47,6 +49,7 @@ import { validateSkillFrontmatter } from "./install-skill-sanitizer.mjs";
 import {
   applyRuntimePaths,
   buildCodexSkillContent,
+  buildCursorProjectHooksJson,
   loadCanonicalAgents,
   parseCanonicalAgent,
   renderGlobalAgentProjection,
@@ -62,7 +65,6 @@ import {
 } from "./global-runtime-mcp.mjs";
 import {
   buildCodexHooksJson,
-  buildCursorHooksJson,
   buildHookPromptAdapterSource,
   runtimeHookSourceOwner,
 } from "./runtime-hook-mapping.mjs";
@@ -2148,6 +2150,23 @@ function runtimeGlobalMetaKimHooksDir(runtimeId) {
   return path.join(home, "hooks", "meta-kim");
 }
 
+// Cursor assigns its global `hooks` asset to sync-runtimes; Claude and Codex
+// keep theirs here. Both scripts lay down the same canonical bytes, so the split
+// only decides who claims the paths in the install manifest — and a path claimed
+// twice leaves uninstall and drift repair reading whichever record they hit
+// first. Yield the record when the profile names another owner.
+function ownsGlobalHookPackageRecords(runtimeId) {
+  const profile = runtimeProfiles[runtimeId];
+  if (!profile) {
+    throw new Error(`No resolved runtime profile for ${runtimeId}`);
+  }
+  return globalProjectionIsOwnedBy(
+    profile,
+    "hooks",
+    GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL,
+  );
+}
+
 function globalMetaKimHooksDir() {
   return runtimeGlobalMetaKimHooksDir("claude");
 }
@@ -2270,6 +2289,10 @@ async function copyCanonicalHooksToRuntimeGlobal(runtimeId, label) {
     if (await pathExists(retiredPath)) {
       await fs.rm(retiredPath, { force: true });
     }
+  }
+
+  if (!ownsGlobalHookPackageRecords(runtimeId)) {
+    return;
   }
 
   recordSafe((rec) =>
@@ -2442,6 +2465,9 @@ async function ensureCursorGlobalHookPromptAdapter() {
   await assertRealHomeBound(adapterPath);
   await fs.mkdir(path.dirname(adapterPath), { recursive: true });
   await fs.writeFile(adapterPath, buildHookPromptAdapterSource("cursor"), "utf8");
+  if (!ownsGlobalHookPackageRecords("cursor")) {
+    return adapterPath;
+  }
   recordSafe((rec) =>
     rec.recordFile(adapterPath, {
       source: "sync-global-meta-theory",
@@ -2454,7 +2480,7 @@ async function ensureCursorGlobalHookPromptAdapter() {
 
 function buildCursorGlobalHooksTemplate() {
   const absHooks = cursorGlobalMetaKimHooksDir();
-  return buildCursorHooksJson({
+  return buildCursorProjectHooksJson({
     graphifyHookPath: path.join(absHooks, "graphify-context.mjs"),
     memoryHookPath: path.join(absHooks, "meta-kim-memory-save.mjs"),
     spineHookPath: path.join(absHooks, "activate-meta-theory-spine.mjs"),
@@ -2464,11 +2490,13 @@ function buildCursorGlobalHooksTemplate() {
       "enforce-agent-dispatch.mjs",
     ),
     hookPromptAdapterPath: cursorGlobalHookPromptAdapterPath(),
+    hooksDir: absHooks,
   });
 }
 
-// Codex hooks.json and Cursor hooks.json share the same event -> blocks shape,
-// so ownership stripping is keyed on the command, not on the runtime.
+// Codex hooks.json uses nested event blocks; Cursor hooks.json uses native flat
+// command blocks. Both shapes are accepted here, with ownership keyed on the
+// command so a runtime-specific representation is never rewritten.
 function stripGlobalMetaKimHooksFromRuntimeHooksConfig(config = {}) {
   const next = structuredClone(config && typeof config === "object" ? config : {});
   const hooks = {};
@@ -2611,6 +2639,9 @@ function flattenHookCommands(hooks = {}) {
   const commands = [];
   for (const blocks of Object.values(hooks ?? {})) {
     for (const block of blocks ?? []) {
+      if (block?.command) {
+        commands.push(block.command);
+      }
       for (const hook of block?.hooks ?? []) {
         if (hook?.command) {
           commands.push(hook.command);
@@ -2625,6 +2656,15 @@ function flattenHookFragments(hooks = {}) {
   const fragments = [];
   for (const [event, blocks] of Object.entries(hooks ?? {})) {
     for (const block of blocks ?? []) {
+      if (block && typeof block === "object" && !Array.isArray(block)) {
+        if (block.command) {
+          fragments.push({
+            event,
+            matcher: block.matcher ?? null,
+            hook: structuredClone(block),
+          });
+        }
+      }
       for (const hook of block?.hooks ?? []) {
         if (hook && typeof hook === "object" && !Array.isArray(hook)) {
           fragments.push({

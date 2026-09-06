@@ -179,6 +179,7 @@ function createMemoryInstallerFixture() {
     "install-mcp-memory-hooks.mjs",
     "memory-endpoint.mjs",
     "safe-managed-file-operations.mjs",
+    "transient-rename.mjs",
   ]) {
     copyFileSync(
       path.join(repoRoot, "scripts", fileName),

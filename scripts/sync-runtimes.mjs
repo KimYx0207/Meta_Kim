@@ -2893,7 +2893,13 @@ export function buildCursorProjectHooksJson({
   hookPromptAdapterPath = null,
   planningContinuityHookPath = null,
   packageRoot = null,
+  // Global scope must pass an absolute directory. A relative command resolves
+  // against whatever directory the runtime happens to start in, so a global
+  // registration would point at another project's copy or at nothing.
+  hooksDir = ".cursor/hooks",
 } = {}) {
+  const hookScript = (fileName) =>
+    path.isAbsolute(hooksDir) ? path.join(hooksDir, fileName) : `${hooksDir}/${fileName}`;
   const config = buildCursorHooksJson({
     graphifyHookPath,
     memoryHookPath,
@@ -2906,30 +2912,30 @@ export function buildCursorProjectHooksJson({
   config.hooks.postToolUse = [
     ...(config.hooks.postToolUse ?? []),
     {
-      command: nodeHookCommand(".cursor/hooks/post-format.mjs"),
+      command: nodeHookCommand(hookScript("post-format.mjs")),
       matcher: "Edit|Write",
     },
     {
-      command: nodeHookCommand(".cursor/hooks/post-typecheck.mjs"),
+      command: nodeHookCommand(hookScript("post-typecheck.mjs")),
       matcher: "Edit|Write",
     },
     {
-      command: nodeHookCommand(".cursor/hooks/post-console-log-warn.mjs"),
+      command: nodeHookCommand(hookScript("post-console-log-warn.mjs")),
       matcher: "Edit|Write",
     },
   ];
   config.hooks.subagentStart = [
     ...(config.hooks.subagentStart ?? []),
     {
-      command: nodeHookCommand(".cursor/hooks/subagent-context.mjs"),
+      command: nodeHookCommand(hookScript("subagent-context.mjs")),
     },
   ];
   config.hooks.stop = [
     ...(config.hooks.stop ?? []),
-    { command: nodeHookCommand(".cursor/hooks/stop-compaction.mjs") },
-    { command: nodeHookCommand(".cursor/hooks/stop-console-log-audit.mjs") },
-    { command: nodeHookCommand(".cursor/hooks/stop-completion-guard.mjs") },
-    { command: nodeHookCommand(".cursor/hooks/stop-spine-cleanup.mjs") },
+    { command: nodeHookCommand(hookScript("stop-compaction.mjs")) },
+    { command: nodeHookCommand(hookScript("stop-console-log-audit.mjs")) },
+    { command: nodeHookCommand(hookScript("stop-completion-guard.mjs")) },
+    { command: nodeHookCommand(hookScript("stop-spine-cleanup.mjs")) },
   ];
   return config;
 }
@@ -4319,6 +4325,8 @@ Examples:
         scope === "global"
           ? path.join(path.dirname(dirs.cursorHooksDir), "hookprompt-adapter.mjs")
           : null;
+      const cursorHooksDir =
+        scope === "global" ? dirs.cursorHooksDir : ".cursor/hooks";
       if (
         (
           await writeGeneratedJson(
@@ -4330,6 +4338,7 @@ Examples:
               enforceAgentDispatchHookPath,
               hookPromptAdapterPath: cursorHookPromptAdapterPath,
               packageRoot: repoRoot,
+              hooksDir: cursorHooksDir,
             }),
           )
         ).changed

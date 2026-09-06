@@ -109,11 +109,23 @@ function promptFor(capability, runtime, nonce, marker) {
   throw new Error(`no controlled producer exists for capability ${capability}`);
 }
 
+export function codexLiveInvocationArgs({ workspace, argsPrefix = [], platform = process.platform }) {
+  const hostSandboxFlavor = platform === "win32" ? ["-c", "windows.sandbox=unelevated"] : [];
+  return [
+    ...argsPrefix,
+    "exec", "--json", "--ignore-user-config", "--skip-git-repo-check",
+    ...hostSandboxFlavor,
+    "-s", "workspace-write",
+    "-C", workspace,
+    "-",
+  ];
+}
+
 function commandFor(runtime, workspace, capability, executableIdentity = null) {
   const argsPrefix = executableIdentity?.argsPrefix ?? [];
   if (runtime === "codex") return {
     command: executableIdentity?.realpath ?? "test-only-codex",
-    args: [...argsPrefix, "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "-s", "workspace-write", "-C", workspace, "-"],
+    args: codexLiveInvocationArgs({ workspace, argsPrefix }),
     observer: observeCodexJsonl,
   };
   const claudeTool = capability === "shell"
