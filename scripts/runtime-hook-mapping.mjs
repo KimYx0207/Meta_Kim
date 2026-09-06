@@ -205,6 +205,7 @@ export const PROJECT_META_KIM_HOOK_FILES = new Set([
   "hookprompt-adapter.mjs",
   "meta-kim-memory-save.mjs",
   "permission_request.py",
+  "planning-continuity.mjs",
   "planning-with-files-adapter.mjs",
   "post-console-log-warn.mjs",
   "post-format.mjs",

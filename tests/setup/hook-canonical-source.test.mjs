@@ -16,6 +16,9 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 
 import {
+  buildCodexHooksJson,
+  buildCursorHooksJson,
+  isProjectMetaKimHookCommand,
   runtimeHookSourceOwner,
   SHARED_RUNTIME_HOOK_FILES,
 } from "../../scripts/runtime-hook-mapping.mjs";
@@ -173,6 +176,42 @@ test("cross-runtime hook core has one canonical owner", () => {
     assert.ok(adapter.split(/\r?\n/u).filter(Boolean).length <= 2, `${fileName} must stay thin`);
     assert.notEqual(adapter, readFileSync(join(SHARED_HOOK_DIR, fileName), "utf8"));
   }
+});
+
+test("every projected project hook command is strippable on retarget", () => {
+  const claudeSettings = JSON.parse(
+    readFileSync(join(REPO_ROOT, "canonical", "runtime-assets", "claude", "settings.json"), "utf8"),
+  );
+  const collect = (config, into = []) => {
+    for (const entries of Object.values(config?.hooks ?? {})) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const hooks = Array.isArray(entry?.hooks) ? entry.hooks : [entry];
+        for (const hook of hooks) {
+          if (typeof hook?.command === "string") into.push(hook.command);
+        }
+      }
+    }
+    return into;
+  };
+
+  const projected = [
+    ...collect(claudeSettings),
+    ...collect(buildCodexHooksJson({})),
+    ...collect(
+      buildCursorHooksJson({
+        planningContinuityHookPath: ".cursor/hooks/planning-continuity.mjs",
+      }),
+    ),
+  ];
+  assert.ok(projected.length >= 16, `expected projected hook commands, got ${projected.length}`);
+
+  const unstrippable = projected.filter((command) => !isProjectMetaKimHookCommand(command));
+  assert.deepEqual(
+    unstrippable,
+    [],
+    `these projected hook commands survive retargeting after their file is deleted: ${unstrippable.join(", ")}`,
+  );
 });
 
 test("spine-state keeps its original gate exports as a compatibility facade", () => {
