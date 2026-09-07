@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { assertInstallerWritePath } from "./installer-write-boundary.mjs";
 import {
   directoryClosureSync,
   manifestPathFor,
@@ -37,10 +38,14 @@ function assertContained(root, target) {
   throw new Error(`retired_dependency_target_outside_runtime_home:${target}`);
 }
 
-async function assertPlainDirectoryChain(root, targetDirectory) {
+async function assertPlainDirectoryChain(root, targetDirectory, writeBoundary = null) {
   const resolvedRoot = path.resolve(root);
   const resolvedTarget = path.resolve(targetDirectory);
   assertContained(resolvedRoot, resolvedTarget);
+  if (writeBoundary) {
+    assertInstallerWritePath(resolvedTarget, writeBoundary);
+    return;
+  }
   if (!(await pathExists(resolvedRoot))) return;
   const rootStat = await fs.lstat(resolvedRoot);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
@@ -184,10 +189,10 @@ function collectHookCommands(config) {
   return commands;
 }
 
-async function planOwnedCodexHooks(codexHome) {
+async function planOwnedCodexHooks(codexHome, writeBoundary) {
   const hooksDir = path.join(codexHome, "hooks");
   assertContained(codexHome, hooksDir);
-  await assertPlainDirectoryChain(codexHome, hooksDir);
+  await assertPlainDirectoryChain(codexHome, hooksDir, writeBoundary);
   const removeFiles = [];
   const preserved = [];
   const verifiedOwnedFiles = new Set();
@@ -260,7 +265,7 @@ async function planOwnedCodexHooks(codexHome) {
   return { removeFiles, hooksUpdate, preserved };
 }
 
-export async function retirePlanningWithFiles({ homes, targets, dryRun = false } = {}) {
+export async function retirePlanningWithFiles({ homes, targets, dryRun = false, writeBoundary = null } = {}) {
   const selected = [...new Set(targets ?? Object.keys(homes ?? {}))]
     .filter((runtime) => homes?.[runtime]);
   const manifestPath = manifestPathFor("global");
@@ -283,8 +288,8 @@ export async function retirePlanningWithFiles({ homes, targets, dryRun = false }
     const aliasPath = path.join(runtimeHome, "plugins", RETIRED_PLANNING_DEPENDENCY_ID);
     assertContained(runtimeHome, skillPath);
     assertContained(runtimeHome, aliasPath);
-    await assertPlainDirectoryChain(runtimeHome, path.dirname(skillPath));
-    await assertPlainDirectoryChain(runtimeHome, path.dirname(aliasPath));
+    await assertPlainDirectoryChain(runtimeHome, path.dirname(skillPath), writeBoundary);
+    await assertPlainDirectoryChain(runtimeHome, path.dirname(aliasPath), writeBoundary);
     const entry = (manifest?.entries ?? []).find(
       (candidate) =>
         normalizeForCompare(candidate.path) === normalizeForCompare(skillPath) &&
@@ -333,7 +338,7 @@ export async function retirePlanningWithFiles({ homes, targets, dryRun = false }
   }
 
   if (selected.includes("codex")) {
-    const codexPlan = await planOwnedCodexHooks(path.resolve(homes.codex));
+    const codexPlan = await planOwnedCodexHooks(path.resolve(homes.codex), writeBoundary);
     plannedRemovals.push(...codexPlan.removeFiles.map((filePath) => ({
       path: filePath,
       recursive: false,
@@ -364,10 +369,14 @@ export async function retirePlanningWithFiles({ homes, targets, dryRun = false }
   }
 
   if (plannedHooksUpdate) {
+    if (writeBoundary) assertInstallerWritePath(plannedHooksUpdate.path, writeBoundary);
     await writeJsonAtomic(plannedHooksUpdate.path, plannedHooksUpdate.value);
     removed.push(plannedHooksUpdate.path);
   }
   for (const operation of plannedRemovals) {
+    if (writeBoundary) {
+      assertInstallerWritePath(operation.recursive ? operation.path : path.dirname(operation.path), writeBoundary);
+    }
     await fs.rm(operation.path, {
       recursive: operation.recursive,
       force: true,

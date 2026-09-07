@@ -173,29 +173,9 @@ function verifiedGraphifyLauncher() {
   };
 }
 
-const GRAPHIFY_API_KEY_NAMES = Object.freeze([
-  "GEMINI_API_KEY",
-  "GOOGLE_API_KEY",
-  "MOONSHOT_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "OLLAMA_API_KEY",
-]);
-
-function graphifyMigrationBackendArgs() {
-  const explicit = String(process.env.META_KIM_GRAPHIFY_MIGRATION_BACKEND ?? "").trim();
-  if (explicit) return ["--backend", explicit];
-  if (GRAPHIFY_API_KEY_NAMES.some((name) => String(process.env[name] ?? "").trim())) {
-    return [];
-  }
-  const claude = spawnSync("claude", ["--version"], {
-    encoding: "utf8",
-    shell: false,
-    windowsHide: true,
-  });
-  return claude.status === 0 && !claude.error ? ["--backend", "claude-cli"] : [];
-}
+// Routine maintenance must never discover credentials or launch a model.
+// Semantic enrichment belongs to an explicitly requested assistant workflow.
+const GRAPHIFY_LOCAL_CLUSTER_ARGS = Object.freeze(["--no-label", "--no-viz"]);
 
 function fail(message) {
   console.error(message);
@@ -2123,24 +2103,18 @@ function runRebuild() {
     return;
   }
   const migrationInProgress = plan.fullExtract || migrationState !== null;
-  const migrationCodeOnly =
-    process.env.META_KIM_GRAPHIFY_MIGRATION_CODE_ONLY === "1";
-  const migrationBackendArgs = migrationInProgress
-    ? verifiedLocalUpdate || migrationCodeOnly
-      ? ["--no-label", "--no-viz"]
-      : graphifyMigrationBackendArgs()
-    : [];
+  const migrationBackendArgs = GRAPHIFY_LOCAL_CLUSTER_ARGS;
 
   if (migrationInProgress && !migrationState) {
     console.log(
-      "Graphify has real legacy/unsafe file-node identities; running one resumable upstream extract --force migration.",
+      "Graphify identity needs rebuilding; running resumable local code extraction (no model; document semantics are not refreshed).",
     );
     console.log("Graphify rebuild: running full extract producer...");
     const extracted = runGraphifyUpdateForRebuild([
       "extract",
       ".",
       "--force",
-      ...(migrationCodeOnly ? ["--code-only"] : migrationBackendArgs),
+      "--code-only",
     ]);
     if (!graphifyProcessSucceeded(extracted)) {
       reportGraphifyProcessFailure(extracted, "extract producer");
@@ -2266,7 +2240,7 @@ function runRebuild() {
           plan.paths,
           plan.repository,
         ).state;
-        const clusterBackendArgs = graphifyMigrationBackendArgs();
+        const clusterBackendArgs = GRAPHIFY_LOCAL_CLUSTER_ARGS;
         const clustered = runGraphifyUpdate(
           ["cluster-only", ".", ...clusterBackendArgs],
           { stdio: "inherit" },

@@ -14,7 +14,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import os from "node:os";
@@ -444,11 +444,21 @@ function shouldSkipDuplicate(payload, runtime, cwd, event, prompt) {
     const dir = path.join(os.tmpdir(), "meta-kim-hook-dedupe");
     mkdirSync(dir, { recursive: true });
     const markerPath = path.join(dir, `${stableHookId(payload, runtime, cwd, event, prompt)}.json`);
-    if (existsSync(markerPath)) {
+    const marker = JSON.stringify({ runtime, event, cwd, time: Date.now() });
+    try {
+      // Duplicate registrations can enter this hook concurrently. Claim a new
+      // event marker with exclusive creation so only one process continues.
+      writeFileSync(markerPath, marker, { encoding: "utf8", flag: "wx" });
+      return false;
+    } catch (error) {
+      if (error?.code !== "EEXIST") return false;
       const ageMs = Date.now() - statSync(markerPath).mtimeMs;
       if (ageMs >= 0 && ageMs < DEDUPE_WINDOW_MS) return true;
+      // An expired marker is outside the duplicate window. Refreshing it is
+      // safe; a concurrent old-marker refresh may cause one extra emit, never
+      // suppression of a new context.
+      writeFileSync(markerPath, marker, "utf8");
     }
-    writeFileSync(markerPath, JSON.stringify({ runtime, event, cwd, time: Date.now() }), "utf8");
   } catch {
     return false;
   }
@@ -464,6 +474,110 @@ function gitStatus(cwd) {
   });
   if (result.status !== 0 || !result.stdout.trim()) return "";
   return result.stdout.trim().split(/\r?\n/u).slice(0, 30).join("\n");
+}
+
+function memoryIdentity(memory) {
+  const explicit = memory?.id ?? memory?.memory_id;
+  if (explicit != null) return String(explicit);
+  return memoryDedupeKey(memory?.content || "");
+}
+
+function recallStatePath(payload, runtime, cwd) {
+  const sessionId =
+    payload.session_id ||
+    payload.sessionId ||
+    payload.conversation_id ||
+    payload.conversationId ||
+    "";
+  // Without a session identity there is no per-session state to compare, so
+  // keep the legacy emit-every-turn behavior instead of guessing a key.
+  if (!sessionId) return null;
+  const hash = createHash("sha256")
+    .update(JSON.stringify([runtime, cwd, String(sessionId)]))
+    .digest("hex")
+    .slice(0, 16);
+  return path.join(os.tmpdir(), `meta-kim-memory-recall-${hash}.json`);
+}
+
+function sleepForRecallLock(milliseconds) {
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(signal, 0, 0, milliseconds);
+}
+
+function withRecallStateLock(statePath, callback) {
+  const lockPath = `${statePath}.lock`;
+  const startedAt = Date.now();
+  let acquired = false;
+  try {
+    while (Date.now() - startedAt < 2000) {
+      try {
+        mkdirSync(lockPath);
+        acquired = true;
+        break;
+      } catch (error) {
+        if (error?.code !== "EEXIST") return null;
+        try {
+          if (Date.now() - statSync(lockPath).mtimeMs > 60_000) {
+            rmSync(lockPath, { recursive: true, force: true });
+            continue;
+          }
+        } catch {
+          // The owner may be releasing the lock; retry below.
+        }
+        sleepForRecallLock(5);
+      }
+    }
+    if (!acquired) return null;
+    return callback();
+  } finally {
+    if (acquired) rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Recall-injection dedup: when the selected memory set and the emitted context
+ * text are identical to the previous injection for the same session, skip the
+ * emission (checkpoints and health warnings are unaffected). A materially
+ * different recall still injects and updates the sidecar state. This gate is
+ * independent from the short-window META_KIM_DISABLE_HOOK_DEDUPE switch.
+ */
+function shouldEmitRecallContext(payload, runtime, cwd, context, memoryIds) {
+  if (process.env.META_KIM_DISABLE_RECALL_DEDUPE === "1") return true;
+  const statePath = recallStatePath(payload, runtime, cwd);
+  if (!statePath || !context) return true;
+  try {
+    const digestInput = context.replace(
+      /^Untrusted recalled memory context \([^\n]*\)\n/u,
+      "Untrusted recalled memory context\n",
+    );
+    const digest = createHash("sha256").update(digestInput).digest("hex");
+    const memoryIdsDigest = createHash("sha256")
+      .update(JSON.stringify([...memoryIds].sort()))
+      .digest("hex");
+    const claimed = withRecallStateLock(statePath, () => {
+      const previous = safeJsonParse(readText(statePath, 500), null);
+      if (
+        previous &&
+        typeof previous === "object" &&
+        previous.digest === digest &&
+        previous.memoryIdsDigest === memoryIdsDigest
+      ) {
+        return false;
+      }
+      writeFileSync(
+        statePath,
+        JSON.stringify({ digest, memoryIdsDigest, at: Date.now() }),
+        "utf8",
+      );
+      return true;
+    });
+    // If the sidecar lock cannot be claimed, preserve the hook's fail-open
+    // behavior and let this context through rather than suppressing required
+    // model context on an uncertain state.
+    return claimed === null ? true : claimed;
+  } catch {
+    return true;
+  }
 }
 
 function buildContent(payload, runtime, cwd, event) {
@@ -900,10 +1014,12 @@ async function main() {
   }
 
   let context = "";
+  let recalledMemoryIds = [];
   if (event === "session-start") {
     context = memoryReadyStatus(endpoint);
   } else if (event !== "stop") {
     const memories = await recallMemories(endpoint, query, project, cwd, event);
+    recalledMemoryIds = memories.map((memory) => memoryIdentity(memory));
     context = formatMemoryContext(memories, runtime, event);
   }
 
@@ -933,6 +1049,10 @@ async function main() {
   }
 
   if (event === "stop") return;
+
+  if (context && !shouldEmitRecallContext(payload, runtime, cwd, context, recalledMemoryIds)) {
+    return;
+  }
 
   if (context) emitRuntimeContext(context, runtime, event);
 }

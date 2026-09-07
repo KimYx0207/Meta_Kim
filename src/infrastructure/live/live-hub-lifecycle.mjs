@@ -18,6 +18,28 @@ export const LIVE_HUB_STATE_SCHEMA_VERSION = "meta-kim-live-hub-state-v1";
 export const LIVE_HUB_HEALTH_SCHEMA_VERSION = "meta-kim-live-hub-health-v1";
 export const LIVE_HUB_LOOPBACK_HOST = "127.0.0.1";
 
+/**
+ * Recorded when the OS refused to produce this process's creation identity.
+ *
+ * The identity exists so a stop or takeover never signals a recycled PID, and
+ * every reader here already answers "unknown, do not act" when the probe fails.
+ * The writer used to be the one exception: a null probe made the whole record
+ * invalid, so the daemon refused to publish itself and exited, and the launcher
+ * — which sees only a child exit — could report nothing better than
+ * `daemon_exited_before_ready`. On Windows the probe shells out to PowerShell and
+ * was measured returning null after 12.4s under a loaded suite, so that turned a
+ * slow machine into a start failure.
+ *
+ * Recording the gap keeps the record publishable and keeps the gap honest, but it
+ * is only safe while readers treat it as "this hub could not prove which process
+ * it is" rather than as an identity. A reader that compared it like an identity
+ * would conclude "different process" as soon as the probe recovered, and orphan a
+ * hub that is still serving. `recordedIdentityIsProvable` is that boundary; no
+ * value `getProcessStartIdentity` returns can collide with this one, because all
+ * of them carry a platform prefix.
+ */
+export const PROCESS_START_IDENTITY_UNAVAILABLE = "process-start-identity-unavailable";
+
 const PROJECT_REF_PATTERN = /^project-[a-f0-9]{12}$/u;
 const RUN_ID_PATTERN = /^meta-[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/u;
 const INSTANCE_ID_PATTERN = /^[a-f0-9-]{16,64}$/u;
@@ -223,14 +245,33 @@ function validState(value) {
 }
 
 /**
+ * Whether a recorded identity can be compared against a fresh probe at all.
+ *
+ * `validState` requires a non-empty string, so the remaining case is a record
+ * whose writer could not obtain its own identity and said so. That value must
+ * never take part in an equality test: comparing it would report "a different
+ * process" the moment the probe starts working again, which is the opposite of
+ * what the recorded gap means.
+ */
+function recordedIdentityIsProvable(recordedIdentity) {
+  return typeof recordedIdentity === "string"
+    && recordedIdentity.length > 0
+    && recordedIdentity !== PROCESS_START_IDENTITY_UNAVAILABLE;
+}
+
+/**
  * Whether the PID in a recorded state still looks like the process that wrote it.
  *
- * `validState` already requires a non-empty recorded identity, so the only
- * ambiguity left is an observed identity the OS refused to produce. That reads as
- * unknown, not as a different process — the same asymmetry `lockOwnerAppearsLive`
- * and `readReusableLiveHub`'s `identity_unavailable` status use.
+ * Two separate ambiguities resolve the same way. An observed identity the OS
+ * refused to produce reads as unknown, not as a different process — the same
+ * asymmetry `lockOwnerAppearsLive` and `readReusableLiveHub`'s
+ * `identity_unavailable` status use. A recorded identity that says the writer
+ * could not prove its own is equally uncomparable. In both cases the incumbent
+ * keeps its record: the alternative is orphaning a hub that is still serving, and
+ * that record is the only way to reach it.
  */
 function incumbentIdentityStillHolds(incumbent, readProcessStartIdentity) {
+  if (!recordedIdentityIsProvable(incumbent.processStartIdentity)) return true;
   const observed = readProcessStartIdentity(incumbent.pid);
   return observed == null || observed === incumbent.processStartIdentity;
 }
@@ -323,6 +364,13 @@ async function inspectLiveHub({
   // every reuse check cost 1867-5020ms on Windows and reported a healthy hub as
   // unusable whenever the OS query timed out.
   if (healthy && !requireProcessIdentity) return { status: "reusable", state };
+  // A record that admits its writer could not prove its own identity is the same
+  // epistemic state as a probe that fails now: this caller is about to act on the
+  // PID and cannot. It fails closed rather than reading as `absent`, because
+  // `absent` licenses a takeover that would signal an unproven PID.
+  if (!recordedIdentityIsProvable(state.processStartIdentity)) {
+    return { status: "identity_unavailable", state };
+  }
   const observedIdentity = readProcessStartIdentity(state.pid);
   if (!observedIdentity) return { status: "identity_unavailable", state };
   if (observedIdentity !== state.processStartIdentity) return { status: "absent", state: null };
@@ -802,7 +850,13 @@ export async function writeLiveHubState({
   address,
   instanceId = process.env.META_KIM_LIVE_INSTANCE_ID,
   pid = process.pid,
-  processStartIdentity = getProcessStartIdentity(pid),
+  // The probe is allowed to fail, and on Windows it does: it shells out to
+  // PowerShell and was measured answering null after 12.4s inside a loaded suite.
+  // Refusing to publish then cost the whole singleton — `validState` rejects an
+  // empty identity, so the daemon exited and the launcher could only report
+  // `daemon_exited_before_ready`. Recording the gap explicitly keeps the record
+  // reachable and keeps every reader failing closed on it.
+  processStartIdentity = getProcessStartIdentity(pid) ?? PROCESS_START_IDENTITY_UNAVAILABLE,
   packageVersion = process.env.META_KIM_LIVE_PACKAGE_VERSION || "unknown",
   packageIdentity = process.env.META_KIM_LIVE_PACKAGE_IDENTITY || "0".repeat(64),
   profile = process.env.META_KIM_PROFILE || "default",

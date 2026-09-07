@@ -264,6 +264,20 @@ function isFresh(stats, sinceMs) {
   return stats.mtimeMs + MTIME_TOLERANCE_MS >= sinceMs;
 }
 
+function selectDesktopSessionFile(files, threadId, sinceMs, ambiguityCode) {
+  // Desktop resumes may append a segment UUID while retaining session_meta.id.
+  // Filenames locate candidates only; callers still validate metadata and events.
+  const resumedName = new RegExp(`-${threadId}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.jsonl$`, "u");
+  const candidates = files.filter((file) => {
+    const name = path.basename(file.filePath);
+    return name.endsWith(`-${threadId}.jsonl`) || resumedName.test(name);
+  });
+  const fresh = candidates.filter((file) => isFresh(file.stats, sinceMs));
+  const eligible = fresh.length ? fresh : candidates;
+  if (eligible.length !== 1) fail(ambiguityCode);
+  return eligible[0];
+}
+
 async function readBoundedFile(file, maxBytes, sizeCode) {
   if (file.stats.size > maxBytes) fail(sizeCode);
   const realPath = await fs.realpath(file.filePath).catch(() => null);
@@ -573,12 +587,8 @@ export async function readCodexDesktopSessionEvidence({
   const sessionsRoot = await assertPlainDirectory(sessionsPath, "codex_sessions_invalid", "codex_sessions_symlink_rejected");
   if (!isInside(realHome, sessionsRoot) || sessionsRoot !== sessionsPath) fail("codex_sessions_symlink_rejected");
   const files = await listSessionFiles(sessionsRoot);
-  const parentMatches = files.filter((file) => path.basename(file.filePath).endsWith(`-${threadId}.jsonl`));
-  const childMatches = files.filter((file) => path.basename(file.filePath).endsWith(`-${childSessionId}.jsonl`));
-  if (parentMatches.length !== 1) fail("codex_parent_session_not_unique");
-  if (childMatches.length !== 1) fail("codex_child_session_not_unique");
-  const parent = parentMatches[0];
-  const child = childMatches[0];
+  const parent = selectDesktopSessionFile(files, threadId, sinceMs, "codex_parent_session_not_unique");
+  const child = selectDesktopSessionFile(files, childSessionId, sinceMs, "codex_child_session_not_unique");
   const parentMeta = await readSessionMeta(parent.filePath);
   const childMeta = await readSessionMeta(child.filePath);
   if (parentMeta?.id !== threadId || parentMeta?.originator !== "Codex Desktop" || parentMeta?.source !== "vscode") fail("codex_desktop_parent_source_invalid");
@@ -727,9 +737,7 @@ export async function readCodexDesktopEngineeringEvidence({ codexHome, threadId,
   const sessionsPath = path.resolve(realHome, "sessions");
   const sessionsRoot = await assertPlainDirectory(sessionsPath, "codex_sessions_invalid", "codex_sessions_symlink_rejected");
   const files = await listSessionFiles(sessionsRoot);
-  const matches = files.filter((file) => path.basename(file.filePath).endsWith(`-${threadId}.jsonl`));
-  if (matches.length !== 1) fail("codex_parent_session_not_unique");
-  const parent = matches[0];
+  const parent = selectDesktopSessionFile(files, threadId, sinceMs, "codex_parent_session_not_unique");
   const meta = await readSessionMeta(parent.filePath);
   if (meta?.id !== threadId || meta?.originator !== "Codex Desktop" || meta?.source !== "vscode" || !isFresh(parent.stats, sinceMs)) fail("codex_desktop_engineering_parent_invalid");
   const snapshotSize = parent.stats.size;

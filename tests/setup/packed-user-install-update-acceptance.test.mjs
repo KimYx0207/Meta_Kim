@@ -14,6 +14,7 @@ import test from "node:test";
 
 import {
   PACKED_GLOBAL_AGENT_TARGETS,
+  PACKED_GLOBAL_USER_INSTALL_TIMEOUT_MS,
   PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS,
   PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS,
   PACKED_TRANSIENT_PACKAGE_INSTALL_TIMEOUT_MS,
@@ -516,19 +517,20 @@ test("project-aware packed global update emits bounded progress around the long-
   assert.match(acceptanceSource, /runRuntimeSedimentationLane\(\{[\s\S]*?onProgress/u);
 });
 
-test("ordinary packed global updates receive a bounded Windows-safe timeout without widening install", () => {
+test("ordinary packed global installs and updates receive bounded Windows-safe timeouts", () => {
   assert.equal(
     releaseVerificationPolicy.packedUserAcceptance.globalUserUpdateTimeoutMs,
     600_000,
   );
   assert.equal(PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS, 600_000);
+  assert.equal(PACKED_GLOBAL_USER_INSTALL_TIMEOUT_MS, 600_000);
   const currentLane = acceptanceFunctionSource(
     "runCurrentPackageLane",
     "runHistoricalUpdateLane",
   );
   assert.match(
     currentLane,
-    /mode === "update" \? PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS : timeoutMs/u,
+    /mode === "update" \? PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS : Math\.max\(timeoutMs, PACKED_GLOBAL_USER_INSTALL_TIMEOUT_MS\)/u,
   );
 });
 

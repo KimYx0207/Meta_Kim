@@ -252,7 +252,7 @@ test("the snapshot a catch-up fetched paints without waiting", () => {
 function connectEventsHarness({ catchingUp }) {
   const html = renderLiveControlRoomPage();
   const listeners = new Map();
-  const calls = { connection: [] };
+  const calls = { connection: [], pollingClears: [] };
   const build = new Function(
     "window",
     "selectionGeneration",
@@ -264,12 +264,14 @@ function connectEventsHarness({ catchingUp }) {
     "catchingUpAfterPause",
     `
       let eventSource = null;
+      let pollingRefreshTimer = 41;
+      ${shippedHelper(html, "stopPollingFallback")}
       ${shippedTailHelper(html, "connectEvents")}
       return connectEvents;
     `,
   );
   build(
-    { EventSource: true },
+    { EventSource: true, clearInterval: (timer) => { calls.pollingClears.push(timer); } },
     1,
     class {
       constructor(url) {
@@ -295,6 +297,7 @@ test("an opened stream reports itself live when nothing is being caught up", () 
   listeners.get("open")();
 
   assert.deepEqual(calls.connection, [["live", "Streaming"]], "an ordinary connect must report the live stream");
+  assert.deepEqual(calls.pollingClears, [41], "an opened stream must retire the real polling fallback");
 });
 
 /**
@@ -307,6 +310,7 @@ test("an opened stream stays quiet while a catch-up is outstanding", () => {
   listeners.get("open")();
 
   assert.deepEqual(calls.connection, [], "opening the stream must not claim live over pre-pause numbers");
+  assert.deepEqual(calls.pollingClears, [41], "an opened stream must retire the real polling fallback even during catch-up");
 });
 
 /**

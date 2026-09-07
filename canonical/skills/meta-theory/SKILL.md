@@ -114,6 +114,8 @@ The top of the dialog is free — no required step indicator.
 
 Trigger stages: Critical / Fetch / Thinking / Review.
 
+**When you MUST pop** — positive mandate: pop the native choice surface (Claude `AskUserQuestion` / Codex `request_user_input` / runtime equivalent) whenever Thinking produces two or more materially different viable routes, owners, or loadouts and the choice changes route, scope, risk, or acceptance. Present each option concretely (route + one-line cost/benefit); never silently pick on the user's behalf. This positive mandate outranks the anti-noise guardrails below when both seem to apply.
+
 **When NOT to pop** — symmetric guardrail to keep the dialog from becoming UI decoration:
 
 - Pure informational confirmation where any short reply (y/n, ok, continue) is equivalent

@@ -415,19 +415,38 @@ test("graphify check rejects private local paths in the report without echoing t
   }
 });
 
+test("graphify rebuild migration never requests model extraction even with an old backend override", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-no-model-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    const recorded = path.join(temp, "args.json");
+    const fake = path.join(temp, "producer.mjs");
+    writeFileSync(fake, `import { writeFileSync } from "node:fs"; writeFileSync(process.env.RECORDED_ARGS, JSON.stringify(process.argv.slice(2))); process.exit(1);`);
+    const result = spawnSync(process.execPath, [cli, "rebuild"], {
+      cwd: repo, encoding: "utf8",
+      env: { ...process.env, META_KIM_GRAPHIFY_BIN: process.execPath,
+        META_KIM_GRAPHIFY_BIN_ARGS: fake, META_KIM_GRAPHIFY_MIGRATION_BACKEND: "claude-cli",
+        RECORDED_ARGS: recorded },
+    });
+    assert.notEqual(result.status, 0, "an unsuccessful local producer must not be stamped as successful");
+    assert.deepEqual(JSON.parse(readFileSync(recorded, "utf8")), ["extract", ".", "--force", "--code-only"]);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+});
+
 test("graphify rebuild safely adopts a complete raw extract without rerunning extract", () => {
   const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-adopt-"));
   try {
     const repo = initRepo(temp, "repo");
     const { output } = writeRawExtractArtifacts(repo);
     const statePath = path.join(temp, "calls.json");
-    writeFileSync(statePath, JSON.stringify({ extract: 0, cluster: 0, update: 0 }));
+    writeFileSync(statePath, JSON.stringify({ extract: 0, cluster: 0, update: 0, args: [] }));
     const fake = path.join(temp, "fake-graphify.mjs");
     writeFileSync(fake, `
 import { readFileSync, writeFileSync } from "node:fs";
 const statePath = process.env.FAKE_GRAPHIFY_STATE;
 const state = JSON.parse(readFileSync(statePath, "utf8"));
 const command = process.argv[2];
+state.args.push(process.argv.slice(2));
 if (command === "extract") state.extract += 1;
 if (command === "cluster-only") state.cluster += 1;
 if (command === "update") state.update += 1;
@@ -451,7 +470,7 @@ writeFileSync(statePath, JSON.stringify(state));
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.deepEqual(
       JSON.parse(readFileSync(statePath, "utf8")),
-      { extract: 0, cluster: 1, update: 0 },
+      { extract: 0, cluster: 1, update: 0, args: [["cluster-only", ".", "--no-label", "--no-viz"]] },
     );
     const report = readFileSync(path.join(output, "GRAPH_REPORT.md"), "utf8");
     assert.match(report, /<meta-kim-home>\/install-manifest\.json/u);

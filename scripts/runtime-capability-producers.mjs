@@ -15,6 +15,12 @@ import { loadSetupBoundRuntimeExecutable, revalidateRuntimeExecutableIdentity } 
 import { resolveClaudeLiveProviderEnvironmentSync } from "./claude-live-provider-env.mjs";
 
 const SUPPORTED_RUNTIMES = new Set(["claude_code", "codex"]);
+const CODEX_EPHEMERAL_NATIVE_TOOL_CAPABILITIES = new Set([
+  "shell",
+  "filesystem",
+  "apply_patch / edit",
+  "engineering_composite",
+]);
 const PRODUCERS = Object.freeze({
   agent: { id: "meta-kim.live-agent.agent", version: "2.0.0", family: "agent_subagent" },
   subagent: { id: "meta-kim.live-agent.subagent", version: "2.0.0", family: "agent_subagent" },
@@ -34,6 +40,7 @@ const CODEX_ENGINEERING_COMPOSITE_PRODUCER = Object.freeze({
   family: "runtime_tool",
   compositeFacets: ["shell", "filesystem", "apply_patch / edit"],
 });
+const CODEX_ENGINEERING_FACETS = Object.freeze(["shell", "filesystem", "apply_patch / edit"]);
 const CODEX_DESKTOP_ENGINEERING_PRODUCER = Object.freeze({
   id: "meta-kim.codex-desktop-engineering.shell-filesystem-edit",
   version: "1.0.0",
@@ -43,6 +50,25 @@ const CODEX_DESKTOP_ENGINEERING_PRODUCER = Object.freeze({
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeCodexOption(value, label) {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  if (!normalized || normalized.length > 256 || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u.test(normalized)) {
+    throw new Error(`Codex ${label} must be a non-empty safe CLI value`);
+  }
+  return normalized;
+}
+
+function testOnlyExecutableIdentity(runtime) {
+  const realpath = `<test-only:${runtime}>`;
+  return {
+    realpath,
+    sha256: sha256(realpath),
+    size: 0,
+    bindingSource: "explicit_test_only_executor",
+  };
 }
 
 function atomicExclusiveWrite(filePath, bytes) {
@@ -63,11 +89,22 @@ function cleanupWorkspaceBestEffort({ workspace, producerRoot, attemptId, comple
     rmSync(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
     return;
   } catch (error) {
+    const resolvedWorkspace = path.resolve(workspace);
+    const resolvedProducerRoot = path.resolve(producerRoot);
+    const relativeWorkspace = path.relative(resolvedProducerRoot, resolvedWorkspace);
+    const workspaceIsInsideProducerRoot = relativeWorkspace === "" ||
+      (relativeWorkspace !== ".." && !relativeWorkspace.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeWorkspace));
     const cleanupRecord = {
       schemaVersion: "meta-kim-runtime-capability-cleanup-pending-v1",
       attemptId,
       observedAt: new Date().toISOString(),
-      workspace: path.relative(producerRoot, workspace).replaceAll("\\", "/"),
+      // Codex probes use an OS-temp workspace so ancestor project skills cannot
+      // be discovered. Preserve an actionable absolute path for that external
+      // workspace instead of emitting an unsafe ../../ reference.
+      workspace: workspaceIsInsideProducerRoot
+        ? relativeWorkspace.replaceAll("\\", "/")
+        : resolvedWorkspace,
+      workspaceReferenceKind: workspaceIsInsideProducerRoot ? "producer_root_relative" : "external_temp_absolute",
       producerCompleted: completed,
       errorCode: error?.code ?? "unknown",
       retryOnNextMaintenance: true,
@@ -86,6 +123,27 @@ function acceptanceWriterFor(testOnly, internalWriter) {
   if (typeof internalWriter === "function") return internalWriter;
   if (testOnly) return writeTestOnlyControlledRuntimeCapabilityAcceptanceAttempt;
   throw new Error("production controlled receipts require the formal runtime produce API");
+}
+
+function createControlledProbeWorkspace({ runtime, producerRoot, attemptId, label }) {
+  if (runtime === "codex") {
+    // A workspace below the repository inherits ancestor project skills/rules.
+    // Keep Codex's controlled child outside that discovery tree while leaving
+    // receipts and raw evidence under the profile-owned producer root.
+    return mkdtempSync(path.join(os.tmpdir(), `meta-kim-codex-${label}-`));
+  }
+  const workspace = path.join(producerRoot, "workspaces", attemptId);
+  mkdirSync(workspace, { recursive: true });
+  return workspace;
+}
+
+export function selectLiveControlledProducerRoute({ runtime, capabilities = [] } = {}) {
+  const requested = Array.isArray(capabilities) ? capabilities : [];
+  const exactCodexEngineeringRequest = runtime === "codex" &&
+    requested.length === CODEX_ENGINEERING_FACETS.length &&
+    new Set(requested).size === CODEX_ENGINEERING_FACETS.length &&
+    requested.every((capability) => CODEX_ENGINEERING_FACETS.includes(capability));
+  return exactCodexEngineeringRequest ? "codex_engineering_composite" : "capability_specific";
 }
 
 function promptFor(capability, runtime, nonce, marker) {
@@ -109,11 +167,29 @@ function promptFor(capability, runtime, nonce, marker) {
   throw new Error(`no controlled producer exists for capability ${capability}`);
 }
 
-export function codexLiveInvocationArgs({ workspace, argsPrefix = [], platform = process.platform }) {
+export function codexLiveInvocationArgs({
+  workspace,
+  argsPrefix = [],
+  platform = process.platform,
+  model = null,
+  reasoningEffort = null,
+  ephemeral = false,
+}) {
   const hostSandboxFlavor = platform === "win32" ? ["-c", "windows.sandbox=unelevated"] : [];
+  const modelValue = normalizeCodexOption(model, "model");
+  const reasoningEffortValue = normalizeCodexOption(reasoningEffort, "reasoning effort");
   return [
     ...argsPrefix,
-    "exec", "--json", "--ignore-user-config", "--skip-git-repo-check",
+    "exec", "--json",
+    ...(ephemeral ? ["--ephemeral"] : []),
+    "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
+    ...(modelValue ? ["-m", modelValue] : []),
+    ...(reasoningEffortValue ? ["-c", `model_reasoning_effort="${reasoningEffortValue}"`] : []),
+    // Native capability probes need only their explicit marker task. CODEX_HOME
+    // alone does not isolate ~/.agents/skills or ancestor project instructions.
+    // These flags affect this child invocation only, never the user's config.
+    "--enable", "skip_host_skill_discovery",
+    "-c", "project_doc_max_bytes=0",
     ...hostSandboxFlavor,
     "-s", "workspace-write",
     "-C", workspace,
@@ -121,22 +197,40 @@ export function codexLiveInvocationArgs({ workspace, argsPrefix = [], platform =
   ];
 }
 
-function commandFor(runtime, workspace, capability, executableIdentity = null) {
+function commandFor(runtime, workspace, capability, executableIdentity = null, {
+  codexModel = null,
+  codexReasoningEffort = null,
+} = {}) {
   const argsPrefix = executableIdentity?.argsPrefix ?? [];
   if (runtime === "codex") return {
     command: executableIdentity?.realpath ?? "test-only-codex",
-    args: codexLiveInvocationArgs({ workspace, argsPrefix }),
+    args: codexLiveInvocationArgs({
+      workspace,
+      argsPrefix,
+      model: codexModel,
+      reasoningEffort: codexReasoningEffort,
+      ephemeral: CODEX_EPHEMERAL_NATIVE_TOOL_CAPABILITIES.has(capability),
+    }),
     observer: observeCodexJsonl,
   };
+  // Allowed-tool grants must name the tool the host actually exposes: Windows
+  // Claude Code exposes PowerShell (not Bash) as the shell tool, and newer
+  // hosts name the subagent tool Task. Listing both keeps dontAsk from
+  // declining the probe's natural choice; eventMatches stays surface-regex
+  // based, so evidence binding is unaffected.
   const claudeTool = capability === "shell"
-    ? "Bash"
+    ? "Bash,PowerShell"
     : capability === "filesystem"
       ? "Read"
       : capability === "apply_patch / edit"
         ? "Read,Edit"
-        : "Agent";
+        : "Agent,Task";
   return {
     command: executableIdentity?.realpath ?? "test-only-claude",
+    // No `--tools`: Claude Code 2.1.236 resolves `--tools <name>` to an empty
+    // tool set (live-verified: init event tools:[]), leaving the probe model
+    // with no tool to run. `--allowedTools` carries the permission grant and
+    // the marker/workspace assertions bind the evidence to one capability.
     args: [...argsPrefix,
       "--setting-sources", "",
       "-p",
@@ -146,34 +240,140 @@ function commandFor(runtime, workspace, capability, executableIdentity = null) {
       "--mcp-config", path.join(workspace, "meta-kim-empty-mcp.json"),
       "--permission-mode", "dontAsk",
       "--no-session-persistence",
-      "--tools", claudeTool,
       "--allowedTools", claudeTool,
     ],
     observer: observeClaudeJsonl,
   };
 }
 
-function productionExecutor(request) {
-  let isolatedRuntimeHome = null;
-  let env = process.env;
-  if (request.runtime === "claude_code") {
-    env = resolveClaudeLiveProviderEnvironmentSync();
-  } else if (request.runtime === "codex") {
-    isolatedRuntimeHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-probe-"));
-    const sourceRuntimeHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-    const authSource = path.join(sourceRuntimeHome, "auth.json");
-    if (!existsSync(authSource)) throw new Error("codex auth.json is required for the isolated native probe");
-    copyFileSync(authSource, path.join(isolatedRuntimeHome, "auth.json"));
-    env = {
-      ...process.env,
-      CODEX_HOME: isolatedRuntimeHome,
-      CODEX_SKILLS_DIR: path.join(isolatedRuntimeHome, "skills"),
-    };
-  }
+function safeChildDiagnostic(value) {
+  if (value == null) return null;
+  const text = String(value);
+  return /^[A-Za-z0-9_.:-]+$/u.test(text) ? text : "unknown";
+}
+
+export function runtimeHostInvocationError(runtime, phase, result) {
+  const exitCode = Number.isInteger(result?.status) ? result.status : null;
+  const signal = safeChildDiagnostic(result?.signal ?? result?.error?.signal);
+  const childErrorCode = safeChildDiagnostic(result?.error?.code);
+  const error = new Error(
+    `${runtime} ${phase} failed: exit=${exitCode ?? "unknown"}; signal=${signal ?? "none"}; errorCode=${childErrorCode ?? "none"}`,
+  );
+  error.exitCode = exitCode;
+  error.signal = signal;
+  error.childErrorCode = childErrorCode;
+  // Keep the conventional bounded diagnostic name used by release evidence.
+  error.errorCode = childErrorCode;
+  return error;
+}
+
+function cleanupIsolatedCodexRuntimeHome(isolatedRuntimeHome, {
+  remove = rmSync,
+  exists = existsSync,
+} = {}) {
   try {
+    remove(isolatedRuntimeHome, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
+  } catch {
+    const copiedAuth = path.join(isolatedRuntimeHome, "auth.json");
+    try {
+      remove(copiedAuth, { force: true, maxRetries: 8, retryDelay: 125 });
+    } catch {
+      // Checked below; a retained auth copy is a hard security failure.
+    }
+    if (exists(copiedAuth)) throw new Error("codex isolated auth cleanup failed");
+  }
+}
+
+function setCaseInsensitiveEnvironmentValue(env, name, value) {
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === name.toLowerCase()) delete env[key];
+  }
+  env[name] = value;
+}
+
+function removeCaseInsensitiveEnvironmentValue(env, name) {
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === name.toLowerCase()) delete env[key];
+  }
+}
+
+function isolatedCodexChildEnvironment(inheritedEnv, isolatedRuntimeHome, { mkdir = mkdirSync } = {}) {
+  const isolatedTemp = path.join(isolatedRuntimeHome, "tmp");
+  // Node and Windows resolve TEMP/TMP before the child starts. Create the
+  // temp root while the isolated home still exists so a missing subdirectory
+  // cannot make the real CLI fall back to the host temp tree.
+  mkdir(isolatedTemp, { recursive: true });
+  const env = { ...inheritedEnv };
+  for (const [name, value] of [
+    ["HOME", isolatedRuntimeHome],
+    ["USERPROFILE", isolatedRuntimeHome],
+    ["APPDATA", path.join(isolatedRuntimeHome, "AppData", "Roaming")],
+    ["LOCALAPPDATA", path.join(isolatedRuntimeHome, "AppData", "Local")],
+    ["TMP", isolatedTemp],
+    ["TEMP", isolatedTemp],
+    ["XDG_CONFIG_HOME", path.join(isolatedRuntimeHome, ".config")],
+    ["XDG_DATA_HOME", path.join(isolatedRuntimeHome, ".local", "share")],
+    ["XDG_CACHE_HOME", path.join(isolatedRuntimeHome, ".cache")],
+    ["CODEX_HOME", isolatedRuntimeHome],
+    ["CODEX_SKILLS_DIR", path.join(isolatedRuntimeHome, "skills")],
+  ]) setCaseInsensitiveEnvironmentValue(env, name, value);
+  const windowsHome = path.win32.normalize(isolatedRuntimeHome);
+  const windowsParts = path.win32.parse(windowsHome);
+  const driveRoot = /^([A-Za-z]:)\\$/u.exec(windowsParts.root);
+  const uncRoot = /^(\\\\[^\\]+\\[^\\]+)\\$/u.exec(windowsParts.root);
+  if (driveRoot) {
+    setCaseInsensitiveEnvironmentValue(env, "HOMEDRIVE", driveRoot[1]);
+    setCaseInsensitiveEnvironmentValue(env, "HOMEPATH", windowsHome.slice(driveRoot[1].length) || path.win32.sep);
+  } else if (uncRoot) {
+    setCaseInsensitiveEnvironmentValue(env, "HOMEDRIVE", uncRoot[1]);
+    setCaseInsensitiveEnvironmentValue(env, "HOMEPATH", windowsHome.slice(uncRoot[1].length) || path.win32.sep);
+  } else {
+    // Never leave a real Windows drive/home pair behind if a test or a
+    // non-Windows host supplies a POSIX temporary path.
+    removeCaseInsensitiveEnvironmentValue(env, "HOMEDRIVE");
+    removeCaseInsensitiveEnvironmentValue(env, "HOMEPATH");
+  }
+  return env;
+}
+
+export function withRuntimeIsolation(request, callback, {
+  tempRoot = os.tmpdir(),
+  sourceRuntimeHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+  inheritedEnv = process.env,
+  mkdtemp = mkdtempSync,
+  mkdir = mkdirSync,
+  exists = existsSync,
+  copyFile = copyFileSync,
+  remove = rmSync,
+} = {}) {
+  let isolatedRuntimeHome = null;
+  let env = inheritedEnv;
+  try {
+    if (request.runtime === "claude_code") {
+      env = resolveClaudeLiveProviderEnvironmentSync();
+    } else if (request.runtime === "codex") {
+      // Keep setup in this try/finally: auth absence or copy failure must still
+      // remove the temporary home created for this invocation.
+      isolatedRuntimeHome = mkdtemp(path.join(tempRoot, "meta-kim-codex-probe-"));
+      const authSource = path.join(sourceRuntimeHome, "auth.json");
+      const authTarget = path.join(isolatedRuntimeHome, "auth.json");
+      if (!exists(authSource)) throw new Error("codex auth.json is required for the isolated native probe");
+      copyFile(authSource, authTarget);
+      env = isolatedCodexChildEnvironment(inheritedEnv, isolatedRuntimeHome, { mkdir });
+    }
+    return callback({ env, isolatedRuntimeHome });
+  } finally {
+    if (isolatedRuntimeHome) cleanupIsolatedCodexRuntimeHome(isolatedRuntimeHome, { remove, exists });
+  }
+}
+
+function productionExecutor(request) {
+  return withRuntimeIsolation(request, ({ env }) => {
     revalidateRuntimeExecutableIdentity(request.executableIdentity);
     const version = runCli(request.command, [...(request.executableIdentity?.argsPrefix ?? []), "--version"], { cwd: request.workspace, env, timeoutMs: 30_000 });
-    if (version.status !== 0 || !String(version.stdout ?? version.stderr ?? "").trim()) throw new Error(`${request.runtime} version probe failed`);
+    if (version.status !== 0 || !String(version.stdout ?? version.stderr ?? "").trim()) {
+      throw runtimeHostInvocationError(request.runtime, "version probe", version);
+    }
     const result = runCli(request.command, request.args, {
       cwd: request.workspace,
       env,
@@ -184,24 +384,10 @@ function productionExecutor(request) {
     return {
       ...result,
       runtimeVersion: String(version.stdout ?? version.stderr).trim().split(/\r?\n/u)[0],
-      runtimeIsolation: request.runtime === "codex" ? "ephemeral_auth_only" : "empty_setting_sources_strict_mcp_current_auth",
+      runtimeIsolation: request.runtime === "codex" ? "ephemeral_auth_home_and_rules_isolated" : "empty_setting_sources_strict_mcp_current_auth",
       executableIdentity: request.executableIdentity,
     };
-  } finally {
-    if (isolatedRuntimeHome) {
-      try {
-        rmSync(isolatedRuntimeHome, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
-      } catch {
-        const copiedAuth = path.join(isolatedRuntimeHome, "auth.json");
-        try {
-          rmSync(copiedAuth, { force: true, maxRetries: 8, retryDelay: 125 });
-        } catch {
-          // Checked below; a retained auth copy is a hard security failure.
-        }
-        if (existsSync(copiedAuth)) throw new Error("codex isolated auth cleanup failed");
-      }
-    }
-  }
+  });
 }
 
 function eventMatches(runtime, capability, event, rawText, marker) {
@@ -358,7 +544,36 @@ function eventStartLine(event) {
   return Math.min(...(event.sourceLines ?? []).filter(Number.isSafeInteger));
 }
 
-function selectCodexEngineeringEvents(rawText, marker) {
+function pathIsEngineeringProbeTarget(candidate, workspace) {
+  if (typeof candidate !== "string" || !candidate.trim() || typeof workspace !== "string" || !workspace.trim()) return false;
+  const candidateText = candidate.trim();
+  const workspaceText = workspace.trim();
+  const windowsPath = /^[A-Za-z]:[\\/]/u.test(candidateText) || /^\\\\/u.test(candidateText) || /^[A-Za-z]:[\\/]/u.test(workspaceText);
+  const pathApi = windowsPath ? path.win32 : path;
+  const expected = pathApi.normalize(pathApi.resolve(workspaceText, "meta-kim-engineering-probe.txt"));
+  const actual = pathApi.normalize(pathApi.isAbsolute(candidateText)
+    ? pathApi.resolve(candidateText)
+    : pathApi.resolve(workspaceText, candidateText));
+  return (windowsPath ? actual.toLowerCase() : actual) === (windowsPath ? expected.toLowerCase() : expected);
+}
+
+function nativeFileChangeTargetsEngineeringProbe(source, workspace) {
+  const completedFileChanges = String(source).split(/\r?\n/u).flatMap((line) => {
+    try {
+      const record = JSON.parse(line);
+      return record?.type === "item.completed" && record.item?.type === "file_change"
+        ? [record.item]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  if (completedFileChanges.length !== 1) return false;
+  const changes = completedFileChanges[0]?.changes;
+  return Array.isArray(changes) && changes.length === 1 && pathIsEngineeringProbeTarget(changes[0]?.path, workspace);
+}
+
+function selectCodexEngineeringEvents(rawText, marker, workspace) {
   const events = observeCodexJsonl(rawText).filter((event) => ["completed", "returned"].includes(event.resultStatus));
   const described = events.map((event) => ({ event, source: sourceTextForEvent(rawText, event) }));
   const filePattern = /meta-kim-engineering-probe\.txt/iu;
@@ -369,9 +584,18 @@ function selectCodexEngineeringEvents(rawText, marker) {
     event.family === "runtime_tool" && /shell|command/u.test(String(event.hostSurface ?? "").toLowerCase()) &&
     filePattern.test(source) && /get-content|readalltext|\bcat\b|\btype\b/iu.test(source) &&
     !/set-content|out-file|writealltext|(?:^|\s)>/iu.test(source));
-  const edits = described.filter(({ event, source }) =>
-    event.family === "runtime_tool" && /file_change|apply_patch|patch|edit/u.test(String(event.hostSurface ?? "").toLowerCase()) &&
-    filePattern.test(source) && source.includes(`before-${marker}`) && source.includes(`after-${marker}`));
+  const edits = described.filter(({ event, source }) => {
+    if (event.family !== "runtime_tool") return false;
+    const surface = String(event.hostSurface ?? "").toLowerCase();
+    // Codex's native file_change event binds the changed path and lifecycle,
+    // but does not echo the edited contents. Marker binding comes from the
+    // ordered native reads around this event and the final workspace check;
+    // do not replace the file_change event with either of those observations.
+    const nativeFileChange = /file_change/u.test(surface) && nativeFileChangeTargetsEngineeringProbe(source, workspace);
+    const markerBoundPatch = /apply_patch|patch|edit/u.test(surface) && filePattern.test(source) &&
+      source.includes(`before-${marker}`) && source.includes(`after-${marker}`);
+    return nativeFileChange || markerBoundPatch;
+  });
   const beforeReads = reads.filter(({ source }) => source.includes(`before-${marker}`) && !source.includes(`after-${marker}`));
   const afterReads = reads.filter(({ source }) => source.includes(`after-${marker}`));
   if (writes.length !== 1 || beforeReads.length !== 1 || edits.length !== 1 || afterReads.length !== 1) {
@@ -410,7 +634,7 @@ function engineeringPrompt(marker) {
     `1. Invoke the native shell tool once to create meta-kim-engineering-probe.txt containing exactly before-${marker} with no trailing newline.\n` +
     `2. Invoke the native shell tool once with a read-only Get-Content command to read that file and observe exactly before-${marker}.\n` +
     `3. Invoke the native apply_patch tool once to replace before-${marker} with after-${marker}. Do not edit through the shell.\n` +
-    `4. Invoke the native shell tool once with a read-only Get-Content command to read the final file and observe exactly after-${marker}.\n` +
+    `4. Invoke the native shell tool once with a read-only Get-Content command to read the final file and observe exactly one line, after-${marker}, followed by one LF.\n` +
     `Then stop. Do not perform any other file, shell, or edit operation.`;
 }
 
@@ -423,13 +647,20 @@ export function runCodexCompositeEngineeringProducer({
   projectRoot,
   profile,
   timeoutMs = 300_000,
+  codexModel = null,
+  codexReasoningEffort = null,
   executor = productionExecutor,
   _acceptanceWriter = null,
   attemptBase = `${new Date().toISOString().replace(/[-:.]/gu, "")}-${randomUUID()}`,
 } = {}) {
   const paths = prepareRuntimeCapabilityAcceptanceStore({ projectRoot, profile });
   const producerRoot = path.join(paths.profileRoot, "runtime-capability-producers");
-  const workspace = path.join(producerRoot, "workspaces", `${attemptBase}-engineering`);
+  const workspace = createControlledProbeWorkspace({
+    runtime: "codex",
+    producerRoot,
+    attemptId: `${attemptBase}-engineering`,
+    label: "engineering",
+  });
   const artifactsDir = path.join(producerRoot, "artifacts");
   const receiptsDir = path.join(producerRoot, "receipts");
   mkdirSync(workspace, { recursive: true });
@@ -438,20 +669,23 @@ export function runCodexCompositeEngineeringProducer({
   const nonce = randomUUID();
   const marker = `META_KIM_CAPABILITY_ENGINEERING_${nonce}`;
   const prompt = engineeringPrompt(marker);
-  const command = commandFor("codex", workspace, "shell");
-  const request = { runtime: "codex", capability: "engineering_composite", mode: "interactive_host", workspace, command: command.command, args: command.args, prompt, timeoutMs };
+  const executableIdentity = executor === productionExecutor
+    ? loadSetupBoundRuntimeExecutable({ projectRoot: paths.projectRoot, profile: paths.profile, runtime: "codex" })
+    : testOnlyExecutableIdentity("codex");
+  const command = commandFor("codex", workspace, "engineering_composite", executableIdentity, { codexModel, codexReasoningEffort });
+  const request = { runtime: "codex", capability: "engineering_composite", mode: "interactive_host", workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity };
   let completed = false;
   try {
     const result = executor(request);
     const rawBytes = Buffer.from(String(result?.stdout ?? ""), "utf8");
     const rawPath = path.join(artifactsDir, `${attemptBase}-engineering.jsonl`);
     atomicExclusiveWrite(rawPath, rawBytes);
-    if (!result || result.status !== 0) throw new Error(`Codex engineering composite host invocation failed with exit ${result?.status ?? "unknown"}`);
+    if (!result || result.status !== 0) throw runtimeHostInvocationError("codex", "engineering composite host invocation", result);
     const rawText = rawBytes.toString("utf8");
     assertCodexEngineeringToolsNotDeclined(rawText);
-    const selected = selectCodexEngineeringEvents(rawText, marker);
+    const selected = selectCodexEngineeringEvents(rawText, marker, workspace);
     const probeFile = path.join(workspace, "meta-kim-engineering-probe.txt");
-    if (!existsSync(probeFile) || readFileSync(probeFile, "utf8") !== `after-${marker}`) {
+    if (!existsSync(probeFile) || readFileSync(probeFile, "utf8") !== `after-${marker}\n`) {
       throw new Error("Codex engineering composite final workspace outcome mismatch");
     }
     const observedAt = new Date().toISOString();
@@ -471,7 +705,7 @@ export function runCodexCompositeEngineeringProducer({
       eventBindings,
       orderedEventIds: [selected.shell.eventId, selected.filesystemBefore.eventId, selected.edit.eventId, selected.filesystemAfter.eventId],
       beforeContentSha256: sha256(`before-${marker}`),
-      finalContentSha256: sha256(`after-${marker}`),
+      finalContentSha256: sha256(`after-${marker}\n`),
     };
     const requestRecord = { runtime: "codex", capability: "engineering_composite", mode: "interactive_host", command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt) };
     const resultRecord = { status: result.status, signal: result.signal ?? null, stdoutSha256: sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) };
@@ -510,7 +744,7 @@ export function runCodexCompositeEngineeringProducer({
         observedAt,
         outcome: "pass",
         hostInvocation: {
-          runtimeIsolation: result.runtimeIsolation ?? (executor === productionExecutor ? "ephemeral_auth_only" : "test_injected"),
+          runtimeIsolation: result.runtimeIsolation ?? (executor === productionExecutor ? "ephemeral_auth_home_and_rules_isolated" : "test_injected"),
           request: requestRecord,
           requestDigest: sha256(JSON.stringify(requestRecord)),
           result: resultRecord,
@@ -711,6 +945,8 @@ export function runControlledRuntimeCapabilityProducer({
   capability,
   mode = "interactive_host",
   timeoutMs = 300_000,
+  codexModel = null,
+  codexReasoningEffort = null,
   executor = productionExecutor,
   _acceptanceWriter = null,
   preserveWorkspace = false,
@@ -723,7 +959,7 @@ export function runControlledRuntimeCapabilityProducer({
   if (!producer) throw new Error(`no controlled producer exists for capability ${capability}`);
   const paths = prepareRuntimeCapabilityAcceptanceStore({ projectRoot, profile });
   const producerRoot = path.join(paths.profileRoot, "runtime-capability-producers");
-  const workspace = path.join(producerRoot, "workspaces", attemptId);
+  const workspace = createControlledProbeWorkspace({ runtime, producerRoot, attemptId, label: capability.replace(/[^a-z0-9]+/giu, "-").toLowerCase() });
   const artifactsDir = path.join(producerRoot, "artifacts");
   const receiptsDir = path.join(producerRoot, "receipts");
   mkdirSync(workspace, { recursive: true });
@@ -736,8 +972,8 @@ export function runControlledRuntimeCapabilityProducer({
   if (runtime === "claude_code") writeFileSync(path.join(workspace, "meta-kim-empty-mcp.json"), '{"mcpServers":{}}\n', "utf8");
   const executableIdentity = executor === productionExecutor
     ? loadSetupBoundRuntimeExecutable({ projectRoot: paths.projectRoot, profile: paths.profile, runtime })
-    : { realpath: `<test-only:${runtime}>`, sha256: sha256(`test-only:${runtime}`), size: 0, bindingSource: "explicit_test_only_executor" };
-  const command = commandFor(runtime, workspace, capability, executableIdentity);
+    : testOnlyExecutableIdentity(runtime);
+  const command = commandFor(runtime, workspace, capability, executableIdentity, { codexModel, codexReasoningEffort });
   const prompt = promptFor(capability, runtime, nonce, marker);
   const request = { runtime, capability, mode, workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity };
   let result;
@@ -747,7 +983,7 @@ export function runControlledRuntimeCapabilityProducer({
     const rawPath = path.join(artifactsDir, `${attemptId}.jsonl`);
     const rawBytes = Buffer.from(String(result?.stdout ?? ""), "utf8");
     atomicExclusiveWrite(rawPath, rawBytes);
-    if (!result || result.status !== 0) throw new Error(`${producer.id} host invocation failed with exit ${result?.status ?? "unknown"}`);
+    if (!result || result.status !== 0) throw runtimeHostInvocationError(runtime, `${producer.id} host invocation`, result);
     const rawText = rawBytes.toString("utf8");
     const events = command.observer(rawText);
     assertExactMarkerEventLifecycles(rawText, marker);
@@ -829,7 +1065,13 @@ export function runControlledRuntimeCapabilityProducer({
 
 export async function produceRuntimeCapabilityWithAcceptanceWriter(options, acceptanceWriter) {
   if (typeof acceptanceWriter !== "function") throw new Error("internal controlled acceptance writer is required");
-  const common = { projectRoot: options.projectRoot, profile: options.profile, _acceptanceWriter: acceptanceWriter };
+  const common = {
+    projectRoot: options.projectRoot,
+    profile: options.profile,
+    _acceptanceWriter: acceptanceWriter,
+    codexModel: options.codexModel,
+    codexReasoningEffort: options.codexReasoningEffort,
+  };
   if (options.source === "codex_desktop_agent_subagent") {
     if (options.runtime !== "codex") throw new Error("Codex Desktop agent source supports only codex");
     return runCodexDesktopSessionCapabilityProducer({
@@ -852,6 +1094,13 @@ export async function produceRuntimeCapabilityWithAcceptanceWriter(options, acce
     });
   }
   if (options.source === "live_controlled") {
+    if (selectLiveControlledProducerRoute(options) === "codex_engineering_composite") {
+      const produced = runCodexCompositeEngineeringProducer({
+        ...common,
+        timeoutMs: options.timeoutMs,
+      });
+      return { results: produced.results };
+    }
     const results = [];
     for (const capability of options.capabilities ?? []) {
       results.push(runControlledRuntimeCapabilityProducer({ ...common, runtime: options.runtime, capability }));

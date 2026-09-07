@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 
+// Flags: --runtime <claude|codex> --scenario <id> --preflight --install-only
+//        --prompt-file <path> --artifact-dir <path> --timeout-ms <ms>
+//        --keep-temp   keep the clean-room temp root after the run so the packed
+//                      workspace and isolated runtime home can be inspected.
+//                      Copied host credentials are scrubbed first. The retained
+//                      path is isolation.tempRoot in the report. A silent
+//                      dependency-install no-op turns this on by itself.
+//                      Equivalent env opt-in: META_KIM_CLEAN_ROOM_KEEP_TEMP=1.
+
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
@@ -19,6 +28,7 @@ import {
 import { buildExactBindingCandidateFromFiles } from "./build-exact-binding-candidate.mjs";
 import { resolveWindowsCliInvocation } from "../runtime-cli-invocation.mjs";
 import { tarExtractCommand } from "../tar-extract-command.mjs";
+import { INSTALLER_ACK_PREFIX, hasInstallerAck } from "../installer-ack.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
@@ -28,6 +38,64 @@ const EXPECTED_AGENT_TEAMS_PLAYBOOK_REF = "v4.8.0";
 const EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT = "753ff43bd9b1f9aee4d184c4f21e7f494af5a79f";
 const EXPECTED_AGENT_TEAMS_PLAYBOOK_SKILL_SHA256 =
   "0c61f80b3e0616e3b6c6611e03c230e8eb26fbda65d4a7cc9477a9370e7d5fb4";
+const DEPENDENCY_INSTALL_SILENT_NOOP_BLOCKER =
+  "dependency_install_silent_noop_empty_output_and_missing_skill";
+
+/**
+ * Multi-line diagnostic for a dependency install that exited 0, produced the
+ * empty-output digest, and left no skill artifact behind. When the harness
+ * already knows the sandbox tempRoot it retains, the diagnostic points at that
+ * exact path; otherwise it tells the operator to rerun with --keep-temp.
+ */
+function formatDependencyInstallSilentNoopDiagnostic({ tempRoot = null } = {}) {
+  return [
+    "installer exited 0 with empty stdout and no artifact — silent noop suspected.",
+    `A real installer run emits a line starting with "${INSTALLER_ACK_PREFIX}" as its first stdout line; the recorded dependencyInstallOutputSha256 equals the empty-output digest.`,
+    tempRoot
+      ? `--keep-temp is already enabled for this run; inspect the retained sandbox tempRoot: ${tempRoot}`
+      : "Re-run with --keep-temp and inspect the reported isolation.tempRoot workspace.",
+    "Then run scripts/install-global-skills-all-runtimes.mjs by hand inside the preserved workspace with the same isolated env.",
+  ].join("\n");
+}
+
+/**
+ * A dependency install that exits 0, prints nothing, and leaves no skill behind
+ * is indistinguishable from success in the recorded evidence, so it gets its own
+ * blocker name. `exitCode === null` means an earlier step short-circuited this
+ * one and must keep reporting as that earlier failure.
+ */
+function classifyDependencyInstallStep({ exitCode, stdout, skillPresent, tempRoot = null } = {}) {
+  const output = typeof stdout === "string" ? stdout : "";
+  const outputEmpty = output.trim().length === 0;
+  const silentNoop = exitCode === 0 && outputEmpty && skillPresent !== true;
+  return {
+    outputEmpty,
+    ackObserved: hasInstallerAck(output),
+    silentNoop,
+    blocker: silentNoop ? DEPENDENCY_INSTALL_SILENT_NOOP_BLOCKER : null,
+    diagnostic: silentNoop
+      ? formatDependencyInstallSilentNoopDiagnostic({ tempRoot })
+      : null,
+  };
+}
+
+/**
+ * Resolve the initial keep-temp choice from the --keep-temp flag and the
+ * META_KIM_CLEAN_ROOM_KEEP_TEMP=1 environment opt-in. The flag wins when both
+ * are present, and each source keeps its own retention reason for the report.
+ */
+export function resolveCleanRoomKeepTemp({
+  args = process.argv.slice(2),
+  env = process.env,
+} = {}) {
+  if (Array.isArray(args) && args.includes("--keep-temp")) {
+    return { keepTemp: true, reason: "keep_temp_flag" };
+  }
+  if (String(env.META_KIM_CLEAN_ROOM_KEEP_TEMP ?? "").trim() === "1") {
+    return { keepTemp: true, reason: "keep_temp_env" };
+  }
+  return { keepTemp: false, reason: null };
+}
 const FAST_PATH_CONTROL_PROMPT =
   "请对这个刚安装的项目做一次只读的发布前维护审计。核对依赖来源、跨运行环境兼容性和发布安全。最多查看 8 个最相关文件，最后用 10 行以内列出风险和证据。不得修改源码、安装依赖、提交、推送或访问工作区外文件。";
 const GOVERNED_EXECUTION_PROMPT =
@@ -528,6 +596,192 @@ async function packAndExtract(tempRoot) {
   };
 }
 
+/**
+ * The install gate keeps the dependency-install no-op named. Every other reason
+ * to stop before the blind host run stays under the generic blocker.
+ */
+function resolveInstallGateOutcome({
+  installExitCode,
+  dependencyReady,
+  dependencyStep,
+  projectionSyncExitCode,
+  bootstrapExitCode,
+  mcpTransportProbeExitCode,
+  mcpTransportEventCount,
+} = {}) {
+  const blocked =
+    installExitCode !== 0 ||
+    dependencyReady !== true ||
+    dependencyStep?.silentNoop === true ||
+    projectionSyncExitCode !== 0 ||
+    bootstrapExitCode !== 0 ||
+    mcpTransportProbeExitCode !== 0 ||
+    mcpTransportEventCount !== 1;
+  if (!blocked) return { blocked, blocker: null, diagnostic: null };
+  return {
+    blocked,
+    blocker: dependencyStep?.blocker ?? "clean_install_or_project_bootstrap_failed",
+    diagnostic: dependencyStep?.diagnostic ?? null,
+  };
+}
+
+export async function verifyInstalledDependency({
+  dependencyDir,
+  installExitCode,
+  env,
+  expectedRef = EXPECTED_AGENT_TEAMS_PLAYBOOK_REF,
+  expectedCommit = EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT,
+  expectedSkillSha256 = EXPECTED_AGENT_TEAMS_PLAYBOOK_SKILL_SHA256,
+}) {
+  const skillPath = path.join(dependencyDir, "SKILL.md");
+  let ownGitRoot = false;
+  // rev-parse alone can discover a parent repository. Never fetch or checkout
+  // unless this exact installed directory owns its own plain Git directory.
+  if (installExitCode === 0) {
+    try {
+      const directory = await fs.lstat(dependencyDir);
+      const gitDirectory = await fs.lstat(path.join(dependencyDir, ".git"));
+      if (directory.isDirectory() && gitDirectory.isDirectory() && !gitDirectory.isSymbolicLink()) {
+        const top = run("git", ["-C", dependencyDir, "rev-parse", "--show-toplevel"], { env, timeoutMs: 30_000 });
+        if (top.status === 0) {
+          ownGitRoot = await fs.realpath(String(top.stdout).trim()) === await fs.realpath(dependencyDir);
+        }
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  const readCommit = () => {
+    if (!ownGitRoot) return null;
+    const result = run("git", ["-C", dependencyDir, "rev-parse", "HEAD"], { env, timeoutMs: 30_000 });
+    return result.status === 0 ? String(result.stdout).trim() : null;
+  };
+  let dependencyCommit = readCommit();
+  const dependencyPin = {
+    expectedRef, expectedCommit,
+    action: dependencyCommit === expectedCommit ? "already_expected_commit" : "not_attempted",
+    exitCode: dependencyCommit === expectedCommit ? 0 : null,
+  };
+  if (ownGitRoot && dependencyCommit !== expectedCommit) {
+    const fetchTag = run("git", [
+      "-C", dependencyDir, "fetch", "--depth", "1", "origin",
+      `refs/tags/${expectedRef}:refs/tags/${expectedRef}`,
+    ], { env, timeoutMs: 120_000 });
+    const checkout = fetchTag.status === 0
+      ? run("git", ["-C", dependencyDir, "checkout", "--detach", expectedCommit], { env, timeoutMs: 30_000 })
+      : { status: null };
+    Object.assign(dependencyPin, {
+      action: "fetch_tag_and_detach", fetchExitCode: fetchTag.status, exitCode: checkout.status,
+    });
+    dependencyCommit = readCommit();
+  }
+  // Presence and digest describe the selected revision, never the clone's
+  // default branch before pinning (whose layout may legitimately differ).
+  const dependencySkillSha256 = existsSync(skillPath)
+    ? createHash("sha256").update(await fs.readFile(skillPath)).digest("hex")
+    : null;
+  let dependencyArchiveMetadata = null;
+  try {
+    dependencyArchiveMetadata = JSON.parse(await fs.readFile(path.join(dependencyDir, ".meta-kim-source.json"), "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+  }
+  const archiveRevisionVerified =
+    dependencyArchiveMetadata?.source === "github_archive_fallback" &&
+    String(dependencyArchiveMetadata?.rootName ?? "").toLowerCase().endsWith(`-${expectedCommit.slice(0, 7)}`) &&
+    dependencySkillSha256 === expectedSkillSha256;
+  if (!ownGitRoot && archiveRevisionVerified) {
+    Object.assign(dependencyPin, { action: "verified_archive_commit_prefix_and_skill_hash", exitCode: 0 });
+  }
+  const dependencyRevisionVerified = dependencyCommit === expectedCommit || archiveRevisionVerified;
+  return {
+    dependencyCommit, dependencyPin, dependencySkillSha256,
+    dependencyArchiveMetadata, dependencyRevisionVerified,
+    dependencyReady: installExitCode === 0 && dependencyPin.exitCode === 0 &&
+      dependencyRevisionVerified && dependencySkillSha256 === expectedSkillSha256,
+  };
+}
+
+export async function copyCleanRoomProject({ sourceWorkspace, workspace }) {
+  try {
+    await fs.lstat(workspace);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    // fs.cp creates the destination itself. Pre-creating it conflicts with
+    // errorOnExist on Node 24 and would obscure the no-overwrite guarantee.
+    await fs.cp(sourceWorkspace, workspace, { recursive: true, errorOnExist: true, force: false });
+    return;
+  }
+  throw new Error(`clean-room project target already exists: ${workspace}`);
+}
+
+export async function initializeCleanRoomProject({
+  workspace, sourceWorkspace = repoRoot, runtimeTarget, env, timeoutMs, runCommand = run,
+}) {
+  const sourceRoot = await fs.realpath(sourceWorkspace);
+  const projectRoot = await fs.realpath(workspace);
+  const relative = path.relative(sourceRoot, projectRoot);
+  const reverse = path.relative(projectRoot, sourceRoot);
+  const overlaps = (value) => value === "" || (!value.startsWith(`..${path.sep}`) && value !== ".." && !path.isAbsolute(value));
+  if (overlaps(relative) || overlaps(reverse)) {
+    throw new Error("clean-room package source and project target must be separate, non-overlapping roots");
+  }
+  const projectionSyncMode = "bootstrap_only_with_dry_run_and_manifest_verification";
+  const args = [path.join(sourceWorkspace, "setup.mjs"), "--project-bootstrap",
+    "--project-dir", workspace, "--targets", runtimeTarget];
+  // Bootstrap is the only writer: sync-runtimes uses another ownership ledger
+  // and can pre-create files that bootstrap correctly treats as user-owned.
+  const bootstrap = runCommand(process.execPath, [...args, "--apply", "--json"], { cwd: workspace, env, timeoutMs });
+  if (bootstrap.status !== 0) {
+    return { bootstrap, projectionSyncMode, projectionVerification: {
+      status: null, stdout: "", stderr: "bootstrap_failed_before_projection_verification",
+    } };
+  }
+  const verification = runCommand(process.execPath, [...args, "--dry-run", "--json"], { cwd: workspace, env, timeoutMs });
+  if (verification.status !== 0) return { bootstrap, projectionSyncMode, projectionVerification: verification };
+  try {
+    const summary = JSON.parse(verification.stdout);
+    const state = summary.results?.[0]?.state;
+    if (summary.ok !== true || summary.results?.length !== 1 ||
+        state?.status !== "ready" || state?.counts?.pending !== 0 ||
+        typeof state.targetDir !== "string" || path.resolve(state.targetDir) !== path.resolve(workspace)) {
+      throw new Error("bootstrap dry-run must report this project ready with zero pending files");
+    }
+    const root = await fs.realpath(workspace);
+    const inside = (target) => {
+      const relative = path.relative(root, target);
+      return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+    };
+    const manifestPath = path.join(workspace, ".meta-kim/state/default/project-bootstrap.json");
+    if (!inside(await fs.realpath(manifestPath))) throw new Error("bootstrap manifest escaped its project");
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+    if (manifest.schemaVersion !== "meta-kim-project-bootstrap-v0.1" ||
+        !Array.isArray(manifest.managedFiles) || manifest.managedFiles.length === 0) {
+      throw new Error("bootstrap ownership manifest must contain managed files");
+    }
+    const seen = new Set();
+    for (const entry of manifest.managedFiles) {
+      if (typeof entry.relPath !== "string" || path.isAbsolute(entry.relPath) ||
+          !/^[a-f0-9]{64}$/iu.test(entry.contentHash ?? "")) {
+        throw new Error("invalid bootstrap managed file binding");
+      }
+      const target = path.resolve(root, entry.relPath);
+      if (!inside(target) || seen.has(target)) throw new Error("unsafe or duplicate bootstrap managed path");
+      seen.add(target);
+      if (!inside(await fs.realpath(target))) throw new Error("bootstrap managed file escaped its project");
+      const actual = createHash("sha256").update(await fs.readFile(target)).digest("hex");
+      if (actual !== entry.contentHash.toLowerCase()) throw new Error(`bootstrap managed hash mismatch: ${entry.relPath}`);
+    }
+    return { bootstrap, projectionSyncMode, projectionVerification: {
+      ...verification, managedFileCount: seen.size,
+    } };
+  } catch (error) {
+    return { bootstrap, projectionSyncMode, projectionVerification: {
+      ...verification, status: 1, stderr: `${verification.stderr ?? ""}\n${error.message}`,
+    } };
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const value = (name, fallback = null) => {
@@ -563,9 +817,17 @@ async function main() {
     value("--artifact-dir", path.join(repoRoot, ".meta-kim", "state", "default", "clean-room-live")),
   );
   await fs.mkdir(artifactsDir, { recursive: true });
-  let keepTemp = args.includes("--keep-temp");
+  const initialKeepTemp = resolveCleanRoomKeepTemp({ args });
+  let keepTemp = initialKeepTemp.keepTemp;
+  let tempRetentionReason = initialKeepTemp.reason;
+  const withTempRetention = (base) => ({
+    ...base,
+    tempRootRetained: keepTemp,
+    tempRootRetentionReason: tempRetentionReason,
+  });
   try {
     const packageInfo = await packAndExtract(tempRoot);
+    const projectWorkspace = path.join(tempRoot, "user-home", "project");
     const userHome = path.join(tempRoot, "user-home");
     const runtimeHome = path.join(userHome, `${runtime}-home`);
     const isolatedTemp = path.join(tempRoot, "tmp");
@@ -584,6 +846,7 @@ async function main() {
       runtimeHome,
       tempDir: isolatedTemp,
       packageWorkspace: packageInfo.workspace,
+      projectWorkspace,
       packageSha256: packageInfo.tarballSha256,
       siblingAgentTeamsPlaybookAbsent: !parentEntries.some((name) => /agent-teams-playbook/i.test(name)),
       globalInventoryInjectionConfigured: false,
@@ -594,7 +857,7 @@ async function main() {
       scenario,
     };
     if (preflightOnly) {
-      const report = { schemaVersion: "clean-room-live-acceptance-v0.1", runId, status: "preflight_pass", isolation };
+      const report = { schemaVersion: "clean-room-live-acceptance-v0.1", runId, status: "preflight_pass", isolation: withTempRetention(isolation) };
       await fs.writeFile(path.join(artifactsDir, `${runId}.json`), `${JSON.stringify(report, null, 2)}\n`, "utf8");
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return;
@@ -605,6 +868,11 @@ async function main() {
     const install = runCli("npm", [
       "install", "--ignore-scripts", "--no-audit", "--no-fund",
     ], { cwd: packageInfo.workspace, env, timeoutMs });
+    if (install.status === 0) {
+      // Keep the packed setup source fixed. The project receives a separate
+      // copy, including installed dependencies required by its MCP/scripts.
+      await copyCleanRoomProject({ sourceWorkspace: packageInfo.workspace, workspace: projectWorkspace });
+    }
     const dependencyInstall = install.status === 0
       ? run(process.execPath, [
           path.join(packageInfo.workspace, "scripts", "install-global-skills-all-runtimes.mjs"),
@@ -620,106 +888,36 @@ async function main() {
       "SKILL.md",
     );
     const dependencyDir = path.dirname(dependencySkillPath);
-    const dependencySkillSha256 = existsSync(dependencySkillPath)
-      ? createHash("sha256").update(await fs.readFile(dependencySkillPath)).digest("hex")
-      : null;
-    let dependencyArchiveMetadata = null;
-    const dependencyArchiveMetadataPath = path.join(dependencyDir, ".meta-kim-source.json");
-    if (existsSync(dependencyArchiveMetadataPath)) {
-      try {
-        dependencyArchiveMetadata = JSON.parse(
-          await fs.readFile(dependencyArchiveMetadataPath, "utf8"),
-        );
-      } catch {
-        dependencyArchiveMetadata = null;
-      }
+    const dependencyStep = classifyDependencyInstallStep({
+      exitCode: dependencyInstall.status,
+      stdout: dependencyInstall.stdout,
+      skillPresent: existsSync(dependencySkillPath),
+      tempRoot,
+    });
+    if (dependencyStep.silentNoop && !keepTemp) {
+      keepTemp = true;
+      tempRetentionReason = DEPENDENCY_INSTALL_SILENT_NOOP_BLOCKER;
     }
-    const archiveCommitPrefix = EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT.slice(0, 7);
-    const archiveRevisionVerified =
-      dependencyArchiveMetadata?.source === "github_archive_fallback" &&
-      String(dependencyArchiveMetadata?.rootName ?? "").toLowerCase().endsWith(`-${archiveCommitPrefix}`) &&
-      dependencySkillSha256 === EXPECTED_AGENT_TEAMS_PLAYBOOK_SKILL_SHA256;
-    let dependencyCommitResult = existsSync(dependencySkillPath)
-      ? run("git", ["-C", dependencyDir, "rev-parse", "HEAD"], { env, timeoutMs: 30_000 })
-      : { status: null, stdout: "" };
-    let dependencyCommit = dependencyCommitResult.status === 0
-      ? String(dependencyCommitResult.stdout).trim()
-      : null;
-    let dependencyPin = {
-      expectedRef: EXPECTED_AGENT_TEAMS_PLAYBOOK_REF,
-      expectedCommit: EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT,
-      action: dependencyCommit === EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT
-        ? "already_expected_commit"
-        : archiveRevisionVerified
-          ? "verified_archive_commit_prefix_and_skill_hash"
-          : "not_attempted",
-      exitCode:
-        dependencyCommit === EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT || archiveRevisionVerified
-          ? 0
-          : null,
-    };
-    if (
-      dependencyInstall.status === 0 &&
-      existsSync(dependencySkillPath) &&
-      dependencyCommit !== EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT &&
-      !archiveRevisionVerified
-    ) {
-      const fetchTag = run("git", [
-        "-C", dependencyDir, "fetch", "--depth", "1", "origin",
-        `refs/tags/${EXPECTED_AGENT_TEAMS_PLAYBOOK_REF}:refs/tags/${EXPECTED_AGENT_TEAMS_PLAYBOOK_REF}`,
-      ], { env, timeoutMs: 120_000 });
-      const checkout = fetchTag.status === 0
-        ? run("git", ["-C", dependencyDir, "checkout", "--detach", EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT], {
-            env,
-            timeoutMs: 30_000,
-          })
-        : { status: null };
-      dependencyPin = {
-        expectedRef: EXPECTED_AGENT_TEAMS_PLAYBOOK_REF,
-        expectedCommit: EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT,
-        action: "fetch_tag_and_detach",
-        fetchExitCode: fetchTag.status,
-        exitCode: checkout.status,
-      };
-      dependencyCommitResult = run("git", ["-C", dependencyDir, "rev-parse", "HEAD"], {
-        env,
-        timeoutMs: 30_000,
-      });
-      dependencyCommit = dependencyCommitResult.status === 0
-        ? String(dependencyCommitResult.stdout).trim()
-        : null;
-    }
-    const dependencyRevisionVerified =
-      dependencyCommit === EXPECTED_AGENT_TEAMS_PLAYBOOK_COMMIT || archiveRevisionVerified;
-    const dependencyReady =
-      dependencyInstall.status === 0 &&
-      existsSync(dependencySkillPath) &&
-      dependencyPin.exitCode === 0 &&
-      dependencyRevisionVerified &&
-      dependencySkillSha256 === EXPECTED_AGENT_TEAMS_PLAYBOOK_SKILL_SHA256;
-    const projectionSync = dependencyReady
-      ? run(process.execPath, [
-          path.join(packageInfo.workspace, "scripts", "sync-runtimes.mjs"),
-          "--scope", "project",
-          "--targets", runtimeTarget,
-        ], { cwd: packageInfo.workspace, env, timeoutMs })
-      : { status: null, stdout: "", stderr: "dependency_install_failed_before_projection_sync" };
-    const bootstrap = projectionSync.status === 0
-      ? run(process.execPath, [
-          path.join(packageInfo.workspace, "setup.mjs"),
-          "--project-bootstrap",
-          "--project-dir", packageInfo.workspace,
-          "--targets", runtimeTarget,
-          "--apply",
-          "--json",
-        ], { cwd: packageInfo.workspace, env, timeoutMs })
-      : { status: null, stdout: "", stderr: "projection_sync_failed_before_bootstrap" };
-    const mcpTransportProbe = bootstrap.status === 0
+    const {
+      dependencySkillSha256, dependencyArchiveMetadata, dependencyCommit,
+      dependencyPin, dependencyRevisionVerified, dependencyReady,
+    } = await verifyInstalledDependency({
+      dependencyDir, installExitCode: dependencyInstall.status, env,
+    });
+    const projectInitialization = dependencyReady
+      ? await initializeCleanRoomProject({ workspace: projectWorkspace, sourceWorkspace: packageInfo.workspace, runtimeTarget, env, timeoutMs })
+      : { bootstrap: { status: null, stdout: "", stderr: "dependency_install_failed_before_bootstrap" },
+          projectionVerification: { status: null, stdout: "", stderr: "dependency_install_failed_before_projection_verification" },
+          projectionSyncMode: "not_attempted_dependency_not_ready" };
+    const { bootstrap, projectionVerification } = projectInitialization;
+    const mcpTransportProbe = projectionVerification.status === 0
       ? run(process.execPath, [
           path.join(packageInfo.workspace, "scripts", "live-acceptance", "probe-mcp-transport.mjs"),
+          // The protocol probe must load the server and its source evidence
+          // from the fixed package; the project's AGENTS.md is a projection.
           "--repo-root", packageInfo.workspace,
-        ], { cwd: packageInfo.workspace, env, timeoutMs: 60_000 })
-      : { status: null, stdout: "", stderr: "bootstrap_failed_before_mcp_transport_probe" };
+        ], { cwd: projectWorkspace, env, timeoutMs: 60_000 })
+      : { status: null, stdout: "", stderr: "projection_verification_failed_before_mcp_transport_probe" };
     const mcpTransportEvents = mcpTransportProbe.status === 0
       ? observeMcpClientJsonl(mcpTransportProbe.stdout)
       : [];
@@ -732,44 +930,58 @@ async function main() {
       dependencyRevisionVerified,
       dependencyArchiveMetadata,
       dependencySkillSha256,
-      projectionSyncExitCode: projectionSync.status,
+      projectionSyncMode: projectInitialization.projectionSyncMode,
+      projectionSyncExitCode: projectionVerification.status,
+      projectionVerifiedManagedFileCount: projectionVerification.managedFileCount ?? 0,
       bootstrapExitCode: bootstrap.status,
       mcpTransportProbeExitCode: mcpTransportProbe.status,
       mcpTransportConformanceObserved: mcpTransportEvents.length === 1,
+      mcpTransportPackageRoot: packageInfo.workspace,
+      mcpTransportProjectCwd: projectWorkspace,
       mcpTransportConformanceBoundary:
         "This proves the packed installation can complete MCP initialize, tools/list, and tools/call. It does not prove the blind host route selected MCP.",
       installOutputSha256: sha256(install.stdout ?? ""),
       dependencyInstallOutputSha256: sha256(dependencyInstall.stdout ?? ""),
-      projectionSyncOutputSha256: sha256(projectionSync.stdout ?? ""),
+      dependencyInstallOutputEmpty: dependencyStep.outputEmpty,
+      dependencyInstallAckObserved: dependencyStep.ackObserved,
+      dependencyInstallSilentNoop: dependencyStep.silentNoop,
+      dependencyInstallSilentNoopDiagnostic: dependencyStep.diagnostic,
+      projectionSyncOutputSha256: sha256(projectionVerification.stdout ?? ""),
       bootstrapOutputSha256: sha256(bootstrap.stdout ?? ""),
       mcpTransportProbeOutputSha256: sha256(mcpTransportProbe.stdout ?? ""),
-      stderrTail: `${install.stderr ?? ""}\n${dependencyInstall.stderr ?? ""}\n${projectionSync.stderr ?? ""}\n${bootstrap.stderr ?? ""}`.slice(-2000),
+      stderrTail: `${install.stderr ?? ""}\n${dependencyInstall.stderr ?? ""}\n${projectionVerification.stderr ?? ""}\n${bootstrap.stderr ?? ""}`.slice(-2000),
       projectedAgentsPresent:
-        existsSync(path.join(packageInfo.workspace, runtime === "claude" ? ".claude" : ".codex", "agents")),
+        existsSync(path.join(projectWorkspace, runtime === "claude" ? ".claude" : ".codex", "agents")),
       projectedSkillPresent: existsSync(
-        path.join(packageInfo.workspace, runtime === "claude" ? ".claude" : ".agents", "skills", "meta-theory", "SKILL.md"),
+        path.join(projectWorkspace, runtime === "claude" ? ".claude" : ".agents", "skills", "meta-theory", "SKILL.md"),
       ),
       dependencySkillPresent: existsSync(dependencySkillPath),
     };
-    if (
-      install.status !== 0 ||
-      !dependencyReady ||
-      projectionSync.status !== 0 ||
-      bootstrap.status !== 0 ||
-      mcpTransportProbe.status !== 0 ||
-      mcpTransportEvents.length !== 1
-    ) {
+    const installGate = resolveInstallGateOutcome({
+      installExitCode: install.status,
+      dependencyReady,
+      dependencyStep,
+      projectionSyncExitCode: projectionVerification.status,
+      bootstrapExitCode: bootstrap.status,
+      mcpTransportProbeExitCode: mcpTransportProbe.status,
+      mcpTransportEventCount: mcpTransportEvents.length,
+    });
+    if (installGate.blocked) {
       const report = {
         schemaVersion: "clean-room-live-acceptance-v0.1",
         runId,
         target: runtime === "codex" ? "codex_cli" : "claude_code",
         status: "blocked",
-        blocker: "clean_install_or_project_bootstrap_failed",
-        isolation,
+        blocker: installGate.blocker,
+        ...(installGate.diagnostic ? { blockerDiagnostic: installGate.diagnostic } : {}),
+        isolation: withTempRetention(isolation),
         installation,
       };
       await fs.writeFile(path.join(artifactsDir, `${runId}.json`), `${JSON.stringify(report, null, 2)}\n`, "utf8");
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      if (installGate.diagnostic) {
+        process.stderr.write(`${report.blocker}: ${installGate.diagnostic}\n`);
+      }
       process.exitCode = 1;
       return;
     }
@@ -779,7 +991,7 @@ async function main() {
         runId,
         target: runtime === "codex" ? "codex_cli" : "claude_code",
         status: "install_pass",
-        isolation,
+        isolation: withTempRetention(isolation),
         installation,
       };
       await fs.writeFile(path.join(artifactsDir, `${runId}.json`), `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -796,7 +1008,7 @@ async function main() {
         promotionEligible: false,
         exactBindingCoverage: false,
         blocker: "codex_cli_global_agents_skills_cannot_be_isolated_in_current_host",
-        isolation,
+        isolation: withTempRetention(isolation),
         installation,
         targetBoundary:
           "Codex CLI scans the OS-user ~/.agents/skills root even with isolated HOME, USERPROFILE, CODEX_HOME, --ignore-user-config, and explicit runtime skill roots. Use an OS-level disposable user/container or a host-supported global-skill disable switch before claiming clean-room CLI evidence. This does not describe Codex Desktop.",
@@ -806,7 +1018,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    const governedArtifactsBefore = await snapshotGovernedArtifacts(packageInfo.workspace);
+    const governedArtifactsBefore = await snapshotGovernedArtifacts(projectWorkspace);
     let authBoundary;
     let result;
     if (runtime === "codex") {
@@ -814,12 +1026,12 @@ async function main() {
       result = runCli("codex", [
         "exec", "--json", "--ephemeral", "--ignore-user-config",
         "--skip-git-repo-check", "--dangerously-bypass-hook-trust",
-        "-s", "workspace-write", "-C", packageInfo.workspace, "-",
-      ], { cwd: packageInfo.workspace, env, input: prompt, timeoutMs });
+        "-s", "workspace-write", "-C", projectWorkspace, "-",
+      ], { cwd: projectWorkspace, env, input: prompt, timeoutMs });
     } else {
       authBoundary = { inheritedEnvironmentVariables: inheritClaudeAuth(env) };
       const settingsPath = path.join(tempRoot, "claude-settings.json");
-      const projectedMcpPath = path.join(packageInfo.workspace, ".mcp.json");
+      const projectedMcpPath = path.join(projectWorkspace, ".mcp.json");
       const mcpPath = existsSync(projectedMcpPath)
         ? projectedMcpPath
         : path.join(tempRoot, "claude-mcp.json");
@@ -829,7 +1041,7 @@ async function main() {
         "-p", "--output-format", "stream-json", "--verbose", "--include-hook-events",
         "--strict-mcp-config", "--mcp-config", mcpPath, "--settings", settingsPath,
         "--permission-mode", "dontAsk", "--no-session-persistence",
-      ], { cwd: packageInfo.workspace, env, input: prompt, timeoutMs });
+      ], { cwd: projectWorkspace, env, input: prompt, timeoutMs });
     }
     const rawPath = path.join(artifactsDir, `${runId}.raw.jsonl`);
     await atomicExclusiveWrite(rawPath, result.stdout ?? "");
@@ -839,7 +1051,7 @@ async function main() {
     const assistantMessages = runtime === "codex"
       ? observeCodexAssistantMessages(result.stdout)
       : observeClaudeAssistantMessages(result.stdout);
-    const governedArtifactsAfter = await snapshotGovernedArtifacts(packageInfo.workspace);
+    const governedArtifactsAfter = await snapshotGovernedArtifacts(projectWorkspace);
     let candidateGeneration;
     try {
       const governedArtifactPath = selectSingleNewGovernedArtifact(
@@ -850,7 +1062,7 @@ async function main() {
         artifactsDir,
         harnessRunId: runId,
         governedArtifactPath,
-        governedArtifactRoot: path.join(packageInfo.workspace, ".meta-kim", "state"),
+        governedArtifactRoot: path.join(projectWorkspace, ".meta-kim", "state"),
         selectedGovernedArtifactSha256: governedArtifactsAfter.get(governedArtifactPath),
         runtime,
         rawHostJsonl: result.stdout ?? "",
@@ -912,7 +1124,7 @@ async function main() {
         signal: result.signal ?? null,
         stderrTail: String(result.stderr ?? "").slice(-2000),
       },
-      isolation,
+      isolation: withTempRetention(isolation),
       installation,
       authBoundary,
       candidateGeneration,
@@ -952,11 +1164,19 @@ async function main() {
     process.exitCode = 1;
   } finally {
     await cleanupCleanRoomTemp(tempRoot, { preserveTemp: keepTemp });
+    if (keepTemp) {
+      process.stderr.write(
+        `clean-room temp root retained (${tempRetentionReason}): ${tempRoot}\n`,
+      );
+    }
   }
 }
 
 export {
+  DEPENDENCY_INSTALL_SILENT_NOOP_BLOCKER,
+  classifyDependencyInstallStep,
   cleanupCleanRoomTemp,
+  resolveInstallGateOutcome,
   resolveWindowsCliInvocation,
   runCli,
   scrubAndRemoveCopiedCredential,

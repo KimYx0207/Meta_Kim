@@ -4866,7 +4866,7 @@ function parseEnvList(value) {
     .filter(Boolean);
 }
 
-function agentTeamsCandidateSkillPaths(runtimeName) {
+export function agentTeamsCandidateSkillPaths(runtimeName) {
   const rootParent = path.dirname(REPO_ROOT);
   const codexSkillsRoot =
     process.env.CODEX_SKILLS_DIR ||
@@ -4913,11 +4913,17 @@ function agentTeamsCandidateSkillPaths(runtimeName) {
       pathRef: `META_KIM_DEP_ROOTS[${index}]/agent-teams-playbook/SKILL.md`,
       filePath: path.join(root, AGENT_TEAMS_PLAYBOOK_ID, "SKILL.md"),
     })),
-    {
-      source: "sibling_dependency_checkout",
-      pathRef: "../agent-teams-playbook/SKILL.md",
-      filePath: path.join(rootParent, AGENT_TEAMS_PLAYBOOK_ID, "SKILL.md"),
-    },
+    // The sibling probe reads the maintainer's disk beside the repo. Hermetic
+    // validators (default-evidence runs whose assertions pin the orchestration
+    // packet) disable it so a machine-local checkout cannot flip selection;
+    // explicit META_KIM_DEP_ROOTS fixtures stay available in that mode.
+    ...(process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE === "1"
+      ? []
+      : [{
+          source: "sibling_dependency_checkout",
+          pathRef: "../agent-teams-playbook/SKILL.md",
+          filePath: path.join(rootParent, AGENT_TEAMS_PLAYBOOK_ID, "SKILL.md"),
+        }]),
     ...runtimeGlobalCandidates,
   ];
 }
@@ -5003,7 +5009,7 @@ function resolveAgentTeamsParallelBudget(executableLaneCount) {
   };
 }
 
-async function resolveAgentTeamsPlaybookProvider(runtimeName) {
+export async function resolveAgentTeamsPlaybookProvider(runtimeName) {
   const skillConfig = await readJsonIfExists(path.join(REPO_ROOT, "config", "skills.json"));
   const dependencyRegistry = await readJsonIfExists(
     path.join(REPO_ROOT, "config", "capability-index", "dependency-project-registry.json")
@@ -10004,6 +10010,49 @@ function workflowCapabilityBinding(match) {
   };
 }
 
+export function buildRouteBranchingOptions(orchestrationReport) {
+  const route = orchestrationReport?.selectedExecutionRoute;
+  const decisionCard = route?.decisionCard;
+  const routeOptions = Array.isArray(decisionCard?.options) ? decisionCard.options : [];
+  if (routeOptions.length < 2) return [];
+
+  // A completed native route choice must not be reopened when a later
+  // workflow-contract builder runs without the earlier preview. The route
+  // selector already owns this state; worker packets never participate here.
+  if (["ready_for_host_handoff", "not_applicable"].includes(route?.routeExecutionGate?.handoffStatus)) {
+    return [];
+  }
+
+  const options = [];
+  const seenLabels = new Set();
+  const recommendedDefault = String(decisionCard.recommendedDefault ?? "").trim();
+  for (const routeOption of routeOptions) {
+    if (!routeOption || typeof routeOption !== "object") continue;
+    const label = String(routeOption.label ?? routeOption.id ?? "").trim();
+    if (!label || seenLabels.has(label)) {
+      continue;
+    }
+    seenLabels.add(label);
+    const summary = [
+      routeOption.bestFor,
+      routeOption.benefit,
+      routeOption.cost,
+      routeOption.risk,
+      routeOption.expectedResult,
+      routeOption.verification,
+    ]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+      .join("；") || null;
+    options.push({
+      label,
+      summary,
+      recommended: String(routeOption.id ?? "").trim() === recommendedDefault,
+    });
+  }
+  return options;
+}
+
 function buildWorkflowContractPackets({
   runId,
   task,
@@ -10034,6 +10083,9 @@ function buildWorkflowContractPackets({
   const projectRef = `meta-kim-governed-execution-${runId}`;
   const primaryDeliverable = `governed-execution-${runId}`;
   const timestamp = nowIso();
+  // Only the route selector's explicit decision card can feed the policy's
+  // branching signal. Worker packets are complementary DAG work, not choices.
+  const planChallengeBranchingOptions = buildRouteBranchingOptions(orchestrationReport);
   const planChallenge = planChallengePreview ?? buildPlanChallengeState({
     task,
     responses: planChallengeResponses,
@@ -10043,6 +10095,7 @@ function buildWorkflowContractPackets({
     priorChallengeState,
     contradictionEvidence,
     requestedSideEffectActions,
+    branchingOptions: planChallengeBranchingOptions,
     outputLanguage,
   });
   const challengePhase = planChallenge.planChallengeState.phase;
@@ -11723,6 +11776,10 @@ export async function runMetaTheoryGovernedExecution({
         taskFingerprint,
       });
   }
+  // No branchingOptions here: this preview runs before route selection, so no
+  // route decision card exists in scope yet. Textual alternatives still use
+  // the policy's explicit branching trigger; the later workflow builder may
+  // add only the route selector's own decision-card options.
   const planChallengePreview = buildPlanChallengeState({
     task: normalizedTask,
     contradictionEvidence: planChallengeContradictionEvidence,

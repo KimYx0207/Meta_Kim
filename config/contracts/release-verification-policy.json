@@ -4,6 +4,7 @@
   "packedUserAcceptance": {
     "expectedDurationMs": 2100000,
     "commandTimeoutMs": 300000,
+    "globalUserInstallTimeoutMs": 600000,
     "globalUserUpdateTimeoutMs": 600000,
     "historicalUserUpdateTimeoutMs": 600000,
     "transientPackageInstallTimeoutMs": 600000,

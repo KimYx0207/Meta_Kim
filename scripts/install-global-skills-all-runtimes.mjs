@@ -24,7 +24,7 @@
  */
 
 import { execFileSync, execSync, spawnSync, spawn } from "node:child_process";
-import { createWriteStream, existsSync, readFileSync, readdirSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -71,6 +71,8 @@ import {
   resolveRuntimeHomeDir,
 } from "./meta-kim-sync-config.mjs";
 import { retirePlanningWithFiles } from "./retire-planning-with-files.mjs";
+import { installerAckLine } from "./installer-ack.mjs";
+import { createInstallerWriteBoundary, assertInstallerWritePath } from "./installer-write-boundary.mjs";
 import { LANG, t } from "./meta-kim-i18n.mjs";
 import {
   buildCodexHooksJson,
@@ -205,7 +207,22 @@ function guideAlreadyHasGraphifySection(platform) {
 }
 
 const cliArgs = process.argv.slice(2);
-const directInvocation = process.argv[1] === fileURLToPath(import.meta.url);
+// Node resolves linked entrypoints (including macOS /var -> /private/var),
+// while argv retains the caller's spelling. Compare the actual files so a
+// packed workspace reached through a link still runs the CLI.
+const directInvocation = (() => {
+  if (!process.argv[1] || process.argv[1] === "-") return false;
+  let entryPath;
+  try {
+    entryPath = realpathSync(process.argv[1]);
+  } catch (error) {
+    // An importing host may supply a virtual entrypoint. Other filesystem
+    // failures remain visible instead of hiding a real invocation error.
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+  return entryPath === realpathSync(fileURLToPath(import.meta.url));
+})();
 const INSTALLER_BOOLEAN_FLAGS = new Set([
   "--all",
   "--update",
@@ -448,6 +465,18 @@ function parseLogFileArg(argv = process.argv.slice(2)) {
     }
   }
   return null;
+}
+
+function parseTargetsRequest(argv = process.argv.slice(2)) {
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === "--targets" && argv[i + 1] !== undefined) {
+      return argv[i + 1];
+    }
+    if (argv[i].startsWith("--targets=")) {
+      return argv[i].slice("--targets=".length);
+    }
+  }
+  return argv.includes("--all") ? "all" : "config-default";
 }
 
 /**
@@ -718,6 +747,23 @@ if (skillsArg !== null) {
 let CLAUDE_PLUGIN_SPECS = SKILL_REPOS.map((s) => s.claudePlugin).filter(Boolean);
 const logFileResolved = await setupTeeStdout(parseLogFileArg(cliArgs));
 
+if (directInvocation) {
+  console.log(
+    installerAckLine({
+      mode: updateMode ? "update" : "install",
+      targets: parseTargetsRequest(cliArgs),
+      skills: SKILL_REPOS.map((skill) => skill.id),
+      flags: [
+        dryRun ? "dry-run" : "",
+        pluginsOnly ? "plugins-only" : "",
+        skipPlugins ? "skip-plugins" : "",
+        skipInventoryRefresh ? "skip-inventory-refresh" : "",
+      ],
+      root: repoRoot,
+    }),
+  );
+}
+
 function loadGlobalManagedSkillPaths() {
   const manifest = readManifest(manifestPathFor("global"));
   return (manifest?.entries ?? [])
@@ -794,45 +840,14 @@ function resolveCompatSkillTargetDir(legacySkillsRoot, spec) {
   return path.join(legacySkillsRoot, spec.id);
 }
 
+let activeInstallerWriteBoundary = null;
+
 function assertUnderHome(resolved) {
-  const home = path.resolve(os.homedir());
-  const abs = path.resolve(resolved);
-  if (abs !== home && !abs.startsWith(`${home}${path.sep}`)) {
-    throw new Error(`Refusing to write outside user home: ${abs}`);
-  }
+  assertInstallerWritePath(resolved, activeInstallerWriteBoundary ?? createInstallerWriteBoundary());
 }
 
-function isPathInside(root, candidate) {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-async function assertRealPathContained(userHome, targetPath) {
-  const lexicalHome = path.resolve(userHome);
-  const lexicalTarget = path.resolve(targetPath);
-  if (!isPathInside(lexicalHome, lexicalTarget)) {
-    throw new Error(`Refusing path outside OS user home: ${lexicalTarget}`);
-  }
-
-  const realHome = await fs.realpath(lexicalHome).catch(() => lexicalHome);
-  const relative = path.relative(lexicalHome, lexicalTarget);
-  const segments = relative.split(path.sep).filter(Boolean);
-  let current = lexicalHome;
-  for (const segment of segments) {
-    current = path.join(current, segment);
-    const stat = await fs.lstat(current).catch((error) => {
-      if (error?.code === "ENOENT") return null;
-      throw error;
-    });
-    if (!stat) break;
-    if (stat.isSymbolicLink()) {
-      throw new Error(`Refusing symlink or junction in managed path: ${current}`);
-    }
-    const realCurrent = await fs.realpath(current);
-    if (!isPathInside(realHome, realCurrent)) {
-      throw new Error(`Refusing managed path escape: ${current} -> ${realCurrent}`);
-    }
-  }
+async function assertRealPathContained(userHome, targetPath, writeBoundary = createInstallerWriteBoundary({ userHome })) {
+  assertInstallerWritePath(targetPath, writeBoundary);
 }
 
 async function pathExists(p) {
@@ -1265,14 +1280,23 @@ async function transactionalReplaceMetaSkillTargets(
   targets,
   {
     userHome = os.homedir(),
+    writeBoundary = createInstallerWriteBoundary({ userHome }),
     failCommitAfter = 0,
     failRollbackTarget = null,
     renameOptions = {},
   } = {},
 ) {
   await validateMetaSkillCreatorPackage(sourceDir);
+  const guardedRenameOptions = {
+    ...renameOptions,
+    rename: async (source, target) => {
+      await assertRealPathContained(userHome, source, writeBoundary);
+      await assertRealPathContained(userHome, target, writeBoundary);
+      return (renameOptions.rename ?? fs.rename)(source, target);
+    },
+  };
   for (const target of targets) {
-    await assertRealPathContained(userHome, target);
+    await assertRealPathContained(userHome, target, writeBoundary);
   }
 
   const prepared = [];
@@ -1282,30 +1306,31 @@ async function transactionalReplaceMetaSkillTargets(
   try {
     // Prepare and validate every target before mutating either live root.
     for (const target of targets) {
+      await assertRealPathContained(userHome, target, writeBoundary);
       const staged = await createSiblingStagingDir(target, "transaction");
-      await assertRealPathContained(userHome, staged);
+      await assertRealPathContained(userHome, staged, writeBoundary);
       await fs.cp(sourceDir, staged, { recursive: true, force: true });
       await validateMetaSkillCreatorPackage(staged);
       prepared.push({ target, staged });
     }
 
     for (const { target } of prepared) {
-      await assertRealPathContained(userHome, target);
+      await assertRealPathContained(userHome, target, writeBoundary);
       if (!(await pathExists(target))) continue;
       const backup = path.join(
         path.dirname(target),
         `${path.basename(target)}.transaction-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       );
-      await renamePathWithWindowsRetry(target, backup, renameOptions);
+      await renamePathWithWindowsRetry(target, backup, guardedRenameOptions);
       backups.push({ target, backup });
     }
 
     for (const item of prepared) {
-      await assertRealPathContained(userHome, item.target);
+      await assertRealPathContained(userHome, item.target, writeBoundary);
       await renamePathWithWindowsRetry(
         item.staged,
         item.target,
-        renameOptions,
+        guardedRenameOptions,
       );
       installed.push(item.target);
       if (failCommitAfter > 0 && installed.length === failCommitAfter) {
@@ -1321,6 +1346,7 @@ async function transactionalReplaceMetaSkillTargets(
     if (!committed) {
       for (const target of installed.reverse()) {
         try {
+          await assertRealPathContained(userHome, target, writeBoundary);
           await fs.rm(target, { recursive: true, force: true });
           if (await pathExists(target)) {
             throw new Error(`new target still exists after rollback removal: ${target}`);
@@ -1333,6 +1359,8 @@ async function transactionalReplaceMetaSkillTargets(
       }
       for (const { target, backup } of backups.reverse()) {
         try {
+          await assertRealPathContained(userHome, target, writeBoundary);
+          await assertRealPathContained(userHome, backup, writeBoundary);
           if (failRollbackTarget && path.resolve(target) === path.resolve(failRollbackTarget)) {
             throw new Error("Injected rollback restore failure");
           }
@@ -1345,7 +1373,7 @@ async function transactionalReplaceMetaSkillTargets(
           await renamePathWithWindowsRetry(
             backup,
             target,
-            renameOptions,
+            guardedRenameOptions,
           );
           if (!(await pathExists(target)) || (await pathExists(backup))) {
             throw new Error(`recovery verification failed: ${backup} -> ${target}`);
@@ -1373,11 +1401,13 @@ async function transactionalReplaceMetaSkillTargets(
   } finally {
     for (const { staged } of prepared) {
       if (await pathExists(staged)) {
+        await assertRealPathContained(userHome, staged, writeBoundary);
         await fs.rm(staged, { recursive: true, force: true }).catch(() => {});
       }
     }
   }
   for (const { backup } of backups) {
+    await assertRealPathContained(userHome, backup, writeBoundary);
     await rmDirBestEffortLocked(backup);
   }
   for (const target of targets) markManagedDependencyTargetWritten(target);
@@ -1418,6 +1448,9 @@ async function installMetaSkillCreatorAcrossRuntimes(
   spec,
   { sourceDir = testMetaSkillSourceDir(), userHome = os.homedir() } = {},
 ) {
+  const writeBoundary = activeInstallerWriteBoundary ?? createInstallerWriteBoundary({
+    userHome, runtimeHomes: activeTargets.map((id) => runtimeHomes[id]).filter(Boolean),
+  });
   const targets = [];
   if (activeTargets.includes("claude") && spec.targets?.includes("claude")) {
     targets.push(path.join(runtimeHomes.claude, "skills", spec.id));
@@ -1430,7 +1463,7 @@ async function installMetaSkillCreatorAcrossRuntimes(
   }
   if (targets.length === 0) return;
   for (const target of targets) {
-    await assertRealPathContained(userHome, target);
+    await assertRealPathContained(userHome, target, writeBoundary);
   }
   if (dryRun) {
     for (const target of targets) {
@@ -1441,7 +1474,7 @@ async function installMetaSkillCreatorAcrossRuntimes(
 
   const sourceStage = await createSiblingStagingDir(targets[0], "source");
   try {
-    await assertRealPathContained(userHome, sourceStage);
+    await assertRealPathContained(userHome, sourceStage, writeBoundary);
     if (sourceDir) {
       await fs.cp(sourceDir, sourceStage, { recursive: true, force: true });
     } else if (spec.subdir) {
@@ -1457,6 +1490,7 @@ async function installMetaSkillCreatorAcrossRuntimes(
     await validateMetaSkillCreatorPackage(sourceStage);
     await transactionalReplaceMetaSkillTargets(sourceStage, targets, {
       userHome,
+      writeBoundary,
       ...testMetaSkillTransactionFaults(targets),
     });
   } finally {
@@ -4277,10 +4311,16 @@ async function installSkillsToMultipleRuntimes(
 async function main() {
   const { activeTargets } = await resolveTargetContext(cliArgs);
   const homes = resolveHomes();
+  activeInstallerWriteBoundary = createInstallerWriteBoundary({
+    userHome: os.homedir(),
+    runtimeHomes: activeTargets.map((id) => homes[id]).filter(Boolean),
+  });
 
   for (const runtimeId of activeTargets) {
     if (homes[runtimeId]) {
-      await assertRealPathContained(os.homedir(), homes[runtimeId]);
+      for (const relative of ["", "skills", "plugins"]) {
+        assertInstallerWritePath(path.join(homes[runtimeId], relative), activeInstallerWriteBoundary);
+      }
     }
   }
 
@@ -4294,6 +4334,7 @@ async function main() {
   await cleanupLegacyGlobalArtifacts(homes);
   const retiredPlanning = await retirePlanningWithFiles({
     homes,
+    writeBoundary: activeInstallerWriteBoundary,
     targets: activeTargets.filter((runtime) =>
       ["claude", "codex", "cursor", "openclaw"].includes(runtime),
     ),
@@ -4911,7 +4952,7 @@ export {
   validateMetaSkillCreatorPackage,
 };
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (directInvocation) {
   main().catch((err) => {
     console.error(err.message || err);
     process.exitCode = 1;

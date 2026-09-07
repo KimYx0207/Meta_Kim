@@ -2855,7 +2855,10 @@ export function buildCodexProjectHooksJson({
   config.hooks.SubagentStart = [
     ...(config.hooks.SubagentStart ?? []),
     {
-      matcher: "*",
+      // The governance rule set targets the nine meta-* governance agents.
+      // A catch-all matcher would inject it into every run-scoped worker
+      // subagent, which is pure token burn.
+      matcher: "meta-*",
       hooks: [hookCommand(nodeHookCommand(".codex/hooks/subagent-context.mjs"))],
     },
   ];
@@ -3461,9 +3464,15 @@ Examples:
   syncScopeForWritePlan = scope;
   const globalOnlyProjectSync =
     scope === "project" &&
-    targetContext.cliTargets.length === 0 &&
     targetContext.localOverrides.projectProjectionMode === "global_only";
   const selectedTargets = globalOnlyProjectSync ? [] : targetContext.activeTargets;
+  // `--targets` selects which runtime receives the project Hook closure. It
+  // must not change the independent global_only project scope decision above,
+  // nor re-enable durable agents/skills/commands for the selected runtime.
+  const globalOnlyExplicitHookTargets =
+    globalOnlyProjectSync && targetContext.cliTargets.length > 0
+      ? new Set(targetContext.activeTargets)
+      : null;
   requestedGlobalAssetTypes = parseGlobalAssetTypesArg(
     cliArgs,
     runtimeProfilesForSync,
@@ -3546,9 +3555,10 @@ Examples:
 
   // `global_only` suppresses durable project agents/skills/commands, but the
   // repo-local governance hook package still has to remain internally
-  // resolvable. Keep the three hook-capable project mirrors paired with the
-  // same shared dependencies (especially activate-meta-theory-spine.mjs +
-  // project-root.mjs). This is deliberately narrower than selecting a runtime:
+  // resolvable. Keep the hook-capable project mirrors paired with the same
+  // shared dependencies (especially activate-meta-theory-spine.mjs +
+  // project-root.mjs). An explicit runtime selection may narrow these Hook
+  // mirrors, but this remains deliberately narrower than selecting a runtime:
   // it does not materialize agents, skills, commands, rules, or MCP config.
   if (globalOnlyProjectSync) {
     const runtimeHookTargets = [
@@ -3576,6 +3586,12 @@ Examples:
     ];
 
     for (const target of runtimeHookTargets) {
+      if (
+        globalOnlyExplicitHookTargets &&
+        !globalOnlyExplicitHookTargets.has(target.runtime)
+      ) {
+        continue;
+      }
       for (const hookName of target.activeFiles) {
         const hookSource = await canonicalGlobalHookSource(
           hookName,

@@ -1495,15 +1495,26 @@ const reusableProviders = uniqueById(sortProvidersForRuntime([
   ...runtimeToolProviders,
 ]));
 
-function providerEligibleForRoute(provider) {
-  return provider?.routeEligible !== false &&
+function referenceOnlyProvider(provider) {
+  if (provider?.routeEligibility === "reference_only") return true;
+  const identities = [provider?.id, provider?.sourceRef, provider?.sourceRoot]
+    .filter((value) => typeof value === "string")
+    .flatMap((value) => value.toLowerCase().split(/[\\/:]/u));
+  return registryDependencies.some((project) =>
+    (project.capabilityCard?.routeEligibility === "reference_only" || project.interface?.invokeAs === "reference") &&
+    (identities.includes(String(project.id).toLowerCase()) ||
+      (project.interface?.preferredWeaponId && provider?.id === project.interface.preferredWeaponId)));
+}
+
+function providerEligibleForRoute(provider, { allowReferenceOnly = false } = {}) {
+  return provider?.routeEligible !== false && (allowReferenceOnly || !referenceOnlyProvider(provider)) &&
     (provider?.type !== "runtimeTools" || provider?.executionEligible === true);
 }
 
-function selectProvider(type, preferredIds = []) {
+function selectProvider(type, preferredIds = [], { allowReferenceOnly = false } = {}) {
   const providers = sortProvidersForRuntime(reusableProviders.filter((provider) =>
     provider.type === type &&
-    providerEligibleForRoute(provider)));
+    providerEligibleForRoute(provider, { allowReferenceOnly })));
   for (const preferredId of preferredIds) {
     const match = providers.find((provider) => provider.id === preferredId) ??
       providers.find((provider) => provider.id?.includes(preferredId));
@@ -2530,7 +2541,14 @@ function executionCapabilityDiscoveryRoute() {
   ].find((agent) => agent.id === selectedOwner) ?? null;
   const wantsDiscovery = explicitDiscoveryRoute || /find|discover|search|寻找|发现/.test(taskText);
   const wantsCreation = /create|scaffold|generate|创建|生成/.test(taskText);
-  const selectedSkillDiscovery = selectProvider("skills", ["findskill", "skill-scout", "skill-stocktake"]);
+  // findskill is a reference-only discovery capability consumed in model
+  // context. It may be selected for discovery, while execution providers
+  // continue through the strict reference-only filter.
+  const selectedSkillDiscovery = selectProvider(
+    "skills",
+    ["findskill", "skill-scout", "skill-stocktake"],
+    { allowReferenceOnly: true },
+  );
   const selectedSkillCreation = selectProvider("skills", ["meta-skill-creator", "create-agent", "agent-teams-playbook"]);
   const selectedSkill = wantsDiscovery
     ? selectedSkillDiscovery ?? selectedSkillCreation
@@ -2665,10 +2683,8 @@ function goalProContractRoute() {
 
 function kimDecisionExperienceRoute() {
   if (!decisionAdjustmentRequested()) return null;
-  const selectedSkill = selectProvider("skills", ["kim-decision"]);
   const dependency = dependencyRecords.find((dep) => dep.id === "kim-decision") ?? null;
   const blockedReasons = [];
-  if (!selectedSkill) blockedReasons.push("kim-decision skill provider missing");
   if (!dependency) blockedReasons.push("kim-decision dependency project missing");
   const score = blockedReasons.length ? 49 : 93;
   return {
@@ -2677,7 +2693,7 @@ function kimDecisionExperienceRoute() {
     weapon: "meta-kim-decision-patterns",
     dependency: null,
     dependencyProject: null,
-    decisionLensProvider: selectedSkill?.id ?? "kim-decision",
+    decisionLensProvider: dependency?.id ?? "kim-decision",
     runtime,
     os: osTarget,
     verificationOwner: "meta-prism",
@@ -2710,7 +2726,11 @@ function kimDecisionExperienceRoute() {
       providerEvidenceRef: "candidateDependencyProjects.kim-decision",
       ownerDiscoveryRef: "ownerDiscoveryPacket",
     },
-    selectedCapabilityProviders: selectedSkill ? [selectedSkill] : [],
+    // Kim_Decision is a registry-backed reference lens. It may enter model
+    // context through this named lens, but its reference-only skill/provider
+    // must never be selected as an execution capability. Do not let the
+    // generic skill selector fall back to an unrelated executable skill.
+    selectedCapabilityProviders: [],
     boundary: {
       invokeAs: "decision_lens",
       executionMode: "model_context",
@@ -3344,22 +3364,6 @@ const routeTypeClassification = classifyRouteTypes(recommendedRoute, {
   gapPacket: capabilityGapPacket,
   gapBlocksExecution: capabilityGapBlocksExecution,
 });
-const userChoiceNeeded = Boolean(recommendedRoute && recommendedRoute.score >= 70 && recommendedRoute.score < 85);
-const decisionCard = userChoiceNeeded ? {
-  recommendedDefault: recommendedRoute.id,
-  reason: "Route is useful but needs confirmation or more evidence because score is 70-84.",
-  choicePolicy: choiceSurfacePolicy.choiceRequiredWhen,
-  options: rankedRoutes.slice(0, 3).map((route) => ({
-    id: route.id,
-    bestFor: route.scoreBand,
-    benefit: "Uses discovered owner, weapon, runtime, OS, and verification route.",
-    cost: "May need more evidence if score is below 85.",
-    risk: route.blockedReasons.join("; ") || "partial capability support may remain.",
-    expectedResult: "Bounded execution route.",
-    verification: route.verificationMethod ?? "manual review"
-  }))
-} : null;
-
 const criticalChoiceDecision = evaluateChoiceRequirement(choiceSurfacePolicy, {
   runtime,
   stage: "Critical",
@@ -3373,6 +3377,83 @@ const criticalChoiceDecision = evaluateChoiceRequirement(choiceSurfacePolicy, {
     (entrySignals.actionIntent === true || entrySignals.destructiveOrProductionIntent === true) &&
     entrySignals.queryPreambleSignal !== true,
 });
+
+const legacyScoreChoiceNeeded = Boolean(
+  recommendedRoute &&
+  recommendedRoute.score >= 70 &&
+  recommendedRoute.score < 85,
+);
+
+function checkpointChoiceOptions() {
+  const checkpoints = recommendedRoute?.subjectiveUiCapabilityAmplification?.decisionCheckpoints ?? [];
+  const checkpoint = checkpoints.find((candidate) =>
+    !hasChoiceStage(candidate?.stage) &&
+    Array.isArray(candidate?.options) &&
+    candidate.options.length >= 2,
+  ) ?? checkpoints.find((candidate) =>
+    Array.isArray(candidate?.options) &&
+    candidate.options.length >= 2,
+  );
+  if (!checkpoint) return null;
+  const options = [...new Set(
+    checkpoint.options
+      .map((option) => String(option ?? "").trim())
+      .filter(Boolean),
+  )].slice(0, 3);
+  if (options.length < 2) return null;
+  return {
+    stage: checkpoint.stage ?? "route",
+    question: checkpoint.question ?? "Choose the route-changing scope before execution.",
+    requiredBefore: checkpoint.requiredBefore ?? "Execution",
+    options: options.map((option) => ({
+      id: option,
+      label: option,
+      bestFor: option,
+      benefit: checkpoint.question ?? "Locks the user-selected route scope.",
+      cost: checkpoint.requiredBefore ?? "The selected scope determines the next stage.",
+      risk: "A different choice changes scope or acceptance.",
+      expectedResult: option,
+      verification: "Verify the selected scope at the next stage.",
+      source: `recommendedRoute.subjectiveUiCapabilityAmplification.decisionCheckpoints.${checkpoint.stage ?? "route"}`,
+    })),
+  };
+}
+
+function buildDecisionCard() {
+  if (!recommendedRoute) return null;
+  const checkpoint = checkpointChoiceOptions();
+  if (checkpoint) {
+    return {
+      recommendedDefault: checkpoint.options[0].id,
+      reason: `Route has a policy-required ${checkpoint.stage} choice before ${checkpoint.requiredBefore}.`,
+      choicePolicy: choiceSurfacePolicy.choiceRequiredWhen,
+      options: checkpoint.options,
+    };
+  }
+  const options = rankedRoutes
+    .slice(0, 3)
+    .filter((route) => route?.id)
+    .map((route) => ({
+      id: route.id,
+      bestFor: route.scoreBand,
+      benefit: "Uses discovered owner, weapon, runtime, OS, and verification route.",
+      cost: "May need more evidence if score is below 85.",
+      risk: route.blockedReasons.join("; ") || "partial capability support may remain.",
+      expectedResult: "Bounded execution route.",
+      verification: route.verificationMethod ?? "manual review",
+    }));
+  if (options.length < 2) return null;
+  return {
+    recommendedDefault: recommendedRoute.id,
+    reason: "Route is useful but needs confirmation or more evidence because score is 70-84.",
+    choicePolicy: choiceSurfacePolicy.choiceRequiredWhen,
+    options,
+  };
+}
+
+let decisionCard = criticalChoiceDecision.required || subjectiveRouteChoice || legacyScoreChoiceNeeded
+  ? buildDecisionCard()
+  : null;
 const thinkingChoiceDimensions = [
   ...(subjectiveRouteChoice ? ["scope", "acceptance"] : []),
   ...(decisionCard ? ["scope", "owner", "runtime_or_os", "dependency", "acceptance"] : []),
@@ -3396,6 +3477,10 @@ const entryChoiceDecision = {
   thinking: thinkingChoiceDecision,
 };
 const choicePolicy = entryChoiceDecision.choicePolicy;
+const userChoiceNeeded = choicePolicy === "must_ask";
+if (userChoiceNeeded && !decisionCard) {
+  decisionCard = buildDecisionCard();
+}
 const criticalChoiceBlocksExecution =
   criticalChoiceDecision.required && !hasChoiceStage("Critical");
 const thinkingChoiceBlocksExecution =

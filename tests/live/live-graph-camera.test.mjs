@@ -340,7 +340,7 @@ test("normalization rejects a missing or non-positive on-screen text floor", () 
   }
 });
 
-test("the cell rendering sizes its title and band from the on-screen floor, not from world pixels", () => {
+test("the cell rendering sizes its title and container from the on-screen floor, not from world pixels", () => {
   const html = renderLiveControlRoomPage({ snapshot: fixtureSnapshot() });
   const camera = loadLiveGraphCameraPolicy();
 
@@ -360,13 +360,18 @@ test("the cell rendering sizes its title and band from the on-screen floor, not 
 
   assert.match(
     html,
-    /--cell-title-fs:\s*max\(var\(--fs-entity-body\),\s*calc\(var\(--min-onscreen-text-px\)\s*\/\s*var\(--camera-scale\)\)\)/u,
+    /--cell-title-fs:\s*max\(var\(--fs-entity-body\),\s*calc\(var\(--min-onscreen-text-px\)\s*\/\s*var\(--camera-scale\)\),\s*calc\(var\(--fs-body\)\s*\/\s*var\(--camera-scale\)\)\)/u,
     "the cell title must be the larger of its ladder step and the counter-scaled floor",
   );
   assert.match(
     html,
-    /--cell-band-h:\s*max\(26px,\s*calc\(var\(--cell-title-fs\)\s*\*\s*var\(--lh-flat\)\s*\+\s*var\(--sp-snug\)\s*\*\s*2\)\)/u,
-    "the band has to grow with the title it contains, or a legible title overflows an illegible band",
+    /height:\s*max\(180px,\s*calc\(var\(--cell-title-fs\)\s*\*\s*2\.84\s*\+\s*48px\)\)/u,
+    "the card must grow with its two-line counter-scaled title plus status and padding",
+  );
+  assert.match(
+    html,
+    /\.node-identity-row\s*\{[^}]*min-height:\s*calc\(var\(--cell-title-fs\)\s*\*\s*2\.56\)/u,
+    "the clickable title container must reserve two counter-scaled lines instead of relying on a detached visual band",
   );
   assert.doesNotMatch(
     html,

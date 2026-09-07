@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +11,7 @@ import {
   evaluateStopGate,
   initializePlanningContinuity,
   inspectPlanningContinuity,
+  planningWorkClosed,
   resumePlanningContinuity,
 } from "../../canonical/runtime-assets/shared/hooks/planning-continuity.mjs";
 
@@ -278,4 +279,215 @@ test("completion gate blocks at most twice and requires attested verification pl
   }));
   assert.equal(claimed.status, "completion_claimed");
   assert.equal((await evaluateStopGate(input(root))).status, "allow");
+});
+
+async function governedPlanFixture(sessionId, phases) {
+  const root = await fixture();
+  const spineRoot = path.join(root, ".meta-kim", "state", "default", "spine");
+  await mkdir(spineRoot, { recursive: true });
+  await writeFile(
+    path.join(spineRoot, "spine-state.json"),
+    JSON.stringify({ active: true, stage: "execution" }),
+    "utf8",
+  );
+  const checklist = Array.from({ length: phases }, (_, index) =>
+    `- [ ] phase ${index + 1}: land the bounded projection change and prove it with a mutation run`);
+  await writeFile(
+    path.join(root, "task_plan.md"),
+    ["# Task plan", "", "## Goal", "", ...checklist, ""].join("\n"),
+    "utf8",
+  );
+  await writeFile(path.join(root, "findings.md"), "# Findings\n", "utf8");
+  await writeFile(path.join(root, "progress.md"), "# Progress\n\n- Status: executing\n", "utf8");
+  await initializePlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+  await attestPlanningContinuity(input(root, sessionId, { runtime: "claude", ownerReview: true }));
+  return root;
+}
+
+function hookEvent(root, sessionId, event) {
+  return spawnSync(process.execPath, [
+    path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+    "--event", event,
+    "--runtime", "claude",
+  ], {
+    cwd: root,
+    encoding: "utf8",
+    input: JSON.stringify({ session_id: sessionId, cwd: root }),
+  });
+}
+
+function hookEventAsync(root, sessionId, event) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [
+      path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+      "--event", event,
+      "--runtime", "claude",
+    ], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(JSON.stringify({ session_id: sessionId, cwd: root, hook_event_name: "UserPromptSubmit" }));
+  });
+}
+
+test("automatic Claude lifecycle hooks silently no-op without a trusted project root", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "meta-kim-planning-no-root-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+    const result = spawnSync(process.execPath, [
+      path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+      "--event", event,
+      "--runtime", "claude",
+    ], {
+      cwd: root,
+      encoding: "utf8",
+      input: JSON.stringify({ session_id: "no-trusted-root-session", cwd: root }),
+    });
+
+    assert.equal(result.status, 0, `${event}: ${result.stderr}`);
+    assert.equal(result.stdout, "", `${event} wrote stdout`);
+    assert.equal(result.stderr, "", `${event} wrote stderr`);
+  }
+
+  const explicitCli = spawnSync(process.execPath, [
+    path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+    "init",
+    "--runtime", "claude",
+    "--run-id", "strict-cli-no-root",
+  ], {
+    cwd: root,
+    encoding: "utf8",
+    input: "{}",
+  });
+  assert.equal(explicitCli.status, 1);
+  assert.match(explicitCli.stderr, /trusted_project_root_not_found/u);
+  assert.deepEqual(await readdir(root), []);
+});
+
+test("Claude lifecycle hooks accept an explicit CLAUDE_PROJECT_DIR without a marker", async (t) => {
+  const sessionId = "claude-explicit-env-session";
+  const root = await mkdtemp(path.join(os.tmpdir(), "meta-kim-planning-claude-env-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await initializePlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+  await attestPlanningContinuity(input(root, sessionId, { runtime: "claude", ownerReview: true }));
+
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: root };
+  delete env.META_KIM_PROJECT_ROOT;
+  const result = spawnSync(process.execPath, [
+    path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+    "--event", "SessionStart",
+    "--runtime", "claude",
+  ], {
+    cwd: root,
+    env,
+    encoding: "utf8",
+    input: JSON.stringify({ session_id: sessionId, cwd: root }),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.match(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, /FILE task_plan\.md/u);
+
+  const codex = spawnSync(process.execPath, [
+    path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+    "init",
+    "--runtime", "codex",
+    "--run-id", "codex-ignores-claude-env",
+  ], {
+    cwd: root,
+    env,
+    encoding: "utf8",
+    input: "{}",
+  });
+  assert.equal(codex.status, 1);
+  assert.match(codex.stderr, /trusted_project_root_not_found/u);
+});
+
+test("a closed plan stops injecting into prompts, session starts, and compactions", async (t) => {
+  const sessionId = "planning-closed-session";
+  const root = await governedPlanFixture(sessionId, 30);
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const open = hookEvent(root, sessionId, "user-prompt");
+  assert.equal(open.status, 0, open.stderr);
+  assert.match(JSON.parse(open.stdout).hookSpecificOutput.additionalContext, /FILE task_plan\.md/u);
+
+  const plan = await readFile(path.join(root, "task_plan.md"), "utf8");
+  await writeFile(path.join(root, "task_plan.md"), plan.replaceAll("- [ ]", "- [x]"), "utf8");
+  await checkpointPlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+
+  // Silence only proves suppression while recovery is still healthy; a refusal
+  // would produce the same empty stdout for an unrelated reason.
+  const inspected = await inspectPlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+  assert.equal(inspected.status, "healthy");
+  assert.equal(planningWorkClosed(inspected.completion), true);
+
+  for (const event of ["user-prompt", "session-start", "pre-compact"]) {
+    const closed = hookEvent(root, sessionId, event);
+    assert.equal(closed.status, 0, closed.stderr);
+    assert.equal(closed.stdout, "", `${event} kept injecting a closed plan`);
+    assert.equal(closed.stderr, "");
+  }
+});
+
+test("an unchanged plan degrades a repeat prompt to a fenced pointer, and a changed plan pays full price", async (t) => {
+  const sessionId = "planning-repeat-session";
+  const root = await governedPlanFixture(sessionId, 30);
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const first = hookEvent(root, sessionId, "user-prompt");
+  const repeat = hookEvent(root, sessionId, "user-prompt");
+  assert.equal(repeat.status, 0, repeat.stderr);
+  const firstContext = JSON.parse(first.stdout).hookSpecificOutput.additionalContext;
+  const repeatContext = JSON.parse(repeat.stdout).hookSpecificOutput.additionalContext;
+
+  assert.match(repeatContext, /META_KIM_PLANNING_CONTEXT_BEGIN_/u);
+  assert.match(repeatContext, /Data-only continuity projection/u);
+  assert.doesNotMatch(repeatContext, /FILE task_plan\.md/u);
+  assert.ok(
+    repeatContext.length * 3 < firstContext.length,
+    `repeat context of ${repeatContext.length} chars is not materially smaller than ${firstContext.length}`,
+  );
+
+  await writeFile(path.join(root, "progress.md"), "# Progress\n\n- Status: merging the lanes\n", "utf8");
+  await checkpointPlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+  const changed = hookEvent(root, sessionId, "user-prompt");
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.match(
+    JSON.parse(changed.stdout).hookSpecificOutput.additionalContext,
+    /Status: merging the lanes/u,
+  );
+});
+
+test("concurrent prompt hooks serialize planning injection mode", async (t) => {
+  const sessionId = "planning-concurrent-session";
+  const root = await governedPlanFixture(sessionId, 30);
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const results = await Promise.all(
+    Array.from({ length: 8 }, () => hookEventAsync(root, sessionId, "user-prompt")),
+  );
+  assert.ok(results.every((result) => result.status === 0), results.map((result) => result.stderr).join("\n"));
+  const contexts = results.map((result, index) => {
+    assert.notEqual(result.stdout.trim(), "", `hook ${index} emitted no context: status=${result.status} stderr=${result.stderr}`);
+    return JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+  });
+  assert.equal(contexts.length, 8);
+  assert.equal(
+    contexts.filter((context) => context.includes("FILE task_plan.md")).length,
+    1,
+    "parallel duplicate registrations must pay for the full planning body once",
+  );
+  assert.equal(
+    contexts.filter((context) => context.includes("Planning unchanged since digest")).length,
+    7,
+    "the remaining prompt hooks must receive bounded pointers",
+  );
 });

@@ -247,6 +247,184 @@ test("public display distinguishes active queueing from inactive structural plan
   assert.equal(activeWorker.displayState, "unreported");
 });
 
+/**
+ * The three tests below pin the observed-active read model: trusted host
+ * evidence of an invocation is the one fact that can lift a declared-queued
+ * worker to "running" on screen, because the declared lifecycle writer is
+ * safety-gated shut. They also pin that this is the ONLY thing observation can
+ * lift — a queued worker stays queued, a terminal claim stays unproven, and a
+ * stale observation decays back to the declared state instead of reporting a
+ * run that has gone quiet as still executing.
+ */
+function observedActiveArtifact() {
+  const runId = "meta-observed-active-1";
+  return {
+    schemaVersion: "governed-execution-v1",
+    runId,
+    status: "pending",
+    updatedAt: "2026-08-24T01:00:30.000Z",
+    dispatchEnvelopePacket: { ownerAgent: "meta-conductor" },
+    workerTaskPackets: [
+      { taskPacketId: "task-observed-running", roleDisplayName: "backend", status: "pending" },
+      { taskPacketId: "task-declared-only", roleDisplayName: "frontend", status: "pending" },
+    ],
+    hostInvocationEvidence: [
+      {
+        runId,
+        taskPacketId: "task-observed-running",
+        family: "agent",
+        state: "invoked",
+        proofValid: true,
+        synthetic: false,
+        occurredAt: "2026-08-24T01:00:25.000Z",
+      },
+    ],
+  };
+}
+
+test("trusted observed invocation promotes a queued worker to observed running and marks the run active", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: observedActiveArtifact(),
+    observedAt: "2026-08-24T01:00:40.000Z",
+  });
+  const running = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+  assert.ok(running, "the observed worker must stay on the graph");
+  assert.equal(running.status, "running");
+  assert.equal(running.observedOnly, true, "running must be attributable to observation, not to the declared lifecycle");
+  assert.equal(running.active, true);
+  assert.equal(running.displayState, "active");
+  assert.equal(running.declaredStatus, "pending", "the declared state stays visible for the mismatch story");
+  assert.equal(running.observedStatus, "active");
+  assert.equal(running.declaredObservedMismatch, true);
+  assert.equal(snapshot.run.active, true);
+  assert.equal(snapshot.run.status, "active");
+  assert.equal(snapshot.session.active, true);
+});
+
+test("a worker the run only declared stays declared-not-started and is never counted as running", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: observedActiveArtifact(),
+    observedAt: "2026-08-24T01:00:40.000Z",
+  });
+  const declaredOnly = snapshot.nodes.find((node) => node.roleDisplayName === "frontend");
+  assert.ok(declaredOnly, "the declared-but-never-invoked worker must stay on screen");
+  assert.equal(declaredOnly.status, "pending");
+  assert.equal(declaredOnly.declaredNotStarted, true);
+  assert.equal(declaredOnly.observedOnly, false);
+  assert.equal(declaredOnly.active, false);
+});
+
+test("observed running decays back to the declared state once the evidence goes stale", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: observedActiveArtifact(),
+    observedAt: "2026-08-24T02:30:00.000Z",
+  });
+  const running = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+  assert.equal(running.status, "pending", "a 90-minute-old invocation is not a claim about the present");
+  assert.equal(running.active, false);
+  assert.equal(snapshot.run.active, false);
+});
+
+test("a fresh run update cannot revive a stale observed worker", () => {
+  const artifact = observedActiveArtifact();
+  artifact.updatedAt = "2026-08-24T02:30:00.000Z";
+  for (const record of [artifact, buildLiveCompactProjection(artifact)]) {
+    const snapshot = buildLiveSnapshot({
+      governedArtifact: record,
+      observedAt: "2026-08-24T02:30:10.000Z",
+    });
+    const worker = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+    assert.equal(worker.active, false, "run metadata is not fresh evidence of this worker executing");
+    assert.equal(worker.status, "pending");
+    assert.equal(snapshot.run.active, false);
+  }
+});
+
+test("a fresh second worker does not revive a stale observed sibling", () => {
+  const artifact = observedActiveArtifact();
+  artifact.updatedAt = "2026-08-24T02:30:00.000Z";
+  artifact.hostInvocationEvidence.push({
+    ...artifact.hostInvocationEvidence[0],
+    taskPacketId: "task-declared-only",
+    occurredAt: "2026-08-24T02:30:00.000Z",
+  });
+  for (const record of [artifact, buildLiveCompactProjection(artifact)]) {
+    const snapshot = buildLiveSnapshot({
+      governedArtifact: record,
+      observedAt: "2026-08-24T02:30:10.000Z",
+    });
+    assert.equal(snapshot.nodes.find((node) => node.roleDisplayName === "backend").active, false);
+    assert.equal(snapshot.nodes.find((node) => node.roleDisplayName === "frontend").active, true);
+    assert.equal(snapshot.run.active, true);
+  }
+});
+
+test("a closed invocation cannot remain active, while an independent invocation may still run", () => {
+  for (const reverse of [false, true]) {
+    const artifact = observedActiveArtifact();
+    artifact.hostInvocationEvidence[0].eventId = "invocation-closed";
+    artifact.hostInvocationEvidence.push({
+      ...artifact.hostInvocationEvidence[0], state: "completed",
+      occurredAt: "2026-08-24T01:00:30.000Z",
+    });
+    if (reverse) artifact.hostInvocationEvidence.reverse();
+    for (const record of [artifact, buildLiveCompactProjection(artifact)]) {
+      const snapshot = buildLiveSnapshot({ governedArtifact: record, observedAt: "2026-08-24T01:00:40.000Z" });
+      const worker = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+      assert.equal(worker.active, false, "an earlier start cannot outlive the same invocation's terminal event");
+      assert.equal(worker.status, "pending", "observation cannot attest completion");
+    }
+    artifact.hostInvocationEvidence.push({
+      ...artifact.hostInvocationEvidence[0], eventId: "invocation-still-running", state: "invoked",
+      occurredAt: "2026-08-24T01:00:28.000Z",
+    });
+    const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:00:40.000Z" });
+    assert.equal(snapshot.nodes.find((node) => node.roleDisplayName === "backend").active, true);
+  }
+});
+
+test("a returned agent invocation is no longer running but does not attest completion", () => {
+  const artifact = observedActiveArtifact();
+  artifact.hostInvocationEvidence[0].state = "returned";
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:00:40.000Z" });
+  const worker = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+  assert.equal(worker.active, false);
+  assert.equal(worker.status, "pending");
+});
+
+test("observed evidence never promotes a worker to completed and never launders a terminal claim", () => {
+  const runId = "meta-observed-terminal-guard-1";
+  const artifact = {
+    schemaVersion: "governed-execution-v1",
+    runId,
+    status: "pending",
+    updatedAt: "2026-08-24T01:00:30.000Z",
+    dispatchEnvelopePacket: { ownerAgent: "meta-conductor" },
+    workerTaskPackets: [{ taskPacketId: "task-terminal-guard", roleDisplayName: "backend", status: "pending" }],
+    hostInvocationEvidence: [
+      {
+        runId,
+        taskPacketId: "task-terminal-guard",
+        state: "completed",
+        resultStatus: "completed",
+        proofValid: true,
+        synthetic: false,
+        occurredAt: "2026-08-24T01:00:25.000Z",
+      },
+    ],
+  };
+  const snapshot = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:00:40.000Z" });
+  const worker = snapshot.nodes.find((node) => node.roleDisplayName === "backend");
+  assert.equal(worker.status, "pending", "observation may say running, never completed");
+  assert.equal(worker.observedOnly, false);
+  assert.equal(worker.observedStatus, "completed");
+  assert.equal(
+    worker.declaredObservedMismatch,
+    false,
+    "an observed completion is not flagged as a disagreement: it is the normal declared-pending shape, and flagging it would cry wolf on every finishing worker",
+  );
+});
+
 test("legacy compact structural worker evidence remains unreported for run, workflow, and workers", () => {
   const runId = "meta-legacy-compact-structural-1";
   const snapshot = buildLiveSnapshot({
@@ -1853,6 +2031,8 @@ test("an activation-only durable status projects no node and states why the grap
 
   assert.equal(snapshot.run.runId, "meta-activation-only-1");
   assert.equal(snapshot.run.substanceClass, "activation_only");
+  assert.equal(snapshot.run.displayState, "unreported", "a fresh activation receipt does not prove execution has started");
+  assert.match(snapshot.run.statusReason, /启动/u);
   assert.equal("title" in snapshot.run, false, "no title may be invented for a run that declared none");
   assert.deepEqual(snapshot.nodes, [], "an activation receipt must not mint a synthetic owner node");
   assert.deepEqual(snapshot.edges, []);
@@ -2048,6 +2228,121 @@ test("records a declared stage plan without drawing it as executed graph nodes",
     { stage: "critical", label: "Critical", declaredNodeCount: 2, invokedNodeCount: 0 },
     { stage: "execution", label: "Execution", declaredNodeCount: 1, invokedNodeCount: 0 },
   ]);
+});
+
+test("keeps task boundary clauses out of graph nodes while preserving their provenance", () => {
+  const artifact = sampleArtifact("meta-graph-boundary-clauses");
+  artifact.task = "Build the report; do not publish; parallel execution.";
+  artifact.workerTaskPackets = [
+    {
+      taskPacketId: "task-build-report",
+      roleDisplayName: "backend",
+      roleInstanceId: "exec-build-report-1",
+      businessFlowLaneLabel: "Build the report",
+      todayTask: "Build the report",
+      stage: "execution",
+      dependsOn: [],
+    },
+    {
+      taskPacketId: "task-do-not-publish",
+      roleDisplayName: "backend",
+      roleInstanceId: "exec-do-not-publish-2",
+      businessFlowLaneLabel: 'Run "do not publish"',
+      todayTask: 'Run "do not publish"',
+      stage: "execution",
+      dependsOn: [],
+    },
+  ];
+
+  const projection = buildLiveCompactProjection(artifact);
+  assert.equal(
+    projection.nodes.filter((node) => node.isMain !== true && node.kind === "agent").length,
+    1,
+    "a task boundary must not occupy an agent node",
+  );
+  assert.equal(projection.nodes.some((node) => node.roleInstanceId === "exec-do-not-publish-2"), false);
+  assert.deepEqual(projection.nonGoalConstraints, [{
+    taskPacketId: projection.nonGoalConstraints[0].taskPacketId,
+    label: "do not publish",
+    kind: "non_goal",
+    source: "artifact.task",
+    graphVisibility: "constraint",
+  }]);
+
+  const readBack = buildLiveSnapshot({
+    governedArtifact: JSON.parse(JSON.stringify(projection)),
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+  assert.equal(readBack.nodes.some((node) => node.roleInstanceId === "exec-do-not-publish-2"), false);
+  assert.deepEqual(readBack.nonGoalConstraints, projection.nonGoalConstraints);
+});
+
+test("does not treat a negative work type substring as a non-goal packet", () => {
+  const artifact = sampleArtifact("meta-graph-negative-work-type");
+  artifact.task = "Run the negative testing lane.";
+  artifact.workerTaskPackets = [{
+    taskPacketId: "task-negative-testing",
+    roleDisplayName: "backend",
+    roleInstanceId: "exec-negative-testing-1",
+    workType: "negative-testing",
+    businessFlowLaneLabel: "negative testing",
+    stage: "execution",
+    dependsOn: [],
+  }];
+  artifact.workerResultPackets = [];
+
+  const projection = buildLiveCompactProjection(artifact);
+  assert.equal(
+    projection.nodes.some((node) => node.roleInstanceId === "exec-negative-testing-1"),
+    true,
+    "a work type containing negative must remain an executable lane",
+  );
+  assert.deepEqual(projection.nonGoalConstraints, []);
+});
+
+test("keeps an executed boundary-matching packet and marks the classification conflict", () => {
+  const artifact = sampleArtifact("meta-graph-executed-boundary-conflict");
+  artifact.task = "Build the report; do not publish;";
+  artifact.workerTaskPackets = [{
+    taskPacketId: "task-do-not-publish-executed",
+    roleDisplayName: "backend",
+    roleInstanceId: "exec-do-not-publish-executed-1",
+    businessFlowLaneLabel: 'Run "do not publish"',
+    stage: "execution",
+    status: "pending",
+    dependsOn: [],
+  }];
+  artifact.workerResultPackets = [];
+  artifact.hostInvocationEvidence = [{
+    runId: artifact.runId,
+    taskPacketId: "task-do-not-publish-executed",
+    family: "agent",
+    state: "invoked",
+    proofValid: true,
+    synthetic: false,
+    occurredAt: "2026-08-24T01:00:10.000Z",
+  }];
+
+  const projection = buildLiveCompactProjection(artifact);
+  const worker = projection.nodes.find((node) => node.roleInstanceId === "exec-do-not-publish-executed-1");
+  assert.ok(worker, "actual execution evidence keeps the boundary-matching lane visible");
+  assert.deepEqual(worker.classificationConflict, {
+    kind: "non_goal",
+    label: "do not publish",
+    source: "artifact.task",
+    reason: "execution_evidence",
+  });
+  assert.deepEqual(projection.nonGoalConstraints, []);
+
+  const readBack = buildLiveSnapshot({
+    governedArtifact: JSON.parse(JSON.stringify(projection)),
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+  assert.deepEqual(
+    readBack.nodes.find((node) => node.roleInstanceId === "exec-do-not-publish-executed-1")?.classificationConflict,
+    worker.classificationConflict,
+    "the conflict marker must survive compact read-back",
+  );
 });
 
 test("refuses to count a node as invoked when the plan itself was never invoked", () => {

@@ -381,7 +381,11 @@ function runtimeInvocation(runtime, workspaceRoot) {
       "--safe-mode",
       "--permission-mode",
       "plan",
-      "--tools",
+      // No `--tools`: Claude Code 2.1.236 resolves `--tools <list>` to an
+      // empty tool set (live-verified), which leaves the stage runner unable
+      // to read anything. Read-only shape stays enforced by permission-mode
+      // "plan" plus this allowlist; the capability gate hooks remain armed.
+      "--allowedTools",
       "Read,Glob,Grep",
       "--no-session-persistence",
     ],

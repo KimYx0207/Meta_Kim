@@ -11,12 +11,14 @@ import {
   getLiveHubPaths,
   LIVE_HUB_DEFAULT_PORT,
   LIVE_HUB_RUNTIME_IDENTITY_PATHS,
+  PROCESS_START_IDENTITY_UNAVAILABLE,
   readReusableLiveHub,
   removeOwnedLiveHubState,
   stopLiveHub,
   validateLiveHubState,
   writeLiveHubState,
 } from "../../src/infrastructure/live/live-hub-lifecycle.mjs";
+import { getProcessStartIdentity } from "../../scripts/release-state-hardening.mjs";
 
 test("uses one stable default browser entry port", () => {
   assert.equal(LIVE_HUB_DEFAULT_PORT, 4331);
@@ -422,6 +424,126 @@ test("a state write cannot hide another live Hub behind its own record", async (
   assert.equal(reregistered.instanceId, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc");
 }));
 
+test("a creation identity the OS will not produce is recorded, not fatal", async () => withTempHome(async (homeDir) => {
+  // Every case above passes an explicit identity string, which is why the default
+  // argument shipped untested: `processStartIdentity` defaults to the real probe,
+  // and on Windows that probe shells out to PowerShell. Measured inside the loaded
+  // live suite it answered null after 12.4s. `validState` rejects an empty
+  // identity, so the daemon threw "Live Hub state is incomplete." before
+  // publishing hub.json, exited, and the launcher — which observes only a child
+  // exit — reported `daemon_exited_before_ready`. Three of eight concurrent packed
+  // starts failed that way; five sequential starts all succeeded.
+  //
+  // The probe answers null for a PID that does not exist on every platform
+  // (Get-CimInstance matches nothing, /proc/<pid>/stat is missing, ps exits
+  // non-zero), so omitting the argument for an unused PID drives the real default
+  // rather than a stub of it.
+  const unusedPid = 424_242;
+  assert.equal(
+    getProcessStartIdentity(unusedPid),
+    null,
+    "this case is only meaningful while the probe genuinely fails for this pid",
+  );
+  const recorded = await writeLiveHubState({
+    homeDir,
+    address,
+    instanceId: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+    pid: unusedPid,
+  });
+  assert.equal(recorded.processStartIdentity, PROCESS_START_IDENTITY_UNAVAILABLE);
+  assert.equal(
+    JSON.parse(await readFile(getLiveHubPaths({ homeDir }).statePath, "utf8")).processStartIdentity,
+    PROCESS_START_IDENTITY_UNAVAILABLE,
+    "the gap belongs on disk: a reader that cannot see it would compare the sentinel as an identity",
+  );
+
+  // Recording the gap must not smuggle in a blank identity. An empty string is
+  // still malformed input, and the sentinel is distinguishable from every value
+  // the probe can return because those all carry a platform prefix.
+  assert.equal(validateLiveHubState({ ...recorded, processStartIdentity: "" }), null);
+  assert.equal(validateLiveHubState(recorded)?.processStartIdentity, PROCESS_START_IDENTITY_UNAVAILABLE);
+  assert.doesNotMatch(PROCESS_START_IDENTITY_UNAVAILABLE, /^(?:windows-creation-ticks|linux-proc-startticks|darwin-ps-lstart):/u);
+}));
+
+test("an unprovable recorded identity fails closed instead of licensing a takeover", async () => withTempHome(async (homeDir) => {
+  // The sentinel says "this hub could not prove which process it is". Comparing it
+  // like an identity inverts that: the moment the probe recovers, the observed
+  // value differs from the sentinel and the hub reads as gone — so a write would
+  // orphan a process that is still holding the port, and a takeover would signal a
+  // PID nothing proved. Both surfaces have to refuse.
+  const incumbent = {
+    instanceId: "dddddddd-dddd-4ddd-8ddd-ddddddddddd1",
+    pid: 424_243,
+    processStartIdentity: PROCESS_START_IDENTITY_UNAVAILABLE,
+  };
+  await writeLiveHubState({
+    homeDir,
+    address,
+    ...incumbent,
+    isProcessAlive: () => false,
+    readProcessStartIdentity: () => null,
+  });
+
+  await assert.rejects(
+    () => writeLiveHubState({
+      homeDir,
+      address,
+      instanceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+      pid: process.pid,
+      processStartIdentity: "intruder-identity",
+      isProcessAlive: (pid) => pid === incumbent.pid,
+      readProcessStartIdentity: () => "a-freshly-working-probe",
+    }),
+    /already serving/u,
+    "a recorded gap is not proof the incumbent is gone, however well the probe works now",
+  );
+  assert.equal(
+    JSON.parse(await readFile(getLiveHubPaths({ homeDir }).statePath, "utf8")).instanceId,
+    incumbent.instanceId,
+  );
+
+  // A dead PID is still residue: recording the gap must not wedge the port name
+  // forever, or a crashed hub could never be replaced.
+  assert.equal(
+    (await writeLiveHubState({
+      homeDir,
+      address,
+      instanceId: "ffffffff-ffff-4fff-8fff-fffffffffff1",
+      pid: process.pid,
+      processStartIdentity: "recovery-identity",
+      isProcessAlive: () => false,
+      readProcessStartIdentity: () => null,
+    })).instanceId,
+    "ffffffff-ffff-4fff-8fff-fffffffffff1",
+  );
+
+  // The read side that acts on the PID refuses the same way, and refusing means
+  // not spawning: reading the gap as `absent` would start a second hub against a
+  // port the first one may still hold.
+  let spawnCount = 0;
+  await writeLiveHubState({
+    homeDir,
+    address,
+    ...incumbent,
+    isProcessAlive: () => false,
+    readProcessStartIdentity: () => null,
+  });
+  const result = await ensureLiveHub({
+    packageRoot: path.resolve("."),
+    homeDir,
+    healthProbe: async () => true,
+    isProcessAlive: () => true,
+    readProcessStartIdentity: () => "a-freshly-working-probe",
+    spawnProcess: () => {
+      spawnCount += 1;
+      return { unref() {} };
+    },
+  });
+  assert.equal(result.status, "unavailable");
+  assert.equal(result.reason, "live_hub_identity_unavailable");
+  assert.equal(spawnCount, 0);
+}));
+
 test("rejects malformed or symlink-like state input without throwing", async () => withTempHome(async (homeDir) => {
   const { root, statePath } = getLiveHubPaths({ homeDir });
   await mkdir(root, { recursive: true });
@@ -450,7 +572,7 @@ test("concurrent ensure calls create one daemon and reuse its deep link", async 
   const options = {
     packageRoot: path.resolve("."),
     homeDir,
-    timeoutMs: 1_500,
+    timeoutMs: STARTUP_BUDGET_THAT_MUST_NOT_EXPIRE_MS,
     projectRef: "project-a1b2c3d4e5f6",
     runId: "meta-session-1",
     spawnProcess,

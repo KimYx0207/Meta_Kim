@@ -85,6 +85,7 @@ let manifestRecorder = null;
 let globalManifestSnapshot = null;
 let executingProjectionPackage = null;
 let checkMissingProjectionPackageAuthority = false;
+const projectionAuthorityDiagnostics = [];
 const manifestRecordFailures = [];
 const PRIMARY_PROJECTION_TARGET_IDS = new Set(["claude", "codex"]);
 function primaryProjectionTargetSelected() {
@@ -644,10 +645,27 @@ async function checkGlobalAgents(plan) {
   for (const { targetId } of globalAgentTargets) {
     const targetEntries = plan.entries.filter((entry) => entry.targetId === targetId);
     let current = 0;
+    const unbound = [];
     for (const entry of targetEntries) {
+      // Judge the same boundary the write path enforces. Reading content through
+      // an out-of-home redirect would report "in sync" for a layout that
+      // syncGlobalAgents refuses to maintain, so the two gates would disagree
+      // about identical on-disk state.
+      try {
+        assertHomeBound(entry.targetPath);
+        await assertRealHomeBound(entry.targetPath);
+      } catch {
+        unbound.push(path.basename(entry.targetPath));
+        continue;
+      }
       if ((await fs.readFile(entry.targetPath, "utf8").catch(() => null)) === entry.expected) current += 1;
     }
     console.log(`${current === targetEntries.length ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}${targetId} global agents: ${current}/${targetEntries.length}${C.reset}`);
+    if (unbound.length > 0) {
+      console.log(
+        `  ${C.dim}${unbound.length} agent path(s) resolve outside the configured runtime homes: ${unbound.join(", ")}; redirect the whole runtime home instead of individual assets${C.reset}`,
+      );
+    }
     if (current !== targetEntries.length) inSync = false;
   }
   return inSync;
@@ -1664,34 +1682,6 @@ async function fingerprintSourceForTarget(targetId) {
   };
 }
 
-async function fingerprintSelectedFiles(rootDir, allowedNames) {
-  if (!(await pathExists(rootDir))) {
-    return null;
-  }
-
-  const filePaths = [];
-  for (const fileName of [...allowedNames].sort((left, right) => left.localeCompare(right))) {
-    const filePath = path.join(rootDir, fileName);
-    if (await pathExists(filePath)) {
-      filePaths.push(filePath);
-    }
-  }
-
-  const hash = createHash("sha256");
-  for (const filePath of filePaths) {
-    const relativePath = path.relative(rootDir, filePath).replace(/\\/g, "/");
-    hash.update(relativePath);
-    hash.update("\n");
-    hash.update(await fs.readFile(filePath));
-    hash.update("\n");
-  }
-
-  return {
-    fileCount: filePaths.length,
-    hash: hash.digest("hex"),
-  };
-}
-
 async function canonicalHookSourcePath(fileName, runtimeId) {
   const owner = runtimeHookSourceOwner(runtimeId, fileName);
   if (!owner) return null;
@@ -1709,6 +1699,7 @@ async function canonicalHookSourcePath(fileName, runtimeId) {
 async function fingerprintGlobalHookSources(runtimeId) {
   const hash = createHash("sha256");
   let fileCount = 0;
+  const files = {};
   for (const fileName of [...GLOBAL_HOOK_PACKAGE_FILES].sort((left, right) => left.localeCompare(right))) {
     const filePath = await canonicalHookSourcePath(fileName, runtimeId);
     if (!filePath) {
@@ -1716,13 +1707,19 @@ async function fingerprintGlobalHookSources(runtimeId) {
     }
     hash.update(fileName);
     hash.update("\n");
-    hash.update(await fs.readFile(filePath));
+    const content = await fs.readFile(filePath);
+    hash.update(content);
     hash.update("\n");
+    files[fileName] = {
+      hash: createHash("sha256").update(content).digest("hex"),
+      source: path.relative(repoRoot, filePath).replaceAll("\\", "/"),
+    };
     fileCount += 1;
   }
   return {
     fileCount,
     hash: hash.digest("hex"),
+    files,
   };
 }
 
@@ -1732,19 +1729,33 @@ async function fingerprintInstalledGlobalHooks(rootDir) {
   }
   const hash = createHash("sha256");
   let fileCount = 0;
+  const files = {};
   for (const fileName of [...GLOBAL_HOOK_PACKAGE_FILES].sort((left, right) => left.localeCompare(right))) {
     const filePath = path.join(rootDir, fileName);
     if (!(await pathExists(filePath))) continue;
     hash.update(fileName);
     hash.update("\n");
-    hash.update(await fs.readFile(filePath));
+    const content = await fs.readFile(filePath);
+    hash.update(content);
     hash.update("\n");
+    files[fileName] = { hash: createHash("sha256").update(content).digest("hex") };
     fileCount += 1;
   }
   return {
     fileCount,
     hash: hash.digest("hex"),
+    files,
   };
+}
+
+function reportGlobalHookDifferences(expected, installed) {
+  for (const [fileName, source] of Object.entries(expected?.files ?? {})) {
+    const actual = installed?.files?.[fileName];
+    const difference = !actual ? "missing" : actual.hash !== source.hash ? "content-diff" : null;
+    if (difference) {
+      console.log(`  ${difference}: ${fileName} (expected source: ${source.source})`);
+    }
+  }
 }
 
 // `--with-global-hooks` gates *writing* into a runtime home, which is why an
@@ -1780,6 +1791,7 @@ async function auditInstalledGlobalHookPackage(runtimeId, label, hooksPath) {
   console.log(
     `  ${C.dim}canonical ${canonicalHooks?.fileCount ?? 0} file(s), installed ${installed.fileCount} file(s); repair with: npm run meta:sync:global:release${C.reset}`,
   );
+  reportGlobalHookDifferences(canonicalHooks, installed);
   return false;
 }
 
@@ -2917,6 +2929,7 @@ async function runCheck() {
       `${hooksInSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Claude Code global hooks (meta-kim): ${globalHooksPath}${C.reset}`,
     );
     if (!hooksInSync) {
+      reportGlobalHookDifferences(repoHooksFp, globalHooksFp);
       failed = true;
     }
     const settingsHooksInSync = await checkClaudeGlobalSettingsHooks();
@@ -2942,6 +2955,7 @@ async function runCheck() {
       `${hooksInSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Codex global hooks (meta-kim): ${codexHooksPath}${C.reset}`,
     );
     if (!hooksInSync) {
+      reportGlobalHookDifferences(repoHooksFp, codexHooksFp);
       failed = true;
     }
     const hooksJsonInSync = await checkCodexGlobalHooksJson();
@@ -2967,6 +2981,7 @@ async function runCheck() {
       `${hooksInSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Cursor global hooks (meta-kim): ${cursorHooksPath}${C.reset}`,
     );
     if (!hooksInSync) {
+      reportGlobalHookDifferences(repoHooksFp, cursorHooksFp);
       failed = true;
     }
     const hooksJsonInSync = await checkCursorGlobalHooksJson();
@@ -3387,6 +3402,7 @@ async function handOffToStableProjectionPackage() {
       expectedPackageName: currentPackageManifest.name,
       expectedPackageVersion: currentPackageManifest.version,
       expectedFirstPartyClosure: currentPackageContent,
+      diagnostics: projectionAuthorityDiagnostics,
     });
     if (!authority) {
       checkMissingProjectionPackageAuthority = true;
@@ -3491,6 +3507,11 @@ async function main() {
   if (await handOffToStableProjectionPackage()) return;
   if (checkOnly) {
     if (checkMissingProjectionPackageAuthority) {
+      if (projectionAuthorityDiagnostics.some((item) => item.reason === "source_closure_mismatch")) {
+        console.error("Projection package authority is stale: current source package content has changed (firstPartyClosure mismatch). Refresh with: node scripts/sync-global-meta-theory.mjs --with-global-hooks --skip-durable-mcp");
+      } else {
+        console.error(`Projection package authority diagnosis: ${projectionAuthorityDiagnostics.map((item) => item.reason).join(", ") || "unavailable"}. Refresh with: node scripts/sync-global-meta-theory.mjs --with-global-hooks --skip-durable-mcp`);
+      }
       console.error(
         "Global projection package authority is missing or invalid; " +
         "the current-root check below is diagnostic only and cannot pass release-grade validation.",

@@ -98,6 +98,8 @@ export const PACKED_USER_ACCEPTANCE_EXPECTED_DURATION_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.expectedDurationMs;
 export const PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.globalUserUpdateTimeoutMs;
+export const PACKED_GLOBAL_USER_INSTALL_TIMEOUT_MS =
+  PACKED_RELEASE_POLICY.packedUserAcceptance.globalUserInstallTimeoutMs;
 export const PACKED_HISTORICAL_USER_UPDATE_TIMEOUT_MS =
   PACKED_RELEASE_POLICY.packedUserAcceptance.historicalUserUpdateTimeoutMs;
 export const PACKED_TRANSIENT_PACKAGE_INSTALL_TIMEOUT_MS =
@@ -3103,7 +3105,7 @@ function runCurrentPackageLane({
       roots,
       env,
       mode,
-      mode === "update" ? PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS : timeoutMs,
+      mode === "update" ? PACKED_GLOBAL_USER_UPDATE_TIMEOUT_MS : Math.max(timeoutMs, PACKED_GLOBAL_USER_INSTALL_TIMEOUT_MS),
     );
     const record = {
       mode,

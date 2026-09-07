@@ -528,7 +528,7 @@ function validateCodexEngineeringCompositeReceipt(receipt, runtime, capability) 
       bindings.shell[0], bindings.filesystem[0], bindings["apply_patch / edit"][0], bindings.filesystem[1],
     ]) ||
     lifecycle?.beforeContentSha256 !== digest(`before-${receipt.capabilityMarker}`) ||
-    lifecycle?.finalContentSha256 !== digest(`after-${receipt.capabilityMarker}`) ||
+    lifecycle?.finalContentSha256 !== digest(`after-${receipt.capabilityMarker}\n`) ||
     receipt.workspaceOutcome?.kind !== "bounded_file" || receipt.workspaceOutcome?.contentSha256 !== lifecycle?.finalContentSha256 ||
     receipt.eventEvidence.some((entry) => entry.facet !== capability || entry.family !== "runtime_tool" || entry.sessionId == null)
   ) throw new Error("Codex engineering composite producer lifecycle is invalid");
@@ -591,6 +591,58 @@ function assertNoMarkerBoundFailure(rawText, marker) {
   }
 }
 
+function codexEngineeringWorkspace(receipt) {
+  const args = receipt?.hostInvocation?.request?.args;
+  if (!Array.isArray(args)) return null;
+  const indexes = args.flatMap((value, index) => value === "-C" ? [index] : []);
+  if (indexes.length !== 1) return null;
+  const workspace = args[indexes[0] + 1];
+  if (typeof workspace !== "string" || !workspace.trim() || !(path.isAbsolute(workspace) || path.win32.isAbsolute(workspace))) return null;
+  return workspace;
+}
+
+function pathIsEngineeringProbeTarget(candidate, workspace) {
+  if (typeof candidate !== "string" || !candidate.trim() || typeof workspace !== "string" || !workspace.trim()) return false;
+  const windowsStyle = path.win32.isAbsolute(candidate) || path.win32.isAbsolute(workspace) || /^[A-Za-z]:[\\/]/u.test(candidate) || /^[A-Za-z]:[\\/]/u.test(workspace);
+  const pathApi = windowsStyle ? path.win32 : path;
+  if (!pathApi.isAbsolute(candidate) || !pathApi.isAbsolute(workspace)) return false;
+  const expected = pathApi.normalize(pathApi.join(pathApi.resolve(workspace), "meta-kim-engineering-probe.txt"));
+  const actual = pathApi.normalize(pathApi.resolve(candidate));
+  return windowsStyle ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+}
+
+function nativeFileChangeTargetsEngineeringProbe(sourceText, workspace) {
+  const records = String(sourceText).split(/\r?\n/u).filter(Boolean).map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+  const started = records.filter((record) => record?.type === "item.started" && record?.item?.type === "file_change");
+  const completed = records.filter((record) => record?.type === "item.completed" && record?.item?.type === "file_change");
+  if (started.length !== 1 || completed.length !== 1) return false;
+  const startedItem = started[0].item;
+  const completedItem = completed[0].item;
+  if (startedItem.id !== completedItem.id || String(completedItem.status ?? "").toLowerCase() !== "completed") return false;
+  for (const item of [startedItem, completedItem]) {
+    if (!Array.isArray(item.changes) || item.changes.length !== 1 || !pathIsEngineeringProbeTarget(item.changes[0]?.path, workspace)) return false;
+  }
+  return true;
+}
+
+function codexCommandOutputHasExactContent(sourceText, content, { expectedFileTrailingNewline = false } = {}) {
+  const records = String(sourceText).split(/\r?\n/u).filter(Boolean).map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+  const completed = records.filter((record) => record?.type === "item.completed" && record?.item?.type === "command_execution");
+  if (completed.length !== 1 || typeof completed[0].item.aggregated_output !== "string") return false;
+  const output = completed[0].item.aggregated_output;
+  const command = String(completed[0].item.command ?? "");
+  const commandReturnsFileBytes = /(?:-raw|readalltext)/iu.test(command);
+  const expected = expectedFileTrailingNewline && commandReturnsFileBytes ? `${content}\n` : content;
+  // Get-Content without -Raw emits one logical line; the host then adds its
+  // own line ending. A raw read emits the file's trailing LF first, so the
+  // two cases must stay distinct instead of trimming either output.
+  return output === `${expected}\r\n` || output === `${expected}\n`;
+}
+
 function validateCodexEngineeringCompositeRaw(receipt, observedEvents, rawText) {
   const lifecycle = receipt.compositeLifecycle;
   const byId = new Map(observedEvents.map((event) => [event.eventId, event]));
@@ -608,17 +660,22 @@ function validateCodexEngineeringCompositeRaw(receipt, observedEvents, rawText) 
   const beforeSource = source(beforeRead);
   const editSource = source(edit);
   const afterSource = source(afterRead);
+  const engineeringWorkspace = codexEngineeringWorkspace(receipt);
+  const editSurface = String(edit?.hostSurface ?? "").toLowerCase();
+  const nativeFileChange = edit?.family === "runtime_tool" && /file_change/u.test(editSurface) &&
+    nativeFileChangeTargetsEngineeringProbe(editSource, engineeringWorkspace);
+  const markerBoundPatch = /apply_patch|patch|edit/u.test(editSurface) && filePattern.test(editSource) &&
+    editSource.includes(`before-${receipt.capabilityMarker}`) && editSource.includes(`after-${receipt.capabilityMarker}`);
   if (
     [shell, beforeRead, edit, afterRead].some((event) => !event || event.family !== "runtime_tool" || event.resultStatus !== "completed") ||
     order.some((line) => !Number.isFinite(line)) || order.some((line, index) => index > 0 && line <= order[index - 1]) ||
     !/shell|command/u.test(String(shell?.hostSurface ?? "").toLowerCase()) || !filePattern.test(shellSource) ||
     !/set-content|out-file|writealltext|(?:^|\s)>/iu.test(shellSource) || !shellSource.includes(`before-${receipt.capabilityMarker}`) ||
     !/shell|command/u.test(String(beforeRead?.hostSurface ?? "").toLowerCase()) || !filePattern.test(beforeSource) ||
-    !/get-content|readalltext|\bcat\b|\btype\b/iu.test(beforeSource) || !beforeSource.includes(`before-${receipt.capabilityMarker}`) || beforeSource.includes(`after-${receipt.capabilityMarker}`) ||
-    !/file_change|apply_patch|patch|edit/u.test(String(edit?.hostSurface ?? "").toLowerCase()) || !filePattern.test(editSource) ||
-    !editSource.includes(`before-${receipt.capabilityMarker}`) || !editSource.includes(`after-${receipt.capabilityMarker}`) ||
+    !/get-content|readalltext|\bcat\b|\btype\b/iu.test(beforeSource) || !beforeSource.includes(`before-${receipt.capabilityMarker}`) || !codexCommandOutputHasExactContent(beforeSource, `before-${receipt.capabilityMarker}`) || beforeSource.includes(`after-${receipt.capabilityMarker}`) ||
+    !/file_change|apply_patch|patch|edit/u.test(editSurface) || !(nativeFileChange || markerBoundPatch) ||
     !/shell|command/u.test(String(afterRead?.hostSurface ?? "").toLowerCase()) || !filePattern.test(afterSource) ||
-    !/get-content|readalltext|\bcat\b|\btype\b/iu.test(afterSource) || !afterSource.includes(`after-${receipt.capabilityMarker}`)
+    !/get-content|readalltext|\bcat\b|\btype\b/iu.test(afterSource) || !afterSource.includes(`after-${receipt.capabilityMarker}`) || !codexCommandOutputHasExactContent(afterSource, `after-${receipt.capabilityMarker}`, { expectedFileTrailingNewline: true })
   ) throw new Error("Codex engineering composite raw lifecycle is invalid");
 }
 
@@ -1124,7 +1181,16 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
             issues.push(`controlled producer event ${expected.eventId} child result is not the exact capability marker`);
           }
           const sourceLines = expected.sourceLines.map((line) => rawText.split(/\r?\n/u)[line - 1] ?? "").join("\n");
-          if (!sourceLines.includes(source.value.capabilityMarker)) issues.push(`controlled producer event ${expected.eventId} is not capability-marker-bound`);
+          const nativeEngineeringFileChange =
+            source.value.producer?.id === CODEX_ENGINEERING_COMPOSITE_PRODUCER_ID &&
+            attempt.runtime === "codex" &&
+            attempt.capability === "apply_patch / edit" &&
+            actual?.family === "runtime_tool" &&
+            /file_change/u.test(String(actual.hostSurface ?? "").toLowerCase()) &&
+            nativeFileChangeTargetsEngineeringProbe(sourceLines, codexEngineeringWorkspace(source.value));
+          if (!nativeEngineeringFileChange && !sourceLines.includes(source.value.capabilityMarker)) {
+            issues.push(`controlled producer event ${expected.eventId} is not capability-marker-bound`);
+          }
           if (!rawEventProvesCapability(attempt.runtime, attempt.capability, actual, sourceLines, source.value.capabilityMarker)) issues.push(`controlled producer event ${expected.eventId} does not prove ${attempt.capability}`);
         }
       }

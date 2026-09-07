@@ -8,6 +8,39 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.1.0] - 2026-09-08
+
+### Added
+
+- **Materially different alternatives require a choice.** Decision policy now recognizes explicit alternatives and mutually exclusive routes that change scope, risk, or acceptance. Complementary parallel work alone does not trigger a question. The runtime must invoke its supported choice surface before treating a required choice as answered; policy checks do not certify live popup behavior on every host.
+- **Evidence pins can be refreshed officially.** `npm run meta:runtime:evidence:refresh-pins` recomputes `repo_projection` source digests after source edits (with a `:check` variant for CI), so a touched pinned file no longer requires a hand-written one-off script.
+- **Clean-room acceptance keeps its sandbox for forensics.** `--keep-temp` (or `META_KIM_CLEAN_ROOM_KEEP_TEMP=1`) preserves the sandbox temp root, and a dependency step that exits 0 with empty output and no artifact now emits an explicit multi-line silent-noop diagnostic into the report instead of failing without a cause.
+- **Compatibility follows verified host capabilities.** Model selection does not merge governance stages, remove necessary native choices, or imply that a runtime has been tested. Compatibility research remains separate from live acceptance.
+
+### Changed
+
+- **The execution graph gets a quieter frame.** The task heading appears once, with the full description and run identifier available on demand. Navigation and the footer no longer repeat it, and overview node labels retain body-sized screen text while preserving complete-card geometry for zooming.
+- **Routine graph rebuilding no longer invokes a model automatically.** Code extraction and community grouping run locally, preserving the existing semantic layer without silently refreshing documents or images. Identity and freshness checks still apply.
+- **Activation receipts are not execution reports.** A run that only registered startup now says it has no execution report; the header and footer use the same public state.
+- **Hook context injection is now digest-gated, not turn-gated.** Planning continuity degrades repeat injections to a one-line pointer when the plan is byte-identical to the last injection, and stops injecting entirely once the work is closed — reopening any item restores the full projection. Memory recall skips re-emitting an identical selection, the graphify usage tip fires once per session instead of per search command, and the subagent rule set is deduplicated per session and agent. New kill switches: `META_KIM_GRAPHIFY_CONTEXT=off`, `META_KIM_SUBAGENT_CONTEXT=off`, `META_KIM_DISABLE_RECALL_DEDUPE=1`. On Codex, the subagent governance rules now target `meta-*` agents instead of every spawned subagent.
+- **The Live panel tells the truth about running work.** Observed invocation evidence now promotes a declared-queued worker to a visible running state (labeled `运行中·observed`) without manufacturing lifecycle proof; runs and sessions derive activity the same way, and stale observed evidence decays back to the declared state. Declared-but-never-started work renders with a dashed border and an explicit "声明未执行" chip instead of looking like executed work.
+- **The Live panel actually polls when the stream is unavailable.** The "Polling snapshot" badge now backs a real 10-second snapshot refresh that suspends while hidden and dismantles itself when the stream returns, instead of promising polling that never happened.
+- **Live layout re-chooses columns after measuring real cards.** When measured card metrics materially disagree with what the arrangement assumed, one corrective re-layout runs — bounded to a single pass, never a loop.
+- **Initial-state graph lines have stronger contrast.** Idle, queued, and structural edges use brighter strokes while running work retains teal emphasis; the legend covers observed running and declared-not-started states.
+- **`gstack` is now a third-party reference, not an installable dependency.** Default install no longer clones it; explicit opt-in prints a warning. The dependency registry marks it `reference_only` — the first step of the gradual peel of non-first-party dependencies.
+
+### Fixed
+
+- **Runtime selection respects installation scope.** Explicit targets in a `global_only` project limit the Hook package without materializing durable project agents, skills, or commands.
+- **Planning hooks handle ordinary folders without repeated errors.** Automatic lifecycle hooks silently skip an unbound project; Claude's explicit project directory is honored only on Claude. Explicit planning commands and integrity protections remain enforced.
+- **Run boundaries no longer appear as pending tasks.** Live separates non-goal constraints from historical task packets while retaining the original record. Work with execution evidence stays visible, with a conflict marker when it contradicts a boundary.
+- **Global checks explain what needs repair.** Stale hooks list missing and changed files with their runtime-specific source. Package checks distinguish source evolution from an invalid installed bundle and retain diagnostic-only failure when authority is unavailable.
+
+- **Windows global sync no longer fails on byte-exact package checks.** Package staging installs with `--no-bin-links`, which keeps extracted bytes equal to `npm pack` truth instead of letting bin linking rewrite a CRLF shebang (issue #74).
+- **Projection-package unit tests no longer read the user's real store.** `META_KIM_PROJECTION_PACKAGE_STORE_ROOT` isolates the digest root, so same-digest retry and concurrency cases no longer fail on machines with existing digests (issue #60).
+- **The Live hub starts reliably on loaded Windows machines.** A PowerShell identity probe that returns null under load no longer kills daemon startup; the failure is classified explicitly instead of surfacing as an opaque exit.
+- **Installers announce themselves.** Direct invocations of the global skill installer print an ack line (mode, targets, skills, flags), so a silent exit-0-with-no-output path can be told apart from a real no-op (issue #59).
+
 ## [3.0.9] - 2026-09-05
 
 ### Changed

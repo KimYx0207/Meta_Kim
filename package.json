@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.0.9",
+  "version": "3.1.0",
   "description": "Governance layer for AI coding: primary Claude Code/Codex projections first, opt-in beta compatibility adapters second, and non-default OpenClaw/Cursor compatibility projections third.",
   "private": true,
   "type": "module",
@@ -171,6 +171,8 @@
     "meta:runtime:validate": "node scripts/validate-runtime-matrix.mjs",
     "meta:runtime:evidence:record": "node scripts/record-runtime-capability-evidence.mjs",
     "meta:runtime:evidence:check": "node scripts/record-runtime-capability-evidence.mjs --check",
+    "meta:runtime:evidence:refresh-pins": "node scripts/refresh-runtime-evidence-pins.mjs",
+    "meta:runtime:evidence:refresh-pins:check": "node scripts/refresh-runtime-evidence-pins.mjs --check",
     "meta:intent:validate": "node scripts/validate-intent-amplification.mjs",
     "meta:prompt:validate": "node scripts/validate-prompt-executability.mjs && node scripts/validate-prompt-abstract-capabilities.mjs",
     "meta:prd:prompt-first-flow:validate": "node scripts/validate-prompt-first-full-flow-stage-contract.mjs",
