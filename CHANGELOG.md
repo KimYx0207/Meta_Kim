@@ -40,6 +40,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Projection-package unit tests no longer read the user's real store.** `META_KIM_PROJECTION_PACKAGE_STORE_ROOT` isolates the digest root, so same-digest retry and concurrency cases no longer fail on machines with existing digests (issue #60).
 - **The Live hub starts reliably on loaded Windows machines.** A PowerShell identity probe that returns null under load no longer kills daemon startup; the failure is classified explicitly instead of surfacing as an opaque exit.
 - **Installers announce themselves.** Direct invocations of the global skill installer print an ack line (mode, targets, skills, flags), so a silent exit-0-with-no-output path can be told apart from a real no-op (issue #59).
+- **`meta-kim release close` accepts the queue ids the private queue actually uses.** The closure step recognized only `P-NNN`, so it had been unrunnable since the queue moved to milestone ids such as `M3-L05`, and the documented final release step silently stopped being taken. Both the flag check and the PRD `ACTIVE` row matcher now share one id grammar; ids outside that grammar are still rejected.
 
 ## [3.0.9] - 2026-09-05
 

@@ -49,7 +49,8 @@ import {
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLANNING_FILES = ["task_plan.md", "findings.md", "progress.md"];
-const ISSUE_PATTERN = /^P-\d{3}$/u;
+const ISSUE_ID_SOURCE = "(?:P-\\d{3}|M\\d+-[A-Z]\\d{1,2})";
+const ISSUE_PATTERN = new RegExp(`^${ISSUE_ID_SOURCE}$`, "u");
 const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const POINTER_SCHEMA = "meta-kim-release-binding-pointer-v1";
 const AUDIT_SCHEMA = "meta-kim-release-binding-audit-v1";
@@ -159,7 +160,9 @@ function validatePrdQueue(prdText, issueId) {
   if (start < 0 || end <= start) {
     throw codedError("prd_queue_invalid", "PRD is missing the unique current queue block");
   }
-  const active = [...prdText.slice(start, end).matchAll(/^\|\s*ACTIVE\s*\|\s*(P-\d{3})\s*\|/gmu)];
+  const active = [...prdText.slice(start, end).matchAll(
+    new RegExp(`^\\|\\s*ACTIVE\\s*\\|\\s*(${ISSUE_ID_SOURCE})\\s*\\|`, "gmu"),
+  )];
   if (active.length !== 1) {
     throw codedError("prd_queue_invalid", "PRD must contain exactly one ACTIVE queue row");
   }
@@ -772,7 +775,7 @@ export async function recordReleasePlanningClosure({
   beforeRecordPublish,
 } = {}) {
   if (!ISSUE_PATTERN.test(issueId || "")) {
-    throw codedError("issue_invalid", "--issue must use a value such as P-128");
+    throw codedError("issue_invalid", "--issue must use a queue id such as P-128 or M3-L05");
   }
   if (!PROFILE_PATTERN.test(profile || "")) {
     throw codedError("profile_invalid", "--profile contains unsupported characters");
@@ -1125,7 +1128,7 @@ function cliOptions(args) {
 function usage() {
   return [
     "Usage:",
-    "  meta-kim release close --issue P-128 --prd <repo-relative-file> [--profile default] [--global-check-timeout-ms <ms>] [--metadata-timeout-ms <ms>] [--asset-timeout-ms <ms>] [--json]",
+    "  meta-kim release close --issue <queue-id> --prd <repo-relative-file> [--profile default] [--global-check-timeout-ms <ms>] [--metadata-timeout-ms <ms>] [--asset-timeout-ms <ms>] [--json]",
     "",
     "The command records an already-published exact release into existing local planning files.",
     "It never publishes the private PRD and never creates a second queue.",

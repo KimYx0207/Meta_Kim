@@ -859,3 +859,46 @@ test("release close rejects a discovered Git top-level that does not own caller 
     fx.cleanup();
   }
 });
+
+test("release close accepts the private queue's milestone issue ids", async () => {
+  const milestoneIssue = "M3-L05";
+  const fx = fixture({ activeIssue: milestoneIssue });
+  try {
+    const result = await runFx(fx, { issueId: milestoneIssue });
+    assert.equal(result.record.issueId, milestoneIssue);
+    for (const file of ["task_plan.md", "findings.md", "progress.md"]) {
+      const text = readFileSync(path.join(fx.root, file), "utf8");
+      assert.match(text, /META_KIM_RELEASE_CLOSURE:M3-L05-v2\.9\.9-/u);
+    }
+    assert.equal(
+      existsSync(path.join(
+        fx.root,
+        ".meta-kim/state/default/planning-closures",
+        `${milestoneIssue}-${TAG}-${ATTEMPT}.json`,
+      )),
+      true,
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("release close still rejects issue ids outside the queue grammar", async () => {
+  for (const badIssue of ["M3-L05 extra", "LIVE", "P-12", "m3-l05"]) {
+    const fx = fixture({ activeIssue: badIssue });
+    try {
+      await assert.rejects(
+        runFx(fx, { issueId: badIssue }),
+        (error) => error.code === "issue_invalid",
+      );
+      for (const file of ["task_plan.md", "findings.md", "progress.md"]) {
+        assert.equal(
+          readFileSync(path.join(fx.root, file), "utf8"),
+          `# existing ${file}\n`,
+        );
+      }
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
