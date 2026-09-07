@@ -26,6 +26,75 @@ export const REPO_PROJECTION_LEDGER_PATH = "config/runtime-capability-evidence.j
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Roll every review freshness binding in the ledger to an explicit date.
+ *
+ * The freshness gates added in 3.0.9 (conservative_review observations and
+ * reviewState.lastReviewedAt) expire after `staleAfterDays` (default 30), so a
+ * healthy ledger still starts failing every validation until a human re-reviews
+ * the projection sources and re-dates the ledger. Doing that by hand means
+ * editing scattered dates across `matrix.lastReviewedAt`, each capability row's
+ * `reviewState`, and every `conservative_review` observation — easy to miss one.
+ *
+ * Like the digest recorder, this is an explicit maintainer action, never a
+ * silent read-time fallback: the mandatory `--rationale` names what the
+ * re-review actually checked, and a future date is refused.
+ */
+export function rollConservativeReviews(ledger, { date, rationale }) {
+  if (!ISO_DATE_RE.test(String(date ?? ""))) {
+    throw new Error(`--date must be YYYY-MM-DD, got: ${JSON.stringify(date)}`);
+  }
+  const rolled = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(rolled.getTime()) || rolled.toISOString().slice(0, 10) !== date) {
+    throw new Error(`--date is not a real calendar date: ${date}`);
+  }
+  if (rolled.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+    throw new Error(`--date is in the future: ${date}`);
+  }
+  if (!rationale || !rationale.trim() || rationale.trim().length < 8) {
+    throw new Error(
+      "--rationale is required (>= 8 chars) and must name what the re-review actually checked",
+    );
+  }
+
+  const next = structuredClone(ledger);
+  const updates = [];
+  const touched = (id, field, from) => {
+    if (from !== date) updates.push({ id, field, from: from ?? null, to: date });
+  };
+
+  if (next.matrix?.lastReviewedAt !== undefined) {
+    touched("matrix", "lastReviewedAt", next.matrix.lastReviewedAt);
+    next.matrix.lastReviewedAt = date;
+  }
+
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      for (const entry of node) walk(entry);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    const review = node.reviewState;
+    if (review && typeof review === "object") {
+      touched(node.id ?? "(row)", "reviewState.lastReviewedAt", review.lastReviewedAt);
+      review.lastReviewedAt = date;
+      review.rationale = rationale.trim();
+    }
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(next.matrix ?? {});
+
+  for (const observation of next.observations ?? []) {
+    if (observation?.observationClass !== "conservative_review") continue;
+    touched(observation.id, "observedAt", observation.observedAt);
+    observation.observedAt = date;
+  }
+
+  return { ledger: next, updates };
+}
+
 export function recordRepoProjectionDigests(ledger) {
   const next = structuredClone(ledger);
   const updates = [];
@@ -77,8 +146,45 @@ function collapseDigestBindings(json) {
 
 function main(argv) {
   const checkOnly = argv.includes("--check");
+  const rollReview = argv.includes("--roll-review");
   const ledgerPath = path.join(REPO_ROOT, REPO_PROJECTION_LEDGER_PATH);
   const source = readFileSync(ledgerPath, "utf8");
+
+  if (rollReview) {
+    const value = (name) => {
+      const equals = argv.find((entry) => entry.startsWith(`${name}=`));
+      if (equals) return equals.slice(name.length + 1);
+      const index = argv.indexOf(name);
+      return index >= 0 ? argv[index + 1] : undefined;
+    };
+    const date = value("--date") ?? new Date().toISOString().slice(0, 10);
+    const rationale = value("--rationale");
+    let rolled;
+    try {
+      rolled = rollConservativeReviews(JSON.parse(source), { date, rationale });
+    } catch (error) {
+      process.stderr.write(`${error.message}\n`);
+      return 1;
+    }
+    const trailingNewline = source.endsWith("\n") ? "\n" : "";
+    const rendered = `${collapseDigestBindings(JSON.stringify(rolled.ledger, null, 2))}${trailingNewline}`;
+    for (const update of rolled.updates) {
+      process.stdout.write(`${update.id} ${update.field}: ${update.from ?? "absent"} -> ${update.to}\n`);
+    }
+    if (rendered === source) {
+      process.stdout.write(`review bindings already rolled to ${date} (${REPO_PROJECTION_LEDGER_PATH})\n`);
+      return 0;
+    }
+    const { issues } = validateRuntimeEvidenceLedger(rolled.ledger);
+    if (issues.length > 0) {
+      process.stderr.write(`ledger still invalid after rolling reviews:\n- ${issues.join("\n- ")}\n`);
+      return 1;
+    }
+    writeFileSync(ledgerPath, rendered);
+    process.stdout.write(`rolled ${rolled.updates.length} review binding(s) to ${date}\n`);
+    return 0;
+  }
+
   const { ledger, updates } = recordRepoProjectionDigests(JSON.parse(source));
   const trailingNewline = source.endsWith("\n") ? "\n" : "";
   const rendered = `${collapseDigestBindings(JSON.stringify(ledger, null, 2))}${trailingNewline}`;
