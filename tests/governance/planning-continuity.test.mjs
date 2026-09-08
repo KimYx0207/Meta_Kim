@@ -419,6 +419,40 @@ test("automatic Claude lifecycle hooks silently no-op without a trusted project 
   assert.deepEqual(await readdir(root), []);
 });
 
+test("a hook payload without any run binding no-ops inside a governed project", async (t) => {
+  const sessionId = "claude-run-binding-session";
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await initializePlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+  await attestPlanningContinuity(input(root, sessionId, { runtime: "claude", ownerReview: true }));
+
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: root };
+  delete env.META_KIM_PROJECT_ROOT;
+  delete env.META_KIM_PLANNING_RUN_ID;
+  const runEvent = (event, payload) => spawnSync(process.execPath, [
+    path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+    "--event", event,
+    "--runtime", "claude",
+  ], { cwd: root, env, encoding: "utf8", input: JSON.stringify(payload) });
+
+  // Every key runIdentifier() accepts is absent, so the hook cannot tell which
+  // run it belongs to. Hosts have shipped payloads without a session id, and
+  // back then this path exited 1 and surfaced a non-blocking hook error on
+  // every edit; an unidentifiable run has to decline in silence instead.
+  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+    const result = runEvent(event, { cwd: root });
+    assert.equal(result.status, 0, `${event}: ${result.stderr}`);
+    assert.equal(result.stdout, "", `${event} wrote stdout`);
+    assert.equal(result.stderr, "", `${event} wrote stderr`);
+  }
+
+  // Without this the silence above is unattributable: an unresolved project
+  // root would suppress the same output through a different branch.
+  const bound = runEvent("SessionStart", { session_id: sessionId, cwd: root });
+  assert.equal(bound.status, 0, bound.stderr);
+  assert.match(JSON.parse(bound.stdout).hookSpecificOutput.additionalContext, /FILE task_plan\.md/u);
+});
+
 test("Claude lifecycle hooks accept an explicit CLAUDE_PROJECT_DIR without a marker", async (t) => {
   const sessionId = "claude-explicit-env-session";
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-kim-planning-claude-env-"));
