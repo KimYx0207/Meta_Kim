@@ -4915,15 +4915,17 @@ export function agentTeamsCandidateSkillPaths(runtimeName) {
     })),
     // The sibling probe reads the maintainer's disk beside the repo. Hermetic
     // validators (default-evidence runs whose assertions pin the orchestration
-    // packet) disable it so a machine-local checkout cannot flip selection;
-    // explicit META_KIM_DEP_ROOTS fixtures stay available in that mode.
-    ...(process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE === "1"
-      ? []
-      : [{
-          source: "sibling_dependency_checkout",
-          pathRef: "../agent-teams-playbook/SKILL.md",
-          filePath: path.join(rootParent, AGENT_TEAMS_PLAYBOOK_ID, "SKILL.md"),
-        }]),
+    // packet) suppress that read so a machine-local checkout cannot flip
+    // selection; explicit META_KIM_DEP_ROOTS fixtures stay available in that
+    // mode. Suppression removes the disk read, not the declaration: the search
+    // order is itself a contract, and callers assert where the sibling sits
+    // relative to the env roots and the runtime-global root.
+    {
+      source: "sibling_dependency_checkout",
+      pathRef: "../agent-teams-playbook/SKILL.md",
+      filePath: path.join(rootParent, AGENT_TEAMS_PLAYBOOK_ID, "SKILL.md"),
+      probeSuppressed: process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE === "1",
+    },
     ...runtimeGlobalCandidates,
   ];
 }
@@ -5031,12 +5033,17 @@ export async function resolveAgentTeamsPlaybookProvider(runtimeName) {
   );
   const candidates = [];
   for (const candidate of agentTeamsCandidateSkillPaths(runtimeName)) {
-    const skillText = await readTextIfExists(candidate.filePath);
+    const skillText = candidate.probeSuppressed
+      ? null
+      : await readTextIfExists(candidate.filePath);
     candidates.push({
       source: candidate.source,
       pathRef: candidate.pathRef,
       found: Boolean(skillText),
       version: parseAgentTeamsVersion(skillText),
+      // A suppressed probe reports the same `found: false` as a genuinely
+      // missing file, so the record says which one produced it.
+      probeSuppressed: candidate.probeSuppressed === true,
     });
   }
   const selectedCandidate = candidates.find((candidate) => candidate.found) ?? null;
