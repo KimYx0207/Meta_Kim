@@ -1010,11 +1010,30 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       assert.ok(
         marketResearch.capabilityNeed.includes("capability-discovery-and-retrieval")
       );
+      // findskill is registered reference_only / invokeAs: reference, so the
+      // shared provider boundary keeps it out of dynamic lane bindings and it
+      // stays reachable through the dedicated skillDiscovery slot instead. The
+      // property this lane proves is that candidates arrive through
+      // capabilityNeed matching, which holds without naming any one provider.
+      const marketResearchCandidates = marketResearch.capabilitySelection.candidateProviders;
+      assert.equal(
+        marketResearchCandidates.some((provider) => provider.id === "findskill"),
+        false,
+        "a reference-only dependency must not re-enter as a dynamic lane candidate"
+      );
+      const marketResearchMatchedTerms = [
+        ...new Set(marketResearchCandidates.flatMap((provider) => provider.matchedTerms ?? [])),
+      ];
       assert.ok(
-        marketResearch.capabilitySelection.candidateProviders.some(
-          (provider) => provider.id === "findskill"
+        marketResearchMatchedTerms.length > 0,
+        "market-research candidates must be bound by capabilityNeed terms"
+      );
+      assert.deepEqual(
+        marketResearchMatchedTerms.filter((term) =>
+          productExperienceTask.toLowerCase().includes(term)
         ),
-        "findskill should be discovered as a capability-discovery candidate, not injected by user wording"
+        [],
+        "candidates should be discovered through capabilityNeed, not injected by user wording"
       );
       assert.ok(
         rows.every(
