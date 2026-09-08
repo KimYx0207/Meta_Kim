@@ -19,30 +19,41 @@ import { fileURLToPath } from "node:url";
 import {
   digestRepositorySource,
   repositorySourcePath,
+  validateRuntimeCapabilityClaims,
   validateRuntimeEvidenceLedger,
 } from "./runtime-capability-evidence.mjs";
 
 export const REPO_PROJECTION_LEDGER_PATH = "config/runtime-capability-evidence.json";
+export const RUNTIME_CAPABILITY_MATRIX_PATH = "config/runtime-capability-matrix.json";
+const MATRIX_PATH = RUNTIME_CAPABILITY_MATRIX_PATH;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Roll every review freshness binding in the ledger to an explicit date.
+ * Roll every review freshness binding to an explicit date, across BOTH real
+ * config files the 3.0.9 freshness gates read:
  *
- * The freshness gates added in 3.0.9 (conservative_review observations and
- * reviewState.lastReviewedAt) expire after `staleAfterDays` (default 30), so a
- * healthy ledger still starts failing every validation until a human re-reviews
- * the projection sources and re-dates the ledger. Doing that by hand means
- * editing scattered dates across `matrix.lastReviewedAt`, each capability row's
- * `reviewState`, and every `conservative_review` observation — easy to miss one.
+ * - config/runtime-capability-matrix.json: `matrix.lastReviewedAt` and each
+ *   capability row's `reviewState.lastReviewedAt` (validated at
+ *   runtime-capability-evidence.mjs:372 and :426)
+ * - config/runtime-capability-evidence.json: every `conservative_review`
+ *   observation's `observedAt` (validated at :435)
+ *
+ * Rolling only one file leaves the other half of the staleness issues red —
+ * the matrix carries the large majority of the bindings.
+ *
+ * Per-row `rationale` values are preserved: each capability row records why it
+ * was judged conservative, and a single blanket sentence must not overwrite
+ * 120 distinct rationales. The mandatory `--rationale` (the maintainer's
+ * statement of what this re-review actually checked) is only filled into rows
+ * whose rationale is missing or blank.
  *
  * Like the digest recorder, this is an explicit maintainer action, never a
- * silent read-time fallback: the mandatory `--rationale` names what the
- * re-review actually checked, and a future date is refused.
+ * silent read-time fallback. A future or non-calendar date is refused.
  */
-export function rollConservativeReviews(ledger, { date, rationale }) {
+export function rollReviewFreshness({ matrix, ledger }, { date, rationale, now }) {
   if (!ISO_DATE_RE.test(String(date ?? ""))) {
     throw new Error(`--date must be YYYY-MM-DD, got: ${JSON.stringify(date)}`);
   }
@@ -50,49 +61,81 @@ export function rollConservativeReviews(ledger, { date, rationale }) {
   if (Number.isNaN(rolled.getTime()) || rolled.toISOString().slice(0, 10) !== date) {
     throw new Error(`--date is not a real calendar date: ${date}`);
   }
-  if (rolled.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+  const nowMs = now ? Date.parse(now) : Date.now();
+  if (Number.isNaN(nowMs)) throw new Error(`--now is not an ISO timestamp: ${now}`);
+  if (rolled.getTime() > nowMs + 24 * 60 * 60 * 1000) {
     throw new Error(`--date is in the future: ${date}`);
   }
-  if (!rationale || !rationale.trim() || rationale.trim().length < 8) {
+  const cleanRationale = String(rationale ?? "").trim();
+  if (cleanRationale.length < 8) {
     throw new Error(
       "--rationale is required (>= 8 chars) and must name what the re-review actually checked",
     );
   }
 
-  const next = structuredClone(ledger);
   const updates = [];
-  const touched = (id, field, from) => {
-    if (from !== date) updates.push({ id, field, from: from ?? null, to: date });
-  };
 
-  if (next.matrix?.lastReviewedAt !== undefined) {
-    touched("matrix", "lastReviewedAt", next.matrix.lastReviewedAt);
-    next.matrix.lastReviewedAt = date;
+  const nextMatrix = structuredClone(matrix);
+  if (!nextMatrix || typeof nextMatrix !== "object") {
+    throw new Error("matrix is required (config/runtime-capability-matrix.json)");
   }
-
-  const walk = (node) => {
+  if (nextMatrix.lastReviewedAt !== undefined) {
+    if (nextMatrix.lastReviewedAt !== date) {
+      updates.push({
+        file: MATRIX_PATH,
+        id: "matrix",
+        field: "lastReviewedAt",
+        from: nextMatrix.lastReviewedAt ?? null,
+        to: date,
+      });
+    }
+    nextMatrix.lastReviewedAt = date;
+  }
+  const walkRows = (node) => {
     if (Array.isArray(node)) {
-      for (const entry of node) walk(entry);
+      for (const entry of node) walkRows(entry);
       return;
     }
     if (!node || typeof node !== "object") return;
     const review = node.reviewState;
     if (review && typeof review === "object") {
-      touched(node.id ?? "(row)", "reviewState.lastReviewedAt", review.lastReviewedAt);
+      if (review.lastReviewedAt !== date) {
+        updates.push({
+          file: MATRIX_PATH,
+          id: node.id ?? node.capability ?? "(row)",
+          field: "reviewState.lastReviewedAt",
+          from: review.lastReviewedAt ?? null,
+          to: date,
+        });
+      }
       review.lastReviewedAt = date;
-      review.rationale = rationale.trim();
+      if (!String(review.rationale ?? "").trim()) {
+        review.rationale = cleanRationale;
+      }
     }
-    for (const value of Object.values(node)) walk(value);
+    for (const value of Object.values(node)) walkRows(value);
   };
-  walk(next.matrix ?? {});
+  walkRows(nextMatrix.platforms ?? {});
 
-  for (const observation of next.observations ?? []) {
+  if (!ledger || typeof ledger !== "object" || !Array.isArray(ledger.observations)) {
+    throw new Error("ledger is required (config/runtime-capability-evidence.json)");
+  }
+  const nextLedger = structuredClone(ledger);
+  for (const observation of nextLedger.observations) {
     if (observation?.observationClass !== "conservative_review") continue;
-    touched(observation.id, "observedAt", observation.observedAt);
+    if (observation.observedAt !== date) {
+      updates.push({
+        file: REPO_PROJECTION_LEDGER_PATH,
+        id: observation.id,
+        field: "observedAt",
+        from: observation.observedAt ?? null,
+        to: date,
+      });
+    }
     observation.observedAt = date;
   }
 
-  return { ledger: next, updates };
+  return { matrix: nextMatrix, ledger: nextLedger, updates };
 }
 
 export function recordRepoProjectionDigests(ledger) {
@@ -159,29 +202,52 @@ function main(argv) {
     };
     const date = value("--date") ?? new Date().toISOString().slice(0, 10);
     const rationale = value("--rationale");
-    let rolled;
+    const matrixPath = path.join(REPO_ROOT, RUNTIME_CAPABILITY_MATRIX_PATH);
+    let pair;
     try {
-      rolled = rollConservativeReviews(JSON.parse(source), { date, rationale });
+      pair = {
+        matrix: JSON.parse(readFileSync(matrixPath, "utf8")),
+        ledger: JSON.parse(source),
+      };
+      pair = rollReviewFreshness(pair, { date, rationale });
     } catch (error) {
       process.stderr.write(`${error.message}\n`);
       return 1;
     }
     const trailingNewline = source.endsWith("\n") ? "\n" : "";
-    const rendered = `${collapseDigestBindings(JSON.stringify(rolled.ledger, null, 2))}${trailingNewline}`;
-    for (const update of rolled.updates) {
-      process.stdout.write(`${update.id} ${update.field}: ${update.from ?? "absent"} -> ${update.to}\n`);
+    const renderedLedger = `${collapseDigestBindings(JSON.stringify(pair.ledger, null, 2))}${trailingNewline}`;
+    const renderedMatrix = `${JSON.stringify(pair.matrix, null, 2)}\n`;
+    for (const update of pair.updates) {
+      const from = update.from ?? "absent";
+      process.stdout.write(`${update.file} ${update.id} ${update.field}: ${from} -> ${update.to}\n`);
     }
-    if (rendered === source) {
-      process.stdout.write(`review bindings already rolled to ${date} (${REPO_PROJECTION_LEDGER_PATH})\n`);
-      return 0;
-    }
-    const { issues } = validateRuntimeEvidenceLedger(rolled.ledger);
+    // Rolling reviews repairs freshness only; any other ledger/matrix problem
+    // must stay failing rather than be written over by this tool.
+    const { issues } = validateRuntimeCapabilityClaims(pair.matrix, pair.ledger);
+    const freshnessIssues = issues.filter(
+      (issue) =>
+        issue.includes("must be current, non-future, and fresh") ||
+        issue.includes("must bind fresh conservative_review evidence") ||
+        issue.includes("reviewState must be fresh, non-future, and explicit"),
+    );
     if (issues.length > 0) {
-      process.stderr.write(`ledger still invalid after rolling reviews:\n- ${issues.join("\n- ")}\n`);
+      process.stderr.write(
+        `ledger/matrix still invalid after rolling reviews:\n- ${issues.join("\n- ")}\n`,
+      );
       return 1;
     }
-    writeFileSync(ledgerPath, rendered);
-    process.stdout.write(`rolled ${rolled.updates.length} review binding(s) to ${date}\n`);
+    if (freshnessIssues.length > 0) {
+      process.stderr.write(
+        `freshness issues survived the roll; refusing to write:\n- ${freshnessIssues.join("\n- ")}\n`,
+      );
+      return 1;
+    }
+    if (renderedLedger !== source) writeFileSync(ledgerPath, renderedLedger);
+    const matrixSource = readFileSync(matrixPath, "utf8");
+    if (renderedMatrix !== matrixSource) writeFileSync(matrixPath, renderedMatrix);
+    process.stdout.write(
+      `rolled ${pair.updates.length} review binding(s) to ${date} across ${RUNTIME_CAPABILITY_MATRIX_PATH} and ${REPO_PROJECTION_LEDGER_PATH}\n`,
+    );
     return 0;
   }
 
