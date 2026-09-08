@@ -8,6 +8,13 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.1.1] - 2026-09-08
+
+### Fixed
+
+- **`--roll-review` now completes the valid review-roll path instead of crashing during re-validation.** The command read `validateRuntimeCapabilityClaims`'s array return as `{ issues }` and threw after printing its planned updates. The read/roll/re-validate/write sequence is now tested through the file and CLI entry points. The command updates applicable bindings in both the capability matrix and evidence ledger and refuses to write if any problem it cannot repair survives. Review dates still require an explicit maintainer action and rationale; this release does not re-date existing evidence (PR #75).
+- **The roller is reachable through npm.** `npm run meta:runtime:evidence:roll-review` replaces having to type the script path.
+
 ## [3.1.0] - 2026-09-08
 
 ### Added
