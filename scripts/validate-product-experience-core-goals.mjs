@@ -8,6 +8,12 @@ import path from "node:path";
 import process from "node:process";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
 
+// Hermetic provider discovery: this validator pins the agent_teams_playbook
+// invocation row at "not_required", which only holds when a machine-local
+// sibling checkout cannot flip selection. See the seam test in
+// tests/meta-theory/agent-teams-provider-resolution-seam.test.mjs.
+process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE = "1";
+
 const PRODUCT_EXPERIENCE_TASK =
   "帮团队做一个内容工作台：成员能把零散素材整理成草稿，编辑审核后安排发布时间；失败时能看出原因并重试，不同成员权限不同。先完成可审查的方案和本地验证，不连接生产账号，也不要真实发布。";
 

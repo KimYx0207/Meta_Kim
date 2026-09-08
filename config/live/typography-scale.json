@@ -24,7 +24,7 @@
     { "name": "body", "ratio": 1, "role": "default readable prose and values" },
     { "name": "entity-title", "ratio": 1.22, "role": "title of a single entity such as a graph node card" },
     { "name": "view-title", "ratio": 1.34, "role": "title of a view, panel or dialog" },
-    { "name": "hero", "ratio": 1.78, "role": "the run identity line - the largest text on screen, and the only element allowed at this tier. It was named \"metric\" and sized six counters at once, which made six things compete to be the most important text in the band while the run title beside them was ellipsised at a smaller tier." }
+    { "name": "hero", "ratio": 1.78, "role": "reserved display tier; the execution surface leaves it unused so the compact run identity does not compete with the graph for space" }
   ],
   "leading": {
     "customPropertyPrefix": "--lh-",

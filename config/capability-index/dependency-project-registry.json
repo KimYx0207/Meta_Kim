@@ -853,7 +853,7 @@
         "risk": [
           "third_party_skill_requires_trust_review"
         ],
-        "routeEligibility": "external_reference",
+        "routeEligibility": "reference_only",
         "notFor": [
           "automatic execution without trust review",
           "direct agent creation without existing provider discovery"

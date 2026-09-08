@@ -47,6 +47,52 @@ function pathAtOrWithin(root, candidate) {
   );
 }
 
+const PROJECTION_PACKAGE_STORE_ROOT_ENV = "META_KIM_PROJECTION_PACKAGE_STORE_ROOT";
+
+/**
+ * Root-resolution seam for the immutable global projection-package store.
+ * The default is unchanged: <homeRoot>/.meta-kim/runtime/projection-packages.
+ * Setting META_KIM_PROJECTION_PACKAGE_STORE_ROOT to an absolute directory
+ * relocates only that store root; every store invariant (plain directory
+ * chains, home-bound containment, fixed digest layout) keeps being enforced,
+ * anchored on the relocated root instead of the user home. Relative or empty
+ * values fail closed so a drifted environment cannot silently split the
+ * store. The packaged global sync script still anchors on the real user home;
+ * this seam exists for test and diagnostic isolation of the store module.
+ */
+function projectionPackageStoreRoot(homeRoot) {
+  const override = process.env[PROJECTION_PACKAGE_STORE_ROOT_ENV];
+  if (typeof override === "string" && override.trim() !== "") {
+    if (!path.isAbsolute(override)) {
+      throw new Error(
+        `${PROJECTION_PACKAGE_STORE_ROOT_ENV} must be an absolute directory path`,
+      );
+    }
+    return path.resolve(override);
+  }
+  return path.join(
+    path.resolve(homeRoot),
+    ".meta-kim",
+    "runtime",
+    "projection-packages",
+  );
+}
+
+function projectionPackageStoreHome(homeRoot) {
+  const override = process.env[PROJECTION_PACKAGE_STORE_ROOT_ENV];
+  if (typeof override === "string" && override.trim() !== "") {
+    const storeRoot = projectionPackageStoreRoot(homeRoot);
+    const storeHome = path.dirname(path.dirname(path.dirname(storeRoot)));
+    if (!pathAtOrWithin(storeHome, storeRoot)) {
+      throw new Error(
+        `${PROJECTION_PACKAGE_STORE_ROOT_ENV} must keep the store root inside its home base`,
+      );
+    }
+    return storeHome;
+  }
+  return path.resolve(homeRoot);
+}
+
 async function lstatIfExists(filePath) {
   try {
     return await fs.lstat(filePath);
@@ -146,12 +192,7 @@ async function resolvePathExecutable(command, env) {
 
 async function createTrustedNpmRunner({ sourceRoot, homeRoot, env }) {
   const resolvedSourceRoot = path.resolve(sourceRoot);
-  const storeRoot = path.join(
-    path.resolve(homeRoot),
-    ".meta-kim",
-    "runtime",
-    "projection-packages",
-  );
+  const storeRoot = projectionPackageStoreRoot(homeRoot);
   const cleanEnv = sanitizeProjectionPackageEnvironment(env, {
     sourceRoot: resolvedSourceRoot,
     storeRoot,
@@ -575,6 +616,28 @@ function parseNpmPackFilePaths(stdout) {
   );
 }
 
+/**
+ * --no-bin-links keeps the extracted bytes equal to npm pack truth. Linking a
+ * bin runs bin-links' fixBin, which rewrites the CRLF shebang of the file named
+ * in "bin" to LF, so on a core.autocrlf=true checkout the packed and installed
+ * bytes of that one file diverge and the byte-exact first-party gate fails
+ * closed. Nothing reads the generated node_modules/.bin shims: the packaged CLI
+ * and sync script are launched by absolute path inside packageRoot.
+ */
+export function projectionInstallArgs(prefixDir, archivePath) {
+  return [
+    "install",
+    "--prefix",
+    prefixDir,
+    "--omit=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    "--no-bin-links",
+    archivePath,
+  ];
+}
+
 async function snapshotNpmPackSource(packageRoot, npmRuntime) {
   const stdout = npmRuntime.run([
     "pack",
@@ -783,18 +846,13 @@ export function resolveGlobalProjectionPackageLayout({
   const nameSegments = packageNameSegments(packageName);
   const version = assertVersion(packageVersion);
   const digest = assertDigest(packageTarballSha256);
-  const storeRoot = path.join(
-    path.resolve(homeRoot),
-    ".meta-kim",
-    "runtime",
-    "projection-packages",
-  );
+  const storeRoot = projectionPackageStoreRoot(homeRoot);
   const versionRoot = path.join(storeRoot, ...nameSegments, version);
   const digestDir = path.join(versionRoot, digest);
   const bundleDir = path.join(digestDir, BUNDLE_DIR);
   const packageRoot = path.join(bundleDir, "node_modules", ...nameSegments);
   return Object.freeze({
-    homeRoot: path.resolve(homeRoot),
+    homeRoot: projectionPackageStoreHome(homeRoot),
     storeRoot,
     versionRoot,
     digestDir,
@@ -1058,12 +1116,8 @@ export async function materializeGlobalProjectionPackage({
   env = process.env,
 } = {}) {
   const sourcePackageRoot = path.resolve(sourceRoot);
-  const fixedStoreRoot = path.join(
-    path.resolve(homeRoot),
-    ".meta-kim",
-    "runtime",
-    "projection-packages",
-  );
+  const fixedStoreRoot = projectionPackageStoreRoot(homeRoot);
+  const storeHome = projectionPackageStoreHome(homeRoot);
   if (pathAtOrWithin(fixedStoreRoot, sourcePackageRoot)) {
     throw new Error(
       "An unverified package inside the projection store cannot rematerialize itself",
@@ -1093,16 +1147,13 @@ export async function materializeGlobalProjectionPackage({
     );
 
     const provisionalRoot = path.join(
-      path.resolve(homeRoot),
-      ".meta-kim",
-      "runtime",
-      "projection-packages",
+      fixedStoreRoot,
       ...packageNameSegments(sourceManifest.name),
       sourceManifest.version,
     );
-    await assertPlainDirectoryChain(homeRoot, provisionalRoot, { allowMissing: true });
+    await assertPlainDirectoryChain(storeHome, provisionalRoot, { allowMissing: true });
     await fs.mkdir(provisionalRoot, { recursive: true });
-    await assertPlainDirectoryChain(homeRoot, provisionalRoot);
+    await assertPlainDirectoryChain(storeHome, provisionalRoot);
     const stageDir = path.join(
       provisionalRoot,
       `.projection-package-staged-${process.pid}-${randomUUID()}`,
@@ -1110,7 +1161,7 @@ export async function materializeGlobalProjectionPackage({
     await fs.mkdir(stageDir, { recursive: false });
     let promoted = false;
     return await runWithCleanup(async () => {
-      await assertPlainDirectoryChain(homeRoot, stageDir);
+      await assertPlainDirectoryChain(storeHome, stageDir);
       const packedResult = parseNpmPackResult(npmRuntime.run(
       [
         "pack",
@@ -1122,7 +1173,7 @@ export async function materializeGlobalProjectionPackage({
       ],
       sourcePackageRoot,
     ));
-    await assertPlainDirectoryChain(homeRoot, stageDir);
+    await assertPlainDirectoryChain(storeHome, stageDir);
     const archives = (await fs.readdir(stageDir)).filter((name) =>
       name.endsWith(".tgz")
     );
@@ -1178,7 +1229,7 @@ export async function materializeGlobalProjectionPackage({
       }
       try {
         return await verifyGlobalProjectionPackage(finalLayout.digestDir, {
-          homeRoot,
+          homeRoot: storeHome,
           expectedPackageName: sourceManifest.name,
           expectedPackageVersion: sourceManifest.version,
           expectedPackageTarballSha256: packageTarballSha256,
@@ -1197,21 +1248,9 @@ export async function materializeGlobalProjectionPackage({
 
     const stageBundleDir = path.join(stageDir, BUNDLE_DIR);
     await fs.mkdir(stageBundleDir, { recursive: true });
-    await assertPlainDirectoryChain(homeRoot, stageBundleDir);
-      npmRuntime.run(
-      [
-        "install",
-        "--prefix",
-        stageBundleDir,
-        "--omit=dev",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-        archivePath,
-      ],
-      stageDir,
-    );
-    await assertPlainDirectoryChain(homeRoot, stageBundleDir);
+    await assertPlainDirectoryChain(storeHome, stageBundleDir);
+    npmRuntime.run(projectionInstallArgs(stageBundleDir, archivePath), stageDir);
+    await assertPlainDirectoryChain(storeHome, stageBundleDir);
     await fs.rm(archivePath, { force: true });
 
     const stageLayout = {
@@ -1227,7 +1266,7 @@ export async function materializeGlobalProjectionPackage({
     };
     stageLayout.packageManifestPath = path.join(stageLayout.packageRoot, "package.json");
     stageLayout.syncScriptPath = path.join(stageLayout.packageRoot, SYNC_SCRIPT_RELATIVE);
-    await assertPlainDirectoryChain(homeRoot, stageLayout.packageRoot);
+    await assertPlainDirectoryChain(storeHome, stageLayout.packageRoot);
     const receipt = await buildReceipt(stageLayout, sourceSnapshotBeforePack);
     await fs.writeFile(
       stageLayout.receiptPath,
@@ -1239,11 +1278,11 @@ export async function materializeGlobalProjectionPackage({
     if (!stageClosure) {
       throw new Error("Staged projection package closure is unavailable");
     }
-    await assertPlainDirectoryChain(homeRoot, stageLayout.packageRoot);
+    await assertPlainDirectoryChain(storeHome, stageLayout.packageRoot);
 
     const verifyExactWinner = async () => {
       const winner = await verifyGlobalProjectionPackage(finalLayout.digestDir, {
-        homeRoot,
+        homeRoot: storeHome,
         expectedPackageName: sourceManifest.name,
         expectedPackageVersion: sourceManifest.version,
         expectedPackageTarballSha256: packageTarballSha256,
@@ -1297,7 +1336,7 @@ export async function materializeGlobalProjectionPackage({
       return false;
     };
     const promoteStagedCandidate = async () => {
-      await assertPlainDirectoryChain(homeRoot, finalLayout.versionRoot);
+      await assertPlainDirectoryChain(storeHome, finalLayout.versionRoot);
       try {
         await renameWithTransientRetryAsync(stageDir, finalLayout.digestDir, {
           rename: fs.rename,
@@ -1318,7 +1357,7 @@ export async function materializeGlobalProjectionPackage({
       });
     };
 
-    const releaseDigestLock = await acquireProjectionDigestLock(finalLayout, homeRoot);
+    const releaseDigestLock = await acquireProjectionDigestLock(finalLayout, storeHome);
     return await runWithCleanup(async () => {
       const existing = await lstatIfExists(finalLayout.digestDir);
       if (existing) {
@@ -1333,7 +1372,7 @@ export async function materializeGlobalProjectionPackage({
             finalLayout.versionRoot,
             `.projection-package-quarantine-${finalLayout.packageTarballSha256.slice(0, 12)}-${process.pid}-${randomUUID()}`,
           );
-          await assertHomeBound(quarantinePath, homeRoot);
+          await assertHomeBound(quarantinePath, storeHome);
           await quarantineIncompleteWinner(quarantinePath);
           const winner = await promoteStagedCandidate();
           if (winner) return winner;
@@ -1343,7 +1382,7 @@ export async function materializeGlobalProjectionPackage({
         if (winner) return winner;
       }
       return await verifyGlobalProjectionPackage(finalLayout.digestDir, {
-        homeRoot,
+        homeRoot: storeHome,
         expectedPackageName: sourceManifest.name,
         expectedPackageVersion: sourceManifest.version,
         expectedPackageTarballSha256: packageTarballSha256,
@@ -1378,8 +1417,13 @@ export async function findAuthoritativeGlobalProjectionPackage(
     expectedPackageVersion,
     expectedFirstPartyClosure = null,
     expectedSourcePackageContentClosure = null,
+    diagnostics = null,
   } = {},
 ) {
+  const refuse = (reason) => {
+    if (Array.isArray(diagnostics)) diagnostics.push({ reason });
+    return null;
+  };
   const expectedClosure = expectedFirstPartyClosure ??
     expectedSourcePackageContentClosure;
   if (
@@ -1389,13 +1433,10 @@ export async function findAuthoritativeGlobalProjectionPackage(
     !SHA256_RE.test(expectedClosure?.sha256 ?? "") ||
     !Number.isInteger(expectedClosure?.entryCount) ||
     expectedClosure.entryCount < 1
-  ) return null;
+  ) return refuse("manifest_identity_mismatch");
   const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
   const versionRoot = path.join(
-    path.resolve(homeRoot),
-    ".meta-kim",
-    "runtime",
-    "projection-packages",
+    projectionPackageStoreRoot(homeRoot),
     ...packageNameSegments(expectedPackageName),
     assertVersion(expectedPackageVersion),
   );
@@ -1414,20 +1455,19 @@ export async function findAuthoritativeGlobalProjectionPackage(
       String(right.installedAt ?? "").localeCompare(String(left.installedAt ?? ""))
     );
   const candidate = candidates[0];
-  if (!candidate) return null;
+  if (!candidate) return refuse("authority_not_recorded");
   try {
     const verified = await verifyGlobalProjectionPackage(candidate.path, {
       homeRoot,
       expectedPackageName,
       expectedPackageVersion,
-      expectedFirstPartyClosure: expectedClosure,
     });
     const closure = directoryClosureSync(verified.digestDir);
     if (
       !closure ||
       closure.sha256 !== candidate.directoryClosureSha256 ||
       closure.entryCount !== candidate.directoryClosureEntryCount
-    ) return null;
+    ) return refuse("manifest_bundle_mismatch");
     const required = [
       [PROJECTION_PACKAGE_PURPOSE.receipt, verified.receiptPath],
       [PROJECTION_PACKAGE_PURPOSE.packageManifest, verified.packageManifestPath],
@@ -1441,12 +1481,20 @@ export async function findAuthoritativeGlobalProjectionPackage(
           entry.category === CATEGORIES.C &&
           manifestFileMatches(entry, filePath)
         )
-      )) return verified;
+      )) {
+      // Diagnose source evolution only after the installed package and its
+      // ownership records have passed every integrity check.
+      if (verified.firstPartyClosure.sha256 !== expectedClosure.sha256 ||
+          verified.firstPartyClosure.entryCount !== expectedClosure.entryCount) {
+        return refuse("source_closure_mismatch");
+      }
+      return verified;
+    }
   } catch {
     // The newest authority for this exact version is invalid. Fail closed;
     // never fall back to an older digest or version.
   }
-  return null;
+  return refuse("bundle_verification_failed");
 }
 
 export async function recordGlobalProjectionPackage(recorder, verifiedPackage) {

@@ -217,6 +217,8 @@
       "id": "gstack",
       "repo": "garrytan/gstack",
       "installMethod": "gitCloneInstallScript",
+      "dependencyClass": "third_party_reference",
+      "installPolicy": "explicit_reference_opt_in",
       "targets": [
         "claude",
         "codex",

@@ -472,6 +472,212 @@ function firstString(value, keys) {
   return null;
 }
 
+// Some older governed artifacts flattened run boundaries into the same lane
+// list as executable work. Keep the raw packet untouched, but do not draw a
+// boundary as an agent node. The matcher is semantic and metadata-driven: it
+// first accepts an explicit packet kind, then compares the packet's lane
+// subject with a negated clause from the run task. It never names a particular
+// locale or boundary string.
+// These are protocol values, not substrings. A work type such as
+// `negative-testing` is still executable work and must not become a boundary
+// merely because it contains the word "negative".
+const NON_GOAL_PACKET_KIND_VALUES = new Set([
+  "non_goal",
+  "non_goal_boundary",
+  "non_goal_constraint",
+  "constraint",
+  "boundary",
+  "scope_guard",
+  "scope_exclusion",
+]);
+const NEGATED_BOUNDARY_PATTERN = /^(?:不(?!同)|不要|无需|无须|禁止|勿|no\b|not\b|without\b|never\b|do\s+not\b|don't\b)/iu;
+
+function normalizePacketClassificationValue(value) {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s-]+/gu, "_");
+}
+
+function normalizeBoundaryText(value) {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/["'“”「」『』]/gu, "")
+    .replace(/[-_:：，,。.;；()[\]{}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function boundaryClauseRecords(artifact) {
+  const records = [];
+  const add = (value, source, split = false) => {
+    const values = Array.isArray(value) ? value : [value];
+    for (const raw of values) {
+      if (typeof raw !== "string") continue;
+      const candidates = split ? raw.split(/[;；\n]+/u) : [raw];
+      const expandedCandidates = candidates.flatMap((candidate) =>
+        NEGATED_BOUNDARY_PATTERN.test(candidate.trim())
+          ? candidate.split(/[、，,]/u)
+          : [candidate],
+      );
+      for (const candidate of expandedCandidates) {
+        const text = candidate.trim().replace(/^["'“”「」『』\s]+|["'“”「」『』\s]+$/gu, "");
+        if (!text || !NEGATED_BOUNDARY_PATTERN.test(text)) continue;
+        const normalized = normalizeBoundaryText(text);
+        if (!normalized || records.some((record) => record.normalized === normalized)) continue;
+        records.push({ text, normalized, source });
+      }
+    }
+  };
+
+  add(firstString(artifact, ["task"]), "artifact.task", true);
+  add(firstString(artifact?.run, ["task"]), "artifact.run.task", true);
+  add(firstString(artifact?.requestRecord, ["task"]), "artifact.requestRecord.task", true);
+  add(artifact?.intentPacket?.nonGoals, "artifact.intentPacket.nonGoals");
+  add(artifact?.coreLoop?.intentPacket?.nonGoals, "artifact.coreLoop.intentPacket.nonGoals");
+  return records;
+}
+
+function quotedBoundarySubject(value) {
+  if (typeof value !== "string") return null;
+  const match = /["“「『]([^"”」』]+)["”」』]/u.exec(value);
+  return match?.[1]?.trim() || null;
+}
+
+function workerPacketBoundarySubject(packet) {
+  for (const key of ["businessFlowLaneLabel", "laneLabel", "todayTask", "coreProblem", "description", "task", "label"]) {
+    const quoted = quotedBoundarySubject(packet?.[key]);
+    if (quoted) return quoted;
+  }
+  for (const key of ["businessFlowLaneId", "roleInstanceId", "shardKey", "laneId", "taskLabel", "laneLabel", "label"]) {
+    const value = firstString(packet, [key]);
+    if (!value) continue;
+    const subject = value
+      .replace(/^exec[-_:]?/iu, "")
+      .replace(/[-_:]+\d+$/u, "")
+      .replace(/^worker[-_:]?/iu, "")
+      .replace(/[-_:]+/gu, " ")
+      .trim();
+    if (subject) return subject;
+  }
+  return null;
+}
+
+function explicitNonGoalPacketSource(packet, index) {
+  for (const key of ["graphRole", "graphNodeKind", "semanticClass", "scopeClass", "taskKind", "packetKind", "workType"]) {
+    const value = firstString(packet, [key]);
+    if (value && NON_GOAL_PACKET_KIND_VALUES.has(normalizePacketClassificationValue(value))) {
+      return `workerTaskPackets[${index}].${key}`;
+    }
+  }
+  for (const key of ["isNonGoal", "nonGoal", "isConstraint", "constraint"]) {
+    if (packet?.[key] === true) return `workerTaskPackets[${index}].${key}`;
+  }
+  return null;
+}
+
+function packetExecutionEvidence(artifact, packet) {
+  const runId = normalizeLiveRunId(artifact?.runId || artifact?.run?.runId);
+  const taskId = taskIdFrom(packet);
+  if (!runId || !taskId) return [];
+  const matches = (item, fallbackTaskId = null) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    if (!recordBelongsToRun(item, runId)) return false;
+    const itemTaskId = exactTaskId(item.taskPacketId) || exactTaskId(item.taskId) || exactTaskId(item.bindingRef);
+    return itemTaskId === taskId || (!itemTaskId && fallbackTaskId === taskId);
+  };
+  const hostEvidence = [
+    ...boundedArray(artifact?.coreLoop?.runtimeInvocationPlanPacket?.evidence, LIVE_MAX_EVIDENCE),
+    ...boundedArray(artifact?.runtimeInvocationPlanPacket?.evidence, LIVE_MAX_EVIDENCE),
+    ...boundedArray(artifact?.hostInvocationEvidence, LIVE_MAX_EVIDENCE),
+  ].filter((item) =>
+    matches(item) && item.proofValid === true && item.synthetic !== true && evidenceShowsActualInvocation(item));
+  const resultEvidence = [
+    ...boundedArray(artifact?.workerResultPackets, LIVE_MAX_NODES),
+    ...boundedArray(artifact?.workerLifecycle, LIVE_MAX_NODES),
+  ].filter((result) => recordBelongsToRun(result, runId) && taskIdFrom(result) === taskId)
+    .flatMap((result) => boundedArray(result?.workerExecutionEvidence, LIVE_MAX_EVIDENCE)
+      .map((item) => ({ item, parentTaskId: taskIdFrom(result) })))
+    .filter(({ item, parentTaskId }) =>
+      matches(item, parentTaskId) && !evidenceIsStructuralOnly(item) && (
+        evidenceShowsActualInvocation(item) ||
+        TRUSTED_TERMINAL_STATUSES.has(normalizeStatus(firstString(item, ["status", "resultStatus", "result"])))
+      ))
+    .map(({ item }) => item);
+  return [...hostEvidence, ...resultEvidence];
+}
+
+function sanitizeClassificationConflict(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.kind !== "non_goal" || value.reason !== "execution_evidence") return null;
+  const label = safeNullableText(value.label, 120);
+  if (!label) return null;
+  const source = value.source === "artifact.task" || value.source === "artifact.run.task" || value.source === "artifact.requestRecord.task"
+    || /^workerTaskPackets\[\d+\]\.[A-Za-z][A-Za-z0-9_]*$/u.test(String(value.source ?? ""))
+    ? String(value.source)
+    : null;
+  if (!source) return null;
+  return { kind: "non_goal", label, source, reason: "execution_evidence" };
+}
+
+function classifyLiveWorkerPackets(artifact, packets) {
+  const clauses = boundaryClauseRecords(artifact);
+  const graphPackets = [];
+  const nonGoalConstraints = [];
+  for (const [index, packet] of packets.entries()) {
+    const explicitSource = explicitNonGoalPacketSource(packet, index);
+    const subject = workerPacketBoundarySubject(packet);
+    const normalizedSubject = normalizeBoundaryText(subject);
+    const matchingClause = clauses.find((clause) => clause.normalized === normalizedSubject);
+    const source = explicitSource || matchingClause?.source || null;
+    if (!source) {
+      graphPackets.push(packet);
+      continue;
+    }
+    if (packetExecutionEvidence(artifact, packet).length > 0) {
+      graphPackets.push({
+        ...packet,
+        __classificationConflict: sanitizeClassificationConflict({
+          kind: "non_goal",
+          label: safeText(subject, "constraint", 120),
+          source,
+          reason: "execution_evidence",
+        }),
+      });
+      continue;
+    }
+    nonGoalConstraints.push({
+      taskPacketId: publicTaskBinding(taskIdFrom(packet)),
+      label: safeText(subject, "constraint", 120),
+      kind: "non_goal",
+      source,
+      graphVisibility: "constraint",
+    });
+  }
+  return {
+    graphPackets,
+    nonGoalConstraints: nonGoalConstraints.filter((record, index, all) =>
+      all.findIndex((candidate) => candidate.taskPacketId === record.taskPacketId && candidate.label === record.label) === index,
+    ),
+  };
+}
+
+function sanitizeNonGoalConstraints(value) {
+  return boundedArray(value, LIVE_MAX_NODES).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const label = safeNullableText(item.label, 120);
+    const taskPacketId = publicTaskBinding(item.taskPacketId);
+    if (!label || item.kind !== "non_goal" || item.graphVisibility !== "constraint") return [];
+    const source = item.source === "artifact.task" || item.source === "artifact.run.task" || item.source === "artifact.requestRecord.task"
+      ? item.source
+      : "worker_task_packet";
+    return [{ taskPacketId, label, kind: "non_goal", source, graphVisibility: "constraint" }];
+  }).filter((record, index, all) =>
+    all.findIndex((candidate) => candidate.taskPacketId === record.taskPacketId && candidate.label === record.label) === index,
+  );
+}
+
 function sourceEnvelope(kind, observedAt, stale) {
   return {
     kind,
@@ -509,6 +715,10 @@ function durableOnlySnapshot(durable, { observedAt, stale, active }) {
     substanceClass: substance.substanceClass,
     ...conversationLinkProjection(durable, run.runId),
     ...publicDisplay(run.status, { active: runActive, structuralOnly: false }),
+    ...(substance.substanceClass === "activation_only" ? {
+      displayState: "unreported",
+      statusReason: "只登记了启动，尚未收到执行回写。",
+    } : {}),
   };
   return {
     schemaVersion: LIVE_SNAPSHOT_SCHEMA_VERSION,
@@ -526,6 +736,7 @@ function durableOnlySnapshot(durable, { observedAt, stale, active }) {
     workspace: workspaceProjection(null),
     contextTransfers: [],
     scheduling: null,
+    nonGoalConstraints: [],
     eventIndex: 0,
     eventCount: 0,
     counts: {
@@ -563,6 +774,7 @@ function emptySnapshot(observedAt, kind = "empty", stale = true) {
     workspace: workspaceProjection(null),
     contextTransfers: [],
     scheduling: null,
+    nonGoalConstraints: [],
     permissions: permissions(),
     graphAvailability: {
       state: "no_run_selected",
@@ -1076,18 +1288,48 @@ function evidenceShowsActualInvocation(item) {
   return LIVE_OBSERVED_INVOCATION_STATES.has(state) || LIVE_OBSERVED_INVOCATION_STATES.has(resultStatus);
 }
 
-const OBSERVED_ACTIVE_STATES = new Set(["invoked", "returned", "started", "running", "in_progress", "accepted"]);
-const OBSERVED_TERMINAL_STATES = new Set(["completed", "verified", "applied"]);
+const OBSERVED_ACTIVE_STATES = new Set(["invoked", "started", "running", "in_progress", "accepted"]);
+const OBSERVED_TERMINAL_STATES = new Set(["returned", "completed", "verified", "applied"]);
 const OBSERVED_FAILED_STATES = new Set(["failed"]);
+
+/**
+ * Whether an observed aggregate counts as "this worker is executing now".
+ *
+ * The aggregate `aggregateObservedStatusForTask` collapses to the word
+ * "active", while a stored compact file could carry the raw row state it was
+ * built from. Both mean the same thing here, so both are admitted — but only
+ * for the active family. Observed terminal states deliberately do NOT count:
+ * observation may say "running", never "completed".
+ */
+function observedStatusCountsAsActive(state) {
+  return state === "active" || OBSERVED_ACTIVE_STATES.has(state);
+}
 
 function aggregateObservedStatusForTask(hostEvidence, taskId) {
   const rows = evidenceForTask(hostEvidence, taskId).filter(evidenceShowsActualInvocation);
   if (!rows.length) return { state: null, count: 0, lastAt: null };
+  // A start and terminal record can share one invocation id. Count its latest
+  // state, not every historical state; unrelated invocations remain independent.
+  const latestByInvocation = new Map();
+  const unbound = [];
+  for (const row of rows) {
+    const id = row.eventId || row.toolCallId || row.invocationId;
+    if (!id) { unbound.push(row); continue; }
+    const key = JSON.stringify([row.family, row.providerId, id]);
+    const previous = latestByInvocation.get(key);
+    const at = Date.parse(row.occurredAt || row.observedAt);
+    const previousAt = Date.parse(previous?.occurredAt || previous?.observedAt);
+    const state = String(row.state || row.resultStatus || "").trim().toLowerCase();
+    const terminal = OBSERVED_TERMINAL_STATES.has(state) || OBSERVED_FAILED_STATES.has(state);
+    if (!previous || (Number.isFinite(at) && (!Number.isFinite(previousAt) || at > previousAt || (at === previousAt && terminal)))) {
+      latestByInvocation.set(key, row);
+    }
+  }
   let active = 0;
   let terminal = 0;
   let failed = 0;
   let lastAt = null;
-  for (const row of rows) {
+  for (const row of [...latestByInvocation.values(), ...unbound]) {
     const state = String(row?.state || row?.resultStatus || "").trim().toLowerCase();
     if (OBSERVED_FAILED_STATES.has(state)) failed += 1;
     else if (OBSERVED_TERMINAL_STATES.has(state)) terminal += 1;
@@ -1500,6 +1742,7 @@ function fitLiveProjectionToBudget(value, maxBytes) {
   projection.eventCount = projection.replay.length;
   projection.session.nodeCount = projection.nodes.length;
   projection.session.eventCount = projection.replay.length;
+  projection.session.constraintCount = sanitizeNonGoalConstraints(projection.nonGoalConstraints).length;
   projection.visibleCounts = {
     nodes: projection.nodes.length,
     edges: projection.edges.length,
@@ -1538,6 +1781,7 @@ function fitLiveProjectionToBudget(value, maxBytes) {
       workspace: projection.workspace,
       contextTransfers: [],
       scheduling: null,
+      nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),
       eventIndex: 0,
       eventCount: 0,
       counts: projection.counts,
@@ -1575,6 +1819,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
         })),
     LIVE_MAX_NODES - 2,
   );
+  const { graphPackets, nonGoalConstraints } = classifyLiveWorkerPackets(artifact, packets);
   const runTask = readableRunTask(artifact);
   const runTitle = readableRunTitle(artifact, runTask);
   const results = liveWorkerResultMap(artifact, runId);
@@ -1582,10 +1827,11 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   const structuralOnly = artifactIsStructuralOnly(artifact);
   const conversation = conversationLinkProjection(artifact, runId);
   const nodeByTaskId = new Map();
-  const workerNodes = packets.map((packet, index) => {
+  const workerNodes = graphPackets.map((packet, index) => {
     const taskId = taskIdFrom(packet) || `${runId}:worker:${index + 1}`;
     const result = results.get(taskId) || null;
     const taskEvidence = safeExecutionEvidence(result, taskId);
+    const classificationConflict = sanitizeClassificationConflict(packet.__classificationConflict);
     let status = normalizeStatus(
       firstString(result, ["status", "resultStatus"]) || firstString(packet, ["status"]),
       "pending",
@@ -1606,12 +1852,24 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     const endMs = completedAt ? Date.parse(completedAt) : NaN;
     const role = firstString(packet, ["roleDisplayName", "businessRoleId", "ownerAgent", "owner"]);
     const scope = readableWorkerScope(packet);
-    const display = publicDisplay(status, {
-      active: false,
-      structuralOnly: structuralOnly || evidenceIsStructuralOnly(result),
-    });
     const observed = aggregateObservedStatusForTask(hostEvidence, taskId);
     const fileHeat = aggregateFileHeatForTask(hostEvidence, taskId);
+    // Trusted host evidence of an invocation is the one signal that can lift a
+    // declared-queued worker onto the screen as running. The declared lifecycle
+    // writer is safety-gated shut (host-event association is unverified by
+    // design), so without this derivation a worker that is verifiably
+    // executing renders as queued for the entire run. The lift is deliberately
+    // narrow: only a queued/pending declaration ("queued" normalizes to
+    // "pending" above), only up to "running", and never past the terminal
+    // guards — observed completion still requires bound proof like any other
+    // terminal claim, and in_doubt stays in doubt.
+    const observedOnly = status === "pending" && observedStatusCountsAsActive(observed.state);
+    const resolvedStatus = observedOnly ? "running" : status;
+    const nodeActive = status === "active" || observedOnly;
+    const display = publicDisplay(resolvedStatus, {
+      active: nodeActive,
+      structuralOnly: structuralOnly || evidenceIsStructuralOnly(result),
+    });
     const declaredObservedMismatch = observed.state !== null && observed.state !== status && observed.state !== "completed" && status !== "in_doubt";
     const terminalProofValid = taskEvidence.some((item) => item?.proofValid === true && ["completed", "failed", "blocked", "cancelled"].includes(item?.status));
     return {
@@ -1628,15 +1886,18 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
         ? "execution"
         : normalizeStage(firstString(packet, ["stage", "currentStage", "stageKey"])),
       parentId: null,
-      status,
-      active: false,
+      status: resolvedStatus,
+      active: nodeActive,
       ...display,
       declaredStatus: status,
+      observedOnly,
+      declaredNotStarted: status === "pending" && observed.count === 0,
       observedStatus: observed.state,
       observedCount: observed.count,
       observedAt: observed.lastAt,
       declaredObservedMismatch,
       terminalProofValid,
+      classificationConflict,
       fileHeat,
       ownerAgent,
       runtime: telemetry.runtime.value || "unavailable",
@@ -1685,7 +1946,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   });
 
   const groupRecords = new Map();
-  for (const [index, packet] of packets.entries()) {
+  for (const [index, packet] of graphPackets.entries()) {
     const taskId = taskIdFrom(packet) || `${runId}:worker:${index + 1}`;
     const groupKey = exactTaskId(packet?.parallelGroup) || "execution";
     if (!groupRecords.has(groupKey)) groupRecords.set(groupKey, []);
@@ -1697,7 +1958,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     label: groupKey === "execution" ? "Execution lanes" : safeText(groupKey, `Workflow ${index + 1}`, 80),
     stage: "execution",
     status: aggregateNodeStatus(workerNodes.filter((node) => childIds.includes(node.id))),
-    active: false,
+    active: workerNodes.some((node) => childIds.includes(node.id) && node.active === true),
     parentId: null,
     ownerAgent: safeText(artifact?.dispatchEnvelopePacket?.ownerAgent, "in_doubt", 96),
     runtime: "unavailable",
@@ -1768,7 +2029,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     evidenceCount: 0,
   };
   for (const workflow of workflowNodes) workflow.parentId = mainNode.id;
-  for (const packet of packets) {
+  for (const packet of graphPackets) {
     const taskId = taskIdFrom(packet);
     const node = workerNodes.find((candidate) => candidate.id === nodeByTaskId.get(taskId));
     const groupKey = exactTaskId(packet?.parallelGroup) || "execution";
@@ -1794,7 +2055,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     const workflowId = publicId("workflow", `${runId}:${groupKey}`);
     for (const childId of childIds) edges.push({ from: workflowId, to: childId, kind: "contains" });
   }
-  for (const packet of packets) {
+  for (const packet of graphPackets) {
     const target = nodeByTaskId.get(taskIdFrom(packet));
     for (const dependency of boundedArray(packet?.dependsOn, 32)) {
       const from = nodeByTaskId.get(exactTaskId(dependency));
@@ -1806,7 +2067,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   const contextTransfers = contextTransferProjection(
     artifact,
     runId,
-    packets,
+    graphPackets,
     nodeByTaskId,
     new Set(nodes.map((node) => node.id)),
   );
@@ -1828,13 +2089,22 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   let runStatus = normalizeStatus(artifact?.status, aggregateNodeStatus(workerNodes));
   if (TRUSTED_TERMINAL_STATUSES.has(runStatus) && !runTerminalStatusIsProven(artifact, runId, runStatus)) runStatus = "in_doubt";
   mainNode.status = runStatus;
-  const runDisplay = publicDisplay(runStatus, { active: false, structuralOnly });
-  const applyInactiveDisplay = (node) => Object.assign(node, publicDisplay(node.status, {
-    active: false,
+  // Run-level activeness is derived, not declared alone: the record saying
+  // "active", or any worker node the projection itself marked active (declared
+  // active, or lifted to running by trusted observation). Freshness is
+  // intentionally not decided here — a projection describes the record it was
+  // built from; the snapshot layer is where an observation too old to describe
+  // the present must stop counting.
+  const anyWorkerActive = workerNodes.some((node) => node.active === true);
+  const runActive = runStatus === "active" || anyWorkerActive;
+  const runDisplay = publicDisplay(runStatus, { active: runActive, structuralOnly });
+  const applyRunDisplay = (node, active) => Object.assign(node, publicDisplay(node.status, {
+    active,
     structuralOnly,
   }));
-  applyInactiveDisplay(mainNode);
-  for (const workflow of workflowNodes) applyInactiveDisplay(workflow);
+  mainNode.active = runActive;
+  applyRunDisplay(mainNode, runActive);
+  for (const workflow of workflowNodes) applyRunDisplay(workflow, workflow.active === true);
   // Wave membership is resolved through the same task-id-to-node map the graph
   // already used, so a wave can only ever name a node that exists here. A
   // malformed scheduling policy degrades this one block instead of failing the
@@ -1855,7 +2125,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       title: runTitle,
       task: runTask,
       status: runStatus,
-      active: false,
+      active: runActive,
       ...runDisplay,
       ...conversation,
       executionEvidenceState: structuralOnly ? "structural_planning_only" : "recorded",
@@ -1870,7 +2140,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       sessionId: publicId("session", runId),
       title: runTitle,
       status: runStatus,
-      active: false,
+      active: runActive,
       ...runDisplay,
       ...conversation,
       recordOrigin: liveRecordOrigin(artifact),
@@ -1882,6 +2152,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       lastPromptSummary: "Prompt summary withheld",
       fileChangeCount: boundedArray(artifact?.executionResult?.fileCompletionList, 128).length,
       artifactCount: boundedArray(artifact?.sourceArtifacts, 128).length,
+      constraintCount: nonGoalConstraints.length,
       plannedCount: workerNodes.filter((node) => node.status === "pending").length,
       completedCount: workerNodes.filter((node) => node.status === "completed").length,
       failedCount: workerNodes.filter((node) => ["failed", "blocked"].includes(node.status)).length,
@@ -1915,6 +2186,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     contextTransfers,
     scheduling,
     declaredPlan: declaredStagePlan(artifact),
+    nonGoalConstraints,
     eventIndex: replay.length,
     eventCount: replay.length,
     counts: null,
@@ -2298,7 +2570,26 @@ function sanitizeCompactProjection(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const runId = normalizeLiveRunId(value?.run?.runId || value.runId);
   if (!runId) return null;
-  const rawNodes = boundedArray(value.nodes, LIVE_MAX_NODES);
+  const storedRawNodes = boundedArray(value.nodes, LIVE_MAX_NODES);
+  const storedWorkerRecords = storedRawNodes.filter((node) => node?.kind === "agent" && node?.isMain !== true);
+  const derivedBoundaryProjection = classifyLiveWorkerPackets(
+    { task: value?.run?.task },
+    storedWorkerRecords,
+  );
+  const suppressedTaskIds = new Set(
+    derivedBoundaryProjection.nonGoalConstraints
+      .map((record) => record.taskPacketId)
+      .filter(Boolean),
+  );
+  const rawNodes = storedRawNodes.filter((node) => {
+    if (node?.kind !== "agent" || node?.isMain === true) return true;
+    const taskPacketId = publicTaskBinding(taskIdFrom(node));
+    return !suppressedTaskIds.has(taskPacketId);
+  });
+  const nonGoalConstraints = sanitizeNonGoalConstraints([
+    ...boundedArray(value.nonGoalConstraints, LIVE_MAX_NODES),
+    ...derivedBoundaryProjection.nonGoalConstraints,
+  ]);
   const compactWorkers = rawNodes.filter((node) => node?.kind === "agent" && node?.isMain !== true);
   const structuralOnly = value?.run?.executionEvidenceState === "structural_planning_only" || (
     compactWorkers.length > 0 && compactWorkers.every((node) =>
@@ -2347,6 +2638,14 @@ function sanitizeCompactProjection(value) {
     if (TRUSTED_TERMINAL_STATUSES.has(status) && raw.kind === "agent" && raw.isMain !== true && !terminalProven) {
       status = "in_doubt";
     }
+    // A stored projection is untrusted input, but the observed-active facts it
+    // carries were minted by this module's own producer, so the vocabulary is
+    // known: whitelist rather than trust, then let the same rule that built the
+    // fact decide activeness again on read-back. Old files without these
+    // fields simply degrade to declared-only truth.
+    const observedOnly = raw.observedOnly === true && status === "active" && raw.kind === "agent" && raw.isMain !== true;
+    const observedStatus = ["active", "failed", "completed"].includes(raw.observedStatus) ? raw.observedStatus : null;
+    const nodeActive = raw.active === true || observedOnly;
     return {
       id,
       kind: raw.kind,
@@ -2359,8 +2658,13 @@ function sanitizeCompactProjection(value) {
       stage: normalizeStage(raw.stage),
       parentId: parentId && knownNodeIds.has(parentId) && parentId !== id ? parentId : null,
       status,
-      active: false,
-      ...publicDisplay(status, { active: false, structuralOnly }),
+      active: nodeActive,
+      ...publicDisplay(status, { active: nodeActive, structuralOnly }),
+      declaredStatus: normalizeStatus(raw.declaredStatus ?? raw.status, "in_doubt"),
+      observedOnly,
+      declaredNotStarted: raw.declaredNotStarted === true,
+      observedStatus,
+      classificationConflict: sanitizeClassificationConflict(raw.classificationConflict),
       ownerAgent: safeText(raw.ownerAgent, "unavailable", 96),
       runtime: runtimeObservation.value || "unavailable",
       runtimeObservation,
@@ -2373,6 +2677,7 @@ function sanitizeCompactProjection(value) {
       timing: { startedAt, completedAt, durationMs },
       firstAt: startedAt,
       lastAt: completedAt,
+      observedAt: safeTimestamp(raw.observedAt),
       durationMs,
       summary: safeText(raw.summary, "No safe execution summary is available", 180),
       terminalEvidence,
@@ -2427,6 +2732,11 @@ function sanitizeCompactProjection(value) {
       childCount: safeTransferCount(raw.childCount),
     };
   });
+  for (const node of sanitizedNodes) {
+    if (node.kind === "workflow") {
+      node.childCount = sanitizedNodes.filter((child) => child.parentId === node.id).length;
+    }
+  }
   const sanitizedEdges = boundedArray(value.edges, LIVE_MAX_EDGES).flatMap((edge) => {
     const from = safeId(edge?.from, null);
     const to = safeId(edge?.to, null);
@@ -2488,6 +2798,11 @@ function sanitizeCompactProjection(value) {
       runStatus = "in_doubt";
     }
   }
+  // The same run-level rule the fresh producer applies, rebuilt from the
+  // sanitized nodes so a stored file cannot claim activeness its own worker
+  // rows do not carry. Freshness remains the snapshot layer's call.
+  const readBackWorkerActive = sanitizedNodes.some((node) => node.kind === "agent" && node.isMain !== true && node.active === true);
+  const readBackRunActive = runStatus === "active" || readBackWorkerActive;
   // Reading back a stored projection, so the duplicates here come from whichever
   // build wrote the file rather than from this pass. The fold is the same one both
   // producers use, because a third wording of it is how the two producers came to
@@ -2513,8 +2828,8 @@ function sanitizeCompactProjection(value) {
     title: safeText(value.run?.title, "Governed run", 120),
     task: safeText(value.run?.task, "Governed execution", 240),
     status: runStatus,
-    active: false,
-    ...publicDisplay(runStatus, { active: false, structuralOnly }),
+    active: readBackRunActive,
+    ...publicDisplay(runStatus, { active: readBackRunActive, structuralOnly }),
     sourceRuntime,
     conversationLinkState,
     conversationDiscovery,
@@ -2550,8 +2865,8 @@ function sanitizeCompactProjection(value) {
       sessionId: publicId("session", runId),
       title: safeText(value.session?.title, run.title, 120),
       status: run.status,
-      active: false,
-      ...publicDisplay(run.status, { active: false, structuralOnly }),
+      active: readBackRunActive,
+      ...publicDisplay(run.status, { active: readBackRunActive, structuralOnly }),
       sourceRuntime: run.sourceRuntime,
       conversationLinkState,
       conversationDiscovery,
@@ -2569,6 +2884,7 @@ function sanitizeCompactProjection(value) {
       lastPromptSummary: safeText(value.session?.lastPromptSummary, "Prompt summary withheld", 180),
       fileChangeCount: safeTransferCount(value.session?.fileChangeCount),
       artifactCount: safeTransferCount(value.session?.artifactCount),
+      constraintCount: nonGoalConstraints.length,
       plannedCount: safeTransferCount(value.session?.plannedCount),
       completedCount: safeTransferCount(value.session?.completedCount),
       failedCount: safeTransferCount(value.session?.failedCount),
@@ -2586,6 +2902,7 @@ function sanitizeCompactProjection(value) {
     workspace: workspaceProjection(value),
     contextTransfers: safeCompactContextTransfers(value.contextTransfers, runId, sanitizedNodes),
     scheduling,
+    nonGoalConstraints,
     declaredPlan: sanitizeDeclaredPlan(value.declaredPlan),
     eventIndex: replay.length,
     eventCount: replay.length,
@@ -2721,6 +3038,31 @@ export function buildLiveSnapshot({
 
   const sameRunDurable = selectedDurable && durableRunId === projection.run.runId;
   const stale = Boolean(sameRunDurable && !durableFresh && !compatibleArtifact);
+  const structuralOnly = projection.run.executionEvidenceState === "structural_planning_only";
+  // Observed activeness may only describe the present while the record itself
+  // is fresh. The projection's aggregate says "invoked at some point"; a point
+  // ninety minutes ago is not a statement about now. Freshness is measured
+  // against the newest activity the projection can name — the run's own update
+  // time or a worker's last observation, whichever is later — and a run that
+  // already reached a trusted terminal state can never be observed back into
+  // activeness.
+  const projectedWorkerNodes = boundedArray(projection.nodes, LIVE_MAX_NODES)
+    .filter((node) => node?.kind === "agent" && node.isMain !== true);
+  let activityMs = Date.parse(safeTimestamp(projection.run.updatedAt) || "");
+  if (!Number.isFinite(activityMs)) activityMs = 0;
+  for (const node of projectedWorkerNodes) {
+    const observedMs = Date.parse(safeTimestamp(node?.observedAt) || "");
+    if (Number.isFinite(observedMs) && observedMs > activityMs) activityMs = observedMs;
+  }
+  const activityFresh = !isStale(activityMs > 0 ? new Date(activityMs).toISOString() : null, safeObservedAt, staleAfterMs);
+  // Run updates and sibling activity cannot renew this worker's observation.
+  const workerActivityFresh = (node) => node.observedOnly !== true
+    || !isStale(safeTimestamp(node.observedAt), safeObservedAt, staleAfterMs);
+  const projectionRunStatus = normalizeStatus(projection.run.status, "in_doubt");
+  const observedRunActive = activityFresh
+    && !structuralOnly
+    && !TRUSTED_TERMINAL_STATUSES.has(projectionRunStatus)
+    && (projectionRunStatus === "active" || projectedWorkerNodes.some((node) => node.active === true && workerActivityFresh(node)));
   const run = {
     ...projection.run,
     status: sameRunDurable && durableActive
@@ -2733,8 +3075,8 @@ export function buildLiveSnapshot({
       : normalizeStage(projection.run.currentStage),
     updatedAt: sameRunDurable && durableFresh ? durableUpdatedAt : safeTimestamp(projection.run.updatedAt),
   };
-  const runActive = Boolean(sameRunDurable && durableActive);
-  const structuralOnly = projection.run.executionEvidenceState === "structural_planning_only";
+  const runActive = Boolean(sameRunDurable && durableActive) || observedRunActive;
+  if (observedRunActive && ["pending"].includes(run.status)) run.status = "active";
   run.active = runActive;
   Object.assign(run, publicDisplay(run.status, { active: runActive, structuralOnly }));
   // Substance rides on every snapshot path, not only the artifact-less one, so a
@@ -2745,11 +3087,26 @@ export function buildLiveSnapshot({
   });
   run.substanceClass = substance.substanceClass;
 
-  const nodes = boundedArray(projection.nodes, LIVE_MAX_NODES).map((node) => ({
-    ...node,
-    active: runActive && normalizeStatus(node.status) === "active",
-    ...publicDisplay(node.status, { active: runActive, structuralOnly }),
-  }));
+  const nodes = boundedArray(projection.nodes, LIVE_MAX_NODES).map((node) => {
+    // An observed-running worker keeps its lifted status only while the run
+    // stays active by the rule above. Once the observation ages out, the node
+    // falls back to what was declared — the queued/pending truth — instead of
+    // asserting a present-tense run nobody has evidence for. Declared-active
+    // nodes were never lifted and keep their own status.
+    const declaredStatus = normalizeStatus(node.declaredStatus ?? node.status, "in_doubt");
+    const observedWorkerActive = node.observedOnly === true && runActive && workerActivityFresh(node);
+    const nodeStatus = node.observedOnly === true && !observedWorkerActive ? declaredStatus : node.status;
+    const nodeActive = runActive && (normalizeStatus(nodeStatus) === "active" || observedWorkerActive);
+    return {
+      ...node,
+      status: nodeStatus,
+      active: nodeActive,
+      // The display's `active` argument is run-level on purpose: it answers
+      // "is this queue still moving", which is what turns a pending worker
+      // into 排队中 rather than 未收到执行回写.
+      ...publicDisplay(nodeStatus, { active: runActive, structuralOnly }),
+    };
+  });
   const session = projection.session ? {
     ...projection.session,
     status: run.status,
@@ -2799,6 +3156,7 @@ export function buildLiveSnapshot({
     workspace: workspaceProjection(projection),
     contextTransfers,
     scheduling,
+    nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),
     declaredPlan: sanitizeDeclaredPlan(projection.declaredPlan),
     eventIndex: Number.isSafeInteger(projection.eventIndex) ? projection.eventIndex : projection.replay?.length || 0,
     eventCount: Number.isSafeInteger(projection.eventCount) ? projection.eventCount : projection.replay?.length || 0,

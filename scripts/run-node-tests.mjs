@@ -20,6 +20,16 @@ import { Worker } from "node:worker_threads";
 const require = createRequire(import.meta.url);
 const repoRoot = process.cwd();
 
+// Test runs must be hermetic: the agent-teams provider's
+// sibling_dependency_checkout probe reads whatever sits beside this repo on
+// the host, so on a machine that keeps a checkout there the tests pinning
+// `selected === false` would depend on the maintainer's disk instead of the
+// code. Explicit fixtures still use META_KIM_DEP_ROOTS. An explicitly set
+// value always wins over this default.
+if (process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE === undefined) {
+  process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE = "1";
+}
+
 function expandPattern(pattern) {
   const normalized = String(pattern)
     .replace(/^["']|["']$/g, "")

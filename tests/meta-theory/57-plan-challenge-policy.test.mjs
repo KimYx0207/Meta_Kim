@@ -1,10 +1,13 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
+  buildRouteBranchingOptions,
   buildPlanChallengeState,
   parsePlanChallengeControl,
   planChallengeAuthorizationBinding,
@@ -16,6 +19,27 @@ import { validateArtifactFile } from "../../scripts/validate-run-artifact.mjs";
 const CORE_LOOP_CONTRACT = JSON.parse(
   readFileSync(new URL("../../config/contracts/core-loop-contract.json", import.meta.url), "utf8"),
 );
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+function selectRoute(task, extraArgs = []) {
+  const result = spawnSync(process.execPath, [
+    "scripts/select-execution-route.mjs",
+    "--task",
+    task,
+    "--runtime",
+    "codex",
+    "--os",
+    "windows",
+    "--json",
+    ...extraArgs,
+  ], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
 
 function build(task, overrides = {}) {
   return buildPlanChallengeState({
@@ -988,6 +1012,349 @@ describe("57 - risk-adaptive plan challenge", () => {
       );
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("ordinary local-mutation work without alternatives stays inactive", () => {
+    const result = build("帮我实现登录功能修复。");
+
+    assert.equal(result.planChallengeState.active, false);
+    assert.deepEqual(result.planChallengeState.triggerReasons, []);
+    assert.equal(result.planChallengeState.phase, "inactive");
+    assert.equal(result.planChallengeState.pendingUserChoice.status, "not_required");
+    assert.deepEqual(result.unresolvedQuestions, []);
+  });
+
+  test("plain inclusive-or wording without alternatives does not activate branching", () => {
+    for (const task of [
+      "帮我修复登录功能，或者顺手更新一下依赖。",
+      "Review the login fix and maybe update the docs.",
+    ]) {
+      const result = build(task);
+      assert.equal(result.planChallengeState.active, false, task);
+      assert.deepEqual(result.planChallengeState.triggerReasons, [], task);
+    }
+  });
+
+  test("alternatives phrasing activates a branching decision and demands a user choice", () => {
+    for (const task of [
+      "方案A还是方案B，帮我定一下再动手。",
+      "这两条路线你选哪条：先重构还是先加功能？",
+      "should we use the local cache or the remote API for session storage?",
+      "Should we use the rebuild approach or the incremental approach first?",
+    ]) {
+      const result = build(task);
+      assert.equal(result.planChallengeState.active, true, task);
+      assert.ok(
+        result.planChallengeState.triggerReasons.includes("branching_decision"),
+        task,
+      );
+      assert.equal(result.planChallengeState.phase, "awaiting_user_answer", task);
+      assert.equal(
+        result.planChallengeState.pendingUserChoice.status,
+        "required_not_invoked",
+        task,
+      );
+      const routeQuestion = result.unresolvedQuestions.find(
+        (question) => question.questionId === "plan-challenge-route-selection",
+      );
+      assert.ok(routeQuestion, task);
+      assert.equal(routeQuestion.status, "open", task);
+      assert.equal(routeQuestion.recommendationState, "preference_only", task);
+      assert.equal(routeQuestion.recommendedAnswer, null, task);
+      assert.equal(
+        result.planChallengeState.pendingUserChoice.question.binding,
+        "plan-challenge-response:plan-challenge-route-selection",
+        task,
+      );
+    }
+  });
+
+  test("structural branching options activate the route-selection question with option lines", () => {
+    const result = build("帮我改进构建流程。", {
+      branchingOptions: [
+        { label: "迁移到 esbuild", summary: "最快，但需要重写配置" },
+        { label: "保留现有 webpack", summary: "零迁移成本，构建时间不变" },
+        { label: "混合方案" },
+      ],
+    });
+
+    assert.equal(result.planChallengeState.active, true);
+    assert.ok(result.planChallengeState.triggerReasons.includes("branching_decision"));
+    const routeQuestion = result.unresolvedQuestions.find(
+      (question) => question.questionId === "plan-challenge-route-selection",
+    );
+    assert.ok(routeQuestion);
+    assert.equal(routeQuestion.impactPriority, 85);
+    assert.ok(routeQuestion.question.includes("存在多条实质不同的可行路线"));
+    assert.ok(routeQuestion.question.includes("• 迁移到 esbuild — 最快，但需要重写配置"));
+    assert.ok(routeQuestion.question.includes("• 保留现有 webpack — 零迁移成本，构建时间不变"));
+    assert.ok(routeQuestion.question.includes("• 混合方案"));
+    assert.equal(routeQuestion.recommendationState, "preference_only");
+    assert.equal(routeQuestion.recommendedAnswer, null);
+    assert.equal(result.planChallengeState.phase, "awaiting_user_answer");
+  });
+
+  test("the real high-score subjective route exposes its must-ask choice card", () => {
+    const result = selectRoute("这个页面不好看，请提供方案A还是方案B让我选择布局");
+
+    assert.equal(result.recommendedRoute?.score, 94);
+    assert.equal(result.entryChoiceDecision?.choicePolicy, "must_ask");
+    assert.equal(result.entryChoiceDecision?.critical?.required, true);
+    assert.equal(result.entryChoiceDecision?.thinking?.required, true);
+    assert.equal(result.userChoiceNeeded, true);
+    assert.ok(result.decisionCard);
+    assert.ok(Array.isArray(result.decisionCard.options));
+    assert.ok(result.decisionCard.options.length >= 2);
+    assert.deepEqual(result.requiredUserChoiceIfAny, result.decisionCard);
+
+    const checkpointOptions = new Set(
+      (result.decisionCheckpoints ?? []).flatMap((checkpoint) => checkpoint.options ?? []),
+    );
+    const rankedRouteIds = new Set(
+      (result.rankedRoutes ?? []).map((route) => route.id).filter(Boolean),
+    );
+    const cardLabels = result.decisionCard.options.map((option) => option.label ?? option.id);
+    assert.equal(new Set(cardLabels).size, cardLabels.length);
+    assert.ok(
+      cardLabels.every((label) => checkpointOptions.has(label) || rankedRouteIds.has(label)),
+      JSON.stringify({ cardLabels, checkpointOptions: [...checkpointOptions], rankedRouteIds: [...rankedRouteIds] }),
+    );
+    assert.ok(
+      cardLabels.includes(result.decisionCard.recommendedDefault),
+      "the recommended default must be one of the real choice options",
+    );
+    assert.equal(result.routeExecutionGate?.handoffStatus, "awaiting_native_choice");
+    assert.equal(result.routeExecutionGate?.canEnterExecution, false);
+  });
+
+  test("a low-risk route does not gain a choice card from the policy projection", () => {
+    const result = selectRoute("修正文档里的一个错别字。");
+
+    assert.equal(result.entryChoiceDecision?.choicePolicy, "no_choice_needed");
+    assert.equal(result.userChoiceNeeded, false);
+    assert.equal(result.decisionCard, null);
+    assert.equal(result.requiredUserChoiceIfAny, null);
+  });
+
+  test("complementary worker lanes never become mutually exclusive route options", () => {
+    const routeOptions = buildRouteBranchingOptions({
+      workerTaskPackets: [
+        {
+          roleDisplayName: "frontend",
+          roleInstanceId: "ui",
+          parallelGroup: "implementation",
+        },
+        {
+          roleDisplayName: "backend",
+          roleInstanceId: "api",
+          parallelGroup: "implementation",
+        },
+        {
+          roleDisplayName: "test",
+          roleInstanceId: "qa",
+          dependsOn: ["api"],
+          parallelGroup: "verification",
+        },
+      ],
+      selectedExecutionRoute: {
+        routeExecutionGate: { handoffStatus: "ready_for_host_handoff" },
+      },
+    });
+
+    assert.deepEqual(routeOptions, []);
+    const result = build("帮我实现登录功能修复。", { branchingOptions: routeOptions });
+    assert.equal(result.planChallengeState.active, false);
+    assert.equal(result.planChallengeState.pendingUserChoice.status, "not_required");
+  });
+
+  test("the route selector decision card remains a required choice", () => {
+    const routeReport = {
+      workerTaskPackets: [
+        { roleDisplayName: "frontend", roleInstanceId: "ui" },
+        { roleDisplayName: "backend", roleInstanceId: "api" },
+      ],
+      selectedExecutionRoute: {
+        decisionCard: {
+          recommendedDefault: "incremental-route",
+          options: [
+            {
+              id: "incremental-route",
+              bestFor: "existing project",
+              benefit: "smallest scope",
+              cost: "slower migration",
+              risk: "partial support",
+              expectedResult: "bounded execution",
+              verification: "route validation",
+            },
+            {
+              id: "rebuild-route",
+              bestFor: "new architecture",
+              benefit: "clean boundary",
+              cost: "larger change",
+              risk: "higher migration cost",
+              expectedResult: "new route",
+              verification: "full review",
+            },
+          ],
+        },
+        routeExecutionGate: { handoffStatus: "awaiting_native_choice" },
+      },
+    };
+    const routeOptions = buildRouteBranchingOptions(routeReport);
+
+    assert.equal(routeOptions.length, 2);
+    assert.equal(routeOptions[0].label, "incremental-route");
+    assert.equal(routeOptions[0].recommended, true);
+    const result = build("帮我修复当前登录功能。", { branchingOptions: routeOptions });
+    assert.ok(result.planChallengeState.triggerReasons.includes("branching_decision"));
+    assert.equal(result.planChallengeState.pendingUserChoice.status, "required_not_invoked");
+
+    const settledRouteOptions = buildRouteBranchingOptions({
+      ...routeReport,
+      selectedExecutionRoute: {
+        ...routeReport.selectedExecutionRoute,
+        routeExecutionGate: { handoffStatus: "ready_for_host_handoff" },
+      },
+    });
+    assert.deepEqual(settledRouteOptions, []);
+  });
+
+  test("an explicitly settled route is not asked again because structural alternatives exist", () => {
+    const result = build("我已经决定采用本地缓存方案，不要切换到远程 API。", {
+      branchingOptions: [
+        { label: "本地缓存方案" },
+        { label: "远程 API" },
+      ],
+    });
+
+    assert.equal(result.planChallengeState.active, false);
+    assert.deepEqual(result.planChallengeState.triggerReasons, []);
+    assert.equal(result.planChallengeState.pendingUserChoice.status, "not_required");
+  });
+
+  test("exactly one recommended option becomes the recommendation; more or fewer do not", () => {
+    const single = build("帮我改进构建流程。", {
+      branchingOptions: [
+        { label: "迁移到 esbuild", summary: "最快", recommended: true },
+        { label: "保留现有 webpack", summary: "零成本" },
+      ],
+    });
+    const singleQuestion = single.unresolvedQuestions.find(
+      (question) => question.questionId === "plan-challenge-route-selection",
+    );
+    assert.equal(singleQuestion.recommendationState, "recommended");
+    assert.equal(singleQuestion.recommendedAnswer, "迁移到 esbuild");
+
+    const multiple = build("帮我改进构建流程。", {
+      branchingOptions: [
+        { label: "A", recommended: true },
+        { label: "B", recommended: true },
+      ],
+    });
+    const multipleQuestion = multiple.unresolvedQuestions.find(
+      (question) => question.questionId === "plan-challenge-route-selection",
+    );
+    assert.equal(multipleQuestion.recommendationState, "preference_only");
+    assert.equal(multipleQuestion.recommendedAnswer, null);
+
+    const lonely = build("帮我改进构建流程。", {
+      branchingOptions: [{ label: "only one lane" }],
+    });
+    assert.equal(lonely.planChallengeState.active, false);
+    assert.deepEqual(lonely.unresolvedQuestions, []);
+  });
+
+  test("option lines are bounded to six options and 120 characters per line", () => {
+    const longSummary = "x".repeat(200);
+    const result = build("帮我改进构建流程。", {
+      branchingOptions: Array.from({ length: 8 }, (_, index) => ({
+        label: `option-${index + 1}`,
+        summary: index === 0 ? longSummary : `summary ${index + 1}`,
+      })),
+    });
+    const routeQuestion = result.unresolvedQuestions.find(
+      (question) => question.questionId === "plan-challenge-route-selection",
+    );
+    const lines = routeQuestion.question.split("\n").filter((line) => line.startsWith("• "));
+    assert.equal(lines.length, 6);
+    assert.ok(!routeQuestion.question.includes("option-7"));
+    assert.ok(!routeQuestion.question.includes("option-8"));
+    for (const line of lines) {
+      assert.ok(line.length <= 120, `line too long: ${line.length}`);
+    }
+    assert.ok(lines[0].endsWith("..."));
+  });
+
+  test("branching alone does not require execution authorization", () => {
+    const result = build("方案A还是方案B，帮我定一下再动手。");
+
+    assert.equal(result.planChallengeState.authorizationRequired, false);
+    assert.equal(
+      result.planChallengeState.executionAuthorization.state,
+      "not_required",
+    );
+    assert.equal(
+      result.planChallengeState.executionAuthorization.scopeCoversActions,
+      true,
+    );
+    assert.ok(
+      !result.summaryData.openRisks.some(
+        (risk) => risk.questionId === "execution-authorization",
+      ),
+    );
+    assert.ok(
+      !result.unresolvedQuestions.some(
+        (question) => question.questionId === "plan-challenge-permission-boundary",
+      ),
+    );
+  });
+
+  test("branching coexists with material risk and sits between permission and delivery", () => {
+    const task = "把生产数据库旧表永久删除并执行不可逆迁移，方案A还是方案B？";
+    const result = build(task);
+
+    assert.equal(result.planChallengeState.active, true);
+    assert.ok(result.planChallengeState.triggerReasons.includes("material_risk"));
+    assert.ok(result.planChallengeState.triggerReasons.includes("branching_decision"));
+    const priorities = new Map(
+      result.unresolvedQuestions.map((question) => [question.questionId, question.impactPriority]),
+    );
+    assert.equal(priorities.get("plan-challenge-permission-boundary"), 100);
+    assert.equal(priorities.get("plan-challenge-route-selection"), 85);
+    assert.equal(priorities.get("plan-challenge-delivery-boundary"), 80);
+    assert.equal(
+      result.planChallengeState.selectedQuestionId,
+      "plan-challenge-permission-boundary",
+    );
+
+    const answered = build(task, {
+      responses: [
+        trustedResponse(
+          { questionId: "plan-challenge-permission-boundary" },
+          "answered",
+          "仅允许本地验证。",
+        ),
+      ],
+    });
+    assert.equal(
+      answered.planChallengeState.selectedQuestionId,
+      "plan-challenge-route-selection",
+    );
+  });
+
+  test("Japanese and Korean route-selection surfaces stay localized", () => {
+    for (const [outputLanguage, task, localizedPattern] of [
+      ["ja-JP", "方案A还是方案B，どちらを採用しますか？", /[ぁ-んァ-ヶ一-龠]/u],
+      ["ko-KR", "方案A还是方案B，어느 쪽을 채택할까요?", /[가-힣]/u],
+    ]) {
+      const result = build(task, { outputLanguage });
+      const routeQuestion = result.unresolvedQuestions.find(
+        (question) => question.questionId === "plan-challenge-route-selection",
+      );
+      assert.ok(routeQuestion, outputLanguage);
+      assert.match(routeQuestion.question, localizedPattern, outputLanguage);
+      assert.doesNotMatch(routeQuestion.question, /plan-challenge-|questionId|binding/iu);
     }
   });
 

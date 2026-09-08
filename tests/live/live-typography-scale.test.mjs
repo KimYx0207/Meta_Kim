@@ -364,11 +364,9 @@ test("semantic tiers land on the elements whose hierarchy was inverted", () => {
   const css = stylesheetOf(renderLiveControlRoomPage());
 
   const expectations = [
-    // The top tier belongs to the run's identity line, not to its counters. It used
-    // to size `.context-fact strong`, one selector matching six elements, which put
-    // six numbers at the largest size on screen while the run title beside them was
-    // clamped to one line and ellipsised at a smaller tier.
-    [/\.run-context-title\s*\{(?:(?!\})[\s\S])*font-size:\s*var\(--fs-hero\)/u, "run identity line"],
+    // The maintainer wants the graph to be primary. Keep the run identity compact
+    // and leave node and graph titles above it in the hierarchy.
+    [/\.run-context-title\s*\{(?:(?!\})[\s\S])*font-size:\s*var\(--fs-body\)/u, "compact run identity line"],
     [/\.node-title\s*\{(?:(?!\})[\s\S])*font-size:\s*var\(--fs-entity-title\)/u, "node title"],
     [/\.node-summary\s*\{(?:(?!\})[\s\S])*font-size:\s*var\(--fs-entity-body\)/u, "node summary"],
     [/\.stage-step-name\s*\{(?:(?!\})[\s\S])*font-size:\s*var\(--fs-body\)/u, "stage step name"],
@@ -468,7 +466,7 @@ test("a ladder that resolves below its own legibility floor is rejected", () => 
   );
 });
 
-test("no element outranks the run identity line at the measured viewports", () => {
+test("the graph and its node titles outrank the compact run identity at measured viewports", () => {
   const scale = loadLiveTypographyScale();
   const css = stylesheetOf(renderLiveControlRoomPage());
 
@@ -490,7 +488,10 @@ test("no element outranks the run identity line at the measured viewports", () =
     const heroSelectors = [...applied]
       .filter(([, size]) => size.value === "var(--fs-hero)")
       .map(([selector]) => selector);
-    assert.deepEqual(heroSelectors, [".run-context-title"]);
+    assert.deepEqual(heroSelectors, [], "the execution surface must not spend space on a hero heading");
+    const runTitle = applied.get('.run-context-title').pixels;
+    assert.ok(applied.get('.graph-canvas-title').pixels > runTitle);
+    assert.ok(applied.get('.node-title').pixels > runTitle);
 
     const contenders = [...applied].filter(([, size]) => size.value !== "var(--fs-hero)");
     const biggest = contenders.reduce((best, entry) => (entry[1].pixels > best[1].pixels ? entry : best));
@@ -713,4 +714,3 @@ test("every type token the stylesheet references is one the document actually pu
     ":root must publish exactly the tokens the document declares, with no extra hand-written type token",
   );
 });
-

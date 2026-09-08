@@ -100,7 +100,33 @@ function classifyPlanChallengeActions(task, requestedSideEffectActions = []) {
   };
 }
 
-function planChallengeSignals(task, contradictionEvidence = [], requestedSideEffectActions = []) {
+const BRANCHING_DECISION_PATTERN =
+  /方案\s*[AＡ][^。！？\n]{0,40}?(?:还是|或者)[^。！？\n]{0,40}?方案\s*[BＢ]|(?:用\s*)?[AＡ]\s*还是\s*(?:用\s*)?[BＢ]|还是改用|两条路线|几种方案|选哪个方案|走哪条(?:路|路线)?|option\s+[AＡ]\s+or\s+option\s+[BＢ]|[AＡ]\s+or\s+[BＢ]\s+route|should\s+(?:we|i)\s+use\s+[^.!?]{2,80}?\s+or\s+|[^.!?]{1,40}?\s+vs\.?\s+[^.!?]{1,40}?\s+route|either\s+[^.!?]{2,60}?\s+or\s+[^.!?]{2,60}?\s+approach/iu;
+
+const SETTLED_ROUTE_DIRECTION_PATTERN =
+  /(?:已(?:经)?|明确|确定|决定)(?:采用|使用|走|选|保留)|(?:按(?:既定|当前|现有)(?:方案|路线))|(?:不要|无需|不再)(?:改用|切换|换成|重新选择|变更路线)|already\s+(?:decided|chose|selected)|stick\s+with|do\s+not\s+(?:switch|change)\s+(?:the\s+)?(?:route|approach)|(?:use|choose|keep)\s+[^.!?]{1,80}?\s+instead\s+of/iu;
+
+function normalizeBranchingOptions(branchingOptions = []) {
+  return (Array.isArray(branchingOptions) ? branchingOptions : [])
+    .filter(
+      (option) =>
+        option &&
+        typeof option === "object" &&
+        String(option.label ?? "").trim().length > 0,
+    )
+    .map((option) => ({
+      label: String(option.label).trim(),
+      summary: option.summary == null ? null : String(option.summary).trim() || null,
+      recommended: option.recommended === true,
+    }));
+}
+
+function planChallengeSignals(
+  task,
+  contradictionEvidence = [],
+  requestedSideEffectActions = [],
+  branchingOptions = [],
+) {
   const text = String(task ?? "");
   const actionIntent = classifyPlanChallengeActions(task, requestedSideEffectActions);
   const boundContradictions = trustedContradictionEvidence(contradictionEvidence);
@@ -114,6 +140,13 @@ function planChallengeSignals(task, contradictionEvidence = [], requestedSideEff
     !actionIntent.documentationOnly &&
     (actionIntent.sideEffectActions.some((action) => action !== "local_file_mutation") ||
       /高成本|昂贵|不可逆|安全边界|costly|high[- ]?cost|irreversible/iu.test(text));
+  const normalizedBranchingOptions = normalizeBranchingOptions(branchingOptions);
+  const explicitRouteQuestion = BRANCHING_DECISION_PATTERN.test(text);
+  const settledRouteDirection =
+    SETTLED_ROUTE_DIRECTION_PATTERN.test(text) && !explicitRouteQuestion;
+  const branchingDecision =
+    !settledRouteDirection &&
+    (normalizedBranchingOptions.length >= 2 || explicitRouteQuestion);
   const evidenceContradiction =
     boundContradictions.length > 0 ||
     /证据(?:互相)?矛盾|信息冲突|结论冲突|前后不一致|contradict(?:ion|ory)|conflicting\s+evidence|evidence\s+conflict/iu.test(text);
@@ -122,6 +155,7 @@ function planChallengeSignals(task, contradictionEvidence = [], requestedSideEff
   return {
     explicitUserRequest,
     materialRisk,
+    branchingDecision,
     evidenceContradiction,
     sideEffectRequested: actionIntent.sideEffectActions.length > 0,
     explicitlyReadOnly: actionIntent.explicitlyReadOnly,
@@ -129,9 +163,11 @@ function planChallengeSignals(task, contradictionEvidence = [], requestedSideEff
     sideEffectActions: actionIntent.sideEffectActions,
     boundContradictions,
     evidenceInsufficient,
+    branchingOptions: normalizedBranchingOptions,
     triggerReasons: [
       ...(explicitUserRequest ? ["explicit_user_request"] : []),
       ...(materialRisk ? ["material_risk"] : []),
+      ...(branchingDecision ? ["branching_decision"] : []),
       ...(evidenceContradiction ? ["evidence_contradiction"] : []),
     ],
   };
@@ -219,10 +255,16 @@ export function buildPlanChallengeState({
   executionAuthorization = null,
   contradictionEvidence = [],
   requestedSideEffectActions = [],
+  branchingOptions = [],
   outputLanguage = "zh-CN",
   priorChallengeState = null,
 } = {}) {
-  const signals = planChallengeSignals(task, contradictionEvidence, requestedSideEffectActions);
+  const signals = planChallengeSignals(
+    task,
+    contradictionEvidence,
+    requestedSideEffectActions,
+    branchingOptions,
+  );
   const active = signals.triggerReasons.length > 0;
   const authorizationRequired =
     active && !signals.explicitlyReadOnly && signals.sideEffectActions.length > 0;
@@ -241,6 +283,9 @@ export function buildPlanChallengeState({
         conflictQuestion: "选择路线前，必须先解决哪一条冲突结论？",
         conflictImpact: "答案会改变采用哪组证据，并可能替换当前路线。",
         conflictRationale: "冲突证据未解决前，任何路线推荐都不可靠。",
+        routeQuestion: "存在多条实质不同的可行路线，应采用哪一条？",
+        routeImpact: "答案会改变执行路线、所有者分配与交付顺序。",
+        routeRationale: "路线选择改变后续全部工作形状，系统不能替用户默认选择。",
         preferenceQuestion: "什么结果会让你认为当前方案不可接受？",
         preferenceImpact: "答案会改变用于保留或否决当前方案的验收边界。",
         preferenceRationale: "这是用户自己的质量和价值边界，系统不能替用户编造偏好。",
@@ -265,6 +310,10 @@ export function buildPlanChallengeState({
         conflictQuestion: "Which conflicting claim must be resolved before the route can be selected?",
         conflictImpact: "The answer changes which evidence is authoritative and may replace the selected route.",
         conflictRationale: "No route recommendation is reliable until the conflicting evidence is resolved.",
+        routeQuestion: "Multiple materially different viable routes exist; which one should be taken?",
+        routeImpact: "The answer changes the execution route, owner allocation, and delivery order.",
+        routeRationale:
+          "Route selection reshapes all downstream work, so the system must not pick silently on the user's behalf.",
         preferenceQuestion: "Which outcome would make the current plan unacceptable to you?",
         preferenceImpact: "The answer changes the acceptance boundary used to challenge or retain the current plan.",
         preferenceRationale: "This is the user's quality and value boundary, so the system must not invent a preferred answer.",
@@ -291,6 +340,9 @@ export function buildPlanChallengeState({
       conflictQuestion: "経路を選ぶ前に、どの矛盾した主張を解決する必要がありますか？",
       conflictImpact: "回答によって採用する証拠が変わり、現在の経路を置き換える可能性があります。",
       conflictRationale: "矛盾する証拠が解決されるまで、経路の推奨は信頼できません。",
+      routeQuestion: "実質的に異なる複数の実行可能な経路があります。どれを採用しますか？",
+      routeImpact: "回答によって実行経路、担当者割り当て、成果物の順序が変わります。",
+      routeRationale: "経路の選択はその後のすべての作業形態を変えるため、システムが黙って代わりに選んではなりません。",
       preferenceQuestion: "どの結果なら、現在の計画を受け入れられないと判断しますか？",
       preferenceImpact: "回答によって、現在の計画を残すか退けるかの受け入れ境界が変わります。",
       preferenceRationale: "これはユーザー自身の品質と価値の境界であり、システムが代わりに作ることはできません。",
@@ -317,6 +369,9 @@ export function buildPlanChallengeState({
       conflictQuestion: "경로를 선택하기 전에 어떤 상충된 주장을 먼저 해결해야 합니까?",
       conflictImpact: "답변에 따라 어떤 증거를 채택할지가 달라지고 현재 경로가 바뀔 수 있습니다.",
       conflictRationale: "상충된 증거가 해결되기 전에는 어떤 경로 추천도 신뢰할 수 없습니다.",
+      routeQuestion: "실질적으로 다른 실행 가능한 경로가 여러 개 있습니다. 어느 것을 채택합니까?",
+      routeImpact: "답변에 따라 실행 경로, 담당자 배정, 결과물 순서가 달라집니다.",
+      routeRationale: "경로 선택은 이후 모든 작업 형태를 바꾸므로 시스템이 사용자를 대신해 조용히 선택해서는 안 됩니다.",
       preferenceQuestion: "어떤 결과라면 현재 계획을 받아들일 수 없습니까?",
       preferenceImpact: "답변에 따라 현재 계획을 유지하거나 기각하는 수용 기준이 달라집니다.",
       preferenceRationale: "이는 사용자의 품질과 가치 기준이므로 시스템이 대신 만들어서는 안 됩니다.",
@@ -352,6 +407,15 @@ export function buildPlanChallengeState({
         "material_risk",
         "classified_side_effect_intent",
         signals.sideEffectActions.join(", "),
+      )
+    : null;
+  const branchingEvidenceRef = signals.branchingDecision
+    ? addTriggerEvidence(
+        "branching_decision",
+        signals.branchingOptions.length >= 2 ? "thinking_lane_options" : "user_request",
+        signals.branchingOptions.length >= 2
+          ? signals.branchingOptions.map((option) => option.label).join(" | ")
+          : task,
       )
     : null;
   const contradictionRefs = [];
@@ -401,6 +465,33 @@ export function buildPlanChallengeState({
         recommendationState: "recommended",
         recommendedAnswer: copy.deliveryRecommendation,
         recommendationRationale: copy.deliveryRationale,
+      }),
+    );
+  }
+
+  if (signals.branchingDecision) {
+    const options = signals.branchingOptions;
+    const optionLines = options.slice(0, 6).map((option) => {
+      const line = option.summary ? `• ${option.label} — ${option.summary}` : `• ${option.label}`;
+      return line.length > 120 ? `${line.slice(0, 117)}...` : line;
+    });
+    const recommendedOptions = options.filter((option) => option.recommended === true);
+    const singleRecommendedOption = recommendedOptions.length === 1
+      ? recommendedOptions[0]
+      : null;
+    questions.push(
+      planChallengeQuestion({
+        questionId: "plan-challenge-route-selection",
+        question: optionLines.length > 0
+          ? `${copy.routeQuestion}\n${optionLines.join("\n")}`
+          : copy.routeQuestion,
+        questionTarget: "wrong_owner_or_capability_risk",
+        decisionImpact: copy.routeImpact,
+        impactPriority: 85,
+        evidenceRefs: [branchingEvidenceRef].filter(Boolean),
+        recommendationState: singleRecommendedOption ? "recommended" : "preference_only",
+        recommendedAnswer: singleRecommendedOption ? singleRecommendedOption.label : null,
+        recommendationRationale: copy.routeRationale,
       }),
     );
   }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -89,5 +90,29 @@ test("recording adds a missing binding instead of leaving the source unproven", 
       .find((entry) => entry.id === observation.id)
       .sourceArtifacts.some((entry) => entry.path === dropped),
     true,
+  );
+});
+
+test("a freshly recorded digest passes the validator that reads it, CRLF sources included", (t) => {
+  // A Windows checkout hands the recorder CRLF bytes that the validator folds to LF
+  // before hashing. Recomputing the digest any other way — raw bytes, a re-implemented
+  // SHA-256 — still produces 64 valid-looking hex characters, and the ledger only
+  // fails later, in whatever sync the pin was supposed to keep green. So assert the
+  // round trip through both call paths rather than the recorder agreeing with itself.
+  const ref = `config/projection-digest-parity-${randomUUID()}.mjs`;
+  const fixture = path.join(REPO_ROOT, ref);
+  writeFileSync(fixture, "export const projected = true;\r\nexport const mode = 2;\r\n", "utf8");
+  t.after(() => rmSync(fixture, { force: true }));
+
+  const ledger = committedLedger();
+  const observation = ledger.observations.find((entry) => entry.observationClass === "repo_projection");
+  observation.sourceRefs = [...observation.sourceRefs, ref];
+
+  const { ledger: recorded } = recordRepoProjectionDigests(ledger);
+  const { issues } = validateRuntimeEvidenceLedger(recorded);
+  assert.deepEqual(
+    issues.filter((issue) => issue.includes(ref)),
+    [],
+    "the recorder must pin the digest the validator recomputes, not one of its own",
   );
 });

@@ -31,6 +31,59 @@ import {
   renderLiveControlRoomPage,
 } from "../../src/presentation/live/live-control-room-page.mjs";
 
+test("navigation and footer do not repeat the task heading", () => {
+  const html = renderLiveControlRoomPage();
+  assert.doesNotMatch(html, /data-live-run-title|data-live-status-title|class="top-run-context"/u);
+  assert.equal((html.match(/<h1 class="run-context-title"/gu) || []).length, 1);
+  assert.match(html, /<details class="run-context-description">[\s\S]*?data-live-run-id[\s\S]*?<\/details>/u);
+});
+
+test("expanded task details retain only the supplement when the heading is repeated", () => {
+  const html = renderLiveControlRoomPage();
+  const body = html.slice(html.indexOf('  function runTaskSupplement('), html.indexOf('  function conversationLinkCopy('));
+  const supplement = new Function('currentLanguage', body + '; return runTaskSupplement;')('zh');
+  assert.equal(supplement('完成 Codex 面板；不公共发布；先审查。', '完成Codex面板'), '不公共发布；先审查。');
+  assert.equal(supplement('相同任务', '相同任务'), '暂无补充说明');
+  assert.equal(supplement('实现者负责复核', '实现'), '实现者负责复核');
+  assert.equal(supplement('另一个任务：保留完整说明', '当前任务'), '另一个任务：保留完整说明');
+  assert.equal(supplement('redacted', '当前任务'), 'redacted');
+  assert.match(html, /runTaskCopy\(runTaskSupplement\(snapshot\.run\.task, snapshot\.run\.title\)\)/u);
+});
+
+test("workspace cards use public state instead of reviving an inactive queue", () => {
+  const html = renderLiveControlRoomPage();
+  const source = html.slice(html.indexOf("  function workspaceColumnForStatus("), html.indexOf("  function appendWorkspaceDetailRow("));
+  const makeElement = (_tag, className = "", text = "") => ({
+    className, text, dataset: {}, children: [],
+    append(...children) { this.children.push(...children); },
+    addEventListener() {},
+  });
+  const board = makeElement("div");
+  const render = new Function("workspaceBoard", "makeElement", "clearChildren", "usefulNodeMeta", "localize", "nodeDisplayState", "nodeStateCopy",
+    `const currentLanguage='zh'; let selectedNodeId=null; ${source}; return renderWorkspaceBoard;`)(
+    board, makeElement, (element) => { element.children = []; }, Boolean, (value) => value,
+    (node) => node.displayState,
+    (node) => node.displayState === "unreported" ? "未收到执行回写" : "运行中",
+  );
+  render({ run: { status: "partial" }, nodes: [
+    { id: "old", kind: "agent", status: "queued", displayState: "unreported", active: false, label: "旧任务" },
+    { id: "live", kind: "agent", status: "active", displayState: "active", active: true, label: "当前任务" },
+  ] });
+  const textOf = (element) => [element.text, ...element.children.map(textOf)].join(" ");
+  assert.match(textOf(board), /未收到执行回写/u);
+  const doing = board.children.find((column) => column.dataset.column === "doing");
+  assert.match(textOf(doing), /当前任务/u, "the active public state belongs in the running column");
+});
+
+test("run header uses the same public execution state as the footer", () => {
+  const html = renderLiveControlRoomPage();
+  const write = /setText\(contextStatus, stateCopy\(([^)]+)\)/u.exec(html);
+  assert.ok(write);
+  const state = new Function("snapshot", `return ${write[1]};`);
+  assert.equal(state({ run: { status: "active", displayState: "unreported" } }), "unreported");
+  assert.equal(state({ run: { status: "active", displayState: "active" } }), "active");
+});
+
 function modalBehaviorHarness() {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const modalStart = html.indexOf("  function modalBackgroundElements()");
@@ -912,6 +965,237 @@ test("wires read-only snapshot polling and server-sent events", () => {
   assert.match(html, /if \(!snapshot\.run\)/u);
 });
 
+/**
+ * "Polling snapshot" used to name a transport that did not exist: the badge
+ * reported it, and then no code ever fetched again, so a stream-less browser
+ * froze on the snapshot that painted at selection. The harness below runs the
+ * shipped fallback together with the connectEvents that arms it, against a
+ * fake window whose setInterval hands the tick back so time advances by hand.
+ *
+ * `window.EventSource` and the bare `EventSource` binding are split for the
+ * same reason the stream-unavailable suite splits them: the constructor is
+ * always a spy, so the harness can tell feature detection apart from a caught
+ * throw.
+ */
+function pollingFallbackHarness({ eventSourceCtor = undefined, visibilityState = "visible" } = {}) {
+  const html = renderLiveControlRoomPage();
+  const start = html.indexOf("  function startPollingFallback() {");
+  assert.ok(start >= 0, "startPollingFallback() is no longer in the shipped client script");
+  const connectMark = html.indexOf("  function connectEvents(", start);
+  assert.ok(connectMark > start, "connectEvents() must follow the polling fallback it arms, or this slice is unbounded");
+  const end = html.indexOf("\n  }\n", connectMark);
+  assert.ok(end > connectMark, "connectEvents() has no terminator, so the slice is unbounded");
+  const source = html.slice(start, end + "\n  }".length);
+
+  const calls = { connection: [], polls: [], intervalMs: null, cleared: [], tick: null, constructed: 0 };
+  const fakeWindow = {
+    EventSource: eventSourceCtor,
+    setInterval(fn, ms) {
+      calls.intervalMs = ms;
+      calls.tick = fn;
+      return 41;
+    },
+    clearInterval(id) {
+      calls.cleared.push(id);
+    },
+  };
+  const constructorSpy = function EventSourceSpy(...args) {
+    calls.constructed += 1;
+    if (typeof eventSourceCtor === "function") return Reflect.construct(eventSourceCtor, args);
+    throw new TypeError("EventSource is not a constructor");
+  };
+  const document = { visibilityState };
+  const api = new Function(
+    "window",
+    "EventSource",
+    "document",
+    "calls",
+    "POLLING_FALLBACK_INTERVAL_MS",
+    `
+      const selectionGeneration = 1;
+      let eventSource = null;
+      let pollingRefreshTimer = null;
+      let selectedRunId = "run-1";
+      let unloading = false;
+      let catchingUpAfterPause = false;
+      const eventsEndpoint = "/live/events";
+      const endpointForSelection = (endpoint) => endpoint;
+      const handleEvent = () => {};
+      const loadSnapshot = (silent) => { calls.polls.push(silent); };
+      const updateConnection = (kind, message) => { calls.connection.push([kind, message]); };
+      ${source}
+      return {
+        connect: () => connectEvents(),
+        stop: stopPollingFallback,
+        tick: () => calls.tick && calls.tick(),
+        streamConnected: () => { eventSource = { addEventListener() {}, close() {} }; },
+        clearSelection: () => { selectedRunId = ""; },
+      };
+    `,
+  )(fakeWindow, constructorSpy, document, calls, 10000);
+  return { calls, api };
+}
+
+test("a browser with no EventSource actually polls the snapshot instead of only claiming to", () => {
+  const { calls, api } = pollingFallbackHarness();
+  api.connect();
+
+  assert.deepEqual(calls.connection, [["stale", "Polling snapshot"]]);
+  assert.equal(calls.intervalMs, 10000, "the fallback must poll at the declared cadence, not arm a badge and stop");
+  api.tick();
+  assert.deepEqual(calls.polls, [true], "each visible tick must silently refresh the snapshot");
+  assert.deepEqual(calls.cleared, [], "nothing may clear the interval while the fallback is the only transport");
+});
+
+test("a constructor that throws lands in the same real polling fallback", () => {
+  const { calls, api } = pollingFallbackHarness({
+    eventSourceCtor: function ThrowingEventSource() {
+      throw new Error("SecurityError: connection refused by policy");
+    },
+  });
+  api.connect();
+
+  assert.equal(calls.constructed, 1, "a present EventSource must actually be attempted");
+  assert.deepEqual(calls.connection, [["stale", "Polling snapshot"]]);
+  assert.equal(calls.intervalMs, 10000);
+});
+
+test("the polling fallback suspends while hidden and dismantles itself when the stream returns or the selection clears", () => {
+  const hidden = pollingFallbackHarness({ visibilityState: "hidden" });
+  hidden.api.connect();
+  hidden.api.tick();
+  assert.deepEqual(hidden.calls.polls, [], "a hidden page must not poll, matching the catalog timer's suspension contract");
+
+  const streamed = pollingFallbackHarness();
+  streamed.api.connect();
+  streamed.api.streamConnected();
+  streamed.api.tick();
+  assert.ok(streamed.calls.cleared.includes(41), "a connected stream must retire the fallback interval");
+  assert.deepEqual(streamed.calls.polls, [], "no poll may run once the stream owns the transport");
+
+  const cleared = pollingFallbackHarness();
+  cleared.api.connect();
+  cleared.api.clearSelection();
+  cleared.api.tick();
+  assert.ok(cleared.calls.cleared.includes(41), "clearing the selection must retire the fallback interval");
+  assert.deepEqual(cleared.calls.polls, []);
+});
+
+test("every teardown path clears the polling fallback timer so no interval outlives its selection", () => {
+  const html = renderLiveControlRoomPage();
+
+  assert.match(
+    html,
+    /function disconnectEvents\(\) \{[\s\S]{0,400}?stopPollingFallback\(\);/u,
+    "selection change and hidden suspension both pass through disconnectEvents and must stop the poll there",
+  );
+  assert.match(html, /window\.clearInterval\(pollingRefreshTimer\)/u, "beforeunload must clear the fallback timer like the catalog timer");
+  const open = /addEventListener\("open", \(\) => \{([\s\S]*?)\n      \}\);/u.exec(html);
+  assert.ok(open, "the stream open handler must remain in the shipped script");
+  assert.match(open[1], /stopPollingFallback\(\);/u, "an open stream must stop the degraded poll before its next tick");
+});
+
+/**
+ * Gap A: the fanout arrangement chooses its columns from card heights it had
+ * to estimate, and the measurement that could correct it used to feed only a
+ * layout pass that never ran again. The corrective pass is bounded by
+ * construction (a single if, not a loop) and gated on the metrics identity, so
+ * the same settled graph never pays for it twice.
+ */
+test("a measured layout that materially disagrees with its assumption triggers exactly one corrective re-layout", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  const blockStart = html.indexOf("if (relayoutWarrantedAfterMeasurement(layout, snapshot)) {");
+  assert.ok(blockStart >= 0, "renderGraph must consult the re-layout guard after the first card sync");
+  const blockEnd = html.indexOf("\n    }", blockStart);
+  assert.ok(blockEnd > blockStart, "the corrective pass must be a bounded block");
+  const block = html.slice(blockStart, blockEnd);
+  assert.equal((block.match(/layoutGraph\(/gu) || []).length, 1, "the corrective pass may call layoutGraph at most once");
+  assert.match(block, /syncLayoutToRenderedCards\(layout\)/u, "the corrective pass must re-sync card geometry and scene bounds");
+});
+
+test("re-layout is warranted only when the browser's measurements materially disagree with the assumed estimates", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const start = html.indexOf("  function cardMetricsKey(metrics) {");
+  assert.ok(start >= 0, "cardMetricsKey() must remain in the shipped client script");
+  const end = html.indexOf("\n  }\n", html.indexOf("  function relayoutWarrantedAfterMeasurement(", start));
+  assert.ok(end > start, "the metrics guard helpers must stay contiguous so this slice is bounded");
+  const source = html.slice(start, end + "\n  }".length);
+
+  const configured = { basis: "configured", baseHeightPx: 96, capabilityRowHeightPx: 26, capabilitiesPerRow: 2, measuredMinHeightPx: 140 };
+  const measuredSameNumbers = { ...configured, basis: "measured" };
+  const measuredTaller = { ...measuredSameNumbers, baseHeightPx: 124 };
+  const measuredWithinNoise = { ...measuredSameNumbers, baseHeightPx: 104 };
+  const measuredReflowed = { ...measuredSameNumbers, capabilitiesPerRow: 1 };
+
+  const api = new Function(
+    "resolveNodeCardHeight",
+    "graphNodesForSnapshot",
+    "nodeCapabilityCount",
+    `
+      let cardMetrics = null;
+      const snapshot = { nodes: [{ id: "n1", kind: "agent" }] };
+      ${source}
+      return {
+        warrant: (layout) => relayoutWarrantedAfterMeasurement(layout, snapshot),
+        setMetrics: (metrics) => { cardMetrics = metrics; },
+      };
+    `,
+  )(resolveNodeCardHeight, (snap) => snap.nodes, () => 3);
+
+  api.setMetrics(configured);
+  assert.equal(api.warrant({ metrics: configured }), false, "identity: the arrangement already assumed exactly these metrics");
+  assert.equal(api.warrant({ metrics: { ...configured } }), false, "a new object with the same rounded numbers is not a disagreement");
+  assert.equal(api.warrant({}), false, "a layout with no recorded metrics cannot claim a disagreement");
+
+  api.setMetrics(measuredSameNumbers);
+  assert.equal(api.warrant({ metrics: configured }), true, "configured estimates becoming a measurement is always material");
+
+  api.setMetrics(measuredWithinNoise);
+  assert.equal(api.warrant({ metrics: measuredSameNumbers }), false, "a height move inside fifteen percent is noise a re-layout cannot fix better");
+
+  api.setMetrics(measuredTaller);
+  assert.equal(api.warrant({ metrics: measuredSameNumbers }), true, "a height move past fifteen percent can change the winning column count");
+
+  api.setMetrics(measuredReflowed);
+  assert.equal(api.warrant({ metrics: measuredSameNumbers }), true, "the strip re-flowing to another column count changes every card's rows");
+});
+
+/**
+ * Gap B: a declared-but-never-invoked worker used to render exactly like work
+ * that had run — same card, same ink, only the copy differing. The service now
+ * ships `declaredNotStarted`, and this pins that the client keeps it, that the
+ * card paints the dashed treatment, and that observed running is labelled as
+ * its own claim rather than collapsing into declared running.
+ */
+test("the client keeps the declared-not-started and observed-only node flags the service ships", () => {
+  const normalizeSnapshot = runNormalizerHarness();
+  const normalized = normalizeSnapshot({
+    run: { runId: "run-1" },
+    nodes: [
+      { id: "n-declared", kind: "agent", status: "pending", declaredNotStarted: true },
+      { id: "n-observed", kind: "agent", status: "running", observedOnly: true },
+      { id: "n-plain", kind: "agent", status: "pending" },
+    ],
+  });
+
+  assert.equal(normalized.nodes.find((node) => node.id === "n-declared").declaredNotStarted, true);
+  assert.equal(normalized.nodes.find((node) => node.id === "n-observed").observedOnly, true);
+  assert.equal(normalized.nodes.find((node) => node.id === "n-plain").declaredNotStarted, false, "absent flags must normalize to false, never to undefined");
+  assert.equal(normalized.nodes.find((node) => node.id === "n-plain").observedOnly, false);
+});
+
+test("declared-not-started cards get a dashed border and a chip, and observed running gets its own label", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  assert.match(html, /card\.dataset\.declaredNotStarted = "true"/u, "the card must expose the flag for the CSS treatment");
+  assert.match(html, /node-declared-chip/u);
+  assert.match(html, /声明未执行/u);
+  assert.match(html, /declared, not started/u);
+  assert.match(html, /\.node-card\[data-declared-not-started="true"\]\s*\{[^}]*border-style:\s*dashed/su, "the distinction must be visual, not only a label");
+  assert.match(html, /运行中·observed/u, "observed running must stay a separate claim from declared running");
+});
+
 test("includes graph, evidence drawer, and replay controls", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
@@ -935,10 +1219,9 @@ test("includes graph, evidence drawer, and replay controls", () => {
   assert.match(html, /data\.replayStatus|dataset\.replayStatus/u);
 });
 
-test("keeps event progress and the current stage in the compact status bar with a replay-backed stage rail", () => {
+test("keeps the current stage in the compact status bar with a replay-backed stage rail", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /data-live-run-progress/u);
   assert.match(html, /data-live-run-workers/u);
   assert.match(html, /class="status-bar"/u);
   assert.match(html, /data-live-run-stage/u);
@@ -946,8 +1229,65 @@ test("keeps event progress and the current stage in the compact status bar with 
   assert.doesNotMatch(html, /class="[^"]*run-hero|class="[^"]*run-facts/u);
   assert.match(html, /selectedSession\.currentStage/u);
   assert.match(html, /selectedSession\.active\s*\?\s*"live"/u);
-  assert.match(html, /"Event " \+ snapshot\.run\.eventIndex \+ " of " \+ snapshot\.run\.eventCount/u);
   assert.match(html, /eventCount\s*=\s*Math\.max\(replay\.length/u);
+});
+
+// The event position and the node total each used to be printed twice: once in
+// the status bar and once in the context band. Both copies read the same
+// snapshot through different expressions, so a change to one left the other
+// stating a stale quantity with equal authority. The band is the surviving
+// owner, which is only honest if the position travels with it — the replay dock
+// that also reports a position ships collapsed, so it is not a visible answer.
+test("each run quantity has exactly one write site, and the surviving owner carries the position", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+
+  for (const retired of ["data-live-run-progress", "data-live-node-count"]) {
+    assert.doesNotMatch(
+      html,
+      new RegExp(retired, "u"),
+      retired + " duplicated a quantity the context band already owns",
+    );
+  }
+
+  for (const [attribute, binding] of [
+    ["data-live-context-nodes", "contextNodes"],
+    ["data-live-context-events", "contextEvents"],
+  ]) {
+    assert.strictEqual(
+      html.match(new RegExp(attribute, "gu"))?.length,
+      2,
+      attribute + " must appear exactly twice: its element and its lookup",
+    );
+    assert.strictEqual(
+      html.match(new RegExp("setText\\(\\s*" + binding + "\\b", "gu"))?.length,
+      1,
+      binding + " must keep exactly one write site",
+    );
+  }
+
+  // The retired status-bar copy was the only producer of the phrase "N nodes",
+  // so `localize()`'s branch for it went with the write site. The band writes a
+  // bare numeral beside a translated label instead. Re-introducing the phrase
+  // would need that branch back, so pin the numeral: this is what makes the
+  // deletion checkable rather than merely plausible.
+  const nodeWrite = /setText\(\s*contextNodes,([\s\S]*?)\);/u.exec(html);
+  assert.ok(nodeWrite, "the nodes fact must keep a single write site");
+  assert.match(nodeWrite[1], /String\(/u, "the nodes fact must write a bare numeral, not a phrase to translate");
+  assert.doesNotMatch(html, /" nodes?"/u, "no surface may re-introduce a node phrase without a translation branch");
+  assert.doesNotMatch(html, /\^\(\\d\+\) nodes\?\$/u, "the node-phrase translation branch must stay retired with its producer");
+
+  const eventWrite = /setText\(\s*contextEvents,([\s\S]*?)\n\s*\);/u.exec(html);
+  assert.ok(eventWrite, "the events fact must keep a single multi-line write site");
+  assert.match(
+    eventWrite[1],
+    /snapshot\.run\.eventIndex \+ " \/ " \+ eventTotal/u,
+    "the surviving owner must print how far along the run is, not only its total",
+  );
+
+  // The dock's own position readout cannot stand in for the band's: the element
+  // ships without `open`, and the collapsed rule hides everything but the summary.
+  assert.match(html, /<details class="replay-panel replay-dock"(?![^>]*\bopen\b)/u);
+  assert.match(html, /\.replay-panel:not\(\[open\]\) > :not\(summary\) \{ display: none !important; \}/u);
 });
 
 test("uses a canvas-first control-room hierarchy with an on-demand inspector and integrated transport", () => {
@@ -2085,7 +2425,7 @@ test("lays out worker and workflow entities by spawn depth with a v1 serpentine 
   assert.match(html, /from\.spine\s*===\s*true\s*&&\s*to\.spine\s*===\s*false[\s\S]{0,100}Math\.abs\(deltaY\)/u);
   assert.match(html, /\.node-card\s*\{[^}]*min-height:\s*176px/su);
   assert.match(html, /function syncLayoutToRenderedCards\(layout\)/u);
-  assert.match(html, /Math\.ceil\(card\.scrollHeight\)/u);
+  assert.match(html, /Math\.ceil\(card\.offsetHeight\)/u);
   assert.match(html, /nextY = previousBottom \+ GRAPH_LAYOUT\.renderedColumnGapPx/u);
   assert.match(html, /syncLayoutToRenderedCards\(layout\);[\s\S]*for \(const edge of graphEdges\)/u);
 });
@@ -2125,7 +2465,7 @@ test("lays out high-fanout work as a searched non-crossing grid and ships an iso
   }
   assert.match(html, /nodeId:\s*"demo-requirements"/u);
   assert.match(html, /演示数据 · 非真实运行/u);
-  assert.match(html, /青色流光＝进行中 · 绿色实线＝已完成 · 灰色虚线＝排队 · 琥珀虚线＝阻塞 · 点线＝结构归属/u);
+  assert.match(html, /青色流光＝运行中 · 运行中\(observed\) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属/u);
   assert.match(html, /\.edge-completed\s*\{[^}]*stroke:\s*var\(--green\)[^}]*stroke-dasharray:\s*none/su);
   // Only the dash is pinned here. The opacity used to be pinned at .38 alongside it,
   // and .38 was the defect: 1.41:1 against the canvas, a line the reporter could not
@@ -2136,7 +2476,7 @@ test("lays out high-fanout work as a searched non-crossing grid and ships an iso
   assert.match(html, /\.node-running\s*\{[^}]*animation:\s*active-node-pulse/su);
   assert.match(html, /\["active", "in_progress", "executing"\]\.includes\(status\)\) return "running"/u);
   assert.match(html, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--green\)/su);
-  assert.match(html, /\.node-card\[data-display-state="queued"\][^\{]*\{[^}]*opacity:\s*\.66/su);
+  assert.match(html, /\.node-card\[data-display-state="queued"\][^\{]*\{[^}]*opacity:\s*1/su, "queued text stays readable; its state is conveyed by its label and neutral border");
   assert.match(html, /if \(!demoMode\) void \(async \(\) =>/u);
 });
 
@@ -2658,15 +2998,7 @@ test("preserves real edge state without replay evidence and uses interactive lis
   assert.match(html, /\.replay-empty\s*\{[^}]*align-self:\s*end[^}]*height:\s*28px[^}]*min-height:\s*0[^}]*margin:\s*var\(--sp-band\)\s+0\s+0\s+calc\(100%\s*-\s*410px\)[^}]*overflow:\s*hidden/su);
   assert.match(html, /\.replay-current \.panel-note\s*\{[^}]*display:\s*none/su);
   assert.doesNotMatch(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-current\s*\{[^}]*display:\s*none/su);
-  assert.equal(
-    resolvedDeclaration(stylesheetRules(html), {
-      selector: ".top-run-context",
-      property: "display",
-      condition: "@media (max-width: 720px)",
-    }),
-    "none",
-    "the topbar run context has no room at handheld width",
-  );
+  assert.doesNotMatch(html, /class="top-run-context"/u, "navigation does not repeat the task heading at any viewport");
   assert.match(html, /data-live-open-sessions[\s\S]{0,500}data-live-language-toggle[\s\S]{0,500}data-live-open-help[\s\S]{0,500}data-live-open-info/u);
   assert.match(html, /\[data-live-graph-fit\], \[data-live-graph-layout\], \[data-live-graph-zoom-out\], \[data-live-graph-zoom-in\]\s*\{\s*display:\s*none/su);
   assert.match(html, /\.replay-events\s*\{[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*hidden/su);
@@ -3851,7 +4183,7 @@ test("an icon control keeps its glyph and carries its instruction in aria and ti
  * them at the body step the six pairs need roughly 450px of a 591-986px strip, so
  * there is no track to starve and no column count to bound.
  */
-test("the run context band gives its width to the title and its top tier to the run, not to six counters", () => {
+test("the run context keeps its title readable at body size so the graph remains primary", () => {
   const rules = stylesheetRules(renderLiveControlRoomPage());
 
   // An ellipsis on a run title deletes the run's identity rather than shortening
@@ -3880,8 +4212,8 @@ test("the run context band gives its width to the title and its top tier to the 
   );
   assert.match(
     resolvedDeclaration(rules, { selector: ".run-context-title", property: "font-size" }) ?? "",
-    /var\(--fs-hero\)/u,
-    "the run title must carry the ladder's top tier; that tier existed for a counter and the counters won",
+    /var\(--fs-body\)/u,
+    "the maintainer requires a compact run title so the execution graph keeps the space",
   );
 
   // Grid tracks are what starved the values, so the strip has to size itself from
@@ -4032,13 +4364,15 @@ test("the edge legend keeps all four locked edge states at every width", () => {
   }
 
   // Deleting states is the other way to make the overflow go away, so the copy
-  // itself is pinned. Both locales carry all four, in both edge vocabularies.
+  // itself is pinned. Both locales carry all four, in both edge vocabularies,
+  // plus the observed-running and declared-not-started vocabulary the graph
+  // now distinguishes.
   const legend = html.match(/<span class="graph-edge-legend"[^>]*>/u);
   assert.ok(legend, "markup must contain the edge legend");
-  for (const state of ["Green solid = done", "Gray dashed = queued", "Amber dashed = blocked", "Dotted = ownership"]) {
+  for (const state of ["Green solid = done", "Gray dashed = queued", "Amber dashed = blocked", "Dotted = ownership", "Dashed card = declared, not started", "running (observed)"]) {
     assert.ok(legend[0].includes(state), `the English legend must document "${state}"`);
   }
-  for (const state of ["绿色实线＝已完成", "灰色虚线＝排队", "琥珀虚线＝阻塞", "点线＝结构归属"]) {
+  for (const state of ["绿色实线＝已完成", "灰色虚线＝排队", "琥珀虚线＝阻塞", "点线＝结构归属", "虚线卡片＝声明未执行", "运行中(observed)"]) {
     assert.ok(legend[0].includes(state), `the Chinese legend must document "${state}"`);
   }
 });
@@ -4069,11 +4403,26 @@ test("an explicit stage-rail expansion refits the camera instead of cropping the
 test("the run task summary reaches the screen and names an absent summary instead of inventing one", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.doesNotMatch(
-    html,
-    /\.run-context-heading \.context-kicker, \.run-context-task \{ display: none; \}/u,
-    "the task summary must not be hidden unconditionally while it carries real text",
-  );
+  // This used to pin the literal `.run-context-heading .context-kicker,
+  // .run-context-task { display: none; }`. The shipped rule had already been
+  // split, so the text never matched and the guard passed no matter what the
+  // stylesheet said. Resolving the declaration a browser would apply is what
+  // actually catches a re-hide, including one written under a different selector
+  // grouping or added later in the sheet.
+  const rules = stylesheetRules(html);
+  for (const selector of [".run-context-task", ".context-kicker", ".run-context-heading .context-kicker"]) {
+    const display = resolvedDeclaration(rules, { selector, property: "display" });
+    assert.notStrictEqual(
+      display,
+      "none",
+      selector + " must not resolve to an unconditional hide while it carries real text",
+    );
+  }
+  // `-webkit-box` is the clamp, not a hide, so the loop above would also pass if
+  // the rule were deleted outright. Pin the two shipped values so a re-hide has
+  // to show up as a changed value rather than an absent one.
+  assert.strictEqual(resolvedDeclaration(rules, { selector: ".run-context-task", property: "display" }), "-webkit-box");
+  assert.strictEqual(resolvedDeclaration(rules, { selector: ".context-kicker", property: "display" }), "block");
 
   const writeSite = /setText\(contextTask,([^;]*)\);/u.exec(html);
   assert.ok(writeSite, "the task summary must keep a single write site");
@@ -4484,18 +4833,21 @@ test("a title too long for one line takes a second line instead of deleting its 
  *
  * Two of four lines is not a shortened title. It is a different title.
  */
-test("the run title shows its whole identity instead of the first half of it", () => {
-  const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
+test("the compact run title keeps its complete identity available in task details", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const rules = stylesheetRules(html);
 
   assert.equal(
     rootCustomProperty(rules, "--clamp-lines-hero"),
     "3",
     "the hero clamp is the shipped value this fix was measured against",
   );
-  assert.ok(
-    lineClampCount(rules, resolvedDeclaration(rules, { selector: ".run-context-title", property: "-webkit-line-clamp" })) >= 3,
-    "a two-line clamp is what hid two of the four lines that were measured",
+  assert.equal(
+    lineClampCount(rules, resolvedDeclaration(rules, { selector: ".run-context-title", property: "-webkit-line-clamp" })), 2,
+    "the execution surface reserves only two compact lines for the title",
   );
+  assert.doesNotMatch(html, /data-live-context-full-title|contextFullTitle/u);
+  assert.equal(resolvedDeclaration(rules, { selector: '.run-context-heading:has(.run-context-description[open]) .run-context-title', property: '-webkit-line-clamp' }), 'unset');
 
   // Clamping wider is half of it. A container that caps its own height crops the
   // lines the clamp now permits, and that crop leaves no ellipsis behind to hint
@@ -4527,14 +4879,14 @@ test("the type scale runs from the brand mark down to the legend caption, not ba
   // Hand-written, not derived: every one of these four is a tier decision that a
   // future edit can only make by disagreeing with this list out loud.
   assert.deepEqual(
-    [".brand-title", ".status-bar .status-title", ".stage-step-name", ".graph-edge-legend"].map((selector) => [
+    [".brand-title", ".run-context-title", ".stage-step-name", ".graph-edge-legend"].map((selector) => [
       selector,
       resolvedDeclaration(rules, { selector, property: "font-size" }),
       resolvedDeclaration(rules, { selector, property: "line-height" }),
     ]),
     [
       [".brand-title", "var(--fs-view-title)", "var(--lh-display)"],
-      [".status-bar .status-title", "var(--fs-entity-title)", "var(--lh-display)"],
+      [".run-context-title", "var(--fs-body)", "var(--lh-snug)"],
       [".stage-step-name", "var(--fs-body)", "var(--lh-flat)"],
       [".graph-edge-legend", "var(--fs-label)", "var(--lh-snug)"],
     ],
@@ -4544,7 +4896,7 @@ test("the type scale runs from the brand mark down to the legend caption, not ba
   // The products are ordered at every width, because the fluid base is a common
   // positive factor and cancels out of the comparison. One width is therefore the
   // whole claim rather than a sample of it.
-  const descending = [".brand-title", ".status-bar .status-title", ".stage-step-name", ".graph-edge-legend"]
+  const descending = [".brand-title", ".run-context-title", ".stage-step-name", ".graph-edge-legend"]
     .map((selector) => [selector, renderedLineBoxPx(rules, selector, 1512)]);
   for (let index = 1; index < descending.length; index += 1) {
     const [above, taller] = descending[index - 1];
@@ -4556,15 +4908,7 @@ test("the type scale runs from the brand mark down to the legend caption, not ba
     );
   }
 
-  // Raising a tier inside a fixed-height bar is how a legible title becomes a
-  // clipped one. The bar is one track with no vertical padding, so the worst case
-  // is the widest base the clamp can reach.
-  const barHeight = loadLiveChromeBudget().statusBarHeightPx;
-  const titleLine = renderedLineBoxPx(rules, ".status-bar .status-title", 4000);
-  assert.ok(
-    titleLine <= barHeight,
-    `the status title renders a ${titleLine.toFixed(2)}px line box in a ${barHeight}px bar`,
-  );
+  assert.doesNotMatch(renderLiveControlRoomPage(), /data-live-status-title/u, "the compact footer carries no duplicate task title");
 });
 
 /**
@@ -4603,39 +4947,27 @@ test("the run task summary is spaced and led as prose rather than as a one-line 
 });
 
 /**
- * The cell band is the eight measured node titles. Its height was derived for one
- * line, so a two-line clamp inside it renders the second line behind the band's
- * own bottom edge — legible text, invisible.
- *
- * `--cell-band-h` is the counter-scaled one-line height and stays untouched: it
- * is the quantity the camera contract is written against. The band the reader
- * sees is a second property derived from it and from the same line count the
- * clamp uses, so the two cannot disagree about how many lines exist.
+ * Overview titles occupy real two-line layout space inside the identity button.
+ * Counter-scaled text must remain visible and clickable without changing the
+ * complete-card reservation used when the viewer zooms in.
  */
-test("the cell band is as tall as the number of lines its title is allowed to take", () => {
+test("overview cards reserve a clickable two-line title instead of a painted text band", () => {
   const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
   const cellCard = '.graph-canvas[data-semantic-zoom="cell"] .node-card';
 
   assert.equal(
     rootCustomProperty(rules, "--clamp-lines-title"),
     "2",
-    "the band derivation and the clamp have to read one count, and this is its shipped value",
+    "overview titles retain two readable lines",
   );
   assert.equal(
-    resolvedDeclaration(rules, { selector: cellCard, property: "--cell-band-box-h" }),
-    "calc(var(--cell-band-h) + (var(--clamp-lines-title) - 1) * var(--cell-title-fs) * var(--lh-flat))",
-    "the visible band must be the one-line band plus the extra lines the clamp permits",
+    resolvedDeclaration(rules, { selector: `${cellCard} .node-identity-row`, property: "min-height", condition: "@media (min-width: 721px)" }),
+    "calc(var(--cell-title-fs) * 2.56)",
+    "the real click target must reserve both lines even when other card content is collapsed",
   );
 
-  const bandHeight = resolvedDeclaration(rules, { selector: `${cellCard}::after`, property: "height" });
-  const titleHeight = resolvedDeclaration(rules, { selector: `${cellCard} .node-title`, property: "height" });
-  assert.equal(bandHeight, "var(--cell-band-box-h)", "the painted band must take the derived height");
-  assert.equal(
-    titleHeight,
-    bandHeight,
-    `the title box is ${titleHeight} and the band behind it is ${bandHeight}; whichever is shorter `
-      + "decides which line the reader loses",
-  );
+  assert.equal(resolvedDeclaration(rules, { selector: `${cellCard}::after`, property: "display" }), "none");
+  assert.equal(resolvedDeclaration(rules, { selector: `${cellCard} .node-title`, property: "height", condition: "@media (min-width: 721px)" }), "auto");
 });
 
 /**

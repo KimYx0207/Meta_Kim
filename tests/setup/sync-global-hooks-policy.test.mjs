@@ -399,6 +399,28 @@ console.log("About to git push");
   // canonical executes stale code on every prompt entry. Leaving that case
   // unchecked by default is how a missing hook dependency survived a full
   // documented maintenance loop.
+  test("stale hook diagnostics identify missing files and the runtime-specific canonical owner", async () => {
+    for (const runtime of ["claude", "codex", "cursor"]) {
+      await withTempRuntimeHomes(async ({ env, root }) => {
+        const hooksRoot = path.join(root, runtime, "hooks", "meta-kim");
+        await mkdir(hooksRoot, { recursive: true });
+        await writeFile(path.join(hooksRoot, "meta-kim-memory-save.mjs"), "PRIVATE_CONTENT_MUST_NOT_BE_LOGGED", "utf8");
+        for (const flags of [[], ["--with-global-hooks"]]) {
+          await assert.rejects(
+            () => runScript(["--check", "--targets", runtime, ...flags], env),
+            (error) => {
+              assert.match(error.stdout, /missing: conversation-binding\.mjs/, `${runtime}: ${error.message}\n${error.stderr ?? ""}`);
+              const owner = runtime === "claude" ? "claude" : "shared";
+              assert.ok(error.stdout.includes(`content-diff: meta-kim-memory-save.mjs (expected source: canonical/runtime-assets/${owner}/hooks/meta-kim-memory-save.mjs)`));
+              assert.doesNotMatch(error.stdout, /PRIVATE_CONTENT_MUST_NOT_BE_LOGGED/);
+              return true;
+            },
+          );
+        }
+      });
+    }
+  });
+
   for (const runtime of [
     { id: "claude", home: "claude", label: "Claude Code" },
     { id: "codex", home: "codex", label: "Codex" },

@@ -24,11 +24,19 @@ test("planning-with-files is removed while its historical evidence remains", asy
 
 test("unrelated projects are not reclassified by this gate", async () => {
   const manifest = await readJson("config/skills.json");
-  for (const id of ["superpowers", "ecc", "cli-anything", "gstack"]) {
+  for (const id of ["superpowers", "ecc", "cli-anything"]) {
     const skill = manifest.skills.find((entry) => entry.id === id);
     assert.equal(skill.dependencyClass, undefined, `${id} was reclassified`);
     assert.equal(skill.installPolicy, undefined, `${id} install policy was changed`);
   }
+});
+
+test("gstack is downgraded to a third-party reference, not unlinked", async () => {
+  const manifest = await readJson("config/skills.json");
+  const gstack = manifest.skills.find((entry) => entry.id === "gstack");
+  assert.ok(gstack, "gstack must remain listed in config/skills.json");
+  assert.equal(gstack.dependencyClass, "third_party_reference");
+  assert.equal(gstack.installPolicy, "explicit_reference_opt_in");
 });
 
 test("planning-with-files is absent from the default execution loadout", async () => {

@@ -59,13 +59,13 @@ describe("graphify idempotent wiring (contract)", () => {
     assert.match(src, /function runRebuild\(\)/);
     assert.match(
       src,
-      /\[\s*"extract",\s*"\.",\s*"--force",\s*\.\.\.\(migrationCodeOnly \? \["--code-only"\] : migrationBackendArgs\),?\s*\]/,
+      /\[\s*"extract",\s*"\.",\s*"--force",\s*"--code-only",?\s*\]/,
     );
     assert.match(src, /\["update", "\."\]/);
     assert.match(src, /graphIdentityMigrationPlan\(/);
     assert.match(src, /GRAPHIFY_MIGRATION_STATE_SCHEMA/);
-    assert.match(src, /\["--backend", "claude-cli"\]/);
-    assert.match(src, /META_KIM_GRAPHIFY_MIGRATION_BACKEND/);
+    assert.doesNotMatch(src, /graphifyMigrationBackendArgs|GRAPHIFY_API_KEY_NAMES|META_KIM_GRAPHIFY_MIGRATION_BACKEND|spawnSync\("claude"/);
+    assert.match(src, /GRAPHIFY_LOCAL_CLUSTER_ARGS = Object\.freeze\(\["--no-label", "--no-viz"\]\)/);
     assert.match(src, /\[\s*"cluster-only",\s*"\.",\s*\.\.\.migrationBackendArgs\]/);
     assert.match(src, /disambiguateGraphFileNodeLabels\(graph, \{/);
     assert.match(src, /finalGraphStats\.nodes\.toLocaleString\("en-US"\)/);

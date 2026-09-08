@@ -7,6 +7,15 @@ import path from "node:path";
 import process from "node:process";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
 
+// The default-evidence run pins agentTeamsPlaybookPacket.selected === false.
+// Selection follows provider discovery, and the sibling_dependency_checkout
+// probe reads whatever happens to sit beside the repository on this machine,
+// so without this seam the pinned literal is a property of the maintainer's
+// disk rather than of the code. Hermetic mode keeps explicit
+// META_KIM_DEP_ROOTS fixtures available; the seam's own test pins both
+// directions.
+process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE = "1";
+
 const MULTI_CAPABILITY_TASK = [
   "同一套 PRD review standard 需要 skill。",
   "长期 test coverage owner 需要 agent。",

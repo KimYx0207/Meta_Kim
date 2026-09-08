@@ -22,6 +22,80 @@ import {
 
 const sha256 = (value) => createHash("sha256").update(value, "utf8").digest("hex");
 const jsonl = (records) => records.map(JSON.stringify).join("\n");
+function realCodexCliCollaborationFixture({
+  childId = "codex-cli-child",
+  waitChildId = childId,
+  waitStatus = "completed",
+  childStatus = "completed",
+  childMessage,
+} = {}) {
+  const parentId = "codex-cli-parent";
+  const marker = "META_KIM_CAPABILITY_AGENT_4c5d7726-2699-45fc-b9cd-0c4539cd177f";
+  const finalMessage = childMessage ?? marker;
+  const spawnPrompt = `Return ${marker} as your entire final response.`;
+  return {
+    marker,
+    raw: jsonl([
+      { type: "thread.started", thread_id: parentId },
+      { type: "turn.started" },
+      { type: "item.completed", item: { id: "item-error", type: "error", message: "skills context budget exceeded" } },
+      { type: "item.completed", item: { id: "item-agent-message", type: "agent_message", text: "I’m initiating the single-child capability probe now." } },
+      {
+        type: "item.started",
+        item: {
+          id: "item-spawn",
+          type: "collab_tool_call",
+          tool: "spawn_agent",
+          sender_thread_id: parentId,
+          receiver_thread_ids: [],
+          prompt: spawnPrompt,
+          agents_states: {},
+          status: "in_progress",
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "item-spawn",
+          type: "collab_tool_call",
+          tool: "spawn_agent",
+          sender_thread_id: parentId,
+          receiver_thread_ids: [childId],
+          prompt: spawnPrompt,
+          agents_states: { [childId]: { status: "pending_init", message: null } },
+          status: "completed",
+        },
+      },
+      {
+        type: "item.started",
+        item: {
+          id: "item-wait",
+          type: "collab_tool_call",
+          tool: "wait",
+          sender_thread_id: parentId,
+          receiver_thread_ids: [waitChildId],
+          prompt: null,
+          agents_states: {},
+          status: "in_progress",
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "item-wait",
+          type: "collab_tool_call",
+          tool: "wait",
+          sender_thread_id: parentId,
+          receiver_thread_ids: [waitChildId],
+          agents_states: { [waitChildId]: { status: childStatus, message: finalMessage } },
+          status: waitStatus,
+        },
+      },
+      { type: "item.completed", item: { id: "item-outer", type: "agent_message", text: "Completed." } },
+      { type: "turn.completed" },
+    ]),
+  };
+}
 const binding = Object.freeze({
   runId: "run-2026-07-12",
   family: "agent_subagent",
@@ -588,6 +662,32 @@ test("Codex CLI spawn without agent_type is runtime invocation evidence but neve
   assert.equal(event.nativeAgentType, null);
   assert.notEqual(event.providerId, "meta-prism");
   assert.equal(event.activityCompletionObserved, true);
+});
+
+test("real Codex CLI spawn and wait JSONL binds the exact child final marker", () => {
+  const fixture = realCodexCliCollaborationFixture();
+  const [event] = observeCodexJsonl(fixture.raw);
+  assert.equal(event.family, "agent_subagent");
+  assert.equal(event.hostSurface, "codex_cli.spawn_agent");
+  assert.equal(event.childSessionId, "codex-cli-child");
+  assert.equal(event.resultTextSha256, sha256(fixture.marker));
+  assert.equal(event.lifecycleEvidence, "codex_cli_wait_child_state");
+  assert.equal(event.completionBoundary, "wait_child_completed");
+  assert.ok(event.resultSourceLines.includes(8));
+});
+
+test("real Codex CLI wait evidence rejects failed, wrong-child, and ordinary child results", () => {
+  const failed = realCodexCliCollaborationFixture({ waitStatus: "failed", childStatus: "failed" });
+  assert.deepEqual(observeCodexJsonl(failed.raw), []);
+
+  const wrongChild = realCodexCliCollaborationFixture({
+    waitChildId: "codex-cli-wrong-child",
+    childMessage: "META_KIM_CAPABILITY_AGENT_4c5d7726-2699-45fc-b9cd-0c4539cd177f",
+  });
+  assert.deepEqual(observeCodexJsonl(wrongChild.raw), []);
+
+  const ordinaryText = realCodexCliCollaborationFixture({ childMessage: "Completed." });
+  assert.deepEqual(observeCodexJsonl(ordinaryText.raw), []);
 });
 
 test("run-scoped Codex spawn returned by child final is complete fuse evidence without activity completion", () => {

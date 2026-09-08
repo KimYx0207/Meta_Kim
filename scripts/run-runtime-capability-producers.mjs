@@ -6,7 +6,7 @@ import { assertExactStandardRuntimeObservationSet, standardRuntimeObservationSet
 
 const SUPPORTED_RUNTIMES = new Set(["claude_code", "codex"]);
 const SUPPORTED_CAPABILITIES = new Set(["agent", "subagent", "shell", "filesystem", "apply_patch / edit"]);
-const VALUE_OPTIONS = new Set(["--runtimes", "--capabilities", "--project-root", "--profile", "--source", "--codex-thread-id", "--codex-child-session-id", "--codex-marker", "--since", "--codex-desktop-engineering-workspace"]);
+const VALUE_OPTIONS = new Set(["--runtimes", "--capabilities", "--project-root", "--profile", "--source", "--codex-thread-id", "--codex-child-session-id", "--codex-marker", "--since", "--codex-desktop-engineering-workspace", "--codex-model", "--codex-reasoning-effort"]);
 const BOOLEAN_OPTIONS = new Set(["--status", "--require-fresh"]);
 
 function printHelp() {
@@ -20,6 +20,8 @@ function printHelp() {
     `  --status                Read fresh accepted production evidence; never invoke a runtime\n` +
     `  --require-fresh         Exit nonzero when any requested claim is missing/stale\n` +
     `  --source <kind>         live_controlled|codex_desktop_agent_subagent|codex_desktop_engineering\n` +
+    `  --codex-model <MODEL>   Explicit Codex model for live_controlled production\n` +
+    `  --codex-reasoning-effort <EFFORT>  Explicit Codex model reasoning effort\n` +
     `  --codex-thread-id <id>  Use one explicit Codex Desktop parent session\n` +
     `  --codex-child-session-id <id>  Bind the exact spawned child session\n` +
     `  --codex-marker <token>   Exact child-final capability marker\n` +
@@ -79,8 +81,13 @@ const marker = option(args, "--codex-marker", undefined);
 const sinceRaw = option(args, "--since", undefined);
 const sinceMs = sinceRaw ? Date.parse(sinceRaw) : null;
 const workspacePath = option(args, "--codex-desktop-engineering-workspace", undefined);
+const codexModel = option(args, "--codex-model", undefined);
+const codexReasoningEffort = option(args, "--codex-reasoning-effort", undefined);
 if (source && statusRequested) failCli("--status cannot be combined with --source");
 if (sinceRaw && !Number.isFinite(sinceMs)) failCli("--since must be a valid timestamp");
+if ((codexModel || codexReasoningEffort) && runtimes.some((runtime) => runtime !== "codex")) {
+  failCli("--codex-model/--codex-reasoning-effort require --runtimes codex to avoid invoking another runtime");
+}
 try {
   if (statusRequested) {
     const effective = loadEffectiveRuntimeCapabilityClaims({ packageRoot: path.resolve(import.meta.dirname, ".."), projectRoot, profile });
@@ -109,7 +116,7 @@ try {
     if (source === "codex_desktop_engineering" && (!threadId || !marker || !workspacePath || !Number.isFinite(sinceMs))) failCli("desktop engineering source requires thread, marker, workspace, and since");
     const producedResults = [];
     for (const runtime of runtimes) {
-      const produced = await produceRuntimeCapabilityAcceptance({ projectRoot, profile, source, runtime, capabilities, threadId, childSessionId, marker, sinceMs, workspacePath: workspacePath ? path.resolve(workspacePath) : undefined });
+      const produced = await produceRuntimeCapabilityAcceptance({ projectRoot, profile, source, runtime, capabilities, threadId, childSessionId, marker, sinceMs, workspacePath: workspacePath ? path.resolve(workspacePath) : undefined, codexModel, codexReasoningEffort });
       for (const entry of produced.results ?? []) producedResults.push({ runtime, capability: entry.capability ?? entry.receipt?.capability, mode: "interactive_host", attemptId: entry.acceptance.record.attemptId, receiptSha256: entry.acceptance.record.sourceReport.sha256, producer: entry.receipt.producer.id, source: entry.receipt.compositeLifecycle?.sourceCategory ?? "live_controlled" });
     }
     process.stdout.write(`${JSON.stringify({ schemaVersion: "meta-kim-controlled-producer-run-v2", ok: true, projectRoot: "<project>", profile: profile ?? "default", results: producedResults }, null, 2)}\n`);
