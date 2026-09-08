@@ -171,6 +171,7 @@
     "meta:runtime:validate": "node scripts/validate-runtime-matrix.mjs",
     "meta:runtime:evidence:record": "node scripts/record-runtime-capability-evidence.mjs",
     "meta:runtime:evidence:check": "node scripts/record-runtime-capability-evidence.mjs --check",
+    "meta:runtime:evidence:roll-review": "node scripts/record-runtime-capability-evidence.mjs --roll-review",
     "meta:runtime:evidence:refresh-pins": "node scripts/refresh-runtime-evidence-pins.mjs",
     "meta:runtime:evidence:refresh-pins:check": "node scripts/refresh-runtime-evidence-pins.mjs --check",
     "meta:intent:validate": "node scripts/validate-intent-amplification.mjs",

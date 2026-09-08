@@ -187,11 +187,63 @@ function collapseDigestBindings(json) {
   );
 }
 
+const FRESHNESS_ISSUE_MARKERS = [
+  "must be current, non-future, and fresh",
+  "must bind fresh conservative_review evidence",
+  "reviewState must be fresh, non-future, and explicit",
+];
+
+/**
+ * Roll both config files on disk and write them back only if the post-roll state
+ * validates.
+ *
+ * The read/roll/re-validate/write sequence lives here rather than inside the CLI
+ * shell because that sequence is where the roller can be wrong in ways the pure
+ * function cannot: `validateRuntimeCapabilityClaims` returns an ARRAY of issues
+ * (`runtime-capability-evidence.mjs:459`), unlike `validateRuntimeEvidenceLedger`,
+ * which returns `{ issues, observations }`. Reading the array as `{ issues }`
+ * yields `undefined` and crashes the re-validation gate — a defect no test of
+ * `rollReviewFreshness` alone can reach.
+ *
+ * A surviving freshness issue means the roller failed to cover a binding it
+ * claims to own, so it is reported separately from ordinary data problems. Both
+ * refuse the write.
+ */
+export function rollReviewFiles({ matrixPath, ledgerPath, date, rationale, now }) {
+  const ledgerSource = readFileSync(ledgerPath, "utf8");
+  const matrixSource = readFileSync(matrixPath, "utf8");
+  const rolled = rollReviewFreshness(
+    { matrix: JSON.parse(matrixSource), ledger: JSON.parse(ledgerSource) },
+    { date, rationale, now },
+  );
+  const renderedLedger = `${collapseDigestBindings(JSON.stringify(rolled.ledger, null, 2))}${ledgerSource.endsWith("\n") ? "\n" : ""}`;
+  const renderedMatrix = `${JSON.stringify(rolled.matrix, null, 2)}${matrixSource.endsWith("\n") ? "\n" : ""}`;
+
+  // Rolling reviews repairs freshness only; any other matrix/ledger problem must
+  // stay failing rather than be written over by this tool.
+  const issues = validateRuntimeCapabilityClaims(rolled.matrix, rolled.ledger, { now });
+  const freshnessIssues = issues.filter((issue) =>
+    FRESHNESS_ISSUE_MARKERS.some((marker) => issue.includes(marker)),
+  );
+  const result = { updates: rolled.updates, issues, freshnessIssues };
+  if (issues.length > 0) return { ...result, code: 1, wrote: [] };
+
+  const wrote = [];
+  if (renderedLedger !== ledgerSource) {
+    writeFileSync(ledgerPath, renderedLedger);
+    wrote.push(ledgerPath);
+  }
+  if (renderedMatrix !== matrixSource) {
+    writeFileSync(matrixPath, renderedMatrix);
+    wrote.push(matrixPath);
+  }
+  return { ...result, code: 0, wrote };
+}
+
 function main(argv) {
   const checkOnly = argv.includes("--check");
   const rollReview = argv.includes("--roll-review");
   const ledgerPath = path.join(REPO_ROOT, REPO_PROJECTION_LEDGER_PATH);
-  const source = readFileSync(ledgerPath, "utf8");
 
   if (rollReview) {
     const value = (name) => {
@@ -201,56 +253,40 @@ function main(argv) {
       return index >= 0 ? argv[index + 1] : undefined;
     };
     const date = value("--date") ?? new Date().toISOString().slice(0, 10);
-    const rationale = value("--rationale");
-    const matrixPath = path.join(REPO_ROOT, RUNTIME_CAPABILITY_MATRIX_PATH);
-    let pair;
+    let result;
     try {
-      pair = {
-        matrix: JSON.parse(readFileSync(matrixPath, "utf8")),
-        ledger: JSON.parse(source),
-      };
-      pair = rollReviewFreshness(pair, { date, rationale });
+      result = rollReviewFiles({
+        matrixPath: path.join(REPO_ROOT, RUNTIME_CAPABILITY_MATRIX_PATH),
+        ledgerPath,
+        date,
+        rationale: value("--rationale"),
+      });
     } catch (error) {
       process.stderr.write(`${error.message}\n`);
       return 1;
     }
-    const trailingNewline = source.endsWith("\n") ? "\n" : "";
-    const renderedLedger = `${collapseDigestBindings(JSON.stringify(pair.ledger, null, 2))}${trailingNewline}`;
-    const renderedMatrix = `${JSON.stringify(pair.matrix, null, 2)}\n`;
-    for (const update of pair.updates) {
+    for (const update of result.updates) {
       const from = update.from ?? "absent";
       process.stdout.write(`${update.file} ${update.id} ${update.field}: ${from} -> ${update.to}\n`);
     }
-    // Rolling reviews repairs freshness only; any other ledger/matrix problem
-    // must stay failing rather than be written over by this tool.
-    const { issues } = validateRuntimeCapabilityClaims(pair.matrix, pair.ledger);
-    const freshnessIssues = issues.filter(
-      (issue) =>
-        issue.includes("must be current, non-future, and fresh") ||
-        issue.includes("must bind fresh conservative_review evidence") ||
-        issue.includes("reviewState must be fresh, non-future, and explicit"),
-    );
-    if (issues.length > 0) {
+    if (result.freshnessIssues.length > 0) {
       process.stderr.write(
-        `ledger/matrix still invalid after rolling reviews:\n- ${issues.join("\n- ")}\n`,
+        `freshness issues survived the roll, so the roller does not cover these bindings:\n- ${result.freshnessIssues.join("\n- ")}\n`,
       );
-      return 1;
     }
-    if (freshnessIssues.length > 0) {
+    if (result.code !== 0) {
       process.stderr.write(
-        `freshness issues survived the roll; refusing to write:\n- ${freshnessIssues.join("\n- ")}\n`,
+        `matrix/ledger still invalid after rolling reviews; nothing written:\n- ${result.issues.join("\n- ")}\n`,
       );
-      return 1;
+      return result.code;
     }
-    if (renderedLedger !== source) writeFileSync(ledgerPath, renderedLedger);
-    const matrixSource = readFileSync(matrixPath, "utf8");
-    if (renderedMatrix !== matrixSource) writeFileSync(matrixPath, renderedMatrix);
     process.stdout.write(
-      `rolled ${pair.updates.length} review binding(s) to ${date} across ${RUNTIME_CAPABILITY_MATRIX_PATH} and ${REPO_PROJECTION_LEDGER_PATH}\n`,
+      `rolled ${result.updates.length} review binding(s) to ${date} across ${RUNTIME_CAPABILITY_MATRIX_PATH} and ${REPO_PROJECTION_LEDGER_PATH}\n`,
     );
     return 0;
   }
 
+  const source = readFileSync(ledgerPath, "utf8");
   const { ledger, updates } = recordRepoProjectionDigests(JSON.parse(source));
   const trailingNewline = source.endsWith("\n") ? "\n" : "";
   const rendered = `${collapseDigestBindings(JSON.stringify(ledger, null, 2))}${trailingNewline}`;
