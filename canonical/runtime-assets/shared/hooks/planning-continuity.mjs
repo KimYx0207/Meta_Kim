@@ -229,6 +229,20 @@ function snapshotsEqual(expected = [], actual = []) {
   return snapshotDigest(expected) === snapshotDigest(actual);
 }
 
+// The attested snapshot covers the whole plan root, but the plan root is shared:
+// any concurrent run — same runtime or another one — that rewrites task_plan.md
+// invalidates every other in-flight attestation at once. The digest alone cannot
+// say which file moved, so a stale attestation is indistinguishable from an
+// unverified run at the point where the operator reads the block message.
+function driftedPlanningFiles(expected = [], actual = []) {
+  const identity = (record) => `${record.state}:${record.sha256 || "none"}:${record.size ?? "none"}`;
+  const before = new Map(expected.map((record) => [record.file, identity(record)]));
+  const after = new Map(actual.map((record) => [record.file, identity(record)]));
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .sort()
+    .filter((file) => before.get(file) !== after.get(file));
+}
+
 function controlPatternFindings(records) {
   const findings = [];
   for (const record of records) {
@@ -290,9 +304,13 @@ export function evaluateCompletion({ state, records }) {
   const claim = state?.completionClaim || null;
   const zeroPhaseAccepted = checklist.total === 0 && Boolean(claim?.zeroPhaseReason);
   const checklistClosed = checklist.total > 0 ? checklist.open.length === 0 : zeroPhaseAccepted;
+  const attestationSnapshot = state?.attestation?.snapshot || null;
   const attestationCurrent = Boolean(
-    state?.attestation?.snapshot && snapshotsEqual(state.attestation.snapshot, records),
+    attestationSnapshot && snapshotsEqual(attestationSnapshot, records),
   );
+  const driftedFiles = attestationSnapshot && !attestationCurrent
+    ? driftedPlanningFiles(attestationSnapshot, records)
+    : [];
   const eligible = Boolean(
     attestationCurrent &&
     checklistClosed &&
@@ -302,12 +320,38 @@ export function evaluateCompletion({ state, records }) {
   return {
     eligible,
     attestationCurrent,
+    attestationFiled: Boolean(attestationSnapshot),
+    driftedFiles,
     checklistClosed,
     checklist,
     verificationPassed: claim?.verificationPassed === true,
     summaryClosed: claim?.summaryClosed === true,
     zeroPhaseAccepted,
   };
+}
+
+// A single collapsed reason cannot be acted on: it reads as "verify and close the
+// summary" even when both are already claimed and the only unmet condition is a
+// stale attestation. Each unmet condition has a different repair, so the block
+// names them individually.
+export function unmetCompletionConditions(completion) {
+  if (!completion || completion.eligible) return [];
+  const unmet = [];
+  if (!completion.verificationPassed) unmet.push("verification_not_passed");
+  if (!completion.summaryClosed) unmet.push("summary_not_closed");
+  if (!completion.checklistClosed) {
+    unmet.push(completion.checklist?.total === 0 ? "zero_phase_reason_missing" : "checklist_open");
+  }
+  if (!completion.attestationCurrent) {
+    unmet.push(completion.attestationFiled ? "attestation_stale" : "attestation_missing");
+  }
+  return unmet;
+}
+
+export function stopBlockReason(completion) {
+  const unmet = unmetCompletionConditions(completion);
+  if (unmet.length === 0) return "planning_not_verified_or_closed";
+  return `planning_blocked_on: ${unmet.join(", ")}`;
 }
 
 // Injection stops when the work is closed, and `eligible` is too narrow to be
@@ -687,7 +731,7 @@ export async function evaluateStopGate(input = {}) {
     }
     return {
       status: "block",
-      reason: "planning_not_verified_or_closed",
+      reason: stopBlockReason(completion),
       completion,
       attempts,
       remainingBlocks: MAX_STOP_BLOCKS - attempts,
@@ -768,7 +812,11 @@ function emitHookContext(runtime, event, projection) {
 
 function emitStopDecision(runtime, result) {
   if (result.status !== "block") return;
-  const reason = `[Meta_Kim planning continuity] ${result.reason}; remaining bounded blocks: ${result.remainingBlocks}.`;
+  const drifted = result.completion?.driftedFiles || [];
+  const driftDetail = drifted.length
+    ? ` Rewritten since attestation: ${drifted.join(", ")} — re-attest against current content instead of reusing the earlier claim.`
+    : "";
+  const reason = `[Meta_Kim planning continuity] ${result.reason}; remaining bounded blocks: ${result.remainingBlocks}.${driftDetail}`;
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
 }
 

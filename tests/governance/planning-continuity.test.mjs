@@ -281,6 +281,54 @@ test("completion gate blocks at most twice and requires attested verification pl
   assert.equal((await evaluateStopGate(input(root))).status, "allow");
 });
 
+test("an un-attested plan blocks on the missing attestation, not on a stale one", async (t) => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, "task_plan.md"), "# Task plan\n\n- [x] carried over\n", "utf8");
+  await writeFile(path.join(root, "findings.md"), "# Findings\n", "utf8");
+  await writeFile(path.join(root, "progress.md"), "# Progress\n", "utf8");
+
+  const initialized = await initializePlanningContinuity(input(root));
+  assert.equal(initialized.status, "initialized_waiting_owner_review");
+
+  const blocked = await evaluateStopGate(input(root));
+  assert.equal(blocked.status, "block");
+  assert.match(blocked.reason, /attestation_missing/u);
+  assert.doesNotMatch(blocked.reason, /attestation_stale/u);
+  assert.deepEqual(blocked.completion.driftedFiles, []);
+});
+
+test("a concurrent rewrite of the shared plan blocks on stale attestation, not on missing verification", async (t) => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await initializePlanningContinuity(input(root));
+
+  const taskPlan = await readFile(path.join(root, "task_plan.md"), "utf8");
+  await writeFile(path.join(root, "task_plan.md"), taskPlan.replaceAll("- [ ]", "- [x]"), "utf8");
+  await attestPlanningContinuity(input(root, "run-a", { ownerReview: true }));
+  await claimPlanningCompletion(input(root, "run-a", {
+    verificationPassed: true,
+    summaryClosed: true,
+  }));
+
+  // The plan root is shared, so another run landing here invalidates this run's
+  // attestation while verification, summary, and checklist all stay satisfied.
+  await writeFile(
+    path.join(root, "progress.md"),
+    "# Progress\n\nrewritten by a concurrent run\n",
+    "utf8",
+  );
+
+  const blocked = await evaluateStopGate(input(root));
+  assert.equal(blocked.status, "block");
+  assert.match(blocked.reason, /attestation_stale/u);
+  assert.doesNotMatch(blocked.reason, /attestation_missing/u);
+  assert.doesNotMatch(blocked.reason, /verification_not_passed/u);
+  assert.doesNotMatch(blocked.reason, /summary_not_closed/u);
+  assert.doesNotMatch(blocked.reason, /checklist_open/u);
+  assert.deepEqual(blocked.completion.driftedFiles, ["progress.md"]);
+});
+
 async function governedPlanFixture(sessionId, phases) {
   const root = await fixture();
   const spineRoot = path.join(root, ".meta-kim", "state", "default", "spine");
