@@ -1261,22 +1261,23 @@ export async function materializeGlobalProjectionPackage({
     // candidate"). Normalizing the staged root's random segment to a stable
     // placeholder makes the bundle machine-independent and reproducible; no
     // runtime consumer reads these file: URLs.
+    // npm embeds the staged working directory (pid + per-worker random UUID)
+    // as a relative file: URL in bundle/package.json dependencies and both
+    // lockfiles. Two concurrent materializations of the same source therefore
+    // produce byte-different bundles, and the second worker's
+    // verifyExactWinner always fails on macOS/APFS timing. Normalizing that
+    // directory fragment to a stable form makes the bundle
+    // machine-independent and reproducible; no runtime consumer reads these
+    // file: URLs. I/O errors propagate: a half-normalized bundle must not be
+    // written over a verified one.
     const normalizeStagedBundlePaths = (filePath) => {
-      try {
-        const raw = readFileSync(filePath, "utf8");
-        // npm embeds the per-worker staged directory (random UUID suffix) as
-        // a relative file: URL. Normalize only that UUID segment so two
-        // materializations of the same source become byte-identical bundles;
-        // everything else stays exactly as npm wrote it.
-        const normalized = raw.replace(
-          /\.projection-package-staged-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
-          ".projection-package-staged",
-        );
-        if (normalized === raw) return;
-        writeFileSync(filePath, normalized);
-      } catch {
-        // Non-JSON or transient file: leave as installed.
-      }
+      const raw = readFileSync(filePath, "utf8");
+      const normalized = raw.replace(
+        /\.projection-package-staged-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+        ".projection-package-staged",
+      );
+      if (normalized === raw) return;
+      writeFileSync(filePath, normalized);
     };
     normalizeStagedBundlePaths(path.join(stageDir, "bundle", "package.json"));
     normalizeStagedBundlePaths(path.join(stageDir, "bundle", "package-lock.json"));
@@ -1334,7 +1335,7 @@ export async function materializeGlobalProjectionPackage({
         throw new Error(
           "Existing projection package digest directory differs from this staged candidate: " +
           (winnerClosure && stageClosure
-            ? `closureMatch=${winnerClosure.sha256 === stageClosure.sha256}, entryCount=${winnerClosure.entryCount}/${stageClosure.entryCount}`
+            ? `closureMatch=${winnerClosure.sha256 === stageClosure.sha256}, entryCount=${winnerClosure.entryCount}/${stageClosure.entryCount}, receiptMatch=${winnerReceiptRaw === stageReceiptRaw}`
             : "closure unavailable"),
         );
       }
