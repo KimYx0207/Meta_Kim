@@ -8,6 +8,15 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.1.2] - 2026-09-10
+
+### Fixed
+
+- **Concurrent global projection no longer fails on npm 10.** When two workers materialized the same package at once, the loser compared its bundle byte-for-byte against the winner's and always found a difference, so the install aborted. The difference was npm's own bookkeeping: on npm 10 `npm install <archive>` records the archive's absolute staged path as a `file:` dependency, and that path carries a per-worker process id and uuid. The staged segment is now collapsed before the bundle is hashed, so two workers building from the same source produce identical bundles. Nothing resolves those `file:` URLs — the archive is deleted right after install — so the rewrite costs nothing. npm 11 records a prefix-relative path and was never affected, which is why the report only reached users on the older npm (PR #80).
+- **A missing lockfile no longer aborts materialization.** The same path read three bundle metadata files unconditionally; npm version decides which of them exist. A file that was never written is now skipped, while every other read or write error still stops the install rather than letting a half-written bundle reach the receipt.
+- **The planning stop hook says which condition is unmet.** It previously refused with `planning_not_verified_or_closed` and a bounded-block count of zero, which named neither the failing condition nor the next action. It now reports the specific unmet completion condition, and the no-op path for a run with no bound plan is covered on every lifecycle event.
+- **The prompt hook budget uses Claude Code's unit.** The hook timeout was written as a millisecond figure in a field Claude Code reads as seconds, which turned an intended one-minute ceiling into an effectively unbounded one.
+
 ## [3.1.1] - 2026-09-08
 
 ### Fixed
