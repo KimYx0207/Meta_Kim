@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { constants as fsConstants, promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -1251,6 +1251,38 @@ export async function materializeGlobalProjectionPackage({
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
     npmRuntime.run(projectionInstallArgs(stageBundleDir, archivePath), stageDir);
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
+
+    // metaj: npm records the staged tarball's absolute path (which contains a
+    // per-worker random UUID) into bundle/package.json dependencies and both
+    // lockfiles. Two concurrent materializations of the SAME source therefore
+    // produce byte-different bundles, and the second worker's
+    // verifyExactWinner always fails on macOS/APFS timing ("Existing
+    // projection package digest directory differs from this staged
+    // candidate"). Normalizing the staged root's random segment to a stable
+    // placeholder makes the bundle machine-independent and reproducible; no
+    // runtime consumer reads these file: URLs.
+    const normalizeStagedBundlePaths = (filePath) => {
+      try {
+        const raw = readFileSync(filePath, "utf8");
+        // npm embeds the per-worker staged directory (random UUID suffix) as
+        // a relative file: URL. Normalize only that UUID segment so two
+        // materializations of the same source become byte-identical bundles;
+        // everything else stays exactly as npm wrote it.
+        const normalized = raw.replace(
+          /\.projection-package-staged-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+          ".projection-package-staged",
+        );
+        if (normalized === raw) return;
+        writeFileSync(filePath, normalized);
+      } catch {
+        // Non-JSON or transient file: leave as installed.
+      }
+    };
+    normalizeStagedBundlePaths(path.join(stageDir, "bundle", "package.json"));
+    normalizeStagedBundlePaths(path.join(stageDir, "bundle", "package-lock.json"));
+    normalizeStagedBundlePaths(
+      path.join(stageDir, "bundle", "node_modules", ".package-lock.json"),
+    );
     await fs.rm(archivePath, { force: true });
 
     const stageLayout = {
@@ -1300,7 +1332,10 @@ export async function materializeGlobalProjectionPackage({
         winnerReceiptRaw !== stageReceiptRaw
       ) {
         throw new Error(
-          "Existing projection package digest directory differs from this staged candidate",
+          "Existing projection package digest directory differs from this staged candidate: " +
+          (winnerClosure && stageClosure
+            ? `closureMatch=${winnerClosure.sha256 === stageClosure.sha256}, entryCount=${winnerClosure.entryCount}/${stageClosure.entryCount}`
+            : "closure unavailable"),
         );
       }
       return winner;
