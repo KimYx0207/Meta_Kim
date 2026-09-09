@@ -73,6 +73,23 @@ export function hookCommandNode(absScriptPath) {
   return `node "${absScriptPath.replace(/\\/g, "/")}"`;
 }
 
+/**
+ * Budget for the native HookPrompt UserPromptSubmit hook.
+ *
+ * Claude Code reads the settings `timeout` field in SECONDS (`e.timeout * 1000`),
+ * defaulting to 600000 ms when omitted. This entry previously carried `10000`,
+ * written as if the field were milliseconds — which granted the hook 2.78 hours,
+ * i.e. no effective budget at all.
+ *
+ * 60 is a judgement value, not a measured p99. The hook issues a model request,
+ * and every transcript record for it is a `hook_cancelled` batch abort
+ * (222..3164 ms), so those durations are lower bounds and cannot pin a true
+ * ceiling. 60 leaves ~19x headroom over the longest observed run, and the cost
+ * of undershooting is mild: the prompt is submitted without optimization rather
+ * than failing.
+ */
+export const HOOK_PROMPT_TIMEOUT_SECONDS = 60;
+
 /** Hook blocks matching Meta_Kim canonical runtime (absolute paths under meta-kim/). */
 export function buildMetaKimHooksTemplate(
   absHooksDir,
@@ -96,7 +113,7 @@ export function buildMetaKimHooksTemplate(
     userPromptHooks.push({
       type: "command",
       command: hookPromptCommand,
-      timeout: 10000,
+      timeout: HOOK_PROMPT_TIMEOUT_SECONDS,
     });
   } else if (hookPromptAdapter) {
     userPromptHooks.push(cmd("hookprompt-adapter.mjs"));
