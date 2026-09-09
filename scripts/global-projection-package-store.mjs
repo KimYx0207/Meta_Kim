@@ -638,6 +638,64 @@ export function projectionInstallArgs(prefixDir, archivePath) {
   ];
 }
 
+/**
+ * Bundle metadata files into which npm can write the staged tarball's path.
+ * Relative to the stage bundle directory.
+ */
+const STAGED_PATH_BEARING_BUNDLE_FILES = [
+  "package.json",
+  "package-lock.json",
+  path.join("node_modules", ".package-lock.json"),
+];
+
+const STAGED_DIR_PLACEHOLDER = ".projection-package-staged";
+
+/**
+ * Erase the per-worker segment of the staged directory name from bundle
+ * metadata.
+ *
+ * Depending on the npm version, `npm install <archivePath>` records the
+ * archive's path as a `file:` dependency in bundle/package.json and both
+ * lockfiles. That path runs through the stage directory, whose name carries
+ * `-<pid>-<uuid>` (see the `stageDir` construction). Two workers materializing
+ * the SAME source therefore produce byte-different bundles, so the loser's
+ * `verifyExactWinner` closure comparison can never match the winner's and
+ * concurrent materialization fails.
+ *
+ * Nothing resolves these `file:` URLs — the archive is deleted immediately
+ * after install — so collapsing the variable segment costs nothing and makes
+ * the bundle reproducible across workers and machines.
+ *
+ * npm 11.16.0 records a path relative to the install prefix, which carries no
+ * staged segment at all; there this is a no-op. Keep it version-agnostic
+ * rather than gating on a probed npm version.
+ */
+export function normalizeStagedBundleMetadata(raw) {
+  return raw.replace(
+    /\.projection-package-staged-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+    STAGED_DIR_PLACEHOLDER,
+  );
+}
+
+/**
+ * A missing file is skipped: npm version differences decide which lockfiles
+ * exist, and normalization has nothing to say about a file that was never
+ * written. Every other I/O error propagates — a half-written bundle must not
+ * reach the receipt.
+ */
+function normalizeStagedBundleMetadataFile(filePath) {
+  let raw;
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  const normalized = normalizeStagedBundleMetadata(raw);
+  if (normalized === raw) return;
+  writeFileSync(filePath, normalized);
+}
+
 async function snapshotNpmPackSource(packageRoot, npmRuntime) {
   const stdout = npmRuntime.run([
     "pack",
@@ -1252,38 +1310,9 @@ export async function materializeGlobalProjectionPackage({
     npmRuntime.run(projectionInstallArgs(stageBundleDir, archivePath), stageDir);
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
 
-    // metaj: npm records the staged tarball's absolute path (which contains a
-    // per-worker random UUID) into bundle/package.json dependencies and both
-    // lockfiles. Two concurrent materializations of the SAME source therefore
-    // produce byte-different bundles, and the second worker's
-    // verifyExactWinner always fails on macOS/APFS timing ("Existing
-    // projection package digest directory differs from this staged
-    // candidate"). Normalizing the staged root's random segment to a stable
-    // placeholder makes the bundle machine-independent and reproducible; no
-    // runtime consumer reads these file: URLs.
-    // npm embeds the staged working directory (pid + per-worker random UUID)
-    // as a relative file: URL in bundle/package.json dependencies and both
-    // lockfiles. Two concurrent materializations of the same source therefore
-    // produce byte-different bundles, and the second worker's
-    // verifyExactWinner always fails on macOS/APFS timing. Normalizing that
-    // directory fragment to a stable form makes the bundle
-    // machine-independent and reproducible; no runtime consumer reads these
-    // file: URLs. I/O errors propagate: a half-normalized bundle must not be
-    // written over a verified one.
-    const normalizeStagedBundlePaths = (filePath) => {
-      const raw = readFileSync(filePath, "utf8");
-      const normalized = raw.replace(
-        /\.projection-package-staged-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
-        ".projection-package-staged",
-      );
-      if (normalized === raw) return;
-      writeFileSync(filePath, normalized);
-    };
-    normalizeStagedBundlePaths(path.join(stageDir, "bundle", "package.json"));
-    normalizeStagedBundlePaths(path.join(stageDir, "bundle", "package-lock.json"));
-    normalizeStagedBundlePaths(
-      path.join(stageDir, "bundle", "node_modules", ".package-lock.json"),
-    );
+    for (const relativePath of STAGED_PATH_BEARING_BUNDLE_FILES) {
+      normalizeStagedBundleMetadataFile(path.join(stageBundleDir, relativePath));
+    }
     await fs.rm(archivePath, { force: true });
 
     const stageLayout = {
