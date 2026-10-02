@@ -393,12 +393,19 @@ test("66 — child process kill after A commit resumes only B after lease expiry
   const invocationLog = path.join(tempRoot, "invocations.log");
   const childPath = path.join(tempRoot, "durable-bridge-child.mjs");
   const childSource = `
+    import assert from "node:assert/strict";
     import { appendFileSync } from "node:fs";
+    import { mock } from "node:test";
     import { runStageRunnerBridge } from ${JSON.stringify(BRIDGE_URL)};
     import { openDurableRunKernel } from ${JSON.stringify(KERNEL_URL)};
     import { buildStageDagPacket } from ${JSON.stringify(DAG_URL)};
 
     const [phase, dbPath, invocationLog] = process.argv.slice(2);
+    const claimedAtMs = 1_700_000_000_000;
+    const leaseMs = 60;
+    // Freeze only Date in each isolated child: bridge and repository share the
+    // same clock without letting process scheduling expire an active fixture claim.
+    mock.timers.enable({ apis: ["Date"], now: claimedAtMs });
     const lane = (taskPacketId) => ({
       laneId: taskPacketId,
       laneKind: "execution_worker",
@@ -432,7 +439,7 @@ test("66 — child process kill after A commit resumes only B after lease expiry
         return completed;
       };
     }
-    const result = await runStageRunnerBridge({
+    const bridgeOptions = {
       runId: "p118-child-kill-resume",
       runtime: "codex",
       stageDagPacket: dag,
@@ -442,10 +449,10 @@ test("66 — child process kill after A commit resumes only B after lease expiry
       durable: {
         enabled: true,
         kernel,
-        mode: phase === "first" ? "create" : "resume",
+        mode: phase === "resume" ? "resume" : "create",
         taskFingerprint: "task-p118-child-kill-resume",
         ownerId: \`bridge-\${phase}\`,
-        leaseMs: 60,
+        leaseMs,
         heartbeatIntervalMs: 15,
       },
       evidenceKind: "child_process_test_double",
@@ -453,6 +460,9 @@ test("66 — child process kill after A commit resumes only B after lease expiry
         appendFileSync(invocationLog, \`\${phase}:\${task.taskPacketId}\\n\`);
         if (phase === "first" && task.taskPacketId === "b") {
           await new Promise(() => {});
+        }
+        if (phase === "expired" && task.taskPacketId === "b") {
+          mock.timers.setTime(claimedAtMs + leaseMs);
         }
         const outputText = \`\${phase}:\${task.taskPacketId}:observed\`;
         return {
@@ -472,13 +482,25 @@ test("66 — child process kill after A commit resumes only B after lease expiry
           stderrTail: "",
         };
       },
-    });
+    };
+    if (phase === "resume") {
+      mock.timers.setTime(claimedAtMs + leaseMs - 1);
+      await assert.rejects(runStageRunnerBridge(bridgeOptions), {
+        code: "blocked_until_lease_expiry",
+        nodeId: "stage:execution:lane:b",
+        leaseOwner: "bridge-first",
+        leaseExpiresAtMs: claimedAtMs + leaseMs,
+      });
+      mock.timers.setTime(claimedAtMs + leaseMs);
+    }
+    const result = await runStageRunnerBridge(bridgeOptions);
     process.stdout.write(JSON.stringify({
       status: result.status,
       nodeRecords: result.nodeRecords,
       executionProjection: result.executionProjection,
     }));
     kernel.close();
+    mock.timers.reset();
   `;
   writeFileSync(childPath, childSource, "utf8");
 
@@ -489,7 +511,6 @@ test("66 — child process kill after A commit resumes only B after lease expiry
   });
   assert.equal(first.status, 86, first.stderr || first.stdout);
 
-  await new Promise((resolve) => setTimeout(resolve, 120));
   const resumed = spawnSync(process.execPath, [childPath, "resume", dbPath, invocationLog], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -525,4 +546,32 @@ test("66 — child process kill after A commit resumes only B after lease expiry
   );
   inspectionKernel.close();
   inspectionKernel = null;
+
+  await t.test("clock advancement still rejects expired terminal commits", () => {
+    const expired = spawnSync(process.execPath, [
+      childPath,
+      "expired",
+      path.join(tempRoot, "expired.sqlite"),
+      path.join(tempRoot, "expired-invocations.log"),
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(expired.status, 0, expired.stderr || expired.stdout);
+    const expiredSummary = JSON.parse(expired.stdout);
+    assert.equal(expiredSummary.status, "failed");
+    assert.equal(expiredSummary.nodeRecords.length, 2);
+    for (const record of expiredSummary.nodeRecords) {
+      assert.equal(record.laneKind, "execution_worker");
+      assert.equal(record.failureClass, "durable_terminal_commit_failed");
+      assert.match(record.failureMessage, /expired lease/iu);
+    }
+    assert.equal(
+      expiredSummary.executionProjection.durable.projection.events.filter(
+        (event) => event.eventType === "NodeAttemptCompleted",
+      ).length,
+      0,
+    );
+  });
 });
