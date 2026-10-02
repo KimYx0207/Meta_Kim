@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   assertPortablePackedReferences,
   collectNonPortablePackedReferences,
@@ -36,6 +37,23 @@ test("governance scripts and registries do not hardcode personal Kim_Decision pa
     "config/governance/decision-pattern-catalog.json",
   ]) {
     assert.doesNotMatch(readFileSync(file, "utf8"), /D:[/\\]KimProject[/\\]Kim_Decision/i, file);
+  }
+});
+
+test("packed portability checks recognize cross-host Windows drive and UNC roots", () => {
+  for (const [root, reference] of [
+    ["D:/work/source-repository", "D:/work/source-repository/scripts/entry.mjs"],
+    ["D:\\work\\source-repository", "d:\\WORK\\SOURCE-REPOSITORY\\scripts\\entry.mjs"],
+    ["D:/work/cache/../source-repository/", "D:/work/source-repository/bin/entry.mjs"],
+    ["\\\\server\\share\\source-repository", "\\\\SERVER\\share\\source-repository\\bin\\entry.mjs"],
+    ["//server/share/source-repository/", "//server/share/source-repository/bin/entry.mjs"],
+    [path.resolve("test-source-root"), `${path.resolve("test-source-root")}/scripts/entry.mjs`],
+  ]) {
+    assert.throws(
+      () => assertPortablePackedReferences({ command: `node "${reference}"` }, { forbiddenRoots: [root] }),
+      /non-portable references/u,
+      `${root} must be recognized on ${process.platform}`,
+    );
   }
 });
 
