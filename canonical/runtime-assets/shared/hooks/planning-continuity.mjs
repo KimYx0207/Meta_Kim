@@ -116,7 +116,8 @@ function isWithin(root, candidate) {
 }
 
 async function resolveSafePlanRoot(projectRoot, requested = ".", { create = false } = {}) {
-  const resolvedProject = path.resolve(projectRoot);
+  let resolvedProject = path.resolve(projectRoot);
+  try { resolvedProject = await realpath(resolvedProject); } catch (e) { if (e?.code !== "ENOENT") throw e; }
   const candidate = path.resolve(resolvedProject, requested || ".");
   if (!isWithin(resolvedProject, candidate)) {
     throw new Error("planning_root_outside_project");
@@ -432,12 +433,19 @@ async function contextFrom({ payload = {}, options = {} } = {}) {
     runtime === "claude_code" ? process.env.CLAUDE_PROJECT_DIR : null,
     process.env.META_KIM_PROJECT_ROOT,
   ].filter((value) => typeof value === "string" && value.trim());
-  const projectRoot = resolveProjectRoot({
+  let projectRoot = resolveProjectRoot({
     cwd: options.cwd || process.cwd(),
     explicitDeclarations,
     runtimeCandidates: projectRootCandidatesFromPayload(payload),
   });
   if (!projectRoot) throw new Error("trusted_project_root_not_found");
+  // metaj: canonicalize symlinked project roots (macOS /var -> /private/var).
+  // Without this, path.relative(projectRoot, realpath-ed authorityRoot) yields
+  // ".."-crossing segments and every subsequent resolveSafePlanRoot call
+  // throws planning_root_outside_project on symlinked roots (e.g. os.tmpdir()).
+  let canonicalProject = path.resolve(projectRoot);
+  try { canonicalProject = await realpath(canonicalProject); } catch (e) { if (e?.code !== "ENOENT") throw e; }
+  projectRoot = canonicalProject;
   if (!["claude_code", "codex"].includes(runtime)) {
     throw new Error("planning_runtime_adapter_unavailable");
   }
