@@ -9,6 +9,26 @@ document. Run `npm run meta:inventory` for live script, package-entry, and
 tracked-test counts. `npm run meta:test:inventory` additionally fails when a
 tracked `*.test.mjs` file is outside the explicit standard suites.
 
+## Behavioral Verification
+
+`verification-stage-manifest.mjs` owns the smoke behavior floor shared by
+`meta:release:smoke` and `meta:verify:all`: capability discovery, test inventory,
+unit/POC, meta-theory, integration, and Live coverage (80% lines/functions/branches).
+Inventory proves registration only; it does not replace executing those tests.
+Full verification adds its existing runtime, installer, governance, and release
+proofs and cannot omit a smoke behavior stage.
+
+CI runs `npm run meta:test:ci -- --suite core|governance|live` in separate jobs on
+every PR and main push, including Markdown-only prompt changes. Each lane syncs
+all runtime projections, then uses a fresh home and an environment allow-list
+without provider credentials or ambient runtime overrides. These are local
+fixture/product tests, including loopback Live HTTP servers, not paid model
+conversations or external live certification. Capability-discovery smoke stays
+mandatory in smoke/full and requires installed execution/creation providers; the
+credential-free CI test lanes do not replace that environment-dependent gate.
+Platform-specific regressions
+remain in their existing Windows/macOS/Linux jobs. CI is not a full release pass.
+
 ## Core Loop And Discovery Bus
 
 - Default governed execution entry: `npm run meta:theory:run` (`scripts/run-meta-theory-governed-execution.mjs`).

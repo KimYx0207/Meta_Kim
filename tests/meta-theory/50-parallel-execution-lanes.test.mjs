@@ -1,7 +1,15 @@
-import { describe, test } from "node:test";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+
+let runtimeFixture;
+before(async () => {
+  runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+});
+after(() => runtimeFixture?.cleanup());
+
 
 function route(task, runtime = "claude_code", os = "windows") {
   const result = spawnSync(

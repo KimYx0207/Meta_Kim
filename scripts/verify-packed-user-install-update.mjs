@@ -175,7 +175,14 @@ const PORTABILITY_PLACEHOLDERS = Object.freeze([
 ]);
 
 function normalizedReference(value) {
-  return path.resolve(String(value)).replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
+  const raw = String(value);
+  // A Windows package/reference may be audited on a POSIX host (and vice
+  // versa). Native path.resolve would prefix a Windows drive with the Unix
+  // cwd, making the forbidden machine root impossible to match.
+  const resolved = path.win32.isAbsolute(raw) && /^(?:[a-z]:|\\\\|\/\/)/iu.test(raw)
+    ? path.win32.normalize(raw)
+    : path.resolve(raw);
+  return resolved.replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
 }
 
 export function collectNonPortablePackedReferences(

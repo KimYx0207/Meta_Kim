@@ -33,6 +33,8 @@
     "meta:test:setup:packed": 900000,
     "meta:test:meta-theory": 1800000,
     "meta:test:integration": 180000,
-    "meta:acceptance:clean-room:require": 30000
+    "meta:acceptance:clean-room:require": 30000,
+    "meta:capabilities:smoke": 180000,
+    "meta:test:live:coverage": 600000
   }
 }

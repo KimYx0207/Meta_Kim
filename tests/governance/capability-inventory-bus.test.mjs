@@ -1,17 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 
-test("capability inventory bus emits unified multi-source provider records", () => {
-  const result = spawnSync(process.execPath, ["scripts/build-capability-inventory.mjs"], {
+test("capability inventory bus emits unified multi-source provider records", (t) => {
+  const fixture = createGovernanceRuntimeFixture(t, { graph: true });
+  const result = fixture.run(["scripts/build-capability-inventory.mjs"], {
     encoding: "utf8",
     timeout: 120_000,
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   const inventory = JSON.parse(
-    readFileSync(".meta-kim/state/default/capability-inventory.json", "utf8"),
+    readFileSync(path.join(fixture.repoRoot, ".meta-kim/state/default/capability-inventory.json"), "utf8"),
   );
   const globalOnly = inventory.projectProjectionMode === "global_only";
   const providerTypes = new Set(inventory.capabilities.map((record) => record.providerType));

@@ -20,6 +20,9 @@ const stateDir = path.join(
 
 const args = new Set(process.argv.slice(2));
 const fixtureMode = args.has("--fixture");
+if (fixtureMode && args.has("--live")) {
+  throw new Error("--fixture and --live are mutually exclusive");
+}
 const liveMode = args.has("--live") || !fixtureMode;
 const runtimeArg =
   process.argv.find((arg) => arg.startsWith("--runtime="))?.split("=")[1] ??
@@ -32,6 +35,12 @@ const requestedRuntimes =
         .map((item) => item.trim())
         .filter(Boolean);
 const compatibilitySmokeRuntimes = ["openclaw", "cursor"];
+// Inspectable synthetic inputs only. Never invoke eval-meta-agents (including
+// its auth preparation) or promote these inputs to actual compatibility smoke.
+const compatibilitySmokeFixtureInputs = {
+  openclaw: { runtime: "openclaw", mode: "fixture", status: "passed", ok: true },
+  cursor: { runtime: "cursor", mode: "fixture", status: "passed", ok: true },
+};
 
 const fullFlowContract = await readJson(
   "config/contracts/prompt-first-full-flow-stage-contract.json",
@@ -380,6 +389,10 @@ if (args.has("--self-test-strict-live-normalization")) {
   runStrictLiveNormalizationSelfTest();
   process.exit(0);
 }
+if (args.has("--self-test-compatibility-fixture-boundary")) {
+  runCompatibilityFixtureBoundarySelfTest();
+  process.exit(0);
+}
 
 const runtimeResults = {};
 for (const runtime of requestedRuntimes) {
@@ -391,7 +404,9 @@ const compatibilitySmokeResults = Object.fromEntries(
   await Promise.all(
     compatibilitySmokeRuntimes.map(async (runtime) => [
       runtime,
-      await runCompatibilitySmoke(runtime),
+      fixtureMode
+        ? buildFixtureCompatibilitySmoke(runtime)
+        : await runCompatibilitySmoke(runtime),
     ]),
   ),
 );
@@ -409,7 +424,10 @@ const noOverclaimPacket = validateNoOverclaim(
   runtimeValidationPackets,
   liveMode ? "live" : "fixture",
 );
-const compatibilitySmokePacket = validateCompatibilitySmoke(compatibilitySmokeResults);
+const compatibilitySmokePacket = validateCompatibilitySmoke(
+  compatibilitySmokeResults,
+  liveMode ? "live" : "fixture",
+);
 const prdTaskStatuses = buildPrdTaskStatuses(
   runtimeValidationPackets,
   promptPerfectionPacket,
@@ -455,6 +473,7 @@ const artifact = {
           )
         : [],
     fixtureModeCannotClaimLivePass: fixtureMode,
+    fixtureModeCannotClaimCompatibilitySmokePass: fixtureMode,
     primaryRuntimePerfection:
       liveMode &&
       allValidationFailures.length === 0 &&
@@ -502,7 +521,7 @@ async function writeArtifact(artifactToWrite) {
     `- P-091: \`${artifactToWrite.prdTaskStatuses["P-091"]}\``,
     "",
     artifactToWrite.summary.fixtureModeCannotClaimLivePass
-      ? "Fixture mode validates the gate only; it is not live evidence."
+      ? "Fixture mode validates the gate only; it is not live or actual compatibility smoke evidence."
       : "Live mode invoked target runtimes and can support the primary-runtime prompt-first full-flow claim when all tasks pass.",
   ];
   await fs.writeFile(artifactPaths.report, `${lines.join("\n")}\n`, "utf8");
@@ -534,6 +553,28 @@ function buildFixtureRuntimePayload(runtime) {
     artifact: "fixture://prompt-first-full-flow",
     liveExecutionPass: false,
   });
+}
+
+function buildFixtureCompatibilitySmoke(runtime) {
+  const input = compatibilitySmokeFixtureInputs[runtime];
+  if (!input) throw new Error(`Missing compatibility smoke fixture: ${runtime}`);
+  const ok = input.ok === true && input.status === "passed";
+  return {
+    runtime,
+    mode: "fixture",
+    status: ok ? "fixture_pass_not_live" : "failed",
+    ok,
+    evidenceKind: "fixture_regression",
+    command: "inline compatibility fixture replay (no command executed)",
+    fixtureSource: "scripts/run-prompt-first-full-flow-live-acceptance.mjs#compatibilitySmokeFixtureInputs",
+    fixtureOnly: true,
+    actualHostObserved: false,
+    compatibilitySmokeClaimAllowed: false,
+    primaryLiveClaimAllowed: false,
+    failureClass: ok ? "pass" : "fixture_failed",
+    remainingAction: "Run --live to collect actual compatibility smoke evidence.",
+    sample: { ...input },
+  };
 }
 
 async function runCompatibilitySmoke(runtime) {
@@ -1244,33 +1285,91 @@ function validateNoOverclaim(results, validationPackets, mode) {
   };
 }
 
-function validateCompatibilitySmoke(smokeResults) {
+function validateCompatibilitySmoke(smokeResults, mode = "live") {
   const failures = [];
+  const fixture = mode === "fixture";
+  const expectedMode = fixture ? "fixture" : "smoke";
+  const expectedStatus = fixture ? "fixture_pass_not_live" : "passed";
+  const expectedEvidenceKind = fixture ? "fixture_regression" : "compatibility_smoke_pass";
   for (const runtime of compatibilitySmokeRuntimes) {
     const result = smokeResults[runtime];
     if (!result) {
       failures.push(`${runtime}: compatibility smoke result missing`);
       continue;
     }
-    if (result.mode !== "smoke") {
-      failures.push(`${runtime}: compatibility evidence must be smoke mode`);
+    if (result.mode !== expectedMode) {
+      failures.push(`${runtime}: compatibility evidence must be ${expectedMode} mode`);
     }
-    if (result.status !== "passed" || result.ok !== true) {
+    if (result.status !== expectedStatus || result.ok !== true) {
       failures.push(
         `${runtime}: compatibility smoke must pass, got ${result.status} (${result.failureClass ?? "unknown"})`,
       );
     }
-    if (result.evidenceKind !== "compatibility_smoke_pass") {
-      failures.push(`${runtime}: compatibility smoke evidenceKind must be compatibility_smoke_pass`);
+    if (result.evidenceKind !== expectedEvidenceKind) {
+      failures.push(`${runtime}: compatibility smoke evidenceKind must be ${expectedEvidenceKind}`);
+    }
+    if (fixture) {
+      if (
+        result.fixtureOnly !== true ||
+        result.actualHostObserved !== false ||
+        result.compatibilitySmokeClaimAllowed !== false ||
+        result.primaryLiveClaimAllowed !== false ||
+        result.sample?.runtime !== runtime ||
+        result.sample?.mode !== "fixture"
+      ) {
+        failures.push(`${runtime}: compatibility fixture must remain fixture-only without host or live claims`);
+      }
+    } else if (result.fixtureOnly === true || result.sample?.mode === "fixture") {
+      failures.push(`${runtime}: fixture cannot satisfy actual compatibility smoke`);
     }
   }
   return {
     status: failures.length === 0 ? "pass" : "fail",
     failures,
     smokeRuntimes: compatibilitySmokeRuntimes,
-    evidenceKind: "compatibility_smoke_pass",
+    mode: expectedMode,
+    evidenceKind: expectedEvidenceKind,
+    fixtureOnly: fixture,
+    compatibilitySmokeClaimAllowed: !fixture && failures.length === 0,
     primaryLiveClaimAllowed: false,
   };
+}
+
+function runCompatibilityFixtureBoundarySelfTest() {
+  const fixtures = Object.fromEntries(
+    compatibilitySmokeRuntimes.map((runtime) => [runtime, buildFixtureCompatibilitySmoke(runtime)]),
+  );
+  if (validateCompatibilitySmoke(fixtures, "fixture").status !== "pass") {
+    throw new Error("Compatibility fixtures must validate locally");
+  }
+  if (validateCompatibilitySmoke(fixtures, "live").status !== "fail") {
+    throw new Error("Compatibility fixtures must not satisfy live-mode smoke");
+  }
+  for (const replacement of [
+    { mode: "smoke" },
+    { status: "passed" },
+    { evidenceKind: "compatibility_smoke_pass" },
+    { evidenceKind: "runtime_live_pass" },
+    { fixtureOnly: false },
+    { actualHostObserved: true },
+    { compatibilitySmokeClaimAllowed: true },
+    { primaryLiveClaimAllowed: true },
+    { sample: { runtime: "openclaw", mode: "smoke" } },
+  ]) {
+    const promoted = { ...fixtures, openclaw: { ...fixtures.openclaw, ...replacement } };
+    if (validateCompatibilitySmoke(promoted, "fixture").status !== "fail") {
+      throw new Error(`Compatibility fixture promotion must fail: ${JSON.stringify(replacement)}`);
+    }
+  }
+  const relabeled = Object.fromEntries(
+    Object.entries(fixtures).map(([runtime, result]) => [runtime, {
+      ...result, mode: "smoke", status: "passed", evidenceKind: "compatibility_smoke_pass",
+    }]),
+  );
+  if (validateCompatibilitySmoke(relabeled, "live").status !== "fail") {
+    throw new Error("Relabeled fixtures must not satisfy actual compatibility smoke");
+  }
+  console.log("compatibility fixture boundary self-test passed");
 }
 
 function buildPrdTaskStatuses(runtimePackets, promptPacket, parityPacket, overclaimPacket, mode) {

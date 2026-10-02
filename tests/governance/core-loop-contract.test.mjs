@@ -1,9 +1,15 @@
-import test from "node:test";
+import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+
+let runtimeFixture;
+before(() => {
+  runtimeFixture = createGovernanceRuntimeFixture(null, { graph: true });
+});
+after(() => runtimeFixture?.cleanup());
 
 const CORE_LOOP = JSON.parse(readFileSync("config/contracts/core-loop-contract.json", "utf8"));
 
@@ -53,8 +59,7 @@ test("core-loop contract binds the default governed execution path", () => {
 test("default CLI keeps stdout machine-readable while progress uses stderr", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-cli-streams-"));
   try {
-    const visible = spawnSync(
-      process.execPath,
+    const visible = runtimeFixture.run(
       [
         "scripts/run-meta-theory-governed-execution.mjs",
         "--emit-conversation-notice",
@@ -69,7 +74,7 @@ test("default CLI keeps stdout machine-readable while progress uses stderr", () 
         "--db",
         path.join(tempDir, "visible.sqlite"),
       ],
-      { cwd: process.cwd(), encoding: "utf8" },
+      { encoding: "utf8" },
     );
     assert.equal(visible.status, 0, visible.stderr);
     const visibleSummary = JSON.parse(visible.stdout);
@@ -78,8 +83,7 @@ test("default CLI keeps stdout machine-readable while progress uses stderr", () 
       assert.equal(visible.stderr.includes(marker), true, `missing stderr progress marker ${marker}`);
     }
 
-    const machine = spawnSync(
-      process.execPath,
+    const machine = runtimeFixture.run(
       [
         "scripts/run-meta-theory-governed-execution.mjs",
         "--no-emit-conversation-notice",
@@ -94,7 +98,7 @@ test("default CLI keeps stdout machine-readable while progress uses stderr", () 
         "--db",
         path.join(tempDir, "json.sqlite"),
       ],
-      { cwd: process.cwd(), encoding: "utf8" },
+      { encoding: "utf8" },
     );
     assert.equal(machine.status, 0, machine.stderr);
     assert.equal(JSON.parse(machine.stdout).runId, "stream-routing-json");
@@ -192,8 +196,7 @@ test("capability discovery is multi-type and verification is a fuse", () => {
 test("governed execution emits a coreLoop artifact summary", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-core-loop-contract-"));
   const runId = "core-loop-contract-test";
-  const result = spawnSync(
-    process.execPath,
+  const result = runtimeFixture.run(
     [
       "scripts/run-meta-theory-governed-execution.mjs",
       "--task",
@@ -499,8 +502,7 @@ test("governed execution emits a coreLoop artifact summary", () => {
 test("caller-provided host-visible names remain unverified hints", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-host-visible-"));
   const runId = "core-loop-host-visible-subagent-test";
-  const result = spawnSync(
-    process.execPath,
+  const result = runtimeFixture.run(
     [
       "scripts/run-meta-theory-governed-execution.mjs",
       "--task",
@@ -616,8 +618,7 @@ test("core-loop contract declares three product goals plus support gates", () =>
 test("project-understanding governed run records deep Fetch source classes", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-project-understanding-"));
   const runId = "core-loop-project-understanding-fetch-test";
-  const result = spawnSync(
-    process.execPath,
+  const result = runtimeFixture.run(
     [
       "scripts/run-meta-theory-governed-execution.mjs",
       "--task",
@@ -672,8 +673,7 @@ test("project-understanding governed run records deep Fetch source classes", () 
 test("default governed run is route-driven instead of old capability-gap orchestration", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-route-driven-"));
   const runId = "route-driven-subjective-ui";
-  const result = spawnSync(
-    process.execPath,
+  const result = runtimeFixture.run(
     [
       "scripts/run-meta-theory-governed-execution.mjs",
       "--task",
@@ -721,8 +721,7 @@ test("default governed run is route-driven instead of old capability-gap orchest
 });
 
 test("core-loop release strict fixture validates with workflow run validator", () => {
-  const result = spawnSync(
-    process.execPath,
+  const result = runtimeFixture.run(
     [
       "scripts/validate-run-artifact.mjs",
       "tests/fixtures/run-artifacts/valid-core-loop-release-run.json",

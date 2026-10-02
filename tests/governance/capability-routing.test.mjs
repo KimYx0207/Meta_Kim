@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import process from "node:process";
 import test from "node:test";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+
+let runtimeFixture;
 
 function route(task, runtime = "auto", os = "auto", extraArgs = []) {
-  const result = spawnSync(process.execPath, ["scripts/select-execution-route.mjs", "--task", task, "--runtime", runtime, "--os", os, "--json", ...extraArgs], {
+  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", runtime, "--os", os, "--json", ...extraArgs], {
     encoding: "utf8",
     maxBuffer: Number.POSITIVE_INFINITY,
   });
@@ -90,7 +91,8 @@ function assertNativeCodexSpawn(
   assert.equal(Object.hasOwn(binding ?? {}, "messageRef"), false);
 }
 
-test("routing fixtures recall internal patterns and platform/OS matrices", () => {
+test("routing fixtures recall internal patterns and platform/OS matrices", (t) => {
+  runtimeFixture = createGovernanceRuntimeFixture(t);
   const pureQuery = route("Meta_Kim 是什么？", "codex", "windows");
   assert.equal(pureQuery.entryClassification.path, "fast_path");
   assert.equal(pureQuery.routeExecutionGate?.applies, false);

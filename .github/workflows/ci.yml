@@ -15,6 +15,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  behavior-regression:
+    name: Behavior regression (${{ matrix.lane }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [core, governance, live]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # The migration fingerprint check reads historical agent blobs.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.0
+      - name: Install test dependencies without lifecycle scripts
+        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+      # Every PR/push runs these lanes, including Markdown-only changes to
+      # canonical prompts. Each matrix job has its own workspace. The runner
+      # uses a fresh home and an environment allow-list without credentials.
+      # Live here means local UI/service tests, not paid model conversations.
+      - name: Run isolated behavioral checks
+        run: npm run meta:test:ci -- --suite ${{ matrix.lane }}
+
   planning-continuity:
     name: Planning continuity (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -78,7 +104,7 @@ jobs:
   package-candidate:
     name: Package candidate
     if: github.event_name != 'pull_request'
-    needs: [planning-continuity, global-sync-policy, installer-regression]
+    needs: [behavior-regression, planning-continuity, global-sync-policy, installer-regression]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
