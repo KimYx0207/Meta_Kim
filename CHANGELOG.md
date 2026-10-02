@@ -17,6 +17,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ### Fixed
 
+- **Windows setup can discover an installed CLI when `where.exe` returns no result.** Discovery checks supported files in absolute PATH directories, then retains the existing shell-free launcher, file identity, version and drift checks.
 - **Clear requests no longer need invented alternatives or another interview.** A settled single viable route can pass the artifact contract. Unresolved material alternatives still require the current host's native choice surface, and understanding or route selection never grants action permission. Codex configuration flags are no longer described as callable tools or as overrides of host mode restrictions.
 - **Dependency methods keep one governance authority.** Internalized brainstorming and questioning methods encourage factual lookup, concrete scenarios, meaningful trade-offs, optional small samples and preservation of decisions. Professional workers return material changes to Meta_Kim rather than restarting requirements or orchestration.
 - **Windows verification and setup fixtures preserve runtime boundaries.** Since 3.2.0, process cleanup and fixture isolation have been corrected without weakening production deadlines; crash/resume tests use controlled lease time. Smoke and full gates share their behavior checks.

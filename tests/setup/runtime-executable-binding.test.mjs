@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  discoverRuntimeExecutablePaths,
   loadSetupBoundRuntimeExecutable,
   readSetupRuntimeLaunchInventory,
   recordSetupRuntimeExecutableBindings,
@@ -30,6 +31,70 @@ function npmShim(root, name) {
   writeFileSync(shim, `@ECHO off\r\nSET dp0=%~dp0\r\n"node"  "%dp0%\\node_modules\\@fixture\\${name}\\bin\\${name}.js" %*\r\n`, "utf8");
   return { discovered, shim, jsEntry };
 }
+
+test("Windows locator failure or empty output discovers actual supported PATH files in directory and extension order", (context) => {
+  if (process.platform !== "win32") return context.skip("Windows executable discovery");
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-path-fallback-"));
+  try {
+    const first = path.join(root, "first");
+    const second = path.join(root, "second");
+    mkdirSync(first); mkdirSync(second);
+    const firstShim = npmShim(first, "codex");
+    const firstNative = executable(first, "codex", "broken native candidate");
+    const secondShim = npmShim(second, "codex");
+    const env = { PATH: `${first};${second};${first}`, PATHEXT: ".PS1;.EXE;.CMD" };
+    const expected = [firstShim.discovered, firstNative, firstShim.shim, secondShim.discovered, secondShim.shim];
+    for (const result of [{ status: 1, stdout: "" }, { status: 0, stdout: "\r\n" }]) {
+      assert.deepEqual(discoverRuntimeExecutablePaths("codex", { env, locatorRunner: () => result }), expected);
+    }
+    assert.deepEqual(discoverRuntimeExecutablePaths("codex", { env, locatorRunner: () => ({ status: 0, stdout: secondShim.shim + "\n" }) }), [secondShim.shim]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Windows fallback refuses empty, relative, rooted-relative, and unsupported executable discovery", (context) => {
+  if (process.platform !== "win32") return context.skip("Windows executable discovery");
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-path-negative-"));
+  try {
+    writeFileSync(path.join(root, "codex.ps1"), "unsupported\n");
+    writeFileSync(path.join(root, "codex"), "extensionless file without supported companion\n");
+    const options = { env: { PATH: `;.;relative;\\;C:relative;${root}`, PATHEXT: ".PS1;.VBS" }, locatorRunner: () => ({ status: 1, stdout: "" }) };
+    assert.deepEqual(discoverRuntimeExecutablePaths("codex", options), []);
+    assert.deepEqual(discoverRuntimeExecutablePaths("../codex", options), []);
+    assert.deepEqual(discoverRuntimeExecutablePaths("missing-runtime", options), []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("non-Windows failed locator stays unavailable and successful which output is preserved", () => {
+  const env = { PATH: "C:\\bin", PATHEXT: ".EXE" };
+  assert.deepEqual(discoverRuntimeExecutablePaths("codex", { platform: "linux", env, locatorRunner: () => ({ status: 1, stdout: "/ignored\n" }) }), []);
+  assert.deepEqual(discoverRuntimeExecutablePaths("codex", { platform: "linux", env, locatorRunner: () => ({ status: 0, stdout: "/first/codex\n/second/codex\n" }) }), ["/first/codex", "/second/codex"]);
+});
+
+test("default Windows binding probes real Node shims, selects the later usable executable, and rejects drift", { concurrency: false }, (context) => {
+  if (process.platform !== "win32") return context.skip("Windows real Node shim binding");
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-real-shim-binding-"));
+  const keys = Object.keys(process.env).filter(key => /^path$/iu.test(key));
+  const original = new Map(keys.map(key => [key, process.env[key]]));
+  if (!keys.length) keys.push("PATH");
+  try {
+    const brokenDir = path.join(root, "broken"); const usableDir = path.join(root, "usable");
+    mkdirSync(brokenDir); mkdirSync(usableDir);
+    const broken = npmShim(brokenDir, "codex"); const usable = npmShim(usableDir, "codex");
+    writeFileSync(broken.jsEntry, "process.stderr.write('fixture broken version probe\\n'); process.exitCode=1;\n");
+    writeFileSync(usable.jsEntry, "if(process.argv[2]!=='--version')process.exitCode=2;else console.log('fixture-codex 2.0.0');\n");
+    for (const key of keys) process.env[key] = [brokenDir, usableDir].join(path.delimiter);
+    const recorded = recordSetupRuntimeExecutableBindings({ roots: [root], targets: ["codex"] });
+    assert.equal(recorded.bindings.codex.version, "fixture-codex 2.0.0");
+    assert.equal(recorded.bindings.codex.launchDescriptor.jsEntry.realpath, realpathSync.native(usable.jsEntry));
+    const loaded = loadSetupBoundRuntimeExecutable({ projectRoot: root, globalRoot: path.join(root, "unused"), runtime: "codex" });
+    assert.equal(loaded.launchDescriptor.jsEntry.realpath, realpathSync.native(usable.jsEntry));
+    writeFileSync(usable.jsEntry, "console.log('changed after binding');\n");
+    assert.throws(() => loadSetupBoundRuntimeExecutable({ projectRoot: root, globalRoot: path.join(root, "unused"), runtime: "codex" }), /identity changed|JS entry identity changed/u);
+  } finally {
+    for (const key of keys) { if (original.get(key) === undefined) delete process.env[key]; else process.env[key] = original.get(key); }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("Windows setup inventory records the shell-free launch descriptor actually used by version and producer calls", (context) => {
   if (process.platform !== "win32") return context.skip("Windows npm shim launch descriptor");

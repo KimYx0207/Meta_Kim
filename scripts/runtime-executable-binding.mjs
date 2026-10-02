@@ -22,14 +22,47 @@ function executableIdentity(filePath) {
   return { realpath: resolved, sha256: sha256File(resolved), size: stat.size };
 }
 
-function pathResolutions(commandName) {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  const locatorArgs = process.platform === "win32"
+export function discoverRuntimeExecutablePaths(commandName, {
+  platform = process.platform,
+  env = process.env,
+  locatorRunner = spawnSync,
+} = {}) {
+  const locator = platform === "win32" ? "where.exe" : "which";
+  const locatorArgs = platform === "win32"
     ? [commandName]
     : ["-a", commandName];
-  const result = spawnSync(locator, locatorArgs, { encoding: "utf8", windowsHide: true, shell: false });
-  if (result.status !== 0) return [];
-  return String(result.stdout).split(/\r?\n/u).map((entry) => entry.trim()).filter(Boolean);
+  const result = locatorRunner(locator, locatorArgs, { env, encoding: "utf8", windowsHide: true, shell: false });
+  const located = result.status === 0
+    ? String(result.stdout ?? "").split(/\r?\n/u).map((entry) => entry.trim()).filter(Boolean)
+    : [];
+  if (located.length || platform !== "win32") return located;
+  if (!/^[a-z0-9][a-z0-9_-]*$/iu.test(commandName)) return [];
+
+  // Some Windows hosts can open known PATH files while where.exe cannot
+  // enumerate their directories. Discover actual files; never trust inventory
+  // entries as a substitute for current PATH discovery or launch validation.
+  const supportedExtensions = new Set([".exe", ".com", ".cmd", ".bat"]);
+  const extensions = ["", ...String(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";").map(entry => entry.trim().toLowerCase())
+    .filter(entry => supportedExtensions.has(entry))];
+  const candidates = [];
+  for (const entry of String(env.PATH ?? env.Path ?? "").split(";")) {
+    const directory = entry.trim().replace(/^"(.*)"$/u, "$1");
+    const windowsRoot = path.win32.parse(directory).root;
+    if (!directory || !path.win32.isAbsolute(directory) || /^[\\/]$/u.test(windowsRoot)) continue;
+    for (const extension of extensions) {
+      const candidate = path.win32.join(directory, commandName + extension);
+      try {
+        if (!lstatSync(candidate).isFile()) continue;
+        if (!extension) resolveWindowsCliLaunchDescriptor(candidate, { env });
+        candidates.push(candidate);
+      } catch {
+        // Unreadable files and extensionless files without a supported
+        // shell-free companion do not become launch candidates.
+      }
+    }
+  }
+  return normalizePathResolutions(candidates);
 }
 
 function normalizePathResolutions(resolved) {
@@ -183,7 +216,7 @@ export function readSetupRuntimeLaunchInventory({ root = os.homedir(), profile =
   return { ...manifest, manifestPath, bindings };
 }
 
-export function loadSetupBoundRuntimeExecutable({ projectRoot, profile = "default", runtime, pathResolver = pathResolutions, globalRoot = os.homedir() } = {}) {
+export function loadSetupBoundRuntimeExecutable({ projectRoot, profile = "default", runtime, pathResolver = discoverRuntimeExecutablePaths, globalRoot = os.homedir() } = {}) {
   const normalizedRuntime = normalizeRuntime(runtime);
   const projectManifest = path.join(projectRoot, ".meta-kim", "state", profile, "runtime-capability-producers", "host-executable-bindings.json");
   const globalManifest = path.join(globalRoot, ".meta-kim", "state", profile, "runtime-capability-producers", "host-executable-bindings.json");
@@ -300,7 +333,7 @@ export function recordSetupRuntimeExecutableBindings({
   roots,
   profile = "default",
   targets,
-  pathResolver = pathResolutions,
+  pathResolver = discoverRuntimeExecutablePaths,
   versionRunner = (launcher, args) => spawnSync(launcher, args, { encoding: "utf8", windowsHide: true, shell: false }),
 } = {}) {
   if (!/^[a-z0-9][a-z0-9._-]*$/iu.test(profile) || profile === "." || profile === "..") {
