@@ -63,7 +63,7 @@ jobs:
       # Real host filesystem/process tests complement cross-host lexical
       # fixtures. HOME and credentials use the same isolated runner as above.
       # Invoke Node directly so PowerShell's npm.ps1 cannot consume --suite.
-      - name: Diagnose Windows shell startup isolation
+      - name: Diagnose Windows cmdlet isolation boundaries
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -73,33 +73,63 @@ jobs:
           import os from 'node:os';
           import path from 'node:path';
           import { buildIsolatedTestEnvironment } from './scripts/run-local-verification.mjs';
-          const home = mkdtempSync(path.join(os.tmpdir(), 'meta-kim-shell-diagnostic-'));
-          const isolated = buildIsolatedTestEnvironment(home);
-          for (const name of ['tmp', 'appdata', 'localappdata', 'config', 'cache', 'data', 'state', 'npm-cache']) mkdirSync(path.join(home, name), { recursive: true });
-          const script = path.join(home, 'ready.ps1');
-          writeFileSync(script, "[Console]::Out.WriteLine('PS_START'); $null = New-Object System.Text.UTF8Encoding($false); $null = Test-Path -LiteralPath $PSHOME; $null = @{ ready = $true } | ConvertTo-Json -Compress; Write-Output 'PS_DONE'; exit 0\n");
-          const systemKeys = ['ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'SystemDrive', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432'];
-          const system = Object.fromEntries(Object.entries(process.env).filter(([key]) => systemKeys.some(name => name.toUpperCase() === key.toUpperCase())));
-          async function probe(label, env, mode, stdin, inputNone = false) {
+          const profile = ['HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'USERNAME', 'USERDOMAIN', 'LOGONSERVER', 'SESSIONNAME', 'COMPUTERNAME'];
+          const appdata = ['APPDATA', 'LOCALAPPDATA', 'PSModuleAnalysisCachePath'];
+          const temp = ['TMPDIR', 'TMP', 'TEMP'];
+          function overlay(target, source, keys) {
+            for (const name of keys) {
+              for (const key of Object.keys(target)) if (key.toUpperCase() === name.toUpperCase()) delete target[key];
+              const entry = Object.entries(source).find(([key]) => key.toUpperCase() === name.toUpperCase());
+              if (entry) target[entry[0]] = entry[1];
+            }
+            return target;
+          }
+          async function probe(label, makeEnv, qualified = false) {
+            const home = mkdtempSync(path.join(os.tmpdir(), 'meta-kim-shell-diagnostic-'));
+            const isolated = buildIsolatedTestEnvironment(home);
+            for (const name of ['tmp', 'appdata', 'localappdata', 'config', 'cache', 'data', 'state', 'npm-cache']) mkdirSync(path.join(home, name), { recursive: true });
+            const script = path.join(home, 'ready.ps1');
+            const utility = qualified ? 'Microsoft.PowerShell.Utility\\' : '';
+            const management = qualified ? 'Microsoft.PowerShell.Management\\' : '';
+            writeFileSync(script, [
+              "[Console]::Out.WriteLine('STAGE_start')",
+              `$null = ${utility}New-Object System.Text.UTF8Encoding($false)`,
+              "[Console]::Out.WriteLine('STAGE_new_object')",
+              `$null = ${management}Test-Path -LiteralPath $PSHOME`,
+              "[Console]::Out.WriteLine('STAGE_test_path')",
+              `$null = @{ ready = $true } | ${utility}ConvertTo-Json -Compress`,
+              "[Console]::Out.WriteLine('STAGE_json')",
+              `${utility}Write-Output 'PS_DONE'`,
+              'exit 0',
+            ].join('\n'));
             const start = Date.now();
-            const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...(inputNone ? ['-InputFormat', 'None'] : []), ...(mode === 'file' ? ['-File', script] : ['-Command', "[Console]::Out.WriteLine('PS_READY'); exit 0"])];
-            const child = spawn('powershell.exe', args, { env, stdio: [stdin, 'pipe', 'pipe'], windowsHide: true });
+            const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { env: makeEnv(isolated, home), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
             let output = '', stderrBytes = 0, timedOut = false;
             child.stdout.on('data', data => { output = (output + data).slice(-1024); });
             child.stderr.on('data', data => { stderrBytes += data.length; });
             const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, 8000);
             const result = await new Promise(resolve => { child.once('error', error => resolve({ error: error.code })); child.once('close', (code, signal) => resolve({ code, signal })); });
             clearTimeout(timer);
-            console.log(JSON.stringify({ label, mode, stdin, inputNone, started: output.includes('PS_START'), done: output.includes('PS_DONE'), stderrBytes, timedOut, elapsedMs: Date.now() - start, ...result }));
-            return output.includes('PS_DONE') && result.code === 0;
+            const stages = output.match(/STAGE_[a-z_]+|PS_DONE/g) || [];
+            console.log(JSON.stringify({ label, stages, stderrBytes, timedOut, elapsedMs: Date.now() - start, ...result }));
+            rmSync(home, { recursive: true, force: true });
+            return stages.includes('PS_DONE') && result.code === 0;
           }
-          try {
-            await probe('baseline', process.env, 'file', 'pipe');
-            const isolatedReady = await probe('isolated', isolated, 'file', 'pipe');
-            await probe('isolated-system', { ...isolated, ...system }, 'file', 'pipe');
-            await probe('isolated-module', { ...isolated, PSModulePath: process.env.PSModulePath || '' }, 'file', 'pipe');
-            if (!isolatedReady) process.exitCode = 1;
-          } finally { rmSync(home, { recursive: true, force: true }); }
+          const builtinModules = path.join(process.env.SystemRoot || process.env.SYSTEMROOT, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
+          await probe('baseline', () => process.env);
+          const ready = await probe('isolated', isolated => isolated);
+          await probe('isolated-builtin-modules', isolated => ({ ...isolated, PSModulePath: builtinModules }));
+          await probe('isolated-profile-restored', isolated => overlay(isolated, process.env, profile));
+          await probe('isolated-appdata-restored', isolated => overlay(isolated, process.env, appdata));
+          await probe('isolated-localappdata-restored', isolated => overlay(isolated, process.env, ['LOCALAPPDATA']));
+          await probe('isolated-appdata-only-restored', isolated => overlay(isolated, process.env, ['APPDATA']));
+          await probe('isolated-temp-restored', isolated => overlay(isolated, process.env, temp));
+          await probe('baseline-profile-isolated', isolated => overlay({ ...process.env }, isolated, profile));
+          await probe('baseline-appdata-isolated', isolated => overlay({ ...process.env }, isolated, appdata));
+          await probe('baseline-temp-isolated', isolated => overlay({ ...process.env }, isolated, temp));
+          await probe('isolated-qualified-cmdlets', isolated => isolated, true);
+          await probe('isolated-builtin-explicit-cache', (isolated, home) => ({ ...isolated, PSModulePath: builtinModules, PSModuleAnalysisCachePath: path.join(home, 'cache', 'ModuleAnalysisCache') }));
+          if (!ready) process.exitCode = 1;
           NODE
       - name: Run isolated setup and process checks
         run: node scripts/run-local-verification.mjs --isolated --suite setup-platform
