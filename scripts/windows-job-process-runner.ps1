@@ -7,7 +7,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+# Explicit module resolution also works with a fresh, isolated module cache.
+$utf8NoBom = Microsoft.PowerShell.Utility\New-Object System.Text.UTF8Encoding($false)
 $schemaVersion = 'meta-kim-windows-job-process-runner-v1'
 
 function Write-RunnerResult([hashtable]$Values) {
@@ -20,7 +21,7 @@ function Write-RunnerResult([hashtable]$Values) {
     stopRequested = [bool]$Values.stopRequested
     failureOperation = $Values.failureOperation
     win32Error = $Values.win32Error
-  } | ConvertTo-Json -Compress
+  } | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress
 
   [System.IO.File]::WriteAllText($ResultPath, $payload, $utf8NoBom)
 }
@@ -30,7 +31,7 @@ $fallbackResult = @{
   reason = 'launcher_initialization_failed'
   childExitCode = $null
   activeProcesses = -1
-  stopRequested = (Test-Path -LiteralPath $StopPath)
+  stopRequested = (Microsoft.PowerShell.Management\Test-Path -LiteralPath $StopPath)
   failureOperation = 'launcher_initialization'
   win32Error = $null
 }
@@ -81,13 +82,13 @@ try {
   }
 
   $launcherPhase = 'read_spec'
-  if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
+  if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
     throw 'Spec file does not exist.'
   }
-  $specText = Get-Content -Raw -Encoding UTF8 -LiteralPath $SpecPath
+  $specText = Microsoft.PowerShell.Management\Get-Content -Raw -Encoding UTF8 -LiteralPath $SpecPath
 
   $launcherPhase = 'parse_spec'
-  $spec = $specText | ConvertFrom-Json
+  $spec = $specText | Microsoft.PowerShell.Utility\ConvertFrom-Json
 
   $launcherPhase = 'validate_spec'
   $propertyNames = @($spec.PSObject.Properties.Name)
@@ -102,7 +103,7 @@ try {
   }
 
   $file = [string]$spec.file
-  $arguments = New-Object System.Collections.Generic.List[string]
+  $arguments = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[string]
   foreach ($argument in $spec.args) {
     if ($null -eq $argument -or $argument -isnot [string]) {
       throw 'Every spec.args entry must be a non-null string.'
@@ -1576,7 +1577,7 @@ namespace MetaKim
 '@
 
   $launcherPhase = 'compile_native_bridge'
-  Add-Type -TypeDefinition $nativeSource -Language CSharp
+  Microsoft.PowerShell.Utility\Add-Type -TypeDefinition $nativeSource -Language CSharp
 
   $launcherPhase = 'invoke_native_bridge'
   $nativeResult = [MetaKim.WindowsJobProcessRunner]::Run(

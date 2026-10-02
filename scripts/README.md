@@ -26,8 +26,11 @@ fixture/product tests, including loopback Live HTTP servers, not paid model
 conversations or external live certification. Capability-discovery smoke stays
 mandatory in smoke/full and requires installed execution/creation providers; the
 credential-free CI test lanes do not replace that environment-dependent gate.
-Platform-specific regressions
-remain in their existing Windows/macOS/Linux jobs. CI is not a full release pass.
+The `setup-platform` lane runs Codex config, memory process identity, and process
+guard regressions on Windows/macOS/Linux. Host-specific process suites run on
+their applicable OS, while cross-host lexical fixtures remain separate from
+real filesystem/process evidence. Other platform regressions remain in their
+existing jobs. CI is not a full release pass.
 
 ## Core Loop And Discovery Bus
 

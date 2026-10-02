@@ -30,4 +30,8 @@ export const CI_LANES = Object.freeze({
   core: Object.freeze(SMOKE_BEHAVIOR_STAGES.filter(({ name }) => name.startsWith("meta:test:") && name !== "meta:test:live:coverage")),
   governance: Object.freeze([npmStage("meta:test:governance")]),
   live: Object.freeze(SMOKE_BEHAVIOR_STAGES.filter(({ name }) => name === "meta:test:live:coverage")),
+  "setup-platform": Object.freeze([
+    npmStage("meta:test:setup:cross-platform"),
+    npmStage("meta:test:process-guard"),
+  ]),
 });

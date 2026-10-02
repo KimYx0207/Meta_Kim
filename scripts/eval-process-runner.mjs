@@ -299,7 +299,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function childOutcome(child) {
+function childOutcome(child, { includeExit = false } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (outcome) => {
@@ -310,16 +310,21 @@ function childOutcome(child) {
     child.once("error", (error) =>
       finish({ error, code: null, signal: null }),
     );
+    if (includeExit) {
+      child.once("exit", (code, signal) => finish({ error: null, code, signal }));
+    }
     child.once("close", (code, signal) => finish({ error: null, code, signal }));
   });
 }
 
-function registerActiveChild(child, label, stop) {
+function registerActiveChild(child, label, stop, { untilCleanup = false } = {}) {
   const key = Symbol(label);
   activeChildren.set(key, { child, label, stop });
   const unregister = () => activeChildren.delete(key);
-  child.once("close", unregister);
-  child.once("error", unregister);
+  if (!untilCleanup) {
+    child.once("close", unregister);
+    child.once("error", unregister);
+  }
   return unregister;
 }
 
@@ -424,33 +429,77 @@ async function forceStopLauncher(
   }
 }
 
-async function stopPosixProcessGroup(child, outcomePromise, graceMs = 5_000) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
-
+async function stopPosixProcessGroup(
+  child,
+  outcomePromise,
+  { kill, graceMs, cleanupTimeoutMs },
+) {
+  if (!child?.pid) return;
+  // A detached child's PID is its owned process-group ID. Root exit/close
+  // alone does not prove that descendants in that group have stopped.
+  const groupId = -child.pid;
+  const groupDeadline = Date.now() + graceMs + cleanupTimeoutMs;
+  let groupGone = false;
   const signalGroup = (signal) => {
-    let lastError = null;
-    for (const target of [-child.pid, child.pid]) {
-      try {
-        process.kill(target, signal);
-        return;
-      } catch (error) {
-        lastError = error;
-        if (error?.code === "ESRCH") return;
-      }
+    if (groupGone) return false;
+    try {
+      kill(groupId, signal);
+      return true;
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+      // Absence is terminal: never retry an ID that could now be reused.
+      groupGone = true;
+      return false;
     }
-    throw lastError;
+  };
+  const waitForGroupExit = async (timeoutMs) => {
+    const deadline = Math.min(groupDeadline, Date.now() + timeoutMs);
+    while (signalGroup(0)) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return false;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(20, remainingMs)));
+    }
+    return true;
   };
 
-  signalGroup("SIGTERM");
-  const graceful = await raceOutcomeWithTimeout(outcomePromise, graceMs);
-  if (!graceful.timedOut) return;
-
-  signalGroup("SIGKILL");
+  try {
+    if (signalGroup(0)) {
+      signalGroup("SIGTERM");
+      if (!(await waitForGroupExit(graceMs))) {
+        signalGroup("SIGKILL");
+        if (!(await waitForGroupExit(cleanupTimeoutMs))) {
+          throw cleanupFailure(
+            null,
+            "META_KIM_POSIX_PROCESS_GROUP_CLEANUP_FAILED",
+            "posix_process_group_exit_unverified",
+            "posix_detached_process_group",
+          );
+        }
+      }
+    }
+  } catch (permissionError) {
+    if (permissionError?.code !== "EPERM") throw permissionError;
+    // A POSIX group can transiently exist with no signalable members. EPERM
+    // never proves cleanup: stop sending signals, and observe only this group
+    // until ESRCH or the original cleanup deadline. Preserve real denials.
+    while (!groupGone) {
+      if (Date.now() >= groupDeadline) throw permissionError;
+      try {
+        if (!signalGroup(0)) break;
+      } catch (probeError) {
+        if (probeError?.code !== "EPERM") throw probeError;
+      }
+      const remainingMs = groupDeadline - Date.now();
+      if (remainingMs <= 0) throw permissionError;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(20, remainingMs)));
+    }
+  }
+  // close (rather than exit) also waits for captured output streams to drain.
   await waitForOutcome(
     outcomePromise,
-    5_000,
+    cleanupTimeoutMs,
     "META_KIM_POSIX_PROCESS_GROUP_CLEANUP_FAILED",
-    "posix_process_group_exit_unverified",
+    "posix_process_close_unverified",
     "posix_detached_process_group",
   );
 }
@@ -624,6 +673,13 @@ function commandFailureError(command, outcome, snapshots, options) {
 
 export function createPosixGuardedCommandRunner(dependencies = {}) {
   const spawnImpl = dependencies.spawn ?? spawn;
+  const kill = dependencies.kill ?? process.kill.bind(process);
+  const graceMs = asPositiveInteger(dependencies.graceMs, 5_000, "graceMs");
+  const cleanupTimeoutMs = asPositiveInteger(
+    dependencies.cleanupTimeoutMs,
+    5_000,
+    "cleanupTimeoutMs",
+  );
   return async function posixGuardedCommand(file, args, options = {}) {
   const command = commandLabel(file, args, options);
   const control = deferred();
@@ -664,8 +720,14 @@ export function createPosixGuardedCommandRunner(dependencies = {}) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const outcomePromise = childOutcome(child);
-  const stop = () => stopPosixProcessGroup(child, outcomePromise);
-  registerActiveChild(child, command, stop);
+  const exitPromise = childOutcome(child, { includeExit: true });
+  let stopPromise = null;
+  const stop = () => (stopPromise ??= stopPosixProcessGroup(child, outcomePromise, {
+    kill,
+    graceMs,
+    cleanupTimeoutMs,
+  }));
+  const unregister = registerActiveChild(child, command, stop, { untilCleanup: true });
   child.stdout?.on("data", (chunk) => stdoutCapture.append(chunk));
   child.stderr?.on("data", (chunk) => stderrCapture.append(chunk));
 
@@ -678,7 +740,7 @@ export function createPosixGuardedCommandRunner(dependencies = {}) {
 
   try {
     const first = await Promise.race([
-      outcomePromise.then((outcome) => ({ type: "outcome", outcome })),
+      exitPromise.then((outcome) => ({ type: "outcome", outcome })),
       control.promise.then((reason) => ({ type: "control", reason })),
     ]);
     controlOpen = false;
@@ -691,23 +753,33 @@ export function createPosixGuardedCommandRunner(dependencies = {}) {
     }
     const winningControlReason =
       first.type === "control" ? first.reason : null;
-    let outcome = first.outcome;
-    if (first.type === "control") {
-      try {
-        await stop();
-        outcome = await outcomePromise;
-      } catch (error) {
-        throw cleanupFailure(
-          error,
-          "META_KIM_COMMAND_CLEANUP_FAILED",
-          `${first.reason}_cleanup_failed`,
-          "posix_detached_process_group",
-        );
+    let outcome;
+    try {
+      await stop();
+      outcome = await outcomePromise;
+    } catch (cause) {
+      if (cause?.ownedProcessGroupCleanupReason === "posix_process_close_unverified") {
+        // A process outside the owned group may still hold inherited pipes.
+        // Release our read handles without claiming or signaling that process.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
       }
+      const error = cleanupFailure(
+        cause,
+        "META_KIM_COMMAND_CLEANUP_FAILED",
+        `${winningControlReason ?? "command_exit"}_cleanup_failed`,
+        "posix_detached_process_group",
+      );
+      error.command = command;
+      throw attachOutput(error, outputSnapshots(stdoutCapture, stderrCapture), options);
     }
 
     const snapshots = outputSnapshots(stdoutCapture, stderrCapture);
-    if (winningControlReason === "output_limit") {
+    if (
+      winningControlReason === "output_limit" ||
+      (winningControlReason === null &&
+        (snapshots.stdout.metadata.limitExceeded || snapshots.stderr.metadata.limitExceeded))
+    ) {
       throw outputLimitError(
         command,
         snapshots,
@@ -744,10 +816,18 @@ export function createPosixGuardedCommandRunner(dependencies = {}) {
       error.code = "META_KIM_CHILD_COMMAND_LAUNCH_FAILED";
       error.command = command;
       error.systemCode = outcome.error?.code ?? null;
+      attachOwnedProcessGroupTruth(error, {
+        verified: Boolean(child.pid),
+        reason: child.pid ? null : "process_not_spawned",
+        scope: "posix_detached_process_group",
+      });
       throw attachOutput(error, snapshots, options);
     }
     if (outcome.code !== 0) {
-      throw commandFailureError(command, outcome, snapshots, options);
+      throw attachOwnedProcessGroupTruth(
+        commandFailureError(command, outcome, snapshots, options),
+        { verified: true, scope: "posix_detached_process_group" },
+      );
     }
     return attachOwnedProcessGroupTruth({
       stdout: snapshots.stdout.text,
@@ -759,6 +839,7 @@ export function createPosixGuardedCommandRunner(dependencies = {}) {
       scope: "posix_detached_process_group",
     });
   } finally {
+    unregister();
     if (timeoutId) clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", abortHandler);
   }
