@@ -67,6 +67,29 @@ test("isolated test environment strips credentials and ambient runtime/config ov
   assert.doesNotMatch(JSON.stringify(env), /sentinel|real-|untrusted|credential-bearing/u);
 });
 
+test("CI runs setup and process guard regressions on every supported host", () => {
+  assert.deepEqual(CI_LANES["setup-platform"].map(({ name }) => name), [
+    "meta:test:setup:cross-platform", "meta:test:process-guard",
+  ]);
+  const stages = localVerificationStages("setup-platform");
+  for (const stage of CI_LANES["setup-platform"]) assert.ok(stages.includes(stage));
+  for (const file of ["codex-config-merge", "mcp-memory-process-control"]) {
+    assert.ok(pkg.scripts["meta:test:setup:cross-platform"].includes(`tests/setup/${file}.test.mjs`));
+  }
+  for (const file of ["windows-job-process-runner", "posix-process-group-runner", "process-runner-contract"]) {
+    assert.ok(pkg.scripts["meta:test:process-guard"].includes(`tests/setup/${file}.test.mjs`));
+  }
+  const workflow = readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8");
+  const job = workflow.split("  setup-platform:\n")[1]?.split("\n  planning-continuity:")[0];
+  assert.ok(job, "the cross-platform lane must have a real CI job");
+  assert.match(job, /os: \[ubuntu-latest, macos-latest, windows-latest\]/u);
+  assert.match(job, /runs-on: \$\{\{ matrix.os \}\}/u);
+  assert.match(job, /persist-credentials: false/u);
+  assert.match(job, /fetch-depth: 0/u);
+  assert.match(job, /npm run meta:test:ci -- --suite setup-platform/u);
+  assert.match(workflow, /needs: \[behavior-regression, setup-platform,/u);
+});
+
 test("a real failing Live fixture stops smoke, full resumed diagnostics, and the CI entrypoint", () => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), "meta-kim-failing-live-gate-"));
   try {
