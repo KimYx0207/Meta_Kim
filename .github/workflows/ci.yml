@@ -63,6 +63,46 @@ jobs:
       # Real host filesystem/process tests complement cross-host lexical
       # fixtures. HOME and credentials use the same isolated runner as above.
       # Invoke Node directly so PowerShell's npm.ps1 cannot consume --suite.
+      - name: Diagnose Windows shell startup isolation
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE'
+          import { spawn } from 'node:child_process';
+          import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import { buildIsolatedTestEnvironment } from './scripts/run-local-verification.mjs';
+          const home = mkdtempSync(path.join(os.tmpdir(), 'meta-kim-shell-diagnostic-'));
+          const isolated = buildIsolatedTestEnvironment(home);
+          for (const name of ['tmp', 'appdata', 'localappdata', 'config', 'cache', 'data', 'state', 'npm-cache']) mkdirSync(path.join(home, name), { recursive: true });
+          const script = path.join(home, 'ready.ps1');
+          writeFileSync(script, "[Console]::Out.WriteLine('PS_READY'); exit 0\n");
+          const systemKeys = ['ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'SystemDrive', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432'];
+          const system = Object.fromEntries(Object.entries(process.env).filter(([key]) => systemKeys.some(name => name.toUpperCase() === key.toUpperCase())));
+          async function probe(label, env, mode, stdin, inputNone = false) {
+            const start = Date.now();
+            const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...(inputNone ? ['-InputFormat', 'None'] : []), ...(mode === 'file' ? ['-File', script] : ['-Command', "[Console]::Out.WriteLine('PS_READY'); exit 0"])];
+            const child = spawn('powershell.exe', args, { env, stdio: [stdin, 'pipe', 'pipe'], windowsHide: true });
+            let output = '', stderrBytes = 0, timedOut = false;
+            child.stdout.on('data', data => { output = (output + data).slice(-1024); });
+            child.stderr.on('data', data => { stderrBytes += data.length; });
+            const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, 8000);
+            const result = await new Promise(resolve => { child.once('error', error => resolve({ error: error.code })); child.once('close', (code, signal) => resolve({ code, signal })); });
+            clearTimeout(timer);
+            console.log(JSON.stringify({ label, mode, stdin, inputNone, ready: output.includes('PS_READY'), stderrBytes, timedOut, elapsedMs: Date.now() - start, ...result }));
+          }
+          try {
+            await probe('baseline', process.env, 'command', 'ignore');
+            await probe('isolated', isolated, 'command', 'ignore');
+            await probe('baseline', process.env, 'file', 'pipe');
+            await probe('isolated', isolated, 'file', 'pipe');
+            await probe('isolated', isolated, 'file', 'ignore');
+            await probe('isolated', isolated, 'file', 'pipe', true);
+            await probe('isolated-system', { ...isolated, ...system }, 'file', 'pipe');
+            await probe('isolated-module', { ...isolated, PSModulePath: process.env.PSModulePath || '' }, 'file', 'pipe');
+          } finally { rmSync(home, { recursive: true, force: true }); }
+          NODE
       - name: Run isolated setup and process checks
         run: node scripts/run-local-verification.mjs --isolated --suite setup-platform
 
