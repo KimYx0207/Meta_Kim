@@ -18,6 +18,7 @@ import {
 } from "./runtime-capability-claims.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+export const RUNTIME_REVIEW_STALE_AFTER_DAYS = 30;
 const OBSERVATION_CLASSES = new Set([
   "official_docs",
   "repo_projection",
@@ -75,6 +76,13 @@ const OFFICIAL_PATH_CAPABILITIES = {
     [/\/memory$/u, new Set(["memory", "project rule file", "global rule file"])],
   ],
   codex: [
+    [/^\/docs\/agent-configuration\/subagents$/u, new Set(["agent", "subagent", "custom agent", "background task"])],
+    [/^\/docs\/build-skills$/u, new Set(["skill", "skill discovery"])],
+    [/^\/docs\/extend\/mcp$/u, new Set(["MCP"])],
+    [/^\/docs\/hooks$/u, new Set(["hook", "hook discovery", "automation trigger"])],
+    [/^\/docs\/config-file\/config-reference$/u, new Set(["browser / web", "shell", "filesystem", "apply_patch / edit", "sandbox", "approval", "permission mode"])],
+    [/^\/docs\/agent-configuration\/agents-md$/u, new Set(["memory", "project rule file", "global rule file"])],
+    [/^\/docs\/developer-commands$/u, new Set(["command", "slash command"])],
     [/\/codex\/(?:concepts\/)?subagents$/u, new Set(["agent", "subagent", "custom agent", "background task"])],
     [/\/codex\/skills$/u, new Set(["skill", "skill discovery"])],
     [/\/codex\/mcp$/u, new Set(["MCP"])],
@@ -98,6 +106,12 @@ const OFFICIAL_PATH_CAPABILITIES = {
     [/\/tools\/apply-patch$/u, new Set(["apply_patch / edit"])],
   ],
   cursor: [
+    [/^\/docs\/skills$/u, new Set(["command", "slash command"])],
+    [/^\/docs\/cli\/using$/u, new Set(["approval", "permission mode"])],
+    [/^\/docs\/rules$/u, new Set(["memory", "project rule file"])],
+    [/^\/docs\/cloud-agent$/u, new Set(["background task", "sandbox"])],
+    [/^\/docs\/mcp$/u, new Set(["MCP"])],
+    [/^\/docs\/agent\/overview$/u, new Set(["browser / web", "shell", "filesystem", "apply_patch / edit"])],
     [/\/(?:docs\/subagents|changelog\/2-4)$/u, new Set(["agent", "subagent", "custom agent"])],
     [/\/docs\/skills$/u, new Set(["skill", "skill discovery"])],
     [/\/changelog\/2-4$/u, new Set(["native choice surface", "human confirmation trigger", "popup / overlay / approval UI", "approval", "permission mode", "MCP", "browser / web", "shell", "filesystem", "apply_patch / edit"])],
@@ -360,7 +374,7 @@ export function validateRuntimeEvidenceLedger(ledger, options = {}) {
 
 export function validateRuntimeCapabilityClaims(matrix, ledger, options = {}) {
   const nowMs = Date.parse(options.now ?? new Date().toISOString());
-  const staleAfterDays = options.staleAfterDays ?? 30;
+  const staleAfterDays = options.staleAfterDays ?? RUNTIME_REVIEW_STALE_AFTER_DAYS;
   const { issues, observations } = validateRuntimeEvidenceLedger(ledger, options);
   for (const observation of observations.values()) {
     if (LIVE_CLASSES.has(observation.observationClass)) issues.push(`${observation.id} live/local acceptance must not be stored in the canonical static ledger`);
@@ -459,9 +473,36 @@ export function validateRuntimeCapabilityClaims(matrix, ledger, options = {}) {
   return issues;
 }
 
+export class RuntimeCapabilityEvidenceError extends Error {
+  constructor(issues) {
+    super(`runtime capability evidence validation failed:\n- ${issues.join("\n- ")}`);
+    this.name = "RuntimeCapabilityEvidenceError";
+    this.reviewNeedsAttention = issues.some((issue) =>
+      issue.includes("must be current, non-future, and fresh") ||
+      issue.includes("reviewState must be fresh, non-future, and explicit") ||
+      issue.includes("must bind fresh conservative_review evidence"));
+  }
+}
+
+// Public MCP diagnostics use fixed messages, never raw validation/I/O errors:
+// malformed repository data or filesystem errors can contain private paths.
+export function runtimeCapabilityFailureDetails(error) {
+  if (error instanceof RuntimeCapabilityEvidenceError && error.reviewNeedsAttention) {
+    return {
+      reasonCode: "runtime_review_required",
+      issues: ["Runtime capability review is stale, future-dated, or invalid; execution remains blocked."],
+      nextAction: "Ask the maintainer to re-review official runtime sources and projection evidence, then explicitly renew both review files. Do not bypass the gate or change dates without review.",
+    };
+  }
+  return {
+    reasonCode: "runtime_evidence_unavailable",
+    issues: ["effective runtime overlay could not be read safely"],
+  };
+}
+
 export function assertRuntimeCapabilityClaims(matrix, ledger, options = {}) {
   const issues = validateRuntimeCapabilityClaims(matrix, ledger, options);
-  if (issues.length > 0) throw new Error(`runtime capability evidence validation failed:\n- ${issues.join("\n- ")}`);
+  if (issues.length > 0) throw new RuntimeCapabilityEvidenceError(issues);
 }
 
 export const validateBaselineRuntimeCapabilityClaims = validateRuntimeCapabilityClaims;

@@ -1,0 +1,27 @@
+name: Runtime evidence review
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  review-freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.0
+      - name: Check current evidence and warn seven days before review expiry
+        run: node scripts/check-runtime-evidence-review.mjs
+      - name: Test evidence gates, explicit review renewal, and MCP resource boundaries
+        if: always()
+        run: node --test tests/governance/runtime-evidence-review-maintenance.test.mjs tests/governance/runtime-capability-evidence.test.mjs tests/governance/runtime-capability-matrix.test.mjs tests/setup/runtime-capability-evidence-review-roll.test.mjs tests/setup/runtime-capability-evidence-record.test.mjs tests/setup/mcp-runtime-resource-contract.test.mjs
