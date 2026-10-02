@@ -19,6 +19,9 @@ Choose the smallest path that can honestly satisfy the real product problem.
 - Review is conditional for standard-path work, but remains required for regulated triggers, ambiguous acceptance, high-blast-radius mutation, or verification failures.
 - Evolution is not part of the default execution scaffold. Dispatch it only for a reusable capability gap, repeated failure scar, durable agent/skill/tool/hook/runtime lesson, governance-contract change, or explicit user request for durable learning.
 - If capability is missing, return to Thinking or create `capabilityGapPacket`; do not invent a fallback owner.
+- Bind alternatives to the current user's outcome and constraints. "Best" means the strongest evidenced feasible route among the considered candidates; record missing evidence and avoid claims of global optimality.
+- For decisions, research, operations, learning and other non-coding goals, discover the required capabilities without forcing an engineering or industry template. Compare expected outcome, cost, risk, reversibility and the smallest discriminating verification before choosing.
+- Keep task-outcome verification separate from framework acceptance. Use `outcome-evaluation.md`; a valid plan or successful schema check cannot close the user's goal.
 
 ## Use when
 

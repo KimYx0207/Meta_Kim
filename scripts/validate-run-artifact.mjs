@@ -2162,9 +2162,15 @@ function validatePreDecisionOptionFrame(contract, artifact) {
     ensureString(artifact.summaryPacket.nextStep, "summaryPacket.nextStep");
   }
   ensureArray(packet.candidateOptions, "preDecisionOptionFrame.candidateOptions");
+  const challenge = packet.planChallengeState;
+  // A pending understanding/permission question is not a request to choose
+  // implementation routes. Preserve its separate gate without filler paths.
+  const routeChoiceRequired = packet.requiresUserChoice && (!challenge?.active ||
+    packet.unresolvedQuestions.some((question) => question.status === "open" &&
+      question.questionId === "plan-challenge-route-selection"));
   ensure(
-    packet.candidateOptions.length >= 2,
-    "preDecisionOptionFrame.candidateOptions must include at least two candidate solution paths.",
+    packet.candidateOptions.length >= (routeChoiceRequired ? 2 : 1),
+    "preDecisionOptionFrame.candidateOptions must include a viable path and at least two paths for a required route choice.",
   );
   for (const [index, option] of packet.candidateOptions.entries()) {
     ensureObject(option, `preDecisionOptionFrame.candidateOptions[${index}]`);

@@ -1,7 +1,7 @@
 {
   "name": "meta-kim",
-  "version": "3.2.0",
-  "description": "Governance layer for AI coding: primary Claude Code/Codex projections first, opt-in beta compatibility adapters second, and non-default OpenClaw/Cursor compatibility projections third.",
+  "version": "3.3.0",
+  "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",
   "exports": {
@@ -50,6 +50,7 @@
     "prepare:openclaw-local": "node scripts/prepare-openclaw-local.mjs",
     "meta:eval:agents": "node scripts/eval-meta-agents.mjs",
     "meta:eval:agents:live": "node scripts/eval-meta-agents.mjs --live",
+    "meta:eval:governance": "node scripts/evaluate-governance-outcomes.mjs",
     "meta:fitness:validate": "node scripts/run-harness-fitness-lab.mjs --validate",
     "meta:fitness:plan": "node scripts/run-harness-fitness-lab.mjs --plan --trials 3",
     "meta:fitness:fixture": "node scripts/run-harness-fitness-lab.mjs --run --provider=fixture --trials 1",
@@ -250,6 +251,7 @@
     "src/domain/evolution/warden-writeback-approval.mjs",
     "src/domain/execution/durable-run-repository-semantics.mjs",
     "src/domain/governance/governance-requirements.mjs",
+    "src/domain/governance/task-outcome.mjs",
     "src/domain/governance/governance-requirement-cutover.mjs",
     "src/domain/quota/quota-usage-projection.mjs",
     "src/domain/runtime/runtime-health-projection.mjs",

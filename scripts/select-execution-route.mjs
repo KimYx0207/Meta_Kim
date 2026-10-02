@@ -62,6 +62,9 @@ async function readGlobalInventoryJson(fallback) {
 
 const task = argValue("--task", "");
 const requestedRouteRunId = argValue("--run-id", null);
+// A route-search constraint, never a claim of native confirmation or Permission.
+const intentDeliveryStrategy = argValue("--intent-delivery-strategy", null);
+if (intentDeliveryStrategy != null && !["fast_usable", "long_term_extensible"].includes(intentDeliveryStrategy)) throw new TypeError("Unknown intent delivery strategy");
 const runtimeArg = argValue("--runtime", "auto");
 const osArg = argValue("--os", "auto");
 const requestedOwnerSourceKey = argValue("--owner-source", null);
@@ -1567,6 +1570,7 @@ function selectAnyProvider(preferredIds = [], allowedTypes = null) {
 }
 
 const CAPABILITY_NEED_TERMS = {
+  "software-architecture-and-extension-boundaries": ["architecture", "architectural", "maintainability", "extension", "system-design", "架构", "可扩展", "可维护"],
   "product-intent-and-context": ["product", "context", "get-context", "design-consultation", "strategy", "用户", "产品"],
   "capability-discovery-and-retrieval": ["findskill", "skill-scout", "skill-stocktake", "discover", "search", "retrieval", "capability", "发现", "检索"],
   "current-platform-policy-research": ["deep-research", "browse", "browser", "research", "platform", "policy", "market", "规则", "研究"],
@@ -3294,8 +3298,41 @@ const independentTaskShape = subjectiveRouteChoice
       : entrySignals.explicitMetaTheory === true
         ? "governed_dispatch"
         : "default_executable";
+const engineeringDirectionApplies = intentDeliveryStrategy != null &&
+  ((taskShape === "engineering_execution" && entrySignals.fileOrMutationIntent === true) || entrySignals.productBuildIntent === true) &&
+  entryClassification.path !== "fast_path";
+const intentArchitectureCandidates = engineeringDirectionApplies && intentDeliveryStrategy === "long_term_extensible"
+  ? candidateProvidersForCapabilityNeed(["software-architecture-and-extension-boundaries"], ["skills"], 6)
+      .filter((entry) => entry.matchedTerms.length > 0 && runtimeMatchScore(entry.provider) < 9 &&
+        entry.provider.cacheEvidenceOnly !== true && entry.provider.executionEligible !== false &&
+        entry.provider.osSupport?.[osTarget] !== "unsupported")
+  : [];
+const intentArchitectureProvider = intentArchitectureCandidates[0]?.provider ?? null;
+const intentDirectionSelection = {
+  deliveryStrategy: intentDeliveryStrategy,
+  applies: engineeringDirectionApplies,
+  capabilityNeed: engineeringDirectionApplies && intentDeliveryStrategy === "long_term_extensible"
+    ? ["software-architecture-and-extension-boundaries"] : [],
+  selectedProvider: intentArchitectureProvider,
+  candidates: intentArchitectureCandidates.map((entry) => providerSummary(entry, intentArchitectureProvider?.id)),
+  selectionPolicy: "capability_need_runtime_match",
+  status: !engineeringDirectionApplies || intentDeliveryStrategy !== "long_term_extensible"
+    ? "not_required" : intentArchitectureProvider ? "selected_not_invoked" : "capability_gap",
+  claimBoundary: "Discovery and route selection only; no native confirmation, invocation or Permission.",
+};
 const rankedRoutes = [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes]
-  .map((route) => {
+  .map((candidateRoute) => {
+    const missingDirectionCapability = intentDirectionSelection.status === "capability_gap";
+    const route = {
+      ...candidateRoute,
+      intentDirectionSelection,
+      selectedCapabilityProviders: intentArchitectureProvider
+        ? { ...candidateRoute.selectedCapabilityProviders, intentArchitecture: intentArchitectureProvider }
+        : candidateRoute.selectedCapabilityProviders,
+      blockedReasons: [...(candidateRoute.blockedReasons ?? []), ...(missingDirectionCapability ? ["confirmed long-term direction lacks an eligible architecture provider"] : [])],
+      score: missingDirectionCapability ? Math.min(candidateRoute.score, 49) : candidateRoute.score,
+      scoreBand: missingDirectionCapability ? "blocked" : candidateRoute.scoreBand,
+    };
     const executionCapabilityGate = evaluateRouteExecutionGate({
       route,
       runtime,

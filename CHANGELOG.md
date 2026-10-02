@@ -8,6 +8,24 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.3.0] - 2026-10-02
+
+### Added
+
+- **Task goals and result assessment across domains.** The governed run binds the actual request and task-specific criteria instead of substituting framework roadmap checks. Required criteria need task-bound observations; missing evidence stays incomplete. Offline outcome regressions do not certify model quality or native invocation.
+- **Confirmed direction feeds existing capability selection.** A settled outcome, constraints and decision references travel through the option frame, business blueprint and worker work orders. A supported extension requirement selects a discovered design capability through the existing provider route; unavailable capabilities remain explicit gaps.
+
+### Fixed
+
+- **Clear requests no longer need invented alternatives or another interview.** A settled single viable route can pass the artifact contract. Unresolved material alternatives still require the current host's native choice surface, and understanding or route selection never grants action permission. Codex configuration flags are no longer described as callable tools or as overrides of host mode restrictions.
+- **Dependency methods keep one governance authority.** Internalized brainstorming and questioning methods encourage factual lookup, concrete scenarios, meaningful trade-offs, optional small samples and preservation of decisions. Professional workers return material changes to Meta_Kim rather than restarting requirements or orchestration.
+- **Windows verification and setup fixtures preserve runtime boundaries.** Since 3.2.0, process cleanup and fixture isolation have been corrected without weakening production deadlines; crash/resume tests use controlled lease time. Smoke and full gates share their behavior checks.
+
+### Evidence and attribution
+
+- New dialogue methods are reference-only adaptations of EveryInc's compound-engineering-plugin (MIT), active open-gsd/gsd-core (MIT), BMAD-METHOD (MIT), and LoopX (Apache-2.0). Result assessment internalizes promptfoo (MIT), NVIDIA SkillEvaluator (Apache-2.0), and tau2-bench (MIT); MarkItDown and p-queue (MIT) contribute provenance and pacing boundaries. Exact source revisions and limitations are recorded in the decision-pattern catalog. No upstream executor was installed.
+- The default Node runner remains planned-only unless its supported execution bridge is explicitly used. Functional cases and local engineering checks do not establish comparative model improvement, native popup behavior, universal tool availability or optional live certification.
+
 ## [3.2.0] - 2026-09-14
 
 ### Added

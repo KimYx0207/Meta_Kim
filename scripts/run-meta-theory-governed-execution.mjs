@@ -19,6 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
+import { classifyTaskShape } from "./governance-lib.mjs";
 import {
   openRunStateStore,
 } from "./capability-gap-mvp.mjs";
@@ -81,6 +82,11 @@ import {
   validateWardenWritebackApproval as validateExactWardenWritebackApproval,
 } from "../src/domain/evolution/warden-writeback-approval.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
+import { prepareIntentDialogue, bindIntentToWorkerTasks, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
+import {
+  buildTaskGoalContract as buildGoalContractPacket,
+  evaluateTaskOutcome,
+} from "../src/domain/governance/task-outcome.mjs";
 import {
   readMetaRunStatus,
   readSpineState,
@@ -2856,6 +2862,14 @@ function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrati
           source: "selectedExecutionRoute.recommendedRoute",
           evidenceRef: `${laneId}_route_match`,
         },
+        ...(packet.intentCapabilitySelection?.selectedProviders ?? []).map((provider) => ({
+          bindingId: `${laneId}_intent_${provider.id}`,
+          capabilitySlot: `${laneId}_confirmed_direction`,
+          bindingType: "skill", bindingRef: provider.id, source: provider.sourceRef,
+          evidenceRef: "selectedExecutionRoute.recommendedRoute.intentDirectionSelection",
+          invocationState: "selected_not_invoked",
+          intentBinding: packet.intentBinding,
+        })),
       ],
       selectedOwner: packet.ownerAgent ?? packet.owner ?? "meta-conductor",
       selectionReason:
@@ -2863,6 +2877,8 @@ function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrati
         "Dynamic Workflow selected this lane from task intent and route evidence.",
       coverageStatus: "covered",
       workerTaskPacketRef: packet.taskPacketId,
+      intentBinding: packet.intentBinding ?? null,
+      intentCapabilitySelection: packet.intentCapabilitySelection ?? null,
       omitted: false,
     };
   };
@@ -2901,6 +2917,7 @@ function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrati
   return {
     deliverableType: "custom",
     deliverableSubtype: "governed_meta_theory_run",
+    intentBinding: orchestrationReport?.criticalSummary?.intentBinding ?? null,
     requiredLanes,
     optionalLanes: [],
     omittedLanes,
@@ -4469,6 +4486,7 @@ function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket) 
 
 function buildTraceEvalControlPlane({
   runId,
+  goalContractPacket,
   artifactStatus,
   stageOperationPlan,
   workerTaskPackets,
@@ -4512,6 +4530,7 @@ function buildTraceEvalControlPlane({
       "OpenTelemetry GenAI semantic conventions",
       "LangSmith-style eval observability",
     ],
+    outcomeEvaluation: evaluateTaskOutcome(goalContractPacket),
     stageTiming: TRACE_SPINE.map((stage, index) => ({
       stage,
       sequence: index + 1,
@@ -5097,87 +5116,6 @@ function buildRuntimeSubagentInvocationPacket({
 
 function graphNodeId(stage) {
   return String(stage).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-}
-
-function buildGoalContractPacket({ task }) {
-  const goalText = [
-    "/goal 用 Meta_Kim 默认治理入口处理当前自然语言任务，先锁定用户真正要的结果，再完成 Fetch 证据、动态路线选择、执行 owner 绑定、验证和演化记录。",
-    "验证：运行 npm run meta:theory:run -- <task> 与 npm run meta:prd:product-experience:validate，检查 artifact 中的 goalContractPacket、langGraphRunPacket、dynamicWorkflowRuntimePacket、peerAgentMeshPacket、agentTeamsPlaybookPacket、capabilityInvocationTruthPacket、visibleMetaTheorySurfacePacket、userPerceptionPacket 和 productExperiencePacket。",
-    "约束：不新增第二份 PRD，不把 fixture、projection smoke、runtime JSON、内部 packet、选中能力、配置 MCP、匹配 hook 或 run-scoped worker 单独写成真实调用或用户体验完成，不做外部写入、凭证、付费或生产变更。",
-    "边界：只在当前 repo 的默认治理 runner、合同、validator、测试和唯一 PRD 内证明产品层体验；Claude Code/Codex native live 证据仍由对应 runtime acceptance 路径单独证明。",
-    "迭代策略：每次失败先读 artifact、validator 输出和测试，再修正合同或 runner；同类失败第二次出现时直接判定为底层设计失败，返回 Critical/Fetch/Thinking 修正设计，而不是继续局部补丁。",
-    "完成条件：P-102 LangGraph-style 控制图、P-103 Dynamic Workflow 能力绑定、P-104 用户可感知体验三个核心目标同时为 pass；P-105 goal-contract、P-106 native choice surface、P-107 repeat-failure design、P-108 no-hardcoded-fixture、P-109 capability-invocation-truth、P-110 agent-teams-playbook orchestration adapter 支撑门全部为 pass。",
-    "暂停条件：需要第三方账号、生产凭证、付费服务、真实外部发布、破坏性操作或平台 native live 功能不可用但又必须作为完成证据时暂停。"
-  ].join(" ");
-  return {
-    schemaVersion: "goal-contract-v0.1",
-    status: "pass",
-    evidenceKind: "goal_contract_ready",
-    sourceMethodRefs: [
-      "joeseesun/qiaomu-goal-meta-skill/SKILL.md",
-      "joeseesun/qiaomu-goal-meta-skill/references/default-goal-strategy.md",
-      "joeseesun/qiaomu-goal-meta-skill/scripts/lint_goal_command.py",
-    ],
-    taskHash: textSha256(task),
-    commandPrefix: "/goal",
-    recommendedGoalText: goalText,
-    contractFields: {
-      outcome:
-        "A governed run produces product-level graph, dynamic workflow, peer handoff, user perception, and verification evidence.",
-      verification: [
-        "npm run meta:theory:run -- <task>",
-        "npm run meta:prd:product-experience:validate",
-        "npm run meta:prd:default-execution:validate",
-      ],
-      constraints: [
-        "single PRD source",
-        "no external write without approval",
-        "no smoke or fixture overclaim",
-        "no selected/discovered/configured capability overclaim as invoked",
-      ],
-      boundaries: [
-        "default governed runner",
-        "contracts",
-        "validators",
-        "tests",
-        "local-private PRD",
-      ],
-      iterationPolicy:
-        "Use fresh artifact or command evidence before retry; when the same failure class appears for the second time, mark bottom_design_failure and return to Critical/Fetch/Thinking.",
-      completionEvidence: [
-        "productExperiencePacket.coreGoalIds=P-102/P-103/P-104",
-        "productExperiencePacket.supportGateIds=P-105/P-106/P-107/P-108/P-109/P-110",
-        "langGraphRunPacket.status=pass",
-        "dynamicWorkflowRuntimePacket.status=pass",
-        "agentTeamsPlaybookPacket.status=pass_or_not_required",
-        "capabilityInvocationTruthPacket.status=pass",
-        "capabilityInvocationProbePacket.status=pass for product-experience callable invocation pass",
-        "visibleMetaTheorySurfacePacket.status=pass",
-        "userPerceptionPacket.status=pass",
-        "productExperiencePacket.status=product_experience_pass",
-      ],
-      stopWhen:
-        "The three product goals pass with evidence and no evidence-tier overclaim remains.",
-      pauseIf:
-        "Credentials, paid services, production mutation, native runtime live capability, or external publication becomes required.",
-    },
-    lint: {
-      status: "pass",
-      requiredMarkersPresent: [
-        "/goal",
-        "验证",
-        "约束",
-        "边界",
-        "迭代策略",
-        "完成条件",
-        "暂停条件",
-      ],
-      noPlaceholders: true,
-      concreteVerificationEvidenceNamed: true,
-      boundedAutonomy: true,
-      highRiskPausePresent: true,
-    },
-  };
 }
 
 function buildHookMatchesForPacket(packet) {
@@ -8503,7 +8441,7 @@ function buildRepeatFailureDesignGate() {
 }
 
 function buildNoHardcodedFixtureGate({ goalContractPacket }) {
-  const durableGoalText = goalContractPacket?.recommendedGoalText ?? "";
+  const durableGoalText = goalContractPacket?.frameworkPolicyText ?? "";
   const forbiddenFixtureBindings = [
     "桌面便签",
     "desktop sticky notes",
@@ -8518,9 +8456,12 @@ function buildNoHardcodedFixtureGate({ goalContractPacket }) {
   return {
     id: "P-108",
     name: "目标不硬编码测试夹具",
-    status: detectedForbiddenBindings.length === 0 ? "pass" : "fail",
+    status: durableGoalText && goalContractPacket?.scope === "run_scoped" &&
+      goalContractPacket?.source === "user_request" && detectedForbiddenBindings.length === 0 ? "pass" : "fail",
     evidenceKind: "product_support_gate",
     durableGoalTextHash: textSha256(durableGoalText),
+    inspectedScope: "durable_framework_policy_only",
+    userTaskMayNameSpecificProducts: true,
     forbiddenFixtureBindings,
     detectedForbiddenBindings,
     abstractionRequirement:
@@ -8975,6 +8916,7 @@ function buildContextEngineeringBudget({
 function buildCoreLoopArtifact({
   runId,
   task,
+  intentDialogue = null,
   orchestrationReport,
   capabilityInventoryBus,
   decisionResults,
@@ -9278,8 +9220,12 @@ function buildCoreLoopArtifact({
     maxIterationHandling: "Fix cards may iterate only while Review or Verification failures remain bounded.",
     escalationOwner: "meta-warden",
   };
+  const goalContractPacket = buildGoalContractPacket({ task, outputLanguage, acceptanceCriteria: intentDialogue?.acceptanceCriteria ?? [] });
+  goalContractPacket.confirmedOutcome = intentDialogue?.outcome ?? task;
+  goalContractPacket.intentBinding = intentDialogue;
   const traceEvalControlPlane = buildTraceEvalControlPlane({
     runId,
+    goalContractPacket,
     artifactStatus,
     stageOperationPlan,
     workerTaskPackets,
@@ -9293,7 +9239,6 @@ function buildCoreLoopArtifact({
     runId,
     stageOperationPlan,
   });
-  const goalContractPacket = buildGoalContractPacket({ task });
   const langGraphRunPacket = buildLangGraphRunPacket({
     runId,
     stageOperationPlan,
@@ -9497,8 +9442,9 @@ function buildCoreLoopArtifact({
     ],
     intentPacket: {
       stage: "Critical",
-      realIntent: orchestrationReport.criticalSummary?.realGoal,
-      successCriteria: orchestrationReport.criticalSummary?.successCriteria ?? [],
+      realIntent: intentDialogue?.outcome ?? goalContractPacket.contractFields.outcome,
+      intentBinding: intentDialogue,
+      successCriteria: goalContractPacket.acceptanceCriteria.map((criterion) => criterion.description),
       nonGoals: orchestrationReport.criticalSummary?.nonGoals ?? [],
       blockingUnknowns: [],
       noQuotaClarification: true,
@@ -9919,6 +9865,7 @@ export function buildRouteBranchingOptions(orchestrationReport) {
 function buildWorkflowContractPackets({
   runId,
   task,
+  intentDialogue = null,
   artifactStatus,
   orchestrationReport,
   coreLoop,
@@ -10278,44 +10225,23 @@ function buildWorkflowContractPackets({
     complexity: "medium",
   };
   const preDecisionOptionFrame = {
+    taskHash: intentDialogue?.taskHash ?? null,
+    intentDigest: intentDialogue?.intentDigest ?? null,
     decisionTrigger: requiresUserChoice
       ? "A risk-adaptive plan challenge has one current user choice pending."
       : "No unresolved branch-changing choice remains for this structural run artifact.",
     contentEvidence: "contentEvidencePacket",
-    optionFrame: "Validate the governed execution artifact through the workflow-contract validator.",
+    optionFrame: intentDialogue?.outcome ?? task,
     presentedBeforeDecision: true,
+    routeFeasibility: orchestrationReport.selectedExecutionRoute?.recommendedRoute ? "route_selected_not_executed" : "capability_gap",
     userChoiceState: choiceState,
     builtFromContentEvidence: true,
     contentEvidenceRefs: ["contentEvidencePacket.decisionImpactMap[0]"],
     unresolvedQuestions: planChallenge.unresolvedQuestions,
     planChallengeState: planChallenge.planChallengeState,
-    candidateOptions: [
-      {
-        optionId: "single-workflow-artifact",
-        whatChanges: "Generate one top-level workflow-contract artifact from the governed runner.",
-        problemSolved: "Avoids a second validator-only shape.",
-        expectedResult: "validate-run-artifact can validate the runner output directly.",
-        advantages: ["One producer path", "One validator path"],
-        disadvantages: ["The runner must populate stricter packet fields."],
-        evidenceRefs: ["contentEvidencePacket.decisionImpactMap[0]"],
-        decisionImpact: "Selects unified artifact production.",
-        candidateOwners: ["meta-conductor"],
-        candidateTaskShape: "governed_execution_artifact",
-      },
-      {
-        optionId: "return-to-thinking",
-        whatChanges: "Stop before execution if packet evidence is insufficient.",
-        problemSolved: "Prevents validator rescue after weak route design.",
-        expectedResult: "The run returns to Thinking with concrete missing packet fields.",
-        advantages: ["No fake public-ready claim"],
-        disadvantages: ["Requires another producing pass."],
-        evidenceRefs: ["contentEvidencePacket.iterationLog[0]"],
-        decisionImpact: "Blocks execution if validation evidence is missing.",
-        candidateOwners: ["meta-prism"],
-        candidateTaskShape: "verification_gate",
-      },
-    ],
-    recommendedDefault: "single-workflow-artifact",
+    candidateOptions: routeCandidateOptions(orchestrationReport.selectedExecutionRoute),
+    recommendedDefault: orchestrationReport.selectedExecutionRoute?.decisionCard?.recommendedDefault ?? orchestrationReport.selectedExecutionRoute?.recommendedRoute?.id ?? "unresolved-route",
+    intentBinding: intentDialogue,
     requiresUserChoice,
     nativeChoiceSurface: requiresUserChoice
       ? "host_adapter_required_not_invoked"
@@ -10380,7 +10306,7 @@ function buildWorkflowContractPackets({
   };
   const dispatchBoard = {
     boardId: `${runId}-dispatch-board`,
-    goal: "Produce one strict governed execution artifact and verify it without claiming release readiness.",
+    goal: intentDialogue?.outcome ?? task,
     ownerResolution: "existing-owner",
     primaryDeliverable,
     mergeStrategy: "meta-conductor merges worker evidence into one artifact; meta-prism verifies strict packet closure.",
@@ -10425,13 +10351,13 @@ function buildWorkflowContractPackets({
         : "operations",
       roleInstanceId: packet.roleInstanceId ?? `operations-${index + 1}`,
       runtimeInstanceAlias: packet.runtimeInstanceAlias ?? "",
-      coreProblem: packet.coreProblem ?? "Produce a strict governed execution artifact.",
-      todayTask: packet.todayTask ?? "Normalize runner output to the workflow-contract packet shape.",
+      coreProblem: packet.coreProblem ?? (intentDialogue?.outcome ?? task),
+      todayTask: packet.todayTask ?? (intentDialogue?.outcome ?? task),
       nonGoals: packet.nonGoals?.length ? packet.nonGoals : ["No unrelated source mutation."],
       output: packet.output ?? "workflow_contract_artifact",
       acceptanceCriteria: packet.acceptanceCriteria?.length
         ? packet.acceptanceCriteria
-        : ["Generated artifact validates through scripts/validate-run-artifact.mjs."],
+        : [intentDialogue?.outcome ?? task],
       deliverableLink: `${primaryDeliverable}:${taskPacketId}`,
       scopeFiles: packet.scopeFiles?.length ? packet.scopeFiles : [scopeFile],
       qualityBar: packet.qualityBar ?? "strict packet validation without public-ready overclaim",
@@ -10721,9 +10647,10 @@ function buildWorkflowContractPackets({
     contentEvidencePacket,
     fetchPacket,
     intentPacket: {
-      realIntent: `Run Meta_Kim governed execution for: ${task}`,
-      trueUserIntent: `Produce a strict governed execution artifact for: ${task}`,
-      successCriteria: "The generated artifact validates through scripts/validate-run-artifact.mjs without claiming release-grade public readiness.",
+      realIntent: intentDialogue?.outcome ?? task,
+      trueUserIntent: intentDialogue?.outcome ?? task,
+      intentBinding: intentDialogue,
+      successCriteria: coreLoop.goalContractPacket.acceptanceCriteria.map((criterion) => criterion.description).join("\n"),
       nonGoals: "Do not require private docs, publish, deploy, or claim live runtime public-ready evidence.",
       blockingUnknowns: [],
       noQuotaClarification: "No filler clarification is needed; route-changing choices require native choice evidence.",
@@ -10971,7 +10898,7 @@ async function readLatestRunId(stateDir) {
   return latestRunId == null ? null : validateRunId(latestRunId, "latest.json runId");
 }
 
-function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null }) {
+function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   return [
@@ -10985,10 +10912,11 @@ function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", run
     "--runner-compact",
     ...(runId ? ["--run-id", runId] : []),
     ...(codexHostToolSchema ? ["--codex-host-tool-schema", codexHostToolSchema] : []),
+    ...(intentDeliveryStrategy ? ["--intent-delivery-strategy", intentDeliveryStrategy] : []),
   ];
 }
 
-async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, spawnError = null }) {
+async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, spawnError = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const originalArgv = process.argv;
@@ -11000,7 +10928,7 @@ async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "wi
     process.argv = [
       process.execPath,
       SELECT_EXECUTION_ROUTE_SCRIPT,
-      ...selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema }),
+      ...selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy }),
     ];
     console.log = (...args) => stdout.push(args.join(" "));
     console.error = (...args) => stderr.push(args.join(" "));
@@ -11037,10 +10965,10 @@ async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "wi
   }
 }
 
-async function selectExecutionRoute({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null }) {
+async function selectExecutionRoute({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
-  const args = selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema });
+  const args = selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy });
   const result = spawnSync(
     process.execPath,
     [SELECT_EXECUTION_ROUTE_SCRIPT, ...args],
@@ -11058,6 +10986,7 @@ async function selectExecutionRoute({ task, runtime = "codex", os = "windows", r
       os: routeOs,
       runId,
       codexHostToolSchema,
+      intentDeliveryStrategy,
       spawnError: result.error,
     });
   }
@@ -11404,13 +11333,24 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
-  const routeResult = await selectExecutionRoute({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema });
+  const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
+  const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
+    ? intentDialogue?.deliveryStrategy ?? null : null;
+  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy });
+  routeResult.intentBinding = intentDialogue;
   const route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
-  const workerTaskPackets = buildRouteDrivenWorkerTasks({ runId, routeResult, task });
+  const workerTaskPackets = bindIntentToWorkerTasks({
+    workerTaskPackets: buildRouteDrivenWorkerTasks({ runId, routeResult, task }),
+    routeResult, dialogue: intentDialogue ?? prepareIntentDialogue({ task }),
+  });
+  const intentCapabilityGaps = workerTaskPackets.filter((packet) => packet.intentCapabilitySelection.status === "capability_gap");
+  if (intentCapabilityGaps.length) {
+    routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", intentCapabilityGaps: intentCapabilityGaps.map((packet) => packet.taskPacketId) };
+  }
   const routeGate = routeResult.routeExecutionGate ?? {};
   const blocked = routeGate.handoffStatus === "blocked";
   const capabilityGaps = routeResult.capabilityGapDetected && routeResult.capabilityGapDecision
@@ -11464,13 +11404,18 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     },
     selectedExecutionRoute: routeResult,
     criticalSummary: {
-      realGoal: `Run Meta_Kim through the selected route for: ${task}`,
-      successCriteria: [
+      realGoal: intentDialogue?.outcome ?? task,
+      successCriteria: intentDialogue?.acceptanceCriteria?.length ? intentDialogue.acceptanceCriteria.map((criterion) => criterion.description) : [intentDialogue?.outcome ?? task],
+      intentBinding: intentDialogue,
+      orchestrationAcceptanceCriteria: [
         "One default route drives Critical, Fetch, Thinking, Execution, Review, Meta-Review, Verification, and Evolution.",
         "Worker task cards separate one-run task scope from durable agent settings.",
         "Agent, skill, MCP, tool, command, hook, and evolution decisions are visible.",
       ],
       nonGoals: [
+        "Do not expand beyond the user's goal and authorization.",
+      ],
+      governanceConstraints: [
         "No old capability-gap orchestration as the default governed execution path.",
         "No validator/hook rescue loop after a weak route.",
       ],
@@ -11569,6 +11514,11 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
 
 export async function runMetaTheoryGovernedExecution({
   task,
+  confirmedIntent = null,
+  planChallengeResponses = [],
+  planChallengeControl = null,
+  sharedUnderstandingConfirmed = null,
+  priorChallengeState = null,
   governanceTaskFacts = null,
   runId = null,
   allowOverwrite = false,
@@ -11609,6 +11559,16 @@ export async function runMetaTheoryGovernedExecution({
   if (!normalizedTask) {
     throw new Error("Missing task for governed meta-theory execution.");
   }
+  const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent, sharedUnderstandingConfirmed });
+  const boundUnderstanding = sharedUnderstandingConfirmed?.taskHash === intentDialogue.taskHash &&
+    (sharedUnderstandingConfirmed.intentDigest ?? null) === (intentDialogue.intentDigest ?? null)
+      ? sharedUnderstandingConfirmed : null;
+  const boundPriorChallengeState = priorChallengeState?.taskHash === intentDialogue.taskHash &&
+    (priorChallengeState.intentDigest ?? priorChallengeState.intentBinding?.intentDigest ?? null) === (intentDialogue.intentDigest ?? null)
+      ? priorChallengeState : null;
+  const boundChallengeResponses = (Array.isArray(planChallengeResponses) ? planChallengeResponses : []).filter((response) =>
+    response?.taskHash === intentDialogue.taskHash && (response.intentDigest ?? null) === (intentDialogue.intentDigest ?? null));
+  const dialogueTask = intentDialogue.status === "host_provided_understanding" ? intentDialogue.routeTask : normalizedTask;
   const taskFingerprint = stableId("task", normalizedTask);
   const durableStageRunnerEnabled = stageRunner?.enabled === true;
   const durableMode = durableStageRunnerEnabled ? (stageRunner.durableMode ?? "fresh") : null;
@@ -11643,13 +11603,17 @@ export async function runMetaTheoryGovernedExecution({
   // route decision card exists in scope yet. Textual alternatives still use
   // the policy's explicit branching trigger; the later workflow builder may
   // add only the route selector's own decision-card options.
-  const planChallengePreview = buildPlanChallengeState({
-    task: normalizedTask,
+  let planChallengePreview = buildPlanChallengeState({
+    task: dialogueTask,
+    responses: boundChallengeResponses,
+    control: planChallengeControl,
+    sharedUnderstandingConfirmed: boundUnderstanding,
+    priorChallengeState: boundPriorChallengeState,
     contradictionEvidence: planChallengeContradictionEvidence,
     requestedSideEffectActions: governedSideEffectActions,
     outputLanguage: resolvedOutputLanguage,
   });
-  const planChallengeHandoffReady =
+  let planChallengeHandoffReady =
     planChallengePreview.planChallengeState.active !== true ||
     planChallengePreview.planChallengeState.planChallengeSatisfied === true;
   const executionAllowed = false;
@@ -11660,7 +11624,7 @@ export async function runMetaTheoryGovernedExecution({
   // the entry classification, durable specification, route, and transactional
   // project-copy checks, so a missing host execution receipt must not silently
   // downgrade an explicitly requested local capability write to read-only.
-  const resolvedProjectCapabilityMutationMode = planChallengeHandoffReady
+  let resolvedProjectCapabilityMutationMode = planChallengeHandoffReady
     ? requestedProjectCapabilityMutationMode
     : "read_only";
   const requestedRunId = runId == null ? null : String(runId);
@@ -11770,7 +11734,22 @@ export async function runMetaTheoryGovernedExecution({
     runtime: routeRuntime,
     osTarget: routeOs,
     codexHostToolSchema,
+    intentDialogue,
   });
+  planChallengePreview = buildPlanChallengeState({
+    task: dialogueTask,
+    responses: boundChallengeResponses,
+    control: planChallengeControl,
+    sharedUnderstandingConfirmed: boundUnderstanding,
+    priorChallengeState: boundPriorChallengeState,
+    contradictionEvidence: planChallengeContradictionEvidence,
+    requestedSideEffectActions: governedSideEffectActions,
+    branchingOptions: buildRouteBranchingOptions(orchestrationReport),
+    outputLanguage: resolvedOutputLanguage,
+  });
+  planChallengeHandoffReady = planChallengePreview.planChallengeState.active !== true ||
+    planChallengePreview.planChallengeState.planChallengeSatisfied === true;
+  resolvedProjectCapabilityMutationMode = planChallengeHandoffReady ? requestedProjectCapabilityMutationMode : "read_only";
   const governanceRequirementLegacySnapshot = buildLegacyGovernanceRequirementSnapshot({
     task: normalizedTask,
     orchestrationReport,
@@ -11998,6 +11977,7 @@ export async function runMetaTheoryGovernedExecution({
     coreLoop = buildCoreLoopArtifact({
       runId: effectiveRunId,
       task: normalizedTask,
+      intentDialogue,
       orchestrationReport,
       capabilityInventoryBus,
       decisionResults,
@@ -12344,6 +12324,7 @@ export async function runMetaTheoryGovernedExecution({
   const workflowContractPackets = buildWorkflowContractPackets({
     runId: effectiveRunId,
     task: normalizedTask,
+    intentDialogue,
     artifactStatus,
     orchestrationReport,
     coreLoop,
@@ -12351,6 +12332,10 @@ export async function runMetaTheoryGovernedExecution({
     writebackFlow,
     cardPlanPacket,
     businessFlowBlueprintPacket,
+    planChallengeResponses,
+    planChallengeControl,
+    sharedUnderstandingConfirmed: boundUnderstanding,
+    priorChallengeState: boundPriorChallengeState,
     runtime: routeRuntime,
     osTarget: routeOs,
     outputLanguage: resolvedOutputLanguage,
@@ -12471,6 +12456,7 @@ export async function runMetaTheoryGovernedExecution({
     governanceRequirementPlanPacket,
     governanceStartReasonPacket,
     businessFlowBlueprintPacket,
+    selectedExecutionRoute: orchestrationReport.selectedExecutionRoute,
     capabilityRoute: orchestrationReport.fetchEvidence.capabilityInventory,
     durableProjectAgentPolicy: {
       createAgentDeliverable: "project_retained_abstract_agent_definition",
@@ -12783,6 +12769,7 @@ function positionalTask(fallback = null) {
         "--host-visible-subagents",
         "--host-invocation-evidence",
         "--native-choice-evidence",
+        "--confirmed-intent",
         "--codex-host-tool-schema",
         "--runtime",
         "--os",
@@ -12821,6 +12808,7 @@ function rawPositionals() {
         "--host-visible-subagents",
         "--host-invocation-evidence",
         "--native-choice-evidence",
+        "--confirmed-intent",
         "--codex-host-tool-schema",
         "--runtime",
         "--os",
@@ -12937,8 +12925,12 @@ async function main() {
   const approvalPacket = approvalPacketPath
     ? JSON.parse(await fs.readFile(path.resolve(approvalPacketPath), "utf8"))
     : null;
+  const confirmedIntentPath = argValue("--confirmed-intent", null);
+  const confirmedIntent = confirmedIntentPath ? JSON.parse(await fs.readFile(path.resolve(confirmedIntentPath), "utf8")) : null;
+  // CLI JSON remains advisory; it cannot supply the host-only understanding boundary.
   const report = await runMetaTheoryGovernedExecution({
     task,
+    confirmedIntent,
     runId: runIdArg ?? (taskArg ? null : positional[1] ?? null),
     allowOverwrite: process.argv.includes("--overwrite-run"),
     cliOutputLanguage,

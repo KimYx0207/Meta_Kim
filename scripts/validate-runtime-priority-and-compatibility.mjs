@@ -133,19 +133,46 @@ function validateFixtureArtifact() {
     [path.join(REPO_ROOT, "scripts", "run-prompt-first-full-flow-live-acceptance.mjs"), "--fixture"],
     { cwd: REPO_ROOT, encoding: "utf8" },
   );
-  assert.match(stdout, /prompt-first full-flow fixture acceptance valid/);
-  assert.match(stdout, /compatibilitySmoke=openclaw:passed,cursor:passed/);
+  validateFixtureEvidence(readJson(FIXTURE_ARTIFACT_PATH), stdout);
+}
 
-  const artifact = readJson(FIXTURE_ARTIFACT_PATH);
+export function validateFixtureEvidence(artifact, stdout) {
+  assert.match(stdout, /prompt-first full-flow fixture acceptance valid/);
+  assert.match(stdout, /compatibilitySmoke=openclaw:fixture_pass_not_live,cursor:fixture_pass_not_live/);
+  assert.match(stdout, /P-087=fixture_pass_not_live/);
+  assert.match(stdout, /P-088=fixture_pass_not_live/);
   assert.equal(artifact.mode, "fixture");
   sameSet(artifact.requestedRuntimes, PRIMARY, "fixture requested runtimes must be primary only");
   sameSet(artifact.compatibilitySmokeRuntimes, COMPATIBILITY, "fixture compatibility runtimes drifted");
   assert.equal(artifact.compatibilitySmokePacket.status, "pass");
+  assert.equal(artifact.compatibilitySmokePacket.evidenceKind, "fixture_regression");
+  assert.equal(artifact.compatibilitySmokePacket.fixtureOnly, true);
+  assert.equal(artifact.compatibilitySmokePacket.compatibilitySmokeClaimAllowed, false);
   assert.equal(artifact.compatibilitySmokePacket.primaryLiveClaimAllowed, false);
-  assert.equal(artifact.compatibilitySmokeResults.openclaw.evidenceKind, "compatibility_smoke_pass");
-  assert.equal(artifact.compatibilitySmokeResults.cursor.evidenceKind, "compatibility_smoke_pass");
+  for (const runtime of COMPATIBILITY) {
+    const result = artifact.compatibilitySmokeResults[runtime];
+    assert.equal(result.mode, "fixture");
+    assert.equal(result.status, "fixture_pass_not_live");
+    assert.equal(result.evidenceKind, "fixture_regression");
+    assert.equal(result.fixtureOnly, true);
+    assert.equal(result.actualHostObserved, false);
+    assert.equal(result.compatibilitySmokeClaimAllowed, false);
+    assert.equal(result.primaryLiveClaimAllowed, false);
+    assert.equal(result.exitCode, undefined, "Fixture input cannot claim a subprocess exit receipt");
+  }
   assert.equal(artifact.summary.fixtureModeCannotClaimLivePass, true);
+  assert.equal(artifact.summary.fixtureModeCannotClaimCompatibilitySmokePass, true);
+  assert.deepEqual(artifact.summary.liveRuntimesPassed, []);
   assert.equal(artifact.summary.primaryRuntimePerfection, false);
+  for (const runtime of PRIMARY) {
+    const payload = artifact.runtimeResults[runtime];
+    assert.equal(payload.verificationResult.evidenceKind, "fixture_regression");
+    assert.equal(payload.claimBoundary.liveExecutionPass, false);
+    assert.equal(payload.claimBoundary.releaseGradeFullFlowClaim, false);
+  }
+  for (const taskId of ["P-087", "P-088"]) {
+    assert.equal(artifact.prdTaskStatuses[taskId], "fixture_pass_not_live", `${taskId} cannot claim a fixture as live acceptance`);
+  }
   for (const taskId of ["P-089", "P-090", "P-091"]) {
     assert.equal(artifact.prdTaskStatuses[taskId], "pass", `${taskId} must pass in fixture regression`);
   }
@@ -212,9 +239,11 @@ function main() {
   );
 }
 
-try {
-  main();
-} catch (error) {
-  process.stderr.write(`${error.stack ?? error.message}\n`);
-  process.exit(1);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`${error.stack ?? error.message}\n`);
+    process.exitCode = 1;
+  }
 }

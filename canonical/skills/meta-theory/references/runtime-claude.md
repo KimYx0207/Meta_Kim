@@ -109,7 +109,7 @@ Do not copy the external hook's wording into durable Meta_Kim instructions. Keep
 - Cite `workerTaskPackets[].taskPacketId` in every Agent dispatch prompt.
 - Read the current content of every target file in the same execution turn before using Edit, MultiEdit, Write, or any command that rewrites it.
 - Build `fileChangeFactCard` before file mutation, and use it to answer write-time fact gates before retrying the same operation.
-- Block with `nativeChoiceSurfaceBlocked` when `AskUserQuestion` is unavailable, returns empty, or cannot be deferred to the host UI.
+- For an unresolved required choice, block with `nativeChoiceSurfaceBlocked` when `AskUserQuestion` is unavailable, returns empty, or cannot be deferred to the host UI. Preserve an already settled direction and existing action authorization separately.
 
 ## Do not
 
@@ -124,13 +124,13 @@ Do not copy the external hook's wording into durable Meta_Kim instructions. Keep
 - `dispatchEnvelopePacket` with `ownerAgent`, `weapon`, `capabilityBindings`, and `verificationOwner`.
 - `fileChangeFactCard` when the lane will mutate files.
 - `workerResultPackets[].workerExecutionEvidence` from each dispatched provider.
-- For `AskUserQuestion`: `choiceSurfaceState` must be `completed` before Execution; `preDecisionOptionFrame.candidatePaths` must list at least two options.
+- For a required branch-changing `AskUserQuestion`: `choiceSurfaceState` must be `completed` before the dependent Execution; `preDecisionOptionFrame.candidateOptions` must list at least two viable options. A settled single route uses the existing recorded skip policy and does not need a filler option or another interview.
 
 ## Pass criteria
 
 - Every dispatched provider returned a result matching its declared output schema.
 - Every mutated file was read before rewrite and has a recorded target, consumer, overlap decision, and data-shape note where applicable.
-- `AskUserQuestion` returned a non-empty answer, or non-interactive mode produced a deferred `AskUserQuestion` tool call that the host UI handles before resume.
+- A required `AskUserQuestion` returned a non-empty answer, or non-interactive mode produced a deferred `AskUserQuestion` tool call that the host UI handles before resume; otherwise an allowed choice skip records its rationale.
 - `workerResultPackets[].schemaValidationAttempts[].passed === true` for each lane.
 - The main thread did not directly edit, write, or run implementation commands.
 
@@ -148,7 +148,7 @@ Do not copy the external hook's wording into durable Meta_Kim instructions. Keep
 - `AskUserQuestion` called outside blocking Critical clarification or post-Thinking execution confirmation.
 - Critical clarification needed for a subjective quality complaint, but mutation or execution starts without `choiceSurfaceState=critical_clarification_allowed` followed by a completed native answer or deferred native answer.
 - Agent dispatch in execution stage without `capabilitySearchPerformed === true` in spine state.
-- `choiceSurfaceState` not `completed` when Execution attempts mutation tools.
+- An unresolved required choice has `choiceSurfaceState` not `completed` when its dependent Execution attempts mutation tools; allowed skips remain governed by their recorded rationale and independent permissions.
 - Same write-time fact gate blocks the same action twice after `fileChangeFactCard` was presented; record `hookFailurePacket` and return to Thinking.
 - PreToolUse hook strips `AskUserQuestion` return data (workaround: hook bypasses `AskUserQuestion` at line ~900 of `enforce-agent-dispatch.mjs`).
 

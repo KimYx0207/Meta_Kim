@@ -1501,19 +1501,19 @@ export function buildCapabilityGapOrchestration(input) {
   return {
     schemaVersion: 1,
     status,
-    rootGoal:
-      "Route meta-theory-triggered complex tasks through Warden/Conductor before CapabilityGap decisions enter execution.",
+    rootGoal: normalizeTaskText(input),
     criticalSummary: {
-      realGoal:
-        "Support multiple capability gaps and dynamic natural-language workflow routing without making a skill or runtime adapter the planner.",
+      realGoal: normalizeTaskText(input),
       nonGoals: [
-        "No full CapabilityGraph.",
-        "No graph database.",
+        "Do not expand beyond the user's goal and authorization.",
+      ],
+      successCriteria: [normalizeTaskText(input)],
+      governanceConstraints: [
         "No automatic canonical write.",
         "No governance agent as implementation worker.",
         "No fixed business-flow lane template for every wish-style request.",
       ],
-      successCriteria: [
+      orchestrationAcceptanceCriteria: [
         "Skill is only the trigger adapter.",
         "Conductor owns orchestration.",
         "Each gap has its own GapDecision.",

@@ -2,7 +2,18 @@
   "schemaVersion": 1,
   "purpose": "Internal Meta_Kim decision data distilled from inspected reference material and Meta_Kim boundaries. Kim_Decision may be discovered through the dependency registry, but these patterns do not authorize invoking Kim_Decision or any other project as an execution dependency.",
   "sourceBoundary": {
-    "referenceOnly": ["Kim_Decision external/local reference discovered through META_KIM_DEP_ROOTS, sibling scan, installed skills, registry, or GitHub evidence"],
+    "referenceOnly": [
+      "Kim_Decision external/local reference discovered through META_KIM_DEP_ROOTS, sibling scan, installed skills, registry, or GitHub evidence",
+      "promptfoo/promptfoo",
+      "NVIDIA/SkillEvaluator",
+      "sierra-research/tau2-bench",
+      "microsoft/markitdown",
+      "sindresorhus/p-queue",
+      "EveryInc/compound-engineering-plugin",
+      "open-gsd/gsd-core",
+      "bmad-code-org/BMAD-METHOD",
+      "loopx-project/loopx"
+    ],
     "dependencyRegistryAllowed": true,
     "notExecutionDependency": true,
     "notInvokable": true,
@@ -10,15 +21,320 @@
     "notWeapon": true,
     "distillationRule": "Absorb reusable decision concepts into Meta_Kim stage data; do not copy another project's workflow shape or make it a callable provider."
   },
+  "referenceSources": [
+    {
+      "id": "promptfoo-declarative-evaluation",
+      "project": "promptfoo/promptfoo",
+      "commit": "ad3bee3299e3a9864ef6d47482298b2e7f1ceb37",
+      "license": "MIT",
+      "inspectedAt": "2026-09-14",
+      "sourceUrl": "https://github.com/promptfoo/promptfoo/blob/ad3bee3299e3a9864ef6d47482298b2e7f1ceb37/src/assertions/javascript.ts",
+      "adoption": "first_party_evaluation_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "task-bound declarative criterion observations",
+        "required failures cannot be averaged away",
+        "offline regression cases"
+      ],
+      "implementationRefs": [
+        "src/domain/governance/task-outcome.mjs",
+        "scripts/evaluate-governance-outcomes.mjs"
+      ]
+    },
+    {
+      "id": "skillevaluator-evidence-tiers",
+      "project": "NVIDIA/SkillEvaluator",
+      "commit": "efcd97ae7e0d2e2179e8a87c5b30c062626f69e7",
+      "license": "Apache-2.0",
+      "inspectedAt": "2026-09-14",
+      "sourceUrl": "https://github.com/NVIDIA/SkillEvaluator/blob/efcd97ae7e0d2e2179e8a87c5b30c062626f69e7/docs/eval-datasets.mdx",
+      "adoption": "first_party_evaluation_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "structure, routing/boundary and task-outcome distinction",
+        "explicit, implicit, contextual and negative cases",
+        "missing evidence remains incomplete"
+      ],
+      "implementationRefs": [
+        "src/domain/governance/task-outcome.mjs",
+        "config/evals/governance-outcomes.json"
+      ],
+      "limitations": [
+        "upstream is experimental",
+        "skill evaluation is not native Agent loading evidence"
+      ]
+    },
+    {
+      "id": "tau-bench-outcome-equivalence",
+      "project": "sierra-research/tau2-bench",
+      "commit": "2174a603f6d014ef94473ffa95957f6ce27100db",
+      "license": "MIT",
+      "inspectedAt": "2026-09-14",
+      "sourceUrl": "https://github.com/sierra-research/tau2-bench/blob/2174a603f6d014ef94473ffa95957f6ce27100db/docs/evaluation.md",
+      "adoption": "first_party_evaluation_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "outcome equivalence rather than one reference tool sequence",
+        "explicit required criterion gates",
+        "business-policy failure scenarios"
+      ],
+      "implementationRefs": [
+        "src/domain/governance/task-outcome.mjs",
+        "config/evals/governance-outcomes.json"
+      ],
+      "limitations": [
+        "no imported retail transaction permissions",
+        "no upstream benchmark score is reused"
+      ]
+    },
+    {
+      "id": "markitdown-material-provenance",
+      "project": "microsoft/markitdown",
+      "commit": "cc0ca9edd8e23b2c7f7b778c7b148c1565730498",
+      "license": "MIT",
+      "inspectedAt": "2026-09-14",
+      "sourceUrl": "https://github.com/microsoft/markitdown/blob/cc0ca9edd8e23b2c7f7b778c7b148c1565730498/README.md",
+      "adoption": "governance_guidance_only",
+      "installedDependency": false,
+      "internalizedAs": [
+        "discover material extraction capability only when needed",
+        "preserve original source and extraction limitations",
+        "conversion is not factual validation"
+      ],
+      "implementationRefs": [
+        "src/domain/governance/task-outcome.mjs",
+        "canonical/skills/meta-theory/references/outcome-evaluation.md"
+      ],
+      "limitations": [
+        "converter adapter remains optional and uninstalled",
+        "OCR or cloud conversion needs separate capability and authorization evidence"
+      ]
+    },
+    {
+      "id": "p-queue-invocation-pacing",
+      "project": "sindresorhus/p-queue",
+      "commit": "180ab9e25cd10b6f548767d7176076b50d25e188",
+      "license": "MIT",
+      "inspectedAt": "2026-09-14",
+      "sourceUrl": "https://github.com/sindresorhus/p-queue/blob/180ab9e25cd10b6f548767d7176076b50d25e188/source/index.ts",
+      "adoption": "governance_guidance_only",
+      "installedDependency": false,
+      "internalizedAs": [
+        "concurrency and request start-rate are separate controls",
+        "timeout does not prove cancellation",
+        "only a controlled invocation surface can be paced"
+      ],
+      "implementationRefs": [
+        "src/domain/governance/task-outcome.mjs",
+        "canonical/skills/meta-theory/references/outcome-evaluation.md"
+      ],
+      "limitations": [
+        "no second scheduler or persistent queue",
+        "no claim to control all host requests or fix global 429 responses"
+      ]
+    },
+    {
+      "id": "ce-brainstorm-requirements-dialogue",
+      "project": "EveryInc/compound-engineering-plugin",
+      "commit": "9af474a70e7f2a844338519ad9e92aafbd92d4fb",
+      "license": "MIT",
+      "internalizedAs": [
+        "discover facts before asking",
+        "scenario replay and examples/counterexamples",
+        "real alternatives with evidenced trade-offs",
+        "optional bounded small sample",
+        "settled decisions carried to execution"
+      ],
+      "limitations": [
+        "no pack resolver or second orchestrator",
+        "no mandatory visual offer",
+        "no primary-runtime chat fallback"
+      ],
+      "inspectedAt": "2026-10-02",
+      "sourceUrl": "https://github.com/EveryInc/compound-engineering-plugin/blob/9af474a70e7f2a844338519ad9e92aafbd92d4fb/skills/ce-brainstorm/references/dialogue.md",
+      "adoption": "first_party_dialogue_method",
+      "installedDependency": false,
+      "implementationRefs": [
+        "canonical/skills/meta-theory/references/intent-amplification.md",
+        "scripts/governed-execution/intent-dialogue.mjs"
+      ]
+    },
+    {
+      "id": "gsd-outcome-questioning",
+      "project": "open-gsd/gsd-core",
+      "commit": "62549bf24110ea5981d76d00e2c1f0c7003a27b6",
+      "license": "MIT",
+      "internalizedAs": [
+        "follow the user thread",
+        "concretize vague desired outcomes",
+        "stop when execution-relevant uncertainty is resolved"
+      ],
+      "limitations": [
+        "retired gsd-build/get-shit-done is migration provenance, not active dependency",
+        "no PROJECT.md or second requirements authority"
+      ],
+      "inspectedAt": "2026-10-02",
+      "sourceUrl": "https://github.com/open-gsd/gsd-core/blob/62549bf24110ea5981d76d00e2c1f0c7003a27b6/gsd-core/references/questioning.md",
+      "adoption": "first_party_dialogue_method",
+      "installedDependency": false,
+      "implementationRefs": [
+        "canonical/skills/meta-theory/references/intent-amplification.md",
+        "scripts/governed-execution/intent-dialogue.mjs"
+      ]
+    },
+    {
+      "id": "bmad-unresolved-question-convergence",
+      "project": "bmad-code-org/BMAD-METHOD",
+      "commit": "4f61d4e769e50bc11d0d5d724f48942aac699679",
+      "license": "MIT",
+      "internalizedAs": [
+        "repo facts before questions",
+        "preserve approved intent",
+        "separate unresolved human choices from implementation details"
+      ],
+      "limitations": [
+        "LICENSE text verified; API NOASSERTION is not license content",
+        "no fixed plan approval ritual or deferred queue"
+      ],
+      "inspectedAt": "2026-10-02",
+      "sourceUrl": "https://github.com/bmad-code-org/BMAD-METHOD/blob/4f61d4e769e50bc11d0d5d724f48942aac699679/skills/bmad-build/step-02-plan.md",
+      "adoption": "first_party_dialogue_method",
+      "installedDependency": false,
+      "implementationRefs": [
+        "canonical/skills/meta-theory/references/intent-amplification.md",
+        "scripts/governed-execution/intent-dialogue.mjs"
+      ]
+    },
+    {
+      "id": "loopx-read-only-goal-projection",
+      "project": "loopx-project/loopx",
+      "commit": "5e889bdcba9cea101a8775340a12629eb5a2474a",
+      "license": "Apache-2.0",
+      "internalizedAs": [
+        "root-goal projection with source references",
+        "goal draft is a suggestion distinct from permission"
+      ],
+      "limitations": [
+        "read-only alignment and advisory goal_draft only",
+        "does not replace Meta requirements, scheduler or permission authority"
+      ],
+      "inspectedAt": "2026-10-02",
+      "sourceUrl": "https://github.com/loopx-project/loopx/blob/5e889bdcba9cea101a8775340a12629eb5a2474a/loopx/control_plane/goals/shared_goal_alignment.py",
+      "adoption": "first_party_dialogue_method",
+      "installedDependency": false,
+      "implementationRefs": [
+        "canonical/skills/meta-theory/references/intent-amplification.md",
+        "scripts/governed-execution/intent-dialogue.mjs"
+      ]
+    }
+  ],
   "stagePatterns": [
+    {
+      "id": "critical-user-outcome-binding",
+      "stage": "critical",
+      "owner": "meta-warden",
+      "pattern": "Bind the current user request and its acceptance criteria before selecting a route; keep framework maintenance acceptance separate.",
+      "useWhen": [
+        "any governed user task",
+        "a task spans non-coding domains",
+        "a model or route claims success"
+      ],
+      "outputs": [
+        "goalContractPacket.taskHash",
+        "goalContractPacket.acceptanceDigest",
+        "goalContractPacket.contractFields.outcome",
+        "goalContractPacket.acceptanceCriteria"
+      ],
+      "rejects": [
+        "fixed framework roadmap as the user's goal",
+        "all tasks treated as industry or coding tasks",
+        "unconditional global-optimum claim"
+      ],
+      "sourceRefs": [
+        "promptfoo-declarative-evaluation",
+        "skillevaluator-evidence-tiers"
+      ],
+      "verification": "The requested task, Critical intent and run-scoped goal stay bound; changing the request or acceptance criteria invalidates prior outcome observations."
+    },
+    {
+      "id": "verification-task-outcome-evidence",
+      "stage": "verification",
+      "owner": "meta-prism",
+      "pattern": "Assess declared task outcomes with evidence, separately from structural checks, routing and native invocation.",
+      "useWhen": [
+        "a deliverable is ready for review",
+        "a candidate route needs a small falsification test",
+        "an eval report is used as acceptance evidence"
+      ],
+      "outputs": [
+        "traceEvalControlPlane.outcomeEvaluation",
+        "criterion observations",
+        "explicit incomplete or failure reason"
+      ],
+      "rejects": [
+        "model score compensates for a required failure",
+        "missing evidence treated as pass",
+        "a reference trajectory is required without a contract reason",
+        "cached or synthetic results called live acceptance"
+      ],
+      "sourceRefs": [
+        "promptfoo-declarative-evaluation",
+        "skillevaluator-evidence-tiers",
+        "tau-bench-outcome-equivalence"
+      ],
+      "verification": "Run npm run meta:eval:governance; supplied observation assessment remains separate from authenticated execution and user acceptance."
+    },
+    {
+      "id": "fetch-material-and-invocation-boundaries",
+      "stage": "fetch",
+      "owner": "meta-artisan",
+      "pattern": "Discover suitable input and invocation capabilities only where the task needs them, preserving evidence and scheduling authority.",
+      "useWhen": [
+        "user supplies documents or tables",
+        "controlled requests face resource constraints or rate limits"
+      ],
+      "outputs": [
+        "material source and extraction limits",
+        "selected converter or explicit capability gap",
+        "concurrency and start-rate constraints",
+        "cancellation and retry boundary"
+      ],
+      "rejects": [
+        "converted text assumed complete",
+        "unsupported OCR assumed available",
+        "timeout assumed to stop a side effect",
+        "local queue claimed to govern all host traffic"
+      ],
+      "sourceRefs": [
+        "markitdown-material-provenance",
+        "p-queue-invocation-pacing"
+      ],
+      "verification": "Require actual material fidelity or controlled-invocation evidence before activating a converter or limiter; method guidance alone does not establish runtime support."
+    },
     {
       "id": "critical-real-intent-lock",
       "stage": "critical",
       "owner": "meta-warden",
       "pattern": "Lock the actual decision or artifact before expanding the frame.",
-      "useWhen": ["surface request is fuzzy", "success criteria are missing", "the task could branch into product, code, strategy, or governance work"],
-      "outputs": ["realIntent", "subject", "currentState", "targetState", "successCriteria", "nonGoals", "blockingUnknowns"],
-      "rejects": ["persona-style advice", "guessing hidden intent", "asking questions that do not change execution"],
+      "useWhen": [
+        "surface request is fuzzy",
+        "success criteria are missing",
+        "the task could branch into product, code, strategy, or governance work"
+      ],
+      "outputs": [
+        "realIntent",
+        "subject",
+        "currentState",
+        "targetState",
+        "successCriteria",
+        "nonGoals",
+        "blockingUnknowns"
+      ],
+      "rejects": [
+        "persona-style advice",
+        "guessing hidden intent",
+        "asking questions that do not change execution"
+      ],
       "verification": "intentPacket explains what changes, for whom, how success is tested, and which unknowns block execution."
     },
     {
@@ -26,9 +342,25 @@
       "stage": "fetch",
       "owner": "meta-conductor",
       "pattern": "Classify evidence by certainty and decision impact before it drives route selection.",
-      "useWhen": ["platform claims", "dependency claims", "current facts", "user-provided assumptions"],
-      "outputs": ["confirmed", "userProvided", "inference", "unconfirmed", "decisionImpactMap", "contradictionLog"],
-      "rejects": ["README-only certainty", "unlabeled inference", "external project claim without inspection status"],
+      "useWhen": [
+        "platform claims",
+        "dependency claims",
+        "current facts",
+        "user-provided assumptions"
+      ],
+      "outputs": [
+        "confirmed",
+        "userProvided",
+        "inference",
+        "unconfirmed",
+        "decisionImpactMap",
+        "contradictionLog"
+      ],
+      "rejects": [
+        "README-only certainty",
+        "unlabeled inference",
+        "external project claim without inspection status"
+      ],
       "verification": "Every material claim has source, confidence, and route/risk/acceptance impact."
     },
     {
@@ -36,9 +368,22 @@
       "stage": "thinking",
       "owner": "meta-conductor",
       "pattern": "Map the subject from current state to target state through candidate paths before dispatch.",
-      "useWhen": ["multiple paths exist", "minimal fix and shortest correct path differ", "ten-x route may change the outcome"],
-      "outputs": ["pathCandidates", "selectedPath", "whyThisPath", "omittedPathsWithReason"],
-      "rejects": ["menu without judgment", "impressive path with weak verification", "path selection before Fetch"],
+      "useWhen": [
+        "multiple paths exist",
+        "minimal fix and shortest correct path differ",
+        "ten-x route may change the outcome"
+      ],
+      "outputs": [
+        "pathCandidates",
+        "selectedPath",
+        "whyThisPath",
+        "omittedPathsWithReason"
+      ],
+      "rejects": [
+        "menu without judgment",
+        "impressive path with weak verification",
+        "path selection before Fetch"
+      ],
       "verification": "Selected path beats alternatives on goal fit, time to proof, risk, reversibility, automation potential, and verification strength."
     },
     {
@@ -46,9 +391,23 @@
       "stage": "thinking",
       "owner": "meta-artisan",
       "pattern": "Define the smallest action that can change the decision before scaling execution.",
-      "useWhen": ["uncertainty remains", "dependency/routing confidence is below execution threshold", "product or strategy claim needs proof"],
-      "outputs": ["firstAction", "testAssumption", "passSignal", "killSignal", "timebox"],
-      "rejects": ["trivial task mislabeled as test", "test without kill condition", "large build before proof"],
+      "useWhen": [
+        "uncertainty remains",
+        "dependency/routing confidence is below execution threshold",
+        "product or strategy claim needs proof"
+      ],
+      "outputs": [
+        "firstAction",
+        "testAssumption",
+        "passSignal",
+        "killSignal",
+        "timebox"
+      ],
+      "rejects": [
+        "trivial task mislabeled as test",
+        "test without kill condition",
+        "large build before proof"
+      ],
       "verification": "The first action has input, action, output, pass signal, kill signal, and timebox."
     },
     {
@@ -56,9 +415,22 @@
       "stage": "review",
       "owner": "meta-prism",
       "pattern": "A stage reached is not a stage passed; review must decide pass, revise, kill, or return to evidence.",
-      "useWhen": ["execution completed", "public-ready could be claimed", "workflow output exists but user goal may not be done"],
-      "outputs": ["reviewPacket.findings", "passDecision", "killOrReturnSignal", "verificationRequired"],
-      "rejects": ["self-congratulatory review", "file-exists-only review", "command-pass equals user-goal-done"],
+      "useWhen": [
+        "execution completed",
+        "public-ready could be claimed",
+        "workflow output exists but user goal may not be done"
+      ],
+      "outputs": [
+        "reviewPacket.findings",
+        "passDecision",
+        "killOrReturnSignal",
+        "verificationRequired"
+      ],
+      "rejects": [
+        "self-congratulatory review",
+        "file-exists-only review",
+        "command-pass equals user-goal-done"
+      ],
       "verification": "Review can reproduce evidence and closes or blocks every critical/high finding."
     },
     {
@@ -66,8 +438,20 @@
       "stage": "thinking",
       "owner": "meta-conductor",
       "pattern": "Bind PR, issue, or release work to the highest-risk capability lane before choosing a learning or execution skill.",
-      "useWhen": ["user asks how to prioritize skill improvement", "PR or issue evidence is being triaged", "multiple repeated failure types compete"],
-      "outputs": ["riskType", "primarySkill", "secondarySkill", "evidenceBoundary", "failureCostTieBreak", "deferredSkillsWithReason", "nextExecutableGate"],
+      "useWhen": [
+        "user asks how to prioritize skill improvement",
+        "PR or issue evidence is being triaged",
+        "multiple repeated failure types compete"
+      ],
+      "outputs": [
+        "riskType",
+        "primarySkill",
+        "secondarySkill",
+        "evidenceBoundary",
+        "failureCostTieBreak",
+        "deferredSkillsWithReason",
+        "nextExecutableGate"
+      ],
       "decisionRules": [
         "runtime/setup/install/sync change -> cross-runtime contract design",
         "localized routing, stage feedback, or choice surface change -> multilingual QA",
@@ -75,7 +459,11 @@
         "hook, dispatch, state, validator, warning, or route progression change -> state-machine failure modeling",
         "tie-break by failure cost: install/runtime breakage, wrong execution or repeated hook blocks, incomplete public closure, localized route failure"
       ],
-      "rejects": ["four skills treated as equal priority", "skill advice without PR, issue, run, or review evidence", "learning plan not tied to the next executable gate"],
+      "rejects": [
+        "four skills treated as equal priority",
+        "skill advice without PR, issue, run, or review evidence",
+        "learning plan not tied to the next executable gate"
+      ],
       "verification": "Decision names one primary skill lane, at most one secondary lane, the evidence that forced it, and the gate where it will be used next."
     },
     {
@@ -83,8 +471,22 @@
       "stage": "review",
       "owner": "meta-prism",
       "pattern": "Cross-check decision claims against current state, counterevidence, and replayable commands before public closure.",
-      "useWhen": ["PR or issue state can change", "recommendation must survive external review", "public-ready or closure claim is about to be made", "user challenges whether the decision is rigorous enough"],
-      "outputs": ["evidenceSnapshotAt", "sourceStateMatrix", "confidenceLabels", "counterEvidence", "contradictionLog", "falsificationChecks", "replayCommands", "reviewVerdict"],
+      "useWhen": [
+        "PR or issue state can change",
+        "recommendation must survive external review",
+        "public-ready or closure claim is about to be made",
+        "user challenges whether the decision is rigorous enough"
+      ],
+      "outputs": [
+        "evidenceSnapshotAt",
+        "sourceStateMatrix",
+        "confidenceLabels",
+        "counterEvidence",
+        "contradictionLog",
+        "falsificationChecks",
+        "replayCommands",
+        "reviewVerdict"
+      ],
       "minimumChecks": [
         "current-state recheck for PRs, issues, releases, versions, platform support, or external claims",
         "source triangulation or explicit single-source limitation",
@@ -92,8 +494,45 @@
         "claim-to-source mapping for every material recommendation",
         "fresh verification command or artifact for local repository claims"
       ],
-      "rejects": ["stale open PR state", "single-source certainty", "unlabeled inference", "unverifiable verified claim", "command-pass equals user-goal-done"],
+      "rejects": [
+        "stale open PR state",
+        "single-source certainty",
+        "unlabeled inference",
+        "unverifiable verified claim",
+        "command-pass equals user-goal-done"
+      ],
       "verification": "An independent reviewer can replay the commands or source links and either reproduce the verdict or identify which contradiction changes the route."
+    },
+    {
+      "id": "critical-settled-direction-to-capabilities",
+      "stage": "critical",
+      "owner": "meta-conductor",
+      "pattern": "Resolve discoverable facts, replay concrete outcomes, preserve settled decision evidence, and feed the existing route and capability bindings; keep route decisions separate from action permission.",
+      "useWhen": [
+        "ambiguous user outcomes",
+        "direction constraints change implementation loadout",
+        "professional dependency handoff"
+      ],
+      "outputs": [
+        "preDecisionOptionFrame.unresolvedQuestions",
+        "goal intent binding",
+        "businessFlowBlueprintPacket.intentBinding",
+        "workerTaskPacket.capabilityBindings"
+      ],
+      "rejects": [
+        "invented alternatives",
+        "repeated settled interview",
+        "silent choice from missing answer",
+        "caller JSON grants permission",
+        "second dependency orchestrator"
+      ],
+      "sourceRefs": [
+        "ce-brainstorm-requirements-dialogue",
+        "gsd-outcome-questioning",
+        "bmad-unresolved-question-convergence",
+        "loopx-read-only-goal-projection"
+      ],
+      "verification": "Behavior regressions and independent actual local task review; offline selection alone does not prove live tool invocation or model quality."
     }
   ]
 }

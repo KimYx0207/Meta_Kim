@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { validateFixtureEvidence } from "../../scripts/validate-runtime-priority-and-compatibility.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const scriptPath = path.join(
@@ -237,6 +238,27 @@ test("prompt-first compatibility fixtures reject host/smoke/live claim promotion
   const sandbox = createSandbox(t);
   assert.match(sandbox.run("--self-test-compatibility-fixture-boundary"), /compatibility fixture boundary self-test passed/);
   assert.deepEqual(sandbox.readTrace(), []);
+});
+
+test("runtime priority validates actual fixture evidence and rejects live claim promotion", (t) => {
+  const sandbox = createSandbox(t);
+  const stdout = sandbox.run("--fixture");
+  const artifact = sandbox.readArtifact();
+  assert.doesNotThrow(() => validateFixtureEvidence(artifact, stdout));
+  assert.throws(() => validateFixtureEvidence(artifact,
+    stdout.replace("openclaw:fixture_pass_not_live,cursor:fixture_pass_not_live", "openclaw:passed,cursor:passed")), /fixture_pass_not_live/);
+  for (const mutate of [
+    (value) => { value.compatibilitySmokeResults.openclaw.evidenceKind = "compatibility_smoke_pass"; },
+    (value) => { value.compatibilitySmokeResults.cursor.actualHostObserved = true; },
+    (value) => { value.compatibilitySmokePacket.compatibilitySmokeClaimAllowed = true; },
+    (value) => { value.runtimeResults.codex.claimBoundary.liveExecutionPass = true; },
+    (value) => { value.prdTaskStatuses["P-087"] = "pass"; },
+  ]) {
+    const promoted = structuredClone(artifact);
+    mutate(promoted);
+    assert.throws(() => validateFixtureEvidence(promoted, stdout));
+  }
+  assert.deepEqual(sandbox.readTrace(), [], "Fixture preparation performs no host, network or auth invocation");
 });
 
 for (const flags of [["--live"], []]) {
