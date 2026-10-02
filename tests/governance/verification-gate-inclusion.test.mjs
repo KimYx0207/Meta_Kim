@@ -41,6 +41,7 @@ test("CI lanes cover smoke test suites and governance without installed-provider
   assert.match(workflow, /lane: \[core, governance, live\]/u);
   assert.match(workflow, /npm run meta:test:ci -- --suite \$\{\{ matrix.lane \}\}/u);
   assert.match(workflow, /persist-credentials: false/u);
+  assert.match(workflow, /persist-credentials: false\s*\n\s*# The migration fingerprint check reads historical agent blobs\.\s*\n\s*fetch-depth: 0/u);
   assert.doesNotMatch(workflow, /^\s*(?:paths|paths-ignore):/mu, "Markdown product changes must trigger CI");
   assert.match(workflow, /needs: \[behavior-regression,/u, "packaging must wait for behavior checks");
 });
