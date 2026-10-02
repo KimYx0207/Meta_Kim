@@ -36,10 +36,31 @@ jobs:
       - name: Test global sync and stale-alias policy
         run: node --test tests/setup/stale-skill-alias-policy.test.mjs
 
+  installer-regression:
+    name: Installer ownership regression (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.0
+      # These tests use isolated homes and local synthetic skills. They do not
+      # install third-party plugins, contact providers, or modify runner homes.
+      - name: Test retirement, independent updates, and ownership boundaries
+        run: node --test tests/setup/retire-planning-with-files.test.mjs tests/setup/meta-skill-creator-installer.test.mjs tests/setup/install-status-semantics.test.mjs tests/setup/installer-runtime-boundary.test.mjs
+
   package-candidate:
     name: Package candidate
     if: github.event_name != 'pull_request'
-    needs: global-sync-policy
+    needs: [global-sync-policy, installer-regression]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

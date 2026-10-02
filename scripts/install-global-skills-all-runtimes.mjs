@@ -4342,10 +4342,13 @@ async function main() {
     dryRun,
   });
   if (retiredPlanning.preserved.length > 0) {
-    throw new Error(
+    // Retirement owns only proven legacy artifacts. Unowned historical files
+    // still require manual review, but must not veto unrelated selected skills.
+    // Keep retirePlanningWithFiles atomic and fail closed for unsafe paths/I/O.
+    console.warn(
       t.planningRetirementPreserved(
         retiredPlanning.preserved.length,
-        retiredPlanning.preserved.map((entry) => entry.path),
+        retiredPlanning.preserved.map((entry) => `${entry.path} (${entry.reason})`),
       ),
     );
   }
@@ -4612,6 +4615,13 @@ async function main() {
   console.log(t.noteCodexOpenclaw);
   console.log(t.activeTargets(activeTargets));
   console.log(t.metaKimRoot(repoRoot));
+  if (retiredPlanning.preserved.length > 0) {
+    // Keep the outstanding manual action visible after long installer output.
+    console.warn(t.planningRetirementPreserved(
+      retiredPlanning.preserved.length,
+      retiredPlanning.preserved.map((entry) => `${entry.path} (${entry.reason})`),
+    ));
+  }
 
   // // Print log file path if logging was active
   // if (logFileResolved) {
