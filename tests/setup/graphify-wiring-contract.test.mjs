@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -537,7 +538,7 @@ console.log("forced rebuild ok");
           "utf8",
         ),
       );
-      assert.equal(path.resolve(marker.declaredRoot), path.resolve(tempDir));
+      assert.equal(path.resolve(marker.declaredRoot), realpathSync.native(tempDir));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
       rmSync(packageRoot, { recursive: true, force: true });

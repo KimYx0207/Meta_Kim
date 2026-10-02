@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -214,7 +214,9 @@ test("semantic coverage remains stable for equivalent manifest key order and com
 });
 
 test("diagnostic artifact is complete, bound, contained, and atomically replaceable", () => {
-  const outputDir = mkdtempSync(path.join(tmpdir(), "meta-kim-graphify-diagnostics-"));
+  // macOS exposes its temporary root through /var -> /private/var. This
+  // plain-directory success fixture must use the actual filesystem path.
+  const outputDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "meta-kim-graphify-diagnostics-")));
   try {
     const diagnostics = analyzeGraphSemanticCoverage(
       { nodes: [{ id: "a", source_file: "a.mjs" }], links: [] },

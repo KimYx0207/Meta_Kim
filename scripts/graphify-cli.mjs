@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   detectPython310,
   discoverWindowsPythonPaths,
@@ -176,6 +177,56 @@ function verifiedGraphifyLauncher() {
 // Routine maintenance must never discover credentials or launch a model.
 // Semantic enrichment belongs to an explicitly requested assistant workflow.
 const GRAPHIFY_LOCAL_CLUSTER_ARGS = Object.freeze(["--no-label", "--no-viz"]);
+
+function managedGraphContext() {
+  const options = {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: sanitizedGitEnvironment(),
+    windowsHide: true,
+  };
+  const root = spawnSync("git", ["rev-parse", "--show-toplevel"], options);
+  const location = spawnSync("git", ["rev-parse", "--git-path", "graphify/config.json"], options);
+  if (root.status !== 0 || location.status !== 0) return null;
+  const repoRoot = root.stdout.trim();
+  const gitPath = location.stdout.trim();
+  const configFile = path.isAbsolute(gitPath)
+    ? gitPath
+    : [path.resolve(process.cwd(), gitPath), path.resolve(repoRoot, gitPath)]
+        .find((candidate) => existsSync(candidate)) ?? path.resolve(process.cwd(), gitPath);
+  return {
+    root: repoRoot,
+    config: existsSync(configFile)
+      ? JSON.parse(readFileSync(configFile, "utf8"))
+      : null,
+  };
+}
+
+function runManagedGraph(action, context = managedGraphContext()) {
+  if (!context) {
+    fail("Managed Graphify requires a Git checkout");
+    return;
+  }
+  if (process.platform === "win32") {
+    fail("Repository-managed Graphify is currently supported on macOS/Linux");
+    return;
+  }
+  const python = context.config
+    ? { command: context.config.python, args: [] }
+    : verifiedGraphifyLauncher().normalizerPython;
+  const sourceManager = fileURLToPath(new URL("./graphify-managed.py", import.meta.url));
+  const result = spawnSync(
+    python.command,
+    [...python.args, sourceManager, action, "--repo", context.root],
+    {
+      cwd: context.root,
+      stdio: "inherit",
+      env: verifiedGraphifyEnvironment(),
+      windowsHide: true,
+    },
+  );
+  process.exitCode = result.status ?? 1;
+}
 
 function fail(message) {
   console.error(message);
@@ -1888,7 +1939,14 @@ function runCheck() {
 }
 
 function installGraphify({ upgrade = false } = {}) {
-  const python = ensurePython({ requirePip: true });
+  const managed = managedGraphContext();
+  const python = managed?.config
+    ? {
+        command: managed.config.python,
+        args: [],
+        versionText: "repository-managed Python",
+      }
+    : ensurePython({ requirePip: true });
   if (!python) {
     return;
   }
@@ -1899,7 +1957,7 @@ function installGraphify({ upgrade = false } = {}) {
   if (upgrade) {
     pipArgs.push("--upgrade");
   }
-  pipArgs.push("graphifyy");
+  pipArgs.push(managed?.config ? "graphifyy==0.9.56" : "graphifyy");
 
   const pipResult = runPythonModule(python, pipArgs, undefined, {
     stdio: "inherit",
@@ -1931,6 +1989,7 @@ function installGraphify({ upgrade = false } = {}) {
   }
 
   sanitizeGraphifyHookSettings(resolveGraphifyExecutable(python));
+  if (managed?.config && !process.exitCode) runManagedGraph("install", managed);
 }
 
 // graphify's upstream `hook install` writes Windows shell-form commands
@@ -1953,6 +2012,11 @@ function sanitizeGraphifyHookSettings(graphifyExecutable) {
 }
 
 function runRebuild() {
+  const managed = managedGraphContext();
+  if (managed?.config && !process.argv.includes("--verified-local-update")) {
+    runManagedGraph("run", managed);
+    return;
+  }
   const initialRepository = readRepositoryContext(process.cwd());
   if (!initialRepository) {
     fail("Graphify rebuild must run from the real Git repository root");
@@ -2307,6 +2371,26 @@ function runRebuild() {
 
 function runGraphifyPassthrough() {
   const graphifyArgs = process.argv.slice(2);
+  const managed = managedGraphContext();
+  const useManagedGraph = managed?.config && !graphifyArgs.includes("--graph");
+  if (useManagedGraph) {
+    const managedResult = spawnSync(
+      managed.config.python,
+      ["-m", "graphify", ...graphifyArgs],
+      {
+        cwd: managed.root,
+        stdio: "inherit",
+        shell: false,
+        env: {
+          ...verifiedGraphifyEnvironment(),
+          GRAPHIFY_OUT: path.join(managed.root, "graphify-out"),
+        },
+        windowsHide: true,
+      },
+    );
+    process.exitCode = managedResult.status ?? 1;
+    return;
+  }
   const launcher = graphifyLauncher();
   const direct = spawnSync(launcher.command, [...launcher.args, ...graphifyArgs], {
     stdio: "inherit",
@@ -2334,6 +2418,12 @@ function runGraphifyPassthrough() {
 }
 
 switch (command) {
+  case "managed-install":
+    runManagedGraph("install");
+    break;
+  case "managed-status":
+    runManagedGraph("status");
+    break;
   case "check":
     runCheck();
     break;

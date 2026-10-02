@@ -783,7 +783,7 @@ test("graphify rebuild refuses a graphify-out junction before an outside file ca
       env: { ...process.env, META_KIM_GRAPHIFY_BIN: process.execPath },
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /unsafe repository state|plain repository directory|outside/u);
+    assert.match(result.stderr, /unsafe repository state|plain repository directory|outside|repository inventory contains a non-plain file/u);
     assert.equal(readFileSync(sentinel, "utf8"), "outside-sentinel\n");
   } finally {
     rmSync(temp, { recursive: true, force: true });

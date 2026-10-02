@@ -5992,6 +5992,52 @@ async function downloadAndInstallPython() {
   }
 }
 
+function readManagedGraphConfig(targetDir) {
+  const location = spawnSync(
+    "git",
+    ["-C", targetDir, "rev-parse", "--git-path", "graphify/config.json"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  if (location.status !== 0) return null;
+  const configFile = resolve(targetDir, location.stdout.trim());
+  return existsSync(configFile)
+    ? JSON.parse(readFileSync(configFile, "utf8"))
+    : null;
+}
+
+function runManagedGraphLifecycle(targetDir, action, managedConfig) {
+  if (!managedConfig) return null;
+  if (platform() === "win32") {
+    warn("Repository-managed Graphify is currently supported on macOS/Linux");
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "Repository-managed Graphify is currently supported on macOS/Linux",
+    };
+  }
+  const sourceManager = join(PROJECT_DIR, "scripts", "graphify-managed.py");
+  return spawnSync(
+    managedConfig.python,
+    [
+      sourceManager,
+      action,
+      "--repo",
+      targetDir,
+    ],
+    {
+      cwd: targetDir,
+      stdio: "pipe",
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PYTHONNOUSERSITE: "1",
+        PYTHONHASHSEED: "0",
+      },
+      windowsHide: true,
+    },
+  );
+}
+
 async function installPythonTools(
   activeTargets,
   inUpdateMode = false,
@@ -6010,23 +6056,31 @@ async function installPythonTools(
     [join(homedir(), ".claude", "settings.json")],
     { operation: "Graphify user Hook reconciliation" },
   );
-  let python = checkPython310();
+  let managedGraphConfig = readManagedGraphConfig(graphifyDir);
+  let python = managedGraphConfig
+    ? {
+        command: managedGraphConfig.python,
+        args: [],
+        versionText: "repository-managed Python",
+      }
+    : checkPython310();
   if (!python) {
     python = await downloadAndInstallPython();
     if (!python) return false;
   }
+  const graphifyPackage = managedGraphConfig ? "graphifyy==0.9.56" : "graphifyy";
 
   // Check if graphify already installed via pip show (more reliable than --version)
   const pipShow = runPythonModule(python, ["-m", "pip", "show", "graphifyy"]);
   if (pipShow.status === 0) {
     const version =
       extractPipShowVersion(readProcessText(pipShow)) ?? "unknown";
-    if (inUpdateMode) {
-      // Upgrade in update mode
+    if (inUpdateMode || (managedGraphConfig && version !== "0.9.56")) {
+      // Upgrade in update mode or repair the managed producer pin.
       info(t.graphifyUpgrading);
       const upgradeResult = runPythonModule(
         python,
-        ["-m", "pip", "install", "--upgrade", "graphifyy"],
+        ["-m", "pip", "install", "--upgrade", graphifyPackage],
         undefined,
         { stdio: "pipe" },
       );
@@ -6049,7 +6103,7 @@ async function installPythonTools(
     info(t.graphifyInstalling);
     const installResult = runPythonModule(
       python,
-      ["-m", "pip", "install", "graphifyy"],
+      ["-m", "pip", "install", graphifyPackage],
       undefined,
       { stdio: "pipe" },
     );
@@ -6166,12 +6220,24 @@ async function installPythonTools(
     }
   }
 
-  const rebuildResult = runPythonModule(
-    python,
-    ["-m", "graphify", "update", "."],
-    undefined,
-    { cwd: graphifyDir, stdio: "pipe" },
-  );
+  if (managedGraphConfig) {
+    const managedRepair = runManagedGraphLifecycle(graphifyDir, "install", managedGraphConfig);
+    if (managedRepair?.status === 0) {
+      managedGraphConfig = readManagedGraphConfig(graphifyDir) ?? managedGraphConfig;
+    } else {
+      warn(`Managed Graphify wiring repair failed: ${readProcessText(managedRepair)}`);
+      return false;
+    }
+  }
+
+  const rebuildResult = managedGraphConfig
+    ? runManagedGraphLifecycle(graphifyDir, "run", managedGraphConfig)
+    : runPythonModule(
+        python,
+        ["-m", "graphify", "update", "."],
+        undefined,
+        { cwd: graphifyDir, stdio: "pipe" },
+      );
   if (rebuildResult.status === 0) {
     ok(t.graphifyCodeGraphGenerated);
     return wiringOk;
