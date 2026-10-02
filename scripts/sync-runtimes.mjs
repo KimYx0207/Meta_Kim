@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import {
   buildMetaKimHooksTemplate,
+  hookCommandNode,
   mergeGlobalMetaKimHooksIntoSettings,
   mergeRepoClaudeSettings,
   stripRepoMetaKimHooksFromSettings,
@@ -3210,6 +3211,22 @@ async function removeProjectMetaKimHooks(hooksDir, platformId, options = {}) {
   return removed;
 }
 
+/** Build the Claude global settings template for the selected runtime home. */
+export async function buildGlobalClaudeSettingsHooksTemplate(runtimeHome) {
+  const hookPromptScript = path.join(runtimeHome, "hooks", "user-prompt-submit.js");
+  let hookPromptCommand = null;
+  try {
+    if ((await fs.stat(hookPromptScript)).isFile()) {
+      hookPromptCommand = hookCommandNode(hookPromptScript);
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return buildMetaKimHooksTemplate(path.join(runtimeHome, "hooks", "meta-kim"), null, {
+    hookPromptCommand,
+  });
+}
+
 async function syncClaudeProjection(
   dirs,
   agents,
@@ -3363,12 +3380,9 @@ async function syncClaudeProjection(
         throw error;
       }
     }
-    const globalClaudeMetaKimHooksDir = path.join(
+    const template = await buildGlobalClaudeSettingsHooksTemplate(
       resolveRuntimeHomeDir("claude"),
-      "hooks",
-      "meta-kim",
     );
-    const template = buildMetaKimHooksTemplate(globalClaudeMetaKimHooksDir);
     const merged = mergeGlobalMetaKimHooksIntoSettings(base, template);
     finalSettingsContent = `${JSON.stringify(merged, null, 2)}\n`;
   }

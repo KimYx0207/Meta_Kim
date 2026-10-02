@@ -23,6 +23,7 @@ import {
   assertProjectionPackageWriteBoundary,
   findAuthoritativeGlobalProjectionPackage,
   materializeGlobalProjectionPackage,
+  normalizeStagedBundleMetadata,
   packageContentClosure,
   projectionPackageWriteBoundaryFindings,
   recordGlobalProjectionPackage,
@@ -1138,4 +1139,62 @@ test("Windows authority lookup accepts manifest paths whose case differs only le
     assert.ok(authority);
     assert.equal(authority.packageRoot.toLowerCase(), verified.packageRoot.toLowerCase());
   });
+});
+
+// The end-to-end defect these guard is only reachable on npm versions that
+// record the archive's staged path as a `file:` dependency. npm 11.16.0
+// records a prefix-relative path with no staged segment, and the store tests
+// run the real npm, so a materialization-level assertion would pass here
+// whether or not the normalization exists. These pin the transform instead.
+test("staged bundle metadata normalization collapses the per-worker segment", () => {
+  const staged = normalizeStagedBundleMetadata(
+    '{"meta-kim":"file:/store/3.1.1/.projection-package-staged-48213-6f1c2a9e-4b73-4d1f-9a08-2c5be7d40f31/meta-kim-3.1.1.tgz"}',
+  );
+
+  assert.equal(
+    staged,
+    '{"meta-kim":"file:/store/3.1.1/.projection-package-staged/meta-kim-3.1.1.tgz"}',
+  );
+});
+
+test("staged bundle metadata normalization makes two workers' bundles converge", () => {
+  // The contract is not "some substring is removed" — it is that bundles
+  // staged by different workers from the same source become byte-identical.
+  // Anything less and the loser's verifyExactWinner closure comparison fails.
+  const bundleFor = (pid, uuid) =>
+    JSON.stringify({
+      dependencies: {
+        "meta-kim": `file:../.projection-package-staged-${pid}-${uuid}/meta-kim-3.1.1.tgz`,
+      },
+      packages: {
+        "": {
+          resolved: `file:../.projection-package-staged-${pid}-${uuid}/meta-kim-3.1.1.tgz`,
+        },
+      },
+    });
+
+  const workerA = bundleFor(48213, "6f1c2a9e-4b73-4d1f-9a08-2c5be7d40f31");
+  const workerB = bundleFor(9007, "b0d4417a-8e21-4c6f-83bb-1de905fa7c62");
+  assert.notEqual(workerA, workerB, "fixture must stage two genuinely different workers");
+
+  // Two occurrences per document: a non-global regex converges the first and
+  // leaves the second divergent.
+  assert.equal(
+    normalizeStagedBundleMetadata(workerA),
+    normalizeStagedBundleMetadata(workerB),
+  );
+});
+
+test("staged bundle metadata normalization leaves everything else byte-exact", () => {
+  const untouched = JSON.stringify({
+    dependencies: { "meta-kim": "file:../meta-kim-3.1.1.tgz" },
+    projectionPackageStagedNote: ".projection-package-staged",
+    // A greedy "match to the path separator" regex would swallow this pid-only
+    // fragment, and with it any sibling text that shares the segment.
+    malformedStagedDir: ".projection-package-staged-48213",
+    lock: ".projection-package-lock-6f1c2a9e-4b73-4d1f-9a08-2c5be7d40f31",
+    integrity: "sha512-6f1c2a9e4b734d1f9a082c5be7d40f31",
+  });
+
+  assert.equal(normalizeStagedBundleMetadata(untouched), untouched);
 });

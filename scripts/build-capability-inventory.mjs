@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OS_TARGETS, RUNTIMES, exists, listFiles, readJson, repoPath, stateDir, toPosix, writeJson } from "./governance-lib.mjs";
 import { getProfilePaths, toRepoRelative } from "./meta-kim-local-state.mjs";
+import { discoverDependencyAgentContracts } from "./dependency-agent-discovery.mjs";
 import {
   claimIsExecutable,
   runtimeCapabilityNameForTool,
@@ -426,7 +427,7 @@ async function configAndStateCapabilities() {
   ];
 }
 
-export async function buildCapabilityInventory() {
+export async function buildCapabilityInventory({ environment = process.env } = {}) {
   const dependencies = await readJson("config/capability-index/dependency-project-registry.json");
   const weapons = await readJson("config/capability-index/weapon-registry.json");
   const skills = await readJson("config/skills.json");
@@ -434,6 +435,9 @@ export async function buildCapabilityInventory() {
   const osMatrix = await readJson("config/os-compatibility-matrix.json");
   const localOverrides = await readJsonIfExists(".meta-kim/local.overrides.json");
   const projectProjectionMode = localOverrides?.projectProjectionMode ?? "project";
+  const dependencyAgents = await discoverDependencyAgentContracts({
+    projects: dependencies.projects, projectRoot: repoPath("."), localOverrides: localOverrides ?? {}, environment,
+  });
   const records = [
     ...(await fileCapabilities("canonical/agents", "agent", ["meta-warden"], { match: (file) => file.endsWith(".md"), mustPreserve: true, routeEligibility: "governance_owner" })),
     ...(await fileCapabilities("canonical/skills", "skill", ["meta-artisan"], { match: (file) => path.basename(file) === "SKILL.md", mustPreserve: true, routeEligibility: "callable", invocationPath: "skill trigger" })),
@@ -445,6 +449,7 @@ export async function buildCapabilityInventory() {
     ...(await mcpCapabilities()),
     ...(await configAndStateCapabilities()),
     ...(await packageScripts()),
+    ...dependencyAgents.capabilities,
   ];
   for (const platform of runtimeMatrix.platforms ?? []) {
     const hasExecutableCapability = (platform.capabilities ?? []).some((capability) =>
@@ -627,6 +632,7 @@ export async function buildCapabilityInventory() {
   return {
     generatedAt: new Date().toISOString(),
     projectProjectionMode,
+    dependencyAgentDiscovery: { sources: dependencyAgents.sources, agentCount: dependencyAgents.agents.length },
     capabilities: normalizedRecords,
     runtimeMatrixCapabilities: runtimeMatrix.capabilityNames ?? [],
     osTargets: (osMatrix.operatingSystems ?? []).map((entry) => entry.id),

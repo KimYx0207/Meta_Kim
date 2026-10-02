@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { constants as fsConstants, promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -638,6 +638,64 @@ export function projectionInstallArgs(prefixDir, archivePath) {
   ];
 }
 
+/**
+ * Bundle metadata files into which npm can write the staged tarball's path.
+ * Relative to the stage bundle directory.
+ */
+const STAGED_PATH_BEARING_BUNDLE_FILES = [
+  "package.json",
+  "package-lock.json",
+  path.join("node_modules", ".package-lock.json"),
+];
+
+const STAGED_DIR_PLACEHOLDER = ".projection-package-staged";
+
+/**
+ * Erase the per-worker segment of the staged directory name from bundle
+ * metadata.
+ *
+ * Depending on the npm version, `npm install <archivePath>` records the
+ * archive's path as a `file:` dependency in bundle/package.json and both
+ * lockfiles. That path runs through the stage directory, whose name carries
+ * `-<pid>-<uuid>` (see the `stageDir` construction). Two workers materializing
+ * the SAME source therefore produce byte-different bundles, so the loser's
+ * `verifyExactWinner` closure comparison can never match the winner's and
+ * concurrent materialization fails.
+ *
+ * Nothing resolves these `file:` URLs — the archive is deleted immediately
+ * after install — so collapsing the variable segment costs nothing and makes
+ * the bundle reproducible across workers and machines.
+ *
+ * npm 11.16.0 records a path relative to the install prefix, which carries no
+ * staged segment at all; there this is a no-op. Keep it version-agnostic
+ * rather than gating on a probed npm version.
+ */
+export function normalizeStagedBundleMetadata(raw) {
+  return raw.replace(
+    /\.projection-package-staged-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+    STAGED_DIR_PLACEHOLDER,
+  );
+}
+
+/**
+ * A missing file is skipped: npm version differences decide which lockfiles
+ * exist, and normalization has nothing to say about a file that was never
+ * written. Every other I/O error propagates — a half-written bundle must not
+ * reach the receipt.
+ */
+function normalizeStagedBundleMetadataFile(filePath) {
+  let raw;
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  const normalized = normalizeStagedBundleMetadata(raw);
+  if (normalized === raw) return;
+  writeFileSync(filePath, normalized);
+}
+
 async function snapshotNpmPackSource(packageRoot, npmRuntime) {
   const stdout = npmRuntime.run([
     "pack",
@@ -1251,6 +1309,10 @@ export async function materializeGlobalProjectionPackage({
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
     npmRuntime.run(projectionInstallArgs(stageBundleDir, archivePath), stageDir);
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
+
+    for (const relativePath of STAGED_PATH_BEARING_BUNDLE_FILES) {
+      normalizeStagedBundleMetadataFile(path.join(stageBundleDir, relativePath));
+    }
     await fs.rm(archivePath, { force: true });
 
     const stageLayout = {
@@ -1300,7 +1362,10 @@ export async function materializeGlobalProjectionPackage({
         winnerReceiptRaw !== stageReceiptRaw
       ) {
         throw new Error(
-          "Existing projection package digest directory differs from this staged candidate",
+          "Existing projection package digest directory differs from this staged candidate: " +
+          (winnerClosure && stageClosure
+            ? `closureMatch=${winnerClosure.sha256 === stageClosure.sha256}, entryCount=${winnerClosure.entryCount}/${stageClosure.entryCount}, receiptMatch=${winnerReceiptRaw === stageReceiptRaw}`
+            : "closure unavailable"),
         );
       }
       return winner;

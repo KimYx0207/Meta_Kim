@@ -33,6 +33,35 @@ function input(root, runId = "run-a", extra = {}) {
   };
 }
 
+function claudeStopHook(root, sessionId, payload = {}) {
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: root };
+  for (const key of ["META_KIM_PROJECT_ROOT", "META_KIM_PLANNING_RUN_ID", "PLANNING_DISABLED", "META_KIM_PLANNING_DISABLED"]) {
+    delete env[key];
+  }
+  return spawnSync(process.execPath, [
+    path.resolve("canonical/runtime-assets/shared/hooks/planning-continuity.mjs"),
+    "--event", "Stop",
+    "--runtime", "claude",
+  ], {
+    cwd: root,
+    env,
+    encoding: "utf8",
+    input: JSON.stringify({
+      session_id: sessionId,
+      cwd: root,
+      hook_event_name: "Stop",
+      stop_hook_active: false,
+      ...payload,
+    }),
+  });
+}
+
+function assertSilentHook(result, description) {
+  assert.equal(result.status, 0, `${description}: ${result.stderr}`);
+  assert.equal(result.stderr, "", `${description} wrote stderr`);
+  assert.equal(result.stdout, "", `${description} wrote stdout`);
+}
+
 test("fresh init is first-party, non-networked, resumable, and excludes findings from context", async (t) => {
   const root = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -279,6 +308,145 @@ test("completion gate blocks at most twice and requires attested verification pl
   }));
   assert.equal(claimed.status, "completion_claimed");
   assert.equal((await evaluateStopGate(input(root))).status, "allow");
+});
+
+test("Claude Stop lets the reported clarification and wait reply yield without attesting an inherited plan", async (t) => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sessionId = "claude-event-clarification";
+  const originals = {
+    "task_plan.md": "# 客户交流会计划\n\n- [ ] 确认讨论主题与目标客户\n- [ ] 制定并验证活动方案\n",
+    "findings.md": "# 资料\n\n到场预期 60 人，预算上限 18000 元。\n",
+    "progress.md": "# 进度\n\n等待用户补充活动主题。\n",
+  };
+  for (const [name, content] of Object.entries(originals)) {
+    await writeFile(path.join(root, name), content, "utf8");
+  }
+  const initialized = await initializePlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+  assert.equal(initialized.status, "initialized_waiting_owner_review");
+  const before = await readFile(initialized.context.authority, "utf8");
+  assert.equal(JSON.parse(before).attestation, null);
+  const clarification = [
+    "材料读完了，先列出资料里已经写清的事实，再挑出需要你补充的点。",
+    "",
+    "资料里已写清的",
+    "- 时间：2026年10月16日下午",
+    "- 规模：预期到场60人",
+    "- 预算上限：18000元",
+    "- 现场工作人员：3人，其中2人可主持",
+    "- 是否能借到额外主持人：未确认",
+    "- 不要求专业录音，工作人员整理文字纪要",
+    "",
+    "资料里没写清、需要你补充的（按重要性排序）",
+    "1. 这次活动讨论什么主题、客户是哪批人——任务书只写了通过讨论收集客户需求",
+    "2. 预算 18000 是否包含茶歇",
+    "3. 邀请规模和到场预期的算法",
+    "",
+    "第 1 题最关键，我先用它开问：",
+    "问题 1/3：10 月 16 日这次客户交流会，要讨论的主题是什么？目标客户是哪一批（春季/夏季的同一批客户，还是新拓或换了一批）？",
+  ].join("\n");
+
+  for (const message of [
+    clarification,
+    '等你的答复再继续。当前一个未关闭项：你对"问题 1/3：讨论主题与目标客户群"的回答。',
+  ]) {
+    assertSilentHook(claudeStopHook(root, sessionId, { last_assistant_message: message }), "clarification yield");
+    assert.equal(await readFile(initialized.context.authority, "utf8"), before);
+  }
+  for (const [name, content] of Object.entries(originals)) {
+    assert.equal(await readFile(path.join(root, name), "utf8"), content);
+  }
+});
+
+test("Claude Stop silently preserves authority for progress, questions, quoted claims, and absent or malformed messages", async (t) => {
+  const cases = [
+    ["English clarification", { last_assistant_message: "What topic should the October meeting cover, and which customers should attend?" }],
+    ["ordinary progress", { last_assistant_message: "I finished reviewing the materials. Next I will draft the agenda after you confirm the topic." }],
+    ["Chinese partial-work progress", { last_assistant_message: "资料整理工作已完成。接下来等你确认讨论主题。" }],
+    ["English partial-work progress", { last_assistant_message: "The research work is complete. Next I need your topic choice." }],
+    ["completed phase awaiting clarification", { last_assistant_message: "阶段一任务已完成。请确认下一阶段主题。" }],
+    ["negative completion", { last_assistant_message: "The work is not complete; verification is still pending." }],
+    ["quoted completion", { last_assistant_message: "> All tasks complete.\nThat is the proposed final wording; verification is still pending." }],
+    ["inline quoted Chinese completion", { last_assistant_message: "用户举的例子是“任务已全部完成”。我还在等待活动主题的答复。" }],
+    ["missing message", {}],
+    ["empty message", { last_assistant_message: "" }],
+    ["null message", { last_assistant_message: null }],
+    ["numeric message", { last_assistant_message: 42 }],
+    ["object message", { last_assistant_message: { text: "All tasks complete." } }],
+  ];
+  for (const [description, payload] of cases) {
+    await t.test(description, async (subtest) => {
+      const root = await fixture();
+      subtest.after(() => rm(root, { recursive: true, force: true }));
+      const sessionId = "claude-ordinary-turn-yield";
+      const initialized = await initializePlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+      const before = await readFile(initialized.context.authority, "utf8");
+      assertSilentHook(claudeStopHook(root, sessionId, payload), description);
+      assert.equal(await readFile(initialized.context.authority, "utf8"), before);
+    });
+  }
+});
+
+test("Claude completion claims retain two bounded blocks across ordinary and recursive Stop replies", async (t) => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sessionId = "claude-completion-budget";
+  const initialized = await initializePlanningContinuity(input(root, sessionId, { runtime: "claude" }));
+  const claimedText = "All tasks complete. Any questions?";
+  const first = claudeStopHook(root, sessionId, { last_assistant_message: claimedText });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.stderr, "");
+  const blocked = JSON.parse(first.stdout);
+  assert.equal(blocked.decision, "block");
+  assert.match(blocked.reason, /verification_not_passed/u);
+  assert.match(blocked.reason, /summary_not_closed/u);
+  assert.match(blocked.reason, /checklist_open/u);
+  const afterFirst = await readFile(initialized.context.authority, "utf8");
+  assert.equal(JSON.parse(afterFirst).stopGate.blockedAttempts, 1);
+  assert.equal(JSON.parse(afterFirst).completionClaim, null);
+
+  for (const payload of [
+    { last_assistant_message: "等你的答复再继续。当前一个未关闭项：你对问题1/3的回答。" },
+    { last_assistant_message: claimedText, stop_hook_active: true },
+  ]) {
+    assertSilentHook(claudeStopHook(root, sessionId, payload), "intervening reply");
+    assert.equal(await readFile(initialized.context.authority, "utf8"), afterFirst);
+  }
+
+  const second = claudeStopHook(root, sessionId, { last_assistant_message: "任务已全部完成！还有问题吗？" });
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(JSON.parse(second.stdout).decision, "block");
+  assert.equal(JSON.parse(await readFile(initialized.context.authority, "utf8")).stopGate.blockedAttempts, 2);
+
+  assertSilentHook(claudeStopHook(root, sessionId, { last_assistant_message: claimedText }), "bounded incomplete stop");
+  const exhausted = JSON.parse(await readFile(initialized.context.authority, "utf8"));
+  assert.equal(exhausted.stopGate.bounded, true);
+  assert.equal(exhausted.completionClaim, null);
+});
+
+test("Claude Stop allows a verified and attested completion without manufacturing a new claim", async (t) => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sessionId = "claude-verified-completion";
+  const boundInput = input(root, sessionId, { runtime: "claude" });
+  const initialized = await initializePlanningContinuity(boundInput);
+  assert.equal((await evaluateStopGate(boundInput)).status, "block");
+  const taskPlan = await readFile(path.join(root, "task_plan.md"), "utf8");
+  await writeFile(path.join(root, "task_plan.md"), taskPlan.replaceAll("- [ ]", "- [x]"), "utf8");
+  await attestPlanningContinuity(input(root, sessionId, { runtime: "claude", ownerReview: true }));
+  const claimed = await claimPlanningCompletion(input(root, sessionId, {
+    runtime: "claude",
+    verificationPassed: true,
+    summaryClosed: true,
+  }));
+  assert.equal(claimed.status, "completion_claimed");
+
+  assertSilentHook(claudeStopHook(root, sessionId, { last_assistant_message: "All tasks complete." }), "verified completion");
+  const after = JSON.parse(await readFile(initialized.context.authority, "utf8"));
+  assert.deepEqual(after.completionClaim, claimed.state.completionClaim);
+  assert.deepEqual(after.attestation, claimed.state.attestation);
+  assert.equal(after.stopGate.blockedAttempts, 0);
+  assert.equal((await inspectPlanningContinuity(boundInput)).completion.eligible, true);
 });
 
 test("an un-attested plan blocks on the missing attestation, not on a stale one", async (t) => {

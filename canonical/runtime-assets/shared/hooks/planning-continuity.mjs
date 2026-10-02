@@ -820,6 +820,41 @@ function emitStopDecision(runtime, result) {
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
 }
 
+// Stop ends an assistant turn, not necessarily the task. Only a current-turn
+// affirmative completion claim schedules the completion gate; this conservative
+// text recognizer is never evidence that verification or closure actually passed.
+// Direct `stop` CLI/library calls remain explicit requests to evaluate the gate.
+function lifecycleStopClaimsCompletion(payload) {
+  if (typeof payload.last_assistant_message !== "string") return false;
+  const prose = payload.last_assistant_message
+    .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/gu, "")
+    .replace(/^\s*>.*$/gmu, "")
+    .replace(/`[^`\r\n]*`|"[^"\r\n]*"|“[^”\r\n]*”|‘[^’\r\n]*’|(?<!\w)'[^'\r\n]*'/gu, "")
+    .replace(/[*_#]/gu, "");
+  // Anchor whole-task subjects: a noun suffix in "research work" or
+  // "阶段一任务" describes partial progress, not completion of the user's task.
+  const claims = [
+    /^(?:(?:all|the|requested|entire|whole|this|current)\s+)*(?:tasks?|work|implementation|changes?|requests?|issues?|bugs?|fixes?)\s+(?:(?:is|are|has been|have been)\s+)?(?:(?:now|all|fully|successfully)\s+)*(?:completed?|done|finished|resolved|fixed)\b/iu,
+    /^(?:I|we)\s+(?:have\s+)?(?:now\s+)?(?:completed|finished|resolved|fixed)\s+(?:(?:all|the|requested|entire)\s+)*(?:tasks?|work|implementation|changes?|requests?|issues?|bugs?)\b/iu,
+    /^(?:all\s+)?(?:done|complete[d]?|finished|resolved|fixed)[!！]?$/iu,
+    /^(?:(?:本次|这次|当前|全部|所有|整个|整项)(?:的)?)*(?:任务|工作|需求|实现|变更|问题|修复)(?:已经|现已|已)?(?:全部|完全|全都)?(?:完成|解决|修复|交付)(?:了)?/u,
+    /^(?:已经|现已|已)?(?:全部|完全|全都)?(?:完成|解决|修复|交付)(?:了)?[!！]?$/u,
+  ];
+  // Separate clauses so a later question or caveat cannot erase an earlier
+  // affirmative claim, e.g. "All tasks complete. Any questions?".
+  return prose.split(/[。.!！;；,，\n]+|(?<=[?？])|\s+[—–]\s+/u).some((raw) => {
+    const clause = raw.trim().replace(/^(?:[-+]\s+|\d+[)）]\s*)/u, "");
+    return claims.some((pattern) => {
+      const match = pattern.exec(clause);
+      if (!match) return false;
+      const after = clause.slice(match.index + match[0].length);
+      // Questions and conditional Chinese suffixes are not assertions. A
+      // follow-up in another clause is evaluated independently above.
+      return !/[?？]/u.test(clause) && !/^(?:后|前|时|的话|吗|么|不|未|没)/u.test(after);
+    });
+  });
+}
+
 function isPlanningWriteTarget(payload, context) {
   const candidates = [
     payload?.tool_input?.file_path,
@@ -837,6 +872,9 @@ function isPlanningWriteTarget(payload, context) {
 async function runHook(payload, options) {
   if (process.env.PLANNING_DISABLED === "1" || process.env.META_KIM_PLANNING_DISABLED === "1") return;
   const event = String(options.event || payload.hook_event_name || payload.event || "").toLowerCase();
+  // Clarifications, progress, and unknown/malformed latest-message payloads
+  // yield quietly without reading authority, spending blocks, or claiming done.
+  if (event === "stop" && !lifecycleStopClaimsCompletion(payload)) return;
   // Hook payloads are untrusted runtime input. If the host cannot provide a
   // session/run binding, fail closed with a silent no-op instead of creating
   // shared authority or surfacing a non-blocking startup error. Direct CLI and

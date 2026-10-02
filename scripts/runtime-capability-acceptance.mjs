@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { resolveProfileName } from "./meta-kim-local-state.mjs";
 import { canonicalJson, sha256 as auditSha256 } from "./release-binding-canonical.mjs";
 import { resolveProjectRoot } from "../canonical/runtime-assets/shared/hooks/project-root.mjs";
-import { observeClaudeJsonl, observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
+import { codexDesktopEventPayload, observeClaudeJsonl, observeCodexJsonl } from "./live-acceptance/observe-host-events.mjs";
 import { observeCodexDesktopEngineeringSlice } from "./live-acceptance/read-codex-session-evidence.mjs";
 import { assertExactStandardRuntimeObservationSet } from "./runtime-execution-gate.mjs";
 import { assertExactMarkerEventLifecycles } from "./live-acceptance/validate-marker-lifecycle.mjs";
@@ -251,7 +251,11 @@ function validateCodexDesktopSourceBindings(receipt, rawText) {
   if (parentEvents.length !== 1) throw new Error("Codex Desktop parent lifecycle no longer proves native spawn and return");
   const childRecords = childLines.map((line) => JSON.parse(line));
   const childMeta = childRecords.find((entry) => entry?.type === "session_meta")?.payload;
-  const final = childRecords.filter((entry) => entry?.type === "event_msg" && entry?.payload?.type === "agent_message" && entry?.payload?.phase === "final_answer" && entry?.payload?.message === receipt.capabilityMarker);
+  const final = childRecords.filter((entry) => {
+    const payload = codexDesktopEventPayload(entry);
+    return entry?.type === "event_msg" && payload?.type === "agent_message" && payload?.phase === "final_answer" && payload?.message === receipt.capabilityMarker &&
+      (!payload.session_id || payload.session_id === lifecycle.childSessionId);
+  });
   const complete = childRecords.filter((entry) => entry?.type === "event_msg" && entry?.payload?.type === "task_complete" && entry?.payload?.last_agent_message === receipt.capabilityMarker);
   if (childMeta?.id !== lifecycle.childSessionId || childMeta?.source?.subagent?.thread_spawn?.parent_thread_id !== lifecycle.threadId || final.length !== 1 || complete.length !== 1) {
     throw new Error("Codex Desktop child session no longer proves the exact completed marker");

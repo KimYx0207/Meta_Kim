@@ -99,6 +99,59 @@
   },
   "providers": [
     {
+      "id": "kim-service-agent-contracts",
+      "providerType": "dependency_project",
+      "providerKind": "dependency_project",
+      "summary": "Kim Service professional role contracts discovered from an explicitly bound local package; native execution remains unverified.",
+      "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
+      "mappings": { "dependencyProjectIds": ["kim-service"] },
+      "source": { "sourceOfTruth": "config/capability-index/dependency-project-registry.json", "mappings": { "dependencyProjectIds": ["kim-service"] } },
+      "capabilities": ["professional_agent_contract_discovery", "industry_owner_candidate_matching"],
+      "activation": {
+        "installLayers": ["dependency_registry"],
+        "trigger": "Fetch explicit dependency agent contract discovery",
+        "outputConsumption": "reference_only"
+      },
+      "trust": { "review": "explicit_local_contract_and_hash_review", "required": true },
+      "installMethod": "dependency_registry",
+      "installLayers": ["dependency_registry"],
+      "exposedArtifacts": ["dependency:kim-service/generated/capabilities.json", "dependency:kim-service/agents/<component>/AGENT.md"],
+      "activationEvents": ["Fetch explicit dependency agent contract discovery"],
+      "outputContracts": { "consumption": "reference_only", "mustEnterModelContext": false, "mustEnforcePolicy": false },
+      "risk": { "trustReview": "explicit_local_contract_and_hash_review", "notes": ["Selection is run-scoped; hashes prove local integrity, not native loading or live model quality."] },
+      "safetyBoundary": { "trustReview": "explicit_local_contract_and_hash_review", "notes": ["Read-only contracts; discovery never installs roles, executes dependency code, or authorizes external writes."] },
+      "verification": {
+        "method": "isolated contract-index and route-selection regression",
+        "command": "node scripts/run-node-tests.mjs tests/governance/dependency-agent-discovery.test.mjs --concurrency 1"
+      },
+      "support": {
+        "default": {
+          "state": "declared",
+          "status": "needs_probe",
+          "installLayers": { "dependency_registry": "declared" },
+          "os": { "macos": "needs_probe", "windows": "needs_probe", "linux": "needs_probe", "wsl2": "needs_probe" },
+          "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence."
+        },
+        "runtimes": {}
+      },
+      "runtimeAdapters": {
+        "claude_code": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." },
+        "codex": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." },
+        "cursor": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." },
+        "openclaw": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." }
+      },
+      "osAdapters": {
+        "macos": { "status": "needs_probe", "risks": ["No native role loading claim."] },
+        "windows": { "status": "needs_probe", "risks": ["No native role loading claim."] },
+        "linux": { "status": "needs_probe", "risks": ["No native role loading claim."] },
+        "wsl2": { "status": "needs_probe", "risks": ["No native role loading claim."] }
+      },
+      "degradation": { "statusByRuntime": { "claude_code": "needs_probe", "codex": "needs_probe", "cursor": "needs_probe", "openclaw": "needs_probe" }, "reason": "Bind reviewed Markdown contracts to a run; do not project durable governance agents or claim native invocation." },
+      "owner": "meta-artisan",
+      "reviewOwner": "meta-prism",
+      "evolutionKey": "provider:kim-service-agent-contracts"
+    },
+    {
       "id": "runtime-native-claude-code",
       "providerType": "runtime_native",
       "summary": "Claude Code formal runtime projection and native capability surface.",

@@ -10,6 +10,7 @@ import {
   validateRequiredMarkdown,
 } from "./runtime-resource-contract.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "../effective-runtime-capability-claims.mjs";
+import { runtimeCapabilityFailureDetails } from "../runtime-capability-evidence.mjs";
 import { standardRuntimeObservationSet } from "../runtime-execution-gate.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -140,7 +141,7 @@ function currentEffectiveRuntimeCapabilities() {
       currentHostAdapter: "unavailable_over_mcp_resource_read",
       issues: state.issues.map(redact),
     }, null, 2);
-  } catch {
+  } catch (error) {
     return JSON.stringify({
       matrix: null,
       overlayStatus: { state: "blocked", applied: [], rejected: [] },
@@ -150,7 +151,7 @@ function currentEffectiveRuntimeCapabilities() {
       observedInCurrentRun: false,
       executionAuthority: false,
       currentHostAdapter: "unavailable_over_mcp_resource_read",
-      issues: ["effective runtime overlay could not be read safely"],
+      ...runtimeCapabilityFailureDetails(error),
     }, null, 2);
   }
 }
@@ -289,14 +290,22 @@ async function runGovernedDispatch({ agent, scope, payload }) {
   });
 }
 
+async function writeSelfTestOutput(text) {
+  // A fresh matrix is larger than a pipe buffer. Wait for the write callback
+  // before exit so a successful self-test cannot emit truncated JSON.
+  await new Promise((resolve, reject) => {
+    process.stdout.write(text, (error) => error ? reject(error) : resolve());
+  });
+}
+
 if (process.argv.includes("--effective-runtime-self-test")) {
-  process.stdout.write(`${currentEffectiveRuntimeCapabilities()}\n`);
+  await writeSelfTestOutput(`${currentEffectiveRuntimeCapabilities()}\n`);
   process.exit(0);
 }
 
 if (process.argv.includes("--self-test")) {
   const agents = await loadAgents();
-  process.stdout.write(
+  await writeSelfTestOutput(
     `${JSON.stringify(
       {
         ok: true,

@@ -91,7 +91,7 @@
         "claude": {
           "event": "UserPromptSubmit",
           "hookFile": "user-prompt-submit.js",
-          "timeout": 10000
+          "timeout": 60
         }
       },
       "targets": [

@@ -394,11 +394,11 @@ class ManagedGraphifyTests(unittest.TestCase):
         original_replace = managed.os.replace
         calls = []
 
-        def flaky_replace(src, dst):
+        def flaky_replace(src, dst, **kwargs):
             calls.append((Path(src).name, Path(dst).name))
             if len(calls) == 2:
                 raise OSError("promotion failed")
-            return original_replace(src, dst)
+            return original_replace(src, dst, **kwargs)
 
         try:
             managed.os.replace = flaky_replace

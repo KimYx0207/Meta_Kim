@@ -57,6 +57,8 @@ docs/agent-health-report.md
 scripts/generate-todo-list.mjs
 
 # ========== Release Artifacts (Embedded in gh release bodies, not tracked) ==========
+# npm pack output is a Release attachment, not source; retain local archives.
+/meta-kim-*.tgz
 # Release notes are published as gh release bodies; local drafts stay outside git.
 .release-notes-v*.md
 # Progress snapshots are historical, kept outside git.

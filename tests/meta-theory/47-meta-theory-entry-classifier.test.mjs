@@ -69,6 +69,32 @@ describe("47 - Meta-theory entry classifier", () => {
     }
   });
 
+  test("requested professional deliverables enter governance without requiring technical vocabulary", () => {
+    for (const prompt of [
+      "请把我的客服经历改成运营助理岗位简历",
+      "这篇正文写好了，请给小红书标题和封面文字",
+      "把本周报价进度写成发给主管的周报",
+      "根据这些实测参数写商品卖点文案",
+      "请按这些帆布袋参数写商品详情页和卖点",
+      "顾客一直催发货，帮我拟一段客服回复",
+      "帮我准备一份四十五分钟的分数教案",
+      "围绕这个知识点帮我出三道练习题",
+      "帮我核算这项服务的成本并给出报价",
+    ]) {
+      const result = classifyMetaTheoryEntry(prompt);
+      assert.equal(result.path, "standard_path", prompt);
+      assert.equal(result.signals.durableOutputIntent, true, prompt);
+    }
+  });
+
+  test("professional terminology alone does not turn an informational question into execution", () => {
+    for (const prompt of ["简历是什么？", "标题与封面文字有什么区别？", "这个知识点我没懂是什么意思？"]) {
+      const result = classifyMetaTheoryEntry(prompt);
+      assert.equal(result.path, "fast_path", prompt);
+      assert.equal(result.governedEntry, false, prompt);
+    }
+  });
+
   test("wish-style product build enters governed path without protocol words", () => {
     const prompt = "帮我做个小红书营销自动发布器";
     assert.doesNotMatch(prompt, /agent|skill|MCP|command|阶段|packet|JSON|优先级|验证清单/i);

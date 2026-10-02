@@ -13,7 +13,10 @@ import {
   record,
   writeManifest,
 } from "../../scripts/install-manifest.mjs";
-import { sanitizeCapabilityPublicationText } from "../../scripts/capability-publication-sanitizer.mjs";
+import {
+  sanitizeCapabilityPublicationText,
+  sanitizeCapabilityPublicationValue,
+} from "../../scripts/capability-publication-sanitizer.mjs";
 
 function pathKey(value) {
   const resolved = path.resolve(value);
@@ -92,6 +95,31 @@ test("published capability text redacts credentials and non-home absolute paths"
   assert.match(sanitized, /REDACTED_SECRET/u);
   assert.match(sanitized, /REDACTED_(?:ABSOLUTE|UNC)_PATH/u);
   assert.match(sanitized, /REDACTED_POSIX_PATH/u);
+});
+
+test("plain slash-separated role terminology is not an absolute path", () => {
+  assert.equal(sanitizeCapabilityPublicationText("搜索 / 推荐流 / 粉丝复访"), "搜索 / 推荐流 / 粉丝复访");
+});
+
+test("serialized worker messages remain parseable while private fields are sanitized", () => {
+  const result = sanitizeCapabilityPublicationValue({ message: JSON.stringify({
+    schemaVersion: "codex-native-worker-invocation-v0.2",
+    ownerContract: {
+      description: "搜索 / 推荐流 / 粉丝复访",
+      source: "D:\\External Material\\private\\AGENT.md",
+      validation: ["tests/contract.test.mjs"],
+    },
+    developer_instructions: "private instruction fixture",
+    invocationStatus: "selected_not_invoked",
+  }) }, { repoRoot: "D:/Repo", homeDir: "C:/Users/Kim" });
+  const message = JSON.parse(result.message);
+  assert.equal(message.ownerContract.description, "搜索 / 推荐流 / 粉丝复访");
+  assert.deepEqual(message.ownerContract.validation, ["tests/contract.test.mjs"]);
+  assert.equal(message.invocationStatus, "selected_not_invoked");
+  assert.match(message.ownerContract.source, /REDACTED_ABSOLUTE_PATH/u);
+  assert.equal(message.developer_instructions.present, true);
+  assert.match(message.developer_instructions.contentDigest, /^[a-f0-9]{64}$/u);
+  assert.doesNotMatch(result.message, /External Material|private instruction fixture/u);
 });
 
 test("install ownership enforces manifest scope/root and preserves sedimented project copies", async () => {

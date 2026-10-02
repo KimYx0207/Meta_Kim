@@ -17,6 +17,8 @@ import {
 } from "./runtime-capability-claims.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "./runtime-execution-gate.mjs";
+import { discoverDependencyAgentContracts, matchDependencyAgentContracts } from "./dependency-agent-discovery.mjs";
+import { durableCapabilityRequestsFromTask } from "./capability-request-intent.mjs";
 import {
   sanitizeCapabilityPublicationText,
   sanitizeCapabilityPublicationValue,
@@ -887,6 +889,25 @@ for (const agent of [...liveGlobalAgents, ...cacheOnlyGlobalAgents]) {
   localGlobalAgents.push(agent);
 }
 const projectRuntimeAgentCandidates = await projectRuntimeAgents();
+const dependencyAgentDiscovery = await discoverDependencyAgentContracts({
+  projects: registryDependencies, projectRoot: repoPath("."), localOverrides,
+});
+const dependencyAgentMatches = matchDependencyAgentContracts(task, dependencyAgentDiscovery.agents);
+const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some(
+  (request) => request.mutationAuthorized && request.candidateType !== "script",
+);
+const technicalScriptRequest = /脚本|\bscript\b/iu.test(task) &&
+  /\b(?:json|node(?:\.js)?|python|powershell|bash|shell|sql|javascript|typescript)\b|代码|程序|命令行/iu.test(task) &&
+  !/口播|分镜|拍摄|台词|screenplay|scriptwriting/iu.test(task);
+const dependencyAgentScopeExclusion = explicitCapabilityLifecycle
+  ? "explicit_capability_lifecycle_uses_existing_governance"
+  : ["engineering_execution", "platform_governance", "goal_contract"].includes(taskShape) ||
+      entrySignals.productBuildIntent === true || entrySignals.serialOrSlowRouteComplaint === true || technicalScriptRequest
+    ? "task_scope_exceeds_read_only_professional_contract"
+    : null;
+const dependencyAgentMatch = dependencyAgentScopeExclusion
+  ? { ...dependencyAgentMatches, selected: null, reason: dependencyAgentScopeExclusion }
+  : dependencyAgentMatches;
 const repoCanonicalSkillProviders = capabilityEntries(repoCapabilityIndex, "skills").map((entry) => compactCapabilityProvider(entry, "repo_canonical_capability_index", "skills"));
 const projectRuntimeSkillProviders = await projectSkillProviders();
 const codexGlobalSkillFileProviders = await codexGlobalSkillProviders();
@@ -1162,6 +1183,7 @@ const runtimeScopedLocalGlobalAgents = runtimeScopedAgents
 const candidateExecutionAgents = [
   ...runtimeScopedProjectExecutionAgents,
   ...runtimeScopedLocalGlobalAgents,
+  ...(dependencyAgentMatch.selected ? [dependencyAgentMatch.selected] : []),
 ]
   .filter(
     (agent) =>
@@ -1178,6 +1200,7 @@ const ownerDiscoveryPacket = {
     "runtime_mirror_indexes",
     "project_runtime_agent_inventory",
     "local_global_agent_inventory",
+    "dependency_agent_contract",
     "available_capability_providers_skills_tools_mcp",
     "runtime_tool_provider_inventory",
   ],
@@ -1191,6 +1214,11 @@ const ownerDiscoveryPacket = {
   repoCanonicalAgents: repoCanonicalAgents.slice(0, 20),
   projectRuntimeAgents: projectRuntimeAgentCandidates.slice(0, 80),
   localGlobalAgents: localGlobalAgents.slice(0, 30),
+  dependencyAgentDiscovery: {
+    sources: dependencyAgentDiscovery.sources,
+    agents: dependencyAgentDiscovery.agents,
+    match: { ...dependencyAgentMatch, selected: dependencyAgentMatch.selected?.id ?? null },
+  },
   repoCanonicalSkillProviders: repoCanonicalSkillProviders.slice(0, 30),
   projectRuntimeSkillProviders: projectRuntimeSkillProviders.slice(0, 40),
   localGlobalSkillProviders,
@@ -1206,6 +1234,7 @@ const ownerDiscoveryPacket = {
   globalInventoryFreshness,
   capabilityDiscoverySearchLog: [
     { source: "repo_canonical_capability_index", checked: true, sourceRef: "config/capability-index/meta-kim-capabilities.json" },
+    ...dependencyAgentDiscovery.sources.map((source) => ({ source: "dependency_agent_contract", checked: true, ...source })),
     { source: "runtime_mirror_capability_indexes", checked: true, sourceRef: ".claude/.codex/.cursor/openclaw capability-index mirrors" },
     { source: "project_projection_policy", checked: true, sourceRef: `.meta-kim/local.overrides.json#projectProjectionMode=${projectProjectionMode}` },
     { source: "claude_project_inventory", checked: true, sourceRef: ".claude/agents; .claude/skills; .claude/commands; .claude/hooks; .claude/settings.json" },
@@ -2055,6 +2084,7 @@ function buildCodexWorkerMessage(ownerId, ownerKind, roleInstanceId, taskPacket 
     ownerBindingMode,
     nativeAgentType,
     ownerDefinition,
+    ownerContract: provider?.ownerContract ?? null,
     capabilityLoadout,
     scope: {
       purpose: taskPacket?.purpose ?? `Execute the bounded worker task owned by ${ownerId}.`,
@@ -2150,6 +2180,9 @@ function codexSpawnBindingForOwner(ownerId, ownerKind = "agent", roleInstanceId 
 }
 
 function selectExecutionOwner() {
+  if (dependencyAgentMatch.selected && !requestedOwnerSourceKey && !requestedOwnerSourceRef && !requestedOwnerContentDigest) {
+    return dependencyAgentMatch.selected.id;
+  }
   const candidates = [...new Set(candidateExistingExecutionOwners)].filter(
     (id) =>
       typeof id === "string" &&
@@ -2533,12 +2566,14 @@ function executionCapabilityDiscoveryRoute() {
   const parallelExecutionLanes = buildParallelExecutionLanes();
   const explicitDiscoveryRoute = capabilityDiscoveryTaskRequested();
   if (subjectiveRouteChoice) return null;
-  if (taskShape !== "engineering_execution" && !explicitDiscoveryRoute) return null;
+  if (taskShape !== "engineering_execution" && !explicitDiscoveryRoute && !dependencyAgentMatch.selected) return null;
   const selectedOwner = selectExecutionOwner();
   const selectedAgentProvider = [
     ...runtimeScopedProjectExecutionAgents,
     ...runtimeScopedLocalGlobalAgents,
+    ...dependencyAgentDiscovery.agents,
   ].find((agent) => agent.id === selectedOwner) ?? null;
+  const usesDependencyContract = selectedAgentProvider?.source === "dependency_agent_contract";
   const wantsDiscovery = explicitDiscoveryRoute || /find|discover|search|寻找|发现/.test(taskText);
   const wantsCreation = /create|scaffold|generate|创建|生成/.test(taskText);
   // findskill is a reference-only discovery capability consumed in model
@@ -2550,29 +2585,32 @@ function executionCapabilityDiscoveryRoute() {
     { allowReferenceOnly: true },
   );
   const selectedSkillCreation = selectProvider("skills", ["meta-skill-creator", "create-agent", "agent-teams-playbook"]);
-  const selectedSkill = wantsDiscovery
+  const selectedSkill = usesDependencyContract ? null : wantsDiscovery
     ? selectedSkillDiscovery ?? selectedSkillCreation
     : wantsCreation
       ? selectedSkillCreation ?? selectedSkillDiscovery
       : selectProvider("skills", ["tdd-workflow", "verification-loop", "meta-theory"]);
   const selectedAgentCreation = selectProvider("skills", ["create-agent", "agent-teams-playbook", "meta-skill-creator"]);
-  const selectedMcpServer = selectProvider("mcpServers", ["meta-kim-runtime", "repo-mcp", "codex-config-mcp"]);
-  const selectedMcpTool = selectProvider("mcpTools", ["get_meta_runtime_capabilities", "list_meta_agents", "get_meta_agent"]);
-  const selectedCommand = selectProvider("commands", ["meta-theory", "save-progress"]);
-  const selectedRuntimeTool = selectProvider("runtimeTools", ["apply_patch", "shell_command", "Bash"]);
+  const discoveredMcpServer = selectProvider("mcpServers", ["meta-kim-runtime", "repo-mcp", "codex-config-mcp"]);
+  const discoveredMcpTool = selectProvider("mcpTools", ["get_meta_runtime_capabilities", "list_meta_agents", "get_meta_agent"]);
+  const discoveredCommand = selectProvider("commands", ["meta-theory", "save-progress"]);
+  const selectedMcpServer = usesDependencyContract ? null : discoveredMcpServer;
+  const selectedMcpTool = usesDependencyContract ? null : discoveredMcpTool;
+  const selectedCommand = usesDependencyContract ? null : discoveredCommand;
+  const selectedRuntimeTool = selectProvider("runtimeTools", usesDependencyContract ? ["filesystem"] : ["apply_patch", "shell_command", "Bash"]);
   const blockedReasons = [];
   if (!selectedOwner) blockedReasons.push("execution owner missing");
-  if (!selectedSkill) blockedReasons.push("skill provider missing");
-  if (!selectedMcpServer && !selectedMcpTool) blockedReasons.push("MCP provider missing");
+  if (!usesDependencyContract && !selectedSkill) blockedReasons.push("skill provider missing");
+  if (!usesDependencyContract && !selectedMcpServer && !selectedMcpTool) blockedReasons.push("MCP provider missing");
   // Missing accepted runtime-tool evidence blocks Execution in the independent
   // capability gate below; it must not erase the correct design-time route.
-  const routeScore = blockedReasons.length ? 49 : explicitDiscoveryRoute ? 92 : 88;
+  const routeScore = blockedReasons.length ? 49 : usesDependencyContract ? 96 : explicitDiscoveryRoute ? 92 : 88;
   return {
     id: `execution-capability-discovery:${runtime}:${osTarget}`,
     owner: selectedOwner,
     weapon: "select-execution-route",
     dependency: selectedSkill?.id ?? null,
-    dependencyProject: null,
+    dependencyProject: usesDependencyContract ? selectedAgentProvider.dependencyId : null,
     runtime,
     os: osTarget,
     verificationOwner: "meta-prism",
@@ -2618,6 +2656,18 @@ function executionCapabilityDiscoveryRoute() {
       command: selectedCommand,
       runtimeTool: selectedRuntimeTool,
     },
+    ...(usesDependencyContract ? {
+      providerRequirementDecisions: {
+        agent: "Source-verified external professional contract; semantic review and run-scoped binding remain required.",
+        skill: "Search performed; the role contract supplies the content workflow, so no extra Skill is selected.",
+        agentCreation: "Search performed; reuse the existing role rather than create a new agent.",
+        skillCreation: "Search performed; no missing Skill requires creation for this content task.",
+        mcp: { searched: true, candidates: [discoveredMcpServer?.id, discoveredMcpTool?.id].filter(Boolean), selected: null, reason: "No business-system operation is authorized by the read-only role contract." },
+        command: { searched: true, candidate: discoveredCommand?.id ?? null, selected: null, reason: "Content delivery needs no shell command." },
+      },
+      ownerContract: selectedAgentProvider.ownerContract,
+      invocationStatus: "selected_not_invoked",
+    } : {}),
     parallelExecutionLanes,
     blockedReasons,
   };
@@ -3838,6 +3888,10 @@ function compactProvider(provider) {
       ["sourceKey", provider.sourceKey],
       ["sourcePriority", provider.sourcePriority],
       ["contentDigest", provider.contentDigest],
+      ["ownerBindingMode", provider.ownerBindingMode],
+      ["nativeAgentType", provider.nativeAgentType],
+      ["validCustomAgentDefinition", provider.validCustomAgentDefinition],
+      ["ownerContract", provider.ownerContract],
       ["nativeIdentity", provider.nativeIdentity],
       ["provenance", provider.provenance],
       ["metadata", provider.metadata],
@@ -3951,6 +4005,11 @@ function compactOwnerDiscoveryPacket(packet) {
     repoCanonicalAgents: compactProviderCollection(packet.repoCanonicalAgents ?? [], 20),
     projectRuntimeAgents: compactProviderCollection(packet.projectRuntimeAgents ?? [], 30),
     localGlobalAgents: compactProviderCollection(packet.localGlobalAgents ?? [], 30),
+    dependencyAgentDiscovery: packet.dependencyAgentDiscovery ? {
+      sources: packet.dependencyAgentDiscovery.sources,
+      match: packet.dependencyAgentDiscovery.match,
+      agents: compactProviderCollection(packet.dependencyAgentDiscovery.agents.map(({ ownerContract, ...agent }) => agent), 40),
+    } : null,
     repoCanonicalSkillProviders: compactProviderCollection(
       packet.repoCanonicalSkillProviders ?? [],
       30,

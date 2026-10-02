@@ -117,6 +117,62 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(restored, {**self.guarded_edges[-1], "target": self.original_target["id"]})
         self.assertEqual(producer.retain(self.before, graph, restore=False), 0)
 
+    def test_real_native_update_rebinds_legacy_hyperedge_members_and_preserves_attributes(self):
+        graph = copy.deepcopy(self.graph)
+        relation = {"id": "curated-group", "nodes": ["semantic_concept", "legacy_target"],
+                    "source_file": "code.py", "relation": "explains_together", "confidence": "INFERRED",
+                    "description": "Keep this exact curated relationship", "weight": 0.75}
+        graph["hyperedges"] = [relation]
+        candidate = self.base / "legacy-hyperedge-candidate"
+        candidate.mkdir()
+        (candidate / "graph.json").write_text(json.dumps(graph))
+        for _ in range(2):
+            completed = subprocess.run([sys.executable, str(SCRIPT), "--repo", str(self.repo), "--candidate", str(candidate)],
+                                       env=self.env, cwd=self.repo, capture_output=True, text=True, timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            final = json.loads((candidate / "graph.json").read_text())
+            expected = {**relation, "nodes": ["semantic_concept", self.original_target["id"]]}
+            self.assertEqual(producer.hyperedges(final), [expected])
+            self.assertTrue(set(expected["nodes"]) <= {node["id"] for node in final["nodes"]})
+
+    def test_hyperedge_only_endpoints_rebind_all_member_encodings_and_fail_closed(self):
+        for field in ("nodes", "members", "node_ids"):
+            with self.subTest(field=field):
+                old = copy.deepcopy(self.graph)
+                old["links"] = []  # The legacy AST ID is protected only by the group.
+                group = {"id": "group", field: ["semantic_concept", "legacy_target"], "note": "preserve"}
+                old["hyperedges"] = [group]
+                before = producer.preserve_before(self.repo, old)
+                self.assertIn("legacy_target", before["endpoints"])
+                current = self.after_native_shape()
+                current["hyperedges"] = [copy.deepcopy(group)]
+                producer.retain(before, current, restore=True)
+                expected = {**group, field: ["semantic_concept", self.original_target["id"]]}
+                self.assertEqual(current["hyperedges"], [expected])
+                producer.retain(before, current, restore=False)
+                producer.retain(before, current, restore=True)
+                self.assertEqual(current["hyperedges"], [expected])
+
+                missing = self.after_native_shape()
+                missing["nodes"] = [node for node in missing["nodes"] if node["id"] != self.original_target["id"]]
+                with self.assertRaisesRegex(RuntimeError, "missing_or_ambiguous"):
+                    producer.retain(before, missing, restore=True)
+                ambiguous = self.after_native_shape()
+                ambiguous["nodes"].append({**self.original_target, "id": "ambiguous-target"})
+                with self.assertRaisesRegex(RuntimeError, "missing_or_ambiguous"):
+                    producer.retain(before, ambiguous, restore=True)
+                for member_state in (group, expected):
+                    changed = self.after_native_shape()
+                    changed["hyperedges"] = [{**member_state, "note": "changed"}]
+                    with self.assertRaisesRegex(RuntimeError, "attributes_changed"):
+                        producer.retain(before, changed, restore=True)
+
+    def test_dangling_hyperedge_members_are_not_silently_preserved(self):
+        graph = copy.deepcopy(self.graph)
+        graph["hyperedges"] = [{"nodes": ["semantic_concept", "missing-member"]}]
+        with self.assertRaisesRegex(RuntimeError, "dangling_protected_edge"):
+            producer.preserve_before(self.repo, graph)
+
     def test_ambiguous_identity_and_relation_changes_fail(self):
         graph = self.after_native_shape()
         duplicate = {**self.original_target, "id": "duplicate_target"}

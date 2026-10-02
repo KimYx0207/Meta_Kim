@@ -74,6 +74,7 @@ import { retirePlanningWithFiles } from "./retire-planning-with-files.mjs";
 import { installerAckLine } from "./installer-ack.mjs";
 import { createInstallerWriteBoundary, assertInstallerWritePath } from "./installer-write-boundary.mjs";
 import { LANG, t } from "./meta-kim-i18n.mjs";
+import { hookCommandNode, isNodeHookScriptCommand } from "./claude-settings-merge.mjs";
 import {
   buildCodexHooksJson,
   buildCursorHooksJson,
@@ -4341,10 +4342,13 @@ async function main() {
     dryRun,
   });
   if (retiredPlanning.preserved.length > 0) {
-    throw new Error(
+    // Retirement owns only proven legacy artifacts. Unowned historical files
+    // still require manual review, but must not veto unrelated selected skills.
+    // Keep retirePlanningWithFiles atomic and fail closed for unsafe paths/I/O.
+    console.warn(
       t.planningRetirementPreserved(
         retiredPlanning.preserved.length,
-        retiredPlanning.preserved.map((entry) => entry.path),
+        retiredPlanning.preserved.map((entry) => `${entry.path} (${entry.reason})`),
       ),
     );
   }
@@ -4611,6 +4615,13 @@ async function main() {
   console.log(t.noteCodexOpenclaw);
   console.log(t.activeTargets(activeTargets));
   console.log(t.metaKimRoot(repoRoot));
+  if (retiredPlanning.preserved.length > 0) {
+    // Keep the outstanding manual action visible after long installer output.
+    console.warn(t.planningRetirementPreserved(
+      retiredPlanning.preserved.length,
+      retiredPlanning.preserved.map((entry) => `${entry.path} (${entry.reason})`),
+    ));
+  }
 
   // // Print log file path if logging was active
   // if (logFileResolved) {
@@ -4871,7 +4882,7 @@ async function deployHookExtraFiles(spec, runtimeHome, runtimeId) {
 
 // ========== Hook Settings Merge ==========
 
-async function mergeHookSettings(spec, runtimeHome, runtimeId) {
+export async function mergeHookSettings(spec, runtimeHome, runtimeId) {
   const hookSettingsMerge = spec.hookSettingsMerge;
   if (!hookSettingsMerge || !hookSettingsMerge[runtimeId]) return;
 
@@ -4902,32 +4913,31 @@ async function mergeHookSettings(spec, runtimeHome, runtimeId) {
   if (!settings.hooks) settings.hooks = {};
   const existingEntries = settings.hooks[cfg.event] || [];
 
-  const normalizedPath = hookScriptPath.replace(/\\/g, "/");
-  const alreadyRegistered = existingEntries.some((group) =>
-    (group.hooks || []).some((h) => {
-      const cmd = (h.command || "").replace(/\\/g, "/");
-      return cmd.includes(cfg.hookFile);
-    }),
-  );
-
-  if (alreadyRegistered) return;
-
-  const newEntry = {
-    hooks: [
-      {
+  const managedHooks = existingEntries.flatMap((group) => group.hooks || [])
+    .filter((hook) => hook.type === "command" && isNodeHookScriptCommand(hook.command, hookScriptPath));
+  if (managedHooks.length > 0) {
+    let changed = false;
+    for (const hook of managedHooks) {
+      if (cfg.timeout !== undefined && hook.timeout !== cfg.timeout) {
+        hook.timeout = cfg.timeout;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+  } else {
+    existingEntries.push({
+      hooks: [{
         type: "command",
-        command: `node "${hookScriptPath.replace(/\\/g, "\\\\")}"`,
-        ...(cfg.timeout ? { timeout: cfg.timeout } : {}),
-      },
-    ],
-  };
-
-  existingEntries.push(newEntry);
+        command: hookCommandNode(hookScriptPath),
+        ...(cfg.timeout !== undefined ? { timeout: cfg.timeout } : {}),
+      }],
+    });
+  }
   settings.hooks[cfg.event] = existingEntries;
 
   await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf8");
   console.log(
-    `${C.green}✓${C.reset} ${spec.id} hook registered: ${cfg.event} -> ${cfg.hookFile}`,
+    `${C.green}✓${C.reset} ${spec.id} hook ${managedHooks.length ? "refreshed" : "registered"}: ${cfg.event} -> ${cfg.hookFile}`,
   );
 }
 

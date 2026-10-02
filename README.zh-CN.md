@@ -261,6 +261,8 @@ node setup.mjs
 
 Codex agent fan-out 的默认上限是同时 2 个线程、1 层嵌套。用户显式设置的其它上限会保留；只有缺失值或 Meta_Kim 旧默认值 6 会迁移。
 
+升级旧安装时，无法确认归属的 `planning-with-files` 文件和 Hook 会保留，交由用户手动检查；退役暂缓不再阻止独立的已选技能安装或更新。安装器会在技能操作前后列出保留路径及原因，这不代表清理已完成。越界写入、不安全的父目录路径、写入错误和技能操作失败仍会正常报错；不要为了消除提示而盲目删除保留文件。
+
 如果你准备维护仓库，优先改主源：`canonical/agents/`、`canonical/skills/meta-theory/`、`config/contracts/`、`config/capability-index/`，然后执行（需 Node.js >= 22.13.0）：
 
 ```bash

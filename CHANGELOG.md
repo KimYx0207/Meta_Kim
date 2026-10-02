@@ -8,6 +8,27 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.2.0] - 2026-09-14
+
+### Added
+
+- **Opt-in industry Agent discovery from Kim Service.** An explicitly bound Kim Service checkout supplies fifteen standalone roles for creators, ecommerce, career and workplace writing, education, and side businesses. Meta_Kim checks each contract and component's contents before selecting an owner through its existing route. The packages remain in Kim Service; selection does not claim native loading or verified model delivery.
+
+### Fixed
+
+- **Existing managed HookPrompt registrations receive the one-minute timeout.** Install/update and template refresh now agree on 60 seconds and refresh old managed entries in place. User commands, unrelated scripts with the same filename, matcher order, and unrelated fields are preserved (issue #81).
+- **Everyday deliverables enter the execution route.** Requests for resumes, weekly reports, customer replies, and similar confirmed industry tasks now reach the shared entry classifier. Serialized work orders preserve ordinary separators such as “search / recommendations” while still redacting private paths and credentials.
+- **Desktop acceptance recognizes current Codex completion events.** Native file changes, subagent activity, and child finals are read from both supported event formats. Freshness follows the bound event timestamps when Windows defers a live rollout's file modification time; stale events, mismatched sessions, failed changes, and altered source records remain rejected.
+
+## [3.1.2] - 2026-09-10
+
+### Fixed
+
+- **Concurrent global projection no longer fails on npm 10.** When two workers materialized the same package at once, the loser compared its bundle byte-for-byte against the winner's and always found a difference, so the install aborted. The difference was npm's own bookkeeping: on npm 10 `npm install <archive>` records the archive's absolute staged path as a `file:` dependency, and that path carries a per-worker process id and uuid. The staged segment is now collapsed before the bundle is hashed, so two workers building from the same source produce identical bundles. Nothing resolves those `file:` URLs — the archive is deleted right after install — so the rewrite costs nothing. npm 11 records a prefix-relative path and was never affected, which is why the report only reached users on the older npm (PR #80).
+- **A missing lockfile no longer aborts materialization.** The same path read three bundle metadata files unconditionally; npm version decides which of them exist. A file that was never written is now skipped, while every other read or write error still stops the install rather than letting a half-written bundle reach the receipt.
+- **The planning stop hook says which condition is unmet.** It previously refused with `planning_not_verified_or_closed` and a bounded-block count of zero, which named neither the failing condition nor the next action. It now reports the specific unmet completion condition, and the no-op path for a run with no bound plan is covered on every lifecycle event.
+- **The prompt hook budget uses Claude Code's unit.** The hook timeout was written as a millisecond figure in a field Claude Code reads as seconds, which turned an intended one-minute ceiling into an effectively unbounded one.
+
 ## [3.1.1] - 2026-09-08
 
 ### Fixed

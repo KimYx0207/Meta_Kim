@@ -90,6 +90,20 @@ def hyperedges(graph):
     return graph.get("hyperedges", graph.get("graph", {}).get("hyperedges", []))
 
 
+def hyperedge_member_field(edge):
+    fields = [name for name in ("nodes", "members", "node_ids") if name in edge]
+    if len(fields) != 1:
+        raise RuntimeError("hyperedge_member_field_missing_or_ambiguous")
+    members = edge[fields[0]]
+    if not isinstance(members, list) or not all(isinstance(value, str) for value in members):
+        raise RuntimeError("invalid_hyperedge_members")
+    return fields[0]
+
+
+def hyperedge_members(edge):
+    return edge[hyperedge_member_field(edge)]
+
+
 def explicit_ignored_predicate(repo):
     from graphify.detect import _load_graphifyignore, _load_dir_own_ignore, _is_ignored
     patterns = _load_graphifyignore(repo, gitignore=False)
@@ -156,7 +170,8 @@ def preserve_before(repo, graph):
               or edge.get("source") in guarded or edge.get("target") in guarded)]
     kept_hyperedges = [edge for edge in hyperedges(graph) if edge.get("source_file") not in retired_sources and
                       not retired_nodes.intersection(edge.get("nodes", edge.get("members", edge.get("node_ids", []))))]
-    endpoint_ids = set(guarded) | {edge[side] for edge in edges for side in ("source", "target")}
+    endpoint_ids = (set(guarded) | {edge[side] for edge in edges for side in ("source", "target")}
+                    | {member for edge in kept_hyperedges for member in hyperedge_members(edge)})
     if not endpoint_ids <= nodes.keys():
         raise RuntimeError("dangling_protected_edge")
     endpoints = {key: node_key(nodes[key]) for key in endpoint_ids}
@@ -257,8 +272,40 @@ def retain(before, graph, *, restore):
         edges.append(edge)
         pairs.add(pair)
         restored += 1
-    if Counter(map(packed, before["hyperedges"])) - Counter(map(packed, hyperedges(graph))):
-        raise RuntimeError("protected_hyperedge_changed")
+    # Native extraction can normalize AST IDs without rebinding a curated
+    # relationship group. Apply the same proven endpoint map as ordinary edges.
+    if "hyperedges" in graph:
+        current_hyperedges = graph["hyperedges"]
+    elif "hyperedges" in graph.get("graph", {}):
+        current_hyperedges = graph["graph"]["hyperedges"]
+    elif restore and before["hyperedges"]:
+        current_hyperedges = graph.setdefault("hyperedges", [])
+    else:
+        current_hyperedges = []
+    available_hyperedges = Counter(map(packed, current_hyperedges))
+    for old in before["hyperedges"]:
+        field = hyperedge_member_field(old)
+        rebound = {**old, field: [target(member) for member in hyperedge_members(old)]}
+        if len(set(rebound[field])) != len(rebound[field]):
+            raise RuntimeError("protected_hyperedge_members_collapsed")
+        key = packed(rebound)
+        if available_hyperedges[key]:
+            available_hyperedges[key] -= 1
+            continue
+        if not restore:
+            raise RuntimeError("protected_hyperedge_changed")
+        old_key = packed(old)
+        if available_hyperedges[old_key]:
+            index = next(index for index, item in enumerate(current_hyperedges) if packed(item) == old_key)
+            current_hyperedges[index] = rebound
+            available_hyperedges[old_key] -= 1
+            continue
+        if any((old.get("id") is not None and item.get("id") == old["id"])
+               or set(hyperedge_members(item)) == set(rebound[field]) for item in current_hyperedges):
+            raise RuntimeError("protected_hyperedge_attributes_changed")
+        current_hyperedges.append(rebound)
+    if any(member not in nodes for edge in current_hyperedges for member in hyperedge_members(edge)):
+        raise RuntimeError("dangling_hyperedge_member")
     before["normalizedEdgeCount"] = len(expected)
     if restore:
         for node in nodes.values():

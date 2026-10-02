@@ -2,7 +2,7 @@
   "schemaVersion": "2.0.0",
   "claimSchemaVersion": 2,
   "authorityBoundary": "observations_only",
-  "reviewedAt": "2026-08-29",
+  "reviewedAt": "2026-10-02",
   "matrixAuthority": "config/runtime-capability-matrix.json",
   "description": "Observation ledger for runtime capability claims. Conclusions remain solely in the runtime capability matrix.",
   "observations": [
@@ -22,11 +22,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/sub-agents"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Specialized subagents have separate contexts, custom instructions, tool access, and permissions; custom-agent definitions remain documented.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -52,11 +52,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/tools-reference"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "The tools reference documents file and shell tools, web tools, background work, and AskUserQuestion; permission prompts do not auto-resolve with ordinary question timeouts.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -78,11 +78,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/hooks"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Lifecycle hooks document PreToolUse denial and per-event output semantics; user/project/global settings have distinct scope and inherited managed policy.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -102,11 +102,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/sandboxing"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "The Bash sandbox supports macOS, Linux, and WSL2; native Windows commands are unsandboxed, and hooks, file tools, and MCP are outside the Bash sandbox.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -124,11 +124,11 @@
       "runtimeModes": [
         "interactive_host"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/permission-modes"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Permission modes and approval behavior are documented; automatic-mode defaults vary by client, version, provider, and managed policy.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -151,11 +151,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/slash-commands"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "SKILL.md skills and legacy command files are documented, with user/project locations and slash-name rules.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -175,11 +175,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/mcp"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Local stdio and remote MCP server configuration remain documented; service configuration is separate from successful tool execution.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -201,11 +201,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://code.claude.com/docs/en/memory"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "CLAUDE.md, rules, and auto memory supply persistent context; they are not enforced authorization controls.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -253,7 +253,7 @@
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "da59121c2a5d32c3e037f2fc3c19c9dd431ab7eef3a6eed54607686e1b171f8c" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "0888397ffaae7387be7616788eb80893dc92d4014ed1bef26e0591179e6ec622" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "84d174aa0703c7c33fd8e4677c23df0ee749023642dda7a9568a4ab752d50a70" }
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d2abc9c5a2944332e4c572f7ab5ea3087acb50c82c04ace182f4e0917dd451e3" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -304,16 +304,17 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-08-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "canonical/runtime-assets/claude",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Fresh conservative review of canonical runtime assets and governance contracts; no host or behavioral support is inferred.",
+      "summary": "Rechecked official subagents, tools, hooks, sandbox, permissions, skills, MCP and memory docs against canonical Claude assets. Preserve Windows sandbox and hook/permission boundaries; no live Claude session was available.",
       "limitations": [
-        "This observation cannot create or promote host support.",
-        "It can only retain unknown, partial, not-applicable, or non-executable conclusions for a bounded review window."
+        "This review checks official documentation and repository integration boundaries, not current-host behavior.",
+        "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
+        "Renewal requires another substantive review within the existing 30-day window, never automatic re-dating."
       ]
     },
     {
@@ -333,12 +334,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://developers.openai.com/codex/subagents",
-        "https://developers.openai.com/codex/concepts/subagents"
+        "https://learn.chatgpt.com/docs/agent-configuration/subagents"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Current documentation describes parallel subagents, custom local agents, inherited sandbox policy, and explicit concurrency limits; agents.max_threads remains a legacy alias.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -359,11 +359,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://developers.openai.com/codex/skills"
+        "https://learn.chatgpt.com/docs/build-skills"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Skills use SKILL.md metadata and progressive disclosure; discovery and loading remain distinct from successful execution.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -383,11 +383,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://developers.openai.com/codex/mcp"
+        "https://learn.chatgpt.com/docs/extend/mcp?surface=cli"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Codex documents stdio and Streamable HTTP configuration through CLI, IDE, and config.toml; client surfaces and authentication requirements differ.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -409,11 +409,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://developers.openai.com/codex/hooks"
+        "https://learn.chatgpt.com/docs/hooks"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Hooks document lifecycle events and PreToolUse denial, but unsupported output forms report errors and may continue the call; coverage is version- and surface-specific.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -439,11 +439,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://developers.openai.com/codex/config-reference"
+        "https://learn.chatgpt.com/docs/config-file/config-reference"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "The configuration reference documents filesystem/network sandboxing and approval policy; permission profiles and legacy sandbox configuration have explicit compatibility constraints.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -465,11 +465,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://developers.openai.com/codex/guides/agents-md"
+        "https://learn.chatgpt.com/docs/agent-configuration/agents-md"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Global and repository AGENTS.md layers remain documented as contextual instructions, not observed execution or authorization evidence.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -490,11 +490,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://developers.openai.com/codex/cli/slash-commands"
+        "https://learn.chatgpt.com/docs/developer-commands?surface=cli"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "The current developer-command reference documents interactive slash commands including /review and /agent alongside non-interactive CLI commands.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -511,11 +511,11 @@
         "interactive_host",
         "headless_live"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://learn.chatgpt.com/codex"
+        "https://learn.chatgpt.com/docs/agent-configuration/subagents"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "The subagent documentation describes concurrent background work and inspection/steering; the old Codex landing URL now redirects to a general overview and is no longer used as proof.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -564,7 +564,7 @@
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "5cb91cf2adf020ae3e13c21bc419e08ce6527f29072561177a189464680a39ed" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "0888397ffaae7387be7616788eb80893dc92d4014ed1bef26e0591179e6ec622" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "84d174aa0703c7c33fd8e4677c23df0ee749023642dda7a9568a4ab752d50a70" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d2abc9c5a2944332e4c572f7ab5ea3087acb50c82c04ace182f4e0917dd451e3" },
         { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "155d756112012120e05918433a7fc9d761d4275067d43fe9878b96ba38d13e69" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
@@ -616,16 +616,17 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-08-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "canonical/runtime-assets/codex",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Fresh conservative review of canonical runtime assets and governance contracts; no host or behavioral support is inferred.",
+      "summary": "Rechecked current ChatGPT Learn pages reached from the former Codex URLs, including concurrency aliases and unsupported hook output semantics. Canonical projection reviewed; installed CLI version availability is not behavioral acceptance.",
       "limitations": [
-        "This observation cannot create or promote host support.",
-        "It can only retain unknown, partial, not-applicable, or non-executable conclusions for a bounded review window."
+        "This review checks official documentation and repository integration boundaries, not current-host behavior.",
+        "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
+        "Renewal requires another substantive review within the existing 30-day window, never automatic re-dating."
       ]
     },
     {
@@ -638,11 +639,11 @@
       "runtimeModes": [
         "interactive_host"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/tools/ask-user"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "ask_user is documented for gathering user input; a question response is not interchangeable with execution authorization. Meta_Kim native choice remains unverified.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance.",
@@ -660,12 +661,12 @@
       "runtimeModes": [
         "interactive_host"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/tools/exec-approvals",
         "https://docs.openclaw.ai/plugins/plugin-permission-requests"
       ],
-      "summary": "OpenClaw documents host/plugin approval surfaces and fail-closed approval resolution.",
+      "summary": "Exec and plugin approval flows are documented; plugin execution requires an exact permitted decision and rejects missing, mismatched, or expired approvals.",
       "limitations": [
         "Approval surfaces are not a general AskUser-style route choice contract.",
         "They do not prove a Meta_Kim typed tool-blocking plugin or current-host acceptance."
@@ -688,12 +689,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://docs.openclaw.ai/tools/subagents",
-        "https://docs.openclaw.ai/automation/tasks"
+        "https://docs.openclaw.ai/tools/subagents"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Subagents run as separate background sessions with result return, configurable nesting, and optional sandboxing; the redirect-only tasks landing page is excluded.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -713,11 +713,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/cli/mcp"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "openclaw mcp distinguishes serving MCP from managing outbound server definitions; a registry entry is not observed runtime consumption.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -734,12 +734,12 @@
       "runtimeModes": [
         "interactive_host"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/tools/permission-modes",
         "https://docs.openclaw.ai/tools/exec-approvals"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Exec permission modes and host-local approval policy are separate layers; configured policy alone is not runtime acceptance.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -761,12 +761,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://docs.openclaw.ai/automation/hooks",
-        "https://docs.openclaw.ai/plugins"
+        "https://docs.openclaw.ai/automation/hooks"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Internal hooks handle lifecycle events inside the Gateway; typed plugin hooks are a separate interception surface. Meta_Kim still has no verified typed tool-blocking adapter.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -788,11 +787,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/concepts/memory"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Workspace Markdown is the durable memory source; only saved material persists, and imports require source-specific handling.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -813,11 +812,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/tools/skills"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "SKILL.md skills are loaded subject to environment, configuration, and binary availability; installation does not prove current-run activation.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -838,11 +837,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/tools/slash-commands"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Text and native slash commands differ by channel and configuration; not every channel exposes native skill commands.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -865,11 +864,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/tools"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "The current tool overview documents browser/web, filesystem and exec capabilities, and links sandbox and approval boundaries.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -889,11 +888,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://docs.openclaw.ai/tools/apply-patch"
       ],
-      "summary": "OpenClaw documents its apply_patch host tool.",
+      "summary": "apply_patch is documented with workspace containment and session-mode constraints. No local tool probe was run, so Meta_Kim keeps the conservative unknown host conclusion.",
       "limitations": [
         "Host documentation does not prove Meta_Kim integration or current-host/live acceptance."
       ]
@@ -939,8 +938,8 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/openclaw", "digestKind": "sha256", "sha256": "ca04424ae285491a8284b1af7bd19375df3e281d75818c48aa25ee27b1fc3287" },
-        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "9a38f214169b1801a78d9d06a7e0cbd7ba3ff3fb7c668ba0da638f23a25c5dd2" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "84d174aa0703c7c33fd8e4677c23df0ee749023642dda7a9568a4ab752d50a70" }
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "8b34211a307dd5c9a05684c603d3a50e8e3984e16cd270b98a662d7ceac02c80" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d2abc9c5a2944332e4c572f7ab5ea3087acb50c82c04ace182f4e0917dd451e3" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -991,16 +990,17 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-08-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "canonical/runtime-assets/openclaw",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Fresh conservative review of canonical runtime assets and governance contracts; no host or behavioral support is inferred.",
+      "summary": "Rechecked official subagents, tool, skill, memory, permission, MCP and hook surfaces. Removed redirect-only evidence links. The missing Meta_Kim typed-plugin enforcement adapter and unprobed choice/apply_patch claims remain conservative.",
       "limitations": [
-        "This observation cannot create or promote host support.",
-        "It can only retain unknown, partial, not-applicable, or non-executable conclusions for a bounded review window."
+        "This review checks official documentation and repository integration boundaries, not current-host behavior.",
+        "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
+        "Renewal requires another substantive review within the existing 30-day window, never automatic re-dating."
       ]
     },
     {
@@ -1019,12 +1019,12 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://cursor.com/docs/subagents",
         "https://cursor.com/changelog/2-4"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Current docs list project/user custom-agent directories and separate subagent execution; compatible file locations do not prove Meta_Kim adapter acceptance.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1045,11 +1045,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://cursor.com/docs/skills"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Current skills documentation covers SKILL.md, native and compatibility directories, nested discovery, and explicit-only invocation.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1067,11 +1067,11 @@
       "runtimeModes": [
         "interactive_host"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://cursor.com/changelog/2-4"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "The official 2.4 changelog documents the ask-question tool in ordinary conversations; this does not prove arbitrary popup authority or Meta_Kim live acceptance.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1093,11 +1093,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://cursor.com/docs/hooks"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Hooks document permission decisions and failClosed behavior for crashes/timeouts; Meta_Kim projection remains product/live unaccepted.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1114,12 +1114,12 @@
       "runtimeModes": [
         "interactive_host"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://docs.cursor.com/cli/reference/permissions",
+        "https://cursor.com/docs/cli/using",
         "https://cursor.com/changelog/2-4"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Current CLI documentation covers command approval and non-interactive write access; the 2.4 changelog covers mode/approval transitions.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1140,11 +1140,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://docs.cursor.com/en/agent/chat/commands"
+        "https://cursor.com/docs/skills"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Current skills documentation lists slash commands and explicit-only /skill-name invocation; the former commands URL redirects to an overview.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1161,12 +1161,12 @@
         "interactive_host",
         "headless_live"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://docs.cursor.com/background-agent",
+        "https://cursor.com/docs/cloud-agent",
         "https://cursor.com/changelog/2-5"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Cloud Agents run in isolated VMs and support parallel work; async subagents are documented in 2.5. The retired background-agent URL is not used as current proof.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1187,12 +1187,11 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://docs.cursor.com/en/context/memories",
-        "https://docs.cursor.com/context/rules"
+        "https://cursor.com/docs/rules"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Current rules documentation describes persistent project/user/team context and AGENTS.md. Automatic conversation-memory behavior was not re-established; the claim remains partial.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1212,12 +1211,12 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "https://cursor.com/changelog/2-5",
         "https://cursor.com/blog/agent-sandboxing"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Official sandbox material documents network/filesystem controls and platform-dependent implementations; this is host documentation, not local enforcement acceptance.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1241,12 +1240,12 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-07-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
-        "https://docs.cursor.com/en/agent/tools",
-        "https://cursor.com/changelog/2-4"
+        "https://cursor.com/docs/agent/overview",
+        "https://cursor.com/docs/mcp"
       ],
-      "summary": "Primary runtime documentation was reviewed for the named host capability surfaces.",
+      "summary": "Current Agent and MCP docs cover file editing/search, shell/web tools, stdio/remote MCP, and project/global configuration; these are host surfaces only.",
       "limitations": [
         "Documentation describes host/platform behavior only.",
         "It does not prove Meta_Kim projection freshness or current-host/live acceptance."
@@ -1294,7 +1293,7 @@
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/cursor", "digestKind": "sha256", "sha256": "786f610efc8d8f2c3e61e8260c4ce9b4f00da6af82701958fb46097b8c8c3780" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "0888397ffaae7387be7616788eb80893dc92d4014ed1bef26e0591179e6ec622" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "84d174aa0703c7c33fd8e4677c23df0ee749023642dda7a9568a4ab752d50a70" }
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d2abc9c5a2944332e4c572f7ab5ea3087acb50c82c04ace182f4e0917dd451e3" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -1345,16 +1344,17 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-08-28",
+      "observedAt": "2026-10-02",
       "sourceRefs": [
         "canonical/runtime-assets/cursor",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Fresh conservative review of canonical runtime assets and governance contracts; no host or behavioral support is inferred.",
+      "summary": "Replaced overview-redirecting legacy evidence URLs with current rules, skills, CLI, Cloud Agent, Agent and MCP documentation. Kept all product/live claims unaccepted and memory partial; no native Cursor session was available.",
       "limitations": [
-        "This observation cannot create or promote host support.",
-        "It can only retain unknown, partial, not-applicable, or non-executable conclusions for a bounded review window."
+        "This review checks official documentation and repository integration boundaries, not current-host behavior.",
+        "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
+        "Renewal requires another substantive review within the existing 30-day window, never automatic re-dating."
       ]
     }
   ],

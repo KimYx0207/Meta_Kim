@@ -1471,6 +1471,95 @@ test("Codex Desktop session producer rejects a mismatched child backlink", async
   }
 });
 
+test("Desktop readers use fresh bound events when an open Windows rollout keeps an old mtime", async () => {
+  for (const kind of ["agent", "engineering"]) {
+    const fixture = kind === "agent" ? codexDesktopFixture() : codexDesktopEngineeringFixture(fixtureProject());
+    const dir = path.join(fixture.codexHome, "sessions", "2026", "07", "28");
+    const prefix = kind === "agent" ? "parent" : "desktop";
+    const parent = path.join(dir, `rollout-${prefix}-${fixture.threadId}.jsonl`);
+    utimesSync(parent, new Date(0), new Date(0));
+    const reader = kind === "agent" ? readCodexDesktopSessionEvidence : readCodexDesktopEngineeringEvidence;
+    const evidence = await reader(fixture);
+    assert.ok(Date.parse(evidence.observedAt) >= fixture.sinceMs);
+    await assert.rejects(() => reader({ ...fixture, sinceMs: Date.now() + 60_000 }), /stale|timestamp|chain_invalid/u);
+  }
+});
+
+test("Desktop item completion records preserve exact parent-child and final-marker replay", async () => {
+  const fixture = codexDesktopFixture();
+  const projectRoot = fixtureProject();
+  const dir = path.join(fixture.codexHome, "sessions", "2026", "07", "28");
+  const parentFile = path.join(dir, `rollout-parent-${fixture.threadId}.jsonl`);
+  const childFile = path.join(dir, `rollout-child-${fixture.childSessionId}.jsonl`);
+  const parent = readFileSync(parentFile, "utf8").trim().split("\n").map(JSON.parse);
+  const child = readFileSync(childFile, "utf8").trim().split("\n").map(JSON.parse);
+  const activity = parent.find((record) => record.payload.type === "sub_agent_activity");
+  const original = activity.payload;
+  activity.payload = { type: "item_completed", thread_id: fixture.threadId,
+    item: { type: "SubAgentActivity", id: original.event_id, kind: "started", agent_thread_id: original.agent_thread_id, agent_path: original.agent_path } };
+  parent.push({ timestamp: activity.timestamp, type: "event_msg", payload: {
+    type: "item_completed", thread_id: fixture.threadId,
+    item: { ...activity.payload.item, id: "subagent-completed-fixture", kind: "completed" },
+  } });
+  const final = child.find((record) => record.payload.type === "agent_message");
+  final.payload = { type: "item_completed", thread_id: fixture.childSessionId,
+    item: { type: "AgentMessage", id: "child-final-item", phase: "final_answer", content: [{ type: "Text", text: fixture.marker }] } };
+  const save = () => {
+    writeFileSync(parentFile, `${jsonl(parent)}\n`);
+    writeFileSync(childFile, `${jsonl(child)}\n`);
+  };
+  save();
+  const previousHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = fixture.codexHome;
+  try {
+    const produced = await runCodexDesktopSessionCapabilityProducer({ projectRoot, ...fixture, reader: (options) => readCodexDesktopSessionEvidence(options) });
+    assert.equal(produced.results.length, 2);
+    const state = loadEffectiveRuntimeCapabilityClaims({ packageRoot, projectRoot, allowTestReceipts: true });
+    assert.equal(state.overlayStatus.applied.length, 2, JSON.stringify(state.overlayStatus.rejected));
+    activity.payload.thread_id = fixture.childSessionId;
+    save();
+    await assert.rejects(() => readCodexDesktopSessionEvidence(fixture), /lifecycle|binding/u);
+    activity.payload.thread_id = fixture.threadId;
+    final.payload.thread_id = fixture.threadId;
+    save();
+    await assert.rejects(() => readCodexDesktopSessionEvidence(fixture), /child_final/u);
+  } finally {
+    if (previousHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousHome;
+  }
+});
+
+test("Desktop engineering binds completed FileChange items and rejects failed or unrelated items", async () => {
+  const fixture = codexDesktopEngineeringFixture(fixtureProject());
+  const file = path.join(fixture.codexHome, "sessions", "2026", "07", "28", `rollout-desktop-${fixture.threadId}.jsonl`);
+  const records = readFileSync(file, "utf8").trim().split("\n").map(JSON.parse);
+  for (const record of records) {
+    if (record.payload.type !== "patch_apply_end") continue;
+    const patch = record.payload;
+    record.payload = {
+      type: "item_completed", thread_id: fixture.threadId,
+      item: { type: "FileChange", id: `exec-${records.indexOf(record)}`, status: "completed", changes: patch.changes, stdout: patch.stdout, stderr: "" },
+    };
+  }
+  const save = () => writeFileSync(file, `${jsonl(records)}\n`);
+  save();
+  const evidence = await readCodexDesktopEngineeringEvidence(fixture);
+  assert.equal(evidence.events.patchUpdate.resultStatus, "completed");
+  const patch = records.find((record) => record.payload.item?.type === "FileChange");
+  patch.payload.item.status = "failed";
+  save();
+  await assert.rejects(() => readCodexDesktopEngineeringEvidence(fixture), /chain_invalid/u);
+  patch.payload.item.status = "completed";
+  patch.payload.thread_id = "99999999-9999-4999-8999-999999999999";
+  save();
+  await assert.rejects(() => readCodexDesktopEngineeringEvidence(fixture), /chain_invalid/u);
+  patch.payload.thread_id = fixture.threadId;
+  const [originalPath, change] = Object.entries(patch.payload.item.changes)[0];
+  patch.payload.item.changes = { [`${originalPath}.unrelated`]: change };
+  save();
+  await assert.rejects(() => readCodexDesktopEngineeringEvidence(fixture), /chain_invalid/u);
+});
+
 test("Codex Desktop session reader rejects wrong marker, stale, and ambiguous parent evidence", async (context) => {
   await context.test("wrong marker", async () => {
     const fixture = codexDesktopFixture();

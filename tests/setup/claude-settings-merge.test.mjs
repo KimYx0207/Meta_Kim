@@ -200,6 +200,32 @@ describe("Claude settings hook command rendering", () => {
     );
   });
 
+  test("HookPrompt budget is expressed in Claude's seconds unit, not milliseconds", () => {
+    const template = buildMetaKimHooksTemplate(
+      "C:\\Users\\Example\\.claude\\hooks\\meta-kim",
+      "D:\\KimProject\\Meta_Kim",
+      {
+        hookPromptCommand:
+          'node "C:/Users/Example/.claude/hooks/user-prompt-submit.js"',
+      },
+    );
+    const { timeout } = template.UserPromptSubmit[0].hooks[0];
+
+    // Claude multiplies this field by 1000. A millisecond-shaped value such as
+    // 10000 silently buys 2.78 hours, which is indistinguishable from having no
+    // budget at all.
+    assert.ok(
+      timeout <= 600,
+      `HookPrompt timeout ${timeout} exceeds Claude's own 600s default, so it was written in milliseconds`,
+    );
+    // The hook issues a model request; a single-digit budget cuts prompt
+    // optimization off mid-flight on an ordinary slow round trip.
+    assert.ok(
+      timeout >= 30,
+      `HookPrompt timeout ${timeout}s is below the model round-trip budget`,
+    );
+  });
+
   test("global settings merge keeps native HookPrompt block before existing prompt hooks", () => {
     const base = {
       hooks: {

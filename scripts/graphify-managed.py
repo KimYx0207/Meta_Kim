@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import importlib.util
@@ -15,6 +16,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -28,6 +30,102 @@ LOG_BYTES, LOG_BACKUPS, AST_BYTES, AST_DAYS = 2 * 1024**2, 3, 1024**3, 30
 CORE = ("graph.json", "GRAPH_REPORT.md", ".graphify_analysis.json", ".graphify_labels.json",
         ".graphify_labels.json.sig", ".graphify_root", ".graphify_semantic_marker", "cost.json",
         ".graphify_build.json", ".graphify_python", "manifest.json")
+
+
+@contextmanager
+def plain_directory_fd(root, directory):
+    """Anchor each directory component; never follow a replaced parent link."""
+    root, directory = Path(os.path.abspath(root)), Path(os.path.abspath(directory))
+    try:
+        parts = directory.relative_to(root).parts
+    except ValueError as exc:
+        raise RuntimeError("Managed path is outside its repository boundary") from exc
+    descriptors = []
+    try:
+        try:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            descriptors.append(os.open(root, flags))
+            for part in parts:
+                descriptors.append(os.open(part, flags, dir_fd=descriptors[-1]))
+        except OSError as exc:
+            raise RuntimeError("Managed path must use plain directories, without symlink parents") from exc
+        yield descriptors[-1]
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def assert_plain_path(root, target, *, directory=True, allow_missing=True):
+    root, target = Path(os.path.abspath(root)), Path(os.path.abspath(target))
+    try:
+        parts = target.relative_to(root).parts
+    except ValueError as exc:
+        raise RuntimeError("Managed path is outside its repository boundary") from exc
+    current = root
+    for index, part in enumerate(parts):
+        with plain_directory_fd(root, current) as parent:
+            try:
+                info = os.stat(part, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                if allow_missing:
+                    return
+                raise RuntimeError("Managed path is missing")
+            if stat.S_ISLNK(info.st_mode):
+                raise RuntimeError("Managed path must not contain a symlink")
+            if index < len(parts) - 1 or directory:
+                if not stat.S_ISDIR(info.st_mode):
+                    raise RuntimeError("Managed path must be a plain directory")
+            elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise RuntimeError("Managed artifact must be a plain unshared file")
+        current /= part
+
+
+def assert_plain_tree(root, directory):
+    assert_plain_path(root, directory, allow_missing=False)
+    for parent, subdirs, files in os.walk(directory, followlinks=False):
+        for name in subdirs:
+            assert_plain_path(root, Path(parent) / name, allow_missing=False)
+        for name in files:
+            assert_plain_path(root, Path(parent) / name, directory=False, allow_missing=False)
+
+
+def remove_managed_tree(root, target):
+    """rmtree's fd-safe implementation protects descendants against link swaps."""
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise RuntimeError("Descriptor-safe directory cleanup is required")
+    target = Path(target)
+    with plain_directory_fd(root, target.parent) as parent:
+        try:
+            info = os.stat(target.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError("Managed cleanup target must be a directory, not a symlink")
+        assert_plain_tree(root, target)
+        shutil.rmtree(target.name, dir_fd=parent)
+
+
+def replace_managed_directory(root, source, destination):
+    source, destination = Path(source), Path(destination)
+    with plain_directory_fd(root, source.parent) as source_parent:
+        with plain_directory_fd(root, destination.parent) as destination_parent:
+            if not stat.S_ISDIR(os.stat(source.name, dir_fd=source_parent, follow_symlinks=False).st_mode):
+                raise RuntimeError("Managed promotion source must be a directory, not a symlink")
+            try:
+                target_info = os.stat(destination.name, dir_fd=destination_parent, follow_symlinks=False)
+            except FileNotFoundError:
+                target_info = None
+            if target_info and not stat.S_ISDIR(target_info.st_mode):
+                raise RuntimeError("Managed promotion destination must not be a symlink")
+            os.replace(source.name, destination.name, src_dir_fd=source_parent, dst_dir_fd=destination_parent)
+
+
+def assert_managed_directories(repo, state):
+    for directory in (state, state / "runtime", state / "candidate", state / "previous", repo / "graphify-out"):
+        assert_plain_path(repo, directory)
+    for name in ("config.json", "request.json", "status.json", "success.json", "worker.lock", "worker.log",
+                 "worker.log.1", "worker.log.2", "worker.log.3"):
+        assert_plain_path(repo, state / name, directory=False)
 
 
 def clean_environment():
@@ -50,8 +148,9 @@ def context(repo):
     if git_dir != common:
         raise RuntimeError("Managed Graphify belongs to the main checkout; linked worktree skipped")
     state = git_dir / "graphify"
-    if state.is_symlink():
-        raise RuntimeError("Graphify control directory must not be a symlink")
+    # Resolving git_dir must not erase a linked .git parent from the check.
+    assert_plain_path(repo, repo / ".git", allow_missing=False)
+    assert_managed_directories(repo, state)
     return repo, state
 
 
@@ -99,7 +198,7 @@ def hook_block(repo, event, manager=SCRIPT):
     operation_guard = ("  for operation in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD; do\n"
                        "    [ ! -e \"$(git rev-parse --git-path \"$operation\")\" ] || exit 0\n"
                        "  done\n") if event in {"post-commit", "post-checkout"} else ""
-    return (f"# {stem}-start\n(\n"
+    return (f"# {stem}-start\n# meta-kim-repository: {json.dumps(str(repo))}\n(\n"
             f"  [ \"$(git rev-parse --show-toplevel 2>/dev/null)\" = {shlex.quote(str(repo))} ] || exit 0\n"
             f"{operation_guard}"
             f"  {arguments} </dev/null\n)\n# {stem}-end")
@@ -125,7 +224,47 @@ def repair_guidance(repo):
             file.write_text(updated)
 
 
+def assert_hook_registration_owner(repo, directory):
+    for event in EVENTS:
+        hook = directory / event
+        assert_plain_path(directory, hook, directory=False)
+        if not hook.exists():
+            continue
+        content = hook.read_text()
+        blocks = re.findall(r"# graphify-(?:checkout-)?hook-start.*?# graphify-(?:checkout-)?hook-end", content, re.DOTALL)
+        if len(blocks) > 1:
+            raise RuntimeError("Multiple Graphify blocks require reconciliation")
+        for block in blocks:
+            marker = re.search(r"^# meta-kim-repository: (.+)$", block, re.MULTILINE)
+            guard = f'[ "$(git rev-parse --show-toplevel 2>/dev/null)" = {shlex.quote(str(repo))} ]'
+            if marker:
+                if json.loads(marker[1]) != str(repo):
+                    raise RuntimeError("Shared hooks are registered to another repository; nothing was replaced")
+            elif "graphify-managed.py" in block and guard not in block:
+                raise RuntimeError("Shared hooks are registered to another repository; nothing was replaced")
+            elif directory != repo / ".git" / "hooks" and guard not in block:
+                raise RuntimeError("Shared hooks have unverified ownership; another repository may own them")
+
+
 def install(repo, state):
+    assert_managed_directories(repo, state)
+    directory = hooks_path(repo)
+    directory.mkdir(parents=True, exist_ok=True)
+    # Different repositories can share core.hooksPath. Serialize the ownership
+    # check and replacement on that shared directory, before writing repo state.
+    descriptor = os.open(directory / ".meta-kim-graphify-install.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise RuntimeError("Shared hook lock must be a plain unshared file")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        assert_hook_registration_owner(repo, directory)
+        return install_locked(repo, state)
+    finally:
+        os.close(descriptor)
+
+
+def install_locked(repo, state):
     from importlib.metadata import version
     if version("graphifyy") != "0.9.56":
         raise RuntimeError("Validate the producer adapter before wiring a different Graphify version")
@@ -138,6 +277,8 @@ def install(repo, state):
     existing = subprocess.run(["git", "-C", str(repo), "config", "--local", "--get", "alias.meta-graphify"],
                               env=clean_environment(), capture_output=True, text=True).stdout.strip()
     old_config = read_json(state / "config.json", {})
+    if old_config and (old_config.get("owner") != "Meta_Kim" or old_config.get("repo") != str(repo)):
+        raise RuntimeError("Graphify control configuration belongs to another repository or owner")
     if existing and existing not in {alias_command(), old_config.get("alias")}:
         raise RuntimeError("The local meta-graphify alias already belongs to another command")
     directory = hooks_path(repo)
@@ -225,6 +366,8 @@ def request(repo, state, event):
 
 
 def copy_seed(current, candidate):
+    assert_plain_tree(current.parent, current)
+    assert_plain_path(current.parent, candidate)
     candidate.mkdir()
     for source in current.iterdir():
         name = source.name
@@ -284,6 +427,7 @@ def graph_digest(output):
 
 
 def clean_ast_cache(output):
+    assert_plain_tree(output.parent, output)
     cache = output / "cache/ast"
     if not cache.is_dir() or cache.is_symlink():
         return
@@ -292,7 +436,8 @@ def clean_ast_cache(output):
     total = sum(size for _, size, _ in files)
     for modified, size, file in sorted(files):
         if modified < time.time() - AST_DAYS * 86400 or total > AST_BYTES:
-            file.unlink()
+            with plain_directory_fd(output, file.parent) as parent:
+                os.unlink(file.name, dir_fd=parent)
             total -= size
 
 
@@ -332,18 +477,22 @@ def run_producer(repo, candidate, logger):
 
 
 def publish(current, candidate, previous):
+    root = current.parent
+    for directory in (current, candidate, previous):
+        assert_plain_path(root, directory)
     if previous.exists():
-        shutil.rmtree(previous)
+        remove_managed_tree(root, previous)
     try:
-        os.replace(current, previous)
-        os.replace(candidate, current)
+        replace_managed_directory(root, current, previous)
+        replace_managed_directory(root, candidate, current)
     except BaseException:
         if not current.exists() and previous.exists():
-            os.replace(previous, current)
+            replace_managed_directory(root, previous, current)
         raise
 
 
 def work(repo, state):
+    assert_managed_directories(repo, state)
     config = read_json(state / "config.json", {})
     if config.get("owner") != "Meta_Kim" or config.get("repo") != str(repo):
         raise RuntimeError("An installed Meta_Kim lifecycle is required before writing graph artifacts")
@@ -371,7 +520,7 @@ def work(repo, state):
             for number in signals:
                 signal.signal(number, cancel)
             if not current.exists() and previous.exists():
-                os.replace(previous, current)
+                replace_managed_directory(repo, previous, current)
                 logger.info("Recovered the previous graph after an interrupted directory promotion")
             for attempt in range(3):
                 item = read_json(state / "request.json")
@@ -395,12 +544,12 @@ def work(repo, state):
                 write_json(state / "status.json", {"status": "running", "request": item, "startedAt": started, "pid": os.getpid()})
                 logger.info("Start %s %s attempt=%s", item["event"], item["id"], attempt + 1)
                 if candidate.exists():
-                    shutil.rmtree(candidate)
+                    remove_managed_tree(repo, candidate)
                 copy_seed(current, candidate)
                 run_producer(repo, candidate, logger)
                 if source_snapshot(repo) != source:
                     logger.info("Sources changed during refresh; discard candidate and retry")
-                    shutil.rmtree(candidate)
+                    remove_managed_tree(repo, candidate)
                     time.sleep(3)
                     continue
                 if output_snapshot(current) != current_output:
@@ -410,10 +559,11 @@ def work(repo, state):
                         or receipt.get("graphSha256") != graph_digest(candidate)):
                     raise RuntimeError("Producer returned without a matching verified receipt")
                 clean_ast_cache(candidate)
+                assert_plain_tree(repo, current)
                 publish(current, candidate, previous)
                 # Rollback needs the verified bundle, not a duplicate extraction cache.
-                if (previous / "cache/ast").is_dir() and not (previous / "cache/ast").is_symlink():
-                    shutil.rmtree(previous / "cache/ast")
+                if (previous / "cache/ast").exists():
+                    remove_managed_tree(repo, previous / "cache/ast")
                 result = {"status": "success", "request": item, "startedAt": started, "finishedAt": time.time(),
                           "source": source, "outputSnapshot": output_snapshot(current),
                           "protectedOutputStatSha256": protected_snapshot(repo, receipt), "receipt": receipt}
@@ -431,7 +581,7 @@ def work(repo, state):
         finally:
             try:
                 if candidate.exists():
-                    shutil.rmtree(candidate)
+                    remove_managed_tree(repo, candidate)
                 logger.removeHandler(handler)
                 handler.close()
             finally:

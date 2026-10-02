@@ -13,7 +13,14 @@ test("runtime matrix covers platforms and critical constraints", async () => {
   assert.equal(matrix.evidenceLedger, "config/runtime-capability-evidence.json");
   assert.equal(matrix.schemaVersion, 2);
   assert.equal(Object.hasOwn(matrix, "lastVerifiedAt"), false);
-  assert.equal(matrix.lastReviewedAt, "2026-08-28");
+  // A substantive review must be renewable without changing a date literal in
+  // this structural test. Real-clock expiry is checked by the maintenance gate.
+  assert.match(matrix.lastReviewedAt, /^\d{4}-\d{2}-\d{2}$/u);
+  assert.equal(new Date(matrix.lastReviewedAt).toISOString().slice(0, 10), matrix.lastReviewedAt);
+  const ledger = await readJson(matrix.evidenceLedger);
+  for (const review of ledger.observations.filter((entry) => entry.observationClass === "conservative_review")) {
+    assert.equal(review.observedAt, matrix.lastReviewedAt);
+  }
   const nestedReviewDates = new Set();
   const collectReviewDates = (value) => {
     if (!value || typeof value !== "object") return;

@@ -11,6 +11,52 @@
   },
   "projects": [
     {
+      "id": "kim-service",
+      "name": "Kim Service professional agent packs",
+      "source": {
+        "type": "github",
+        "uri": "https://github.com/KimYx0207/Kim_Service",
+        "localPath": null,
+        "inspectionStatus": "declared_contract_index",
+        "lastInspectedAt": null
+      },
+      "capabilityCard": {
+        "oneLine": "First-party professional owner contracts for everyday content, ecommerce, career, education and small-business work.",
+        "taskShapes": ["professional_content", "industry_analysis", "learning_support"],
+        "triggerConditions": ["自媒体选题、标题封面、脚本文案", "电商商品页、客服回复、店铺数据", "简历、面试、周报邮件", "备课、知识讲解、练习题", "副业方向、启动计划、报价成本"],
+        "inputContract": { "requires": ["explicit local dependency root", "v1 generated capability index", "matching source contracts and component hashes"] },
+        "outputContract": { "produces": ["professional owner candidates", "scoped input/output and permission contracts", "source integrity evidence or explicit discovery gap"] },
+        "canDo": ["provide independent professional agent contracts", "supply plain-language role triggers and complete examples"],
+        "canNotDo": ["governance routing", "final user-goal acceptance", "automatic external writes", "prove runtime-native agent loading"],
+        "notFor": ["replacing the nine governance owners", "implicit global installation", "adopting third-party governance architecture"],
+        "verificationMethod": "node scripts/run-node-tests.mjs tests/governance/dependency-agent-discovery.test.mjs --concurrency 1",
+        "verificationMethods": ["node scripts/run-node-tests.mjs tests/governance/dependency-agent-discovery.test.mjs --concurrency 1", "npm run meta:route:validate"],
+        "risk": ["index discovery is not live invocation", "review source contracts before binding", "do not execute dependency validation code during discovery"],
+        "routeEligibility": "needs_probe",
+        "writebackKey": "dependency:kim-service"
+      },
+      "interface": {
+        "invokeAs": "agent_contract",
+        "invocationPath": "explicit-root/agents/<component>/AGENT.md",
+        "requiredFiles": ["generated/capabilities.json"],
+        "requiredEnv": [],
+        "requiredRuntime": [],
+        "capabilityIndex": {
+          "format": "component-capabilities-v1",
+          "path": "generated/capabilities.json",
+          "rootEnv": "META_KIM_KIM_SERVICE_ROOT"
+        }
+      },
+      "runtimeSupport": { "claude_code": "unknown", "codex": "unknown", "cursor": "unknown", "openclaw": "unknown" },
+      "osSupport": { "macos": "unknown", "windows": "unknown", "linux": "unknown", "wsl2": "unknown" },
+      "supportEvidence": {
+        "source": "declared_source_contract_index",
+        "confidence": "repo_claim",
+        "verificationCommand": "node scripts/run-node-tests.mjs tests/governance/dependency-agent-discovery.test.mjs --concurrency 1",
+        "lastVerifiedAt": null
+      }
+    },
+    {
       "id": "agent-teams-playbook",
       "name": "agent-teams-playbook",
       "source": {

@@ -53,7 +53,7 @@ export function sanitizeCapabilityPublicationText(
     .replace(/\\\\[^\r\n)\]}]+/gu, "[REDACTED_UNC_PATH]")
     .replace(/[A-Za-z]:[\\/][^\r\n)\]}]+/gu, "[REDACTED_ABSOLUTE_PATH]")
     .replace(
-      /(^|[\s=(])\/(?!\/)[^\r\n)\]}]+/gu,
+      /(^|[\s=(])\/(?![\/\s])[^\r\n)\]}]+/gu,
       (match, prefix) => `${prefix}[REDACTED_POSIX_PATH]`,
     );
   return sanitized;
@@ -76,7 +76,17 @@ export function sanitizeCapabilityPublicationValue(value, options = {}) {
       return [key, sanitizeCapabilityPublicationValue(nested, options)];
     }));
   }
-  return typeof value === "string"
-    ? sanitizeCapabilityPublicationText(value, options)
-    : value;
+  if (typeof value === "string") {
+    // Worker messages are JSON strings inside the route artifact. Sanitize
+    // their values before reserializing so redaction cannot consume JSON syntax.
+    let structured;
+    if (/^\s*[\[{]/u.test(value)) {
+      try { structured = JSON.parse(value); } catch { /* Ordinary text uses the same redaction below. */ }
+    }
+    if (structured && typeof structured === "object") {
+      return JSON.stringify(sanitizeCapabilityPublicationValue(structured, options));
+    }
+    return sanitizeCapabilityPublicationText(value, options);
+  }
+  return value;
 }

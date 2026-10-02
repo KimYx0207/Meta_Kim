@@ -17,6 +17,7 @@ if (process.platform === "win32") {
   process.exit(0);
 }
 const TEST_FILES = Object.freeze([
+  path.join(REPO_ROOT, "tests", "setup", "graphify-managed-safety.test.py"),
   path.join(REPO_ROOT, "tests", "setup", "graphify-managed.test.py"),
   path.join(REPO_ROOT, "tests", "setup", "graphify-managed-producer.test.py"),
 ]);

@@ -4,7 +4,7 @@ import { createReadStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { observeCodexJsonl } from "./observe-host-events.mjs";
+import { codexDesktopEventPayload, observeCodexJsonl } from "./observe-host-events.mjs";
 
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 const SESSION_META_READ_LIMIT_BYTES = 1024 * 1024;
@@ -495,6 +495,7 @@ async function readDesktopParentEventSlice({ parent, threadId, childSessionId, m
   const activities = [];
   const finalMessages = [];
   let sessionMeta = null;
+  let hasFreshRecord = false;
   let lineNumber = 0;
   for await (const line of lines) {
     lineNumber += 1;
@@ -510,15 +511,17 @@ async function readDesktopParentEventSlice({ parent, threadId, childSessionId, m
     }
     const timestampMs = Date.parse(record?.timestamp ?? "");
     if (!Number.isFinite(timestampMs) || timestampMs < sinceMs) continue;
-    const payload = record?.payload ?? {};
+    hasFreshRecord = true;
+    const payload = codexDesktopEventPayload(record) ?? {};
     if (record?.type === "response_item" && payload?.type === "function_call" && payload?.name === "spawn_agent" && payload?.namespace === "collaboration" && payload?.call_id) {
       spawnCalls.set(payload.call_id, { line, lineNumber, record });
     }
     if (record?.type === "response_item" && payload?.type === "function_call_output" && payload?.call_id) {
       callOutputs.set(payload.call_id, { line, lineNumber, record });
     }
-    if (record?.type === "event_msg" && payload?.type === "sub_agent_activity" && payload?.agent_thread_id === childSessionId && payload?.event_id) {
-      activities.push({ line, lineNumber, record });
+    if (record?.type === "event_msg" && payload?.type === "sub_agent_activity" && payload?.agent_thread_id === childSessionId && payload?.event_id &&
+        (!payload.session_id || payload.session_id === threadId)) {
+      activities.push({ line, lineNumber, record, activity: payload });
     }
     if (record?.type === "response_item" && payload?.type === "agent_message") {
       const texts = (payload.content ?? []).map((entry) => entry?.text ?? "").filter(Boolean);
@@ -526,14 +529,15 @@ async function readDesktopParentEventSlice({ parent, threadId, childSessionId, m
     }
   }
   if (!sessionMeta) fail("codex_desktop_parent_meta_missing");
-  const eventIds = [...new Set(activities.map((entry) => entry.record.payload.event_id))];
+  if (!hasFreshRecord) fail("codex_desktop_session_stale");
+  const eventIds = [...new Set(activities.filter((entry) => ["started", "interacted"].includes(entry.activity.kind)).map((entry) => entry.activity.event_id))];
   if (eventIds.length !== 1) fail("codex_desktop_spawn_lifecycle_not_unique");
   const [eventId] = eventIds;
   const spawn = spawnCalls.get(eventId);
   const output = callOutputs.get(eventId);
   if (!spawn || !output) fail("codex_desktop_spawn_call_binding_missing");
   const childAgentPaths = [...new Set(
-    activities.map((entry) => entry.record.payload.agent_path).filter(Boolean),
+    activities.map((entry) => entry.activity.agent_path).filter(Boolean),
   )];
   if (childAgentPaths.length !== 1) fail("codex_desktop_child_agent_path_invalid");
   const [childAgentPath] = childAgentPaths;
@@ -593,7 +597,8 @@ export async function readCodexDesktopSessionEvidence({
   const childMeta = await readSessionMeta(child.filePath);
   if (parentMeta?.id !== threadId || parentMeta?.originator !== "Codex Desktop" || parentMeta?.source !== "vscode") fail("codex_desktop_parent_source_invalid");
   if (childMeta?.id !== childSessionId || childMeta?.originator !== "Codex Desktop" || childMeta?.source?.subagent?.thread_spawn?.parent_thread_id !== threadId) fail("codex_child_session_mismatch");
-  if (!isFresh(parent.stats, sinceMs) || !isFresh(child.stats, sinceMs)) fail("codex_desktop_session_stale");
+  // Windows can defer mtime updates while Desktop keeps its append handle open.
+  // Freshness comes from the bound spawn/final/completion events below.
   const parentSlice = await readDesktopParentEventSlice({ parent, threadId, childSessionId, marker, sinceMs });
   const childSessionText = await readBoundedFile(child, maxBytes, "codex_child_session_too_large");
   const childRecords = childSessionText.split(/\r?\n/u).filter(Boolean).map((line, index) => {
@@ -601,8 +606,11 @@ export async function readCodexDesktopSessionEvidence({
   }).filter(Boolean);
   const childMetas = childRecords.filter(({ value }) =>
     value?.type === "session_meta" && value?.payload?.id === childSessionId);
-  const childFinals = childRecords.filter(({ value }) =>
-    value?.type === "event_msg" && value?.payload?.type === "agent_message" && value?.payload?.phase === "final_answer" && value?.payload?.message === marker);
+  const childFinals = childRecords.filter(({ value }) => {
+    const payload = codexDesktopEventPayload(value);
+    return value?.type === "event_msg" && payload?.type === "agent_message" && payload?.phase === "final_answer" && payload?.message === marker &&
+      (!payload.session_id || payload.session_id === childSessionId);
+  });
   const taskCompletions = childRecords.filter(({ value }) =>
     value?.type === "event_msg" && value?.payload?.type === "task_complete" && value?.payload?.last_agent_message === marker);
   if (childMetas.length !== 1 || childFinals.length !== 1 || taskCompletions.length !== 1) fail("codex_desktop_child_final_invalid");
@@ -674,7 +682,19 @@ export function observeCodexDesktopEngineeringSlice(text, { marker, workspacePat
   }).filter(Boolean);
   const calls = records.filter(({ value }) => value?.type === "response_item" && value?.payload?.type === "custom_tool_call" && value?.payload?.name === "exec" && value?.payload?.call_id);
   const outputs = new Map(records.filter(({ value }) => value?.type === "response_item" && value?.payload?.type === "custom_tool_call_output" && value?.payload?.call_id).map((entry) => [entry.value.payload.call_id, entry]));
-  const patchEnds = records.filter(({ value }) => value?.type === "event_msg" && value?.payload?.type === "patch_apply_end" && value?.payload?.success === true && value?.payload?.status === "completed");
+  const threadId = records.find(({ value }) => value?.type === "session_meta")?.value?.payload?.id;
+  const patchEnds = records.flatMap((entry) => {
+    const payload = entry.value?.payload;
+    if (entry.value?.type !== "event_msg") return [];
+    if (payload?.type === "patch_apply_end" && payload.success === true && payload.status === "completed") {
+      return [{ ...entry, patchResult: payload }];
+    }
+    if (payload?.type === "item_completed" && payload.thread_id === threadId &&
+        payload.item?.type === "FileChange" && payload.item.status === "completed") {
+      return [{ ...entry, patchResult: payload.item }];
+    }
+    return [];
+  });
   const normalizedInput = (entry) => normalizePathText(entry.value.payload.input ?? "");
   const isShellProvider = (input) => /tools\.(?:shell_command|exec_command)/u.test(input);
   const successfulShell = calls.map((call) => ({ call, output: outputs.get(call.value.payload.call_id), input: normalizedInput(call) })).filter(({ output }) => output && completedShellOutput(output.value.payload));
@@ -684,9 +704,11 @@ export function observeCodexDesktopEngineeringSlice(text, { marker, workspacePat
   const afterReads = reads.filter(({ output }) => outputText(output.value.payload).includes(`after-${marker}`));
   const patches = calls.map((call) => ({ call, output: outputs.get(call.value.payload.call_id), input: normalizedInput(call) })).filter(({ input, output }) => input.includes("tools.apply_patch") && input.includes(filePath) && output);
   const bindPatchEnd = ({ call, output, input }, kind) => {
-    const matches = patchEnds.filter((entry) => entry.line > call.line && entry.line < output.line && normalizePathText(entry.value.payload.stdout ?? "").includes(filePath));
+    const matches = patchEnds.filter((entry) => entry.line > call.line && entry.line < output.line && normalizePathText(entry.patchResult.stdout ?? "").includes(filePath));
     if (matches.length !== 1) return null;
-    const change = Object.values(matches[0].value.payload.changes ?? {})[0];
+    const changes = Object.entries(matches[0].patchResult.changes ?? {});
+    if (changes.length !== 1 || normalizePathText(changes[0][0]) !== filePath) return null;
+    const change = changes[0][1];
     if (kind === "add" && (change?.type !== "add" || change?.content !== `before-${marker}\n` || !input.includes("*** add file:"))) return null;
     if (kind === "update" && (change?.type !== "update" || !String(change?.unified_diff ?? "").includes(`-before-${marker}`) || !String(change?.unified_diff ?? "").includes(`+after-${marker}`) || !input.includes("*** update file:"))) return null;
     return { call, output, patchEnd: matches[0] };
@@ -708,7 +730,7 @@ export function observeCodexDesktopEngineeringSlice(text, { marker, workspacePat
       providerId: hostSurface,
       resultStatus: "completed",
       inputDigest: sha256(entry.call.value.payload.input ?? ""),
-      outputDigest: sha256(entry.patchEnd ? JSON.stringify(entry.patchEnd.value.payload.changes) : outputText(entry.output.value.payload)),
+      outputDigest: sha256(entry.patchEnd ? JSON.stringify(entry.patchEnd.patchResult.changes) : outputText(entry.output.value.payload)),
       sourceLines: selected.map((item) => item.line),
       facet,
       observedAt: entry.output.value.timestamp ?? entry.patchEnd?.value?.timestamp ?? entry.call.value.timestamp,
@@ -739,7 +761,9 @@ export async function readCodexDesktopEngineeringEvidence({ codexHome, threadId,
   const files = await listSessionFiles(sessionsRoot);
   const parent = selectDesktopSessionFile(files, threadId, sinceMs, "codex_parent_session_not_unique");
   const meta = await readSessionMeta(parent.filePath);
-  if (meta?.id !== threadId || meta?.originator !== "Codex Desktop" || meta?.source !== "vscode" || !isFresh(parent.stats, sinceMs)) fail("codex_desktop_engineering_parent_invalid");
+  if (meta?.id !== threadId || meta?.originator !== "Codex Desktop" || meta?.source !== "vscode") fail("codex_desktop_engineering_parent_invalid");
+  // Do not use mtime as an event clock for an open Windows rollout. Every
+  // selected tool call/result still has to pass the sinceMs filter below.
   const snapshotSize = parent.stats.size;
   const stream = createReadStream(parent.filePath, { encoding: "utf8", start: 0, end: Math.max(0, snapshotSize - 1) });
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
@@ -768,7 +792,9 @@ export async function readCodexDesktopEngineeringEvidence({ codexHome, threadId,
       selected.push({ line, lineNumber });
     } else if (record?.type === "response_item" && payload?.type === "custom_tool_call_output" && selectedCallIds.has(payload.call_id)) {
       selected.push({ line, lineNumber });
-    } else if (record?.type === "event_msg" && payload?.type === "patch_apply_end" && serialized.includes(normalizedWorkspace)) {
+    } else if (record?.type === "event_msg" && serialized.includes(normalizedWorkspace) &&
+      (payload?.type === "patch_apply_end" ||
+       (payload?.type === "item_completed" && payload.item?.type === "FileChange" && payload.thread_id === threadId))) {
       selected.push({ line, lineNumber });
     }
   }

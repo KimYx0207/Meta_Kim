@@ -45,6 +45,20 @@
     "projection": "bounded_structural_summary"
   },
   "completionGate": {
+    "lifecycleTrigger": "affirmative_completion_claim_in_current_last_assistant_message",
+    "lifecycleDetection": "conservative_text_recognition_is_scheduling_not_completion_evidence",
+    "ordinaryTurnYield": {
+      "decision": "silent_allow_without_completion_claim",
+      "includes": [
+        "clarification",
+        "waiting_for_user",
+        "progress",
+        "missing_or_malformed_current_message"
+      ],
+      "changesPlanningAuthority": false,
+      "consumesOrResetsBlockingAttempts": false
+    },
+    "explicitCliAndLibraryStop": "always_evaluate_completion_conditions",
     "requires": [
       "current_attestation",
       "no_open_checklist_items",

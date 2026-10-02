@@ -66,6 +66,25 @@ function payloadOf(record) {
   return record?.payload ?? record;
 }
 
+// Preserve raw rollout rows for hashing; normalize only the event view used by
+// both live observation and later receipt replay.
+export function codexDesktopEventPayload(record) {
+  const payload = payloadOf(record);
+  if (record?.type !== "event_msg" || payload?.type !== "item_completed" ||
+      typeof payload.thread_id !== "string" || !payload.thread_id) return payload;
+  const item = payload.item;
+  if (item?.type === "SubAgentActivity" && typeof item.id === "string" && item.id) {
+    return { ...item, type: "sub_agent_activity", event_id: item.id,
+      session_id: payload.thread_id, status: item.kind === "completed" ? "completed" : item.status };
+  }
+  if (item?.type === "AgentMessage" && Array.isArray(item.content) &&
+      item.content.every((part) => part?.type === "Text" && typeof part.text === "string")) {
+    return { ...item, type: "agent_message", session_id: payload.thread_id,
+      message: item.content.map((part) => part.text).join("") };
+  }
+  return payload;
+}
+
 function validateMetaKimBinding(candidate) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
   const keys = Object.keys(candidate).sort();
@@ -801,7 +820,12 @@ export function observeCodexJsonl(text) {
     callSessions.set(callId, sessionId);
   };
   for (const record of records) {
-    const payload = payloadOf(record.value);
+    const payload = codexDesktopEventPayload(record.value);
+    if (record.value?.type === "event_msg" && payload?.type === "sub_agent_activity" &&
+        payload.session_id && threadId && payload.session_id !== threadId) {
+      crossSessionCorrelationDetected = true;
+      continue;
+    }
     if (record.value?.type === "session_meta") {
       threadId = record.value?.payload?.id ?? record.value?.payload?.session_id ?? threadId;
       if (threadId) rootSessionIds.add(threadId);
