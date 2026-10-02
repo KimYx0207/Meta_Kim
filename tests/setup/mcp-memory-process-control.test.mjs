@@ -3,6 +3,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -26,6 +28,10 @@ import {
 const endpoint = { hostname: "127.0.0.1", port: "8123" };
 const executablePath = resolve("fixture", "Python312", "python.exe");
 const launcherPath = resolve("fixture", "candidate", "Scripts", "memory.exe");
+// These fixtures exercise real filesystem ownership checks, which intentionally
+// use host path semantics. Windows CI also verifies the conventional Scripts
+// spelling; POSIX hosts must not gain Windows case folding just for a fixture.
+const hostScriptsDirectory = platform() === "win32" ? "Scripts" : "scripts";
 const identity = {
   platform: "win32",
   pid: 42,
@@ -325,9 +331,12 @@ describe("MCP memory endpoint process control", () => {
     }).reason, "active_runtime_database_mismatch");
   });
 
-  test("real Windows chain accepts base Python listener plus exact candidate memory launcher", () => {
+  test("Windows lexical identity accepts base Python plus the exact candidate launcher", () => {
+    const executablePath = String.raw`C:\Meta Kim\Python312\python.exe`;
+    const launcherPath = String.raw`C:\Meta Kim\candidate\Scripts\memory.exe`;
     const result = verifyMemoryListenerIdentity({
       ...identity,
+      executablePath,
       listenerHost: "127.0.0.1",
       argv: [
         executablePath,
@@ -392,12 +401,12 @@ describe("MCP memory endpoint process control", () => {
     }, expected).reason, "listener_port_mismatch");
   });
 
-  test("Windows venv expectation resolves one trusted base Python from pyvenv.cfg", () => {
+  test("Windows venv ownership resolves one trusted base Python from a host filesystem fixture", () => {
     const root = mkdtempSync(join(tmpdir(), "meta-kim-process-identity-"));
     try {
       const baseDir = join(root, "Python312");
       const venvDir = join(root, "candidate");
-      const scriptsDir = join(venvDir, "Scripts");
+      const scriptsDir = join(venvDir, hostScriptsDirectory);
       const basePython = join(baseDir, "python.exe");
       const memoryBin = join(scriptsDir, "memory.exe");
       mkdirSync(baseDir, { recursive: true });
@@ -410,8 +419,9 @@ describe("MCP memory endpoint process control", () => {
       );
 
       const expected = resolveWindowsVenvProcessExpectation(memoryBin);
-      assert.equal(expected.expectedExecutablePath, resolve(basePython));
-      assert.equal(expected.expectedLauncherPath, resolve(memoryBin));
+      assert.ok(expected, "the valid filesystem fixture must resolve before testing config drift");
+      assert.equal(expected.expectedExecutablePath, realpathSync(basePython));
+      assert.equal(expected.expectedLauncherPath, realpathSync(memoryBin));
 
       writeFileSync(
         join(venvDir, "pyvenv.cfg"),
@@ -435,9 +445,9 @@ describe("MCP memory endpoint process control", () => {
       const oldVenv = join(root, "memory-venv");
       const candidateVenv = join(root, "candidate");
       const basePython = join(baseDir, "python.exe");
-      const oldPython = join(oldVenv, "Scripts", "python.exe");
-      const candidatePython = join(candidateVenv, "Scripts", "python.exe");
-      const memoryBin = join(candidateVenv, "Scripts", "memory.exe");
+      const oldPython = join(oldVenv, hostScriptsDirectory, "python.exe");
+      const candidatePython = join(candidateVenv, hostScriptsDirectory, "python.exe");
+      const memoryBin = join(candidateVenv, hostScriptsDirectory, "memory.exe");
       for (const dir of [baseDir, dirname(oldPython), dirname(candidatePython)]) {
         mkdirSync(dir, { recursive: true });
       }
@@ -451,11 +461,12 @@ describe("MCP memory endpoint process control", () => {
       );
 
       const expected = resolveWindowsVenvProcessExpectation(memoryBin);
-      assert.equal(expected.expectedExecutablePath, resolve(basePython));
+      assert.ok(expected, "the nested filesystem fixture must resolve before testing home drift");
+      assert.equal(expected.expectedExecutablePath, realpathSync(basePython));
       assert.deepEqual(new Set(expected.expectedExecutablePaths), new Set([
-        resolve(basePython),
-        resolve(oldPython),
-        resolve(candidatePython),
+        realpathSync(basePython),
+        realpathSync(oldPython),
+        realpathSync(candidatePython),
       ]));
 
       writeFileSync(join(oldVenv, "pyvenv.cfg"), `home = ${join(root, "other-base")}\n`);
@@ -468,7 +479,7 @@ describe("MCP memory endpoint process control", () => {
   test("base Python layout resolves only same-root python.exe and exact Scripts memory.exe", () => {
     const root = mkdtempSync(join(tmpdir(), "meta-kim-base-python-identity-"));
     try {
-      const scriptsDir = join(root, "Scripts");
+      const scriptsDir = join(root, hostScriptsDirectory);
       const basePython = join(root, "python.exe");
       const memoryBin = join(scriptsDir, "memory.exe");
       mkdirSync(scriptsDir, { recursive: true });
@@ -476,10 +487,11 @@ describe("MCP memory endpoint process control", () => {
       writeFileSync(memoryBin, "memory-launcher");
 
       const expected = resolveWindowsVenvProcessExpectation(memoryBin);
+      assert.ok(expected, "the exact base Python layout must resolve on the current host");
       assert.equal(expected.runtimeLayout, "base_python");
-      assert.equal(expected.expectedExecutablePath, resolve(basePython));
-      assert.deepEqual(expected.expectedExecutablePaths, [resolve(basePython)]);
-      assert.equal(expected.expectedLauncherPath, resolve(memoryBin));
+      assert.equal(expected.expectedExecutablePath, realpathSync(basePython));
+      assert.deepEqual(expected.expectedExecutablePaths, [realpathSync(basePython)]);
+      assert.equal(expected.expectedLauncherPath, realpathSync(memoryBin));
 
       const verification = verifyMemoryListenerIdentity({
         kind: "listening",
@@ -517,33 +529,69 @@ describe("MCP memory endpoint process control", () => {
       const basePython = join(root, "python.exe");
       writeFileSync(basePython, "base-python");
 
-      const nestedMemory = join(root, "attacker", "Scripts", "memory.exe");
+      const nestedMemory = join(root, "attacker", hostScriptsDirectory, "memory.exe");
       mkdirSync(dirname(nestedMemory), { recursive: true });
       writeFileSync(nestedMemory, "nested-launcher");
+      const nestedPython = join(root, "attacker", "python.exe");
+      writeFileSync(nestedPython, "nested-base-python");
+      assert.ok(resolveWindowsVenvProcessExpectation(nestedMemory));
+      rmSync(nestedPython);
       assert.equal(resolveWindowsVenvProcessExpectation(nestedMemory), null);
 
       const wrongRoot = join(root, "wrong-root");
-      const wrongRootMemory = join(wrongRoot, "Scripts", "memory.exe");
+      const wrongRootMemory = join(wrongRoot, hostScriptsDirectory, "memory.exe");
       mkdirSync(dirname(wrongRootMemory), { recursive: true });
       writeFileSync(wrongRootMemory, "wrong-root-launcher");
+      const wrongRootPython = join(wrongRoot, "python.exe");
+      writeFileSync(wrongRootPython, "same-root-positive-control");
+      assert.ok(resolveWindowsVenvProcessExpectation(wrongRootMemory));
+      rmSync(wrongRootPython);
       assert.equal(resolveWindowsVenvProcessExpectation(wrongRootMemory), null);
 
       const linkedRoot = join(root, "linked-root");
       const realScripts = join(root, "real-scripts");
-      mkdirSync(linkedRoot, { recursive: true });
-      mkdirSync(realScripts, { recursive: true });
+      const linkedScripts = join(linkedRoot, hostScriptsDirectory);
+      const linkedMemory = join(linkedScripts, "memory.exe");
+      mkdirSync(linkedScripts, { recursive: true });
       writeFileSync(join(linkedRoot, "python.exe"), "linked-base-python");
-      writeFileSync(join(realScripts, "memory.exe"), "linked-launcher");
-      symlinkSync(realScripts, join(linkedRoot, "Scripts"), "junction");
+      writeFileSync(linkedMemory, "linked-launcher");
+      assert.ok(resolveWindowsVenvProcessExpectation(linkedMemory));
+      renameSync(linkedScripts, realScripts);
+      symlinkSync(realScripts, linkedScripts, "junction");
       assert.equal(
-        resolveWindowsVenvProcessExpectation(join(linkedRoot, "Scripts", "memory.exe")),
+        resolveWindowsVenvProcessExpectation(linkedMemory),
         null,
       );
 
-      const wrongName = join(root, "Scripts", "memory-copy.exe");
+      const wrongName = join(root, hostScriptsDirectory, "memory-copy.exe");
       mkdirSync(dirname(wrongName), { recursive: true });
+      const exactName = join(root, hostScriptsDirectory, "memory.exe");
+      writeFileSync(exactName, "exact-name-positive-control");
+      assert.ok(resolveWindowsVenvProcessExpectation(exactName));
       writeFileSync(wrongName, "wrong-name");
       assert.equal(resolveWindowsVenvProcessExpectation(wrongName), null);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("filesystem ownership folds Scripts casing only on an actual Windows host", () => {
+    const root = mkdtempSync(join(tmpdir(), "meta-kim-scripts-casing-"));
+    try {
+      for (const [index, scriptsName] of ["scripts", "Scripts", "sCrIpTs"].entries()) {
+        const baseDir = join(root, `python-${index}`);
+        const memoryBin = join(baseDir, scriptsName, "memory.exe");
+        mkdirSync(dirname(memoryBin), { recursive: true });
+        writeFileSync(join(baseDir, "python.exe"), "base-python");
+        writeFileSync(memoryBin, "launcher");
+        const expected = resolveWindowsVenvProcessExpectation(memoryBin);
+        if (platform() === "win32" || scriptsName === "scripts") {
+          assert.ok(expected, `${scriptsName} should resolve on ${platform()}`);
+          assert.equal(expected.expectedLauncherPath, realpathSync(memoryBin));
+        } else {
+          assert.equal(expected, null, `must not case-fold ${scriptsName} on ${platform()}`);
+        }
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

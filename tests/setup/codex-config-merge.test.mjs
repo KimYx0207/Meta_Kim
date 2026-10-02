@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -589,34 +589,104 @@ describe("Codex config merge", () => {
     assert.equal(out, input);
   });
 
-  test("prefers Codex computer-use helper notify on Windows when present", () => {
-    const codexHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-home-"));
-    const helperPath = path.join(
+  test("Windows helper discovery uses Windows paths and the newest available directory", () => {
+    const codexHome = String.raw`C:\Users\Kim\.codex`;
+    const helperRoot = path.win32.join(
       codexHome,
       "plugins",
       "cache",
       "openai-bundled",
       "computer-use",
-      "26.602.71036",
-      "node_modules",
-      "@oai",
-      "sky",
-      "bin",
-      "windows",
-      "codex-computer-use.exe",
     );
-    mkdirSync(path.dirname(helperPath), { recursive: true });
+    const helperFor = (version) => path.win32.join(
+      helperRoot, version, "node_modules", "@oai", "sky", "bin", "windows", "codex-computer-use.exe",
+    );
+    const helperPath = helperFor("26.602.10");
+    const readCalls = [];
+    const checkedPaths = [];
     const input = 'notify = ["terminal-notifier", "-message", "done"]\n';
-
     const out = ensureCodexWindowsNotifyCompat(input, "win32", {
       codexHome,
-      pathExists: (candidate) => candidate === helperPath,
+      readDirectory: (...args) => {
+        readCalls.push(args);
+        return [
+          { name: "26.602.9", isDirectory: () => true },
+          { name: "26.602.20", isDirectory: () => true },
+          { name: "26.602.99", isDirectory: () => false },
+          { name: "26.602.10", isDirectory: () => true },
+        ];
+      },
+      pathExists: (candidate) => {
+        checkedPaths.push(candidate);
+        return candidate === helperPath;
+      },
     });
 
+    assert.deepEqual(readCalls, [[helperRoot, { withFileTypes: true }]]);
+    assert.deepEqual(checkedPaths, [helperFor("26.602.20"), helperPath]);
     assert.doesNotMatch(out, /terminal-notifier/);
-    assert.match(out, /codex-computer-use\.exe/);
+    assert.ok(out.includes(JSON.stringify(helperPath)));
     assert.match(out, /"turn-ended"/);
     assert.doesNotMatch(out, /\$input \| Out-Null/);
+  });
+
+  test("Windows helper discovery reads a real cache fixture on the current host", () => {
+    const nativeHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-home-"));
+    // Keep Windows lexical paths separate from the host filesystem. Windows CI
+    // exercises the default fs dependencies without the POSIX fixture adapter.
+    const codexHome = process.platform === "win32" ? nativeHome : String.raw`C:\Users\Kim\.codex`;
+    const helperSegments = [
+      "plugins", "cache", "openai-bundled", "computer-use", "26.602.71036",
+      "node_modules", "@oai", "sky", "bin", "windows", "codex-computer-use.exe",
+    ];
+    const helperPath = path.win32.join(codexHome, ...helperSegments);
+    const nativeHelper = path.join(nativeHome, ...helperSegments);
+    const hostPath = (candidate) => {
+      const relative = path.win32.relative(codexHome, candidate);
+      assert.equal(path.win32.isAbsolute(relative), false);
+      assert.equal(relative.split("\\").includes(".."), false);
+      return path.join(nativeHome, ...relative.split("\\"));
+    };
+    const options = {
+      codexHome,
+      ...(process.platform === "win32" ? {} : {
+        readDirectory: (candidate, readOptions) => readdirSync(hostPath(candidate), readOptions),
+        pathExists: (candidate) => existsSync(hostPath(candidate)),
+      }),
+    };
+    try {
+      mkdirSync(path.dirname(nativeHelper), { recursive: true });
+      writeFileSync(nativeHelper, "fixture-helper");
+      const input = 'notify = ["terminal-notifier", "-message", "done"]\n';
+      const out = ensureCodexWindowsNotifyCompat(input, "win32", options);
+      assert.ok(out.includes(JSON.stringify(helperPath)));
+      assert.match(out, /"turn-ended"/);
+      assert.doesNotMatch(out, /terminal-notifier|\$input \| Out-Null/);
+
+      rmSync(nativeHelper);
+      const missing = ensureCodexWindowsNotifyCompat(input, "win32", options);
+      assert.match(missing, /\$input \| Out-Null/);
+      assert.doesNotMatch(missing, /codex-computer-use\.exe/);
+    } finally {
+      rmSync(nativeHome, { recursive: true, force: true });
+    }
+  });
+
+  test("Windows helper discovery falls back on read failure and never probes for other platforms", () => {
+    const input = 'notify = ["terminal-notifier", "-message", "done"]\n';
+    let reads = 0;
+    const options = {
+      codexHome: String.raw`C:\Users\Kim\.codex`,
+      readDirectory: () => { reads += 1; throw new Error("unreadable fixture cache"); },
+      pathExists: () => assert.fail("must not probe candidates when cache enumeration fails"),
+    };
+    const out = ensureCodexWindowsNotifyCompat(input, "win32", options);
+    assert.match(out, /\$input \| Out-Null/);
+    assert.equal(reads, 1);
+    for (const platformName of ["linux", "darwin"]) {
+      assert.equal(ensureCodexWindowsNotifyCompat(input, platformName, options), input);
+    }
+    assert.equal(reads, 1);
   });
 
   test("restores Windows Codex App native controls after ECC config overwrite", () => {

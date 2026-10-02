@@ -455,6 +455,7 @@ function codexComputerUseNotifyBlock(command) {
 function findCodexComputerUseNotifyCommand({
   codexHome,
   pathExists = defaultPathExists,
+  readDirectory = readdirSync,
 } = {}) {
   if (!codexHome) return null;
   const helperRoot = path.win32.join(
@@ -467,7 +468,7 @@ function findCodexComputerUseNotifyCommand({
 
   let versionDirs = [];
   try {
-    versionDirs = readdirSync(helperRoot, { withFileTypes: true })
+    versionDirs = readDirectory(helperRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort(compareVersionLikeNamesDesc);
