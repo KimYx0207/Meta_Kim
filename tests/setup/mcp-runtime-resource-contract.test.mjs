@@ -65,6 +65,8 @@ test("MCP empty effective status returns results0 and exact missing10 without ex
     });
     assert.equal(result.status, 0, result.stderr || result.stdout || result.error?.message);
     const payload = JSON.parse(result.stdout);
+    assert.ok(payload.matrix, "fresh packaged evidence must not silently become a blocked/null matrix");
+    assert.notEqual(payload.overlayStatus.state, "blocked");
     assert.deepEqual(payload.results, []);
     assert.equal(payload.missing.length, 10);
     assert.equal(new Set(payload.missing.map((entry) => `${entry.runtime}:${entry.capability}:${entry.mode}`)).size, 10);
