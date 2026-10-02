@@ -341,7 +341,11 @@ describe("cross-platform process runner contract", () => {
         {
           commandDisplay: "CUSTOM_MARKER token=display-secret-token",
           redactText: (value) => value.replaceAll("CUSTOM_MARKER", "<CALLER>"),
-          timeout: 10_000,
+          // This checks redaction/exit truth, not first-use launcher latency.
+          // Windows PowerShell compiles its native Job bridge on launch; a first
+          // Windows CI invocation exceeded the former 10s budget. Dedicated timeout
+          // cases retain their original deadlines and timeout assertions.
+          timeout: process.platform === "win32" ? 30_000 : 10_000,
         },
       ),
     );
