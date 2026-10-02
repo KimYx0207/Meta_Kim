@@ -88,6 +88,7 @@ test("CI runs setup and process guard regressions on every supported host", () =
   assert.match(job, /fetch-depth: 0/u);
   assert.match(job, /git config --global core\.autocrlf false\s*\n\s*- uses: actions\/checkout@/u);
   assert.match(job, /node scripts\/run-local-verification\.mjs --isolated --suite setup-platform/u);
+  assert.doesNotMatch(job, /Diagnose Windows|STAGE_new_object|isolated-profile-restored/u, "remove the temporary host-environment diagnostics");
   assert.match(workflow, /needs: \[behavior-regression, setup-platform,/u);
 });
 

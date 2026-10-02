@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -11,6 +12,7 @@ import path from "node:path";
 import { after, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { runWindowsGuardedCommand } from "../../scripts/eval-process-runner.mjs";
+import { buildIsolatedTestEnvironment } from "../../scripts/run-local-verification.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const launcherPath = path.join(repoRoot, "scripts", "windows-job-process-runner.ps1");
@@ -27,6 +29,21 @@ const testTempRoot = path.resolve(os.tmpdir());
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function coldPowerShellEnvironment(tempDir) {
+  const home = path.join(tempDir, "isolated-home");
+  const env = buildIsolatedTestEnvironment(home);
+  for (const key of [
+    "HOME", "APPDATA", "LOCALAPPDATA", "TMP", "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "npm_config_cache",
+  ]) {
+    mkdirSync(env[key], { recursive: true });
+  }
+  env.PSModuleAnalysisCachePath = path.join(env.LOCALAPPDATA, "ModuleAnalysisCache");
+  assert.equal(existsSync(env.PSModuleAnalysisCachePath), false);
+  assert.equal(Object.keys(env).some((key) => key.toUpperCase() === "PSMODULEPATH"), false);
+  return env;
 }
 
 function registerTestDirectory(tempDir) {
@@ -90,7 +107,7 @@ function captureOwnedIdentities(pids) {
     `$ids = @(${idList})`,
     "$rows = @()",
     "foreach ($id in $ids) { try { $p = [System.Diagnostics.Process]::GetProcessById($id); $rows += [ordered]@{ pid = [int]$id; startTicks = [string]$p.StartTime.ToUniversalTime().Ticks } } catch {} }",
-    "ConvertTo-Json -InputObject $rows -Compress",
+    "Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject $rows -Compress",
   ].join("; ");
   const result = spawnSync(
     powershell,
@@ -107,8 +124,8 @@ function captureOwnedIdentities(pids) {
 
 function directChildPids(parentPid) {
   const command = [
-    `$ids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ${Number(parentPid)}" | ForEach-Object { [int]$_.ProcessId })`,
-    "Write-Output ('[' + (($ids | ForEach-Object { [string]$_ }) -join ',') + ']')",
+    `$ids = @(CimCmdlets\\Get-CimInstance Win32_Process -Filter "ParentProcessId = ${Number(parentPid)}" | Microsoft.PowerShell.Core\\ForEach-Object { [int]$_.ProcessId })`,
+    "Microsoft.PowerShell.Utility\\Write-Output ('[' + (($ids | Microsoft.PowerShell.Core\\ForEach-Object { [string]$_ }) -join ',') + ']')",
   ].join("; ");
   const result = spawnSync(
     powershell,
@@ -244,7 +261,7 @@ function writeSpec(tempDir, rootScript) {
   return specPath;
 }
 
-function startLauncherForSpec(tempDir, specPath) {
+function startLauncherForSpec(tempDir, specPath, env) {
   const stopPath = path.join(tempDir, "stop");
   const resultPath = path.join(tempDir, "result.json");
   const child = spawn(
@@ -265,7 +282,7 @@ function startLauncherForSpec(tempDir, specPath) {
       "-OwnerPid",
       String(process.pid),
     ],
-    { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
+    { cwd: repoRoot, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
   );
   return { child, resultPath, stopPath };
 }
@@ -302,6 +319,28 @@ function assertNoWholeTreeClaim(value) {
     "out_of_job_process_creation_not_covered",
   );
 }
+
+test("Windows launcher explicitly resolves its built-in cmdlets without ambient discovery", () => {
+  const source = readFileSync(launcherPath, "utf8");
+  const powershellSource = source.replace(/\$nativeSource = @'[\s\S]*?\r?\n'@/u, "");
+  const cmdlets = [
+    ["Microsoft.PowerShell.Utility", "New-Object"],
+    ["Microsoft.PowerShell.Utility", "ConvertTo-Json"],
+    ["Microsoft.PowerShell.Utility", "ConvertFrom-Json"],
+    ["Microsoft.PowerShell.Utility", "Add-Type"],
+    ["Microsoft.PowerShell.Management", "Test-Path"],
+    ["Microsoft.PowerShell.Management", "Get-Content"],
+  ];
+  for (const [module, cmdlet] of cmdlets) {
+    const calls = [...powershellSource.matchAll(
+      new RegExp(String.raw`(?<![\w.\\-])(?:([\w.-]+)\\)?${cmdlet}\b`, "gu"),
+    )];
+    assert.ok(calls.length > 0, `${cmdlet} must be covered`);
+    for (const [, resolvedModule] of calls) {
+      assert.equal(resolvedModule, module, `${cmdlet} must resolve through ${module}`);
+    }
+  }
+});
 
 describe(
   "Windows Job Object evaluator process runner",
@@ -346,7 +385,7 @@ describe(
           path.join(os.tmpdir(), `meta-kim-job-${fixture.name}-`),
         );
         const specPath = fixture.prepareSpec(tempDir);
-        const launcher = startLauncherForSpec(tempDir, specPath);
+        const launcher = startLauncherForSpec(tempDir, specPath, coldPowerShellEnvironment(tempDir));
         try {
           const exit = await waitForChildExit(launcher.child);
           assert.equal(exit.code, 2);
@@ -364,6 +403,29 @@ describe(
           if (launcher.child.exitCode === null) launcher.child.kill("SIGKILL");
           registerTestDirectory(tempDir);
         }
+      }
+    });
+
+    test("preserves exit and cleanup truth with a cold isolated PowerShell module cache", async () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-job-cold-cache-"));
+      try {
+        const error = await expectRejected(runWindowsGuardedCommand(
+          process.execPath,
+          ["-e", 'process.stdout.write("isolated child reached"); process.exit(7);'],
+          { cwd: tempDir, env: coldPowerShellEnvironment(tempDir), timeout: 10_000 },
+        ));
+        assert.equal(error.code, "META_KIM_CHILD_COMMAND_FAILED");
+        assert.equal(error.exitCode, 7);
+        assert.equal(error.signal, null);
+        assert.equal(error.stdout, "isolated child reached");
+        assert.equal(error.ownedProcessGroupCleanupVerified, true);
+        assert.equal(error.ownedProcessGroupCleanupFailure, false);
+        assert.equal(error.ownedProcessGroupCleanupReason, null);
+        assert.equal(error.ownedProcessGroupScope, "windows_job_object_owned_process_group");
+        assert.equal(error.launcherStillAlive, false);
+        assertNoWholeTreeClaim(error);
+      } finally {
+        registerTestDirectory(tempDir);
       }
     });
 
@@ -556,7 +618,7 @@ describe(
         fakeLauncher,
         [
           "param([string]$SpecPath, [string]$StopPath, [string]$ResultPath)",
-          "Write-Output 'META_KIM_JOB_READY'",
+          "Microsoft.PowerShell.Utility\\Write-Output 'META_KIM_JOB_READY'",
           "exit 0",
           "",
         ].join("\n"),
