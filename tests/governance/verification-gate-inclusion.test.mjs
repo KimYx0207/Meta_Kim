@@ -86,6 +86,7 @@ test("CI runs setup and process guard regressions on every supported host", () =
   assert.match(job, /runs-on: \$\{\{ matrix.os \}\}/u);
   assert.match(job, /persist-credentials: false/u);
   assert.match(job, /fetch-depth: 0/u);
+  assert.match(job, /git config --global core\.autocrlf false\s*\n\s*- uses: actions\/checkout@/u);
   assert.match(job, /node scripts\/run-local-verification\.mjs --isolated --suite setup-platform/u);
   assert.match(workflow, /needs: \[behavior-regression, setup-platform,/u);
 });
