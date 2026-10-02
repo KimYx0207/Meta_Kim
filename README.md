@@ -263,6 +263,8 @@ Update also treats third-party installers as untrusted configuration producers. 
 
 Codex agent fan-out has a bounded default of two threads and one nested level. Explicit user limits are preserved; only an absent value or Meta_Kim's former default of six threads is migrated.
 
+When updating an older installation, unverified `planning-with-files` files or hooks are preserved for manual review. Their deferred retirement does not prevent independent selected skills from installing or updating. The installer reports the exact retained paths and reasons before and after the skill work; this is not a successful cleanup claim. Out-of-bound writes, unsafe parent paths, write failures, and failed skill operations still fail normally. Do not delete the retained files blindly to silence the warning.
+
 If you plan to maintain the repository, edit the canonical sources first: `canonical/agents/`, `canonical/skills/meta-theory/`, `config/contracts/`, and `config/capability-index/`. Then run (requires Node.js >= 22.13.0):
 
 ```bash

@@ -15,6 +15,7 @@ import { pathToFileURL } from "node:url";
 import {
   createEmpty,
   directoryClosureSync,
+  readManifest,
   record,
   writeManifest,
 } from "../../scripts/install-manifest.mjs";
@@ -44,19 +45,19 @@ test("retired Codex planning hooks are stripped without touching user hooks", ()
   assert.equal(stripped.hooks.Stop, undefined);
 });
 
-test("retirement failure is localized through the shared installer i18n surface", () => {
+test("deferred retirement is localized as manual work through the shared installer i18n surface", () => {
   const moduleUrl = pathToFileURL(path.join(repoRoot, "scripts", "meta-kim-i18n.mjs")).href;
   const cases = [
-    ["en", /retirement stopped/u],
-    ["zh-CN", /退役已停止/u],
-    ["ja-JP", /廃止を停止/u],
-    ["ko-KR", /사용 중단을 멈췄/u],
+    ["en", /retirement deferred/u],
+    ["zh-CN", /退役已暂缓/u],
+    ["ja-JP", /廃止を保留/u],
+    ["ko-KR", /사용 중단을 보류/u],
   ];
   for (const [language, expected] of cases) {
     const result = spawnSync(process.execPath, [
       "--input-type=module",
       "-e",
-      `import { t } from ${JSON.stringify(moduleUrl)}; console.log(t.planningRetirementPreserved(2, ["A", "B"]));`,
+      `import { t, installStatusClassForMessageKey } from ${JSON.stringify(moduleUrl)}; console.log(installStatusClassForMessageKey("planningRetirementPreserved")); console.log(t.planningRetirementPreserved(2, ["A", "B"]));`,
     ], {
       cwd: repoRoot,
       encoding: "utf8",
@@ -64,6 +65,7 @@ test("retirement failure is localized through the shared installer i18n surface"
       env: { ...process.env, META_KIM_LANG: language },
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /^manual\r?\n/u);
     assert.match(result.stdout, expected);
     assert.match(result.stdout, /A/u);
     assert.match(result.stdout, /B/u);
@@ -95,6 +97,84 @@ test("retirement is a no-op for a fresh install without a manifest", () => {
     const payload = JSON.parse(result.stdout);
     assert.deepEqual(payload.removed, []);
     assert.deepEqual(payload.preserved, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("preserved legacy planning does not block independent skill install, update, or repeat update", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-retire-independent-update-"));
+  const packageRoot = process.env.META_KIM_TEST_PACKED_ROOT || repoRoot;
+  try {
+    const homes = Object.fromEntries(runtimeIds.map((runtime) => [runtime, path.join(root, `.${runtime}`)]));
+    const source = path.join(root, "fixture-skill");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(path.join(source, "SKILL.md"), "---\nname: meta-skill-creator\ndescription: Isolated installer fixture.\n---\n\nLocal test fixture.\n");
+    const retained = new Map();
+    for (const runtime of ["claude", "codex"]) {
+      const legacy = path.join(homes[runtime], "skills", "planning-with-files");
+      mkdirSync(legacy, { recursive: true });
+      retained.set(path.join(legacy, "SKILL.md"), `# user-owned ${runtime} planning\n`);
+    }
+    const hooksDir = path.join(homes.codex, "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    retained.set(path.join(hooksDir, "codex_hook_runner.mjs"), "// historical runner without current ownership markers\n");
+    retained.set(path.join(hooksDir, "stop.py"), "# user-owned historical stop hook\n");
+    const hookCommand = `node "${path.join(hooksDir, "codex_hook_runner.mjs")}" "${path.join(hooksDir, "stop.py")}"`;
+    retained.set(path.join(homes.codex, "hooks.json"), `${JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: hookCommand }] }] } }, null, 2)}\n`);
+    for (const [file, content] of retained) writeFileSync(file, content);
+    const env = {
+      ...process.env,
+      HOME: root,
+      USERPROFILE: root,
+      META_KIM_CLAUDE_HOME: homes.claude,
+      META_KIM_CODEX_HOME: homes.codex,
+      META_KIM_CURSOR_HOME: homes.cursor,
+      META_KIM_OPENCLAW_HOME: homes.openclaw,
+      META_KIM_LANG: "en",
+      META_KIM_ALLOW_TEST_FIXTURES: "1",
+      META_KIM_TEST_META_SKILL_SOURCE_DIR: source,
+      META_KIM_SKIP_OPTIONAL_TOOLS: "1",
+    };
+    const installerArgs = [
+      path.join(packageRoot, "scripts", "install-global-skills-all-runtimes.mjs"),
+      "--targets", "claude,codex", "--skills", "meta-skill-creator",
+      "--skip-plugins", "--skip-inventory-refresh",
+    ];
+    const beforeDryRun = directoryClosureSync(root);
+    const dryRun = spawnSync(process.execPath, [...installerArgs, "--dry-run"], {
+      cwd: packageRoot, encoding: "utf8", windowsHide: true, env, timeout: 30_000,
+    });
+    assert.equal(dryRun.status, 0, dryRun.stdout + dryRun.stderr);
+    assert.deepEqual(directoryClosureSync(root), beforeDryRun, "dry-run must not write into the isolated home");
+    for (const [version, extraArgs] of [["v1", []], ["v2", ["--update"]], ["v2", ["--update"]]]) {
+      writeFileSync(path.join(source, "payload.txt"), `${version}\n`);
+      const result = spawnSync(process.execPath, [...installerArgs, ...extraArgs], {
+        cwd: packageRoot, encoding: "utf8", windowsHide: true, env, timeout: 30_000,
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.match(result.stderr, /retirement deferred/u);
+      assert.match(result.stderr, /independent selected skills/u);
+      for (const runtime of ["claude", "codex"]) {
+        assert.equal(readFileSync(path.join(homes[runtime], "skills", "meta-skill-creator", "payload.txt"), "utf8"), `${version}\n`);
+      }
+      for (const [file, content] of retained) assert.equal(readFileSync(file, "utf8"), content, file);
+      if (version === "v1") {
+        // Subsequent updates see a mixed owned/unowned retirement transaction.
+        // Even the proven owned copy must remain when another path is unverified.
+        const skill = path.join(homes.claude, "skills", "planning-with-files");
+        const closure = directoryClosureSync(skill);
+        const manifestPath = path.join(root, ".meta-kim", "install-manifest.json");
+        const manifest = record(readManifest(manifestPath), {
+          path: skill, category: "A", kind: "dir",
+          source: "install-global-skills-all-runtimes",
+          purpose: "planning-with-files-global-skill",
+          directoryClosureSha256: closure.sha256,
+          directoryClosureEntryCount: closure.entryCount,
+        });
+        writeManifest(manifestPath, manifest);
+      }
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

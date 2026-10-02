@@ -69,6 +69,7 @@ export const INSTALL_STATUS_MESSAGE_CLASSES = Object.freeze({
   pythonInstallHint: "manual",
   pythonInstallHintGraphify: "manual",
   warnStagingLocked: "manual",
+  planningRetirementPreserved: "manual",
 
   failManifestLoad: "failed",
   warnGitInstallFailed: "failed",
@@ -79,7 +80,6 @@ export const INSTALL_STATUS_MESSAGE_CLASSES = Object.freeze({
   reverseModeAborted: "failed",
   warnGraphifySkillFailed: "failed",
   warnGraphifyPipFailed: "failed",
-  planningRetirementPreserved: "failed",
 });
 
 export function installStatusClassForMessageKey(messageKey) {
@@ -808,7 +808,7 @@ const STRINGS = {
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `Ignoring loopback proxy env for install: ${entries.join(", ")}`,
     planningRetirementPreserved: (count, paths) =>
-      `planning-with-files retirement stopped because ${count} path(s) could not be verified as Meta_Kim-owned: ${paths.join(", ")}`,
+      `Manual review: planning-with-files retirement deferred; ${count} unverified path(s) were preserved: ${paths.join(", ")}. Updates to independent selected skills can continue. Review the listed legacy files/hooks manually; cleanup is not complete.`,
     // sync-runtimes.mjs — incremental summary + --check
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] Skipping missing canonical file: ${filePath}`,
@@ -1081,7 +1081,7 @@ const STRINGS = {
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `已忽略安装流程中的回环代理环境变量：${entries.join(", ")}`,
     planningRetirementPreserved: (count, paths) =>
-      `planning-with-files 退役已停止：${count} 个路径无法证明归 Meta_Kim 所有：${paths.join("，")}`,
+      `需手动检查：planning-with-files 退役已暂缓，已保留 ${count} 个无法确认归属的路径：${paths.join("，")}。独立的已选技能可继续更新；请手动检查所列旧文件和 Hook，清理尚未完成。`,
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] 跳过缺失的 canonical 源文件：${filePath}`,
     syncRuntimesSummaryTitle: "── meta:sync（本轮增量写入摘要）──",
@@ -1334,7 +1334,7 @@ const STRINGS = {
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `インストール用のループバックプロキシ環境変数を無視しました: ${entries.join(", ")}`,
     planningRetirementPreserved: (count, paths) =>
-      `planning-with-files の廃止を停止しました。Meta_Kim 所有と確認できないパスが ${count} 件あります: ${paths.join("、")}`,
+      `手動確認が必要です: planning-with-files の廃止を保留し、所有を確認できない ${count} 件のパスを保持しました: ${paths.join("、")}。独立した選択済みスキルの更新は続行できます。記載された旧ファイルと Hook を手動確認してください。クリーンアップは未完了です。`,
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] 欠落している canonical ファイルをスキップ: ${filePath}`,
     syncRuntimesSummaryTitle: "── meta:sync（増分書き込み要約）──",
@@ -1600,7 +1600,7 @@ const STRINGS = {
     warnIgnoringLoopbackProxyEnv: (entries) =>
       `설치에서 루프백 프록시 환경변수를 무시했습니다: ${entries.join(", ")}`,
     planningRetirementPreserved: (count, paths) =>
-      `planning-with-files 사용 중단을 멈췄습니다. Meta_Kim 소유로 확인할 수 없는 경로가 ${count}개 있습니다: ${paths.join(", ")}`,
+      `수동 확인 필요: planning-with-files 사용 중단을 보류하고 소유를 확인할 수 없는 경로 ${count}개를 보존했습니다: ${paths.join(", ")}. 독립적으로 선택한 스킬 업데이트는 계속할 수 있습니다. 나열된 이전 파일과 Hook을 수동으로 확인하세요. 정리는 완료되지 않았습니다.`,
     canonicalMissingWarn: (filePath) =>
       `[sync-runtimes] 누락된 canonical 파일을 건너뜁니다: ${filePath}`,
     syncRuntimesSummaryTitle: "── meta:sync（증분 쓰기 요약）──",
