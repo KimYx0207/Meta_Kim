@@ -77,7 +77,7 @@ jobs:
           const isolated = buildIsolatedTestEnvironment(home);
           for (const name of ['tmp', 'appdata', 'localappdata', 'config', 'cache', 'data', 'state', 'npm-cache']) mkdirSync(path.join(home, name), { recursive: true });
           const script = path.join(home, 'ready.ps1');
-          writeFileSync(script, "[Console]::Out.WriteLine('PS_READY'); exit 0\n");
+          writeFileSync(script, "[Console]::Out.WriteLine('PS_START'); $null = New-Object System.Text.UTF8Encoding($false); $null = Test-Path -LiteralPath $PSHOME; $null = @{ ready = $true } | ConvertTo-Json -Compress; Write-Output 'PS_DONE'; exit 0\n");
           const systemKeys = ['ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'SystemDrive', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432'];
           const system = Object.fromEntries(Object.entries(process.env).filter(([key]) => systemKeys.some(name => name.toUpperCase() === key.toUpperCase())));
           async function probe(label, env, mode, stdin, inputNone = false) {
@@ -90,17 +90,15 @@ jobs:
             const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, 8000);
             const result = await new Promise(resolve => { child.once('error', error => resolve({ error: error.code })); child.once('close', (code, signal) => resolve({ code, signal })); });
             clearTimeout(timer);
-            console.log(JSON.stringify({ label, mode, stdin, inputNone, ready: output.includes('PS_READY'), stderrBytes, timedOut, elapsedMs: Date.now() - start, ...result }));
+            console.log(JSON.stringify({ label, mode, stdin, inputNone, started: output.includes('PS_START'), done: output.includes('PS_DONE'), stderrBytes, timedOut, elapsedMs: Date.now() - start, ...result }));
+            return output.includes('PS_DONE') && result.code === 0;
           }
           try {
-            await probe('baseline', process.env, 'command', 'ignore');
-            await probe('isolated', isolated, 'command', 'ignore');
             await probe('baseline', process.env, 'file', 'pipe');
-            await probe('isolated', isolated, 'file', 'pipe');
-            await probe('isolated', isolated, 'file', 'ignore');
-            await probe('isolated', isolated, 'file', 'pipe', true);
+            const isolatedReady = await probe('isolated', isolated, 'file', 'pipe');
             await probe('isolated-system', { ...isolated, ...system }, 'file', 'pipe');
             await probe('isolated-module', { ...isolated, PSModulePath: process.env.PSModulePath || '' }, 'file', 'pipe');
+            if (!isolatedReady) process.exitCode = 1;
           } finally { rmSync(home, { recursive: true, force: true }); }
           NODE
       - name: Run isolated setup and process checks
