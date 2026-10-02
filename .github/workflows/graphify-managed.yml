@@ -27,7 +27,8 @@ jobs:
         with:
           node-version: 22.13.0
       - name: Install the pinned native producer test dependency from PyPI
-        run: python -m pip install --only-binary=:all: graphifyy==0.9.56
+        run: |
+          python -m pip install --only-binary=:all: graphifyy==0.9.56
       - name: Require the tested producer version
         run: python -c "from importlib.metadata import version; assert version('graphifyy') == '0.9.56'"
       # All repositories, hooks, outputs, and sentinel files are isolated test
