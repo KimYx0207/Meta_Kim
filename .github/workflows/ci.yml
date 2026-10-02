@@ -59,8 +59,9 @@ jobs:
           node-version: 22.13.0
       # Real host filesystem/process tests complement cross-host lexical
       # fixtures. HOME and credentials use the same isolated runner as above.
+      # Invoke Node directly so PowerShell's npm.ps1 cannot consume --suite.
       - name: Run isolated setup and process checks
-        run: npm run meta:test:ci -- --suite setup-platform
+        run: node scripts/run-local-verification.mjs --isolated --suite setup-platform
 
   planning-continuity:
     name: Planning continuity (${{ matrix.os }})
