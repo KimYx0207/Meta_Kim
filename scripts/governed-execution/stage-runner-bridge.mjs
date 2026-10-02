@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import runQuotaPolicy from "../../config/governance/run-quota-policy.json" with { type: "json" };
 import {
   observeClaudeAssistantMessages,
@@ -220,10 +221,20 @@ function redactLocalPaths(value, workspaceRoot) {
     [os.homedir(), "<user-home>"],
   ]) {
     if (!candidate) continue;
-    for (const normalized of [path.resolve(candidate), path.resolve(candidate).replace(/\\/gu, "/")]) {
+    const native = path.resolve(candidate);
+    const slash = native.replace(/\\/gu, "/");
+    for (const [normalized, display] of [
+      [pathToFileURL(native).href, `file://${replacement}`],
+      [`file://${slash.startsWith("/") ? "" : "/"}${slash}`, `file://${replacement}`],
+      [native, replacement],
+      [slash, replacement],
+    ]) {
+      // Log text can change case even on a case-sensitive host. Redact those
+      // presentations without changing filesystem identity or path resolution.
+      // Match complete roots/descendants, not similarly named sibling paths.
       redacted = redacted.replace(
-        new RegExp(escapeRegExp(normalized), process.platform === "win32" ? "giu" : "gu"),
-        replacement,
+        new RegExp(`(?<![\\p{L}\\p{N}_./\\\\-])${escapeRegExp(normalized)}(?=$|[/\\\\\\s"'\x60<>()[\\]{}:,;!?]|\\.(?=$|[\\s"'\x60<>()[\\]{}]))`, "giu"),
+        display,
       );
     }
   }

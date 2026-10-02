@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -213,6 +214,32 @@ test("bridge sanitizes custom worker output, stderr, and failure fields before r
   assert.match(result.nodeRecords[0].stderrTail, /<user-home>/u);
   assert.notEqual(result.nodeRecords[0].outputSha256, "a".repeat(64));
   assert.match(result.failure.reason, /<redacted-secret>/u);
+});
+
+test("bridge log path redaction keeps root boundaries while protecting case variants", async () => {
+  const root = process.cwd();
+  const home = os.homedir();
+  const result = await runStageRunnerBridge({
+    runId: "case-variant-path-redaction",
+    runtime: "codex",
+    stageDagPacket: dagFor(["one"]),
+    workerTaskPackets: [packet("one")],
+    workspaceRoot: root,
+    evidenceKind: "custom_test_double",
+    invokeWorker: async () => ({
+      status: "pass", durationMs: 1,
+      outputText: `"${root.toUpperCase()}/private.txt" ${root}-backup word${root} (${home.toUpperCase()}/private.txt) ${pathToFileURL(root).href.toUpperCase()}/private.txt ${root.toUpperCase()}. ${root}.hidden`,
+      outputSha256: "a".repeat(64), stderrTail: "",
+    }),
+  });
+  const text = result.nodeRecords[0].outputText;
+  assert.ok(text.includes('"<workspace>/private.txt"'));
+  assert.ok(text.includes("(<user-home>/private.txt)"));
+  assert.ok(text.includes("file://<workspace>/private.txt"), "file URL presentations must not leak the root");
+  assert.ok(text.includes("<workspace>. "), "sentence punctuation must not prevent root redaction");
+  assert.ok(text.includes(`${root}.hidden`), "a dot-suffixed sibling is not the declared root");
+  assert.ok(text.includes(`${root}-backup`), "a sibling is not the declared workspace root");
+  assert.ok(text.includes(`word${root}`), "a path embedded in a larger token is not the declared root");
 });
 
 test("sequential bridge executes one native-bound worker and the local merge node", async () => {
