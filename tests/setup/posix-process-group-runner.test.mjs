@@ -86,6 +86,24 @@ function assertNoWholeTreeClaim(value) {
   );
 }
 
+function safeCleanupDiagnostic(error, signals = []) {
+  const safe = (value) => typeof value === "string" && /^[A-Za-z0-9_]{1,100}$/u.test(value)
+    ? value
+    : null;
+  return JSON.stringify({
+    code: safe(error?.code),
+    reason: safe(error?.ownedProcessGroupCleanupReason),
+    causeCode: safe(error?.cause?.code),
+    causeReason: safe(error?.cause?.ownedProcessGroupCleanupReason),
+    causeSyscall: safe(error?.cause?.syscall),
+    signals: signals.map(({ signal, code, calls }) => ({
+      signal: signal === 0 ? 0 : safe(signal),
+      code: safe(code),
+      calls,
+    })),
+  });
+}
+
 function writeProcessTreeFixture(
   tempDir,
   { rootMode = "hold", exitCode = 0, inheritOutput = false, resistTerm = false } = {},
@@ -149,16 +167,40 @@ describe(
       { name: "signal root exit", rootMode: "signal", exitCode: null },
       { name: "root exit with inherited output pipes", rootMode: "exit", exitCode: 7, inheritOutput: true },
       { name: "root exit with a TERM-resistant grandchild", rootMode: "exit", exitCode: 7, resistTerm: true },
-    ]) {
-      test(`${scenario.name} drains the remaining owned group before publishing cleanup truth`, async () => {
+    ].flatMap((scenario) => scenario.resistTerm
+      ? Array.from({ length: 10 }, (_, index) => ({
+        ...scenario,
+        name: `${scenario.name} (independent run ${index + 1}/10)`,
+      }))
+      : [scenario])) {
+      test(`${scenario.name} drains the remaining owned group before publishing cleanup truth`, async (context) => {
         const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-posix-group-"));
         const { pidsPath, readyPath, releasePath, rootScript } = writeProcessTreeFixture(tempDir, scenario);
         let identities = [];
+        const signals = [];
+        const recordSignal = (signal, code) => {
+          const last = signals.at(-1);
+          if (last?.signal === signal && last.code === code) last.calls += 1;
+          else signals.push({ signal, code, calls: 1 });
+          if (signals.length > 12) signals.shift();
+        };
         try {
           // Shorten only the escalation grace in the resistant-process fixture;
           // spawning, signaling, probing and final verification remain real.
           const runner = scenario.resistTerm
-            ? createPosixGuardedCommandRunner({ graceMs: 100 })
+            ? createPosixGuardedCommandRunner({
+              graceMs: 100,
+              kill: (pid, signal) => {
+                try {
+                  const result = process.kill(pid, signal);
+                  recordSignal(signal, null);
+                  return result;
+                } catch (error) {
+                  recordSignal(signal, error.code);
+                  throw error;
+                }
+              },
+            })
             : runCommandWithIgnoredStdin;
           const completion = runner(process.execPath, [rootScript], {
             cwd: tempDir,
@@ -171,10 +213,12 @@ describe(
           writeFileSync(releasePath, "exit\n", "utf8");
 
           const { result, error } = await completion;
+          const permissionDenials = signals.reduce((total, call) => total + (call.code === "EPERM" ? call.calls : 0), 0);
+          if (permissionDenials > 0) context.diagnostic(`Observed ${permissionDenials} EPERM response(s) during owned-group cleanup`);
           if (scenario.exitCode === 0) {
             assert.equal(error, undefined);
           } else {
-            assert.equal(error?.code, "META_KIM_CHILD_COMMAND_FAILED");
+            assert.equal(error?.code, "META_KIM_CHILD_COMMAND_FAILED", safeCleanupDiagnostic(error, signals));
             assert.equal(error.exitCode, scenario.exitCode);
             assert.equal(error.signal, scenario.rootMode === "signal" ? "SIGTERM" : null);
           }

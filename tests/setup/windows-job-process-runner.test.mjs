@@ -122,20 +122,6 @@ function captureOwnedIdentities(pids) {
   }));
 }
 
-function directChildPids(parentPid) {
-  const command = [
-    `$ids = @(CimCmdlets\\Get-CimInstance Win32_Process -Filter "ParentProcessId = ${Number(parentPid)}" | Microsoft.PowerShell.Core\\ForEach-Object { [int]$_.ProcessId })`,
-    "Microsoft.PowerShell.Utility\\Write-Output ('[' + (($ids | Microsoft.PowerShell.Core\\ForEach-Object { [string]$_ }) -join ',') + ']')",
-  ].join("; ");
-  const result = spawnSync(
-    powershell,
-    ["-NoProfile", "-NonInteractive", "-Command", command],
-    { encoding: "utf8", timeout: 5_000, windowsHide: true },
-  );
-  if (result.status !== 0 || !result.stdout.trim()) return [];
-  return JSON.parse(result.stdout.trim());
-}
-
 function pidAppearsAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -560,11 +546,23 @@ describe(
       const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-job-owner-death-"));
       const { pidsPath, rootScript } = writeTreeFixture(tempDir);
       const helperScript = path.join(tempDir, "supervisor.mjs");
+      const launcherRecordPath = path.join(tempDir, "launcher-pid.json");
       writeFileSync(
         helperScript,
         [
+          'import { spawn } from "node:child_process";',
+          'import { writeFileSync } from "node:fs";',
           'import { pathToFileURL } from "node:url";',
-          'const { runWindowsGuardedCommand } = await import(pathToFileURL(process.env.META_KIM_RUNNER_MODULE).href);',
+          'const { createWindowsGuardedCommandRunner } = await import(pathToFileURL(process.env.META_KIM_RUNNER_MODULE).href);',
+          "const launcherRecords = [];",
+          "const runWindowsGuardedCommand = createWindowsGuardedCommandRunner({",
+          "  spawn: (file, args, options) => {",
+          "    const launcher = spawn(file, args, options);",
+          "    launcherRecords.push({ parentPid: process.pid, launcherPid: launcher.pid });",
+          '    writeFileSync(process.env.META_KIM_LAUNCHER_RECORD, JSON.stringify(launcherRecords));',
+          "    return launcher;",
+          "  },",
+          "});",
           "await runWindowsGuardedCommand(process.execPath, [process.env.META_KIM_ROOT_SCRIPT], {",
           "  cwd: process.cwd(),",
           "  timeout: 60000,",
@@ -579,25 +577,29 @@ describe(
           ...process.env,
           META_KIM_ROOT_SCRIPT: rootScript,
           META_KIM_RUNNER_MODULE: path.join(repoRoot, "scripts", "eval-process-runner.mjs"),
+          META_KIM_LAUNCHER_RECORD: launcherRecordPath,
         },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
       let treeIdentities = [];
       let launcherIdentities = [];
-      let observedLauncherPids = [];
       try {
         treeIdentities = await readOwnedTree(pidsPath);
-        await waitForCondition(
-          () => {
-            observedLauncherPids = directChildPids(supervisor.pid);
-            return observedLauncherPids.length > 0;
-          },
-          "owned PowerShell launcher",
-          30_000,
-        );
-        launcherIdentities = captureOwnedIdentities(observedLauncherPids);
-        assert.ok(launcherIdentities.length >= 1);
+        // Observe the actual production spawn without discovering unrelated
+        // processes through CIM. Arguments, handles and Job behavior are real.
+        await waitForFile(launcherRecordPath, 30_000);
+        const launcherRecords = JSON.parse(readFileSync(launcherRecordPath, "utf8"));
+        assert.ok(Array.isArray(launcherRecords));
+        assert.equal(launcherRecords.length, 1);
+        const [launcherRecord] = launcherRecords;
+        assert.equal(launcherRecord.parentPid, supervisor.pid);
+        assert.ok(Number.isSafeInteger(launcherRecord.launcherPid) && launcherRecord.launcherPid > 0);
+        assert.notEqual(launcherRecord.launcherPid, supervisor.pid);
+        launcherIdentities = captureOwnedIdentities([launcherRecord.launcherPid]);
+        assert.equal(launcherIdentities.length, 1);
+        assert.equal(launcherIdentities[0].pid, launcherRecord.launcherPid);
+        assert.match(launcherIdentities[0].startTicks, /^\d+$/u);
 
         const supervisorExit = waitForChildExit(supervisor);
         assert.equal(supervisor.kill("SIGKILL"), true);

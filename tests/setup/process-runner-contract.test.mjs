@@ -58,6 +58,138 @@ function noSuchGroup() {
 }
 
 describe("cross-platform process runner contract", () => {
+  for (const deniedSignal of [0, "SIGTERM", "SIGKILL"]) {
+    for (const followup of ["gone", "denied", "exists", "invalid"]) {
+      test(`POSIX ${deniedSignal} EPERM then ${followup} permits only bounded read-only group observation`, { timeout: 2000 }, async () => {
+        const child = fakePosixChild();
+        const permissionError = Object.assign(new Error("Permission denied"), { code: "EPERM", syscall: "kill" });
+        const invalidError = Object.assign(new Error("Invalid signal target"), { code: "EINVAL" });
+        const calls = [];
+        let deniedAt = -1;
+        let absenceObserved = false;
+        const runner = createPosixGuardedCommandRunner({
+          graceMs: 5,
+          cleanupTimeoutMs: 100,
+          spawn: () => {
+            queueMicrotask(() => closeFakeChild(child, 7));
+            return child;
+          },
+          kill: (pid, signal) => {
+            assert.equal(absenceObserved, false, "ESRCH must be terminal");
+            assert.equal(pid, -child.pid);
+            calls.push(signal);
+            if (deniedAt < 0) {
+              if (signal === deniedSignal) {
+                deniedAt = calls.length - 1;
+                throw permissionError;
+              }
+              return true;
+            }
+            assert.equal(signal, 0, "no further TERM/KILL or root-PID fallback after EPERM");
+            if (followup === "gone") {
+              absenceObserved = true;
+              throw noSuchGroup();
+            }
+            if (followup === "denied") throw permissionError;
+            if (followup === "invalid") throw invalidError;
+            return true;
+          },
+        });
+        const error = await expectRejected(runner("fixture", []));
+        assert.ok(deniedAt >= 0);
+        assert.ok(calls.slice(deniedAt + 1).every((signal) => signal === 0));
+        if (followup === "gone") {
+          assert.equal(error.code, "META_KIM_CHILD_COMMAND_FAILED");
+          assert.equal(error.exitCode, 7);
+          assert.equal(error.ownedProcessGroupCleanupVerified, true);
+          assert.equal(error.ownedProcessGroupCleanupFailure, false);
+        } else {
+          assert.equal(error.code, "META_KIM_COMMAND_CLEANUP_FAILED");
+          assert.equal(error.ownedProcessGroupCleanupVerified, false);
+          assert.equal(error.ownedProcessGroupCleanupFailure, true);
+          assert.equal(error.cause, followup === "invalid" ? invalidError : permissionError);
+        }
+        assertNoWholeTreeClaim(error);
+      });
+    }
+  }
+
+  test("POSIX non-permission signaling errors fail immediately without another probe", async () => {
+    const child = fakePosixChild();
+    const invalidError = Object.assign(new Error("Invalid target"), { code: "EINVAL" });
+    let calls = 0;
+    const runner = createPosixGuardedCommandRunner({
+      spawn: () => {
+        queueMicrotask(() => closeFakeChild(child));
+        return child;
+      },
+      kill: (pid, signal) => {
+        assert.equal(pid, -child.pid);
+        assert.equal(signal, 0);
+        calls += 1;
+        throw invalidError;
+      },
+    });
+    const error = await expectRejected(runner("fixture", []));
+    assert.equal(calls, 1);
+    assert.equal(error.cause, invalidError);
+    assert.equal(error.ownedProcessGroupCleanupVerified, false);
+    assert.equal(error.ownedProcessGroupCleanupFailure, true);
+    assertNoWholeTreeClaim(error);
+  });
+
+  test("POSIX EPERM observation retains the original group deadline", async (context) => {
+    context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
+    const flush = async () => {
+      for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    };
+    const child = fakePosixChild();
+    const permissionError = Object.assign(new Error("Permission denied"), { code: "EPERM" });
+    const calls = [];
+    let denied = false;
+    let settled = false;
+    const runner = createPosixGuardedCommandRunner({
+      graceMs: 20,
+      cleanupTimeoutMs: 40,
+      spawn: () => {
+        queueMicrotask(() => closeFakeChild(child, 7));
+        return child;
+      },
+      kill: (pid, signal) => {
+        assert.equal(pid, -child.pid);
+        calls.push({ signal, at: Date.now() });
+        if (denied) assert.equal(signal, 0);
+        if (denied || signal === "SIGKILL") {
+          denied = true;
+          throw permissionError;
+        }
+        return true;
+      },
+    });
+    const completion = expectRejected(runner("fixture", [])).then((error) => {
+      settled = true;
+      return error;
+    });
+    await flush();
+    context.mock.timers.tick(20);
+    await flush();
+    assert.ok(denied);
+    assert.equal(settled, false);
+    context.mock.timers.tick(20);
+    await flush();
+    context.mock.timers.tick(19);
+    await flush();
+    assert.equal(settled, false);
+    context.mock.timers.tick(1);
+    await flush();
+    assert.equal(settled, true, "EPERM must not restart the original 20 + 40ms group budget");
+    const error = await completion;
+    assert.equal(error.cause, permissionError);
+    assert.equal(error.ownedProcessGroupCleanupVerified, false);
+    assert.ok(calls.every(({ at }) => at < 60));
+    assertNoWholeTreeClaim(error);
+  });
+
   for (const scenario of [
     { name: "nonzero root exit with denied probe", trigger: "command_exit", failure: "probe", code: 7 },
     { name: "signaled root with denied group signal", trigger: "command_exit", failure: "signal", code: null, signal: "SIGTERM" },
