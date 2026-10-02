@@ -1,4 +1,5 @@
 import test from "node:test";
+import { SMOKE_STAGES } from "../../scripts/verification-stage-manifest.mjs";
 import assert from "node:assert/strict";
 import {
   mkdtempSync,
@@ -291,10 +292,11 @@ test("standard and smoke release gates reject a stale global Agent migration cat
     packageJson.scripts?.["meta:agents:migration-catalog:check"],
     "node scripts/generate-global-agent-migration-catalog.mjs --check",
   );
-  assert.match(
-    packageJson.scripts?.["meta:release:smoke"] ?? "",
-    /npm run meta:agents:migration-catalog:check/u,
+  assert.equal(
+    packageJson.scripts?.["meta:release:smoke"],
+    "node scripts/run-local-verification.mjs --suite smoke",
   );
+  assert.ok(SMOKE_STAGES.some(({ name }) => name === "meta:agents:migration-catalog:check"));
   assert.match(verifyRunnerSource, /meta:agents:migration-catalog:check/u);
 });
 

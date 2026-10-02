@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   buildPlanChallengeState,
@@ -9,7 +10,7 @@ import {
 } from "../../scripts/governed-execution/plan-challenge-policy.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
 
-const repoRoot = path.resolve(new URL("../..", import.meta.url).pathname.slice(1));
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 function matrixWith(claimOverrides = {}) {
   const claim = {

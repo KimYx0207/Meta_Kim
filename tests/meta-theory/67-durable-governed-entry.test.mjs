@@ -1,17 +1,28 @@
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import { promisify } from "node:util";
 
-import { openDurableRunKernel } from "../../scripts/governed-execution/durable-run-kernel.mjs";
-import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+let openDurableRunKernel;
+let runMetaTheoryGovernedExecution;
 
 const execFileAsync = promisify(execFile);
-const ENTRY = path.resolve("scripts/run-meta-theory-governed-execution.mjs");
+let ENTRY;
 const TASK = "Run meta-theory: inspect package.json and produce a durable verification report of the exact package name and version. Do not modify files.";
+
+let runtimeFixture;
+before(async () => {
+  runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  ({ runMetaTheoryGovernedExecution } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs"));
+  ({ openDurableRunKernel } = await runtimeFixture.import("scripts/governed-execution/durable-run-kernel.mjs"));
+  ENTRY = path.resolve("scripts/run-meta-theory-governed-execution.mjs");
+});
+after(() => runtimeFixture?.cleanup());
+
 
 async function tempRoot(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-p118-entry-"));

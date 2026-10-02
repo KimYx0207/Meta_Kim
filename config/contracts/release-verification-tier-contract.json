@@ -89,12 +89,14 @@
         "meta:check:global:release",
         "eval-meta-agents",
         "meta:runtime:produce",
+        "meta:capabilities:smoke",
         "meta:test:inventory",
         "meta:test:unit",
-        "meta:test:process-guard",
-        "meta:test:setup",
         "meta:test:meta-theory",
-        "meta:test:integration"
+        "meta:test:integration",
+        "meta:test:live:coverage",
+        "meta:test:process-guard",
+        "meta:test:setup"
       ]
     }
   },

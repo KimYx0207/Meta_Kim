@@ -1,4 +1,5 @@
-import { describe, test } from "node:test";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -7,11 +8,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import {
-  readGovernedExecutionRun,
-  renameWithTransientWindowsRetry,
-  runMetaTheoryGovernedExecution,
-} from "../../scripts/run-meta-theory-governed-execution.mjs";
+let readGovernedExecutionRun, renameWithTransientWindowsRetry, runMetaTheoryGovernedExecution;
 import {
   getGovernedRunSurfaceLabels,
   resolveOutputLanguage,
@@ -24,6 +21,14 @@ import {
 } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 
 let reportProfileSequence = 0;
+
+let runtimeFixture;
+before(async () => {
+  runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  ({ readGovernedExecutionRun, renameWithTransientWindowsRetry, runMetaTheoryGovernedExecution } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs"));
+});
+after(() => runtimeFixture?.cleanup());
+
 
 function createRepoReportProfile(label) {
   reportProfileSequence += 1;

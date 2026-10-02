@@ -3,12 +3,19 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import test from "node:test";
+import test, { after, before } from "node:test";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+
 import {
   discoverDependencyAgentContracts,
   matchDependencyAgentContracts,
 } from "../../scripts/dependency-agent-discovery.mjs";
+let runtimeFixture;
+before(() => {
+  runtimeFixture = createGovernanceRuntimeFixture(null);
+});
+after(() => runtimeFixture?.cleanup());
+
 
 const project = {
   id: "kim-service",
@@ -207,9 +214,9 @@ test("paths cannot escape the declared package or traverse a directory link", as
 
 test("the existing route selector binds the discovered role as a contract, without claiming invocation", (t) => {
   const { root } = fixture(t);
-  const result = spawnSync(process.execPath, ["scripts/select-execution-route.mjs", "--task", "请把我的客服经历改成运营助理岗位简历", "--runtime", "codex", "--os", "windows", "--json"], {
-    cwd: process.cwd(), encoding: "utf8", timeout: 90_000,
-    env: { ...process.env, META_KIM_KIM_SERVICE_ROOT: root },
+  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "请把我的客服经历改成运营助理岗位简历", "--runtime", "codex", "--os", "windows", "--json"], {
+    encoding: "utf8", timeout: 90_000,
+    env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const route = JSON.parse(result.stdout);
@@ -230,9 +237,9 @@ test("the existing route selector binds the discovered role as a contract, witho
 
 test("engineering work mentioning a professional domain does not select a read-only content role", (t) => {
   const { root } = fixture(t);
-  const result = spawnSync(process.execPath, ["scripts/select-execution-route.mjs", "--task", "修复商品详情页的 JavaScript 代码和 API 报错", "--runtime", "codex", "--os", "windows", "--json"], {
-    cwd: process.cwd(), encoding: "utf8", timeout: 90_000,
-    env: { ...process.env, META_KIM_KIM_SERVICE_ROOT: root },
+  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "修复商品详情页的 JavaScript 代码和 API 报错", "--runtime", "codex", "--os", "windows", "--json"], {
+    encoding: "utf8", timeout: 90_000,
+    env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const route = JSON.parse(result.stdout);
@@ -242,9 +249,9 @@ test("engineering work mentioning a professional domain does not select a read-o
 
 test("capability discovery complaints are not claimed by a tutor through generic question words", (t) => {
   const { root } = fixture(t);
-  const result = spawnSync(process.execPath, ["scripts/select-execution-route.mjs", "--task", "Critical Thinking Fetch Deep Thinking Review 为什么 Codex 一直创建 agent 而不是找全局 agent", "--runtime", "codex", "--os", "windows", "--json"], {
-    cwd: process.cwd(), encoding: "utf8", timeout: 90_000,
-    env: { ...process.env, META_KIM_KIM_SERVICE_ROOT: root },
+  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "Critical Thinking Fetch Deep Thinking Review 为什么 Codex 一直创建 agent 而不是找全局 agent", "--runtime", "codex", "--os", "windows", "--json"], {
+    encoding: "utf8", timeout: 90_000,
+    env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const route = JSON.parse(result.stdout);
@@ -263,9 +270,9 @@ test("professional contracts cannot replace explicit governance or technical scr
     "为什么一直创建简历 agent，而不是复用已有的",
   ]) {
     await t.test(task, () => {
-      const result = spawnSync(process.execPath, ["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
-        cwd: process.cwd(), encoding: "utf8", timeout: 90_000,
-        env: { ...process.env, META_KIM_KIM_SERVICE_ROOT: root },
+      const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
+        encoding: "utf8", timeout: 90_000,
+        env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
       });
       assert.equal(result.status, 0, result.stderr || result.stdout);
       const route = JSON.parse(result.stdout);

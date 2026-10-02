@@ -35,6 +35,7 @@ import {
 } from "./verify-packed-user-install-update.mjs";
 import { resolveRuntimeProfilesFromManifest } from "./meta-kim-sync-config.mjs";
 import { packedProductProofComplete } from "./packed-product-proof.mjs";
+import { SMOKE_BEHAVIOR_STAGES } from "./verification-stage-manifest.mjs";
 
 export { packedProductProofComplete } from "./packed-product-proof.mjs";
 
@@ -115,12 +116,9 @@ const STANDARD_STAGE_COMMANDS = Object.freeze([
   ["meta:check:global:release", "npm run meta:check:global:release"],
   ["eval-meta-agents", "node scripts/eval-meta-agents.mjs"],
   ["meta:runtime:produce", "node scripts/run-runtime-capability-producers.mjs --status --require-fresh"],
-  ["meta:test:inventory", "npm run meta:test:inventory"],
-  ["meta:test:unit", "npm run meta:test:unit"],
+  ...SMOKE_BEHAVIOR_STAGES.map(({ name, cmd }) => [name, cmd]),
   ["meta:test:process-guard", "npm run meta:test:process-guard"],
   ["meta:test:setup", "npm run meta:test:setup"],
-  ["meta:test:meta-theory", "npm run meta:test:meta-theory"],
-  ["meta:test:integration", "npm run meta:test:integration"],
 ]);
 
 export function buildVerificationStages(environment = process.env) {
