@@ -10,7 +10,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { runCommandWithIgnoredStdin } from "../../scripts/eval-process-runner.mjs";
+import {
+  createPosixGuardedCommandRunner,
+  runCommandWithIgnoredStdin,
+} from "../../scripts/eval-process-runner.mjs";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,13 +86,24 @@ function assertNoWholeTreeClaim(value) {
   );
 }
 
-function writeProcessTreeFixture(tempDir) {
+function writeProcessTreeFixture(
+  tempDir,
+  { rootMode = "hold", exitCode = 0, inheritOutput = false, resistTerm = false } = {},
+) {
   const grandchildScript = path.join(tempDir, "grandchild.mjs");
   const childScript = path.join(tempDir, "child.mjs");
   const rootScript = path.join(tempDir, "root.mjs");
   const pidsPath = path.join(tempDir, "pids.json");
+  const readyPath = path.join(tempDir, "grandchild-ready");
+  const releasePath = path.join(tempDir, "release-root");
 
-  writeFileSync(grandchildScript, "setInterval(() => {}, 1000);\n", "utf8");
+  writeFileSync(grandchildScript, [
+    'import { writeFileSync } from "node:fs";',
+    resistTerm ? 'process.on("SIGTERM", () => {});' : "",
+    `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
+    "setInterval(() => {}, 1000);",
+    "",
+  ].join("\n"), "utf8");
   writeFileSync(
     childScript,
     [
@@ -106,23 +120,91 @@ function writeProcessTreeFixture(tempDir) {
     rootScript,
     [
       'import { spawn } from "node:child_process";',
-      'process.on("SIGTERM", () => process.exit(23));',
+      'import { existsSync } from "node:fs";',
+      rootMode === "hold" ? 'process.on("SIGTERM", () => process.exit(23));' : "",
       `spawn(process.execPath, [${JSON.stringify(childScript)}], {`,
       `  env: { ...process.env, META_KIM_GRANDCHILD: ${JSON.stringify(grandchildScript)}, META_KIM_PIDS: ${JSON.stringify(pidsPath)}, META_KIM_ROOT_PID: String(process.pid) },`,
-      '  stdio: "ignore",',
+      inheritOutput ? '  stdio: ["ignore", "inherit", "inherit"],' : '  stdio: "ignore",',
       "});",
-      "setInterval(() => {}, 1000);",
+      rootMode === "hold" ? "setInterval(() => {}, 1000);" : [
+        "const deadline = Date.now() + 10000;",
+        `while (!existsSync(${JSON.stringify(releasePath)}) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));`,
+        `if (!existsSync(${JSON.stringify(releasePath)})) throw new Error("root release was not signaled");`,
+        rootMode === "signal" ? 'process.kill(process.pid, "SIGTERM");' : `process.exit(${exitCode});`,
+      ].join("\n"),
       "",
     ].join("\n"),
     "utf8",
   );
-  return { pidsPath, rootScript };
+  return { pidsPath, readyPath, releasePath, rootScript };
 }
 
 describe(
   "POSIX detached evaluator process group",
   { skip: process.platform === "win32" },
   () => {
+    for (const scenario of [
+      { name: "successful root exit", rootMode: "exit", exitCode: 0 },
+      { name: "nonzero root exit", rootMode: "exit", exitCode: 7 },
+      { name: "signal root exit", rootMode: "signal", exitCode: null },
+      { name: "root exit with inherited output pipes", rootMode: "exit", exitCode: 7, inheritOutput: true },
+      { name: "root exit with a TERM-resistant grandchild", rootMode: "exit", exitCode: 7, resistTerm: true },
+    ]) {
+      test(`${scenario.name} drains the remaining owned group before publishing cleanup truth`, async () => {
+        const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-posix-group-"));
+        const { pidsPath, readyPath, releasePath, rootScript } = writeProcessTreeFixture(tempDir, scenario);
+        let identities = [];
+        try {
+          // Shorten only the escalation grace in the resistant-process fixture;
+          // spawning, signaling, probing and final verification remain real.
+          const runner = scenario.resistTerm
+            ? createPosixGuardedCommandRunner({ graceMs: 100 })
+            : runCommandWithIgnoredStdin;
+          const completion = runner(process.execPath, [rootScript], {
+            cwd: tempDir,
+            timeout: 10_000,
+          }).then((result) => ({ result }), (error) => ({ error }));
+          await Promise.all([waitForFile(pidsPath), waitForFile(readyPath)]);
+          const pids = Object.values(JSON.parse(readFileSync(pidsPath, "utf8")));
+          identities = pids.map(processIdentity).filter(Boolean);
+          assert.equal(identities.length, 3);
+          writeFileSync(releasePath, "exit\n", "utf8");
+
+          const { result, error } = await completion;
+          if (scenario.exitCode === 0) {
+            assert.equal(error, undefined);
+          } else {
+            assert.equal(error?.code, "META_KIM_CHILD_COMMAND_FAILED");
+            assert.equal(error.exitCode, scenario.exitCode);
+            assert.equal(error.signal, scenario.rootMode === "signal" ? "SIGTERM" : null);
+          }
+          const diagnostic = result ?? error;
+          assert.equal(diagnostic.ownedProcessGroupCleanupVerified, true);
+          assert.equal(diagnostic.ownedProcessGroupCleanupFailure, false);
+          assert.equal(diagnostic.ownedProcessGroupCleanupReason, null);
+          assert.equal(diagnostic.ownedProcessGroupScope, "posix_detached_process_group");
+          assertNoWholeTreeClaim(diagnostic);
+          // No extra grace after return: verified must already mean group gone.
+          assert.throws(() => process.kill(-pids[0], 0), { code: "ESRCH" });
+          assert.ok(identities.every((identity) => !pidAppearsAlive(identity.pid)));
+        } finally {
+          stopOwnedProcesses(identities);
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
+    }
+
+    test("launch failure reports that no owned process group was established", async () => {
+      const missingCommand = path.join(os.tmpdir(), `meta-kim-missing-${process.pid}-${Date.now()}`);
+      const error = await expectRejected(runCommandWithIgnoredStdin(missingCommand, []));
+      assert.equal(error.code, "META_KIM_CHILD_COMMAND_LAUNCH_FAILED");
+      assert.equal(error.systemCode, "ENOENT");
+      assert.equal(error.ownedProcessGroupCleanupVerified, false);
+      assert.equal(error.ownedProcessGroupCleanupFailure, false);
+      assert.equal(error.ownedProcessGroupCleanupReason, "process_not_spawned");
+      assertNoWholeTreeClaim(error);
+    });
+
     test("timeout wins over the root exit code and drains root, child, and grandchild", async () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-posix-group-"));
       const { pidsPath, rootScript } = writeProcessTreeFixture(tempDir);

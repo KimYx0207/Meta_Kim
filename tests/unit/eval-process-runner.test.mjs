@@ -166,6 +166,11 @@ describe("bounded evaluator output capture", () => {
   test("clears a losing POSIX timeout after the child outcome wins", async () => {
     const child = createFakeChild();
     const runner = createPosixGuardedCommandRunner({
+      kill: (pid, signal) => {
+        assert.equal(pid, -child.pid);
+        assert.equal(signal, 0);
+        throw Object.assign(new Error("No such process group"), { code: "ESRCH" });
+      },
       spawn: (_file, _args, options) => {
         assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);
         queueMicrotask(() => closeFakeChild(child, 0));
