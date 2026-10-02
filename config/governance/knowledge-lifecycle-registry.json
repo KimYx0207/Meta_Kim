@@ -1,73 +1,173 @@
 {
-  "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "revision": 0,
-  "updatedAt": "2026-08-12T00:00:00.000Z",
-  "entries": {
-    "canonical/skills/meta-theory/SKILL.md": {
-      "targetRef": "canonical/skills/meta-theory/SKILL.md",
-      "kind": "knowledge",
-      "status": "active",
-      "foundational": true,
-      "executionClass": "execution_eligible",
-      "sourceDigest": "sha256:67b490e804b8710197c84da46713ecc3e0f33a57a5481f5648ac0127559f5ddb",
-      "replacementRefs": [],
-      "provenance": {
-        "sourceRefs": ["canonical/skills/meta-theory/SKILL.md"],
-        "evidenceRefs": ["AGENTS.md#Meta-Theory-Activation"],
-        "recordedAt": "2026-08-12T00:00:00.000Z"
-      },
-      "lifecycle": {
-        "lastTransitionId": "genesis:meta-theory-skill",
-        "changedAt": "2026-08-12T00:00:00.000Z",
-        "reason": "Foundational governed-execution source retained as active."
-      }
-    },
-    "config/contracts/core-loop-contract.json": {
-      "targetRef": "config/contracts/core-loop-contract.json",
-      "kind": "rule",
-      "status": "active",
-      "foundational": true,
-      "executionClass": "execution_eligible",
-      "sourceDigest": "sha256:2ec5d1012785a9e2fe38b871ab48cbcbbe318d46bda500c920d521d7b89d6397",
-      "replacementRefs": [],
-      "provenance": {
-        "sourceRefs": ["config/contracts/core-loop-contract.json"],
-        "evidenceRefs": ["AGENTS.md#Eight-Stage-Spine"],
-        "recordedAt": "2026-08-12T00:00:00.000Z"
-      },
-      "lifecycle": {
-        "lastTransitionId": "genesis:core-loop-contract",
-        "changedAt": "2026-08-12T00:00:00.000Z",
-        "reason": "Foundational eight-stage execution contract retained as active."
-      }
-    },
-    "config/governance/decision-pattern-catalog.json": {
+  "appliedTransitions": {
+    "intent-tools-20261002:method-catalog": {
+      "appliedAt": "2026-10-02T20:01:28.004Z",
+      "approvalDigest": "sha256:f43f8c4430b8b96f5af6df0ccfdef464c9b937e90d933edb1b71ad9716864b13",
+      "candidateDigest": "sha256:b6c84c47a31a6145b76275ba71b827f74d83bf90e2d25d41199c076765b24c60",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
       "targetRef": "config/governance/decision-pattern-catalog.json",
-      "kind": "capability_index",
-      "status": "active",
-      "foundational": false,
-      "executionClass": "reference_only",
-      "sourceDigest": "sha256:b4e827d2032422ae635a6bc31b7af3dddbab6a94a372669ae200948536abc6b5",
-      "replacementRefs": [],
-      "provenance": {
-        "sourceRefs": ["config/governance/decision-pattern-catalog.json"],
-        "evidenceRefs": ["config/capability-index/dependency-project-registry.json"],
-        "recordedAt": "2026-08-12T00:00:00.000Z"
-      },
-      "lifecycle": {
-        "lastTransitionId": "genesis:decision-pattern-catalog",
-        "changedAt": "2026-08-12T00:00:00.000Z",
-        "reason": "Reference-only distilled patterns remain registered without execution authority."
-      }
+      "toStatus": "active"
+    },
+    "intent-tools-20261002:method-skill": {
+      "appliedAt": "2026-10-02T20:01:27.986Z",
+      "approvalDigest": "sha256:cfc3f6a92745e3baff4adfd5169e68e2d8c2b8e899d1be4d28f96869fa42bd4f",
+      "candidateDigest": "sha256:e04886df1c06413c81c136c529aa0664f10e34640e1a29c77d0cc3bf72df9f90",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
     }
   },
-  "appliedTransitions": {},
-  "history": [],
+  "entries": {
+    "canonical/skills/meta-theory/SKILL.md": {
+      "executionClass": "execution_eligible",
+      "foundational": true,
+      "kind": "knowledge",
+      "lifecycle": {
+        "changedAt": "2026-10-02T20:01:27.986Z",
+        "lastTransitionId": "intent-tools-20261002:method-skill",
+        "reason": "Bind reviewed confirmed-intent and reference-method source changes; retain existing lifecycle status and execution class."
+      },
+      "provenance": {
+        "evidenceRefs": [
+          "AGENTS.md#Meta-Theory-Activation"
+        ],
+        "recordedAt": "2026-08-12T00:00:00.000Z",
+        "sourceRefs": [
+          "canonical/skills/meta-theory/SKILL.md"
+        ]
+      },
+      "replacementRefs": [],
+      "sourceDigest": "sha256:9d346bfe93e88c3da48d503f90a018f86f8c937f99aac8228efa9f88b5c746fc",
+      "status": "active",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md"
+    },
+    "config/contracts/core-loop-contract.json": {
+      "executionClass": "execution_eligible",
+      "foundational": true,
+      "kind": "rule",
+      "lifecycle": {
+        "changedAt": "2026-08-12T00:00:00.000Z",
+        "lastTransitionId": "genesis:core-loop-contract",
+        "reason": "Foundational eight-stage execution contract retained as active."
+      },
+      "provenance": {
+        "evidenceRefs": [
+          "AGENTS.md#Eight-Stage-Spine"
+        ],
+        "recordedAt": "2026-08-12T00:00:00.000Z",
+        "sourceRefs": [
+          "config/contracts/core-loop-contract.json"
+        ]
+      },
+      "replacementRefs": [],
+      "sourceDigest": "sha256:2ec5d1012785a9e2fe38b871ab48cbcbbe318d46bda500c920d521d7b89d6397",
+      "status": "active",
+      "targetRef": "config/contracts/core-loop-contract.json"
+    },
+    "config/governance/decision-pattern-catalog.json": {
+      "executionClass": "reference_only",
+      "foundational": false,
+      "kind": "capability_index",
+      "lifecycle": {
+        "changedAt": "2026-10-02T20:01:28.004Z",
+        "lastTransitionId": "intent-tools-20261002:method-catalog",
+        "reason": "Bind reviewed confirmed-intent and reference-method source changes; retain existing lifecycle status and execution class."
+      },
+      "provenance": {
+        "evidenceRefs": [
+          "config/capability-index/dependency-project-registry.json"
+        ],
+        "recordedAt": "2026-08-12T00:00:00.000Z",
+        "sourceRefs": [
+          "config/governance/decision-pattern-catalog.json"
+        ]
+      },
+      "replacementRefs": [],
+      "sourceDigest": "sha256:11f5d7ce6ee09eeeeb5f337be611f03ce6559556d809ca8a245bd4fd7c6033a0",
+      "status": "active",
+      "targetRef": "config/governance/decision-pattern-catalog.json"
+    }
+  },
+  "history": [
+    {
+      "appliedAt": "2026-10-02T20:01:27.986Z",
+      "approvalDigest": "sha256:cfc3f6a92745e3baff4adfd5169e68e2d8c2b8e899d1be4d28f96869fa42bd4f",
+      "candidateDigest": "sha256:e04886df1c06413c81c136c529aa0664f10e34640e1a29c77d0cc3bf72df9f90",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-08-12T00:00:00.000Z",
+          "lastTransitionId": "genesis:meta-theory-skill",
+          "reason": "Foundational governed-execution source retained as active."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:67b490e804b8710197c84da46713ecc3e0f33a57a5481f5648ac0127559f5ddb",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "intent-tools-20261002:method-skill"
+    },
+    {
+      "appliedAt": "2026-10-02T20:01:28.004Z",
+      "approvalDigest": "sha256:f43f8c4430b8b96f5af6df0ccfdef464c9b937e90d933edb1b71ad9716864b13",
+      "candidateDigest": "sha256:b6c84c47a31a6145b76275ba71b827f74d83bf90e2d25d41199c076765b24c60",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "reference_only",
+        "foundational": false,
+        "kind": "capability_index",
+        "lifecycle": {
+          "changedAt": "2026-08-12T00:00:00.000Z",
+          "lastTransitionId": "genesis:decision-pattern-catalog",
+          "reason": "Reference-only distilled patterns remain registered without execution authority."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "config/capability-index/dependency-project-registry.json"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/governance/decision-pattern-catalog.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:b4e827d2032422ae635a6bc31b7af3dddbab6a94a372669ae200948536abc6b5",
+        "status": "active",
+        "targetRef": "config/governance/decision-pattern-catalog.json"
+      },
+      "targetRef": "config/governance/decision-pattern-catalog.json",
+      "toStatus": "active",
+      "transitionId": "intent-tools-20261002:method-catalog"
+    }
+  ],
   "policy": {
-    "automaticDeletion": false,
     "automaticAgeTransition": false,
+    "automaticDeletion": false,
     "foundationalRetirement": false,
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
-  }
+  },
+  "revision": 2,
+  "schemaVersion": "knowledge-lifecycle-registry-v1",
+  "updatedAt": "2026-10-02T20:01:28.004Z"
 }

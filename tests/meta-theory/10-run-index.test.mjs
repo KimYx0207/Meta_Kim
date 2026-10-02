@@ -1,7 +1,8 @@
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { REPO_ROOT } from "./_helpers.mjs";
@@ -9,8 +10,9 @@ import { REPO_ROOT } from "./_helpers.mjs";
 const execFileAsync = promisify(execFile);
 
 describe("run-index.mjs", () => {
-  const profile = "test-run-index";
+  const profile = `test-run-index-${process.pid}`;
   const profileDir = path.join(REPO_ROOT, ".meta-kim", "state", profile);
+  let isolatedHome;
   const validFixture = path.join(REPO_ROOT, "tests", "fixtures", "run-artifacts", "valid-run.json");
   const invalidFixture = path.join(REPO_ROOT, "tests", "fixtures", "run-artifacts", "invalid-run-public-ready.json");
   const invalidCompactionFixture = path.join(
@@ -21,9 +23,20 @@ describe("run-index.mjs", () => {
     "invalid-run-compaction-open-findings.json"
   );
 
+  before(async () => {
+    isolatedHome = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-run-index-home-"));
+  });
+  after(async () => {
+    await fs.rm(profileDir, { recursive: true, force: true });
+    if (isolatedHome) await fs.rm(isolatedHome, { recursive: true, force: true });
+  });
+
   async function runRunIndex(args) {
     const { stdout } = await execFileAsync("node", ["scripts/run-index.mjs", ...args], {
       cwd: REPO_ROOT,
+      // Profile setup also opens the global project registry. Keep that real
+      // SQLite path isolated rather than mutating the developer's home state.
+      env: { ...process.env, HOME: isolatedHome, USERPROFILE: isolatedHome },
     });
     return JSON.parse(stdout);
   }
@@ -46,6 +59,8 @@ describe("run-index.mjs", () => {
     assert.equal(result.indexedCount, 1);
     assert.equal(result.skippedCount, 2);
     assert.deepEqual(result.indexed, ["tests/fixtures/run-artifacts/valid-run.json"]);
+    assert.equal((await fs.stat(path.join(profileDir, "run-index.sqlite"))).isFile(), true);
+    assert.equal((await fs.stat(path.join(isolatedHome, ".meta-kim", "global", "project-registry.sqlite"))).isFile(), true);
   });
 
   test("query filters by governance flow, owner, publicReady, and open findings", async () => {

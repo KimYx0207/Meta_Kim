@@ -156,13 +156,23 @@ test("binding loader finds the stored descriptor after a stale or mismatched ear
 });
 
 test("production PATH locator skips a broken first candidate and reloads the usable second candidate", { concurrency: false }, () => {
-  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-default-locator-"));
+  // Use the same project boundary for Node file writes and the external PATH
+  // locator. A sandbox can expose its OS temp directory only to the Node child.
+  const fixtureParent = path.resolve(import.meta.dirname, "../../tmp");
+  mkdirSync(fixtureParent, { recursive: true });
+  const root = mkdtempSync(path.join(fixtureParent, "meta-kim-runtime-default-locator-"));
   const brokenDir = path.join(root, "broken-bin");
   const usableDir = path.join(root, "usable-bin");
   const executableName = process.platform === "win32" ? "codex.exe" : "codex";
   const broken = path.join(brokenDir, executableName);
   const usable = path.join(usableDir, executableName);
-  const originalPath = process.env.PATH;
+  // Node test workers can preserve both PATH and Path. Windows child process
+  // environment folding must see the fixture path through either spelling.
+  const pathKeys = process.platform === "win32"
+    ? Object.keys(process.env).filter((key) => /^path$/iu.test(key))
+    : ["PATH"];
+  const originalPaths = new Map(pathKeys.map((key) => [key, process.env[key]]));
+  if (pathKeys.length === 0) pathKeys.push("PATH");
   try {
     mkdirSync(brokenDir, { recursive: true });
     mkdirSync(usableDir, { recursive: true });
@@ -172,7 +182,8 @@ test("production PATH locator skips a broken first candidate and reloads the usa
       chmodSync(broken, 0o755);
       chmodSync(usable, 0o755);
     }
-    process.env.PATH = [brokenDir, usableDir, originalPath].filter(Boolean).join(path.delimiter);
+    const fixturePath = [brokenDir, usableDir, ...new Set(originalPaths.values())].filter(Boolean).join(path.delimiter);
+    for (const key of pathKeys) process.env[key] = fixturePath;
 
     const brokenRealpath = realpathSync.native(broken);
     const usableRealpath = realpathSync.native(usable);
@@ -201,8 +212,11 @@ test("production PATH locator skips a broken first candidate and reloads the usa
     });
     assert.equal(loaded.realpath, usableRealpath);
   } finally {
-    if (originalPath === undefined) delete process.env.PATH;
-    else process.env.PATH = originalPath;
+    for (const key of pathKeys) {
+      const original = originalPaths.get(key);
+      if (original === undefined) delete process.env[key];
+      else process.env[key] = original;
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });
