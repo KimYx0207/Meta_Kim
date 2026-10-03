@@ -252,6 +252,7 @@ test("only the exact unchanged installer receipt permits replacement; drift neve
   for (const mutation of [
     { source: "unrelated-writer" }, { purpose: "unrelated-global-skill" }, { path: path.join(ctx.home, ".claude/skills/same-name-elsewhere") },
     { directoryClosureSha256: "0".repeat(64) }, { directoryClosureEntryCount: 999 }, { ownershipClass: "runtime_sedimented_project_copy" },
+    { ownershipClass: "user_owned" }, { ownershipClass: "canonical_source" },
   ]) {
     const value = JSON.parse(originalReceipt); Object.assign(value.entries.find((entry) => entry.path === target), mutation);
     put(ledger, JSON.stringify(value));
@@ -262,6 +263,13 @@ test("only the exact unchanged installer receipt permits replacement; drift neve
   put(path.join(source, "skills/goalpro/SKILL.md"), "---\nname: goalpro\ndescription: Updated verified source.\n---\n\n# Updated source\n");
   passed(run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true }));
   assert.match(readFileSync(path.join(target, "SKILL.md"), "utf8"), /Updated source/);
+  for (const ownershipClass of [null, "install_projection"]) {
+    const value = JSON.parse(readFileSync(ledger)); value.entries.find((entry) => entry.path === target).ownershipClass = ownershipClass;
+    put(ledger, JSON.stringify(value));
+    put(path.join(source, "skills/goalpro/NOTICE"), `Updated source for ${ownershipClass ?? "legacy null"}\n`);
+    passed(run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true }));
+    assert.equal(readFileSync(path.join(target, "NOTICE"), "utf8"), readFileSync(path.join(source, "skills/goalpro/NOTICE"), "utf8"));
+  }
   const managedReceipt = readFileSync(ledger, "utf8");
   put(path.join(target, "user-owned-after-install.txt"), "do not erase this addition\n");
   const drifted = treeHash(target, true);

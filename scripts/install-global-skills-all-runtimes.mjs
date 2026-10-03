@@ -4188,7 +4188,7 @@ async function isOwnedServiceSkillRoot(spec, root) {
     managedDependencyTargetKey(entry.path) === key &&
     entry.source === "install-global-skills-all-runtimes" &&
     entry.purpose === `${spec.id}-global-skill` &&
-    entry.ownershipClass !== "runtime_sedimented_project_copy");
+    [undefined, null, "install_projection"].includes(entry.ownershipClass));
   return shouldRecordManagedDependencyTarget({
     previousEntry: receipt,
     currentClosure: directoryClosureSync(root),
