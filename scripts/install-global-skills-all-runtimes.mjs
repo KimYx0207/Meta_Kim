@@ -1510,8 +1510,8 @@ async function installMetaSkillCreatorAcrossRuntimes(
     const knownLegacy = await isKnownLegacySkillRoot(spec, target);
     if (knownLegacy) preserveLegacyTargets.push(target);
     if (repoNameFromFullName(spec.repoFullName) === "Kim_Service" && await pathExists(target)
-      && !(await isEmptyDir(target)) && !knownLegacy && !(await isReusableSkillRoot(spec, target))) {
-      throw new Error(`Existing ${spec.id} directory has no verified component entrypoint; preserved without replacement: ${target}`);
+      && !(await isEmptyDir(target)) && !knownLegacy && !(await isOwnedServiceSkillRoot(spec, target))) {
+      throw new Error(`Existing ${spec.id} directory has no matching unchanged ownership receipt; preserved without replacement: ${target}`);
     }
   }
   if (dryRun) {
@@ -4177,6 +4177,24 @@ async function isReusableSkillRoot(spec, root, { installed = true } = {}) {
   } catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
 }
 
+async function isOwnedServiceSkillRoot(spec, root) {
+  if (!(await isReusableSkillRoot(spec, root))) return false;
+  if (repoNameFromFullName(spec.repoFullName) !== "Kim_Service") return true;
+  // Matching names and valid frontmatter prove structure, never ownership.
+  // Also reject drift: files added beside a managed entrypoint are not ours
+  // to silently delete during a whole-directory replacement.
+  const key = managedDependencyTargetKey(root);
+  const receipt = globalManagedSkillPaths.find((entry) =>
+    managedDependencyTargetKey(entry.path) === key &&
+    entry.source === "install-global-skills-all-runtimes" &&
+    entry.purpose === `${spec.id}-global-skill` &&
+    [undefined, null, "install_projection"].includes(entry.ownershipClass));
+  return shouldRecordManagedDependencyTarget({
+    previousEntry: receipt,
+    currentClosure: directoryClosureSync(root),
+  });
+}
+
 async function isKnownLegacySkillRoot(spec, root) {
   if (repoNameFromFullName(spec.repoFullName) !== "Kim_Service") return false;
   let config;
@@ -4218,9 +4236,9 @@ async function validateServiceStage(spec, stagedPath) {
 async function stageAndDeployServiceSkill(spec, targetDir) {
   const targetExists = await pathExists(targetDir) && !(await isEmptyDir(targetDir));
   const knownLegacy = targetExists && await isKnownLegacySkillRoot(spec, targetDir);
-  const reusable = targetExists && await isReusableSkillRoot(spec, targetDir);
+  const reusable = targetExists && await isOwnedServiceSkillRoot(spec, targetDir);
   if (targetExists && !knownLegacy && !reusable) {
-    throw new Error(`Existing ${spec.id} directory has no verified component entrypoint; preserved without replacement: ${targetDir}`);
+    throw new Error(`Existing ${spec.id} directory has no matching unchanged ownership receipt; preserved without replacement: ${targetDir}`);
   }
   if (dryRun) {
     console.log(t.dryRun(`install ${spec.id} component -> ${targetDir}`));
@@ -4263,8 +4281,8 @@ async function deployStagedSkill(stagedPath, targetDir, skillId, subdirPath, spe
   const targetExists = await pathExists(targetDir);
   const targetEmpty = targetExists && (await isEmptyDir(targetDir));
   if (targetExists && !targetEmpty && repoNameFromFullName(spec.repoFullName) === "Kim_Service"
-    && !knownLegacy && !(await isReusableSkillRoot(spec, targetDir))) {
-    throw new Error(`Existing ${skillId} directory has no verified component entrypoint; preserved without replacement: ${targetDir}`);
+    && !knownLegacy && !(await isOwnedServiceSkillRoot(spec, targetDir))) {
+    throw new Error(`Existing ${skillId} directory has no matching unchanged ownership receipt; preserved without replacement: ${targetDir}`);
   }
   if (!knownLegacy) await repairManagedSkillTarget({ skillId, targetDir, subdirPath, allowDelete: true });
 
@@ -4340,7 +4358,7 @@ async function installSkillsToMultipleRuntimes(
       if (applicableRuntimes.length === 0) continue;
       for (const runtimeId of applicableRuntimes) {
         const candidate = resolveSkillTargetDir(homes[runtimeId], spec, runtimeId);
-        if (await isReusableSkillRoot(spec, candidate) && !(await isKnownLegacySkillRoot(spec, candidate))) {
+        if (await isOwnedServiceSkillRoot(spec, candidate) && !(await isKnownLegacySkillRoot(spec, candidate))) {
           alreadyExists.set(spec.id, candidate);
           break;
         }

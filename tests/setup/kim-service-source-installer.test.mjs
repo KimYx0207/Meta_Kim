@@ -214,6 +214,70 @@ test("unknown target is preserved before repair; recognized historical repo is r
   passed(run(ctx,source,{ids:["agent-teams-playbook"]})); assert.ok(existsSync(path.join(target,"SKILL.md")));
   assert.equal(readFileSync(path.join(legacyBackup(target),"user-owned.txt"),"utf8"),"keep\n");
 });
+test("unowned matching Service entrypoints do not authorize directory replacement or adoption", (t) => {
+  for (const [id] of specs) {
+    const ctx = sandbox(t); const source = fixture(ctx.root);
+    const subdir = specs.find(([candidate]) => candidate === id)[1];
+    const target = path.join(ctx.home, ".claude/skills", id);
+    cpSync(path.join(source, subdir), target, { recursive: true });
+    put(path.join(target, "user-owned-notes.txt"), "Keep this user content beside the matching entrypoint.\n");
+    const before = treeHash(target, true);
+    const result = run(ctx, source, { ids: [id], targets: "claude", update: true });
+    t.diagnostic(JSON.stringify({ id, exitCode: result.status, userFilePreserved: existsSync(path.join(target, "user-owned-notes.txt")), directoryUnchanged: treeHash(target, true) === before }));
+    assert.notEqual(result.status, 0, `${id}: a matching entrypoint is not an ownership receipt`);
+    assert.equal(treeHash(target, true), before, `${id}: preserve the whole unowned directory`);
+    const ledger = path.join(ctx.home, ".meta-kim/install-manifest.json");
+    if (existsSync(ledger)) assert.equal(JSON.parse(readFileSync(ledger)).entries.some((entry) => entry.path === target), false);
+  }
+});
+test("unowned matching targets remain intact on multi-runtime and remote update routes", (t) => {
+  for (const options of [{ targets: "claude,codex" }, { targets: "claude", local: false }]) {
+    const ctx = sandbox(t); const source = fixture(ctx.root);
+    const target = path.join(ctx.home, ".claude/skills/goalpro");
+    cpSync(path.join(source, "skills/goalpro"), target, { recursive: true });
+    put(path.join(target, "private-notes.txt"), "fixture only\n");
+    const before = treeHash(target, true); mockRemoteSource(ctx, source);
+    const denied = run(ctx, source, { ids: ["goalpro"], update: true, ...options });
+    assert.notEqual(denied.status, 0); assert.match(denied.stderr, /ownership receipt.*preserved without replacement/);
+    assert.equal(treeHash(target, true), before);
+  }
+});
+test("only the exact unchanged installer receipt permits replacement; drift never gets re-adopted", (t) => {
+  const ctx = sandbox(t); const source = fixture(ctx.root);
+  passed(run(ctx, source, { ids: ["goalpro"], targets: "claude" }));
+  const target = path.join(ctx.home, ".claude/skills/goalpro");
+  const ledger = path.join(ctx.home, ".meta-kim/install-manifest.json");
+  const originalReceipt = readFileSync(ledger, "utf8");
+  const before = treeHash(target, true);
+  for (const mutation of [
+    { source: "unrelated-writer" }, { purpose: "unrelated-global-skill" }, { path: path.join(ctx.home, ".claude/skills/same-name-elsewhere") },
+    { directoryClosureSha256: "0".repeat(64) }, { directoryClosureEntryCount: 999 }, { ownershipClass: "runtime_sedimented_project_copy" },
+    { ownershipClass: "user_owned" }, { ownershipClass: "canonical_source" },
+  ]) {
+    const value = JSON.parse(originalReceipt); Object.assign(value.entries.find((entry) => entry.path === target), mutation);
+    put(ledger, JSON.stringify(value));
+    const rejected = run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true });
+    assert.notEqual(rejected.status, 0, JSON.stringify(mutation)); assert.equal(treeHash(target, true), before);
+  }
+  put(ledger, originalReceipt);
+  put(path.join(source, "skills/goalpro/SKILL.md"), "---\nname: goalpro\ndescription: Updated verified source.\n---\n\n# Updated source\n");
+  passed(run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true }));
+  assert.match(readFileSync(path.join(target, "SKILL.md"), "utf8"), /Updated source/);
+  for (const ownershipClass of [null, "install_projection"]) {
+    const value = JSON.parse(readFileSync(ledger)); value.entries.find((entry) => entry.path === target).ownershipClass = ownershipClass;
+    put(ledger, JSON.stringify(value));
+    put(path.join(source, "skills/goalpro/NOTICE"), `Updated source for ${ownershipClass ?? "legacy null"}\n`);
+    passed(run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true }));
+    assert.equal(readFileSync(path.join(target, "NOTICE"), "utf8"), readFileSync(path.join(source, "skills/goalpro/NOTICE"), "utf8"));
+  }
+  const managedReceipt = readFileSync(ledger, "utf8");
+  put(path.join(target, "user-owned-after-install.txt"), "do not erase this addition\n");
+  const drifted = treeHash(target, true);
+  const rejected = run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true });
+  assert.notEqual(rejected.status, 0); assert.equal(treeHash(target, true), drifted);
+  const current = JSON.parse(readFileSync(ledger)); const previous = JSON.parse(managedReceipt);
+  assert.deepEqual(current.entries.find((entry) => entry.path === target), previous.entries.find((entry) => entry.path === target));
+});
 test("single-runtime remote route preserves unknown and historical targets through the same deployment boundary", (t) => {
   const ctx = sandbox(t); const source = fixture(ctx.root);
   const target = path.join(ctx.home, ".claude/skills/agent-teams-playbook");
