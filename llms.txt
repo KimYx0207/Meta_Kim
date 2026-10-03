@@ -1,19 +1,21 @@
 # Meta_Kim
 
-Meta_Kim is a governance layer for AI coding assistants: it turns durable coding work into intent, capability search, bounded ownership, review, verification, and writeback.
+Meta_Kim is a general agent governance framework: it turns user goals into evidence-backed decisions, capability discovery, bounded ownership, orchestration, outcome verification, and writeback across domains.
 
-It is not another code generator. It coordinates AI coding work through a repeatable spine:
+It coordinates research, operations, learning, writing, software and other tasks through a repeatable spine:
 
 Critical -> Fetch -> Thinking -> Execution -> Review -> Meta-Review -> Verification -> Evolution
 
 ## Core Idea
 
-AI coding assistants are good hands. Meta_Kim adds the governing layer above the hands:
+Runtime agents provide execution capabilities. Meta_Kim governs how they serve the current user's outcome:
 
 - clarify the real intent before execution
 - search available capabilities before picking an owner
+- compare feasible routes under the user's constraints and state the limits of the recommendation
 - route work to bounded agents, skills, scripts, MCP providers, or runtime tools
 - review and verify results with artifacts
+- distinguish structural checks, routing, native invocation and actual task outcomes
 - write back useful lessons only after approval
 
 ## Start Here

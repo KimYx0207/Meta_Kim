@@ -130,7 +130,8 @@ test("Codex and Claude adapters require real native calls and block instead of d
   const claude = await readText("canonical/skills/meta-theory/references/runtime-claude.md");
 
   assert.match(codex, /must call `request_user_input`/);
-  assert.match(codex, /block instead of treating a chat card as an accepted Codex decision/);
+  assert.match(codex, /record `nativeChoiceSurfaceBlocked` with the concrete reason, stop before Execution/);
+  assert.match(codex, /Do not continue with a localized markdown decision card as acceptance evidence/);
   assert.match(codex, /cardPlanPacket[\s\S]*not evidence/i);
   assert.match(codex, /False native choice claim guard/);
   assert.match(codex, /do not invent an empty response/);

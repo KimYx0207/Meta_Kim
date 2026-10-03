@@ -7,6 +7,7 @@ This file is the Codex entrypoint for maintaining Meta_Kim. Read it as the resid
 If you only keep five rules in mind:
 
 - Meta_Kim is one cross-runtime governance system. Claude Code, Codex, OpenClaw, and Cursor are projections of the same canonical layer.
+- Its core is general agent governance: understand the current user goal, compare evidenced feasible routes, discover capabilities, orchestrate execution and verify outcomes across domains. Industry packages are optional capability sources; framework acceptance must never replace the user's outcome.
 - `meta-warden` is the normal public front door. Other meta agents are backstage specialists.
 - Dispatch is capability-first: describe the capability, search agents / skills / tools / capability indexes, then choose the best owner.
 - Long-term behavior lives in `canonical/`, `config/contracts/`, and `config/capability-index/`. Runtime trees (`.claude/`, `.codex/`, `.cursor/`, `openclaw/`) are gitignored projections — run `npm run meta:sync` after clone to generate them locally.

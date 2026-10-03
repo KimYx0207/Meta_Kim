@@ -1211,7 +1211,7 @@
         "dependencyDetection": "auto",
         "linearFormat": "sequential_questions",
         "parallelFormat": "batch_list",
-        "description": "When multiple independent questions exist, collect and present them in one interaction"
+        "description": "Optional host-supported batching for independent questions outside an active plan challenge. An active plan challenge selects only the highest-impact unresolved question; no batching quota, repeated settled decision, or dependent question may override that single question authority."
       },
       "codexVisibleMultiOptionOutput": {
         "required": true,
@@ -2604,6 +2604,7 @@
         "triggerReasonEnum": [
           "explicit_user_request",
           "material_risk",
+          "branching_decision",
           "evidence_contradiction"
         ],
         "executionAuthorizationRequiredFields": [

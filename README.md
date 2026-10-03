@@ -26,11 +26,11 @@
 
 ## Start here
 
-**Tell your coding agent what you want. Meta_Kim turns that request into a visible, reviewed, verifiable execution.**
+**Tell Meta_Kim the outcome you want. It helps choose an evidence-backed approach, find the right capabilities, and coordinate work through verification.**
 
-Meta_Kim is not a new model and it does not replace Claude Code or Codex. It adds the missing team layer around them: clarify the goal, find the right capabilities, split safe parallel work, review the result, verify the evidence, and preserve useful lessons for the next run.
+Meta_Kim is a general agent governance framework that runs through hosts such as Claude Code and Codex. Its core is intent, decision-making and orchestration across research, operations, learning, writing, software and other tasks supported by discovered capabilities. Industry roles are optional capabilities. The framework compares feasible routes, coordinates owners and dependencies, verifies outcomes, and preserves useful lessons.
 
-> You say: “Finish the sign-up and login flow. Keep existing users working, split frontend/backend/testing where useful, and tell me exactly what was verified.”
+> You say: “Compare the feasible options under my budget and time constraints, recommend one with evidence, organize the work, and tell me which outcomes were actually verified.”
 
 | What happens next | What you can see |
 | --- | --- |
@@ -42,7 +42,7 @@ Meta_Kim is not a new model and it does not replace Claude Code or Codex. It add
 
 ### What you actually get
 
-- The thing you asked for: code, a fix, a PR review, a PRD, documentation, or a release-ready change.
+- The thing you asked for: a decision with evidence, a research report, an executable plan, learning materials, code, a review, documentation, or a release-ready change.
 - A readable explanation of what changed and why.
 - Test and verification evidence, with unknown or unproven claims kept visible instead of being called “done.”
 - A local Live control room whose default view is one execution graph, with named sessions, work-item status, AI roles, tool activity, blockers, outputs, evidence, and replay history.

@@ -286,6 +286,29 @@ describe("validate-run-artifact.mjs", () => {
     );
   });
 
+  test("accepts a settled single viable route without a filler alternative", async (t) => {
+    const file = await writeTempFixture(t, (artifact) => {
+      artifact.preDecisionOptionFrame.candidateOptions = artifact.preDecisionOptionFrame.candidateOptions.slice(0, 1);
+    });
+    assert.equal((await validateFixture(file)).ok, true);
+  });
+
+  test("rejects an empty route even when the choice was already settled", async (t) => {
+    const file = await writeTempFixture(t, (artifact) => {
+      artifact.preDecisionOptionFrame.candidateOptions = [];
+      artifact.contentEvidencePacket.decisionImpactMap[0].impacts = ['preDecisionOptionFrame.candidateOptions', 'dispatchEnvelopePacket.ownerSelection'];
+    });
+    await assert.rejects(execFileAsync('node', ['scripts/validate-run-artifact.mjs', file], {cwd: REPO_ROOT}), /candidateOptions.*viable path/);
+  });
+
+  test("a required route choice still needs two viable alternatives", async (t) => {
+    const file = await writeTempFixture(t, (artifact) => {
+      artifact.preDecisionOptionFrame.candidateOptions = artifact.preDecisionOptionFrame.candidateOptions.slice(0, 1);
+      artifact.preDecisionOptionFrame.requiresUserChoice = true;
+    });
+    await assert.rejects(execFileAsync('node', ['scripts/validate-run-artifact.mjs', file], {cwd: REPO_ROOT}), /candidateOptions.*two paths/);
+  });
+
   test("rejects finalized dispatch when solution choice is still pending", async (t) => {
     const tempFixture = await writeTempFixture(t, (artifact) => {
       artifact.intentGatePacket.requiresUserChoice = true;

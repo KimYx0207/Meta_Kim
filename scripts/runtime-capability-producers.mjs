@@ -15,6 +15,23 @@ import { loadSetupBoundRuntimeExecutable, revalidateRuntimeExecutableIdentity } 
 import { resolveClaudeLiveProviderEnvironmentSync } from "./claude-live-provider-env.mjs";
 
 const SUPPORTED_RUNTIMES = new Set(["claude_code", "codex"]);
+
+/** Run controls constrain probes; they do not authorize provider use or spend. */
+export function validateControlledProbeOptions({ runtime, source = "live_controlled", claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs } = {}) {
+  const hasClaudeControls = claudeMaxTurns !== undefined || claudeMaxBudgetUsd !== undefined;
+  if (hasClaudeControls && runtime !== "claude_code") throw new Error("Claude probe limits require runtime claude_code");
+  if ((hasClaudeControls || timeoutMs !== undefined) && source !== "live_controlled") throw new Error("Probe limits require source live_controlled");
+  if (claudeMaxTurns !== undefined && (!Number.isInteger(claudeMaxTurns) || claudeMaxTurns < 1 || claudeMaxTurns > 4)) {
+    throw new Error("claudeMaxTurns must be an integer from 1 to 4");
+  }
+  if (claudeMaxBudgetUsd !== undefined && (typeof claudeMaxBudgetUsd !== "number" || !Number.isFinite(claudeMaxBudgetUsd) || claudeMaxBudgetUsd <= 0 || claudeMaxBudgetUsd > 0.10)) {
+    throw new Error("claudeMaxBudgetUsd must be finite, greater than 0 and at most 0.10 USD per probe");
+  }
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 25_000 || timeoutMs > 300_000)) {
+    throw new Error("timeoutMs must be an integer from 25000 to 300000 milliseconds");
+  }
+  return { claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs };
+}
 const CODEX_EPHEMERAL_NATIVE_TOOL_CAPABILITIES = new Set([
   "shell",
   "filesystem",
@@ -200,6 +217,8 @@ export function codexLiveInvocationArgs({
 function commandFor(runtime, workspace, capability, executableIdentity = null, {
   codexModel = null,
   codexReasoningEffort = null,
+  claudeMaxTurns,
+  claudeMaxBudgetUsd,
 } = {}) {
   const argsPrefix = executableIdentity?.argsPrefix ?? [];
   if (runtime === "codex") return {
@@ -241,6 +260,8 @@ function commandFor(runtime, workspace, capability, executableIdentity = null, {
       "--permission-mode", "dontAsk",
       "--no-session-persistence",
       "--allowedTools", claudeTool,
+      ...(claudeMaxTurns !== undefined ? ["--max-turns", String(claudeMaxTurns)] : []),
+      ...(claudeMaxBudgetUsd !== undefined ? ["--max-budget-usd", String(claudeMaxBudgetUsd)] : []),
     ],
     observer: observeClaudeJsonl,
   };
@@ -336,6 +357,21 @@ function isolatedCodexChildEnvironment(inheritedEnv, isolatedRuntimeHome, { mkdi
   return env;
 }
 
+export function isolatedClaudeProbeEnvironment(providerEnv, controlledHome, { mkdir = mkdirSync } = {}) {
+  if (!path.isAbsolute(controlledHome)) throw new Error("controlled Claude home must be absolute");
+  const env = isolatedCodexChildEnvironment(providerEnv, controlledHome, { mkdir });
+  removeCaseInsensitiveEnvironmentValue(env, "CODEX_HOME");
+  removeCaseInsensitiveEnvironmentValue(env, "CODEX_SKILLS_DIR");
+  setCaseInsensitiveEnvironmentValue(env, "TMPDIR", path.join(controlledHome, "tmp"));
+  for (const [name, value] of [
+    ["CLAUDE_CONFIG_DIR", path.join(controlledHome, ".claude")],
+    ["CLAUDE_HOME", controlledHome],
+    ["CLAUDE_SKILLS_DIR", path.join(controlledHome, ".claude", "skills")],
+  ]) setCaseInsensitiveEnvironmentValue(env, name, value);
+  for (const name of ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CLAUDE_CONFIG_DIR"]) mkdir(env[name], { recursive: true });
+  return env;
+}
+
 export function withRuntimeIsolation(request, callback, {
   tempRoot = os.tmpdir(),
   sourceRuntimeHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
@@ -351,6 +387,11 @@ export function withRuntimeIsolation(request, callback, {
   try {
     if (request.runtime === "claude_code") {
       env = resolveClaudeLiveProviderEnvironmentSync();
+      if (request.claudeMaxTurns !== undefined || request.claudeMaxBudgetUsd !== undefined) {
+        // Resolve the authorized provider first, then isolate writable CLI
+        // state without copying settings, auth files, or changing token type.
+        env = isolatedClaudeProbeEnvironment(env, path.join(request.workspace, "controlled-cli-home"), { mkdir });
+      }
     } else if (request.runtime === "codex") {
       // Keep setup in this try/finally: auth absence or copy failure must still
       // remove the temporary home created for this invocation.
@@ -384,7 +425,8 @@ function productionExecutor(request) {
     return {
       ...result,
       runtimeVersion: String(version.stdout ?? version.stderr).trim().split(/\r?\n/u)[0],
-      runtimeIsolation: request.runtime === "codex" ? "ephemeral_auth_home_and_rules_isolated" : "empty_setting_sources_strict_mcp_current_auth",
+      runtimeIsolation: request.runtime === "codex" ? "ephemeral_auth_home_and_rules_isolated"
+        : (request.claudeMaxTurns !== undefined || request.claudeMaxBudgetUsd !== undefined) ? "controlled_workspace_home_trusted_provider_env_only" : "empty_setting_sources_strict_mcp_current_auth",
       executableIdentity: request.executableIdentity,
     };
   });
@@ -947,6 +989,8 @@ export function runControlledRuntimeCapabilityProducer({
   timeoutMs = 300_000,
   codexModel = null,
   codexReasoningEffort = null,
+  claudeMaxTurns,
+  claudeMaxBudgetUsd,
   executor = productionExecutor,
   _acceptanceWriter = null,
   preserveWorkspace = false,
@@ -955,6 +999,7 @@ export function runControlledRuntimeCapabilityProducer({
 } = {}) {
   if (!SUPPORTED_RUNTIMES.has(runtime)) throw new Error("controlled producers support only claude_code and codex");
   if (mode !== "interactive_host") throw new Error("controlled producers currently support only interactive_host");
+  validateControlledProbeOptions({ runtime, claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs });
   const producer = PRODUCERS[capability];
   if (!producer) throw new Error(`no controlled producer exists for capability ${capability}`);
   const paths = prepareRuntimeCapabilityAcceptanceStore({ projectRoot, profile });
@@ -973,9 +1018,9 @@ export function runControlledRuntimeCapabilityProducer({
   const executableIdentity = executor === productionExecutor
     ? loadSetupBoundRuntimeExecutable({ projectRoot: paths.projectRoot, profile: paths.profile, runtime })
     : testOnlyExecutableIdentity(runtime);
-  const command = commandFor(runtime, workspace, capability, executableIdentity, { codexModel, codexReasoningEffort });
+  const command = commandFor(runtime, workspace, capability, executableIdentity, { codexModel, codexReasoningEffort, claudeMaxTurns, claudeMaxBudgetUsd });
   const prompt = promptFor(capability, runtime, nonce, marker);
-  const request = { runtime, capability, mode, workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity };
+  const request = { runtime, capability, mode, workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity, claudeMaxTurns, claudeMaxBudgetUsd };
   let result;
   let completed = false;
   try {
@@ -1006,8 +1051,8 @@ export function runControlledRuntimeCapabilityProducer({
       outcome: "pass",
       hostInvocation: {
         runtimeIsolation: result.runtimeIsolation ?? (executor === productionExecutor ? "runtime_native_isolation" : "test_injected"),
-        request: { runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt) },
-        requestDigest: sha256(JSON.stringify({ runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt) })),
+        request: { runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt), timeoutMs },
+        requestDigest: sha256(JSON.stringify({ runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt), timeoutMs })),
         result: { status: result.status, signal: result.signal ?? null, stdoutSha256: sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) },
         resultDigest: sha256(JSON.stringify({ status: result.status, signal: result.signal ?? null, stdoutSha256: sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) })),
         exitCode: result.status,
@@ -1065,12 +1110,14 @@ export function runControlledRuntimeCapabilityProducer({
 
 export async function produceRuntimeCapabilityWithAcceptanceWriter(options, acceptanceWriter) {
   if (typeof acceptanceWriter !== "function") throw new Error("internal controlled acceptance writer is required");
+  const probeOptions = validateControlledProbeOptions(options);
   const common = {
     projectRoot: options.projectRoot,
     profile: options.profile,
     _acceptanceWriter: acceptanceWriter,
     codexModel: options.codexModel,
     codexReasoningEffort: options.codexReasoningEffort,
+    ...probeOptions,
   };
   if (options.source === "codex_desktop_agent_subagent") {
     if (options.runtime !== "codex") throw new Error("Codex Desktop agent source supports only codex");

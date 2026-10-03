@@ -25,6 +25,7 @@ import {
 import {
   createJsonKnowledgeLifecycleRegistryRepository,
 } from "../../src/data/repositories/json-knowledge-lifecycle-registry-repository.mjs";
+import { createHash } from "node:crypto";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const REGISTRY_SOURCE = path.join(ROOT, "config/governance/knowledge-lifecycle-registry.json");
@@ -39,7 +40,10 @@ async function tempRepository(t, mutate = (value) => value) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-a11-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const registryPath = path.join(root, "registry.json");
-  const registry = mutate(await readJson(REGISTRY_SOURCE));
+  // Lifecycle scenarios start from an isolated genesis; production source
+  // upgrades must not change their initial CAS revision or history length.
+  const sourceRegistry = await readJson(REGISTRY_SOURCE);
+  const registry = mutate({ ...sourceRegistry, revision: 0, appliedTransitions: {}, history: [] });
   const targetPath = path.join(root, ...TARGET.split("/"));
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.copyFile(path.join(ROOT, ...TARGET.split("/")), targetPath);
@@ -103,6 +107,15 @@ function apply(repository, candidate, appliedAt = "2026-08-12T01:00:01.000Z", op
     ...options,
   });
 }
+
+test("79 — production knowledge bindings match reviewed source bytes", async () => {
+  const registry = validateKnowledgeLifecycleRegistry(await readJson(REGISTRY_SOURCE));
+  for (const [targetRef, entry] of Object.entries(registry.entries)) {
+    const bytes = await fs.readFile(path.join(ROOT, ...targetRef.split("/")));
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    assert.equal(entry.sourceDigest, digest, `unreviewed source drift for ${targetRef}`);
+  }
+});
 
 test("79 — contract and registry declare a four-state, no-delete hygiene boundary", async () => {
   const contract = await readJson(path.join(ROOT, "config/contracts/knowledge-lifecycle-hygiene-contract.json"));

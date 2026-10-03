@@ -11,6 +11,11 @@ import {
   observeCodexJsonl,
 } from "../live-acceptance/observe-host-events.mjs";
 import { spawnCli } from "../runtime-cli-invocation.mjs";
+import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
+import {
+  invokeLocalDependencyToolWorker,
+  isObservedLocalDependencyToolResult,
+} from "./local-dependency-tool-worker.mjs";
 import { HOST_INHERITED_ENV_NAMES } from "./host-runtime-provenance.mjs";
 import { assertDurableRunRepositoryPort } from "../../src/application/ports/durable-run-repository-port.mjs";
 import { openDurableRunRepository } from "../../src/application/run/open-durable-run-repository.mjs";
@@ -38,6 +43,7 @@ import {
 
 const SUPPORTED_RUNTIMES = new Set(["codex", "claude"]);
 const nativeRuntimeBridgeAttestations = new WeakSet();
+const localToolBridgeAttestations = new WeakMap();
 const MAX_RESULT_TEXT = 16_000;
 const MANAGED_PARENT_MARKERS = HOST_INHERITED_ENV_NAMES;
 const CHILD_ENV_SYSTEM_ALLOWLIST = new Set([
@@ -87,6 +93,18 @@ const canonicalJson = (value) => {
 };
 
 const canonicalDigestReference = (value) => `sha256:${sha256(canonicalJson(value))}`;
+
+function localToolWorkOrderDigest(packet, node) {
+  return canonicalDigestReference({
+    localToolBinding: packet?.localToolBinding ?? null,
+    scopeFiles: packet?.scopeFiles ?? null,
+    effectClass: {
+      node: node?.effectClass ?? null,
+      packet: packet?.effectClass ?? null,
+    },
+    sourceReview: packet?.intentBinding?.constraints?.localToolSourceReview ?? null,
+  });
+}
 
 function runtimeHealthFailureStatus(failureClass) {
   switch (failureClass) {
@@ -1062,9 +1080,12 @@ export async function runStageRunnerBridge({
 }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
   const nativeRuntimeInvokerSelected = invokeWorker === invokeReadOnlyRuntimeWorker;
+  const localToolInvokerSelected = invokeWorker === invokeLocalDependencyToolWorker;
   const resolvedEvidenceKind = nativeRuntimeInvokerSelected
     ? "native_read_only_stage_runner"
-    : evidenceKind === "native_read_only_stage_runner"
+    : localToolInvokerSelected
+      ? "first_party_local_tool_subprocess"
+    : ["native_read_only_stage_runner", "first_party_local_tool_subprocess"].includes(evidenceKind)
       ? "injected_stage_runner_callback"
       : evidenceKind;
   if (!SUPPORTED_RUNTIMES.has(normalizedRuntime)) {
@@ -1084,6 +1105,8 @@ export async function runStageRunnerBridge({
   const workerResultsByNodeId = new Map();
   const durableClaimsByNodeId = new Map();
   const nativeInvocationAttemptedNodeIds = new Set();
+  const observedLocalToolNodeIds = new Set();
+  const observedLocalWorkOrderDigests = new Map();
   for (const completed of durableContext?.resume.completedNodes ?? []) {
     const record = completed.output;
     if (!record || record.nodeId !== completed.nodeId || record.status !== "completed") {
@@ -1205,6 +1228,7 @@ export async function runStageRunnerBridge({
               nativeInvocationAttemptedNodeIds.add(node.nodeId);
             }
             result = await invokeWorker({
+              ...(localToolInvokerSelected ? { runId, requestTask } : {}),
               runtime: normalizedRuntime,
               prompt,
               workspaceRoot: resolvedWorkspace,
@@ -1219,6 +1243,18 @@ export async function runStageRunnerBridge({
               failureClass: "runtime_invoker_threw",
               failureMessage: error.message,
             };
+          }
+          const observedLocalToolResult = localToolInvokerSelected &&
+            isObservedLocalDependencyToolResult(result, {
+              runId, runtime: normalizedRuntime, node, packet,
+              localToolBinding: packet.localToolBinding,
+            });
+          if (observedLocalToolResult && result.localToolProcessInvoked === true) {
+            observedLocalToolNodeIds.add(node.nodeId);
+            observedLocalWorkOrderDigests.set(packet.taskPacketId, localToolWorkOrderDigest(packet, node));
+          }
+          if (localToolInvokerSelected && result.status === "pass" && !observedLocalToolResult) {
+            result = { status: "failed", failureClass: "local_tool_result_binding_unobserved", failureMessage: "The local tool result has no current-run first-party observation for the selected binding." };
           }
           normalizedResult = bridgeNodeRecord(node, {
             status: result.status === "pass" ? "completed" : "failed",
@@ -1235,13 +1271,24 @@ export async function runStageRunnerBridge({
             endedAt: result.endedAt ?? new Date().toISOString(),
             observedDurationMs: Math.max(1, Number(result.durationMs) || 0),
             exitCode: result.exitCode ?? null,
-            sessionId: result.sessionId ?? null,
-            messageId: result.messageId ?? null,
+            sessionId: localToolInvokerSelected ? null : result.sessionId ?? null,
+            messageId: localToolInvokerSelected ? null : result.messageId ?? null,
             outputText: result.outputText ?? null,
             outputSha256: result.outputSha256 ?? null,
             rawOutputSha256: result.rawOutputSha256 ?? null,
-            hostEventCount: result.hostEventCount ?? 0,
-            toolEventCount: result.toolEventCount ?? 0,
+            hostEventCount: localToolInvokerSelected ? 0 : result.hostEventCount ?? 0,
+            toolEventCount: localToolInvokerSelected ? 0 : result.toolEventCount ?? 0,
+            ...(localToolInvokerSelected ? {
+              localToolProcessInvoked: observedLocalToolResult && result.localToolProcessInvoked === true,
+              actualToolExecution: observedLocalToolResult && result.localToolProcessInvoked === true && result.status === "pass",
+              localToolReceipt: observedLocalToolResult ? result.localToolReceipt ?? null : null,
+              localToolOutcomeStatus: observedLocalToolResult ? result.outcomeStatus ?? null : null,
+              completed: observedLocalToolResult && result.completed === true,
+              sourceUnmodifiedVerified: observedLocalToolResult && result.sourceUnmodifiedVerified === true,
+              localToolBindingDigest: canonicalDigestReference(packet.localToolBinding),
+              localToolWorkOrderDigest: localToolWorkOrderDigest(packet, node),
+              nativeInvocationVerified: false,
+            } : {}),
             removedManagedHostMarkers: result.removedManagedHostMarkers ?? [],
             failureClass: result.failureClass ?? null,
             failureMessage: result.failureMessage ?? null,
@@ -1500,6 +1547,10 @@ export async function runStageRunnerBridge({
     workerResults.every(
       (result) => result.evidenceKind === "native_read_only_stage_runner",
     );
+  const actualLocalToolInvoked = localToolInvokerSelected &&
+    nodeRecords.some((record) => observedLocalToolNodeIds.has(record.nodeId) && record.localToolProcessInvoked === true);
+  const actualToolExecution = bridgeCallbackCompleted && localToolInvokerSelected &&
+    workerResults.every((result) => observedLocalToolNodeIds.has(result.nodeId) && result.actualToolExecution === true);
   const durableRunProjection = durableContext
     ? durableContext.kernel.projectRun(runId)
     : null;
@@ -1513,10 +1564,14 @@ export async function runStageRunnerBridge({
       status: nodeRecordsById.get(node.nodeId)?.status ?? "planned_not_invoked",
     })),
     invocationTruth: {
-      plannedIsInvoked: nativeRuntimeInvoked,
+      plannedIsInvoked: nativeRuntimeInvoked || actualToolExecution,
       bridgeCallbackCompleted,
       nativeRuntimeInvoked,
-      requiredEvidence: "runId + nodeId + native runtime process + terminal result",
+      actualLocalToolInvoked,
+      actualToolExecution,
+      requiredEvidence: localToolInvokerSelected
+        ? "current-run first-party result identity + run/node/task/intent/source/input binding + actual local subprocess + terminal result"
+        : "runId + nodeId + native runtime process + terminal result",
       evidenceRef: "coreLoop.stageRunnerBridgePacket.nodeRecords",
     },
     durable: durableContext
@@ -1748,10 +1803,14 @@ export async function runStageRunnerBridge({
     runtime: normalizedRuntime,
     invocationAuthority: nativeRuntimeInvokerSelected
       ? "built_in_native_read_only_subprocess"
+      : localToolInvokerSelected
+        ? "built_in_local_tool_subprocess"
       : "injected_callback",
     runId,
     graphAuthority: stageDagPacket.authority,
-    workspaceBoundary: "provider sandbox/permission mode is read-only; prompt and retained telemetry redact workspace/home paths, but filesystem read confinement is not claimed",
+    workspaceBoundary: localToolInvokerSelected
+      ? "The selected local scanner reads its explicitly approved target; Meta_Kim writes owned result receipts and durable artifacts. No user-selected report destination or whole-system no-writes claim is granted."
+      : "provider sandbox/permission mode is read-only; prompt and retained telemetry redact workspace/home paths, but filesystem read confinement is not claimed",
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
     observedDurationMs: totalDurationMs,
@@ -1808,10 +1867,54 @@ export async function runStageRunnerBridge({
     },
   };
   if (nativeRuntimeInvokerSelected) nativeRuntimeBridgeAttestations.add(bridge);
+  if (localToolInvokerSelected) {
+    localToolBridgeAttestations.set(bridge, {
+      digest: canonicalDigestReference(bridge),
+      observedNodeIds: new Set(observedLocalToolNodeIds),
+      taskWorkOrderDigests: new Map(observedLocalWorkOrderDigests),
+    });
+  }
   return bridge;
   } finally {
     if (durableContext?.ownsKernel) durableContext.kernel.close();
   }
+}
+
+function localToolResultObservedForCoreLoop(bridge, coreLoop, result) {
+  const attestation = localToolBridgeAttestations.get(bridge);
+  const request = coreLoop?.requestRecord;
+  const goal = coreLoop?.goalContractPacket;
+  if (!attestation || !result || attestation.digest !== canonicalDigestReference(bridge) ||
+    bridge.invocationAuthority !== "built_in_local_tool_subprocess" ||
+    request?.runId !== bridge.runId || typeof request?.task !== "string" || !request.task.trim() ||
+    typeof goal?.taskHash !== "string" || goal.taskHash !== taskOutcomeDigest(request.task) ||
+    !Object.hasOwn(goal.intentBinding ?? {}, "intentDigest") ||
+    coreLoop?.stageDagPacket?.graphDigest !== bridge.stageDagPacket?.graphDigest ||
+    !attestation.observedNodeIds.has(result.nodeId) ||
+    result.evidenceKind !== "first_party_local_tool_subprocess" || result.actualToolExecution !== true ||
+    result.localToolWorkOrderDigest !== attestation.taskWorkOrderDigests.get(result.taskPacketId)) return false;
+  const currentNode = coreLoop.stageDagPacket.nodes?.find((node) => node.nodeId === result.nodeId);
+  if (!currentNode) return false;
+  return (coreLoop.thinkingPacket?.workerTaskPackets ?? []).some((packet) => {
+    const binding = packet.localToolBinding;
+    return packet.taskPacketId === result.taskPacketId && binding &&
+      binding.runId === request.runId && binding.taskHash === goal.taskHash &&
+      Object.hasOwn(binding, "intentDigest") && binding.intentDigest === goal.intentBinding.intentDigest &&
+      canonicalDigestReference(binding) === result.localToolBindingDigest &&
+      localToolWorkOrderDigest(packet, currentNode) === attestation.taskWorkOrderDigests.get(result.taskPacketId);
+  });
+}
+
+/** Current-process proof only; JSON reloads and caller-made receipts cannot acquire it. */
+export function isObservedLocalToolBridgeResult(bridge, coreLoop) {
+  return Boolean(bridge?.status === "pass" && bridge.workerResults?.length > 0 &&
+    bridge.executionProjection?.invocationTruth?.actualToolExecution === true &&
+    bridge.workerResults.every((result) => localToolResultObservedForCoreLoop(bridge, coreLoop, result)));
+}
+
+/** Snapshot trusted task-bound outputs for outcome evaluation; never parses advisory saved receipts. */
+export function readObservedLocalToolBridgeResults(bridge, coreLoop) {
+  return isObservedLocalToolBridgeResult(bridge, coreLoop) ? structuredClone(bridge.workerResults) : [];
 }
 
 export function applyStageRunnerBridgeResult(coreLoop, bridge) {
@@ -1835,14 +1938,21 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
     bridge.workerResults.every(
       (result) => result.evidenceKind === "native_read_only_stage_runner",
     );
+  const localResultObserved = (result) => localToolResultObservedForCoreLoop(bridge, coreLoop, result);
+  const actualToolExecution = bridgeCompleted &&
+    bridge.executionProjection?.invocationTruth?.actualToolExecution === true &&
+    bridge.workerResults.every(localResultObserved);
   const workerResultPackets = coreLoop.executionResult.workerResultPackets.map((planned) => {
     const result = resultsByTask.get(planned.taskPacketId);
     if (!result) return planned;
+    const localExecutionObserved = localResultObserved(result);
     return {
       ...planned,
       status: "executed",
       resultKind: nativeExecutionObserved
         ? "native_read_only_worker_result"
+        : localExecutionObserved
+          ? "actual_local_tool_worker_result"
         : "synthetic_read_only_worker_result",
       evidenceKind: result.evidenceKind,
       output: {
@@ -1851,15 +1961,19 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
         externalWritePerformed: false,
         text: result.outputText,
         textSha256: result.outputSha256,
+        ...(localExecutionObserved ? { localToolReceipt: result.localToolReceipt, actualToolExecution: true, localToolProcessInvoked: true } : {}),
       },
       note: nativeExecutionObserved
         ? "A native runtime process returned a terminal result for this bounded read-only worker task; Review still owns semantic acceptance."
+        : localExecutionObserved
+          ? "The selected first-party local tool returned an observed task/source/input-bound subprocess result; Meta_Kim retained owned receipts. Review still owns semantic acceptance; no native Agent or model invocation is claimed."
         : "A synthetic callback returned a terminal result for this bounded read-only worker task; this proves bridge and recovery behavior, not native runtime execution.",
     };
   });
   const workerExecutionEvidence = coreLoop.executionResult.workerExecutionEvidence.map((planned) => {
     const result = resultsByTask.get(planned.taskPacketId);
     if (!result) return planned;
+    const localExecutionObserved = localResultObserved(result);
     return {
       ...planned,
       evidenceKind: result.evidenceKind,
@@ -1868,6 +1982,9 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
       liveWorkerExecution: nativeExecutionObserved,
       externalAgentSpawned: false,
       runtimeProcessInvoked: nativeExecutionObserved,
+      actualToolExecution: localExecutionObserved,
+      localToolProcessInvoked: localExecutionObserved,
+      ...(localExecutionObserved ? { localToolReceipt: result.localToolReceipt, localToolBindingDigest: result.localToolBindingDigest } : {}),
       runtime: bridge.runtime,
       sessionId: result.sessionId,
       messageId: result.messageId,
@@ -1877,6 +1994,8 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
       toolEventCount: result.toolEventCount,
       reason: nativeExecutionObserved
         ? "A native read-only runtime result was observed and merged; this proves invocation, while Review owns semantic acceptance."
+        : localExecutionObserved
+          ? "A first-party local tool subprocess result was observed and merged for the bound task/source/input; native runtime and external Agent invocation remain unclaimed."
         : "A synthetic read-only callback result was merged for bridge and recovery verification; native runtime invocation is not claimed.",
     };
   });
@@ -1886,10 +2005,14 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
           ...timing,
           timingRecordStatus: nativeExecutionObserved
             ? "native_runtime_observed"
+            : actualToolExecution
+              ? "local_tool_observed"
             : "synthetic_callback_observed",
           observedDurationMs: bridge.observedDurationMs,
           durationMeasurementNote: nativeExecutionObserved
             ? "Measured from the native stage-runner bridge start/end boundaries."
+            : actualToolExecution
+              ? "Measured from the first-party local-tool bridge start/end boundaries; this is not native model timing."
             : "Measured from synthetic bridge callback boundaries; native runtime timing is not claimed.",
         }
       : timing
@@ -1898,11 +2021,15 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
     ...coreLoop.langGraphRunPacket,
     runtimeExecutionEvidence: nativeExecutionObserved
       ? "native_stage_runner_bridge"
+      : actualToolExecution
+        ? "local_tool_stage_runner_bridge"
       : bridgeCompleted
         ? "synthetic_stage_runner_bridge"
         : "stage_runner_bridge_failed",
     runtimeBoundary: nativeExecutionObserved
       ? `The authoritative stage DAG was executed in ${bridge.runtime} read-only shadow mode; this does not claim LangGraph runtime usage.`
+      : actualToolExecution
+        ? "The authoritative stage DAG invoked a task-bound first-party local tool and retained Meta_Kim-owned results; this does not claim native Agent/model or LangGraph runtime usage."
       : "The authoritative stage DAG was exercised by a synthetic callback; this proves bridge and recovery behavior but not native runtime or LangGraph execution.",
     eventLog: coreLoop.langGraphRunPacket.eventLog.map((event) => {
       const taskPacketId = String(event.nodeId ?? "").replace(/^worker:/u, "");
@@ -1933,9 +2060,12 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
     },
     executionResult: {
       ...coreLoop.executionResult,
-      actualWorkerExecution: nativeExecutionObserved,
+      actualWorkerExecution: nativeExecutionObserved || actualToolExecution,
+      actualToolExecution,
       executionClosure: nativeExecutionObserved
         ? "run_scoped_worker_executed"
+        : actualToolExecution
+          ? "actual_local_tool_worker_executed"
         : bridgeCompleted
           ? "synthetic_worker_result_observed"
           : "worker_execution_failed",
@@ -1945,6 +2075,7 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
         ...coreLoop.executionResult.mergeResult,
         status: bridgeCompleted ? "worker_results_merged" : "worker_merge_failed",
         liveExecutionMerged: nativeExecutionObserved,
+        actualToolExecutionMerged: actualToolExecution,
         bridgeEvidenceRef: "coreLoop.stageRunnerBridgePacket",
       },
     },

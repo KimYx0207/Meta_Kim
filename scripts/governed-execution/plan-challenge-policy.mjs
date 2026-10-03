@@ -740,6 +740,7 @@ export function buildPlanChallengeState({
   const requiredAuthorizationBinding = planChallengeAuthorizationBinding(signals.sideEffectActions);
   const priorChallenge = reusablePriorState ? priorChallengeState.planChallengeState : null;
   const newUnderstandingProvided =
+    active &&
     sharedUnderstandingConfirmed?.trusted === true &&
     sharedUnderstandingConfirmed?.binding === "plan-challenge-understanding-confirmation" &&
     Array.isArray(sharedUnderstandingConfirmed?.evidenceRefs) &&
@@ -770,7 +771,7 @@ export function buildPlanChallengeState({
         trusted: false,
         binding: requiredAuthorizationBinding,
         evidenceRefs: [],
-        scopeCoversActions: true,
+        scopeCoversActions: signals.sideEffectActions.length === 0,
       };
   const understandingConfirmed = active && trustedUnderstanding;
   const understandingEvidenceRefs = newUnderstandingProvided

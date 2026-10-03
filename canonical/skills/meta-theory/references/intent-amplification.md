@@ -246,6 +246,16 @@ Run the most specific validator for this reference plus `npm run meta:prompt:val
 
 Write durable improvements to canonical references, governance configs, capability indexes, validators, tests, or scars. If no durable change exists, record `none-with-reason`.
 
+## Evidence-Informed Requirements Dialogue
+
+Reuse the seven intent dimensions in `workflow-contract.json` and the question history in `preDecisionOptionFrame.unresolvedQuestions`; they remain the single requirements authority. Fetch reads project facts and existing decisions before asking the user. Replay a concrete scenario, example or counterexample when an adjective or desired outcome could imply different deliverables. Ask the highest-impact unresolved question whose answer changes a goal, audience, scope, cost, deadline, quality, tool, permission or acceptance criterion. There is no fixed number of questions.
+
+Compare multiple directions only when they are genuinely viable and materially different. Describe their outcome, relevant cost/time/quality/extension trade-offs and uncertainty from evidence; do not invent estimates or filler routes. A cheap, bounded sample may distinguish uncertain directions before a larger implementation. A user's settled direction carries its evidence into the goal contract, pre-decision frame, business blueprint, capability bindings and worker packets. Reopen a decision only when new material evidence changes it; ordinary implementation details use the existing authorization.
+
+Professional capabilities receive that settled task and constraints. They may use their own domain methods and existing tools, but must return a material goal/cost/deadline/permission discovery to the Meta_Kim merge owner instead of launching another interview or orchestrator. A reference's planning files or goal draft do not replace the sole PRD, first-party planning-continuity or native decision authority. Understanding/route choice is distinct from action permission; a confirmed goal cannot grant credentials, paid services or external writes.
+
+Method provenance is pinned in `config/governance/decision-pattern-catalog.json`: EveryInc/compound-engineering-plugin `ce-brainstorm` contributes interaction, dialogue, approaches, visual probes and settled-decision techniques; active `open-gsd/gsd-core` contributes outcome-focused question examples; BMAD-METHOD contributes unresolved-question convergence; LoopX contributes a read-only shared-goal draft idea. These are methods, not installed execution dependencies. Preserve GSD migration provenance rather than presenting the retired repository as active. Do not import a second pack resolver, mandatory visual offer, chat fallback, global workflow, fixed questionnaire or competing goal authority.
+
 ## Preserve
 
 Preserve Skills, WebSearch/browser/research, filesystem, shell, apply_patch, MCP, memory, Graphify, graph, hooks, commands, rules, agents, subagents, approval, sandbox, runtime tools, package scripts, setup, sync, install, uninstall, status, doctor, validators, and runtime projections.

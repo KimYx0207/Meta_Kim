@@ -141,7 +141,13 @@ There is no question quota. Each visible question must change an execution branc
 
 ## Codex Multi-Option Choice Surface Rule
 
-For every required confirmation or decision surface in Codex, use `default_mode_request_user_input` and `request_user_input`. Do not show a `Preflight` block unless the user explicitly asks for debug, audit, protocol, or governance trace output. Always show the maximum viable options accepted by the active host schema, include an explicit output-language choice when language is unresolved, use the latest input language, and render Option A placeholders as resolved user-facing language instead of hardcoding any single human language. If `request_user_input` is unavailable, block instead of treating a chat card as an accepted Codex decision. Claude Code native question tool remains unchanged.
+`default_mode_request_user_input` is a host configuration feature flag, never a callable tool name. A configured flag does not override the current host's exposed schema or Plan/Default mode restriction.
+
+An explicit output-language choice is useful when language is unresolved and affects delivery; an already chosen runtime/user language needs no repeated question.
+
+Render every option and placeholder as resolved user-facing language instead of hardcoding any single human language; never leave an unresolved Option A label.
+
+For every required branch-changing confirmation or decision surface in Codex, use the actual exposed native choice tool and its current schema and mode restrictions. `request_user_input` may be restricted to Plan mode by the host; a reference cannot create a tool or enable it in another mode. Do not show a `Preflight` block unless the user explicitly asks for debug, audit, protocol, or governance trace output. Show meaningful options accepted by the active host schema, resolve output language only when that choice matters, and render placeholders as user-facing language. If the required native surface is unavailable, block the dependent branch instead of treating a chat card as an accepted Codex decision. Already settled directions and safe work inside existing authorization continue without an extra confirmation. Claude Code native question tool remains unchanged.
 
 Choice Surface Gate states: `not_allowed`, `critical_clarification_allowed`, `execution_confirmation_allowed`, `completed`. FORBIDDEN: premature choice surface for test a popup / interactive box / popup_test_request. Critical -> Fetch -> Thinking must happen before execution confirmation. If the intent frame is missing or conflicting and the missing answer changes route, scope, risk, acceptance, owner, permission, or non-goal, ask Critical clarification and must not present execution options. `contentEvidencePacket` precedes `preDecisionOptionFrame`. No candidate paths means no execution confirmation; no Fetch evidence means Thinking is not complete; no Thinking result means no pre-Execution confirmation.
 

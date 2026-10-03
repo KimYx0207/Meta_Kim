@@ -976,6 +976,51 @@ describe("57 - risk-adaptive plan challenge", () => {
       assert.equal(report.preDecisionOptionFrame.solutionChoiceState, "pending_user_choice");
       assert.equal(report.coreLoop.executionResult.executionGate, "blocked_by_plan_challenge");
 
+      // Isolated hosts may discover no viable owner while understanding or
+      // permission is still pending. Keep that gap honest instead of padding
+      // the frame with an unevidenced route.
+      const emptyCandidates = JSON.parse(readFileSync(report.paths.json, "utf8"));
+      assert.equal(emptyCandidates.preDecisionOptionFrame.planChallengeState.active, true);
+      assert.equal(emptyCandidates.coreLoop.executionResult.executionAllowed, false);
+      assert.notEqual(emptyCandidates.status, "pass");
+      // This fixture isolates the non-route permission question. Local
+      // inventory can otherwise add a separate route question to the report.
+      emptyCandidates.preDecisionOptionFrame.unresolvedQuestions =
+        emptyCandidates.preDecisionOptionFrame.unresolvedQuestions.filter((question) =>
+          question.questionId !== "plan-challenge-route-selection");
+      emptyCandidates.preDecisionOptionFrame.candidateOptions = [];
+      const emptyCandidatesPath = path.join(tempDir, "pending-no-routes.json");
+      await writeFile(emptyCandidatesPath, `${JSON.stringify(emptyCandidates, null, 2)}\n`, "utf8");
+      await validateArtifactFile(emptyCandidatesPath);
+
+      const invalidCandidate = structuredClone(emptyCandidates);
+      invalidCandidate.preDecisionOptionFrame.candidateOptions = [{}];
+      const invalidCandidatePath = path.join(tempDir, "pending-invalid-route.json");
+      await writeFile(invalidCandidatePath, `${JSON.stringify(invalidCandidate, null, 2)}\n`, "utf8");
+      await assert.rejects(validateArtifactFile(invalidCandidatePath), /candidateOptions\[0\].*missing required field/iu);
+
+      const routeChoice = structuredClone(emptyCandidates);
+      const routeFrame = routeChoice.preDecisionOptionFrame;
+      const previousQuestionId = routeFrame.planChallengeState.selectedQuestionId;
+      const routeQuestionId = "plan-challenge-route-selection";
+      for (const question of routeFrame.unresolvedQuestions) {
+        if (question.questionId === previousQuestionId) question.questionId = routeQuestionId;
+        question.dependsOn = question.dependsOn.map((id) => id === previousQuestionId ? routeQuestionId : id);
+      }
+      routeFrame.planChallengeState.selectedQuestionId = routeQuestionId;
+      routeFrame.planChallengeState.pendingUserChoice.question.binding = `plan-challenge-response:${routeQuestionId}`;
+      const routeChoicePath = path.join(tempDir, "route-choice-no-routes.json");
+      await writeFile(routeChoicePath, `${JSON.stringify(routeChoice, null, 2)}\n`, "utf8");
+      await assert.rejects(validateArtifactFile(routeChoicePath), /at least two paths for a required route choice/iu);
+      // This deliberately incomplete option checks the count before any option
+      // quality checks; a single route cannot become a real branching choice.
+      routeFrame.candidateOptions = [{}];
+      await writeFile(routeChoicePath, `${JSON.stringify(routeChoice, null, 2)}\n`, "utf8");
+      await assert.rejects(validateArtifactFile(routeChoicePath), /at least two paths for a required route choice/iu);
+      routeFrame.requiresUserChoice = false;
+      await writeFile(routeChoicePath, `${JSON.stringify(routeChoice, null, 2)}\n`, "utf8");
+      await assert.rejects(validateArtifactFile(routeChoicePath), /at least two paths for a required route choice/iu);
+
       const forged = JSON.parse(await readFileSync(report.paths.json, "utf8"));
       forged.preDecisionOptionFrame.planChallengeState.executionAllowed = true;
       forged.coreLoop.executionResult.executionAllowed = true;
@@ -1135,6 +1180,19 @@ describe("57 - risk-adaptive plan challenge", () => {
     assert.equal(result.userChoiceNeeded, false);
     assert.equal(result.decisionCard, null);
     assert.equal(result.requiredUserChoiceIfAny, null);
+  });
+
+  test("ordinary route cards exclude blocked support entries and low-score routes", () => {
+    const result = selectRoute("Pressure-test this plan, then publish the version to GitHub.");
+    const feasibleRouteIds = new Set((result.rankedRoutes ?? [])
+      .filter((route) => route.id && route.score >= 70 && !(route.blockedReasons?.length))
+      .map((route) => route.id));
+    assert.ok((result.rankedRoutes ?? []).some((route) => route.blockedReasons?.length),
+      "the fixture must include blocked support entries to exercise their exclusion");
+    if (result.decisionCard === null) return;
+    assert.ok(result.decisionCard.options.length >= 2);
+    assert.ok(result.decisionCard.options.every((option) => feasibleRouteIds.has(option.id)),
+      JSON.stringify(result.decisionCard.options));
   });
 
   test("complementary worker lanes never become mutually exclusive route options", () => {
