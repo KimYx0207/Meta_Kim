@@ -8,6 +8,16 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.3.1] - 2026-10-03
+
+### Fixed
+
+- **Explicitly authorized project-root scans use the existing local tool route.** Preparation and execution now agree on root containment. Root authorization remains exact; a broader scope entry does not broaden a narrower target. Owned receipts and default control state stay outside the read-only target, while explicit overlapping output paths fail before writes. Path escapes, links, source identity and Windows process cleanup checks remain enforced.
+
+### Verification scope
+
+- This patch targets the existing Windows local scan adapter. Focused regressions, independent review and a real public root fixture distinguish tool execution from model or native Agent evidence; the native-host gaps documented in 3.3.0 remain open.
+
 ## [3.3.0] - 2026-10-03
 
 ### Added

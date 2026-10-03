@@ -12,6 +12,7 @@ import { taskOutcomeDigest } from '../../src/domain/governance/task-outcome.mjs'
 import { intentDialogueDigest } from './intent-dialogue.mjs';
 import { discoverRuntimeExecutablePaths } from '../runtime-executable-binding.mjs';
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT, LOCAL_DEPENDENCY_TOOL_OUTPUT_SHAPES as shapes, LOCAL_DEPENDENCY_TOOL_OUTPUT_STATUSES as statuses, LOCAL_DEPENDENCY_TOOL_SCHEMA_VERSION as schemaVersion, LOCAL_DEPENDENCY_TOOL_INPUT_FIELDS as inputFields } from './local-dependency-tool-contract.mjs';
+import { checkedLocalToolTarget, checkedLocalToolTempRoot, createLocalToolControlDirectory } from './local-tool-control-paths.mjs';
 export { LOCAL_DEPENDENCY_TOOL_CONTRACT };
 
 const observations = new WeakMap();
@@ -213,22 +214,19 @@ export async function invokeLocalDependencyToolWorker({ runId, runtime, workspac
     keys(binding.input, Object.hasOwn(binding.input, 'rules') ? [...inputFields, 'rules'] : inputFields, 'tool input');
     assert.equal(binding.input.schemaVersion, schemaVersion); assert(path.isAbsolute(binding.input.workspaceRoot) && samePath(binding.input.workspaceRoot, root), 'input workspace differs from trusted workspace');
     assert(binding.input.rules === undefined || binding.input.rules === LOCAL_DEPENDENCY_TOOL_CONTRACT.rules, 'unreviewed rules');
-    target = await trustedPath(path.resolve(root, binding.input.target));
-    assert(inside(root, target) && !samePath(root, target), 'target must be a bounded directory within the workspace');
+    target = checkedLocalToolTarget({ workspaceRoot: root, target: binding.input.target }).target;
+    checkedLocalToolTempRoot(target);
     assert(Array.isArray(packet.scopeFiles) && packet.scopeFiles.length > 0, 'authorized target scope is missing');
-    assert(packet.scopeFiles.some((entry) => typeof entry === 'string' && inside(root, path.resolve(root, entry)) && !samePath(root, path.resolve(root, entry)) && inside(path.resolve(root, entry), target)), 'target exceeds work-order scope');
+    assert(packet.scopeFiles.some((entry) => typeof entry === 'string' && !entry.includes('\0') && !/^(?:\\\\|\/\/)/u.test(entry) && inside(root, path.resolve(root, entry)) &&
+      (samePath(root, target) ? path.isAbsolute(entry) && samePath(root, path.resolve(entry)) : !samePath(root, path.resolve(root, entry)) && inside(path.resolve(root, entry), target))), 'target exceeds work-order scope');
     source = await validateSource(binding.selectedCapability);
     validateSourceReview(packet, binding.selectedCapability);
     assert.equal(digest(bindingView({ runId, runtime, node, packet })), preparedBindingDigest, 'work-order binding changed during preparation');
     assert(!inside(target, source.componentRoot), 'scanner component must not be inside its target');
     before = await snapshot(target);
-    const tmp = path.join(root, 'tmp'); const receipts = path.join(tmp, 'local-dependency-tool-receipts');
-    assert(!inside(target, receipts), 'owned receipt directory cannot be inside the scan target');
-    await fs.mkdir(tmp, { recursive: true }); await trustedPath(tmp);
-    await fs.mkdir(receipts, { recursive: true }); await trustedPath(receipts);
-    receiptRoot = await fs.mkdtemp(path.join(receipts, `${runId}-`));
+    receiptRoot = createLocalToolControlDirectory(target, 'receipt');
     if (signal?.aborted) throw new Error('local tool invocation cancelled before launch');
-    home = await fs.mkdtemp(path.join(os.tmpdir(), 'meta-kim-local-tool-home-'));
+    home = createLocalToolControlDirectory(target, 'home');
     const env = isolatedEnv(home);
     const python = detectPython310((command, args, options) => spawnSync(command, args, { ...options, env, timeout: 10000, windowsHide: true, shell: false }), process.platform, { env: process.env });
     assert(python, 'existing Python >=3.10 is unavailable; no installation attempted');

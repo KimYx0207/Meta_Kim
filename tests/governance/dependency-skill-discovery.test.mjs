@@ -182,7 +182,11 @@ test("linked roots and selected component trees are rejected without fallback", 
   const rootResult = await discoverDependencySkillContracts({ ...options, environment: { TEST_TOOL_LIBRARY_ROOT: alias } });
   assert.equal(rootResult.sources[0].status, "invalid");
   assert.match(rootResult.sources[0].reason, /symlink or junction/);
-  fs.rmSync(alias);
+  assert.equal(path.dirname(path.resolve(alias)), path.resolve(root));
+  assert.equal(path.basename(alias), 'linked-library');
+  assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
+  fs.rmSync(alias, { recursive: true });
+  assert.equal(fs.existsSync(path.join(root, 'skills/offline-check/capability.json')), true);
   const component = path.join(root, "skills/offline-check"), moved = path.join(root, "moved-component");
   fs.renameSync(component, moved);
   fs.symlinkSync(moved, component, process.platform === "win32" ? "junction" : "dir");

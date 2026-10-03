@@ -65,7 +65,7 @@ async function main() {
   const target = path.resolve(spec.input.workspaceRoot, spec.input.target);
   assert.equal(await fs.realpath(target), target);
   const relative = path.relative(spec.input.workspaceRoot, target);
-  assert(relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  assert(relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
   assert(spec.input.rules === undefined || spec.input.rules === LOCAL_DEPENDENCY_TOOL_CONTRACT.rules);
   const child = spawn(spec.python.realpath, ['-B', entrypoint, ...LOCAL_DEPENDENCY_TOOL_CONTRACT.invocation.argv], {
     cwd: spec.input.workspaceRoot, env: process.env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],

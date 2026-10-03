@@ -67,6 +67,7 @@ import {
 } from "./governed-execution/stage-runner-bridge.mjs";
 import { bindLocalDependencyToolWorkOrder, invokeLocalDependencyToolWorker } from "./governed-execution/local-dependency-tool-worker.mjs";
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT, LOCAL_DEPENDENCY_TOOL_INPUT_FIELDS, LOCAL_DEPENDENCY_TOOL_SCHEMA_VERSION } from "./governed-execution/local-dependency-tool-contract.mjs";
+import { checkedLocalToolTarget, checkedLocalToolTempRoot, createLocalToolControlDirectory, localToolInside, localToolSamePath, resolveLocalToolRunnerControlPaths } from "./governed-execution/local-tool-control-paths.mjs";
 import { buildGovernanceRequirementsShadow } from "./governed-execution/governance-requirements-shadow-adapter.mjs";
 import {
   buildLegacyGovernanceRequirementSnapshot,
@@ -10940,7 +10941,14 @@ export function prepareLocalToolRequest({ task, dialogue, localToolInput = null 
     const relativeTarget = path.relative(input.workspaceRoot, input.target);
     if (path.isAbsolute(relativeTarget) || relativeTarget === ".." || relativeTarget.startsWith(`..${path.sep}`)) blockers.push("local_target_outside_workspace");
     const scopedTargets = [constraints.target, ...(Array.isArray(constraints.scopeFiles) ? constraints.scopeFiles : []), ...(Array.isArray(constraints.scope) ? constraints.scope : [])];
-    if (!samePath(constraints.workspaceRoot, input.workspaceRoot) || !scopedTargets.some((target) => samePath(target, input.target))) blockers.push("target_not_in_confirmed_scope");
+    if (!samePath(constraints.workspaceRoot, input.workspaceRoot) ||
+        (constraints.target != null && (typeof constraints.target !== 'string' || !path.isAbsolute(constraints.target) || !samePath(constraints.target, input.target))) ||
+        !scopedTargets.some((target) => typeof target === 'string' && path.isAbsolute(target) && samePath(target, input.target))) blockers.push("target_not_in_confirmed_scope");
+    try {
+      const checked = checkedLocalToolTarget(input);
+      checkedLocalToolTempRoot(checked.target);
+      if (typeof sourceReview?.sourceRoot === 'string' && localToolInside(checked.target, path.resolve(sourceReview.sourceRoot, 'skills', LOCAL_DEPENDENCY_TOOL_CONTRACT.componentId))) blockers.push('local_scanner_inside_target');
+    } catch { blockers.push('unsafe_local_target_or_control_path'); }
   }
   return { applies: true, status: blockers.length ? "blocked" : "ready", blockers, request,
     taskHash, intentDigest: dialogue?.intentDigest ?? null,
@@ -11617,7 +11625,8 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
   };
 }
 
-export async function runMetaTheoryGovernedExecution({
+export async function runMetaTheoryGovernedExecution(options = {}) {
+  let {
   task,
   confirmedIntent = null,
   localToolInput = null,
@@ -11660,7 +11669,7 @@ export async function runMetaTheoryGovernedExecution({
   requestedSideEffectActions = [],
   previousPlanChallengeRunId = null,
   stageRunner = null,
-} = {}) {
+  } = options;
   const normalizedTask = normalizeTask(task);
   if (!normalizedTask) {
     throw new Error("Missing task for governed meta-theory execution.");
@@ -11671,6 +11680,20 @@ export async function runMetaTheoryGovernedExecution({
   const understandingSnapshot = sharedUnderstandingConfirmed == null ? null : structuredClone(sharedUnderstandingConfirmed);
   const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
   const localToolRequest = prepareLocalToolRequest({ task: normalizedTask, dialogue: intentDialogue, localToolInput });
+  // A read-only scan must not create state, databases, artifacts or project
+  // capabilities in its target before the worker takes the source snapshot.
+  if (localToolRequest.status === 'ready') {
+    normalizedProjectCapabilityMutationMode(projectCapabilityMutationMode);
+    if (applyWriteback || (Array.isArray(requestedSideEffectActions) && requestedSideEffectActions.length)) {
+      throw new Error('Local read-only scanner cannot apply writeback or project side effects');
+    }
+    ({ stateDir, artifactDir, dbPath, stageRunner } = resolveLocalToolRunnerControlPaths({
+      target: localToolRequest.input.target, stateDir, artifactDir, dbPath, stageRunner,
+      relocateDefaults: ['stateDir', 'artifactDir', 'dbPath'].every((key) => !Object.hasOwn(options, key)) &&
+        artifactDir == null && localToolSamePath(stateDir, DEFAULT_STATE_DIR) && localToolSamePath(dbPath, DEFAULT_DB_PATH) && stageRunner?.durableDbPath == null,
+    }));
+    projectCapabilityMutationMode = 'read_only';
+  }
   const boundUnderstanding = understandingSnapshot?.taskHash === intentDialogue.taskHash &&
     (understandingSnapshot.intentDigest ?? null) === (intentDialogue.intentDigest ?? null)
       ? understandingSnapshot : null;
@@ -12075,9 +12098,9 @@ export async function runMetaTheoryGovernedExecution({
   const panelContractDefinition = await readJson(RUN_REPORT_PANEL_CONTRACT_PATH);
   const aiReadableStandards = await readJson(AI_READABLE_PRODUCT_STANDARDS_PATH);
   const agentTeamsPlaybookProvider = await resolveAgentTeamsPlaybookProvider(routeRuntime);
-  const projectCapabilityCandidateRoot = mkdtempSync(
-    path.join(os.tmpdir(), "meta-kim-project-capability-candidates-"),
-  );
+  const projectCapabilityCandidateRoot = localToolRequest.status === 'ready'
+    ? createLocalToolControlDirectory(localToolRequest.input.target, 'candidates')
+    : mkdtempSync(path.join(os.tmpdir(), "meta-kim-project-capability-candidates-"));
   let coreLoop;
   const hostProvenance = await resolveGovernedRunHostProvenance({
     projectRoot: path.resolve(projectRoot),
@@ -12119,7 +12142,9 @@ export async function runMetaTheoryGovernedExecution({
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
   }
-  const spineWorkerBinding = await publishRunnerWorkerBindingsToSpine({
+  const spineWorkerBinding = localToolRequest.status === 'ready' && localToolInside(localToolRequest.input.target, path.resolve(projectRoot, '.meta-kim'))
+    ? { status: 'not_published', reason: 'read_only_scan_target_contains_project_spine' }
+    : await publishRunnerWorkerBindingsToSpine({
     projectRoot: path.resolve(projectRoot),
     runId: effectiveRunId,
     runtime: routeRuntime,
