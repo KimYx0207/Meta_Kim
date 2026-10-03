@@ -143,10 +143,10 @@ test("declared whole runtime redirects support repeat install and update without
 test("missing explicit subdir and required Hook attachment fail without network fallback", (t) => {
   const ctx=sandbox(t); const source=fixture(ctx.root); rmSync(path.join(source,"skills/goalpro"),{recursive:true});
   const missing=run(ctx,source,{ids:["goalpro"]}); assert.notEqual(missing.status,0); assert.match(missing.stderr,/local component.*(?:invalid|missing)/i);
-  const second=sandbox(t); const complete=fixture(second.root); rmSync(path.join(complete,"hooks/hookprompt/.claude/prompt-optimizer-meta.md"));
+  const second=sandbox(t); const complete=fixture(second.root);
+  passed(run(second, complete, { ids: ["hookprompt"] }));
+  rmSync(path.join(complete,"hooks/hookprompt/.claude/prompt-optimizer-meta.md"));
   const oldHook = path.join(second.home, ".claude/skills/hookprompt");
-  cpSync(path.join(complete, "hooks/hookprompt"), oldHook, { recursive: true });
-  put(path.join(oldHook, ".claude/prompt-optimizer-meta.md"), "old optimizer\n");
   const oldHash = treeHash(oldHook, true);
   const hook=run(second,complete,{ids:["hookprompt"],update:true}); assert.notEqual(hook.status,0); assert.match(hook.stderr,/ENOENT|prompt-optimizer/);
   assert.equal(treeHash(oldHook, true), oldHash);
@@ -161,12 +161,14 @@ test("a mismatched local Skill entrypoint fails before replacing an installed co
   assert.equal(treeHash(target, true), before);
 });
 test("a rejected local multi-stage extraction never falls back to a per-runtime remote install", (t) => {
-  const ctx=sandbox(t); const source=fixture(ctx.root); rmSync(path.join(source,"skills/goalpro"),{recursive:true});
-  put(path.join(ctx.home,".claude/skills/goalpro/user-owned.txt"),"unchanged\n");
+  const ctx=sandbox(t); const source=fixture(ctx.root);
+  passed(run(ctx, source, { ids: ["goalpro"] }));
+  const before = treeHash(ctx.home, true);
+  rmSync(path.join(source,"skills/goalpro"),{recursive:true});
   // Parent-directory declaration uses the existing repoName lookup, so failure occurs in staging.
   const missing=run(ctx,path.dirname(source),{ids:["goalpro"],update:true});
   assert.notEqual(missing.status,0); assert.match(missing.stderr,/Local dependency source missing/);
-  assert.equal(readFileSync(path.join(ctx.home,".claude/skills/goalpro/user-owned.txt"),"utf8"),"unchanged\n");
+  assert.equal(treeHash(ctx.home, true), before);
 });
 test("a recognized explicit Service root missing its index fails without network or old-target mutation", (t) => {
   const ctx=sandbox(t); const original=fixture(ctx.root); const source=path.join(ctx.root,"explicit-service-worktree"); renameSync(original,source);
@@ -278,6 +280,38 @@ test("only the exact unchanged installer receipt permits replacement; drift neve
   const current = JSON.parse(readFileSync(ledger)); const previous = JSON.parse(managedReceipt);
   assert.deepEqual(current.entries.find((entry) => entry.path === target), previous.entries.find((entry) => entry.path === target));
 });
+for (const scenario of [
+  { name: "later runtime drift", targets: "claude,codex", ids: ["goalpro"], rejected: ".codex/skills/goalpro", drift: true },
+  { name: "later runtime missing receipt", targets: "claude,codex", ids: ["goalpro"], rejected: ".codex/skills/goalpro" },
+  { name: "later component after meta-skill transaction", targets: "claude,codex", ids: ["meta-skill-creator", "goalpro"], rejected: ".codex/skills/goalpro", drift: true },
+  { name: "later component in one runtime", targets: "claude", ids: ["agent-teams-playbook", "goalpro"], rejected: ".claude/skills/goalpro", drift: true },
+  { name: "Codex compatibility mirror", targets: "claude,codex", ids: ["meta-skill-creator", "goalpro"], rejected: ".codex/skills/meta-skill-creator", drift: true },
+]) {
+  test(`Service ownership preflight preserves every target and receipt on ${scenario.name}`, (t) => {
+    const ctx = sandbox(t); const source = fixture(ctx.root);
+    passed(run(ctx, source, scenario));
+    const rejected = path.join(ctx.home, scenario.rejected);
+    const ledger = path.join(ctx.home, ".meta-kim/install-manifest.json");
+    if (scenario.drift) put(path.join(rejected, "user-added.txt"), "preserve this fixture addition\n");
+    else {
+      const receipt = JSON.parse(readFileSync(ledger));
+      receipt.entries = receipt.entries.filter((entry) => entry.path !== rejected);
+      put(ledger, JSON.stringify(receipt));
+    }
+    for (const id of scenario.ids) {
+      const subdir = specs.find(([candidate]) => candidate === id)[1];
+      put(path.join(source, subdir, "NOTICE"), "changed source must not reach an earlier target\n");
+    }
+    const before = treeHash(ctx.home, true); const receiptBefore = readFileSync(ledger);
+    const denied = run(ctx, source, { ...scenario, update: true });
+    const unchanged = treeHash(ctx.home, true) === before;
+    t.diagnostic(JSON.stringify({ scenario: scenario.name, exitCode: denied.status, allTargetsUnchanged: unchanged, receiptUnchanged: readFileSync(ledger).equals(receiptBefore) }));
+    assert.notEqual(denied.status, 0);
+    assert.match(denied.stderr, /ownership receipt.*preserved without replacement/);
+    assert.equal(unchanged, true, "reject the whole selection before any target is modified");
+    assert.deepEqual(readFileSync(ledger), receiptBefore);
+  });
+}
 test("single-runtime remote route preserves unknown and historical targets through the same deployment boundary", (t) => {
   const ctx = sandbox(t); const source = fixture(ctx.root);
   const target = path.join(ctx.home, ".claude/skills/agent-teams-playbook");
