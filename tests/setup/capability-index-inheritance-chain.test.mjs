@@ -675,6 +675,7 @@ describe("capability index inheritance chain", () => {
     const index = await readJson("config/capability-index/meta-kim-capabilities.json");
     const actual = Object.keys(index.byCapabilityType?.mcpTools ?? {}).sort();
     assert.deepEqual(actual, [
+      "repo:repo-mcp:meta-kim-runtime:calculate_materials",
       "repo:repo-mcp:meta-kim-runtime:dispatch_meta_agent",
       "repo:repo-mcp:meta-kim-runtime:get_meta_agent",
       "repo:repo-mcp:meta-kim-runtime:get_meta_effective_runtime_capabilities",
@@ -682,7 +683,7 @@ describe("capability index inheritance chain", () => {
       "repo:repo-mcp:meta-kim-runtime:get_meta_runtime_evidence",
       "repo:repo-mcp:meta-kim-runtime:list_meta_agents",
     ]);
-    assert.equal(index.summary?.totalMcpTools, 6);
+    assert.equal(index.summary?.totalMcpTools, 7);
   });
 
   test("canonical discovery remains byte-stable before and after isolated project sync", async () => {

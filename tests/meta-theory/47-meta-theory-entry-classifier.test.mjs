@@ -80,6 +80,9 @@ describe("47 - Meta-theory entry classifier", () => {
       "帮我准备一份四十五分钟的分数教案",
       "围绕这个知识点帮我出三道练习题",
       "帮我核算这项服务的成本并给出报价",
+      "帮我比较这几家供应商",
+      "帮我比较材料中的两家采购供应商，算到货总支出和超购，不联系供应商或下单",
+      "Compare the supplied quotes and calculate landed cost and excess quantity",
     ]) {
       const result = classifyMetaTheoryEntry(prompt);
       assert.equal(result.path, "standard_path", prompt);
@@ -88,7 +91,7 @@ describe("47 - Meta-theory entry classifier", () => {
   });
 
   test("professional terminology alone does not turn an informational question into execution", () => {
-    for (const prompt of ["简历是什么？", "标题与封面文字有什么区别？", "这个知识点我没懂是什么意思？"]) {
+    for (const prompt of ["简历是什么？", "标题与封面文字有什么区别？", "这个知识点我没懂是什么意思？", "超购和总支出是什么意思？", "供应商比较是什么意思？", "What does landed cost mean?"]) {
       const result = classifyMetaTheoryEntry(prompt);
       assert.equal(result.path, "fast_path", prompt);
       assert.equal(result.governedEntry, false, prompt);

@@ -126,10 +126,47 @@ jobs:
       - name: Test retirement, independent updates, and ownership boundaries
         run: node --test tests/setup/retire-planning-with-files.test.mjs tests/setup/meta-skill-creator-installer.test.mjs tests/setup/install-status-semantics.test.mjs tests/setup/installer-runtime-boundary.test.mjs
 
+  dependency-calculation:
+    name: Real dependency calculation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: Meta_Kim
+          persist-credentials: false
+      - name: Check out the reviewed first-party calculator source
+        uses: actions/checkout@v7
+        with:
+          repository: KimYx0207/Kim_Service
+          ref: 8e520e1d641b27228b6a941d8eb41f51533f6028
+          path: Kim_Service
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install existing MCP dependencies without lifecycle scripts
+        working-directory: Meta_Kim
+        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+      # Fixed synthetic requests and real stdlib Python/MCP. No models, provider
+      # credentials, supplier contact or purchasing are involved.
+      - name: Test original request, existing route, real tool and delivery
+        working-directory: Meta_Kim
+        env:
+          META_KIM_TEST_KIM_SERVICE_SOURCE: ${{ github.workspace }}/Kim_Service
+        run: node --test tests/governance/dependency-calculation.test.mjs
+
   package-candidate:
     name: Package candidate
     if: github.event_name != 'pull_request'
-    needs: [behavior-regression, setup-platform, planning-continuity, global-sync-policy, installer-regression]
+    needs: [behavior-regression, setup-platform, planning-continuity, global-sync-policy, installer-regression, dependency-calculation]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

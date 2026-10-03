@@ -313,6 +313,14 @@ Surface compatibility is intentionally weaker than runtime support. A tool can s
 
 ---
 
+### Calculate supplied quotations with Kim_Service
+
+A Meta MCP version exposing `calculate_materials` uses the existing route selector and Kim_Service procurement role, then runs its fixed Python calculator and returns a brief, actual receipt and readable comparison. Set the MCP environment's `META_KIM_KIM_SERVICE_ROOT` to an existing Kim_Service checkout, or pass `dependencyRoot`; do not reinstall the old standalone repositories.
+
+With the current quotations supplied, ask: “Compare these supplier quotes and calculate landed cost and excess quantity; use the supplied constraints and do not place an order.” The host passes the original request as `task` and the explicitly supplied materials as `inputJson`, following the Service package's `docs/tool-api.md`. Missing quantity, currency, specification or quotes warrants a focused question. Missing weights do not block a multidimensional comparison, and unknown fees remain unknown.
+
+The tool does not contact suppliers, order or pay. Independent contract/script hashes bind the helper; Agent `Read` permissions stay unchanged. `completed` means calculation of the supplied JSON, not semantic acceptance of the whole request. The host must reconcile the brief with the user's materials. Deterministic MCP/Python replay does not certify model behavior or native Agent invocation.
+
 ## Contact
 
 ![Contact QR](docs/images/contact-qr.png)

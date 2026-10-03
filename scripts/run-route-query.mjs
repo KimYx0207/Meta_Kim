@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const routeScript = fileURLToPath(new URL("./select-execution-route.mjs", import.meta.url));
 
-export function runRouteQuery({ task, runtime = "auto", os = "auto", extraArgs = [] }) {
+export function runRouteQuery({ task, runtime = "auto", os = "auto", extraArgs = [], env = process.env }) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
@@ -22,6 +22,7 @@ export function runRouteQuery({ task, runtime = "auto", os = "auto", extraArgs =
       {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        env,
       },
     );
     let stdout = "";
