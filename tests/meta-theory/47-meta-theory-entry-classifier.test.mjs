@@ -91,11 +91,20 @@ describe("47 - Meta-theory entry classifier", () => {
   });
 
   test("professional terminology alone does not turn an informational question into execution", () => {
-    for (const prompt of ["简历是什么？", "标题与封面文字有什么区别？", "这个知识点我没懂是什么意思？", "超购和总支出是什么意思？", "供应商比较是什么意思？", "What does landed cost mean?"]) {
+    for (const prompt of ["简历是什么？", "标题与封面文字有什么区别？", "这个知识点我没懂是什么意思？", "超购和总支出是什么意思？", "供应商比较是什么意思？", "What does landed cost mean?", "What does it mean to compare landed cost?", "What does it mean to calculate excess quantity?"]) {
       const result = classifyMetaTheoryEntry(prompt);
       assert.equal(result.path, "fast_path", prompt);
       assert.equal(result.governedEntry, false, prompt);
     }
+    assert.equal(classifyMetaTheoryEntry("What does landed cost mean? Then compare these supplier quotes and write a report.").path, "standard_path");
+    assert.equal(classifyMetaTheoryEntry("What does landed cost mean. Compare these supplier quotes and write a report.").path, "standard_path");
+    for (const prompt of [
+      "What does landed cost mean to a buyer, and please compare these supplier quotes and write a report",
+      "What does landed cost mean to a buyer, and could you calculate total expenditure?",
+      "What does it mean to compare landed cost and please write a report?",
+      "What does it mean to compare landed cost and can you calculate these quotes?",
+      "What does it mean to compare quotes, and please calculate landed cost for these supplier quotes?",
+    ]) assert.equal(classifyMetaTheoryEntry(prompt).path, "standard_path", prompt);
   });
 
   test("wish-style product build enters governed path without protocol words", () => {

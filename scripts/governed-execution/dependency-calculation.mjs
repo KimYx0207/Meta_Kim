@@ -18,18 +18,44 @@ function result(status, fields = {}) {
     modelSemanticAcceptance: false, externalActionsPerformed: false, ...fields };
 }
 
+function hasDuplicateObjectKeys(validJson) {
+  // JSON.parse has already checked syntax. Track object key sets without
+  // collapsing duplicates or mistaking punctuation inside strings for tokens.
+  const stack = [];
+  for (const [token] of validJson.matchAll(/"(?:\\[\s\S]|[^"\\])*"|[{}\[\],:]/gu)) {
+    if (token === "{") stack.push({ keys: new Set(), expectsKey: true });
+    else if (token === "[") stack.push(null);
+    else if (token === "}" || token === "]") stack.pop();
+    else {
+      const object = stack.at(-1);
+      if (token === "," && object) object.expectsKey = true;
+      else if (token.startsWith('"') && object?.expectsKey) {
+        const key = JSON.parse(token);
+        if (object.keys.has(key)) return true;
+        object.keys.add(key); object.expectsKey = false;
+      }
+    }
+  }
+  return false;
+}
+
 /** A deterministic read-only calculation is a host tool, not native Agent
  * execution. The host supplies the original request and explicit materials.
  * This bridge never invents conversation confirmation or executes arbitrary
  * dependency commands. Only reviewed script bytes can cross this boundary.
  */
 export async function runDependencyCalculation({ task, inputJson, dependencyRoot = process.env.META_KIM_KIM_SERVICE_ROOT,
-  runtime = "codex", osTarget = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux" } = {}) {
+  runtime = process.env.META_KIM_RUNTIME_FAMILY, osTarget = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux" } = {}) {
   if (typeof task !== "string" || !task.trim() || task.length > 6000 || typeof inputJson !== "string"
     || Buffer.byteLength(inputJson) > MAX_INPUT_BYTES) return result("invalid_input", { code: "invalid_request_envelope" });
   let materials;
   try { materials = JSON.parse(inputJson); } catch { return result("invalid_input", { code: "invalid_materials_json" }); }
   if (!materials || typeof materials !== "object" || Array.isArray(materials)) return result("invalid_input", { code: "materials_must_be_object" });
+  runtime = runtime === "claude" ? "claude_code" : runtime;
+  if (!["codex", "claude_code", "cursor", "openclaw"].includes(runtime)) {
+    return result("unavailable", { code: "runtime_binding_required",
+      nextAction: "Bind META_KIM_RUNTIME_FAMILY in the MCP server configuration to its actual host runtime." });
+  }
   if (typeof dependencyRoot !== "string" || !path.isAbsolute(dependencyRoot)) {
     return result("unavailable", { code: "explicit_dependency_root_required", nextAction: "Configure META_KIM_KIM_SERVICE_ROOT with the existing Kim_Service checkout." });
   }
@@ -69,17 +95,25 @@ export async function runDependencyCalculation({ task, inputJson, dependencyRoot
   const brief = { request: task, specification: materials.specification ?? null, quantity: materials.quantity ?? null,
     currency: materials.currency ?? null, maxLeadDays: materials.maxLeadDays ?? null,
     weights: materials.weights ?? null, scope: "compare_supplied_materials_only", permitsContactOrPurchase: false };
-  const selectedRoute = { owner: policy.ownerId, entryPath: route.entryClassification.path,
+  const selectedRoute = { owner: policy.ownerId, runtime, entryPath: route.entryClassification.path,
     source: "existing_execution_route", sourceContentSha256: sourceHash, toolId: tool.id };
   const missing = tool.requiredMaterials.filter((key) => !Object.hasOwn(materials, key)
     || materials[key] == null || (typeof materials[key] === "string" && !materials[key].trim())
     || (Array.isArray(materials[key]) && materials[key].length === 0));
-  if (missing.length) return result("needs_input", { binding, brief, route: selectedRoute, missing,
+  // Ambiguous raw input must still reach the helper's strict duplicate-key
+  // parser; its last-value-wins projection must not masquerade as missing data.
+  if (missing.length && !hasDuplicateObjectKeys(inputJson)) return result("needs_input", { binding, brief, route: selectedRoute, missing,
     questions: [`请补充${missing.map((key) => fieldLabels[key] ?? key).join("、")}；不需要为了核算先设置权重。`] });
-  // Material comparison does not inherit unrelated native choice, dispatch or
-  // model-execution claims. Genuine unresolved route choices still stay open.
-  if (route.userChoiceNeeded) return result("needs_input", { binding, brief, route: selectedRoute,
+  const gate = route.routeExecutionGate;
+  if (gate?.handoffStatus === "awaiting_native_choice" && route.userChoiceNeeded) return result("needs_input", { binding, brief, route: selectedRoute,
     code: "material_route_choice_required", questions: [route.requiredUserChoiceIfAny ?? "请确认影响本次结果的路径选择。"] });
+  // Route readiness is required before the MCP host starts its bounded tool;
+  // it does not claim native Agent execution or replace host permissions.
+  if (gate?.handoffStatus !== "ready_for_host_handoff" || gate.routeCompatible !== true || gate.canHandoffToHost !== true) {
+    return result("unavailable", { code: "route_not_ready_for_host_handoff", binding, brief, route: selectedRoute,
+      gate: { handoffStatus: gate?.handoffStatus ?? "missing", blockedBy: gate?.blockedBy ?? [],
+        returnToStage: gate?.returnToStage ?? "Fetch", reason: gate?.reason ?? "Route handoff evidence is missing." } });
+  }
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-calculation-"));
   try {
     // Execute a snapshot of the reviewed bytes; a later dependency edit cannot
