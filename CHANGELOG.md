@@ -8,6 +8,16 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.3.2] - 2026-10-03
+
+### Fixed
+
+- **Local read-only scans reject hard-linked control databases before any writes.** An external database pathname can identify a file inside the scan target even when realpath and containment checks pass. The existing control-path preflight now rejects multiply linked database files and SQLite companion files, including the implicit durable database and the known capability-inventory write. Ordinary custom single-link database paths remain supported.
+
+### Verification scope
+
+- Public fixture reproduction demonstrates the pre-snapshot write, rather than claiming damage to existing user data. Independent negative probes and a real normal custom-database scan verify the focused fix. Existing Windows-only, native-host and model-evidence limits remain unchanged; 3.3.1 retains its separate root-target fix.
+
 ## [3.3.1] - 2026-10-03
 
 ### Fixed
