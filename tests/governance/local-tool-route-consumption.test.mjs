@@ -142,6 +142,56 @@ test('caller mutation cannot replace a validated external durable database path'
   assert.deepEqual(fs.readdirSync(target), []);
 });
 
+test('hardlinked SQLite and fixed inventory control files reject before any API writes', async (t) => {
+  for (const database of ['db', 'durable', 'implicit-durable', 'capability-inventory']) {
+    for (const suffix of database === 'capability-inventory' ? [''] : ['', '-wal', '-shm', '-journal']) {
+      // Check companions with both absent and existing single-link main DBs.
+      for (const existingMain of suffix ? [false, true] : [false]) {
+        const { root, target } = temp(t);
+        const control = path.join(root, 'control'); fs.mkdirSync(control);
+        const stateDir = path.join(control, 'state'); fs.mkdirSync(stateDir);
+        const dbPath = path.join(control, 'runs.sqlite');
+        const durableDbPath = database === 'implicit-durable' ? path.join(stateDir, 'durable-runs.sqlite') : path.join(control, 'durable.sqlite');
+        const file = database === 'capability-inventory' ? path.join(stateDir, 'capability-inventory.json') : database === 'db' ? dbPath : durableDbPath;
+        if (existingMain) fs.writeFileSync(file, '');
+        const source = path.join(target, 'public-fixture.sqlite'); fs.writeFileSync(source, 'public fixture only\n');
+        fs.linkSync(source, `${file}${suffix}`);
+        assert.equal(fs.statSync(source).nlink, 2);
+        assert.equal(fs.statSync(source).ino, fs.statSync(`${file}${suffix}`).ino);
+        const before = await componentHash(target);
+        const artifactDir = path.join(control, 'artifacts');
+        const stageRunner = { enabled: true, ...(database === 'implicit-durable' ? {} : { durableDbPath }) };
+        const bound = intent(target, target, 'fast_usable', { status: 'pass', dependencyId: 'kim-service', sourceRoot: root, componentVersion: '1.1.0',
+          contractSha256: 'a'.repeat(64), componentContentSha256: 'b'.repeat(64), indexSha256: 'c'.repeat(64), evidenceRefs: ['test-only-reviewed-source'] });
+        await assert.rejects(runMetaTheoryGovernedExecution({ task, ...bound, projectRoot: target, stateDir, artifactDir, dbPath, stageRunner }), /control files cannot be hard linked/u,
+          `${database}${suffix}; existing main=${existingMain}`);
+        assert.equal(await componentHash(target), before);
+        assert.equal(fs.existsSync(artifactDir), false, 'reject before output mkdir');
+        if (database !== 'capability-inventory') assert.equal(fs.existsSync(path.join(stateDir, 'capability-inventory.json')), false);
+      }
+    }
+  }
+});
+
+test('ordinary existing single-link custom databases and SQLite companions remain valid', (t) => {
+  const { root, target } = temp(t);
+  const stateDir = path.join(root, 'state'); fs.mkdirSync(stateDir);
+  fs.writeFileSync(path.join(stateDir, 'capability-inventory.json'), '{}\n');
+  const dbPath = path.join(root, 'custom.sqlite');
+  const durableDbPath = path.join(stateDir, 'durable-runs.sqlite');
+  for (const file of [dbPath, durableDbPath]) {
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      fs.writeFileSync(`${file}${suffix}`, '');
+      assert.equal(fs.statSync(`${file}${suffix}`).nlink, 1);
+    }
+  }
+  const stageRunner = { enabled: true };
+  const paths = resolveLocalToolRunnerControlPaths({ target, stateDir, artifactDir: null, dbPath, stageRunner });
+  assert.equal(paths.dbPath, dbPath); assert.equal(paths.stateDir, stateDir);
+  assert.deepEqual(paths.stageRunner, stageRunner);
+  assert.deepEqual(fs.readdirSync(target), []);
+});
+
 async function dependencyFixture(t, version = "1.1.0") {
   const { root, target } = temp(t);
   const componentRoot = path.join(root, "skills/semgrep-skill");

@@ -25,6 +25,10 @@ export function checkedLocalToolControlPath(value) {
     try {
       const stat = lstatSync(current);
       assert(!stat.isSymbolicLink() && localToolSamePath(realpathSync.native(current), current), 'control path cannot traverse a symlink or junction');
+      // realpath preserves hardlink names. A regular control file with another
+      // name could alias source inside the scan target; directory link counts
+      // are unrelated and remain valid (notably on POSIX).
+      assert(!stat.isFile() || stat.nlink === 1, 'control files cannot be hard linked');
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
@@ -67,7 +71,11 @@ export function resolveLocalToolRunnerControlPaths({ target, stateDir, artifactD
   // The runner awaits before opening its durable database. Caller mutation
   // must not replace the scalar path that this preflight just validated.
   stageRunner = stageRunner == null ? stageRunner : { ...stageRunner };
-  const paths = [stateDir, artifactDir, dbPath, stageRunner?.durableDbPath].filter((value) => value != null);
+  const durableDbPath = stageRunner?.durableDbPath ?? (stageRunner?.enabled === true ? path.join(stateDir, 'durable-runs.sqlite') : null);
+  const databasePaths = [dbPath, durableDbPath].filter((value) => value != null);
+  // SQLite can write existing companions even when the main database is new.
+  const paths = [stateDir, path.join(stateDir, 'capability-inventory.json'), artifactDir, ...databasePaths.flatMap((file) =>
+    [file, `${file}-wal`, `${file}-shm`, `${file}-journal`])].filter((value) => value != null);
   const overlap = paths.map(checkedLocalToolControlPath).some((value) => localToolInside(target, value));
   checkedLocalToolTempRoot(target);
   if (!overlap) return { stateDir, artifactDir, dbPath, stageRunner };
