@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "tools": [
+    {
+      "ownerId": "kim-service:supplier-comparison-analyst",
+      "dependencyId": "kim-service",
+      "componentId": "supplier-comparison-analyst",
+      "contractFile": "calculation-tool.json",
+      "contractSha256": "e9a32b0f5975559aaa24a62aa96a32686a9bb13852a9d3b78c1c31b9d7abf21b",
+      "scriptSha256": "6c2a372dc9511c150cd2b0c4dde5d2e838e830a0b69f8dd73fccfbfd6fdd9e9c"
+    }
+  ]
+}

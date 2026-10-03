@@ -12,6 +12,7 @@ import {
 import { loadEffectiveRuntimeCapabilityClaims } from "../effective-runtime-capability-claims.mjs";
 import { runtimeCapabilityFailureDetails } from "../runtime-capability-evidence.mjs";
 import { standardRuntimeObservationSet } from "../runtime-execution-gate.mjs";
+import { runDependencyCalculation } from "../governed-execution/dependency-calculation.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -320,6 +321,7 @@ if (process.argv.includes("--self-test")) {
           "meta://skill/meta-theory",
         ],
         tools: [
+          "calculate_materials",
           "list_meta_agents",
           "get_meta_agent",
           "get_meta_runtime_capabilities",
@@ -413,6 +415,17 @@ server.registerResource(
   "meta://runtime-effective",
   { description: "Profile-local effective runtime capability status", mimeType: "application/json" },
   async () => ({ contents: [{ uri: "meta://runtime-effective", mimeType: "application/json", text: currentEffectiveRuntimeCapabilities() }] }),
+);
+
+server.registerTool(
+  "calculate_materials",
+  {
+    description: "按用户原始需求和明确提供的 JSON 材料，通过既有 Meta 路由调用 Kim_Service 已审查的只读计算器。目前支持采购供应商的包数、MOQ、到货成本、交期约束与用户权重。不要把示例当用户事实；不联系供应商或下单。不要求默认权重，不声称原生 Agent 或模型语义验收。",
+    inputSchema: { task: z.string().min(1).max(6000), inputJson: z.string().max(262144),
+      dependencyRoot: z.string().optional() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async (args) => ({ content: [{ type: "text", text: JSON.stringify(await runDependencyCalculation(args)) }] }),
 );
 
 server.registerTool(

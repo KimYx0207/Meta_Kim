@@ -44,7 +44,8 @@ test("MCP packaged resources ignore a polluted repository-root environment", () 
     assert.equal(result.status, 0, result.stderr || result.stdout || result.error?.message);
     const payload = JSON.parse(result.stdout);
     assert.equal(payload.agentCount, 9);
-    assert.equal(payload.tools.length, 6);
+    assert.equal(payload.tools.length, 7);
+    assert.ok(payload.tools.includes("calculate_materials"));
     assert.deepEqual(payload.resources.slice(-2), ["meta://runtime-effective", "meta://skill/meta-theory"]);
   } finally {
     rmSync(externalRoot, { recursive: true, force: true });
