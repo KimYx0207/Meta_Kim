@@ -4195,6 +4195,31 @@ async function isOwnedServiceSkillRoot(spec, root) {
   });
 }
 
+async function preflightServiceSkillTargets(homes, activeTargets) {
+  if (pluginsOnly) return;
+  const checked = new Set();
+  for (const spec of SKILL_REPOS) {
+    if (!usesGenericSkillInstall(spec) || repoNameFromFullName(spec.repoFullName) !== "Kim_Service") continue;
+    for (const runtimeId of activeTargets) {
+      if (!homes[runtimeId] || (spec.targets && !spec.targets.includes(runtimeId))) continue;
+      const targets = [resolveSkillTargetDir(homes[runtimeId], spec, runtimeId)];
+      if (runtimeId === "codex" && spec.id === "meta-skill-creator") {
+        targets.push(path.join(homes[runtimeId], "skills", spec.id));
+      }
+      for (const target of targets) {
+        const key = managedDependencyTargetKey(target);
+        if (checked.has(key)) continue;
+        checked.add(key);
+        await assertRealPathContained(os.homedir(), target, activeInstallerWriteBoundary);
+        if (await pathExists(target) && !(await isEmptyDir(target))
+          && !(await isKnownLegacySkillRoot(spec, target)) && !(await isOwnedServiceSkillRoot(spec, target))) {
+          throw new Error(`Existing ${spec.id} directory has no matching unchanged ownership receipt; preserved without replacement: ${target}`);
+        }
+      }
+    }
+  }
+}
+
 async function isKnownLegacySkillRoot(spec, root) {
   if (repoNameFromFullName(spec.repoFullName) !== "Kim_Service") return false;
   let config;
@@ -4539,6 +4564,11 @@ async function main() {
       `${C.yellow}⚠${C.reset} ${t.warnIgnoringLoopbackProxyEnv(strippedLoopbackProxyEnv)}`,
     );
   }
+
+  // Reject ownership collisions across the entire selection before cleanup or
+  // deployment can alter an earlier target and leave its receipt stale.
+  // Per-target checks remain in the write paths to detect later changes.
+  await preflightServiceSkillTargets(homes, activeTargets);
 
   // Clean up known legacy artifacts before any install operations
   await cleanupLegacyGlobalArtifacts(homes);
