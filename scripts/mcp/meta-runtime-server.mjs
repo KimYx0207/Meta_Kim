@@ -425,7 +425,9 @@ server.registerTool(
       dependencyRoot: z.string().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async (args) => ({ content: [{ type: "text", text: JSON.stringify(await runDependencyCalculation(args)) }] }),
+  async (args) => ({ content: [{ type: "text", text: JSON.stringify(await runDependencyCalculation({
+    ...args, runtime: process.env.META_KIM_RUNTIME_FAMILY,
+  })) }] }),
 );
 
 server.registerTool(

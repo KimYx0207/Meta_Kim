@@ -317,7 +317,12 @@ Surface compatibility is intentionally weaker than runtime support. A tool can s
 
 A Meta MCP version exposing `calculate_materials` uses the existing route selector and Kim_Service procurement role, then runs its fixed Python calculator and returns a brief, actual receipt and readable comparison. Set the MCP environment's `META_KIM_KIM_SERVICE_ROOT` to an existing Kim_Service checkout, or pass `dependencyRoot`; do not reinstall the old standalone repositories.
 
-With the current quotations supplied, ask: “Compare these supplier quotes and calculate landed cost and excess quantity; use the supplied constraints and do not place an order.” The host passes the original request as `task` and the explicitly supplied materials as `inputJson`, following the Service package's `docs/tool-api.md`. Missing quantity, currency, specification or quotes warrants a focused question. Missing weights do not block a multidimensional comparison, and unknown fees remain unknown.
+Bind `META_KIM_RUNTIME_FAMILY` in the MCP server environment to its actual host (`codex`, `claude`/`claude_code`, `cursor`, or `openclaw`); the tool never assumes Codex or accepts a caller-supplied runtime. Normal install/update refreshes capability discovery. Missing/stale discovery, unsupported capabilities and other blocked route gates stop execution with a reason; refresh or repair that route before retrying.
+
+Compound requests can produce a parallel plan whose safety has not been established. The calculator preserves that block; the host must resolve the task scope and route before calculation proceeds.
+The earlier example “Compare these supplier quotes and calculate landed cost and excess quantity; use the supplied constraints and do not place an order.” currently receives `parallel_lane_safety_not_proven` from the selector and is not an executable success example.
+
+With the current quotations supplied, ask: “Calculate landed cost for these supplied supplier quotes.” The host passes the original request as `task` and the explicitly supplied materials as `inputJson`, following the Service package's `docs/tool-api.md`. Missing quantity, currency, specification or quotes warrants a focused question. Missing weights do not block a multidimensional comparison, and unknown fees remain unknown.
 
 The tool does not contact suppliers, order or pay. Independent contract/script hashes bind the helper; Agent `Read` permissions stay unchanged. `completed` means calculation of the supplied JSON, not semantic acceptance of the whole request. The host must reconcile the brief with the user's materials. Deterministic MCP/Python replay does not certify model behavior or native Agent invocation.
 

@@ -92,6 +92,11 @@ const DURABLE_OUTPUT_RE = createLexiconMatcher("durableOutput");
 
 const PURE_QUERY_RE =
   /^(?:what|why|how|when|where|who|is|are|can|could|should)\b|^(?:什么|为什么|怎么|如何|是否|能否|可以|介绍|解释|说明)/iu;
+const DEFINITION_QUERY_RE = /^what\s+(?:does|do)\s+(?:it\s+mean\s+to\s+[^,.?!;\r\n]+|[^,.?!;\r\n]+\s+mean)[.?]?\s*$/iu;
+function isDefinitionQuery(text) {
+  return DEFINITION_QUERY_RE.test(text)
+    && !/\b(?:and|then)\s+(?:please\b|(?:can|could|would)\s+you\b)/iu.test(text);
+}
 
 const CHINESE_QUERY_WORD_RE = /(?:什么|为什么|怎么|如何|是否|能否|可以吗|吗|介绍|解释|说明)/u;
 
@@ -127,6 +132,9 @@ function normalizePrompt(prompt) {
 
 function hasQuestionOnlyShape(text) {
   if (!PURE_QUERY_RE.test(text) && !CHINESE_QUERY_WORD_RE.test(text)) return false;
+  // A verb named inside a complete definition question is its subject, not an
+  // instruction to execute. A following sentence or clause still routes work.
+  if (isDefinitionQuery(text)) return true;
   if (ACTION_RE.test(text) && DURABLE_OUTPUT_RE.test(text)) return false;
   if (FILE_OR_MUTATION_RE.test(text) && ACTION_RE.test(text)) return false;
   return true;
@@ -187,7 +195,7 @@ export function classifyMetaTheoryEntry(prompt) {
   const lower = text.toLowerCase();
   const explicitMetaTheory = EXPLICIT_META_THEORY_RE.test(text);
   const subjectiveQuality = SUBJECTIVE_QUALITY_RE.test(text);
-  const actionIntent = ACTION_RE.test(text);
+  const actionIntent = ACTION_RE.test(text) && !isDefinitionQuery(text);
   const durableOutputIntent = DURABLE_OUTPUT_RE.test(text);
   const fileOrMutationIntent = FILE_OR_MUTATION_RE.test(text);
   const productBuildIntent = actionIntent && PRODUCT_BUILD_OBJECT_RE.test(text);
