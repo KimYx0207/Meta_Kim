@@ -17,6 +17,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ### Fixed
 
+- **Controlled Claude probes forward explicit run limits.** Turn, CLI budget and timeout options stay on the formal producer path. Bounded runs keep writable CLI state in their controlled workspace while using the existing provider in memory. CLI cost reports are not a verified gateway invoice.
 - **Windows setup can discover an installed CLI when `where.exe` returns no result.** Discovery checks supported files in absolute PATH directories, then retains the existing shell-free launcher, file identity, version and drift checks.
 - **Clear requests no longer need invented alternatives or another interview.** A settled single viable route can pass the artifact contract. Unresolved material alternatives still require the current host's native choice surface, and understanding or route selection never grants action permission. Codex configuration flags are no longer described as callable tools or as overrides of host mode restrictions.
 - **Dependency methods keep one governance authority.** Internalized brainstorming and questioning methods encourage factual lookup, concrete scenarios, meaningful trade-offs, optional small samples and preservation of decisions. Professional workers return material changes to Meta_Kim rather than restarting requirements or orchestration.

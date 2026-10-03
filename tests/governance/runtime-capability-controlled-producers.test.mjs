@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import { codexLiveInvocationArgs, runCodexCompositeEngineeringProducer, runCodexDesktopEngineeringSessionProducer, runCodexDesktopSessionCapabilityProducer, runControlledRuntimeCapabilityProducer } from "../../scripts/runtime-capability-producers.mjs";
+import { codexLiveInvocationArgs, isolatedClaudeProbeEnvironment, validateControlledProbeOptions, produceRuntimeCapabilityWithAcceptanceWriter, runCodexCompositeEngineeringProducer, runCodexDesktopEngineeringSessionProducer, runCodexDesktopSessionCapabilityProducer, runControlledRuntimeCapabilityProducer } from "../../scripts/runtime-capability-producers.mjs";
 import { readCodexDesktopEngineeringEvidence, readCodexDesktopSessionEvidence } from "../../scripts/live-acceptance/read-codex-session-evidence.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "../../scripts/effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
@@ -415,7 +415,8 @@ test("controlled producer binds Claude to the fail-closed provider resolver whil
   assert.match(producerExecutor, /withRuntimeIsolation\(request, \(\{ env \}\) =>/u);
   assert.match(runtimeIsolationHelper, /if \(request\.runtime === "claude_code"\) \{\s*env = resolveClaudeLiveProviderEnvironmentSync\(\);/u);
   assert.match(producerExecutor, /runCli\(request\.command, request\.args, \{\s*cwd: request\.workspace,\s*env,/u);
-  assert.match(producerExecutor, /runtimeIsolation: request\.runtime === "codex" \? "ephemeral_auth_home_and_rules_isolated" : "empty_setting_sources_strict_mcp_current_auth"/u);
+  assert.match(producerExecutor, /runtimeIsolation: request\.runtime === "codex" \? "ephemeral_auth_home_and_rules_isolated"/u);
+  assert.match(producerExecutor, /"controlled_workspace_home_trusted_provider_env_only" : "empty_setting_sources_strict_mcp_current_auth"/u);
   assert.match(commandBuilder, /"--setting-sources",\s*"",/u);
   assert.match(commandBuilder, /"--strict-mcp-config",/u);
   assert.match(commandBuilder, /"--mcp-config", path\.join\(workspace, "meta-kim-empty-mcp\.json"\),/u);
@@ -714,6 +715,83 @@ test("live controlled Codex forwards explicit model and reasoning effort to the 
   assert.ok(captured);
   assert.equal(captured.args[captured.args.indexOf("-m") + 1], "gpt-5.6-luna");
   assert.equal(captured.args[captured.args.indexOf("-c") + 1], 'model_reasoning_effort="max"');
+});
+
+test("Claude bounded controls reach official host arguments, timeout and receipt without changing defaults", () => {
+  for (const budget of [0.01, 0.10]) {
+    let captured;
+    const produced = runControlledRuntimeCapabilityProducer({
+      projectRoot: fixtureProject(), runtime: "claude_code", capability: "filesystem",
+      claudeMaxTurns: 4, claudeMaxBudgetUsd: budget, timeoutMs: 120000,
+      executor: request => { captured = request; return injectedExecutor(request); },
+    });
+    assert.equal(captured.args[captured.args.indexOf("--max-turns") + 1], "4");
+    assert.equal(captured.args[captured.args.indexOf("--max-budget-usd") + 1], String(budget));
+    assert.equal(captured.timeoutMs, 120000);
+    assert.equal(produced.receipt.hostInvocation.request.timeoutMs, 120000);
+    assert.deepEqual(produced.receipt.hostInvocation.request.args, captured.args);
+    assert.equal(produced.receipt.testOnly, true);
+  }
+  let defaults;
+  runControlledRuntimeCapabilityProducer({ projectRoot: fixtureProject(), runtime: "claude_code", capability: "filesystem", executor: request => { defaults = request; return injectedExecutor(request); } });
+  assert.equal(defaults.args.includes("--max-turns"), false);
+  assert.equal(defaults.args.includes("--max-budget-usd"), false);
+  assert.equal(defaults.timeoutMs, 300000);
+});
+
+test("invalid or wrong-runtime controls fail before workspace, provider, executor and acceptance writer", async () => {
+  const invalid = [
+    { claudeMaxTurns: 0 }, { claudeMaxTurns: 5 }, { claudeMaxTurns: 1.5 },
+    { claudeMaxBudgetUsd: 0 }, { claudeMaxBudgetUsd: -0.01 }, { claudeMaxBudgetUsd: 0.10000001 }, { claudeMaxBudgetUsd: Infinity }, { claudeMaxBudgetUsd: "0.1" },
+    { timeoutMs: 24999 }, { timeoutMs: 300001 }, { timeoutMs: NaN },
+    { runtime: "codex", claudeMaxTurns: 1 }, { runtime: "codex", claudeMaxBudgetUsd: 0 },
+  ];
+  let calls = 0;
+  for (const controls of invalid) {
+    const options = { projectRoot: "invalid-project-before-provider", runtime: "claude_code", capability: "filesystem", ...controls };
+    assert.throws(() => runControlledRuntimeCapabilityProducer({ ...options, executor: () => { calls++; throw new Error("unexpected executor"); } }), /claudeMax|timeoutMs|Claude probe limits/u);
+    await assert.rejects(() => produceRuntimeCapabilityWithAcceptanceWriter({ ...options, source: "live_controlled", capabilities: ["filesystem"] }, () => { calls++; }), /claudeMax|timeoutMs|Claude probe limits/u);
+  }
+  assert.equal(calls, 0);
+  assert.throws(() => validateControlledProbeOptions({ runtime: "claude_code", source: "codex_desktop_engineering", claudeMaxTurns: 1 }), /source live_controlled/u);
+  assert.deepEqual(validateControlledProbeOptions({ runtime: "claude_code", claudeMaxTurns: 1, claudeMaxBudgetUsd: 0.10, timeoutMs: 25000 }), { claudeMaxTurns: 1, claudeMaxBudgetUsd: 0.10, timeoutMs: 25000 });
+});
+
+test("bounded Claude home redirects writable state without copying config or changing provider authentication", () => {
+  const home = path.join(fixtureProject(), "controlled-cli-home");
+  const provider = { HOME: "ambient", Home: "stale", USERPROFILE: "ambient", APPDATA: "ambient", LOCALAPPDATA: "ambient", TEMP: "ambient", TMP: "ambient", CLAUDE_CONFIG_DIR: "ambient", Claude_Config_Dir: "stale", ANTHROPIC_AUTH_TOKEN: "fixture-authorized-memory-only", ANTHROPIC_BASE_URL: "https://fixture.invalid", ANTHROPIC_MODEL: "fixture-model" };
+  const env = isolatedClaudeProbeEnvironment(provider, home);
+  for (const key of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMP", "TEMP", "TMPDIR", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"]) {
+    const relative = path.relative(home, env[key]);
+    assert.equal(path.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path.sep), false);
+    assert.equal(Object.keys(env).filter(k => k.toLowerCase() === key.toLowerCase()).length, 1);
+  }
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, provider.ANTHROPIC_AUTH_TOKEN);
+  assert.equal(env.ANTHROPIC_BASE_URL, provider.ANTHROPIC_BASE_URL);
+  assert.equal(env.ANTHROPIC_MODEL, provider.ANTHROPIC_MODEL);
+  assert.equal(env.ANTHROPIC_API_KEY, undefined);
+  assert.equal(provider.HOME, "ambient");
+  assert.deepEqual(readdirSync(path.join(home, ".claude")), []);
+});
+
+test("Claude CLI controls reject invalid bounds, mixed runtimes and unsupported sources before invocation", () => {
+  const script = path.join(packageRoot, "scripts/run-runtime-capability-producers.mjs");
+  for (const args of [
+    ["--source", "live_controlled", "--runtimes", "claude_code", "--claude-max-turns", "5"],
+    ["--source", "live_controlled", "--runtimes", "claude_code", "--claude-max-budget-usd", "0.1001"],
+    ["--source", "live_controlled", "--runtimes", "claude_code", "--claude-max-budget-usd", "0"],
+    ["--source", "live_controlled", "--runtimes", "claude_code", "--claude-max-budget-usd="],
+    ["--source", "live_controlled", "--runtimes", "codex", "--claude-max-turns", "1"],
+    ["--source", "codex_desktop_engineering", "--runtimes", "codex", "--timeout-ms", "120000"],
+    ["--source", "live_controlled", "--runtimes", "claude_code", "--timeout-ms", "Infinity"],
+  ]) {
+    const result = spawnSync(process.execPath, [script, ...args], { cwd: packageRoot, encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /claudeMax|Claude probe limits|numeric value|source live_controlled|timeoutMs/u);
+  }
+  const help = spawnSync(process.execPath, [script, "--help"], { encoding: "utf8" });
+  assert.equal(help.status, 0);
+  for (const option of ["--claude-max-turns", "--claude-max-budget-usd", "--timeout-ms"]) assert.ok(help.stdout.includes(option));
 });
 
 test("the production codex composite path builds its invocation through the shared codex builder", () => {
