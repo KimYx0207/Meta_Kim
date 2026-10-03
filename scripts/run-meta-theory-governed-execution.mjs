@@ -63,7 +63,10 @@ import {
   applyStageRunnerBridgeResult,
   normalizeStageRunnerRuntime,
   runStageRunnerBridge,
+  readObservedLocalToolBridgeResults,
 } from "./governed-execution/stage-runner-bridge.mjs";
+import { bindLocalDependencyToolWorkOrder, invokeLocalDependencyToolWorker } from "./governed-execution/local-dependency-tool-worker.mjs";
+import { LOCAL_DEPENDENCY_TOOL_CONTRACT, LOCAL_DEPENDENCY_TOOL_INPUT_FIELDS, LOCAL_DEPENDENCY_TOOL_SCHEMA_VERSION } from "./governed-execution/local-dependency-tool-contract.mjs";
 import { buildGovernanceRequirementsShadow } from "./governed-execution/governance-requirements-shadow-adapter.mjs";
 import {
   buildLegacyGovernanceRequirementSnapshot,
@@ -86,6 +89,7 @@ import { prepareIntentDialogue, bindIntentToWorkerTasks, routeCandidateOptions }
 import {
   buildTaskGoalContract as buildGoalContractPacket,
   evaluateTaskOutcome,
+  taskOutcomeDigest,
 } from "../src/domain/governance/task-outcome.mjs";
 import {
   readMetaRunStatus,
@@ -4464,6 +4468,8 @@ function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket) 
         ? "external_write"
         : packet.executionMode === "approval_gate"
           ? "approval_gate"
+          : packet.executionMode === "local_tool_execution" && packet.effectClass === "read_only_support"
+            ? "read_only_support"
           : "read_only_worker",
       resourceScopes,
       isolation: packet.workspaceIsolation ?? "unspecified",
@@ -10898,7 +10904,84 @@ async function readLatestRunId(stateDir) {
   return latestRunId == null ? null : validateRunId(latestRunId, "latest.json runId");
 }
 
-function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null }) {
+export function prepareLocalToolRequest({ task, dialogue, localToolInput = null }) {
+  const request = dialogue?.status === "host_provided_understanding" ? dialogue.outcome : task;
+  const scanNeed = /\b(?:security|vulnerability|vulnerabilities|secret|semgrep)\b|安全|漏洞|密钥/iu.test(request) &&
+    /\b(?:scan|scanning|audit)\b|扫描|审计/iu.test(request) &&
+    !/\b(?:do not|don't|never)\s+(?:run\s+)?(?:a\s+)?(?:security\s+)?scan\b|不要扫描|无需扫描/iu.test(request);
+  if (!scanNeed) return { applies: false, status: "not_applicable", blockers: [] };
+  const blockers = [];
+  if (dialogue?.status !== "host_provided_understanding") blockers.push("confirmed_scan_intent_required");
+  const taskHash = taskOutcomeDigest(task);
+  if (!localToolInput || typeof localToolInput !== "object" || Array.isArray(localToolInput)) blockers.push("explicit_local_tool_input_required");
+  else {
+    if (Object.keys(localToolInput).some((key) => !["taskHash", "intentDigest", "input"].includes(key))) blockers.push("unsupported_local_tool_binding_field");
+    if (localToolInput.taskHash !== taskHash || !dialogue?.intentDigest || localToolInput.intentDigest !== dialogue.intentDigest) blockers.push("local_tool_intent_binding_mismatch");
+  }
+  const input = localToolInput?.input;
+  const constraints = dialogue?.constraints ?? {};
+  const sourceReview = constraints.localToolSourceReview;
+  if (!sourceReview || sourceReview.status !== 'pass' || sourceReview.dependencyId !== LOCAL_DEPENDENCY_TOOL_CONTRACT.dependencyId ||
+      typeof sourceReview.sourceRoot !== "string" || !path.isAbsolute(sourceReview.sourceRoot) ||
+      typeof sourceReview.componentVersion !== "string" || !sourceReview.componentVersion ||
+      ["contractSha256", "componentContentSha256", "indexSha256"].some((field) => !/^[a-f0-9]{64}$/u.test(sourceReview[field] ?? "")) ||
+      !Array.isArray(sourceReview.evidenceRefs) || !sourceReview.evidenceRefs.length ||
+      sourceReview.evidenceRefs.some((ref) => typeof ref !== "string" || !ref.trim())) blockers.push("exact_local_source_review_required");
+  const samePath = (a, b) => typeof a === "string" && typeof b === "string" &&
+    (process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      Object.keys(input).some((key) => ![...LOCAL_DEPENDENCY_TOOL_INPUT_FIELDS, "rules"].includes(key)) ||
+      input.schemaVersion !== LOCAL_DEPENDENCY_TOOL_SCHEMA_VERSION || typeof input.workspaceRoot !== "string" || !path.isAbsolute(input.workspaceRoot) ||
+      typeof input.target !== "string" || !path.isAbsolute(input.target) ||
+      [input.workspaceRoot, input.target].some((value) => value.includes("\0") || /^(?:\\\\|\/\/)/u.test(value)) ||
+      (input.rules !== undefined && input.rules !== LOCAL_DEPENDENCY_TOOL_CONTRACT.rules)) {
+    blockers.push("invalid_exact_local_tool_input");
+  } else {
+    const relativeTarget = path.relative(input.workspaceRoot, input.target);
+    if (path.isAbsolute(relativeTarget) || relativeTarget === ".." || relativeTarget.startsWith(`..${path.sep}`)) blockers.push("local_target_outside_workspace");
+    const scopedTargets = [constraints.target, ...(Array.isArray(constraints.scopeFiles) ? constraints.scopeFiles : []), ...(Array.isArray(constraints.scope) ? constraints.scope : [])];
+    if (!samePath(constraints.workspaceRoot, input.workspaceRoot) || !scopedTargets.some((target) => samePath(target, input.target))) blockers.push("target_not_in_confirmed_scope");
+  }
+  return { applies: true, status: blockers.length ? "blocked" : "ready", blockers, request,
+    taskHash, intentDigest: dialogue?.intentDigest ?? null,
+    sourceReview: blockers.length ? null : structuredClone(sourceReview),
+    input: blockers.length ? null : { ...input, workspaceRoot: path.resolve(input.workspaceRoot), target: path.resolve(input.target) },
+    claimBoundary: "Explicit target binding for a reviewed local read-only tool; no native Permission or execution claim." };
+}
+
+export const LOCAL_SCAN_OUTCOME_CRITERIA = Object.freeze({
+  "scanner-completed": "The selected local scan completed for the explicitly authorized target.",
+  "scanner-read-only": "The selected scan used the verified local offline configuration and left the authorized target unchanged.",
+  "scanner-bundled-rules": "The selected scan used the verified bundled local rule source.",
+});
+
+export function evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) {
+  const goal = coreLoop.goalContractPacket;
+  const observed = readObservedLocalToolBridgeResults(bridgeResult, coreLoop);
+  const observations = [];
+  if (observed.length === 1) {
+    const result = observed[0];
+    let output;
+    try { output = JSON.parse(result.outputText); } catch { output = null; }
+    const evidenceRef = result.localToolReceipt?.path;
+    if (output && typeof evidenceRef === "string" && evidenceRef && result.localToolProcessInvoked === true) {
+      const facts = {
+        "scanner-completed": result.completed === true && output.completed === true && output.status === "completed",
+        "scanner-read-only": result.sourceUnmodifiedVerified === true && output.filesModified === false && output.networkUsed === false,
+        "scanner-bundled-rules": output.rules?.source === `canonical:skills/${LOCAL_DEPENDENCY_TOOL_CONTRACT.componentId}/${LOCAL_DEPENDENCY_TOOL_CONTRACT.rules}` &&
+          /^[a-f0-9]{64}$/u.test(output.rules?.sourceSha256 ?? "") && /^[a-f0-9]{64}$/u.test(output.rules?.effectiveSha256 ?? ""),
+      };
+      for (const criterion of goal.acceptanceCriteria) {
+        if (criterion.kind !== "deterministic" || criterion.description !== LOCAL_SCAN_OUTCOME_CRITERIA[criterion.id]) continue;
+        observations.push({ criterionId: criterion.id, taskHash: goal.taskHash, acceptanceDigest: goal.acceptanceDigest,
+          verdict: facts[criterion.id] ? "pass" : "fail", evidenceKind: "deterministic_check", evidenceRef });
+      }
+    }
+  }
+  return evaluateTaskOutcome(goal, observations);
+}
+
+function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   return [
@@ -10913,10 +10996,11 @@ function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", run
     ...(runId ? ["--run-id", runId] : []),
     ...(codexHostToolSchema ? ["--codex-host-tool-schema", codexHostToolSchema] : []),
     ...(intentDeliveryStrategy ? ["--intent-delivery-strategy", intentDeliveryStrategy] : []),
+    ...(localToolRequest?.applies ? ["--local-tool-request-json", JSON.stringify(localToolRequest)] : []),
   ];
 }
 
-async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, spawnError = null }) {
+async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, spawnError = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const originalArgv = process.argv;
@@ -10928,7 +11012,7 @@ async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "wi
     process.argv = [
       process.execPath,
       SELECT_EXECUTION_ROUTE_SCRIPT,
-      ...selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy }),
+      ...selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest }),
     ];
     console.log = (...args) => stdout.push(args.join(" "));
     console.error = (...args) => stderr.push(args.join(" "));
@@ -10965,10 +11049,10 @@ async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "wi
   }
 }
 
-async function selectExecutionRoute({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null }) {
+async function selectExecutionRoute({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
-  const args = selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy });
+  const args = selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest });
   const result = spawnSync(
     process.execPath,
     [SELECT_EXECUTION_ROUTE_SCRIPT, ...args],
@@ -10987,6 +11071,7 @@ async function selectExecutionRoute({ task, runtime = "codex", os = "windows", r
       runId,
       codexHostToolSchema,
       intentDeliveryStrategy,
+      localToolRequest,
       spawnError: result.error,
     });
   }
@@ -11333,20 +11418,40 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, localToolRequest = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
   const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
     ? intentDialogue?.deliveryStrategy ?? null : null;
-  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy });
+  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest });
   routeResult.intentBinding = intentDialogue;
   const route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
-  const workerTaskPackets = bindIntentToWorkerTasks({
+  const intentBoundPackets = bindIntentToWorkerTasks({
     workerTaskPackets: buildRouteDrivenWorkerTasks({ runId, routeResult, task }),
     routeResult, dialogue: intentDialogue ?? prepareIntentDialogue({ task }),
   });
+  const localGate = routeResult.localToolExecutionGate;
+  const workerTaskPackets = localGate?.status === "ready"
+    ? intentBoundPackets.map((packet) => ({
+        ...packet, executionMode: "local_tool_execution", effectClass: "read_only_support",
+        intentBinding: { ...packet.intentBinding, status: intentDialogue.status },
+        scopeFiles: [localGate.input.target], shardScope: [localGate.input.target],
+        externalWriteBoundary: false, mutationPolicy: "read_only_target", finalizationGate: "local_tool_result_required",
+        localToolBinding: { runId, taskHash: taskOutcomeDigest(task), intentDigest: packet.intentBinding.intentDigest,
+          selectedCapability: localGate.selectedCapability, input: localGate.input },
+        skillLoadout: [localGate.selectedCapability],
+        capabilityLoadout: { ...packet.capabilityLoadout,
+          repoSkills: [localGate.selectedCapability.id], runtimeSkillCandidates: [localGate.selectedCapability.id],
+          runtimeTools: [`${localGate.selectedCapability.id}:local_cli`] },
+        toolLoadout: [{ id: `${localGate.selectedCapability.id}:local_cli`, type: "runtimeTools", source: "verified_dependency_tool_contract", invocation: localGate.selectedCapability.selectedCapability.invocation, invocationStatus: "not_invoked" }],
+        capabilityBindings: { ...packet.capabilityBindings,
+          skills: [localGate.selectedCapability],
+          tools: [{ id: `${localGate.selectedCapability.id}:local_cli`, type: "runtimeTools", invocation: localGate.selectedCapability.selectedCapability.invocation, invocationStatus: "not_invoked" }],
+          localToolBinding: { runId, taskHash: taskOutcomeDigest(task), intentDigest: packet.intentBinding.intentDigest, selectedCapability: localGate.selectedCapability, input: localGate.input } },
+      }))
+    : intentBoundPackets;
   const intentCapabilityGaps = workerTaskPackets.filter((packet) => packet.intentCapabilitySelection.status === "capability_gap");
   if (intentCapabilityGaps.length) {
     routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", intentCapabilityGaps: intentCapabilityGaps.map((packet) => packet.taskPacketId) };
@@ -11515,6 +11620,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
 export async function runMetaTheoryGovernedExecution({
   task,
   confirmedIntent = null,
+  localToolInput = null,
   planChallengeResponses = [],
   planChallengeControl = null,
   sharedUnderstandingConfirmed = null,
@@ -11559,10 +11665,15 @@ export async function runMetaTheoryGovernedExecution({
   if (!normalizedTask) {
     throw new Error("Missing task for governed meta-theory execution.");
   }
-  const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent, sharedUnderstandingConfirmed });
-  const boundUnderstanding = sharedUnderstandingConfirmed?.taskHash === intentDialogue.taskHash &&
-    (sharedUnderstandingConfirmed.intentDigest ?? null) === (intentDialogue.intentDigest ?? null)
-      ? sharedUnderstandingConfirmed : null;
+  // Snapshot the parsed host boundary before any asynchronous discovery. A
+  // caller changing a constraints object later cannot change this work order.
+  const confirmedIntentSnapshot = confirmedIntent == null ? null : structuredClone(confirmedIntent);
+  const understandingSnapshot = sharedUnderstandingConfirmed == null ? null : structuredClone(sharedUnderstandingConfirmed);
+  const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
+  const localToolRequest = prepareLocalToolRequest({ task: normalizedTask, dialogue: intentDialogue, localToolInput });
+  const boundUnderstanding = understandingSnapshot?.taskHash === intentDialogue.taskHash &&
+    (understandingSnapshot.intentDigest ?? null) === (intentDialogue.intentDigest ?? null)
+      ? understandingSnapshot : null;
   const boundPriorChallengeState = priorChallengeState?.taskHash === intentDialogue.taskHash &&
     (priorChallengeState.intentDigest ?? priorChallengeState.intentBinding?.intentDigest ?? null) === (intentDialogue.intentDigest ?? null)
       ? priorChallengeState : null;
@@ -11735,6 +11846,7 @@ export async function runMetaTheoryGovernedExecution({
     osTarget: routeOs,
     codexHostToolSchema,
     intentDialogue,
+    localToolRequest,
   });
   planChallengePreview = buildPlanChallengeState({
     task: dialogueTask,
@@ -12027,11 +12139,21 @@ export async function runMetaTheoryGovernedExecution({
   try {
   if (stageRunner?.enabled === true) {
     const routeExecutionGate = orchestrationReport.selectedExecutionRoute?.routeExecutionGate ?? {};
+    const localToolGate = orchestrationReport.selectedExecutionRoute?.localToolExecutionGate;
+    const localToolPackets = coreLoop.thinkingPacket.workerTaskPackets;
+    const localToolBridgeEligible = localToolRequest.status === "ready" && localToolGate?.status === "ready" &&
+      localToolPackets.length === 1 && localToolPackets.every((packet) =>
+        packet.executionMode === "local_tool_execution" && packet.effectClass === "read_only_support" &&
+        packet.localToolBinding?.runId === effectiveRunId && packet.localToolBinding?.taskHash === taskOutcomeDigest(normalizedTask) &&
+        packet.localToolBinding?.intentDigest === intentDialogue.intentDigest &&
+        JSON.stringify(packet.localToolBinding.input) === JSON.stringify(localToolRequest.input) &&
+        path.resolve(packet.localToolBinding.input.workspaceRoot) === path.resolve(projectRoot) &&
+        packet.scopeFiles?.length === 1 && packet.scopeFiles[0] === localToolRequest.input.target);
     const routeGateAllowsBridge =
-      routeExecutionGate.routeCompatible === true &&
+      localToolBridgeEligible || (routeExecutionGate.routeCompatible === true &&
       routeExecutionGate.canHandoffToHost === true &&
       routeExecutionGate.handoffStatus === "ready_for_host_handoff" &&
-      routeExecutionGate.hostAction === "host_action_required";
+      routeExecutionGate.hostAction === "host_action_required" && localToolRequest.applies !== true);
     if (!planChallengeHandoffReady || !routeGateAllowsBridge) {
       const planChallengeBlocked = !planChallengeHandoffReady;
       coreLoop = {
@@ -12044,6 +12166,7 @@ export async function runMetaTheoryGovernedExecution({
           runtime: normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime),
           runId: effectiveRunId,
           routeExecutionGate,
+          localToolExecutionGate: localToolGate ?? null,
           canHandoffToHost: routeExecutionGate.canHandoffToHost === true,
           failure: {
             failureClass: planChallengeBlocked
@@ -12096,6 +12219,16 @@ export async function runMetaTheoryGovernedExecution({
           heartbeatIntervalMs: coordinatorHeartbeatIntervalMs,
         });
       }
+      if (localToolBridgeEligible) {
+        for (const packet of localToolPackets) {
+          bindLocalDependencyToolWorkOrder(packet, {
+            runId: effectiveRunId, runtime: normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime),
+            node: coreLoop.stageDagPacket.nodes.find((node) => node.nodeId === stageLaneNodeId("Execution", packet.taskPacketId)),
+            requestTask: normalizedTask, confirmedIntent: confirmedIntentSnapshot,
+            sharedUnderstandingConfirmed: boundUnderstanding, testOnly: false,
+          });
+        }
+      }
       const bridgeResult = await runStageRunnerBridge({
         runId: effectiveRunId,
         runtime: stageRunner.runtime ?? routeRuntime,
@@ -12105,13 +12238,13 @@ export async function runMetaTheoryGovernedExecution({
         requestTask: normalizedTask,
         capacity: stageRunner.capacity ?? null,
         timeoutMs: stageRunner.timeoutMs ?? 300_000,
-        invokeWorker: stageRunner.invokeWorker,
+        invokeWorker: localToolBridgeEligible ? invokeLocalDependencyToolWorker : stageRunner.invokeWorker,
         executeReadySet: stageRunner.executeReadySet ?? resolveReadySetExecutor(
           stageRunner.orchestrator ?? "native",
           stageRunner.orchestratorOptions,
         ),
         readySetTimeoutMs: stageRunner.readySetTimeoutMs ?? null,
-        evidenceKind: stageRunner.evidenceKind ?? "native_read_only_stage_runner",
+        evidenceKind: localToolBridgeEligible ? "first_party_local_tool_subprocess" : stageRunner.evidenceKind ?? "native_read_only_stage_runner",
         durable: durableCoordinator
           ? {
               enabled: true,
@@ -12124,15 +12257,25 @@ export async function runMetaTheoryGovernedExecution({
             }
           : null,
       });
-      bridgeResult.routeHandoffEvidence = {
+      const routeHandoffEvidence = {
         routeCompatible: routeExecutionGate.routeCompatible === true,
         canHandoffToHost: routeExecutionGate.canHandoffToHost === true,
         handoffStatus: routeExecutionGate.handoffStatus,
         hostAction: routeExecutionGate.hostAction,
         executionAuthorized: false,
         authority: routeExecutionGate.authorizationOwner ?? "current_host_native_surfaces_and_permissions",
+        localToolExecutionGate: localToolBridgeEligible ? { ...localToolGate, selectedCapability: localToolGate.selectedCapability.id,
+          authority: "reviewed_local_read_only_contract_bound_to_confirmed_scope", grantsNativePermission: false } : null,
       };
+      // The local bridge's whole-object digest is immutable. Keep this runner
+      // handoff record outside that observed object instead of weakening it.
+      if (localToolBridgeEligible) coreLoop = { ...coreLoop, localToolRouteHandoffPacket: routeHandoffEvidence };
+      else bridgeResult.routeHandoffEvidence = routeHandoffEvidence;
       coreLoop = applyStageRunnerBridgeResult(coreLoop, bridgeResult);
+      if (localToolBridgeEligible) {
+        coreLoop = { ...coreLoop, traceEvalControlPlane: { ...coreLoop.traceEvalControlPlane,
+          outcomeEvaluation: evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) } };
+      }
       if (durableCoordinator) {
         durableCoordinator.assertHealthy();
         const projection = bridgeResult.executionProjection.durable.projection;
@@ -12770,6 +12913,7 @@ function positionalTask(fallback = null) {
         "--host-invocation-evidence",
         "--native-choice-evidence",
         "--confirmed-intent",
+        "--local-tool-input",
         "--codex-host-tool-schema",
         "--runtime",
         "--os",
@@ -12809,6 +12953,7 @@ function rawPositionals() {
         "--host-invocation-evidence",
         "--native-choice-evidence",
         "--confirmed-intent",
+        "--local-tool-input",
         "--codex-host-tool-schema",
         "--runtime",
         "--os",
@@ -12831,6 +12976,10 @@ function rawPositionals() {
 }
 
 async function main() {
+  if (process.argv.includes("--help")) {
+    process.stdout.write("Usage: node scripts/run-meta-theory-governed-execution.mjs --task <request> [--confirmed-intent <json-file>] [--local-tool-input <json-file>] [--execute-stage-dag]\n\n--local-tool-input binds {taskHash,intentDigest,input:{schemaVersion:1,workspaceRoot,target,rules?}}. It is planning input, not an execution flag or a native Permission grant. --execute-stage-dag requests execution through the existing bridge; confirmed host understanding, exact authorized scope and the reviewed local contract remain required. Caller-supplied CLI intent JSON remains advisory. A host may call the public runMetaTheoryGovernedExecution API with its existing confirmed understanding; the built-in local worker is then selected automatically without a callback. Local receipts do not prove native/model invocation or complete source security.\n");
+    return;
+  }
   if (
     process.argv.includes("--host-invocation-evidence-trusted") ||
     process.argv.includes("--native-choice-evidence-trusted")
@@ -12926,11 +13075,14 @@ async function main() {
     ? JSON.parse(await fs.readFile(path.resolve(approvalPacketPath), "utf8"))
     : null;
   const confirmedIntentPath = argValue("--confirmed-intent", null);
+  const localToolInputPath = argValue("--local-tool-input", null);
+  const localToolInput = localToolInputPath ? JSON.parse(await fs.readFile(path.resolve(localToolInputPath), "utf8")) : null;
   const confirmedIntent = confirmedIntentPath ? JSON.parse(await fs.readFile(path.resolve(confirmedIntentPath), "utf8")) : null;
   // CLI JSON remains advisory; it cannot supply the host-only understanding boundary.
   const report = await runMetaTheoryGovernedExecution({
     task,
     confirmedIntent,
+    localToolInput,
     runId: runIdArg ?? (taskArg ? null : positional[1] ?? null),
     allowOverwrite: process.argv.includes("--overwrite-run"),
     cliOutputLanguage,

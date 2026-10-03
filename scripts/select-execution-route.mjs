@@ -17,7 +17,9 @@ import {
 } from "./runtime-capability-claims.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "./runtime-execution-gate.mjs";
-import { discoverDependencyAgentContracts, matchDependencyAgentContracts } from "./dependency-agent-discovery.mjs";
+import { discoverDependencyAgentContracts, matchDependencyAgentContracts, stableJson } from "./dependency-agent-discovery.mjs";
+import { discoverDependencySkillContracts } from "./dependency-skill-discovery.mjs";
+import { LOCAL_DEPENDENCY_TOOL_CONTRACT } from "./governed-execution/local-dependency-tool-contract.mjs";
 import { durableCapabilityRequestsFromTask } from "./capability-request-intent.mjs";
 import {
   sanitizeCapabilityPublicationText,
@@ -64,6 +66,10 @@ const task = argValue("--task", "");
 const requestedRouteRunId = argValue("--run-id", null);
 // A route-search constraint, never a claim of native confirmation or Permission.
 const intentDeliveryStrategy = argValue("--intent-delivery-strategy", null);
+// This is route-preview input only. The governed runner separately checks the
+// confirmed intent and explicit scope before selecting a local worker.
+const localToolRequestRaw = argValue("--local-tool-request-json", null);
+const localToolRequest = localToolRequestRaw ? JSON.parse(localToolRequestRaw) : null;
 if (intentDeliveryStrategy != null && !["fast_usable", "long_term_extensible"].includes(intentDeliveryStrategy)) throw new TypeError("Unknown intent delivery strategy");
 const runtimeArg = argValue("--runtime", "auto");
 const osArg = argValue("--os", "auto");
@@ -895,6 +901,59 @@ const projectRuntimeAgentCandidates = await projectRuntimeAgents();
 const dependencyAgentDiscovery = await discoverDependencyAgentContracts({
   projects: registryDependencies, projectRoot: repoPath("."), localOverrides,
 });
+const dependencySkillDiscovery = localToolRequest?.status === "ready"
+  ? await discoverDependencySkillContracts({
+      request: localToolRequest.request,
+      capabilityNeedIds: [LOCAL_DEPENDENCY_TOOL_CONTRACT.capabilityId],
+      projects: registryDependencies, projectRoot: repoPath("."), localOverrides,
+    })
+  : { skills: [], capabilities: [], sources: [], matches: [], canExecute: false, invocationStatus: "not_invoked" };
+const dependencySkillCandidate = dependencySkillDiscovery.capabilities.length === 1
+  ? dependencySkillDiscovery.capabilities[0] : null;
+const dependencySkillContract = dependencySkillDiscovery.skills.find((skill) =>
+  skill.componentId === dependencySkillCandidate?.componentId &&
+  skill.dependencyId === dependencySkillCandidate?.dependencyId);
+const localScanInvocation = dependencySkillCandidate?.selectedCapability?.invocation;
+const localToolPlatformSupported = Array.isArray(LOCAL_DEPENDENCY_TOOL_CONTRACT.supportedPlatforms) &&
+  LOCAL_DEPENDENCY_TOOL_CONTRACT.supportedPlatforms.includes(process.platform) && osTarget === "windows";
+const localSourceReview = localToolRequest?.sourceReview;
+const localSourceReviewMatches = dependencySkillCandidate && localSourceReview?.status === 'pass' &&
+  ["dependencyId", "componentVersion", "contractSha256", "componentContentSha256", "indexSha256"]
+    .every((field) => localSourceReview[field] === dependencySkillCandidate[field]) &&
+  typeof localSourceReview.sourceRoot === "string" && path.isAbsolute(localSourceReview.sourceRoot) &&
+  (process.platform === "win32"
+    ? path.resolve(localSourceReview.sourceRoot).toLowerCase() === path.resolve(dependencySkillCandidate.sourceRoot).toLowerCase()
+    : path.resolve(localSourceReview.sourceRoot) === path.resolve(dependencySkillCandidate.sourceRoot)) &&
+  Array.isArray(localSourceReview.evidenceRefs) && localSourceReview.evidenceRefs.length > 0 &&
+  localSourceReview.evidenceRefs.every((ref) => typeof ref === "string" && ref.trim());
+const selectedLocalScanCapability = dependencySkillCandidate && dependencySkillContract &&
+  localToolPlatformSupported &&
+  localSourceReviewMatches && dependencySkillCandidate.dependencyId === LOCAL_DEPENDENCY_TOOL_CONTRACT.dependencyId &&
+  dependencySkillCandidate.componentId === LOCAL_DEPENDENCY_TOOL_CONTRACT.componentId &&
+  dependencySkillCandidate.componentVersion === LOCAL_DEPENDENCY_TOOL_CONTRACT.componentVersion &&
+  dependencySkillCandidate.selectedCapability?.id === LOCAL_DEPENDENCY_TOOL_CONTRACT.capabilityId &&
+  stableJson(localScanInvocation) === stableJson(LOCAL_DEPENDENCY_TOOL_CONTRACT.invocation) &&
+  dependencySkillCandidate.sideEffects?.length === 0 && dependencySkillCandidate.humanGate?.required === false
+    ? { ...dependencySkillCandidate, fullContract: dependencySkillContract.fullContract } : null;
+const localToolExecutionGate = {
+  applies: localToolRequest?.applies === true,
+  status: localToolRequest?.applies !== true ? "not_applicable"
+    : localToolRequest.status !== "ready" ? "blocked"
+    : selectedLocalScanCapability ? "ready" : "blocked",
+  blockers: localToolRequest?.status === "blocked" ? localToolRequest.blockers
+    : localToolRequest?.applies === true && !localToolPlatformSupported ? ["local_tool_platform_unsupported"]
+    : localToolRequest?.applies === true && !selectedLocalScanCapability
+      ? [dependencySkillCandidate && !localSourceReviewMatches ? "local_source_review_binding_mismatch" : "exact_local_scan_contract_unavailable"] : [],
+  input: localToolRequest?.status === "ready" ? localToolRequest.input : null,
+  taskHash: localToolRequest?.taskHash ?? null,
+  intentDigest: localToolRequest?.intentDigest ?? null,
+  selectedCapability: selectedLocalScanCapability,
+  invocationStatus: "not_invoked",
+  grantsNativePermission: false,
+  supportedPlatforms: LOCAL_DEPENDENCY_TOOL_CONTRACT.supportedPlatforms,
+  sourceReviewBinding: localSourceReviewMatches ? { status: "exact_review_bound", evidenceRefs: localSourceReview.evidenceRefs } : { status: "not_verified" },
+  effectClass: "read_only_support",
+};
 const dependencyAgentMatches = matchDependencyAgentContracts(task, dependencyAgentDiscovery.agents);
 const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some(
   (request) => request.mutationAuthorized && request.candidateType !== "script",
@@ -1222,6 +1281,7 @@ const ownerDiscoveryPacket = {
     agents: dependencyAgentDiscovery.agents,
     match: { ...dependencyAgentMatch, selected: dependencyAgentMatch.selected?.id ?? null },
   },
+  dependencySkillDiscovery,
   repoCanonicalSkillProviders: repoCanonicalSkillProviders.slice(0, 30),
   projectRuntimeSkillProviders: projectRuntimeSkillProviders.slice(0, 40),
   localGlobalSkillProviders,
@@ -1238,6 +1298,7 @@ const ownerDiscoveryPacket = {
   capabilityDiscoverySearchLog: [
     { source: "repo_canonical_capability_index", checked: true, sourceRef: "config/capability-index/meta-kim-capabilities.json" },
     ...dependencyAgentDiscovery.sources.map((source) => ({ source: "dependency_agent_contract", checked: true, ...source })),
+    ...dependencySkillDiscovery.sources.map((source) => ({ source: "dependency_skill_contract", checked: true, ...source })),
     { source: "runtime_mirror_capability_indexes", checked: true, sourceRef: ".claude/.codex/.cursor/openclaw capability-index mirrors" },
     { source: "project_projection_policy", checked: true, sourceRef: `.meta-kim/local.overrides.json#projectProjectionMode=${projectProjectionMode}` },
     { source: "claude_project_inventory", checked: true, sourceRef: ".claude/agents; .claude/skills; .claude/commands; .claude/hooks; .claude/settings.json" },
@@ -3280,6 +3341,24 @@ function productBuildOrchestrationRoute() {
   };
 }
 
+function localDependencyToolRoute() {
+  if (!selectedLocalScanCapability || localToolExecutionGate.status !== "ready") return null;
+  return {
+    id: `dependency-local-tool:${selectedLocalScanCapability.id}`, owner: selectedLocalScanCapability.id,
+    weapon: "local-dependency-tool", dependency: selectedLocalScanCapability.id,
+    dependencyProject: selectedLocalScanCapability.dependencyId, runtime, os: osTarget,
+    verificationOwner: "meta-prism", verificationMethod: "task-bound local scanner receipt and reported findings",
+    verification: { artifact: "local tool result receipt", passCondition: "Actual scan covers only the explicit target with bundled rules; assess task criteria separately." },
+    score: 99, scoreBand: "execute", blockedReasons: [], ownershipType: "tool",
+    selectedCapabilityProviders: { skill: selectedLocalScanCapability },
+    localToolExecutionGate,
+    parallelExecutionLanes: [{ laneId: LOCAL_DEPENDENCY_TOOL_CONTRACT.capabilityId, roleDisplayName: "test", ownerKind: "tool",
+      ownerAgent: selectedLocalScanCapability.id, ownerSource: "local_dependency_skill_contract",
+      sourceRef: selectedLocalScanCapability.sourceRef, purpose: localToolRequest.request,
+      capabilityNeed: [LOCAL_DEPENDENCY_TOOL_CONTRACT.capabilityId], capabilityProvider: selectedLocalScanCapability,
+      dependsOn: [], decisionImpact: "Read only the explicitly selected local scan target; no model or native Agent invocation." }],
+  };
+}
 const syntheticRoutes = [
   goalProContractRoute(),
   kimDecisionExperienceRoute(),
@@ -3320,7 +3399,9 @@ const intentDirectionSelection = {
     ? "not_required" : intentArchitectureProvider ? "selected_not_invoked" : "capability_gap",
   claimBoundary: "Discovery and route selection only; no native confirmation, invocation or Permission.",
 };
-const rankedRoutes = [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes]
+const rankedRoutes = (localToolRequest?.applies === true
+  ? [localDependencyToolRoute()].filter(Boolean)
+  : [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes])
   .map((candidateRoute) => {
     const missingDirectionCapability = intentDirectionSelection.status === "capability_gap";
     const route = {
@@ -3866,6 +3947,7 @@ const output = {
   capabilityGapDetected,
   capabilityGapDecision,
   routeExecutionGate,
+  localToolExecutionGate,
   userChoiceNeeded,
   decisionCard,
   dispatchBoardDraft: recommendedRoute ? {
@@ -3913,6 +3995,8 @@ const output = {
 
 function compactProvider(provider) {
   if (!provider || typeof provider !== "object") return provider;
+  // The local adapter re-reads these exact source hashes and the full contract.
+  if (provider.evidence?.source === "local_dependency_skill_contract") return provider;
   return Object.fromEntries(
     [
       ["id", provider.id],
@@ -4130,6 +4214,11 @@ const printableOutput = sanitizeCapabilityPublicationValue(outputForPublication,
   repoRoot: repoPath("."),
   homeDir: process.env.USERPROFILE ?? process.env.HOME ?? "",
 });
+// The existing runner transport must retain exact private source/target bindings
+// for re-verification. Normal route publication keeps the sanitized projection.
+if (process.argv.includes("--runner-compact") && localToolExecutionGate.applies) {
+  printableOutput.localToolExecutionGate = localToolExecutionGate;
+}
 
 if (json) console.log(JSON.stringify(printableOutput));
 else console.log(JSON.stringify(printableOutput, null, 2));

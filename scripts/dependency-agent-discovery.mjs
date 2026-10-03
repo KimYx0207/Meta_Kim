@@ -20,6 +20,9 @@ const TOOL_PERMISSIONS = {
 const compare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
+// Shared source-integrity checks; exporting them does not widen Agent permissions.
+export { checkedPath, componentHash, stableJson, uniqueIds, stringArray, sha256 };
+
 // Kim Service's v1 index hashes sorted JSON plus a final LF, and sorted
 // component-relative file names separated from their raw bytes with NULs.
 function stable(value) {

@@ -14,6 +14,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 - **Task goals and result assessment across domains.** The governed run binds the actual request and task-specific criteria instead of substituting framework roadmap checks. Required criteria need task-bound observations; missing evidence stays incomplete. Offline outcome regressions do not certify model quality or native invocation.
 - **Confirmed direction feeds existing capability selection.** A settled outcome, constraints and decision references travel through the option frame, business blueprint and worker work orders. A supported extension requirement selects a discovered design capability through the existing provider route; unavailable capabilities remain explicit gaps.
+- **An existing local Skill can deliver an actual tool result.** For an explicitly confirmed local security scan, the host API selects Kim Service's reviewed Skill contract, binds its exact source and target, and uses the existing execution bridge. Real subprocess results feed the task's supported completion criteria. Ordinary tasks acquire no scanner requirement; missing tools, changed sources and unconfirmed inputs remain blocked.
 
 ### Fixed
 
@@ -27,6 +28,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 - New dialogue methods are reference-only adaptations of EveryInc's compound-engineering-plugin (MIT), active open-gsd/gsd-core (MIT), BMAD-METHOD (MIT), and LoopX (Apache-2.0). Result assessment internalizes promptfoo (MIT), NVIDIA SkillEvaluator (Apache-2.0), and tau2-bench (MIT); MarkItDown and p-queue (MIT) contribute provenance and pacing boundaries. Exact source revisions and limitations are recorded in the decision-pattern catalog. No upstream executor was installed.
 - The default Node runner remains planned-only unless its supported execution bridge is explicitly used. Functional cases and local engineering checks do not establish comparative model improvement, native popup behavior, universal tool availability or optional live certification.
+- The local scan adapter currently supports verified Windows Job cleanup and accepts one reviewed version and bundled rule set through a shared policy; it does not execute arbitrary dependency commands. Caller-supplied CLI intent files remain advisory. Local process evidence is separate from native Agent or model evidence, and disabling telemetry does not prove operating-system network isolation.
 
 ## [3.2.0] - 2026-09-14
 
