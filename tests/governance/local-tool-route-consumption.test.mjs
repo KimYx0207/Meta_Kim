@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { componentHash, stableJson, sha256 } from "../../scripts/dependency-agent-discovery.mjs";
 import { buildTaskGoalContract, taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import { intentDialogueDigest, prepareIntentDialogue } from "../../scripts/governed-execution/intent-dialogue.mjs";
-import { evaluateObservedLocalToolOutcome, LOCAL_SCAN_OUTCOME_CRITERIA, prepareLocalToolRequest } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { evaluateObservedLocalToolOutcome, LOCAL_SCAN_OUTCOME_CRITERIA, prepareLocalToolRequest, runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { resolveLocalToolRunnerControlPaths } from "../../scripts/governed-execution/local-tool-control-paths.mjs";
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT } from "../../scripts/governed-execution/local-dependency-tool-contract.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -22,10 +23,10 @@ function intent(root, target, strategy = "fast_usable", sourceReview = {
     constraints: { workspaceRoot: root, target, scopeFiles: [target], deliveryStrategy: strategy, localToolSourceReview: sourceReview },
     acceptanceCriteria: [], evidenceRefs: ["test-only-host-understanding-boundary"] };
   const digest = intentDialogueDigest(confirmed);
-  const dialogue = prepareIntentDialogue({ task, confirmedIntent: confirmed,
-    sharedUnderstandingConfirmed: { trusted: true, binding: "plan-challenge-understanding-confirmation",
-      taskHash: confirmed.taskHash, intentDigest: digest, evidenceRefs: confirmed.evidenceRefs } });
-  return { dialogue, localToolInput: { taskHash: confirmed.taskHash, intentDigest: digest,
+  const sharedUnderstandingConfirmed = { trusted: true, binding: "plan-challenge-understanding-confirmation",
+    taskHash: confirmed.taskHash, intentDigest: digest, evidenceRefs: confirmed.evidenceRefs };
+  const dialogue = prepareIntentDialogue({ task, confirmedIntent: confirmed, sharedUnderstandingConfirmed });
+  return { dialogue, confirmedIntent: confirmed, sharedUnderstandingConfirmed, localToolInput: { taskHash: confirmed.taskHash, intentDigest: digest,
     input: { schemaVersion: 1, workspaceRoot: root, target, rules: "rules/local-security.yml" } } };
 }
 function temp(t) {
@@ -64,6 +65,81 @@ test("scope, task, intent, extra fields and remote rules cannot broaden local ex
   assert.equal(prepareLocalToolRequest({ task, dialogue: bound.dialogue }).status, "blocked");
   assert.equal(prepareLocalToolRequest({ task, dialogue: prepareIntentDialogue({ task }), localToolInput: bound.localToolInput }).status, "blocked");
   assert.equal(prepareLocalToolRequest({ task: "Build a website for long-term expansion", dialogue: null }).applies, false);
+});
+
+test('whole-workspace readiness requires exact authorization and feasible paths', (t) => {
+  const { root, target } = temp(t);
+  const exact = intent(root, root);
+  exact.dialogue.constraints.localToolSourceReview.sourceRoot = path.dirname(root);
+  assert.equal(prepareLocalToolRequest({ task, ...exact }).status, 'ready');
+  const narrow = intent(root, target);
+  narrow.localToolInput.input.target = root;
+  narrow.dialogue.constraints.scopeFiles = ['.'];
+  const denied = prepareLocalToolRequest({ task, ...narrow });
+  assert.equal(denied.status, 'blocked'); assert(denied.blockers.includes('target_not_in_confirmed_scope'));
+  narrow.dialogue.constraints.scopeFiles = [root];
+  assert(prepareLocalToolRequest({ task, ...narrow }).blockers.includes('target_not_in_confirmed_scope'));
+  for (const malformed of [42, {}, ['.']]) {
+    narrow.dialogue.constraints.target = malformed;
+    assert(prepareLocalToolRequest({ task, ...narrow }).blockers.includes('target_not_in_confirmed_scope'));
+  }
+  const withSource = intent(root, root);
+  withSource.dialogue.constraints.localToolSourceReview.sourceRoot = root;
+  assert(prepareLocalToolRequest({ task, ...withSource }).blockers.includes('local_scanner_inside_target'));
+  const temporaryRoot = path.resolve(os.tmpdir());
+  assert(prepareLocalToolRequest({ task, ...intent(temporaryRoot, temporaryRoot) }).blockers.includes('unsafe_local_target_or_control_path'));
+  const linked = path.join(root, 'linked');
+  fs.symlinkSync(target, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  assert(prepareLocalToolRequest({ task, ...intent(root, linked) }).blockers.includes('unsafe_local_target_or_control_path'));
+});
+
+test('default overlapping control paths move to a fixed owned temporary directory', (t) => {
+  const { root } = temp(t);
+  const paths = resolveLocalToolRunnerControlPaths({ target: root, stateDir: path.join(root, 'state'), artifactDir: null,
+    dbPath: path.join(root, 'runs.sqlite'), stageRunner: { enabled: true }, relocateDefaults: true });
+  const controlRoot = path.dirname(paths.stateDir);
+  t.after(() => { assert.equal(path.dirname(controlRoot), path.resolve(os.tmpdir())); fs.rmSync(controlRoot, { recursive: true, force: true }); });
+  assert.equal(path.dirname(controlRoot), path.resolve(os.tmpdir()));
+  assert.equal(paths.artifactDir, path.join(controlRoot, 'artifacts'));
+  assert.equal(paths.dbPath, path.join(controlRoot, 'runs.sqlite'));
+  assert.equal(paths.stageRunner.durableDbPath, path.join(controlRoot, 'durable-runs.sqlite'));
+  assert.deepEqual(fs.readdirSync(root), ['owned-target']);
+});
+
+test('explicit overlapping runner state, artifact and database paths fail before target writes', async (t) => {
+  const { root } = temp(t);
+  // Keep the reviewed component outside the scan root; no route or scanner
+  // execution is needed to observe this API preflight boundary.
+  const bound = intent(root, root, 'fast_usable', { status: 'pass', dependencyId: 'kim-service', sourceRoot: path.dirname(root), componentVersion: '1.1.0',
+    contractSha256: 'a'.repeat(64), componentContentSha256: 'b'.repeat(64), indexSha256: 'c'.repeat(64), evidenceRefs: ['test-only-reviewed-source'] });
+  const before = await componentHash(root);
+  const outside = path.join(path.dirname(root), `${path.basename(root)}-not-created`);
+  for (const overrides of [{ stateDir: path.join(root, 'state') }, { artifactDir: path.join(root, 'artifacts') },
+    { dbPath: path.join(root, 'runs.sqlite') }, { stageRunner: { enabled: true, durableDbPath: path.join(root, 'durable.sqlite') } }]) {
+    await assert.rejects(runMetaTheoryGovernedExecution({ task, ...bound, projectRoot: root,
+      stateDir: path.join(outside, 'state'), artifactDir: path.join(outside, 'artifacts'), dbPath: path.join(outside, 'runs.sqlite'), ...overrides }), /explicit local scan control paths/u);
+    assert.equal(await componentHash(root), before);
+    assert.equal(fs.existsSync(outside), false);
+  }
+});
+
+test('a control directory junction cannot redirect external-looking output into the target', async (t) => {
+  const { root, target } = temp(t);
+  const link = path.join(root, 'control-link');
+  fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => resolveLocalToolRunnerControlPaths({ target, stateDir: path.join(link, 'state'), artifactDir: null,
+    dbPath: path.join(root, 'external.sqlite') }), /symlink or junction/u);
+  assert.deepEqual(fs.readdirSync(target), []);
+});
+
+test('caller mutation cannot replace a validated external durable database path', (t) => {
+  const { root, target } = temp(t);
+  const stageRunner = { enabled: true, durableDbPath: path.join(root, 'external.sqlite') };
+  const paths = resolveLocalToolRunnerControlPaths({ target, stateDir: path.join(root, 'state'), artifactDir: null,
+    dbPath: path.join(root, 'runs.sqlite'), stageRunner });
+  stageRunner.durableDbPath = path.join(target, 'injected.sqlite');
+  assert.equal(paths.stageRunner.durableDbPath, path.join(root, 'external.sqlite'));
+  assert.deepEqual(fs.readdirSync(target), []);
 });
 
 async function dependencyFixture(t, version = "1.1.0") {

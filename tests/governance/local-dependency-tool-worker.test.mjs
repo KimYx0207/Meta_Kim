@@ -100,15 +100,71 @@ test('a linked scan target fails before any process or receipt is created', asyn
   assert.equal(result.localToolProcessInvoked, false); assert.equal(result.localToolReceipt, null);
 });
 
-test('a target covering the control-plane directory is rejected without adding source files', async (t) => {
+test('a target named tmp executes with its receipt and home outside the target', async (t) => {
   const f = await fixture(t); const target = path.join(f.workspace, 'tmp');
   await fs.mkdir(target); await fs.writeFile(path.join(target, 'sample.py'), '# target\n');
   const before = await componentHash(target);
   const packet = { ...f.packet, scopeFiles: ['tmp'], localToolBinding: { ...f.packet.localToolBinding, input: { ...f.packet.localToolBinding.input, target: 'tmp' } } };
   bindLocalDependencyToolWorkOrder(packet, { ...f.options, packet, testOnly: true });
   const result = await invokeLocalDependencyToolWorker({ ...f.options, packet });
-  assert.equal(result.localToolProcessInvoked, false); assert.equal(result.localToolReceipt, null);
+  assert.equal(result.status, 'pass', JSON.stringify(result));
+  assert.equal(result.localToolProcessInvoked, true); assert(result.localToolReceipt);
+  assert.equal(path.dirname(path.dirname(result.localToolReceipt.path)), path.resolve(os.tmpdir()));
   assert.equal(await componentHash(target), before);
+});
+
+test('an explicitly authorized whole workspace executes without adding control files or production authority', async (t) => {
+  const f = await fixture(t); const before = await componentHash(f.workspace);
+  f.packet.scopeFiles = [f.workspace]; f.packet.localToolBinding.input.target = f.workspace;
+  bindLocalDependencyToolWorkOrder(f.packet, { ...f.options, testOnly: true });
+  const result = await invokeLocalDependencyToolWorker(f.options);
+  assert.equal(result.status, 'pass', JSON.stringify(result)); assert.equal(result.completed, true);
+  assert.equal(result.localToolProcessInvoked, true); assert.equal(result.sourceUnmodifiedVerified, true);
+  assert.equal(result.cleanup.ownedProcessGroupCleanupVerified, true); assert.equal(result.cleanup.tempHomeRemoved, true);
+  assert.equal(path.dirname(path.dirname(result.localToolReceipt.path)), path.resolve(os.tmpdir()));
+  assert.equal(await componentHash(f.workspace), before);
+  assert.equal(await fs.access(path.join(f.workspace, 'tmp')).then(() => true, () => false), false);
+  assert.equal(isObservedLocalDependencyToolResult(result, f.options), false);
+  const receipt = JSON.parse(await fs.readFile(result.localToolReceipt.path, 'utf8'));
+  assert.equal(receipt.targetBeforeSha256, receipt.targetAfterSha256);
+  assert.equal(receipt.binding.input.target, f.workspace);
+});
+
+test('whole-workspace invocation requires an explicit absolute target and matching absolute scope', async (t) => {
+  const f = await fixture(t); const before = await componentHash(f.workspace);
+  for (const [target, scopeFiles] of [[f.workspace, ['.']], ['.', [f.workspace]], [f.workspace, ['fixture']], [f.workspace, []]]) {
+    const packet = { ...f.packet, scopeFiles, permissionGranted: true,
+      localToolBinding: { ...f.packet.localToolBinding, input: { ...f.packet.localToolBinding.input, target } } };
+    bindLocalDependencyToolWorkOrder(packet, { ...f.options, packet, testOnly: true });
+    const result = await invokeLocalDependencyToolWorker({ ...f.options, packet });
+    assert.equal(result.localToolProcessInvoked, false); assert.equal(result.localToolReceipt, null);
+  }
+  assert.equal(await componentHash(f.workspace), before);
+});
+
+test('a whole-workspace request with an internal junction is blocked before control writes', async (t) => {
+  const f = await fixture(t);
+  await fs.symlink(f.target, path.join(f.workspace, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  f.packet.scopeFiles = [f.workspace]; f.packet.localToolBinding.input.target = f.workspace;
+  bindLocalDependencyToolWorkOrder(f.packet, { ...f.options, testOnly: true });
+  const result = await invokeLocalDependencyToolWorker(f.options);
+  assert.equal(result.localToolProcessInvoked, false); assert.equal(result.localToolReceipt, null);
+});
+
+test('target cannot contain the host temporary root or use remote and NUL path spellings', async (t) => {
+  const f = await fixture(t);
+  for (const target of ['//server/share', '\\\\server\\share', `${f.workspace}\0`, '../dependency']) {
+    const packet = { ...f.packet, scopeFiles: [target], localToolBinding: { ...f.packet.localToolBinding, input: { ...f.packet.localToolBinding.input, target } } };
+    bindLocalDependencyToolWorkOrder(packet, { ...f.options, packet, testOnly: true });
+    const result = await invokeLocalDependencyToolWorker({ ...f.options, packet });
+    assert.equal(result.localToolProcessInvoked, false); assert.equal(result.localToolReceipt, null);
+  }
+  const root = path.resolve(os.tmpdir());
+  const packet = { ...f.packet, scopeFiles: [root], localToolBinding: { ...f.packet.localToolBinding, input: { schemaVersion: 1, workspaceRoot: root, target: root } } };
+  bindLocalDependencyToolWorkOrder(packet, { ...f.options, packet, testOnly: true });
+  const result = await invokeLocalDependencyToolWorker({ ...f.options, workspaceRoot: root, packet });
+  assert.equal(result.localToolProcessInvoked, false); assert.equal(result.localToolReceipt, null);
+  assert.match(result.failureMessage, /temporary control directory/u);
 });
 
 test('a real guarded Python fixture invocation preserves source and cannot mint production authority', async (t) => {
