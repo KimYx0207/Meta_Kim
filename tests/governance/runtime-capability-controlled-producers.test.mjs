@@ -173,6 +173,10 @@ function injectedExecutor(request) {
     assert.doesNotMatch(request.prompt, /Do not call Write/u);
   }
   if (request.runtime === "codex" && ["agent", "subagent"].includes(request.capability)) {
+    assert.match(request.prompt, /First discover the current host's native spawn_agent capability and its actual schema/u);
+    assert.match(request.prompt, /If it is deferred, use the exposed native tool-search capability to load it before calling it/u);
+    assert.match(request.prompt, /inherit the current model and reasoning effort without overrides; never select a different model/u);
+    assert.match(request.prompt, /do not use a legacy substitute for the current host's native capability/u);
     const normalizedPrompt = request.prompt.toLowerCase();
     const spawnInstruction = request.prompt.split(/[.!?]/u).find((sentence) =>
       sentence.includes("spawn_agent") && /exactly once/iu.test(sentence)

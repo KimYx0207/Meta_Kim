@@ -145,6 +145,7 @@ const PACKED_COMMAND_ERROR_CODE_ALLOWLIST = new Set([
   "UNKNOWN",
 ]);
 const PACKED_COMMAND_OPERATION_ALLOWLIST = new Set([
+  "packed-cli-npm-bootstrap",
   PROJECT_AWARE_GLOBAL_UPDATE_OPERATION_ID,
   PORTABLE_RUNTIME_GLOBAL_UPDATE_OPERATION_ID,
 ]);
@@ -454,7 +455,10 @@ export function requirePackedCommandSuccess(
     snapshot.error !== null ||
     snapshot.signal !== null
   ) {
-    throw packedCommandError("packed command failed", boundedDiagnostics);
+    const message = options.operation === "packed-cli-npm-bootstrap"
+      ? "packed npm bootstrap failed before the public CLI ran; the isolated cache needs registry access or complete preseeded dependencies for offline verification"
+      : "packed command failed";
+    throw packedCommandError(message, boundedDiagnostics);
   }
   return Object.freeze({
     status: 0,
@@ -762,16 +766,19 @@ function makeIsolatedRoots(root, name) {
   for (const directory of Object.values(roots).filter((value) => typeof value === "string")) {
     mkdirSync(directory, { recursive: true });
   }
-  const findskillFixture = path.join(roots.localDependencyRoot, "findskill");
+  const findskillFixture = path.join(roots.localDependencyRoot, "Kim_Service");
   mkdirSync(path.join(findskillFixture, ".git"), { recursive: true });
-  for (const platformDir of ["windows", "original"]) {
+  for (const platformDir of ["skills/find-skill"]) {
     mkdirSync(path.join(findskillFixture, platformDir), { recursive: true });
     writeFileSync(
       path.join(findskillFixture, platformDir, "SKILL.md"),
-      "---\nname: findskill\ndescription: Deterministic first-party packed acceptance fixture.\n---\n\n# Findskill\n",
+      "---\nname: find-skill\ndescription: Deterministic first-party packed acceptance fixture.\n---\n\n# Findskill\n",
       "utf8",
     );
+    writeFileSync(path.join(findskillFixture, platformDir, "capability.json"), JSON.stringify({ schemaVersion: 1, id: "find-skill", componentType: "skill", entrypoint: "SKILL.md" }), "utf8");
   }
+  mkdirSync(path.join(findskillFixture, "generated"), { recursive: true });
+  writeFileSync(path.join(findskillFixture, "generated/capabilities.json"), JSON.stringify({ schemaVersion: 1, components: [{ id: "find-skill", componentType: "skill", path: "skills/find-skill" }] }), "utf8");
   writeFileSync(path.join(roots.ordinaryCwd, "user-owned.txt"), "user-owned\n", "utf8");
   return roots;
 }
@@ -846,9 +853,8 @@ function packedCliDescriptor(packageInfo, roots, globalNodeModules) {
 }
 
 function installPackedCli(packageInfo, roots, env, timeoutMs) {
-  requireSuccess(
-    "packed candidate isolated global CLI install",
-    runCli(
+  const startedAt = Date.now();
+  const installed = runCli(
       "npm",
       [
         "install",
@@ -861,8 +867,12 @@ function installPackedCli(packageInfo, roots, env, timeoutMs) {
         packageInfo.tarball,
       ],
       { cwd: roots.laneRoot, env, timeoutMs },
-    ),
-  );
+    );
+  requirePackedCommandSuccess(installed, {
+    operation: "packed-cli-npm-bootstrap",
+    timeoutMs,
+    elapsedMs: Date.now() - startedAt,
+  });
   const globalRoot = requireSuccess(
     "resolve isolated packed CLI global package root",
     runCli(

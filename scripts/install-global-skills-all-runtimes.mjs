@@ -84,6 +84,7 @@ import {
   MetaKimConfigError,
   loadMetaKimConfig,
 } from "./meta-kim-config-loader.mjs";
+import { checkedPath, componentHash } from "./dependency-agent-discovery.mjs";
 
 // ── ANSI colors (matching setup.mjs) ─────────────────────────────────
 
@@ -401,11 +402,39 @@ function repoNameFromFullName(repoFullName) {
   return String(repoFullName ?? "").split("/").filter(Boolean).at(-1) ?? null;
 }
 
-function resolveLocalDependencyRepo(repoFullName) {
+function resolveLocalDependencyRepo(repoFullName, subdir = null) {
   if (!preferLocalDependencies) return null;
   const repoName = repoNameFromFullName(repoFullName);
   if (!repoName) return null;
   for (const root of localDependencyRoots()) {
+    // An explicitly declared Kim Service checkout can have a worktree name.
+    // Bind it by its indexed component, never by an arbitrary existing folder.
+    if (repoName === "Kim_Service" && subdir && existsSync(path.join(root, ".git"))) {
+      const explicitDirectService = process.env.META_KIM_LOCAL_DEPENDENCY_ROOT
+        && path.resolve(root) === path.resolve(process.env.META_KIM_LOCAL_DEPENDENCY_ROOT)
+        && (path.basename(root) === repoName || existsSync(path.join(root, subdir, "capability.json")));
+      try {
+        const index = JSON.parse(readFileSync(path.join(root, "generated", "capabilities.json"), "utf8"));
+        const component = index.schemaVersion === 1 && index.components?.find((entry) => entry.path === subdir);
+        const contract = JSON.parse(readFileSync(path.join(root, subdir, "capability.json"), "utf8"));
+        if (component && contract.schemaVersion === 1 && contract.id === component.id
+          && contract.componentType === component.componentType) {
+          if (typeof contract.entrypoint !== "string" || contract.entrypoint.split(/[\\/]/u).some((part) => !part || part === "." || part === "..") || path.isAbsolute(contract.entrypoint)) {
+            throw new Error(`Declared local component entrypoint is invalid: ${subdir}`);
+          }
+          if (!existsSync(path.join(root, subdir, contract.entrypoint))) throw new Error(`Declared local component entrypoint is missing: ${subdir}`);
+          return root;
+        }
+        throw new Error(`Declared local component is invalid or missing: ${subdir}`);
+      } catch (error) {
+        if (error.message.startsWith("Declared local component")) throw error;
+        if (explicitDirectService && !existsSync(path.join(root, "generated", "capabilities.json"))) {
+          throw new Error("Declared local Kim_Service capability index is missing: generated/capabilities.json");
+        }
+        // An explicit direct checkout must not become an implicit network clone.
+        if (existsSync(path.join(root, "generated", "capabilities.json"))) throw new Error(`Declared local component is invalid or missing: ${subdir}`);
+      }
+    }
     const candidate = path.join(root, repoName);
     if (existsSync(path.join(candidate, ".git"))) {
       return candidate;
@@ -679,13 +708,20 @@ function loadInstallerConfig() {
     process.exit(2);
   }
 
+  const dependencyRegistry = JSON.parse(readFileSync(path.join(repoRoot, "config", "capability-index", "dependency-project-registry.json"), "utf8"));
+  const selectedIds = parseSkillsArg(cliArgs);
   const skillRepos = config.skills.skills.map((skill) => {
-    const localRepoPath = resolveLocalDependencyRepo(skill.repository.fullName);
     const subdir = resolveManifestSkillSubdir(skill, os.platform());
+    const selected = selectedIds === null ? skill.installPolicy !== "explicit_reference_opt_in"
+      : selectedIds.some((id) => id.toLowerCase() === skill.id.toLowerCase());
+    const localRepoPath = selected ? resolveLocalDependencyRepo(skill.repository.fullName, subdir) : null;
+    const dependency = dependencyRegistry.projects?.find((entry) => entry.id === skill.id);
     return {
       ...skill,
       repo: skill.repository.cloneUrl,
       repoFullName: skill.repository.fullName,
+      historicalRepoUrls: (dependency?.source?.history ?? []).map((entry) => entry.uri?.replaceAll("${skillOwner}", config.skills.skillOwner)).filter(Boolean),
+      historicalSubdirs: (dependency?.source?.history ?? []).map((entry) => entry.subdir).filter(Boolean),
       ...(localRepoPath ? { localRepoPath } : {}),
       ...(subdir ? { subdir } : {}),
     };
@@ -1285,9 +1321,11 @@ async function transactionalReplaceMetaSkillTargets(
     failCommitAfter = 0,
     failRollbackTarget = null,
     renameOptions = {},
+    preserveLegacyTargets = [],
   } = {},
 ) {
   await validateMetaSkillCreatorPackage(sourceDir);
+  const legacyTargets = new Set(preserveLegacyTargets.map((target) => path.resolve(target)));
   const guardedRenameOptions = {
     ...renameOptions,
     rename: async (source, target) => {
@@ -1318,10 +1356,9 @@ async function transactionalReplaceMetaSkillTargets(
     for (const { target } of prepared) {
       await assertRealPathContained(userHome, target, writeBoundary);
       if (!(await pathExists(target))) continue;
-      const backup = path.join(
-        path.dirname(target),
-        `${path.basename(target)}.transaction-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      );
+      const backup = legacyTargets.has(path.resolve(target))
+        ? await legacySkillBackupPath(target, userHome, writeBoundary)
+        : path.join(path.dirname(target), `${path.basename(target)}.transaction-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
       await renamePathWithWindowsRetry(target, backup, guardedRenameOptions);
       backups.push({ target, backup });
     }
@@ -1379,7 +1416,7 @@ async function transactionalReplaceMetaSkillTargets(
           if (!(await pathExists(target)) || (await pathExists(backup))) {
             throw new Error(`recovery verification failed: ${backup} -> ${target}`);
           }
-          await validateMetaSkillCreatorPackage(target);
+          if (!legacyTargets.has(path.resolve(target))) await validateMetaSkillCreatorPackage(target);
         } catch (recoveryError) {
           recoveryErrors.push(
             new Error(
@@ -1407,8 +1444,12 @@ async function transactionalReplaceMetaSkillTargets(
       }
     }
   }
-  for (const { backup } of backups) {
+  for (const { target, backup } of backups) {
     await assertRealPathContained(userHome, backup, writeBoundary);
+    if (legacyTargets.has(path.resolve(target))) {
+      console.log(`meta-skill-creator: preserved legacy repository at ${backup}`);
+      continue;
+    }
     await rmDirBestEffortLocked(backup);
   }
   for (const target of targets) markManagedDependencyTargetWritten(target);
@@ -1463,8 +1504,15 @@ async function installMetaSkillCreatorAcrossRuntimes(
     );
   }
   if (targets.length === 0) return;
+  const preserveLegacyTargets = [];
   for (const target of targets) {
     await assertRealPathContained(userHome, target, writeBoundary);
+    const knownLegacy = await isKnownLegacySkillRoot(spec, target);
+    if (knownLegacy) preserveLegacyTargets.push(target);
+    if (repoNameFromFullName(spec.repoFullName) === "Kim_Service" && await pathExists(target)
+      && !(await isEmptyDir(target)) && !knownLegacy && !(await isReusableSkillRoot(spec, target))) {
+      throw new Error(`Existing ${spec.id} directory has no verified component entrypoint; preserved without replacement: ${target}`);
+    }
   }
   if (dryRun) {
     for (const target of targets) {
@@ -1476,8 +1524,19 @@ async function installMetaSkillCreatorAcrossRuntimes(
   const sourceStage = await createSiblingStagingDir(targets[0], "source");
   try {
     await assertRealPathContained(userHome, sourceStage, writeBoundary);
+    if (!sourceDir && !updateMode) {
+      for (const target of targets) {
+        if (!preserveLegacyTargets.includes(target) && await isReusableSkillRoot(spec, target)) {
+          await validateMetaSkillCreatorPackage(target);
+          sourceDir = target;
+          break;
+        }
+      }
+    }
     if (sourceDir) {
       await fs.cp(sourceDir, sourceStage, { recursive: true, force: true });
+    } else if (spec.localRepoPath) {
+      await stageSkillFromLocalRepo(spec.id, sourceStage, spec.localRepoPath, spec.subdir);
     } else if (spec.subdir) {
       await installGitSkillFromSubdir(
         spec.id,
@@ -1492,6 +1551,7 @@ async function installMetaSkillCreatorAcrossRuntimes(
     await transactionalReplaceMetaSkillTargets(sourceStage, targets, {
       userHome,
       writeBoundary,
+      preserveLegacyTargets,
       ...testMetaSkillTransactionFaults(targets),
     });
   } finally {
@@ -2480,7 +2540,15 @@ async function installAllSkillsForRuntime(label, runtimeHome, runtimeId) {
     emitHeader();
     const targetDir = resolveSkillTargetDir(runtimeHome, spec, runtimeId);
     await cleanupLegacySkillNames(runtimeHome, spec);
-    if (spec.subdir) {
+    if (repoNameFromFullName(spec.repoFullName) === "Kim_Service") {
+      await stageAndDeployServiceSkill(spec, targetDir);
+    } else if (spec.localRepoPath) {
+      const staged = await createSiblingStagingDir(targetDir);
+      try {
+        await stageSkillFromLocalRepo(spec.id, staged, spec.localRepoPath, spec.subdir);
+        await deployStagedSkill(staged, targetDir, spec.id, spec.subdir, spec);
+      } finally { await rmDirBestEffortLocked(staged); }
+    } else if (spec.subdir) {
       await installGitSkillFromSubdir(
         spec.id,
         targetDir,
@@ -3902,6 +3970,7 @@ async function stageSkillClone(
     (await pathExists(preExistingPath)) &&
     !(await isEmptyDir(preExistingPath))
   ) {
+    await fs.cp(preExistingPath, stagedPath, { recursive: true, force: true, filter: (file) => path.basename(file) !== ".git" });
     return true;
   }
 
@@ -3939,6 +4008,7 @@ async function stageSkillFromLocalRepo(
     (await pathExists(preExistingPath)) &&
     !(await isEmptyDir(preExistingPath))
   ) {
+    await fs.cp(preExistingPath, stagedPath, { recursive: true, force: true, filter: (file) => path.basename(file) !== ".git" });
     return true;
   }
 
@@ -3960,6 +4030,9 @@ async function stageSkillFromLocalRepo(
   if (!(await pathExists(sourcePath))) {
     throw new Error(`Local dependency source missing for ${skillId}: ${sourcePath}`);
   }
+  await assertPlainComponentRoot(localRepoPath);
+  if (subdirPath) await checkedPath(localRepoPath, subdirPath, true);
+  await componentHash(sourcePath);
   await fs.mkdir(path.dirname(stagedPath), { recursive: true });
   await fs.cp(sourcePath, stagedPath, { recursive: true, force: true });
   return true;
@@ -3988,6 +4061,7 @@ async function stageSkillFromSubdir(
     (await pathExists(preExistingPath)) &&
     !(await isEmptyDir(preExistingPath))
   ) {
+    await fs.cp(preExistingPath, stagedPath, { recursive: true, force: true, filter: (file) => path.basename(file) !== ".git" });
     return true;
   }
 
@@ -4074,24 +4148,127 @@ async function stageSkillFromSubdir(
  * Deploy a staged skill to a runtime's skills directory.
  * Handles existing targets, repair, and sanitization.
  */
-async function deployStagedSkill(stagedPath, targetDir, skillId, subdirPath) {
+async function assertPlainComponentRoot(root, { installed = false } = {}) {
+  const stat = await fs.lstat(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Component root must be a plain directory");
+  if (installed) {
+    // A bound whole runtime home may redirect; inner component paths may not.
+    await assertRealPathContained(os.homedir(), root, activeInstallerWriteBoundary);
+    return;
+  }
+  const canonical = await fs.realpath(root);
+  const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
+  if (normalize(canonical) !== normalize(path.resolve(root))) throw new Error("Component root cannot traverse a symlink or junction");
+}
+
+async function isReusableSkillRoot(spec, root, { installed = true } = {}) {
+  try {
+    await assertPlainComponentRoot(root, { installed });
+    const relative = spec.id === "hookprompt"
+      ? `.claude/hooks/${spec.hookSettingsMerge?.claude?.hookFile ?? "missing"}` : "SKILL.md";
+    const entrypoint = await checkedPath(root, relative);
+    await componentHash(root);
+    if (spec.id === "hookprompt") return true;
+    const content = await fs.readFile(entrypoint, "utf8");
+    if (!validateSkillFrontmatter(content).ok) return false;
+    if (repoNameFromFullName(spec.repoFullName) !== "Kim_Service") return true;
+    const name = content.match(/^name:\s*["']?([^\r\n"']+)["']?\s*$/mu)?.[1]?.trim();
+    return [spec.id, path.posix.basename(spec.subdir ?? spec.id), ...(spec.id === "kim-decision" ? ["Kim"] : [])].includes(name);
+  } catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
+}
+
+async function isKnownLegacySkillRoot(spec, root) {
+  if (repoNameFromFullName(spec.repoFullName) !== "Kim_Service") return false;
+  let config;
+  try { await assertPlainComponentRoot(root, { installed: true }); config = await fs.readFile(await checkedPath(root, ".git/config"), "utf8"); }
+  catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
+  const origin = config.match(/\[remote "origin"\]([^\[]*)/u)?.[1]?.match(/^\s*url\s*=\s*(.+)$/mu)?.[1]?.trim();
+  const normalize = (value) => String(value ?? "").replace(/^https:\/\/github\.com\//iu, "").replace(/\.git$/iu, "").toLowerCase();
+  if (!origin || ![spec.repo, ...(spec.historicalRepoUrls ?? [])].some((url) => normalize(url) === normalize(origin))) return false;
+  if (await isReusableSkillRoot(spec, root)) return true;
+  const subdirs = [spec.subdir, ...(spec.historicalSubdirs ?? []), ...(spec.id === "findskill" ? ["windows", "original"] : [])].filter(Boolean);
+  for (const subdir of subdirs) if (await isReusableSkillRoot(spec, path.join(root, subdir))) return true;
+  return false;
+}
+
+async function validateServiceStage(spec, stagedPath) {
+  const stat = await fs.lstat(stagedPath);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Staged component root must be a plain directory");
+  // Staging ancestors can include a permitted whole runtime-home redirect.
+  const physical = await fs.realpath(stagedPath);
+  if (!(await isReusableSkillRoot(spec, physical, { installed: false }))) {
+    throw new Error(`Staged ${spec.id} component has no valid matching entrypoint`);
+  }
+  const prefix = `${spec.subdir}/`;
+  for (const [runtime, subdirs] of Object.entries(spec.hookSubdirs ?? {})) {
+    if (spec.targets && !spec.targets.includes(runtime)) continue;
+    for (const relative of subdirs) {
+      if (!relative.startsWith(prefix)) throw new Error(`Hook source is outside ${spec.id} component`);
+      await checkedPath(physical, relative.slice(prefix.length), true);
+    }
+  }
+  for (const entries of Object.values(spec.hookExtraFiles ?? {})) {
+    for (const entry of entries) {
+      if (!entry.src.startsWith(prefix)) throw new Error(`Hook attachment is outside ${spec.id} component`);
+      await checkedPath(physical, entry.src.slice(prefix.length));
+    }
+  }
+}
+
+async function stageAndDeployServiceSkill(spec, targetDir) {
+  const targetExists = await pathExists(targetDir) && !(await isEmptyDir(targetDir));
+  const knownLegacy = targetExists && await isKnownLegacySkillRoot(spec, targetDir);
+  const reusable = targetExists && await isReusableSkillRoot(spec, targetDir);
+  if (targetExists && !knownLegacy && !reusable) {
+    throw new Error(`Existing ${spec.id} directory has no verified component entrypoint; preserved without replacement: ${targetDir}`);
+  }
+  if (dryRun) {
+    console.log(t.dryRun(`install ${spec.id} component -> ${targetDir}`));
+    return;
+  }
+  const staged = await createSiblingStagingDir(targetDir);
+  try {
+    const existing = reusable && !knownLegacy ? targetDir : null;
+    if (spec.localRepoPath) {
+      await stageSkillFromLocalRepo(spec.id, staged, spec.localRepoPath, spec.subdir, existing, !updateMode);
+    } else {
+      await stageSkillFromSubdir(spec.id, staged, spec.repo, spec.subdir, existing, !updateMode);
+    }
+    await deployStagedSkill(staged, targetDir, spec.id, spec.subdir, spec);
+  } finally {
+    await rmDirBestEffortLocked(staged);
+  }
+}
+
+async function legacySkillBackupPath(targetDir, userHome = os.homedir(), writeBoundary = activeInstallerWriteBoundary) {
+  // Keep full historical roots outside all runtime skills/plugin scan roots,
+  // but on the same runtime filesystem so rename remains atomic.
+  const backupRoot = path.join(path.dirname(path.dirname(targetDir)), ".meta-kim", "legacy-dependency-backups");
+  await assertRealPathContained(userHome, backupRoot, writeBoundary);
+  await fs.mkdir(backupRoot, { recursive: true });
+  const backup = path.join(backupRoot, `${path.basename(targetDir)}.legacy-preserved-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  await assertRealPathContained(userHome, backup, writeBoundary);
+  return backup;
+}
+
+async function deployStagedSkill(stagedPath, targetDir, skillId, subdirPath, spec = { id: skillId }) {
   assertUnderHome(targetDir);
 
   if (!(await pathExists(stagedPath)) || (await isEmptyDir(stagedPath))) {
     return false;
   }
+  if (repoNameFromFullName(spec.repoFullName) === "Kim_Service") await validateServiceStage(spec, stagedPath);
 
-  await repairManagedSkillTarget({
-    skillId,
-    targetDir,
-    subdirPath,
-    allowDelete: true,
-  });
-
+  const knownLegacy = await isKnownLegacySkillRoot(spec, targetDir);
   const targetExists = await pathExists(targetDir);
   const targetEmpty = targetExists && (await isEmptyDir(targetDir));
+  if (targetExists && !targetEmpty && repoNameFromFullName(spec.repoFullName) === "Kim_Service"
+    && !knownLegacy && !(await isReusableSkillRoot(spec, targetDir))) {
+    throw new Error(`Existing ${skillId} directory has no verified component entrypoint; preserved without replacement: ${targetDir}`);
+  }
+  if (!knownLegacy) await repairManagedSkillTarget({ skillId, targetDir, subdirPath, allowDelete: true });
 
-  if (targetExists && !targetEmpty && !updateMode) {
+  if (targetExists && !targetEmpty && !updateMode && !knownLegacy) {
     console.log(
       `${C.yellow}⊘${C.reset} ${C.dim}${t.skipExists(targetDir)}${C.reset}`,
     );
@@ -4107,15 +4284,27 @@ async function deployStagedSkill(stagedPath, targetDir, skillId, subdirPath) {
   }
 
   const stagedCopy = await createSiblingStagingDir(targetDir);
+  let legacyBackup = null;
   try {
     await fs.cp(stagedPath, stagedCopy, { recursive: true, force: true });
     if ((await pathExists(stagedCopy)) && !(await isEmptyDir(stagedCopy))) {
+      if (knownLegacy) {
+        legacyBackup = await legacySkillBackupPath(targetDir);
+        assertUnderHome(legacyBackup);
+        await assertRealPathContained(os.homedir(), targetDir, activeInstallerWriteBoundary);
+        await assertRealPathContained(os.homedir(), legacyBackup, activeInstallerWriteBoundary);
+        await renamePathWithWindowsRetry(targetDir, legacyBackup);
+        console.log(`${skillId}: preserved legacy repository at ${legacyBackup}`);
+      }
       await replaceTargetDir(targetDir, stagedCopy);
       markManagedDependencyTargetWritten(targetDir);
       console.log(
         `${C.green}✓${C.reset} ${t.okBasename(path.basename(targetDir), targetDir)}`,
       );
     }
+  } catch (error) {
+    if (legacyBackup && !(await pathExists(targetDir))) await renamePathWithWindowsRetry(legacyBackup, targetDir);
+    throw error;
   } finally {
     await rmDirBestEffortLocked(stagedCopy);
   }
@@ -4149,16 +4338,12 @@ async function installSkillsToMultipleRuntimes(
         (id) => !spec.targets || spec.targets.includes(id),
       );
       if (applicableRuntimes.length === 0) continue;
-      // Check the first runtime as the canonical "already installed" source.
-      const firstRuntimeId = applicableRuntimes[0];
-      const firstRuntimeHome = homes[firstRuntimeId];
-      const candidate = resolveSkillTargetDir(
-        firstRuntimeHome,
-        spec,
-        firstRuntimeId,
-      );
-      if ((await pathExists(candidate)) && !(await isEmptyDir(candidate))) {
-        alreadyExists.set(spec.id, candidate);
+      for (const runtimeId of applicableRuntimes) {
+        const candidate = resolveSkillTargetDir(homes[runtimeId], spec, runtimeId);
+        if (await isReusableSkillRoot(spec, candidate) && !(await isKnownLegacySkillRoot(spec, candidate))) {
+          alreadyExists.set(spec.id, candidate);
+          break;
+        }
       }
     }
 
@@ -4166,14 +4351,15 @@ async function installSkillsToMultipleRuntimes(
 
     const limitClone = createConcurrencyLimiter(MAX_CONCURRENT_CLONES);
 
-    const stagePromises = SKILL_REPOS.filter((spec) => {
+    const stageSpecs = SKILL_REPOS.filter((spec) => {
       if (!usesGenericSkillInstall(spec)) return false;
       if (spec.id === "meta-skill-creator") return false;
       const needs = targetRuntimeIds.filter(
         (id) => !spec.targets || spec.targets.includes(id),
       );
       return needs.length > 0;
-    }).map((spec) =>
+    });
+    const stagePromises = stageSpecs.map((spec) =>
       limitClone(async () => {
         const stagedPath = path.join(stagingRoot, spec.id);
         const preExistingPath = alreadyExists.get(spec.id);
@@ -4214,9 +4400,11 @@ async function installSkillsToMultipleRuntimes(
 
     const stagedSkills = new Map();
     const stageResults = await Promise.allSettled(stagePromises);
-    for (const result of stageResults) {
+    for (const [index, result] of stageResults.entries()) {
       if (result.status === "fulfilled") {
         stagedSkills.set(result.value.id, result.value);
+      } else if (stageSpecs[index].localRepoPath) {
+        throw result.reason;
       }
     }
 
@@ -4278,11 +4466,14 @@ async function installSkillsToMultipleRuntimes(
             targetDir,
             spec.id,
             spec.subdir,
+            spec,
           );
         } else {
           // Staging skipped or failed: fall back to direct per-runtime install
           emitHeader();
-          if (spec.subdir) {
+          if (repoNameFromFullName(spec.repoFullName) === "Kim_Service") {
+            await stageAndDeployServiceSkill(spec, targetDir);
+          } else if (spec.subdir) {
             await installGitSkillFromSubdir(
               spec.id,
               targetDir,
@@ -4631,6 +4822,18 @@ async function main() {
 
 // ========== Hook Co-Deployment ==========
 
+async function localHookSource(spec, runtimeHome, runtimeId, relative, directory = false) {
+  if (spec.localRepoPath) {
+    await assertPlainComponentRoot(spec.localRepoPath);
+    return checkedPath(spec.localRepoPath, relative, directory);
+  }
+  const installed = resolveSkillTargetDir(runtimeHome, spec, runtimeId);
+  if (!(await isReusableSkillRoot(spec, installed))) return null;
+  const prefix = spec.subdir ? `${spec.subdir}/` : "";
+  const componentRelative = prefix && relative.startsWith(prefix) ? relative.slice(prefix.length) : relative;
+  return checkedPath(installed, componentRelative, directory);
+}
+
 async function deployHookSubdirs(spec, runtimeHome, runtimeId) {
   const hookSubdirs = spec.hookSubdirs;
   if (!hookSubdirs || !hookSubdirs[runtimeId]) return;
@@ -4639,6 +4842,7 @@ async function deployHookSubdirs(spec, runtimeHome, runtimeId) {
   if (!Array.isArray(subdirs) || subdirs.length === 0) return;
 
   const hooksDir = path.join(runtimeHome, "hooks");
+  assertUnderHome(hooksDir);
   if (!dryRun) {
     await fs.mkdir(hooksDir, { recursive: true });
   }
@@ -4650,6 +4854,11 @@ async function deployHookSubdirs(spec, runtimeHome, runtimeId) {
           `git sparse-checkout ${spec.repo}:${hookSubdir} -> ${hooksDir}`,
         ),
       );
+      continue;
+    }
+    const localSource = await localHookSource(spec, runtimeHome, runtimeId, hookSubdir, true);
+    if (localSource) {
+      await fs.cp(localSource, hooksDir, { recursive: true, force: true });
       continue;
     }
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-hook-"));
@@ -4703,6 +4912,12 @@ async function deployHookConfigFiles(spec, runtimeHome, runtimeId) {
         `git sparse-checkout ${spec.repo}:${configFile} -> ${runtimeHome}`,
       ),
     );
+    return;
+  }
+
+  const localSource = await localHookSource(spec, runtimeHome, runtimeId, configFile);
+  if (localSource) {
+    await fs.copyFile(localSource, path.join(runtimeHome, path.basename(configFile)));
     return;
   }
 
@@ -4845,6 +5060,15 @@ async function deployHookExtraFiles(spec, runtimeHome, runtimeId) {
       continue;
     }
 
+    const localSource = await localHookSource(spec, runtimeHome, runtimeId, entry.src);
+    if (localSource) {
+      const destPath = path.join(runtimeHome, entry.dest);
+      assertUnderHome(destPath);
+      await fs.mkdir(path.dirname(destPath), { recursive: true });
+      await fs.copyFile(localSource, destPath);
+      continue;
+    }
+
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-hextra-"));
     try {
       const parentDir = path.dirname(entry.src).replace(/\\/g, "/");
@@ -4891,6 +5115,9 @@ export async function mergeHookSettings(spec, runtimeHome, runtimeId) {
 
   const settingsPath = path.join(runtimeHome, "settings.json");
   const hookScriptPath = path.join(runtimeHome, "hooks", cfg.hookFile);
+  const writeBoundary = activeInstallerWriteBoundary ?? createInstallerWriteBoundary({ runtimeHomes: [runtimeHome] });
+  await assertRealPathContained(os.homedir(), settingsPath, writeBoundary);
+  await assertRealPathContained(os.homedir(), hookScriptPath, writeBoundary);
 
   if (dryRun) {
     console.log(

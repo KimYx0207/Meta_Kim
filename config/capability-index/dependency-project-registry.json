@@ -61,10 +61,20 @@
       "name": "agent-teams-playbook",
       "source": {
         "type": "github",
-        "uri": "https://github.com/KimYx0207/agent-teams-playbook",
+        "uri": "https://github.com/KimYx0207/Kim_Service",
         "localPath": null,
+        "subdir": "skills/agent-teams-playbook",
         "inspectionStatus": "installed_skill_candidate",
-        "lastInspectedAt": "2026-06-14"
+        "lastInspectedAt": null,
+        "history": [
+          {
+            "type": "github",
+            "uri": "https://github.com/KimYx0207/agent-teams-playbook",
+            "localPath": null,
+            "inspectionStatus": "installed_skill_candidate",
+            "lastInspectedAt": "2026-06-14"
+          }
+        ]
       },
       "capabilityCard": {
         "oneLine": "Parallel agent-team orchestration playbook.",
@@ -285,10 +295,20 @@
       "name": "findskill",
       "source": {
         "type": "github",
-        "uri": "${skillOwner}/findskill",
+        "uri": "https://github.com/KimYx0207/Kim_Service",
         "localPath": null,
+        "subdir": "skills/find-skill",
         "inspectionStatus": "external_reference",
-        "lastInspectedAt": null
+        "lastInspectedAt": null,
+        "history": [
+          {
+            "type": "github",
+            "uri": "${skillOwner}/findskill",
+            "localPath": null,
+            "inspectionStatus": "external_reference",
+            "lastInspectedAt": null
+          }
+        ]
       },
       "capabilityCard": {
         "oneLine": "Dependency capability for findskill.",
@@ -381,10 +401,20 @@
       "name": "hookprompt",
       "source": {
         "type": "github",
-        "uri": "${skillOwner}/HookPrompt",
+        "uri": "https://github.com/KimYx0207/Kim_Service",
         "localPath": null,
+        "subdir": "hooks/hookprompt",
         "inspectionStatus": "external_reference",
-        "lastInspectedAt": null
+        "lastInspectedAt": null,
+        "history": [
+          {
+            "type": "github",
+            "uri": "${skillOwner}/HookPrompt",
+            "localPath": null,
+            "inspectionStatus": "external_reference",
+            "lastInspectedAt": null
+          }
+        ]
       },
       "capabilityCard": {
         "oneLine": "Dependency capability for hookprompt.",
@@ -972,12 +1002,22 @@
       "name": "meta-skill-creator",
       "source": {
         "type": "github",
-        "uri": "https://github.com/KimYx0207/meta-skill-creator",
+        "uri": "https://github.com/KimYx0207/Kim_Service",
         "localPath": null,
+        "subdir": "skills/meta-skill-creator",
         "inspectionStatus": "inspected_reference",
-        "lastInspectedAt": "2026-07-11",
-        "revision": "ace057d771c1baaa58811a00a2cbbdcad30d8e72",
-        "subdir": "skills/meta-skill-creator"
+        "lastInspectedAt": null,
+        "history": [
+          {
+            "type": "github",
+            "uri": "https://github.com/KimYx0207/meta-skill-creator",
+            "localPath": null,
+            "inspectionStatus": "inspected_reference",
+            "lastInspectedAt": "2026-07-11",
+            "revision": "ace057d771c1baaa58811a00a2cbbdcad30d8e72",
+            "subdir": "skills/meta-skill-creator"
+          }
+        ]
       },
       "capabilityCard": {
         "oneLine": "Design, refactor, review, and validate reusable Agent Skill packages with evidence-backed release gates.",
@@ -1095,12 +1135,22 @@
       "name": "GoalPro",
       "source": {
         "type": "github",
-        "uri": "https://github.com/KimYx0207/GoalPro",
+        "uri": "https://github.com/KimYx0207/Kim_Service",
         "localPath": null,
+        "subdir": "skills/goalpro",
         "inspectionStatus": "inspected_reference",
-        "lastInspectedAt": "2026-07-11",
-        "revision": "39adc8db765e0e4ad4df8d4ce02e7059fed69f26",
-        "subdir": ".agents/skills/goalpro"
+        "lastInspectedAt": null,
+        "history": [
+          {
+            "type": "github",
+            "uri": "https://github.com/KimYx0207/GoalPro",
+            "localPath": null,
+            "inspectionStatus": "inspected_reference",
+            "lastInspectedAt": "2026-07-11",
+            "revision": "39adc8db765e0e4ad4df8d4ce02e7059fed69f26",
+            "subdir": ".agents/skills/goalpro"
+          }
+        ]
       },
       "capabilityCard": {
         "oneLine": "Prompt-only Goal Contract skill that turns fuzzy or strategic work into Goal Prompt + Loop Prompt before execution.",
@@ -1226,12 +1276,22 @@
       "name": "Kim_Decision",
       "source": {
         "type": "github",
-        "uri": "https://github.com/KimYx0207/Kim_Decision",
+        "uri": "https://github.com/KimYx0207/Kim_Service",
         "localPath": null,
+        "subdir": "skills/kim-decision",
         "inspectionStatus": "inspected_reference",
-        "lastInspectedAt": "2026-07-11",
-        "revision": "32208316c1900ee25fcc56f255ad178281a7da98",
-        "subdir": ".agents/skills/Kim"
+        "lastInspectedAt": null,
+        "history": [
+          {
+            "type": "github",
+            "uri": "https://github.com/KimYx0207/Kim_Decision",
+            "localPath": null,
+            "inspectionStatus": "inspected_reference",
+            "lastInspectedAt": "2026-07-11",
+            "revision": "32208316c1900ee25fcc56f255ad178281a7da98",
+            "subdir": ".agents/skills/Kim"
+          }
+        ]
       },
       "capabilityCard": {
         "oneLine": "Reference-only decision protocol for real-intent lock, path selection, minimum test, and pass/kill judgment.",

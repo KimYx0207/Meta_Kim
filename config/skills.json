@@ -5,24 +5,20 @@
   "skills": [
     {
       "id": "agent-teams-playbook",
-      "repo": "${skillOwner}/agent-teams-playbook",
-      "installMethod": "gitCloneInstallScript",
+      "repo": "${skillOwner}/Kim_Service",
+      "installMethod": "subdirExtraction",
       "targets": [
         "claude",
         "codex",
         "openclaw",
         "cursor"
-      ]
+      ],
+      "subdir": "skills/agent-teams-playbook"
     },
     {
       "id": "findskill",
-      "repo": "${skillOwner}/findskill",
+      "repo": "${skillOwner}/Kim_Service",
       "installMethod": "subdirExtraction",
-      "subdirTemplate": "{platform}",
-      "subdirMapping": {
-        "win32": "windows",
-        "default": "original"
-      },
       "legacyNames": [
         "find-skills"
       ],
@@ -31,12 +27,13 @@
         "codex",
         "openclaw",
         "cursor"
-      ]
+      ],
+      "subdir": "skills/find-skill"
     },
     {
       "id": "hookprompt",
-      "repo": "${skillOwner}/HookPrompt",
-      "installMethod": "manual",
+      "repo": "${skillOwner}/Kim_Service",
+      "installMethod": "subdirExtraction",
       "capabilities": [
         "prompt-submission-optimization"
       ],
@@ -82,7 +79,7 @@
       "hookExtraFiles": {
         "claude": [
           {
-            "src": ".claude/prompt-optimizer-meta.md",
+            "src": "hooks/hookprompt/.claude/prompt-optimizer-meta.md",
             "dest": "prompt-optimizer-meta.md"
           }
         ]
@@ -98,7 +95,13 @@
         "claude",
         "codex",
         "cursor"
-      ]
+      ],
+      "subdir": "hooks/hookprompt",
+      "hookSubdirs": {
+        "claude": [
+          "hooks/hookprompt/.claude/hooks"
+        ]
+      }
     },
     {
       "id": "superpowers",
@@ -228,7 +231,7 @@
     },
     {
       "id": "meta-skill-creator",
-      "repo": "${skillOwner}/meta-skill-creator",
+      "repo": "${skillOwner}/Kim_Service",
       "installMethod": "subdirExtraction",
       "subdir": "skills/meta-skill-creator",
       "capabilities": [
@@ -251,9 +254,9 @@
     },
     {
       "id": "goalpro",
-      "repo": "${skillOwner}/GoalPro",
+      "repo": "${skillOwner}/Kim_Service",
       "installMethod": "subdirExtraction",
-      "subdir": ".agents/skills/goalpro",
+      "subdir": "skills/goalpro",
       "capabilities": [
         "goal-contract",
         "intent-amplification",
@@ -286,9 +289,9 @@
     },
     {
       "id": "kim-decision",
-      "repo": "${skillOwner}/Kim_Decision",
+      "repo": "${skillOwner}/Kim_Service",
       "installMethod": "subdirExtraction",
-      "subdir": ".agents/skills/Kim",
+      "subdir": "skills/kim-decision",
       "capabilities": [
         "decision-protocol-reference",
         "path-selection",
