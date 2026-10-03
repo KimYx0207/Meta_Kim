@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -31,6 +32,33 @@ function npmShim(root, name) {
   writeFileSync(shim, `@ECHO off\r\nSET dp0=%~dp0\r\n"node"  "%dp0%\\node_modules\\@fixture\\${name}\\bin\\${name}.js" %*\r\n`, "utf8");
   return { discovered, shim, jsEntry };
 }
+
+test("runtime fingerprints match byte-exact SHA256 across chunk boundaries and still reject drift", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-hash-chunks-"));
+  try {
+    for (const size of [0, 65535, 65536, 65537, 196731]) {
+      const bytes = Buffer.alloc(size);
+      for (let index = 0; index < size; index++) bytes[index] = index % 251;
+      const binary = path.join(root, `codex-${size}.exe`);
+      writeFileSync(binary, bytes);
+      const inventoryRoot = path.join(root, `inventory-${size}`); mkdirSync(inventoryRoot);
+      const recorded = recordSetupRuntimeExecutableBindings({
+        roots: [inventoryRoot], targets: ["codex"], pathResolver: () => [binary],
+        versionRunner: () => ({ status: 0, stdout: "fixture-codex 1.0", stderr: "" }),
+      });
+      const descriptor = recorded.bindings.codex.launchDescriptor;
+      const expected = createHash("sha256").update(bytes).digest("hex");
+      assert.equal(descriptor.discoveredEntry.sha256, expected);
+      assert.equal(descriptor.launcher.sha256, expected);
+      assert.doesNotThrow(() => readSetupRuntimeLaunchInventory({ root: inventoryRoot, runtimes: ["codex"] }));
+      const changed = Buffer.from(bytes.length ? bytes : [0]); changed[changed.length - 1] ^= 255;
+      writeFileSync(binary, changed);
+      assert.throws(() => readSetupRuntimeLaunchInventory({ root: inventoryRoot, runtimes: ["codex"] }), /identity changed/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("Windows locator failure or empty output discovers actual supported PATH files in directory and extension order", (context) => {
   if (process.platform !== "win32") return context.skip("Windows executable discovery");

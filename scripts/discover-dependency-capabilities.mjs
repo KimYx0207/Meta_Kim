@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
+import { checkedPath } from "./dependency-agent-discovery.mjs";
 import { OS_TARGETS, RUNTIMES, exists, listFiles, readJson, repoPath, stateDir, toPosix, writeJson } from "./governance-lib.mjs";
 import { CATEGORIES, directoryClosureSync, manifestPathFor, readManifest } from "./install-manifest.mjs";
 import {
@@ -242,38 +244,73 @@ function annotateMissing(project) {
   return project;
 }
 
-async function kimDecisionRecord() {
-  const roots = [
-    ...(process.env.META_KIM_DEP_ROOTS ? process.env.META_KIM_DEP_ROOTS.split(path.delimiter) : []),
-    path.resolve(repoPath(".."), "Kim_Decision"),
-  ];
+export async function kimDecisionRecord({ environment = process.env, projectRoot = repoPath("."), skillDirs = [] } = {}) {
+  const roots = environment.META_KIM_KIM_SERVICE_ROOT
+    ? [environment.META_KIM_KIM_SERVICE_ROOT]
+    : [
+        ...(environment.META_KIM_DEP_ROOTS ? environment.META_KIM_DEP_ROOTS.split(path.delimiter).filter(Boolean) : []),
+        path.resolve(projectRoot, "..", "Kim_Service"),
+        path.resolve(projectRoot, "..", "Kim_Decision"),
+      ];
   let foundPath = null;
+  let skillPath = null;
   for (const root of roots) {
-    if (root && (await exists(root))) {
-      foundPath = root;
-      break;
+    if (!path.isAbsolute(root)) continue;
+    for (const relative of ["skills/kim-decision/SKILL.md", ".agents/skills/Kim/SKILL.md"]) {
+      try {
+        const stat = await fs.lstat(root);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+        const realRoot = await fs.realpath(root);
+        if ((process.platform === "win32" ? realRoot.toLowerCase() : realRoot) !== (process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root))) continue;
+        const entry = await checkedPath(root, relative);
+        const content = await fs.readFile(entry, "utf8");
+        if (!/^---\r?\n[\s\S]*?^name:\s*(?:kim-decision|Kim)\s*$/imu.test(content)) continue;
+        if (relative.startsWith("skills/")) {
+          const contract = JSON.parse(await fs.readFile(await checkedPath(root, "skills/kim-decision/capability.json"), "utf8"));
+          if (contract.schemaVersion !== 1 || contract.id !== "kim-decision" || contract.componentType !== "skill" || contract.entrypoint !== "SKILL.md") continue;
+        }
+        foundPath = root; skillPath = entry; break;
+      } catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code) && !(error instanceof SyntaxError) && error.name !== "AssertionError") throw error; }
+    }
+    if (skillPath) break;
+  }
+  if (!skillPath && !environment.META_KIM_KIM_SERVICE_ROOT) {
+    for (const installed of skillDirs.filter((entry) => entry.id === "kim-decision")) {
+      try {
+        if (!path.isAbsolute(installed.skillRoot)) continue;
+        const stat = await fs.lstat(installed.skillRoot);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+        const realRoot = await fs.realpath(installed.skillRoot);
+        const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
+        if (normalize(realRoot) !== normalize(path.resolve(installed.skillRoot))) continue;
+        const entry = await checkedPath(installed.skillRoot, "SKILL.md");
+        if (/^---\r?\n[\s\S]*?^name:\s*(?:kim-decision|Kim)\s*$/imu.test(await fs.readFile(entry, "utf8"))) {
+          foundPath = installed.skillRoot; skillPath = entry; break;
+        }
+      } catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code) && error.name !== "AssertionError") throw error; }
     }
   }
-  const skillPath = foundPath ? path.join(foundPath, ".agents", "skills", "Kim", "SKILL.md") : null;
-  const hasSkill = skillPath ? await exists(skillPath) : false;
+  const hasSkill = Boolean(skillPath);
   return annotateMissing({
     id: "kim-decision",
     name: "Kim_Decision",
-    source: { type: foundPath ? "local" : "github_or_unknown", uri: "https://github.com/KimYx0207/Kim_Decision", localPath: foundPath ? toPosix(path.relative(repoPath("."), foundPath)) : null, inspectionStatus: foundPath ? "local_inspected_protocol" : "needs_probe" },
+    source: { type: foundPath ? "local" : "github_or_unknown", uri: "https://github.com/KimYx0207/Kim_Service", subdir: "skills/kim-decision", localPath: foundPath ? toPosix(path.relative(projectRoot, foundPath)) : null, inspectionStatus: foundPath ? "local_inspected_protocol" : "needs_probe" },
     sourceType: foundPath ? "local" : "github",
     inspectionStatus: foundPath ? "local_inspected_protocol" : "needs_probe",
     canDo: ["realIntent judgment", "subject path mapping", "evidence labeling", "minimum test", "pass/kill condition", "public-ready intent acceptance review"],
     canNotDo: ["direct code implementation", "code executor", "security approval", "runtime hook install", "MCP server startup", "universal owner"],
     inputContract: { requires: ["decision question", "evidence labels", "constraints"] },
     outputContract: { produces: ["decision rationale", "minimum test", "passSignal", "killSignal"] },
-    invokeAs: hasSkill ? "skill" : "reference",
+    invokeAs: "reference",
     runtimeSupport: Object.fromEntries(RUNTIMES.map((runtime) => [runtime, hasSkill ? "partial" : "unknown"])),
     osSupport: Object.fromEntries(OS_TARGETS.map((target) => [target, foundPath ? "partial" : "unknown"])),
     verificationMethod: hasSkill ? "read installed skill and run dependency compatibility validator" : "probe META_KIM_DEP_ROOTS or installed skill paths",
     risk: ["not_for_code_execution", "requires_owner_weapon_verification_route"],
     reuseScore: hasSkill || foundPath ? 82 : 55,
-    routeEligibility: hasSkill ? "installed_skill_candidate" : foundPath ? "local_inspected_protocol" : "needs_probe",
-    invocationPath: hasSkill ? toPosix(path.relative(repoPath("."), skillPath)) : null,
+    routeEligibility: "reference_only",
+    invocationPath: null,
+    referencePath: hasSkill ? toPosix(path.relative(projectRoot, skillPath)) : null,
+    sourceAvailability: { status: hasSkill ? "verified_local" : "needs_probe", liveVerification: false },
     writebackKey: "dependency:kim-decision-state-machine",
     taskShapes: ["strategy_product_decision", "intent_acceptance", "path_selection"],
     triggerConditions: ["realIntent unclear", "minimum test needed", "pass/kill condition needed"],
@@ -296,7 +333,15 @@ async function discover() {
   const githubUrls = await discoverGithubUrls();
   const mcpServers = await discoverMcpServers();
   const globalManifest = readManifest(manifestPathFor("global"));
+  const kimSource = await kimDecisionRecord({ skillDirs });
   const registryProjects = (registry.projects ?? []).map((project) => annotateMissing(normalizeProject(project)));
+  const declaredKim = registryProjects.find((project) => project.id === "kim-decision");
+  if (declaredKim) {
+    declaredKim.sourceAvailability = kimSource.sourceAvailability;
+    declaredKim.referencePath = kimSource.referencePath;
+    if (kimSource.source.localPath) declaredKim.source = { ...declaredKim.source, localPath: kimSource.source.localPath };
+    // Local presence does not waive the registry's reference-only decision.
+  }
   const manifestProjects = (skills.skills ?? []).map((skill) => {
     const existing = registryProjects.find((project) => project.id === skill.id);
     if (existing) return null;
@@ -338,7 +383,7 @@ async function discover() {
   }).filter(Boolean);
   const dynamicProjects = [];
   if (!registryProjects.some((project) => project.id === "kim-decision")) {
-    dynamicProjects.push(await kimDecisionRecord());
+    dynamicProjects.push(kimSource);
   }
   const discoveredDependencyProjects = [...registryProjects, ...manifestProjects, ...dynamicProjects]
     .map((project) => lifecycleForProject(project, skillDirs, globalManifest))
@@ -390,8 +435,10 @@ function validateIndex(index) {
   if (kim.canNotDo.some((item) => /code executor/i.test(item)) !== true) throw new Error("Kim_Decision must record not_for_code_execution");
 }
 
-const index = await discover();
-await writeJson(outputPath, index);
-if (checkMode) validateIndex(index);
-if (json) console.log(JSON.stringify(index, null, 2));
-else console.log(`Dependency capability index written to ${outputPath}`);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const index = await discover();
+  await writeJson(outputPath, index);
+  if (checkMode) validateIndex(index);
+  if (json) console.log(JSON.stringify(index, null, 2));
+  else console.log(`Dependency capability index written to ${outputPath}`);
+}

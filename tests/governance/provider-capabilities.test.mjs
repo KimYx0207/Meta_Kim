@@ -401,13 +401,16 @@ test("meta-skill-creator is the formal skill creation provider for Claude Code a
 
   const manifestEntry = skills.skills.find((skill) => skill.id === "meta-skill-creator");
   assert.ok(manifestEntry, "meta-skill-creator must be installable from the skills manifest");
-  assert.equal(manifestEntry.repo, "${skillOwner}/meta-skill-creator");
+  assert.equal(manifestEntry.repo, "${skillOwner}/Kim_Service");
   assert.equal(manifestEntry.subdir, "skills/meta-skill-creator");
   assert.deepEqual(manifestEntry.targets, ["claude", "codex"]);
   assert.equal(skills.skills.some((skill) => skill.id === "skill-creator"), false);
 
   const dependency = dependencies.projects.find((project) => project.id === "meta-skill-creator");
   assert.ok(dependency, "meta-skill-creator must be present in the dependency registry");
+  assert.equal(dependency.source.uri, "https://github.com/KimYx0207/Kim_Service");
+  assert.equal(dependency.source.subdir, "skills/meta-skill-creator");
+  assert.ok(dependency.source.history.some((source) => source.uri === "https://github.com/KimYx0207/meta-skill-creator"));
   assert.deepEqual(dependency.interface.requiredRuntime, ["claude_code", "codex"]);
   assert.equal(dependencies.projects.some((project) => project.id === "skill-creator"), false);
 

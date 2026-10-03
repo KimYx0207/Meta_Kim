@@ -726,6 +726,24 @@ function packedCommandResult(overrides = {}) {
   };
 }
 
+test("packed npm bootstrap failure identifies the pre-CLI boundary without leaking npm output", () => {
+  const privateOutput = "ENOTCACHED registry credential must-not-retain";
+  assert.throws(() => requirePackedCommandSuccess(
+    packedCommandResult({ status: 1, stderr: privateOutput }),
+    packedDiagnosticsOptions({ operation: "packed-cli-npm-bootstrap" }),
+  ), (error) => {
+    assert.match(error.message, /npm bootstrap failed before the public CLI ran/);
+    assert.match(error.message, /preseeded dependencies for offline verification/);
+    assert.equal(error.boundedDiagnostics.operation, "packed-cli-npm-bootstrap");
+    assert.equal(error.boundedDiagnostics.exitCode, 1);
+    assert.equal(error.boundedDiagnostics.stderrChars, privateOutput.length);
+    assert.equal(JSON.stringify({ message: error.message, ...error }).includes(privateOutput), false);
+    return true;
+  });
+  const bootstrap = acceptanceFunctionSource("installPackedCli", "canonicalAgentIds");
+  assert.ok(bootstrap.includes("requirePackedCommandSuccess(installed"));
+});
+
 function assertSafePackedError(
   error,
   expectedMessage,

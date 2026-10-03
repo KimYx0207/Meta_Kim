@@ -53,16 +53,16 @@ describe("install platform config", () => {
     );
   });
 
-  test("findskill uses windows subdir on Windows", () => {
+  test("findskill uses the Service component on Windows and retains its historical helper", () => {
     assert.equal(findskillPackSubdirForPlatform("win32"), "windows");
-    assert.equal(resolveManifestSkillSubdir(findskillSkill, "win32"), "windows");
+    assert.equal(resolveManifestSkillSubdir(findskillSkill, "win32"), "skills/find-skill");
   });
 
-  test("findskill uses original subdir on macOS and Linux", () => {
+  test("findskill uses the same Service component on macOS and Linux", () => {
     assert.equal(findskillPackSubdirForPlatform("darwin"), "original");
     assert.equal(findskillPackSubdirForPlatform("linux"), "original");
-    assert.equal(resolveManifestSkillSubdir(findskillSkill, "darwin"), "original");
-    assert.equal(resolveManifestSkillSubdir(findskillSkill, "linux"), "original");
+    assert.equal(resolveManifestSkillSubdir(findskillSkill, "darwin"), "skills/find-skill");
+    assert.equal(resolveManifestSkillSubdir(findskillSkill, "linux"), "skills/find-skill");
   });
 
   test("HookPrompt declares global-capable Codex and Cursor adapters", () => {
