@@ -3599,8 +3599,8 @@ function buildDecisionCard() {
     };
   }
   const options = rankedRoutes
+    .filter((route) => route?.id && route.score >= 70 && !(route.blockedReasons?.length))
     .slice(0, 3)
-    .filter((route) => route?.id)
     .map((route) => ({
       id: route.id,
       bestFor: route.scoreBand,

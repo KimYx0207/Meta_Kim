@@ -2165,11 +2165,16 @@ function validatePreDecisionOptionFrame(contract, artifact) {
   const challenge = packet.planChallengeState;
   // A pending understanding/permission question is not a request to choose
   // implementation routes. Preserve its separate gate without filler paths.
-  const routeChoiceRequired = packet.requiresUserChoice && (!challenge?.active ||
-    packet.unresolvedQuestions.some((question) => question.status === "open" &&
-      question.questionId === "plan-challenge-route-selection"));
+  const routeChoiceRequired = packet.unresolvedQuestions.some((question) =>
+    question.status === "open" && question.questionId === "plan-challenge-route-selection") ||
+    (packet.requiresUserChoice && !challenge?.active);
+  const blockedNonRouteChallenge = challenge?.active === true &&
+    challenge.executionAllowed === false && artifact.status !== "pass" &&
+    artifact.coreLoop?.executionResult?.executionAllowed === false &&
+    artifact.coreLoop?.executionResult?.executionGate === "blocked_by_plan_challenge" &&
+    !routeChoiceRequired;
   ensure(
-    packet.candidateOptions.length >= (routeChoiceRequired ? 2 : 1),
+    packet.candidateOptions.length >= (routeChoiceRequired ? 2 : blockedNonRouteChallenge ? 0 : 1),
     "preDecisionOptionFrame.candidateOptions must include a viable path and at least two paths for a required route choice.",
   );
   for (const [index, option] of packet.candidateOptions.entries()) {

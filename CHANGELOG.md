@@ -8,7 +8,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
-## [3.3.0] - 2026-10-02
+## [3.3.0] - 2026-10-03
 
 ### Added
 
