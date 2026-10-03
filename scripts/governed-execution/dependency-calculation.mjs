@@ -71,7 +71,9 @@ export async function runDependencyCalculation({ task, inputJson, dependencyRoot
     weights: materials.weights ?? null, scope: "compare_supplied_materials_only", permitsContactOrPurchase: false };
   const selectedRoute = { owner: policy.ownerId, entryPath: route.entryClassification.path,
     source: "existing_execution_route", sourceContentSha256: sourceHash, toolId: tool.id };
-  const missing = tool.requiredMaterials.filter((key) => !Object.hasOwn(materials, key));
+  const missing = tool.requiredMaterials.filter((key) => !Object.hasOwn(materials, key)
+    || materials[key] == null || (typeof materials[key] === "string" && !materials[key].trim())
+    || (Array.isArray(materials[key]) && materials[key].length === 0));
   if (missing.length) return result("needs_input", { binding, brief, route: selectedRoute, missing,
     questions: [`请补充${missing.map((key) => fieldLabels[key] ?? key).join("、")}；不需要为了核算先设置权重。`] });
   // Material comparison does not inherit unrelated native choice, dispatch or

@@ -68,6 +68,18 @@ test("only missing essential materials ask one useful question; missing fees rem
   assert.match(partial.delivery, /待确认/); assert.equal(partial.receipt.ranking, null);
 });
 
+test("absent or empty candidate quotes ask once before invoking Python", sourceOptions, async () => {
+  for (const quotes of [undefined, null, []]) {
+    const input = JSON.parse(inputJson());
+    if (quotes === undefined) delete input.quotes;
+    else input.quotes = quotes;
+    const pending = await run({ inputJson: JSON.stringify(input) });
+    assert.equal(pending.status, "needs_input"); assert.equal(pending.toolInvoked, false);
+    assert.deepEqual(pending.missing, ["quotes"]); assert.equal(pending.questions.length, 1);
+    assert.match(pending.questions[0], /候选报价/);
+  }
+});
+
 test("original JSON duplicate keys reach the strict helper and cannot become a successful receipt", sourceOptions, async () => {
   const raw = inputJson().replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1');
   const invalid = await run({ inputJson: raw });
