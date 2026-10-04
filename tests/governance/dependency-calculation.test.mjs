@@ -188,7 +188,9 @@ test("self-consistent regenerated dependency indexes cannot authorize changed sc
 });
 
 test("legacy helper contracts remain discoverable but never bypass missing reviewed delivery support", sourceOptions, async (t) => {
-  const copy = fs.mkdtempSync(path.join(os.tmpdir(), "meta-kim-legacy-delivery-"));
+  // The production boundary requires a canonical explicit dependency root.
+  // macOS /var and Windows short temporary paths can otherwise fail earlier.
+  const copy = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "meta-kim-legacy-delivery-")));
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
   fs.cpSync(path.join(dependencyRoot, "agents"), path.join(copy, "agents"), { recursive: true });
   fs.mkdirSync(path.join(copy, "generated"));

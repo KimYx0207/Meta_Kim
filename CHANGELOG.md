@@ -18,7 +18,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 ### Verification scope
 
 - Thirty-six local cross-repository tests passed using actual Python helpers, MCP transport and the formal task handoff. Independent review covered unchanged receipts, malformed and missing materials, source drift, Unicode and input/output boundaries. These checks do not certify an autonomous native Agent or model chain.
-- Full packed install/update acceptance is still pending: the cloud probe detects the official Claude CLI but fails to bind its executable during installation. No full release-grade or native-host acceptance is claimed.
+- Real packed global install, update, repeated update, project install and project update passed using the official Claude CLI. The complete gate remains pending because this cloud checkout lacks the exact ten Claude Code/Codex interactive-host observation records; no full release-grade or native model-chain acceptance is claimed.
 - The broader local governance run recorded 826 passes, 29 explicit skips and four project-root-test failures caused by a pre-existing managed `.git` ancestor in the cloud temporary directory. Remote CI and release evidence must be reported separately; this is not a full-green local claim.
 
 
