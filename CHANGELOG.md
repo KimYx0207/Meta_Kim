@@ -8,6 +8,16 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.4.2] - 2026-10-04
+
+### Fixed
+
+- **Qualified purchase nouns stay analysis requests.** The coordinated-purchase repair could treat phrases such as "The purchase and payment terms need explanation" or "Our order and payment records need review" as financial commitments. Configured nominal prefixes now cover these qualified noun phrases and the reported purchase-and-sales-data context, without suppressing a later explicit purchase or payment. "Purchase data" and "Buy sales data" remain actionable purchase requests.
+
+### Verification scope
+
+- Focused synthetic regressions retain both sides of the boundary: the reported noun phrases avoid unnecessary authorization, while coordinated financial actions and explicit side-effect declarations keep their authorization requirement. No transaction is executed. The original 3.4.1 tag and the previously disclosed native-host limits remain unchanged.
+
 ## [3.4.1] - 2026-10-04
 
 ### Fixed
