@@ -311,20 +311,14 @@ Meta_Kim 现在把平台支持分成几层，而不是把所有“看起来兼�
 
 ---
 
-### 用现有报价和店铺指标完成核算
+### 调用已审核的外部计算能力
 
-包含 `calculate_materials` 的 Meta MCP 可以沿既有路由选择 Kim_Service 采购或店铺复盘角色，再执行它的已审固定 Python 计算器，返回需求摘要、实际计算回执和可读结果。先把 MCP 环境的 `META_KIM_KIM_SERVICE_ROOT` 指向已有 Kim_Service checkout，或由宿主传入工具参数 `dependencyRoot`；不需要重复安装旧独立仓。
+`calculate_materials` 保留 `task`、`inputJson`、`dependencyRoot` 参数，沿现有能力路由调用 Kim_Service 中已审核的只读能力。将 `META_KIM_KIM_SERVICE_ROOT` 绑定到已有 checkout；生成的 MCP 配置会绑定真实宿主 `META_KIM_RUNTIME_FAMILY`，宿主未知或路由不满足时停止。
 
-正常同步/安装会在其生成的 MCP 定义中自动把 `META_KIM_RUNTIME_FAMILY` 绑定到真实宿主；手工接入 MCP 时才需显式配置真实宿主（`codex`、`claude`/`claude_code`、`cursor` 或 `openclaw`）。宿主未知时停止执行；工具不默认认作 Codex，也不接受调用参数伪造宿主。正常安装/更新会刷新能力发现。发现记录缺失或过期、能力不支持及其他路由阻断会说明原因并停止执行，需先刷新或修复该路由。
+Meta 负责需求、能力来源、权限、固定入口调用和通用回执完整性；Service 负责专业输入字段、材料补问、业务结果校验和报告。具体输入与输出见所选组件的 `calculation-tool.json`、`delivery-tool.json` 和 `docs/`，不在框架重复维护行业规则。计算器原有 `--input-json -` CLI 与旧计算合同保持可读；完整专业交付需要带已审交付合同的 Service 版本，旧依赖不会被静默当作已升级。
 
-复合请求可能被规划为并行任务；若并行安全边界尚未明确，计算器会保留该阻断，由宿主先明确任务范围和路由后再执行。
-早先的英文长句“Compare these supplier quotes and calculate landed cost and excess quantity; use the supplied constraints and do not place an order.”目前会被选择器以 `parallel_lane_safety_not_proven` 阻断，不能作为可执行成功样例。
+合同、入口及全部执行文件均经独立哈希审核后复制到临时快照，以固定参数执行；依赖声明本身不授予执行权。没有来源或路由证据时不运行。`Read` 角色权限不变，不增加任何外部行动权限。`completed` 只表示本次给定材料处理完成，宿主仍须核对用户目标与结果；本地计算与 MCP 回放不等于模型语义或原生 Agent 验收。
 
-提供本次报价材料后，可以说：“帮我比较这几家供应商，算 120 个同规格纸袋的总支出和超购，8 天内到货，不下单。”宿主把原句放入 `task`，把明确提供的材料按 Service 包内 `docs/tool-api.md` 放入 `inputJson`。缺数量、币种、规格或报价才补问必要材料；没有权重就逐项比较，费用未知不当零。
-
-说“帮我复盘这周店铺数据”时，宿主按 `store-performance-analyst/docs/examples.md` 传 `schemaVersion:1` 和期间/SKU/渠道指标 `rows`。电商输入最多65536个UTF-8字节，采购最多262144字节；缺指标行只问实际数据，不问用户内部schema版本。`definitions` 和 `comparison` 可缺：未知成本不填零，口径缺失或冲突保留各行指标，拒绝跨期变化与收入分解。既有 `--calculation-materials` / `--execute-stage-dag` 入口把完整材料与实际receipt交给所选AGENT.md的输出合同；Python不可用时只能明确未核算的材料内分析。
-
-该工具只核算材料，不联系供应商、下单、付款、登录店铺后台或投放。源合同和脚本须通过独立哈希核验；`Read` 角色权限不变。`completed` 仅指给定 JSON 核算完成，宿主仍须核对原句与材料；固定请求与真实 MCP/Python 回放不等于模型语义或原生 Agent 验收。
 
 ## 联系方式
 

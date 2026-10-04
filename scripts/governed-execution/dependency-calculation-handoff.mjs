@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { loadDependencyAgentMethod } from "../dependency-agent-discovery.mjs";
-import { runDependencyCalculation, MAX_CALCULATION_INPUT_BYTES, calculationIssues } from "./dependency-calculation.mjs";
+import { runDependencyCalculation, MAX_CALCULATION_INPUT_BYTES } from "./dependency-calculation.mjs";
 
 export const MAX_CALCULATION_HANDOFF_BYTES = 524288;
 const observations = new WeakMap();
@@ -83,7 +83,7 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
     toolInvoked: calculation.toolInvoked, questions: calculation.questions ?? [], missing: calculation.missing ?? [],
     receiptStatus: calculation.receipt?.status ?? null,
     receiptSha256: calculation.receipt ? digest(JSON.stringify(calculation.receipt)) : null,
-    issues: calculationIssues(calculation.receipt),
+    issues: calculation.issues ?? [],
     ...(calculation.maxBytes ? { maxBytes: calculation.maxBytes } : {}),
     execution: calculation.execution ?? null,
     observationScope: "current_invocation",
@@ -92,9 +92,9 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
       calculation.binding?.requestSha256 !== request.binding.requestSha256 || calculation.binding?.inputSha256 !== request.binding.inputSha256) {
     return { summary: { ...publicSummary, status: "blocked", code: "calculation_source_or_binding_rejected" }, handoff: null };
   }
-  const conflicts = [...new Set(publicSummary.issues.filter((issue) => issue.code === "definition_conflict").map((issue) => issue.field))];
-  if (calculation.route.toolId === "supplier-comparison-calculate" && conflicts.length) return { summary: { ...publicSummary, status: "needs_input", code: "calculation_definition_conflict",
-    questions: [`请确认候选报价的${conflicts.map((field) => ({ currency: "币种", specification: "规格与单位", qualityDefinition: "质量评分定义" })[field] ?? field).join("、")}采用什么统一口径；当前不作横向排名。`] }, handoff: null };
+  if (["completed", "partial"].includes(calculation.status) && calculation.handoff && calculation.handoff.status !== "ready") return {
+    summary: { ...publicSummary, status: calculation.handoff.status,
+      code: calculation.handoff.code, questions: calculation.handoff.questions }, handoff: null };
   // A process launch failure permits explicitly uncomputed material analysis.
   // Source failures, receipt failures, missing inputs and invalid inputs do not.
   if (!["completed", "partial"].includes(calculation.status) && calculation.code !== "calculation_process_failed") {
