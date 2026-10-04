@@ -264,6 +264,75 @@ describe("57 - risk-adaptive plan challenge", () => {
     }
   });
 
+  test("coordinated purchase verbs retain the authorization boundary", () => {
+    for (const task of [
+      "Purchase and install the annual plan",
+      "Buy and install this software for us",
+      "Buy or rent this software for us",
+      "Purchase or install the annual plan",
+      "Procure and install the annual plan",
+      "Order and install the annual plan",
+      "Pay and install the annual plan",
+      "Subscribe and install the annual plan",
+    ]) {
+      const { planChallengeState: state } = build(task);
+      assert.ok(state.sideEffectActions.includes("purchase_commitment"), task);
+      assert.equal(state.active, true, task);
+      assert.equal(state.authorizationRequired, true, task);
+      assert.equal(state.executionAllowed, false, task);
+    }
+  });
+
+  test("coordinated purchase nouns and complete term explanations remain nonexecuting", () => {
+    for (const task of [
+      "Purchase and payment terms need explanation.",
+      "Purchase or subscription options need comparison.",
+      "Order and payment records need review.",
+      "Purchase and order terms need explanation.",
+      "Explain the words purchase and pay in this sentence.",
+      "Define the terms purchase or pay in this context.",
+      "Describe the terms order and pay in this text.",
+      "Explain the meanings of purchase and pay in this sentence.",
+      "Explain what purchase and pay mean",
+      "What do purchase and pay mean?",
+    ]) {
+      const { planChallengeState: state } = build(task);
+      assert.equal(state.authorizationRequired, false, task);
+      assert.deepEqual(state.sideEffectActions, [], task);
+    }
+  });
+
+  test("purchase explanations cannot consume subsequent commitments or override explicit scope", () => {
+    for (const task of [
+      "Explain the words purchase and pay in this sentence, then purchase the annual plan",
+      "Explain the words purchase and pay in this sentence and then purchase the annual plan",
+      "Explain the words purchase and pay in this sentence and please pay the supplier",
+      "Explain what purchase and pay mean and then buy the annual plan",
+      "What do purchase and pay mean? Then pay the supplier",
+      "Purchase and payment terms need explanation and purchase the annual plan",
+      "Compare procurement quotes and please place the order",
+    ]) {
+      const { planChallengeState: state } = build(task);
+      assert.ok(state.sideEffectActions.includes("purchase_commitment"), task);
+      assert.equal(state.authorizationRequired, true, task);
+      assert.equal(state.executionAllowed, false, task);
+    }
+    const { planChallengeState: explicit } = build(
+      "Explain the words purchase and pay in this sentence.",
+      { requestedSideEffectActions: ["purchase_commitment"] },
+    );
+    assert.equal(explicit.authorizationRequired, true);
+    for (const task of [
+      "Do not purchase and install the annual plan",
+      "Never buy or rent this software for us",
+      "Never purchase nor install the annual plan",
+    ]) {
+      const { planChallengeState: state } = build(task);
+      assert.equal(state.authorizationRequired, false, task);
+      assert.equal(state.sideEffectActions.includes("purchase_commitment"), false, task);
+    }
+  });
+
   test("purchase scope boundaries preserve unrelated coordinated prohibitions", () => {
     for (const task of [
       "do not deploy and publish the app",
