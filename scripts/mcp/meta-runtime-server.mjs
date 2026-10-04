@@ -420,7 +420,7 @@ server.registerResource(
 server.registerTool(
   "calculate_materials",
   {
-    description: "按用户原始需求和明确提供的 JSON 材料，通过既有 Meta 路由调用 Kim_Service 已审查的只读计算器。目前支持采购供应商的包数、MOQ、到货成本、交期约束与用户权重。不要把示例当用户事实；不联系供应商或下单。不要求默认权重，不声称原生 Agent 或模型语义验收。",
+    description: "按用户原始需求和明确提供的 JSON 材料，通过既有 Meta 路由调用 Kim_Service 已审查的只读计算器。支持采购包数、MOQ、到货成本、交期约束与用户权重（最多262144字节），以及店铺period/sku/channel指标行、退款净收入、所列成本贡献和可比期间算术分解（最多65536字节，schemaVersion:1、rows必填，definitions/comparison可缺）。未知成本不填零，口径冲突仅保留各期指标，不跨期比较或归因。不要把示例当用户事实；不联系供应商、下单、登录后台或投放。不要求默认权重，不声称原生 Agent 或模型语义验收。",
     inputSchema: { task: z.string().min(1).max(6000), inputJson: z.string().max(262144),
       dependencyRoot: z.string().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

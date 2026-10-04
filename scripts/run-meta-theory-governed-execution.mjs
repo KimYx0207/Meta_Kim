@@ -20,6 +20,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
+import { prepareDependencyCalculationInput, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
 import {
   openRunStateStore,
 } from "./capability-gap-mvp.mjs";
@@ -11057,7 +11058,7 @@ async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "wi
   }
 }
 
-async function selectExecutionRoute({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null }) {
+async function selectExecutionRoute({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const args = selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest });
@@ -11067,11 +11068,12 @@ async function selectExecutionRoute({ task, runtime = "codex", os = "windows", r
     {
       cwd: REPO_ROOT,
       encoding: "utf8",
-      env: process.env,
+      env: environment,
       maxBuffer: 20 * 1024 * 1024,
     },
   );
   if (result.error) {
+    if (environment !== process.env) throw new Error("Bound dependency route process unavailable; in-process fallback cannot substitute a different source environment.", { cause: result.error });
     return selectExecutionRouteInProcess({
       task,
       runtime: routeRuntime,
@@ -11282,13 +11284,17 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
     const taskPacketId = `${runId}-${lane.laneId ?? `route-${index + 1}`}`;
     const roleDisplayName = lane.roleDisplayName ?? draft.roleDisplayName ?? "operations";
     const ownerAgent = lane.ownerAgent ?? draft.ownerAgent ?? route?.owner ?? "meta-conductor";
+    const selectedOwner = [route?.selectedCapabilityProviders?.agent]
+      .find((provider) => provider?.id === ownerAgent && provider?.ownerContract);
     const ownerSource =
+      selectedOwner?.source ??
       lane.ownerSource ??
       draft.codexSpawnBinding?.ownerSource ??
       draft.ownerSource ??
       route?.ownerBinding?.source ??
       "owner_source_unresolved";
     const ownerSourceRef =
+      selectedOwner?.sourceRef ??
       lane.sourceRef ??
       draft.codexSpawnBinding?.sourceRef ??
       draft.sourceRef ??
@@ -11314,6 +11320,7 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
       ownerAgent,
       ownerSource,
       ownerSourceRef,
+      ownerContract: selectedOwner?.ownerContract ?? lane.ownerContract ?? draft.ownerContract ?? null,
       ownerKind,
       ownerBindingMode,
       nativeAgentType,
@@ -11426,13 +11433,13 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, localToolRequest = null }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, localToolRequest = null, environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
   const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
     ? intentDialogue?.deliveryStrategy ?? null : null;
-  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest });
+  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, environment });
   routeResult.intentBinding = intentDialogue;
   const route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
@@ -11630,6 +11637,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   task,
   confirmedIntent = null,
   localToolInput = null,
+  dependencyCalculationInput = null,
   planChallengeResponses = [],
   planChallengeControl = null,
   sharedUnderstandingConfirmed = null,
@@ -11679,6 +11687,12 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const confirmedIntentSnapshot = confirmedIntent == null ? null : structuredClone(confirmedIntent);
   const understandingSnapshot = sharedUnderstandingConfirmed == null ? null : structuredClone(sharedUnderstandingConfirmed);
   const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
+  const calculationRequest = prepareDependencyCalculationInput({ input: dependencyCalculationInput, task: normalizedTask,
+    intentDigest: intentDialogue.intentDigest ?? null });
+  const calculationEnvironment = calculationRequest?.dependencyRoot
+    ? { ...process.env, META_KIM_KIM_SERVICE_ROOT: calculationRequest.dependencyRoot } : process.env;
+  let dependencyCalculationPacket = calculationRequest?.summary ?? null;
+  let dependencyCalculationHandoff = null;
   const localToolRequest = prepareLocalToolRequest({ task: normalizedTask, dialogue: intentDialogue, localToolInput });
   // A read-only scan must not create state, databases, artifacts or project
   // capabilities in its target before the worker takes the source snapshot.
@@ -11703,7 +11717,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const boundChallengeResponses = (Array.isArray(planChallengeResponses) ? planChallengeResponses : []).filter((response) =>
     response?.taskHash === intentDialogue.taskHash && (response.intentDigest ?? null) === (intentDialogue.intentDigest ?? null));
   const dialogueTask = intentDialogue.status === "host_provided_understanding" ? intentDialogue.routeTask : normalizedTask;
-  const taskFingerprint = stableId("task", normalizedTask);
+  const taskFingerprint = stableId("task", calculationRequest
+    ? JSON.stringify([normalizedTask, calculationRequest.summary, runtime, osTarget, stageRunner?.runtime ?? runtime]) : normalizedTask);
   const durableStageRunnerEnabled = stageRunner?.enabled === true;
   const durableMode = durableStageRunnerEnabled ? (stageRunner.durableMode ?? "fresh") : null;
   if (durableStageRunnerEnabled && !["fresh", "resume"].includes(durableMode)) {
@@ -11813,7 +11828,13 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       dbPath,
       durableDbPath,
     });
-    if (materialized) return materialized;
+    if (materialized) {
+      if (materialized.dependencyCalculationPacket) materialized.dependencyCalculationPacket = {
+        ...materialized.dependencyCalculationPacket, observationScope: "historical_materialized_run",
+        priorToolInvoked: materialized.dependencyCalculationPacket.toolInvoked, toolInvoked: false,
+      };
+      return materialized;
+    }
   } else if (durableMode === "fresh") {
     await reserveExplicitRunId(reservationPath, {
       runId: effectiveRunId,
@@ -11870,6 +11891,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     codexHostToolSchema,
     intentDialogue,
     localToolRequest,
+    environment: calculationEnvironment,
   });
   planChallengePreview = buildPlanChallengeState({
     task: dialogueTask,
@@ -12179,7 +12201,20 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       routeExecutionGate.canHandoffToHost === true &&
       routeExecutionGate.handoffStatus === "ready_for_host_handoff" &&
       routeExecutionGate.hostAction === "host_action_required" && localToolRequest.applies !== true);
-    if (!planChallengeHandoffReady || !routeGateAllowsBridge) {
+    if (calculationRequest && planChallengeHandoffReady && routeGateAllowsBridge && calculationRequest.summary.status === "prepared") {
+      if (normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime) !== normalizeStageRunnerRuntime(routeRuntime)) {
+        dependencyCalculationPacket = { ...calculationRequest.summary, status: "blocked", code: "calculation_runtime_binding_rejected" };
+      } else {
+        const prepared = await prepareDependencyCalculationHandoff({ request: calculationRequest, runId: effectiveRunId,
+          runtime: routeRuntime, osTarget: routeOs, route: orchestrationReport.selectedExecutionRoute,
+          workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets, environment: calculationEnvironment });
+        dependencyCalculationPacket = prepared.summary;
+        dependencyCalculationHandoff = prepared.handoff;
+      }
+    } else if (calculationRequest && (!planChallengeHandoffReady || !routeGateAllowsBridge)) {
+      dependencyCalculationPacket = { ...calculationRequest.summary, status: "blocked", code: "calculation_existing_gate_blocked" };
+    }
+    if (!planChallengeHandoffReady || !routeGateAllowsBridge || (calculationRequest && !dependencyCalculationHandoff)) {
       const planChallengeBlocked = !planChallengeHandoffReady;
       coreLoop = {
         ...coreLoop,
@@ -12196,9 +12231,13 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           failure: {
             failureClass: planChallengeBlocked
               ? "plan_challenge_execution_not_authorized"
+              : routeGateAllowsBridge && calculationRequest
+                ? dependencyCalculationPacket.code ?? `calculation_${dependencyCalculationPacket.status}`
               : "route_gate_host_native_execution_required",
             reason: planChallengeBlocked
               ? "The plan challenge is still awaiting a real host-native decision."
+              : routeGateAllowsBridge && calculationRequest
+                ? `Calculation handoff stopped: ${dependencyCalculationPacket.code ?? dependencyCalculationPacket.status}.`
               : "The route gate is not ready for the explicitly requested read-only host bridge handoff.",
           },
           nodeRecords: [],
@@ -12254,6 +12293,16 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           });
         }
       }
+      const routeHandoffEvidence = {
+        routeCompatible: routeExecutionGate.routeCompatible === true,
+        canHandoffToHost: routeExecutionGate.canHandoffToHost === true,
+        handoffStatus: routeExecutionGate.handoffStatus,
+        hostAction: routeExecutionGate.hostAction,
+        executionAuthorized: false,
+        authority: routeExecutionGate.authorizationOwner ?? "current_host_native_surfaces_and_permissions",
+        localToolExecutionGate: localToolBridgeEligible ? { ...localToolGate, selectedCapability: localToolGate.selectedCapability.id,
+          authority: "reviewed_local_read_only_contract_bound_to_confirmed_scope", grantsNativePermission: false } : null,
+      };
       const bridgeResult = await runStageRunnerBridge({
         runId: effectiveRunId,
         runtime: stageRunner.runtime ?? routeRuntime,
@@ -12261,6 +12310,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets,
         workspaceRoot: path.resolve(projectRoot),
         requestTask: normalizedTask,
+        dependencyCalculationHandoff,
+        routeHandoffEvidence: localToolBridgeEligible ? null : routeHandoffEvidence,
+        workerEnv: calculationEnvironment,
         capacity: stageRunner.capacity ?? null,
         timeoutMs: stageRunner.timeoutMs ?? 300_000,
         invokeWorker: localToolBridgeEligible ? invokeLocalDependencyToolWorker : stageRunner.invokeWorker,
@@ -12282,20 +12334,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
             }
           : null,
       });
-      const routeHandoffEvidence = {
-        routeCompatible: routeExecutionGate.routeCompatible === true,
-        canHandoffToHost: routeExecutionGate.canHandoffToHost === true,
-        handoffStatus: routeExecutionGate.handoffStatus,
-        hostAction: routeExecutionGate.hostAction,
-        executionAuthorized: false,
-        authority: routeExecutionGate.authorizationOwner ?? "current_host_native_surfaces_and_permissions",
-        localToolExecutionGate: localToolBridgeEligible ? { ...localToolGate, selectedCapability: localToolGate.selectedCapability.id,
-          authority: "reviewed_local_read_only_contract_bound_to_confirmed_scope", grantsNativePermission: false } : null,
-      };
       // The local bridge's whole-object digest is immutable. Keep this runner
       // handoff record outside that observed object instead of weakening it.
       if (localToolBridgeEligible) coreLoop = { ...coreLoop, localToolRouteHandoffPacket: routeHandoffEvidence };
-      else bridgeResult.routeHandoffEvidence = routeHandoffEvidence;
       coreLoop = applyStageRunnerBridgeResult(coreLoop, bridgeResult);
       if (localToolBridgeEligible) {
         coreLoop = { ...coreLoop, traceEvalControlPlane: { ...coreLoop.traceEvalControlPlane,
@@ -12552,6 +12593,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     conductorConsumptionEvidence: coreLoop.conductorConsumptionEvidence,
     traceEvalControlPlane: coreLoop.traceEvalControlPlane,
     stageRunnerBridgePacket: coreLoop.stageRunnerBridgePacket ?? null,
+    dependencyCalculationPacket,
     agUiStageEvents: coreLoop.agUiStageEvents,
     performanceCostBudget: coreLoop.performanceCostBudget,
     contextEngineeringBudget: coreLoop.contextEngineeringBudget,
@@ -12939,6 +12981,7 @@ function positionalTask(fallback = null) {
         "--native-choice-evidence",
         "--confirmed-intent",
         "--local-tool-input",
+        "--calculation-materials",
         "--codex-host-tool-schema",
         "--runtime",
         "--os",
@@ -12979,6 +13022,7 @@ function rawPositionals() {
         "--native-choice-evidence",
         "--confirmed-intent",
         "--local-tool-input",
+        "--calculation-materials",
         "--codex-host-tool-schema",
         "--runtime",
         "--os",
@@ -13002,6 +13046,7 @@ function rawPositionals() {
 
 async function main() {
   if (process.argv.includes("--help")) {
+    process.stdout.write("Calculation handoff: --calculation-materials <utf8-json-file> supplies complete materials (procurement max 262144 bytes; store rows max 65536 bytes with schemaVersion:1 and required rows, optional definitions/comparison); configure META_KIM_KIM_SERVICE_ROOT for the reviewed dependency. Add --execute-stage-dag for the existing read-only worker bridge. The selected AGENT.md determines the output contract; store definition conflicts retain row metrics without cross-period comparisons or attribution. Materials alone do not execute tools or models, waive route/choice gates, or establish a native invocation. The public API accepts dependencyCalculationInput={inputJson,dependencyRoot?}; request/intent/owner bindings are created internally.\n\n");
     process.stdout.write("Usage: node scripts/run-meta-theory-governed-execution.mjs --task <request> [--confirmed-intent <json-file>] [--local-tool-input <json-file>] [--execute-stage-dag]\n\n--local-tool-input binds {taskHash,intentDigest,input:{schemaVersion:1,workspaceRoot,target,rules?}}. It is planning input, not an execution flag or a native Permission grant. --execute-stage-dag requests execution through the existing bridge; confirmed host understanding, exact authorized scope and the reviewed local contract remain required. Caller-supplied CLI intent JSON remains advisory. A host may call the public runMetaTheoryGovernedExecution API with its existing confirmed understanding; the built-in local worker is then selected automatically without a callback. Local receipts do not prove native/model invocation or complete source security.\n");
     return;
   }
@@ -13102,12 +13147,21 @@ async function main() {
   const confirmedIntentPath = argValue("--confirmed-intent", null);
   const localToolInputPath = argValue("--local-tool-input", null);
   const localToolInput = localToolInputPath ? JSON.parse(await fs.readFile(path.resolve(localToolInputPath), "utf8")) : null;
+  const calculationMaterialsPath = argValue("--calculation-materials", null);
+  const dependencyCalculationInput = calculationMaterialsPath
+    ? await readDependencyCalculationInputFile(path.resolve(calculationMaterialsPath)) : null;
+  if (dependencyCalculationInput?.error) {
+    process.stdout.write(`${JSON.stringify({ status: "invalid_input", dependencyCalculationPacket: dependencyCalculationInput.error })}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const confirmedIntent = confirmedIntentPath ? JSON.parse(await fs.readFile(path.resolve(confirmedIntentPath), "utf8")) : null;
   // CLI JSON remains advisory; it cannot supply the host-only understanding boundary.
   const report = await runMetaTheoryGovernedExecution({
     task,
     confirmedIntent,
     localToolInput,
+    dependencyCalculationInput,
     runId: runIdArg ?? (taskArg ? null : positional[1] ?? null),
     allowOverwrite: process.argv.includes("--overwrite-run"),
     cliOutputLanguage,
@@ -13203,6 +13257,7 @@ async function main() {
         projectCustomization: report.projectCustomizationPacket.status,
         projectCapabilityWrites:
           report.projectCustomizationPacket.execution?.appliedCount ?? 0,
+        dependencyCalculation: report.dependencyCalculationPacket,
         stageRunner:
           report.stageRunnerBridgePacket == null
             ? null

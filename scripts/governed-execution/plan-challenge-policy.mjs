@@ -20,13 +20,34 @@ function stripConfiguredQuotedSpans(text) {
   );
 }
 
-function configuredClauses(text) {
+function configuredClauses(text, splitPattern = ACTION_INTENT_CONFIG.clauseSplitPattern ?? "[\\n]+") {
   const withoutQuotedSpans = stripConfiguredQuotedSpans(text);
-  const splitPattern = ACTION_INTENT_CONFIG.clauseSplitPattern ?? "[\\n]+";
   return withoutQuotedSpans
     .split(new RegExp(splitPattern, ACTION_INTENT_REGEX_FLAGS))
     .map((clause) => clause.trim())
     .filter(Boolean);
+}
+
+function matchesActionIntent(clause, rule) {
+  if (!rule.scopeEachMatch) {
+    return matchesConfiguredPattern(clause, rule.patterns) &&
+      !matchesConfiguredPattern(clause, rule.negationPatterns);
+  }
+  if (matchesConfiguredPattern(clause, rule.nonExecutionContextPatterns) ||
+      matchesConfiguredPattern(clause, rule.nominalClausePatterns)) return false;
+  const matches = (rule.patterns ?? []).flatMap((pattern) =>
+    [...clause.matchAll(new RegExp(pattern, `${ACTION_INTENT_REGEX_FLAGS}g`))],
+  ).sort((left, right) => left.index - right.index);
+  let priorNegated = false;
+  return matches.some((match, index) => {
+    // A preceding action's negation cannot erase a later affirmative action.
+    const start = index === 0 ? 0 : matches[index - 1].index + matches[index - 1][0].length;
+    const context = clause.slice(start, match.index + match[0].length);
+    const prefix = clause.slice(start, match.index);
+    priorNegated = matchesConfiguredPattern(context, rule.negationPatterns) ||
+      (priorNegated && matchesConfiguredPattern(prefix, rule.negationContinuationPatterns));
+    return !priorNegated;
+  });
 }
 
 const PLAN_CHALLENGE_QUESTION_STATUSES = new Set([
@@ -50,7 +71,7 @@ function trustedContradictionEvidence(items) {
 function classifyPlanChallengeActions(task, requestedSideEffectActions = []) {
   const text = String(task ?? "");
   const clauses = configuredClauses(text);
-  const clauseContexts = clauses.map((clause) => ({
+  const clauseContext = (clause) => ({
     clause,
     readOnly: matchesConfiguredPattern(clause, ACTION_INTENT_CONFIG.readOnlyPatterns),
     documentationOnly:
@@ -63,7 +84,8 @@ function classifyPlanChallengeActions(task, requestedSideEffectActions = []) {
       clause,
       ACTION_INTENT_CONFIG.nonExecutionContextPatterns,
     ),
-  }));
+  });
+  const clauseContexts = clauses.map(clauseContext);
   const explicitlyReadOnly =
     clauseContexts.length > 0 &&
     clauseContexts.every((context) => context.readOnly || context.nonExecutionContext);
@@ -80,23 +102,22 @@ function classifyPlanChallengeActions(task, requestedSideEffectActions = []) {
       .map((action) => String(action).trim())
       .filter(Boolean),
   );
-  if (!explicitlyReadOnly) {
-    for (const context of clauseContexts) {
+  const hasExplicitActions = actions.size > 0;
+  for (const rule of ACTION_INTENT_CONFIG.actions ?? []) {
+    const contexts = rule.clauseSplitPattern
+      ? clauses.flatMap((clause) => configuredClauses(clause, rule.clauseSplitPattern)).map(clauseContext)
+      : clauseContexts;
+    for (const context of contexts) {
       if (context.readOnly || context.nonExecutionContext) continue;
-      for (const rule of ACTION_INTENT_CONFIG.actions ?? []) {
-        if (context.documentationOnly && rule.skipWhenDocumentationOnly === true) continue;
-        if (
-          matchesConfiguredPattern(context.clause, rule.patterns) &&
-          !matchesConfiguredPattern(context.clause, rule.negationPatterns)
-        ) actions.add(rule.action);
-      }
+      if (context.documentationOnly && rule.skipWhenDocumentationOnly === true) continue;
+      if (matchesActionIntent(context.clause, rule)) actions.add(rule.action);
     }
   }
   return {
-    explicitlyReadOnly,
-    documentationOnly,
+    explicitlyReadOnly: explicitlyReadOnly && actions.size === 0,
+    documentationOnly: documentationOnly && !hasExplicitActions && !actions.has("purchase_commitment"),
     nonExecutionContext,
-    sideEffectActions: explicitlyReadOnly ? [] : [...actions].sort(),
+    sideEffectActions: [...actions].sort(),
   };
 }
 

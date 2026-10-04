@@ -8,6 +8,14 @@
       "contractFile": "calculation-tool.json",
       "contractSha256": "e9a32b0f5975559aaa24a62aa96a32686a9bb13852a9d3b78c1c31b9d7abf21b",
       "scriptSha256": "6c2a372dc9511c150cd2b0c4dde5d2e838e830a0b69f8dd73fccfbfd6fdd9e9c"
+    },
+    {
+      "ownerId": "kim-service:store-performance-analyst",
+      "dependencyId": "kim-service",
+      "componentId": "store-performance-analyst",
+      "contractFile": "calculation-tool.json",
+      "contractSha256": "6f5918228acbda22c3e331eddf343ae3609ef9b2f412862d4d8db9ec6bf511fe",
+      "scriptSha256": "ff6556abef810216068f1881ba505a7d6109c1a3ca21fe97242af421ce28d38c"
     }
   ]
 }
