@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",

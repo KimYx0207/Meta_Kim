@@ -105,7 +105,18 @@ function classifyPlanChallengeActions(task, requestedSideEffectActions = []) {
   const hasExplicitActions = actions.size > 0;
   for (const rule of ACTION_INTENT_CONFIG.actions ?? []) {
     const contexts = rule.clauseSplitPattern
-      ? clauses.flatMap((clause) => configuredClauses(clause, rule.clauseSplitPattern)).map(clauseContext)
+      ? clauses.flatMap((clause) => {
+          if (matchesConfiguredPattern(clause, rule.nonExecutionWholeClausePatterns)) return [];
+          // Mask only the nominal prefix; later affirmative actions retain their own scope.
+          const actionClause = (rule.nominalClausePatterns ?? []).reduce(
+            (value, pattern) => value.replace(
+              new RegExp(pattern, ACTION_INTENT_REGEX_FLAGS),
+              (match) => " ".repeat(match.length),
+            ),
+            clause,
+          );
+          return configuredClauses(actionClause, rule.clauseSplitPattern);
+        }).map(clauseContext)
       : clauseContexts;
     for (const context of contexts) {
       if (context.readOnly || context.nonExecutionContext) continue;

@@ -8,6 +8,16 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.4.1] - 2026-10-04
+
+### Fixed
+
+- **Coordinated purchase verbs retain the authorization requirement.** In 3.4.0, requests such as "Purchase and install the annual plan" could lose their purchase-commitment classification. Purchase verbs now remain detectable before conjunctions. Configured noun prefixes and complete term explanations stay nonexecuting, while a later affirmative purchase or payment still requires authorization.
+
+### Verification scope
+
+- Synthetic regressions cover coordinated financial actions, negation, procurement analysis, terminology questions and mixed explanation/action requests. They verify the required authorization and blocked states without executing transactions; the separate native-host limits in 3.4.0 remain open.
+
 ## [3.4.0] - 2026-10-04
 
 ### Added
