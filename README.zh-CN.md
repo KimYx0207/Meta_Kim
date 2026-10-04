@@ -311,9 +311,9 @@ Meta_Kim 现在把平台支持分成几层，而不是把所有“看起来兼�
 
 ---
 
-### 用现有报价完成采购核算
+### 用现有报价和店铺指标完成核算
 
-包含 `calculate_materials` 的 Meta MCP 可以沿既有路由选择 Kim_Service 采购角色，再执行它的固定 Python 计算器，返回需求摘要、实际计算回执和可读结果。先把 MCP 环境的 `META_KIM_KIM_SERVICE_ROOT` 指向已有 Kim_Service checkout，或由宿主传入工具参数 `dependencyRoot`；不需要重复安装旧独立仓。
+包含 `calculate_materials` 的 Meta MCP 可以沿既有路由选择 Kim_Service 采购或店铺复盘角色，再执行它的已审固定 Python 计算器，返回需求摘要、实际计算回执和可读结果。先把 MCP 环境的 `META_KIM_KIM_SERVICE_ROOT` 指向已有 Kim_Service checkout，或由宿主传入工具参数 `dependencyRoot`；不需要重复安装旧独立仓。
 
 正常同步/安装会在其生成的 MCP 定义中自动把 `META_KIM_RUNTIME_FAMILY` 绑定到真实宿主；手工接入 MCP 时才需显式配置真实宿主（`codex`、`claude`/`claude_code`、`cursor` 或 `openclaw`）。宿主未知时停止执行；工具不默认认作 Codex，也不接受调用参数伪造宿主。正常安装/更新会刷新能力发现。发现记录缺失或过期、能力不支持及其他路由阻断会说明原因并停止执行，需先刷新或修复该路由。
 
@@ -322,7 +322,9 @@ Meta_Kim 现在把平台支持分成几层，而不是把所有“看起来兼�
 
 提供本次报价材料后，可以说：“帮我比较这几家供应商，算 120 个同规格纸袋的总支出和超购，8 天内到货，不下单。”宿主把原句放入 `task`，把明确提供的材料按 Service 包内 `docs/tool-api.md` 放入 `inputJson`。缺数量、币种、规格或报价才补问必要材料；没有权重就逐项比较，费用未知不当零。
 
-该工具只核算材料，不联系供应商、下单或付款。源合同和脚本须通过独立哈希核验；`Read` 角色权限不变。`completed` 仅指给定 JSON 核算完成，宿主仍须核对原句与材料；固定请求与真实 MCP/Python 回放不等于模型语义或原生 Agent 验收。
+说“帮我复盘这周店铺数据”时，宿主按 `store-performance-analyst/docs/examples.md` 传 `schemaVersion:1` 和期间/SKU/渠道指标 `rows`。电商输入最多65536个UTF-8字节，采购最多262144字节；缺指标行只问实际数据，不问用户内部schema版本。`definitions` 和 `comparison` 可缺：未知成本不填零，口径缺失或冲突保留各行指标，拒绝跨期变化与收入分解。既有 `--calculation-materials` / `--execute-stage-dag` 入口把完整材料与实际receipt交给所选AGENT.md的输出合同；Python不可用时只能明确未核算的材料内分析。
+
+该工具只核算材料，不联系供应商、下单、付款、登录店铺后台或投放。源合同和脚本须通过独立哈希核验；`Read` 角色权限不变。`completed` 仅指给定 JSON 核算完成，宿主仍须核对原句与材料；固定请求与真实 MCP/Python 回放不等于模型语义或原生 Agent 验收。
 
 ## 联系方式
 

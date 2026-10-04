@@ -63,11 +63,12 @@
   },
   "safety": {
     "codex": "codex exec with ephemeral session, ignored user config/rules, and read-only sandbox",
-    "claude": "claude print mode with safe mode, plan permission mode, explicit read/search tools, and no session persistence",
+    "claude": "Generic workers keep safe mode. Source-verified dependency owners use bare mode with one explicit --agents definition and --agent selector, source-contract read-only tools, plan permission mode, and no session persistence. Unsupported CLI options fail; no generic fallback.",
     "childEnvironmentBoundary": "Pass system variables plus an exact runtime allowlist: Codex receives only CODEX_HOME and named OPENAI endpoint/auth selectors; Claude receives only CLAUDE_CONFIG_DIR and named ANTHROPIC/Claude auth selectors. Prefix-matching is forbidden, parent session markers are removed, and unrelated project or cloud credentials are not inherited.",
     "filesystemReadBoundary": "Provider sandbox/permission mode is read-only. Workspace-only reads are requested by prompt but are not claimed as mechanically confined by this bridge.",
     "telemetryRedaction": "Before any durable retention, bound output and redact workspace/user-home paths, known secret environment values, and common KEY/TOKEN/PASSWORD/SECRET/CREDENTIAL fields from output, stderr, and failure text for built-in and custom invokers.",
-    "stdinPromptOnly": true,
+    "stdinPromptOnly": false,
+    "promptTransport": "Task text stays on stdin. Codex receives the source-verified owner method on stdin; Claude receives that method only in its explicit single-role --agents JSON argument.",
     "shellInterpolationForbidden": true,
     "projectWritesForbidden": true,
     "externalWritesForbidden": true,
@@ -75,6 +76,13 @@
     "dockerProductEvidenceForbidden": true,
     "taskBudget": null,
     "timeoutMeaning": "A process safety fuse only; it is not a token, cost, or task-performance budget."
+  },
+  "dependencyOwnerBinding": {
+    "authority": "Installed package dependency registry and its explicit environment/local override root binding; packet paths are never filesystem authority.",
+    "verification": "Re-discover the owner, match owner identity, source reference and immutable dependency/content/component digest fields, then read and hash the selected AGENT.md bytes. Component digest covers the full capability.json; redacted packet contract prose never grants tools or supplies method text.",
+    "codex": "run_scoped_owner_contract with source method in prompt; native custom-agent loading remains unverified.",
+    "claude": "Explicit single native-role request; supplied method bytes and a terminal process result alone do not prove native custom-agent selection or semantic acceptance.",
+    "writeback": "Retain source and component digests with method delivery and runtime result. Current-process run/task-bound observations only; callbacks, serialized receipts, modified results and durable replay cannot assert current native invocation."
   },
   "requiredNodeEvidence": [
     "runId",

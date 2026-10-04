@@ -180,6 +180,102 @@ describe("57 - risk-adaptive plan challenge", () => {
     }
   });
 
+  test("procurement and payment nouns in analysis do not request a purchase commitment", () => {
+    for (const task of [
+      "帮我比较采购报价",
+      "帮我比较这几家供应商",
+      "分析购买成本与付款方式。",
+      "解释支付流程和年度套餐价格。",
+      "采购报价有什么差异？",
+      "Compare procurement quotes and purchase prices.",
+      "Analyze payment options for an annual plan.",
+      "Explain the purchase process.",
+      "Purchase quotes need comparison.",
+    ]) {
+      const result = build(task);
+      assert.equal(result.planChallengeState.active, false, task);
+      assert.equal(result.planChallengeState.authorizationRequired, false, task);
+      assert.deepEqual(result.planChallengeState.sideEffectActions, [], task);
+    }
+  });
+
+  test("purchase, payment and order requests survive preceding analysis or negated actions", () => {
+    for (const task of [
+      "请购买这批货物",
+      "请为我购买这批货物",
+      "帮我向B采购这批货物",
+      "请购买报价管理软件",
+      "请把评估过的货物购买下来",
+      "订阅年度套餐",
+      "请购买计划中的物料",
+      "采购这批货物。",
+      "请支付这张账单。",
+      "比较采购报价，然后下单",
+      "分析采购报价然后付款。",
+      "比较采购报价并下单",
+      "比较报价并向B下单",
+      "比较采购报价后向B下单",
+      "先比较采购报价再帮我向B下单",
+      "不要采购A并采购B",
+      "不执行采购再下单。",
+      "仅分析采购报价后付款。",
+      "仅分析采购报价，然后购买这批货物。",
+      "不要购买旧款然后购买新款。",
+      "不执行采购，但请支付这张账单。",
+      "请比较采购报价并删除旧报价文件。",
+      "Purchase the annual plan.",
+      "Please pay the supplier.",
+      "Can you purchase this item?",
+      "Help me buy these supplies",
+      "compare supplier quotes and then place the order",
+      "Compare procurement quotes and please place the order",
+      "Analysis only for the quotes, then buy these items.",
+      "Do not purchase the old items but purchase the new items.",
+      "Do not execute the purchase, then pay the supplier.",
+      "Compare purchase prices and delete the cached quotes.",
+    ]) {
+      const result = build(task);
+      const action = /删除|delete/iu.test(task) ? "destructive_change" : "purchase_commitment";
+      assert.equal(result.planChallengeState.active, true, task);
+      assert.equal(result.planChallengeState.authorizationRequired, true, task);
+      assert.ok(result.planChallengeState.sideEffectActions.includes(action), task);
+    }
+  });
+
+  test("negated purchase actions do not request execution authorization", () => {
+    for (const task of [
+      "请不要购买这批货物。",
+      "不要下单，只比较采购报价。",
+      "不执行采购。",
+      "无需支付账单。",
+      "不要购买也不要付款。",
+      "Do not purchase these items.",
+      "Please do not pay the supplier.",
+      "Compare supplier quotes and do not place the order.",
+      "Do not purchase this and do not pay that.",
+      "不要采购A或支付B。",
+      "Do not purchase these goods or pay the supplier.",
+      "Never buy these supplies nor pay this invoice.",
+      "Explain the words purchase and pay.",
+    ]) {
+      const result = build(task);
+      assert.equal(result.planChallengeState.authorizationRequired, false, task);
+      assert.equal(result.planChallengeState.sideEffectActions.includes("purchase_commitment"), false, task);
+    }
+  });
+
+  test("purchase scope boundaries preserve unrelated coordinated prohibitions", () => {
+    for (const task of [
+      "do not deploy and publish the app",
+      "don't release this and don't deploy this",
+      "不要发布也不要部署。",
+    ]) {
+      const result = build(task);
+      assert.equal(result.planChallengeState.authorizationRequired, false, task);
+      assert.deepEqual(result.planChallengeState.sideEffectActions, [], task);
+    }
+  });
+
   test("low-risk documentation wording does not become a material-risk challenge", () => {
     for (const task of [
       "更新发布说明中的一个错别字。",
@@ -601,12 +697,20 @@ describe("57 - risk-adaptive plan challenge", () => {
     assert.equal(result.planChallengeState.executionAllowed, false);
   });
 
-  test("read-only classification removes caller-requested side-effect actions", () => {
-    const result = build("只读压力测试这个命令方案，不修改也不创建文件。", {
-      requestedSideEffectActions: ["project_capability_copy"],
-    });
-    assert.deepEqual(result.planChallengeState.sideEffectActions, []);
-    assert.equal(result.planChallengeState.authorizationRequired, false);
+  test("read-only wording suppresses inference but preserves explicit side-effect actions", () => {
+    for (const task of [
+      "只读压力测试这个命令方案，不修改也不创建文件。",
+      "只读比较采购报价。",
+      "Read-only comparison of supplier quotes; do not purchase anything.",
+    ]) {
+      for (const action of ["project_capability_copy", "purchase_commitment"]) {
+        const result = build(task, { requestedSideEffectActions: [action] });
+        assert.deepEqual(result.planChallengeState.sideEffectActions, [action], task);
+        assert.equal(result.planChallengeState.active, true, task);
+        assert.equal(result.planChallengeState.authorizationRequired, true, task);
+      }
+      assert.deepEqual(build(task).planChallengeState.sideEffectActions, [], task);
+    }
   });
 
   test("pure preference and evidence-insufficient questions do not invent recommendations", () => {
