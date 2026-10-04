@@ -105,7 +105,9 @@
       "meta-kim-runtime": {
         "command": "node",
         "args": ["__REPO_ROOT__/scripts/mcp/meta-runtime-server.mjs"],
-        "env": {}
+        "env": {
+          "META_KIM_RUNTIME_FAMILY": "openclaw"
+        }
       }
     }
   }

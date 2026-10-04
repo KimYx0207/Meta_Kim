@@ -683,6 +683,8 @@ async function canonicalClaudeMcpIdentity() {
     runtimeBaseDir,
     identity,
     packageManifest,
+    process.execPath,
+    "claude",
   );
   const legacyScriptArg = (entries[0][1].args ?? []).find((value) =>
     typeof value === "string" && value.includes("__REPO_ROOT__"),
@@ -1063,10 +1065,11 @@ async function buildClaudeUserMcpPlan() {
   if (executingProjectionPackage) {
     const authorityLayout = projectionPackageMcpLayout(executingProjectionPackage);
     const existing = base?.mcpServers?.[canonical.name];
+    const normalized = normalizeExactDurableMetaKimMcpDefinition(existing, "claude");
     if (
-      existing !== undefined &&
+      normalized !== null &&
       managedFingerprints.has(mcpDefinitionFingerprint(existing)) &&
-      mcpDefinitionFingerprint(existing) ===
+      mcpDefinitionFingerprint({ ...normalized, env: authorityLayout.definition.env }) ===
         mcpDefinitionFingerprint(authorityLayout.definition)
     ) {
       canonical = {
@@ -1101,7 +1104,7 @@ function projectionPackageMcpLayout(authority) {
     packageManifestPath: authority.packageManifestPath,
     cliPath: authority.cliPath,
     serverPath,
-    definition: buildDurableMetaKimMcpServer(process.execPath, authority.cliPath),
+    definition: buildDurableMetaKimMcpServer(process.execPath, authority.cliPath, "claude"),
   };
 }
 
@@ -1129,7 +1132,7 @@ async function directoryChainHasNoLinks(root, target) {
 async function verifiedHistoricalClaudeMcpFingerprints(base, canonical) {
   const fingerprints = new Set();
   const existing = base?.mcpServers?.[canonical.name];
-  const normalized = normalizeExactDurableMetaKimMcpDefinition(existing);
+  const normalized = normalizeExactDurableMetaKimMcpDefinition(existing, "claude");
   if (!normalized) return fingerprints;
 
   try {

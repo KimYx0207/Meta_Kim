@@ -318,6 +318,8 @@ function verifySuccessfulDurableBundleLifecycle() {
       runtime.userHome,
       ORIGINAL_IDENTITY,
       ORIGINAL_MANIFEST,
+      process.execPath,
+      "claude",
     );
     const firstConfigRaw = readFileSync(runtime.claudeConfig, "utf8");
     const firstConfig = JSON.parse(firstConfigRaw);
@@ -535,6 +537,7 @@ function verifyLockedSameVersionBundleUsesImmutableAuthority() {
     assert.equal(treeFingerprint(legacyLayout.bundleDir), legacyFingerprint);
 
     const config = JSON.parse(readFileSync(runtime.claudeConfig, "utf8"));
+    assert.deepEqual(config.mcpServers["meta-kim-runtime"].env, { META_KIM_RUNTIME_FAMILY: "claude" });
     const cliPath = config.mcpServers["meta-kim-runtime"].args[0];
     const portableCliPath = cliPath.replaceAll("\\", "/");
     assert.ok(
@@ -548,6 +551,20 @@ function verifyLockedSameVersionBundleUsesImmutableAuthority() {
       "immutable-authority idempotent sync after locked update",
       runGlobalSync(candidate.workspace, runtime),
     );
+    assert.equal(treeFingerprint(legacyLayout.bundleDir), legacyFingerprint);
+
+    // A prior manifest-owned registration of this same immutable authority
+    // must gain the binding without moving back to the locked legacy bundle.
+    const oldConfig = structuredClone(config);
+    oldConfig.mcpServers["meta-kim-runtime"].env = {};
+    writeFileSync(runtime.claudeConfig, JSON.stringify(oldConfig));
+    const manifestPath = path.join(runtime.userHome, ".meta-kim", "install-manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const record = manifest.entries.find((entry) => entry.kind === "mcp-server" && entry.mcpServerName === "meta-kim-runtime");
+    record.mcpServerFingerprint = mcpDefinitionFingerprint(oldConfig.mcpServers["meta-kim-runtime"]);
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    requireSuccess("bind legacy immutable-authority registration", runGlobalSync(candidate.workspace, runtime));
+    assert.deepEqual(JSON.parse(readFileSync(runtime.claudeConfig, "utf8")), config);
     assert.equal(treeFingerprint(legacyLayout.bundleDir), legacyFingerprint);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });

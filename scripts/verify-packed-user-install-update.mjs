@@ -826,6 +826,8 @@ function packedCliDescriptor(packageInfo, roots, globalNodeModules) {
     roots.userHome,
     identity,
     packageManifest,
+    process.execPath,
+    "claude",
   );
   const packedCliPath = path.resolve(
     packageInfo.workspace,

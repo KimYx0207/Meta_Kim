@@ -84,7 +84,15 @@ export function resolvePortableMetaKimPackageIdentity(packageManifest, distribut
   return Object.freeze({ packageName, packageVersion, cliName, packageSpec });
 }
 
-export function buildPortableMetaKimMcpServer(identity, platform = process.platform) {
+export function metaKimMcpRuntimeEnvironment(runtimeFamily) {
+  if (runtimeFamily === undefined) return {};
+  if (!["claude", "codex", "cursor", "openclaw"].includes(runtimeFamily)) {
+    throw new Error("MCP runtime binding requires an explicit supported host runtime.");
+  }
+  return { META_KIM_RUNTIME_FAMILY: runtimeFamily };
+}
+
+export function buildPortableMetaKimMcpServer(identity, platform = process.platform, runtimeFamily) {
   if (!isPlainObject(identity)) throw new Error("A portable package identity is required.");
   const packageSpec = requireSafeToken(identity.packageSpec, "portable package spec");
   const cliName = requireSafeToken(identity.cliName, "portable package CLI name");
@@ -92,11 +100,11 @@ export function buildPortableMetaKimMcpServer(identity, platform = process.platf
     type: "stdio",
     command: platform === "win32" ? "npx.cmd" : "npx",
     args: ["--yes", packageSpec, cliName, "mcp", "serve"],
-    env: {},
+    env: metaKimMcpRuntimeEnvironment(runtimeFamily),
   };
 }
 
-export function buildDurableMetaKimMcpServer(nodePath, cliPath) {
+export function buildDurableMetaKimMcpServer(nodePath, cliPath, runtimeFamily) {
   const absoluteOnAnySupportedPlatform = (value) =>
     typeof value === "string" && (path.isAbsolute(value) || /^[A-Za-z]:[\\/]/u.test(value));
   if (!absoluteOnAnySupportedPlatform(nodePath) || !absoluteOnAnySupportedPlatform(cliPath)) {
@@ -106,7 +114,7 @@ export function buildDurableMetaKimMcpServer(nodePath, cliPath) {
     type: "stdio",
     command: nodePath,
     args: [cliPath, "mcp", "serve"],
-    env: {},
+    env: metaKimMcpRuntimeEnvironment(runtimeFamily),
   };
 }
 
@@ -115,6 +123,7 @@ export function resolveDurableMetaKimRuntimeLayout(
   identity,
   packageManifest,
   nodePath = process.execPath,
+  runtimeFamily,
 ) {
   if (!path.isAbsolute(runtimeBaseDir)) throw new Error("Runtime base directory must be absolute.");
   const binRelativePath = packageManifest?.bin?.[identity.cliName];
@@ -138,14 +147,14 @@ export function resolveDurableMetaKimRuntimeLayout(
     packageManifestPath: path.join(packageRoot, "package.json"),
     cliPath,
     serverPath,
-    definition: buildDurableMetaKimMcpServer(nodePath, cliPath),
+    definition: buildDurableMetaKimMcpServer(nodePath, cliPath, runtimeFamily),
   });
 }
 
-export function isPortableMetaKimMcpDefinition(definition, identity, platform = process.platform) {
+export function isPortableMetaKimMcpDefinition(definition, identity, platform = process.platform, runtimeFamily) {
   return isPlainObject(definition) &&
     mcpDefinitionFingerprint(definition) ===
-      mcpDefinitionFingerprint(buildPortableMetaKimMcpServer(identity, platform));
+      mcpDefinitionFingerprint(buildPortableMetaKimMcpServer(identity, platform, runtimeFamily));
 }
 
 export function legacyMetaKimMcpAliases(canonicalName) {
@@ -232,16 +241,20 @@ function unwrapExactWindowsCmdWrapper(definition) {
  * Filesystem ownership is intentionally verified by the sync layer; this pure
  * helper proves only the data shape and never treats a matching path as owned.
  */
-export function normalizeExactDurableMetaKimMcpDefinition(definition) {
+export function normalizeExactDurableMetaKimMcpDefinition(definition, runtimeFamily) {
+  const expectedEnv = metaKimMcpRuntimeEnvironment(runtimeFamily);
+  const isExactEnvironment = (env) => isPlainObject(env) && (
+    Object.keys(env).length === 0 || stableJson(env) === stableJson(expectedEnv)
+  );
   if (!isPlainObject(definition)) return null;
   if (!hasOnlyKeys(definition, ["type", "command", "args", "env"])) return null;
   if (definition.type !== "stdio") return null;
-  if (!isPlainObject(definition.env) || Object.keys(definition.env).length !== 0) return null;
+  if (!isExactEnvironment(definition.env)) return null;
 
   const normalized = unwrapExactWindowsCmdWrapper(definition) ?? structuredClone(definition);
   if (!hasOnlyKeys(normalized, ["type", "command", "args", "env"])) return null;
   if (normalized.type !== "stdio") return null;
-  if (!isPlainObject(normalized.env) || Object.keys(normalized.env).length !== 0) return null;
+  if (!isExactEnvironment(normalized.env)) return null;
   if (
     !isStrictNodeExecutable(normalized.command) ||
     !(path.win32.isAbsolute(normalized.command) || path.posix.isAbsolute(normalized.command))

@@ -315,7 +315,7 @@ Meta_Kim 现在把平台支持分成几层，而不是把所有“看起来兼�
 
 包含 `calculate_materials` 的 Meta MCP 可以沿既有路由选择 Kim_Service 采购角色，再执行它的固定 Python 计算器，返回需求摘要、实际计算回执和可读结果。先把 MCP 环境的 `META_KIM_KIM_SERVICE_ROOT` 指向已有 Kim_Service checkout，或由宿主传入工具参数 `dependencyRoot`；不需要重复安装旧独立仓。
 
-在 MCP 服务端环境把 `META_KIM_RUNTIME_FAMILY` 绑定到真实宿主（`codex`、`claude`/`claude_code`、`cursor` 或 `openclaw`）；工具不默认认作 Codex，也不接受调用参数伪造宿主。正常安装/更新会刷新能力发现。发现记录缺失或过期、能力不支持及其他路由阻断会说明原因并停止执行，需先刷新或修复该路由。
+正常同步/安装会在其生成的 MCP 定义中自动把 `META_KIM_RUNTIME_FAMILY` 绑定到真实宿主；手工接入 MCP 时才需显式配置真实宿主（`codex`、`claude`/`claude_code`、`cursor` 或 `openclaw`）。宿主未知时停止执行；工具不默认认作 Codex，也不接受调用参数伪造宿主。正常安装/更新会刷新能力发现。发现记录缺失或过期、能力不支持及其他路由阻断会说明原因并停止执行，需先刷新或修复该路由。
 
 复合请求可能被规划为并行任务；若并行安全边界尚未明确，计算器会保留该阻断，由宿主先明确任务范围和路由后再执行。
 早先的英文长句“Compare these supplier quotes and calculate landed cost and excess quantity; use the supplied constraints and do not place an order.”目前会被选择器以 `parallel_lane_safety_not_proven` 阻断，不能作为可执行成功样例。

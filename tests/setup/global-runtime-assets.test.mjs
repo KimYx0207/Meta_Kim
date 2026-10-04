@@ -69,6 +69,7 @@ import {
 import {
   canonicalGlobalOnlyProjectionContent,
   canRetireGlobalOnlyProjection,
+  renderMetaKimRuntimeMcp,
 } from "../../scripts/sync-runtimes.mjs";
 import {
   manifestFileEntryMatches,
@@ -183,6 +184,82 @@ test("portable MCP strategy contains no machine or repository path", () => {
   for (const platform of ["win32", "linux", "darwin"]) {
     const rendered = JSON.stringify(buildPortableMetaKimMcpServer(PACKAGE_IDENTITY, platform));
     assert.doesNotMatch(rendered, /[A-Za-z]:[\\/]|Users[\\/]|__REPO_ROOT__|REPLACE_WITH_REPO_ROOT/);
+  }
+});
+
+test("MCP builders bind only an explicitly selected host and historical normalization stays exact", () => {
+  const cliPath = path.join(path.parse(process.execPath).root, "managed", "meta-kim.mjs");
+  for (const runtime of ["claude", "cursor", "openclaw", "codex"]) {
+    const expected = { META_KIM_RUNTIME_FAMILY: runtime };
+    assert.deepEqual(buildDurableMetaKimMcpServer(process.execPath, cliPath, runtime).env, expected);
+    for (const platform of ["linux", "darwin", "win32"]) {
+      assert.deepEqual(buildPortableMetaKimMcpServer(PACKAGE_IDENTITY, platform, runtime).env, expected);
+    }
+  }
+  assert.throws(() => buildDurableMetaKimMcpServer(process.execPath, cliPath, "unknown"), /supported host/);
+  const bound = buildDurableMetaKimMcpServer(process.execPath, cliPath, "claude");
+  const legacy = { ...bound, env: {} };
+  const wrapped = { ...bound, command: "cmd", args: ["/c", bound.command, ...bound.args] };
+  for (const definition of [bound, legacy, wrapped]) {
+    assert.deepEqual(normalizeExactDurableMetaKimMcpDefinition(definition, "claude"), definition === wrapped ? bound : definition);
+  }
+  for (const env of [{ META_KIM_RUNTIME_FAMILY: "cursor" }, { ...bound.env, TOKEN: "user" }, { TOKEN: "user" }]) {
+    assert.equal(normalizeExactDurableMetaKimMcpDefinition({ ...bound, env }, "claude"), null);
+  }
+  assert.equal(normalizeExactDurableMetaKimMcpDefinition(bound), null);
+  assert.notEqual(mcpDefinitionFingerprint(legacy), mcpDefinitionFingerprint(bound));
+  const options = { canonicalName: "meta-kim-runtime", portableDefinition: bound, legacyScriptSuffix: LEGACY_MCP_SUFFIX };
+  const base = { mcpServers: { "meta-kim-runtime": legacy } };
+  assert.deepEqual(mergeClaudeUserMcpConfig(base, options).collisions, ["meta-kim-runtime"]);
+  const migrated = mergeClaudeUserMcpConfig(base, { ...options, managedFingerprints: new Set([mcpDefinitionFingerprint(legacy)]) });
+  assert.deepEqual(migrated.config.mcpServers["meta-kim-runtime"], bound);
+  const drifted = { mcpServers: { "meta-kim-runtime": { ...legacy, env: { TOKEN: "user" } } } };
+  const collision = mergeClaudeUserMcpConfig(drifted, { ...options, managedFingerprints: new Set([mcpDefinitionFingerprint(legacy)]) });
+  assert.deepEqual(collision.collisions, ["meta-kim-runtime"]);
+  assert.deepEqual(collision.config, drifted);
+});
+
+async function assertGeneratedMcpBinding(server, home, expectedCode = "explicit_dependency_root_required") {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
+  const transport = new StdioClientTransport({
+    command: server.command,
+    args: server.args,
+    cwd: home,
+    env: { ...process.env, HOME: home, USERPROFILE: home, META_KIM_RUNTIME_FAMILY: "", META_KIM_KIM_SERVICE_ROOT: "", ...server.env },
+    stderr: "pipe",
+  });
+  let stderr = "";
+  transport.stderr?.on("data", (chunk) => { stderr += chunk; });
+  const client = new Client({ name: "generated-runtime-binding-test", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    const response = await client.callTool({ name: "calculate_materials", arguments: { task: "Compare supplied materials", inputJson: "{}" } });
+    const result = JSON.parse(response.content[0].text);
+    assert.equal(result.code, expectedCode);
+    assert.equal(result.toolInvoked, false);
+  } catch (error) {
+    throw new Error(`${error.message}\n${stderr}`, { cause: error });
+  } finally {
+    await client.close();
+    await transport.close();
+  }
+}
+
+test("generated Claude, Cursor and OpenClaw MCP definitions carry their actual host through stdio", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "meta-kim-generated-mcp-"));
+  try {
+    for (const runtime of ["claude", "cursor", "openclaw"]) {
+      const template = readFileSync(path.join(REPO_ROOT, "canonical", "runtime-assets", runtime === "openclaw" ? "openclaw/openclaw.template.json" : "claude/mcp.json"), "utf8");
+      const rendered = JSON.parse(renderMetaKimRuntimeMcp(template, REPO_ROOT, runtime));
+      const server = (rendered.mcpServers ?? rendered.mcp.servers)["meta-kim-runtime"];
+      assert.deepEqual(server.env, { META_KIM_RUNTIME_FAMILY: runtime });
+      assert.equal(server.args[0], `${REPO_ROOT.replaceAll("\\", "/")}/scripts/mcp/meta-runtime-server.mjs`);
+      await assertGeneratedMcpBinding(server, home);
+      if (runtime === "claude") await assertGeneratedMcpBinding({ ...server, env: {} }, home, "runtime_binding_required");
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -400,7 +477,7 @@ test("MCP merge blocks non-plain maps, unknown canonical collisions, and loose l
   }
 });
 
-test("global sync derives every supported Agent projection from runtime profiles", () => {
+test("global sync derives every supported Agent projection from runtime profiles", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-global-assets-"));
   try {
     assert.equal(
@@ -479,8 +556,9 @@ test("global sync derives every supported Agent projection from runtime profiles
     assert.equal(config.mcpServers.user.env.AUTH, "preserve");
     const managed = config.mcpServers["meta-kim-runtime"];
     assert.ok(managed);
-    const layout = resolveDurableMetaKimRuntimeLayout(root, PACKAGE_IDENTITY, PACKAGE_MANIFEST);
+    const layout = resolveDurableMetaKimRuntimeLayout(root, PACKAGE_IDENTITY, PACKAGE_MANIFEST, process.execPath, "claude");
     assert.deepEqual(managed, layout.definition);
+    await assertGeneratedMcpBinding(managed, root);
     assert.ok(readFileSync(layout.packageManifestPath, "utf8"));
     const selfTest = spawnSync(process.execPath, [layout.cliPath, "mcp", "self-test"], {
       cwd: layout.packageRoot,
@@ -489,12 +567,39 @@ test("global sync derives every supported Agent projection from runtime profiles
     assert.equal(selfTest.status, 0, selfTest.stderr);
     assert.match(selfTest.stdout, /"ok":\s*true/u);
 
+    // Recreate the exact old generated definition, including its old manifest
+    // fingerprint, then exercise normal sync rather than editing the binding.
+    const manifestPath = path.join(root, ".meta-kim", "install-manifest.json");
+    for (const retainMcpRecord of [true, false]) {
+      const oldConfig = structuredClone(config);
+      oldConfig.mcpServers["meta-kim-runtime"].env = {};
+      writeFileSync(path.join(root, ".claude.json"), JSON.stringify(oldConfig));
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.entries = manifest.entries.filter((entry) => {
+        if (entry.kind !== "mcp-server") return true;
+        entry.mcpServerFingerprint = mcpDefinitionFingerprint(oldConfig.mcpServers["meta-kim-runtime"]);
+        return retainMcpRecord;
+      });
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+      const update = runSync(root, ["--targets", GLOBAL_AGENT_TARGET_IDS.join(",")]);
+      assert.equal(update.status, 0, `${update.stderr}\n${update.stdout}`);
+      assert.deepEqual(JSON.parse(readFileSync(path.join(root, ".claude.json"), "utf8")), config);
+    }
+
     const check = runSync(root, [
       "--check",
       "--targets",
       GLOBAL_AGENT_TARGET_IDS.join(","),
     ]);
     assert.equal(check.status, 0, `${check.stderr}\n${check.stdout}`);
+
+    const userConfig = structuredClone(config);
+    userConfig.mcpServers["meta-kim-runtime"].env.USER_TOKEN = "preserve";
+    const userRaw = JSON.stringify(userConfig);
+    writeFileSync(path.join(root, ".claude.json"), userRaw);
+    const collision = runSync(root, ["--targets", "claude"]);
+    assert.notEqual(collision.status, 0);
+    assert.equal(readFileSync(path.join(root, ".claude.json"), "utf8"), userRaw);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

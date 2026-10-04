@@ -1431,7 +1431,7 @@ test("packed MCP acceptance follows the shared durable strategy across supported
     ["/opt/homebrew/bin/node", "/Users/runtime/.meta-kim/runtime/meta-kim/current/bin/meta-kim.mjs"],
   ];
   for (const [nodePath, cliPath] of pathShapes) {
-    const definition = buildDurableMetaKimMcpServer(nodePath, cliPath);
+    const definition = buildDurableMetaKimMcpServer(nodePath, cliPath, "claude");
     assert.equal(
       durableMcpDefinitionMatches(definition, definition),
       true,
@@ -1444,6 +1444,9 @@ test("packed MCP acceptance follows the shared durable strategy across supported
       false,
       `${nodePath} drifted MCP definition must fail packed acceptance`,
     );
+    for (const env of [{}, { META_KIM_RUNTIME_FAMILY: "codex" }, { ...definition.env, TOKEN: "user" }]) {
+      assert.equal(durableMcpDefinitionMatches({ ...definition, env }, definition), false);
+    }
   }
 
   const validatorSource = acceptanceFunctionSource(
