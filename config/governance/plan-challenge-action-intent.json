@@ -84,7 +84,8 @@
       ],
       "nominalClausePatterns": [
         "^(?:购买|采购|付款|支付|订阅)(?:报价|价格|成本|预算|流程|方式|方案|计划|需求|政策|条款|说明|记录|信息|术语|供应商)(?=$|[\\s，,。！？!?；;]|有|是|需|的)",
-        "^(?:purchase|order|pay|subscription)(?:\\s+(?:and|or|nor)\\s+(?:purchase|order|payment|subscription|installation|delivery|procurement))*\\s+(?:quotes?|prices?|costs?|budgets?|process|methods?|options?|plans?|requirements?|polic(?:y|ies)|terms?|instructions?|records?|information|status)(?=$|[\\s,.;!?])"
+        "^(?:(?:the|an?|this|that|these|those|my|your|our|their)\\s+)?(?:purchase|order|pay|subscription)(?:\\s+(?:and|or|nor)\\s+(?:purchase|order|payment|subscription|installation|delivery|procurement))*\\s+(?:quotes?|prices?|costs?|budgets?|process|methods?|options?|plans?|requirements?|polic(?:y|ies)|terms?|instructions?|records?|information|status)(?=$|[\\s,.;!?])",
+        "^(?:(?:the|an?|this|that|these|those|my|your|our|their)\\s+)?(?:purchase|order)\\s+(?:and|or|nor)\\s+sales\\s+data(?=$|[\\s,.;!?])"
       ],
       "nonExecutionWholeClausePatterns": [
         "^(?:(?:please|help\\s+me|can\\s+you|could\\s+you|would\\s+you|first|only)\\s+)*(?:explain|describe|define)\\s+(?:(?:the|these|those)\\s+)?(?:words?|terms?|phrases?|(?:meanings?|definitions?)\\s+of)\\s+(?:buy|purchase|procure|order|pay|subscribe)(?:\\s+(?:and|or|nor)\\s+(?:buy|purchase|procure|order|pay|subscribe))*(?:\\s+(?:in|from)\\s+(?:(?:this|that|the)\\s+)?(?:sentences?|contexts?|texts?|phrases?))?\\s*\\.?\\s*$",

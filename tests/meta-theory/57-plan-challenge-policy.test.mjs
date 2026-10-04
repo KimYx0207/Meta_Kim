@@ -302,6 +302,61 @@ describe("57 - risk-adaptive plan challenge", () => {
     }
   });
 
+  test("determined purchase nouns and coordinated sales data remain nonexecuting", () => {
+    for (const task of [
+      "Purchase and sales data need analysis.",
+      "The purchase and payment terms need explanation.",
+      "Our order and payment records need review.",
+      "These purchase and sales data need analysis.",
+      "Those order and payment records need review.",
+      "My purchase and payment terms need explanation.",
+      "Your purchase or subscription options need comparison.",
+      "Their purchase and order terms need explanation.",
+    ]) {
+      const { planChallengeState: state } = build(task);
+      assert.equal(state.authorizationRequired, false, task);
+      assert.deepEqual(state.sideEffectActions, [], task);
+    }
+  });
+
+  test("data purchases do not become nominal prefixes", () => {
+    for (const task of [
+      "Purchase data",
+      "Purchase sales data",
+      "Buy sales data",
+      "Buy purchase and sales data",
+      "Please purchase sales data.",
+      "Purchase and install annual plan",
+    ]) {
+      const { planChallengeState: state } = build(task);
+      assert.ok(state.sideEffectActions.includes("purchase_commitment"), task);
+      assert.equal(state.authorizationRequired, true, task);
+      assert.equal(state.executionAllowed, false, task);
+    }
+  });
+
+  test("determined noun prefixes preserve later commitments and explicit scope", () => {
+    for (const task of [
+      "Purchase and sales data need analysis and buy the annual plan",
+      "The purchase and payment terms need explanation and purchase the annual plan",
+      "Our order and payment records need review and pay the supplier",
+      "These purchase and sales data need analysis, then purchase the annual plan",
+      "Their purchase and payment terms need explanation; pay the supplier",
+    ]) {
+      const { planChallengeState: state } = build(task);
+      assert.ok(state.sideEffectActions.includes("purchase_commitment"), task);
+      assert.equal(state.authorizationRequired, true, task);
+      assert.equal(state.executionAllowed, false, task);
+    }
+    const { planChallengeState: explicit } = build(
+      "Our order and payment records need review.",
+      { requestedSideEffectActions: ["purchase_commitment"] },
+    );
+    assert.deepEqual(explicit.sideEffectActions, ["purchase_commitment"]);
+    assert.equal(explicit.authorizationRequired, true);
+    assert.equal(explicit.executionAllowed, false);
+  });
+
   test("purchase explanations cannot consume subsequent commitments or override explicit scope", () => {
     for (const task of [
       "Explain the words purchase and pay in this sentence, then purchase the annual plan",
