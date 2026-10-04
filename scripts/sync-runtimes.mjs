@@ -53,6 +53,7 @@ import {
   loadProtectedProjectCapabilityPaths,
 } from "./project-capability-ownership.mjs";
 import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
+import { metaKimMcpRuntimeEnvironment } from "./global-runtime-mcp.mjs";
 
 const cliArgs = process.argv.slice(2);
 const checkOnly = process.argv.includes("--check");
@@ -2146,9 +2147,13 @@ async function writeGeneratedJson(filePath, value) {
   return writeGeneratedFile(filePath, nextContent);
 }
 
-function renderMetaKimRuntimeMcp(content, rootDir) {
+export function renderMetaKimRuntimeMcp(content, rootDir, runtimeFamily) {
+  if (runtimeFamily === undefined) throw new Error("MCP projection requires its target runtime.");
   const normalizedRoot = rootDir.replace(/\\/g, "/");
-  return content.replaceAll("__REPO_ROOT__", normalizedRoot);
+  const parsed = JSON.parse(content.replaceAll("__REPO_ROOT__", normalizedRoot));
+  const server = (parsed.mcpServers ?? parsed.mcp?.servers)?.["meta-kim-runtime"];
+  if (server) server.env = { ...server.env, ...metaKimMcpRuntimeEnvironment(runtimeFamily) };
+  return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
 function renderCodexConfigExample(content, rootDir) {
@@ -3401,7 +3406,7 @@ async function syncClaudeProjection(
     // Only write meta-kim-runtime MCP config when the target contains the
     // server script; writing that command elsewhere breaks MCP startup.
     if (targetHasMetaRuntimeServer) {
-      const renderedMcpContent = renderMetaKimRuntimeMcp(mcpContent, repoRoot);
+      const renderedMcpContent = renderMetaKimRuntimeMcp(mcpContent, repoRoot, "claude");
       let existingMcpRaw = null;
       try {
         existingMcpRaw = await fs.readFile(claudeMcpProjectionPath, "utf8");
@@ -3705,6 +3710,7 @@ Examples:
       const renderedTemplateRaw = renderMetaKimRuntimeMcp(
         JSON.stringify(templateConfig),
         repoRoot,
+        "openclaw",
       );
       templateConfig = JSON.parse(renderedTemplateRaw);
     }
@@ -4382,7 +4388,7 @@ Examples:
       const mcpContent = await tryReadCanonical(canonicalClaudeMcpPath);
       const cursorInRepoRoot = dirs.cursorMcpPath.includes(repoRoot);
       const renderedMcpContent = cursorInRepoRoot
-        ? renderMetaKimRuntimeMcp(mcpContent, repoRoot)
+        ? renderMetaKimRuntimeMcp(mcpContent, repoRoot, "cursor")
         : emptyMcpConfigContent();
       if (
         mcpContent &&

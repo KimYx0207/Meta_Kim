@@ -96,6 +96,22 @@ function runProjectSyncFromFixture(tempRoot, args = [], extraEnv = {}) {
 }
 
 describe("runtime hook sync contract", () => {
+  test("fresh project sync binds only existing Claude, Cursor and OpenClaw MCP projections to their hosts", () => {
+    const tempRoot = createTempSourceRepoFixture();
+    try {
+      const result = runProjectSyncFromFixture(tempRoot, ["--scope", "project", "--targets", "claude,codex,cursor,openclaw"]);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      for (const [runtime, relative] of [["claude", ".mcp.json"], ["cursor", ".cursor/mcp.json"], ["openclaw", "openclaw/openclaw.template.json"]]) {
+        const config = JSON.parse(readFileSync(join(tempRoot, relative), "utf8"));
+        const server = (config.mcpServers ?? config.mcp.servers)["meta-kim-runtime"];
+        assert.deepEqual(server.env, { META_KIM_RUNTIME_FAMILY: runtime });
+      }
+      assert.doesNotMatch(readFileSync(join(tempRoot, ".codex/config.toml"), "utf8"), /\[mcp_servers\./);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("source repo project check treats absent runtime projections as expected", () => {
     const tempRoot = createTempSourceRepoFixture();
     try {
