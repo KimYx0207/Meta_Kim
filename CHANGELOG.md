@@ -8,6 +8,25 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.4.0] - 2026-10-04
+
+### Added
+
+- **Selected professional methods receive the complete task materials and tool results.** The stage runner loads the verified Kim_Service owner's AGENT.md and preserves its method, output contract and permissions. Bounded materials and actual calculation receipts reach that worker without truncation; changed inputs cannot reuse a historical delivery. Supported adapters describe their actual invocation mode instead of treating an owner name as native execution proof.
+- **Procurement comparison and store review use their existing real calculators.** The fixed local Python helpers retain their distinct result contracts. Missing quotes or metric rows prompt for the needed materials, unknown costs stay unknown, and conflicting definitions prevent unsupported comparisons. The host receives useful structured results and the selected professional handoff.
+
+### Fixed
+
+- **Consolidated dependencies install from Kim_Service and preserve user-owned files.** The six absorbed packages use the current component source and can reuse a verified local checkout. Unknown or drifted directories are refused, and all selected targets are checked before replacement so a later conflict cannot leave an earlier runtime partially updated.
+- **Generated MCP entries bind the actual runtime and operating system.** Trusted configuration supplies the host identity; caller parameters cannot impersonate another runtime or bypass a blocked execution route. Managed historical entries migrate only when their ownership fingerprint matches.
+- **Analysis requests avoid accidental purchase confirmation.** Comparing procurement quotes stays an analysis task. Explicit orders, payments and subscriptions retain authorization checks; definition questions and mixed action requests keep their respective routes.
+- **Professional evidence survives the formal result writeback.** Route evidence is included before the bridge result is sealed, preserving the verified method binding without weakening result integrity or historical-resume checks.
+
+### Verification scope
+
+- Related regression tests and independent review cover source loading, complete material/receipt handoff, actual Python execution, input changes, missing data, source drift, runtime binding and installer ownership. Three-platform CI includes the actual Kim_Service calculation tests.
+- Synthetic procurement and store cases were delivered by the current dot model using the complete professional methods and real helper receipts. These cases do not certify the product's autonomous native model chain, all 16 native role invocations, the seven outstanding host-native capabilities or real business results. Exact artifact and release verification results belong to the GitHub Release; uncompleted checks must remain explicit.
+
 ## [3.3.2] - 2026-10-03
 
 ### Fixed
