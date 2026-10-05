@@ -4,7 +4,7 @@
 
 This file is the reader-facing release history for Meta_Kim.
 
-The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. When exact evidence is needed, use the repository history, tests, generated reports, and PRD artifacts.
+The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](./tests/release-records/verification-history.md), repository history and relevant PRs.
 
 ## Unreleased
 
@@ -15,12 +15,9 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Keep professional rules with their capability packages.** Procurement and store-review material questions, typed result checks and readable reports now belong to Kim_Service. Meta retains intent, capability discovery, permissions, reviewed invocation and generic return validation; new business fields no longer require framework branches.
 - **Use reviewed delivery contracts without changing raw calculators.** Kim_Service V1.7 provides the optional delivery contract. The existing `calculate_materials` arguments and original calculator CLI remain compatible; older capability contracts remain discoverable but cannot silently bypass the reviewed delivery requirement. Source hashes, fixed arguments and authorization gates remain enforced.
 
-### Verification scope
+### Compatibility
 
-- Thirty-six local cross-repository tests passed using actual Python helpers, MCP transport and the formal task handoff. Independent review covered unchanged receipts, malformed and missing materials, source drift, Unicode and input/output boundaries. These checks do not certify an autonomous native Agent or model chain.
-- Real packed global install, update, repeated update, project install and project update passed using the official Claude CLI. The complete gate remains pending because this cloud checkout lacks the exact ten Claude Code/Codex interactive-host observation records; no full release-grade or native model-chain acceptance is claimed.
-- The broader local governance run recorded 826 passes, 29 explicit skips and four project-root-test failures caused by a pre-existing managed `.git` ancestor in the cloud temporary directory. Remote CI and release evidence must be reported separately; this is not a full-green local claim.
-
+- Source-verified methods and local calculator execution do not by themselves establish native Agent or model-chain support.
 
 ## [3.4.2] - 2026-10-04
 
@@ -28,19 +25,11 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 - **Qualified purchase nouns stay analysis requests.** The coordinated-purchase repair could treat phrases such as "The purchase and payment terms need explanation" or "Our order and payment records need review" as financial commitments. Configured nominal prefixes now cover these qualified noun phrases and the reported purchase-and-sales-data context, without suppressing a later explicit purchase or payment. "Purchase data" and "Buy sales data" remain actionable purchase requests.
 
-### Verification scope
-
-- Focused synthetic regressions retain both sides of the boundary: the reported noun phrases avoid unnecessary authorization, while coordinated financial actions and explicit side-effect declarations keep their authorization requirement. No transaction is executed. The original 3.4.1 tag and the previously disclosed native-host limits remain unchanged.
-
 ## [3.4.1] - 2026-10-04
 
 ### Fixed
 
 - **Coordinated purchase verbs retain the authorization requirement.** In 3.4.0, requests such as "Purchase and install the annual plan" could lose their purchase-commitment classification. Purchase verbs now remain detectable before conjunctions. Configured noun prefixes and complete term explanations stay nonexecuting, while a later affirmative purchase or payment still requires authorization.
-
-### Verification scope
-
-- Synthetic regressions cover coordinated financial actions, negation, procurement analysis, terminology questions and mixed explanation/action requests. They verify the required authorization and blocked states without executing transactions; the separate native-host limits in 3.4.0 remain open.
 
 ## [3.4.0] - 2026-10-04
 
@@ -55,11 +44,6 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Generated MCP entries bind the actual runtime and operating system.** Trusted configuration supplies the host identity; caller parameters cannot impersonate another runtime or bypass a blocked execution route. Managed historical entries migrate only when their ownership fingerprint matches.
 - **Analysis requests avoid accidental purchase confirmation.** Comparing procurement quotes stays an analysis task. Explicit orders, payments and subscriptions retain authorization checks; definition questions and mixed action requests keep their respective routes.
 - **Professional evidence survives the formal result writeback.** Route evidence is included before the bridge result is sealed, preserving the verified method binding without weakening result integrity or historical-resume checks.
-
-### Verification scope
-
-- Related regression tests and independent review cover source loading, complete material/receipt handoff, actual Python execution, input changes, missing data, source drift, runtime binding and installer ownership. Three-platform CI includes the actual Kim_Service calculation tests.
-- Synthetic procurement and store cases were delivered by the current dot model using the complete professional methods and real helper receipts. These cases do not certify the product's autonomous native model chain, all 16 native role invocations, the seven outstanding host-native capabilities or real business results. Exact artifact and release verification results belong to the GitHub Release; uncompleted checks must remain explicit.
 
 ## [3.3.2] - 2026-10-03
 
