@@ -34,6 +34,8 @@ existing jobs. CI is not a full release pass.
 
 ## Core Loop And Discovery Bus
 
+`dependency-method-handoff.mjs` exposes an advisory, task-hash-bound professional-method recommendation alongside route selection. It does not replace the execution owner or relax read-only exclusions. Consume its recommendation only through `loadDependencyAgentMethod`, then hand the revalidated method to an existing authorized host worker. Host tool/resource bindings, actual receipts, and independent outcome verification remain explicit missing requirements; this packet always has `executionAllowed: false` and cannot grant permissions.
+
 - Default governed execution entry: `npm run meta:theory:run` (`scripts/run-meta-theory-governed-execution.mjs`).
 - Machine contract: `config/contracts/core-loop-contract.json`.
 - Strict run artifact validator: `npm run meta:validate:run -- <artifact.json>` for full workflow-contract artifacts.

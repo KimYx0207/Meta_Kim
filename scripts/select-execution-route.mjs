@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { buildDependencyMethodHandoff } from "./dependency-method-handoff.mjs";
 import { promises as fs } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -970,6 +971,7 @@ const dependencyAgentScopeExclusion = explicitCapabilityLifecycle
 const dependencyAgentMatch = dependencyAgentScopeExclusion
   ? { ...dependencyAgentMatches, selected: null, reason: dependencyAgentScopeExclusion }
   : dependencyAgentMatches;
+const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: dependencyAgentMatches, scopeExclusion: dependencyAgentScopeExclusion });
 const repoCanonicalSkillProviders = capabilityEntries(repoCapabilityIndex, "skills").map((entry) => compactCapabilityProvider(entry, "repo_canonical_capability_index", "skills"));
 const projectRuntimeSkillProviders = await projectSkillProviders();
 const codexGlobalSkillFileProviders = await codexGlobalSkillProviders();
@@ -3918,6 +3920,7 @@ const routeExecutionGate = {
 
 const output = {
   taskShape,
+  dependencyMethodHandoff,
   intentAmplificationPrecheck: {
     needsIntentAmplification: taskShape === "fuzzy_complex_task" || taskShape === "strategy_product_decision",
     scoreThreshold: intentContract.scoreBands?.find((band) => band.status?.includes("may_claim"))?.min ?? 90,
