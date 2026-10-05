@@ -199,7 +199,7 @@ test("unavailable Python permits explicitly uncomputed owner analysis, while fab
     childProcess.spawnSync = (command, args, opts) => {
       const executed = original(command, args, opts);
       if (!args?.includes("--input-json")) return executed;
-      const receipt = JSON.parse(executed.stdout); mutate(receipt);
+      const receipt = JSON.parse(executed.stdout); mutate(receipt.receipt);
       return { ...executed, stdout: JSON.stringify(receipt) };
     }; syncBuiltinESMExports();
     try {
@@ -257,7 +257,7 @@ test("real MCP calculate_materials exposes and executes store inputs without a p
   try {
     await client.connect(transport);
     const tool = (await client.listTools()).tools.find((entry) => entry.name === "calculate_materials");
-    assert.match(tool.description, /65536/); assert.equal(Object.hasOwn(tool.inputSchema.properties, "runtime"), false);
+    assert.match(tool.description, /所选能力合同/); assert.equal(Object.hasOwn(tool.inputSchema.properties, "runtime"), false);
     const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: JSON.stringify(materials()), dependencyRoot } });
     assert.equal(response.isError, undefined);
     const result = JSON.parse(response.content[0].text);

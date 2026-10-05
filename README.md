@@ -313,20 +313,14 @@ Surface compatibility is intentionally weaker than runtime support. A tool can s
 
 ---
 
-### Calculate supplied quotations and store metrics with Kim_Service
+### Call reviewed external calculation capabilities
 
-A Meta MCP version exposing `calculate_materials` uses the existing route selector to select the Kim_Service procurement or store-performance role, then runs its reviewed fixed Python calculator and returns a brief, actual receipt and readable calculation. Set the MCP environment's `META_KIM_KIM_SERVICE_ROOT` to an existing Kim_Service checkout, or pass `dependencyRoot`; do not reinstall the old standalone repositories.
+`calculate_materials` retains its `task`, `inputJson`, and `dependencyRoot` arguments and uses the existing capability route to call a reviewed read-only Kim_Service capability. Bind `META_KIM_KIM_SERVICE_ROOT` to an existing checkout. Generated MCP configuration binds the actual host through `META_KIM_RUNTIME_FAMILY`; unknown hosts and blocked routes do not execute.
 
-Normal sync/install binds `META_KIM_RUNTIME_FAMILY` to the actual host in the MCP definitions it generates; for a manually configured MCP server, explicitly bind its actual host (`codex`, `claude`/`claude_code`, `cursor`, or `openclaw`). An unknown host stops execution; the tool never assumes Codex or accepts a caller-supplied runtime. Normal install/update refreshes capability discovery. Missing/stale discovery, unsupported capabilities and other blocked route gates stop execution with a reason; refresh or repair that route before retrying.
+Meta owns intent, capability provenance, permissions, fixed-entrypoint invocation and generic receipt integrity. Service owns domain inputs, material questions, typed business-result validation and delivery. Read the selected component's `calculation-tool.json`, `delivery-tool.json` and `docs/` rather than duplicating industry rules in the framework. The original `--input-json -` calculator CLI and old calculation contracts remain readable. Full professional delivery requires a Service version with a reviewed delivery contract; an older dependency is never silently treated as upgraded.
 
-Compound requests can produce a parallel plan whose safety has not been established. The calculator preserves that block; the host must resolve the task scope and route before calculation proceeds.
-The earlier example “Compare these supplier quotes and calculate landed cost and excess quantity; use the supplied constraints and do not place an order.” currently receives `parallel_lane_safety_not_proven` from the selector and is not an executable success example.
+Independent review hashes cover the contracts and every execution file before a temporary snapshot is run with fixed arguments. Dependency declarations do not grant execution authority. Missing source or route evidence stops execution. Agent `Read` permissions stay unchanged; no external-action permission is added. `completed` describes processing the supplied materials, not acceptance of the user's whole goal. Local calculation and MCP replay do not certify model semantics or native Agent invocation.
 
-With the current quotations supplied, ask: “Calculate landed cost for these supplied supplier quotes.” The host passes the original request as `task` and the explicitly supplied materials as `inputJson`, following the Service package's `docs/tool-api.md`. Missing quantity, currency, specification or quotes warrants a focused question. Missing weights do not block a multidimensional comparison, and unknown fees remain unknown.
-
-For “帮我复盘这周店铺数据”, supply `schemaVersion:1` and `rows` containing period/SKU/channel metrics, following `store-performance-analyst/docs/examples.md`. Store input is limited to 65536 UTF-8 bytes; procurement input to 262144 bytes. Missing rows warrants a focused request for the actual data, without asking users for internal schema versions. Definitions and comparison are optional: unknown costs remain unknown, and missing or conflicting definitions retain row metrics without cross-period deltas or income decomposition. The existing `--calculation-materials` / `--execute-stage-dag` entry delivers the complete input and actual receipt to the selected AGENT.md output contract; unavailable Python permits explicitly uncomputed material analysis.
-
-The tool does not contact suppliers, order, pay, log into store backends or change advertising. Independent contract/script hashes bind the helper; Agent `Read` permissions stay unchanged. `completed` means calculation of the supplied JSON, not semantic acceptance of the whole request. The host must reconcile the brief with the user's materials. Deterministic MCP/Python replay does not certify model behavior or native Agent invocation.
 
 ## Contact
 

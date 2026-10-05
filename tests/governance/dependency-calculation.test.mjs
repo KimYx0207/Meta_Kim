@@ -8,7 +8,7 @@ import test, { before, after } from "node:test";
 import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
 import { runDependencyCalculation } from "../../scripts/governed-execution/dependency-calculation.mjs";
-import { componentHash } from "../../scripts/dependency-agent-discovery.mjs";
+import { componentHash, stableJson } from "../../scripts/dependency-agent-discovery.mjs";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
@@ -124,7 +124,7 @@ test("only missing essential materials ask one useful question; missing fees rem
   assert.match(partial.delivery, /待确认/); assert.equal(partial.receipt.ranking, null);
 });
 
-test("absent or empty candidate quotes ask once before invoking Python", sourceOptions, async () => {
+test("absent or empty candidate quotes ask once without performing calculation", sourceOptions, async () => {
   for (const quotes of [undefined, null, []]) {
     const input = JSON.parse(inputJson());
     if (quotes === undefined) delete input.quotes;
@@ -170,19 +170,48 @@ test("informational and other-owner tasks cannot use this calculator", sourceOpt
 });
 
 test("self-consistent regenerated dependency indexes cannot authorize changed script bytes", sourceOptions, async (t) => {
+  for (const scriptName of ["calculate.py", "deliver.py"]) {
   const copy = fs.mkdtempSync(path.join(os.tmpdir(), "meta-kim-calculation-source-"));
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
   fs.cpSync(path.join(dependencyRoot, "agents"), path.join(copy, "agents"), { recursive: true });
   fs.mkdirSync(path.join(copy, "generated"));
   const index = JSON.parse(fs.readFileSync(path.join(dependencyRoot, "generated/capabilities.json")));
   const component = path.join(copy, "agents/supplier-comparison-analyst");
-  fs.appendFileSync(path.join(component, "scripts/calculate.py"), "\n# unreviewed replacement\n");
+  fs.appendFileSync(path.join(component, `scripts/${scriptName}`), "\n# unreviewed replacement\n");
   const changedHash = await componentHash(component);
   index.components.find((item) => item.id === "supplier-comparison-analyst").contentSha256 = changedHash;
   for (const item of index.capabilities.filter((item) => item.componentId === "supplier-comparison-analyst")) item.componentContentSha256 = changedHash;
   fs.writeFileSync(path.join(copy, "generated/capabilities.json"), JSON.stringify(index));
   const rejected = await run({ dependencyRoot: copy });
   assert.equal(rejected.code, "dependency_source_or_route_not_verified"); assert.equal(rejected.toolInvoked, false);
+  }
+});
+
+test("legacy helper contracts remain discoverable but never bypass missing reviewed delivery support", sourceOptions, async (t) => {
+  // The production boundary requires a canonical explicit dependency root.
+  // macOS /var and Windows short temporary paths can otherwise fail earlier.
+  const copy = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "meta-kim-legacy-delivery-")));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  fs.cpSync(path.join(dependencyRoot, "agents"), path.join(copy, "agents"), { recursive: true });
+  fs.mkdirSync(path.join(copy, "generated"));
+  const index = JSON.parse(fs.readFileSync(path.join(dependencyRoot, "generated/capabilities.json")));
+  const id = "supplier-comparison-analyst", root = path.join(copy, "agents", id);
+  const contractPath = path.join(root, "capability.json");
+  const contract = JSON.parse(fs.readFileSync(contractPath));
+  for (const capability of contract.capabilities) delete capability.deliveryContract;
+  fs.writeFileSync(contractPath, JSON.stringify(contract, null, 2) + "\n");
+  const contentSha256 = await componentHash(root);
+  const contractSha256 = createHash("sha256").update(stableJson(contract)).digest("hex");
+  Object.assign(index.components.find((entry) => entry.id === id), { contentSha256, contractSha256 });
+  for (const entry of index.capabilities.filter((item) => item.componentId === id)) {
+    delete entry.deliveryContract;
+    Object.assign(entry, { componentContentSha256: contentSha256, contractSha256 });
+  }
+  fs.writeFileSync(path.join(copy, "generated/capabilities.json"), JSON.stringify(index));
+  const result = await run({ dependencyRoot: copy });
+  assert.equal(result.status, "unavailable");
+  assert.equal(result.code, "reviewed_delivery_contract_required");
+  assert.equal(result.toolInvoked, false);
 });
 
 test("real MCP tool call delivers the same calculation without a native Agent or paid model", sourceOptions, async (t) => {

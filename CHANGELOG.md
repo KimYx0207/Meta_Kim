@@ -8,6 +8,20 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.5.0] - 2026-10-04
+
+### Changed
+
+- **Keep professional rules with their capability packages.** Procurement and store-review material questions, typed result checks and readable reports now belong to Kim_Service. Meta retains intent, capability discovery, permissions, reviewed invocation and generic return validation; new business fields no longer require framework branches.
+- **Use reviewed delivery contracts without changing raw calculators.** Kim_Service V1.7 provides the optional delivery contract. The existing `calculate_materials` arguments and original calculator CLI remain compatible; older capability contracts remain discoverable but cannot silently bypass the reviewed delivery requirement. Source hashes, fixed arguments and authorization gates remain enforced.
+
+### Verification scope
+
+- Thirty-six local cross-repository tests passed using actual Python helpers, MCP transport and the formal task handoff. Independent review covered unchanged receipts, malformed and missing materials, source drift, Unicode and input/output boundaries. These checks do not certify an autonomous native Agent or model chain.
+- Real packed global install, update, repeated update, project install and project update passed using the official Claude CLI. The complete gate remains pending because this cloud checkout lacks the exact ten Claude Code/Codex interactive-host observation records; no full release-grade or native model-chain acceptance is claimed.
+- The broader local governance run recorded 826 passes, 29 explicit skips and four project-root-test failures caused by a pre-existing managed `.git` ancestor in the cloud temporary directory. Remote CI and release evidence must be reported separately; this is not a full-green local claim.
+
+
 ## [3.4.2] - 2026-10-04
 
 ### Fixed
