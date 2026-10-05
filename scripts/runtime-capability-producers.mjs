@@ -302,20 +302,22 @@ function nativeCliStreamExecutor(request) {
   revalidateRuntimeExecutableIdentity(request.executableIdentity);
   const prefix = request.executableIdentity?.argsPrefix ?? [];
   const version = run([...prefix, "--version"]);
-  if (version.status !== 0 || version.error || version.signal) throw new Error("native CLI version preflight failed");
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI version preflight", version);
   const runtimeVersion = String(version.stdout ?? "").trim();
   if (!runtimeVersion || runtimeVersion.length > 256 || /[\r\n]/u.test(runtimeVersion)) throw new Error("native CLI version identity is invalid");
   const help = run([...prefix, "--help"]);
   const helpText = String(help.stdout ?? "");
-  if (help.status !== 0 || help.error || help.signal ||
-      (request.runtime === "claude_code" && !["--safe-mode", "--no-session-persistence", "--forward-subagent-text"].every((flag) => helpText.includes(flag)))) {
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI help preflight", help);
+  if (request.runtime === "claude_code" && !["--safe-mode", "--no-session-persistence", "--forward-subagent-text"].every((flag) => helpText.includes(flag))) {
     throw new Error("native CLI lacks the required bounded stream flags");
   }
   const authArgs = buildNativeCliAuthStatusArgs(request.runtime, prefix);
   // Match the actual invocation's empty optional settings; CLI credential storage
   // and managed policy remain in place and are never read by this producer.
   if (request.runtime === "claude_code") authArgs.splice(prefix.length, 0, "--setting-sources", "", "--safe-mode");
-  const authObservation = parseNativeCliAuthStatus(request.runtime, run(authArgs));
+  const authResult = run(authArgs);
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI auth-status preflight", authResult);
+  const authObservation = parseNativeCliAuthStatus(request.runtime, authResult);
   const result = run(request.args, { input: request.prompt, timeout: request.timeoutMs, maxBuffer: 4 * 1024 * 1024 });
   revalidateRuntimeExecutableIdentity(request.executableIdentity);
   return { ...result, runtimeVersion, authObservation, executableIdentity: request.executableIdentity,
@@ -328,7 +330,7 @@ function productionExecutorSelected(executor) {
 
 function evidenceFromResult(result, request, marker) {
   if (request.source !== "native_cli_stream") return { rawBytes: Buffer.from(String(result?.stdout ?? ""), "utf8"), capture: null };
-  if (!result || result.status !== 0 || result.signal || result.error) throw new Error("native CLI probe did not finish successfully");
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI bounded probe", result);
   if (result.authObservation?.kind !== "official_existing_login" || result.authObservation.runtime !== request.runtime ||
       result.authObservation.provider !== (request.runtime === "codex" ? "chatgpt" : "firstParty")) {
     throw new Error("native CLI probe lacks verified official existing-login provenance");
@@ -342,22 +344,38 @@ function evidenceFromResult(result, request, marker) {
 function safeChildDiagnostic(value) {
   if (value == null) return null;
   const text = String(value);
-  return /^[A-Za-z0-9_.:-]+$/u.test(text) ? text : "unknown";
+  return /^[A-Z][A-Z0-9_]{0,63}$/u.test(text) ? text : "unknown";
 }
 
 export function runtimeHostInvocationError(runtime, phase, result) {
   const exitCode = Number.isInteger(result?.status) ? result.status : null;
   const signal = safeChildDiagnostic(result?.signal ?? result?.error?.signal);
   const childErrorCode = safeChildDiagnostic(result?.error?.code);
+  const errno = Number.isSafeInteger(result?.error?.errno) ? result.error.errno : null;
+  // Node's syscall may append the absolute executable path. Keep only a known
+  // operation token; never retain paths, argv, error.message, stdout or stderr.
+  const syscallToken = typeof result?.error?.syscall === "string" ? result.error.syscall.split(/\s/u, 1)[0] : null;
+  const syscall = syscallToken == null ? null : ["spawn", "spawnSync", "execFile", "execFileSync", "fork", "uv_spawn"].includes(syscallToken) ? syscallToken : "unknown";
   const error = new Error(
-    `${runtime} ${phase} failed: exit=${exitCode ?? "unknown"}; signal=${signal ?? "none"}; errorCode=${childErrorCode ?? "none"}`,
+    `${runtime} ${phase} failed: exit=${exitCode ?? "unknown"}; signal=${signal ?? "none"}; errorCode=${childErrorCode ?? "none"}; errno=${errno ?? "unknown"}; syscall=${syscall ?? "none"}`,
   );
   error.exitCode = exitCode;
+  error.status = exitCode;
+  error.code = childErrorCode;
+  error.errno = errno;
+  error.syscall = syscall;
   error.signal = signal;
   error.childErrorCode = childErrorCode;
   // Keep the conventional bounded diagnostic name used by release evidence.
   error.errorCode = childErrorCode;
   return error;
+}
+
+export function assertRuntimeHostInvocationSuccess(runtime, phase, result) {
+  if (!result || result.status !== 0 || result.signal != null || result.error != null) {
+    throw runtimeHostInvocationError(runtime, phase, result);
+  }
+  return result;
 }
 
 function cleanupIsolatedCodexRuntimeHome(isolatedRuntimeHome, {

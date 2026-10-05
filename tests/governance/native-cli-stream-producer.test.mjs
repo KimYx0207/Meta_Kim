@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { nativeCliStreamInvocationArgs, runControlledRuntimeCapabilityProducer, runCodexCompositeEngineeringProducer, validateControlledProbeOptions } from "../../scripts/runtime-capability-producers.mjs";
+import { assertRuntimeHostInvocationSuccess, runtimeHostInvocationError, nativeCliStreamInvocationArgs, runControlledRuntimeCapabilityProducer, runCodexCompositeEngineeringProducer, validateControlledProbeOptions } from "../../scripts/runtime-capability-producers.mjs";
 import { produceRuntimeCapabilityAcceptance, validateRuntimeCapabilityAcceptanceAttemptEvidence, writeRuntimeCapabilityAcceptanceAttempt } from "../../scripts/runtime-capability-acceptance.mjs";
 
 const sha = (value) => createHash("sha256").update(value).digest("hex");
@@ -186,4 +186,39 @@ test("generated Windows shell grant has a replayable exact native PowerShell eve
     {type:"result",subtype:"success",session_id:session,is_error:false,result:"finished"},
   ];
   assert.doesNotThrow(()=>collectNativeCliEventTape(jsonl(records),{runtime:"claude_code",capability:"shell",marker:token,workspace}));
+});
+
+
+test("Windows spawnSync EPERM preserves bounded diagnostics but strips user paths and private output", () => {
+  const nativeFailure = { status: null, signal: null, stdout: "PRIVATE_STDOUT", stderr: "PRIVATE_STDERR",
+    error: { code: "EPERM", errno: -4048, syscall: "spawnSync C:\\Users\\PRIVATE_USER\\npm\\node.exe",
+      path: "C:\\Users\\PRIVATE_USER\\npm\\node.exe", spawnargs: ["PRIVATE_ARGUMENT"], message: "PRIVATE_MESSAGE" } };
+  for (const phase of ["native CLI version preflight", "native CLI help preflight", "native CLI auth-status preflight", "native CLI bounded probe"]) {
+    assert.throws(() => assertRuntimeHostInvocationSuccess("codex", phase, nativeFailure), error => {
+      assert.equal(error.status, null); assert.equal(error.exitCode, null); assert.equal(error.signal, null);
+      assert.equal(error.code, "EPERM"); assert.equal(error.errorCode, "EPERM"); assert.equal(error.errno, -4048); assert.equal(error.syscall, "spawnSync");
+      assert.match(error.message, /exit=unknown; signal=none; errorCode=EPERM; errno=-4048; syscall=spawnSync/u);
+      assert.doesNotMatch(error.message + JSON.stringify(error), /PRIVATE_|node\.exe|Users/u);
+      return true;
+    });
+  }
+});
+
+test("benign CLI warnings do not replace a successful exit with a process failure", () => {
+  const successful = {status:0, signal:null, error:null, stdout:"codex-cli 0.157.1\n", stderr:"diagnostic startup warning"};
+  assert.equal(assertRuntimeHostInvocationSuccess("codex", "version", successful), successful);
+});
+
+test("signal, errno and syscall diagnostics reject malformed or unbounded values without echoing", () => {
+  const error=runtimeHostInvocationError("codex","probe",{status:0,signal:"PRIVATE_SIGNAL /path",error:{code:"PRIVATE_CODE secret",errno:"PRIVATE_ERRNO",syscall:"PRIVATE_SYSCALL /private/path"}});
+  assert.equal(error.signal,"unknown"); assert.equal(error.code,"unknown"); assert.equal(error.errno,null); assert.equal(error.syscall,"unknown");
+  assert.doesNotMatch(error.message+JSON.stringify(error),/PRIVATE_|private\/path/u);
+  assert.throws(()=>assertRuntimeHostInvocationSuccess("codex","probe",{status:0,signal:null,error:{code:"EPERM",errno:-4048,syscall:"spawnSync"}}),/EPERM/u);
+});
+
+test("every native preflight uses the shared diagnostic assertion without a fallback", () => {
+  const source=readFileSync(new URL("../../scripts/runtime-capability-producers.mjs",import.meta.url),"utf8");
+  const native=source.slice(source.indexOf("function nativeCliStreamExecutor("),source.indexOf("function productionExecutorSelected("));
+  for(const phase of ["native CLI version preflight","native CLI help preflight","native CLI auth-status preflight"]) assert(native.includes(`assertRuntimeHostInvocationSuccess(request.runtime, "${phase}"`));
+  assert.match(native,/shell: false/u); assert.doesNotMatch(native,/shell: true|execFileSync|spawnargs|chmod|icacls|bypass|withRuntimeIsolation/u);
 });
