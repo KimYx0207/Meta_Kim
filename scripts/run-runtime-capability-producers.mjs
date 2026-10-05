@@ -20,12 +20,13 @@ function printHelp() {
     `  --profile <name>        Acceptance profile (default: META_KIM_PROFILE/default)\n` +
     `  --status                Read fresh accepted production evidence; never invoke a runtime\n` +
     `  --require-fresh         Exit nonzero when any requested claim is missing/stale\n` +
-    `  --source <kind>         live_controlled|codex_desktop_agent_subagent|codex_desktop_engineering\n` +
-    `  --codex-model <MODEL>   Explicit Codex model for live_controlled production\n` +
+    `  --source <kind>         native_cli_stream|live_controlled|codex_desktop_agent_subagent|codex_desktop_engineering\n` +
+    `  native_cli_stream uses official existing login and only this fresh probe stream; never imports sessions or credentials.\n` +
+    `  --codex-model <MODEL>   Explicit Codex model for controlled CLI production\n` +
     `  --codex-reasoning-effort <EFFORT>  Explicit Codex model reasoning effort\n` +
-    `  --claude-max-turns <N>   Claude live_controlled limit: integer 1..4\n` +
+    `  --claude-max-turns <N>   Claude controlled CLI limit: integer 1..4\n` +
     `  --claude-max-budget-usd <USD>  Claude SDK budget limit: >0..0.10 per probe; not an invoice guarantee\n` +
-    `  --timeout-ms <MS>       live_controlled timeout: integer 25000..300000; default 300000\n` +
+    `  --timeout-ms <MS>       Controlled CLI timeout: integer 25000..300000; default 300000\n` +
     `  --codex-thread-id <id>  Use one explicit Codex Desktop parent session\n` +
     `  --codex-child-session-id <id>  Bind the exact spawned child session\n` +
     `  --codex-marker <token>   Exact child-final capability marker\n` +
@@ -131,7 +132,7 @@ try {
     const producedResults = [];
     for (const runtime of runtimes) {
       const produced = await produceRuntimeCapabilityAcceptance({ projectRoot, profile, source, runtime, capabilities, threadId, childSessionId, marker, sinceMs, workspacePath: workspacePath ? path.resolve(workspacePath) : undefined, codexModel, codexReasoningEffort, claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs });
-      for (const entry of produced.results ?? []) producedResults.push({ runtime, capability: entry.capability ?? entry.receipt?.capability, mode: "interactive_host", attemptId: entry.acceptance.record.attemptId, receiptSha256: entry.acceptance.record.sourceReport.sha256, producer: entry.receipt.producer.id, source: entry.receipt.compositeLifecycle?.sourceCategory ?? "live_controlled" });
+      for (const entry of produced.results ?? []) producedResults.push({ runtime, capability: entry.capability ?? entry.receipt?.capability, mode: "interactive_host", attemptId: entry.acceptance.record.attemptId, receiptSha256: entry.acceptance.record.sourceReport.sha256, producer: entry.receipt.producer.id, source: entry.receipt.hostInvocation?.request?.source ?? entry.receipt.compositeLifecycle?.sourceCategory ?? "live_controlled" });
     }
     process.stdout.write(`${JSON.stringify({ schemaVersion: "meta-kim-controlled-producer-run-v2", ok: true, projectRoot: "<project>", profile: profile ?? "default", results: producedResults }, null, 2)}\n`);
   }

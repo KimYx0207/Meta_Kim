@@ -1295,7 +1295,13 @@ export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, ta
     copyPreservingPath(receiptSource, receiptTarget);
     const receipt = JSON.parse(readFileSync(receiptSource, "utf8"));
     copyPreservingPath(path.resolve(sourceProfile, receipt.rawArtifact.path), path.resolve(targetProfile, receipt.rawArtifact.path));
-    for (const ref of [receipt.compositeLifecycle?.parentSessionRef, receipt.compositeLifecycle?.childSessionRef].filter(Boolean)) {
+    const nativeStream = receipt.hostInvocation?.request?.source === "native_cli_stream";
+    if (nativeStream && (receipt.compositeLifecycle?.parentSessionRef != null || receipt.compositeLifecycle?.childSessionRef != null)) {
+      throw new Error("native CLI stream snapshots cannot depend on private session files");
+    }
+    // New stream receipts are self-contained minimal event tapes. Their replay
+    // was validated above; never read the user's credential or transcript store.
+    for (const ref of (nativeStream ? [] : [receipt.compositeLifecycle?.parentSessionRef, receipt.compositeLifecycle?.childSessionRef]).filter(Boolean)) {
       copyPreservingPath(path.join(sourceUserHome, ".codex", "sessions", ref), path.join(targetUserHome, ".codex", "sessions", ref));
     }
     copied.push({ runtime: attempt.runtime, capability: attempt.capability, mode: attempt.mode, attemptId: attempt.attemptId, receiptSha256: attempt.sourceReport.sha256 });

@@ -1222,3 +1222,8 @@ Meta_Kim by KimYx0207 — https://github.com/KimYx0207/Meta_Kim
 ```
 
 Attribution must not imply endorsement by KimYx0207 or the Meta_Kim project. Third-party dependencies and optional skill repositories keep their own licenses.
+
+
+### Native CLI observation privacy
+
+The explicit `native_cli_stream` producer uses the official CLI’s existing login and only a fresh controlled probe’s structured output. It does not copy credentials or read historical sessions, and does not fall back to API billing. Ten real observations and the full release gate remain required; existing login alone is not model-usage authorization. See [compatibility and privacy boundaries](docs/native-cli-observation.md).
