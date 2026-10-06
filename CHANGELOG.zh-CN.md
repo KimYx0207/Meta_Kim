@@ -4,7 +4,7 @@
 
 这是 Meta_Kim 面向读者的更新说明。
 
-更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看[测试记录](./tests/release-records/verification-history.zh-CN.md)、Git 历史和相关 PR。
+更新说明先解释本次解决的用户痛点或风险，再说明为了解决它改了什么、为什么重要。过细的内部任务编号、低价值 backlog id 和实现流水账不放在这里；需要精确证据时，请看[测试记录](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.zh-CN.md)、Git 历史和相关 PR。
 
 ## 未发布
 
