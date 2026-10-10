@@ -119,6 +119,7 @@ lib/
 docs/**
 !docs/
 !docs/live-sdk.md
+!docs/native-cli-observation.md
 !docs/graphify-managed-lifecycle.md
 !docs/images/
 !docs/images/**

@@ -1211,3 +1211,8 @@ Meta_Kim by KimYx0207 — https://github.com/KimYx0207/Meta_Kim
 ```
 
 署名不得暗示 KimYx0207 或 Meta_Kim 项目对你的产品、服务或分发版本作出背书。第三方依赖和可选技能仓库仍适用各自许可证。
+
+
+### 原生 CLI 观察与隐私
+
+显式 `native_cli_stream` 来源使用官方 CLI 既有登录，只采集本次受控探针的结构化输出，不复制凭据、不读取历史会话、不自动回退 API 计费。标准十项真实观察及完整发布门不变；已有登录本身不代表已授权模型用量。见[兼容性与隐私边界](docs/native-cli-observation.md)。

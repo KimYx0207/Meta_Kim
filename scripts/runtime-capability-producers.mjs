@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { buildNativeCliEnvironment, buildNativeCliAuthStatusArgs, parseNativeCliAuthStatus } from "./native-cli-auth.mjs";
+import { collectNativeCliEventTape } from "./native-cli-event-tape.mjs";
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,7 +23,8 @@ const SUPPORTED_RUNTIMES = new Set(["claude_code", "codex"]);
 export function validateControlledProbeOptions({ runtime, source = "live_controlled", claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs } = {}) {
   const hasClaudeControls = claudeMaxTurns !== undefined || claudeMaxBudgetUsd !== undefined;
   if (hasClaudeControls && runtime !== "claude_code") throw new Error("Claude probe limits require runtime claude_code");
-  if ((hasClaudeControls || timeoutMs !== undefined) && source !== "live_controlled") throw new Error("Probe limits require source live_controlled");
+  if ((hasClaudeControls || timeoutMs !== undefined) && !["live_controlled", "native_cli_stream"].includes(source)) throw new Error("Probe limits require source live_controlled or native_cli_stream");
+  if (source === "native_cli_stream" && claudeMaxBudgetUsd !== undefined) throw new Error("native_cli_stream does not select API billing or accept an API dollar budget");
   if (claudeMaxTurns !== undefined && (!Number.isInteger(claudeMaxTurns) || claudeMaxTurns < 1 || claudeMaxTurns > 4)) {
     throw new Error("claudeMaxTurns must be an integer from 1 to 4");
   }
@@ -267,25 +271,111 @@ function commandFor(runtime, workspace, capability, executableIdentity = null, {
   };
 }
 
+// This source consumes only a newly spawned official CLI's structured stdout.
+// Authentication remains inside that CLI: no credential or session-file access.
+export function nativeCliStreamInvocationArgs({ runtime, workspace, capability, argsPrefix = [], codexModel, codexReasoningEffort, claudeMaxTurns = 4, marker, platform = process.platform } = {}) {
+  if (runtime === "codex") return codexLiveInvocationArgs({ workspace, argsPrefix, model: codexModel,
+    reasoningEffort: codexReasoningEffort, ephemeral: true }).filter((arg) => arg !== "--ignore-rules");
+  if (runtime !== "claude_code") throw new Error("unsupported native CLI runtime");
+  const configured = commandFor(runtime, workspace, capability, { argsPrefix }, { claudeMaxTurns });
+  const required = ["agent", "subagent"].includes(capability) ? ["Agent", "Task"]
+    : capability === "shell" ? [platform === "win32" ? "PowerShell" : "Bash"] : capability === "filesystem" ? ["Read"] : ["Read", "Edit"];
+  const disabled = ["Bash", "PowerShell", "Read", "Edit", "Write", "Agent", "Task", "WebSearch", "WebFetch", "Skill", "mcp__*"].filter((tool) => !required.includes(tool));
+  const exactPath = "./meta-kim-probe.txt";
+  let allowed = required.map((tool) => ["Read", "Edit"].includes(tool) ? `${tool}(${exactPath})` : tool).join(",");
+  if (capability === "shell") {
+    if (!/^META_KIM_CAPABILITY_SHELL_[0-9a-f-]{36}$/u.test(marker ?? "")) throw new Error("native shell permission requires the fresh capability marker");
+    allowed = platform === "win32"
+      ? `PowerShell(Set-Content -LiteralPath meta-kim-probe.txt -Value 'shell-${marker}' -NoNewline -Encoding ascii)`
+      : `Bash(printf '%s' 'shell-${marker}' > meta-kim-probe.txt)`;
+  }
+  configured.args[configured.args.indexOf("--allowedTools") + 1] = allowed;
+  return [...configured.args, "--safe-mode", "--disallowedTools", disabled.join(","), ...(["agent", "subagent"].includes(capability) ? ["--forward-subagent-text"] : [])];
+}
+
+function nativeCliStreamExecutor(request) {
+  const env = buildNativeCliEnvironment(request.runtime);
+  const run = (args, extra = {}) => spawnSync(request.command, args, {
+    cwd: request.workspace, env, shell: false, windowsHide: true, encoding: "utf8",
+    timeout: 30_000, maxBuffer: 64 * 1024, ...extra,
+  });
+  revalidateRuntimeExecutableIdentity(request.executableIdentity);
+  const prefix = request.executableIdentity?.argsPrefix ?? [];
+  const version = run([...prefix, "--version"]);
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI version preflight", version);
+  const runtimeVersion = String(version.stdout ?? "").trim();
+  if (!runtimeVersion || runtimeVersion.length > 256 || /[\r\n]/u.test(runtimeVersion)) throw new Error("native CLI version identity is invalid");
+  const help = run([...prefix, "--help"]);
+  const helpText = String(help.stdout ?? "");
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI help preflight", help);
+  if (request.runtime === "claude_code" && !["--safe-mode", "--no-session-persistence", "--forward-subagent-text"].every((flag) => helpText.includes(flag))) {
+    throw new Error("native CLI lacks the required bounded stream flags");
+  }
+  const authArgs = buildNativeCliAuthStatusArgs(request.runtime, prefix);
+  // Match the actual invocation's empty optional settings; CLI credential storage
+  // and managed policy remain in place and are never read by this producer.
+  if (request.runtime === "claude_code") authArgs.splice(prefix.length, 0, "--setting-sources", "", "--safe-mode");
+  const authResult = run(authArgs);
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI auth-status preflight", authResult);
+  const authObservation = parseNativeCliAuthStatus(request.runtime, authResult);
+  const result = run(request.args, { input: request.prompt, timeout: request.timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+  revalidateRuntimeExecutableIdentity(request.executableIdentity);
+  return { ...result, runtimeVersion, authObservation, executableIdentity: request.executableIdentity,
+    runtimeIsolation: "official_cli_existing_login_fresh_workspace_structured_stream" };
+}
+
+function productionExecutorSelected(executor) {
+  return executor === productionExecutor || executor === nativeCliStreamExecutor;
+}
+
+function evidenceFromResult(result, request, marker) {
+  if (request.source !== "native_cli_stream") return { rawBytes: Buffer.from(String(result?.stdout ?? ""), "utf8"), capture: null };
+  assertRuntimeHostInvocationSuccess(request.runtime, "native CLI bounded probe", result);
+  if (result.authObservation?.kind !== "official_existing_login" || result.authObservation.runtime !== request.runtime ||
+      result.authObservation.provider !== (request.runtime === "codex" ? "chatgpt" : "firstParty")) {
+    throw new Error("native CLI probe lacks verified official existing-login provenance");
+  }
+  const tape = collectNativeCliEventTape(String(result.stdout ?? ""), {
+    runtime: request.runtime, capability: request.capability, workspace: request.workspace, marker,
+  });
+  return { rawBytes: Buffer.from(tape.text, "utf8"), capture: tape.capture };
+}
+
 function safeChildDiagnostic(value) {
   if (value == null) return null;
   const text = String(value);
-  return /^[A-Za-z0-9_.:-]+$/u.test(text) ? text : "unknown";
+  return /^[A-Z][A-Z0-9_]{0,63}$/u.test(text) ? text : "unknown";
 }
 
 export function runtimeHostInvocationError(runtime, phase, result) {
   const exitCode = Number.isInteger(result?.status) ? result.status : null;
   const signal = safeChildDiagnostic(result?.signal ?? result?.error?.signal);
   const childErrorCode = safeChildDiagnostic(result?.error?.code);
+  const errno = Number.isSafeInteger(result?.error?.errno) ? result.error.errno : null;
+  // Node's syscall may append the absolute executable path. Keep only a known
+  // operation token; never retain paths, argv, error.message, stdout or stderr.
+  const syscallToken = typeof result?.error?.syscall === "string" ? result.error.syscall.split(/\s/u, 1)[0] : null;
+  const syscall = syscallToken == null ? null : ["spawn", "spawnSync", "execFile", "execFileSync", "fork", "uv_spawn"].includes(syscallToken) ? syscallToken : "unknown";
   const error = new Error(
-    `${runtime} ${phase} failed: exit=${exitCode ?? "unknown"}; signal=${signal ?? "none"}; errorCode=${childErrorCode ?? "none"}`,
+    `${runtime} ${phase} failed: exit=${exitCode ?? "unknown"}; signal=${signal ?? "none"}; errorCode=${childErrorCode ?? "none"}; errno=${errno ?? "unknown"}; syscall=${syscall ?? "none"}`,
   );
   error.exitCode = exitCode;
+  error.status = exitCode;
+  error.code = childErrorCode;
+  error.errno = errno;
+  error.syscall = syscall;
   error.signal = signal;
   error.childErrorCode = childErrorCode;
   // Keep the conventional bounded diagnostic name used by release evidence.
   error.errorCode = childErrorCode;
   return error;
+}
+
+export function assertRuntimeHostInvocationSuccess(runtime, phase, result) {
+  if (!result || result.status !== 0 || result.signal != null || result.error != null) {
+    throw runtimeHostInvocationError(runtime, phase, result);
+  }
+  return result;
 }
 
 function cleanupIsolatedCodexRuntimeHome(isolatedRuntimeHome, {
@@ -671,12 +761,13 @@ function assertCodexEngineeringToolsNotDeclined(rawText) {
   }
 }
 
-function engineeringPrompt(marker) {
+function engineeringPrompt(marker, nativeStream = false) {
+  const readCommand = nativeStream && process.platform !== "win32" ? "cat" : "Get-Content";
   return `This is one bounded Meta_Kim Codex engineering capability probe. Work only in the current temporary workspace. Use exactly this sequence and do not combine steps:\n` +
     `1. Invoke the native shell tool once to create meta-kim-engineering-probe.txt containing exactly before-${marker} with no trailing newline.\n` +
-    `2. Invoke the native shell tool once with a read-only Get-Content command to read that file and observe exactly before-${marker}.\n` +
+    `2. Invoke the native shell tool once with a read-only ${readCommand} command to read that file and observe exactly before-${marker}.\n` +
     `3. Invoke the native apply_patch tool once to replace before-${marker} with after-${marker}. Do not edit through the shell.\n` +
-    `4. Invoke the native shell tool once with a read-only Get-Content command to read the final file and observe exactly one line, after-${marker}, followed by one LF.\n` +
+    `4. Invoke the native shell tool once with a read-only ${readCommand} command to read the final file and observe exactly one line, after-${marker}, followed by one LF.\n` +
     `Then stop. Do not perform any other file, shell, or edit operation.`;
 }
 
@@ -692,9 +783,11 @@ export function runCodexCompositeEngineeringProducer({
   codexModel = null,
   codexReasoningEffort = null,
   executor = productionExecutor,
+  source = "live_controlled",
   _acceptanceWriter = null,
   attemptBase = `${new Date().toISOString().replace(/[-:.]/gu, "")}-${randomUUID()}`,
 } = {}) {
+  if (source === "native_cli_stream" && executor === productionExecutor) executor = nativeCliStreamExecutor;
   const paths = prepareRuntimeCapabilityAcceptanceStore({ projectRoot, profile });
   const producerRoot = path.join(paths.profileRoot, "runtime-capability-producers");
   const workspace = createControlledProbeWorkspace({
@@ -710,16 +803,17 @@ export function runCodexCompositeEngineeringProducer({
   mkdirSync(receiptsDir, { recursive: true });
   const nonce = randomUUID();
   const marker = `META_KIM_CAPABILITY_ENGINEERING_${nonce}`;
-  const prompt = engineeringPrompt(marker);
-  const executableIdentity = executor === productionExecutor
+  const prompt = engineeringPrompt(marker, source === "native_cli_stream");
+  const executableIdentity = productionExecutorSelected(executor)
     ? loadSetupBoundRuntimeExecutable({ projectRoot: paths.projectRoot, profile: paths.profile, runtime: "codex" })
     : testOnlyExecutableIdentity("codex");
   const command = commandFor("codex", workspace, "engineering_composite", executableIdentity, { codexModel, codexReasoningEffort });
-  const request = { runtime: "codex", capability: "engineering_composite", mode: "interactive_host", workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity };
+  if (source === "native_cli_stream") command.args = nativeCliStreamInvocationArgs({ runtime: "codex", workspace, capability: "engineering_composite", argsPrefix: executableIdentity.argsPrefix ?? [], codexModel, codexReasoningEffort });
+  const request = { source, runtime: "codex", capability: "engineering_composite", mode: "interactive_host", workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity };
   let completed = false;
   try {
     const result = executor(request);
-    const rawBytes = Buffer.from(String(result?.stdout ?? ""), "utf8");
+    const { rawBytes, capture } = evidenceFromResult(result, request, marker);
     const rawPath = path.join(artifactsDir, `${attemptBase}-engineering.jsonl`);
     atomicExclusiveWrite(rawPath, rawBytes);
     if (!result || result.status !== 0) throw runtimeHostInvocationError("codex", "engineering composite host invocation", result);
@@ -749,8 +843,8 @@ export function runCodexCompositeEngineeringProducer({
       beforeContentSha256: sha256(`before-${marker}`),
       finalContentSha256: sha256(`after-${marker}\n`),
     };
-    const requestRecord = { runtime: "codex", capability: "engineering_composite", mode: "interactive_host", command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt) };
-    const resultRecord = { status: result.status, signal: result.signal ?? null, stdoutSha256: sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) };
+    const requestRecord = { ...(source === "native_cli_stream" ? { source, workspace, timeoutMs } : {}), runtime: "codex", capability: "engineering_composite", mode: "interactive_host", command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt) };
+    const resultRecord = { status: result.status, signal: result.signal ?? null, stdoutSha256: capture?.rawStdoutSha256 ?? sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) };
     const byId = new Map(Object.values(selected).map((event) => [event.eventId, event]));
     const results = [];
     for (const capability of lifecycle.facets) {
@@ -776,7 +870,7 @@ export function runCodexCompositeEngineeringProducer({
         schemaVersion: PRODUCER_RECEIPT_SCHEMA_VERSION,
         attestationAuthority: "controlled_producer",
         producer: CODEX_ENGINEERING_COMPOSITE_PRODUCER,
-        testOnly: executor !== productionExecutor,
+        testOnly: !productionExecutorSelected(executor),
         runtime: "codex",
         runtimeVersion: String(result.runtimeVersion ?? "").trim(),
         capability,
@@ -786,18 +880,20 @@ export function runCodexCompositeEngineeringProducer({
         observedAt,
         outcome: "pass",
         hostInvocation: {
-          runtimeIsolation: result.runtimeIsolation ?? (executor === productionExecutor ? "ephemeral_auth_home_and_rules_isolated" : "test_injected"),
+          runtimeIsolation: result.runtimeIsolation ?? (productionExecutorSelected(executor) ? "ephemeral_auth_home_and_rules_isolated" : "test_injected"),
           request: requestRecord,
           requestDigest: sha256(JSON.stringify(requestRecord)),
           result: resultRecord,
           resultDigest: sha256(JSON.stringify(resultRecord)),
           exitCode: result.status,
           signal: result.signal ?? null,
+          ...(capture ? { executableIdentity: result.executableIdentity ?? executableIdentity } : {}),
         },
         capabilityNonce: nonce,
         capabilityMarker: marker,
         compositeLifecycle: { ...lifecycle, facet: capability },
         eventEvidence,
+        ...(capture ? { streamCapture: capture, authObservation: result.authObservation } : {}),
         rawArtifact: { path: path.relative(paths.profileRoot, rawPath).replaceAll("\\", "/"), sha256: sha256(rawBytes) },
         workspaceOutcome: { kind: "bounded_file", contentSha256: lifecycle.finalContentSha256 },
         flags: { fixture: false, recoveredFromTimeout: false, blockedFromRelease: false },
@@ -992,14 +1088,16 @@ export function runControlledRuntimeCapabilityProducer({
   claudeMaxTurns,
   claudeMaxBudgetUsd,
   executor = productionExecutor,
+  source = "live_controlled",
   _acceptanceWriter = null,
   preserveWorkspace = false,
   attemptId = `${new Date().toISOString().replace(/[-:.]/gu, "")}-${randomUUID()}`,
   correlationId = randomUUID(),
 } = {}) {
+  if (source === "native_cli_stream" && executor === productionExecutor) executor = nativeCliStreamExecutor;
   if (!SUPPORTED_RUNTIMES.has(runtime)) throw new Error("controlled producers support only claude_code and codex");
   if (mode !== "interactive_host") throw new Error("controlled producers currently support only interactive_host");
-  validateControlledProbeOptions({ runtime, claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs });
+  validateControlledProbeOptions({ source, runtime, claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs });
   const producer = PRODUCERS[capability];
   if (!producer) throw new Error(`no controlled producer exists for capability ${capability}`);
   const paths = prepareRuntimeCapabilityAcceptanceStore({ projectRoot, profile });
@@ -1015,18 +1113,28 @@ export function runControlledRuntimeCapabilityProducer({
   if (capability === "filesystem") writeFileSync(path.join(workspace, "meta-kim-probe.txt"), `${marker}\n`, "utf8");
   if (capability === "apply_patch / edit") writeFileSync(path.join(workspace, "meta-kim-probe.txt"), `before-${marker}\n`, "utf8");
   if (runtime === "claude_code") writeFileSync(path.join(workspace, "meta-kim-empty-mcp.json"), '{"mcpServers":{}}\n', "utf8");
-  const executableIdentity = executor === productionExecutor
+  const executableIdentity = productionExecutorSelected(executor)
     ? loadSetupBoundRuntimeExecutable({ projectRoot: paths.projectRoot, profile: paths.profile, runtime })
     : testOnlyExecutableIdentity(runtime);
   const command = commandFor(runtime, workspace, capability, executableIdentity, { codexModel, codexReasoningEffort, claudeMaxTurns, claudeMaxBudgetUsd });
-  const prompt = promptFor(capability, runtime, nonce, marker);
-  const request = { runtime, capability, mode, workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity, claudeMaxTurns, claudeMaxBudgetUsd };
+  if (source === "native_cli_stream") command.args = nativeCliStreamInvocationArgs({ runtime, workspace, capability, argsPrefix: executableIdentity.argsPrefix ?? [], codexModel, codexReasoningEffort, claudeMaxTurns, marker });
+  let prompt = promptFor(capability, runtime, nonce, marker);
+  if (source === "native_cli_stream" && runtime === "claude_code" && ["agent", "subagent"].includes(capability)) {
+    prompt += " Use only the built-in general-purpose child in the foreground. Do not set a model, permission mode, agent name, or custom role. Do not request background execution. The child must use no tools and return only the marker.";
+  }
+  if (source === "native_cli_stream" && runtime === "claude_code" && capability === "shell") {
+    const fixedCommand = process.platform === "win32"
+      ? `Set-Content -LiteralPath meta-kim-probe.txt -Value 'shell-${marker}' -NoNewline -Encoding ascii`
+      : `printf '%s' 'shell-${marker}' > meta-kim-probe.txt`;
+    prompt += ` Run exactly this single command without adding arguments or other operations: ${fixedCommand}`;
+  }
+  const request = { source, runtime, capability, mode, workspace, command: command.command, args: command.args, prompt, timeoutMs, executableIdentity, claudeMaxTurns, claudeMaxBudgetUsd };
   let result;
   let completed = false;
   try {
     result = executor(request);
     const rawPath = path.join(artifactsDir, `${attemptId}.jsonl`);
-    const rawBytes = Buffer.from(String(result?.stdout ?? ""), "utf8");
+    const { rawBytes, capture } = evidenceFromResult(result, request, marker);
     atomicExclusiveWrite(rawPath, rawBytes);
     if (!result || result.status !== 0) throw runtimeHostInvocationError(runtime, `${producer.id} host invocation`, result);
     const rawText = rawBytes.toString("utf8");
@@ -1035,12 +1143,18 @@ export function runControlledRuntimeCapabilityProducer({
     const matched = events.filter((event) => eventMatches(runtime, capability, event, rawText, marker) && ["completed", "returned"].includes(event.resultStatus));
     if (matched.length === 0) throw new Error(`${producer.id} did not observe a capability-specific completed host event`);
     assertWorkspaceOutcome(workspace, capability, marker);
+    if (source === "native_cli_stream" && !["agent", "subagent"].includes(capability)) {
+      const expectedBytes = capability === "shell" ? `shell-${marker}` : capability === "filesystem" ? `${marker}\n` : `after-${marker}\n`;
+      if (readFileSync(path.join(workspace, "meta-kim-probe.txt"), "utf8") !== expectedBytes) {
+        throw new Error("native CLI probe file bytes do not match the exact bounded outcome");
+      }
+    }
     const observedAt = new Date().toISOString();
     const receiptWithoutHash = {
       schemaVersion: PRODUCER_RECEIPT_SCHEMA_VERSION,
       attestationAuthority: "controlled_producer",
       producer,
-      testOnly: executor !== productionExecutor,
+      testOnly: !productionExecutorSelected(executor),
       runtime,
       runtimeVersion: String(result.runtimeVersion ?? "").trim(),
       capability,
@@ -1050,11 +1164,11 @@ export function runControlledRuntimeCapabilityProducer({
       observedAt,
       outcome: "pass",
       hostInvocation: {
-        runtimeIsolation: result.runtimeIsolation ?? (executor === productionExecutor ? "runtime_native_isolation" : "test_injected"),
-        request: { runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt), timeoutMs },
-        requestDigest: sha256(JSON.stringify({ runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt), timeoutMs })),
-        result: { status: result.status, signal: result.signal ?? null, stdoutSha256: sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) },
-        resultDigest: sha256(JSON.stringify({ status: result.status, signal: result.signal ?? null, stdoutSha256: sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) })),
+        runtimeIsolation: result.runtimeIsolation ?? (productionExecutorSelected(executor) ? "runtime_native_isolation" : "test_injected"),
+        request: { ...(source === "native_cli_stream" ? { source, workspace } : {}), runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt), timeoutMs },
+        requestDigest: sha256(JSON.stringify({ ...(source === "native_cli_stream" ? { source, workspace } : {}), runtime, capability, mode, command: path.basename(command.command), args: command.args, promptSha256: sha256(prompt), timeoutMs })),
+        result: { status: result.status, signal: result.signal ?? null, stdoutSha256: capture?.rawStdoutSha256 ?? sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) },
+        resultDigest: sha256(JSON.stringify({ status: result.status, signal: result.signal ?? null, stdoutSha256: capture?.rawStdoutSha256 ?? sha256(rawBytes), stderrSha256: sha256(String(result.stderr ?? "")) })),
         exitCode: result.status,
         signal: result.signal ?? null,
         executableIdentity: result.executableIdentity ?? executableIdentity,
@@ -1078,6 +1192,7 @@ export function runControlledRuntimeCapabilityProducer({
         activityCompletionObserved: event.activityCompletionObserved === true,
         sourceLines: event.sourceLines ?? [],
       })),
+      ...(capture ? { streamCapture: capture, authObservation: result.authObservation } : {}),
       rawArtifact: {
         path: path.relative(paths.profileRoot, rawPath).replaceAll("\\", "/"),
         sha256: sha256(rawBytes),
@@ -1114,6 +1229,7 @@ export async function produceRuntimeCapabilityWithAcceptanceWriter(options, acce
   const common = {
     projectRoot: options.projectRoot,
     profile: options.profile,
+    source: options.source,
     _acceptanceWriter: acceptanceWriter,
     codexModel: options.codexModel,
     codexReasoningEffort: options.codexReasoningEffort,
@@ -1139,6 +1255,25 @@ export async function produceRuntimeCapabilityWithAcceptanceWriter(options, acce
       sinceMs: options.sinceMs,
       workspacePath: options.workspacePath,
     });
+  }
+  if (options.source === "native_cli_stream") {
+    const requested = options.capabilities ?? [];
+    if (!Array.isArray(requested) || requested.length === 0 || new Set(requested).size !== requested.length ||
+        requested.some((capability) => !Object.hasOwn(PRODUCERS, capability))) throw new Error("native CLI capabilities must be a nonempty unique supported set");
+    const results = [];
+    // Native file-change JSON binds paths, not contents. Keep the existing
+    // ordered write/read/edit/read composite to prove all three engineering facets.
+    const engineering = requested.filter((capability) => CODEX_ENGINEERING_FACETS.includes(capability));
+    if (options.runtime === "codex" && engineering.length && engineering.length !== 3) {
+      throw new Error("native Codex engineering proof requires shell,filesystem,apply_patch / edit together");
+    }
+    for (const capability of requested.filter((capability) => options.runtime !== "codex" || !CODEX_ENGINEERING_FACETS.includes(capability))) {
+      results.push(runControlledRuntimeCapabilityProducer({ ...common, runtime: options.runtime, capability }));
+    }
+    if (options.runtime === "codex" && engineering.length) {
+      results.push(...runCodexCompositeEngineeringProducer({ ...common, timeoutMs: options.timeoutMs }).results);
+    }
+    return { results };
   }
   if (options.source === "live_controlled") {
     if (selectLiveControlledProducerRoute(options) === "codex_engineering_composite") {

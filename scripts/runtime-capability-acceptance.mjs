@@ -25,6 +25,7 @@ import { codexDesktopEventPayload, observeClaudeJsonl, observeCodexJsonl } from 
 import { observeCodexDesktopEngineeringSlice } from "./live-acceptance/read-codex-session-evidence.mjs";
 import { assertExactStandardRuntimeObservationSet } from "./runtime-execution-gate.mjs";
 import { assertExactMarkerEventLifecycles } from "./live-acceptance/validate-marker-lifecycle.mjs";
+import { validateNativeCliEventTape } from "./native-cli-event-tape.mjs";
 import { packedProductProofComplete } from "./packed-product-proof.mjs";
 
 export const ACCEPTANCE_ATTEMPT_SCHEMA_VERSION = "meta-kim-runtime-capability-acceptance-attempt-v1";
@@ -448,7 +449,12 @@ function validateControlledProducerReceipt(receipt, runtime, capability, mode) {
     : `META_KIM_CAPABILITY_${capability.replace(/[^a-z0-9]+/giu, "_").toUpperCase()}_${receipt.capabilityNonce}`;
   if (receipt.capabilityMarker !== expectedMarker) throw new Error("controlled producer capability marker mismatch");
   if (digest(JSON.stringify(receipt.hostInvocation.request)) !== receipt.hostInvocation.requestDigest || digest(JSON.stringify(receipt.hostInvocation.result)) !== receipt.hostInvocation.resultDigest) throw new Error("controlled producer host invocation digest mismatch");
-  if (receipt.hostInvocation.result.stdoutSha256 !== receipt.rawArtifact.sha256) throw new Error("controlled producer stdout/raw artifact binding mismatch");
+  const nativeStream = receipt.hostInvocation.request.source === "native_cli_stream";
+  if (nativeStream) validateNativeCliStreamReceipt(receipt, runtime);
+  else {
+    if (receipt.streamCapture != null || receipt.authObservation != null) throw new Error("native stream evidence requires the explicit native_cli_stream source");
+    if (receipt.hostInvocation.result.stdoutSha256 !== receipt.rawArtifact.sha256) throw new Error("controlled producer stdout/raw artifact binding mismatch");
+  }
   if (["agent", "subagent"].includes(capability) && receipt.eventEvidence.some((entry) =>
     typeof entry.childSessionId !== "string" || !entry.childSessionId || entry.childSessionId.length > 256 || /[\u0000-\u001f\u007f]/u.test(entry.childSessionId) ||
     typeof entry.sessionId !== "string" || !entry.sessionId || entry.sessionId.length > 256 || /[\u0000-\u001f\u007f]/u.test(entry.sessionId)
@@ -476,6 +482,52 @@ function validateControlledProducerReceipt(receipt, runtime, capability, mode) {
     ) throw new Error("controlled producer promotion lineage is invalid");
   }
   return { observedAt: receipt.observedAt, runtimeVersion: receipt.runtimeVersion, reportSchemaVersion: receipt.schemaVersion };
+}
+
+function validateNativeCliStreamReceipt(receipt, runtime) {
+  const request = receipt.hostInvocation.request;
+  const capture = receipt.streamCapture;
+  const auth = receipt.authObservation;
+  const expectedProvider = runtime === "codex" ? "chatgpt" : "firstParty";
+  if (!capture || capture.source !== "native_cli_stream" || capture.runtime !== runtime ||
+      capture.rawStdoutSha256 !== receipt.hostInvocation.result.stdoutSha256 ||
+      capture.eventTapeSha256 !== receipt.rawArtifact.sha256 ||
+      auth?.kind !== "official_existing_login" || auth.runtime !== runtime || auth.provider !== expectedProvider ||
+      JSON.stringify(Object.keys(auth).sort()) !== JSON.stringify(["kind", "provider", "runtime"]) ||
+      receipt.hostInvocation.signal != null || receipt.hostInvocation.result.signal != null || receipt.hostInvocation.result.status !== 0 ||
+      receipt.hostInvocation.runtimeIsolation !== "official_cli_existing_login_fresh_workspace_structured_stream" ||
+      request.runtime !== runtime || request.mode !== receipt.mode ||
+      request.capability !== (receipt.producer.id === CODEX_ENGINEERING_COMPOSITE_PRODUCER_ID ? "engineering_composite" : receipt.capability) ||
+      !/^[a-f0-9]{64}$/u.test(request.promptSha256 ?? "") ||
+      !path.isAbsolute(request.workspace ?? "") ||
+      !Array.isArray(request.args) || request.args.some((arg) => typeof arg !== "string") ||
+      receipt.compositeLifecycle?.parentSessionRef != null || receipt.compositeLifecycle?.childSessionRef != null ||
+      [CODEX_DESKTOP_COMPOSITE_PRODUCER_ID, CODEX_DESKTOP_ENGINEERING_PRODUCER_ID].includes(receipt.producer.id)) {
+    throw new Error("native CLI stream source, auth, process or evidence binding is invalid");
+  }
+  const identity = receipt.hostInvocation.executableIdentity;
+  const setupBound = identity?.bindingSource === "setup_or_host_adapter" ||
+    (identity?.bindingSource === "setup_runtime_launch_inventory" && identity.executionAuthority === false);
+  if (!identity || !/^[a-f0-9]{64}$/u.test(identity.sha256 ?? "") ||
+      (receipt.testOnly !== true && (!setupBound || !path.isAbsolute(identity.realpath ?? "")))) {
+    throw new Error("native CLI stream requires a bound executable identity");
+  }
+  if (request.command !== path.basename(identity.realpath)) throw new Error("native CLI command does not match bound executable");
+  const args = request.args;
+  if (args.some((arg) => /dangerously|bypassPermissions|--ignore-rules|--with-api-key|--with-access-token/u.test(arg))) {
+    throw new Error("native CLI stream cannot bypass rules or supply credentials");
+  }
+  const pair = (name, value) => args.indexOf(name) >= 0 && args[args.indexOf(name) + 1] === value;
+  if (runtime === "codex") {
+    if (!args.includes("--ephemeral") || !args.includes("--json") || !pair("-s", "workspace-write") || !pair("-C", request.workspace)) {
+      throw new Error("native Codex stream requires ephemeral bounded JSON invocation");
+    }
+  } else if (!args.includes("--safe-mode") || !args.includes("--no-session-persistence") ||
+      !pair("--output-format", "stream-json") || !pair("--setting-sources", "") ||
+      !args.includes("--strict-mcp-config") || !args.includes("--disallowedTools") || !pair("--permission-mode", "dontAsk") || args.includes("--bare") ||
+      args.includes("--tools") || (["agent", "subagent"].includes(receipt.capability) && !args.includes("--forward-subagent-text"))) {
+    throw new Error("native Claude stream requires existing-login safe mode and native tool events");
+  }
 }
 
 function validLineBindings(value) {
@@ -979,7 +1031,7 @@ export function writeTestOnlyControlledRuntimeCapabilityAcceptanceAttempt(option
 
 /** Formal product boundary. Callers choose a supported source; producer and writer stay fixed internally. */
 export async function produceRuntimeCapabilityAcceptance(options = {}) {
-  const allowed = new Set(["live_controlled", "codex_desktop_agent_subagent", "codex_desktop_engineering"]);
+  const allowed = new Set(["live_controlled", "native_cli_stream", "codex_desktop_agent_subagent", "codex_desktop_engineering"]);
   if (!allowed.has(options.source)) throw new Error("unsupported controlled production source");
   if (Object.hasOwn(options, "executor") || Object.hasOwn(options, "reader") || Object.hasOwn(options, "codexHome")) {
     throw new Error("production capability API does not accept injected executor, reader, or codexHome");
@@ -1151,6 +1203,11 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
       const raw = readDigestBoundBytes(path.resolve(root, source.value.rawArtifact.path), root, "controlled producer raw artifact");
       if (raw.sha256 !== source.value.rawArtifact.sha256 || raw.sha256 !== attempt.rawArtifactSha256) issues.push("controlled producer raw artifact SHA-256 mismatch");
       const rawText = raw.bytes.toString("utf8");
+      if (source.value.hostInvocation?.request?.source === "native_cli_stream") {
+        validateNativeCliEventTape(rawText, source.value.streamCapture, { runtime: attempt.runtime,
+          capability: source.value.compositeLifecycle?.facets ? "engineering_composite" : attempt.capability,
+          marker: source.value.capabilityMarker, workspace: source.value.hostInvocation.request.workspace });
+      }
       assertNoMarkerBoundFailure(rawText, source.value.capabilityMarker);
       const observedEvents = attempt.runtime === "codex" ? observeCodexJsonl(rawText) : observeClaudeJsonl(rawText);
       if (source.value.producer?.id === CODEX_DESKTOP_ENGINEERING_PRODUCER_ID) {
