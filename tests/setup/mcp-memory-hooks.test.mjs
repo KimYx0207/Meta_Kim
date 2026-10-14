@@ -1562,7 +1562,13 @@ describe("MCP memory cross-runtime hooks", () => {
     const wrapper =
       "[客户端说明] 这是客户端注入的说明文本，占据整条提示的开头部分，用户本人一个字都没有说。";
     const request = "把剩余的重命名单元全部处理完再交付";
+    const uiNote =
+      "[UI language] System note appended each turn. This is not a user message. " +
+      "Only user-facing error reports must use the interface language.";
     const cases = [
+      { name: "truncated UI-language note keeps no task", lastPrompt: uiNote.slice(0, uiNote.indexOf("Only")), expected: null },
+      { name: "UI-language note before a newline keeps only the request", lastPrompt: `${uiNote}\n${request}`, expected: request },
+      { name: "stacked UI-language note and label keep only the request", lastPrompt: `${uiNote}\n\n[From Orca Lead]\n${request}`, expected: request },
       { name: "truncated wrapper keeps no task", lastPrompt: wrapper, expected: null },
       { name: "wrapper hiding a trivial trigger keeps no task", lastPrompt: `${wrapper}\n\n开工`, expected: null },
       { name: "wrapper before a real request keeps only the request", lastPrompt: `${wrapper}\n\n${request}`, expected: request },

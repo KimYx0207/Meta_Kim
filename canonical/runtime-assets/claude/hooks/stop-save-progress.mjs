@@ -163,24 +163,34 @@ const WRAPPER_PROMPT_PREFIXES = [
   "[UI_ACTION_TRIGGER]",
   "[计划对账]",
   "[Session context rebuild",
+  // A per-turn UI-language note (620 characters, one line). Measured later over the same
+  // operator's transcripts: 7667 of 11422 substantive `last-prompt` entries (67%) were
+  // this note alone, every one truncated to <=210 characters with the request cut off.
+  "[UI language]",
 ];
 // The plan-reconciliation header ends with its own end-of-notice line (half-width comma
 // in the real data); a blank line is the general case. Requiring an *explicit* separator
 // is what makes truncation safe: at ~200 chars the wrapper has swallowed the separator
 // too, so no body is found and the entry is dropped instead of being filed as the goal.
-const WRAPPER_BODY_SEPARATOR_RE = /==\s*对账说明结束[^=]*==|\n\s*\n/;
+// The UI-language note is followed by a single newline in 32 of 386 full user messages,
+// so its fixed closing sentence is the separator rather than the blank line.
+const WRAPPER_BODY_SEPARATOR_RE =
+  /==\s*对账说明结束[^=]*==|Only user-facing error reports must use the interface language\.|\n\s*\n/;
 const LABEL_PROMPT_PREFIX_RE = /^\[(?:Image #\d+|From Orca (?:Lead|Worker))\]\s*/;
 
 // Returns the user's actual words, or "" when the prompt is nothing but harness wrapper.
+// Prefixes stack — the UI-language note is often followed by `[From Orca Lead]` — so each
+// strip recurses on the remainder. Every step shortens the text, and
+// an unrecognized bracket returns unchanged, so the recursion terminates.
 function stripHarnessPromptPrefix(prompt) {
   const text = prompt.trim();
   if (!text.startsWith("[")) return text;
   const labelStripped = text.replace(LABEL_PROMPT_PREFIX_RE, "");
-  if (labelStripped !== text) return labelStripped.trim();
+  if (labelStripped !== text) return stripHarnessPromptPrefix(labelStripped);
   if (!WRAPPER_PROMPT_PREFIXES.some((p) => text.startsWith(p))) return text;
   const match = WRAPPER_BODY_SEPARATOR_RE.exec(text);
   if (!match) return "";
-  return text.slice(match.index + match[0].length).trim();
+  return stripHarnessPromptPrefix(text.slice(match.index + match[0].length));
 }
 
 // A session's goal is neither "the first prompt" nor "the last one". Measured over
