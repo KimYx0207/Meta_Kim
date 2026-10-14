@@ -99,7 +99,8 @@ const TASK_PATTERNS = [
 // Injected context wrappers are not speech — they are the harness talking to the
 // model, and their contents ("完成", "commit", file paths) trip every task regex.
 const INJECTED_CONTEXT_TAGS =
-  "system-reminder|task-notification|command-name|command-message|command-args|local-command-stdout";
+  "system-reminder|task-notification|command-name|command-message|command-args|local-command-stdout|" +
+  "cindy-host-image-references";
 const INJECTED_CONTEXT_RE = new RegExp(`<(${INJECTED_CONTEXT_TAGS})>[\\s\\S]*?</\\1>`, "g");
 // When one of these blocks is quoted inside a larger payload it arrives truncated:
 // a sampled summariser prompt carried 2 opening `<task-notification>` tags and 0
@@ -158,24 +159,29 @@ const TRIVIAL_PROMPTS = new Set([
 // Two shapes need two treatments. A WRAPPER is prose addressed to the model, with the
 // user's message after a separator; drop it and keep whatever follows. A LABEL is just
 // a marker and the real message starts immediately after it; drop the marker only.
+//
+// Each wrapper declares its own end. A shared separator broke once goals moved to full
+// user turns (below): the blank line always matched first, so a multi-paragraph wrapper
+// was cut at its own first paragraph and the rest of it was filed as the user's words.
+// Requiring an *explicit* end is also what makes truncation safe: at ~200 chars the
+// wrapper has swallowed its end too, so no body is found and the entry is dropped.
+const BLANK_LINE_RE = /\n\s*\n/;
+// Session rebuild and handoff notes run to 12-13 paragraphs and close with
+// "== End of … note; the user's new message follows ==".
+const NOTE_END_RE = /== End of [^=\n]*the user's new message follows ==/;
 const WRAPPER_PROMPT_PREFIXES = [
-  "[客户端说明]",
-  "[UI_ACTION_TRIGGER]",
-  "[计划对账]",
-  "[Session context rebuild",
-  // A per-turn UI-language note (620 characters, one line). Measured later over the same
+  ["[客户端说明]", BLANK_LINE_RE],
+  ["[UI_ACTION_TRIGGER]", BLANK_LINE_RE],
+  // Ends with its own end-of-notice line (half-width comma in the real data).
+  ["[计划对账]", /==\s*对账说明结束[^=]*==|\n\s*\n/],
+  ["[Session context rebuild", NOTE_END_RE],
+  ["[Session handoff", NOTE_END_RE],
+  // A per-turn UI-language note (620 characters, one line). Measured over the same
   // operator's transcripts: 7667 of 11422 substantive `last-prompt` entries (67%) were
-  // this note alone, every one truncated to <=210 characters with the request cut off.
-  "[UI language]",
+  // this note alone. It is followed by a single newline in 32 of 386 full user turns,
+  // so its fixed closing sentence is the end rather than the blank line.
+  ["[UI language]", /Only user-facing error reports must use the interface language\./],
 ];
-// The plan-reconciliation header ends with its own end-of-notice line (half-width comma
-// in the real data); a blank line is the general case. Requiring an *explicit* separator
-// is what makes truncation safe: at ~200 chars the wrapper has swallowed the separator
-// too, so no body is found and the entry is dropped instead of being filed as the goal.
-// The UI-language note is followed by a single newline in 32 of 386 full user messages,
-// so its fixed closing sentence is the separator rather than the blank line.
-const WRAPPER_BODY_SEPARATOR_RE =
-  /==\s*对账说明结束[^=]*==|Only user-facing error reports must use the interface language\.|\n\s*\n/;
 const LABEL_PROMPT_PREFIX_RE = /^\[(?:Image #\d+|From Orca (?:Lead|Worker))\]\s*/;
 
 // Returns the user's actual words, or "" when the prompt is nothing but harness wrapper.
@@ -187,8 +193,9 @@ function stripHarnessPromptPrefix(prompt) {
   if (!text.startsWith("[")) return text;
   const labelStripped = text.replace(LABEL_PROMPT_PREFIX_RE, "");
   if (labelStripped !== text) return stripHarnessPromptPrefix(labelStripped);
-  if (!WRAPPER_PROMPT_PREFIXES.some((p) => text.startsWith(p))) return text;
-  const match = WRAPPER_BODY_SEPARATOR_RE.exec(text);
+  const wrapper = WRAPPER_PROMPT_PREFIXES.find(([prefix]) => text.startsWith(prefix));
+  if (!wrapper) return text;
+  const match = wrapper[1].exec(text);
   if (!match) return "";
   return stripHarnessPromptPrefix(text.slice(match.index + match[0].length));
 }
@@ -211,6 +218,10 @@ function stripHarnessPromptPrefix(prompt) {
 // Staleness was only ever a proxy — a 12-hour-old opening line of a resumed session
 // still describes that session, so most of the measured "staleness" is not a defect.
 // Keep the earliest substantive prompt until there is a signal better than length.
+// A full user turn can be a pasted document. 200 matches the length `last-prompt`
+// already capped goals at, so moving to full turns changes the source, not the size.
+const GOAL_PROMPT_MAX_CHARS = 200;
+
 function pickGoalPrompt(prompts) {
   return prompts[0] || "";
 }
@@ -263,6 +274,11 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
   // `taskFromUser` was a dead branch that returned "" on every measured transcript.
   const userBlocks = [];
   const substantivePrompts = [];
+  // `last-prompt` is truncated to ~200 characters, so a long harness wrapper leaves no
+  // request in it at all: stripping can drop the wrapper but cannot recover the words
+  // cut off behind it. The full user turn still carries them, so it is the primary
+  // source and `last-prompt` the fallback.
+  const userTurnPrompts = [];
   let lastPrompt = "";
   let fd = null;
   try {
@@ -315,6 +331,8 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
         if (entry.type === "user") {
           userBlocks.push({ role: "user", text });
           if (userBlocks.length > maxUserBlocks) userBlocks.shift();
+          const spoken = stripHarnessPromptPrefix(text);
+          if (isSubstantivePrompt(spoken)) userTurnPrompts.push(spoken.slice(0, GOAL_PROMPT_MAX_CHARS));
         }
       }
     }
@@ -324,7 +342,8 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
     // D9: always close the descriptor, including read/iteration failures.
     await fd?.close().catch(() => {});
   }
-  return { blocks, userBlocks, lastPrompt, goalPrompt: pickGoalPrompt(substantivePrompts) };
+  const goalPrompt = pickGoalPrompt(userTurnPrompts) || pickGoalPrompt(substantivePrompts);
+  return { blocks, userBlocks, lastPrompt, goalPrompt };
 }
 
 function proseLines(blocks) {

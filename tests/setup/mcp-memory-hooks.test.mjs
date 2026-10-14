@@ -1631,6 +1631,68 @@ describe("MCP memory cross-runtime hooks", () => {
     }
   });
 
+  // `last-prompt` is truncated to ~200 characters, so a long wrapper leaves nothing of the
+  // request in it. The goal must come from the full user turn, and multi-paragraph
+  // wrappers must be cut at their own end marker, not at their first blank line.
+  test("Claude stop save progress takes the goal from the full user turn", () => {
+    const uiNote =
+      "[UI language] System note appended each turn. This is not a user message. " +
+      "Only user-facing error reports must use the interface language.";
+    const request = "把剩余的重命名单元全部处理完再交付";
+    const rebuild =
+      "[Session context rebuild · internal context]\nThe previous session exceeded the context window.\n\n" +
+      "== Work ledger (auto-extracted) ==\nFiles changed:\n- /tmp/a.mjs\n\n" +
+      "== End of rebuild note; the user's new message follows ==\n";
+    const handoff =
+      "[Session handoff · internal context]\nThis conversation was previously driven by another engine.\n\n" +
+      "== Recent conversation ==\n[User]\n更早的一句话\n\n" +
+      "== End of handoff note; the user's new message follows ==\n";
+    const cases = [
+      { name: "full turn behind a long note wins over its truncated last-prompt", userText: `${uiNote}\n\n${request}`, expected: request },
+      { name: "rebuild note is cut at its end marker", userText: `${rebuild}${request}`, expected: request },
+      { name: "handoff note is cut at its end marker", userText: `${handoff}${request}`, expected: request },
+      { name: "image references appended to the turn are dropped", userText: `${request}\n<cindy-host-image-references>\n{"path":"a.png"}\n</cindy-host-image-references>`, expected: request },
+    ];
+
+    const hookPath = path.join(repoRoot, "canonical", "runtime-assets", "claude", "hooks", "stop-save-progress.mjs");
+
+    for (const { name, userText, expected } of cases) {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-stop-save-turn-"));
+      try {
+        writeFileSync(path.join(tempDir, "AGENTS.md"), "test project marker\n", "utf8");
+        writeFileSync(
+          path.join(tempDir, "transcript.jsonl"),
+          [
+            JSON.stringify({ type: "user", message: { content: userText } }),
+            JSON.stringify({ type: "last-prompt", lastPrompt: userText.slice(0, 200) }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "已经完成当前阶段的代码检查。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "接下来继续 Fetch 并核对运行时状态。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "还需要检查 stop-save-progress 的回归测试。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "这是真实进度记录，足以通过 Stop hook 的内容阈值。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "完成后继续验证并整理结果。" }] } }),
+          ].join("\n"),
+          "utf8",
+        );
+
+        const result = spawnSync(process.execPath, [hookPath], {
+          input: JSON.stringify({ transcript_path: path.join(tempDir, "transcript.jsonl") }),
+          encoding: "utf8",
+          env: { ...process.env, META_KIM_DRY_RUN: "1" },
+          cwd: tempDir,
+          timeout: 20000,
+        });
+
+        assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+        const args = JSON.parse(result.stdout.trim()).args ?? [];
+        const taskIndex = args.indexOf("--task");
+        assert.notEqual(taskIndex, -1, `${name}: expected a task to be saved`);
+        assert.equal(args[taskIndex + 1], expected, name);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("Claude spine state dir rejects META_KIM_SPINE_STATE_DIR outside .meta-kim/state", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-spine-"));
     const outsideDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-outside-"));
