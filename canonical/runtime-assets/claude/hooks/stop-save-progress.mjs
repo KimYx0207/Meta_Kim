@@ -241,6 +241,10 @@ function stripInjectedContext(text) {
   return text.replace(INJECTED_CONTEXT_RE, " ").replace(INJECTED_CONTEXT_OPEN_RE, " ").trim();
 }
 
+function normalizeUserSpeech(prompt) {
+  return stripHarnessPromptPrefix(stripInjectedContext(prompt));
+}
+
 // Only `text` blocks are speech. `thinking` is excluded deliberately, not just as
 // noise reduction: HANDOFF_PATTERNS mean "the assistant *announced* a continuation",
 // and un-announced plans living in thinking would manufacture phantom handoffs.
@@ -311,7 +315,7 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
           lastPrompt = entry.lastPrompt.trim();
           // Push the stripped form, not the raw one: judging on the user's words but
           // storing the wrapper would file the boilerplate as `current_task` anyway.
-          const spoken = stripHarnessPromptPrefix(lastPrompt);
+          const spoken = normalizeUserSpeech(lastPrompt);
           if (isSubstantivePrompt(spoken)) substantivePrompts.push(spoken);
         }
         continue;
@@ -320,8 +324,18 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
       // Session summaries and other injected turns describe *previous* work; counting
       // them would make each resumed session re-save the last one's completed list.
       if (entry.isMeta === true) continue;
-      for (const raw of spokenTextBlocks(entry)) {
-        const text = stripInjectedContext(raw);
+      let speech = spokenTextBlocks(entry);
+      if (entry.type === "user") {
+        // Wrappers and injected context can span text blocks within one user turn.
+        // Normalize once so goals and fallback task extraction share the same speech.
+        const spoken = normalizeUserSpeech(speech.join("\n"));
+        // Exclude the whole injected turn from fallback task extraction as well.
+        if (!spoken || isSummariserPromptBlock(spoken)) continue;
+        if (isSubstantivePrompt(spoken)) userTurnPrompts.push(spoken.slice(0, GOAL_PROMPT_MAX_CHARS));
+        speech = [spoken];
+      }
+      for (const raw of speech) {
+        const text = entry.type === "user" ? raw : stripInjectedContext(raw);
         if (!text) continue;
         // After stripping, not before: an injected wrapper sitting ahead of the
         // summariser prompt would otherwise push the phrase past the opening window.
@@ -331,8 +345,6 @@ async function readConversationBlocks(transcriptPath, maxBlocks = 60, maxUserBlo
         if (entry.type === "user") {
           userBlocks.push({ role: "user", text });
           if (userBlocks.length > maxUserBlocks) userBlocks.shift();
-          const spoken = stripHarnessPromptPrefix(text);
-          if (isSubstantivePrompt(spoken)) userTurnPrompts.push(spoken.slice(0, GOAL_PROMPT_MAX_CHARS));
         }
       }
     }
@@ -711,7 +723,8 @@ async function main() {
   // kill, re-entering through the back door. Measured over 791 transcripts: 27 sessions
   // on the pre-D7 hook, 32 after D7 raised recall. Guard the fallback, not the
   // assignment — `taskVariants.lastPrompt` stays raw so the diagnostic still shows it.
-  const lastPromptFallback = isSubstantivePrompt(lastPrompt) ? stripHarnessPromptPrefix(lastPrompt) : "";
+  const normalizedLastPrompt = normalizeUserSpeech(lastPrompt);
+  const lastPromptFallback = isSubstantivePrompt(normalizedLastPrompt) ? normalizedLastPrompt : "";
   const currentTask = goalPrompt || taskFromUser || lastPromptFallback;
   if (handoffMatched && remaining.length === 0) {
     remaining.push(currentTask || "continuation handoff detected");
