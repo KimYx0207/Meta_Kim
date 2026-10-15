@@ -1865,6 +1865,38 @@ describe("MCP memory cross-runtime hooks", () => {
         const literal = `Please preserve this example:\n${fence}\n<system-reminder>\nrequired flag\n</system-reminder>\n${fence.startsWith("`") ? "````" : "~~~~"}`;
         return { name: `${fence} code example keeps its literal XML`, entries: [user([text(literal)])], expected: literal };
       }),
+      ...["```xml", "~~~~xml"].flatMap((fence) => {
+        const before = `Keep this unfinished example:\n${fence}\nrequired flag`;
+        const context = "<system-reminder>\nObsolete synthetic task\n</system-reminder>";
+        const expected = `${before}\n\n${request}`;
+        return [
+          { name: `${fence} unmatched user fence cannot protect later context`, entries: [user([text(before), text(context), text(request)])], expected },
+          { name: `${fence} unmatched legacy fence cannot protect later context`, entries: [], lastPrompt: `${before}\n${context}\n${request}`, expected },
+        ];
+      }),
+      ...[
+        "<system-reminder>\nObsolete synthetic task\n\x60\x60\x60\n</system-reminder>",
+        "<system-reminder>First obsolete task</system-reminder><task-notification>\nObsolete synthetic task\n\x60\x60\x60\n</task-notification>",
+      ].flatMap((context) => {
+        const before = "Keep this unfinished example:\n\x60\x60\x60xml\nrequired flag";
+        const expected = `${before}\n\n${request}`;
+        return [
+          { name: `a fence inside real context cannot close the user fence: ${context}`, entries: [user([text(before), text(context), text(request)])], expected },
+          { name: `a fence inside legacy context cannot close the user fence: ${context}`, entries: [], lastPrompt: `${before}\n${context}\n${request}`, expected },
+        ];
+      }),
+      {
+        name: "a closed code example may quote an unclosed XML tag",
+        entries: [user([text("Preserve this tag example:\n\x60\x60\x60xml\n<system-reminder>\nrequired flag\n\x60\x60\x60")])],
+        expected: "Preserve this tag example:\n\x60\x60\x60xml\n<system-reminder>\nrequired flag\n\x60\x60\x60",
+      },
+      ...["[From Orca Lead]", `[UI language] ${uiEnd}`, "<system-reminder>First obsolete task</system-reminder>\n[From Orca Lead]"].flatMap((prefix) => {
+        const prompt = `${prefix}<task-notification>Obsolete synthetic task</task-notification>\n${request}`;
+        return [
+          { name: `${prefix} exposes XML context in the full user turn`, entries: [user([text(prompt)])], expected: request },
+          { name: `${prefix} exposes XML context in legacy last-prompt`, entries: [], lastPrompt: prompt, expected: request },
+        ];
+      }),
       {
         name: "real XML context containing a code fence is still excluded",
         entries: [user([text(`<system-reminder>\n\x60\x60\x60text\nObsolete synthetic task\n\x60\x60\x60\n</system-reminder>\n${request}`)])],
