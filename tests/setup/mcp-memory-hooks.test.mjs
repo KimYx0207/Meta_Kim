@@ -1562,7 +1562,13 @@ describe("MCP memory cross-runtime hooks", () => {
     const wrapper =
       "[客户端说明] 这是客户端注入的说明文本，占据整条提示的开头部分，用户本人一个字都没有说。";
     const request = "把剩余的重命名单元全部处理完再交付";
+    const uiNote =
+      "[UI language] System note appended each turn. This is not a user message. " +
+      "Only user-facing error reports must use the interface language.";
     const cases = [
+      { name: "truncated UI-language note keeps no task", lastPrompt: uiNote.slice(0, uiNote.indexOf("Only")), expected: null },
+      { name: "UI-language note before a newline keeps only the request", lastPrompt: `${uiNote}\n${request}`, expected: request },
+      { name: "stacked UI-language note and label keep only the request", lastPrompt: `${uiNote}\n\n[From Orca Lead]\n${request}`, expected: request },
       { name: "truncated wrapper keeps no task", lastPrompt: wrapper, expected: null },
       { name: "wrapper hiding a trivial trigger keeps no task", lastPrompt: `${wrapper}\n\n开工`, expected: null },
       { name: "wrapper before a real request keeps only the request", lastPrompt: `${wrapper}\n\n${request}`, expected: request },
@@ -1618,6 +1624,297 @@ describe("MCP memory cross-runtime hooks", () => {
         } else {
           assert.notEqual(taskIndex, -1, `${name}: expected a task to be saved`);
           assert.equal(args[taskIndex + 1], expected, name);
+        }
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  // `last-prompt` is truncated to ~200 characters, so a long wrapper leaves nothing of the
+  // request in it. The goal must come from the full user turn, and multi-paragraph
+  // wrappers must be cut at their own end marker, not at their first blank line.
+  test("Claude stop save progress takes the goal from the full user turn", () => {
+    const uiNote =
+      "[UI language] System note appended each turn. This is not a user message. " +
+      "Keep internal notes separate from the user's actual request. ".repeat(12) +
+      "Only user-facing error reports must use the interface language.";
+    const request = "把剩余的重命名单元全部处理完再交付";
+    assert.ok(uiNote.length > 620, "the UI note must hide the request beyond the transcript cap");
+    const rebuild =
+      "[Session context rebuild · internal context]\nThe previous session exceeded the context window.\n\n" +
+      "== Work ledger (auto-extracted) ==\nFiles changed:\n- /tmp/a.mjs\n\n" +
+      "== End of rebuild note; the user's new message follows ==\n";
+    const handoff =
+      "[Session handoff · internal context]\nThis conversation was previously driven by another engine.\n\n" +
+      "== Recent conversation ==\n[User]\n更早的一句话\n\n" +
+      "== End of handoff note; the user's new message follows ==\n";
+    const cases = [
+      { name: "full turn behind a long note wins over its truncated last-prompt", userText: `${uiNote}\n\n${request}`, expected: request },
+      { name: "rebuild note is cut at its end marker", userText: `${rebuild}${request}`, expected: request },
+      { name: "handoff note is cut at its end marker", userText: `${handoff}${request}`, expected: request },
+      { name: "image references appended to the turn are dropped", userText: `${request}\n<cindy-host-image-references>\n{"path":"a.png"}\n</cindy-host-image-references>`, expected: request },
+    ];
+
+    const hookPath = path.join(repoRoot, "canonical", "runtime-assets", "claude", "hooks", "stop-save-progress.mjs");
+
+    for (const { name, userText, expected } of cases) {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-stop-save-turn-"));
+      try {
+        const lastPrompt = userText.slice(0, 200);
+        if (userText.startsWith(uiNote)) {
+          assert.equal(lastPrompt.length, 200, `${name}: the fixture must actually truncate`);
+          assert.equal(lastPrompt.includes(request), false, `${name}: the snapshot cannot supply the request`);
+        }
+        writeFileSync(path.join(tempDir, "AGENTS.md"), "test project marker\n", "utf8");
+        writeFileSync(
+          path.join(tempDir, "transcript.jsonl"),
+          [
+            JSON.stringify({ type: "user", message: { content: userText } }),
+            JSON.stringify({ type: "last-prompt", lastPrompt }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "已经完成当前阶段的代码检查。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "接下来继续 Fetch 并核对运行时状态。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "还需要检查 stop-save-progress 的回归测试。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "这是真实进度记录，足以通过 Stop hook 的内容阈值。" }] } }),
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "完成后继续验证并整理结果。" }] } }),
+          ].join("\n"),
+          "utf8",
+        );
+
+        const result = spawnSync(process.execPath, [hookPath], {
+          input: JSON.stringify({ transcript_path: path.join(tempDir, "transcript.jsonl") }),
+          encoding: "utf8",
+          env: { ...process.env, META_KIM_DRY_RUN: "1" },
+          cwd: tempDir,
+          timeout: 20000,
+        });
+
+        assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+        const diagnostic = JSON.parse(result.stdout.trim());
+        const args = diagnostic.args ?? [];
+        const taskIndex = args.indexOf("--task");
+        assert.notEqual(taskIndex, -1, `${name}: expected a task to be saved`);
+        assert.equal(args[taskIndex + 1], expected, name);
+        assert.equal(diagnostic.taskVariants.goalPrompt, expected, `${name}: the full turn must supply the goal`);
+        assert.equal(diagnostic.taskVariants.lastPrompt, lastPrompt, `${name}: the diagnostic retains the truncated snapshot`);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("Claude stop save progress selects goals from whole user turns across text blocks", () => {
+    const request = "Repair the memory hook and verify its regression tests.";
+    const text = (value) => ({ type: "text", text: value });
+    const user = (content, extra = {}) => ({ type: "user", message: { content }, ...extra });
+    const longRequest = "Verify the memory goal selection and preserve the user's actual request. ".repeat(5);
+    const uiHeader = "[UI language] System note appended each turn. This is not a user message.";
+    const uiBody = "Keep internal notes separate from the user's actual request. ".repeat(12);
+    const uiEnd = "Only user-facing error reports must use the interface language.";
+    const splitUiTurn = [uiHeader, uiBody, `${uiEnd}\n${request}`];
+    const truncatedUiPrompt = splitUiTurn.join("\n").slice(0, 200);
+    assert.equal(truncatedUiPrompt.length, 200);
+    assert.equal(truncatedUiPrompt.includes(request), false);
+    const noise = [
+      { type: "tool_result", content: "Tool output must not become the goal.", text: "Tool output must not become the goal." },
+      { type: "image", source: { type: "url", url: "https://example.invalid/synthetic.png" }, text: "Image metadata must not become the goal." },
+      { type: "thinking", thinking: "Private reasoning must not become the goal.", text: "Private reasoning must not become the goal." },
+      { type: "tool_use", name: "synthetic_tool", input: {}, text: "Tool input must not become the goal." },
+    ];
+    const cases = [
+      {
+        name: "rebuild ledger split across text blocks is not the goal",
+        entries: [user([
+          text("[Session context rebuild · internal context]\nThe previous session exceeded the context window."),
+          text("== Work ledger (auto-extracted) ==\nFiles changed:\n- synthetic-ledger.mjs"),
+          text(`== End of rebuild note; the user's new message follows ==\n${request}`),
+        ])],
+        expected: request,
+      },
+      {
+        name: "handoff history split across text blocks is not the goal",
+        entries: [user([
+          text("[Session handoff · internal context]\nThis conversation was previously driven by another engine."),
+          text("== Recent conversation ==\n[User]\nAn obsolete synthetic request."),
+          text(`== End of handoff note; the user's new message follows ==\n${request}`),
+        ])],
+        expected: request,
+      },
+      ...["system-reminder", "cindy-host-image-references"].map((tag) => ({
+        name: `${tag} injection split across text blocks is removed`,
+        entries: [user([
+          text(`<${tag}>`),
+          text("Injected synthetic context must never become the goal."),
+          text(`</${tag}>\n${request}`),
+        ])],
+        expected: request,
+      })),
+      ...["system-reminder", "cindy-host-image-references"].map((tag) => ({
+        name: `${tag} injection-only turn cannot supply a fallback task`,
+        entries: [user([
+          text(`<${tag}>`),
+          text("修复旧的合成回归测试"),
+          text(`</${tag}>`),
+        ])],
+        expected: null,
+      })),
+      ...["system-reminder", "cindy-host-image-references"].map((tag) => ({
+        name: `${tag} injection-only turn and matching last-prompt cannot supply a task`,
+        entries: [user([
+          text(`<${tag}>`),
+          text("修复旧的合成回归测试"),
+          text(`</${tag}>`),
+        ])],
+        lastPrompt: `<${tag}>\n修复旧的合成回归测试\n</${tag}>`,
+        expected: null,
+      })),
+      ...["system-reminder", "cindy-host-image-references"].flatMap((tag) =>
+        ["before", "after"].map((position) => ({
+          name: `${tag} injection plus ${position} acknowledgement cannot supply a fallback task`,
+          entries: [user([
+            ...(position === "before" ? [text("继续")] : []),
+            text(`<${tag}>`),
+            text("修复旧的合成回归测试"),
+            text(`</${tag}>`),
+            ...(position === "after" ? [text("继续")] : []),
+          ])],
+          expected: null,
+        }))),
+      ...[
+        ["rebuild", "[Session context rebuild · internal context]"],
+        ["handoff", "[Session handoff · internal context]"],
+      ].map(([kind, header]) => ({
+        name: `${kind} ledger plus acknowledgement cannot supply a fallback task`,
+        entries: [user([
+          text(header),
+          text("== Work ledger (auto-extracted) ==\n修复旧的合成回归测试"),
+          text(`== End of ${kind} note; the user's new message follows ==\n继续`),
+        ])],
+        expected: null,
+      })),
+      {
+        name: "non-text blocks with misleading text properties are not speech",
+        entries: [user([...noise, text(request)])],
+        expected: request,
+      },
+      {
+        name: "a non-text-only user turn does not create a goal",
+        entries: [user(noise)],
+        expected: null,
+      },
+      {
+        name: "meta user turns are ignored before the real request",
+        entries: [
+          user([text("An injected session summary must not become the goal.")], { isMeta: true }),
+          user([text(request)]),
+        ],
+        expected: request,
+      },
+      {
+        name: "a meta-only user turn does not create a goal",
+        entries: [user([text("An injected session summary must not become the goal.")], { isMeta: true })],
+        expected: null,
+      },
+      {
+        name: "short text fragments combine into a substantive user turn",
+        entries: [user([text("修复"), text("内存"), text("回归")])],
+        expected: "修复\n内存\n回归",
+      },
+      {
+        name: "ordinary short user action remains available to the fallback",
+        entries: [user([text("修复合成测试")])],
+        expected: "修复合成测试",
+        expectedGoal: "",
+      },
+      {
+        name: "later confirmations preserve the earliest substantive goal",
+        entries: [user([text(request)]), user([text("继续")]), user([text("按照你的建议来")])],
+        lastPrompt: "按照你的建议来",
+        expected: request,
+      },
+      {
+        name: "a split long UI note recovers the request beyond the last-prompt cap",
+        entries: [user(splitUiTurn.map(text))],
+        lastPrompt: truncatedUiPrompt,
+        expected: request,
+      },
+      {
+        name: "an ordinary legacy last-prompt retains a goal without user entries",
+        entries: [],
+        lastPrompt: request,
+        expected: request,
+      },
+      {
+        name: "an unknown bracket prefix remains ordinary user content",
+        entries: [user([text("[SomethingElse]"), text(request)])],
+        expected: `[SomethingElse]\n${request}`,
+      },
+      {
+        name: "a split summariser user turn is excluded as a whole",
+        entries: [
+          user([
+            text("Below is a conversation log from a Claude Code session."),
+            text("Obsolete synthetic session work must not become the new goal."),
+          ]),
+          user([text(request)]),
+        ],
+        expected: request,
+      },
+      {
+        name: "a split summariser-only user turn cannot supply a fallback task",
+        entries: [user([
+          text("Below is a conversation log from a Claude Code session."),
+          text("修复旧的合成回归测试"),
+        ])],
+        expected: null,
+      },
+      {
+        name: "a substantive whole turn retains the 200 character goal cap",
+        entries: [user([text(longRequest.slice(0, 110)), text(longRequest.slice(110))])],
+        expected: `${longRequest.slice(0, 110)}\n${longRequest.slice(110)}`.slice(0, 200),
+      },
+    ];
+    const hookPath = path.join(repoRoot, "canonical", "runtime-assets", "claude", "hooks", "stop-save-progress.mjs");
+
+    for (const { name, entries, lastPrompt, expected, expectedGoal } of cases) {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-stop-save-turn-blocks-"));
+      try {
+        const transcriptPath = path.join(tempDir, "transcript.jsonl");
+        writeFileSync(
+          transcriptPath,
+          [
+            ...entries,
+            ...(lastPrompt ? [{ type: "last-prompt", lastPrompt }] : []),
+            // Exercise the real CLI past its content gate without needing Python or
+            // writing persistent memory. These are synthetic progress, not goals.
+            ...[
+              "commit fixes for the memory regression fixture.",
+              "The dry-run callback captured the expected task arguments.",
+              "remaining regression assertions need verification.",
+              "The fixture has enough spoken lines for the content gate.",
+              "Keep the original user request as the saved session goal.",
+            ].map((line) => ({ type: "assistant", message: { content: [text(line)] } })),
+          ].map((entry) => JSON.stringify(entry)).join("\n"),
+          "utf8",
+        );
+        const result = spawnSync(process.execPath, [hookPath], {
+          input: JSON.stringify({ transcript_path: transcriptPath }),
+          encoding: "utf8",
+          env: { ...process.env, META_KIM_DRY_RUN: "1" },
+          cwd: tempDir,
+          timeout: 20000,
+        });
+
+        assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+        const diagnostic = JSON.parse(result.stdout.trim());
+        const taskIndex = diagnostic.args.indexOf("--task");
+        assert.equal(diagnostic.taskVariants.goalPrompt, expectedGoal ?? expected ?? "", name);
+        if (expected === null) {
+          assert.equal(taskIndex, -1, `${name}: no user goal should be saved`);
+        } else {
+          assert.notEqual(taskIndex, -1, `${name}: expected a task to be saved`);
+          assert.equal(diagnostic.args[taskIndex + 1], expected, name);
+          assert.ok(expected.length <= 200, `${name}: the saved goal must stay bounded`);
         }
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
