@@ -251,7 +251,7 @@
         "setup.mjs"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "bab0bbf6d888da63e061c24335f59ab8b5f20d3b5a7bb56cf1a6bf2ef940c4a6" },
+        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "87af39289120c62b06923c5beaf405826e99a0a3a04141bd95a829a3b0d1d8f0" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "0888397ffaae7387be7616788eb80893dc92d4014ed1bef26e0591179e6ec622" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d2abc9c5a2944332e4c572f7ab5ea3087acb50c82c04ace182f4e0917dd451e3" }
       ],

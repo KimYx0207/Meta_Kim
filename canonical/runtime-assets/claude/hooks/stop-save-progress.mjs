@@ -241,8 +241,83 @@ function stripInjectedContext(text) {
   return text.replace(INJECTED_CONTEXT_RE, " ").replace(INJECTED_CONTEXT_OPEN_RE, " ").trim();
 }
 
+const USER_CONTEXT_START_RE = new RegExp(`^<(${INJECTED_CONTEXT_TAGS})>`);
+const USER_CODE_FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+// Only known XML occupying a line block is context; prose tails remain literal.
+function userContextSpan(lines, index) {
+  const opening = USER_CONTEXT_START_RE.exec(lines[index]);
+  if (!opening) return null;
+  let end = index;
+  let fragment = lines[index];
+  let tag = opening[1];
+  while (true) {
+    const start = end;
+    const closing = `</${tag}>`;
+    while (!fragment.includes(closing) && end + 1 < lines.length) fragment = lines[++end];
+    if (!fragment.includes(closing)) {
+      // Preserve the paragraph boundary for a truncated context block.
+      end = start;
+      while (end + 1 < lines.length && lines[end + 1].trim()) end += 1;
+      return { end, closed: false };
+    }
+    const tail = fragment.slice(fragment.indexOf(closing) + closing.length).trimStart();
+    if (!tail.trim()) return { end, closed: true };
+    // Several harness blocks may be adjacent without an intervening newline.
+    const adjacent = USER_CONTEXT_START_RE.exec(tail);
+    if (!adjacent) return null;
+    tag = adjacent[1];
+    fragment = tail;
+  }
+}
+
+function stripUserInjectedContext(text) {
+  const lines = text.split("\n");
+  const spoken = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const marker = USER_CODE_FENCE_RE.exec(line);
+    if (marker) {
+      let fenceEnd = i + 1;
+      while (fenceEnd < lines.length) {
+        const context = userContextSpan(lines, fenceEnd);
+        if (context?.closed) {
+          // A fence inside real context cannot close the user's code example.
+          fenceEnd = context.end + 1;
+          continue;
+        }
+        const closing = USER_CODE_FENCE_RE.exec(lines[fenceEnd]);
+        if (closing && closing[1][0] === marker[1][0] && closing[1].length >= marker[1].length && !closing[2].trim()) break;
+        fenceEnd += 1;
+      }
+      // An unmatched opener must not shield real context in later text blocks.
+      if (fenceEnd < lines.length) {
+        spoken.push(lines.slice(i, fenceEnd + 1).join("\n"));
+        i = fenceEnd;
+        continue;
+      }
+    }
+
+    const context = userContextSpan(lines, i);
+    if (!context) {
+      spoken.push(line);
+      continue;
+    }
+    // Consume the whole context before looking for code fences inside it.
+    i = context.end;
+    spoken.push("");
+  }
+  return spoken.join("\n").trim();
+}
+
 function normalizeUserSpeech(prompt) {
-  return stripHarnessPromptPrefix(stripInjectedContext(prompt));
+  let spoken = prompt;
+  while (true) {
+    const normalized = stripHarnessPromptPrefix(stripUserInjectedContext(spoken));
+    if (normalized === spoken) return spoken;
+    // Each change removes known context, so interleaved wrappers converge.
+    spoken = normalized;
+  }
 }
 
 // Only `text` blocks are speech. `thinking` is excluded deliberately, not just as
