@@ -241,8 +241,72 @@ function stripInjectedContext(text) {
   return text.replace(INJECTED_CONTEXT_RE, " ").replace(INJECTED_CONTEXT_OPEN_RE, " ").trim();
 }
 
+const USER_CONTEXT_START_RE = new RegExp(`^<(${INJECTED_CONTEXT_TAGS})>`);
+
+function stripUserInjectedContext(text) {
+  const lines = text.split("\n");
+  const spoken = [];
+  let fence = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      spoken.push(line);
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = { char: marker[1][0], length: marker[1].length };
+      spoken.push(line);
+      continue;
+    }
+
+    // User examples can name these tags. Only a block starting at a line boundary
+    // and ending without trailing prose is context; inline literals stay speech.
+    const opening = USER_CONTEXT_START_RE.exec(line);
+    if (!opening) {
+      spoken.push(line);
+      continue;
+    }
+    let end = i;
+    let fragment = line;
+    let tag = opening[1];
+    let contextOnly = false;
+    while (true) {
+      const start = end;
+      const closing = `</${tag}>`;
+      while (!fragment.includes(closing) && end + 1 < lines.length) fragment = lines[++end];
+      if (!fragment.includes(closing)) {
+        // Preserve the paragraph boundary for a truncated context block.
+        end = start;
+        while (end + 1 < lines.length && lines[end + 1].trim()) end += 1;
+        contextOnly = true;
+        break;
+      }
+      const tail = fragment.slice(fragment.indexOf(closing) + closing.length).trimStart();
+      if (!tail.trim()) {
+        contextOnly = true;
+        break;
+      }
+      // Several harness blocks may be adjacent without an intervening newline.
+      const adjacent = USER_CONTEXT_START_RE.exec(tail);
+      if (!adjacent) break;
+      tag = adjacent[1];
+      fragment = tail;
+    }
+    if (!contextOnly) {
+      spoken.push(line);
+      continue;
+    }
+    // Consume the whole context before looking for code fences inside it.
+    i = end;
+    spoken.push("");
+  }
+  return spoken.join("\n").trim();
+}
+
 function normalizeUserSpeech(prompt) {
-  return stripHarnessPromptPrefix(stripInjectedContext(prompt));
+  return stripHarnessPromptPrefix(stripUserInjectedContext(prompt));
 }
 
 // Only `text` blocks are speech. `thinking` is excluded deliberately, not just as

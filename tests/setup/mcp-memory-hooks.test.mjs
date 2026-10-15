@@ -1844,6 +1844,50 @@ describe("MCP memory cross-runtime hooks", () => {
         lastPrompt: request,
         expected: request,
       },
+      ...["system-reminder", "task-notification", "command-name", "command-message", "command-args", "local-command-stdout", "cindy-host-image-references"].flatMap((tag) => {
+        const literal = `Please preserve <${tag}>required flag</${tag}> syntax`;
+        return [
+          { name: `${tag} inline literal survives the full user turn`, entries: [user([text(literal)])], expected: literal },
+          { name: `${tag} inline literal survives legacy last-prompt`, entries: [], lastPrompt: literal, expected: literal },
+        ];
+      }),
+      {
+        name: "inline XML literal split across text blocks remains user speech",
+        entries: [user([text("Please preserve <system-reminder>"), text("required flag</system-reminder> syntax")])],
+        expected: "Please preserve <system-reminder>\nrequired flag</system-reminder> syntax",
+      },
+      ...["`<system-reminder>required flag</system-reminder>`", "<unknown-tag>required flag</unknown-tag>", "<system-reminder>required flag</system-reminder> syntax must remain literal"].map((literal) => ({
+        name: `literal syntax remains intact: ${literal}`,
+        entries: [user([text(literal)])],
+        expected: literal,
+      })),
+      ...["```xml", "~~~~xml"].map((fence) => {
+        const literal = `Please preserve this example:\n${fence}\n<system-reminder>\nrequired flag\n</system-reminder>\n${fence.startsWith("`") ? "````" : "~~~~"}`;
+        return { name: `${fence} code example keeps its literal XML`, entries: [user([text(literal)])], expected: literal };
+      }),
+      {
+        name: "real XML context containing a code fence is still excluded",
+        entries: [user([text(`<system-reminder>\n\x60\x60\x60text\nObsolete synthetic task\n\x60\x60\x60\n</system-reminder>\n${request}`)])],
+        expected: request,
+      },
+      {
+        name: "unclosed XML context stops at the paragraph before the request",
+        entries: [user([text(`<task-notification>\nObsolete synthetic task\n\n${request}`)])],
+        expected: request,
+      },
+      {
+        name: "true context is stripped while an inline literal request survives",
+        entries: [user([text("<system-reminder>Obsolete task</system-reminder>\nPlease preserve <system-reminder>required flag</system-reminder> syntax")])],
+        expected: "Please preserve <system-reminder>required flag</system-reminder> syntax",
+      },
+      ...[
+        "<system-reminder>Obsolete task</system-reminder><task-notification>Old task</task-notification>",
+        "<system-reminder>Obsolete task</system-reminder><task-notification>\nOld task\n</task-notification>",
+      ].map((context) => ({
+        name: `adjacent context blocks remain excluded: ${context}`,
+        entries: [user([text(`${context}\n${request}`)])],
+        expected: request,
+      })),
       {
         name: "an unknown bracket prefix remains ordinary user content",
         entries: [user([text("[SomethingElse]"), text(request)])],
