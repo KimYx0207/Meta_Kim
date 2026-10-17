@@ -41,3 +41,29 @@ always emits a plan with:
 Promotion requires a separate reviewed runtime-projection work item. Packaging
 or verifying this beta adapter must never be interpreted as runtime activation
 or formal sync support.
+
+## Confirmed path facts (2026-10-17, tier unchanged)
+
+Independent probes no longer need to rediscover these; verify currency instead:
+
+- User scope: `~/.zcode/*` (agents, skills, commands, `AGENTS.md`,
+  `cli/config.json` for MCP/hooks) applies to every workspace.
+- Workspace scope: `<repo>/.zcode/*` applies to the project;
+  `.agents/*` works as a compatible fallback for skills/commands/MCP.
+- Agents: `.md` definitions with Claude-style frontmatter
+  (`name`/`description`/`tools`); user `~/.zcode/agents/{agent}.md`,
+  workspace `<repo>/.zcode/agents/{agent}.md`; plugins may contribute agents.
+  Verified live: a 65-file user-scope set was loaded by an interactive host
+  as dispatchable subagents (see catalog evidence `host_observation`
+  2026-10-17).
+- Conflicts: same-named resources resolve first-match, user scope beats
+  workspace; within a scope `.zcode` is scanned before `.agents`.
+- Hooks: config-file hooks require `hooks.enabled: true`; seven documented
+  events.
+- MCP: `mcp.servers` in user/workspace config; user overrides workspace;
+  all scopes auto-connect at session start.
+
+Source: zcode-plugins-official/zcode-guide 0.3.0 (skill
+`zcode-configuration-guide`) plus the live observation above. These facts
+upgrade path/format knowledge only — they do not change the tier, unlock
+formal sync, or grant execution permissions.

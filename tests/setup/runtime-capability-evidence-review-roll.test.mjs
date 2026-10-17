@@ -164,7 +164,7 @@ test("rolling the committed pair to today leaves freshness issues at zero under 
 
 test("the file-level roll re-validates and writes both files", (t) => {
   const { matrixPath, ledgerPath } = sandbox(t);
-  const now = "2026-10-15T00:00:00Z";
+  const now = "2026-10-20T00:00:00Z";
   const result = rollReviewFiles({
     matrixPath,
     ledgerPath,

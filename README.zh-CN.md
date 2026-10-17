@@ -286,7 +286,7 @@ npm run meta:validate
 | Meta_Kim 仓库 + Claude Code | 完整治理（CLAUDE.md 提供 8-stage spine、门、分发规则） | 直接说任务；需要 durable 处理的工作会进入治理路线 |
 | 任意其他项目 + Claude Code | 全局 skill 可被发现；全局 hooks 需要显式 `--with-global-hooks`；项目内文件只在确认需要定制/bootstrap 后写入 | 直接说任务；`/meta-theory` 只是维护者快捷方式 |
 | Codex | 全局 skill + 项目 `AGENTS.md` 上下文；全局 hooks 需要显式 `--with-global-hooks`；本地 `.codex/agents`、`.codex/commands` 或 `.agents/skills` 是项目专用覆盖层，不是默认执行层投影 | 直接说任务；Codex 会区分 durable 工作、主观模糊输入和纯查询 |
-| ZCode | Beta | 使用随包提供的 ZCode 兼容 adapter |
+| ZCode | Beta | 使用随包提供的 ZCode 兼容 adapter；agents/skills/commands/hooks/MCP 的用户级与项目级持久路径已有证据确认（tier 不变） |
 | DeepSeek Harness | Beta | 使用随包提供的 plugin/preset 兼容 adapter |
 | Qoder | Beta | 使用随包提供的 Qoder 兼容 adapter |
 | Trae | Beta | 使用随包提供的 Trae 兼容 adapter |
