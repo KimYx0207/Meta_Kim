@@ -304,7 +304,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-02",
+      "observedAt": "2026-10-17",
       "sourceRefs": [
         "canonical/runtime-assets/claude",
         "config/governance/choice-surface-policy.json",
@@ -616,7 +616,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-02",
+      "observedAt": "2026-10-17",
       "sourceRefs": [
         "canonical/runtime-assets/codex",
         "config/governance/choice-surface-policy.json",
@@ -990,7 +990,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-02",
+      "observedAt": "2026-10-17",
       "sourceRefs": [
         "canonical/runtime-assets/openclaw",
         "config/governance/choice-surface-policy.json",
@@ -1344,7 +1344,7 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-02",
+      "observedAt": "2026-10-17",
       "sourceRefs": [
         "canonical/runtime-assets/cursor",
         "config/governance/choice-surface-policy.json",
