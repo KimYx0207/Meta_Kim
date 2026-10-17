@@ -860,10 +860,10 @@
         "isDefaultTarget": false
       },
       "genericCompatibility": {
-        "skillPath": "ZCode skill surface is locally observable; exact durable project/global projection paths still require official contract evidence",
-        "agentPath": "ZCode expert and subagent surfaces are locally observable; durable agent file format and ownership need probe",
-        "hookConfig": null,
-        "mcpConfig": "ZCode exposes an MCP command surface; exact merge-safe configuration file authority needs probe",
+        "skillPath": ".zcode/skills/{skill-name}/SKILL.md (workspace) / ~/.zcode/skills/ (user; ~/.agents/skills/ compatible), first-match with user-scope priority — documented in zcode-guide 0.3.0; Meta_Kim projection freshness still unproven",
+        "agentPath": ".zcode/agents/{agent}.md (workspace) / ~/.zcode/agents/{agent}.md (user), Claude-style frontmatter (name/description/tools); verified 2026-10-17 by live interactive host loading a 65-file user-scope set as dispatchable subagents; host-owned, Meta_Kim projection not established",
+        "hookConfig": "~/.zcode/cli/config.json -> hooks (requires hooks.enabled=true) / <repo>/.zcode/config.json, seven documented events, plugin hooks appended — documented in zcode-guide 0.3.0; merge-safe update behavior still needs probe",
+        "mcpConfig": "~/.zcode/cli/config.json -> mcp.servers (fallback ~/.agents/mcp.json -> mcpServers) / <repo>/.zcode/config.json -> mcp.servers; user overrides workspace, all scopes auto-connect — documented in zcode-guide 0.3.0; merge-safe update behavior still needs probe",
         "status": "partial"
       },
       "compatibilitySurfaces": [
@@ -885,6 +885,16 @@
           "type": "command_output",
           "ref": "zcode version; zcode --help; zcode commands",
           "claim": "A local no-prompt probe observed ZCode 0.16.3, plan/build/edit/yolo modes, skills, goals, experts, subagents, MCP, resume, and JSON output surfaces."
+        },
+        {
+          "type": "official_docs",
+          "ref": "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json (zcode-guide 0.3.0, skill zcode-configuration-guide); ledger observation zcode.docs.configuration.2026-10-17",
+          "claim": "Official configuration guide documents durable user/workspace scopes for skills, commands, agents, hooks, MCP, plugins, and instruction files, with first-match conflict resolution and user-scope priority."
+        },
+        {
+          "type": "host_observation",
+          "ref": "65 Claude-format agent .md files written to ~/.zcode/agents/ (user scope); a live interactive ZCode session subsequently exposed all 65 as dispatchable subagent types (2026-10-17)",
+          "claim": "User-scope ~/.zcode/agents/*.md with Claude-style frontmatter is loaded by the interactive host as dispatchable agents; format and ownership facts only, no Meta_Kim projection or live-acceptance claim."
         }
       ],
       "decision": "Admit ZCode as beta_compatibility only: packed structural evidence is enough for an opt-in plan-only adapter, but not for formal sync, install, native runtime, or live-certified model support claims.",
