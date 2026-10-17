@@ -288,7 +288,7 @@ After the default install (`node setup.mjs` or `npx`) or a confirmed project boo
 | Meta_Kim repo with Claude Code | Full governance via CLAUDE.md (8-stage spine, gates, dispatch rules) | Say the task naturally; durable work is classified into the governed route |
 | Any other project with Claude Code | Global skills can be discovered; global hooks require explicit `--with-global-hooks`; project-local files are written only after confirmed customization/bootstrap | Say the task naturally; explicit `/meta-theory` remains a maintainer shortcut |
 | Codex | Global skills plus project `AGENTS.md` context when present; global hooks require explicit `--with-global-hooks`; local `.codex/agents`, `.codex/commands`, or `.agents/skills` are project-specific overrides, not default execution-layer projection | Say the task naturally; Codex classifies durable work, subjective ambiguity, and pure queries differently |
-| ZCode | Beta | Use the packaged ZCode compatibility adapter |
+| ZCode | Beta | Use the packaged ZCode compatibility adapter; durable user/workspace paths for agents, skills, commands, hooks, and MCP are evidence-confirmed (tier unchanged) |
 | DeepSeek Harness | Beta | Use the packaged plugin/preset compatibility adapter |
 | Qoder | Beta | Use the packaged Qoder compatibility adapter |
 | Trae | Beta | Use the packaged Trae compatibility adapter |
