@@ -61,6 +61,7 @@ const OFFICIAL_HOSTS = {
   codex: new Set(["developers.openai.com", "learn.chatgpt.com"]),
   openclaw: new Set(["docs.openclaw.ai"]),
   cursor: new Set(["cursor.com", "docs.cursor.com"]),
+  zcode: new Set(["cdn-zcode.z.ai"]),
 };
 const REPOSITORY_EVIDENCE_PREFIXES = ["canonical/", "config/", "scripts/"];
 const REPOSITORY_EVIDENCE_FILES = new Set(["setup.mjs", "AGENTS.md"]);

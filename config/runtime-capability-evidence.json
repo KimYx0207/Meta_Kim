@@ -1356,6 +1356,35 @@
         "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
         "Renewal requires another substantive review within the existing 30-day window, never automatic re-dating."
       ]
+    },
+    {
+      "id": "zcode.docs.configuration.2026-10-17",
+      "runtime": "zcode",
+      "capabilities": [
+        "agent",
+        "subagent",
+        "skill",
+        "command",
+        "hook",
+        "MCP",
+        "plugin",
+        "instructions"
+      ],
+      "observationClass": "official_docs",
+      "runtimeModes": [
+        "project_projection",
+        "global_install",
+        "interactive_host"
+      ],
+      "observedAt": "2026-10-17",
+      "sourceRefs": [
+        "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json"
+      ],
+      "summary": "Official ZCode configuration guide documents durable scopes for five extension resources: user scope ~/.zcode/* applies to every workspace and workspace scope <repo>/.zcode/* applies to the project; subagents are .md agent definitions (Settings - Subagents; plugins may contribute agents); same-named conflicts resolve first-match with user-scope priority; user instructions ~/.zcode/AGENTS.md load before workspace AGENTS.md.",
+      "limitations": [
+        "Observed via the local bundled copy of marketplace plugin zcode-guide 0.3.0 (skill zcode-configuration-guide); a bundled copy may lag the shipping ZCode product.",
+        "Documents host configuration behavior only; proves no Meta_Kim projection freshness, live acceptance, or model behavior under ZCode."
+      ]
     }
   ],
   "semantics": {
