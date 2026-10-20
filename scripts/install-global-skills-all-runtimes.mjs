@@ -350,7 +350,7 @@ async function recordManagedDependencyReceipts(homes, activeTargets) {
       }
       for (const targetDir of targetDirs) {
         const key = managedDependencyTargetKey(targetDir);
-        if (recorded.has(key) || !(await pathExists(targetDir))) continue;
+        if (recorded.has(key) || isPreservedServiceTarget(targetDir) || !(await pathExists(targetDir))) continue;
         const previousEntry = globalManagedSkillPaths.find((entry) => {
           if (managedDependencyTargetKey(entry.path) !== key) return false;
           if (entry.purpose !== `${spec.id}-global-skill`) return false;
@@ -455,6 +455,11 @@ const archiveFallbacks = [];
 const repairedInstallRoots = [];
 const sanitizedSkillIssues = [];
 const managedDependencyTargetsWritten = new Set();
+const preservedServiceTargets = new Set();
+
+function isPreservedServiceTarget(targetDir) {
+  return preservedServiceTargets.has(managedDependencyTargetKey(targetDir));
+}
 
 function managedDependencyTargetKey(targetDir) {
   const resolved = path.resolve(targetDir);
@@ -1503,6 +1508,11 @@ async function installMetaSkillCreatorAcrossRuntimes(
       path.join(runtimeHomes.codex, "skills", spec.id),
     );
   }
+  // A collision belongs to this target only, including either Codex mirror.
+  // The remaining targets still participate in the same atomic transaction.
+  for (let index = targets.length - 1; index >= 0; index -= 1) {
+    if (isPreservedServiceTarget(targets[index])) targets.splice(index, 1);
+  }
   if (targets.length === 0) return;
   const preserveLegacyTargets = [];
   for (const target of targets) {
@@ -2539,6 +2549,7 @@ async function installAllSkillsForRuntime(label, runtimeHome, runtimeId) {
     }
     emitHeader();
     const targetDir = resolveSkillTargetDir(runtimeHome, spec, runtimeId);
+    if (isPreservedServiceTarget(targetDir)) continue;
     await cleanupLegacySkillNames(runtimeHome, spec);
     if (repoNameFromFullName(spec.repoFullName) === "Kim_Service") {
       await stageAndDeployServiceSkill(spec, targetDir);
@@ -3811,15 +3822,22 @@ async function cleanupLegacySkillNames(runtimeHome, spec) {
   const installSegment = skillInstallRootSegment(spec);
   for (const legacyName of legacyNames) {
     const legacyDir = path.join(runtimeHome, installSegment, legacyName);
-    if (!(await pathExists(legacyDir))) continue;
+    let stat;
+    try { stat = await fs.lstat(legacyDir); }
+    catch (error) { if (error.code === "ENOENT") continue; throw error; }
+    // Names, valid frontmatter and symlink destinations are not ownership.
+    // Preserve linked, unknown and modified aliases, including dangling links.
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !hasUnchangedSkillReceipt(spec, legacyDir)) {
+      console.warn(`${C.yellow}⚠${C.reset} ${spec.id}: skipped legacy \"${legacyName}\" (preserved, unowned or modified): ${legacyDir}`);
+      continue;
+    }
+    await assertRealPathContained(os.homedir(), legacyDir, activeInstallerWriteBoundary);
     if (dryRun) {
       console.log(t.dryRun(`remove legacy skill dir: ${legacyDir}`));
       continue;
     }
     try {
-      const stat = await fs.lstat(legacyDir);
-      if (stat.isSymbolicLink()) await fs.unlink(legacyDir);
-      else await rmDirWithRetry(legacyDir);
+      await rmDirWithRetry(legacyDir);
       console.log(
         `${C.green}✓${C.reset} ${t.warnLegacyNameRemoved(spec.id, legacyName, legacyDir)}`,
       );
@@ -4180,6 +4198,10 @@ async function isReusableSkillRoot(spec, root, { installed = true } = {}) {
 async function isOwnedServiceSkillRoot(spec, root) {
   if (!(await isReusableSkillRoot(spec, root))) return false;
   if (repoNameFromFullName(spec.repoFullName) !== "Kim_Service") return true;
+  return hasUnchangedSkillReceipt(spec, root);
+}
+
+function hasUnchangedSkillReceipt(spec, root) {
   // Matching names and valid frontmatter prove structure, never ownership.
   // Also reject drift: files added beside a managed entrypoint are not ours
   // to silently delete during a whole-directory replacement.
@@ -4213,7 +4235,8 @@ async function preflightServiceSkillTargets(homes, activeTargets) {
         await assertRealPathContained(os.homedir(), target, activeInstallerWriteBoundary);
         if (await pathExists(target) && !(await isEmptyDir(target))
           && !(await isKnownLegacySkillRoot(spec, target)) && !(await isOwnedServiceSkillRoot(spec, target))) {
-          throw new Error(`Existing ${spec.id} directory has no matching unchanged ownership receipt; preserved without replacement: ${target}`);
+          preservedServiceTargets.add(key);
+          console.warn(`${C.yellow}⚠${C.reset} ${spec.id}: skipped (preserved, unowned or modified); no matching unchanged ownership receipt; preserved without replacement: ${target}`);
         }
       }
     }
@@ -4383,6 +4406,7 @@ async function installSkillsToMultipleRuntimes(
       if (applicableRuntimes.length === 0) continue;
       for (const runtimeId of applicableRuntimes) {
         const candidate = resolveSkillTargetDir(homes[runtimeId], spec, runtimeId);
+        if (isPreservedServiceTarget(candidate)) continue;
         if (await isOwnedServiceSkillRoot(spec, candidate) && !(await isKnownLegacySkillRoot(spec, candidate))) {
           alreadyExists.set(spec.id, candidate);
           break;
@@ -4398,7 +4422,8 @@ async function installSkillsToMultipleRuntimes(
       if (!usesGenericSkillInstall(spec)) return false;
       if (spec.id === "meta-skill-creator") return false;
       const needs = targetRuntimeIds.filter(
-        (id) => !spec.targets || spec.targets.includes(id),
+        (id) => (!spec.targets || spec.targets.includes(id)) &&
+          !isPreservedServiceTarget(resolveSkillTargetDir(homes[id], spec, id)),
       );
       return needs.length > 0;
     });
@@ -4493,6 +4518,7 @@ async function installSkillsToMultipleRuntimes(
 
         const staged = stagedSkills.get(spec.id);
         const targetDir = resolveSkillTargetDir(runtimeHome, spec, runtimeId);
+        if (isPreservedServiceTarget(targetDir)) { emitHeader(); continue; }
         await cleanupLegacySkillNames(runtimeHome, spec);
         // staged?.success can be true even when stagedPath is empty (skip-clone
         // when skill already exists at first runtime). In that case fall through
@@ -4565,8 +4591,8 @@ async function main() {
     );
   }
 
-  // Reject ownership collisions across the entire selection before cleanup or
-  // deployment can alter an earlier target and leave its receipt stale.
+  // Report every ownership collision before deployment and preserve only those
+  // targets, so unrelated selected skills and runtimes can still update.
   // Per-target checks remain in the write paths to detect later changes.
   await preflightServiceSkillTargets(homes, activeTargets);
 

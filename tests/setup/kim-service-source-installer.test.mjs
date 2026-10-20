@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { kimDecisionRecord } from "../../scripts/discover-dependency-capabilities.mjs";
+import { directoryClosureSync } from "../../scripts/install-manifest.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
-const installer = path.join(repoRoot, "scripts/install-global-skills-all-runtimes.mjs");
+const installer = process.env.META_KIM_TEST_PACKED_INSTALLER ?? path.join(repoRoot, "scripts/install-global-skills-all-runtimes.mjs");
 const manifest = JSON.parse(readFileSync(path.join(repoRoot,"config/skills.json"),"utf8"));
 const specs = [
   ["agent-teams-playbook", "skills/agent-teams-playbook"], ["findskill", "skills/find-skill"],
@@ -65,9 +66,10 @@ function fixture(root) {
   put(path.join(source, "generated/capabilities.json"), JSON.stringify({ schemaVersion:1, components }));
   return source;
 }
-function run(ctx, source, { ids = specs.map(([id])=>id), targets = "claude,codex,cursor,openclaw", update = false, local = true } = {}) {
+function run(ctx, source, { ids = specs.map(([id])=>id), targets = "claude,codex,cursor,openclaw", update = false, local = true, dryRun = false } = {}) {
   const args = [installer, "--targets", targets, "--skills", ids.join(","), "--skip-plugins", "--skip-inventory-refresh"];
   if (local) args.push("--prefer-local-dependencies"); if (update) args.push("--update");
+  if (dryRun) args.push("--dry-run");
   const result = spawnSync(process.execPath, args, { cwd: ctx.root, env: { ...ctx.env, META_KIM_LOCAL_DEPENDENCY_ROOT: source }, encoding:"utf8", timeout:90000, maxBuffer:8*1024*1024 });
   const evidenceRoot = process.env.META_KIM_SERVICE_TEST_EVIDENCE;
   if (evidenceRoot) { mkdirSync(evidenceRoot,{recursive:true}); const label=`${Date.now()}-${ids.join("-")}-${update?"update":"install"}`; put(path.join(evidenceRoot,`${label}.stdout.log`), result.stdout ?? ""); put(path.join(evidenceRoot,`${label}.stderr.log`), result.stderr ?? ""); put(path.join(evidenceRoot,`${label}.json`),JSON.stringify({args,status:result.status,errorCode:result.error?.code,source,home:ctx.home,networkAttempts:existsSync(ctx.networkLog)?readFileSync(ctx.networkLog,"utf8"):""},null,2)); }
@@ -192,26 +194,30 @@ test("explicit partial Service source reads only the requested component", (t) =
   passed(run(ctx,source,{ids:["findskill"],targets:"claude,codex"}));
   assert.ok(existsSync(path.join(ctx.home,".claude/skills/findskill/SKILL.md"))); assert.ok(existsSync(path.join(ctx.home,".codex/skills/findskill/SKILL.md")));
 });
-test("local component junctions and unknown meta-skill roots fail closed before replacement", (t) => {
+test("local component junctions fail closed and unknown meta-skill roots are preserved", (t) => {
   const ctx=sandbox(t); const source=fixture(ctx.root); const outside=path.join(ctx.root,"outside"); mkdirSync(outside); put(path.join(outside,"user-owned.txt"),"external\n");
   symlinkSync(outside,path.join(source,"skills/goalpro/linked"),process.platform==="win32"?"junction":"dir");
   const linked=run(ctx,source,{ids:["goalpro"]}); assert.notEqual(linked.status,0); assert.match(linked.stderr,/symlink|junction/);
   assert.equal(readFileSync(path.join(outside,"user-owned.txt"),"utf8"),"external\n");
   const second=sandbox(t); const complete=fixture(second.root); const target=path.join(second.home,".claude/skills/meta-skill-creator"); put(path.join(target,"user-owned.txt"),"meta-user\n");
-  const denied=run(second,complete,{ids:["meta-skill-creator"]}); assert.notEqual(denied.status,0); assert.equal(readFileSync(path.join(target,"user-owned.txt"),"utf8"),"meta-user\n");
+  const denied=run(second,complete,{ids:["meta-skill-creator"]}); passed(denied); assert.match(denied.stderr,/skipped.*preserved/); assert.equal(readFileSync(path.join(target,"user-owned.txt"),"utf8"),"meta-user\n");
 });
 test("HookPrompt refuses settings redirects without modifying the outside file", (t) => {
   const ctx = sandbox(t); const source = fixture(ctx.root);
   const external = path.join(ctx.root, "outside-settings.json");
   put(external, '{"userOwned":true}\n'); mkdirSync(path.join(ctx.home, ".claude"));
-  symlinkSync(external, path.join(ctx.home, ".claude/settings.json"), "file");
+  try { symlinkSync(external, path.join(ctx.home, ".claude/settings.json"), "file"); }
+  catch (error) {
+    if (process.platform === "win32" && error.code === "EPERM") { t.skip("Windows host cannot create file symlinks without additional privileges"); return; }
+    throw error;
+  }
   const result = run(ctx, source, { ids: ["hookprompt"], targets: "claude" });
   assert.notEqual(result.status, 0); assert.match(result.stderr, /symlink|junction/);
   assert.equal(readFileSync(external, "utf8"), '{"userOwned":true}\n');
 });
 test("unknown target is preserved before repair; recognized historical repo is retained as a backup", (t) => {
   const ctx=sandbox(t); const source=fixture(ctx.root); const target=path.join(ctx.home,".claude/skills/agent-teams-playbook"); put(path.join(target,"user-owned.txt"),"keep\n");
-  const denied=run(ctx,source,{ids:["agent-teams-playbook"]}); assert.notEqual(denied.status,0); assert.equal(readFileSync(path.join(target,"user-owned.txt"),"utf8"),"keep\n");
+  const denied=run(ctx,source,{ids:["agent-teams-playbook"]}); passed(denied); assert.equal(readFileSync(path.join(target,"user-owned.txt"),"utf8"),"keep\n");
   put(path.join(target,".git/config"),'[remote "origin"]\n url = https://github.com/KimYx0207/agent-teams-playbook.git\n'); cpSync(path.join(source,"skills/agent-teams-playbook"),path.join(target,"skills/agent-teams-playbook"),{recursive:true});
   passed(run(ctx,source,{ids:["agent-teams-playbook"]})); assert.ok(existsSync(path.join(target,"SKILL.md")));
   assert.equal(readFileSync(path.join(legacyBackup(target),"user-owned.txt"),"utf8"),"keep\n");
@@ -226,7 +232,7 @@ test("unowned matching Service entrypoints do not authorize directory replacemen
     const before = treeHash(target, true);
     const result = run(ctx, source, { ids: [id], targets: "claude", update: true });
     t.diagnostic(JSON.stringify({ id, exitCode: result.status, userFilePreserved: existsSync(path.join(target, "user-owned-notes.txt")), directoryUnchanged: treeHash(target, true) === before }));
-    assert.notEqual(result.status, 0, `${id}: a matching entrypoint is not an ownership receipt`);
+    passed(result); assert.match(result.stderr, /skipped.*preserved/);
     assert.equal(treeHash(target, true), before, `${id}: preserve the whole unowned directory`);
     const ledger = path.join(ctx.home, ".meta-kim/install-manifest.json");
     if (existsSync(ledger)) assert.equal(JSON.parse(readFileSync(ledger)).entries.some((entry) => entry.path === target), false);
@@ -240,7 +246,7 @@ test("unowned matching targets remain intact on multi-runtime and remote update 
     put(path.join(target, "private-notes.txt"), "fixture only\n");
     const before = treeHash(target, true); mockRemoteSource(ctx, source);
     const denied = run(ctx, source, { ids: ["goalpro"], update: true, ...options });
-    assert.notEqual(denied.status, 0); assert.match(denied.stderr, /ownership receipt.*preserved without replacement/);
+    passed(denied); assert.match(denied.stderr, /ownership receipt.*preserved without replacement/);
     assert.equal(treeHash(target, true), before);
   }
 });
@@ -259,7 +265,8 @@ test("only the exact unchanged installer receipt permits replacement; drift neve
     const value = JSON.parse(originalReceipt); Object.assign(value.entries.find((entry) => entry.path === target), mutation);
     put(ledger, JSON.stringify(value));
     const rejected = run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true });
-    assert.notEqual(rejected.status, 0, JSON.stringify(mutation)); assert.equal(treeHash(target, true), before);
+    passed(rejected); assert.match(rejected.stderr, /skipped.*preserved/); assert.equal(treeHash(target, true), before);
+    assert.deepEqual(readFileSync(ledger), Buffer.from(JSON.stringify(value)), "skipped receipt must not be re-adopted");
   }
   put(ledger, originalReceipt);
   put(path.join(source, "skills/goalpro/SKILL.md"), "---\nname: goalpro\ndescription: Updated verified source.\n---\n\n# Updated source\n");
@@ -276,7 +283,7 @@ test("only the exact unchanged installer receipt permits replacement; drift neve
   put(path.join(target, "user-owned-after-install.txt"), "do not erase this addition\n");
   const drifted = treeHash(target, true);
   const rejected = run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true });
-  assert.notEqual(rejected.status, 0); assert.equal(treeHash(target, true), drifted);
+  passed(rejected); assert.equal(treeHash(target, true), drifted);
   const current = JSON.parse(readFileSync(ledger)); const previous = JSON.parse(managedReceipt);
   assert.deepEqual(current.entries.find((entry) => entry.path === target), previous.entries.find((entry) => entry.path === target));
 });
@@ -287,7 +294,7 @@ for (const scenario of [
   { name: "later component in one runtime", targets: "claude", ids: ["agent-teams-playbook", "goalpro"], rejected: ".claude/skills/goalpro", drift: true },
   { name: "Codex compatibility mirror", targets: "claude,codex", ids: ["meta-skill-creator", "goalpro"], rejected: ".codex/skills/meta-skill-creator", drift: true },
 ]) {
-  test(`Service ownership preflight preserves every target and receipt on ${scenario.name}`, (t) => {
+  test(`Service ownership preflight skips only the collision on ${scenario.name}`, (t) => {
     const ctx = sandbox(t); const source = fixture(ctx.root);
     passed(run(ctx, source, scenario));
     const rejected = path.join(ctx.home, scenario.rejected);
@@ -300,16 +307,19 @@ for (const scenario of [
     }
     for (const id of scenario.ids) {
       const subdir = specs.find(([candidate]) => candidate === id)[1];
-      put(path.join(source, subdir, "NOTICE"), "changed source must not reach an earlier target\n");
+      put(path.join(source, subdir, "NOTICE"), "changed source reaches other owned targets\n");
     }
-    const before = treeHash(ctx.home, true); const receiptBefore = readFileSync(ledger);
+    const before = treeHash(rejected, true); const receiptBefore = JSON.parse(readFileSync(ledger)).entries.find(entry => entry.path === rejected);
     const denied = run(ctx, source, { ...scenario, update: true });
-    const unchanged = treeHash(ctx.home, true) === before;
-    t.diagnostic(JSON.stringify({ scenario: scenario.name, exitCode: denied.status, allTargetsUnchanged: unchanged, receiptUnchanged: readFileSync(ledger).equals(receiptBefore) }));
-    assert.notEqual(denied.status, 0);
+    const unchanged = treeHash(rejected, true) === before;
+    passed(denied);
     assert.match(denied.stderr, /ownership receipt.*preserved without replacement/);
-    assert.equal(unchanged, true, "reject the whole selection before any target is modified");
-    assert.deepEqual(readFileSync(ledger), receiptBefore);
+    assert.equal(unchanged, true, "preserve the colliding target");
+    assert.deepEqual(JSON.parse(readFileSync(ledger)).entries.find(entry => entry.path === rejected), receiptBefore);
+    for (const id of scenario.ids) {
+      const target = path.join(ctx.home, ".claude/skills", id);
+      if (target !== rejected) assert.equal(readFileSync(path.join(target, "NOTICE"), "utf8"), "changed source reaches other owned targets\n");
+    }
   });
 }
 test("single-runtime remote route preserves unknown and historical targets through the same deployment boundary", (t) => {
@@ -317,7 +327,7 @@ test("single-runtime remote route preserves unknown and historical targets throu
   const target = path.join(ctx.home, ".claude/skills/agent-teams-playbook");
   put(path.join(target, "user-owned.txt"), "remote-preserve\n");
   const unknown = run(ctx, source, { ids: ["agent-teams-playbook"], targets: "claude", update: true, local: false });
-  assert.notEqual(unknown.status, 0); assert.match(unknown.stderr, /preserved without replacement/);
+  passed(unknown); assert.match(unknown.stderr, /preserved without replacement/);
   assert.equal(readFileSync(path.join(target, "user-owned.txt"), "utf8"), "remote-preserve\n");
   put(path.join(target, ".git/config"), '[remote "origin"]\n url = https://github.com/KimYx0207/agent-teams-playbook.git\n');
   cpSync(path.join(source, "skills/agent-teams-playbook"), path.join(target, "skills/agent-teams-playbook"), { recursive: true });
@@ -327,6 +337,75 @@ test("single-runtime remote route preserves unknown and historical targets throu
   assert.ok(existsSync(path.join(target, "SKILL.md")));
   assert.equal(existsSync(path.join(target, ".git")), false);
 });
+
+test("all unowned findskill and meta-skill targets are reported while unrelated skills install", (t) => {
+  const ctx = sandbox(t); const source = fixture(ctx.root);
+  const collisions = [".claude/skills/findskill", ".codex/skills/findskill", ".claude/skills/meta-skill-creator", ".codex/skills/meta-skill-creator", ".agents/skills/meta-skill-creator"];
+  for (const relative of collisions) put(path.join(ctx.home, relative, "user-owned.txt"), relative);
+  const result = run(ctx, source, { targets: "claude,codex", update: true });
+  passed(result);
+  for (const relative of collisions) {
+    assert.ok(result.stderr.includes(path.join(ctx.home, relative)), `report ${relative}`);
+    assert.equal(readFileSync(path.join(ctx.home, relative, "user-owned.txt"), "utf8"), relative);
+  }
+  for (const runtime of [".claude", ".codex"]) for (const id of ["agent-teams-playbook", "goalpro", "kim-decision"])
+    assert.ok(existsSync(path.join(ctx.home, runtime, "skills", id, "SKILL.md")));
+  const entries = JSON.parse(readFileSync(path.join(ctx.home, ".meta-kim/install-manifest.json"))).entries;
+  for (const relative of collisions) assert.equal(entries.some(entry => entry.path === path.join(ctx.home, relative)), false);
+});
+
+test("an unowned HookPrompt target preserves its runtime Hook files while another runtime installs", (t) => {
+  const ctx = sandbox(t); const source = fixture(ctx.root);
+  const userFiles = [".claude/skills/hookprompt/user.txt", ".claude/hooks/user-prompt-submit.js", ".claude/prompt-optimizer-meta.md", ".claude/settings.json"];
+  for (const relative of userFiles) put(path.join(ctx.home, relative), relative.endsWith("settings.json") ? '{"userOwned":true}\n' : "user-owned content\n");
+  const before = treeHash(path.join(ctx.home, ".claude"), true);
+  passed(run(ctx, source, { ids: ["hookprompt"], targets: "claude,codex", update: true }));
+  assert.equal(treeHash(path.join(ctx.home, ".claude"), true), before);
+  assert.ok(existsSync(path.join(ctx.home, ".codex/skills/hookprompt/.codex/hooks/user-prompt-submit.js")));
+  assert.ok(existsSync(path.join(ctx.home, ".codex/hooks.json")));
+});
+
+for (const ownership of ["unowned", "unchanged", "drifted", "wrong-source", "wrong-purpose", "project-copy", "linked", "dangling"]) {
+  test(`legacyNames cleanup preserves user data and removes only proven unchanged aliases: ${ownership}`, (t) => {
+    const ctx = sandbox(t); const source = fixture(ctx.root);
+    passed(run(ctx, source, { ids: ["findskill"], targets: "claude" }));
+    const alias = path.join(ctx.home, ".claude/skills/find-skills");
+    const canonical = path.join(ctx.home, ".claude/skills/findskill");
+    const outside = path.join(ctx.root, "user-skill");
+    if (["linked", "dangling"].includes(ownership)) {
+      mkdirSync(outside); put(path.join(outside, "user-owned.txt"), "preserve outside\n");
+      symlinkSync(outside, alias, process.platform === "win32" ? "junction" : "dir");
+      if (ownership === "dangling") rmSync(outside, { recursive: true });
+    } else {
+      cpSync(canonical, alias, { recursive: true });
+    }
+    if (["unchanged", "drifted", "wrong-source", "wrong-purpose", "project-copy"].includes(ownership)) {
+      const ledger = path.join(ctx.home, ".meta-kim/install-manifest.json");
+      const value = JSON.parse(readFileSync(ledger));
+      const receipt = { ...value.entries.find(entry => entry.path === canonical), path: alias };
+      const closure = directoryClosureSync(alias);
+      Object.assign(receipt, { directoryClosureSha256: closure.sha256, directoryClosureEntryCount: closure.entryCount });
+      if (ownership === "wrong-source") receipt.source = "unrelated-writer";
+      if (ownership === "wrong-purpose") receipt.purpose = "unrelated-global-skill";
+      if (ownership === "project-copy") receipt.ownershipClass = "runtime_sedimented_project_copy";
+      value.entries.push(receipt); put(ledger, JSON.stringify(value));
+      if (ownership === "drifted") put(path.join(alias, "user-added.txt"), "preserve addition\n");
+    }
+    const before = directoryClosureSync(alias);
+    const beforeLink = lstatSync(alias).isSymbolicLink() ? readlinkSync(alias) : null;
+    const dry = run(ctx, source, { ids: ["findskill"], targets: "claude", update: true, dryRun: true }); passed(dry);
+    assert.deepEqual(directoryClosureSync(alias), before, "dry-run preserves aliases");
+    if (ownership !== "unchanged") assert.match(dry.stderr, /skipped legacy.*preserved/);
+    const result = run(ctx, source, { ids: ["findskill"], targets: "claude", update: true }); passed(result);
+    if (ownership === "unchanged") assert.equal(existsSync(alias), false);
+    else {
+      assert.deepEqual(directoryClosureSync(alias), before);
+      if (beforeLink) assert.equal(readlinkSync(alias), beforeLink, "preserve even dangling aliases");
+      assert.match(result.stderr, /skipped legacy.*preserved/);
+      if (ownership === "linked") assert.equal(readFileSync(path.join(outside, "user-owned.txt"), "utf8"), "preserve outside\n");
+    }
+  });
+}
 test("historical Git repositories with valid root Skill or Hook entries retain their full old roots on update", (t) => {
   for (const id of ["agent-teams-playbook","hookprompt","meta-skill-creator"]) {
     const ctx=sandbox(t); const source=fixture(ctx.root); const subdir=specs.find(([candidate])=>candidate===id)[1];

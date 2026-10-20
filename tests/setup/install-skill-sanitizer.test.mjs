@@ -266,6 +266,7 @@ description: Existing install
 `,
       "utf8",
     );
+    await fs.writeFile(path.join(targetDir, ".git/config"), '[remote "origin"]\n url = https://github.com/meta-kim-test-owner-that-should-not-exist-000000/Kim_Service.git\n');
 
     const fakeBin = path.join(root, "bin");
     await fs.mkdir(fakeBin, { recursive: true });
@@ -287,6 +288,19 @@ description: Existing install
     delete childEnv.PATH;
     delete childEnv.Path;
     childEnv.META_KIM_CLAUDE_HOME = runtimeHome;
+    childEnv.META_KIM_CODEX_HOME = path.join(root, ".codex");
+    childEnv.META_KIM_OPENCLAW_HOME = path.join(root, ".openclaw");
+    childEnv.META_KIM_CURSOR_HOME = path.join(root, ".cursor");
+    childEnv.HOME = root;
+    childEnv.USERPROFILE = root;
+    childEnv.META_KIM_SKIP_OPTIONAL_TOOLS = "1";
+    // The legacy Git origin authorizes staging, so this test reaches the real
+    // failure path instead of accidentally passing on an ownership rejection.
+    // Intercept executable Git too: Windows does not resolve git.cmd with shell:false.
+    const preload = path.join(root, "fail-network.mjs");
+    await fs.writeFile(preload, `import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
+for(const key of ['spawn','spawnSync']){const original=cp[key];cp[key]=function(command,args,options){if(/(?:^|[\\\\/])git(?:\\.exe)?$/i.test(String(command)))return original.call(this,process.execPath,['-e','process.exit(1)'],options);return original.apply(this,arguments);};}globalThis.fetch=async()=>{throw new Error('Offline test rejects downloads');};syncBuiltinESMExports();`);
+    childEnv.NODE_OPTIONS = `--import=${new URL(`file:///${preload.replaceAll("\\", "/")}`).href}`;
     childEnv.META_KIM_SKILL_OWNER =
       "meta-kim-test-owner-that-should-not-exist-000000";
     childEnv.Path = `${fakeBin}${path.delimiter}${process.env.Path ?? process.env.PATH ?? ""}`;
@@ -298,6 +312,7 @@ description: Existing install
         path.join(repoRoot, "scripts", "install-global-skills-all-runtimes.mjs"),
         "--update",
         "--skip-plugins",
+        "--skip-inventory-refresh",
         "--targets",
         "claude",
         "--skills",
