@@ -369,6 +369,7 @@ function renderSnapshotHarness(overrides = {}) {
     updateConnection: (kind, message) => { calls.connection.push([kind, message]); },
     hideEmpty: paints("hideEmpty"),
     updateHeader: paints("updateHeader"),
+    renderRunOverview: paints("renderRunOverview"),
     renderStageRail: paints("renderStageRail"),
     renderGraph: paints("renderGraph"),
     renderEvidence: paints("renderEvidence"),

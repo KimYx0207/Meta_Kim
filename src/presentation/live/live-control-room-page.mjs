@@ -44,6 +44,8 @@ import {
 import { serializeReplayNodeViewResolver } from "../../application/live/live-replay-visibility.mjs";
 import { serializeGraphReadabilityResolvers } from "../../application/live/live-graph-readability.mjs";
 import { serializeLocalFeedbackResolvers } from "./live-feedback-draft.mjs";
+import { serializeLiveRunOverviewResolvers } from "./live-run-overview.mjs";
+import { serializeLiveTokenUsageResolvers } from "./live-token-usage.mjs";
 import {
   loadLiveSpacingScale,
   serializeSpacingCustomProperties,
@@ -229,6 +231,8 @@ const MEASURED_CARD_METRICS_SOURCE = serializeMeasuredCardMetricsResolver();
 const FANOUT_ARRANGEMENT_SOURCE = serializeFanoutArrangementResolver();
 const GRAPH_READABILITY_SOURCE = serializeGraphReadabilityResolvers();
 const LOCAL_FEEDBACK_SOURCE = serializeLocalFeedbackResolvers();
+const RUN_OVERVIEW_SOURCE = serializeLiveRunOverviewResolvers();
+const TOKEN_USAGE_SOURCE = serializeLiveTokenUsageResolvers();
 
 /**
  * Which run the page opens on when the URL names none.
@@ -380,6 +384,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const resolveFanoutArrangement = ${FANOUT_ARRANGEMENT_SOURCE};
   ${GRAPH_READABILITY_SOURCE}
   ${LOCAL_FEEDBACK_SOURCE}
+  ${RUN_OVERVIEW_SOURCE}
+  ${TOKEN_USAGE_SOURCE}
 
   const DEFAULT_SELECTION = ${DEFAULT_SELECTION_LITERAL};
   ${DEFAULT_SELECTION_SOURCE}
@@ -757,6 +763,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const updated = app.querySelector("[data-live-run-updated]");
   const source = app.querySelector("[data-live-source]");
   const graph = app.querySelector("[data-live-graph]");
+  const runOverview = app.querySelector("[data-live-run-overview]");
   const stageRail = app.querySelector("[data-live-stage-rail]");
   const graphScene = app.querySelector("[data-live-graph-scene]");
   const graphStage = app.querySelector("[data-live-graph-viewport]");
@@ -1295,6 +1302,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
         statusReason: display(firstValue(item, ["statusReason", "stateReason"], ""), ""),
         active: item.active === true,
         observedOnly: item.observedOnly === true,
+        executionObserved: item.executionObserved === true,
+        runId: safeIdentifier(item.runId),
         declaredNotStarted: item.declaredNotStarted === true,
         role: display(firstValue(item, ["roleDisplayName", "role", "ownerRole"], "worker"), "worker"),
         agent: display(firstValue(item, ["agent", "ownerAgent", "owner"])),
@@ -1304,9 +1313,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         description: display(firstValue(item, ["description", "summary", "message"], "No task detail available"), "No task detail available"),
         parentId: display(firstValue(item, ["parentId", "parentNodeId", "spawnedByNodeId"], ""), ""),
         model: display(firstValue(item, ["model", "modelName", "providerModel"], ""), ""),
-        inputTokens: Math.max(0, numberOr(firstValue(item, ["inputTokens"], 0), 0)),
-        outputTokens: Math.max(0, numberOr(firstValue(item, ["outputTokens", "tokens", "tokenCount"], 0), 0)),
-        totalTokens: Math.max(0, numberOr(firstValue(item, ["totalTokens"], 0), 0)),
+        ...normalizeLiveTokenUsage(item),
         firstAt: display(firstValue(item, ["firstAt", "startedAt", "createdAt"], ""), ""),
         lastAt: display(firstValue(item, ["lastAt", "endedAt", "updatedAt"], ""), ""),
         terminalEvidence: summarizeTerminalEvidence(firstValue(item, ["terminalEvidence", "completionEvidence", "resultSummary"], "")),
@@ -1383,6 +1390,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
         id: display(firstValue(record, ["id", "toolCallId"], "tool-" + (index + 1)), "tool-" + (index + 1)),
         nodeId: display(firstValue(record, ["nodeId", "agentNodeId", "ownerNodeId"], ""), ""),
         name: display(firstValue(record, ["name", "tool", "toolName", "kind"], "Tool call"), "Tool call"),
+        runId: safeIdentifier(record.runId),
+        executionObserved: record.executionObserved === true,
+        synthetic: record.synthetic === true,
+        activityState: display(firstValue(record, ["state", "status"], ""), ""),
+        // Preserve execution clocks apart from the detail display fallback below.
+        activityTimestamps: ["endedAt", "completedAt", "occurredAt", "at", "timestamp", "startedAt"].map((key) => display(record[key], "")),
         summary: display(firstValue(record, ["summary", "safeSummary", "description", "label"], "Tool activity observed"), "Tool activity observed"),
         startedAt: display(firstValue(record, ["startedAt", "occurredAt", "at", "timestamp"], ""), ""),
         endedAt: display(firstValue(record, ["endedAt", "completedAt", "updatedAt", "occurredAt"], ""), ""),
@@ -1416,6 +1429,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
         promptId: display(firstValue(record, ["promptId", "eraId"], ""), ""),
         visibility: display(firstValue(record, ["visibility", "action"], ""), ""),
         eventType: display(firstValue(record, ["eventType", "type", "kind"], "status"), "status"),
+        runId: safeIdentifier(record.runId),
+        executionObserved: record.executionObserved === true,
+        synthetic: record.synthetic === true,
+        proofValid: typeof record.proofValid === "boolean" ? record.proofValid : null,
+        activityState: display(firstValue(record, ["state", "status"], ""), ""),
+        summary: display(firstValue(record, ["summary", "safeSummary", "detail"], ""), ""),
         stage: display(firstValue(record, ["stage", "phase", "chapter"], ""), "").toLowerCase().replace(/[\s_]+/gu, "-"),
         chapter: display(firstValue(record, ["chapter", "stage", "phase"], ""), "").toLowerCase().replace(/[\s_]+/gu, "-"),
       };
@@ -1600,6 +1619,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const parsed = new Date(iso);
     if (!Number.isNaN(parsed.getTime())) element.dateTime = parsed.toISOString();
     parent.append(element);
+    return element;
   }
 
   function formatDuration(firstAt, lastAt) {
@@ -3659,7 +3679,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(selectedNodeModel, labeledFact("Model", selected ? selected.model : ""));
     setText(selectedNodeDuration, labeledFact("Duration", selected ? formatDuration(selected.firstAt, selected.lastAt) : ""));
     setText(selectedNodeTools, labeledFact("Tools", selected ? toolCount + (usefulNodeMeta(selected.latestTool) ? " · " + selected.latestTool : "") : ""));
-    setText(selectedNodeTokens, labeledFact("Tokens", selected ? selected.outputTokens : ""));
+    setText(selectedNodeTokens, selected
+      ? (currentLanguage === "zh" ? "输入 · " : "Input · ") + formatLiveTokenCount(selected.inputTokens, currentLanguage)
+        + (currentLanguage === "zh" ? " / 输出 · " : " / Output · ") + formatLiveTokenCount(selected.outputTokens, currentLanguage)
+        + (currentLanguage === "zh" ? " / 合计 · " : " / Total · ") + formatLiveTokenCount(selected.totalTokens, currentLanguage)
+      : labeledFact("Tokens", ""));
     if (selectedNodeLoadout) {
       const loadout = selected?.loadout || {};
       const labels = [
@@ -3984,7 +4008,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const summary = makeElement("span", "node-summary", node.summary);
       const identity = makeElement("button", "node-identity-row node-identity-button");
       identity.type = "button";
-      identity.setAttribute("aria-label", node.label + ", " + nodeStateCopy(node) + ", " + node.toolCount + " tools, " + node.outputTokens + " tokens");
+      identity.setAttribute("aria-label", node.label + ", " + nodeStateCopy(node) + ", " + node.toolCount + " tools, "
+        + (currentLanguage === "zh" ? "输出 token " : "output tokens ") + formatLiveTokenCount(node.outputTokens, currentLanguage));
       const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       glyph.setAttribute("class", "node-glyph");
       glyph.setAttribute("viewBox", "0 0 40 40");
@@ -4034,7 +4059,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       model.title = localize("Model");
       const tools = makeElement("span", "node-meta-item activity-chip chip-tools", node.toolCount + " tools" + (usefulNodeMeta(node.latestTool) ? " · " + node.latestTool : ""));
       tools.title = localize("Tool activity");
-      const tokens = makeElement("span", "node-meta-item activity-chip chip-tokens", node.outputTokens + " tok");
+      const tokens = makeElement("span", "node-meta-item activity-chip chip-tokens", (currentLanguage === "zh" ? "输出 " : "Out ") + formatLiveTokenCount(node.outputTokens, currentLanguage));
       tokens.title = localize("Output tokens");
       const evidence = makeElement("span", "node-meta-item activity-chip chip-evidence", node.evidenceCount + " evidence");
       evidence.title = localize("Observed evidence");
@@ -4047,9 +4072,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (usefulNodeMeta(role.textContent)) meta.append(role);
       if (usefulNodeMeta(agent.textContent)) meta.append(agent);
       if (usefulNodeMeta(runtime.textContent)) meta.append(runtime);
+      meta.append(tokens);
       if (usefulNodeMeta(node.model)) meta.append(model);
       if (node.toolCount || usefulNodeMeta(node.latestTool)) meta.append(tools);
-      if (node.outputTokens) meta.append(tokens);
       if (node.evidenceCount) meta.append(evidence);
       if (loadoutTotal) meta.append(loadoutChip);
       if (usefulNodeMeta(node.firstAt) && usefulNodeMeta(node.lastAt)) meta.append(makeElement("span", "node-meta-item activity-chip chip-duration", formatDuration(node.firstAt, node.lastAt)));
@@ -4590,6 +4615,112 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return "/api/deliverable?" + params.toString();
   }
 
+  /** Bind a summary feedback shortcut to the existing local-only draft form. */
+  function openOverviewFeedback(item) {
+    if (!currentSnapshot?.run || (item && item.runId !== currentSnapshot.run.id)) return;
+    const node = item?.taskPacketId ? currentSnapshot.nodes.find((candidate) => candidate.taskPacketId === item.taskPacketId) : null;
+    selectedNodeId = node?.id || null;
+    const base = { projectId: selectedProjectId || "", runId: currentSnapshot.run.id, nodeId: node?.id || "" };
+    localFeedbackDrafts.select(base, item ? "deliverable:" + item.id : "");
+    updateSelectedNodeVisuals();
+    setInspectorTab("summary");
+    setInspectorOpen(true);
+    localFeedbackSurfaces.get("inspector")?.raw.focus();
+  }
+
+  /** A compact reading order before the process map: work, result, block, activity. */
+  function renderRunOverview(snapshot) {
+    if (!runOverview) return;
+    const overview = resolveLiveRunOverview(snapshot);
+    const coverage = summarizeLiveTokenCoverage((snapshot?.nodes || []).filter((node) => !["stage", "chapter", "stage_summary", "workflow"].includes(node.kind)
+      && (!node.runId || node.runId === snapshot?.run?.id)));
+    const renderKey = JSON.stringify([overview, coverage, currentLanguage, selectedProjectId]);
+    if (runOverview.dataset.renderKey === renderKey) return;
+    runOverview.dataset.renderKey = renderKey;
+    runOverview.dataset.state = overview.state;
+    clearChildren(runOverview);
+    const zh = currentLanguage === "zh";
+    const item = (key, heading) => {
+      const row = makeElement("article", "run-overview-item");
+      row.dataset.overviewItem = key;
+      row.append(makeElement("h2", "", heading));
+      runOverview.append(row);
+      return row;
+    };
+    const line = (parent, text, className = "run-overview-value") => {
+      const element = makeElement("p", className, text);
+      element.title = text;
+      parent.append(element);
+      return element;
+    };
+    const task = item("task", zh ? "当前任务" : "Current task");
+    const taskEmpty = overview.state === "empty" ? (zh ? "等待运行记录" : "Waiting for a run record")
+      : overview.state === "planned" ? (zh ? "仅有规划，尚未派发" : "Planned; not dispatched")
+        : overview.state === "completed" ? (zh ? "已验证完成，结果仍需核对" : "Verified complete; result review still needed")
+          : overview.state === "blocked" ? (zh ? "工作受阻，查看原因" : "Work blocked; see the reason")
+            : overview.state === "active" ? (zh ? "运行中，当前执行任务未回写" : "Running; current task not reported")
+              : (zh ? "历史记录，未确认当前执行" : "Historical record; no current execution confirmed");
+    line(task, overview.task?.label || taskEmpty);
+    if (overview.task) {
+      const action = makeElement("button", "run-overview-action", zh ? "查看任务" : "Inspect task");
+      action.type = "button";
+      action.addEventListener("click", () => selectNode(overview.task.nodeId, { inspectorTab: "summary" }));
+      task.append(action);
+      if (overview.task.moreCount) line(task, (zh ? "另有 " : "+ ") + overview.task.moreCount + (zh ? " 项正在执行" : " active tasks"), "run-overview-note");
+    }
+    const tokenCoverage = line(task, (zh ? "输出计量 " : "Output measured ") + coverage.outputMeasuredNodeCount + "/" + coverage.nodeCount, "run-overview-note");
+    tokenCoverage.dataset.liveTokenCoverage = "";
+    tokenCoverage.title = zh ? "仅统计当前运行中已报告输出 token 数的节点；其余节点未计量，0 也是有效计量。" : "Nodes in this run with an observed output token count; other nodes are not measured. Zero is measured.";
+
+    const result = item("result", zh ? "可用结果" : "Available result");
+    const available = overview.result.items[0];
+    if (available) {
+      const link = makeElement("a", "run-overview-value run-overview-result", available.label);
+      link.href = deliverableOpenHref(available);
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.dataset.liveOverviewResult = available.id;
+      link.title = available.label;
+      result.append(link);
+      line(result, (overview.result.items.length > 1 ? (zh ? "共 " : "") + overview.result.items.length + (zh ? " 份可用 · " : " available · ") : "") + (zh ? "有内容，尚待用户验收" : "Content present; user acceptance pending"), "run-overview-note");
+    } else {
+      line(result, overview.result.declaredCount ? (zh ? "仅声明产出，尚无可用内容" : "Output declared; no available content") : (zh ? "尚无可用结果" : "No available result yet"));
+    }
+    if (snapshot?.run) {
+      const feedback = makeElement("button", "run-overview-action", available ? (zh ? "反馈此结果" : "Give result feedback") : (zh ? "反馈当前工作" : "Give work feedback"));
+      feedback.type = "button";
+      feedback.dataset.liveOverviewFeedback = "";
+      feedback.addEventListener("click", () => openOverviewFeedback(available));
+      result.append(feedback);
+    }
+
+    const blocker = item("blocker", overview.blocker?.kind === "status" ? (zh ? "状态说明" : "Status detail") : (zh ? "阻塞原因" : "Blocker"));
+    line(blocker, overview.blocker?.label || (overview.blocker?.kind === "blocked" ? (zh ? "已报告阻塞，原因未提供" : "Blocked; reason not reported")
+      : overview.state === "empty" || overview.state === "planned" ? (zh ? "尚无执行阻塞记录" : "No execution blocker recorded")
+        : (zh ? "未报告阻塞" : "No blocker reported")));
+    if (overview.blocker?.nodeLabel) line(blocker, overview.blocker.nodeLabel + (overview.blocker.moreCount ? (zh ? " · 另有 " : " · + ") + overview.blocker.moreCount : ""), "run-overview-note");
+    if (overview.blocker?.nodeId) {
+      const action = makeElement("button", "run-overview-action", zh ? "查看阻塞" : "Inspect blocker");
+      action.type = "button";
+      action.addEventListener("click", () => selectNode(overview.blocker.nodeId, { inspectorTab: "summary" }));
+      blocker.append(action);
+    }
+
+    const activity = item("activity", zh ? "执行活动" : "Execution activity");
+    const observed = overview.activity.item;
+    line(activity, observed?.label || (zh ? "尚无实际执行记录" : "No execution activity observed"));
+    if (observed?.at) {
+      const time = appendObservedTime(activity, observed.at);
+      if (time) {
+        time.className = "run-overview-note";
+        time.textContent = (zh ? "最近记录 · " : "Latest timed record · ") + formatSessionTime(observed.at);
+        time.title = observed.at;
+      }
+    } else line(activity, zh ? "活动时间未知" : "Activity time unknown", "run-overview-note");
+    if (overview.activity.undatedCount && observed?.at) line(activity, (zh ? "另有 " : "") + overview.activity.undatedCount + (zh ? " 条活动时间未知" : " activities have unknown time"), "run-overview-note");
+    if (observed?.detail) activity.title = observed.detail;
+  }
+
   function appendLiveDeliverables(parent, snapshot, selected) {
     if (!snapshot?.run) return;
     const deliverables = liveDeliverablesForNode(snapshot.deliverables, selected);
@@ -4709,9 +4840,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
         option.value = item.value;
         view.target.append(option);
       }
-      view.target.value = selection;
       view.selectionKey = selectionKey;
     }
+    // Overview shortcuts can change selection without changing the option list.
+    if (view.target.value !== selection) view.target.value = selection;
     view.base = base;
     view.context = context;
     const draft = localFeedbackDrafts.get(context);
@@ -5701,6 +5833,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function showEmpty(message) {
+    renderRunOverview(null);
     if (emptyState) emptyState.hidden = false;
     for (const element of [workspace, replayPanel]) {
       if (element) element.hidden = true;
@@ -5760,6 +5893,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     hideEmpty();
     updateHeader(snapshot);
+    renderRunOverview(snapshot);
     renderStageRail(snapshot);
     renderGraph(snapshot);
     renderEvidence(snapshot);
@@ -6394,7 +6528,18 @@ button { color: inherit; }
 .ui-icon, .empty-state-icon { width: 1rem; height: 1rem; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .topbar-button { padding: 0 var(--sp-cozy); font-size: var(--fs-body); }
 .topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
-.main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+.run-overview { min-width: 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: var(--sp-default); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
+.run-overview-item { min-width: 0; display: flex; flex-wrap: wrap; align-content: start; align-items: baseline; gap: var(--sp-cozy); }
+.run-overview-item h2 { flex-basis: 100%; margin: 0; color: var(--muted); font-size: var(--fs-label); font-weight: 500; line-height: var(--lh-snug); }
+.run-overview-value { flex-basis: 100%; min-width: 0; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-entity-body); line-height: var(--lh-snug); }
+.run-overview-note { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-snug); }
+.run-overview-result { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.run-overview-action { min-height: 28px; max-width: 100%; padding: var(--sp-cozy); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: var(--fs-label); line-height: var(--lh-snug); cursor: pointer; }
+.run-overview-action:focus-visible, .run-overview-result:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.run-overview[data-state="blocked"] [data-overview-item="blocker"] .run-overview-value { color: var(--amber); }
+@media (max-width: 1024px) { .run-overview { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 720px) { .run-overview { gap: var(--sp-cozy); padding: var(--sp-cozy); max-height: 36dvh; overflow: auto; } }
 .run-context { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--sp-cozy) var(--sp-section); padding: var(--sp-snug) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-context-heading { min-width: 0; grid-column: 1 / -1; }
 .run-context-heading > .context-kicker { display: none; }
@@ -7066,6 +7211,7 @@ export function renderLiveControlRoomPage({
         </div>
         <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
       </section>
+      <section class="run-overview" data-live-run-overview aria-label="Run overview"><p class="run-overview-note" data-i18n-en="Waiting for a run record" data-i18n-zh="等待运行记录">等待运行记录</p></section>
       <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
         <section class="work-surface-view repository-view" id="repository-view" role="tabpanel" aria-labelledby="work-view-repository" data-live-repository-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</span><h2 data-live-repository-title>已登记项目</h2><p data-live-repository-boundary>仓库边界不可用</p></div><span class="surface-state" data-i18n-en="Observed catalog" data-i18n-zh="已观测目录">已观测目录</span></header><div class="repository-layout"><section class="operational-section" aria-labelledby="repository-facts-title"><h3 id="repository-facts-title" data-i18n-en="Repository facts" data-i18n-zh="仓库事实">仓库事实</h3><div class="operational-list" data-live-repository-facts></div></section><section class="operational-section" aria-labelledby="repository-workspaces-title"><h3 id="repository-workspaces-title" data-i18n-en="Workspace sessions" data-i18n-zh="工作区会话">工作区会话</h3><div class="workspace-children" data-live-repository-sessions></div></section></div></section>
         <section class="work-surface-view workspace-view" id="workspace-view" role="tabpanel" aria-labelledby="work-view-workspace" data-live-workspace-view hidden>
