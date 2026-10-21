@@ -401,8 +401,93 @@ test("two processes racing the same consume CAS produce exactly one stored winne
   ]);
   assert.deepEqual(results.map((result) => result.code).sort(), [0, 2]);
   assert.equal(results.filter((result) => result.stdout === "won").length, 1);
-  assert.equal(results.filter((result) => result.stdout.includes("CAS_MISMATCH")).length, 1);
+  assert.equal(results.filter((result) => result.stdout.includes("CAS_MISMATCH")).length, 1,
+    JSON.stringify(results.map(({ code, stdout }) => ({ code, stdout }))));
   assert.equal(repository.read({ substrateRef: consumed.substrateRef }).state, "consumed");
+});
+
+function consumeAfterLockInspectionRace(t, mode) {
+  const { profileRoot, root } = tempProfile(t);
+  const repository = createNativeHostAnswerRepository({ profileRoot });
+  const fixture = fixtureIdentity(`lock-inspection-${mode}`);
+  const issued = repository.issue(fixture.authority);
+  const observed = observedAuthority(fixture);
+  repository.observe(cas(observed, issued));
+  const consumed = consumeNativeHostReturnObservedClaim(observed, {
+    at: CONSUMED_AT,
+    timeSourceClaimRef: "clock:lock-inspection",
+    consumerRef: "consumer:lock-inspection-winner",
+  });
+  repository.consume(cas(consumed, observed));
+  const inputPath = path.join(root, "loser-input.json");
+  writeFileSync(inputPath, JSON.stringify(cas(consumed, observed)), "utf8");
+  const lockPath = path.join(repository.paths.root, "write.lock");
+  const lockText = JSON.stringify({
+    schemaVersion: "native-host-answer-repository-lock-v1",
+    token: "11111111-1111-4111-8111-111111111111",
+    pid: process.pid,
+    processStartRef: DIGEST("4"),
+    createdAt: new Date().toISOString(),
+  });
+  writeFileSync(lockPath, lockText, "utf8");
+  const moduleUrl = pathToFileURL(path.resolve("src/data/repositories/native-host-answer-repository.mjs")).href;
+  const script = `
+    import fs from "node:fs";
+    import path from "node:path";
+    import { syncBuiltinESMExports } from "node:module";
+    const { createNativeHostAnswerRepository } = await import(process.argv[1]);
+    const mode = process.argv[5];
+    const repository = createNativeHostAnswerRepository({ profileRoot: process.argv[2], lockTimeoutMs: mode === "timeout" ? 0 : 2000 });
+    const lockPath = path.resolve(process.argv[4]);
+    const open = fs.openSync, lstat = fs.lstatSync;
+    let conflicted = false, inspected = false;
+    fs.openSync = (file, flags, ...args) => {
+      try { return open(file, flags, ...args); }
+      catch (error) {
+        if (path.resolve(String(file)) === lockPath && flags === "wx" && error.code === "EEXIST") conflicted = true;
+        throw error;
+      }
+    };
+    fs.lstatSync = (file, ...args) => {
+      if (conflicted && !inspected && path.resolve(String(file)) === lockPath) {
+        inspected = true;
+        if (mode === "denied") throw Object.assign(new Error("controlled permission denial"), { code: "EACCES" });
+        fs.unlinkSync(lockPath);
+      }
+      return lstat(file, ...args);
+    };
+    syncBuiltinESMExports();
+    let result = "unexpected_winner";
+    try { repository.consume(JSON.parse(fs.readFileSync(process.argv[3], "utf8"))); }
+    catch (error) { result = error.code || "failed"; }
+    process.stdout.write(JSON.stringify({ conflicted, inspected, result }));
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", script, moduleUrl, profileRoot, inputPath, lockPath, mode], {
+    encoding: "utf8", timeout: 10_000, windowsHide: true,
+  });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout);
+  assert.equal(result.conflicted, true, "the exclusive open must first observe the existing owner");
+  assert.equal(result.inspected, true, "the injected boundary must be reached after EEXIST");
+  if (mode === "denied") {
+    assert.equal(readFileSync(lockPath, "utf8"), lockText, "permission errors must preserve the existing lock");
+    rmSync(lockPath);
+  }
+  assert.equal(repository.read({ substrateRef: consumed.substrateRef }).state, "consumed");
+  return result.result;
+}
+
+test("a CAS loser retries when the owner releases between EEXIST and lock inspection", (t) => {
+  assert.equal(consumeAfterLockInspectionRace(t, "released"), "NATIVE_HOST_ANSWER_REPOSITORY_CAS_MISMATCH");
+});
+
+test("a vanished-lock retry still respects the acquisition deadline", (t) => {
+  assert.equal(consumeAfterLockInspectionRace(t, "timeout"), "NATIVE_HOST_ANSWER_REPOSITORY_BUSY");
+});
+
+test("lock inspection permission errors propagate without removing an existing lock", (t) => {
+  assert.equal(consumeAfterLockInspectionRace(t, "denied"), "EACCES");
 });
 
 test("a partial unpublished revision from an interrupted writer cannot occupy the final revision", (t) => {

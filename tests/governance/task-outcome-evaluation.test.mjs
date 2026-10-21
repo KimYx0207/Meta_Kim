@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { buildTaskGoalContract, evaluateTaskOutcome, taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import { evaluateGovernedArtifact, evaluateGovernanceFixtures } from "../../scripts/evaluate-governance-outcomes.mjs";
+import { intentDialogueDigest, prepareIntentDialogue } from "../../scripts/governed-execution/intent-dialogue.mjs";
 
 const task = "Choose a practical study schedule within the user's available time.";
 const deterministic = [{ id: "schedule", description: "No overlapping sessions", kind: "deterministic" }];
@@ -98,3 +99,72 @@ test("changed acceptance criteria invalidate prior observations even when the re
   assert.throws(() => evaluateTaskOutcome({ ...oldGoal, acceptanceCriteria: revisedGoal.acceptanceCriteria }), /binding mismatch/u);
   assert.throws(() => evaluateTaskOutcome({ ...oldGoal, acceptanceCriteria: [] }), /original acceptance/u);
 });
+
+test("a PDF assessment cannot satisfy the same request after its confirmed finished format changes to EPUB", () => {
+  const request = "Revise the handbook into a readable finished product.";
+  const build = (format) => {
+    const intent = { taskHash: taskOutcomeDigest(request), outcome: `A readable ${format} handbook`,
+      constraints: { outputFormat: format, preserve: ["original-illustrations"] },
+      acceptanceCriteria: [{ id: "readability", description: "The handbook is readable", kind: "semantic", required: true }],
+      settledDecisions: [{ decisionId: "output-format", value: `Deliver ${format}`, evidenceRefs: ["conversation:format"] }],
+      evidenceRefs: ["conversation:handbook"] };
+    const intentBinding = prepareIntentDialogue({ task: request, confirmedIntent: intent, sharedUnderstandingConfirmed: {
+      trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: intent.taskHash,
+      intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs,
+    } });
+    const goal = { ...buildTaskGoalContract({ task: request, acceptanceCriteria: intent.acceptanceCriteria }),
+      confirmedOutcome: intent.outcome, intentBinding };
+    return { requestRecord: { task: request }, intentPacket: { realIntent: intent.outcome, intentBinding }, goalContractPacket: goal };
+  };
+  const pdf = build("PDF");
+  const epub = build("EPUB");
+  const oldAssessment = { criterionId: "readability", taskHash: pdf.goalContractPacket.taskHash,
+    acceptanceDigest: pdf.goalContractPacket.acceptanceDigest, intentDigest: pdf.goalContractPacket.intentBinding.intentDigest,
+    verdict: "pass", evidenceKind: "human_review", reviewer: "reader", evidenceRef: "review:old-pdf" };
+  assert.equal(pdf.goalContractPacket.acceptanceDigest, epub.goalContractPacket.acceptanceDigest, "Only the confirmed format changed");
+  assert.equal(evaluateGovernedArtifact(epub, [oldAssessment]).status, "fail");
+  const { intentDigest, ...unboundAssessment } = oldAssessment;
+  assert.equal(evaluateGovernedArtifact(epub, [unboundAssessment]).status, "incomplete");
+  const current = evaluateGovernedArtifact(epub, [{ ...oldAssessment, intentDigest: epub.goalContractPacket.intentBinding.intentDigest, evidenceRef: "review:current-epub" }]);
+  assert.equal(current.status, "pass");
+  assert.equal(current.publicReady, false, "A bound supplied assessment still does not prove live acceptance");
+});
+
+test("confirmed deterministic observations bind intent while advisory intent remains backward compatible", () => {
+  const original = buildTaskGoalContract({ task, acceptanceCriteria: deterministic });
+  const observation = { criterionId: "schedule", taskHash: original.taskHash, acceptanceDigest: original.acceptanceDigest,
+    verdict: "pass", evidenceKind: "deterministic_check", evidenceRef: "test:current-check" };
+  const confirmed = { ...original, intentBinding: { status: "host_provided_understanding", intentDigest: "a".repeat(64) } };
+  assert.equal(evaluateTaskOutcome(confirmed, [{ ...observation, intentDigest: "a".repeat(64) }]).status, "pass");
+  assert.equal(evaluateTaskOutcome(confirmed, [observation]).status, "incomplete");
+  assert.throws(() => evaluateTaskOutcome({ ...confirmed, intentBinding: { status: "host_provided_understanding" } }), /original intent binding/u);
+  const advisory = { ...original, intentBinding: { status: "advisory_not_confirmed" } };
+  assert.equal(evaluateTaskOutcome(advisory, [observation]).status, "pass");
+  assert.equal(evaluateGovernedArtifact({ requestRecord: { task }, intentPacket: { realIntent: task, intentBinding: advisory.intentBinding },
+    goalContractPacket: advisory }, [observation]).status, "pass");
+});
+
+for (const status of [undefined, "advisory_not_confirmed"]) {
+  test(`artifact evaluation rejects a confirmed EPUB goal with ${status ?? "missing"} goal binding status`, () => {
+    const request = "Revise the handbook into a readable finished product.";
+    const intent = { taskHash: taskOutcomeDigest(request), outcome: "A readable EPUB handbook",
+      constraints: { outputFormat: "EPUB" }, acceptanceCriteria: [{ id: "readability", description: "The handbook is readable", kind: "semantic" }],
+      evidenceRefs: ["conversation:format"] };
+    const intentBinding = prepareIntentDialogue({ task: request, confirmedIntent: intent, sharedUnderstandingConfirmed: {
+      trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: intent.taskHash,
+      intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs,
+    } });
+    const goal = { ...buildTaskGoalContract({ task: request, acceptanceCriteria: intent.acceptanceCriteria }),
+      confirmedOutcome: intent.outcome, intentBinding };
+    const artifact = { requestRecord: { task: request }, intentPacket: { realIntent: intent.outcome, intentBinding }, goalContractPacket: goal };
+    const oldAssessment = { criterionId: "readability", taskHash: goal.taskHash, acceptanceDigest: goal.acceptanceDigest,
+      intentDigest: intentDialogueDigest({ ...intent, outcome: "A readable PDF handbook", constraints: { outputFormat: "PDF" } }),
+      verdict: "pass", evidenceKind: "human_review", reviewer: "reader", evidenceRef: "review:old-pdf" };
+    assert.equal(evaluateGovernedArtifact(artifact, [oldAssessment]).status, "fail");
+    const downgradedBinding = { ...intentBinding };
+    if (status === undefined) delete downgradedBinding.status;
+    else downgradedBinding.status = status;
+    const downgraded = { ...artifact, goalContractPacket: { ...goal, intentBinding: downgradedBinding } };
+    assert.throws(() => evaluateGovernedArtifact(downgraded, [oldAssessment]), /confirmed understanding status/u);
+  });
+}

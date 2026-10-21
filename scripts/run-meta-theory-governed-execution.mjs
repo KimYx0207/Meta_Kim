@@ -19,6 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
+import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
 import { prepareDependencyCalculationInput, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
 import {
@@ -9039,6 +9040,7 @@ function buildCoreLoopArtifact({
       evidenceRef: packet.evidenceRefs?.[index] ?? packet.taskPacketId,
     }));
     return {
+      runId,
       taskPacketId: packet.taskPacketId,
       owner: packet.owner,
       ownerAgent: packet.ownerAgent,
@@ -9090,6 +9092,8 @@ function buildCoreLoopArtifact({
     const stepEvidence = (packet.verifySteps ?? []).map((step, stepIndex) => {
       const status = result.status === "planned_not_executed" ? "pending_execution" : "skipped";
       const base = {
+        runId,
+        taskPacketId: packet.taskPacketId,
         verifyStepRef: step.id ?? `verify-step-${stepIndex + 1}`,
         command: step.command ?? "npm run meta:theory:run",
         passClaim: step.successMarker ?? "status=pass",
@@ -9117,6 +9121,7 @@ function buildCoreLoopArtifact({
     });
     result.workerExecutionEvidence = stepEvidence;
     return {
+      runId,
       taskPacketId: result.taskPacketId,
       owner: result.owner,
       evidenceKind: result.evidenceKind,
@@ -9870,7 +9875,7 @@ export function buildRouteBranchingOptions(orchestrationReport) {
   return options;
 }
 
-function buildWorkflowContractPackets({
+export function buildWorkflowContractPackets({
   runId,
   task,
   intentDialogue = null,
@@ -10409,6 +10414,7 @@ function buildWorkflowContractPackets({
   const workerResultPackets = workerTaskPackets.map((packet, index) => {
     const evidenceRunAt = timestamp;
     return {
+      runId,
       taskPacketId: packet.taskPacketId,
       owner: packet.owner,
       status: "planned_not_executed",
@@ -10421,6 +10427,8 @@ function buildWorkflowContractPackets({
         skipReason: "A real host worker must execute the task before this file can be reported completed.",
       })),
       workerExecutionEvidence: packet.verifySteps.map((step, stepIndex) => ({
+        runId,
+        taskPacketId: packet.taskPacketId,
         verifyStepRef: step.id,
         command: stepIndex === 0 ? "node scripts/validate-run-artifact.mjs <artifact>" : "node scripts/run-meta-theory-governed-execution.mjs",
         passClaim: step.verify,
@@ -10703,7 +10711,12 @@ function buildWorkflowContractPackets({
     },
     dispatchBoard,
     workerTaskPackets,
-    workerResultPackets,
+    workerResultPackets: projectWorkflowWorkerResults({
+      runId,
+      workerTaskPackets,
+      plannedResults: workerResultPackets,
+      executionResults: coreLoop.executionResult.workerResultPackets,
+    }),
     reviewPacket,
     verificationPacket,
     summaryPacket,
@@ -10983,6 +10996,7 @@ export function evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) {
       for (const criterion of goal.acceptanceCriteria) {
         if (criterion.kind !== "deterministic" || criterion.description !== LOCAL_SCAN_OUTCOME_CRITERIA[criterion.id]) continue;
         observations.push({ criterionId: criterion.id, taskHash: goal.taskHash, acceptanceDigest: goal.acceptanceDigest,
+          ...(goal.intentBinding?.status === "host_provided_understanding" ? { intentDigest: goal.intentBinding.intentDigest } : {}),
           verdict: facts[criterion.id] ? "pass" : "fail", evidenceKind: "deterministic_check", evidenceRef });
       }
     }

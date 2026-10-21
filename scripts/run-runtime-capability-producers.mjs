@@ -4,11 +4,12 @@ import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capabi
 import { loadRuntimeCapabilityAcceptanceAttempts, produceRuntimeCapabilityAcceptance } from "./runtime-capability-acceptance.mjs";
 import { assertExactStandardRuntimeObservationSet, standardRuntimeObservationSet } from "./runtime-execution-gate.mjs";
 import { validateControlledProbeOptions } from "./runtime-capability-producers.mjs";
+import { readPrivateClaudeProviderHandoff } from "./claude-live-provider-env.mjs";
 
 const SUPPORTED_RUNTIMES = new Set(["claude_code", "codex"]);
 const SUPPORTED_CAPABILITIES = new Set(["agent", "subagent", "shell", "filesystem", "apply_patch / edit"]);
-const VALUE_OPTIONS = new Set(["--runtimes", "--capabilities", "--project-root", "--profile", "--source", "--codex-thread-id", "--codex-child-session-id", "--codex-marker", "--since", "--codex-desktop-engineering-workspace", "--codex-model", "--codex-reasoning-effort", "--claude-max-turns", "--claude-max-budget-usd", "--timeout-ms"]);
-const BOOLEAN_OPTIONS = new Set(["--status", "--require-fresh"]);
+const VALUE_OPTIONS = new Set(["--runtimes", "--capabilities", "--project-root", "--profile", "--source", "--codex-thread-id", "--codex-child-session-id", "--codex-marker", "--since", "--codex-desktop-engineering-workspace", "--codex-model", "--codex-reasoning-effort", "--claude-max-turns", "--claude-max-budget-usd", "--claude-model", "--claude-effort", "--timeout-ms"]);
+const BOOLEAN_OPTIONS = new Set(["--status", "--require-fresh", "--claude-provider-stdin"]);
 
 function printHelp() {
   process.stdout.write(`Usage: node scripts/run-runtime-capability-producers.mjs [options]\n\n` +
@@ -26,6 +27,9 @@ function printHelp() {
     `  --codex-reasoning-effort <EFFORT>  Explicit Codex model reasoning effort\n` +
     `  --claude-max-turns <N>   Claude controlled CLI limit: integer 1..4\n` +
     `  --claude-max-budget-usd <USD>  Claude SDK budget limit: >0..0.10 per probe; not an invoice guarantee\n` +
+    `  --claude-model <MODEL>  Explicit model ID for live_controlled Claude only; no provider change or fallback\n` +
+    `  --claude-effort <EFFORT>  live_controlled Claude only: low|medium|high|xhigh|max\n` +
+    `  --claude-provider-stdin  Private bounded JSON pipe for explicitly authorized MiniMax direct live_controlled Claude; never official OAuth\n` +
     `  --timeout-ms <MS>       Controlled CLI timeout: integer 25000..300000; default 300000\n` +
     `  --codex-thread-id <id>  Use one explicit Codex Desktop parent session\n` +
     `  --codex-child-session-id <id>  Bind the exact spawned child session\n` +
@@ -88,6 +92,9 @@ const sinceMs = sinceRaw ? Date.parse(sinceRaw) : null;
 const workspacePath = option(args, "--codex-desktop-engineering-workspace", undefined);
 const codexModel = option(args, "--codex-model", undefined);
 const codexReasoningEffort = option(args, "--codex-reasoning-effort", undefined);
+const claudeModel = option(args, "--claude-model", undefined);
+const claudeEffort = option(args, "--claude-effort", undefined);
+const privateProviderRequested = args.includes("--claude-provider-stdin");
 function numericOption(name) {
   const raw = option(args, name, undefined);
   if (raw === undefined) return undefined;
@@ -103,7 +110,12 @@ if ((codexModel || codexReasoningEffort) && runtimes.some((runtime) => runtime !
   failCli("--codex-model/--codex-reasoning-effort require --runtimes codex to avoid invoking another runtime");
 }
 try {
-  for (const runtime of runtimes) validateControlledProbeOptions({ runtime, source, claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs });
+  if (privateProviderRequested && (statusRequested || source !== "live_controlled" || runtimes.length !== 1 || runtimes[0] !== "claude_code" ||
+      claudeModel !== "MiniMax-M3.1-Flash" || claudeEffort !== "low" || claudeMaxTurns === undefined || claudeMaxBudgetUsd === undefined || timeoutMs === undefined)) {
+    throw new Error("Invalid private Claude probe route or controls");
+  }
+  for (const runtime of runtimes) validateControlledProbeOptions({ runtime, source, claudeMaxTurns, claudeMaxBudgetUsd, claudeModel, claudeEffort, timeoutMs });
+  const claudePrivateProvider = privateProviderRequested ? await readPrivateClaudeProviderHandoff(process.stdin) : undefined;
   if (statusRequested) {
     const effective = loadEffectiveRuntimeCapabilityClaims({ packageRoot: path.resolve(import.meta.dirname, ".."), projectRoot, profile });
     const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot, profile });
@@ -131,7 +143,7 @@ try {
     if (source === "codex_desktop_engineering" && (!threadId || !marker || !workspacePath || !Number.isFinite(sinceMs))) failCli("desktop engineering source requires thread, marker, workspace, and since");
     const producedResults = [];
     for (const runtime of runtimes) {
-      const produced = await produceRuntimeCapabilityAcceptance({ projectRoot, profile, source, runtime, capabilities, threadId, childSessionId, marker, sinceMs, workspacePath: workspacePath ? path.resolve(workspacePath) : undefined, codexModel, codexReasoningEffort, claudeMaxTurns, claudeMaxBudgetUsd, timeoutMs });
+      const produced = await produceRuntimeCapabilityAcceptance({ projectRoot, profile, source, runtime, capabilities, threadId, childSessionId, marker, sinceMs, workspacePath: workspacePath ? path.resolve(workspacePath) : undefined, codexModel, codexReasoningEffort, claudeMaxTurns, claudeMaxBudgetUsd, claudeModel, claudeEffort, claudePrivateProvider, timeoutMs });
       for (const entry of produced.results ?? []) producedResults.push({ runtime, capability: entry.capability ?? entry.receipt?.capability, mode: "interactive_host", attemptId: entry.acceptance.record.attemptId, receiptSha256: entry.acceptance.record.sourceReport.sha256, producer: entry.receipt.producer.id, source: entry.receipt.hostInvocation?.request?.source ?? entry.receipt.compositeLifecycle?.sourceCategory ?? "live_controlled" });
     }
     process.stdout.write(`${JSON.stringify({ schemaVersion: "meta-kim-controlled-producer-run-v2", ok: true, projectRoot: "<project>", profile: profile ?? "default", results: producedResults }, null, 2)}\n`);

@@ -15,11 +15,15 @@ export function evaluateGovernedArtifact(artifact, observations = []) {
   const goal = core?.goalContractPacket;
   const taskHash = taskOutcomeDigest(task);
   const dialogue = core?.intentPacket?.intentBinding;
-  const confirmedOutcome = dialogue?.status === "host_provided_understanding" ? dialogue.outcome : task.trim();
+  const confirmedUnderstanding = dialogue?.status === "host_provided_understanding";
+  if (confirmedUnderstanding !== (goal?.intentBinding?.status === "host_provided_understanding")) {
+    throw new TypeError("Artifact and outcome contract must preserve the same confirmed understanding status");
+  }
+  const confirmedOutcome = confirmedUnderstanding ? dialogue.outcome : task.trim();
   if (goal?.taskHash !== taskHash || core?.intentPacket?.realIntent !== confirmedOutcome) {
     throw new TypeError("Artifact request, Critical intent and outcome contract must refer to the same task");
   }
-  if (dialogue?.status === "host_provided_understanding") {
+  if (confirmedUnderstanding) {
     const digest = intentDialogueDigest({
       taskHash: dialogue.taskHash, outcome: dialogue.outcome, constraints: dialogue.constraints,
       acceptanceCriteria: dialogue.acceptanceCriteria, settledDecisions: dialogue.settledDecisionRefs,

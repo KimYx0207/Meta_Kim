@@ -157,7 +157,9 @@ test("rehashing cannot remove stream provenance, change status or attach private
 
 test("packed stream path only copies self-contained minimal evidence", () => {
   const source=readFileSync(new URL("../../scripts/verify-packed-user-install-update.mjs",import.meta.url),"utf8");
-  assert.match(source,/nativeStream \? \[\] : \[receipt\.compositeLifecycle/u);
+  const copier=source.split("export function copyRuntimeCapabilityObservationSnapshot")[1].split("export function assertPackedAdvisoryEffectiveMatrix")[0];
+  assert.doesNotMatch(copier,/copyPreservingPath|sourceUserHome|targetUserHome|["']sessions["']/u);
+  assert.match(copier,/portableAdvisorySnapshot: false/u);
   assert.match(source,/native CLI stream snapshots cannot depend on private session files/u);
 });
 
@@ -221,4 +223,76 @@ test("every native preflight uses the shared diagnostic assertion without a fall
   const native=source.slice(source.indexOf("function nativeCliStreamExecutor("),source.indexOf("function productionExecutorSelected("));
   for(const phase of ["native CLI version preflight","native CLI help preflight","native CLI auth-status preflight"]) assert(native.includes(`assertRuntimeHostInvocationSuccess(request.runtime, "${phase}"`));
   assert.match(native,/shell: false/u); assert.doesNotMatch(native,/shell: true|execFileSync|spawnargs|chmod|icacls|bypass|withRuntimeIsolation/u);
+});
+
+test("native failure diagnostics retain exact categories and hashes without private stream bodies or acceptance", t => {
+  const categories = [
+    ["model_not_found", "model_unavailable"], ["invalid_api_key", "authentication_failed"],
+    ["rate_limit_exceeded", "rate_limited"], ["insufficient_quota", "quota_exhausted"],
+    ["max_turns_exceeded", "budget_or_turn_limit"], ["child_failed", "child_failed"],
+    ["permission_denied", "policy_denied"], ["model_not_found PRIVATE_SECRET", "unknown"],
+  ];
+  for (const [code, category] of categories) {
+    const root = project(t), attemptId = "safe-failure";
+    const stdout = jsonl([{ type: "error", code, message: "PRIVATE_SECRET sk-private-example-long-token C:/Users/PRIVATE_USER/secret", reasoning: "PRIVATE_REASONING", command: "PRIVATE_COMMAND" }]);
+    assert.throws(() => runControlledRuntimeCapabilityProducer({ projectRoot: root, attemptId, runtime: "codex", capability: "agent", source: "native_cli_stream", codexModel: "gpt-6-luna", codexReasoningEffort: "low", executor: request => ({ ...codexAgent(request), stdout }) }));
+    const base = path.join(root, ".meta-kim/state/default/runtime-capability-producers");
+    const diagnostic = JSON.parse(readFileSync(path.join(base, "failures", `${attemptId}.json`), "utf8"));
+    assert.equal(diagnostic.errorCategory, category);
+    assert.equal(diagnostic.accepted, false);
+    assert.equal(diagnostic.testOnly, true);
+    assert.equal(diagnostic.stdoutSha256, sha(stdout));
+    assert.equal(diagnostic.stdoutBytes, Buffer.byteLength(stdout));
+    assert.equal(diagnostic.requestedModel, "gpt-6-luna");
+    assert.equal(diagnostic.requestedEffort, "low");
+    assert.equal(diagnostic.exitCode, 0);
+    assert.ok(Date.parse(diagnostic.endedAt) >= Date.parse(diagnostic.startedAt));
+    assert.doesNotMatch(JSON.stringify(diagnostic), /PRIVATE_|sk-private|Users|reasoning|message|command|workspace|prompt/u);
+    assert.equal(existsSync(path.join(base, "receipts", `${attemptId}.json`)), false);
+    assert.equal(existsSync(path.join(root, ".meta-kim/state/default/runtime-capability-acceptance/attempts", `${attemptId}.json`)), false);
+  }
+});
+
+test("native failure diagnostics classify only anchored failures and stay unknown on contradictory or malicious metadata", t => {
+  const samples = [
+    [{ type: "error", message: "The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account." }, "model_unavailable"],
+    [{ type: "error", message: "PRIVATE_SECRET model_not_found" }, "unknown"],
+    [{ type: "assistant", message: { content: [{ type: "text", text: "PRIVATE_SECRET", code: "invalid_api_key" }] } }, "unknown"],
+    [{ type: "error", code: "rate_limit_exceeded", error: { code: "model_not_found" } }, "unknown"],
+  ];
+  for (const [event, expected] of samples) {
+    const root=project(t), attemptId="unknown-failure";
+    assert.throws(() => runControlledRuntimeCapabilityProducer({ projectRoot:root, attemptId, runtime:"codex", capability:"agent", source:"native_cli_stream", executor: request => ({ ...codexAgent(request), stdout:jsonl([event]), runtimeVersion:"PRIVATE_SECRET /private/path", signal:"PRIVATE_SIGNAL /private/path" }) }));
+    const diagnostic=JSON.parse(readFileSync(path.join(root,".meta-kim/state/default/runtime-capability-producers/failures",`${attemptId}.json`),"utf8"));
+    assert.equal(diagnostic.errorCategory,expected);
+    assert.equal(diagnostic.runtimeVersion,null);
+    assert.equal(diagnostic.signal,null);
+    assert.doesNotMatch(JSON.stringify(diagnostic),/PRIVATE_|private\/path|message|content|text/u);
+  }
+  for (const model of ["sk-PRIVATE_SECRET_LONG_VALUE", "eyJPRIVATE_SECRET.jwt.signature", "unknown-custom-model"]) {
+    const root=project(t), attemptId="hashed-model";
+    assert.throws(() => runControlledRuntimeCapabilityProducer({ projectRoot:root,attemptId,runtime:"codex",capability:"agent",source:"native_cli_stream",codexModel:model,codexReasoningEffort:"PRIVATE_SECRET",executor:request=>({...codexAgent(request),stdout:jsonl([{type:"error",code:"model_not_found",message:"PRIVATE_SECRET"}]),stderr:"PRIVATE_SECRET"}) }));
+    const diagnostic=JSON.parse(readFileSync(path.join(root,".meta-kim/state/default/runtime-capability-producers/failures",`${attemptId}.json`),"utf8"));
+    assert.equal(diagnostic.requestedModel,null);
+    assert.equal(diagnostic.requestedModelSha256,sha(model));
+    assert.equal(diagnostic.requestedEffort,null);
+    assert.doesNotMatch(JSON.stringify(diagnostic),/PRIVATE_|eyJ|sk-|unknown-custom-model/u);
+  }
+});
+
+test("engineering native failure diagnostics remain separate from the successful facet receipts", t => {
+  const root=project(t), attemptBase="engineering-failure";
+  assert.throws(() => runCodexCompositeEngineeringProducer({ projectRoot:root, attemptBase, source:"native_cli_stream", codexModel:"gpt-6-luna", codexReasoningEffort:"low", executor: request => ({ ...codexEngineering(request), stdout:jsonl([{type:"error",code:"child_failed",message:"PRIVATE_SECRET"}]) }) }));
+  const base=path.join(root,".meta-kim/state/default/runtime-capability-producers");
+  const diagnostic=JSON.parse(readFileSync(path.join(base,"failures",`${attemptBase}-engineering.json`),"utf8"));
+  assert.equal(diagnostic.errorCategory,"child_failed"); assert.equal(diagnostic.accepted,false);
+  assert.equal(diagnostic.requestedModel,"gpt-6-luna"); assert.equal(diagnostic.requestedEffort,"low");
+  for (const facet of ["shell","filesystem","apply-patch-edit"]) assert.equal(existsSync(path.join(base,"receipts",`${attemptBase}-${facet}.json`)),false);
+  const succeeded=runControlledRuntimeCapabilityProducer({ projectRoot:root,attemptId:"successful-attempt",runtime:"codex",capability:"agent",source:"native_cli_stream",executor:codexAgent });
+  assert.equal(existsSync(path.join(base,"failures","successful-attempt.json")),false);
+  assert.equal(succeeded.receipt.outcome,"pass");
+  const blocked=project(t), blockedBase=path.join(blocked,".meta-kim/state/default/runtime-capability-producers");
+  mkdirSync(blockedBase,{recursive:true}); writeFileSync(path.join(blockedBase,"failures"),"preserve unrelated file");
+  assert.throws(()=>runControlledRuntimeCapabilityProducer({projectRoot:blocked,runtime:"codex",capability:"agent",source:"native_cli_stream",executor:request=>({...codexAgent(request),stdout:jsonl([{type:"error",code:"model_not_found",message:"PRIVATE_SECRET"}])})}),/native CLI event tape: failure event in stream/u);
+  assert.equal(readFileSync(path.join(blockedBase,"failures"),"utf8"),"preserve unrelated file");
 });

@@ -15,11 +15,13 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   copyFileSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -48,7 +50,7 @@ import {
 } from "./mcp/runtime-resource-contract.mjs";
 import { renderGlobalAgentProjection } from "./sync-runtimes.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
-import { loadRuntimeCapabilityAcceptanceAttempts } from "./runtime-capability-acceptance.mjs";
+import { loadRuntimeCapabilityAcceptanceAttempts, resolveRuntimeCapabilityAcceptancePaths, validateRuntimeCapabilityAcceptanceAttemptEvidence } from "./runtime-capability-acceptance.mjs";
 import { assertExactStandardRuntimeObservationSet } from "./runtime-execution-gate.mjs";
 import { resolveWindowsCliInvocation } from "./runtime-cli-invocation.mjs";
 import { tarExtractCommand } from "./tar-extract-command.mjs";
@@ -1266,55 +1268,84 @@ function runPortableRuntimePreparation({ packageInfo, descriptor, roots, env, ti
   };
 }
 
-function copyPreservingPath(source, target) {
-  mkdirSync(path.dirname(target), { recursive: true });
-  copyFileSync(source, target);
-}
-
-export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, targetProjectRoot, sourceUserHome = os.homedir(), targetUserHome, profile = "default" } = {}) {
+export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, targetProjectRoot, profile = "default" } = {}) {
+  const sourcePaths = resolveRuntimeCapabilityAcceptancePaths({ projectRoot: sourceProjectRoot, profile });
+  if (existsSync(path.join(sourcePaths.root, "advisory-snapshot.json"))) throw new Error("advisory snapshots cannot be re-exported as original source observations");
   const effective = loadEffectiveRuntimeCapabilityClaims({
     projectRoot: sourceProjectRoot,
     profile,
-    portableAdvisorySnapshot: true,
   });
   assertExactStandardRuntimeObservationSet(effective.overlayStatus.applied);
   const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot: sourceProjectRoot, profile });
   const sourceProfile = store.paths.profileRoot;
-  const targetProfile = path.join(targetProjectRoot, ".meta-kim", "state", profile);
-  mkdirSync(targetProfile, { recursive: true });
-  writeFileSync(path.join(targetProfile, "project-bootstrap.json"), "{}\n", "utf8");
-  const copied = [];
+  const plannedFiles = new Map();
+  const bindings = [];
+  const planFile = (relative, expectedSha256) => {
+    const source = path.resolve(sourceProfile, relative);
+    const within = path.relative(sourceProfile, source);
+    if (within.startsWith("..") || path.isAbsolute(within) || !lstatSync(source).isFile() || realpathSync.native(source) !== source) throw new Error("snapshot source must be a contained plain file");
+    const bytes = readFileSync(source);
+    if (expectedSha256 && sha256(bytes) !== expectedSha256) throw new Error("snapshot source hash changed after validation");
+    plannedFiles.set(within, bytes);
+    return sha256(bytes);
+  };
+  // Always validate original sources here. An advisory manifest at the source
+  // must never turn this first-party source check into portable replay.
   for (const binding of effective.overlayStatus.applied) {
     const attempt = store.attempts.find((entry) => entry.attemptId === binding.attemptId);
     if (!attempt || attempt.releaseGrade === true) throw new Error("packed snapshot requires original non-releaseGrade host observations");
-    const attemptSource = path.join(store.paths.attemptsDir, `${attempt.attemptId}.json`);
-    const attemptTarget = path.join(targetProfile, "runtime-capability-acceptance", "attempts", `${attempt.attemptId}.json`);
-    copyPreservingPath(attemptSource, attemptTarget);
-    const receiptSource = path.resolve(sourceProfile, attempt.sourceReport.path);
-    const receiptTarget = path.resolve(targetProfile, attempt.sourceReport.path);
-    copyPreservingPath(receiptSource, receiptTarget);
-    const receipt = JSON.parse(readFileSync(receiptSource, "utf8"));
-    copyPreservingPath(path.resolve(sourceProfile, receipt.rawArtifact.path), path.resolve(targetProfile, receipt.rawArtifact.path));
+    const original = validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, { profileRoot: sourceProfile, portableAdvisorySnapshot: false });
+    if (!original.valid) throw new Error(`packed snapshot original source validation failed: ${original.issues.join("; ")}`);
+    const attemptSha256 = planFile(path.join("runtime-capability-acceptance", "attempts", `${attempt.attemptId}.json`), attempt.artifactFileSha256);
+    const receiptSha256 = planFile(attempt.sourceReport.path, attempt.sourceReport.sha256);
+    const receipt = JSON.parse(plannedFiles.get(path.relative(sourceProfile, path.resolve(sourceProfile, attempt.sourceReport.path))).toString("utf8"));
+    const rawArtifactSha256 = planFile(receipt.rawArtifact.path, receipt.rawArtifact.sha256);
     const nativeStream = receipt.hostInvocation?.request?.source === "native_cli_stream";
     if (nativeStream && (receipt.compositeLifecycle?.parentSessionRef != null || receipt.compositeLifecycle?.childSessionRef != null)) {
       throw new Error("native CLI stream snapshots cannot depend on private session files");
     }
-    // New stream receipts are self-contained minimal event tapes. Their replay
-    // was validated above; never read the user's credential or transcript store.
-    for (const ref of (nativeStream ? [] : [receipt.compositeLifecycle?.parentSessionRef, receipt.compositeLifecycle?.childSessionRef]).filter(Boolean)) {
-      copyPreservingPath(path.join(sourceUserHome, ".codex", "sessions", ref), path.join(targetUserHome, ".codex", "sessions", ref));
-    }
-    copied.push({ runtime: attempt.runtime, capability: attempt.capability, mode: attempt.mode, attemptId: attempt.attemptId, receiptSha256: attempt.sourceReport.sha256 });
+    bindings.push({ runtime: attempt.runtime, capability: attempt.capability, mode: attempt.mode, attemptId: attempt.attemptId,
+      observedAt: attempt.observedAt, attemptSha256, receiptSha256, rawArtifactSha256,
+      ...(receipt.compositeLifecycle?.sourceCategory === "codex_desktop_sessions"
+        ? { sourceWorkspacePath: path.resolve(sourceProfile, ...receipt.compositeLifecycle.workspaceRef.split("/")) } : {}),
+    });
   }
-  assertExactStandardRuntimeObservationSet(copied);
-  writeFileSync(path.join(targetProfile, "runtime-capability-acceptance", "advisory-snapshot.json"), `${JSON.stringify({
+  assertExactStandardRuntimeObservationSet(bindings);
+  const snapshot = {
     schemaVersion: "meta-kim-runtime-advisory-snapshot-v1",
     evidenceClass: "read_only_advisory_snapshot",
     observedInCurrentRun: false,
     executionAuthority: false,
-    bindings: copied,
-  }, null, 2)}\n`, "utf8");
-  return { evidenceClass: "read_only_advisory_snapshot", observedInCurrentRun: false, executionAuthority: false, count: copied.length, bindings: copied };
+    sourceValidatedAt: new Date().toISOString(),
+    sourceProfileRootDigest: sha256(path.resolve(sourceProfile).replaceAll("\\", "/").toLowerCase()),
+    bindings,
+  };
+  const targetProfile = path.join(targetProjectRoot, ".meta-kim", "state", profile);
+  const acceptanceTarget = path.join(targetProfile, "runtime-capability-acceptance");
+  const producerTarget = path.join(targetProfile, "runtime-capability-producers");
+  if (existsSync(acceptanceTarget) || existsSync(producerTarget)) throw new Error("packed snapshot target must not contain earlier acceptance state");
+  mkdirSync(targetProfile, { recursive: true });
+  if (realpathSync.native(targetProfile) !== path.resolve(targetProfile)) throw new Error("snapshot target profile must be a plain directory chain");
+  const staging = mkdtempSync(path.join(targetProfile, ".advisory-staging-"));
+  try {
+    for (const [relative, bytes] of plannedFiles) {
+      const target = path.join(staging, relative);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, bytes, { flag: "wx" });
+    }
+    const stagedAcceptance = path.join(staging, "runtime-capability-acceptance");
+    writeFileSync(path.join(stagedAcceptance, "advisory-snapshot.json"), `${JSON.stringify(snapshot, null, 2)}\n`, { flag: "wx" });
+    const bootstrap = path.join(targetProfile, "project-bootstrap.json");
+    if (!existsSync(bootstrap)) writeFileSync(bootstrap, "{}\n", { flag: "wx" });
+    renameSync(path.join(staging, "runtime-capability-producers"), producerTarget);
+    // Publish the complete manifest/attempt directory last. Failed preparation
+    // cannot expose a usable half-snapshot, and no session store is copied.
+    renameSync(stagedAcceptance, acceptanceTarget);
+  } finally {
+    if (realpathSync.native(staging) !== path.resolve(staging) || path.dirname(staging) !== targetProfile) throw new Error("snapshot staging cleanup boundary changed");
+    rmSync(staging, { recursive: true, force: true });
+  }
+  return { evidenceClass: snapshot.evidenceClass, observedInCurrentRun: false, executionAuthority: false, sourceValidatedAt: snapshot.sourceValidatedAt, count: bindings.length, bindings };
 }
 
 export function assertPackedAdvisoryEffectiveMatrix(actualMatrix, expectedMatrix, effectiveState) {
@@ -3425,8 +3456,6 @@ export function runPackedUserInstallUpdateAcceptance({
       prepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot({
         sourceProjectRoot: packageInfo.sourceRoot,
         targetProjectRoot: prepared.context.roots.ordinaryCwd,
-        sourceUserHome: os.homedir(),
-        targetUserHome: prepared.context.roots.userHome,
       });
       const transientPackage = prepareTransientPackageRoot({
         packageInfo,

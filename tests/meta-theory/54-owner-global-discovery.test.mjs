@@ -56,6 +56,16 @@ describe("54 — Owner Global-First Discovery (meta-theory SKILL.md)", () => {
     assert.match(src, /core-loop-contract\.json/);
     assert.match(src, /stage-internal parallel policy|Inside each stage/iu);
   });
+
+  test("discovery guidance uses the machine scan policy without requiring every source or a fixed wave", () => {
+    const src = readFileSync(SKILL_FILE, "utf8");
+    const reference = readFileSync("canonical/skills/meta-theory/references/global-owner-discovery.md", "utf8");
+    assert.match(src, /Fetch discovery minimum checklist:[\s\S]*?source catalog[\s\S]*?stop-on-match/iu);
+    assert.match(reference, /core-loop-contract\.json/iu);
+    assert.match(reference, /cached[\s\S]*?project-light[\s\S]*?stop-on-match/iu);
+    assert.match(reference, /fullScanTriggers/u);
+    assert.doesNotMatch(reference, /before any Wave 1|every one of the six sources|each of the six sources with checked-at|complete the six-source scan/iu);
+  });
 });
 
 describe("54b — Owner Global-First Discovery (dev-governance.md cross-link)", () => {

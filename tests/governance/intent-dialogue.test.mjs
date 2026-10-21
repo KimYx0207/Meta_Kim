@@ -9,6 +9,7 @@ import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs"
 import { evaluateGovernedArtifact } from "../../scripts/evaluate-governance-outcomes.mjs";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 import { buildPlanChallengeState, runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { buildReadOnlyWorkerPrompt } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
 
 const task = "Implement a local CSV report with a deterministic check; preserve the current project.";
 function confirmed(strategy = "fast_usable") {
@@ -49,6 +50,43 @@ test("confirmed direction changes the actual selected discovered skill loadout w
   assert.equal(extensible.intentBinding.taskHash, taskOutcomeDigest(task));
   assert.equal(extensible.intentCapabilitySelection.invocationState, "selected_not_invoked");
   assert.match(dialogue("long_term_extensible").routeTask, /Architecture/);
+});
+
+test("actual worker prompts preserve the confirmed finished format, decisions and protected content in every lane", () => {
+  const request = "Revise the handbook into a readable finished product.";
+  const { intent } = confirmed();
+  intent.taskHash = taskOutcomeDigest(request);
+  intent.outcome = "A readable EPUB handbook";
+  intent.constraints = { outputFormat: "EPUB", preserve: ["original-illustrations"], forbidden: ["rewrite-author-preface"] };
+  intent.acceptanceCriteria = [{ id: "reader", description: "The handbook is readable in the user's reader", kind: "semantic", required: true }];
+  intent.settledDecisions = [{ decisionId: "output-format", value: "Deliver the EPUB for the user's reader", evidenceRefs: ["conversation:reader-format"] }];
+  const understanding = { trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: intent.taskHash,
+    intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs };
+  const bound = prepareIntentDialogue({ task: request, confirmedIntent: intent, sharedUnderstandingConfirmed: understanding });
+  const packets = bindIntentToWorkerTasks({ workerTaskPackets: ["backend", "review", "test"].map((roleDisplayName) => ({
+    ...worker, taskPacketId: `handbook-${roleDisplayName}`, roleDisplayName,
+    executionMode: roleDisplayName === "backend" ? "primary_execution" : "verification_execution",
+  })), routeResult, dialogue: bound });
+  for (const packet of packets) {
+    const prompt = buildReadOnlyWorkerPrompt({ runId: "handbook-intent", runtime: "codex", node: { nodeId: packet.taskPacketId }, packet, requestTask: request });
+    for (const value of [intent.outcome, "original-illustrations", "rewrite-author-preface", intent.settledDecisions[0].value, understanding.intentDigest]) {
+      assert.ok(prompt.includes(value), `${packet.roleDisplayName} prompt lost confirmed requirement: ${value}`);
+    }
+  }
+});
+
+test("a confirmed acceptance item beyond the prompt's generic first twenty items is retained", () => {
+  const { intent } = confirmed();
+  intent.acceptanceCriteria = Array.from({ length: 21 }, (_, index) => ({
+    id: `reader-${index + 1}`, description: `Reader acceptance requirement ${index + 1}`, kind: "semantic", required: true,
+  }));
+  const bound = prepareIntentDialogue({ task, confirmedIntent: intent, sharedUnderstandingConfirmed: {
+    trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: intent.taskHash,
+    intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs,
+  } });
+  const packet = bindIntentToWorkerTasks({ workerTaskPackets: [worker], routeResult, dialogue: bound })[0];
+  const prompt = buildReadOnlyWorkerPrompt({ runId: "all-acceptance", runtime: "codex", node: { nodeId: packet.taskPacketId }, packet, requestTask: task });
+  for (const criterion of bound.acceptanceCriteria) assert.ok(prompt.includes(criterion.description), `Prompt silently dropped ${criterion.id}`);
 });
 
 test("architecture capability gaps and wrong-runtime providers cannot become execution capabilities", () => {

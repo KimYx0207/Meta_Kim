@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
+import { hasEngineeringRepairIntent, hasProductBuildIntent } from "./meta-theory-entry-classifier.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(__dirname, "..");
@@ -214,6 +215,9 @@ export function classifyTaskShape(task) {
   }
   if (/goal\s*prompt|loop\s*prompt|goalpro|goal\s*contract|intent amplification|目标契约|目标合同|意图放大|循环提示词/.test(text)) {
     return "goal_contract";
+  }
+  if (hasEngineeringRepairIntent(text) && !hasProductBuildIntent(text)) {
+    return "engineering_execution";
   }
   if (/strategy|growth|moneti[sz]e|pricing|business|product|pmf|conversion|decision|judge|判断|决策|选择|取舍|pass.?kill|策略|增长|商业化|变现|定价|产品|转化|留存|分发|用户路径|高流量/.test(text)) {
     return "strategy_product_decision";

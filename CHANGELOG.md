@@ -8,13 +8,34 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.6.0] - 2026-10-21
+
 ### Added
 
+- **Observe work in the current Codex conversation.** A newly started Live instance can use a runtime-provided conversation binding to read this turn's tool calls and child-task dispatches and returns. A returned call does not establish task acceptance.
+- **Inspect the produced result from its task.** Live can open explicitly declared text, Markdown and HTML outputs and observed worker results. Local files are limited to declared output locations; HTML previews disable scripts and external resources.
+- **Keep feedback attached to the result.** The task inspector preserves feedback verbatim with its run, task and deliverable context, ready to copy into the current conversation for a focused revision. Drafts stay in the current page and do not submit or execute a task automatically.
 - **ZCode durable paths are now evidence-confirmed at the beta tier.** The runtime compatibility catalog no longer marks ZCode skill/agent/hook/MCP locations as "needs probe": user scope `~/.zcode/*`, workspace scope `<repo>/.zcode/*`, first-match conflict resolution, and Claude-style agent frontmatter are recorded from official documentation plus a live host observation (a 65-file user-scope agent set loaded by an interactive ZCode session). Independent probes can now verify currency instead of rediscovering paths; tier, promotion gates, and claim levels are unchanged.
 
 ### Changed
 
 - **Runtime evidence review clock rolled to 2026-10-17.** Ledger observations cannot postdate the matrix-declared review clock, so this evidence update ships with the prescribed review roll; `cdn-zcode.z.ai` joins the allowlisted official documentation hosts.
+
+### Fixed
+
+- **Distinguish plans from observed execution.** Undispatched structural plans are labeled as plans and excluded from execution-evidence counts. New activity after a resumed task also takes precedence over older completion records.
+- **Route existing engineering repairs through capability discovery.** Preservation constraints such as keeping an approved product no longer send repair requests into new-product steps. Chinese concurrency terms remain intact during clause parsing.
+- **Make the run graph easier to follow.** Organizational nodes are collapsed by default, execution relationships can be isolated, and edge endpoints follow actual node bounds when zooming or resizing the inspector.
+- **Keep observed work separate from acceptance.** Matching worker results survive planning projections. Live distinguishes missing evidence, pending verification and completion instead of making historical records appear complete without proof.
+- **Preserve confirmed intent through handoff and review.** Workers receive the complete confirmed goal, constraints and acceptance criteria. Outcome observations bind the current intent, so a changed request cannot reuse an earlier assessment.
+- **Reuse the discovered owner without redundant fallback.** Capability discovery guidance and runtime sync now agree on global owner reuse and preserve literal runtime paths in generated content.
+- **Keep controlled verification explicit and diagnosable.** Claude probes accept a model and effort for that invocation without changing provider configuration or adding fallback. Failed native probes retain bounded diagnostic metadata without response content; optional installed playbooks no longer cause false validation failures.
+- **Handle simultaneous intent answers consistently.** A competing answer that releases its lock during acquisition no longer causes a missing-file error; the version check still allows only one answer to win.
+- **Keep release verification separate from personal state.** Packed advisory replay carries validated evidence fragments instead of full Desktop conversations and retains their original expiry. An explicit isolated home can be used for the full pipeline's global installation check.
+
+### Compatibility
+
+- Feedback remains a local copyable handoff. A finished worker turn or a readable output does not establish user acceptance, native model support or completion of older runs.
 
 ## [3.5.0] - 2026-10-04
 

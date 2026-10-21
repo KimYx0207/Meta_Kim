@@ -4,6 +4,7 @@ import {
   isLiveRunId,
   normalizeLiveRunId,
   resolveLiveProjectRoot,
+  safeReadJson,
 } from "../../infrastructure/live/live-read-repository.mjs";
 import { buildLiveShareArtifact } from "./build-live-share-artifact.mjs";
 import {
@@ -33,8 +34,10 @@ import { RUN_SUBSTANCE_CLASSES, runSubstance } from "./live-run-substance.mjs";
 import { LIVE_RECORD_ORIGINS, liveRecordOrigin } from "./live-record-origin.mjs";
 import {
   liveTerminalStatusDisplay,
+  LIVE_PLANNING_DISPLAY,
   normalizeLiveStatus,
 } from "./live-status-vocabulary.mjs";
+import { collectLiveDeliverables, publicLiveDeliverable, readLiveDeliverable } from "./live-deliverables.mjs";
 
 export { RUN_SUBSTANCE_CLASSES, runSubstance };
 
@@ -857,15 +860,50 @@ function terminalEvidenceRecords(result, { runId = null, taskId = null } = {}) {
     ...boundedArray(result?.terminalEvidence, 24),
   ];
   return records.filter((item) => {
-    if (evidenceIsStructuralOnly(item) || !evidenceMatchesBinding(item, { runId, taskId })) return false;
-    return TRUSTED_TERMINAL_STATUSES.has(normalizeStatus(firstString(item, ["status", "resultStatus", "result"])));
+    if (item?.synthetic === true || evidenceIsStructuralOnly(item) || !evidenceMatchesBinding(item, { runId, taskId })) return false;
+    return TRUSTED_TERMINAL_STATUSES.has(workerEvidenceStatus(item));
   });
 }
 
 function terminalStatusIsProven(result, expectedStatus, binding = {}) {
   const normalized = normalizeStatus(expectedStatus, "in_doubt");
   return terminalEvidenceRecords(result, binding)
-    .some((item) => normalizeStatus(firstString(item, ["status", "resultStatus", "result"])) === normalized);
+    .some((item) => workerEvidenceStatus(item) === normalized);
+}
+
+// The worker contract uses "verified" for an actual command check. Honour that
+// vocabulary only with its recorded execution/output fields, never from a word
+// alone and never from the native runtime's final assistant message.
+function workerEvidenceStatus(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return "in_doubt";
+  const raw = firstString(item, ["status", "resultStatus", "result"]);
+  const normalized = normalizeStatus(raw);
+  const contradictoryStatuses = [item.resultStatus, item.result, item.outcomeStatus,
+    item.observedResult && typeof item.observedResult === "object" ? item.observedResult.status : null];
+  const completionClaim = raw === "verified" || normalized === "completed";
+  if (completionClaim && ((Number.isInteger(item.exitCode) && item.exitCode !== 0) || item.passed === false || item.success === false ||
+    contradictoryStatuses.some((value) => ["failed", "blocked", "cancelled"].includes(normalizeStatus(value))))) return "in_doubt";
+  if (raw !== "verified") return normalized;
+  if (!firstString(item, ["command"]) || !firstString(item, ["runBy"]) || item.runBy === "not_run" ||
+    !safeTimestamp(item.runAt) || !firstString(item, ["observedResult"]) || evidenceIsStructuralOnly(item)) return "in_doubt";
+  if (item.successMarkerFormat === "exit-code-only") {
+    return item.exitCode === 0 && safeTimestamp(item.commandRanAt) ? "completed" : "in_doubt";
+  }
+  if (typeof item.actualOutput !== "string" || !item.actualOutput.trim()) return "in_doubt";
+  if (item.successMarkerFormat === "stdout-text") return "completed";
+  if (item.successMarkerFormat === "json-output") {
+    try { JSON.parse(item.actualOutput); return "completed"; } catch { return "in_doubt"; }
+  }
+  return "in_doubt";
+}
+
+function taskExecutionState(result, runId, taskId) {
+  if (evidenceIsStructuralOnly(result) || /planned/iu.test(String(result?.status || ""))) return "not_executed";
+  const observed = boundedArray(result?.workerExecutionEvidence, 24).some((item) =>
+    evidenceMatchesBinding(item, { runId, taskId }) && !evidenceIsStructuralOnly(item) && item.synthetic !== true &&
+    ((item.status === "executed" && (item.runtimeProcessInvoked === true || item.actualToolExecution === true)) ||
+      workerEvidenceStatus(item) === "completed"));
+  return observed ? "executed" : "unreported";
 }
 
 function passingVerificationEvidence(artifact, runId = null) {
@@ -880,7 +918,7 @@ function passingVerificationEvidence(artifact, runId = null) {
 function passingWorkerEvidence(result, { runId = null, taskId = null } = {}) {
   const boundTaskId = taskId || taskIdFrom(result);
   return terminalEvidenceRecords(result, { runId, taskId: boundTaskId })
-    .filter((item) => normalizeStatus(firstString(item, ["status", "resultStatus", "result"])) === "completed");
+    .filter((item) => workerEvidenceStatus(item) === "completed");
 }
 
 function completionIsProven(artifact, runId = null) {
@@ -927,13 +965,14 @@ function artifactIsStructuralOnly(artifact) {
   return results.length > 0 && results.every((result) =>
     /planned_not_executed/iu.test(String(result?.status || result?.resultKind || "")) ||
     String(result?.evidenceKind || "").toLowerCase().includes("structural") ||
-    boundedArray(result?.workerExecutionEvidence, 24).some(evidenceIsStructuralOnly));
+    (boundedArray(result?.workerExecutionEvidence, 24).length > 0 &&
+      boundedArray(result?.workerExecutionEvidence, 24).every(evidenceIsStructuralOnly)));
 }
 
 function publicDisplay(status, { active = false, structuralOnly = false } = {}) {
   const normalized = normalizeStatus(status, "in_doubt");
   if (structuralOnly) {
-    return { displayState: "unreported", statusReason: "这是结构规划记录，不是执行证据；尚未发现可信任务回报。" };
+    return { ...LIVE_PLANNING_DISPLAY };
   }
   const terminal = liveTerminalStatusDisplay(normalized);
   if (terminal) return { ...terminal };
@@ -945,6 +984,17 @@ function publicDisplay(status, { active = false, structuralOnly = false } = {}) 
     return { displayState: "unreported", statusReason: "运行当前不活跃，尚未发现该任务的可信执行回报。" };
   }
   return { displayState: "unknown", statusReason: "现有记录不足以判断该任务是否执行或完成。" };
+}
+
+/** Count actual bound execution separately from inspectable planning records. */
+function executionEvidenceCounts(records, runId) {
+  const evidence = boundedArray(records, LIVE_MAX_EVIDENCE);
+  return {
+    executionEvidence: evidence.filter((item) => item?.synthetic !== true && !evidenceIsStructuralOnly(item)
+      && normalizeLiveRunId(item?.runId) === runId && Boolean(taskIdFrom(item))
+      && (item?.executionObserved === true || item?.proofValid === true)).length,
+    planningEvidence: evidence.filter(evidenceIsStructuralOnly).length,
+  };
 }
 
 function safeConversationRuntime(value) {
@@ -1165,19 +1215,22 @@ function evidenceForTask(evidence, taskId) {
   );
 }
 
-function safeExecutionEvidence(result, taskId) {
-  return boundedArray(result?.workerExecutionEvidence, 24).map((item, index) => ({
+function safeExecutionEvidence(result, taskId, runId) {
+  return boundedArray([...boundedArray(result?.workerExecutionEvidence, 24), ...boundedArray(result?.terminalEvidence, 24)], 24).map((item, index) => ({
     id: publicId("proof", `${taskId}:${item?.verifyStepRef ?? index}`),
-    status: normalizeStatus(firstString(item, ["status", "result"]), "in_doubt"),
+    status: workerEvidenceStatus(item),
     observedAt: safeTimestamp(item?.runAt || item?.occurredAt || item?.completedAt),
     label: `Worker evidence ${index + 1}`,
     detail: safeText(item?.observedResult || item?.expectedResult || item?.skipReason, "Evidence recorded by the governed run", 180),
     sourceRef: safeText(item?.verifyStepRef, null, 120),
-    runId: normalizeLiveRunId(item?.runId || result?.runId),
-    taskPacketId: publicTaskBinding(item?.taskPacketId || item?.taskId || result?.taskPacketId || result?.taskId || taskId),
+    runId: normalizeLiveRunId(item?.runId),
+    taskPacketId: publicTaskBinding(item?.taskPacketId || item?.taskId),
     proofValid: item?.proofValid === true,
     synthetic: item?.synthetic === true,
     evidenceKind: safeNullableText(item?.evidenceKind, 80),
+    executionObserved: evidenceMatchesBinding(item, { runId, taskId }) && item?.synthetic !== true &&
+      !evidenceIsStructuralOnly(item) && item?.status === "executed" &&
+      (item?.runtimeProcessInvoked === true || item?.actualToolExecution === true),
   }));
 }
 
@@ -1830,12 +1883,14 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   const workerNodes = graphPackets.map((packet, index) => {
     const taskId = taskIdFrom(packet) || `${runId}:worker:${index + 1}`;
     const result = results.get(taskId) || null;
-    const taskEvidence = safeExecutionEvidence(result, taskId);
+    const taskEvidence = safeExecutionEvidence(result, taskId, runId);
     const classificationConflict = sanitizeClassificationConflict(packet.__classificationConflict);
     let status = normalizeStatus(
       firstString(result, ["status", "resultStatus"]) || firstString(packet, ["status"]),
       "pending",
     );
+    const executionState = taskExecutionState(result, runId, taskId);
+    if (result?.status === "executed" && executionState === "executed") status = "in_doubt";
     if (TRUSTED_TERMINAL_STATUSES.has(status) && !terminalStatusIsProven(result, status, { runId, taskId })) {
       status = "in_doubt";
     }
@@ -1870,6 +1925,9 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       active: nodeActive,
       structuralOnly: structuralOnly || evidenceIsStructuralOnly(result),
     });
+    if (status === "in_doubt" && executionState === "executed") {
+      display.statusReason = "执行回合已结束，等待任务验证；尚不能确认任务完成。";
+    }
     const declaredObservedMismatch = observed.state !== null && observed.state !== status && observed.state !== "completed" && status !== "in_doubt";
     const terminalProofValid = taskEvidence.some((item) => item?.proofValid === true && ["completed", "failed", "blocked", "cancelled"].includes(item?.status));
     return {
@@ -1889,6 +1947,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       status: resolvedStatus,
       active: nodeActive,
       ...display,
+      executionState,
       declaredStatus: status,
       observedOnly,
       declaredNotStarted: status === "pending" && observed.count === 0,
@@ -2184,6 +2243,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     repository: repositoryProjection(artifact),
     workspace: workspaceProjection(artifact),
     contextTransfers,
+    deliverables: collectLiveDeliverables(artifact).map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
     scheduling,
     declaredPlan: declaredStagePlan(artifact),
     nonGoalConstraints,
@@ -2195,6 +2255,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     nodes: projection.nodes.length,
     edges: projection.edges.length,
     evidence: projection.evidence.length,
+    ...executionEvidenceCounts(projection.evidence, runId),
     events: projection.replay.length,
     toolCalls: projection.toolCalls.length,
     prompts: projection.prompts.length,
@@ -2542,7 +2603,7 @@ function sanitizeCompactEvidenceItem(item, knownNodeIds) {
     label: safeText(item.label, "Evidence", 160),
     detail: safeNullableText(item.detail, 180),
     sourceRef: safeNullableText(item.sourceRef, 120),
-    status: normalizeStatus(item.status, "in_doubt"),
+    status: workerEvidenceStatus(item),
     observedAt: safeTimestamp(item.observedAt || item.occurredAt),
     nodeId: nodeId && knownNodeIds.has(nodeId) ? nodeId : "",
     runId: normalizeLiveRunId(item.runId),
@@ -2550,6 +2611,7 @@ function sanitizeCompactEvidenceItem(item, knownNodeIds) {
     proofValid: item.proofValid === true,
     synthetic: item.synthetic === true,
     evidenceKind: safeNullableText(item.evidenceKind, 80),
+    executionObserved: item.executionObserved === true && item.synthetic !== true,
   };
 }
 
@@ -2593,8 +2655,8 @@ function sanitizeCompactProjection(value) {
   const compactWorkers = rawNodes.filter((node) => node?.kind === "agent" && node?.isMain !== true);
   const structuralOnly = value?.run?.executionEvidenceState === "structural_planning_only" || (
     compactWorkers.length > 0 && compactWorkers.every((node) =>
-      boundedArray(node?.workerExecutionEvidence, 24).some(evidenceIsStructuralOnly) ||
-      boundedArray(node?.terminalEvidence, 24).some(evidenceIsStructuralOnly))
+      [...boundedArray(node?.workerExecutionEvidence, 24), ...boundedArray(node?.terminalEvidence, 24)].length > 0 &&
+      [...boundedArray(node?.workerExecutionEvidence, 24), ...boundedArray(node?.terminalEvidence, 24)].every(evidenceIsStructuralOnly))
   );
   const nodes = [];
   const knownNodeIds = new Set();
@@ -2633,8 +2695,11 @@ function sanitizeCompactProjection(value) {
       ? boundedArray(raw.terminalEvidence, 24).some((item) =>
           evidenceMatchesBinding(item, { runId, taskId: rawTaskId }) &&
           !evidenceIsStructuralOnly(item) &&
-          normalizeStatus(firstString(item, ["status", "resultStatus", "result"])) === status)
+          workerEvidenceStatus(item) === status)
       : false;
+    const executionState = structuralOnly ? "not_executed" : evidence.some((item) =>
+      evidenceMatchesBinding(item, { runId, taskId: publicTaskBinding(rawTaskId) }) &&
+      (item.executionObserved === true || item.status === "completed")) ? "executed" : "unreported";
     if (TRUSTED_TERMINAL_STATUSES.has(status) && raw.kind === "agent" && raw.isMain !== true && !terminalProven) {
       status = "in_doubt";
     }
@@ -2660,6 +2725,7 @@ function sanitizeCompactProjection(value) {
       status,
       active: nodeActive,
       ...publicDisplay(status, { active: nodeActive, structuralOnly }),
+      executionState,
       declaredStatus: normalizeStatus(raw.declaredStatus ?? raw.status, "in_doubt"),
       observedOnly,
       declaredNotStarted: raw.declaredNotStarted === true,
@@ -2839,6 +2905,7 @@ function sanitizeCompactProjection(value) {
     ...(primaryLink?.conversationRef ? { conversationRef: primaryLink.conversationRef } : {}),
     ...(primaryLink?.conversationTitle ? { conversationTitle: primaryLink.conversationTitle } : {}),
     executionEvidenceState: structuralOnly ? "structural_planning_only" : "recorded",
+    stageProgressEvidence: value.run?.stageProgressEvidence === "native_execution_only" ? "native_execution_only" : null,
     completionEvidenceState: value.run?.completionEvidenceState === "trusted_terminal" ? "trusted_terminal" : "unproven",
     recordOrigin: liveRecordOrigin(value),
     currentStage: normalizeStage(value.run?.currentStage),
@@ -2901,6 +2968,9 @@ function sanitizeCompactProjection(value) {
     repository: repositoryProjection(value),
     workspace: workspaceProjection(value),
     contextTransfers: safeCompactContextTransfers(value.contextTransfers, runId, sanitizedNodes),
+    deliverables: boundedArray(value.deliverables, LIVE_MAX_NODES)
+      .filter((item) => item?.runId === runId)
+      .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
     scheduling,
     nonGoalConstraints,
     declaredPlan: sanitizeDeclaredPlan(value.declaredPlan),
@@ -2910,6 +2980,7 @@ function sanitizeCompactProjection(value) {
       nodes: safeCount("nodes", sanitizedNodes.length),
       edges: safeCount("edges", sanitizedEdges.length),
       evidence: safeCount("evidence", evidence.length),
+      ...executionEvidenceCounts(evidence, runId),
       events: safeCount("events", replay.length),
       toolCalls: safeCount("toolCalls", toolCalls.length),
       prompts: safeCount("prompts", prompts.length),
@@ -3105,6 +3176,8 @@ export function buildLiveSnapshot({
       // "is this queue still moving", which is what turns a pending worker
       // into 排队中 rather than 未收到执行回写.
       ...publicDisplay(nodeStatus, { active: runActive, structuralOnly }),
+      ...(nodeStatus === "in_doubt" && node.executionState === "executed"
+        ? { statusReason: "执行回合已结束，等待任务验证；尚不能确认任务完成。" } : {}),
     };
   });
   const session = projection.session ? {
@@ -3155,6 +3228,9 @@ export function buildLiveSnapshot({
     repository: repositoryProjection(projection),
     workspace: workspaceProjection(projection),
     contextTransfers,
+    deliverables: boundedArray(projection.deliverables, LIVE_MAX_NODES)
+      .filter((item) => item?.runId === run.runId)
+      .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
     scheduling,
     nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),
     declaredPlan: sanitizeDeclaredPlan(projection.declaredPlan),
@@ -3164,6 +3240,7 @@ export function buildLiveSnapshot({
       nodes: countValue("nodes", projection.nodes?.length || 0),
       edges: countValue("edges", projection.edges?.length || 0),
       evidence: countValue("evidence", projection.evidence?.length || 0),
+      ...executionEvidenceCounts(projection.evidence, projection.run.runId),
       events: countValue("events", projection.replay?.length || 0),
       toolCalls: countValue("toolCalls", projection.toolCalls?.length || 0),
       prompts: countValue("prompts", projection.prompts?.length || 0),
@@ -3284,6 +3361,22 @@ export function createLiveControlRoomService(options = {}) {
     };
   };
 
+  const getDeliverable = async (runId, deliverableId) => {
+    if (!isLiveRunId(runId) || !/^deliverable:[a-f0-9]{24}$/u.test(deliverableId || "")) return null;
+    let artifact = typeof repository.readArtifact === "function" ? await repository.readArtifact(runId) : null;
+    const projectRoot = typeof repository.getProjectRoot === "function" ? await repository.getProjectRoot() : repository.projectRoot;
+    // Compact projections deliberately contain no path or raw output. Reopen
+    // only their exact companion artifact under the existing read boundary.
+    if (artifact?.schemaVersion === LIVE_COMPACT_PROJECTION_SCHEMA_VERSION && typeof artifact.__sourcePath === "string" && projectRoot) {
+      const sourcePath = artifact.__sourcePath.replace(/\.live\.json$/u, ".json");
+      if (sourcePath === artifact.__sourcePath) return null;
+      const source = await safeReadJson(projectRoot, sourcePath);
+      artifact = source.status === "valid" ? source.value : null;
+    }
+    if (normalizeLiveRunId(artifact?.runId) !== runId) return null;
+    return readLiveDeliverable(artifact, deliverableId, projectRoot);
+  };
+
   const getShare = async ({ runId = null, format = "json", title } = {}) => {
     if (format !== "json" && format !== "markdown" && format !== "readme") {
       throw continuationError("unsupported share format", "LIVE_SHARE_FORMAT_UNSUPPORTED");
@@ -3365,6 +3458,7 @@ export function createLiveControlRoomService(options = {}) {
     repository,
     getSnapshot,
     getReplay,
+    getDeliverable,
     getShare,
     getShareArtifact: getShare,
     planContinuation,

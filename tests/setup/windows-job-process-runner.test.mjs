@@ -101,25 +101,117 @@ async function waitForCondition(predicate, label, timeoutMs = 10_000) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-function captureOwnedIdentities(pids) {
+/** Test-only, content-free diagnostics for one bounded identity query. */
+function captureOwnedIdentityObservation(pids, {
+  timeoutMs = 5_000, spawnSyncImpl = spawnSync, now = Date.now,
+} = {}) {
+  assert.ok(pids.length > 0 && pids.every((pid) => Number.isSafeInteger(pid) && pid > 0));
+  assert.equal(new Set(pids).size, pids.length);
+  assert.ok(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 5_000);
   const idList = pids.map(Number).join(",");
   const command = [
     `$ids = @(${idList})`,
     "$rows = @()",
-    "foreach ($id in $ids) { try { $p = [System.Diagnostics.Process]::GetProcessById($id); $rows += [ordered]@{ pid = [int]$id; startTicks = [string]$p.StartTime.ToUniversalTime().Ticks } } catch {} }",
-    "Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject $rows -Compress",
+    "$failures = @()",
+    "foreach ($id in $ids) { try { $p = [System.Diagnostics.Process]::GetProcessById($id); $rows += [ordered]@{ pid = [int]$id; startTicks = [string]$p.StartTime.ToUniversalTime().Ticks } } catch { $failure = $_.Exception.GetBaseException(); $category = 'process_query_failed'; if ($failure -is [System.ArgumentException]) { $category = 'pid_missing' } elseif ($failure -is [System.ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 5) { $category = 'access_denied' }; $failures += [ordered]@{ pid = [int]$id; category = $category } } }",
+    "Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject ([ordered]@{ identities = $rows; failures = $failures }) -Compress",
   ].join("; ");
-  const result = spawnSync(
+  const startedAt = now();
+  const result = spawnSyncImpl(
     powershell,
     ["-NoProfile", "-NonInteractive", "-Command", command],
-    { encoding: "utf8", timeout: 5_000, windowsHide: true },
+    { encoding: "utf8", timeout: timeoutMs, windowsHide: true },
   );
-  if (result.status !== 0 || !result.stdout.trim()) return [];
-  const rows = JSON.parse(result.stdout);
-  return (Array.isArray(rows) ? rows : [rows]).map((row) => ({
-    pid: row.pid,
-    startTicks: row.startTicks,
-  }));
+  const stdout = String(result.stdout ?? "");
+  const diagnostic = {
+    category: "query_ok", status: Number.isInteger(result.status) ? result.status : null,
+    signal: ["SIGTERM", "SIGKILL", "SIGINT"].includes(result.signal) ? result.signal : null,
+    errorCode: result.error
+      ? (["ETIMEDOUT", "EACCES", "EPERM", "ENOENT", "EINVAL"].includes(result.error.code) ? result.error.code : "OTHER")
+      : null,
+    stdoutBytes: Buffer.byteLength(stdout), stderrBytes: Buffer.byteLength(String(result.stderr ?? "")),
+    elapsedMs: Math.max(0, now() - startedAt), timeoutMs,
+  };
+  const failure = (category) => ({ identities: [], diagnostic: { ...diagnostic, category } });
+  if (result.error) return failure(result.error.code === "ETIMEDOUT" ? "query_timeout" : "query_spawn_failed");
+  if (result.status !== 0) return failure("query_exit_nonzero");
+  if (!stdout.trim()) return failure("query_empty_output");
+  let parsed;
+  try { parsed = JSON.parse(stdout); } catch { return failure("query_malformed_output"); }
+  if (!parsed || !Array.isArray(parsed.identities) || !Array.isArray(parsed.failures)) {
+    return failure("query_malformed_output");
+  }
+  if (parsed.failures.length > 0) {
+    if (parsed.failures.some((item) => !pids.includes(item?.pid)
+      || !["pid_missing", "access_denied", "process_query_failed"].includes(item?.category))) {
+      return failure("query_malformed_output");
+    }
+    if (parsed.failures.some((item) => item.category === "access_denied")) return failure("query_access_denied");
+    if (parsed.failures.some((item) => item.category === "pid_missing")) return failure("query_pid_missing");
+    return failure("query_process_failure");
+  }
+  const rows = parsed.identities;
+  if (rows.length !== pids.length || new Set(rows.map((row) => row?.pid)).size !== pids.length
+    || rows.some((row) => !pids.includes(row?.pid) || typeof row?.startTicks !== "string"
+      || !/^\d+$/u.test(row.startTicks))) return failure("query_identity_mismatch");
+  return { identities: rows.map(({ pid, startTicks }) => ({ pid, startTicks })), diagnostic };
+}
+
+function identityObservationError(diagnostic) {
+  const error = new Error(`Owned process identity observation failed: ${diagnostic.category}`);
+  error.observationDiagnostic = diagnostic;
+  return error;
+}
+
+function captureOwnedIdentities(pids) {
+  const observed = captureOwnedIdentityObservation(pids);
+  if (observed.diagnostic.category !== "query_ok") throw identityObservationError(observed.diagnostic);
+  return observed.identities;
+}
+
+/** All retries share the caller's original deadline; only a query timeout is transient. */
+async function observeOwnedTreeWithDeadline(pids, {
+  deadline, now = Date.now, sleep = delay,
+  capture = (requested, timeoutMs) => captureOwnedIdentityObservation(requested, { timeoutMs }),
+}) {
+  let attempts = 0;
+  let diagnostic = { category: "readiness_deadline_exhausted", stdoutBytes: 0, stderrBytes: 0 };
+  while (now() < deadline) {
+    const timeoutMs = Math.min(5_000, Math.floor(deadline - now()));
+    if (timeoutMs <= 0) break;
+    const observed = capture(pids, timeoutMs);
+    attempts += 1;
+    diagnostic = { ...observed.diagnostic, attempts, deadline };
+    if (diagnostic.category === "query_ok") {
+      if (now() >= deadline) {
+        throw identityObservationError({ ...diagnostic, category: "readiness_deadline_exhausted" });
+      }
+      return observed.identities;
+    }
+    if (diagnostic.category !== "query_timeout" || now() >= deadline) throw identityObservationError(diagnostic);
+    await sleep(Math.min(25, Math.max(0, deadline - now())));
+  }
+  throw identityObservationError({ ...diagnostic, attempts, deadline });
+}
+
+/** A failed observation never releases its directory before the original guard has settled. */
+async function observeWithSettledOwnedGuard({ guarded, observe, verify }) {
+  const settled = guarded.then(
+    (value) => ({ status: "fulfilled", value }),
+    (error) => ({ status: "rejected", error }),
+  );
+  let observed;
+  let observationError;
+  let cleanupError;
+  try { observed = await observe(); } catch (error) { observationError = error; }
+  const outcome = await settled;
+  try { await verify(outcome, observed); } catch (error) { cleanupError = error; }
+  if (observationError && cleanupError) {
+    throw new AggregateError([observationError, cleanupError], "Identity observation and guarded cleanup both failed");
+  }
+  if (observationError) throw observationError;
+  if (cleanupError) throw cleanupError;
+  return observed;
 }
 
 function pidAppearsAlive(pid) {
@@ -277,12 +369,12 @@ function startLauncher(tempDir, rootScript) {
   return startLauncherForSpec(tempDir, writeSpec(tempDir, rootScript));
 }
 
-async function readOwnedTree(pidsPath, timeoutMs = 10_000) {
-  await waitForFile(pidsPath, timeoutMs);
+async function readOwnedTree(pidsPath, timeoutMs = 10_000, { deadline = Date.now() + timeoutMs } = {}) {
+  await waitForFile(pidsPath, Math.max(0, deadline - Date.now()));
   const pids = Object.values(JSON.parse(readFileSync(pidsPath, "utf8")));
   assert.equal(pids.length, 3);
   assert.ok(pids.every((pid) => Number.isSafeInteger(pid) && pid > 0));
-  const identities = captureOwnedIdentities(pids);
+  const identities = await observeOwnedTreeWithDeadline(pids, { deadline });
   assert.equal(identities.length, pids.length);
   assert.ok(identities.every((identity) => /^\d+$/u.test(identity.startTicks)));
   return identities;
@@ -305,6 +397,124 @@ function assertNoWholeTreeClaim(value) {
     "out_of_job_process_creation_not_covered",
   );
 }
+
+describe("owned identity observation diagnostics and teardown", () => {
+  const pids = [101, 102, 103];
+  const identities = pids.map((pid) => ({ pid, startTicks: String(100000 + pid) }));
+  const success = () => ({ status: 0, signal: null, stdout: JSON.stringify({ identities, failures: [] }), stderr: "" });
+  const timeout = () => ({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" }, stdout: "", stderr: "" });
+
+  test("explicit query timeout retries within the original deadline and five-second ceiling", async () => {
+    let clock = 0;
+    const queryTimeouts = [];
+    let queries = 0;
+    let yields = 0;
+    const actual = await observeOwnedTreeWithDeadline(pids, {
+      deadline: 9_000, now: () => clock,
+      sleep: async () => { yields += 1; clock += 25; },
+      capture: (requested, timeoutMs) => captureOwnedIdentityObservation(requested, {
+        timeoutMs, now: () => clock,
+        spawnSyncImpl: (_file, _args, options) => {
+          queryTimeouts.push(options.timeout);
+          queries += 1;
+          if (queries === 1) { clock += 5_000; return timeout(); }
+          return success();
+        },
+      }),
+    });
+    assert.deepEqual(actual, identities);
+    assert.deepEqual(queryTimeouts, [5_000, 3_975]);
+    assert.equal(yields, 1);
+  });
+
+  test("query timeout exhaustion preserves the shared deadline", async () => {
+    let clock = 0;
+    const queryTimeouts = [];
+    await assert.rejects(observeOwnedTreeWithDeadline(pids, {
+      deadline: 6_000, now: () => clock, sleep: async () => { clock += 25; },
+      capture: (requested, timeoutMs) => captureOwnedIdentityObservation(requested, {
+        timeoutMs, now: () => clock,
+        spawnSyncImpl: (_file, _args, options) => {
+          queryTimeouts.push(options.timeout); clock += options.timeout; return timeout();
+        },
+      }),
+    }), (error) => error.observationDiagnostic.category === "query_timeout"
+      && error.observationDiagnostic.attempts === 2
+      && error.observationDiagnostic.deadline === 6_000);
+    assert.deepEqual(queryTimeouts, [5_000, 975]);
+    assert.equal(clock, 6_000);
+  });
+
+  test("a late successful query cannot extend the original deadline", async () => {
+    let clock = 0;
+    await assert.rejects(observeOwnedTreeWithDeadline(pids, {
+      deadline: 1_000, now: () => clock,
+      capture: () => { clock = 1_000; return { identities, diagnostic: { category: "query_ok" } }; },
+    }), (error) => error.observationDiagnostic.category === "readiness_deadline_exhausted");
+  });
+
+  for (const [category, result] of [
+    ["query_spawn_failed", { status: null, error: { code: "EACCES" }, stdout: "", stderr: "" }],
+    ["query_spawn_failed", { status: null, error: { code: "private-do-not-echo", message: "private-do-not-echo" }, stdout: "", stderr: "" }],
+    ["query_exit_nonzero", { status: 1, stdout: "", stderr: "private-do-not-echo" }],
+    ["query_empty_output", { status: 0, stdout: "", stderr: "" }],
+    ["query_malformed_output", { status: 0, stdout: "private-do-not-echo", stderr: "" }],
+    ["query_pid_missing", { status: 0, stdout: JSON.stringify({ identities: [], failures: [{ pid: 101, category: "pid_missing" }] }), stderr: "" }],
+    ["query_access_denied", { status: 0, stdout: JSON.stringify({ identities: [], failures: [{ pid: 101, category: "access_denied" }] }), stderr: "" }],
+    ["query_process_failure", { status: 0, stdout: JSON.stringify({ identities: [], failures: [{ pid: 101, category: "process_query_failed" }] }), stderr: "" }],
+    ["query_identity_mismatch", { status: 0, stdout: JSON.stringify({ identities: [identities[0], identities[0], identities[2]], failures: [] }), stderr: "" }],
+  ]) {
+    test(`${category} is diagnostic, private and never retried`, async () => {
+      let queries = 0;
+      let caught;
+      try {
+        await observeOwnedTreeWithDeadline(pids, {
+          deadline: 20_000, now: () => 0,
+          sleep: async () => { assert.fail("fatal observation must not retry"); },
+          capture: (requested, timeoutMs) => captureOwnedIdentityObservation(requested, {
+            timeoutMs, now: () => 0,
+            spawnSyncImpl: () => { queries += 1; return result; },
+          }),
+        });
+      } catch (error) { caught = error; }
+      assert.equal(caught?.observationDiagnostic?.category, category);
+      assert.equal(queries, 1);
+      assert.doesNotMatch(JSON.stringify(caught.observationDiagnostic), /private-do-not-echo/u);
+      assert.equal(typeof caught.observationDiagnostic.stdoutBytes, "number");
+    });
+  }
+
+  test("observation failure cannot enter teardown before the original guard settles", async () => {
+    let settleGuard;
+    const guarded = new Promise((resolve) => { settleGuard = resolve; });
+    const observationError = new Error("specific observation failure");
+    let verified = false;
+    let teardown = false;
+    const operation = observeWithSettledOwnedGuard({
+      guarded,
+      observe: async () => { throw observationError; },
+      verify: async (outcome) => { assert.equal(outcome.status, "fulfilled"); verified = true; },
+    }).finally(() => { teardown = true; });
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(teardown, false);
+    assert.equal(verified, false);
+    settleGuard({ guardedFixtureOnly: true });
+    await assert.rejects(operation, (error) => error === observationError);
+    assert.equal(verified, true);
+    assert.equal(teardown, true);
+  });
+
+  test("observation and guard cleanup failures remain distinct", async () => {
+    const observationError = new Error("specific observation failure");
+    const cleanupError = new Error("specific cleanup failure");
+    await assert.rejects(observeWithSettledOwnedGuard({
+      guarded: Promise.reject(cleanupError),
+      observe: async () => { throw observationError; },
+      verify: async (outcome) => { assert.equal(outcome.status, "rejected"); throw outcome.error; },
+    }), (error) => error instanceof AggregateError
+      && error.errors[0] === observationError && error.errors[1] === cleanupError);
+  });
+});
 
 test("Windows launcher explicitly resolves its built-in cmdlets without ambient discovery", () => {
   const source = readFileSync(launcherPath, "utf8");
@@ -721,27 +931,37 @@ describe(
       const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-job-timeout-"));
       const { pidsPath, rootScript } = writeTreeFixture(tempDir);
       let identities = [];
+      let guardCleanupVerified = false;
       try {
-        const rejection = expectRejected(
-          runWindowsGuardedCommand(process.execPath, [rootScript], {
+        const deadline = Date.now() + TIMEOUT_CLEANUP_READY_TIMEOUT_MS;
+        const guarded = runWindowsGuardedCommand(process.execPath, [rootScript], {
             cwd: tempDir,
             timeout: TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS,
             outputLimitBytes: 64 * 1024,
             tailBytes: 1024,
-          }),
-        );
-        identities = await readOwnedTree(
-          pidsPath,
-          TIMEOUT_CLEANUP_READY_TIMEOUT_MS,
-        );
-        const error = await rejection;
-        assert.equal(error.timeoutMs, TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS);
-        assert.equal(error.ownedProcessGroupCleanupVerified, true);
-        assertNoWholeTreeClaim(error);
-        await waitForOwnedProcessesToExit(identities);
+          });
+        await observeWithSettledOwnedGuard({
+          guarded,
+          observe: async () => {
+            identities = await readOwnedTree(pidsPath, TIMEOUT_CLEANUP_READY_TIMEOUT_MS, { deadline });
+            return identities;
+          },
+          verify: async (outcome) => {
+            assert.equal(outcome.status, "rejected", "the original guard must reach its timeout");
+            const error = outcome.error;
+            if (error.code !== "META_KIM_COMMAND_TIMEOUT") throw error;
+            assert.equal(error.code, "META_KIM_COMMAND_TIMEOUT");
+            assert.equal(error.timeoutMs, TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS);
+            assert.equal(error.ownedProcessGroupCleanupVerified, true);
+            assertNoWholeTreeClaim(error);
+            await waitForOwnedProcessesToExit(identities);
+            guardCleanupVerified = true;
+          },
+        });
       } finally {
         stopOwnedProcesses(identities);
-        registerTestDirectory(tempDir);
+        // Unverified native cleanup remains a failure and retains its directory.
+        if (guardCleanupVerified) registerTestDirectory(tempDir);
       }
     });
 

@@ -42,6 +42,8 @@ import {
   LIVE_RECORD_ORIGINS,
 } from "../../application/live/live-record-origin.mjs";
 import { serializeReplayNodeViewResolver } from "../../application/live/live-replay-visibility.mjs";
+import { serializeGraphReadabilityResolvers } from "../../application/live/live-graph-readability.mjs";
+import { serializeLocalFeedbackResolvers } from "./live-feedback-draft.mjs";
 import {
   loadLiveSpacingScale,
   serializeSpacingCustomProperties,
@@ -225,6 +227,8 @@ const GRAPH_LAYOUT_LITERAL = JSON.stringify(serializeGraphLayoutPolicyForClient(
 const NODE_CARD_HEIGHT_SOURCE = serializeNodeCardHeightResolver();
 const MEASURED_CARD_METRICS_SOURCE = serializeMeasuredCardMetricsResolver();
 const FANOUT_ARRANGEMENT_SOURCE = serializeFanoutArrangementResolver();
+const GRAPH_READABILITY_SOURCE = serializeGraphReadabilityResolvers();
+const LOCAL_FEEDBACK_SOURCE = serializeLocalFeedbackResolvers();
 
 /**
  * Which run the page opens on when the URL names none.
@@ -374,6 +378,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const resolveNodeCardHeight = ${NODE_CARD_HEIGHT_SOURCE};
   const resolveMeasuredCardMetrics = ${MEASURED_CARD_METRICS_SOURCE};
   const resolveFanoutArrangement = ${FANOUT_ARRANGEMENT_SOURCE};
+  ${GRAPH_READABILITY_SOURCE}
+  ${LOCAL_FEEDBACK_SOURCE}
 
   const DEFAULT_SELECTION = ${DEFAULT_SELECTION_LITERAL};
   ${DEFAULT_SELECTION_SOURCE}
@@ -406,6 +412,21 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const GRAPH_TOOLS_EDGE_MARGIN = 8;
   const GRAPH_TOOLS_DRAG_THRESHOLD = 3;
   const zhText = new Map(Object.entries({
+    "meta-conductor": "流程统筹",
+    "product-build-discovery": "调研分组",
+    "product-build-design": "设计分组",
+    "product-build-implementation": "实施分组",
+    "product-build-verification": "验收分组",
+    "product-build-closure": "收尾分组",
+    "product-definition": "产品定义",
+    "market-research": "市场调研",
+    "content-strategy": "内容策划",
+    "ux-flow": "交互流程",
+    "frontend-ui": "前端界面",
+    "backend-api": "后端接口",
+    "data-model": "数据模型",
+    "test-qa": "测试验收",
+    "release-ops": "发布交付",
     "Started": "开始于",
     "File time": "文件时间",
     "This record reports no time of its own; the value shown is when its file was last written.": "这条记录本身没有报告时间，显示的是记录文件最后一次写入的时间。",
@@ -747,8 +768,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const graphMinimap = app.querySelector("[data-live-graph-minimap]");
   const graphMinimapScene = app.querySelector("[data-live-minimap-scene]");
   const graphMinimapViewport = app.querySelector("[data-live-minimap-viewport]");
+  const graphRelationButtons = app.querySelectorAll("[data-live-graph-relations]");
+  const graphRelationSummary = app.querySelector("[data-live-graph-relation-summary]");
   const selectedNodeLabel = app.querySelector("[data-live-selected-node-label]");
+  const selectedNodeRelations = app.querySelector("[data-live-selected-node-relations]");
   const selectedNodeEvidence = app.querySelector("[data-live-selected-node-evidence]");
+  const inspectorFeedbackHost = app.querySelector("[data-live-feedback-host]");
+  const inspectorDeliverablesHost = app.querySelector("[data-live-deliverables-host]");
   const selectedNodeStatus = app.querySelector("[data-live-selected-node-status]");
   const selectedNodeOwner = app.querySelector("[data-live-selected-node-owner]");
   const selectedNodeRuntime = app.querySelector("[data-live-selected-node-runtime]");
@@ -802,6 +828,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const contextNodes = app.querySelector("[data-live-context-nodes]");
   const contextEvents = app.querySelector("[data-live-context-events]");
   const contextEvidence = app.querySelector("[data-live-context-evidence]");
+  const contextEvidenceLabel = app.querySelector("[data-live-context-evidence-label]");
+  const planningNotice = app.querySelector("[data-live-planning-notice]");
+  const graphTitles = [...app.querySelectorAll("[data-live-graph-title]")];
   const workspace = app.querySelector(".workspace-grid");
   const replayPanel = app.querySelector(".replay-panel");
   const shareStatus = app.querySelector("[data-live-share-status]");
@@ -837,6 +866,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
   // against the new band width without waiting for the next snapshot.
   let replayTickEvents = [];
   let layoutMode = "compact";
+  let relationMode = "dependency";
+  let relationFocusActive = false;
+  let minimapExpanded = false;
+  let graphCardResizeObserver = null;
+  let graphCardRefreshPending = false;
+  let graphCardMeasurementPending = false;
+  const localFeedbackDrafts = createLocalFeedbackDraftStore();
+  const localFeedbackSurfaces = new Map();
   // Start in a full-graph overview so the run topology is legible before the
   // user opts into following a replay target.
   let graphFollowing = false;
@@ -846,6 +883,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     nodeElements: new Map(),
     edgeElements: new Map(),
     edgeEffects: new Map(),
+    edgeRoutes: new Map(),
+    rootEntries: new Map(),
     bounds: { width: 1, height: 1 },
   };
   let camera = { x: 0, y: 0, scale: 1 };
@@ -1019,10 +1058,34 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function normalizedRunDisplayState(runInput, fallback) {
+    if (runInput?.executionEvidenceState === "structural_planning_only") return "planned";
     const state = display(firstValue(runInput, ["displayState", "publicState"], fallback), "unknown")
       .toLowerCase().replace(/[\s-]+/gu, "_");
     if (state === "unknown" && runInput?.active !== true) return "unreported";
     return state;
+  }
+
+  function isPlanningSnapshot(snapshot) {
+    return snapshot?.run?.executionEvidenceState === "structural_planning_only";
+  }
+
+  function isPlanningEvidence(item) {
+    return String(item?.evidenceKind || "").toLowerCase().includes("structural")
+      || ["not_run_by_structural_artifact_builder", "not_run_by_governed_runner"].includes(item?.detail);
+  }
+
+  function executionEvidenceCount(snapshot) {
+    if (isPlanningSnapshot(snapshot)) return 0;
+    return snapshot.evidence.filter((item) => item.synthetic !== true && !isPlanningEvidence(item)
+      && item.runId === snapshot.run.id && Boolean(item.taskPacketId)
+      && (item.executionObserved === true || item.proofValid === true)).length;
+  }
+
+  function setTranslatedText(element, english, chinese) {
+    if (!element) return;
+    element.dataset.i18nEn = english;
+    element.dataset.i18nZh = chinese;
+    element.textContent = currentLanguage === "zh" ? chinese : english;
   }
 
   function summarizeTerminalEvidence(value) {
@@ -1221,6 +1284,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       };
       return {
         id: display(firstValue(item, ["id", "nodeId"], "node-" + (index + 1)), "node-" + (index + 1)),
+        taskPacketId: safeIdentifier(item.taskPacketId) || null,
+        executionState: ["not_executed", "executed", "unreported"].includes(item.executionState) ? item.executionState : "unreported",
         label: display(firstValue(item, ["label", "title", "name", "nodeId"], "Untitled task"), "Untitled task"),
         kind: display(firstValue(item, ["kind", "nodeKind", "type"], "worker"), "worker").toLowerCase().replace(/[\s-]+/gu, "_"),
         isMain: item.isMain === true,
@@ -1292,6 +1357,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
         nodeId: display(firstValue(record, ["nodeId", "node", "ownerNodeId"], ""), ""),
         at: display(firstValue(record, ["timestamp", "observedAt", "occurredAt", "createdAt"], ""), ""),
         sourceRef: display(firstValue(record, ["sourceRef", "source", "ref"], ""), ""),
+        runId: safeIdentifier(record.runId),
+        taskPacketId: safeIdentifier(record.taskPacketId),
+        evidenceKind: display(record.evidenceKind, ""),
+        proofValid: record.proofValid === true,
+        executionObserved: record.executionObserved === true,
+        synthetic: record.synthetic === true,
       };
     });
 
@@ -1364,6 +1435,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
     return {
       schemaVersion: display(input.schemaVersion, "unknown"),
+      deliverables: normalizeLiveDeliverables(input.deliverables, safeIdentifier(runInput.id || runInput.runId || input.runId)),
       source: display(firstValue(sourceInput, ["label", "name", "kind"], input.source), "local observer"),
       run: hasRun ? {
         id: display(firstValue(runInput, ["id", "runId", "key"], input.runId), "unidentified run"),
@@ -1394,6 +1466,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         eventCount,
         demoMode: runInput.demoMode === true,
         executionEvidenceState: display(firstValue(runInput, ["executionEvidenceState"], "unavailable"), "unavailable"),
+        stageProgressEvidence: runInput.stageProgressEvidence === "native_execution_only" ? "native_execution_only" : null,
       } : null,
       sessionInfo: {
         title: display(firstValue(sessionInput, ["title", "name"], firstValue(runInput, ["title", "name"], "Live execution")), "Live execution"),
@@ -1673,7 +1746,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function nodeDisplayState(node) {
     const state = display(node?.displayState, "").toLowerCase().replace(/[\s-]+/gu, "_");
-    if (["active", "queued", "completed", "failed", "blocked", "cancelled", "unreported"].includes(state)) return state;
+    // An older public-state projection can still say unknown after a real
+    // execution report arrived. Preserve the known execution and pending proof.
+    if (node?.executionState === "executed" && node?.status === "in_doubt") return "in_doubt";
+    if (state === "planned" || node?.executionState === "not_executed") return "planned";
+    if (["active", "queued", "completed", "failed", "blocked", "cancelled", "unreported", "in_doubt"].includes(state)) return state;
     // Legacy structural records often carry a generic unknown value. Once the
     // run is inactive, the exact public truth is that no execution writeback
     // was received, rather than an unexplained status.
@@ -1683,12 +1760,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // Inactive pending data is structural planning, not a live queue entry.
     if (node?.active !== true && ["pending", "queued"].includes(node?.status)) return "unreported";
     if (node?.status === "running") return "active";
-    if (["completed", "failed", "blocked", "cancelled"].includes(node?.status)) return node.status;
+    if (["completed", "failed", "blocked", "cancelled", "in_doubt"].includes(node?.status)) return node.status;
     return "unknown";
   }
 
   function nodeStateCopy(node) {
     const state = nodeDisplayState(node);
+    if (state === "planned") return currentLanguage === "zh" ? "仅规划 · 尚未派发" : "Planned · not dispatched";
     if (state === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
     if (state === "unknown") return currentLanguage === "zh" ? "状态未知" : "Unknown state";
     // Observed running is a different claim from declared running: the host
@@ -1697,7 +1775,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (state === "active" && node?.observedOnly === true) return currentLanguage === "zh" ? "运行中·observed" : "Running · observed";
     if (state === "active") return currentLanguage === "zh" ? "执行中" : "Running";
     if (state === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
+    if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "已执行 · 待验证" : "Executed · awaiting verification";
     return stateCopy(state);
+  }
+
+  function nodeShortStateCopy(node) {
+    const state = nodeDisplayState(node);
+    if (state === "planned") return currentLanguage === "zh" ? "尚未派发" : "Not dispatched";
+    if (state === "unreported") return currentLanguage === "zh" ? "缺执行证据" : "No evidence";
+    if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "待验证" : "To verify";
+    return localize(state);
   }
 
   function sourceRuntimeLabel(value) {
@@ -1866,6 +1953,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function stateCopy(status) {
+    if (status === "planned") return currentLanguage === "zh" ? "仅规划 · 尚未派发" : "Planned · not dispatched";
     if (status === "live") return localize("Live");
     if (status === "in_doubt") return localize("In doubt");
     if (status === "completed") return localize("Completed");
@@ -1906,7 +1994,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function updateHeader(snapshot) {
-
+    const planningOnly = isPlanningSnapshot(snapshot);
+    if (planningNotice) planningNotice.hidden = !planningOnly;
+    graphTitles.forEach((title) => setTranslatedText(title,
+      planningOnly ? "Task plan graph" : "Live execution graph",
+      planningOnly ? "任务规划图" : "实时运行图"));
+    const dependencyButton = app.querySelector('[data-live-graph-relations="dependency"]');
+    setTranslatedText(dependencyButton, planningOnly ? "Planned dependencies" : "Execution dependencies", planningOnly ? "规划依赖" : "执行依赖");
+    setTranslatedText(contextEvidenceLabel, "Execution evidence", "执行证据");
     setText(contextTitle, snapshot.run.title, "Live execution");
 
     const shortRunId = shortenIdentifier(snapshot.run.id, DISPLAY_FORMAT.identifierShortForm);
@@ -1923,7 +2018,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       ? activeWorkers.size + " active worker" + (activeWorkers.size === 1 ? "" : "s")
       : "No active workers");
     setText(contextTask, runTaskCopy(runTaskSupplement(snapshot.run.task, snapshot.run.title)));
-    setText(contextStage, informativeValue(snapshot.run.stage, "Stage unconfirmed"), "Stage unconfirmed");
+    if (planningOnly) setText(contextStage, currentLanguage === "zh" ? "尚未派发" : "Not dispatched");
+    else setText(contextStage, informativeValue(snapshot.run.stage, "Stage unconfirmed"), "Stage unconfirmed");
     setText(contextStatus, stateCopy(snapshot.run.displayState || snapshot.run.status), "In doubt");
     setText(contextUpdated, formatTime(snapshot.run.updatedAt));
     // Joined from the parts that exist rather than a fixed two-part string: the
@@ -1960,7 +2056,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         : String(eventTotal),
       "0",
     );
-    setText(contextEvidence, String(snapshot.evidence.length || 0), "0");
+    setText(contextEvidence, String(executionEvidenceCount(snapshot)), "0");
     const status = snapshot.run.displayState || snapshot.run.status;
     if (stateChip) stateChip.dataset.state = status;
     setText(stateLabel, stateCopy(status), "Stale");
@@ -2168,6 +2264,76 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return snapshot.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
   }
 
+  function graphRelationPlan(snapshot) {
+    const nodes = graphNodesForSnapshot(snapshot);
+    return classifyGraphRelations(nodes, graphEdgesForSnapshot(snapshot, nodes), EXECUTION_EDGE_KINDS);
+  }
+
+  function updateGraphRelationControls(plan = graphState.layout?.relationPlan) {
+    if (!plan) return;
+    for (const button of graphRelationButtons) {
+      const mode = button.dataset.liveGraphRelations;
+      button.setAttribute("aria-pressed", String(mode === relationMode));
+      button.dataset.active = String(mode === relationMode);
+      button.textContent = (currentLanguage === "zh"
+        ? mode === "all" ? "全部关系 " : "执行依赖 "
+        : mode === "all" ? "All relations " : "Dependencies ") + (mode === "all" ? plan.edges.length : plan.executionEdges.length);
+    }
+    const hidden = plan.edges.length - plan.executionEdges.length;
+    const pieces = [plan.nodes.length + (currentLanguage === "zh" ? " 节点" : " nodes")];
+    if (relationMode !== "all" && plan.executionEdges.length && plan.contextNodes.length) pieces.push(currentLanguage === "zh"
+      ? plan.contextNodes.length + " 个组织节点已收起" : plan.contextNodes.length + " organization nodes collapsed");
+    if (!plan.executionEdges.length) pieces.push(currentLanguage === "zh"
+      ? "尚无执行依赖记录；可查看全部关系" : "No execution dependencies recorded; view all relations");
+    else if (relationMode !== "all" && hidden) pieces.push(currentLanguage === "zh"
+      ? plan.structuralEdges.length + " 条归属已收起" : plan.structuralEdges.length + " ownership hidden");
+    if (relationMode !== "all" && plan.otherEdges.length) pieces.push(currentLanguage === "zh"
+      ? plan.otherEdges.length + " 条其他关系已收起" : plan.otherEdges.length + " other relations hidden");
+    if (plan.cyclic) pieces.push(currentLanguage === "zh" ? "存在循环依赖，位置不表示时序" : "Dependency cycle; positions do not imply order");
+    if (graphRelationSummary) graphRelationSummary.textContent = pieces.join(" · ");
+    if (graph) graph.dataset.relationMode = relationMode;
+  }
+
+  /** Keep replay visibility independent of the chosen relation layer and focus. */
+  function updateGraphRelationPresentation() {
+    for (const [id, route] of graphState.edgeRoutes) {
+      const path = graphState.edgeElements.get(id);
+      if (!path) continue;
+      const view = resolveGraphEdgePresentation(route.edge, {
+        mode: relationMode, executionKinds: EXECUTION_EDGE_KINDS, selectedNodeId,
+        focusActive: relationFocusActive, replayVisible: path.dataset.replayVisible !== "false",
+      });
+      for (const element of [path, graphState.edgeEffects.get(id)]) {
+        if (!element) continue;
+        element.dataset.relationVisible = String(view.relationVisible);
+        element.dataset.relationFocus = view.focus;
+        element.style.display = view.visible ? "" : "none";
+      }
+    }
+    for (const [id, entry] of graphState.rootEntries) {
+      const visible = graphState.nodeElements.get(id)?.dataset.replayVisible !== "false";
+      for (const element of [entry.path, entry.halo, entry.dot]) element.style.display = visible ? "" : "none";
+    }
+  }
+
+  function setGraphRelationMode(mode) {
+    relationMode = mode === "all" ? "all" : "dependency";
+    if (graphState.layout?.kind === "dependency") {
+      graphState.layout.inputs.includeContext = relationMode === "all";
+      reflowReadableGraph(camera.scale, { search: true, preserveAnchor: false });
+      syncLayoutToRenderedCards(graphState.layout);
+      reconcileCamera();
+    }
+    updateGraphRelationControls(graphState.relationPlan);
+    updateGraphRelationPresentation();
+  }
+
+  function graphNodeReadingLabel(node) {
+    // Exact vocabulary translations only; an unknown identity keeps its source.
+    const label = String(node.label || node.id);
+    return currentLanguage === "zh" ? zhText.get(label) || label : label;
+  }
+
   function nodeCapabilityCount(node) {
     return Array.isArray(node?.capabilityTruth)
       ? node.capabilityTruth.filter((record) => record && ["planned", "observed"].includes(record.state)
@@ -2272,12 +2438,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
    * No backticks or dollar-brace in this comment: the whole browser script is a
    * template literal, so either one ends it early and the module stops parsing.
    */
-  function graphRankById(nodes, graphEdges) {
+  function graphRankById(nodes, graphEdges, { includeParents = true } = {}) {
     const upstream = new Map(nodes.map((node) => [node.id, []]));
     for (const edge of graphEdges) {
       if (upstream.has(edge.to) && upstream.has(edge.from)) upstream.get(edge.to).push(edge.from);
     }
-    for (const node of nodes) {
+    for (const node of includeParents ? nodes : []) {
       const declared = node.parentId;
       if (!declared || !upstream.has(declared) || !upstream.has(node.id)) continue;
       if (!upstream.get(node.id).includes(declared)) upstream.get(node.id).push(declared);
@@ -2298,9 +2464,28 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return rankById;
   }
 
-  function layoutGraph(snapshot) {
+  function layoutGraph(snapshot, presentation = {}) {
     const nodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, nodes);
+    const relationPlan = classifyGraphRelations(nodes, graphEdges, EXECUTION_EDGE_KINDS);
+    if (relationPlan.executionEdges.length) {
+      const mode = GRAPH_LAYOUT.modes[layoutMode] || GRAPH_LAYOUT.modes[GRAPH_LAYOUT.defaultMode];
+      const scale = presentation.scale || camera.scale;
+      const result = resolveDependencyGraphLayout({
+        plan: relationPlan, canvas: graphCanvasBox(), inset: graphFitInset(),
+        includeContext: relationMode === "all",
+        cardWidth: GRAPH_LAYOUT.card.entityWidthPx,
+        cardHeight: Math.max(GRAPH_LAYOUT.card.measuredMinHeightPx, ...nodes.map(estimatedNodeCardHeight)),
+        nodeHeights: presentation.nodeHeights || graphState.fullCardHeights,
+        tier: presentation.tier || resolveSemanticZoom(scale, GRAPH_CAMERA), scale,
+        cellScreenHeight: 64,
+        columnGap: mode.entityColumnStepPx - GRAPH_LAYOUT.card.entityWidthPx,
+        rowGap: mode.entityRowGapPx,
+        padding: GRAPH_LAYOUT.scenePaddingPx,
+        arrangement: presentation.arrangement,
+      });
+      return { ...result, metrics: cardMetrics };
+    }
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const parentById = new Map(graphEdges.map((edge) => [edge.to, edge.from]));
     const rankById = graphRankById(nodes, graphEdges);
@@ -2637,6 +2822,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const sceneMin = GRAPH_LAYOUT.sceneMinimumPx;
     const columns = new Map();
     const measured = measureRenderedCardHeights(layout);
+    if (layout.kind === "dependency") {
+      graphState.fullCardHeights = new Map([...(graphState.fullCardHeights || []), ...measured]);
+      const corrected = resolveDependencyGraphLayout({ ...layout.inputs, nodeHeights: graphState.fullCardHeights });
+      Object.assign(layout, corrected, { metrics: cardMetrics });
+      applyReadableLayoutBoxes(layout);
+      return;
+    }
     for (const [nodeId, position] of layout.positions) {
       const card = graphState.nodeElements.get(nodeId);
       if (!card) continue;
@@ -2682,6 +2874,75 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (edgeLayer) edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
   }
 
+  /** Apply one coherent footprint to cards, bands, scene bounds and edge space. */
+  function applyReadableLayoutBoxes(layout) {
+    graphState.layout = layout;
+    graphState.positions = layout.positions;
+    graphState.bounds = layout.bounds;
+    graphState.edgeGeometryKey = null;
+    if (graph) graph.style.setProperty("--readable-cell-height", 64 / layout.scale + "px");
+    for (const [id, card] of graphState.nodeElements) {
+      const position = layout.positions.get(id);
+      card.hidden = !position;
+      if (!position) continue;
+      card.style.left = position.x + "px";
+      card.style.top = position.y + "px";
+      card.style.width = position.width + "px";
+      card.style.minHeight = position.height + "px";
+      card.dataset.graphGroup = position.group;
+    }
+    for (const element of graphState.bandElements || []) element.remove();
+    graphState.bandElements = [];
+    for (const band of layout.bands || []) {
+      const copy = band.group === "context"
+        ? currentLanguage === "zh" ? "归属 / 工作流，不代表时序" : "Ownership / workflow, not execution order"
+        : currentLanguage === "zh" ? "未参与执行依赖" : "Not linked to execution dependencies";
+      const label = makeElement("div", "graph-group-label", copy);
+      label.style.left = band.x + "px";
+      label.style.top = band.y + "px";
+      label.style.width = Math.max(1, layout.bounds.width - band.x - GRAPH_LAYOUT.scenePaddingPx.right) + "px";
+      nodeList?.append(label);
+      graphState.bandElements.push(label);
+    }
+    if (graphScene) {
+      graphScene.style.width = layout.bounds.width + "px";
+      graphScene.style.height = layout.bounds.height + "px";
+    }
+    if (edgeLayer) edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
+    for (const mini of graphMinimapScene?.children || []) {
+      const position = layout.positions.get(mini.dataset.nodeId);
+      mini.hidden = !position;
+      if (!position) continue;
+      mini.style.left = position.x + "px";
+      mini.style.top = position.y + "px";
+      mini.style.width = position.width + "px";
+      mini.style.height = position.height + "px";
+    }
+  }
+
+  /** A tier/viewport reflow uses cached complete-card measurements, never a loop. */
+  function reflowReadableGraph(scale, { search = false, preserveAnchor = true } = {}) {
+    const previous = graphState.layout;
+    if (previous?.kind !== "dependency") return;
+    const selected = preserveAnchor && selectedNodeId ? previous.positions.get(selectedNodeId) : null;
+    const anchor = selected ? { x: selected.x + selected.width / 2, y: selected.y + selected.height / 2 } : null;
+    const tier = resolveSemanticZoom(scale, GRAPH_CAMERA);
+    const layout = resolveDependencyGraphLayout({ ...previous.inputs,
+      canvas: graphCanvasBox(), inset: graphFitInset(), tier, scale,
+      nodeHeights: graphState.fullCardHeights,
+      arrangement: search || tier !== previous.tier ? undefined : previous.arrangement,
+    });
+    layout.metrics = cardMetrics;
+    applyReadableLayoutBoxes(layout);
+    if (anchor) {
+      const next = layout.positions.get(selectedNodeId);
+      if (next) {
+        camera.x += (anchor.x - next.x - next.width / 2) * scale;
+        camera.y += (anchor.y - next.y - next.height / 2) * scale;
+      }
+    }
+  }
+
   function edgePortSlot(index, count, span) {
     if (count <= 1) return span / 2;
     const margin = Math.min(42, Math.max(24, span * .18));
@@ -2689,6 +2950,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function edgeGeometry(from, to, ports = {}) {
+    if (ports.orthogonal) return resolveOrthogonalGraphRoute(from, to, ports);
     const sourceIndex = Math.max(0, Number(ports.sourceIndex) || 0);
     const sourceCount = Math.max(1, Number(ports.sourceCount) || 1);
     const targetIndex = Math.max(0, Number(ports.targetIndex) || 0);
@@ -2761,12 +3023,114 @@ const CLIENT_SCRIPT = String.raw`(() => {
     };
   }
 
-  function updateCamera(nextCamera = camera) {
+  /** The layout reserves full cards; ports follow the card currently on screen. */
+  function visibleGraphPositions() {
+    const positions = new Map();
+    for (const [nodeId, position] of graphState.positions) {
+      const card = graphState.nodeElements.get(nodeId);
+      const width = card?.offsetWidth;
+      const height = card?.offsetHeight;
+      positions.set(nodeId, {
+        ...position,
+        width: width > 0 ? width : position.width,
+        height: height > 0 ? height : position.height,
+      });
+    }
+    return positions;
+  }
+
+  function refreshGraphEdgeGeometry() {
+    if (!graphState.edgeRoutes.size && !graphState.rootEntries.size) return;
+    const key = [camera.scale, graph?.dataset.semanticZoom, graph?.clientWidth, graph?.clientHeight, window.innerWidth].join("|");
+    if (graphState.edgeGeometryKey === key) return;
+    const positions = visibleGraphPositions();
+    for (const route of graphState.edgeRoutes.values()) {
+      const from = positions.get(route.from);
+      const to = positions.get(route.to);
+      if (!from || !to) continue;
+      const geometry = edgeGeometry(from, to, { ...route.ports, obstacles: positions });
+      for (const path of route.paths) path.setAttribute("d", geometry.path);
+      route.motion?.setAttribute("path", geometry.path);
+    }
+    for (const [nodeId, entry] of graphState.rootEntries) {
+      const position = positions.get(nodeId);
+      if (!position) continue;
+      setRootEntryGeometry(entry, position);
+    }
+    graphState.edgeGeometryKey = key;
+  }
+
+  /** Coalesce actual card-size changes; CSS LOD changes never rewrite status. */
+  function scheduleGraphCardRefresh({ measureCards = false } = {}) {
+    graphCardMeasurementPending ||= measureCards;
+    if (graphCardRefreshPending) return;
+    graphCardRefreshPending = true;
+    const refresh = () => {
+      graphCardRefreshPending = false;
+      const layout = graphState.layout;
+      const measure = graphCardMeasurementPending;
+      graphCardMeasurementPending = false;
+      if (!layout || !graphState.nodeElements.size) return;
+      if (measure) syncLayoutToRenderedCards(layout);
+      graphState.edgeGeometryKey = null;
+      reconcileCamera();
+    };
+    if (window.requestAnimationFrame) window.requestAnimationFrame(refresh);
+    else refresh();
+  }
+
+  /** Track the rendered border boxes, rather than a viewport-only cache key. */
+  function observeGraphCardSizes() {
+    graphCardResizeObserver?.disconnect();
+    graphState.observedCardSizes = new Map();
+    for (const [id, card] of graphState.nodeElements) {
+      graphState.observedCardSizes.set(id, card.offsetWidth + "|" + card.offsetHeight);
+      graphCardResizeObserver?.observe(card);
+    }
+    graphState.cardViewportWidth = window.innerWidth;
+  }
+
+  function handleGraphCardResize(entries) {
+    let changed = false;
+    let measureCards = false;
+    for (const entry of entries) {
+      const card = entry.target;
+      const id = card.dataset.nodeId;
+      if (graphState.nodeElements.get(id) !== card) continue;
+      const dimensions = card.offsetWidth + "|" + card.offsetHeight;
+      if (graphState.observedCardSizes?.get(id) === dimensions) continue;
+      graphState.observedCardSizes?.set(id, dimensions);
+      changed = true;
+      const reserved = graphState.positions.get(id);
+      if (graph?.dataset.semanticZoom === "card" && reserved
+        && (card.offsetHeight > reserved.height || card.offsetWidth !== reserved.width)) measureCards = true;
+    }
+    if (changed) scheduleGraphCardRefresh({ measureCards });
+  }
+
+  function setRootEntryGeometry(entry, position) {
+    const originX = Math.max(18, position.x - 26);
+    const originY = position.y + Math.min(34, position.height / 3);
+    const targetY = position.y + position.height / 2;
+    const bendX = Math.max(originX + 10, position.x - 18);
+    entry.path.setAttribute("d", "M " + originX + " " + originY + " H " + bendX + " V " + targetY + " H " + position.x);
+    for (const dot of [entry.halo, entry.dot]) {
+      dot.setAttribute("cx", String(originX));
+      dot.setAttribute("cy", String(originY));
+    }
+  }
+
+  function updateCamera(nextCamera = camera, { preserveAnchor = true } = {}) {
+    const previousScale = camera.scale;
     camera = {
       x: Number.isFinite(nextCamera.x) ? nextCamera.x : 0,
       y: Number.isFinite(nextCamera.y) ? nextCamera.y : 0,
       scale: Math.max(GRAPH_CAMERA.minScale, Math.min(GRAPH_CAMERA.maxScale, Number.isFinite(nextCamera.scale) ? nextCamera.scale : 1)),
     };
+    const layout = graphState.layout;
+    const layoutMismatch = layout?.kind === "dependency"
+      && (layout.scale !== camera.scale || layout.tier !== resolveSemanticZoom(camera.scale, GRAPH_CAMERA));
+    if (layoutMismatch) reflowReadableGraph(camera.scale, { preserveAnchor });
     if (graphScene) {
       graphScene.style.transform = "translate(" + camera.x + "px, " + camera.y + "px) scale(" + camera.scale + ")";
     }
@@ -2774,6 +3138,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       graph.dataset.semanticZoom = resolveSemanticZoom(camera.scale, GRAPH_CAMERA);
       graph.style.setProperty("--camera-scale", String(camera.scale));
     }
+    // Cell height changes within its zoom tier as well. Panning leaves it alone
+    // and must not pay for a card measurement or a layout pass.
+    if (camera.scale !== previousScale || layoutMismatch) refreshGraphEdgeGeometry();
     updateMinimap();
   }
 
@@ -3047,6 +3414,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function reconcileCamera({ inspectorOpen = evidencePanel?.dataset.open === "true" } = {}) {
     reclampGraphTools();
     if (!graph || !currentSnapshot) return;
+    const layout = graphState.layout;
+    // Responsive capability grids can change full-card height while cell LOD
+    // stays fixed. Measure that independent budget before the next zoom-in.
+    if (layout && graphState.cardViewportWidth !== window.innerWidth) {
+      graphState.cardViewportWidth = window.innerWidth;
+      syncLayoutToRenderedCards(layout);
+      graphState.edgeGeometryKey = null;
+    }
+    if (layout?.kind === "dependency" && (layout.inputs.canvas.width !== graph.clientWidth || layout.inputs.canvas.height !== graph.clientHeight)) {
+      reflowReadableGraph(camera.scale, { search: true });
+    }
     const lift = resolveInspectorCameraLift(
       { inspectorOpen: inspectorOpen && cameraMode === "follow", scale: camera.scale, liftedFrom: inspectorCameraLiftOrigin },
       GRAPH_CAMERA,
@@ -3055,13 +3433,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (lift.scale !== camera.scale) updateCamera({ ...camera, scale: lift.scale });
     if (cameraMode === "overview") {
       fitGraph();
-      return;
-    }
-    if (cameraMode === "follow") {
+    } else if (cameraMode === "follow") {
       centerGraphNode(followTargetId());
-      return;
+    } else {
+      // A resize reflow may have compensated x/y to preserve the selection.
+      // Write that camera through the existing path; unchanged scale cannot
+      // trigger another reflow, and the next pan starts from the rendered state.
+      updateCamera(camera);
     }
-    updateMinimap();
+    refreshGraphEdgeGeometry();
   }
 
   function modalBackgroundElements() {
@@ -3151,8 +3531,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const graphWidth = Math.max(1, graph?.clientWidth || 760);
     const graphHeight = Math.max(1, graph?.clientHeight || 420);
     const overflowing = graphState.bounds.width > graphWidth * 1.05 || graphState.bounds.height > graphHeight * 1.05;
-    graphMinimap.hidden = !overflowing;
-    if (!overflowing) return;
+    graphMinimap.hidden = !overflowing || !minimapExpanded;
+    if (!overflowing || !minimapExpanded) return;
     const miniWidth = Math.max(1, graphMinimap.clientWidth || 180);
     const miniHeight = Math.max(1, graphMinimap.clientHeight || 100);
     const miniScale = Math.min((miniWidth - 12) / Math.max(1, graphState.bounds.width), (miniHeight - 12) / Math.max(1, graphState.bounds.height));
@@ -3198,8 +3578,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function fitGraph() {
     if (!graph || !graphState.bounds.width) return;
     const canvas = { width: graph.clientWidth || 760, height: graph.clientHeight || 420 };
-    const fit = resolveOverviewCamera(canvas, graphState.bounds, graphFitInset(), GRAPH_CAMERA);
-    updateCamera({ scale: fit.scale, x: fit.x, y: fit.y });
+    if (graphState.layout?.kind === "dependency") reflowReadableGraph(GRAPH_CAMERA.minScale, { search: true, preserveAnchor: false });
+    let fit = resolveOverviewCamera(canvas, graphState.bounds, graphFitInset(), GRAPH_CAMERA);
+    // Screen-sized cells and world-space scene bounds are coupled. This bounded
+    // arithmetic refinement does no measurement and cannot cause a layout loop.
+    if (graphState.layout?.kind === "dependency") {
+      for (let pass = 0; pass < 3; pass += 1) {
+        reflowReadableGraph(fit.scale, { preserveAnchor: false });
+        const next = resolveOverviewCamera(canvas, graphState.bounds, graphFitInset(), GRAPH_CAMERA);
+        if (Math.abs(next.scale - fit.scale) < 0.0001) { fit = next; break; }
+        fit = next;
+      }
+    }
+    updateCamera({ scale: fit.scale, x: fit.x, y: fit.y }, { preserveAnchor: false });
     setCameraMode("overview", fit.wholeGraphFits);
   }
 
@@ -3214,6 +3605,24 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setCameraMode("manual");
   }
 
+  function updateSelectedNodeRelations(visibleNodeIds = null) {
+    if (!selectedNodeRelations) return;
+    const snapshot = currentSnapshot;
+    const selected = snapshot?.nodes.find((node) => node.id === selectedNodeId);
+    const visible = visibleNodeIds || new Set(resolveReplayNodeView({
+      nodes: snapshot?.nodes || [], edges: snapshot?.edges || [], events: snapshot?.replay || [],
+      cursorIndex: currentReplayIndex, structuralEdgeKinds: Array.from(STRUCTURAL_EDGE_KINDS),
+    }).visibleNodeIds);
+    const byId = new Map((snapshot?.nodes || []).map((node) => [node.id, node]));
+    const relations = selected ? snapshot.edges.filter((edge) => (edge.from === selected.id || edge.to === selected.id)
+      && visible.has(edge.from) && visible.has(edge.to)) : [];
+    selectedNodeRelations.textContent = relations.map((edge) => {
+      const other = edge.from === selected.id ? edge.to : edge.from;
+      const label = byId.has(other) ? graphNodeReadingLabel(byId.get(other)) : other;
+      return (edge.from === selected.id ? "→ " : "← ") + label + " (" + edge.kind + ")";
+    }).join(" · ");
+  }
+
   function updateSelectedNodeVisuals() {
     const selected = currentSnapshot?.nodes.find((node) => node.id === selectedNodeId) || null;
     for (const [id, card] of graphState.nodeElements.entries()) {
@@ -3223,6 +3632,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (active) identityButton?.setAttribute("aria-current", "true");
       else identityButton?.removeAttribute("aria-current");
     }
+    updateGraphRelationPresentation();
+    updateSelectedNodeRelations();
     const linked = selected
       ? currentSnapshot.evidence.filter((item) => item.nodeId === selected.id)
       : [];
@@ -3268,6 +3679,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(selectedNodeProvenance, labeledFact("Source", selected ? (provenance?.reasoningExcerpt || (selected.parentId ? "spawned by " + selected.parentId : "run root")) : ""));
     setText(selectedNodePrompt, labeledFact("Prompt era", selected && activePrompt ? activePrompt.label + " · " + activePrompt.excerpt : ""));
     renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents });
+    clearChildren(inspectorDeliverablesHost);
+    appendLiveDeliverables(inspectorDeliverablesHost, currentSnapshot, selected);
+    renderLocalFeedback(inspectorFeedbackHost, currentSnapshot, selected, "inspector");
   }
 
   function renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents }) {
@@ -3404,6 +3818,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function selectNode(nodeId, { focus = false, inspectorTab = null } = {}) {
     if (!currentSnapshot || !currentSnapshot.nodes.some((node) => node.id === nodeId)) return;
     selectedNodeId = nodeId;
+    relationFocusActive = true;
     if (INSPECTOR_TABS.includes(inspectorTab)) currentInspectorTab = inspectorTab;
     updateSelectedNodeVisuals();
     setInspectorOpen(true);
@@ -3457,6 +3872,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function renderGraph(snapshot) {
     const graphNodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, graphNodes);
+    const relationPlan = classifyGraphRelations(graphNodes, graphEdges, EXECUTION_EDGE_KINDS);
     const graphNodeById = new Map(graphNodes.map((node) => [node.id, node]));
     // Wave membership is read from the projection, never inferred from graph
     // shape. The page cannot observe scheduling order, so a node the projection
@@ -3474,14 +3890,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
     clearChildren(graphMinimapScene);
     if (!graphNodes.length) {
       if (graphEmpty) showGraphEmpty(graphEmptyReason(snapshot));
-      graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), bounds: { width: 1, height: 1 } };
+      graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), edgeRoutes: new Map(), rootEntries: new Map(), bounds: { width: 1, height: 1 } };
+      graphState.relationPlan = relationPlan;
+      updateGraphRelationControls(relationPlan);
       return;
     }
     if (graphEmpty) graphEmpty.hidden = true;
 
     let layout = layoutGraph(snapshot);
-    graphState = { positions: layout.positions, nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), bounds: layout.bounds };
+    graphState = { positions: layout.positions, nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), edgeRoutes: new Map(), rootEntries: new Map(), bounds: layout.bounds, layout, relationPlan };
     if (graph) graph.dataset.layoutKind = layout.kind || "layered";
+    updateGraphRelationControls(relationPlan);
     if (graphScene) {
       graphScene.style.width = layout.bounds.width + "px";
       graphScene.style.height = layout.bounds.height + "px";
@@ -3514,6 +3933,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       card.dataset.nodeId = node.id;
       card.dataset.status = node.status;
       card.dataset.displayState = publicState;
+      card.dataset.executionState = node.executionState || "unreported";
       card.dataset.replayStatus = node.status;
       card.dataset.selected = "false";
       // Declared but never invoked: the packet exists, no trusted host
@@ -3521,7 +3941,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       // state visually separate from both running and completed work while the
       // node stays on screen as queued.
       if (node.declaredNotStarted === true) card.dataset.declaredNotStarted = "true";
-      card.title = taskLine || node.label;
+      card.title = node.label + (taskLine && taskLine !== node.label ? " · " + taskLine : "");
       card.setAttribute("role", "listitem");
       const position = layout.positions.get(node.id) || { x: 32, y: 32, width: 132, height: 76 };
       card.style.left = position.x + "px";
@@ -3531,7 +3951,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const top = makeElement("div", "node-card-top");
       const marker = makeElement("span", "node-marker");
       marker.setAttribute("aria-hidden", "true");
-      top.append(marker, makeElement("span", "node-status", nodeStateCopy(node)));
+      const statusCopy = nodeStateCopy(node);
+      const shortState = nodeShortStateCopy(node);
+      top.append(marker, makeElement("span", "node-status", statusCopy), makeElement("span", "node-state-short", shortState));
+      top.title = statusCopy;
       if (node.declaredNotStarted === true) {
         const declaredChip = makeElement("span", "node-declared-chip",
           currentLanguage === "zh" ? "声明未执行" : "declared, not started");
@@ -3556,7 +3979,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
         card.dataset.waveIndex = String(nodeWave.waveIndex);
         top.append(waveBadge);
       }
-      const heading = makeElement("span", "node-title", node.label);
+      const heading = makeElement("span", "node-title", graphNodeReadingLabel(node));
+      heading.title = node.label;
       const summary = makeElement("span", "node-summary", node.summary);
       const identity = makeElement("button", "node-identity-row node-identity-button");
       identity.type = "button";
@@ -3729,12 +4153,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const outgoingEdges = new Map();
     const incomingEdges = new Map();
     for (const edge of graphEdges) {
-      const outgoing = outgoingEdges.get(edge.from) || [];
+      const family = EXECUTION_EDGE_KINDS.has(edge.kind || "sequence") ? "execution" : "other";
+      const outgoing = outgoingEdges.get(edge.from + "|" + family) || [];
       outgoing.push(edge);
-      outgoingEdges.set(edge.from, outgoing);
-      const incoming = incomingEdges.get(edge.to) || [];
+      outgoingEdges.set(edge.from + "|" + family, outgoing);
+      const incoming = incomingEdges.get(edge.to + "|" + family) || [];
       incoming.push(edge);
-      incomingEdges.set(edge.to, incoming);
+      incomingEdges.set(edge.to + "|" + family, incoming);
     }
     const sortEdgesByOtherEndpoint = (edges, endpoint) => edges.sort((left, right) => {
       const leftPosition = layout.positions.get(left[endpoint]) || { x: 0, y: 0 };
@@ -3745,31 +4170,42 @@ const CLIENT_SCRIPT = String.raw`(() => {
     incomingEdges.forEach((edges) => sortEdgesByOtherEndpoint(edges, "from"));
 
     for (const edge of graphEdges) {
-      const from = layout.positions.get(edge.from);
-      const to = layout.positions.get(edge.to);
+      // Keep routes registered for collapsed ownership. Revealing that layer
+      // reuses these elements and refreshes them from the newly visible boxes.
+      const from = layout.positions.get(edge.from) || (layout.kind === "dependency" ? { x: 0, y: 0, width: 1, height: 1 } : null);
+      const to = layout.positions.get(edge.to) || (layout.kind === "dependency" ? { x: 0, y: 0, width: 1, height: 1 } : null);
       if (!from || !to || !edgeLayer) continue;
-      const outgoing = outgoingEdges.get(edge.from) || [edge];
-      const incoming = incomingEdges.get(edge.to) || [edge];
-      const geometry = edgeGeometry(from, to, {
+      const family = EXECUTION_EDGE_KINDS.has(edge.kind || "sequence") ? "execution" : "other";
+      const outgoing = outgoingEdges.get(edge.from + "|" + family) || [edge];
+      const incoming = incomingEdges.get(edge.to + "|" + family) || [edge];
+      const ports = {
         sourceIndex: Math.max(0, outgoing.indexOf(edge)),
         sourceCount: outgoing.length,
         targetIndex: Math.max(0, incoming.indexOf(edge)),
         targetCount: incoming.length,
         layoutKind: layout.kind,
-      });
+        orthogonal: layout.kind === "dependency",
+        obstacles: layout.positions,
+        routeIndex: graphEdges.indexOf(edge),
+        routeCount: graphEdges.length,
+      };
+      const geometry = edgeGeometry(from, to, ports);
       const executionRelation = EXECUTION_EDGE_KINDS.has(edge.kind || "sequence");
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", geometry.path);
       path.setAttribute("class", "edge edge-" + (executionRelation ? nodeClass(edge.status) : "structural"));
       path.setAttribute("data-edge-id", edge.id);
       path.dataset.edgeKind = edge.kind || "sequence";
+      const relationTitle = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      relationTitle.textContent = (edge.kind || "sequence") + " · " + edge.from + " → " + edge.to;
+      path.append(relationTitle);
       const targetNode = graphNodeById.get(edge.to);
       const targetState = nodeDisplayState(targetNode);
       const targetTerminal = ["completed", "failed", "blocked", "cancelled", "skipped"].includes(nodeDisplayState(targetNode));
       const stageFocusState = executionRelation && snapshot.run?.active && !terminalRun && !targetTerminal && targetState === "active" ? "live" : "none";
       path.dataset.stageFocus = stageFocusState;
       path.dataset.liveFocus = stageFocusState;
-      path.setAttribute("marker-end", "url(#" + edgeMarkerId(executionRelation ? (stageFocusState === "none" ? edge.status : "stage-" + stageFocusState) : "queued") + ")");
+      if (executionRelation) path.setAttribute("marker-end", "url(#" + edgeMarkerId(stageFocusState === "none" ? edge.status : "stage-" + stageFocusState) + ")");
       path.setAttribute("vector-effect", "non-scaling-stroke");
       const effectGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
       effectGroup.setAttribute("class", "edge-effects");
@@ -3786,12 +4222,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
       tracer.dataset.stageFocus = stageFocusState;
       tracer.setAttribute("vector-effect", "non-scaling-stroke");
       effectGroup.append(glow, tracer);
+      let motion = null;
       if (stageFocusState !== "none" && !reducedMotion.matches) {
         const particle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         particle.setAttribute("r", stageFocusState === "live" ? "4" : "3.5");
         particle.setAttribute("class", "edge-flow-particle");
         particle.dataset.stageFocus = stageFocusState;
-        const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
+        motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
         motion.setAttribute("dur", stageFocusState === "live" ? "1.35s" : "1.8s");
         motion.setAttribute("repeatCount", "indefinite");
         motion.setAttribute("path", geometry.path);
@@ -3801,40 +4238,38 @@ const CLIENT_SCRIPT = String.raw`(() => {
       edgeLayer.append(path, effectGroup);
       graphState.edgeElements.set(edge.id, path);
       graphState.edgeEffects.set(edge.id, effectGroup);
+      graphState.edgeRoutes.set(edge.id, { edge, from: edge.from, to: edge.to, ports, paths: [path, glow, tracer], motion });
     }
 
     if (edgeLayer) {
-      const childIds = new Set(graphEdges.map((edge) => edge.to));
-      for (const rootNode of graphNodes.filter((node) => !childIds.has(node.id))) {
+      const rootEdges = relationPlan.executionEdges.length ? relationPlan.executionEdges : graphEdges;
+      const childIds = new Set(rootEdges.map((edge) => edge.to));
+      const rootNodes = relationPlan.executionEdges.length ? relationPlan.executionNodes : graphNodes;
+      for (const rootNode of rootNodes.filter((node) => !childIds.has(node.id))) {
         const position = layout.positions.get(rootNode.id);
         if (!position) continue;
-        const originX = Math.max(18, position.x - 54);
-        const originY = position.y + Math.min(34, position.height / 3);
-        const targetY = position.y + position.height / 2;
-        const bendX = Math.max(originX + 10, position.x - 18);
         const rootPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        rootPath.setAttribute("d", "M " + originX + " " + originY + " H " + bendX + " V " + targetY + " H " + position.x);
         rootPath.setAttribute("class", "root-entry-path");
         rootPath.setAttribute("vector-effect", "non-scaling-stroke");
         const rootHalo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        rootHalo.setAttribute("cx", String(originX));
-        rootHalo.setAttribute("cy", String(originY));
         rootHalo.setAttribute("r", "18");
         rootHalo.setAttribute("class", "root-entry-halo");
         const rootDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        rootDot.setAttribute("cx", String(originX));
-        rootDot.setAttribute("cy", String(originY));
         rootDot.setAttribute("r", "6");
         rootDot.setAttribute("class", "root-entry-dot");
         edgeLayer.append(rootPath, rootHalo, rootDot);
+        const entry = { path: rootPath, halo: rootHalo, dot: rootDot };
+        setRootEntryGeometry(entry, position);
+        graphState.rootEntries.set(rootNode.id, entry);
       }
     }
 
     for (const node of graphNodes) {
-      const position = layout.positions.get(node.id);
+      const position = layout.positions.get(node.id) || (layout.kind === "dependency" ? { x: 0, y: 0, width: 1, height: 1 } : null);
       if (!position || !graphMinimapScene) continue;
       const miniNode = makeElement("span", "minimap-node minimap-node-" + nodeClass(node.status));
       miniNode.dataset.nodeId = node.id;
+      miniNode.hidden = !layout.positions.has(node.id);
       miniNode.style.left = position.x + "px";
       miniNode.style.top = position.y + "px";
       miniNode.style.width = position.width + "px";
@@ -3842,7 +4277,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       graphMinimapScene.append(miniNode);
     }
     updateCamera(camera);
+    refreshGraphEdgeGeometry();
+    updateGraphRelationPresentation();
     updateSelectedNodeVisuals();
+    observeGraphCardSizes();
   }
 
   function renderStageRail(snapshot) {
@@ -3881,7 +4319,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     STAGE_ORDER.forEach((stageName, index) => {
       const stageEvents = events.filter((event) => String(event.stage || event.chapter || "").toLowerCase() === stageName);
       const latest = stageEvents.at(-1);
-      const state = currentIndex >= 0
+      const state = isPlanningSnapshot(snapshot) ? "planned"
+        : snapshot.run?.stageProgressEvidence === "native_execution_only" ? stageName === "execution" ? "observed" : "unproven"
+        : currentIndex >= 0
         ? index < currentIndex || (index === currentIndex && terminalRun) ? "completed" : index === currentIndex ? "current" : "upcoming"
         : latest?.status === "completed" ? "completed" : "upcoming";
       const item = makeElement("li", "stage-step");
@@ -3893,14 +4333,21 @@ const CLIENT_SCRIPT = String.raw`(() => {
         makeElement("span", "stage-step-copy"),
       );
       const copy = item.lastElementChild;
-      copy.append(makeElement("span", "stage-step-name", localize(stageName)), makeElement("span", "stage-step-state", localize(state)));
+      copy.append(makeElement("span", "stage-step-name", localize(stageName)), makeElement("span", "stage-step-state", state === "planned"
+        ? (currentLanguage === "zh" ? "规划步骤" : "Planned step")
+        : state === "observed" ? (currentLanguage === "zh" ? "已观察执行" : "Execution observed")
+        : state === "unproven" ? (currentLanguage === "zh" ? "未记录" : "Not recorded") : localize(state)));
       stageRail.append(item);
     });
   }
 
   function renderEvidence(snapshot) {
     clearChildren(evidenceList);
-    setText(evidenceCount, String(snapshot.evidence.length).padStart(2, "0"), "00");
+    setText(evidenceCount, String(executionEvidenceCount(snapshot)).padStart(2, "0"), "00");
+    const plannedCount = snapshot.evidence.filter(isPlanningEvidence).length;
+    if (plannedCount) evidenceList.append(makeElement("p", "panel-empty", currentLanguage === "zh"
+      ? "以下 " + plannedCount + " 条为规划占位，尚未执行，不计入执行证据。"
+      : plannedCount + " planning placeholders below have not run and do not count as execution evidence."));
     if (!snapshot.evidence.length) {
       const empty = makeElement("p", "panel-empty", "No evidence has been observed yet.");
       evidenceList.append(empty);
@@ -3915,9 +4362,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
       entry.setAttribute("aria-label", localize(item.label + " evidence"));
       entry.tabIndex = 0;
       const top = makeElement("div", "evidence-item-top");
-      top.append(makeElement("span", "evidence-kind", item.label));
+      top.append(makeElement("span", "evidence-kind", isPlanningEvidence(item)
+        ? (currentLanguage === "zh" ? "规划占位" : "Planning placeholder") : item.label));
       appendObservedTime(top, item.at);
-      const detail = makeElement("p", "evidence-detail", item.detail);
+      const detail = makeElement("p", "evidence-detail", isPlanningEvidence(item)
+        ? (currentLanguage === "zh" ? "仅声明待执行检查，尚无实际执行结果。" : "A check was declared; no actual execution result is recorded.") : item.detail);
       const status = makeElement("span", "evidence-status evidence-status-" + item.status.toLowerCase().replace(/[^a-z0-9_-]/gu, "-"), item.status);
       entry.append(top, detail, status);
       entry.addEventListener("click", () => selectNode(item.nodeId));
@@ -4134,7 +4583,165 @@ const CLIENT_SCRIPT = String.raw`(() => {
     parent?.append(row);
   }
 
+  /** Open only the same-origin read-only route; the server resolves the file. */
+  function deliverableOpenHref(item) {
+    const params = new URLSearchParams({ runId: item.runId, deliverableId: item.id });
+    if (selectedProjectId) params.set("projectId", selectedProjectId);
+    return "/api/deliverable?" + params.toString();
+  }
+
+  function appendLiveDeliverables(parent, snapshot, selected) {
+    if (!snapshot?.run) return;
+    const deliverables = liveDeliverablesForNode(snapshot.deliverables, selected);
+    for (const item of deliverables) {
+      const row = makeElement("article", "live-deliverable");
+      row.dataset.deliverableId = item.id;
+      const link = makeElement("a", "live-deliverable-link", (currentLanguage === "zh" ? "打开成品 · " : "Open result · ") + item.label);
+      link.href = deliverableOpenHref(item);
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      row.append(link, makeElement("span", "panel-note", item.availability === "available"
+        ? currentLanguage === "zh" ? "有产出内容 · 仍需核对结果" : "Output present · review still needed"
+        : currentLanguage === "zh" ? "已声明路径 · 打开时核对是否可用" : "Declared reference · availability checked when opened"));
+      parent?.append(row);
+    }
+    if (!deliverables.length) parent?.append(makeElement("p", "panel-empty", currentLanguage === "zh"
+      ? "尚未保存可打开的成品；执行日志和验证证据仍可在下方核对。"
+      : "No openable result was saved; inspect execution and verification evidence below."));
+    parent?.append(makeElement("p", "panel-note", currentLanguage === "zh"
+      ? "已完成表示任务验证通过；执行回合结束仍需验证。它不代表用户已验收，缺证记录不会补成完成。"
+      : "Completed means task verification passed. A finished execution still needs verification; neither means user acceptance, and missing evidence stays missing."));
+  }
+
+  /** Reuse the same form across snapshot paints so live updates do not eat input. */
+  function renderLocalFeedback(host, snapshot, selected, surface) {
+    if (!host || !snapshot?.run) return;
+    let view = localFeedbackSurfaces.get(surface);
+    if (!view) {
+      const root = makeElement("section", "workspace-detail-section local-feedback");
+      root.dataset.localFeedback = surface;
+      const heading = makeElement("h3");
+      const contextCopy = makeElement("p", "panel-note");
+      const targetLabel = makeElement("label", "local-feedback-label");
+      const targetCopy = makeElement("span");
+      const target = makeElement("select", "local-feedback-target");
+      targetLabel.append(targetCopy, target);
+      const rawLabel = makeElement("label", "local-feedback-label");
+      const rawCopy = makeElement("span");
+      const raw = makeElement("textarea", "local-feedback-original");
+      raw.rows = 3;
+      rawLabel.append(rawCopy, raw);
+      const prepare = makeElement("button", "topbar-button");
+      prepare.type = "button";
+      const preparedLabel = makeElement("label", "local-feedback-label");
+      const preparedCopy = makeElement("span");
+      const prepared = makeElement("textarea", "local-feedback-prepared");
+      prepared.rows = 6;
+      preparedLabel.append(preparedCopy, prepared);
+      const copy = makeElement("button", "topbar-button");
+      copy.type = "button";
+      const notice = makeElement("p", "panel-note");
+      notice.setAttribute("role", "status");
+      root.append(heading, contextCopy, targetLabel, rawLabel, prepare, preparedLabel, copy, notice);
+      view = { root, heading, contextCopy, targetCopy, target, rawCopy, raw, prepare, preparedCopy, prepared, copy, notice };
+      localFeedbackSurfaces.set(surface, view);
+      target.addEventListener("change", () => {
+        localFeedbackDrafts.select(view.base, target.value);
+        renderLocalFeedback(host, view.snapshot, view.selected, surface);
+      });
+      raw.addEventListener("input", () => {
+        const draft = localFeedbackDrafts.get(view.context);
+        draft.original = raw.value;
+        draft.prepared = "";
+        prepared.value = "";
+        prepare.disabled = !raw.value.trim();
+        copy.disabled = true;
+        notice.textContent = view.idleNotice;
+      });
+      prepared.addEventListener("input", () => {
+        localFeedbackDrafts.get(view.context).prepared = prepared.value;
+        copy.disabled = !prepared.value.trim();
+      });
+      prepare.addEventListener("click", () => {
+        const draft = localFeedbackDrafts.get(view.context);
+        draft.prepared = buildLocalFeedbackText(view.context, draft.original, currentLanguage);
+        prepared.value = draft.prepared;
+        copy.disabled = !draft.prepared.trim();
+        notice.textContent = view.idleNotice;
+      });
+      copy.addEventListener("click", async () => {
+        const draft = localFeedbackDrafts.get(view.context);
+        const contextKey = localFeedbackDrafts.key(view.context);
+        const value = draft.prepared;
+        try {
+          if (!value.trim() || !navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+          await navigator.clipboard.writeText(value);
+          if (localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
+          notice.textContent = currentLanguage === "zh" ? "已复制反馈；粘贴到当前 Codex 对话后继续修订。" : "Feedback copied; paste into the current Codex conversation to continue revising.";
+        } catch {
+          if (localFeedbackDrafts.key(view.context) !== contextKey) return;
+          notice.textContent = currentLanguage === "zh" ? "剪贴板不可用；请选中上方反馈文本手动复制。" : "Clipboard unavailable; select and copy the feedback text above.";
+        }
+      });
+    }
+    view.snapshot = snapshot;
+    view.selected = selected;
+    const base = { projectId: selectedProjectId || "", runId: snapshot.run.id, nodeId: selected?.id || "", nodeLabel: selected?.label || "" };
+    const choices = [
+      ...liveDeliverablesForNode(snapshot.deliverables, selected).map((item) => ({ value: "deliverable:" + item.id, label: item.label, deliverableId: item.id, deliverableLabel: item.label })),
+      ...(selected ? snapshot.evidence.filter((item) => item.nodeId === selected.id) : snapshot.evidence).map((item) => ({ value: "evidence:" + item.id, label: item.label, evidenceId: item.id, sourceRef: item.sourceRef })),
+    ];
+    const selection = localFeedbackDrafts.selected(base);
+    if (selection && !choices.some((item) => item.value === selection)) {
+      const isDeliverable = selection.startsWith("deliverable:");
+      choices.push({ value: selection, label: currentLanguage === "zh" ? "原引用（本次快照未包含）" : "Previous reference (absent from this snapshot)",
+        ...(isDeliverable ? { deliverableId: selection.slice(12) } : { evidenceId: selection.slice(9) }) });
+    }
+    const context = { ...base, ...(choices.find((item) => item.value === selection) || {}) };
+    const selectionKey = JSON.stringify([base, choices, currentLanguage]);
+    if (view.selectionKey !== selectionKey) {
+      clearChildren(view.target);
+      const option = makeElement("option", "", currentLanguage === "zh" ? "当前工作，未指定成品或证据" : "Current work, no result or evidence selected");
+      option.value = "";
+      view.target.append(option);
+      for (const item of choices) {
+        const option = makeElement("option", "", item.label + " · " + item.value);
+        option.value = item.value;
+        view.target.append(option);
+      }
+      view.target.value = selection;
+      view.selectionKey = selectionKey;
+    }
+    view.base = base;
+    view.context = context;
+    const draft = localFeedbackDrafts.get(context);
+    if (view.raw.value !== draft.original) view.raw.value = draft.original;
+    if (view.prepared.value !== draft.prepared) view.prepared.value = draft.prepared;
+    view.heading.textContent = currentLanguage === "zh" ? "局部反馈" : "Feedback on this result";
+    view.contextCopy.textContent = (selected?.label || snapshot.run.title) + " · " + base.runId + (base.nodeId ? " · " + base.nodeId : "");
+    view.targetCopy.textContent = currentLanguage === "zh" ? "反馈对应的成品或证据" : "Result or evidence being reviewed";
+    view.rawCopy.textContent = currentLanguage === "zh" ? "你的反馈原话" : "Your feedback, verbatim";
+    view.prepare.textContent = currentLanguage === "zh" ? "整理反馈文本" : "Prepare feedback text";
+    view.preparedCopy.textContent = currentLanguage === "zh" ? "可编辑的反馈文本" : "Editable feedback text";
+    view.copy.textContent = currentLanguage === "zh" ? "复制反馈" : "Copy feedback";
+    view.prepare.disabled = !draft.original.trim();
+    view.copy.disabled = !draft.prepared.trim();
+    view.idleNotice = currentLanguage === "zh"
+      ? "草稿仅保留在本页面。复制反馈，粘贴到当前 Codex 对话后继续修订。"
+      : "Drafts stay in this page. Copy feedback, then paste into the current Codex conversation to continue revising.";
+    if (view.lastContextKey !== localFeedbackDrafts.key(context)) view.notice.textContent = view.idleNotice;
+    view.lastContextKey = localFeedbackDrafts.key(context);
+    if (view.root.parentNode !== host) host.append(view.root);
+  }
+
   function renderWorkspaceDetail(snapshot) {
+    // Preserve a focused feedback form while the surrounding live facts repaint.
+    const feedback = localFeedbackSurfaces.get("workspace")?.root;
+    const activeFeedback = feedback?.contains(document.activeElement) ? document.activeElement : null;
+    const feedbackSelection = activeFeedback && typeof activeFeedback.selectionStart === "number"
+      ? [activeFeedback.selectionStart, activeFeedback.selectionEnd] : null;
+    const previousFeedbackContext = localFeedbackSurfaces.get("workspace")?.lastContextKey;
+    if (feedback?.parentNode === workspaceDetail) feedback.remove();
     clearChildren(workspaceDetail);
     const selected = snapshot.nodes.find((node) => node.id === selectedNodeId) || null;
     const hero = makeElement("section", "workspace-detail-hero");
@@ -4183,6 +4790,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const outputSection = makeElement("section", "workspace-detail-section");
     outputSection.append(makeElement("h3", "", currentLanguage === "zh" ? "产出与证据" : "Outputs and evidence"));
     const outputs = makeElement("div", "workspace-detail-list");
+    appendLiveDeliverables(outputs, snapshot, selected);
     if (snapshot.repository.diff?.state === "observed") appendWorkspaceDetailRow(outputs, currentLanguage === "zh" ? "代码变更" : "Changes", snapshot.repository.diff.summary);
     // The projection may omit the kind while still carrying a row label.
     // Preferring the kind and falling back to the label keeps a real name in the
@@ -4195,6 +4803,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!outputs.children.length) outputs.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "尚未关联交付物或验证证据。" : "No deliverable or verification evidence is linked yet."));
     outputSection.append(outputs);
     workspaceDetail?.append(outputSection);
+    renderLocalFeedback(workspaceDetail, snapshot, selected, "workspace");
+    if (activeFeedback && previousFeedbackContext === localFeedbackSurfaces.get("workspace")?.lastContextKey) {
+      activeFeedback.focus({ preventScroll: true });
+      if (feedbackSelection) activeFeedback.setSelectionRange(...feedbackSelection);
+    }
 
     if (!snapshot.nodes.length || (!snapshot.replay.length && !snapshot.evidence.length)) {
       workspaceDetail?.append(makeElement("p", "workspace-telemetry-warning", currentLanguage === "zh"
@@ -4593,8 +5206,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
         : replayFocus === "recorded"
           ? "stage-recorded"
           : replayState;
-      path.setAttribute("marker-end", "url(#" + edgeMarkerId(stageMarkerState) + ")");
+      if (executionRelation) path.setAttribute("marker-end", "url(#" + edgeMarkerId(stageMarkerState) + ")");
+      else path.removeAttribute("marker-end");
     }
+    updateGraphRelationPresentation();
+    updateSelectedNodeRelations(visibleNodeIds);
   }
 
   function stopReplay() {
@@ -5409,6 +6025,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const hadOpenDialog = Boolean(activeDialog);
       event.preventDefault();
       closeTransientUi();
+      if (relationFocusActive && !hadOpenDialog) {
+        relationFocusActive = false;
+        updateGraphRelationPresentation();
+        return;
+      }
       selectedNodeId = null;
       updateSelectedNodeVisuals();
       setInspectorOpen(false);
@@ -5493,6 +6114,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
   bindRovingTabs(inspectorTabs, INSPECTOR_TABS, setInspectorTab);
 
   app.querySelector("[data-live-graph-fit]")?.addEventListener("click", fitGraph);
+  graphRelationButtons.forEach((button) => button.addEventListener("click", () => setGraphRelationMode(button.dataset.liveGraphRelations)));
+  app.querySelector("[data-live-graph-map]")?.addEventListener("click", (event) => {
+    minimapExpanded = !minimapExpanded;
+    event.currentTarget.setAttribute("aria-pressed", String(minimapExpanded));
+    updateMinimap();
+    if (cameraMode === "overview") fitGraph();
+  });
   app.querySelector("[data-live-graph-zoom-in]")?.addEventListener("click", () => zoomGraph(GRAPH_CAMERA.zoomInFactor));
   app.querySelector("[data-live-graph-zoom-out]")?.addEventListener("click", () => zoomGraph(GRAPH_CAMERA.zoomOutFactor));
   app.querySelector("[data-live-graph-layout]")?.addEventListener("click", () => {
@@ -5506,6 +6134,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const target = event.target;
     if (graphToolsDrag) return;
     if (target?.closest?.("[data-node-id], button, .graph-canvas-tools")) return;
+    relationFocusActive = false;
+    updateGraphRelationPresentation();
     pointerPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, cameraX: camera.x, cameraY: camera.y };
     setCameraMode("manual");
     graph.setPointerCapture?.(event.pointerId);
@@ -5655,6 +6285,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const graphResizeObserver = new ResizeObserver(() => reconcileCamera());
     graphResizeObserver.observe(graph);
     window.addEventListener("beforeunload", () => graphResizeObserver.disconnect(), { once: true });
+  }
+  if (window.ResizeObserver) {
+    graphCardResizeObserver = new ResizeObserver(handleGraphCardResize);
+    window.addEventListener("beforeunload", () => graphCardResizeObserver.disconnect(), { once: true });
   }
   // The axis label count depends on the band's own width, which changes when the
   // drawer is disclosed as well as when the window resizes. Observing the band
@@ -5858,6 +6492,18 @@ button { color: inherit; }
 .workspace-detail-section { padding: var(--sp-default) var(--sp-default); border-bottom: 1px solid var(--line); }
 .workspace-detail-section h3 { margin: 0 0 var(--sp-cozy); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; letter-spacing: .05em; }
 .workspace-detail-list { display: grid; gap: var(--sp-snug); }
+.local-feedback { display: grid; gap: var(--sp-cozy); }
+.local-feedback-label { display: grid; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-label); }
+.local-feedback textarea, .local-feedback select { width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-cozy); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--text); background: #0e151f; font: inherit; line-height: var(--lh-normal); }
+.local-feedback textarea { resize: vertical; }
+.local-feedback button { justify-self: start; }
+.local-feedback button:disabled { opacity: .45; cursor: default; }
+.local-feedback .panel-note { margin: 0; overflow-wrap: anywhere; }
+.live-deliverable { display: grid; gap: var(--sp-snug); min-width: 0; }
+.live-deliverable-link { color: var(--accent); overflow-wrap: anywhere; font-size: var(--fs-entity-body); }
+.node-card[data-display-state="in_doubt"][data-execution-state="executed"] { border-color: rgba(216,168,78,.6); border-left-color: var(--amber); }
+.node-card[data-display-state="in_doubt"][data-execution-state="executed"] .node-card-top { color: var(--amber); }
+.graph-canvas[data-semantic-zoom="cell"] .node-card[data-display-state="in_doubt"][data-execution-state="executed"] { border-color: rgba(216,168,78,.6); border-left-color: var(--amber); background: linear-gradient(135deg, rgba(216,168,78,.12), #171d29 62%); }
 .workspace-detail-row { display: grid; grid-template-columns: 74px minmax(0,1fr); gap: var(--sp-cozy); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
 .workspace-detail-row[data-unlabelled="true"] { grid-template-columns: minmax(0,1fr); }
 .workspace-detail-row strong { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-weight: 600; }
@@ -5871,7 +6517,15 @@ button { color: inherit; }
 .workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 420px); }
 .graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto var(--h-status-bar); border: 0; background: var(--ink); overflow: hidden; }
 .graph-stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.graph-stage-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-roomy); min-height: 40px; padding: var(--sp-cozy) var(--sp-default); border-bottom: 1px solid var(--line-soft); background: #0e141e; }
+.graph-stage-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-snug); min-height: 40px; padding: var(--sp-cozy) var(--sp-default); border-bottom: 1px solid var(--line-soft); background: #0e141e; }
+.graph-relation-controls { display: inline-flex; flex: 0 0 auto; gap: var(--sp-snug); padding: var(--sp-hairline); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.graph-relation-controls button { min-height: 28px; padding: 0 var(--sp-cozy); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: var(--fs-label); cursor: pointer; }
+.graph-relation-controls button[aria-pressed="true"] { color: var(--accent); background: rgba(88,212,207,.1); }
+.graph-relation-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.graph-relation-summary { flex: 1 1 170px; min-width: 0; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-snug); }
+.graph-legend-details { order: 5; flex: 0 1 auto; color: var(--muted); font-size: var(--fs-label); }
+.graph-legend-details summary { cursor: pointer; }
+.graph-legend-details[open] { flex-basis: 100%; }
 .graph-canvas-title { display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--sp-cozy); color: var(--text); font-size: var(--fs-view-title); font-weight: 720; white-space: nowrap; }
 .graph-canvas-title .ui-icon { width: 1.05rem; height: 1.05rem; color: var(--muted); }
 .graph-edge-legend { order: 3; flex-basis: 100%; min-width: 0; margin-right: auto; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-snug); }
@@ -5959,6 +6613,7 @@ button { color: inherit; }
 .node-failed, .node-in-doubt { border-left-color: var(--danger); }
 .node-blocked { border-color: rgba(216,168,78,.72); border-left-color: var(--amber); background: linear-gradient(135deg, rgba(216,168,78,.13), #181a21 60%); box-shadow: 0 0 0 1px rgba(216,168,78,.12), 0 8px 24px rgba(0,0,0,.32); }
 .node-card-top { display: flex; align-items: center; gap: var(--sp-snug); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; }
+.node-state-short { display: none; }
 .node-marker { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .node-running .node-marker { width: 9px; height: 9px; color: var(--running); box-shadow: 0 0 0 5px rgba(88,212,207,.1), 0 0 14px rgba(88,212,207,.95); }
 .node-completed .node-marker { color: var(--green); box-shadow: 0 0 0 3px rgba(99,202,155,.1); }
@@ -6002,6 +6657,13 @@ button { color: inherit; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-glyph, .graph-canvas[data-semantic-zoom="cell"] .node-card .node-summary { display: none; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; display: -webkit-box; height: auto; padding: 0; color: var(--text); font-weight: 600; font-size: var(--cell-title-fs); line-height: var(--lh-flat); font-family: inherit; }
 }
+.graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card { height: var(--readable-cell-height) !important; min-height: var(--readable-cell-height) !important; }
+.graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-identity-row { flex: 1 1 auto; min-height: 0; }
+.graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-title { -webkit-line-clamp: 3; }
+.graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-status { display: none; }
+.graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-state-short { display: inline; }
+.graph-group-label { position: absolute; color: var(--muted); font-size: max(var(--fs-label), calc(var(--min-onscreen-text-px) / var(--camera-scale))); line-height: var(--lh-flat); pointer-events: none; }
+.edge[data-relation-focus="far"], .edge-effects[data-relation-focus="far"] { opacity: .22; }
 .graph-minimap { position: absolute; z-index: 7; right: .75rem; bottom: .75rem; width: 166px; height: 92px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: rgba(13,18,27,.94); pointer-events: none; }
 .minimap-scene { position: absolute; transform-origin: 0 0; }
 .minimap-node { position: absolute; border-radius: 1px; background: #666; }
@@ -6102,6 +6764,10 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
 .stage-step[data-state="completed"] { color: var(--completion-bright); border-color: #3b5381; }
 .stage-step-marker { display: grid; flex: 0 0 1.2rem; width: 1.2rem; height: 1.2rem; place-items: center; color: #111; background: #555; border-radius: 50%; font-weight: 700; font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; }
 .stage-step[data-state="current"] .stage-step-marker { background: var(--accent); }.stage-step[data-state="completed"] .stage-step-marker { background: var(--completion); }
+.planning-notice { margin: var(--sp-cozy) 0; color: var(--muted); line-height: var(--lh-normal); }
+.node-planned { border-style: dashed; }
+.node-planned .node-status, .node-planned .node-state-short { color: var(--muted); }
+.graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card.node-planned { border-color: var(--line-strong); border-left-color: #53647e; background: #151d29; box-shadow: none; }
 .stage-step-copy { display: grid; min-width: 0; gap: var(--sp-cozy); }
 .stage-step-name { overflow: hidden; color: inherit; font-weight: 600; font-size: var(--fs-body); line-height: var(--lh-flat); font-family: monospace; text-overflow: ellipsis; white-space: nowrap; }
 .stage-step-state { color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-flat); font-family: monospace; }
@@ -6129,7 +6795,7 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .graph-tool-button { min-height: 34px; padding-inline: var(--sp-default); border-right: 1px solid var(--line-soft); border-radius: 0; white-space: nowrap; }
   .graph-tool-button:last-child { border-right: 0; }
   .graph-precision-control, .graph-toolbar [data-evidence-toggle] { display: none; }
-  .graph-minimap { display: none; }
+  .graph-minimap, [data-live-graph-map] { display: none; }
   .node-card { width: 256px; padding: var(--sp-default); border-radius: 5px; background: #17202d; }
   .replay-panel { margin-top: 0; border: 1px solid var(--line); border-radius: 3px; background: #101722; }
   .replay-dock-header { width: 300px; min-width: 0; max-width: 100%; padding: var(--sp-default) var(--sp-default); }
@@ -6386,6 +7052,7 @@ export function renderLiveControlRoomPage({
         <div class="run-context-heading">
           <span class="context-kicker" data-i18n-en="Current run" data-i18n-zh="当前运行">当前运行</span>
           <h1 class="run-context-title" data-live-context-title>正在等待运行快照</h1>
+          <p class="planning-notice" data-live-planning-notice role="status" hidden data-i18n-en="This record contains a task plan only. No work was dispatched; planned steps and relationships are not execution progress." data-i18n-zh="这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。">这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。</p>
           <details class="run-context-description"><summary data-i18n-en="View task description" data-i18n-zh="查看任务说明">查看任务说明</summary><p class="run-context-task" data-live-context-task>正在等待任务摘要</p><p class="run-context-identifier" data-live-run-id>未识别运行</p></details>
         </div>
         <div class="run-context-facts" role="list" aria-label="Run facts">
@@ -6393,7 +7060,7 @@ export function renderLiveControlRoomPage({
           <div class="context-fact" role="listitem"><span data-i18n-en="Stage" data-i18n-zh="阶段">阶段</span><strong data-live-context-stage>${EMPTY_PLACEHOLDER}</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Nodes" data-i18n-zh="节点">节点</span><strong data-live-context-nodes>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Events" data-i18n-zh="事件">事件</span><strong data-live-context-events>0</strong></div>
-          <div class="context-fact" role="listitem"><span data-i18n-en="Evidence" data-i18n-zh="证据">证据</span><strong data-live-context-evidence>0</strong></div>
+          <div class="context-fact" role="listitem"><span data-live-context-evidence-label data-i18n-en="Execution evidence" data-i18n-zh="执行证据">执行证据</span><strong data-live-context-evidence>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
           <div class="context-fact" role="listitem" data-live-context-chat hidden><button class="context-fact-copy" type="button" data-live-context-chat-copy title="Copy the full chat id">${EMPTY_PLACEHOLDER}</button></div>
         </div>
@@ -6420,9 +7087,9 @@ export function renderLiveControlRoomPage({
         </section>
         <section class="graph-panel" id="run-view" role="tabpanel" aria-labelledby="work-view-run" data-live-run-view aria-label="Run view">
           <div class="graph-stage" data-live-graph-viewport>
-            <h1 class="sr-only" id="graph-title" data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
+            <h1 class="sr-only" id="graph-title" data-live-graph-title data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
             <details class="stage-overview" aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-stage-rail-state="collapse" data-i18n-en="Collapse" data-i18n-zh="收起">收起</span><span data-stage-rail-state="expand" data-i18n-en="Expand" data-i18n-zh="展开">展开</span></summary><div class="stage-overview-body"><ol class="stage-rail" data-live-stage-rail></ol></div></details>
-            <div class="graph-stage-bar"><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><span class="graph-edge-legend" data-i18n-en="Teal glow = running · running (observed) uses the same teal · Green solid = done · Gray dashed = queued · Dashed card = declared, not started · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属</span><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
+            <div class="graph-stage-bar"><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Arrows = dependencies · State key" data-i18n-zh="箭头＝依赖 · 状态图例">箭头＝依赖 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Teal glow = running · running (observed) uses the same teal · Green solid = done · Gray dashed = queued · Dashed card = declared, not started · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
@@ -6443,7 +7110,7 @@ export function renderLiveControlRoomPage({
         <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
           <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
           <div class="inspector-tabs" role="tablist" aria-label="Inspector sections"><button type="button" role="tab" id="inspector-tab-summary" aria-controls="inspector-panel-summary" aria-selected="true" data-live-inspector-tab="summary" data-i18n-en="Summary" data-i18n-zh="摘要">摘要</button><button type="button" role="tab" id="inspector-tab-evidence" aria-controls="inspector-panel-evidence" aria-selected="false" tabindex="-1" data-live-inspector-tab="evidence" data-i18n-en="Evidence" data-i18n-zh="证据">证据</button><button type="button" role="tab" id="inspector-tab-terminal" aria-controls="inspector-panel-terminal" aria-selected="false" tabindex="-1" data-live-inspector-tab="terminal" data-i18n-en="Tools" data-i18n-zh="工具">工具</button><button type="button" role="tab" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected="false" tabindex="-1" data-live-inspector-tab="context" data-i18n-en="Decisions" data-i18n-zh="决策">决策</button></div>
-          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0"><div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-owner>负责人 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-runtime>运行时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-model>模型 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-duration>耗时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tools>工具 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tokens>输出 · ${EMPTY_PLACEHOLDER}</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-prompt>提示词阶段 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-loadout>能力装载 · ${EMPTY_PLACEHOLDER}</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div></div>
+          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0"><div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-owner>负责人 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-runtime>运行时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-model>模型 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-duration>耗时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tools>工具 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tokens>输出 · ${EMPTY_PLACEHOLDER}</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-relations></p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-prompt>提示词阶段 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-loadout>能力装载 · ${EMPTY_PLACEHOLDER}</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div><section class="workspace-detail-section"><h3 data-i18n-en="Outputs" data-i18n-zh="成品">成品</h3><div class="workspace-detail-list" data-live-deliverables-host></div></section><div data-live-feedback-host></div></div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-terminal" role="tabpanel" aria-labelledby="inspector-tab-terminal" data-live-inspector-panel="terminal" data-item-count="0" hidden><div class="evidence-list" data-live-terminal-list role="list" aria-label="Terminal evidence"></div></div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-evidence" role="tabpanel" aria-labelledby="inspector-tab-evidence" data-live-inspector-panel="evidence" data-item-count="0" data-evidence-drawer hidden><div class="evidence-list" data-live-conversation-list role="list" aria-label="Conversation summaries"></div><div class="evidence-list" data-live-changes-list role="list" aria-label="Observed changes"></div><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-context" role="tabpanel" aria-labelledby="inspector-tab-context" data-live-inspector-panel="context" data-item-count="0" hidden><div class="evidence-list" data-live-context-transfer-list role="list" aria-label="Context transfers"></div></div>

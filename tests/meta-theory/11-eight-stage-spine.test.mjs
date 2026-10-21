@@ -59,6 +59,27 @@ const SKILL_PATH = `${REPO_ROOT}/canonical/skills/meta-theory/SKILL.md`;
 const WORKFLOW_CONTRACT = `${REPO_ROOT}/config/contracts/workflow-contract.json`;
 const VALID_FIXTURE = `${REPO_ROOT}/tests/fixtures/run-artifacts/valid-run.json`;
 
+function thinkingStageDescription(skill) {
+  const rows = skill.split(/\r?\n/u).filter((line) => /^\|\s*3\s*\|\s*Thinking\s*\|/u.test(line));
+  assert.equal(rows.length, 1, "SKILL.md must contain exactly one stage-3 Thinking row");
+  const columns = rows[0].trim().slice(1, -1).split("|").map((column) => column.trim());
+  assert.equal(columns.length, 4, "Thinking must retain the four-column stage table contract");
+  assert.equal(columns[0], "3");
+  assert.equal(columns[1], "Thinking");
+  assert.ok(columns[2] && columns[3], "Thinking must describe both its work and interaction policy");
+  return columns[2];
+}
+
+function assertThinkingOrder(description, requirements, message) {
+  let cursor = 0;
+  for (const requirement of requirements) {
+    const match = requirement.exec(description.slice(cursor));
+    assert.ok(match, `${message}: missing or out of order ${requirement}`);
+    cursor += match.index + match[0].length;
+  }
+  return cursor;
+}
+
 function minimalNodeBindings() {
   return {
     intentPacket: {
@@ -629,9 +650,10 @@ describe("Part A: 8-stage spine ordering", async () => {
       /\| 2 \| Fetch \|[\s\S]{0,360}(?:online|联网|web)[\s\S]{0,220}(?:local|本地)[\s\S]{0,220}(?:confirm|确认)[\s\S]{0,220}(?:problem|问题)[\s\S]{0,220}(?:candidate solutions|候选解决方案)/i,
       "The SKILL.md stage table must define Fetch as online/local problem and candidate-solution research",
     );
-    assert.match(
-      skill,
-      /\| 3 \| Thinking \|[\s\S]{0,520}determine needed execution capabilities[\s\S]{0,260}agents[\s\S]{0,160}skills[\s\S]{0,160}commands[\s\S]{0,160}MCP capabilities[\s\S]{0,160}tools[\s\S]{0,260}match existing capabilities[\s\S]{0,260}create or upgrade only for gaps[\s\S]{0,260}(?:DAG|parallel|serial)[\s\S]{0,160}mergeOwner/i,
+    const thinkingDescription = thinkingStageDescription(skill);
+    const capabilityBoundary = assertThinkingOrder(
+      thinkingDescription,
+      [/determine needed execution capabilities/i, /\bagents\b/i, /\bskills\b/i, /\bcommands\b/i, /MCP capabilities/i, /\btools\b/i],
       "The SKILL.md stage table must make Thinking the owner/skill/tool matching and orchestration stage",
     );
     assert.match(
@@ -649,9 +671,9 @@ describe("Part A: 8-stage spine ordering", async () => {
       /Fetch[\s\S]{0,260}(?:online|联网|web)[\s\S]{0,260}(?:local|本地)[\s\S]{0,260}(?:confirm|确认)[\s\S]{0,220}(?:problem|问题)[\s\S]{0,220}(?:candidate solutions|候选解决方案)/i,
       "Fetch must cover online/local research and confirm problem plus candidate solutions",
     );
-    assert.match(
-      combined,
-      /Thinking[\s\S]{0,260}determine needed execution capabilities[\s\S]{0,260}agents[\s\S]{0,160}skills[\s\S]{0,160}commands[\s\S]{0,160}MCP capabilities[\s\S]{0,160}tools[\s\S]{0,260}match existing capabilities[\s\S]{0,260}create or upgrade only for gaps[\s\S]{0,260}(?:DAG|parallel|serial)[\s\S]{0,160}mergeOwner/i,
+    assertThinkingOrder(
+      thinkingDescription.slice(capabilityBoundary),
+      [/match existing capabilities/i, /create or upgrade only for gaps/i, /bind the file delivery contract/i, /\b(?:DAG|parallel|serial)\b/i, /\bmergeOwner\b/i],
       "Thinking must first decide needed capabilities, then match/create gaps, then plan DAG/merge owner",
     );
     assert.match(

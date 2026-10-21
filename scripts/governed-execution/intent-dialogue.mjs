@@ -116,8 +116,9 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
     const skills = [...(packet.skillLoadout ?? [])];
     for (const provider of selected) if (!skills.some((item) => item.id === provider.id)) skills.push(provider);
     const binding = {
-      taskHash: dialogue.taskHash, confirmedOutcome: dialogue.outcome,
+      taskHash: dialogue.taskHash, status: dialogue.status, confirmedOutcome: dialogue.outcome,
       intentDigest: dialogue.intentDigest ?? null, constraints: dialogue.constraints,
+      acceptanceCriteria: dialogue.acceptanceCriteria,
       settledDecisionRefs: dialogue.settledDecisionRefs,
       invocationState: "selected_not_invoked",
     };

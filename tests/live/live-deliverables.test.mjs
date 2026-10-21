@@ -1,0 +1,165 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { collectLiveDeliverables, readLiveDeliverable } from "../../src/application/live/live-deliverables.mjs";
+import { buildLiveCompactProjection, buildLiveSnapshot, createLiveControlRoomService } from "../../src/application/live/live-control-room-service.mjs";
+import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
+import { LIVE_MAX_JSON_BYTES } from "../../src/infrastructure/live/live-read-repository.mjs";
+
+const runId = "live-deliverable-fixture";
+const taskPacketId = "task-backend-fixture";
+function artifact(overrides = {}) {
+  return { schemaVersion: 1, runId, recordOrigin: "acceptance_fixture", status: "partial", updatedAt: new Date().toISOString(),
+    executionResult: { actualWorkerExecution: true }, workerTaskPackets: [{ taskPacketId, roleDisplayName: "backend", ownerAgent: "backend" }],
+    workerResultPackets: [{ runId, taskPacketId, ownerAgent: "backend", status: "executed", resultKind: "native_read_only_worker_result",
+      output: { text: "The actual bounded result <script>parent.fixtureScriptRan=true</script>" }, producedArtifacts: ["outputs/page.html", "outputs/readme.md"],
+      workerExecutionEvidence: [{ runId, taskPacketId, status: "executed", runtimeProcessInvoked: true, synthetic: false }] }], ...overrides };
+}
+
+test("executed, task-verified, and unbound historical claims stay distinct across compact round-trip", () => {
+  const raw = artifact();
+  raw.workerResultPackets[0].workerExecutionEvidence.unshift({ runId, taskPacketId, status: "pending_execution", evidenceKind: "structural_worker_plan", observedResult: "not_run_by_governed_runner" });
+  const compact = buildLiveCompactProjection(raw);
+  for (const input of [raw, compact]) {
+    const snapshot = buildLiveSnapshot({ governedArtifact: input });
+    const worker = snapshot.nodes.find((node) => node.isMain === false && node.kind === "agent");
+    assert.equal(worker.status, "in_doubt");
+    assert.equal(worker.executionState, "executed");
+    assert.equal(snapshot.run.executionEvidenceState, "recorded", "obsolete verify-step placeholders cannot hide an actual observed return");
+    assert.match(worker.statusReason, /等待任务验证/u);
+    assert.equal(snapshot.deliverables.length, 3);
+    assert.equal(snapshot.deliverables[0].taskPacketId, worker.taskPacketId);
+    assert.doesNotMatch(JSON.stringify(snapshot.deliverables), /outputs\/|actual bounded|parent.secret/u);
+  }
+  const verified = artifact();
+  const result = verified.workerResultPackets[0];
+  result.status = "completed";
+  result.workerExecutionEvidence = [{ runId, taskPacketId, status: "verified", command: "node --check bounded-result.mjs", runBy: "backend",
+    runAt: new Date().toISOString(), commandRanAt: new Date().toISOString(), observedResult: "exit code 0", successMarkerFormat: "exit-code-only", exitCode: 0 }];
+  assert.equal(buildLiveSnapshot({ governedArtifact: verified }).nodes.find((node) => node.roleDisplayName === "backend").status, "completed");
+  delete result.workerExecutionEvidence[0].runId;
+  assert.equal(buildLiveSnapshot({ governedArtifact: verified }).nodes.find((node) => node.roleDisplayName === "backend").status, "in_doubt");
+  result.workerExecutionEvidence[0].runId = runId;
+  delete result.workerExecutionEvidence[0].commandRanAt;
+  assert.equal(buildLiveSnapshot({ governedArtifact: verified }).nodes.find((node) => node.roleDisplayName === "backend").status, "in_doubt");
+  for (const successMarkerFormat of ["stdout-text", "json-output"]) {
+    result.workerExecutionEvidence[0] = { runId, taskPacketId, status: "verified", command: "fixture-check", runBy: "backend", runAt: new Date().toISOString(),
+      successMarkerFormat, observedResult: "test failed", actualOutput: successMarkerFormat === "json-output" ? '{"status":"failed"}' : "not ok 1", exitCode: 1 };
+    assert.equal(buildLiveSnapshot({ governedArtifact: verified }).nodes.find((node) => node.roleDisplayName === "backend").status, "in_doubt", `${successMarkerFormat} cannot override nonzero exit`);
+    result.workerExecutionEvidence[0].exitCode = 0;
+    result.workerExecutionEvidence[0].resultStatus = "failed";
+    assert.equal(buildLiveSnapshot({ governedArtifact: verified }).nodes.find((node) => node.roleDisplayName === "backend").status, "in_doubt", `${successMarkerFormat} cannot override explicit failure`);
+  }
+});
+
+test("completion aliases cannot hide failure fields in raw or compact evidence", () => {
+  const failures = [{ exitCode: 1 }, { resultStatus: "failed" }, { result: "error" }, { outcomeStatus: "failed" },
+    { observedResult: { status: "failed" } }, { passed: false }, { success: false }];
+  for (const status of ["completed", "success", "succeeded", "pass", "passed", "done", "verified"]) {
+    for (const failure of failures) {
+      const raw = artifact();
+      raw.workerResultPackets[0].status = "completed";
+      raw.workerResultPackets[0].workerExecutionEvidence = [{ runId, taskPacketId, status, command: "fixture-check", runBy: "backend",
+        runAt: new Date().toISOString(), commandRanAt: new Date().toISOString(), actualOutput: "not ok", observedResult: "check returned", successMarkerFormat: "stdout-text", exitCode: 0, ...failure }];
+      const compact = buildLiveCompactProjection(raw);
+      for (const input of [raw, compact]) {
+        const snapshot = buildLiveSnapshot({ governedArtifact: input });
+        assert.equal(snapshot.nodes.find((node) => node.roleDisplayName === "backend").status, "in_doubt", `${status} + ${JSON.stringify(failure)} must not become completed`);
+      }
+    }
+  }
+  const failed = artifact();
+  failed.workerResultPackets[0].status = "failed";
+  failed.workerResultPackets[0].workerExecutionEvidence = [{ runId, taskPacketId, status: "failed", exitCode: 1, passed: false }];
+  for (const input of [failed, buildLiveCompactProjection(failed)]) {
+    assert.equal(buildLiveSnapshot({ governedArtifact: input }).nodes.find((node) => node.roleDisplayName === "backend").status, "failed");
+  }
+  const declared = artifact();
+  declared.workerResultPackets[0].status = "completed";
+  declared.workerResultPackets[0].workerExecutionEvidence = [{ runId, taskPacketId, status: "completed" }];
+  const stored = buildLiveCompactProjection(declared);
+  const worker = stored.nodes.find((node) => node.roleDisplayName === "backend");
+  worker.workerExecutionEvidence[0].exitCode = 1;
+  worker.terminalEvidence[0].exitCode = 1;
+  assert.equal(buildLiveSnapshot({ governedArtifact: stored }).nodes.find((node) => node.roleDisplayName === "backend").status, "in_doubt", "stored compact evidence must reject its own explicit failure too");
+});
+
+test("declared deliverable reads are exact, output-only, bounded, and reject symlinks", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "live-deliverable-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "outputs"));
+  await writeFile(path.join(root, "outputs/page.html"), "<h1>Fixture result</h1><script>fetch('/api/snapshot')</script>");
+  await writeFile(path.join(root, "outputs/readme.md"), "# Actual fixture markdown");
+  const raw = artifact();
+  const refs = collectLiveDeliverables(raw);
+  assert.deepEqual(refs.slice(0, 2).map((item) => item.label), ["page.html", "readme.md"]);
+  assert.equal((await readLiveDeliverable(raw, refs[0].id, root)).kind, "html");
+  assert.equal(await readLiveDeliverable(raw, "deliverable:" + "0".repeat(24), root), null);
+  await writeFile(path.join(root, "outputs/too-large.txt"), "x".repeat(LIVE_MAX_JSON_BYTES + 1));
+  const large = artifact({ primaryDeliverable: "outputs/too-large.txt" });
+  assert.equal(await readLiveDeliverable(large, collectLiveDeliverables(large)[0].id, root), null);
+  assert.equal(collectLiveDeliverables(artifact({ workerResultPackets: [{ ...raw.workerResultPackets[0], status: "planned_not_executed" }] })).length, 0);
+  for (const ownerAgent of ["foreign-owner", null, undefined]) {
+    const foreign = artifact({ workerResultPackets: [{ ...raw.workerResultPackets[0], ownerAgent }] });
+    assert.equal(collectLiveDeliverables(foreign).length, 0, "a matching task id cannot transfer another owner's output");
+    assert.equal(await readLiveDeliverable(foreign, refs[0].id, root), null);
+  }
+  for (const ref of ["../private.md", "outputs/../private.md", "src/private.md", "outputs/.env.md", "file:///private.md", "https://example.com/?token=bad", "javascript:alert(1)"]) {
+    assert.equal(collectLiveDeliverables(artifact({ primaryDeliverable: ref })).some((item) => item.taskPacketId === null), false, ref);
+  }
+  const outside = await mkdtemp(path.join(os.tmpdir(), "live-deliverable-private-"));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await writeFile(path.join(outside, "private.md"), "PRIVATE");
+  try { await symlink(outside, path.join(root, "outputs/escape"), "junction"); }
+  catch (error) { if (["EPERM", "EACCES"].includes(error.code)) { t.diagnostic("symlink unavailable for this host"); return; } throw error; }
+  const linked = artifact({ primaryDeliverable: "outputs/escape/private.md" });
+  assert.equal(await readLiveDeliverable(linked, collectLiveDeliverables(linked)[0].id, root), null);
+});
+
+test("a persisted compact reference reopens only its exact same-run source companion", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "live-deliverable-compact-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".git"));
+  await mkdir(path.join(root, "outputs"));
+  const records = path.join(root, ".meta-kim/state/default/governed-executions");
+  await mkdir(records, { recursive: true });
+  await writeFile(path.join(root, "outputs/page.html"), "<h1>Persisted exact result</h1>");
+  const raw = artifact();
+  await writeFile(path.join(records, `${runId}.json`), JSON.stringify(raw));
+  await writeFile(path.join(records, `${runId}.live.json`), JSON.stringify(buildLiveCompactProjection(raw)));
+  const service = createLiveControlRoomService({ projectRoot: root });
+  const snapshot = await service.getSnapshot(runId);
+  assert.equal(snapshot.source.kind, "live_projection");
+  assert.equal((await service.getDeliverable(runId, snapshot.deliverables[0].id)).text, "<h1>Persisted exact result</h1>");
+  await writeFile(path.join(records, `${runId}.json`), JSON.stringify({ ...raw, runId: "foreign-run" }));
+  assert.equal(await service.getDeliverable(runId, snapshot.deliverables[0].id), null);
+});
+
+test("HTTP opening is read-only, sandboxed, run-bound, and absent from public shares", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "live-deliverable-http-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "outputs"));
+  await writeFile(path.join(root, "outputs/page.html"), "<h1>Actual fixture</h1><script>window.fixtureScriptRan=true</script>");
+  await writeFile(path.join(root, "outputs/readme.md"), "# Fixture markdown");
+  const raw = artifact();
+  const service = createLiveControlRoomService({ repository: { projectRoot: root, readArtifact: async (id) => id === runId ? raw : null, readLatestArtifact: async () => raw } });
+  const control = createLiveControlRoomServer({ service, port: 0 });
+  t.after(() => control.close());
+  const address = await control.start();
+  const snapshot = await (await fetch(`${address.url}/api/snapshot?runId=${runId}`)).json();
+  const url = `${address.url}/api/deliverable?runId=${runId}&deliverableId=${snapshot.deliverables[0].id}`;
+  const html = await fetch(url);
+  assert.equal(html.status, 200);
+  assert.match(html.headers.get("content-security-policy"), /sandbox; default-src 'none'; script-src 'none'/u);
+  assert.match(await html.text(), /Actual fixture/u);
+  assert.equal((await fetch(url + "&path=outputs/page.html")).status, 400);
+  assert.equal((await fetch(url.replace(runId, "foreign-run"))).status, 404);
+  assert.equal((await fetch(url, { method: "POST" })).status, 405);
+  const textRef = snapshot.deliverables.find((item) => item.kind === "text");
+  const textResponse = await fetch(`${address.url}/api/deliverable?runId=${runId}&deliverableId=${textRef.id}`);
+  assert.match(await textResponse.text(), /&lt;script&gt;/u);
+  const share = await service.getShare({ runId });
+  assert.doesNotMatch(JSON.stringify(share), /deliverable:|outputs\/page|actual bounded|parent.secret/u);
+});

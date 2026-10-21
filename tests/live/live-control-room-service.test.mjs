@@ -234,8 +234,8 @@ test("public display distinguishes active queueing from inactive structural plan
   const inactive = buildLiveSnapshot({ governedArtifact: artifact, observedAt: "2026-08-24T01:01:00.000Z" });
   const inactiveWorker = inactive.nodes.find((node) => node.isMain === false && node.kind === "agent");
   assert.equal(inactive.run.active, false);
-  assert.equal(inactiveWorker.displayState, "unreported");
-  assert.match(inactiveWorker.statusReason, /结构规划记录/u);
+  assert.equal(inactiveWorker.displayState, "planned");
+  assert.match(inactiveWorker.statusReason, /仅生成任务规划/u);
 
   const active = buildLiveSnapshot({
     durableStatus: { ...sampleStatus(runId), updatedAt: "2026-08-24T01:00:30.000Z" },
@@ -244,7 +244,7 @@ test("public display distinguishes active queueing from inactive structural plan
   });
   const activeWorker = active.nodes.find((node) => node.isMain === false && node.kind === "agent");
   assert.equal(active.run.active, true);
-  assert.equal(activeWorker.displayState, "unreported");
+  assert.equal(activeWorker.displayState, "planned");
 });
 
 /**
@@ -425,7 +425,7 @@ test("observed evidence never promotes a worker to completed and never launders 
   );
 });
 
-test("legacy compact structural worker evidence remains unreported for run, workflow, and workers", () => {
+test("legacy compact structural worker evidence remains planned for run, workflow, and workers", () => {
   const runId = "meta-legacy-compact-structural-1";
   const snapshot = buildLiveSnapshot({
     governedArtifact: {
@@ -446,11 +446,11 @@ test("legacy compact structural worker evidence remains unreported for run, work
     observedAt: "2026-08-30T09:01:00.000Z",
   });
   assert.equal(snapshot.run.executionEvidenceState, "structural_planning_only");
-  assert.equal(snapshot.run.displayState, "unreported");
-  assert.ok(snapshot.nodes.every((node) => node.displayState === "unreported"));
+  assert.equal(snapshot.run.displayState, "planned");
+  assert.ok(snapshot.nodes.every((node) => node.displayState === "planned"));
 });
 
-test("legacy compact detail-only structural evidence remains unreported", () => {
+test("legacy compact detail-only structural evidence remains planned", () => {
   const runId = "meta-legacy-compact-detail-1";
   const snapshot = buildLiveSnapshot({
     governedArtifact: {
@@ -471,8 +471,69 @@ test("legacy compact detail-only structural evidence remains unreported", () => 
     observedAt: "2026-08-30T09:01:00.000Z",
   });
   assert.equal(snapshot.run.executionEvidenceState, "structural_planning_only");
-  assert.equal(snapshot.run.displayState, "unreported");
-  assert.ok(snapshot.nodes.every((node) => node.displayState === "unreported"));
+  assert.equal(snapshot.run.displayState, "planned");
+  assert.ok(snapshot.nodes.every((node) => node.displayState === "planned"));
+});
+
+test("nine structural placeholders stay inspectable without counting as execution evidence", () => {
+  const runId = "meta-nine-planning-placeholders";
+  const tasks = Array.from({ length: 9 }, (_, index) => ({ taskPacketId: `task-planning-${index}`, roleDisplayName: "backend" }));
+  const projection = buildLiveCompactProjection({
+    schemaVersion: "governed-execution-v1", runId, status: "partial",
+    executionResult: { actualWorkerExecution: false },
+    workerTaskPackets: tasks,
+    workerResultPackets: tasks.map((task) => ({ ...task, status: "planned_not_executed", workerExecutionEvidence: [{
+      status: "pending_execution", evidenceKind: "structural_worker_plan", observedResult: "not_run_by_structural_artifact_builder",
+    }] })),
+  });
+  assert.equal(projection.counts.evidence, 9, "record count remains compatible");
+  assert.equal(projection.counts.executionEvidence, 0);
+  assert.equal(projection.counts.planningEvidence, 9);
+  const readBack = buildLiveSnapshot({ governedArtifact: { ...projection, counts: { ...projection.counts, executionEvidence: 99 } } });
+  assert.equal(readBack.run.displayState, "planned");
+  assert.equal(readBack.counts.executionEvidence, 0, "stored execution counts cannot promote placeholders");
+  assert.equal(readBack.evidence.length, 9, "the declared checks can still be inspected");
+});
+
+test("bound observed execution counts without promoting the task to verified completion", () => {
+  const runId = "meta-bound-observation-count";
+  const taskPacketId = "observed-worker";
+  const projection = buildLiveCompactProjection({
+    schemaVersion: "governed-execution-v1", runId, status: "partial",
+    executionResult: { actualWorkerExecution: true },
+    workerTaskPackets: [{ taskPacketId, roleDisplayName: "backend" }],
+    workerResultPackets: [{ runId, taskPacketId, status: "executed", workerExecutionEvidence: [{
+      runId, taskPacketId, status: "executed", runtimeProcessInvoked: true, evidenceKind: "native_host_observation",
+    }] }],
+  });
+  assert.equal(projection.counts.executionEvidence, 1);
+  assert.equal(projection.nodes.find((node) => node.taskPacketId)?.status, "in_doubt");
+  projection.run.stageProgressEvidence = "native_execution_only";
+  const readBack = buildLiveSnapshot({ governedArtifact: projection });
+  assert.equal(readBack.counts.executionEvidence, 1);
+  assert.equal(readBack.run.stageProgressEvidence, "native_execution_only");
+  assert.equal(readBack.nodes.find((node) => node.taskPacketId)?.status, "in_doubt");
+  assert.notEqual(readBack.run.displayState, "planned");
+});
+
+test("a bound terminal word is not an accepted execution observation", () => {
+  const runId = "meta-explicit-evidence-count";
+  const record = { nodeId: "agent:known", runId, taskPacketId: "task-known", proofValid: false, executionObserved: false, synthetic: false };
+  const snapshot = buildLiveSnapshot({ governedArtifact: {
+    schemaVersion: "meta-kim-live-projection-v2",
+    run: { runId, status: "in_doubt", executionEvidenceState: "recorded" },
+    nodes: [{ id: "agent:known", kind: "agent", label: "worker", taskPacketId: "task-known", status: "in_doubt" }],
+    edges: [], replay: [], toolCalls: [],
+    evidence: [
+      ...["completed", "failed", "blocked", "cancelled"].map((status) => ({ ...record, id: `proof:${status}`, status })),
+      { ...record, id: "proof:observed", status: "executed", executionObserved: true },
+      { ...record, id: "proof:accepted", status: "completed", proofValid: true },
+      { ...record, id: "proof:synthetic", status: "completed", proofValid: true, synthetic: true },
+      { ...record, id: "proof:foreign", status: "completed", proofValid: true, runId: "other-run" },
+    ],
+  } });
+  assert.equal(snapshot.evidence.length, 8, "all declared records remain inspectable");
+  assert.equal(snapshot.counts.executionEvidence, 2, "only explicit observed execution or accepted proof counts");
 });
 
 test("all trusted terminal states survive compact round-trip", () => {

@@ -216,6 +216,18 @@ const FILE_OR_MUTATION_RE =
   /\b(?:file|code|repo|repository|project|app|page|component|test|config|contract|script|hook|runtime|release|version)\b|(?:文件|代码|仓库|项目|页面|组件|测试|配置|合同|脚本|钩子|运行时|发布|版本)/iu;
 const PRODUCT_BUILD_OBJECT_RE =
   /\b(?:app|web app|dashboard|platform|tool|saas|automation|publisher|scheduler|workflow)\b|(?:系统|平台|工具|应用|网站|面板|看板|自动发布器|发布器|营销.*器|自动化|工作流)/iu;
+// Keep request/constraint binding aligned with the full entry classifier. The
+// hook remains self-contained: a projected hook cannot import repository scripts.
+function productBuildRequested(prompt) {
+  const clauses = String(prompt ?? "").split(/[,.!?;，。！？；\r\n]+|\b(?:and|then|but|while)\b|(?:并且|同时|然后|但是)|并(?=(?:请|帮我|先|再|继续|把|将|新建|新做|新增|做|搭建|开发|打造|构建|实现|修复|排查|纠错|修好|重构|优化|验证|测试|检查|审查|生成|更新|保留|保持|禁止|不要|不得|只用|仅用))/iu)
+    .map((clause) => clause.trim()).filter(Boolean)
+    .filter((clause) => !/^(?:(?:please|请|务必)\s*)?(?:keep\b|preserve\b|without\b|do\s+not\b|don't\b|must\s+not\b|保留|保持|禁止|不要|不得|不重做|不新建|不改变|不改动|只用|仅用|零新增成本)/iu.test(clause));
+  const repair = /\b(?:fix|repair|debug|patch|refactor|troubleshoot)\b|(?:修复|排查|纠错|修好|重构|修正|수정|고치)/iu;
+  const engineering = /\b(?:code|api|database|test|timeout|crash|bug|error|ui|backend|frontend|software|app|system)\b|(?:代码|测试|超时|崩溃|缺陷|报错|接口|数据库|前端|后端|页面|软件|系统|タイムアウト|バグ|エラー|不具合|오류|버그|타임아웃|코드)/iu;
+  const construction = /\b(?:build|create|develop|implement|launch|ship|make)\b|(?:新建|新做|新增|做个|做一个|搭建|开发|打造|构建|从头做|实现(?:一个|新)|作る|作成|開発|만들|개발|구축)/iu;
+  return clauses.some((clause) => (ACTION_RE.test(clause) || construction.test(clause)) && PRODUCT_BUILD_OBJECT_RE.test(clause)
+    && (!(repair.test(clause) && engineering.test(clause)) || construction.test(clause)));
+}
 const PROJECT_UNDERSTANDING_RE =
   /\b(?:project|repo|repository|codebase|architecture|commerciali[sz]e|market|competitor|business model|strategy|roadmap)\b|(?:项目|仓库|代码库|架构|怎么玩|干啥|做什么|商业化|市场|竞品|商业模式|发展|路线图|战略)/iu;
 const SUBJECTIVE_QUALITY_RE =
@@ -277,7 +289,7 @@ function classifyPromptActivation(promptText) {
   const actionIntent = ACTION_RE.test(promptText);
   const durableOutputIntent = DURABLE_OUTPUT_RE.test(promptText);
   const fileOrMutationIntent = FILE_OR_MUTATION_RE.test(promptText);
-  const productBuildIntent = actionIntent && PRODUCT_BUILD_OBJECT_RE.test(promptText);
+  const productBuildIntent = actionIntent && productBuildRequested(promptText);
   if (SUBJECTIVE_QUALITY_RE.test(promptText) && actionIntent) {
     return {
       triggered: true,

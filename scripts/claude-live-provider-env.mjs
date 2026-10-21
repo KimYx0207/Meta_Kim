@@ -2,6 +2,78 @@ import { promises as fs, readFileSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+const PRIVATE_PROVIDER_MAX_BYTES = 16_384;
+const PRIVATE_PROVIDER_FIELDS = new Set(["schemaVersion", "providerId", "endpoint", "authType", "credential"]);
+const privateProviderError = () => new Error("Invalid private Claude provider handoff");
+
+/** Validates an explicit, run-scoped private handoff. Never formats its values. */
+export function validatePrivateClaudeProviderHandoff(value) {
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype) throw privateProviderError();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).length !== PRIVATE_PROVIDER_FIELDS.size ||
+      Reflect.ownKeys(descriptors).some(key => !PRIVATE_PROVIDER_FIELDS.has(key) || !Object.hasOwn(descriptors[key], "value") || typeof descriptors[key].value !== "string")) throw privateProviderError();
+  if (value.schemaVersion !== "meta-kim-private-claude-provider-v1" || value.providerId !== "minimax" ||
+      value.endpoint !== "https://api.minimaxi.com/anthropic" || !["auth_token", "api_key"].includes(value.authType) ||
+      value.credential.length < 1 || value.credential.length > 4096 || !/^[\x21-\x7e]+$/u.test(value.credential)) throw privateProviderError();
+  return Object.freeze({ schemaVersion: value.schemaVersion, providerId: value.providerId, endpoint: value.endpoint, authType: value.authType, credential: value.credential });
+}
+
+/** Parses only a flat string-valued JSON object, rejecting even escaped duplicate keys. */
+export function parsePrivateClaudeProviderHandoff(input) {
+  try {
+    if (typeof input !== "string" || Buffer.byteLength(input, "utf8") > PRIVATE_PROVIDER_MAX_BYTES) throw privateProviderError();
+    const token = /"(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/y;
+    let offset = 0;
+    const whitespace = () => { while (/[\x20\t\r\n]/u.test(input[offset] ?? "")) offset++; };
+    const string = () => { token.lastIndex = offset; const match = token.exec(input); if (!match) throw privateProviderError(); offset = token.lastIndex; return JSON.parse(match[0]); };
+    const parsed = {};
+    whitespace();
+    if (input[offset++] !== "{") throw privateProviderError();
+    whitespace();
+    while (input[offset] !== "}") {
+      const key = string();
+      if (!PRIVATE_PROVIDER_FIELDS.has(key) || Object.hasOwn(parsed, key)) throw privateProviderError();
+      whitespace();
+      if (input[offset++] !== ":") throw privateProviderError();
+      whitespace();
+      parsed[key] = string();
+      whitespace();
+      if (input[offset] !== ",") break;
+      offset++;
+      whitespace();
+      if (input[offset] === "}") throw privateProviderError();
+    }
+    if (input[offset++] !== "}") throw privateProviderError();
+    whitespace();
+    if (offset !== input.length) throw privateProviderError();
+    return validatePrivateClaudeProviderHandoff(parsed);
+  } catch { throw privateProviderError(); }
+}
+
+/** Consumes a bounded private pipe; no private value is logged or written to disk. */
+export async function readPrivateClaudeProviderHandoff(input) {
+  const chunks = [];
+  let bytes = 0;
+  const timer = setTimeout(() => input.destroy(privateProviderError()), 10_000);
+  timer.unref?.();
+  try {
+    for await (const chunk of input) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += buffer.length;
+      if (bytes > PRIVATE_PROVIDER_MAX_BYTES) throw privateProviderError();
+      chunks.push(buffer);
+    }
+    return parsePrivateClaudeProviderHandoff(Buffer.concat(chunks).toString("utf8"));
+  } catch { throw privateProviderError(); }
+  finally { clearTimeout(timer); for (const chunk of chunks) chunk.fill(0); }
+}
+
+/** Public identity is safe for request binding; it deliberately excludes credential hashes. */
+export function privateClaudeProviderIdentity(handoff) {
+  const provider = validatePrivateClaudeProviderHandoff(handoff);
+  return { providerId: provider.providerId, endpointHost: "api.minimaxi.com", endpointPath: "/anthropic", authType: provider.authType, selectionSource: "explicit_private_stdin" };
+}
+
 export const CLAUDE_LIVE_PROVIDER_ENV_KEYS = Object.freeze([
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -108,7 +180,25 @@ function readClaudeLiveProviderSettingsSync(configDir) {
 export function resolveClaudeLiveProviderEnvironmentSync({
   homeDir = os.homedir(),
   ambientEnv = process.env,
+  privateProviderHandoff,
+  model,
+  effort,
 } = {}) {
+  if (privateProviderHandoff !== undefined) {
+    const provider = validatePrivateClaudeProviderHandoff(privateProviderHandoff);
+    if (model !== "MiniMax-M3.1-Flash" || effort !== "low") throw privateProviderError();
+    return {
+      ...sanitizeClaudeLiveProviderAmbientEnv(ambientEnv),
+      ANTHROPIC_BASE_URL: provider.endpoint,
+      [provider.authType === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"]: provider.credential,
+      ANTHROPIC_MODEL: model,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+      CLAUDE_CODE_EFFORT_LEVEL: effort,
+      NO_COLOR: "1",
+    };
+  }
   let configDir;
   let configured;
   try {

@@ -2727,7 +2727,7 @@ export function applyRuntimePaths(content, targetId) {
   const protectedBlocks = [];
   let result = content;
   for (const pattern of [
-    /Fetch discovery minimum checklist: before Thinking, search at least these locations \(even if results are empty\):[\s\S]*?\n(?=Pass condition:)/g,
+    /Fetch discovery minimum checklist:[\s\S]*?\n(?=Pass condition:)/g,
     /^- 项目内迭代或创新需要专用能力时，必须创建在对应 runtime 的原生项目目录[\s\S]*?\n/gm,
   ]) {
     result = result.replace(pattern, (block) => {

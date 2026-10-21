@@ -10,12 +10,15 @@
 //   node scripts/run-verify-all.mjs --from meta:check   # 从某步续跑
 //   node scripts/run-verify-all.mjs --json       # 结束时打印聚合 JSON
 //   node scripts/run-verify-all.mjs --live-certified # 追加外部签名实机认证
+//   node scripts/run-verify-all.mjs --isolated-global-home <absolute-home> # 仅隔离只读全局检查
 
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
+  lstatSync,
   readFileSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -36,6 +39,7 @@ import {
 import { resolveRuntimeProfilesFromManifest } from "./meta-kim-sync-config.mjs";
 import { packedProductProofComplete } from "./packed-product-proof.mjs";
 import { SMOKE_BEHAVIOR_STAGES } from "./verification-stage-manifest.mjs";
+import { buildIsolatedUserHomeEnv } from "./isolated-user-home-env.mjs";
 
 export { packedProductProofComplete } from "./packed-product-proof.mjs";
 
@@ -61,6 +65,41 @@ const RELEASE_VERIFICATION_POLICY = JSON.parse(
 export const RELEASE_RUNTIME_TARGETS = Object.freeze([
   ...RELEASE_SYNC_MANIFEST.supportedTargets,
 ]);
+
+export function parseIsolatedGlobalHome(args, callerHome = os.homedir()) {
+  if (args.some((argument) => argument.startsWith("--isolated-global-home="))) throw new Error("--isolated-global-home requires a separate absolute directory argument");
+  const positions = args.flatMap((arg, index) => arg === "--isolated-global-home" ? [index] : []);
+  if (positions.length === 0) return null;
+  const value = args[positions[0] + 1];
+  if (positions.length !== 1 || typeof value !== "string" || !path.isAbsolute(value)) throw new Error("--isolated-global-home requires one absolute existing plain directory");
+  const requested = path.resolve(value);
+  const stats = lstatSync(requested);
+  const callerPath = realpathSync.native(path.resolve(callerHome));
+  const callerStats = lstatSync(callerPath);
+  const same = (a, b) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const samePhysicalHome = stats.ino !== 0 && stats.dev === callerStats.dev && stats.ino === callerStats.ino;
+  if (!stats.isDirectory() || stats.isSymbolicLink() || !same(realpathSync.native(requested), requested) || same(requested, callerPath) || samePhysicalHome) {
+    throw new Error("--isolated-global-home must be a plain isolated directory distinct from the caller home");
+  }
+  return requested;
+}
+
+export function verificationStageEnvironment(stageName, { isolatedGlobalHome = null, environment = process.env } = {}) {
+  if (!isolatedGlobalHome || stageName !== "meta:check:global:release") return { environment: { ...environment }, scope: null };
+  const home = parseIsolatedGlobalHome(["--isolated-global-home", isolatedGlobalHome]);
+  const base = { ...environment };
+  const controlled = new Set(["HOME", "USERPROFILE", "META_KIM_PROJECTION_PACKAGE_STORE_ROOT", "META_KIM_CLAUDE_USER_CONFIG", "CLAUDE_CONFIG_DIR", "TMP", "TEMP", "NPM_CONFIG_CACHE"]);
+  for (const runtimeId of RELEASE_RUNTIME_TARGETS) for (const key of RELEASE_RUNTIME_PROFILES[runtimeId].activation.envKeys) controlled.add(key.toUpperCase());
+  for (const key of Object.keys(base)) if (controlled.has(key.toUpperCase())) delete base[key];
+  const overrides = { META_KIM_CLAUDE_USER_CONFIG: path.join(home, ".claude.json"), CLAUDE_CONFIG_DIR: path.join(home, ".claude"), TMP: home, TEMP: home, NPM_CONFIG_CACHE: path.join(home, ".npm-cache") };
+  const runtimeHomes = {};
+  for (const runtimeId of RELEASE_RUNTIME_TARGETS) {
+    const runtimeHome = path.join(home, RELEASE_RUNTIME_PROFILES[runtimeId].activation.defaultHomeDir);
+    runtimeHomes[runtimeId] = runtimeHome;
+    for (const key of RELEASE_RUNTIME_PROFILES[runtimeId].activation.envKeys) overrides[key] = runtimeHome;
+  }
+  return { environment: buildIsolatedUserHomeEnv(home, overrides, base), scope: { kind: "isolated_global_home", home, runtimeHomes, readOnly: true, personalGlobalUpdated: false } };
+}
 
 function timeoutEnvironmentKey(stageName) {
   const suffix = String(stageName)
@@ -552,6 +591,7 @@ export function computeReleaseGrade({
   sourceIntegrity = { releaseEligible: true },
   globalTargetProof = { status: "passed" },
   packedUserProof = null,
+  isolatedGlobalHome = null,
 }) {
   if (startIndex !== 0 || results.length < STAGES.length) return false;
   if (
@@ -559,6 +599,10 @@ export function computeReleaseGrade({
     globalTargetProof.status !== "passed" ||
     !packedProductProofComplete(packedUserProof)
   ) return false;
+  if (isolatedGlobalHome) {
+    const scope = results.find((entry) => entry.name === "meta:check:global:release")?.environmentScope;
+    if (scope?.kind !== "isolated_global_home" || scope.home !== isolatedGlobalHome || scope.readOnly !== true || scope.personalGlobalUpdated !== false) return false;
+  }
   return STAGES.every(
     (stage, index) =>
       results[index]?.name === stage.name && results[index]?.status === "passed",
@@ -586,6 +630,7 @@ export function computeVerificationClaims({
   sourceIntegrity,
   globalTargetProof,
   packedUserProof,
+  isolatedGlobalHome = null,
 }) {
   const releaseGrade = computeReleaseGrade({
     results,
@@ -593,6 +638,7 @@ export function computeVerificationClaims({
     sourceIntegrity,
     globalTargetProof,
     packedUserProof,
+    isolatedGlobalHome,
   });
   const liveCertified = computeLiveCertified({
     requested,
@@ -662,6 +708,7 @@ function printReleasePreflightProgress(progress) {
 async function main() {
 
 const args = process.argv.slice(2);
+const isolatedGlobalHome = parseIsolatedGlobalHome(args);
 const liveCertifiedRequested = args.includes("--live-certified");
 const selectedStages = liveCertifiedRequested
   ? [...STAGES, LIVE_CERTIFIED_STAGE]
@@ -746,9 +793,9 @@ function parseStageCommand(cmd) {
   return { command: "sh", args: ["-lc", cmd] };
 }
 
-function runWithTimeout(cmd, timeoutMs, { captureStdout = false } = {}) {
+function runWithTimeout(cmd, timeoutMs, { captureStdout = false, environment: stageEnvironment = process.env } = {}) {
   const { command, args: commandArgs } = parseStageCommand(cmd);
-  const environment = { ...process.env };
+  const environment = { ...stageEnvironment };
   if (cmd.includes("meta:graphify:verified-rebuild")) {
     const blockedEnvironmentKeys = new Set([
       "META_KIM_GRAPHIFY_BIN",
@@ -828,7 +875,8 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
   const label = `[${i + 1}/${selectedStages.length}] ${stage.name}`;
   const t0 = Date.now();
   console.log(`\n=== ${label} ===\n> ${stage.cmd}`);
-  const result = runWithTimeout(stage.cmd, stage.timeoutMs, { captureStdout: stage.name === "meta:runtime:produce" });
+  const stageEnvironment = verificationStageEnvironment(stage.name, { isolatedGlobalHome });
+  const result = runWithTimeout(stage.cmd, stage.timeoutMs, { captureStdout: stage.name === "meta:runtime:produce", environment: stageEnvironment.environment });
   const ms = Date.now() - t0;
   if (result.ok) {
     console.log(`\n✓ ${label} 通过 (${ms}ms)`);
@@ -845,6 +893,7 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
       durationMs: ms,
       exitCode: 0,
       timedOut: false,
+      ...(stageEnvironment.scope ? { environmentScope: stageEnvironment.scope } : {}),
       ...(controlledProducerEvidence ? { controlledProducerEvidence } : {}),
     });
   } else {
@@ -862,6 +911,7 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
       timedOut: result.timedOut,
       signal: result.signal,
       error: result.error,
+      ...(stageEnvironment.scope ? { environmentScope: stageEnvironment.scope } : {}),
       resumeCommand: `node scripts/run-verify-all.mjs${liveCertifiedRequested ? " --live-certified" : ""} --from ${stage.name}`,
     });
     failedStage = stage;
@@ -882,6 +932,7 @@ const verificationClaims = computeVerificationClaims({
   sourceIntegrity,
   globalTargetProof,
   packedUserProof,
+  isolatedGlobalHome,
 });
 const { releaseGrade, liveCertified, liveCertificationStatus } = verificationClaims;
 let report = {
@@ -889,6 +940,7 @@ let report = {
   releaseGrade,
   liveCertified,
   liveCertificationStatus,
+  globalCheckEnvironment: isolatedGlobalHome ? { kind: "isolated_global_home", home: isolatedGlobalHome, readOnly: true, personalGlobalUpdated: false } : { kind: "caller_home", home: os.homedir(), readOnly: true },
   packedProductProofComplete: packedProductProofComplete(packedUserProof),
   resumedRun: startIndex > 0,
   releaseGradeReason:

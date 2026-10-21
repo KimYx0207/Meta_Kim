@@ -72,7 +72,16 @@ test("catalog admits the four packaged adapters only as beta compatibility", () 
     assert.equal(product.dependencyInstall.ecc.support, "not_supported", id);
     assert.match(product.decision, /beta_compatibility only/i, id);
   }
-  assert.equal(byId.get("zcode").genericCompatibility.hookConfig, null);
+  const zcode = byId.get("zcode");
+  assert.equal(zcode.genericCompatibility.status, "partial");
+  assert.match(zcode.genericCompatibility.hookConfig, /~\/\.zcode\/cli\/config\.json -> hooks/u);
+  assert.match(zcode.genericCompatibility.hookConfig, /requires hooks\.enabled=true/u);
+  assert.match(zcode.genericCompatibility.hookConfig, /<repo>\/\.zcode\/config\.json/u);
+  assert.match(zcode.genericCompatibility.hookConfig, /documented in zcode-guide 0\.3\.0/u);
+  assert.match(zcode.genericCompatibility.hookConfig, /merge-safe update behavior still needs probe/u);
+  assert.ok(zcode.evidence.some((entry) => entry.type === "official_docs"
+    && entry.ref.includes("zcode-guide 0.3.0")
+    && entry.ref.includes("zcode.docs.configuration.2026-10-17")));
   assert.match(byId.get("zcode").nextAction, /no-quota and plan-only/i);
   assert.ok(
     byId

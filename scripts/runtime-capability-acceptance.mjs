@@ -215,36 +215,86 @@ function readBoundSessionLines(sessionFile, snapshotSize, bindings, sessionsRoot
   return bindings.map((entry) => captured.get(entry.lineNumber));
 }
 
-function validateCodexDesktopSourceBindings(receipt, rawText) {
+function portableAdvisoryBinding(attempt, receipt, profileRoot, now) {
+  const snapshot = readDigestBoundFile(path.join(profileRoot, "runtime-capability-acceptance", "advisory-snapshot.json"), profileRoot, "portable advisory snapshot").value;
+  if (snapshot.schemaVersion !== "meta-kim-runtime-advisory-snapshot-v1" || snapshot.evidenceClass !== "read_only_advisory_snapshot" ||
+      snapshot.observedInCurrentRun !== false || snapshot.executionAuthority !== false ||
+      !Number.isFinite(Date.parse(snapshot.sourceValidatedAt)) || Date.parse(snapshot.sourceValidatedAt) > Date.parse(now) ||
+      !/^[a-f0-9]{64}$/u.test(snapshot.sourceProfileRootDigest ?? "")) throw new Error("portable advisory snapshot boundary is invalid");
+  assertExactStandardRuntimeObservationSet(snapshot.bindings);
+  const attemptIds = new Set();
+  for (const entry of snapshot.bindings) {
+    assertSafeId(entry.attemptId, "portable advisory attempt id");
+    if (attemptIds.has(entry.attemptId) || !Number.isFinite(Date.parse(entry.observedAt)) ||
+        Date.parse(entry.observedAt) > Date.parse(snapshot.sourceValidatedAt) ||
+        [entry.attemptSha256, entry.receiptSha256, entry.rawArtifactSha256].some((value) => !/^[a-f0-9]{64}$/u.test(value ?? ""))) {
+      throw new Error("portable advisory source binding is invalid");
+    }
+    attemptIds.add(entry.attemptId);
+  }
+  const bindings = snapshot.bindings.filter((entry) => entry.attemptId === attempt.attemptId);
+  if (bindings.length !== 1) throw new Error("portable advisory attempt binding is not unique");
+  const binding = bindings[0];
+  for (const field of ["runtime", "capability", "mode", "observedAt"]) {
+    if (binding[field] !== attempt[field]) throw new Error(`portable advisory ${field} binding mismatch`);
+  }
+  const attemptFile = readDigestBoundBytes(path.join(profileRoot, "runtime-capability-acceptance", "attempts", `${assertSafeId(attempt.attemptId, "attempt id")}.json`), profileRoot, "portable advisory attempt");
+  if (binding.attemptSha256 !== attemptFile.sha256 || binding.receiptSha256 !== attempt.sourceReport.sha256 ||
+      binding.rawArtifactSha256 !== receipt.rawArtifact.sha256 || Date.parse(snapshot.sourceValidatedAt) < Date.parse(attempt.observedAt)) {
+    throw new Error("portable advisory exact source hash binding mismatch");
+  }
+  return { ...binding, sourceProfileRootDigest: snapshot.sourceProfileRootDigest };
+}
+
+function boundFragmentLines(rawLines, bindings, label) {
+  if (rawLines.length !== bindings.length || bindings.some((entry, index) =>
+    (index > 0 && entry.lineNumber <= bindings[index - 1].lineNumber) || digest(`${rawLines[index]}\n`) !== entry.sha256)) {
+    throw new Error(`${label} portable source line digest mismatch`);
+  }
+  return rawLines;
+}
+
+function validateCodexDesktopSourceBindings(receipt, rawText, portableBinding = null) {
   const lifecycle = receipt.compositeLifecycle;
-  const configuredHome = receipt.testOnly === true ? (process.env.CODEX_HOME || path.join(os.homedir(), ".codex")) : path.join(os.homedir(), ".codex");
-  const home = assertPlainDirectory(path.resolve(configuredHome), "trusted Codex home");
-  if (home !== path.resolve(configuredHome)) throw new Error("trusted Codex home cannot be a symlink or junction");
-  const sessions = assertPlainDirectory(path.join(home, "sessions"), "trusted Codex sessions");
-  if (!inside(sessions, home)) throw new Error("trusted Codex sessions escape Codex home");
   for (const ref of [lifecycle.parentSessionRef, lifecycle.childSessionRef]) {
     if (path.isAbsolute(ref) || ref.includes("\\") || ref.split("/").includes("..")) throw new Error("Codex Desktop session reference is unsafe");
   }
-  const parentLines = readBoundSessionLines(
+  let parentLines, childLines;
+  if (portableBinding) {
+    const lines = rawText.trimEnd().split("\n");
+    parentLines = boundFragmentLines(lines.slice(0, lifecycle.parentSourceLines.length), lifecycle.parentSourceLines, "Codex Desktop parent");
+    childLines = boundFragmentLines(lines.slice(lifecycle.parentSourceLines.length), lifecycle.childSourceLines, "Codex Desktop child");
+  } else {
+    const configuredHome = receipt.testOnly === true ? (process.env.CODEX_HOME || path.join(os.homedir(), ".codex")) : path.join(os.homedir(), ".codex");
+    const home = assertPlainDirectory(path.resolve(configuredHome), "trusted Codex home");
+    if (home !== path.resolve(configuredHome)) throw new Error("trusted Codex home cannot be a symlink or junction");
+    const sessions = assertPlainDirectory(path.join(home, "sessions"), "trusted Codex sessions");
+    if (!inside(sessions, home)) throw new Error("trusted Codex sessions escape Codex home");
+    parentLines = readBoundSessionLines(
     path.join(sessions, ...lifecycle.parentSessionRef.split("/")),
     lifecycle.parentSnapshotSize,
     lifecycle.parentSourceLines,
     sessions,
     "Codex Desktop parent session",
   );
-  const childLines = readBoundSessionLines(
+    childLines = readBoundSessionLines(
     path.join(sessions, ...lifecycle.childSessionRef.split("/")),
     lifecycle.childSnapshotSize,
     lifecycle.childSourceLines,
     sessions,
     "Codex Desktop child session",
   );
+  }
   const parentFragment = `${parentLines.join("\n")}\n`;
   const childFragment = `${childLines.join("\n")}\n`;
   if (digest(parentFragment) !== lifecycle.parentFragmentDigest || digest(childFragment) !== lifecycle.childFragmentDigest) {
     throw new Error("Codex Desktop session fragment digest mismatch");
   }
   if (`${parentFragment}${childFragment}` !== rawText || digest(rawText) !== lifecycle.rawCompositeDigest) throw new Error("Codex Desktop composite raw source mismatch");
+  const parentMeta = JSON.parse(parentLines[0]);
+  if (parentMeta?.type !== "session_meta" || parentMeta?.payload?.id !== lifecycle.threadId || parentMeta?.payload?.originator !== "Codex Desktop" || parentMeta?.payload?.source !== "vscode") {
+    throw new Error("Codex Desktop parent source is invalid");
+  }
   const parentEvents = observeCodexJsonl(parentFragment).filter((event) =>
     event.eventId === lifecycle.eventId && event.sessionId === lifecycle.threadId &&
     event.childSessionId === lifecycle.childSessionId && event.hostSurface === "collaboration.spawn_agent" &&
@@ -268,40 +318,44 @@ function validateCodexDesktopSourceBindings(receipt, rawText) {
   if (receipt.capability === "agent" && (!selectedText.includes("spawn_agent") || !selectedText.includes(lifecycle.childSessionId))) throw new Error("Codex Desktop agent facet is not parent-spawn-bound");
 }
 
-function validateCodexDesktopEngineeringBindings(receipt, rawText, profileRoot, { portableAdvisorySnapshot = false } = {}) {
+function validateCodexDesktopEngineeringBindings(receipt, rawText, profileRoot, portableBinding = null) {
   const lifecycle = receipt.compositeLifecycle;
   if (path.isAbsolute(lifecycle.workspaceRef) || lifecycle.workspaceRef.includes("\\") || lifecycle.workspaceRef.split("/").includes("..")) {
     throw new Error("Codex Desktop engineering workspace reference is unsafe");
   }
-  const workspacePath = path.resolve(profileRoot, ...lifecycle.workspaceRef.split("/"));
-  if (!inside(workspacePath, profileRoot) || (!portableAdvisorySnapshot && digest(workspacePath.replaceAll("\\", "/").toLowerCase()) !== lifecycle.workspaceDigest)) {
+  const workspacePath = portableBinding?.sourceWorkspacePath ?? path.resolve(profileRoot, ...lifecycle.workspaceRef.split("/"));
+  if (!path.isAbsolute(workspacePath) || (!portableBinding && !inside(workspacePath, profileRoot)) || digest(workspacePath.replaceAll("\\", "/").toLowerCase()) !== lifecycle.workspaceDigest) {
     throw new Error("Codex Desktop engineering workspace binding mismatch");
   }
-  const configuredHome = receipt.testOnly === true ? (process.env.CODEX_HOME || path.join(os.homedir(), ".codex")) : path.join(os.homedir(), ".codex");
-  const home = assertPlainDirectory(path.resolve(configuredHome), "trusted Codex home");
-  const sessions = assertPlainDirectory(path.join(home, "sessions"), "trusted Codex sessions");
   if (path.isAbsolute(lifecycle.parentSessionRef) || lifecycle.parentSessionRef.includes("\\") || lifecycle.parentSessionRef.split("/").includes("..")) {
     throw new Error("Codex Desktop engineering session reference is unsafe");
   }
-  const parentLines = readBoundSessionLines(
+  let parentLines;
+  if (portableBinding) {
+    const sourceProfile = path.resolve(workspacePath, ...lifecycle.workspaceRef.split("/").map(() => ".."));
+    if (digest(sourceProfile.replaceAll("\\", "/").toLowerCase()) !== portableBinding.sourceProfileRootDigest ||
+        path.resolve(sourceProfile, ...lifecycle.workspaceRef.split("/")) !== workspacePath) throw new Error("portable advisory source workspace binding mismatch");
+    parentLines = boundFragmentLines(rawText.trimEnd().split("\n"), lifecycle.parentSourceLines, "Codex Desktop engineering");
+  } else {
+    const configuredHome = receipt.testOnly === true ? (process.env.CODEX_HOME || path.join(os.homedir(), ".codex")) : path.join(os.homedir(), ".codex");
+    const home = assertPlainDirectory(path.resolve(configuredHome), "trusted Codex home");
+    const sessions = assertPlainDirectory(path.join(home, "sessions"), "trusted Codex sessions");
+    parentLines = readBoundSessionLines(
     path.join(sessions, ...lifecycle.parentSessionRef.split("/")),
     lifecycle.parentSnapshotSize,
     lifecycle.parentSourceLines,
     sessions,
     "Codex Desktop engineering parent session",
   );
+  }
   const fragment = `${parentLines.join("\n")}\n`;
   if (digest(fragment) !== lifecycle.parentFragmentDigest || fragment !== rawText) throw new Error("Codex Desktop engineering fragment binding mismatch");
   const meta = JSON.parse(parentLines[0]);
   if (meta?.type !== "session_meta" || meta?.payload?.id !== lifecycle.threadId || meta?.payload?.originator !== "Codex Desktop" || meta?.payload?.source !== "vscode") {
     throw new Error("Codex Desktop engineering parent source is invalid");
   }
-  // A packed read-only snapshot intentionally relocates the profile root. The
-  // immutable raw/session digests remain exact, but the original absolute
-  // workspace path is historical and cannot equal the isolated project path.
-  // This branch can only feed advisory observations; the execution gate never
-  // treats it as current-host authority.
-  if (portableAdvisorySnapshot) return;
+  // Portable replay parses the digest-bound original workspace; it never opens
+  // that historical path or grants current-host execution authority.
   const events = observeCodexDesktopEngineeringSlice(fragment, { marker: receipt.capabilityMarker, workspacePath });
   const ordered = [events.shell, events.patchAdd, events.filesystemBefore, events.patchUpdate, events.filesystemAfter];
   if (JSON.stringify(ordered.map((entry) => entry.eventId)) !== JSON.stringify(lifecycle.orderedEventIds)) {
@@ -1171,6 +1225,7 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
   portableAdvisorySnapshot = false,
 } = {}) {
   const issues = [];
+  if (portableAdvisorySnapshot && releaseResolution) issues.push("portable advisory snapshots cannot satisfy release resolution");
   if (!SUPPORTED_RUNTIME_ID_SET.has(attempt?.runtime)) {
     issues.push(`unsupported runtime acceptance target: ${attempt?.runtime ?? "missing"}`);
   }
@@ -1185,7 +1240,7 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
   if (!Number.isFinite(nowMs) || !Number.isFinite(observedMs) || !Number.isFinite(createdMs)) issues.push("acceptance timestamps are invalid");
   else {
     if (observedMs > nowMs || createdMs > nowMs) issues.push("acceptance timestamps are future-dated");
-    if ((!portableAdvisorySnapshot || releaseResolution) && nowMs - observedMs > maxAge) issues.push("acceptance source observation is stale");
+    if (nowMs - observedMs > maxAge) issues.push("acceptance source observation is stale");
   }
   try {
     const source = readDigestBoundFile(path.resolve(root, attempt.sourceReport.path), root, "runtime capability source report");
@@ -1203,6 +1258,8 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
       const raw = readDigestBoundBytes(path.resolve(root, source.value.rawArtifact.path), root, "controlled producer raw artifact");
       if (raw.sha256 !== source.value.rawArtifact.sha256 || raw.sha256 !== attempt.rawArtifactSha256) issues.push("controlled producer raw artifact SHA-256 mismatch");
       const rawText = raw.bytes.toString("utf8");
+      const portableBinding = portableAdvisorySnapshot && !releaseResolution
+        ? portableAdvisoryBinding(attempt, source.value, root, now) : null;
       if (source.value.hostInvocation?.request?.source === "native_cli_stream") {
         validateNativeCliEventTape(rawText, source.value.streamCapture, { runtime: attempt.runtime,
           capability: source.value.compositeLifecycle?.facets ? "engineering_composite" : attempt.capability,
@@ -1211,9 +1268,9 @@ export function validateRuntimeCapabilityAcceptanceAttemptEvidence(attempt, {
       assertNoMarkerBoundFailure(rawText, source.value.capabilityMarker);
       const observedEvents = attempt.runtime === "codex" ? observeCodexJsonl(rawText) : observeClaudeJsonl(rawText);
       if (source.value.producer?.id === CODEX_DESKTOP_ENGINEERING_PRODUCER_ID) {
-        validateCodexDesktopEngineeringBindings(source.value, rawText, root, { portableAdvisorySnapshot });
+        validateCodexDesktopEngineeringBindings(source.value, rawText, root, portableBinding);
       } else if (source.value.producer?.id === CODEX_DESKTOP_COMPOSITE_PRODUCER_ID) {
-        validateCodexDesktopSourceBindings(source.value, rawText);
+        validateCodexDesktopSourceBindings(source.value, rawText, portableBinding);
       } else {
         assertExactMarkerEventLifecycles(rawText, source.value.capabilityMarker);
         for (const expected of source.value.eventEvidence) {
