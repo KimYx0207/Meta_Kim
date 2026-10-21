@@ -8,6 +8,17 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.6.1] - 2026-10-22
+
+### Changed
+
+- **Read the task and result before the process graph.** Live now leads with current work, available results, blockers and observed activity. Available outputs can be opened through the existing safe preview, with feedback attached to the selected result.
+- **Tell unmeasured usage from measured counts.** Token displays preserve unknown, zero and positive values separately. Output measurement coverage shows how many execution nodes reported a count, and repeated snapshots do not accumulate usage.
+
+### Fixed
+
+- **Keep activity and feedback tied to their source.** The overview uses original event times and observed execution provenance, so planning records and snapshot refreshes do not appear as new execution. Feedback follows the selected task and output when the selection changes.
+
 ## [3.6.0] - 2026-10-21
 
 ### Added

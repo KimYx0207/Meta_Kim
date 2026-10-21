@@ -112,6 +112,8 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/infrastructure/live/live-runtime-adapter-registry.mjs",
   "src/presentation/live/live-control-room-page.mjs",
   "src/presentation/live/live-feedback-draft.mjs",
+  "src/presentation/live/live-run-overview.mjs",
+  "src/presentation/live/live-token-usage.mjs",
   "src/presentation/live/render-live-share-card.mjs",
   "src/sdk/live/common.mjs",
   "src/sdk/live/evidence-card.mjs",

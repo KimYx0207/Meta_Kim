@@ -1638,6 +1638,8 @@ function hostReplay(hostEvidence, runId, nodeByTaskId, mainNodeId) {
       nodeId,
       toolCallId,
       status: isFailure ? "failed" : normalizeStatus(item?.resultStatus || item?.state, kind === "tool_start" ? "active" : "completed"),
+      // Replay display fallbacks are not invocation proof; retain the existing evidence predicate.
+      executionObserved: evidenceShowsActualInvocation(item),
       label: `${provider} · ${kind.replaceAll("_", " ")}`,
     });
   }
@@ -2834,6 +2836,7 @@ function sanitizeCompactProjection(value) {
       nodeId: nodeId && knownNodeIds.has(nodeId) ? nodeId : null,
       toolCallId,
       status: normalizeStatus(event?.status, "in_doubt"),
+      executionObserved: event?.executionObserved === true,
       visibility: event?.visibility === "visible" ? "visible" : "unavailable",
       label: safeText(event?.label, "Observed event", 160),
     }];

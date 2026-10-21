@@ -301,6 +301,33 @@ test("trusted observed invocation promotes a queued worker to observed running a
   assert.equal(snapshot.session.active, true);
 });
 
+test("host replay carries actual invocation truth through compact readback without changing display status", () => {
+  const runId = "meta-replay-invocation-truth";
+  const states = ["planned", "declared", "not_executed", "selected_not_invoked", "invoked", "running", "returned", "completed", "failed"];
+  const observedStates = new Set(["invoked", "running", "returned", "completed", "failed"]);
+  const artifact = { schemaVersion: "governed-execution-v1", runId, status: "in_progress", updatedAt: "2026-10-22T08:00:00.000Z",
+    hostInvocationEvidence: states.map((state) => ({ runId, eventId: "host-" + state, providerId: "tool-" + state, family: "runtime_tool", state,
+      proofValid: true, synthetic: false, occurredAt: "2026-10-22T08:00:00.000Z" })),
+  };
+  const compact = buildLiveCompactProjection(artifact);
+  for (const governedArtifact of [artifact, JSON.parse(JSON.stringify(compact))]) {
+    const snapshot = buildLiveSnapshot({ governedArtifact, observedAt: "2026-10-22T08:00:01.000Z" });
+    for (const state of states) {
+      const event = snapshot.replay.find((item) => item.label.startsWith("tool-" + state + " · "));
+      assert.ok(event, state + " replay remains available for inspection");
+      assert.equal(event.executionObserved, observedStates.has(state), state);
+      if (["planned", "declared", "not_executed"].includes(state)) {
+        assert.equal(event.eventType, "ToolFinished");
+        assert.equal(event.status, "completed", "existing replay display behavior is preserved");
+      }
+    }
+  }
+  const oldCompact = JSON.parse(JSON.stringify(compact));
+  oldCompact.replay.forEach((event) => { delete event.executionObserved; });
+  assert.ok(buildLiveSnapshot({ governedArtifact: oldCompact }).replay.every((event) => event.executionObserved === false),
+    "old display-only events do not acquire invocation proof on readback");
+});
+
 test("a worker the run only declared stays declared-not-started and is never counted as running", () => {
   const snapshot = buildLiveSnapshot({
     governedArtifact: observedActiveArtifact(),

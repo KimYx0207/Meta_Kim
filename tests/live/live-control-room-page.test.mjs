@@ -24,7 +24,10 @@ import {
   serializeGraphLayoutPolicyForClient,
 } from "../../src/application/live/live-graph-layout.mjs";
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
+import { buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 import { buildLocalFeedbackText, createLocalFeedbackDraftStore, liveDeliverablesForNode, normalizeLiveDeliverables } from "../../src/presentation/live/live-feedback-draft.mjs";
+import { resolveLiveRunOverview } from "../../src/presentation/live/live-run-overview.mjs";
+import { serializeLiveTokenUsageResolvers } from "../../src/presentation/live/live-token-usage.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
 import {
   loadLiveTypographyScale,
@@ -2901,7 +2904,7 @@ test("consumes bounded v2 agent, prompt, tool, provenance, and event facts with 
   assert.match(html, /provenanceInput\.slice\(0, 256\)/u);
   assert.match(html, /replayInputEvents\.slice\(0, 512\)/u);
   assert.match(html, /node\.toolCount \+ " tools"[\s\S]{0,120}node\.latestTool/u);
-  assert.match(html, /node\.outputTokens \+ " tok"/u);
+  assert.match(html, /formatLiveTokenCount\(node\.outputTokens, currentLanguage\)/u);
   assert.match(html, /item\.dataset\.kind = event\.kind/u);
   assert.match(html, /data-kind="prompt"/u);
   assert.match(html, /data-kind="spawn"/u);
@@ -3699,12 +3702,91 @@ function runNormalizerHarness({ actualStatus = false } = {}) {
   const normalizeSnapshot = new Function(
     "DISPLAY_FORMAT",
     ...stubNames,
-    `${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
+    `${serializeLiveTokenUsageResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
       return normalizeSnapshot;
     `,
   )(displayFormat, ...stubNames.map((name) => stubs[name]));
   return normalizeSnapshot;
 }
+
+test("overview observes real host replay after snapshot production and page normalization", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const runId = "meta-overview-host-replay";
+  const at = "2026-10-22T08:00:00.000Z";
+  const artifact = (evidence) => ({ schemaVersion: "governed-execution-v1", runId, status: "in_progress", updatedAt: at,
+    workerTaskPackets: [{ taskPacketId: "task-host", roleDisplayName: "frontend", status: "pending", stage: "execution" }],
+    hostInvocationEvidence: [{ runId, taskPacketId: "task-host", providerId: "javascript-pro", family: "agent_subagent", state: "invoked", proofValid: true, synthetic: false, occurredAt: at, ...evidence }],
+  });
+  const project = (evidence) => buildLiveSnapshot({ governedArtifact: artifact(evidence), observedAt: "2026-10-22T08:00:01.000Z" });
+  const produced = project({});
+  assert.equal(produced.toolCalls.length, 0, "an agent invocation must be visible without tool rows");
+  assert.equal(produced.replay.find((event) => event.kind === "agent")?.eventType, "AgentEvent");
+  const activity = resolveLiveRunOverview(normalize(produced)).activity.item;
+  assert.equal(activity?.source, "event");
+  assert.equal(activity?.label, "javascript-pro · agent");
+  assert.equal(activity?.at, at);
+
+  for (const evidence of [{ synthetic: true }, { proofValid: false }, { proofValid: undefined }, { runId: "other-run" }, { state: "selected_not_invoked" }, { state: "planned" }]) {
+    assert.equal(resolveLiveRunOverview(normalize(project(evidence))).activity.item, null, JSON.stringify(evidence));
+  }
+  for (const state of ["planned", "declared", "not_executed", "selected_not_invoked"]) {
+    const result = project({ taskPacketId: undefined, providerId: "not-called-tool", family: "runtime_tool", state });
+    assert.equal(result.replay.find((event) => event.eventType === "ToolFinished")?.status, state === "selected_not_invoked" ? "pending" : "completed",
+      "the replay display status is not proof that this tool ran");
+    assert.equal(resolveLiveRunOverview(normalize(result)).activity.item, null, "unbound " + state);
+  }
+  for (const [state, eventType] of [["running", "ToolStarted"], ["completed", "ToolFinished"], ["failed", "HostFailure"]]) {
+    // Unbound host tools belong to the main node and have no task tool-call row.
+    const result = project({ taskPacketId: undefined, providerId: "shell", family: "runtime_tool", state });
+    assert.equal(result.toolCalls.length, 0);
+    assert.equal(result.replay.find((event) => event.stage === "execution")?.eventType, eventType);
+    assert.equal(resolveLiveRunOverview(normalize(result)).activity.item?.label, "shell · " + (state === "running" ? "tool start" : state === "failed" ? "failure" : "tool end"));
+  }
+});
+
+test("overview activity ignores display endedAt backfilled from tool updatedAt after page normalization", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const normalized = normalize({ run: { id: "run-clock", active: true, status: "active" }, toolCalls: [
+    { id: "old", name: "older invocation", state: "completed", startedAt: "2026-10-22T08:00:00Z", updatedAt: "2099-01-01T00:00:00Z" },
+    { id: "new", name: "newer invocation", state: "completed", endedAt: "2026-10-22T09:00:00Z" },
+    { id: "unknown", name: "update only", state: "completed", updatedAt: "2099-01-02T00:00:00Z" },
+  ] });
+  assert.equal(normalized.toolCalls[0].endedAt, "2099-01-01T00:00:00Z", "existing detail display fallback stays intact");
+  const result = resolveLiveRunOverview(normalized).activity;
+  assert.equal(result.item?.id, "new");
+  assert.equal(result.item?.at, "2026-10-22T09:00:00.000Z");
+  assert.equal(result.undatedCount, 1);
+});
+
+test("overview reuses guarded timestamp rendering with localized copy and no empty time element", () => {
+  const html = renderLiveControlRoomPage();
+  const displayFormat = JSON.parse(html.match(/const DISPLAY_FORMAT = (\{.*?\});\n/su)[1]);
+  const makeElement = (tagName, className = "", textContent = "") => ({
+    tagName, className, textContent, children: [], dataset: {},
+    append(...children) { this.children.push(...children); }, addEventListener() {},
+  });
+  for (const language of ["zh", "en"]) {
+    const overview = makeElement("section");
+    const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "DISPLAY_FORMAT", "currentLanguage", `
+const selectedProjectId = "";
+${serializeLiveTokenUsageResolvers()}
+${["renderRunOverview", "appendObservedTime", "formatTime", "formatSessionTime", "display"].map((name) => shippedHelper(html, name)).join("\n")}
+return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, displayFormat, language);
+    const snapshot = { run: { id: "run-time", active: true, status: "active" }, nodes: [], replay: [
+      { id: "call", eventType: "command_returned", label: "shell", at: "2026-10-22T09:00:00Z" },
+    ] };
+    render(snapshot);
+    const activity = overview.children.find((element) => element.dataset.overviewItem === "activity");
+    const time = activity.children.find((element) => element.tagName === "time");
+    assert.ok(time);
+    assert.equal(time.dateTime, "2026-10-22T09:00:00.000Z");
+    assert.equal(time.title, time.dateTime);
+    assert.ok(time.textContent.startsWith(language === "zh" ? "最近记录 · " : "Latest timed record · "));
+    assert.equal(time.className, "run-overview-note");
+    render({ ...snapshot, replay: [{ ...snapshot.replay[0], at: "" }] });
+    assert.ok(overview.children.every((item) => item.children.every((element) => element.tagName !== "time")));
+  }
+});
 
 /**
  * The run header reads a snapshot this normalizer rebuilds field by field, and it
@@ -6317,6 +6399,68 @@ return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.childr
   assert.doesNotMatch(view.notice.textContent, /已发送|已处理/u);
   render(host, { ...snapshot, deliverables: [] }, nodeA, "inspector");
   assert.equal(view.raw.value, original, "a missing descriptor in the next snapshot must not discard its draft");
+});
+
+test("overview feedback shortcuts synchronize an existing form target and preserve work and result drafts", () => {
+  const html = renderLiveControlRoomPage();
+  const element = (tagName, className = "", textContent = "") => ({
+    tagName, className, textContent, dataset: {}, children: [], parentNode: null, value: "", events: {}, focusCount: 0,
+    append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
+    setAttribute() {}, addEventListener(type, handler) { this.events[type] = handler; }, focus() { this.focusCount += 1; },
+  });
+  const drafts = createLocalFeedbackDraftStore();
+  const surfaces = new Map();
+  const api = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", `
+const currentLanguage = "zh";
+const selectedProjectId = "project-a";
+let currentSnapshot;
+let selectedNodeId = null;
+const host = makeElement("div");
+const setInspectorTab = () => {};
+const setInspectorOpen = () => {};
+function updateSelectedNodeVisuals() {
+  renderLocalFeedback(host, currentSnapshot, currentSnapshot.nodes.find((node) => node.id === selectedNodeId) || null, "inspector");
+}
+${["renderLocalFeedback", "openOverviewFeedback"].map((name) => shippedHelper(html, name)).join("\n")}
+return { open: openOverviewFeedback, paint(snapshot) { currentSnapshot = snapshot; updateSelectedNodeVisuals(); } };`)(
+    drafts, surfaces, element, (node) => { node.children = []; }, liveDeliverablesForNode, buildLocalFeedbackText,
+  );
+  const result = { id: "run-result", runId: "run-a", taskPacketId: null, label: "运行结果", kind: "html", availability: "available" };
+  const snapshot = { run: { id: "run-a", title: "当前运行" }, nodes: [], evidence: [], deliverables: [result] };
+  api.paint(snapshot);
+  const view = surfaces.get("inspector");
+  const rawControl = view.raw;
+  const firstOption = view.target.children[0];
+  view.raw.value = "当前工作草稿";
+  view.raw.events.input();
+
+  api.open(result);
+  assert.equal(view.target.value, "deliverable:run-result");
+  assert.equal(view.context.deliverableId, "run-result");
+  assert.equal(view.target.children[0], firstOption, "selection changes do not rebuild unchanged options");
+  assert.equal(view.raw, rawControl, "the focused input control is preserved");
+  view.raw.value = "结果草稿";
+  view.raw.events.input();
+  view.prepare.events.click();
+  const resultPrepared = view.prepared.value;
+  assert.match(resultPrepared, /交付物：run-result/u);
+
+  api.open();
+  assert.equal(view.target.value, "");
+  assert.equal(view.context.deliverableId, undefined);
+  assert.equal(view.raw.value, "当前工作草稿");
+  assert.equal(view.target.children[0], firstOption);
+  api.open(result);
+  api.paint({ ...snapshot, deliverables: [] });
+  assert.equal(view.raw.value, "结果草稿", "snapshot removal retains the result draft");
+  api.open();
+  assert.equal(drafts.selected({ projectId: "project-a", runId: "run-a" }), "");
+  assert.equal(view.target.value, "");
+  assert.equal(view.raw.value, "当前工作草稿");
+  view.prepare.events.click();
+  assert.doesNotMatch(view.prepared.value, /交付物：run-result/u);
+  assert.deepEqual(drafts.get({ projectId: "project-a", runId: "run-a", deliverableId: "run-result" }), { original: "结果草稿", prepared: resultPrepared });
+  assert.equal(view.raw.focusCount, 4, "each shortcut focuses the same input");
 });
 
 test("the default graph inspector opens deliverables through the scoped safe route", () => {
