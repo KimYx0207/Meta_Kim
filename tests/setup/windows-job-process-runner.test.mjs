@@ -22,6 +22,10 @@ const powershell = "powershell.exe";
 // cold start cannot be mistaken for an owned-tree cleanup failure.
 const TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS = 20_000;
 const TIMEOUT_CLEANUP_READY_TIMEOUT_MS = TIMEOUT_CLEANUP_GUARD_TIMEOUT_MS;
+// This is a test-only preparation window for fixtures without a release gate,
+// not a product startup-performance contract or a post-kill cleanup allowance.
+const DIRECT_LAUNCHER_FIXTURE_READY_TIMEOUT_MS = 20_000;
+const FLOOD_GUARD_TIMEOUT_MS = 15_000;
 // Early launcher failure must surface well before the 10-second guard timeout.
 const EARLY_LAUNCHER_EXIT_BUDGET_MS = 8_000;
 const testTempDirectories = new Set();
@@ -111,10 +115,12 @@ function captureOwnedIdentityObservation(pids, {
   const idList = pids.map(Number).join(",");
   const command = [
     `$ids = @(${idList})`,
-    "$rows = @()",
-    "$failures = @()",
-    "foreach ($id in $ids) { try { $p = [System.Diagnostics.Process]::GetProcessById($id); $rows += [ordered]@{ pid = [int]$id; startTicks = [string]$p.StartTime.ToUniversalTime().Ticks } } catch { $failure = $_.Exception.GetBaseException(); $category = 'process_query_failed'; if ($failure -is [System.ArgumentException]) { $category = 'pid_missing' } elseif ($failure -is [System.ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 5) { $category = 'access_denied' }; $failures += [ordered]@{ pid = [int]$id; category = $category } } }",
-    "Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject ([ordered]@{ identities = $rows; failures = $failures }) -Compress",
+    "$rows = [System.Collections.Generic.List[string]]::new()",
+    "$failures = [System.Collections.Generic.List[string]]::new()",
+    // Only integer PIDs, numeric OS ticks and fixed failure enums enter this
+    // JSON. Console output avoids importing a module just to serialize them.
+    "foreach ($id in $ids) { try { $p = [System.Diagnostics.Process]::GetProcessById($id); $ticks = [string]$p.StartTime.ToUniversalTime().Ticks; $rows.Add('{\"pid\":' + [string]$id + ',\"startTicks\":\"' + $ticks + '\"}') } catch { $failure = $_.Exception.GetBaseException(); $category = 'process_query_failed'; if ($failure -is [System.ArgumentException]) { $category = 'pid_missing' } elseif ($failure -is [System.ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 5) { $category = 'access_denied' }; $failures.Add('{\"pid\":' + [string]$id + ',\"category\":\"' + $category + '\"}') } }",
+    "[Console]::Out.Write('{\"identities\":[' + [string]::Join(',', $rows.ToArray()) + '],\"failures\":[' + [string]::Join(',', $failures.ToArray()) + ']}')",
   ].join("; ");
   const startedAt = now();
   const result = spawnSyncImpl(
@@ -158,7 +164,12 @@ function captureOwnedIdentityObservation(pids, {
 }
 
 function identityObservationError(diagnostic) {
-  const error = new Error(`Owned process identity observation failed: ${diagnostic.category}`);
+  const measurements = Object.fromEntries(
+    ["timeoutMs", "elapsedMs", "attempts", "stdoutBytes", "stderrBytes"]
+      .filter((key) => Number.isFinite(diagnostic[key]) && diagnostic[key] >= 0)
+      .map((key) => [key, diagnostic[key]]),
+  );
+  const error = new Error(`Owned process identity observation failed: ${diagnostic.category} ${JSON.stringify(measurements)}`);
   error.observationDiagnostic = diagnostic;
   return error;
 }
@@ -480,6 +491,8 @@ describe("owned identity observation diagnostics and teardown", () => {
       assert.equal(caught?.observationDiagnostic?.category, category);
       assert.equal(queries, 1);
       assert.doesNotMatch(JSON.stringify(caught.observationDiagnostic), /private-do-not-echo/u);
+      assert.doesNotMatch(caught.message, /private-do-not-echo/u);
+      assert.match(caught.message, /"stdoutBytes":\d+/u);
       assert.equal(typeof caught.observationDiagnostic.stdoutBytes, "number");
     });
   }
@@ -542,6 +555,37 @@ describe(
   "Windows Job Object evaluator process runner",
   { skip: process.platform !== "win32" },
   () => {
+    test("captures a real cold-cache identity without importing a serializer module", async (t) => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-job-cold-identity-"));
+      const observations = [];
+      try {
+        const env = coldPowerShellEnvironment(tempDir);
+        const identities = await observeOwnedTreeWithDeadline([process.pid], {
+          deadline: Date.now() + 10_000,
+          capture: (requested, timeoutMs) => {
+            assert.ok(timeoutMs > 0 && timeoutMs <= 5_000);
+            const observed = captureOwnedIdentityObservation(requested, {
+              timeoutMs,
+              spawnSyncImpl: (file, args, options) => {
+                assert.equal(options.timeout, timeoutMs);
+                assert.doesNotMatch(args.at(-1), /ConvertTo-Json|Import-Module|Write-Output/u);
+                return spawnSync(file, args, { ...options, env });
+              },
+            });
+            observations.push(observed.diagnostic);
+            return observed;
+          },
+        });
+        assert.equal(observations.at(-1)?.category, "query_ok");
+        assert.ok(observations.slice(0, -1).every(({ category }) => category === "query_timeout"));
+        assert.deepEqual(identities.map(({ pid }) => pid), [process.pid]);
+        assert.match(identities[0].startTicks, /^\d+$/u);
+      } finally {
+        t.diagnostic(`cold identity observations ${JSON.stringify(observations)}`);
+        registerTestDirectory(tempDir);
+      }
+    });
+
     test("classifies outer spec failures without serializing private diagnostics", async () => {
       const cases = [
         {
@@ -687,7 +731,7 @@ describe(
       const launcher = startLauncher(tempDir, rootScript);
       let identities = [];
       try {
-        identities = await readOwnedTree(pidsPath);
+        identities = await readOwnedTree(pidsPath, DIRECT_LAUNCHER_FIXTURE_READY_TIMEOUT_MS);
         writeFileSync(launcher.stopPath, "stop", "utf8");
         const exit = await waitForChildExit(launcher.child);
         assert.equal(exit.code, 0);
@@ -740,7 +784,7 @@ describe(
       const launcher = startLauncher(tempDir, rootScript);
       let identities = [];
       try {
-        identities = await readOwnedTree(pidsPath);
+        identities = await readOwnedTree(pidsPath, DIRECT_LAUNCHER_FIXTURE_READY_TIMEOUT_MS);
         const exitPromise = waitForChildExit(launcher.child);
         assert.equal(launcher.child.kill("SIGKILL"), true);
         await exitPromise;
@@ -795,7 +839,7 @@ describe(
       let treeIdentities = [];
       let launcherIdentities = [];
       try {
-        treeIdentities = await readOwnedTree(pidsPath);
+        treeIdentities = await readOwnedTree(pidsPath, DIRECT_LAUNCHER_FIXTURE_READY_TIMEOUT_MS);
         // Observe the actual production spawn without discovering unrelated
         // processes through CIM. Arguments, handles and Job behavior are real.
         await waitForFile(launcherRecordPath, 30_000);
@@ -975,31 +1019,44 @@ describe(
           floodStream: streamName,
         });
         let identities = [];
+        let guardCleanupVerified = false;
         try {
+          const readinessDeadline = Date.now() + FLOOD_GUARD_TIMEOUT_MS;
           const guarded = runWindowsGuardedCommand(process.execPath, [rootScript], {
             cwd: tempDir,
-            timeout: 15_000,
+            timeout: FLOOD_GUARD_TIMEOUT_MS,
             outputLimitBytes: 4_096,
             tailBytes: 256,
           });
-          identities = await readOwnedTree(pidsPath);
-          writeFileSync(releasePath, "flood", "utf8");
-          const error = await expectRejected(guarded);
-          const metadata = error[`${streamName}Metadata`];
-          assert.equal(error.code, "META_KIM_COMMAND_OUTPUT_LIMIT_EXCEEDED");
-          assert.equal(error.ownedProcessGroupCleanupVerified, true);
-          assertNoWholeTreeClaim(error);
-          assert.deepEqual(error.outputLimitStreams, [streamName]);
-          assert.equal(metadata.limitExceeded, true);
-          assert.ok(metadata.bytesCaptured <= 4_096);
-          assert.ok(metadata.tailBytesCaptured <= 256);
-          assert.ok(Buffer.byteLength(error[streamName], "utf8") <= 4_096);
-          assert.equal(typeof metadata.sha256, "string");
-          assert.equal(metadata.sha256.length, 64);
-          await waitForOwnedProcessesToExit(identities);
+          await observeWithSettledOwnedGuard({
+            guarded,
+            observe: async () => {
+              identities = await readOwnedTree(pidsPath, FLOOD_GUARD_TIMEOUT_MS, { deadline: readinessDeadline });
+              writeFileSync(releasePath, "flood", "utf8");
+              return identities;
+            },
+            verify: async (outcome) => {
+              assert.equal(outcome.status, "rejected", "the flood must exceed its output limit");
+              const error = outcome.error;
+              const metadata = error[`${streamName}Metadata`];
+              assert.equal(error.code, "META_KIM_COMMAND_OUTPUT_LIMIT_EXCEEDED");
+              assert.equal(error.ownedProcessGroupCleanupVerified, true);
+              assertNoWholeTreeClaim(error);
+              assert.deepEqual(error.outputLimitStreams, [streamName]);
+              assert.equal(metadata.limitExceeded, true);
+              assert.ok(metadata.bytesCaptured <= 4_096);
+              assert.ok(metadata.tailBytesCaptured <= 256);
+              assert.ok(Buffer.byteLength(error[streamName], "utf8") <= 4_096);
+              assert.equal(typeof metadata.sha256, "string");
+              assert.equal(metadata.sha256.length, 64);
+              await waitForOwnedProcessesToExit(identities);
+              guardCleanupVerified = true;
+            },
+          });
         } finally {
           stopOwnedProcesses(identities);
-          registerTestDirectory(tempDir);
+          // Keep failed readiness/cleanup evidence instead of racing the Job.
+          if (guardCleanupVerified) registerTestDirectory(tempDir);
         }
       });
     }
