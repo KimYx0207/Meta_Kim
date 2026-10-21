@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { URL } from "node:url";
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 
 import {
   createLiveControlRoomService,
@@ -24,6 +25,9 @@ import {
   LIVE_HUB_MAX_NODE_COUNT,
 } from "./live-hub-project-catalog.mjs";
 import { renderLiveControlRoomPage } from "../../presentation/live/live-control-room-page.mjs";
+import { createCodexNativeSessionReader } from "./codex-native-session-reader.mjs";
+import { buildNativeCodexLiveSnapshot, nativeCodexSessionCatalogRow } from "../../application/live/live-native-codex-projection.mjs";
+import { buildProjectRef } from "../../../scripts/project-registry.mjs";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
@@ -180,6 +184,21 @@ function jsonResponse(response, statusCode, value) {
   response.statusCode = statusCode;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("cache-control", "no-store");
+  response.setHeader("content-length", Buffer.byteLength(body));
+  response.end(body);
+}
+
+function deliverableResponse(response, value) {
+  const escape = (text) => String(text).replace(/[&<>"']/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+  securityHeaders(response);
+  response.statusCode = 200;
+  response.setHeader("content-type", "text/html; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("cross-origin-resource-policy", "same-origin");
+  response.setHeader("content-security-policy", value.kind === "external"
+    ? "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    : "sandbox; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; navigate-to 'none'; frame-ancestors 'none'");
+  const body = value.kind === "html" ? value.text : `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>${escape(value.label)}</title><style>body{max-width:1000px;margin:40px auto;padding:0 24px;font:16px/1.7 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>${escape(value.label)}</h1>${value.kind === "external" ? `<p>此运行明确引用了外部成品：</p><a href="${escape(value.url)}" target="_blank" rel="noopener noreferrer">${escape(value.url)}</a>` : `<pre>${escape(value.text)}</pre>`}</html>`;
   response.setHeader("content-length", Buffer.byteLength(body));
   response.end(body);
 }
@@ -429,7 +448,86 @@ function boundedError(error, fallback = "control_unavailable") {
  */
 export function createLiveControlRoomServer(options = {}) {
   const globalHub = options.globalHub === true;
-  const service = options.service || createLiveControlRoomService(globalHub
+  // Binding comes only from a trusted startup option, never from an HTTP query.
+  // Native sessions are read-only and have their own run; old planning artifacts
+  // cannot acquire execution truth merely because a Desktop conversation exists.
+  const nativeReader = options.nativeCodex && typeof options.nativeCodex === "object"
+    ? createCodexNativeSessionReader(options.nativeCodex)
+    : null;
+  const nativeProjectRef = nativeReader ? buildProjectRef({ repoPath: nativeReader.projectRoot }) : null;
+  const nativeSnapshots = new Map();
+  const readNativeSnapshot = async (requestedRunId = null) => {
+    if (!nativeReader) return null;
+    let observation;
+    if (requestedRunId) {
+      const prefix = `native-codex-${nativeReader.threadId}-`;
+      if (!requestedRunId.startsWith(prefix)) return null;
+      const turnId = requestedRunId.slice(prefix.length);
+      if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(turnId)) return null;
+      observation = await nativeReader.readTurn(turnId);
+    } else observation = await nativeReader.read();
+    const snapshot = buildNativeCodexLiveSnapshot(observation);
+    if (snapshot) {
+      nativeSnapshots.set(snapshot.run.runId, snapshot);
+      if (nativeSnapshots.size > 16) nativeSnapshots.delete(nativeSnapshots.keys().next().value);
+    }
+    return snapshot;
+  };
+  const mergeNativeProjects = (rows) => {
+    if (!nativeReader || !nativeSnapshots.size) return rows;
+    const snapshots = [...nativeSnapshots.values()].sort((a, b) => String(b.run.startedAt).localeCompare(String(a.run.startedAt)));
+    const sessions = snapshots.map(nativeCodexSessionCatalogRow);
+    const existing = rows.find((project) => project.projectRef === nativeProjectRef);
+    const nativeIds = new Set(sessions.map((session) => session.runId));
+    const nativeProject = {
+      ...(existing || {}), projectRef: nativeProjectRef, repoRoot: nativeReader.projectRoot,
+      displayName: existing?.displayName || path.basename(nativeReader.projectRoot),
+      status: sessions[0].status, activeSessionId: sessions[0].active ? sessions[0].sessionId : existing?.activeSessionId || null,
+      updatedAt: sessions[0].updatedAt,
+      sessions: [...sessions, ...(existing?.sessions || []).filter((item) => !nativeIds.has(item.runId))],
+    };
+    nativeProject.sessionCount = nativeProject.sessions.length;
+    return [nativeProject, ...rows.filter((project) => project.projectRef !== nativeProjectRef)];
+  };
+  const wrapNativeService = (base, repoRoot) => {
+    if (!nativeReader || path.resolve(repoRoot).toLowerCase() !== nativeReader.projectRoot.toLowerCase()) return base;
+    const share = async (request = {}) => {
+      const requestedRun = typeof request === "string" ? request : request.runId;
+      if (!requestedRun || requestedRun.startsWith("native-codex-")) {
+        const error = new Error("Native session sharing is unavailable.");
+        error.code = "LIVE_SHARE_UNAVAILABLE";
+        throw error;
+      }
+      return base.getShare(request);
+    };
+    return {
+      ...base,
+      async getSnapshot(runId) {
+        if (runId && typeof runId === "object") runId = runId.runId;
+        if (!runId || runId.startsWith(`native-codex-${nativeReader.threadId}-`)) {
+          const snapshot = await readNativeSnapshot(runId || null);
+          if (snapshot && (!runId || runId === snapshot.run.runId)) return snapshot;
+          if (runId) throw new Error("native_turn_not_available");
+        }
+        return base.getSnapshot(runId);
+      },
+      async getReplay(runId) {
+        if (runId && typeof runId === "object") runId = runId.runId;
+        if (typeof runId === "string" && runId.startsWith(`native-codex-${nativeReader.threadId}-`)) {
+          const snapshot = await this.getSnapshot(runId);
+          return { schemaVersion: LIVE_REPLAY_SCHEMA_VERSION, runId, source: snapshot.source, replay: snapshot.replay, eventCount: snapshot.eventCount, permissions: snapshot.permissions };
+        }
+        return base.getReplay(runId);
+      },
+      async getDeliverable(runId, deliverableId) {
+        if (typeof runId === "string" && runId.startsWith("native-codex-")) return null;
+        return typeof base.getDeliverable === "function" ? base.getDeliverable(runId, deliverableId) : null;
+      },
+      getShare: share,
+      getShareArtifact: share,
+    };
+  };
+  const baseService = options.service || createLiveControlRoomService(globalHub
     ? {
         ...options,
         repository: {
@@ -439,6 +537,7 @@ export function createLiveControlRoomServer(options = {}) {
         },
       }
     : options);
+  const service = wrapNativeService(baseService, options.projectRoot || nativeReader?.projectRoot || process.cwd());
   const requestedPort = Number.isInteger(options.port) && options.port >= 0 ? options.port : DEFAULT_PORT;
   const requestedHost = options.host;
   if (!loopbackOnly(requestedHost)) {
@@ -517,8 +616,9 @@ export function createLiveControlRoomServer(options = {}) {
   const rebuildHubProjects = () => {
     if (!hubCatalogReadPromise) {
       hubCatalogReadPromise = Promise.resolve(hubCatalog.listProjects())
-        .then((projects) => {
-          hubCatalogCache = Array.isArray(projects) ? projects : [];
+        .then(async (projects) => {
+          await readNativeSnapshot().catch(() => null);
+          hubCatalogCache = mergeNativeProjects(Array.isArray(projects) ? projects : []);
           hubCatalogCacheExpiresAt = hubCatalogClock() + hubCatalogTtlMs;
           return hubCatalogCache;
         })
@@ -545,7 +645,8 @@ export function createLiveControlRoomServer(options = {}) {
   };
 
   const publicHubCatalog = async ({ requestedProjectId = null, requestedRunId = null, refresh = false } = {}) => {
-    const internalProjects = await readHubProjects({ refresh });
+    if (nativeReader) await readNativeSnapshot(requestedRunId?.startsWith("native-codex-") ? requestedRunId : null).catch(() => null);
+    const internalProjects = mergeNativeProjects(await readHubProjects({ refresh }));
     const unorderedProjects = internalProjects.map((project) => ({
       projectId: project.projectRef,
       displayName: project.displayName,
@@ -672,12 +773,14 @@ export function createLiveControlRoomServer(options = {}) {
     if (requestedRunId && !selectedProject?.sessions?.some((session) => session.runId === requestedRunId)) {
       return { service: null, projectId, runId: requestedRunId, catalog, invalidRun: true };
     }
-    const internalProject = await hubCatalog.resolveProject(projectId);
+    const internalProject = projectId === nativeProjectRef
+      ? { projectRef: nativeProjectRef, repoRoot: nativeReader.projectRoot }
+      : await hubCatalog.resolveProject(projectId);
     if (!internalProject) return { service: null, projectId, runId, catalog, invalidProject: true };
     const cacheKey = `${projectId}:${internalProject.repoRoot}`;
     let selectedService = projectServices.get(cacheKey);
     if (!selectedService) {
-      selectedService = createProjectService(internalProject);
+      selectedService = wrapNativeService(createProjectService(internalProject), internalProject.repoRoot);
       projectServices.clear();
       projectServices.set(cacheKey, selectedService);
     }
@@ -869,6 +972,24 @@ export function createLiveControlRoomServer(options = {}) {
     if (request.method !== "GET") {
       response.setHeader("allow", "GET");
       jsonResponse(response, 405, safeError("method_not_allowed"));
+      return;
+    }
+
+    if (parsed.pathname === "/api/deliverable") {
+      const runId = parsed.searchParams.get("runId");
+      const deliverableId = parsed.searchParams.get("deliverableId");
+      if (!runId || !isLiveRunId(runId) || !/^deliverable:[a-f0-9]{24}$/u.test(deliverableId || "") ||
+        [...parsed.searchParams.keys()].some((key) => !["projectId", "runId", "deliverableId"].includes(key))) {
+        jsonResponse(response, 400, safeError("invalid_deliverable_reference"));
+        return;
+      }
+      try {
+        const selection = await resolveHubSelection(parsed);
+        const value = selection.service && typeof selection.service.getDeliverable === "function"
+          ? await selection.service.getDeliverable(runId, deliverableId) : null;
+        if (!value || selection.invalidProject || selection.invalidRun) jsonResponse(response, 404, safeError("deliverable_unavailable"));
+        else deliverableResponse(response, value);
+      } catch { jsonResponse(response, 404, safeError("deliverable_unavailable")); }
       return;
     }
 

@@ -5,7 +5,13 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 import {
+  assertOptionalPlaybookContract,
+  inspectOptionalPlaybookProvider,
+} from "../helpers/optional-playbook-contract.mjs";
+import {
+  agentTeamsCandidateSkillPaths,
   buildRuntimeProjectionEvidence,
   buildWardenWritebackFlow,
   classifyProjectionFailure,
@@ -212,10 +218,10 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       assert.equal(report.defaultRuntimePath.langGraphRunPacket.status, "pass");
       assert.equal(report.defaultRuntimePath.peerAgentMeshPacket.status, "pass");
       assert.equal(report.defaultRuntimePath.agentTeamsPlaybookPacket.status, "pass");
-      assert.equal(report.defaultRuntimePath.agentTeamsPlaybookPacket.selected, false);
-      assert.equal(
-        report.defaultRuntimePath.agentTeamsPlaybookPacket.acceptance.optionalProviderDoesNotGateNativeFanout,
-        true,
+      await assertOptionalPlaybookContract(
+        report.defaultRuntimePath.agentTeamsPlaybookPacket,
+        report.capabilityInvocationTruthPacket,
+        agentTeamsCandidateSkillPaths("codex"),
       );
       assert.deepEqual(
         [
@@ -263,7 +269,6 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       assert.equal(invocationByFamily.get("app_visible_subagent").state, "not_required");
       assert.equal(invocationByFamily.get("worker_task").state, "blocked");
       assert.equal(invocationByFamily.get("prompt_rule").state, "applied");
-      assert.equal(invocationByFamily.get("agent_teams_playbook").state, "not_required");
       assert.equal(report.defaultRuntimePath.capabilityInvocationProbePacket.status, "not_run");
       assert.equal(
         report.capabilityInvocationTruthPacket.realInvocationCoverage.status,
@@ -914,7 +919,62 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     }
   });
 
-  test("T-005 validates the three product goals and support gates", () => {
+  test("optional playbook contract follows real present and absent discovery fixtures", async (t) => {
+    const fixture = createGovernanceRuntimeFixture(t);
+    const childSource = `
+      import path from "node:path";
+      import { agentTeamsCandidateSkillPaths, runMetaTheoryGovernedExecution }
+        from "./scripts/run-meta-theory-governed-execution.mjs";
+      const branch = process.argv[1];
+      const stateDir = path.join(process.cwd(), "tmp", branch);
+      const report = await runMetaTheoryGovernedExecution({
+        task: ${JSON.stringify(multiGapTask)}, runId: "optional-provider-fixture", stateDir,
+        dbPath: path.join(stateDir, "runs.sqlite"),
+      });
+      console.log(JSON.stringify({
+        packet: report.defaultRuntimePath.agentTeamsPlaybookPacket,
+        invocationTruth: report.capabilityInvocationTruthPacket,
+        candidates: agentTeamsCandidateSkillPaths("codex"),
+        workerTaskIds: report.defaultRuntimePath.workerTaskPackets.map((task) => task.taskPacketId),
+      }));
+    `;
+    const execute = (branch) => {
+      const result = fixture.run(["--input-type=module", "--eval", childSource, branch]);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      return JSON.parse(result.stdout);
+    };
+    const available = execute("optional-provider-present");
+    await assertOptionalPlaybookContract(available.packet, available.invocationTruth, available.candidates);
+    assert.equal(available.packet.selected, true);
+    assert.equal(available.packet.providerResolution.selectedSource, "codex_global_skill");
+    const forgedSource = structuredClone(available.packet);
+    forgedSource.providerResolution.selectedPathRef = "unrelated/SKILL.md";
+    await assert.rejects(
+      assertOptionalPlaybookContract(forgedSource, available.invocationTruth, available.candidates),
+      /selectedPathRef must match the nearest real source/u,
+    );
+    const forgedInvocation = structuredClone(available.invocationTruth);
+    forgedInvocation.rows.find((row) => row.family === "agent_teams_playbook").invokedCount = 1;
+    await assert.rejects(
+      assertOptionalPlaybookContract(available.packet, forgedInvocation, available.candidates),
+      { code: "ERR_ASSERTION" },
+    );
+    // Only remove discovery fixtures created in this disposable HOME. Do not
+    // suppress sibling discovery or alter the developer's provider inventory.
+    for (const runtime of [".codex", ".claude"]) {
+      await rm(path.join(fixture.home, runtime, "skills", "agent-teams-playbook"), { recursive: true });
+    }
+    const refreshed = fixture.run(["scripts/discover-global-capabilities.mjs", "--runtime-inventory-only"]);
+    assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
+    const unavailable = execute("optional-provider-absent");
+    await assertOptionalPlaybookContract(unavailable.packet, unavailable.invocationTruth, unavailable.candidates);
+    assert.equal(unavailable.packet.selected, false);
+    assert.equal(unavailable.packet.providerResolution.selectedSource, null);
+    assert.deepEqual(available.workerTaskIds, unavailable.workerTaskIds);
+    assert.deepEqual(available.packet.waves, unavailable.packet.waves);
+  });
+
+  test("T-005 validates the three product goals and support gates", async () => {
     const result = spawnSync(
       process.execPath,
       ["scripts/validate-product-experience-core-goals.mjs"],
@@ -922,6 +982,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     );
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(result.stdout);
+    const optionalProvider = await inspectOptionalPlaybookProvider(agentTeamsCandidateSkillPaths("codex"));
     assert.equal(output.status, "pass");
     assert.equal(output.validationStatus, "pass");
     assert.equal(output.evidenceMode, "structural-boundary-plus-synthetic-negative-control");
@@ -957,10 +1018,14 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     );
     assert.equal(
       output.defaultBoundaryRun.capabilityInvocationTruth.agentTeamsPlaybookState,
-      "not_required",
+      optionalProvider.found ? "selected_not_invoked" : "not_required",
+    );
+    assert.equal(
+      output.syntheticNegativeControlRun.capabilityInvocationTruth.agentTeamsPlaybookState,
+      optionalProvider.found ? "selected_not_invoked" : "not_required",
     );
     assert.equal(output.agentTeamsPlaybook.status, "pass");
-    assert.equal(output.agentTeamsPlaybook.selected, false);
+    assert.equal(output.agentTeamsPlaybook.selected, optionalProvider.found);
     assert.equal(output.defaultBoundaryRun.visibleMetaTheorySurface, "partial");
     assert.ok(output.userPerceptionCues >= 6);
   });

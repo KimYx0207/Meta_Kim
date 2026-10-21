@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
+import { hasEngineeringRepairIntent, hasProductBuildIntent } from "./meta-theory-entry-classifier.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(__dirname, "..");
@@ -60,7 +61,10 @@ export function annotateCrossScopeAgentCollisions(agents, runtime) {
     groups.set(agent.id, group);
   }
   return agents.map((agent) => {
-    const group = groups.get(agent.id) ?? [agent];
+    const cacheOnly = agent.cacheEvidenceOnly === true;
+    // Cached definitions remain advisory evidence, never live collision inputs.
+    const group = (groups.get(agent.id) ?? [agent])
+      .filter((candidate) => cacheOnly || candidate.cacheEvidenceOnly !== true);
     const provenance = group.flatMap((candidate) =>
       Array.isArray(candidate.provenance) && candidate.provenance.length > 0
         ? candidate.provenance
@@ -82,9 +86,11 @@ export function annotateCrossScopeAgentCollisions(agents, runtime) {
     const distinctDigests = [...new Set(uniqueSources.map((entry) => entry.contentDigest).filter(Boolean))];
     const conflicting = distinctDigests.length > 1;
     const explicitlySelected = agent.sourceSelectedExplicitly === true;
-    const routeEligible = (!conflicting || explicitlySelected) &&
+    const routeEligible = !cacheOnly && agent.routeEligible !== false &&
+      (!conflicting || explicitlySelected) &&
       agent.validCustomAgentDefinition !== false;
-    if (uniqueSources.length <= 1 && agent.collision == null) return agent;
+    if (uniqueSources.length <= 1 && agent.collision == null &&
+      !cacheOnly && agent.routeEligible !== false && agent.validCustomAgentDefinition !== false) return agent;
     const collision = {
       detected: uniqueSources.length > 1,
       kind: uniqueSources.length <= 1
@@ -97,7 +103,11 @@ export function annotateCrossScopeAgentCollisions(agents, runtime) {
       exactDuplicate: uniqueSources.length > 1 && !conflicting,
       ambiguous: conflicting,
       routeEligible,
-      evidenceSource: "live_project_and_global_filesystem",
+      evidenceSource: group.every((candidate) => candidate.cacheEvidenceOnly === true)
+        ? "cached_agent_inventory"
+        : group.some((candidate) => candidate.cacheEvidenceOnly === true)
+          ? "mixed_live_and_cached_agent_inventory"
+          : "live_project_and_global_filesystem",
     };
     return {
       ...agent,
@@ -214,6 +224,9 @@ export function classifyTaskShape(task) {
   }
   if (/goal\s*prompt|loop\s*prompt|goalpro|goal\s*contract|intent amplification|目标契约|目标合同|意图放大|循环提示词/.test(text)) {
     return "goal_contract";
+  }
+  if (hasEngineeringRepairIntent(text) && !hasProductBuildIntent(text)) {
+    return "engineering_execution";
   }
   if (/strategy|growth|moneti[sz]e|pricing|business|product|pmf|conversion|decision|judge|判断|决策|选择|取舍|pass.?kill|策略|增长|商业化|变现|定价|产品|转化|留存|分发|用户路径|高流量/.test(text)) {
     return "strategy_product_decision";

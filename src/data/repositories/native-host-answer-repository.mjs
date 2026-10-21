@@ -459,7 +459,18 @@ function acquireLock(paths, options) {
       return token;
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
-      const lockStats = lstatSync(paths.lockPath);
+      let lockStats;
+      try {
+        lockStats = lstatSync(paths.lockPath);
+      } catch (inspectionError) {
+        if (inspectionError?.code !== "ENOENT") throw inspectionError;
+        // The owner can release after our exclusive open saw its lock.
+        // Retry the acquisition, while retaining the original time bound.
+        if (performance.now() >= deadline) {
+          fail("write lock disappeared after the acquisition deadline", "NATIVE_HOST_ANSWER_REPOSITORY_BUSY");
+        }
+        continue;
+      }
       if (!lockStats.isFile() || lockStats.isSymbolicLink()) {
         fail("write lock is not a regular non-link file", "NATIVE_HOST_ANSWER_REPOSITORY_UNSAFE_LOCK");
       }

@@ -536,6 +536,23 @@ test("verify-all owns one stage manifest and expands deterministic checks once",
   );
 });
 
+test("isolated global target binding cannot promote incomplete or mismatched full verification", () => {
+  const home = path.resolve("isolated-test-home");
+  const results = STAGES.map(stage => ({ name: stage.name, status: "passed" }));
+  const options = { results, startIndex: 0, packedUserProof: completePackedProductProof(), isolatedGlobalHome: home };
+  assert.equal(computeReleaseGrade(options), false, "selected target must be bound in the global stage");
+  const globalResult = results.find(entry => entry.name === "meta:check:global:release");
+  globalResult.environmentScope = { kind: "isolated_global_home", home, readOnly: true, personalGlobalUpdated: false };
+  assert.equal(computeReleaseGrade(options), true);
+  assert.equal(computeReleaseGrade({ ...options, startIndex: 1 }), false);
+  assert.equal(computeReleaseGrade({ ...options, results: results.slice(1) }), false);
+  assert.equal(computeReleaseGrade({ ...options, packedUserProof: null }), false);
+  for (const scope of [{ ...globalResult.environmentScope, home: path.resolve("other-home") }, { ...globalResult.environmentScope, personalGlobalUpdated: true }, { ...globalResult.environmentScope, readOnly: false }]) {
+    globalResult.environmentScope = scope;
+    assert.equal(computeReleaseGrade(options), false);
+  }
+});
+
 test("standard release-grade and optional live certification remain separate", () => {
   const standardResults = STAGES.map((stage) => ({ name: stage.name, status: "passed" }));
   const standardClaims = computeVerificationClaims({

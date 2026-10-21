@@ -13,6 +13,8 @@ import { controlledProducerStageFromVerification, selectVerificationBoundControl
 import { parseRuntimeAcceptanceCliArgs } from "../../scripts/attest-runtime-capability-acceptance.mjs";
 import { loadSetupBoundRuntimeExecutable, recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
 import { observeClaudeJsonl } from "../../scripts/live-acceptance/observe-host-events.mjs";
+import * as privateProvider from "../../scripts/claude-live-provider-env.mjs";
+import { Readable } from "node:stream";
 
 const packageRoot = path.resolve(import.meta.dirname, "../..");
 const temporaryRoots = new Set();
@@ -63,6 +65,129 @@ function assertHostHandoffOnly(gate, handoffStatus = "ready_for_host_handoff") {
 function jsonl(records) {
   return records.map((entry) => JSON.stringify(entry)).join("\n");
 }
+
+const privateHandoffFixture = () => ({ schemaVersion: "meta-kim-private-claude-provider-v1", providerId: "minimax", endpoint: "https://api.minimaxi.com/anthropic", authType: "auth_token", credential: "fixture-private-credential-do-not-retain" });
+const privateControls = () => ({ runtime: "claude_code", source: "live_controlled", claudeModel: "MiniMax-M3.1-Flash", claudeEffort: "low", claudeMaxTurns: 4, claudeMaxBudgetUsd: 0.05, timeoutMs: 120000 });
+
+test("private Claude handoff parser rejects duplicate, nested, oversized and unsafe payloads without echo", async () => {
+  const valid = JSON.stringify(privateHandoffFixture());
+  assert.deepEqual(privateProvider.parsePrivateClaudeProviderHandoff(valid), privateHandoffFixture());
+  for (const input of ["", "{bad-secret", valid.replace('"providerId":"minimax"', '"providerId":"minimax","providerId":"minimax"'), valid.replace('"providerId":"minimax"', '"providerId":"minimax","provider\\u0049d":"minimax"'), JSON.stringify({ ...privateHandoffFixture(), credential: { nested: "secret" } }), JSON.stringify({ ...privateHandoffFixture(), extra: "secret" }), " ".repeat(16385), ...["http://api.minimaxi.com/anthropic", "https://user:secret@api.minimaxi.com/anthropic", "https://api.minimaxi.com:443/anthropic", "https://api.minimaxi.com/anthropic?key=secret", "https://api.minimaxi.com/other", "https://api.minimaxi.com.evil.invalid/anthropic"].map(endpoint => JSON.stringify({ ...privateHandoffFixture(), endpoint }))]) {
+    assert.throws(() => privateProvider.parsePrivateClaudeProviderHandoff(input), { message: "Invalid private Claude provider handoff" });
+  }
+  assert.deepEqual(await privateProvider.readPrivateClaudeProviderHandoff(Readable.from([valid.slice(0, 20), valid.slice(20)])), privateHandoffFixture());
+  await assert.rejects(privateProvider.readPrivateClaudeProviderHandoff(Readable.from([" ".repeat(16385)])), { message: "Invalid private Claude provider handoff" });
+});
+
+test("private Claude handoff uses memory-only exact provider with pinned aliases and isolated writable home", async () => {
+  const { withRuntimeIsolation } = await import("../../scripts/runtime-capability-producers.mjs");
+  const handoff = privateHandoffFixture();
+  for (const authType of ["auth_token", "api_key"]) {
+    const workspace = fixtureProject();
+    let env;
+    withRuntimeIsolation({ ...privateControls(), workspace, claudePrivateProvider: { ...handoff, authType } }, result => { env = result.env; }, { inheritedEnv: { PATH: "fixture-path", CLAUDE_CONFIG_DIR: "invalid-private-global", ANTHROPIC_API_KEY: "ambient-secret", ANTHROPIC_MODEL: "claude-opus-5-5", CLAUDE_CODE_EFFORT_LEVEL: "max", NODE_OPTIONS: "bad" } });
+    assert.equal(env.ANTHROPIC_BASE_URL, handoff.endpoint);
+    assert.equal(env[authType === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"], handoff.credential);
+    assert.equal(env[authType === "api_key" ? "ANTHROPIC_AUTH_TOKEN" : "ANTHROPIC_API_KEY"], undefined);
+    for (const key of ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL"]) assert.equal(env[key], "MiniMax-M3.1-Flash");
+    assert.equal(env.CLAUDE_CODE_EFFORT_LEVEL, "low");
+    assert.equal(env.NODE_OPTIONS, undefined);
+    assert.equal(env.CLAUDE_CONFIG_DIR, path.join(workspace, "controlled-cli-home", ".claude"));
+    assert.deepEqual(readdirSync(env.CLAUDE_CONFIG_DIR), []);
+  }
+});
+
+test("private Claude handoff rejects wrong routes and unbounded controls before state or execution", async () => {
+  let invoked = 0;
+  for (const overrides of [{ runtime: "codex" }, { source: "native_cli_stream" }, { source: "codex_desktop_agent_subagent" }, { claudeModel: "claude-opus-5-5" }, { claudeEffort: "max" }, { claudeMaxTurns: undefined }, { claudeMaxBudgetUsd: undefined }, { timeoutMs: undefined }, { claudePrivateProvider: { ...privateHandoffFixture(), authType: "oauth" } }]) {
+    const options = { ...privateControls(), claudePrivateProvider: privateHandoffFixture(), ...overrides };
+    assert.throws(() => validateControlledProbeOptions(options), /private Claude|Claude probe/u);
+    assert.throws(() => runControlledRuntimeCapabilityProducer({ ...options, projectRoot: "invalid-before-provider", capability: "filesystem", executor: () => { invoked++; } }), /private Claude|Claude probe/u);
+    await assert.rejects(produceRuntimeCapabilityWithAcceptanceWriter({ ...options, projectRoot: "invalid-before-provider", capabilities: ["filesystem"] }, () => { invoked++; }), /private Claude|Claude probe/u);
+  }
+  assert.equal(invoked, 0);
+});
+
+test("private Claude handoff receipt binds only public identity and never credential or its digest", () => {
+  const handoff = privateHandoffFixture();
+  const projectRoot = fixtureProject();
+  const produced = runControlledRuntimeCapabilityProducer({ ...privateControls(), projectRoot, claudePrivateProvider: handoff, capability: "filesystem", executor: request => injectedExecutor(request) });
+  const request = produced.receipt.hostInvocation.request;
+  assert.deepEqual(request.providerIdentity, { providerId: "minimax", endpointHost: "api.minimaxi.com", endpointPath: "/anthropic", authType: "auth_token", selectionSource: "explicit_private_stdin" });
+  assert.equal(produced.receipt.hostInvocation.requestDigest, createHash("sha256").update(JSON.stringify(request)).digest("hex"));
+  assert.equal(produced.receipt.testOnly, true);
+  const allFiles = readdirSync(path.join(projectRoot, ".meta-kim"), { recursive: true }).filter(file => /\.(?:json|jsonl)$/u.test(file));
+  for (const file of allFiles) {
+    const text = readFileSync(path.join(projectRoot, ".meta-kim", file), "utf8");
+    assert.equal(text.includes(handoff.credential), false);
+    assert.equal(text.includes(createHash("sha256").update(handoff.credential).digest("hex")), false);
+  }
+  const leakingRoot = fixtureProject();
+  assert.throws(() => runControlledRuntimeCapabilityProducer({ ...privateControls(), projectRoot: leakingRoot, claudePrivateProvider: handoff, capability: "filesystem", executor: () => ({ status: 1, stdout: handoff.credential, stderr: handoff.credential }) }), { message: "Private Claude controlled probe failed; no acceptance recorded" });
+  assert.deepEqual(readdirSync(path.join(leakingRoot, ".meta-kim", "state", "default", "runtime-capability-producers", "artifacts")), []);
+  assert.throws(() => runControlledRuntimeCapabilityProducer({ ...privateControls(), projectRoot: fixtureProject(), claudePrivateProvider: handoff, capability: "filesystem", executor: () => { throw new Error(handoff.credential); } }), { message: "Private Claude controlled probe failed; no acceptance recorded" });
+});
+
+test("private Claude stdin CLI rejects invalid payload or route without printing private input", () => {
+  const script = path.join(packageRoot, "scripts/run-runtime-capability-producers.mjs");
+  const controls = ["--source", "live_controlled", "--runtimes", "claude_code", "--claude-provider-stdin", "--claude-model", "MiniMax-M3.1-Flash", "--claude-effort", "low", "--claude-max-turns", "4", "--claude-max-budget-usd", "0.05", "--timeout-ms", "120000"];
+  for (const args of [controls, controls.map(value => value === "claude_code" ? "claude_code,codex" : value), controls.map(value => value === "live_controlled" ? "native_cli_stream" : value), ["--status", "--claude-provider-stdin"]]) {
+    const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8", input: '{"credential":"fixture-private-input-secret"}', timeout: 10000 });
+    assert.equal(result.status, 1);
+    assert.equal((result.stdout + result.stderr).includes("fixture-private-input-secret"), false);
+    assert.match(result.stderr, /private Claude|Private Claude|Claude model\/effort/u);
+  }
+  const help = spawnSync(process.execPath, [script, "--help"], { encoding: "utf8" });
+  assert.match(help.stdout, /--claude-provider-stdin/u);
+});
+
+test("private Claude minimal context replaces the default system prompt while ordinary routes remain unchanged", () => {
+  for (const capability of ["filesystem", "apply_patch / edit", "shell", "agent", "subagent"]) {
+    let captured;
+    runControlledRuntimeCapabilityProducer({ ...privateControls(), projectRoot: fixtureProject(), capability, claudePrivateProvider: privateHandoffFixture(), executor: request => { captured = request; return injectedExecutor(request); } });
+    const system = captured.args[captured.args.indexOf("--system-prompt") + 1];
+    assert.ok(captured.args.includes("--system-prompt"));
+    assert.ok(system.length < 1100);
+    assert.match(system, /real native tools/iu);
+    assert.match(system, /never fabricate/iu);
+    assert.match(system, /temporary working directory/iu);
+    assert.match(system, /credentials|environment/iu);
+    assert.equal(captured.args[captured.args.indexOf("--permission-mode") + 1], "dontAsk");
+    assert.equal(captured.args[captured.args.indexOf("--max-budget-usd") + 1], "0.05");
+    assert.equal(captured.args[captured.args.indexOf("--model") + 1], "MiniMax-M3.1-Flash");
+    assert.equal(captured.args[captured.args.indexOf("--effort") + 1], "low");
+    assert.equal(captured.args.includes("--fallback-model"), false);
+    const toolIndex = captured.args.indexOf("--tools");
+    const selected = captured.args.slice(toolIndex + 1).filter((value, index, rest) => !rest.slice(0, index + 1).some(item => item.startsWith("--")));
+    assert.deepEqual(selected, capability === "filesystem" ? ["Read"] : capability === "apply_patch / edit" ? ["Read", "Edit"] : capability === "shell" ? ["Bash"] : ["Task"]);
+    assert.equal(captured.args.includes("--safe-mode"), true);
+    assert.equal(captured.args.includes("--agents"), false, "built-in child is not a safe-mode-disabled custom role");
+    if (["agent", "subagent"].includes(capability)) assert.match(captured.prompt, /child must inherit the current model and effort/iu);
+  }
+  let ordinary;
+  runControlledRuntimeCapabilityProducer({ ...privateControls(), projectRoot: fixtureProject(), capability: "filesystem", executor: request => { ordinary = request; return injectedExecutor(request); } });
+  assert.equal(ordinary.args.includes("--system-prompt"), false);
+  assert.equal(ordinary.args.includes("--tools"), false);
+  const native = readFileSync(path.join(packageRoot, "scripts/runtime-capability-producers.mjs"), "utf8").split("export function nativeCliStreamInvocationArgs")[1].split("function nativeCliStreamExecutor")[0];
+  assert.doesNotMatch(native, /privateClaudeMinimal|claudePrivateProvider|--system-prompt/u);
+});
+
+test("private Claude minimal context rejects empty, expanded, missing and substitute native init tools", () => {
+  for (const [capability, tools] of [["filesystem", []], ["filesystem", ["Read", "Bash"]], ["filesystem", ["Read", "Read"]], ["apply_patch / edit", ["Edit"]], ["agent", ["Agent"]], ["subagent", []], ["shell", ["PowerShell"]]]) {
+    const root = fixtureProject();
+    assert.throws(() => runControlledRuntimeCapabilityProducer({ ...privateControls(), projectRoot: root, capability, claudePrivateProvider: privateHandoffFixture(), executor: request => {
+      const result = injectedExecutor(request);
+      const records = result.stdout.split("\n").filter(Boolean).map(line => JSON.parse(line));
+      records[0].tools = tools;
+      return { ...result, stdout: jsonl(records) };
+    } }), { message: "Private Claude controlled probe failed; no acceptance recorded" });
+    assert.deepEqual(readdirSync(path.join(root, ".meta-kim", "state", "default", "runtime-capability-producers", "receipts")), []);
+  }
+  assert.throws(() => runControlledRuntimeCapabilityProducer({ ...privateControls(), projectRoot: fixtureProject(), capability: "filesystem", claudePrivateProvider: privateHandoffFixture(), executor: request => {
+    const result = injectedExecutor(request);
+    return { ...result, stdout: result.stdout + "\n" + JSON.stringify({ type: "result", subtype: "error_max_budget_usd", is_error: true }) };
+  } }), { message: "Private Claude controlled probe failed; no acceptance recorded" });
+});
 
 function codexDesktopFixture() {
   const codexHome = mkdtempSync(path.join(tmpdir(), "meta-kim-codex-desktop-"));
@@ -139,19 +264,19 @@ function injectedExecutor(request) {
     const mcpConfigPath = request.args[mcpConfigIndex + 1];
     assert.equal(path.dirname(mcpConfigPath), request.workspace);
     assert.deepEqual(JSON.parse(readFileSync(mcpConfigPath, "utf8")), { mcpServers: {} });
-    const expectedTool = request.capability === "shell"
+    const expectedTool = request.claudePrivateProvider !== undefined && ["shell", "agent", "subagent"].includes(request.capability) ? (request.capability === "shell" ? "Bash" : "Task") : request.capability === "shell"
       ? "Bash,PowerShell"
       : request.capability === "filesystem"
         ? "Read"
         : request.capability === "apply_patch / edit"
           ? "Read,Edit"
           : "Agent,Task";
-    // Claude Code 2.1.236 resolves `--tools <name>` to an EMPTY tool set
+    // Ordinary legacy probes preserve the earlier empty-tool compatibility
     // (verified live: init event tools:[] with the flag, full tool list
     // without it), which made every probe model report "no shell tool
-    // available". The probe must therefore rely on `--allowedTools` for the
-    // permission grant and never pass `--tools`.
-    assert.equal(request.args.includes("--tools"), false);
+    // available". Private probes use the separately verified space-list
+    // directory and retain exact actual-init validation.
+    assert.equal(request.args.includes("--tools"), request.claudePrivateProvider !== undefined);
     const allowedToolsIndex = request.args.indexOf("--allowedTools");
     assert.equal(request.args[allowedToolsIndex + 1], expectedTool);
     if (request.capability === "apply_patch / edit") {
@@ -228,7 +353,7 @@ function injectedExecutor(request) {
     ]);
   } else {
     const name = request.capability === "agent" || request.capability === "subagent"
-      ? "Agent"
+      ? request.claudePrivateProvider !== undefined ? "Task" : "Agent"
       : request.capability === "shell"
         ? "Bash"
         : request.capability === "filesystem"
@@ -237,8 +362,12 @@ function injectedExecutor(request) {
     const id = `${name}-${nonce}`;
     stdout = jsonl([
       { type: "assistant", session_id: `session-${nonce}`, message: { id: `message-${nonce}`, content: [{ type: "tool_use", id, name, input: { path: "meta-kim-probe.txt", marker } }] } },
-      { type: "user", session_id: `session-${nonce}`, tool_use_result: name === "Agent" ? { agentId: `child-${nonce}` } : {}, message: { content: [{ type: "tool_result", tool_use_id: id, content: marker }] } },
+      { type: "user", session_id: `session-${nonce}`, tool_use_result: ["Agent", "Task"].includes(name) ? { agentId: `child-${nonce}` } : {}, message: { content: [{ type: "tool_result", tool_use_id: id, content: marker }] } },
     ]);
+  }
+  if (request.claudePrivateProvider !== undefined) {
+    const tools = request.capability === "filesystem" ? ["Read"] : request.capability === "apply_patch / edit" ? ["Read", "Edit"] : request.capability === "shell" ? ["Bash"] : ["Task"];
+    stdout = jsonl([{ type: "system", subtype: "init", tools, model: request.claudeModel }]) + "\n" + stdout;
   }
   return { status: 0, signal: null, stdout, stderr: "", runtimeVersion: `${request.runtime}-test-1.0.0` };
 }
@@ -411,13 +540,14 @@ test("controlled producer binds Claude to the fail-closed provider resolver whil
     source.indexOf("function productionExecutor(request)"),
   );
 
-  assert.match(source, /import \{ resolveClaudeLiveProviderEnvironmentSync \} from "\.\/claude-live-provider-env\.mjs";/u);
+  assert.match(source, /import \{[^\n]*resolveClaudeLiveProviderEnvironmentSync[^\n]*\} from "\.\/claude-live-provider-env\.mjs";/u);
   assert.match(promptBuilder, /if \(runtime === "claude_code"\)/u);
   assert.match(promptBuilder, /native Edit tool exactly once/u);
   assert.match(promptBuilder, /Do not call Write or any other write tool/u);
   assert.match(promptBuilder, /native edit\/apply-patch capability/u);
   assert.match(producerExecutor, /withRuntimeIsolation\(request, \(\{ env \}\) =>/u);
-  assert.match(runtimeIsolationHelper, /if \(request\.runtime === "claude_code"\) \{\s*env = resolveClaudeLiveProviderEnvironmentSync\(\);/u);
+  assert.match(runtimeIsolationHelper, /if \(request\.runtime === "claude_code"\) \{\s*if \(request\.claudePrivateProvider !== undefined\)/u);
+  assert.match(runtimeIsolationHelper, /\} else \{\s*env = resolveClaudeLiveProviderEnvironmentSync\(\);/u);
   assert.match(producerExecutor, /runCli\(request\.command, request\.args, \{\s*cwd: request\.workspace,\s*env,/u);
   assert.match(producerExecutor, /runtimeIsolation: request\.runtime === "codex" \? "ephemeral_auth_home_and_rules_isolated"/u);
   assert.match(producerExecutor, /"controlled_workspace_home_trusted_provider_env_only" : "empty_setting_sources_strict_mcp_current_auth"/u);
@@ -741,6 +871,77 @@ test("Claude bounded controls reach official host arguments, timeout and receipt
   assert.equal(defaults.args.includes("--max-turns"), false);
   assert.equal(defaults.args.includes("--max-budget-usd"), false);
   assert.equal(defaults.timeoutMs, 300000);
+});
+
+test("Claude explicit model and effort bind the host request and receipt without ambient override or fallback", () => {
+  const previous = { model: process.env.ANTHROPIC_MODEL, effort: process.env.CLAUDE_CODE_EFFORT_LEVEL };
+  process.env.ANTHROPIC_MODEL = "claude-opus-5-5";
+  process.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
+  try {
+    for (const capability of ["filesystem", "agent"]) {
+      let captured;
+      const produced = runControlledRuntimeCapabilityProducer({
+        projectRoot: fixtureProject(), runtime: "claude_code", source: "live_controlled", capability,
+        claudeModel: "MiniMax-M3.1-Flash", claudeEffort: "low", claudeMaxTurns: 4, claudeMaxBudgetUsd: 0.05,
+        executor: request => { captured = request; return injectedExecutor(request); },
+      });
+      assert.equal(captured.args[captured.args.indexOf("--model") + 1], "MiniMax-M3.1-Flash");
+      assert.equal(captured.args[captured.args.indexOf("--effort") + 1], "low");
+      assert.equal(captured.args.includes("--fallback-model"), false);
+      assert.equal(captured.args.includes("claude-opus-5-5"), false);
+      assert.deepEqual(produced.receipt.hostInvocation.request.args, captured.args);
+      assert.equal(produced.receipt.hostInvocation.requestDigest, createHash("sha256").update(JSON.stringify(produced.receipt.hostInvocation.request)).digest("hex"));
+      assert.equal(produced.receipt.testOnly, true);
+      if (capability === "agent") assert.match(captured.prompt, /child.*inherit.*model.*effort/iu);
+    }
+    assert.equal(process.env.ANTHROPIC_MODEL, "claude-opus-5-5");
+    assert.equal(process.env.CLAUDE_CODE_EFFORT_LEVEL, "max");
+  } finally {
+    if (previous.model === undefined) delete process.env.ANTHROPIC_MODEL;
+    else process.env.ANTHROPIC_MODEL = previous.model;
+    if (previous.effort === undefined) delete process.env.CLAUDE_CODE_EFFORT_LEVEL;
+    else process.env.CLAUDE_CODE_EFFORT_LEVEL = previous.effort;
+  }
+});
+
+test("Claude model and effort reject invalid values or runtime/source before any execution or state creation", async () => {
+  const invalid = [
+    ...["", " spaced", "bad\nmodel", "--fallback-model", "bad model", null, 1].map(claudeModel => ({ claudeModel })),
+    ...["none", "ultracode", "LOW", " low", "", null, 1].map(claudeEffort => ({ claudeEffort })),
+    { runtime: "codex", claudeModel: "MiniMax-M3.1-Flash" },
+    { runtime: "codex", claudeEffort: "low" },
+    { source: "native_cli_stream", claudeModel: "MiniMax-M3.1-Flash" },
+    { source: "native_cli_stream", claudeEffort: "low" },
+    { source: "codex_desktop_agent_subagent", claudeModel: "MiniMax-M3.1-Flash" },
+  ];
+  let invoked = 0;
+  for (const controls of invalid) {
+    const options = { projectRoot: "invalid-project-before-provider", runtime: "claude_code", source: "live_controlled", capability: "filesystem", ...controls };
+    assert.throws(() => runControlledRuntimeCapabilityProducer({ ...options, executor: () => { invoked++; } }), /Claude|claudeModel|claudeEffort/u);
+    await assert.rejects(produceRuntimeCapabilityWithAcceptanceWriter({ ...options, capabilities: ["filesystem"] }, () => { invoked++; }), /Claude|claudeModel|claudeEffort/u);
+  }
+  assert.equal(invoked, 0);
+  assert.deepEqual(validateControlledProbeOptions({ runtime: "claude_code", source: "live_controlled", claudeModel: "MiniMax-M3.1-Flash", claudeEffort: "low" }), {
+    claudeMaxTurns: undefined, claudeMaxBudgetUsd: undefined, timeoutMs: undefined,
+    claudeModel: "MiniMax-M3.1-Flash", claudeEffort: "low",
+  });
+});
+
+test("Claude CLI model options are discoverable and reject wrong source/runtime before invoking a CLI", () => {
+  const script = path.join(packageRoot, "scripts/run-runtime-capability-producers.mjs");
+  const help = spawnSync(process.execPath, [script, "--help"], { encoding: "utf8" });
+  assert.equal(help.status, 0, help.stderr);
+  for (const option of ["--claude-model", "--claude-effort"]) assert.ok(help.stdout.includes(option));
+  for (const args of [
+    ["--source", "live_controlled", "--runtimes", "codex", "--claude-model", "MiniMax-M3.1-Flash"],
+    ["--source", "native_cli_stream", "--runtimes", "claude_code", "--claude-effort", "low"],
+    ["--source", "live_controlled", "--runtimes", "claude_code", "--claude-model", "bad model"],
+    ["--source", "live_controlled", "--runtimes", "claude_code", "--claude-effort", "none"],
+  ]) {
+    const result = spawnSync(process.execPath, [script, ...args], { cwd: packageRoot, encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Claude probe limits|Claude model|claudeModel|claudeEffort/u);
+  }
 });
 
 test("invalid or wrong-runtime controls fail before workspace, provider, executor and acceptance writer", async () => {
@@ -1169,7 +1370,7 @@ test("recomputing receipt, attempt and index hashes can only forge advisory stat
   assertHostHandoffOnly(evaluateRouteExecutionGate({ runtime: "codex", taskShape: "default_executable", effectiveMatrix: state.effectiveMatrix }));
 });
 
-test("portable advisory snapshots preserve stale observations without weakening normal freshness", () => {
+test("portable advisory snapshots cannot revive stale observations by refreshing source validation", () => {
   const projectRoot = fixtureProject();
   const produced = runControlledRuntimeCapabilityProducer({
     projectRoot,
@@ -1195,7 +1396,8 @@ test("portable advisory snapshots preserve stale observations without weakening 
     now: staleNow,
     portableAdvisorySnapshot: true,
   });
-  assert.equal(sourceSnapshot.overlayStatus.applied.length, 1);
+  assert.equal(sourceSnapshot.overlayStatus.applied.length, 0);
+  assert.match(sourceSnapshot.issues.join("\n"), /source observation is stale/u);
   assertHostHandoffOnly(evaluateRouteExecutionGate({
     runtime: "codex",
     taskShape: "default_executable",
@@ -1214,6 +1416,7 @@ test("portable advisory snapshots preserve stale observations without weakening 
     evidenceClass: "read_only_advisory_snapshot",
     observedInCurrentRun: false,
     executionAuthority: false,
+    sourceValidatedAt: staleNow,
     bindings: [{ attemptId: produced.acceptance.record.attemptId }],
   }, null, 2)}\n`, "utf8");
   const copiedSnapshot = loadEffectiveRuntimeCapabilityClaims({
@@ -1222,8 +1425,8 @@ test("portable advisory snapshots preserve stale observations without weakening 
     allowTestReceipts: true,
     now: staleNow,
   });
-  assert.equal(copiedSnapshot.overlayStatus.applied.length, 1);
-  assert.equal(copiedSnapshot.overlayStatus.applied[0].executionAuthority, false);
+  assert.equal(copiedSnapshot.overlayStatus.applied.length, 0);
+  assert.match(copiedSnapshot.issues.join("\n"), /source observation is stale/u);
 });
 
 test("Codex engineering composite rejects an incomplete or reordered facet chain", () => {

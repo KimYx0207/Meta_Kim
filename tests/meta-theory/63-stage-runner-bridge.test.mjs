@@ -129,6 +129,50 @@ test("read-only worker prompt retains the original governed user task", () => {
   }
 });
 
+test("large confirmed work orders reach runtime adapters intact without an invented prompt budget", async () => {
+  const required = `${"Required reader acceptance: ".repeat(3_000)}Preserve the final EPUB illustrations.`;
+  const selected = packet("one", { acceptanceCriteria: [required], intentBinding: {
+    status: "host_provided_understanding", intentDigest: "a".repeat(64), confirmedOutcome: "An EPUB with its original illustrations",
+    constraints: { outputFormat: "EPUB", preserve: ["original-illustrations"] },
+    acceptanceCriteria: [{ id: "reader", description: required, kind: "semantic", required: true }],
+  } });
+  const prompt = buildReadOnlyWorkerPrompt({ runId: "complete-prompt", runtime: "codex",
+    node: dagFor(["one"]).nodes[0], packet: selected, requestTask: "Inspect the reader artifact." });
+  assert.ok(prompt.length > 64_000, "Exercise the former arbitrary cutoff");
+  assert.ok(prompt.includes(required));
+  for (const runtime of ["codex", "claude"]) {
+    const invocation = await prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot: process.cwd(), packet: selected, prompt });
+    assert.equal(invocation.input, prompt, `${runtime} stdin must preserve the complete task`);
+  }
+  let calls = 0;
+  const bridge = await runStageRunnerBridge({ runId: "complete-prompt", runtime: "codex",
+    stageDagPacket: dagFor(["one"]), workerTaskPackets: [selected], workspaceRoot: process.cwd(),
+    evidenceKind: "custom_test_double", invokeWorker: async (options) => {
+      calls += 1;
+      assert.ok(options.prompt.includes(required));
+      return passingInvoker()(options);
+    } });
+  assert.equal(calls, 1);
+  assert.equal(bridge.status, "pass");
+  assert.equal(bridge.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
+});
+
+test("an adapter context rejection remains an explicit failure after receiving the full work order", async () => {
+  const required = `${"Retain required content. ".repeat(3_000)}Final protected requirement.`;
+  let calls = 0;
+  const bridge = await runStageRunnerBridge({ runId: "adapter-context-rejection", runtime: "codex",
+    stageDagPacket: dagFor(["one"]), workerTaskPackets: [packet("one", { acceptanceCriteria: [required] })], workspaceRoot: process.cwd(),
+    evidenceKind: "custom_test_double", invokeWorker: async ({ prompt }) => {
+      calls += 1;
+      assert.ok(prompt.includes(required));
+      return { status: "failed", failureClass: "runtime_nonzero_exit", failureMessage: "Test adapter rejected its context size", exitCode: 2, durationMs: 1 };
+    } });
+  assert.equal(calls, 1);
+  assert.equal(bridge.status, "failed");
+  assert.equal(bridge.failure.failureClass, "runtime_nonzero_exit");
+  assert.equal(bridge.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
+});
+
 test("runtime child environment is provider-specific and drops unrelated cloud credentials", () => {
   const parentEnv = {
     PATH: "runtime-path",
@@ -225,6 +269,10 @@ test("bridge sanitizes custom worker output, stderr, and failure fields before r
 test("bridge log path redaction keeps root boundaries while protecting case variants", async () => {
   const root = process.cwd();
   const home = os.homedir();
+  // A worktree can live inside the user home. Workspace siblings stay outside
+  // the workspace replacement while still preserving the independent home rule.
+  const rootInsideHome = root.toLowerCase().startsWith(`${home}${path.sep}`.toLowerCase());
+  const siblingRoot = rootInsideHome ? `<user-home>${root.slice(home.length)}` : root;
   const result = await runStageRunnerBridge({
     runId: "case-variant-path-redaction",
     runtime: "codex",
@@ -243,8 +291,8 @@ test("bridge log path redaction keeps root boundaries while protecting case vari
   assert.ok(text.includes("(<user-home>/private.txt)"));
   assert.ok(text.includes("file://<workspace>/private.txt"), "file URL presentations must not leak the root");
   assert.ok(text.includes("<workspace>. "), "sentence punctuation must not prevent root redaction");
-  assert.ok(text.includes(`${root}.hidden`), "a dot-suffixed sibling is not the declared root");
-  assert.ok(text.includes(`${root}-backup`), "a sibling is not the declared workspace root");
+  assert.ok(text.includes(`${siblingRoot}.hidden`), "a dot-suffixed sibling remains outside the workspace and obeys home redaction");
+  assert.ok(text.includes(`${siblingRoot}-backup`), "a sibling remains outside the workspace and obeys home redaction");
   assert.ok(text.includes(`word${root}`), "a path embedded in a larger token is not the declared root");
 });
 

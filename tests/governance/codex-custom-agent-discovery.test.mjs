@@ -19,6 +19,61 @@ function writeAgent(agentsDir, filename, content) {
   writeFileSync(join(agentsDir, filename), `${content.trim()}\n`, "utf8");
 }
 
+test("collision annotations cannot promote cache-only, invalid or upstream-blocked owners", () => {
+  const base = {
+    id: "bounded-owner", source: "local_global_agent_inventory", sourceRef: "~/.codex/agents/owner.toml",
+    sourceKey: "codex:agents:bounded-owner:personal:owner.toml", contentDigest: "a".repeat(64),
+    validCustomAgentDefinition: true, collision: { kind: "none" },
+  };
+  for (const fields of [
+    { cacheEvidenceOnly: true, routeEligible: false },
+    { cacheEvidenceOnly: true, routeEligible: true, collision: null },
+    { routeEligible: false },
+    { validCustomAgentDefinition: false },
+  ]) {
+    for (const sourceSelectedExplicitly of [false, true]) {
+      const [annotated] = annotateCrossScopeAgentCollisions([{ ...base, ...fields, sourceSelectedExplicitly }], "codex");
+      assert.equal(annotated.routeEligible, false, JSON.stringify({ fields, sourceSelectedExplicitly }));
+      if (fields.cacheEvidenceOnly) {
+        assert.equal(annotated.cacheEvidenceOnly, true);
+        assert.equal(annotated.collision.evidenceSource, "cached_agent_inventory");
+      }
+    }
+  }
+});
+
+test("live collision identity is not altered by a stale cached source", () => {
+  const live = {
+    id: "bounded-owner", source: "project_runtime_agent_inventory", sourceRef: ".codex/agents/owner.toml",
+    sourceKey: "codex:agents:bounded-owner:project:owner.toml", contentDigest: "a".repeat(64),
+    validCustomAgentDefinition: true, routeEligible: true,
+  };
+  const cached = {
+    ...live, source: "local_global_agent_inventory", sourceRef: "~/.codex/agents/old.toml",
+    sourceKey: "codex:agents:bounded-owner:personal:old.toml", contentDigest: "b".repeat(64),
+    cacheEvidenceOnly: true, routeEligible: false, collision: { kind: "none" },
+  };
+  const [current, stale] = annotateCrossScopeAgentCollisions([live, cached], "codex");
+  assert.equal(current.routeEligible, true);
+  assert.equal(stale.routeEligible, false);
+  assert.equal(current.collision?.ambiguous ?? false, false);
+  assert.notEqual(stale.collision.evidenceSource, "live_project_and_global_filesystem");
+});
+
+test("real live duplicates and explicit valid live source selection retain collision semantics", () => {
+  const base = { id: "bounded-owner", validCustomAgentDefinition: true };
+  const first = { ...base, sourceKey: "project", sourceRef: ".codex/agents/owner.toml", contentDigest: "a".repeat(64) };
+  const second = { ...base, sourceKey: "personal", sourceRef: "~/.codex/agents/owner.toml", contentDigest: "a".repeat(64) };
+  const duplicates = annotateCrossScopeAgentCollisions([first, second], "codex");
+  assert.ok(duplicates.every((agent) => agent.routeEligible === true && agent.collision.kind === "exact_duplicate"));
+  const [selected, conflict] = annotateCrossScopeAgentCollisions([
+    { ...first, sourceSelectedExplicitly: true }, { ...second, contentDigest: "b".repeat(64) },
+  ], "codex");
+  assert.equal(selected.routeEligible, true);
+  assert.equal(conflict.routeEligible, false);
+  assert.equal(selected.collision.evidenceSource, "live_project_and_global_filesystem");
+});
+
 test("Codex project and global agent collisions cannot claim an exact native source binding", () => {
   const candidates = annotateCrossScopeAgentCollisions([
     {

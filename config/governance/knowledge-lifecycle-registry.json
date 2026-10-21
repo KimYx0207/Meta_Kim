@@ -19,6 +19,16 @@
       "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active"
+    },
+    "publish-both-20261021:reviewed-meta-theory-skill": {
+      "appliedAt": "2026-10-21T14:08:10.970Z",
+      "approvalDigest": "sha256:25450021a3af89b61b47573cac68c321901624018146f3dadb65a53e649e0d5a",
+      "candidateDigest": "sha256:a5a57f7966ce6ceeb28f779a5774119c63effe9211d5c9ab8d51d5fd72c6e585",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
     }
   },
   "entries": {
@@ -27,9 +37,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-10-02T20:01:27.986Z",
-        "lastTransitionId": "intent-tools-20261002:method-skill",
-        "reason": "Bind reviewed confirmed-intent and reference-method source changes; retain existing lifecycle status and execution class."
+        "changedAt": "2026-10-21T14:08:10.970Z",
+        "lastTransitionId": "publish-both-20261021:reviewed-meta-theory-skill",
+        "reason": "Proposed source review for actual worker delivery constraints and contract-aligned cached discovery policy; preserve active foundational status and execution class."
       },
       "provenance": {
         "evidenceRefs": [
@@ -41,7 +51,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:9d346bfe93e88c3da48d503f90a018f86f8c937f99aac8228efa9f88b5c746fc",
+      "sourceDigest": "sha256:aaad55a44426b8ff1f399f12dcbb90d70428cbdec65805c0f7a222eca30be51f",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -158,6 +168,39 @@
       "targetRef": "config/governance/decision-pattern-catalog.json",
       "toStatus": "active",
       "transitionId": "intent-tools-20261002:method-catalog"
+    },
+    {
+      "appliedAt": "2026-10-21T14:08:10.970Z",
+      "approvalDigest": "sha256:25450021a3af89b61b47573cac68c321901624018146f3dadb65a53e649e0d5a",
+      "candidateDigest": "sha256:a5a57f7966ce6ceeb28f779a5774119c63effe9211d5c9ab8d51d5fd72c6e585",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-10-02T20:01:27.986Z",
+          "lastTransitionId": "intent-tools-20261002:method-skill",
+          "reason": "Bind reviewed confirmed-intent and reference-method source changes; retain existing lifecycle status and execution class."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:9d346bfe93e88c3da48d503f90a018f86f8c937f99aac8228efa9f88b5c746fc",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "publish-both-20261021:reviewed-meta-theory-skill"
     }
   ],
   "policy": {
@@ -167,7 +210,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 2,
+  "revision": 3,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-10-02T20:01:28.004Z"
+  "updatedAt": "2026-10-21T14:08:10.970Z"
 }

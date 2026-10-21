@@ -1,0 +1,50 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { buildLocalFeedbackText, createLocalFeedbackDraftStore, liveDeliverablesForNode, normalizeLiveDeliverables, serializeLocalFeedbackResolvers } from "../../src/presentation/live/live-feedback-draft.mjs";
+
+test("feedback handoff keeps the exact original and binds one run, node and artifact", () => {
+  const original = "  这里的连线还错了\n不要把已确认的内容改掉。  ";
+  const value = buildLocalFeedbackText({ projectId: "project-a", runId: "run-a", nodeId: "node-a", nodeLabel: "前端", deliverableId: "output-1", deliverableLabel: "页面", evidenceId: "proof-1", sourceRef: "host:1" }, original);
+  assert.ok(value.endsWith(original));
+  for (const valuePart of ["run-a", "node-a", "output-1", "页面", "proof-1", "host:1"]) assert.ok(value.includes(valuePart));
+  assert.match(value, /项目：project-a/u);
+  assert.match(value, /节点：前端 · node-a/u);
+  assert.doesNotMatch(value, /已发送|已处理|已应用/u);
+});
+
+test("switching node, evidence, run or project never loses or mixes a draft", () => {
+  const store = createLocalFeedbackDraftStore();
+  const context = { projectId: "p", runId: "r", nodeId: "n", evidenceId: "e" };
+  store.get(context).original = "原话";
+  store.get(context).prepared = "编辑后的反馈文本";
+  for (const variant of [{ nodeId: "other" }, { evidenceId: "other" }, { runId: "other" }, { projectId: "other" }, { deliverableId: "other" }]) {
+    assert.deepEqual(store.get({ ...context, ...variant }), { original: "", prepared: "" });
+  }
+  assert.deepEqual(store.get(context), { original: "原话", prepared: "编辑后的反馈文本" });
+  store.select(context, "evidence:e");
+  assert.equal(store.selected({ ...context, evidenceId: "different" }), "evidence:e");
+  assert.equal(store.selected({ ...context, nodeId: "different" }), "");
+});
+
+test("serialized browser helpers preserve original feedback exactly", () => {
+  const browser = new Function(serializeLocalFeedbackResolvers() + "\nreturn { buildLocalFeedbackText, createLocalFeedbackDraftStore };")();
+  const context = { runId: "r", nodeId: "n" };
+  const original = " x\n\n y ";
+  assert.equal(browser.buildLocalFeedbackText(context, original), buildLocalFeedbackText(context, original));
+  assert.deepEqual(browser.createLocalFeedbackDraftStore().get(context), { original: "", prepared: "" });
+});
+
+test("deliverable descriptors retain only same-run safe references and exact task bindings", () => {
+  const rows = normalizeLiveDeliverables([
+    { id: "result-a", runId: "run-a", taskPacketId: "task-a", label: "页面", kind: "html", availability: "declared", url: "javascript:bad()", path: "private" },
+    { id: "run-result", runId: "run-a", taskPacketId: null, label: "运行说明", kind: "text", availability: "available" },
+    { id: "wrong-run", runId: "run-b", kind: "text", availability: "available" },
+    { id: "invalid", runId: "run-a", kind: "binary", availability: "available" },
+  ], "run-a");
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].url, undefined);
+  assert.equal(rows[0].path, undefined);
+  assert.equal(liveDeliverablesForNode(rows, { id: "agent:task-a", taskPacketId: "task-a" })[0].id, "result-a");
+  assert.deepEqual(liveDeliverablesForNode(rows, { id: "task-a", label: "页面" }), [], "node ids and labels are not task bindings");
+  assert.equal(liveDeliverablesForNode(rows, null).length, 2, "run-level results remain reachable before node selection");
+});

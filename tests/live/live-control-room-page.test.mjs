@@ -4,6 +4,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { shortenIdentifier } from "../../src/application/live/live-display-format.mjs";
+import { loadLiveGraphCameraPolicy, resolveInspectorCameraLift, resolveOverviewCamera, resolveSemanticZoom } from "../../src/application/live/live-graph-camera.mjs";
+import {
+  classifyGraphRelations,
+  resolveDependencyGraphLayout,
+  resolveGraphEdgePresentation,
+} from "../../src/application/live/live-graph-readability.mjs";
+import { resolveReplayNodeView } from "../../src/application/live/live-replay-visibility.mjs";
 import {
   compareSelectionRows,
   pickDefaultRow,
@@ -17,6 +24,7 @@ import {
   serializeGraphLayoutPolicyForClient,
 } from "../../src/application/live/live-graph-layout.mjs";
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
+import { buildLocalFeedbackText, createLocalFeedbackDraftStore, liveDeliverablesForNode, normalizeLiveDeliverables } from "../../src/presentation/live/live-feedback-draft.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
 import {
   loadLiveTypographyScale,
@@ -82,6 +90,68 @@ test("run header uses the same public execution state as the footer", () => {
   const state = new Function("snapshot", `return ${write[1]};`);
   assert.equal(state({ run: { status: "active", displayState: "unreported" } }), "unreported");
   assert.equal(state({ run: { status: "active", displayState: "active" } }), "active");
+});
+
+test("planning placeholders do not inflate the execution evidence header", () => {
+  const html = renderLiveControlRoomPage();
+  const count = new Function(`${["isPlanningSnapshot", "isPlanningEvidence", "executionEvidenceCount"].map((name) => shippedHelper(html, name)).join("\n")}; return executionEvidenceCount;`)();
+  const observed = { runId: "run-real", taskPacketId: "task-real", status: "executed", executionObserved: true };
+  const snapshot = { run: { id: "run-real", executionEvidenceState: "recorded" }, evidence: [
+    observed,
+    { ...observed, evidenceKind: "structural_worker_plan" },
+    { ...observed, detail: "not_run_by_structural_artifact_builder" },
+    { ...observed, runId: "another-run" },
+    { ...observed, synthetic: true },
+    { ...observed, taskPacketId: "" },
+    ...["completed", "failed", "blocked", "cancelled"].map((status) => ({ ...observed, status, executionObserved: false, proofValid: false })),
+  ] };
+  assert.equal(count(snapshot), 1);
+  assert.equal(count({ ...snapshot, evidence: [{ ...observed, status: "completed", executionObserved: false, proofValid: true }] }), 1);
+  assert.equal(count({ ...snapshot, run: { ...snapshot.run, executionEvidenceState: "structural_planning_only" } }), 0);
+  assert.match(html, /setText\(contextEvidence, String\(executionEvidenceCount\(snapshot\)\)/u);
+  assert.match(html, /data-live-planning-notice[\s\S]*?尚未派发实际工作/u);
+  assert.match(html, /planningOnly \? "任务规划图" : "实时运行图"/u);
+});
+
+test("a planning stage position never paints execution stages completed", () => {
+  const html = renderLiveControlRoomPage();
+  const normalize = runNormalizerHarness();
+  assert.equal(normalize({ run: { runId: "native-stage-only", stageProgressEvidence: "native_execution_only" } }).run.stageProgressEvidence, "native_execution_only");
+  const makeElement = (_tag, className = "", text = "") => ({
+    className, text, dataset: {}, children: [], setAttribute() {},
+    append(...children) { this.children.push(...children); },
+    get lastElementChild() { return this.children.at(-1); },
+  });
+  const rail = makeElement("ol");
+  const stages = ["critical", "fetch", "thinking", "execution", "review", "meta_review", "verification", "evolution"];
+  const render = new Function("stageRail", "STAGE_ORDER", "makeElement", "clearChildren", "document", "localize", `
+const currentLanguage = "zh";
+${shippedHelper(html, "isPlanningSnapshot")}
+${shippedHelper(html, "renderStageRail")}
+return renderStageRail;`)(rail, stages, makeElement, (node) => { node.children = []; }, { createElementNS: () => makeElement("svg") }, (value) => value);
+  render({ run: { currentStage: "execution", status: "partial", executionEvidenceState: "structural_planning_only" }, replay: [{ stage: "fetch", status: "completed" }] });
+  assert.equal(rail.children.length, 8);
+  assert.ok(rail.children.every((item) => item.dataset.state === "planned"));
+  assert.ok(rail.children.every((item) => item.lastElementChild.children[1].text === "规划步骤"));
+  render({ run: { currentStage: "execution", status: "active", executionEvidenceState: "recorded" }, replay: [] });
+  assert.equal(rail.children[0].dataset.state, "completed");
+  assert.equal(rail.children[3].dataset.state, "current");
+  render({ run: { currentStage: "execution", status: "partial", executionEvidenceState: "recorded", stageProgressEvidence: "native_execution_only" }, replay: [] });
+  assert.equal(rail.children[3].dataset.state, "observed");
+  assert.equal(rail.children[3].lastElementChild.children[1].text, "已观察执行");
+  assert.ok(rail.children.filter((_item, index) => index !== 3).every((item) => item.dataset.state === "unproven"));
+});
+
+test("not dispatched is distinct from an executed task with missing verification", () => {
+  const html = renderLiveControlRoomPage();
+  const displayFormat = { emptyPlaceholder: "—", nonInformativeValues: [] };
+  const view = new Function("DISPLAY_FORMAT", `
+const currentLanguage = "zh"; const localize = (value) => value; const stateCopy = (value) => value;
+${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
+return (node) => [nodeDisplayState(node), nodeStateCopy(node), nodeShortStateCopy(node)];`)(displayFormat);
+  assert.deepEqual(view({ displayState: "planned", executionState: "not_executed", status: "pending" }), ["planned", "仅规划 · 尚未派发", "尚未派发"]);
+  assert.deepEqual(view({ displayState: "in_doubt", executionState: "executed", status: "in_doubt" }), ["in_doubt", "已执行 · 待验证", "待验证"]);
+  assert.deepEqual(view({ displayState: "unreported", executionState: "unreported", status: "pending" }), ["unreported", "未收到执行回写", "缺执行证据"]);
 });
 
 function modalBehaviorHarness() {
@@ -191,8 +261,11 @@ function modalBehaviorHarness() {
       const modalBackgroundState = new Map();
       const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
       let selectedNodeId = null;
+      let relationFocusActive = false;
+      const updateGraphRelationPresentation = () => {};
+      const inspectorCalls = [];
       const updateSelectedNodeVisuals = () => {};
-      const setInspectorOpen = () => {};
+      const setInspectorOpen = (value) => inspectorCalls.push(value);
       ${modalSource}
       ${keydownSource}
       return {
@@ -200,6 +273,10 @@ function modalBehaviorHarness() {
         trapDialogFocus,
         keydownHandler: () => app.keydownHandler,
         activeDialog: () => activeDialog,
+        setRelationFocus: (value) => { relationFocusActive = value; selectedNodeId = "selected"; },
+        relationFocus: () => relationFocusActive,
+        selection: () => selectedNodeId,
+        inspectorCalls,
       };
     `}`,
   );
@@ -1273,7 +1350,11 @@ test("each run quantity has exactly one write site, and the surviving owner carr
   const nodeWrite = /setText\(\s*contextNodes,([\s\S]*?)\);/u.exec(html);
   assert.ok(nodeWrite, "the nodes fact must keep a single write site");
   assert.match(nodeWrite[1], /String\(/u, "the nodes fact must write a bare numeral, not a phrase to translate");
-  assert.doesNotMatch(html, /" nodes?"/u, "no surface may re-introduce a node phrase without a translation branch");
+  // The graph's new layer hint deliberately states its node/hidden-relation
+  // scope. Its bilingual phrase is exercised in the controls behavior test;
+  // every other surface must retain the single original count owner.
+  const withoutLayerHint = html.replace(shippedHelper(html, "updateGraphRelationControls"), "");
+  assert.doesNotMatch(withoutLayerHint, /" nodes?"/u, "only the bilingual layer hint may name its node scope");
   assert.doesNotMatch(html, /\^\(\\d\+\) nodes\?\$/u, "the node-phrase translation branch must stay retired with its producer");
 
   const eventWrite = /setText\(\s*contextEvents,([\s\S]*?)\n\s*\);/u.exec(html);
@@ -1311,7 +1392,7 @@ test("uses a canvas-first control-room hierarchy with an on-demand inspector and
   // by definition the smallest scale at which a node is readable. It also has to
   // be reversible, so the decision lives in the shared resolver and the origin it
   // reports is kept for the close.
-  assert.match(html, /function reconcileCamera\([\s\S]{0,700}inspectorCameraLiftOrigin = lift\.liftedFrom;[\s\S]{0,320}centerGraphNode\(followTargetId\(\)\)/u);
+  assert.match(shippedHelper(html, "reconcileCamera"), /inspectorCameraLiftOrigin = lift\.liftedFrom;[\s\S]*centerGraphNode\(followTargetId\(\)\)/u);
   assert.match(html, /new ResizeObserver\(\(\)\s*=>\s*reconcileCamera\(\)\)/u);
   assert.match(html, /if \(firstSnapshot\) \{\s*setInspectorOpen\(false\)/u);
   assert.doesNotMatch(html, /setInspectorOpen\(currentWorkView === "run"[\s\S]{0,160}Boolean\(selectedNodeId\)\)/u);
@@ -1319,7 +1400,10 @@ test("uses a canvas-first control-room hierarchy with an on-demand inspector and
   assert.match(html, /selectNode\(node\.id, \{ inspectorTab: record\.tab \}\)/u);
   assert.match(html, /evidenceToggle\?\.addEventListener\("click", \(\) => setInspectorOpen\(evidencePanel\?\.dataset\.open !== "true"\)\)/u);
   assert.match(html, /evidenceClose\?\.addEventListener\("click", \(\) => setInspectorOpen\(false\)\)/u);
-  assert.match(html, /event\.key === "Escape"[\s\S]{0,260}setInspectorOpen\(false\)/u);
+  const escapeStart = html.indexOf('if (event.key === "Escape")');
+  const escapeBranch = html.slice(escapeStart, html.indexOf("    const interactive =", escapeStart));
+  assert.match(escapeBranch, /relationFocusActive[\s\S]*relationFocusActive = false;[\s\S]*return;/u);
+  assert.match(escapeBranch, /selectedNodeId = null;[\s\S]*setInspectorOpen\(false\)/u);
   assert.match(html, /app\.addEventListener\("pointerdown"[\s\S]{0,300}evidencePanel\.contains\(target\)[\s\S]{0,180}setInspectorOpen\(false\)/u);
   assert.match(html, /\.evidence-panel \.panel-header\s*\{[^}]*position:\s*sticky[^}]*z-index:\s*3[^}]*background:\s*var\(--panel\)/su);
   assert.match(html, /\.evidence-panel \[data-live-inspector-close\]\s*\{[^}]*width:\s*36px[^}]*height:\s*36px[^}]*place-items:\s*center/su);
@@ -1509,7 +1593,10 @@ test("keeps the graph control cluster out of the canvas and lets the operator mo
   // stage bar is a sibling that precedes the canvas, which makes occlusion in
   // the docked state structurally impossible rather than merely unlikely.
   assert.doesNotMatch(html, /graph-canvas-header/u);
-  assert.match(html, /class="graph-stage-bar"[\s\S]{0,4000}class="graph-canvas"/u);
+  const stageBar = html.indexOf('<div class="graph-stage-bar">');
+  const canvas = html.indexOf('<div class="graph-canvas"', stageBar);
+  assert.ok(stageBar >= 0 && canvas > stageBar);
+  assert.match(html.slice(stageBar, canvas), /data-live-graph-tools/u, "camera controls must remain in the bar before the canvas");
   assert.match(html, /\.graph-stage-bar\s*\{(?:(?!\})[\s\S])*flex:\s*0 0 auto/u);
   assert.doesNotMatch(html, /\.graph-stage-bar\s*\{(?:(?!\})[\s\S])*position:\s*absolute/u);
   assert.match(html, /\.graph-canvas-tools\[data-floating="true"\]\s*\{(?:(?!\})[\s\S])*position:\s*absolute/u);
@@ -2270,7 +2357,7 @@ test("uses a compact, zoomable DAG canvas with a minimap and fit controls", () =
   assert.match(html, /graphScene\.style\.transform/u);
   assert.match(html, /data-live-graph-minimap/iu);
   assert.match(html, /dataset\.semanticZoom\s*=\s*resolveSemanticZoom\(camera\.scale,\s*GRAPH_CAMERA\)/u);
-  assert.match(html, /const fit\s*=\s*resolveOverviewCamera\(canvas,\s*graphState\.bounds,\s*graphFitInset\(\),\s*GRAPH_CAMERA\)/u);
+  assert.match(html, /let fit\s*=\s*resolveOverviewCamera\(canvas,\s*graphState\.bounds,\s*graphFitInset\(\),\s*GRAPH_CAMERA\)/u);
   assert.match(html, /wholeGraphFits\s*\?\s*inset\.left\s*\+\s*\(usableWidth\s*-\s*content\.width\s*\*\s*scale\)\s*\/\s*2\s*:\s*inset\.left/u);
 });
 
@@ -2528,7 +2615,14 @@ function graphLayoutHarness({ width, height }) {
     "resolveNodeCardHeight",
     "resolveFanoutArrangement",
     "cardMetrics",
-    `${helpers.map((name) => shippedHelper(html, name)).join("\n")}\nreturn { layoutGraph, graphRankById };`,
+    "classifyGraphRelations",
+    "resolveDependencyGraphLayout",
+    "resolveSemanticZoom",
+    `const camera = { scale: 0.28 };
+const relationMode = "all";
+const graphState = {};
+const EXECUTION_EDGE_KINDS = new Set(["sequence", "depends_on", "dependency", "fork", "join", "blocks", "execution", "invokes"]);
+${helpers.map((name) => shippedHelper(html, name)).join("\n")}\nreturn { layoutGraph, graphRankById };`,
   )(
     layout,
     shippedConstant("GRAPH_CAMERA"),
@@ -2542,6 +2636,9 @@ function graphLayoutHarness({ width, height }) {
     // page spells it. Nothing here has been measured, so the configured card is what
     // the arrangement runs on -- which is the state these guards describe.
     resolveMeasuredCardMetrics(null, layout.card),
+    classifyGraphRelations,
+    resolveDependencyGraphLayout,
+    resolveSemanticZoom,
   );
 }
 
@@ -2557,14 +2654,13 @@ const RANK_FIXTURE_WORKER = (id, second) => ({
  * the shape a real governed run produces, and the shape a reporter complained
  * about: `d -> c -> b -> a` is a four-deep chain and `e` depends on nothing.
  *
- * `expectedRank` is the longest path to each node over containment and execution
- * together. Containment counts because a run whose only edges are `contains` --
- * the common case, and the case in the browser session that prompted this -- has
- * no other way to separate a hub from the work it holds.
+ * `expectedRank` is now execution-only for a mixed graph. The owner goes to a
+ * separate context band, and e remains reachable in the unlinked-work band.
+ * The legacy contains-only rank resolver is still guarded independently below.
  */
 const RANK_FIXTURE_FANOUT = {
   label: "fanout",
-  expectedRank: { p: 0, d: 1, e: 1, c: 2, b: 3, a: 4 },
+  expectedRank: { d: 0, c: 1, b: 2, a: 3 },
   nodes: [
     { id: "p", label: "workflow", kind: "workflow" },
     RANK_FIXTURE_WORKER("a", 1),
@@ -2588,7 +2684,7 @@ const RANK_FIXTURE_FANOUT = {
 /** The same dependency claim below `fanout.minimumChildren`, so the layered branch runs. */
 const RANK_FIXTURE_LAYERED = {
   label: "layered",
-  expectedRank: { p: 0, b: 1, e: 1, a: 2 },
+  expectedRank: { b: 0, a: 1 },
   nodes: [
     { id: "p", label: "workflow", kind: "workflow" },
     RANK_FIXTURE_WORKER("a", 1),
@@ -2624,6 +2720,9 @@ test("places every node at the column its longest dependency path earns", () => 
           ...fixture,
           edges: edgeOrder === "declared" ? fixture.edges : [...fixture.edges].reverse(),
         });
+        assert.equal(result.positions.size, fixture.nodes.length, "context and unlinked nodes must not disappear");
+        assert.equal(result.positions.get("p").group, "context");
+        assert.equal(result.positions.get("e").group, "unlinked");
         const placed = (id) => {
           const position = result.positions.get(id);
           assert.ok(position, `${id} must be placed in ${where}`);
@@ -2954,6 +3053,19 @@ test("makes aria-modal dialogs isolate the app, trap focus, and restore the open
   controller.setDialogOpen(sessionsDialog, false);
   assert.equal(document.activeElement, opener);
   assert.equal(background.inert, false);
+});
+
+test("Escape clears one-hop emphasis before closing the selected node inspector", () => {
+  const { controller, first } = modalBehaviorHarness();
+  controller.setRelationFocus(true);
+  const escape = () => ({ key: "Escape", target: first, preventDefault() { this.defaultPrevented = true; } });
+  controller.keydownHandler()(escape());
+  assert.equal(controller.relationFocus(), false);
+  assert.equal(controller.selection(), "selected", "clearing relation emphasis must retain the inspected identity");
+  assert.deepEqual(controller.inspectorCalls, [], "the first Escape must keep its inspector open");
+  controller.keydownHandler()(escape());
+  assert.equal(controller.selection(), null);
+  assert.deepEqual(controller.inspectorCalls, [false], "the normal second Escape still closes the inspector");
 });
 
 test("keeps the desktop workspace bounded and coalesces high-frequency snapshot updates", () => {
@@ -3559,7 +3671,7 @@ test("the client keeps the discovery reason the server allow-list already ships"
  * value helpers are sliced from the real script so a normalizer that starts
  * depending on a new one fails here instead of silently reading undefined.
  */
-function runNormalizerHarness() {
+function runNormalizerHarness({ actualStatus = false } = {}) {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const displayFormat = JSON.parse(html.match(/const DISPLAY_FORMAT = (\{.*?\});\n/su)[1]);
   const stubs = {
@@ -3572,12 +3684,22 @@ function runNormalizerHarness() {
     normalizeNodeCapabilityTruth: () => ({}),
     summarizeTerminalEvidence: () => null,
     capabilityNames: () => [],
+    normalizeLiveDeliverables,
   };
   const stubNames = Object.keys(stubs);
+  let actualStatusSource = "";
+  if (actualStatus) {
+    for (const name of ["normalizedStatus", "normalizedRunDisplayState", "normalizedNodeStatus"]) {
+      delete stubs[name];
+      stubNames.splice(stubNames.indexOf(name), 1);
+    }
+    actualStatusSource = ["statuses", "nodeStatuses"].map((name) => html.match(new RegExp("  const " + name + " = new Set\\([^\\n]+\\);", "u"))[0]).join("\n")
+      + "\n" + ["normalizedStatus", "normalizedRunDisplayState", "normalizedNodeStatus"].map((name) => shippedHelper(html, name)).join("\n");
+  }
   const normalizeSnapshot = new Function(
     "DISPLAY_FORMAT",
     ...stubNames,
-    `${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
+    `${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
       return normalizeSnapshot;
     `,
   )(displayFormat, ...stubNames.map((name) => stubs[name]));
@@ -4149,7 +4271,7 @@ test("an icon control keeps its glyph and carries its instruction in aria and ti
   // Chinese in English mode for exactly that reason.
   assert.match(
     body,
-    /<span class="graph-canvas-title"[^>]*>\s*<svg[^>]*>[\s\S]*?<\/svg><span data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">/u,
+    /<span class="graph-canvas-title"[^>]*>\s*<svg[^>]*>[\s\S]*?<\/svg><span[^>]*data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">/u,
   );
 
   // Moving an instruction into title only helps a Chinese reader if titles are
@@ -5208,6 +5330,340 @@ return edgeGeometry;`,
 });
 
 /**
+ * Run the renderer's real edge/animation/root registration tail, then drive the
+ * shipped camera and geometry helpers. A cell can be smaller than the full-card
+ * reservation without making that reservation wrong; its visible box is simply
+ * the different geometry that a line must meet.
+ */
+function visibleEdgeGeometryHarness() {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const renderer = shippedHelper(html, "renderGraph");
+  const tailStart = renderer.indexOf("    const outgoingEdges = new Map();");
+  assert.ok(tailStart >= 0, "the renderer must register the edges being exercised");
+  const tail = renderer.slice(tailStart, renderer.lastIndexOf("\n  }"));
+  const makeSvgElement = (tagName) => ({
+    tagName,
+    dataset: {},
+    attributes: new Map(),
+    children: [],
+    setAttribute(name, value) { this.attributes.set(name, String(value)); },
+    getAttribute(name) { return this.attributes.get(name); },
+    append(...children) { this.children.push(...children); },
+  });
+  const graph = {
+    dataset: { semanticZoom: "card" },
+    clientWidth: 1295,
+    clientHeight: 382,
+    style: {
+      scale: 1,
+      setProperty(name, value) { if (name === "--camera-scale") this.scale = Number(value); },
+    },
+  };
+  const positions = new Map([
+    ["owner", { x: 44, y: 44, width: 252, height: 333, spine: true }],
+    ["vertical", { x: 44, y: 600, width: 252, height: 333, spine: false }],
+    ["bus", { x: 500, y: 600, width: 252, height: 333, spine: false, busX: 400, laneY: 556 }],
+  ]);
+  let dimensionReads = 0;
+  const nodeElements = new Map([...positions].map(([id, position]) => [id, {
+    get offsetWidth() { dimensionReads += 1; return position.width; },
+    get offsetHeight() {
+      dimensionReads += 1;
+      return graph.dataset.semanticZoom === "card" ? 333 : graph.style.scale < 0.4 ? 203 : 180;
+    },
+    // Screen rects are deliberately unusable: the scene's transform must never
+    // enter the world-space port calculation, even halfway through a transition.
+    getBoundingClientRect() { throw new Error("ports must use unscaled dimensions"); },
+  }]));
+  const graphState = {
+    positions,
+    nodeElements,
+    edgeElements: new Map(),
+    edgeEffects: new Map(),
+    edgeRoutes: new Map(),
+    rootEntries: new Map(),
+  };
+  const graphNodes = [...positions.keys()].map((id) => ({ id, status: "active", displayState: "active" }));
+  const graphEdges = [
+    { id: "vertical-edge", from: "owner", to: "vertical", kind: "fork", status: "active" },
+    { id: "bus-edge", from: "owner", to: "bus", kind: "fork", status: "active" },
+  ];
+  const api = new Function(
+    "graphState", "graph", "graphScene", "document", "edgeLayer", "GRAPH_CAMERA", "resolveSemanticZoom",
+    "window", "graphNodes", "graphEdges", "layout", "graphNodeById",
+    `let camera = { x: 0, y: 0, scale: 1 };
+const snapshot = { run: { active: true } };
+const terminalRun = false;
+const reducedMotion = { matches: false };
+const graphMinimapScene = null;
+const EXECUTION_EDGE_KINDS = new Set(["fork"]);
+const relationPlan = { executionEdges: graphEdges, executionNodes: graphNodes };
+const nodeClass = (status) => status;
+const nodeDisplayState = (node) => node.displayState;
+const edgeMarkerId = (status) => "marker-" + status;
+const updateMinimap = () => {};
+const updateSelectedNodeVisuals = () => {};
+const updateGraphRelationPresentation = () => {};
+const observeGraphCardSizes = () => {};
+${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
+function draw() {
+${tail}
+}
+draw();
+return { updateCamera, refreshGraphEdgeGeometry, camera: () => ({ ...camera }) };`,
+  )(
+    graphState, graph, { style: {} }, { createElementNS: (_namespace, tagName) => makeSvgElement(tagName) },
+    makeSvgElement("svg"), loadLiveGraphCameraPolicy(), resolveSemanticZoom,
+    { innerWidth: 1351 }, graphNodes, graphEdges, { positions, kind: "fanout" },
+    new Map(graphNodes.map((node) => [node.id, node])),
+  );
+  return { ...api, graph, graphState, dimensionReads: () => dimensionReads };
+}
+
+function assertVisibleRoutes(harness, height) {
+  const { graphState } = harness;
+  const vertical = graphState.edgeRoutes.get("vertical-edge");
+  const bus = graphState.edgeRoutes.get("bus-edge");
+  assert.match(vertical.paths[0].getAttribute("d"), new RegExp("^M 86 " + (44 + height) + " C ", "u"));
+  assert.match(bus.paths[0].getAttribute("d"), new RegExp("^M 296 " + (44 + height / 2) + " H ", "u"));
+  for (const route of [vertical, bus]) {
+    const path = route.paths[0].getAttribute("d");
+    assert.ok(route.motion, "the live renderer must register the particle path too");
+    assert.equal(route.paths[1].getAttribute("d"), path, "glow must follow the main edge");
+    assert.equal(route.paths[2].getAttribute("d"), path, "tracer must follow the main edge");
+    assert.equal(route.motion.getAttribute("path"), path, "particle must follow the main edge");
+  }
+  const root = graphState.rootEntries.get("owner");
+  const originY = 44 + Math.min(34, height / 3);
+  assert.equal(root.path.getAttribute("d"), `M 18 ${originY} H 28 V ${44 + height / 2} H 44`);
+  for (const dot of [root.halo, root.dot]) {
+    assert.equal(dot.getAttribute("cx"), "18");
+    assert.equal(dot.getAttribute("cy"), String(originY));
+  }
+  for (const position of graphState.positions.values()) assert.equal(position.height, 333, "visible geometry must preserve the complete-card collision budget");
+}
+
+test("edge ports follow a 203px cell while its complete card still reserves 333px", () => {
+  const harness = visibleEdgeGeometryHarness();
+  assertVisibleRoutes(harness, 333);
+  harness.updateCamera({ x: 31, y: 42, scale: 0.28 });
+  assert.equal(harness.graph.dataset.semanticZoom, "cell");
+  assertVisibleRoutes(harness, 203);
+  harness.updateCamera({ x: 31, y: 42, scale: 1.1 });
+  assert.equal(harness.graph.dataset.semanticZoom, "card");
+  assertVisibleRoutes(harness, 333);
+});
+
+test("zooming within cell mode refreshes every route without measuring again on pan", () => {
+  const harness = visibleEdgeGeometryHarness();
+  harness.updateCamera({ x: 0, y: 0, scale: 0.28 });
+  assertVisibleRoutes(harness, 203);
+  const beforeZoomReads = harness.dimensionReads();
+  harness.updateCamera({ x: 0, y: 0, scale: 0.5 });
+  assert.equal(harness.graph.dataset.semanticZoom, "cell", "this zoom never crosses a semantic tier");
+  assertVisibleRoutes(harness, 180);
+  assert.equal(harness.dimensionReads() - beforeZoomReads, 6, "one sweep must measure each card only once");
+  const beforePanReads = harness.dimensionReads();
+  harness.updateCamera({ x: 99, y: -30, scale: 0.5 });
+  assert.equal(harness.dimensionReads(), beforePanReads, "panning must not read card dimensions");
+  assert.deepEqual(harness.camera(), { x: 99, y: -30, scale: 0.5 });
+  harness.refreshGraphEdgeGeometry();
+  assert.equal(harness.dimensionReads(), beforePanReads, "unchanged viewport and scale must reuse the geometry");
+  harness.graph.clientWidth -= 200;
+  harness.refreshGraphEdgeGeometry();
+  assert.equal(harness.dimensionReads() - beforePanReads, 6, "a viewport change must remeasure at the same camera scale");
+  assertVisibleRoutes(harness, 180);
+});
+
+test("shipped relation controls compose execution/all, one-hop focus and replay without changing positions", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const nodes = [{ id: "owner", kind: "workflow" }, { id: "a", kind: "worker" }, { id: "b", kind: "worker" }];
+  const edges = [
+    { id: "ownership", from: "owner", to: "a", kind: "contains" },
+    { id: "dependency", from: "a", to: "b", kind: "depends_on" },
+    { id: "other", from: "owner", to: "b", kind: "future_relation" },
+  ];
+  const kinds = new Set(["depends_on"]);
+  const plan = classifyGraphRelations(nodes, edges, kinds);
+  const buttons = ["dependency", "all"].map((mode) => ({
+    dataset: { liveGraphRelations: mode }, attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; },
+  }));
+  const makePath = () => ({ dataset: {}, style: {} });
+  const positions = new Map(nodes.map((node, index) => [node.id, { x: index * 300, y: 80, width: 252, height: 333 }]));
+  const state = { positions, relationPlan: plan, edgeRoutes: new Map(edges.map((edge) => [edge.id, { edge }])),
+    edgeElements: new Map(edges.map((edge) => [edge.id, makePath()])), edgeEffects: new Map(edges.map((edge) => [edge.id, makePath()])), rootEntries: new Map() };
+  const summary = {};
+  const api = new Function("graphState", "graphRelationButtons", "graphRelationSummary", "graph", "EXECUTION_EDGE_KINDS", "resolveGraphEdgePresentation",
+    `let relationMode = "dependency";
+let relationFocusActive = true;
+let selectedNodeId = "a";
+let currentLanguage = "zh";
+${["updateGraphRelationControls", "updateGraphRelationPresentation", "setGraphRelationMode"].map((name) => shippedHelper(html, name)).join("\n")}
+return { setGraphRelationMode, updateGraphRelationPresentation, updateGraphRelationControls, setLanguage: (value) => { currentLanguage = value; } };`
+  )(state, buttons, summary, { dataset: {} }, kinds, resolveGraphEdgePresentation);
+  const before = JSON.stringify([...positions]);
+  api.setGraphRelationMode("dependency");
+  assert.deepEqual(buttons.map((button) => button.textContent), ["执行依赖 1", "全部关系 3"]);
+  assert.deepEqual(buttons.map((button) => button.attributes["aria-pressed"]), ["true", "false"]);
+  assert.match(summary.textContent, /3 节点.*1 条归属已收起.*1 条其他关系已收起/u);
+  assert.equal(state.edgeElements.get("ownership").style.display, "none");
+  assert.equal(state.edgeElements.get("dependency").style.display, "");
+  state.edgeElements.get("dependency").dataset.replayVisible = "false";
+  api.setGraphRelationMode("all");
+  assert.equal(state.edgeElements.get("ownership").style.display, "");
+  assert.equal(state.edgeElements.get("other").style.display, "");
+  assert.equal(state.edgeElements.get("other").dataset.relationFocus, "far");
+  assert.equal(state.edgeElements.get("dependency").style.display, "none", "selection/all must not reveal a future replay relation");
+  assert.equal(state.edgeEffects.get("dependency").style.display, "none", "effects must follow the same rule as the main path");
+  api.setGraphRelationMode("dependency");
+  assert.equal(JSON.stringify([...positions]), before, "the visibility switch must not call layout or move any node");
+  const structureOnly = classifyGraphRelations(nodes, [edges[0]], kinds);
+  api.updateGraphRelationControls(structureOnly);
+  assert.match(summary.textContent, /尚无执行依赖记录；可查看全部关系/u);
+  assert.deepEqual(buttons.map((button) => button.textContent), ["执行依赖 0", "全部关系 1"]);
+  api.setLanguage("en");
+  api.updateGraphRelationControls(plan);
+  assert.deepEqual(buttons.map((button) => button.textContent), ["Dependencies 1", "All relations 3"]);
+  assert.match(summary.textContent, /3 nodes.*1 ownership hidden.*1 other relations hidden/u);
+});
+
+test("manual resize and inspector reflow apply the compensated camera before the next pan", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const policy = loadLiveGraphLayoutPolicy();
+  const nodes = ["owner", "a", "b", "c", "d", "join", "tail", "end"].map((id) => ({ id, label: id, kind: id === "owner" ? "workflow" : "worker" }));
+  const edges = [
+    ...nodes.slice(1).map((node) => ({ from: "owner", to: node.id, kind: "contains" })),
+    ...["a", "b", "c", "d"].map((id) => ({ from: id, to: "join", kind: "depends_on" })),
+    { from: "join", to: "tail", kind: "depends_on" }, { from: "tail", to: "end", kind: "depends_on" },
+  ];
+  const plan = classifyGraphRelations(nodes, edges, ["depends_on"]);
+  const graph = { clientWidth: 800, clientHeight: 500, dataset: { semanticZoom: "cell" }, style: { setProperty() {} } };
+  const layout = resolveDependencyGraphLayout({ plan, canvas: { width: 800, height: 500 }, inset: { top: 26, right: 26, bottom: 26, left: 26 },
+    cardWidth: 252, cardHeight: 333, cellScreenHeight: 64, tier: "cell", scale: 0.5,
+    columnGap: 104, rowGap: 88, padding: policy.scenePaddingPx });
+  const cards = new Map(nodes.map((node) => [node.id, { style: {}, dataset: {} }]));
+  const state = { layout, positions: layout.positions, bounds: layout.bounds, nodeElements: cards,
+    fullCardHeights: new Map(nodes.map((node) => [node.id, 333])) };
+  const scene = { style: {} };
+  let layoutCalls = 0;
+  const api = new Function("graphState", "graph", "graphScene", "GRAPH_LAYOUT", "GRAPH_CAMERA", "resolveSemanticZoom", "resolveDependencyGraphLayout", "resolveInspectorCameraLift",
+    `let camera = { x: 10, y: 20, scale: 0.5 };
+const currentSnapshot = {};
+const window = { innerWidth: 1200 };
+graphState.cardViewportWidth = window.innerWidth;
+let selectedNodeId = "join";
+let cameraMode = "manual";
+let inspectorCameraLiftOrigin = null;
+const evidencePanel = { dataset: { open: "false" } };
+const currentLanguage = "zh";
+const cardMetrics = GRAPH_LAYOUT.card;
+const graphMinimap = null;
+const graphMinimapScene = null;
+const edgeLayer = null;
+const nodeList = { append() {} };
+const makeElement = () => ({ style: {}, remove() {} });
+const reclampGraphTools = () => {};
+const updateMinimap = () => {};
+const refreshGraphEdgeGeometry = () => {};
+const fitGraph = () => { throw new Error("manual reconciliation must not enter overview"); };
+const centerGraphNode = () => { throw new Error("manual reconciliation must not follow"); };
+${["graphCanvasBox", "graphFitInset", "applyReadableLayoutBoxes", "reflowReadableGraph", "updateCamera", "reconcileCamera"].map((name) => shippedHelper(html, name)).join("\n")}
+applyReadableLayoutBoxes(graphState.layout);
+updateCamera(camera);
+return {
+  camera: () => ({ ...camera }),
+  resize: (width, height, inspectorOpen = false) => { graph.clientWidth = width; graph.clientHeight = height; reconcileCamera({ inspectorOpen }); },
+  pan: (dx, dy) => updateCamera({ ...camera, x: camera.x + dx, y: camera.y + dy }),
+};`
+  )(state, graph, scene, policy, loadLiveGraphCameraPolicy(), resolveSemanticZoom,
+    (input) => { layoutCalls += 1; return resolveDependencyGraphLayout(input); }, resolveInspectorCameraLift);
+  const domSelectedCenter = () => {
+    const transform = scene.style.transform.match(/^translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)$/u);
+    assert.ok(transform, "the camera must have an actual scene transform");
+    const card = cards.get("join");
+    return { x: Number(transform[1]) + (Number.parseFloat(card.style.left) + Number.parseFloat(card.style.width) / 2) * Number(transform[3]),
+      y: Number(transform[2]) + (Number.parseFloat(card.style.top) + Number.parseFloat(card.style.minHeight) / 2) * Number(transform[3]) };
+  };
+  const assertCameraApplied = () => {
+    const camera = api.camera();
+    assert.equal(scene.style.transform, `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`, "DOM and logical camera must agree immediately");
+  };
+  for (const [width, height, inspectorOpen] of [[1800, 260, false], [600, 260, true]]) {
+    const beforeCenter = domSelectedCenter();
+    const beforeWorldX = state.positions.get("join").x;
+    const beforeLayouts = layoutCalls;
+    api.resize(width, height, inspectorOpen);
+    assert.notEqual(state.positions.get("join").x, beforeWorldX, "this case must actually move the selected node, or the compensation path was not exercised");
+    assert.equal(layoutCalls - beforeLayouts, 1, "applying the compensated camera must not recursively run layout");
+    assertCameraApplied();
+    const afterCenter = domSelectedCenter();
+    assert.ok(Math.abs(afterCenter.x - beforeCenter.x) < 1e-7 && Math.abs(afterCenter.y - beforeCenter.y) < 1e-7,
+      "manual resize/inspector reflow must preserve the selected screen anchor");
+    api.pan(12, -7);
+    assertCameraApplied();
+    const afterPan = domSelectedCenter();
+    assert.ok(Math.abs(afterPan.x - afterCenter.x - 12) < 1e-7 && Math.abs(afterPan.y - afterCenter.y + 7) < 1e-7,
+      "the next pan must move by its own delta, without applying a delayed compensation jump");
+    assert.equal(layoutCalls - beforeLayouts, 1, "pure pan must still avoid layout");
+  }
+});
+
+test("the selected relation list hides future replay identities and refreshes on a node-less cursor event", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const snapshot = {
+    nodes: [
+      { id: "a", label: "Current A", firstAt: "2026-10-21T00:00:10Z", status: "completed", isMain: true },
+      { id: "b", label: "Future B", firstAt: "2026-10-21T00:00:30Z", status: "completed" },
+      { id: "c", label: "Other C", firstAt: "2026-10-21T00:00:15Z", status: "completed" },
+    ],
+    edges: [{ id: "ab", from: "a", to: "b", kind: "depends_on", status: "completed" }, { id: "ac", from: "a", to: "c", kind: "future_relation", status: "completed" }],
+    replay: [
+      { nodeId: "a", at: "2026-10-21T00:00:10Z", label: "A started", status: "running" },
+      { at: "2026-10-21T00:00:20Z", label: "Poll without a node" },
+      { nodeId: "b", at: "2026-10-21T00:00:30Z", label: "B started", status: "running" },
+      { at: "2026-10-21T00:00:40Z", label: "Replay finished" },
+    ],
+  };
+  const before = JSON.stringify(snapshot);
+  const relationList = { textContent: "" };
+  const cards = snapshot.nodes.map((node) => ({ dataset: { nodeId: node.id }, setAttribute() {}, querySelector: () => null }));
+  const api = new Function("currentSnapshot", "selectedNodeRelations", "resolveReplayNodeView", "cards",
+    `let currentReplayIndex = 0;
+let selectedNodeId = "a";
+let replayFollowingLive = false;
+let graphFollowing = false;
+let currentInspectorTab = "summary";
+const INSPECTOR_TABS = ["summary"];
+const STRUCTURAL_EDGE_KINDS = new Set(["contains"]);
+const nodeList = { querySelectorAll: () => cards };
+const graphState = { edgeElements: new Map(), edgeEffects: new Map(), nodeElements: new Map(cards.map(card => [card.dataset.nodeId, card])) };
+const replayRange = null, replayProgress = null, replayStatus = null, replayEvents = null, replayPrev = null, replayNext = null, replayLive = null, liveRegion = null;
+const graphNodeReadingLabel = node => node.label;
+const updateGraphRelationPresentation = () => {};
+const updateSelectedNodeVisuals = () => updateSelectedNodeRelations();
+const setInspectorOpen = () => {};
+${["updateSelectedNodeRelations", "selectNode", "updateReplayPosition"].map((name) => shippedHelper(html, name)).join("\n")}
+return { seek: updateReplayPosition, select: selectNode };`
+  )(snapshot, relationList, resolveReplayNodeView, cards);
+  api.seek(0);
+  api.select("a");
+  assert.equal(relationList.textContent, "", "neither future endpoint may appear beside the current node");
+  assert.equal(cards.find((card) => card.dataset.nodeId === "b").dataset.replayVisible, "false");
+  api.seek(1);
+  assert.match(relationList.textContent, /Other C \(future_relation\)/u, "an event without nodeId must still refresh newly visible relations");
+  assert.doesNotMatch(relationList.textContent, /Future B/u);
+  api.select("b");
+  assert.equal(relationList.textContent, "", "a hidden selected endpoint cannot reveal its incoming relation either");
+  api.select("a");
+  api.seek(3);
+  assert.match(relationList.textContent, /Future B \(depends_on\)/u, "the replay end must restore the original relation");
+  assert.match(relationList.textContent, /Other C \(future_relation\)/u, "unknown types remain inspectable when visible");
+  assert.equal(cards.find((card) => card.dataset.nodeId === "b").dataset.replayVisible, "true");
+  assert.equal(JSON.stringify(snapshot), before, "replay filtering must not rewrite the underlying snapshot");
+});
+
+/**
  * Lift `syncLayoutToRenderedCards`, and the measurement it drives, out of the shipped
  * script with their closure values injected.
  *
@@ -5782,4 +6238,162 @@ test("no text run sits closer to the run above it than the ladder's own text flo
     `these text runs sit closer to the run above them than the ${spacing.textAdjacency.minimumPx}px the ladder `
       + "declares for a text-run gap, which is the density the maintainer called painful to look at",
   );
+});
+
+test("actual card resize invalidates edge geometry once and preserves full-card measurement as a separate step", () => {
+  const html = renderLiveControlRoomPage();
+  const frames = [];
+  const card = { dataset: { nodeId: "a" }, offsetWidth: 252, offsetHeight: 333 };
+  const state = { layout: {}, nodeElements: new Map([["a", card]]), positions: new Map([["a", { width: 252, height: 333 }]]),
+    observedCardSizes: new Map([["a", "252|333"]]), edgeGeometryKey: "old" };
+  const calls = [];
+  const api = new Function("graphState", "graph", "window", "syncLayoutToRenderedCards", "reconcileCamera", `
+let graphCardRefreshPending = false;
+let graphCardMeasurementPending = false;
+${["handleGraphCardResize", "scheduleGraphCardRefresh"].map((name) => shippedHelper(html, name)).join("\n")}
+return handleGraphCardResize;`)(state, { dataset: { semanticZoom: "card" } }, { requestAnimationFrame: (fn) => frames.push(fn) },
+    () => calls.push("measure-complete-cards"), () => calls.push("reconcile"));
+  api([{ target: card }]);
+  assert.equal(frames.length, 0, "the observer's initial unchanged size does not make a loop");
+  card.offsetHeight = 420;
+  api([{ target: card }]);
+  card.offsetHeight = 430;
+  api([{ target: card }]);
+  assert.equal(frames.length, 1, "one frame coalesces intermediate sizes");
+  frames.shift()();
+  assert.deepEqual(calls, ["measure-complete-cards", "reconcile"]);
+  assert.equal(state.edgeGeometryKey, null);
+  api([{ target: card }]);
+  assert.equal(frames.length, 0, "settled sizes do not schedule another pass");
+});
+
+test("the shipped feedback form survives snapshot paints and switching references without rewriting original text", async () => {
+  const html = renderLiveControlRoomPage();
+  const element = (tagName, className = "", textContent = "") => ({
+    tagName, className, textContent, dataset: {}, children: [], parentNode: null, value: "", events: {},
+    append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
+    setAttribute() {}, addEventListener(type, handler) { this.events[type] = handler; },
+  });
+  const drafts = createLocalFeedbackDraftStore();
+  const surfaces = new Map();
+  const copied = [];
+  const render = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", "navigator", `
+const currentLanguage = "zh";
+const selectedProjectId = "project-a";
+${shippedHelper(html, "renderLocalFeedback")}
+return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.children = []; }, liveDeliverablesForNode, buildLocalFeedbackText,
+    { clipboard: { writeText: async (value) => copied.push(value) } });
+  const host = element("div");
+  const nodeA = { id: "node-a", taskPacketId: "task-a", label: "页面" };
+  const nodeB = { id: "node-b", taskPacketId: "task-b", label: "其他任务" };
+  const snapshot = { run: { id: "run-a", title: "当前运行" }, evidence: [{ id: "proof-a", nodeId: "node-a", label: "检查结果", sourceRef: "host:one" }],
+    deliverables: [{ id: "output-a", runId: "run-a", taskPacketId: "task-a", label: "成品", kind: "html", availability: "declared" }] };
+  render(host, snapshot, nodeA, "inspector");
+  const view = surfaces.get("inspector");
+  view.target.value = "deliverable:output-a";
+  view.target.events.change();
+  const original = "  只修这里的连线\n保留其余改动。  ";
+  view.raw.value = original;
+  view.raw.events.input();
+  view.prepare.events.click();
+  assert.ok(view.prepared.value.endsWith(original));
+  assert.match(view.prepared.value, /output-a/u);
+  const originalControl = view.raw;
+  render(host, { ...snapshot }, nodeA, "inspector");
+  assert.equal(view.raw, originalControl, "live paints reuse the actual input control");
+  assert.equal(view.raw.value, original);
+  view.prepared.value += "\n由我补充的验收要求";
+  view.prepared.events.input();
+  const prepared = view.prepared.value;
+  render(host, snapshot, nodeB, "inspector");
+  assert.equal(view.raw.value, "");
+  render(host, snapshot, nodeA, "inspector");
+  assert.equal(view.target.value, "deliverable:output-a");
+  assert.equal(view.raw.value, original);
+  assert.equal(view.prepared.value, prepared);
+  await view.copy.events.click();
+  assert.deepEqual(copied, [prepared]);
+  assert.match(view.notice.textContent, /已复制.*粘贴/u);
+  assert.doesNotMatch(view.notice.textContent, /已发送|已处理/u);
+  render(host, { ...snapshot, deliverables: [] }, nodeA, "inspector");
+  assert.equal(view.raw.value, original, "a missing descriptor in the next snapshot must not discard its draft");
+});
+
+test("the default graph inspector opens deliverables through the scoped safe route", () => {
+  const html = renderLiveControlRoomPage();
+  assert.match(html, /data-live-deliverables-host/u);
+  assert.match(html, /data-live-feedback-host/u);
+  const href = new Function("selectedProjectId", `${shippedHelper(html, "deliverableOpenHref")} return deliverableOpenHref;`)("project/a");
+  const url = new URL(href({ id: "out&one", runId: "run-one", url: "javascript:bad()" }), "http://localhost");
+  assert.equal(url.pathname, "/api/deliverable");
+  assert.deepEqual(Object.fromEntries(url.searchParams), { runId: "run-one", deliverableId: "out&one", projectId: "project/a" });
+  const selected = shippedHelper(html, "updateSelectedNodeVisuals");
+  assert.match(selected, /appendLiveDeliverables\(inspectorDeliverablesHost/u);
+  assert.match(selected, /renderLocalFeedback\(inspectorFeedbackHost/u);
+});
+
+test("real snapshot normalization keeps executed-but-unverified distinct from missing execution on graph and summary", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const snapshot = normalize({ run: { id: "live-acceptance-iteration-a", status: "partial" }, nodes: [
+    { id: "making", kind: "agent", taskPacketId: "task:making", status: "in_doubt", displayState: "unknown", executionState: "executed",
+      statusReason: "执行回合已结束，等待任务验证；尚不能确认任务完成。" },
+    { id: "verified", kind: "agent", status: "completed", displayState: "completed", executionState: "executed" },
+    { id: "missing", kind: "agent", status: "in_doubt", displayState: "unknown", executionState: "unreported" },
+  ] });
+  const html = renderLiveControlRoomPage();
+  const displayFormat = JSON.parse(html.match(/const DISPLAY_FORMAT = (\{.*?\});\n/su)[1]);
+  const view = new Function("DISPLAY_FORMAT", `
+const currentLanguage = "zh";
+const localize = (value) => value;
+const stateCopy = (state) => state;
+${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
+return (node) => ({ state: nodeDisplayState(node), summary: nodeStateCopy(node), graph: nodeShortStateCopy(node) });`)(displayFormat);
+  assert.equal(snapshot.nodes[0].taskPacketId, "task:making");
+  assert.equal(snapshot.nodes[0].executionState, "executed");
+  assert.deepEqual(view(snapshot.nodes[0]), { state: "in_doubt", summary: "已执行 · 待验证", graph: "待验证" });
+  assert.equal(view(snapshot.nodes[1]).state, "completed");
+  assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "缺执行证据" });
+});
+
+test("first overview synchronizes actual layout scale and tier even when the camera value has not changed", () => {
+  const html = renderLiveControlRoomPage();
+  const policy = loadLiveGraphLayoutPolicy();
+  const nodes = ["making", "reviewing", "missing"].map((id) => ({ id, kind: "agent", taskPacketId: "task:" + id }));
+  const edges = [{ from: "making", to: "reviewing", kind: "depends_on" }];
+  const plan = classifyGraphRelations(nodes, edges, ["depends_on"]);
+  const layout = resolveDependencyGraphLayout({ plan, canvas: { width: 800, height: 300 }, inset: { top: 26, right: 26, bottom: 26, left: 26 },
+    cardWidth: 252, cardHeight: 333, cellScreenHeight: 64, tier: "card", scale: 1,
+    columnGap: 104, rowGap: 88, padding: policy.scenePaddingPx, includeContext: false });
+  const properties = new Map();
+  const graph = { dataset: {}, clientWidth: 800, clientHeight: 300, style: { setProperty: (key, value) => properties.set(key, value) } };
+  const state = { layout, positions: layout.positions, bounds: layout.bounds,
+    nodeElements: new Map(nodes.map((node) => [node.id, { style: {}, dataset: {} }])),
+    fullCardHeights: new Map(nodes.map((node) => [node.id, 333])) };
+  const api = new Function("graphState", "graph", "GRAPH_LAYOUT", "GRAPH_CAMERA", "resolveSemanticZoom", "resolveDependencyGraphLayout", "resolveOverviewCamera", `
+let camera = { x: 0, y: 0, scale: 0.4098 };
+let selectedNodeId = null;
+const currentLanguage = "zh";
+const cardMetrics = GRAPH_LAYOUT.card;
+const graphScene = { style: {} };
+const graphMinimap = null;
+const graphMinimapScene = null;
+const edgeLayer = null;
+const nodeList = { append() {} };
+const makeElement = () => ({ style: {}, remove() {} });
+const refreshGraphEdgeGeometry = () => {};
+const updateMinimap = () => {};
+const setCameraMode = () => {};
+${["graphCanvasBox", "graphFitInset", "applyReadableLayoutBoxes", "reflowReadableGraph", "updateCamera", "fitGraph"].map((name) => shippedHelper(html, name)).join("\n")}
+return { synchronize: () => updateCamera(camera), fit: fitGraph, camera: () => camera };`)(state, graph, policy, loadLiveGraphCameraPolicy(), resolveSemanticZoom, resolveDependencyGraphLayout, resolveOverviewCamera);
+  api.synchronize();
+  assert.equal(state.layout.scale, api.camera().scale, "the unchanged camera still corrects a stale layout");
+  assert.equal(state.layout.tier, "cell");
+  assert.ok(Math.abs(Number.parseFloat(properties.get("--readable-cell-height")) * api.camera().scale - 64) < 0.001);
+  api.fit();
+  assert.equal(state.layout.scale, api.camera().scale, "the actual first fit cannot leave the layout at an intermediate refinement scale");
+  assert.equal(state.layout.tier, resolveSemanticZoom(api.camera().scale, loadLiveGraphCameraPolicy()));
+  if (state.layout.tier === "cell") {
+    assert.ok(Math.abs(Number.parseFloat(properties.get("--readable-cell-height")) * api.camera().scale - 64) < 0.001);
+    for (const position of state.positions.values()) assert.ok(Math.abs(position.height * api.camera().scale - 64) < 0.001);
+  }
 });

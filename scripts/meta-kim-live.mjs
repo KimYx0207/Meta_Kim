@@ -86,6 +86,11 @@ function parseArgs(argv) {
     } else if (arg === "--run-id") {
       options.runId = nextValue(argv, index, arg);
       index += 1;
+    } else if (arg === "--observe-codex-thread" || arg === "--observe-codex-turn") {
+      const value = nextValue(argv, index, arg);
+      if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(value)) throw new LiveCliUsageError(`${arg} requires a UUID.`);
+      options[arg === "--observe-codex-thread" ? "nativeCodexThreadId" : "nativeCodexTurnId"] = value.toLowerCase();
+      index += 1;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
@@ -101,6 +106,7 @@ function usage() {
     "Usage: meta-kim live [--project-root DIR] [--profile NAME] [--port PORT] [--restart] [--no-open] [--json] [--enable-control]",
     "Default mode starts or reuses one user-level Hub on 127.0.0.1, listing only registered projects and governed sessions; it exposes no mutation endpoint.",
     "--enable-control records an explicit control request, but the singleton CLI stays read-only unless a complete authority loadout is injected through the programmatic server API; otherwise it is fail-closed.",
+    "A newly started Hub can observe the exact current Codex thread from CODEX_THREAD_ID (or --observe-codex-thread UUID); --observe-codex-turn UUID pins one turn. This only reads native events and never calls a model. Reusing an existing Hub does not silently replace its native binding.",
   ].join("\n");
 }
 
@@ -139,6 +145,14 @@ export function liveSelectionForRegistration(registration, runId = null) {
 
 export { parseArgs };
 
+/** Existing host metadata can bind a new daemon; no arbitrary HTTP binding exists. */
+export function nativeCodexStartupBinding(options, projectRoot, environment = process.env) {
+  const threadId = options.nativeCodexThreadId || environment.CODEX_THREAD_ID;
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(String(threadId || ""))) return null;
+  if (!path.isAbsolute(projectRoot || "")) return null;
+  return { projectRoot, threadId: threadId.toLowerCase(), ...(options.nativeCodexTurnId ? { turnId: options.nativeCodexTurnId } : {}), ...(environment.CODEX_HOME ? { codexHome: environment.CODEX_HOME } : {}) };
+}
+
 async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (options.help) {
@@ -172,7 +186,13 @@ async function main(argv = process.argv.slice(2)) {
         throw error;
       }
     }
-    const result = await ensureLiveHub({
+    const nativeBinding = nativeCodexStartupBinding(options, projectRoot);
+    const previousBinding = process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING;
+    if (nativeBinding) process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING = JSON.stringify(nativeBinding);
+    else delete process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING;
+    let result;
+    try {
+      result = await ensureLiveHub({
       packageRoot: PACKAGE_ROOT,
       homeDir: process.env.META_KIM_LIVE_HOME,
       projectRef,
@@ -188,7 +208,11 @@ async function main(argv = process.argv.slice(2)) {
       // whichever package root installed the hook.
       allowBuildTakeover: true,
       timeoutMs: budget.startupBudgetMs,
-    });
+      });
+    } finally {
+      if (previousBinding === undefined) delete process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING;
+      else process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING = previousBinding;
+    }
     if (result.status === "unavailable") {
       if (result.reason === "profile_in_use") {
         process.stderr.write(
@@ -229,6 +253,14 @@ async function main(argv = process.argv.slice(2)) {
     throw error;
   }
 
+  let nativeCodex = null;
+  try {
+    const raw = process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING || "";
+    if (Buffer.byteLength(raw) <= 4_096) {
+      const supplied = JSON.parse(raw);
+      nativeCodex = nativeCodexStartupBinding({ nativeCodexThreadId: supplied.threadId, nativeCodexTurnId: supplied.turnId }, supplied.projectRoot, { CODEX_HOME: supplied.codexHome });
+    }
+  } catch { /* An absent or invalid binding leaves ordinary project reads unchanged. */ }
   const controller = createLiveControlRoomServer({
     ...options,
     globalHub: options.daemonChild === true,
@@ -238,6 +270,7 @@ async function main(argv = process.argv.slice(2)) {
     // The lifecycle hands the child both halves of its build authority. Passing
     // only the digest is what left /api/health unable to name the build it serves.
     packageVersion: process.env.META_KIM_LIVE_PACKAGE_VERSION || null,
+    nativeCodex,
   });
   let stopping = false;
   const stop = async () => {

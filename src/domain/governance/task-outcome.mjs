@@ -124,6 +124,12 @@ export function evaluateTaskOutcome(goalContract, observations = []) {
   const criteria = normalizeCriteria(goalContract.acceptanceCriteria, goalContract.contractFields.outcome);
   const acceptanceDigest = criteriaDigest(criteria);
   if (goalContract.acceptanceDigest !== acceptanceDigest) throw new TypeError("Acceptance criteria binding mismatch");
+  const confirmedIntentDigest = goalContract.intentBinding?.status === "host_provided_understanding"
+    ? goalContract.intentBinding.intentDigest : null;
+  if (goalContract.intentBinding?.status === "host_provided_understanding" &&
+      (typeof confirmedIntentDigest !== "string" || !/^[a-f0-9]{64}$/u.test(confirmedIntentDigest))) {
+    throw new TypeError("Confirmed outcome evaluation requires the original intent binding");
+  }
   const knownIds = new Set(criteria.map((criterion) => criterion.id));
   const errors = [];
   for (const observation of observations) {
@@ -139,6 +145,8 @@ export function evaluateTaskOutcome(goalContract, observations = []) {
     if (matches.length > 1) return { ...base, status: "invalid", reason: "ambiguous_duplicate_observations" };
     if (observation.taskHash !== taskHash) return { ...base, status: "invalid", reason: "task_binding_mismatch" };
     if (observation.acceptanceDigest !== acceptanceDigest) return { ...base, status: "invalid", reason: "acceptance_binding_mismatch" };
+    if (confirmedIntentDigest && !observation.intentDigest) return { ...base, status: "missing", reason: "confirmed_intent_binding_missing" };
+    if (confirmedIntentDigest && observation.intentDigest !== confirmedIntentDigest) return { ...base, status: "invalid", reason: "confirmed_intent_binding_mismatch" };
     if (!["pass", "fail", "inconclusive"].includes(observation.verdict)) return { ...base, status: "invalid", reason: "unknown_verdict" };
     const allowed = criterion.kind === "deterministic"
       ? ["deterministic_check", "human_review", "independent_review"]
@@ -164,6 +172,7 @@ export function evaluateTaskOutcome(goalContract, observations = []) {
     : required.every((result) => result.status === "pass") ? "pass" : "incomplete";
   return {
     schemaVersion: "task-outcome-evaluation-v0.1", taskHash, acceptanceDigest, status,
+    ...(confirmedIntentDigest ? { intentDigest: confirmedIntentDigest } : {}),
     evidenceKind: "reported_criterion_assessment", results, errors,
     requiredPassed: required.filter((result) => result.status === "pass").length,
     requiredCount: required.length,

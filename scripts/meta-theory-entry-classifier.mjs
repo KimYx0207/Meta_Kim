@@ -106,6 +106,29 @@ const FILE_OR_MUTATION_RE = createLexiconMatcher("fileOrMutationObject");
 
 const PRODUCT_BUILD_OBJECT_RE = createLexiconMatcher("productBuildObject");
 
+const ENGINEERING_REPAIR_RE = /\b(?:fix|repair|debug|patch|refactor|troubleshoot)\b|(?:修复|排查|纠错|修好|重构|修正|수정|고치)/iu;
+const ENGINEERING_REPAIR_OBJECT_RE = /\b(?:code|api|database|test|timeout|crash|bug|error|ui|backend|frontend|software|app|system)\b|(?:代码|测试|超时|崩溃|缺陷|报错|接口|数据库|前端|后端|页面|软件|系统|タイムアウト|バグ|エラー|不具合|오류|버그|타임아웃|코드)/iu;
+const PRODUCT_CONSTRUCTION_RE = /\b(?:build|create|develop|implement|launch|ship|make)\b|(?:新建|新做|新增|做个|做一个|搭建|开发|打造|构建|从头做|实现(?:一个|新)|作る|作成|開発|만들|개발|구축)/iu;
+
+function affirmativeRequestClauses(prompt) {
+  return String(prompt ?? "").split(/[,.!?;，。！？；\r\n]+|\b(?:and|then|but|while)\b|(?:并且|同时|然后|但是)|并(?=(?:请|帮我|先|再|继续|把|将|新建|新做|新增|做|搭建|开发|打造|构建|实现|修复|排查|纠错|修好|重构|优化|验证|测试|检查|审查|生成|更新|保留|保持|禁止|不要|不得|只用|仅用))/iu)
+    .map((clause) => clause.trim()).filter(Boolean)
+    .filter((clause) => !/^(?:(?:please|请|务必)\s*)?(?:keep\b|preserve\b|without\b|do\s+not\b|don't\b|must\s+not\b|保留|保持|禁止|不要|不得|不重做|不新建|不改变|不改动|只用|仅用|零新增成本)/iu.test(clause));
+}
+
+/** An explicit repair of existing engineering behavior, independent of guardrails. */
+export function hasEngineeringRepairIntent(prompt) {
+  return affirmativeRequestClauses(prompt).some((clause) => ENGINEERING_REPAIR_RE.test(clause)
+    && ENGINEERING_REPAIR_OBJECT_RE.test(clause));
+}
+
+/** Bind a product object to an affirmative request in the same clause. */
+export function hasProductBuildIntent(prompt) {
+  return affirmativeRequestClauses(prompt).some((clause) => (ACTION_RE.test(clause) || PRODUCT_CONSTRUCTION_RE.test(clause))
+    && PRODUCT_BUILD_OBJECT_RE.test(clause)
+    && (!hasEngineeringRepairIntent(clause) || PRODUCT_CONSTRUCTION_RE.test(clause)));
+}
+
 const PROJECT_UNDERSTANDING_RE = createLexiconMatcher("projectUnderstanding");
 
 const PARALLEL_AGENT_RE =
@@ -198,7 +221,7 @@ export function classifyMetaTheoryEntry(prompt) {
   const actionIntent = ACTION_RE.test(text) && !isDefinitionQuery(text);
   const durableOutputIntent = DURABLE_OUTPUT_RE.test(text);
   const fileOrMutationIntent = FILE_OR_MUTATION_RE.test(text);
-  const productBuildIntent = actionIntent && PRODUCT_BUILD_OBJECT_RE.test(text);
+  const productBuildIntent = actionIntent && hasProductBuildIntent(text);
   const projectUnderstandingIntent = PROJECT_UNDERSTANDING_RE.test(text);
   const pureQuery = hasQuestionOnlyShape(text);
   const directParallelAgentRequest = PARALLEL_AGENT_RE.test(text);

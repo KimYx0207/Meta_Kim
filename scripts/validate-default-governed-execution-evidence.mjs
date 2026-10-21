@@ -7,15 +7,6 @@ import path from "node:path";
 import process from "node:process";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
 
-// The default-evidence run pins agentTeamsPlaybookPacket.selected === false.
-// Selection follows provider discovery, and the sibling_dependency_checkout
-// probe reads whatever happens to sit beside the repository on this machine,
-// so without this seam the pinned literal is a property of the maintainer's
-// disk rather than of the code. Hermetic mode keeps explicit
-// META_KIM_DEP_ROOTS fixtures available; the seam's own test pins both
-// directions.
-process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE = "1";
-
 const MULTI_CAPABILITY_TASK = [
   "同一套 PRD review standard 需要 skill。",
   "长期 test coverage owner 需要 agent。",
@@ -146,12 +137,29 @@ function validateProductExperienceEvidence(report) {
   assert.equal(report.coreLoop.goalContractPacket.status, "pass");
   assert.equal(report.coreLoop.langGraphRunPacket.status, "pass");
   assert.equal(report.coreLoop.peerAgentMeshPacket.status, "pass");
-  assert.equal(report.coreLoop.agentTeamsPlaybookPacket.status, "pass");
-  assert.equal(report.coreLoop.agentTeamsPlaybookPacket.selected, false);
+  const playbook = report.coreLoop.agentTeamsPlaybookPacket;
+  const resolution = playbook.providerResolution;
+  const nearestProvider = resolution.candidates.find((candidate) => candidate.found) ?? null;
+  const providerAvailable = nearestProvider !== null;
+  assert.equal(resolution.found, providerAvailable);
+  assert.equal(resolution.selectedSource, nearestProvider?.source ?? null);
+  assert.equal(resolution.selectedPathRef, nearestProvider?.pathRef ?? null);
+  assert.equal(resolution.selectedVersion, nearestProvider?.version ?? null);
+  // Discovery may find a real optional provider on this host. Both branches
+  // must retain native DAG readiness; discovery alone never proves invocation.
+  assert.equal(playbook.status, "pass");
+  assert.equal(playbook.selected, providerAvailable);
+  assert.equal(playbook.selectedAs, providerAvailable
+    ? "parallel_fanout_orchestration_adapter"
+    : "optional_adapter_not_required_for_native_fanout");
+  assert.equal(playbook.evidenceKind, providerAvailable
+    ? "orchestration_provider_selected"
+    : "native_stage_dag_ready_optional_playbook_not_selected");
   assert.equal(
-    report.coreLoop.agentTeamsPlaybookPacket.acceptance.optionalProviderDoesNotGateNativeFanout,
-    true,
+    playbook.acceptance.optionalProviderDoesNotGateNativeFanout,
+    !providerAvailable,
   );
+  assert.equal(playbook.acceptance.orchestrationReadyWhenParallelLanes, true);
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, true);
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.acceptance.independentLanesProven, true);
   assert.equal(report.coreLoop.agentTeamsPlaybookPacket.acceptance.parallelWaveExists, true);
@@ -220,7 +228,10 @@ function validateProductExperienceEvidence(report) {
   assert.equal(invocationByFamily.get("app_visible_subagent").state, "not_required");
   assert.equal(invocationByFamily.get("worker_task").state, "blocked");
   assert.equal(invocationByFamily.get("prompt_rule").state, "applied");
-  assert.equal(invocationByFamily.get("agent_teams_playbook").state, "not_required");
+  const playbookInvocation = invocationByFamily.get("agent_teams_playbook");
+  assert.equal(playbookInvocation.state, providerAvailable ? "selected_not_invoked" : "not_required");
+  assert.equal(playbookInvocation.selectedCount, providerAvailable ? 1 : 0);
+  assert.equal(playbookInvocation.invokedCount, 0);
   assert.equal(report.coreLoop.capabilityInvocationProbePacket.status, "not_run");
   assert.ok(
     ["selected_not_invoked", "discovered_not_selected", "not_required"].includes(
@@ -305,7 +316,20 @@ async function main() {
         consumedGovernancePackets: report.coreLoop.conductorConsumptionEvidence.consumedPacketRefs.length,
         workerResultPackets: report.coreLoop.executionResult.workerResultPackets.length,
         workerExecutionEvidence: report.coreLoop.executionResult.workerExecutionEvidence.length,
-        productExperience: report.coreLoop.productExperiencePacket.status
+        productExperience: report.coreLoop.productExperiencePacket.status,
+        optionalProvider: {
+          available: report.coreLoop.agentTeamsPlaybookPacket.providerResolution.found,
+          selected: report.coreLoop.agentTeamsPlaybookPacket.selected,
+          selectedSource: report.coreLoop.agentTeamsPlaybookPacket.providerResolution.selectedSource,
+          invocationState: report.coreLoop.capabilityInvocationTruthPacket.rows.find((row) => row.family === "agent_teams_playbook").state,
+          invokedCount: report.coreLoop.capabilityInvocationTruthPacket.rows.find((row) => row.family === "agent_teams_playbook").invokedCount,
+          nativeFanoutReady: report.coreLoop.agentTeamsPlaybookPacket.acceptance.orchestrationReadyWhenParallelLanes,
+          fanoutSafety: report.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout,
+          dagAndCollisionSafe: report.coreLoop.agentTeamsPlaybookPacket.acceptance.dagAndCollisionSafe,
+          parallelWaveExists: report.coreLoop.agentTeamsPlaybookPacket.acceptance.parallelWaveExists,
+          workerTaskIds: report.coreLoop.agentTeamsPlaybookPacket.waves.flatMap((wave) => wave.taskPacketIds),
+          actualWorkerExecution: report.coreLoop.executionResult.actualWorkerExecution,
+        }
       }, null, 2)}\n`
     );
   } finally {

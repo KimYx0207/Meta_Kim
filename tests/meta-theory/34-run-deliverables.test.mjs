@@ -7,7 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { generateRunDeliverables } from "../../scripts/generate-meta-theory-run-deliverables.mjs";
-import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { agentTeamsCandidateSkillPaths, runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { assertOptionalPlaybookContract } from "../helpers/optional-playbook-contract.mjs";
 import { getReportLabels } from "../../scripts/meta-kim-i18n.mjs";
 import { buildAgentProjectionTargets } from "../../scripts/runtime-tool-profiles.mjs";
 import { readJson, readFile as readRepoFile } from "./_helpers.mjs";
@@ -689,16 +690,15 @@ describe("34 — Meta-theory run deliverables", () => {
       assert.equal(invocationByFamily.get("app_visible_subagent").state, "not_required");
       assert.equal(invocationByFamily.get("worker_task").state, "blocked");
       assert.equal(invocationByFamily.get("prompt_rule").state, "applied");
-      assert.equal(invocationByFamily.get("agent_teams_playbook").state, "not_required");
+      await assertOptionalPlaybookContract(
+        runArtifact.agentTeamsPlaybookPacket,
+        runArtifact.capabilityInvocationTruthPacket,
+        agentTeamsCandidateSkillPaths("codex"),
+      );
       assert.equal(invocationByFamily.get("mcp").state, "selected_not_invoked");
       assert.equal(runArtifact.capabilityInvocationProbePacket.status, "not_run");
       assert.equal(runArtifact.capabilityInvocationTruthPacket.realInvocationCoverage.status, "partial");
       assert.equal(runArtifact.agentTeamsPlaybookPacket.status, "pass");
-      assert.equal(runArtifact.agentTeamsPlaybookPacket.selected, false);
-      assert.equal(
-        runArtifact.agentTeamsPlaybookPacket.acceptance.optionalProviderDoesNotGateNativeFanout,
-        true,
-      );
       assert.equal(runArtifact.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, true);
       assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.independentLanesProven, true);
       assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.parallelWaveExists, true);
@@ -880,10 +880,10 @@ describe("34 — Meta-theory run deliverables", () => {
       assert.ok(omittedLaneIds.includes("frontend-ui"));
       assert.equal(artifact.defaultRuntimePath.workerTaskPackets.length, selectedLaneIds.length);
       assert.equal(artifact.defaultRuntimePath.agentTeamsPlaybookPacket.status, "pass");
-      assert.equal(artifact.defaultRuntimePath.agentTeamsPlaybookPacket.selected, false);
-      assert.equal(
-        artifact.defaultRuntimePath.agentTeamsPlaybookPacket.acceptance.optionalProviderDoesNotGateNativeFanout,
-        true,
+      await assertOptionalPlaybookContract(
+        artifact.defaultRuntimePath.agentTeamsPlaybookPacket,
+        artifact.capabilityInvocationTruthPacket,
+        agentTeamsCandidateSkillPaths("codex"),
       );
       assert.equal(
         artifact.defaultRuntimePath.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout,

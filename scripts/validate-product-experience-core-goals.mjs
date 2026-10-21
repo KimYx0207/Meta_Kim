@@ -8,12 +8,6 @@ import path from "node:path";
 import process from "node:process";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
 
-// Hermetic provider discovery: this validator pins the agent_teams_playbook
-// invocation row at "not_required", which only holds when a machine-local
-// sibling checkout cannot flip selection. See the seam test in
-// tests/meta-theory/agent-teams-provider-resolution-seam.test.mjs.
-process.env.META_KIM_DISABLE_SIBLING_DEP_PROBE = "1";
-
 const PRODUCT_EXPERIENCE_TASK =
   "帮团队做一个内容工作台：成员能把零散素材整理成草稿，编辑审核后安排发布时间；失败时能看出原因并重试，不同成员权限不同。先完成可审查的方案和本地验证，不连接生产账号，也不要真实发布。";
 
@@ -217,7 +211,7 @@ function assertVisibleMetaTheorySurface(report) {
   assert.equal(Object.hasOwn(packet, "capabilityInvocationTruth"), false);
   assert.equal(Object.hasOwn(packet.capabilityInvocationPresentation, "rows"), false);
   assert.equal(packet.agentTeamsPlaybook.status, "pass");
-  assert.equal(packet.agentTeamsPlaybook.selected, false);
+  assert.equal(packet.agentTeamsPlaybook.selected, report.coreLoop.agentTeamsPlaybookPacket.selected);
   assert.ok(packet.agentTeamsPlaybook.waveCount >= 1);
   assert.equal(packet.peerAgentMesh.status, "pass");
   assert.ok(packet.peerAgentMesh.peerCount > 0);
@@ -285,7 +279,11 @@ function assertCapabilityInvocationTruth(report) {
   assert.equal(byFamily.get("prompt_rule").state, "applied");
   assert.equal(byFamily.get("command_script").state, "selected_not_invoked");
   assert.equal(byFamily.get("runtime_tool").state, "not_required");
-  assert.equal(byFamily.get("agent_teams_playbook").state, "not_required");
+  const playbookInvocation = byFamily.get("agent_teams_playbook");
+  const playbookSelected = report.coreLoop.agentTeamsPlaybookPacket.selected;
+  assert.equal(playbookInvocation.state, playbookSelected ? "selected_not_invoked" : "not_required");
+  assert.equal(playbookInvocation.selectedCount, playbookSelected ? 1 : 0);
+  assert.equal(playbookInvocation.invokedCount, 0);
   assert.equal(packet.realInvocationCoverage.status, "partial");
   for (const family of [
     "agent_subagent",
@@ -358,6 +356,15 @@ function assertInvocationProbes(report) {
 
 function assertAgentTeamsPlaybook(report) {
   const packet = report.coreLoop.agentTeamsPlaybookPacket;
+  const resolution = packet.providerResolution;
+  const nearestProvider = resolution.candidates.find((candidate) => candidate.found) ?? null;
+  const providerAvailable = nearestProvider !== null;
+  assert.equal(resolution.found, providerAvailable);
+  assert.equal(resolution.selectedSource, nearestProvider?.source ?? null);
+  assert.equal(resolution.selectedPathRef, nearestProvider?.pathRef ?? null);
+  assert.equal(resolution.selectedVersion, nearestProvider?.version ?? null);
+  assert.equal(packet.selected, providerAvailable);
+  assert.equal(packet.acceptance.optionalProviderDoesNotGateNativeFanout, !providerAvailable);
   assert.equal(packet.status, "pass");
   assert.equal(packet.triggered, true);
   assert.equal(packet.providerId, "agent-teams-playbook");

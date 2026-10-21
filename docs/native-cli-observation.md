@@ -83,3 +83,71 @@ complete.
 
 Legacy `live_controlled` and Desktop-session sources retain their historical
 contracts; they are not automatic fallbacks for `native_cli_stream`.
+
+## Explicit private provider handoff
+
+An explicitly authorized MiniMax direct account can be selected for this run
+through `--claude-provider-stdin`. This is a separate `live_controlled` API
+provider route; it is never an official Claude OAuth observation or an
+automatic fallback. No profile or global configuration is switched.
+
+Use only `--source live_controlled --runtimes claude_code`, with explicit
+`--claude-model MiniMax-M3.1-Flash --claude-effort low`, `--claude-max-turns`
+(1..4), `--claude-max-budget-usd` (>0..0.10), and `--timeout-ms`
+(25000..300000). The model service must actually support this request;
+configuration or a timeout alone does not establish support or acceptance.
+
+The private stdin pipe accepts at most 16 KiB within 10 seconds. Its flat JSON
+object has exactly five string fields: `schemaVersion` set to
+`meta-kim-private-claude-provider-v1`, `providerId` set to `minimax`, `endpoint`
+set to `https://api.minimaxi.com/anthropic`, `authType` set to `auth_token` or
+`api_key`, and `credential`. Keep the original credential type; reject an
+ambiguous source rather than automatically choosing one. Supply this object
+from an authorized in-memory reader, never as shell arguments, a file, or a
+logged command. Meta_Kim does not read a provider manager database.
+
+The resolver discards ambient provider values and binds parent and child
+model aliases to the explicit Flash model and low effort. Writable Claude
+state uses the controlled workspace. The private handoff is never written to
+configuration, receipts, or request hashes. Receipts bind only the public
+provider identity, credential type and explicit selection source. Duplicate
+fields, unknown fields, other endpoints and unsupported routes fail closed
+with fixed errors; an observed credential echo is rejected before evidence is
+saved. JavaScript memory is not a secure enclave or guaranteed zeroization.
+
+Only this explicit private route uses a short replacement `--system-prompt`,
+`--safe-mode`, and an explicit space-separated native `--tools` directory.
+Filesystem uses Read, edit uses Read/Edit, shell uses the observed native Bash,
+and agent/subagent uses the built-in Task child with inherited model aliases.
+No custom `--agents` definition is introduced. The installed CLI's zero-account
+loopback diagnostic exposed exactly Read/Edit with this list form; older empty
+tool observations are not treated as proof of support. Every actual private
+probe must still report the exact required init tools and selected model;
+missing, empty, expanded, substituted, duplicate or unsupported directories
+fail closed. A budget-error result is rejected even if the wrapper exit code
+is zero. These flags replace default coding context to reduce tokens without
+changing pricing, budgets or the real event, marker and file-outcome checks.
+Ordinary legacy and official native-stream routes retain their existing flags.
+
+## Portable advisory replay
+
+The packed verification exporter first validates the exact ten original
+observations against their original sources. It then carries only the bound
+attempts, receipts and minimal raw evidence fragments. It does not copy the
+Desktop sessions store or whole conversations. Ordinary Desktop validation
+continues to require the original session lines.
+
+The exported snapshot is unsigned local advisory data, not an independent
+certificate that its source was genuine. Its hashes and event checks preserve
+the integrity of this controlled export; an arbitrary external snapshot is
+not accepted as original-source proof. `sourceValidatedAt` records the source
+check time and never refreshes `observedAt` or its expiry. Portable replay
+cannot grant live execution or release-resolution authority, and an advisory
+snapshot cannot be exported again as original observations.
+
+The full verifier accepts `--isolated-global-home <absolute-existing-plain-dir>`
+to check an already installed temporary global authority. Only the read-only
+global-check stage uses that home; the other stages keep the caller's home
+and original-source validation. The report records this scope without claiming
+that personal global installations were updated. The option does not skip
+stages or relax package, manifest or closure checks.

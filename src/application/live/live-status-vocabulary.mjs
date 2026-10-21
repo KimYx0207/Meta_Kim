@@ -39,6 +39,12 @@ export const LIVE_STATUS_ALIASES = Object.freeze(new Map([
   ["uncertain", "in_doubt"],
 ]));
 
+/** A declared workflow is available to inspect, but no work was dispatched. */
+export const LIVE_PLANNING_DISPLAY = Object.freeze({
+  displayState: "planned",
+  statusReason: "仅生成任务规划，尚未派发实际工作；规划记录不代表执行进展。",
+});
+
 /**
  * `partial`, `superseded`, and `archived_legacy` each name a specific outcome
  * that runs on disk actually record: executed and verified but refused release,
