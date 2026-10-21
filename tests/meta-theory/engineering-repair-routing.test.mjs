@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 import { classifyTaskShape } from "../../scripts/governance-lib.mjs";
 import { classifyMetaTheoryEntry, hasProductBuildIntent } from "../../scripts/meta-theory-entry-classifier.mjs";
 
@@ -61,13 +63,61 @@ test("the self-contained activation hook follows the same repair/constraint boun
   assert.ok(observedClauses.includes("修复高并发平台超时"), "the hook must keep 并 inside an engineering word");
 });
 
-test("the actual route CLI sends the quant repair through existing engineering selection", () => {
-  const result = spawnSync(process.execPath, ["scripts/select-execution-route.mjs", "--task", quantRepair, "--runtime", "codex", "--os", "windows", "--json"], {
-    cwd: process.cwd(), encoding: "utf8", windowsHide: true, timeout: 120000, maxBuffer: 8 * 1024 * 1024,
-  });
-  assert.equal(result.status, 0, result.stderr);
-  const route = JSON.parse(result.stdout);
+test("the actual route CLI sends the quant repair through existing engineering selection", (t) => {
+  const fixture = createGovernanceRuntimeFixture(t);
+  const executionIds = ["worker", "analysis", "frontend", "backend", "test", "review"];
+  const runRoute = () => {
+    const result = fixture.run(["scripts/select-execution-route.mjs", "--task", quantRepair, "--runtime", "codex", "--os", "windows", "--json"]);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  const route = runRoute();
   assert.equal(route.taskShape, "engineering_execution");
   assert.ok(route.recommendedRoute, "the existing route selector must still select a feasible route");
   assert.doesNotMatch(route.recommendedRoute.id, /^product-build-orchestration:/u);
+  assert.equal(route.recommendedRoute.id, "execution-capability-discovery:codex:windows");
+  assert.ok(route.recommendedRoute.score >= 85);
+  assert.deepEqual(route.recommendedRoute.blockedReasons, []);
+  const owner = route.recommendedRoute.selectedCapabilityProviders.agent;
+  assert.ok(executionIds.includes(owner.id));
+  assert.ok(route.ownerDiscoveryPacket.candidateExistingExecutionOwners.includes(owner.id));
+  assert.equal(owner.id, route.recommendedRoute.owner);
+  assert.equal(owner.source, "local_global_agent_inventory");
+  assert.equal(owner.validCustomAgentDefinition, true);
+  assert.equal(owner.metadata.name, owner.id);
+  assert.notEqual(owner.cacheEvidenceOnly, true);
+  assert.equal(owner.sourceRef, `~/.codex/agents/${owner.id}.toml`);
+  assert.equal(owner.sourceKey, `codex:agents:${owner.id}:personal:${owner.sourceRef}`);
+  const ownerBytes = readFileSync(path.join(fixture.home, ".codex", "agents", `${owner.id}.toml`));
+  assert.equal(owner.contentDigest, createHash("sha256").update(ownerBytes).digest("hex"));
+  assert.equal(route.recommendedRoute.ownerBinding.selectedOwner, owner.id);
+  assert.equal(route.recommendedRoute.ownerBinding.existingOwnerMatched, true);
+  assert.ok(route.recommendedRoute.selectedCapabilityProviders.skill);
+  assert.ok(route.recommendedRoute.selectedCapabilityProviders.mcpServer
+    || route.recommendedRoute.selectedCapabilityProviders.mcpTool);
+  assert.equal(route.recommendedRoute.executionEligible, false, "discovery is not execution evidence");
+  assert.equal(route.recommendedRoute.codexSpawnBinding.ownerBindingMode, "run_scoped_owner_contract");
+  assert.equal(route.recommendedRoute.codexSpawnBinding.nativeAgentType, null);
+
+  // Preserve the cache but remove only this fixture's exact live execution
+  // definitions. Cached discovery must not mint an available implementation owner.
+  const homeRoot = realpathSync(fixture.home);
+  const executionFiles = executionIds.map((id) => path.join(fixture.home, ".codex", "agents", `${id}.toml`));
+  for (const file of executionFiles) {
+    const relative = path.relative(homeRoot, realpathSync(file));
+    assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+    assert.equal(lstatSync(file).isSymbolicLink(), false);
+  }
+  for (const file of executionFiles) unlinkSync(file);
+  const missing = runRoute();
+  assert.equal(missing.taskShape, "engineering_execution");
+  assert.deepEqual(missing.ownerDiscoveryPacket.candidateExistingExecutionOwners, []);
+  assert.equal(missing.recommendedRoute, null);
+  const engineering = missing.rankedRoutes.find((candidate) => candidate.id === "execution-capability-discovery:codex:windows");
+  assert.ok(engineering.blockedReasons.includes("execution owner missing"));
+  for (const cached of missing.ownerDiscoveryPacket.localGlobalAgents.filter((agent) => executionIds.includes(agent.id))) {
+    assert.equal(cached.cacheEvidenceOnly, true);
+    assert.equal(cached.routeEligible, false);
+    assert.notEqual(cached.collision.evidenceSource, "live_project_and_global_filesystem");
+  }
 });

@@ -61,7 +61,10 @@ export function annotateCrossScopeAgentCollisions(agents, runtime) {
     groups.set(agent.id, group);
   }
   return agents.map((agent) => {
-    const group = groups.get(agent.id) ?? [agent];
+    const cacheOnly = agent.cacheEvidenceOnly === true;
+    // Cached definitions remain advisory evidence, never live collision inputs.
+    const group = (groups.get(agent.id) ?? [agent])
+      .filter((candidate) => cacheOnly || candidate.cacheEvidenceOnly !== true);
     const provenance = group.flatMap((candidate) =>
       Array.isArray(candidate.provenance) && candidate.provenance.length > 0
         ? candidate.provenance
@@ -83,9 +86,11 @@ export function annotateCrossScopeAgentCollisions(agents, runtime) {
     const distinctDigests = [...new Set(uniqueSources.map((entry) => entry.contentDigest).filter(Boolean))];
     const conflicting = distinctDigests.length > 1;
     const explicitlySelected = agent.sourceSelectedExplicitly === true;
-    const routeEligible = (!conflicting || explicitlySelected) &&
+    const routeEligible = !cacheOnly && agent.routeEligible !== false &&
+      (!conflicting || explicitlySelected) &&
       agent.validCustomAgentDefinition !== false;
-    if (uniqueSources.length <= 1 && agent.collision == null) return agent;
+    if (uniqueSources.length <= 1 && agent.collision == null &&
+      !cacheOnly && agent.routeEligible !== false && agent.validCustomAgentDefinition !== false) return agent;
     const collision = {
       detected: uniqueSources.length > 1,
       kind: uniqueSources.length <= 1
@@ -98,7 +103,11 @@ export function annotateCrossScopeAgentCollisions(agents, runtime) {
       exactDuplicate: uniqueSources.length > 1 && !conflicting,
       ambiguous: conflicting,
       routeEligible,
-      evidenceSource: "live_project_and_global_filesystem",
+      evidenceSource: group.every((candidate) => candidate.cacheEvidenceOnly === true)
+        ? "cached_agent_inventory"
+        : group.some((candidate) => candidate.cacheEvidenceOnly === true)
+          ? "mixed_live_and_cached_agent_inventory"
+          : "live_project_and_global_filesystem",
     };
     return {
       ...agent,
