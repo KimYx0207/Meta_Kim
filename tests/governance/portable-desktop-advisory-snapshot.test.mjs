@@ -297,4 +297,3 @@ test("portable replay rejects a changed selected original line even when the raw
   assert.equal(replay.valid, false);
   assert.match(replay.issues.join("\n"), /line digest mismatch/u);
 });
-
