@@ -34,6 +34,18 @@ test("serialized browser helpers preserve original feedback exactly", () => {
   assert.deepEqual(browser.createLocalFeedbackDraftStore().get(context), { original: "", prepared: "" });
 });
 
+test("a content-version change preserves raw feedback but invalidates the prepared handoff and receipt key", () => {
+  const store = createLocalFeedbackDraftStore();
+  const context = { projectId: "p", runId: "r", deliverableId: "d", contentVersion: "sha256:" + "a".repeat(64) };
+  store.get(context).original = "  我的原话\n保留空白。  ";
+  store.get(context).prepared = "旧版本整理文本";
+  const next = { ...context, contentVersion: "sha256:" + "b".repeat(64) };
+  assert.notEqual(store.key(context), store.key(next));
+  assert.deepEqual(store.get(next), { original: "  我的原话\n保留空白。  ", prepared: "" });
+  assert.match(buildLocalFeedbackText(next, "原话"), /本次读取版本：sha256:b{64}/u);
+  assert.match(buildLocalFeedbackText({ runId: "r", deliverableId: "d", contentVersion: "caller-claimed" }, "原话"), /本次读取版本：未知/u);
+});
+
 test("deliverable descriptors retain only same-run safe references and exact task bindings", () => {
   const rows = normalizeLiveDeliverables([
     { id: "result-a", runId: "run-a", taskPacketId: "task-a", label: "页面", kind: "html", availability: "declared", url: "javascript:bad()", path: "private" },

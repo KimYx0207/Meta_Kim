@@ -8,6 +8,7 @@ import { createCodexNativeSessionReader } from "../../src/infrastructure/live/co
 import { buildNativeCodexLiveSnapshot } from "../../src/application/live/live-native-codex-projection.mjs";
 import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
 import { nativeCodexStartupBinding, parseArgs } from "../../scripts/meta-kim-live.mjs";
+import { buildProjectRef } from "../../scripts/project-registry.mjs";
 
 const THREAD = "11111111-1111-4111-8111-111111111111";
 const CHILD = "22222222-2222-4222-8222-222222222222";
@@ -236,6 +237,72 @@ test("the earliest bound task start survives later turn contexts and resume segm
   assert.equal((await createCodexNativeSessionReader(f.options).read()).startedAt, at(1));
 });
 
+test("exact parent resume segments retain earlier execution and deduplicate copied terminals before resumed activity", async (t) => {
+  const f = await fixture(t);
+  const first = command(f.projectRoot);
+  const terminal = row("event_msg", { type: "task_complete", turn_id: TURN }, 7);
+  await f.write([meta(f.projectRoot), context(), first, ...spawn(), terminal]);
+  const second = command(f.projectRoot, { offset: 14 });
+  second.payload.item.id = "exec-native-2";
+  const resumed = path.join(f.day, `rollout-2026-10-21T16-01-00-${THREAD}.jsonl`);
+  await writeFile(resumed, serialize([meta(f.projectRoot), context(), first, terminal, context(TURN, 12), second]));
+  const reader = createCodexNativeSessionReader(f.options);
+  const observation = await reader.read();
+  assert.equal(observation.agents.length, 1, "earlier native dispatch survives a resumed segment");
+  assert.equal(observation.commands.length, 2, "copied command lines are not counted twice");
+  assert.equal(observation.turnComplete, false, "an old terminal cannot close resumed execution");
+  assert.equal(observation.coverage.parentReadCount, 2);
+  assert.equal(observation.coverage.state, "bounded");
+  await appendFile(resumed, serialize([row("event_msg", { type: "task_complete", turn_id: TURN }, 16)]));
+  assert.equal((await createCodexNativeSessionReader(f.options).read()).turnComplete, true);
+});
+
+test("resume merge cannot import another project, thread or turn through a matching filename", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(), command(f.projectRoot)]);
+  const foreign = command(f.projectRoot, { turn: OTHER, offset: 15 });
+  foreign.payload.item.id = "foreign-command";
+  await writeFile(path.join(f.day, `rollout-foreign-project-${THREAD}.jsonl`), serialize([meta(path.join(f.root, "other")), context(TURN, 12), foreign]));
+  await writeFile(path.join(f.day, `rollout-foreign-thread-${THREAD}.jsonl`), serialize([meta(f.projectRoot, OTHER), context(TURN, 12), foreign]));
+  await writeFile(path.join(f.day, `rollout-other-turn-${THREAD}.jsonl`), serialize([meta(f.projectRoot), context(OTHER, 12), foreign]));
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.deepEqual(observed.commands.map((item) => item.id), ["exec-native-1"]);
+  assert.equal(observed.turnId, TURN);
+});
+
+test("an exact child start and return can span resume segments without promoting user acceptance", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(), ...spawn(), command(f.projectRoot, { exitCode: 2 })]);
+  await writeFile(path.join(f.day, `rollout-a-${CHILD}.jsonl`), serialize([meta(f.projectRoot, CHILD, THREAD), childStart(), context(OTHER, 3)]));
+  await writeFile(path.join(f.day, `rollout-b-${CHILD}.jsonl`), serialize([meta(f.projectRoot, CHILD, THREAD), context(OTHER, 8), row("event_msg", { type: "task_complete", turn_id: OTHER, last_agent_message: "PRIVATE RESULT" }, 10)]));
+  const observation = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observation.agents[0].completed, true);
+  const snapshot = buildNativeCodexLiveSnapshot(observation);
+  assert.deepEqual(snapshot.run.executionSummary, { observedAgentCount: 1, returnedAgentCount: 1, activeAgentCount: 0, returnedToolCount: 1, failedToolCount: 1, acceptanceState: "unproven" });
+  assert.deepEqual(snapshot.session.executionSummary, snapshot.run.executionSummary);
+  assert.equal(snapshot.session.completedCount, 0);
+  assert.equal(snapshot.run.completionEvidenceState, "unproven");
+  assert.equal(snapshot.nodes[1].status, "in_doubt");
+  assert.equal(JSON.stringify(snapshot).includes("PRIVATE RESULT"), false);
+});
+
+test("large omitted parent and child segments stay bounded and expose partial coverage instead of full completion", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(), ...spawn(), command(f.projectRoot)]);
+  await writeFile(path.join(f.day, `rollout-large-${THREAD}.jsonl`), "x".repeat(4_096));
+  await writeFile(path.join(f.day, `rollout-a-${CHILD}.jsonl`), serialize([meta(f.projectRoot, CHILD, THREAD), childStart(), context(OTHER, 3), row("event_msg", { type: "task_complete", turn_id: OTHER }, 10)]));
+  await writeFile(path.join(f.day, `rollout-b-${CHILD}.jsonl`), "x".repeat(4_096));
+  const observation = await createCodexNativeSessionReader({ ...f.options, maxBytes: 3_072 }).read();
+  assert.equal(observation.coverage.state, "partial");
+  assert.deepEqual(observation.coverage.reasons, ["segment_size_limit"]);
+  assert.equal(observation.agents[0].completed, false, "an omitted child continuation leaves its current return unconfirmed");
+  const snapshot = buildNativeCodexLiveSnapshot(observation);
+  assert.equal(snapshot.source.coverage.state, "partial");
+  assert.equal(snapshot.run.executionSummary.returnedAgentCount, 0);
+  assert.equal(snapshot.run.completionEvidenceState, "unproven");
+  assert.ok(snapshot.source.limitations.some((item) => item.includes("partial observations")));
+});
+
 test("multiply linked source is rejected even when file symlinks are unavailable", async (t) => {
   const f = await fixture(t);
   const target = path.join(f.root, "outside.jsonl");
@@ -289,6 +356,10 @@ test("trusted native observed run joins existing hub catalog and snapshot withou
   assert.equal(snapshot.body.counts.toolCalls, 1);
   assert.equal(snapshot.body.counts.executionEvidence, 1);
   assert.equal(snapshot.body.run.completionEvidenceState, "unproven");
+  const nativeSession = catalog.body.projects[0].sessions.find((session) => session.runId === runId);
+  assert.equal(nativeSession.observationKind, "native_execution");
+  assert.deepEqual(nativeSession.executionSummary, snapshot.body.run.executionSummary);
+  assert.equal(nativeSession.observationCoverage.state, "bounded");
   const replay = await request(controller, `/api/replay?projectId=${projectId}&runId=${runId}`);
   assert.equal(replay.body.runId, runId);
   assert.equal(replay.body.replay.length, 1);
@@ -297,4 +368,20 @@ test("trusted native observed run joins existing hub catalog and snapshot withou
   assert.equal(share.body.error, "share_unavailable");
   const invalid = await request(controller, `/api/snapshot?projectId=${projectId}&runId=native-codex-${OTHER}-${TURN}`);
   assert.notEqual(invalid.status, 200);
+});
+
+test("a planning row cannot copy native labels to acquire an observed execution summary", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(), command(f.projectRoot)]);
+  const projectRef = buildProjectRef({ repoPath: f.projectRoot });
+  const planning = { sessionId: "planning", runId: "governed-plan", title: "Existing plan", status: "pending", titleSource: "artifact", observationKind: "native_execution", executionSummary: { returnedAgentCount: 999 }, workerCount: 1, nodeCount: 1, eventCount: 1 };
+  const controller = createLiveControlRoomServer({ globalHub: true, nativeCodex: f.options, hubCatalog: { profile: "default", listProjects: async () => [{ projectRef, repoRoot: f.projectRoot, displayName: "project", sessions: [planning] }], resolveProject: async () => null } });
+  controller.server.address = () => ({ address: "127.0.0.1", port: 4331 });
+  const catalog = await request(controller, "/api/projects");
+  const row = catalog.body.projects[0].sessions.find((session) => session.runId === "governed-plan");
+  assert.ok(row);
+  assert.equal(row.status, "pending");
+  assert.equal(row.observationKind, undefined);
+  assert.equal(row.executionSummary, undefined);
+  assert.equal(planning.executionSummary.returnedAgentCount, 999, "catalog did not rewrite the source planning row");
 });

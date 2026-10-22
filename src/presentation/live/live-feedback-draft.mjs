@@ -9,6 +9,7 @@ export function buildLocalFeedbackText(context, original, language = "zh") {
   lines.push((zh ? "运行：" : "Run: ") + context.runId);
   if (context.nodeId) lines.push((zh ? "节点：" : "Node: ") + (context.nodeLabel ? context.nodeLabel + " · " : "") + context.nodeId);
   if (context.deliverableId) lines.push((zh ? "交付物：" : "Deliverable: ") + context.deliverableId + (context.deliverableLabel ? " · " + context.deliverableLabel : ""));
+  if (context.deliverableId) lines.push((zh ? "本次读取版本：" : "Version read this time: ") + (/^sha256:[a-f0-9]{64}$/u.test(context.contentVersion || "") ? context.contentVersion : zh ? "未知（尚未取得内容哈希）" : "unknown (content hash not obtained)"));
   if (context.evidenceId) lines.push((zh ? "证据：" : "Evidence: ") + context.evidenceId);
   if (context.sourceRef) lines.push((zh ? "可见来源引用：" : "Visible source reference: ") + context.sourceRef);
   lines.push("", zh ? "用户反馈原话：" : "User feedback, verbatim:", original);
@@ -18,13 +19,18 @@ export function buildLocalFeedbackText(context, original, language = "zh") {
 /** Keep independent drafts in this page only; no remote write or implied queue. */
 export function createLocalFeedbackDraftStore() {
   const drafts = new Map();
+  const versions = new Map();
   const selections = new Map();
   const baseKey = (context) => JSON.stringify([context.projectId || "", context.runId || "", context.nodeId || ""]);
-  const key = (context) => JSON.stringify([baseKey(context), context.deliverableId || "", context.evidenceId || ""]);
+  const targetKey = (context) => JSON.stringify([baseKey(context), context.deliverableId || "", context.evidenceId || ""]);
+  const version = (context) => /^sha256:[a-f0-9]{64}$/u.test(context.contentVersion || "") ? context.contentVersion : "unknown";
+  const key = (context) => JSON.stringify([targetKey(context), version(context)]);
   return {
     get(context) {
-      const id = key(context);
+      const id = targetKey(context);
       if (!drafts.has(id)) drafts.set(id, { original: "", prepared: "" });
+      if (versions.has(id) && versions.get(id) !== version(context)) drafts.get(id).prepared = "";
+      versions.set(id, version(context));
       return drafts.get(id);
     },
     selected(context) { return selections.get(baseKey(context)) || ""; },
@@ -48,7 +54,8 @@ export function normalizeLiveDeliverables(input, runId) {
     seen.add(id);
     return [{ id, runId, taskPacketId: identifier(record.taskPacketId) || null,
       label: typeof record.label === "string" ? record.label.normalize("NFKC").replace(/[\u0000-\u001f\u007f]/gu, " ").trim().slice(0, 240) || id : id,
-      kind: record.kind, availability: record.availability }];
+      kind: record.kind, availability: record.availability,
+      contentVersion: /^sha256:[a-f0-9]{64}$/u.test(record.contentVersion || "") ? record.contentVersion : null }];
   });
 }
 

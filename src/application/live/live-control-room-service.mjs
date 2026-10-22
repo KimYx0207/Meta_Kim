@@ -925,6 +925,61 @@ function completionIsProven(artifact, runId = null) {
   return passingVerificationEvidence(artifact, runId).length > 0;
 }
 
+/** Project the existing revision chain; status words alone never close a fix. */
+function buildRevisionReview(artifact, runId, observedAt = new Date().toISOString(), staleAfterMs = LIVE_STALE_AFTER_MS) {
+  if (!artifact || normalizeLiveRunId(artifact.runId) !== runId) return { state: "not_reported", items: [] };
+  const belongs = (record) => record && typeof record === "object" && !Array.isArray(record) && (!record.runId || record.runId === runId);
+  const findings = boundedArray(artifact.reviewPacket?.findings, 64).filter(belongs);
+  const responses = [...boundedArray(artifact.revisionResponses, 64), ...boundedArray(artifact.reviewPacket?.revisionResponses, 64), ...boundedArray(artifact.verificationPacket?.revisionResponses, 64)].filter(belongs);
+  const results = [...boundedArray(artifact.verificationPacket?.verificationResults, 64), ...boundedArray(artifact.verificationPacket?.fixEvidence, 64)].filter(belongs);
+  const knownTasks = new Set(boundedArray(artifact.workerTaskPackets ?? artifact.coreLoop?.thinkingPacket?.workerTaskPackets, LIVE_MAX_NODES).map(taskIdFrom).filter(Boolean));
+  const deliverables = collectLiveDeliverables(artifact);
+  const version = (record) => /^sha256:[a-f0-9]{64}$/u.test(record?.contentVersion || record?.deliverableVersion || "") ? record.contentVersion || record.deliverableVersion : null;
+  const rows = [...responses, ...findings.filter((finding) => !responses.some((row) => row.findingId === finding.findingId))]
+    .sort((left, right) => (Date.parse(safeTimestamp(right.updatedAt || right.revisedAt)) || 0) - (Date.parse(safeTimestamp(left.updatedAt || left.revisedAt)) || 0));
+  const seen = new Set();
+  const items = [];
+  for (const row of rows) {
+    const findingId = safeId(row.findingId, null);
+    const actionId = safeId(row.actionId, null);
+    if (!findingId) continue;
+    const finding = findings.find((item) => item.findingId === findingId);
+    const taskId = taskIdFrom(row) || taskIdFrom(finding);
+    if (taskId && !knownTasks.has(taskId)) continue;
+    const targetId = safeId(row.deliverableId || finding?.deliverableId, null);
+    const target = deliverables.find((item) => item.id === targetId && (!taskId || item.taskPacketId === taskId));
+    const contentVersion = version(row);
+    const currentVersion = target && publicLiveDeliverable(target, publicTaskBinding, { contentObserved: true })?.contentVersion;
+    const revisionAt = safeTimestamp(row.updatedAt || row.revisedAt);
+    const matching = results.filter((item) => item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && taskId && taskIdFrom(item) === taskId && target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion && currentVersion === contentVersion);
+    // A check cannot supply either missing predecessor in the existing chain.
+    const actual = finding && responses.includes(row) ? matching.filter((item) => item.synthetic !== true && !evidenceIsStructuralOnly(item) && item.status === "verified" &&
+      workerEvidenceStatus(item) === "completed" && !isStale(safeTimestamp(item.runAt), observedAt, staleAfterMs) &&
+      !isStale(safeTimestamp(item.commandRanAt), observedAt, staleAfterMs) && (!revisionAt || Date.parse(item.commandRanAt) >= Date.parse(revisionAt))) : [];
+    const state = actual.length ? "verified" : matching.length ? "verification_unconfirmed" : responses.includes(row) ? "pending_verification" : "recorded";
+    const id = publicId("revision", `${runId}:${findingId}:${actionId || ""}:${taskId || ""}:${targetId || ""}:${contentVersion || ""}`);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    items.push({ id, runId, findingId: publicId("finding", findingId), actionId: actionId ? publicId("action", actionId) : null,
+      taskPacketId: publicTaskBinding(taskId), deliverableId: target?.id || null, contentVersion,
+      state, verificationObservedAt: actual.length ? safeTimestamp(actual.at(-1).commandRanAt) : null });
+    if (items.length === 64) break;
+  }
+  return { state: items.length ? "reported" : "not_reported", items };
+}
+
+/** Stored summaries preserve bindings, never their own claim of verification. */
+function sanitizeRevisionReview(value, runId) {
+  const items = boundedArray(value?.items, 64).flatMap((item) => {
+    if (item?.runId !== runId || !/^revision:[a-f0-9]{20}$/u.test(item.id || "") || !/^finding:[a-f0-9]{20}$/u.test(item.findingId || "")) return [];
+    const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
+    return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
+      taskPacketId: publicTaskBinding(item.taskPacketId), deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
+      contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state, verificationObservedAt: null }];
+  });
+  return { state: items.length ? "reported" : "not_reported", items };
+}
+
 function runTerminalStatusIsProven(artifact, runId, status) {
   const normalized = normalizeStatus(status, "in_doubt");
   if (normalized === "completed") return completionIsProven(artifact, runId);
@@ -2245,7 +2300,8 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     repository: repositoryProjection(artifact),
     workspace: workspaceProjection(artifact),
     contextTransfers,
-    deliverables: collectLiveDeliverables(artifact).map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
+    deliverables: collectLiveDeliverables(artifact).map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: true })).filter(Boolean),
+    revisionReview: buildRevisionReview(artifact, runId),
     scheduling,
     declaredPlan: declaredStagePlan(artifact),
     nonGoalConstraints,
@@ -2974,6 +3030,7 @@ function sanitizeCompactProjection(value) {
     deliverables: boundedArray(value.deliverables, LIVE_MAX_NODES)
       .filter((item) => item?.runId === runId)
       .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
+    revisionReview: sanitizeRevisionReview(value.revisionReview, runId),
     scheduling,
     nonGoalConstraints,
     declaredPlan: sanitizeDeclaredPlan(value.declaredPlan),
@@ -3231,9 +3288,12 @@ export function buildLiveSnapshot({
     repository: repositoryProjection(projection),
     workspace: workspaceProjection(projection),
     contextTransfers,
-    deliverables: boundedArray(projection.deliverables, LIVE_MAX_NODES)
+    deliverables: (compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
+      ? collectLiveDeliverables(compatibleArtifact) : boundedArray(projection.deliverables, LIVE_MAX_NODES))
       .filter((item) => item?.runId === run.runId)
-      .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
+      .map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: Boolean(compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION) })).filter(Boolean),
+    revisionReview: compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
+      ? buildRevisionReview(compatibleArtifact, run.runId, safeObservedAt, staleAfterMs) : sanitizeRevisionReview(projection.revisionReview, run.runId),
     scheduling,
     nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),
     declaredPlan: sanitizeDeclaredPlan(projection.declaredPlan),

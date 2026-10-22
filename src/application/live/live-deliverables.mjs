@@ -87,12 +87,14 @@ export function collectLiveDeliverables(artifact) {
 }
 
 /** Public metadata excludes local paths and output text, including compact-file inputs. */
-export function publicLiveDeliverable(value, taskBinding = (taskId) => taskId) {
+export function publicLiveDeliverable(value, taskBinding = (taskId) => taskId, { contentObserved = false } = {}) {
   if (!value || !/^deliverable:[a-f0-9]{24}$/u.test(value.id) || !normalizeLiveRunId(value.runId) ||
     !["text", "markdown", "html", "external"].includes(value.kind)) return null;
   return { id: value.id, runId: value.runId, taskPacketId: value.taskPacketId ? taskBinding(value.taskPacketId) : null,
     label: safeLabel(value.label, "Deliverable"), kind: value.kind,
-    availability: value.availability === "available" ? "available" : "declared" };
+    availability: value.availability === "available" ? "available" : "declared",
+    // A stored descriptor's claimed hash is not a read receipt.
+    contentVersion: contentObserved && typeof value.text === "string" && value.kind !== "external" ? `sha256:${sha(value.text)}` : null };
 }
 
 /** Read through an exact declared id with bounded bytes and no symlink traversal. */
@@ -101,7 +103,7 @@ export async function readLiveDeliverable(artifact, deliverableId, projectRoot) 
   if (!item) return null;
   if (item.kind === "external") return { kind: item.kind, label: item.label, url: item.reference };
   if (item.text !== undefined) return Buffer.byteLength(item.text, "utf8") <= LIVE_MAX_JSON_BYTES
-    ? { kind: "text", label: item.label, text: item.text } : null;
+    ? { kind: "text", label: item.label, text: item.text, contentVersion: `sha256:${sha(item.text)}` } : null;
   if (!projectRoot) return null;
   try {
     const root = path.resolve(projectRoot);
@@ -130,7 +132,7 @@ export async function readLiveDeliverable(artifact, deliverableId, projectRoot) 
       if (bytesRead !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs ||
         named.isSymbolicLink() || named.ino !== before.ino || named.dev !== before.dev ||
         await realpath(target) !== canonicalTarget) return null;
-      return { kind: item.kind, label: item.label, text: bytes.subarray(0, bytesRead).toString("utf8") };
+      return { kind: item.kind, label: item.label, text: bytes.subarray(0, bytesRead).toString("utf8"), contentVersion: `sha256:${sha(bytes.subarray(0, bytesRead))}` };
     } finally { await handle.close(); }
   } catch { return null; }
 }

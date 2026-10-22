@@ -26,7 +26,7 @@ import {
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
 import { buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 import { buildLocalFeedbackText, createLocalFeedbackDraftStore, liveDeliverablesForNode, normalizeLiveDeliverables } from "../../src/presentation/live/live-feedback-draft.mjs";
-import { resolveLiveRunOverview } from "../../src/presentation/live/live-run-overview.mjs";
+import { resolveLiveRunOverview, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
 import { serializeLiveTokenUsageResolvers } from "../../src/presentation/live/live-token-usage.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
 import {
@@ -862,9 +862,11 @@ const GRAPH_TOOLS_KEY = "meta-kim-live-graph-tools-position-v1";
  * of asserting that a call site merely mentions the right helper name.
  */
 function shippedHelper(html, name) {
-  const start = html.indexOf("  function " + name + "(");
+  const regularStart = html.indexOf("  function " + name + "(");
+  const start = regularStart >= 0 ? regularStart : html.indexOf("  async function " + name + "(");
   assert.ok(start >= 0, name + "() must remain in the shipped script");
-  const end = html.indexOf("\n  function ", start + 1);
+  const ends = [html.indexOf("\n  function ", start + 1), html.indexOf("\n  async function ", start + 1)].filter((value) => value > start);
+  const end = Math.min(...ends);
   assert.ok(end > start, name + "() must be followed by another shipped helper");
   return html.slice(start, end);
 }
@@ -3716,7 +3718,7 @@ function runNormalizerHarness({ actualStatus = false } = {}) {
   const normalizeSnapshot = new Function(
     "DISPLAY_FORMAT",
     ...stubNames,
-    `${serializeLiveTokenUsageResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
+    `${serializeLiveTokenUsageResolvers()}\n${serializeLiveRunOverviewResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
       return normalizeSnapshot;
     `,
   )(displayFormat, ...stubNames.map((name) => stubs[name]));
@@ -6406,6 +6408,55 @@ test("editing copied feedback immediately returns the handoff to unsubmitted", a
   assert.equal(view.prepared.value, "");
   assert.equal(view.copy.disabled, true);
   assert.doesNotMatch(view.notice.textContent, /已复制/u);
+});
+
+test("a new result version preserves raw feedback and invalidates even an in-flight old copy receipt", async () => {
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const { view, paint, prepare, snapshot } = localFeedbackFormHarness({ writeText: () => pending });
+  const result = { id: "result-a", runId: "run-a", kind: "text", availability: "available", label: "结果", contentVersion: "sha256:" + "a".repeat(64) };
+  paint({ ...snapshot, deliverables: [result] });
+  view.target.value = "deliverable:result-a";
+  view.target.events.change();
+  const original = "  原话保留\n不要清掉新反馈。  ";
+  prepare(original);
+  const oldCopy = view.copy.events.click();
+  paint({ ...snapshot, deliverables: [{ ...result, contentVersion: "sha256:" + "b".repeat(64) }] });
+  assert.equal(view.raw.value, original);
+  assert.equal(view.prepared.value, "");
+  assert.equal(view.copy.disabled, true);
+  assert.match(view.contextCopy.textContent, /本次读取版本：sha256:b{64}/u);
+  assert.match(view.revisionStatus.textContent, /尚未收到修订\/复验回写/u);
+  finish();
+  await oldCopy;
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  assert.equal(view.raw.value, original);
+});
+
+test("the shipped read observer uses the same-origin route and drops stale versions after failures or old responses", async () => {
+  const html = renderLiveControlRoomPage();
+  const records = new Map();
+  const item = { id: "d", runId: "r", contentVersion: null };
+  const key = JSON.stringify(["p", "r", "d"]);
+  let resolveFirst;
+  let calls = 0;
+  let fail = false;
+  const first = new Promise((resolve) => { resolveFirst = resolve; });
+  const response = (letter) => ({ ok: true, headers: { get: () => "sha256:" + letter.repeat(64) }, body: { cancel: async () => {} } });
+  const observe = new Function("localDeliverableReads", "fetch", "deliverableOpenHref", `
+const selectedProjectId='p'; const currentSnapshot={run:{id:'r'}}; const localFeedbackSurfaces=new Map();
+const window={location:{href:'http://fixture.local/',origin:'http://fixture.local'}};
+${shippedHelper(html, "observeDeliverableRead")}
+return observeDeliverableRead;`)(records, async (_url, options) => { assert.equal(options.redirect, "error"); if (fail) throw new Error("offline"); return ++calls === 1 ? first : response("b"); }, () => "/api/deliverable?runId=r&deliverableId=d");
+  const old = observe(item);
+  await observe(item);
+  assert.equal(records.get(key).contentVersion, "sha256:" + "b".repeat(64));
+  resolveFirst(response("a"));
+  await old;
+  assert.equal(records.get(key).contentVersion, "sha256:" + "b".repeat(64));
+  fail = true;
+  await observe(item);
+  assert.equal(records.get(key).contentVersion, null);
 });
 
 test("clipboard failure selects the current feedback for manual handoff without claiming delivery", async () => {

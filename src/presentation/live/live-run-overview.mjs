@@ -15,6 +15,33 @@ function overviewActivityState(record) {
   return overviewState(Object.prototype.hasOwnProperty.call(record, "activityState") ? record.activityState : record.state || record.status);
 }
 
+/** Native return counters never share the accepted-completion counter. */
+export function normalizeLiveExecutionSummary(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.acceptanceState !== "unproven") return null;
+  const keys = ["observedAgentCount", "returnedAgentCount", "activeAgentCount", "returnedToolCount", "failedToolCount"];
+  if (keys.some((key) => !Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 4096) || value.returnedAgentCount + value.activeAgentCount !== value.observedAgentCount || value.failedToolCount > value.returnedToolCount) return null;
+  return Object.fromEntries([...keys.map((key) => [key, value[key]]), ["acceptanceState", "unproven"]]);
+}
+
+/** Whitelist the server's bounded revision view, never arbitrary fix artifacts. */
+export function normalizeLiveRevisionReview(value, runId) {
+  const items = (Array.isArray(value?.items) ? value.items : []).slice(0, 64).flatMap((item) => {
+    if (item?.runId !== runId || !/^revision:[a-f0-9]{20}$/u.test(item.id || "") || !/^finding:[a-f0-9]{20}$/u.test(item.findingId || "")) return [];
+    const state = ["recorded", "pending_verification", "verification_unconfirmed", "verified"].includes(item.state) ? item.state : "verification_unconfirmed";
+    return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
+      taskPacketId: /^task:[a-f0-9]{20}$/u.test(item.taskPacketId || "") ? item.taskPacketId : null,
+      deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
+      contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state }];
+  });
+  return { state: items.length ? "reported" : "not_reported", items };
+}
+
+/** Offer an explicit same-project navigation; never merge this into a plan. */
+export function resolveLiveNativeActivity(project, currentRunId, projectId) {
+  if (!project || !projectId || project.projectId !== projectId) return null;
+  return (Array.isArray(project.sessions) ? project.sessions : []).find((session) => session?.runId !== currentRunId && session.observationKind === "native_execution" && session.sourceRuntime === "codex" && session.conversationLinkState === "verified" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(session.conversationRef || "") && new RegExp("^native-codex-" + session.conversationRef + "-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$", "u").test(session.runId || "")) || null;
+}
+
 /** Only a parseable, explicitly supplied timestamp can order observed activity. */
 function overviewTimestamp(value) {
   const text = overviewText(value);
@@ -110,11 +137,13 @@ export function resolveLiveRunOverview(snapshot) {
       : runBlocked ? { kind: "blocked", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 }
         : overviewText(run.statusReason) ? { kind: "status", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 } : null,
     activity,
+    execution: run.observationKind === "native_execution" ? normalizeLiveExecutionSummary(run.executionSummary) : null,
+    revisionReview: normalizeLiveRevisionReview(snapshot.revisionReview, runId),
   };
 }
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, overviewTimestamp, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveNativeActivity, overviewTimestamp, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }

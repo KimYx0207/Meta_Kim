@@ -125,12 +125,17 @@ export function buildNativeCodexLiveSnapshot(observation) {
   const active = hasExecution && !observation.turnComplete;
   const state = !hasExecution ? "pending" : active ? "active" : "in_doubt";
   const statusReason = !hasExecution ? "当前已绑定原生会话；这个 turn 尚无执行观察。" : active ? "正在观察当前 Codex 原生执行；任务结果尚未验收。" : "已观察到本轮原生执行结束；任务结果尚未验收。";
+  // Execution returning and the user's result being accepted are separate facts.
+  // The latter is deliberately never inferred from a native terminal event.
+  const agents = observation.agents || [];
+  const returnedAgentCount = agents.filter((agent) => agent.completed && agent.childMetadataVerified).length;
+  const executionSummary = { observedAgentCount: agents.length, returnedAgentCount, activeAgentCount: agents.length - returnedAgentCount, returnedToolCount: toolCalls.length, failedToolCount: toolCalls.filter((tool) => tool.status === "failed").length, acceptanceState: "unproven" };
   const conversation = { sourceRuntime: "codex", conversationLinkState: "verified", conversationRef: observation.threadId, conversationDiscovery: { state: "verified", runtime: "codex", reason: "explicit_thread_turn_and_native_cwd_match" }, verifiedLinks: [{ sourceRuntime: "codex", conversationRef: observation.threadId, matchBasis: "native_session_metadata" }], candidateLinks: [] };
   return {
     schemaVersion: "meta-kim-live-snapshot-v1",
-    source: { kind: "codex_desktop_native_session", observedAt: observation.observedAt, stale: false, readOnly: true, limitations: observation.limitations },
-    run: { runId, title: "当前 Codex 真实执行记录", task: "当前会话中实际观察到的工具调用与子任务；不代表用户验收。", status: state, active, displayState: state, statusReason, currentStage: "execution", stageProgressEvidence: "native_execution_only", executionEvidenceState: hasExecution ? "recorded" : "not_observed", completionEvidenceState: "unproven", recordOrigin: "governed_run", substanceClass: "substantive", startedAt: observation.startedAt, updatedAt, ...conversation },
-    session: { sessionId: id("session", runId), title: "当前 Codex 真实执行记录", status: state, active, displayState: state, statusReason, runtime: "codex", mode: "native observed", nodeCount: nodes.length, eventCount: replay.length, plannedCount: 0, completedCount: 0, failedCount: 0, blockedCount: 0, proofState: "native execution observed; task acceptance unproven", ...conversation },
+    source: { kind: "codex_desktop_native_session", observedAt: observation.observedAt, stale: false, readOnly: true, limitations: observation.limitations, coverage: observation.coverage || null },
+    run: { runId, title: "当前 Codex 真实执行记录", task: "当前会话中实际观察到的工具调用与子任务；不代表用户验收。", status: state, active, displayState: state, statusReason, currentStage: "execution", stageProgressEvidence: "native_execution_only", observationKind: "native_execution", executionSummary, observationCoverage: observation.coverage || null, executionEvidenceState: hasExecution ? "recorded" : "not_observed", completionEvidenceState: "unproven", recordOrigin: "governed_run", substanceClass: "substantive", startedAt: observation.startedAt, updatedAt, ...conversation },
+    session: { sessionId: id("session", runId), title: "当前 Codex 真实执行记录", status: state, active, displayState: state, statusReason, runtime: "codex", mode: "native observed", executionSummary, nodeCount: nodes.length, eventCount: replay.length, plannedCount: 0, completedCount: 0, failedCount: 0, blockedCount: 0, proofState: "native execution observed; task acceptance unproven", ...conversation },
     nodes, edges, evidence: allEvidence, replay, prompts: [], toolCalls, provenance: [], repository: null, workspace: null, contextTransfers: [], deliverables: [], scheduling: null, nonGoalConstraints: [], declaredPlan: null,
     eventIndex: replay.length, eventCount: replay.length,
     counts: { nodes: nodes.length, edges: edges.length, evidence: allEvidence.length, executionEvidence: allEvidence.length, planningEvidence: 0, events: replay.length, toolCalls: toolCalls.length, prompts: 0, provenance: 0, contextTransfers: 0 },

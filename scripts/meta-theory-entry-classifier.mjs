@@ -92,10 +92,10 @@ const DURABLE_OUTPUT_RE = createLexiconMatcher("durableOutput");
 
 const PURE_QUERY_RE =
   /^(?:what|why|how|when|where|who|is|are|can|could|should)\b|^(?:什么|为什么|怎么|如何|是否|能否|可以|介绍|解释|说明)/iu;
-const DEFINITION_QUERY_RE = /^what\s+(?:does|do)\s+(?:it\s+mean\s+to\s+[^,.?!;\r\n]+|[^,.?!;\r\n]+\s+mean)[.?]?\s*$/iu;
+const DEFINITION_QUERY_RE = /^what\s+(?:does|do)\s+(?:it\s+mean\s+to\s+[^,.?!;，。？！；\r\n]+|[^,.?!;，。？！；\r\n]+\s+mean)[.?？]?\s*$/iu;
 function isDefinitionQuery(text) {
   return DEFINITION_QUERY_RE.test(text)
-    && !/\b(?:and|then)\s+(?:please\b|(?:can|could|would)\s+you\b)/iu.test(text);
+    && !/\b(?:and|then)\s+(?:please\b|(?:can|could|would)\s+you\b)|(?:请|帮我|然后|并且)/iu.test(text);
 }
 
 const CHINESE_QUERY_WORD_RE = /(?:什么|为什么|怎么|如何|是否|能否|可以吗|吗|介绍|解释|说明)/u;
@@ -148,6 +148,13 @@ const HIGH_RISK_DECISION_RE =
 
 const DESTRUCTIVE_OR_PRODUCTION_RE =
   /\b(?:delete|remove|drop|truncate|wipe|purge)\b|\b(?:deploy|publish|release)\b(?=.{0,40}\b(?:production|prod|live)\b)|\bproduction\b(?=.{0,40}\b(?:database|deploy|release|environment)\b)|(?:删除|清空|销毁|移除).{0,24}(?:生产|数据库|数据|文件|资源)|(?:发布|部署).{0,16}(?:上线|生产环境)|(?:发布上线|部署上线|上线生产|生产环境)/iu;
+const DIRECT_DESTRUCTIVE_REQUEST_RE = /^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:help\s+me\s+)?(?:delete|remove|drop|truncate|wipe|purge|deploy|publish|release)\b|^(?:请帮我|能否帮我|可以帮我|可否帮我)(?:先|直接)?(?:删除|清空|销毁|移除|发布|部署)/iu;
+
+/** Classify a request clause, never infer permission to perform its effects. */
+function hasDestructiveExecutionIntent(text) {
+  return affirmativeRequestClauses(text).some((clause) => DESTRUCTIVE_OR_PRODUCTION_RE.test(clause)
+    && (!PURE_QUERY_RE.test(clause) || DIRECT_DESTRUCTIVE_REQUEST_RE.test(clause)));
+}
 
 function normalizePrompt(prompt) {
   return String(prompt ?? "").trim();
@@ -227,9 +234,7 @@ export function classifyMetaTheoryEntry(prompt) {
   const directParallelAgentRequest = PARALLEL_AGENT_RE.test(text);
   const structuredGovernanceChainRequest = STRUCTURED_GOVERNANCE_CHAIN_RE.test(text);
   const serialAgentRouteComplaint = COMPLEXITY_COMPLAINT_RE.test(text);
-  const destructiveOrProductionIntent =
-    DESTRUCTIVE_OR_PRODUCTION_RE.test(text) &&
-    !(PURE_QUERY_RE.test(text) || CHINESE_QUERY_WORD_RE.test(text));
+  const destructiveOrProductionIntent = hasDestructiveExecutionIntent(text);
   const governedMetaTrigger =
     explicitMetaTheory ||
     structuredGovernanceChainRequest ||
@@ -272,6 +277,18 @@ export function classifyMetaTheoryEntry(prompt) {
       taskClassification: "meta_theory_explicit",
       triggerReason: "explicit_meta_theory",
       confidence: 1,
+    }, text, fanoutContext);
+  }
+
+  // A complete definition mentions work; it does not authorize that work.
+  // Apply this before topic/parallel hints can turn its subject into a task.
+  if (isDefinitionQuery(text)) {
+    return withEntrySignals({
+      governedEntry: false,
+      path: "fast_path",
+      taskClassification: "pure_query",
+      triggerReason: "pure_query",
+      confidence: 0.9,
     }, text, fanoutContext);
   }
 

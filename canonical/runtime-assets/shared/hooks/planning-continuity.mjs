@@ -115,7 +115,7 @@ function isWithin(root, candidate) {
   );
 }
 
-async function resolveSafePlanRoot(projectRoot, requested = ".", { create = false } = {}) {
+async function resolveSafePlanRoot(projectRoot, requested = ".", { create = false, allowMissing = false } = {}) {
   let resolvedProject = path.resolve(projectRoot);
   try { resolvedProject = await realpath(resolvedProject); } catch (e) { if (e?.code !== "ENOENT") throw e; }
   const candidate = path.resolve(resolvedProject, requested || ".");
@@ -132,6 +132,10 @@ async function resolveSafePlanRoot(projectRoot, requested = ".", { create = fals
       stat = await lstat(next);
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
+      // A preflight may validate a future path without creating either that
+      // path or authority directories. Descendants of a missing parent cannot
+      // contain an existing junction, and candidate is already normalized.
+      if (!create && allowMissing) return candidate;
       if (!create) throw new Error("planning_root_missing");
       const realCurrent = await realpath(current);
       if (!isWithin(realProject, realCurrent)) throw new Error("planning_root_symlink_escape");
@@ -258,19 +262,48 @@ function controlPatternFindings(records) {
   return findings;
 }
 
-function structuralBody(records) {
+function planningBinding(context) {
+  if (!context) return "";
+  return `Planning binding: ${JSON.stringify({
+    projectRoot: context.projectRoot,
+    planRoot: context.planRoot,
+    runtime: context.runtime,
+    runKey: context.key,
+  })}`;
+}
+
+function boundedText(value, limit, { latest = false } = {}) {
+  if (limit <= 0) return "";
+  let start = latest ? Math.max(0, value.length - limit) : 0;
+  let end = latest ? value.length : Math.min(value.length, limit);
+  // Keep UTF-16 surrogate pairs whole at both truncation boundaries.
+  if (start > 0 && /[\uDC00-\uDFFF]/u.test(value[start]) && /[\uD800-\uDBFF]/u.test(value[start - 1])) start += 1;
+  if (end < value.length && /[\uD800-\uDBFF]/u.test(value[end - 1]) && /[\uDC00-\uDFFF]/u.test(value[end])) end -= 1;
+  return value.slice(start, end);
+}
+
+function structuralBody(records, context) {
   const selected = [];
+  const binding = planningBinding(context);
+  if (binding) selected.push(binding);
+  // Reserve room for both files: a long historic task plan must not crowd the
+  // latest recovery status and next action out of the bounded projection.
+  const fileBudget = Math.max(0, Math.floor((MAX_CONTEXT_CHARS - binding.length - 2) / AUTO_CONTEXT_FILES.length));
   for (const record of records) {
     if (!AUTO_CONTEXT_FILES.includes(record.file) || record.state !== "present") continue;
     const lines = record.content.split(/\r?\n/u).filter((line) =>
       /^#{1,4}\s+/u.test(line) ||
       /^\s*[-*]\s+\[[ xX]\]\s+/u.test(line) ||
-      /^\s*[-*]\s+(?:Current|Next|Status|Goal|当前|下一步|状态|目标)\s*[:：]/iu.test(line),
+      /^\s*[-*]\s+(?:Current(?:\s+(?:status|step))?|Next(?:\s+action)?|Status|Goal|当前(?:状态|步骤)?|下一步(?:行动)?|状态|目标)\s*[:：]/iu.test(line),
     );
-    selected.push(`FILE ${record.file}`);
-    selected.push(...lines.slice(0, MAX_CONTEXT_LINES));
+    const latest = record.file === "progress.md";
+    const boundedLines = latest ? lines.slice(-MAX_CONTEXT_LINES) : lines.slice(0, MAX_CONTEXT_LINES);
+    const header = `FILE ${record.file}\n`;
+    const body = boundedLines.join("\n");
+    const bodyBudget = Math.max(0, fileBudget - header.length);
+    selected.push(header + boundedText(body, bodyBudget, { latest }));
   }
-  return selected.join("\n").slice(0, MAX_CONTEXT_CHARS);
+  return boundedText(selected.join("\n"), MAX_CONTEXT_CHARS);
 }
 
 function fencedContext(nonce, body) {
@@ -282,14 +315,14 @@ function fencedContext(nonce, body) {
   ].join("\n");
 }
 
-function structuralProjection(records, nonce) {
-  return fencedContext(nonce, structuralBody(records));
+function structuralProjection(records, nonce, context) {
+  return fencedContext(nonce, structuralBody(records, context));
 }
 
-function unchangedContextPointer(nonce, digest) {
+function unchangedContextPointer(nonce, digest, context) {
   return fencedContext(
     nonce,
-    `Planning unchanged since digest ${digest.slice(0, 12)}. Read task_plan.md or progress.md when the plan matters.`,
+    `${planningBinding(context)}\nPlanning unchanged since digest ${digest.slice(0, 12)}. Read task_plan.md or progress.md in the bound planning root when the plan matters.`,
   );
 }
 
@@ -412,7 +445,7 @@ function baseState({ projectRoot, planRoot, profile, runtime, identifier, key })
   };
 }
 
-function bindingIssues(state, context) {
+function identityBindingIssues(state, context) {
   const issues = [];
   if (!state) return ["authority_missing"];
   if (state.schemaVersion !== PLANNING_CONTINUITY_SCHEMA_VERSION) issues.push("schema_version_mismatch");
@@ -420,6 +453,12 @@ function bindingIssues(state, context) {
   if (state.runtime !== context.runtime) issues.push("runtime_binding_mismatch");
   if (state.runIdentifierDigest !== sha256(context.identifier)) issues.push("run_binding_mismatch");
   if (state.runKey !== context.key) issues.push("run_key_mismatch");
+  return issues;
+}
+
+function bindingIssues(state, context) {
+  const issues = identityBindingIssues(state, context);
+  if (!state) return issues;
   if (state.planRootRelative !== (path.relative(context.projectRoot, context.planRoot) || ".")) {
     issues.push("planning_root_binding_mismatch");
   }
@@ -453,7 +492,11 @@ async function contextFrom({ payload = {}, options = {} } = {}) {
   if (!identifier) throw new Error("planning_run_identifier_missing");
   const key = runKey(projectRoot, runtime, identifier);
   const profile = safeProfile(options.profile || process.env.META_KIM_PROFILE);
-  const planRoot = await resolveSafePlanRoot(projectRoot, options.planRoot || ".", { create: options.createPlanRoot === true });
+  const explicitPlanRoot = options.planRoot !== undefined && options.planRoot !== null && options.planRoot !== "";
+  if (explicitPlanRoot) {
+    if (typeof options.planRoot !== "string") throw new Error("planning_root_binding_invalid");
+    await resolveSafePlanRoot(projectRoot, options.planRoot, { allowMissing: options.createPlanRoot === true });
+  }
   const authorityRoot = await resolveSafePlanRoot(
     projectRoot,
     path.join(".meta-kim", "state", profile, "planning-continuity"),
@@ -470,6 +513,25 @@ async function contextFrom({ payload = {}, options = {} } = {}) {
     path.join(authorityRelative, "locks"),
     { create: true },
   );
+  const paths = authorityPaths(authorityRoot, key, { runsRoot, locksRoot });
+  const existing = await readJson(paths.authority);
+  let requestedPlanRoot = explicitPlanRoot ? options.planRoot : ".";
+  if (!explicitPlanRoot && existing) {
+    // Only this exact authority can supply an implicit plan location. Do not
+    // search nearby projects, other runs or Git worktrees for a substitute.
+    const issues = identityBindingIssues(existing, { projectRoot, runtime, identifier, key });
+    if (issues.length) throw new Error(`planning_authority_binding_refused:${issues.join(",")}`);
+    if (typeof existing.planRootRelative !== "string" || !existing.planRootRelative.trim() || path.isAbsolute(existing.planRootRelative)) {
+      throw new Error("planning_root_binding_invalid");
+    }
+    requestedPlanRoot = existing.planRootRelative;
+  }
+  if (typeof requestedPlanRoot !== "string") throw new Error("planning_root_binding_invalid");
+  const planRoot = await resolveSafePlanRoot(projectRoot, requestedPlanRoot, {
+    // Init may create a new plan. A saved plan that disappeared after a crash
+    // is residue to report, never authority to recreate and silently attest.
+    create: options.createPlanRoot === true && !existing,
+  });
   return {
     projectRoot,
     runtime,
@@ -477,7 +539,8 @@ async function contextFrom({ payload = {}, options = {} } = {}) {
     key,
     profile,
     planRoot,
-    ...authorityPaths(authorityRoot, key, { runsRoot, locksRoot }),
+    planRootSource: explicitPlanRoot ? "explicit" : existing ? "authority" : "default",
+    ...paths,
   };
 }
 
@@ -489,7 +552,8 @@ export async function initializePlanningContinuity(input = {}) {
   return withFileLock(context.lock, async () => {
     const existing = await readJson(context.authority);
     if (existing) {
-      return { status: "existing", context, state: existing, issues: bindingIssues(existing, context) };
+      const issues = bindingIssues(existing, context);
+      return { status: issues.length ? "refused" : "existing", context, state: existing, issues };
     }
     const fileResult = await ensureFiles(context.planRoot);
     const recordsWithContent = await planningSnapshot(context.planRoot, { includeContent: true });
@@ -580,6 +644,7 @@ export async function resumePlanningContinuity(input = {}) {
   const projection = structuralProjection(
     inspection.records,
     inspection.state.attestation.nonce,
+    inspection.context,
   );
   return { status: "resumed", projection, completion: inspection.completion, context: inspection.context };
 }
@@ -602,7 +667,7 @@ export async function selectPlanningContextInjection(input = {}) {
       return { status: "refused", issues: inspection.issues, context: inspection.context };
     }
     const { state, records, completion } = inspection;
-    const body = structuralBody(records);
+    const body = structuralBody(records, context);
     const digest = sha256(body);
     const previous = state.contextInjection || null;
     const mode = resolveInjectionMode({
@@ -628,7 +693,7 @@ export async function selectPlanningContextInjection(input = {}) {
       status: "injected",
       mode,
       projection: mode === "pointer"
-        ? unchangedContextPointer(state.attestation.nonce, digest)
+        ? unchangedContextPointer(state.attestation.nonce, digest, context)
         : fencedContext(state.attestation.nonce, body),
       digest,
       completion,
@@ -713,6 +778,8 @@ export async function evaluateStopGate(input = {}) {
   return withFileLock(context.lock, async () => {
     let state = await readJson(context.authority);
     if (!state) return { status: "allow", reason: "planning_authority_absent" };
+    const issues = bindingIssues(state, context);
+    if (issues.length) return { status: "refused", issues, context };
     const records = await planningSnapshot(context.planRoot, { includeContent: true });
     const completion = evaluateCompletion({ state, records });
     if (completion.eligible) {

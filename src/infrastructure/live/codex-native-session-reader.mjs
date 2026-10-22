@@ -29,10 +29,10 @@ async function plainDirectory(directory) {
 }
 
 /** Read one append-safe bounded snapshot; source files are never changed. */
-async function snapshot(file, maximum, acceptMeta) {
+async function snapshot(file, maximum, acceptMeta, onOmitted = () => {}) {
   const before = await lstat(file);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink > 1) fail("native_session_file_rejected");
-  if (before.size > maximum) return null;
+  if (before.size > maximum) { onOmitted("segment_size_limit"); return null; }
   if (normalize(await realpath(file)) !== normalize(file)) fail("native_session_file_rejected");
   const handle = await open(file, "r");
   try {
@@ -42,7 +42,7 @@ async function snapshot(file, maximum, acceptMeta) {
     const headerRead = await handle.read(prefix, 0, prefix.length, 0);
     const header = prefix.subarray(0, headerRead.bytesRead).toString("utf8").split("\n")[0];
     let meta;
-    try { meta = JSON.parse(header); } catch { return null; }
+    try { meta = JSON.parse(header); } catch { onOmitted("segment_metadata_unavailable"); return null; }
     if (meta.type !== "session_meta" || !acceptMeta(meta)) return null;
     const buffer = Buffer.alloc(opened.size);
     let count = 0;
@@ -55,13 +55,38 @@ async function snapshot(file, maximum, acceptMeta) {
     if (after.isSymbolicLink() || after.ino !== opened.ino || after.dev !== opened.dev) fail("native_session_file_changed");
     const text = buffer.subarray(0, count).toString("utf8");
     // A concurrently appended final line is not a complete event yet.
+    if (!text.endsWith("\n")) onOmitted("partial_final_line");
     const complete = text.endsWith("\n") ? text : text.slice(0, text.lastIndexOf("\n") + 1);
     return complete.split(/\r?\n/u).filter(Boolean).map((line) => {
-      try { return { record: JSON.parse(line), sha256: digest(line) }; } catch { return null; }
+      try { return { record: JSON.parse(line), sha256: digest(line) }; } catch { onOmitted("invalid_event_line"); return null; }
     }).filter(Boolean);
   } finally {
     await handle.close();
   }
+}
+
+/** Keep only parser inputs while joining bounded resume segments in memory. */
+function structuralEntries(entries) {
+  return entries.flatMap(({ record, sha256 }) => {
+    const p = record.payload || {};
+    let payload;
+    if (record.type === "turn_context") payload = { turn_id: p.turn_id, cwd: p.cwd };
+    else if (record.type === "response_item" && p.type === "function_call") payload = { type: p.type, call_id: p.call_id, namespace: p.namespace, name: p.name, arguments: typeof p.arguments === "string" && Buffer.byteLength(p.arguments) <= 32_768 ? p.arguments : null };
+    else if (record.type === "response_item" && p.type === "function_call_output") payload = { type: p.type, call_id: p.call_id };
+    else if (record.type === "event_msg" && ["task_started", "task_complete", "turn_complete", "item_completed"].includes(p.type)) {
+      payload = { type: p.type, thread_id: p.thread_id, turn_id: p.turn_id, started_at: p.started_at, completed_at_ms: p.completed_at_ms, root_turn_id: p.root_turn_id, turn_attribution: { parent_turn_id: p.turn_attribution?.parent_turn_id } };
+      if (p.item?.type === "CommandExecution") payload.item = { type: p.item.type, id: p.item.id, cwd: p.item.cwd, status: p.item.status, exit_code: p.item.exit_code, duration: p.item.duration };
+      else if (p.item?.type === "SubAgentActivity") payload.item = { type: p.item.type, id: p.item.id, agent_thread_id: p.item.agent_thread_id, agent_path: p.item.agent_path, kind: p.item.kind };
+    }
+    return payload ? [{ record: { type: record.type, timestamp: record.timestamp, payload }, sha256 }] : [];
+  });
+}
+
+/** Exact source-line duplicates do not replay terminals or double-count work. */
+function mergeSegmentEntries(segments) {
+  const unique = new Map();
+  for (const entries of segments) for (const entry of entries) if (!unique.has(entry.sha256)) unique.set(entry.sha256, entry);
+  return [...unique.values()].sort((a, b) => (Date.parse(a.record.timestamp) || 0) - (Date.parse(b.record.timestamp) || 0));
 }
 
 function dayDirectories(sinceMs, nowMs) {
@@ -224,23 +249,30 @@ export function createCodexNativeSessionReader(options = {}) {
     if (normalize(realProject) !== normalize(projectRoot)) fail("native_session_project_rejected");
     const candidates = await locateSegments(sessions, threadId, sinceMs, now());
     let selected = null;
+    const parentSegments = [];
+    const omittedReasons = new Set();
+    const coverage = { state: "bounded", parentSegmentCount: candidates.length, parentReadCount: 0, childSegmentCount: 0, childReadCount: 0, reasons: [] };
+    const noteOmitted = (reason) => { coverage.state = "partial"; omittedReasons.add(reason); };
     const turnStarts = new Map();
     const targetTurnId = requestedTurnId || explicitTurnId;
     let selectedTurn = targetTurnId;
     for (const file of candidates) {
-      const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], threadId, realProject));
+      const rawRecords = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], threadId, realProject), noteOmitted);
+      const records = rawRecords && structuralEntries(rawRecords);
       if (!records) continue;
+      coverage.parentReadCount += 1;
+      parentSegments.push(records);
       for (const { record } of records) rememberTurnStart(turnStarts, record, threadId);
       const turns = records.filter(({ record }) => record.type === "turn_context" && UUID.test(String(record.payload?.turn_id || "")) && Date.parse(record.timestamp) >= sinceMs);
       const match = targetTurnId ? turns.find(({ record }) => record.payload.turn_id === targetTurnId) : turns.at(-1);
       if (!match) continue;
       if (!selected || Date.parse(match.record.timestamp) > Date.parse(selected.timestamp)) {
-        selected = { records, timestamp: match.record.timestamp };
+        selected = { timestamp: match.record.timestamp };
         selectedTurn = match.record.payload.turn_id;
       }
     }
-    if (!selected) return { state: "unavailable", reason: "exact_native_turn_not_observed", threadId, turnId: targetTurnId };
-    const observation = parseCodexNativeTurn(selected.records, { threadId, turnId: selectedTurn, sinceMs });
+    if (!selected) return { state: "unavailable", reason: "exact_native_turn_not_observed", threadId, turnId: targetTurnId, coverage: { ...coverage, reasons: [...omittedReasons] } };
+    const observation = parseCodexNativeTurn(mergeSegmentEntries(parentSegments), { threadId, turnId: selectedTurn, sinceMs });
     const startedMs = turnStarts.get(selectedTurn)?.task ?? turnStarts.get(selectedTurn)?.context;
     if (Number.isFinite(startedMs)) observation.startedAt = new Date(startedMs).toISOString();
     observation.commands = observation.commands.filter((command) => normalize(command.cwd) === normalize(realProject));
@@ -249,61 +281,50 @@ export function createCodexNativeSessionReader(options = {}) {
       const spawnMs = Date.parse(agent.at);
       const endMs = observation.turnCompletedAt ? Date.parse(observation.turnCompletedAt) : Infinity;
       const childFiles = await locateSegments(sessions, agent.childThreadId, sinceMs, now());
-      let selectedChild = null;
+      coverage.childSegmentCount += childFiles.length;
+      const childSegments = [];
+      let childIncomplete = false;
       for (const file of childFiles) {
-        const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], agent.childThreadId, realProject, threadId) && Date.parse(meta.timestamp) >= spawnMs - 5_000 && Date.parse(meta.timestamp) <= endMs);
-        if (!records) continue;
-        const starts = records.filter(({ record }) => {
-          const p = record.payload;
-          const time = taskStartedMs(record);
-          return record.type === "event_msg" && p?.type === "task_started" && p.turn_attribution?.parent_turn_id === selectedTurn && p.root_turn_id === selectedTurn && UUID.test(String(p.turn_id || "")) && time >= spawnMs - 5_000 && time <= endMs;
-        });
-        const childStart = starts.reduce((latest, entry) => !latest || taskStartedMs(entry.record) >= taskStartedMs(latest.record) ? entry : latest, null)?.record;
-        if (!childStart) continue;
-        const firstContextIndex = records.findIndex(({ record }) => record.type === "turn_context" && record.payload?.turn_id === childStart.payload.turn_id);
-        if (firstContextIndex < 0) continue;
-        const childContext = records[firstContextIndex].record;
-        if (typeof childContext.payload?.cwd === "string" && normalize(childContext.payload.cwd) !== normalize(realProject)) continue;
-        // Desktop child journals include copied parent history. Only a real
-        // child task_started attribution to this exact parent turn can select
-        // its own turn; a copied task_complete can never finish this worker.
-        // Follow-ups from another parent turn are excluded from this old run.
-        let completion = null;
-        const startedAtMs = taskStartedMs(childStart);
-        let latestAtMs = Math.max(Date.parse(childStart.timestamp), Date.parse(childContext.timestamp));
-        for (const entry of records.slice(firstContextIndex + 1)) {
-          if (entry.record.type === "turn_context" && entry.record.payload?.turn_id !== childContext.payload?.turn_id) break;
-          const time = Date.parse(entry.record.timestamp);
-          const p = entry.record.payload || {};
-          if (!Number.isFinite(time) || time < startedAtMs || time > endMs || (p.turn_id && p.turn_id !== childStart.payload.turn_id) || (p.thread_id && p.thread_id !== agent.childThreadId)) continue;
-          const activity = nativeExecutionActivity(entry.record, agent.childThreadId, childStart.payload.turn_id);
-          const terminal = entry.record.type === "event_msg" && ["task_complete", "turn_complete"].includes(p.type) && p.turn_id === childStart.payload.turn_id;
-          if (activity) completion = null;
-          if (terminal) completion = entry;
-          if (activity || terminal || entry.record.type === "turn_context") latestAtMs = Math.max(latestAtMs, time);
-        }
-        // Compare attributed starts across every bounded segment, even when
-        // the newest segment is still active. An older terminal cannot win
-        // just because it is the first segment containing a completion.
-        if (!selectedChild || startedAtMs > selectedChild.startedAtMs || (startedAtMs === selectedChild.startedAtMs && (
-          latestAtMs > selectedChild.latestAtMs || (latestAtMs === selectedChild.latestAtMs && !completion)
-        ))) {
-          selectedChild = { startedAtMs, latestAtMs, turnId: childStart.payload.turn_id, completion };
-        }
+        const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], agent.childThreadId, realProject, threadId) && Date.parse(meta.timestamp) >= spawnMs - 5_000 && Date.parse(meta.timestamp) <= endMs, (reason) => { childIncomplete = true; noteOmitted(reason); });
+        if (records) { coverage.childReadCount += 1; childSegments.push(structuralEntries(records)); }
       }
-      if (selectedChild) {
-        agent.childMetadataVerified = true;
-        agent.childTurnId = selectedChild.turnId;
-        if (selectedChild.completion) {
-          agent.completed = true;
-          agent.completedAt = selectedChild.completion.record.timestamp;
-          agent.completionSha256 = selectedChild.completion.sha256;
-        }
+      const records = mergeSegmentEntries(childSegments);
+      const starts = records.filter(({ record }) => {
+        const p = record.payload;
+        const time = taskStartedMs(record);
+        return record.type === "event_msg" && p?.type === "task_started" && p.turn_attribution?.parent_turn_id === selectedTurn && p.root_turn_id === selectedTurn && UUID.test(String(p.turn_id || "")) && time >= spawnMs - 5_000 && time <= endMs;
+      });
+      const childStart = starts.reduce((latest, entry) => !latest || taskStartedMs(entry.record) >= taskStartedMs(latest.record) ? entry : latest, null)?.record;
+      if (!childStart) continue;
+      const firstContextIndex = records.findIndex(({ record }) => record.type === "turn_context" && record.payload?.turn_id === childStart.payload.turn_id);
+      if (firstContextIndex < 0) continue;
+      const childContext = records[firstContextIndex].record;
+      if (typeof childContext.payload?.cwd === "string" && normalize(childContext.payload.cwd) !== normalize(realProject)) continue;
+      // Copied parent history cannot select a child turn. Join only the latest
+      // child start attributed to this exact parent turn, then replay its bounded
+      // segments chronologically so resumed activity invalidates an old terminal.
+      let completion = null;
+      const startedAtMs = taskStartedMs(childStart);
+      for (const entry of records.slice(firstContextIndex + 1)) {
+        if (entry.record.type === "turn_context" && entry.record.payload?.turn_id !== childContext.payload?.turn_id) break;
+        const time = Date.parse(entry.record.timestamp);
+        const p = entry.record.payload || {};
+        if (!Number.isFinite(time) || time < startedAtMs || time > endMs || (p.turn_id && p.turn_id !== childStart.payload.turn_id) || (p.thread_id && p.thread_id !== agent.childThreadId)) continue;
+        if (nativeExecutionActivity(entry.record, agent.childThreadId, childStart.payload.turn_id)) completion = null;
+        if (entry.record.type === "event_msg" && ["task_complete", "turn_complete"].includes(p.type) && p.turn_id === childStart.payload.turn_id) completion = entry;
+      }
+      agent.childMetadataVerified = true;
+      agent.childTurnId = childStart.payload.turn_id;
+      if (completion && !childIncomplete) {
+        agent.completed = true;
+        agent.completedAt = completion.record.timestamp;
+        agent.completionSha256 = completion.sha256;
       }
     }
     // Remove the raw cwd as soon as its exact match has been checked.
     observation.commands = observation.commands.map(({ cwd: _cwd, ...item }) => item);
-    return { state: "observed", sourceKind: "codex_desktop_native_session", readOnly: true, ...observation, observedAt: new Date(now()).toISOString(), binding: { threadId, turnId: selectedTurn, projectRootMatched: true }, limitations: ["Native execution observation is not semantic task acceptance.", "Only the bound current turn and verified child metadata are inspected."] };
+    coverage.reasons = [...omittedReasons];
+    return { state: "observed", sourceKind: "codex_desktop_native_session", readOnly: true, ...observation, coverage, observedAt: new Date(now()).toISOString(), binding: { threadId, turnId: selectedTurn, projectRootMatched: true }, limitations: ["Native execution observation is not semantic task acceptance.", "Only the bound current turn and verified child metadata are inspected.", ...(coverage.state === "partial" ? ["Some bounded native source segments or events were omitted; counts are partial observations."] : [])] };
   };
   const read = async (requestedTurnId = null) => {
     if (requestedTurnId && (!UUID.test(requestedTurnId) || (explicitTurnId && requestedTurnId !== explicitTurnId))) fail("native_session_turn_not_bound");

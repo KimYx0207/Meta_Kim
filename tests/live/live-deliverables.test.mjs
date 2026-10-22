@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { collectLiveDeliverables, readLiveDeliverable } from "../../src/application/live/live-deliverables.mjs";
+import { collectLiveDeliverables, publicLiveDeliverable, readLiveDeliverable } from "../../src/application/live/live-deliverables.mjs";
 import { buildLiveCompactProjection, buildLiveSnapshot, createLiveControlRoomService } from "../../src/application/live/live-control-room-service.mjs";
 import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
 import { LIVE_MAX_JSON_BYTES } from "../../src/infrastructure/live/live-read-repository.mjs";
@@ -152,14 +153,85 @@ test("HTTP opening is read-only, sandboxed, run-bound, and absent from public sh
   const url = `${address.url}/api/deliverable?runId=${runId}&deliverableId=${snapshot.deliverables[0].id}`;
   const html = await fetch(url);
   assert.equal(html.status, 200);
+  const firstVersion = "sha256:" + createHash("sha256").update("<h1>Actual fixture</h1><script>window.fixtureScriptRan=true</script>").digest("hex");
+  assert.equal(html.headers.get("x-meta-kim-content-version"), firstVersion);
+  const spoofedVersion = "sha256:" + "f".repeat(64);
+  const spoofed = await fetch(url, { headers: { "x-meta-kim-content-version": spoofedVersion } });
+  assert.equal(spoofed.headers.get("x-meta-kim-content-version"), firstVersion, "a request header cannot provide content-read truth");
+  const queryClaim = await fetch(url + "&contentVersion=" + spoofedVersion);
+  assert.equal(queryClaim.status, 400);
+  assert.equal(queryClaim.headers.get("x-meta-kim-content-version"), null);
+  assert.equal(snapshot.deliverables[0].contentVersion, null, "a path declaration has not read file contents");
   assert.match(html.headers.get("content-security-policy"), /sandbox; default-src 'none'; script-src 'none'/u);
   assert.match(await html.text(), /Actual fixture/u);
   assert.equal((await fetch(url + "&path=outputs/page.html")).status, 400);
   assert.equal((await fetch(url.replace(runId, "foreign-run"))).status, 404);
+  assert.equal((await fetch(url.replace(runId, "foreign-run"))).headers.get("x-meta-kim-content-version"), null);
   assert.equal((await fetch(url, { method: "POST" })).status, 405);
   const textRef = snapshot.deliverables.find((item) => item.kind === "text");
   const textResponse = await fetch(`${address.url}/api/deliverable?runId=${runId}&deliverableId=${textRef.id}`);
   assert.match(await textResponse.text(), /&lt;script&gt;/u);
   const share = await service.getShare({ runId });
   assert.doesNotMatch(JSON.stringify(share), /deliverable:|outputs\/page|actual bounded|parent.secret/u);
+  await writeFile(path.join(root, "outputs/page.html"), "<h1>Changed version</h1>");
+  const changed = await service.getDeliverable(runId, snapshot.deliverables[0].id);
+  assert.notEqual(changed.contentVersion, firstVersion);
+  assert.equal(changed.contentVersion, "sha256:" + createHash("sha256").update(changed.text).digest("hex"));
+  assert.equal(publicLiveDeliverable({ ...collectLiveDeliverables(raw)[0], contentVersion: firstVersion }).contentVersion, null, "a claimed hash on a descriptor is not observed content");
+  raw.workerResultPackets[0].producedArtifacts.push("https://example.com/public-result");
+  const external = collectLiveDeliverables(raw).find((item) => item.kind === "external");
+  const externalResponse = await fetch(`${address.url}/api/deliverable?runId=${runId}&deliverableId=${external.id}`);
+  assert.equal(externalResponse.status, 200);
+  assert.equal(externalResponse.headers.get("x-meta-kim-content-version"), null, "rendering an external reference has not read its remote content");
+});
+
+test("revision verification needs the exact run, task, action, content version and a fresh recorded command", () => {
+  const raw = artifact();
+  const target = collectLiveDeliverables(raw).find((item) => item.text !== undefined);
+  const version = publicLiveDeliverable(target, (id) => id, { contentObserved: true }).contentVersion;
+  const now = "2026-10-22T08:00:00.000Z";
+  const revision = { runId, findingId: "F-1", actionId: "A-1", taskPacketId, deliverableId: target.id, contentVersion: version, updatedAt: "2026-10-22T07:59:58.000Z", responseSummary: "outputs/private.md", fixArtifact: "C:/private/key" };
+  raw.reviewPacket = { findings: [{ runId, findingId: "F-1", taskPacketId, summary: "<script>private</script>", fixArtifact: "C:/private/key" }] };
+  raw.revisionResponses = [revision];
+  const check = { ...revision, status: "verified", command: "node --check fixture.mjs", runBy: "backend", runAt: now, commandRanAt: now, observedResult: "exit code 0", successMarkerFormat: "exit-code-only", exitCode: 0 };
+  raw.verificationPacket = { verificationResults: [check] };
+  const project = () => buildLiveSnapshot({ governedArtifact: raw, observedAt: now }).revisionReview;
+  assert.equal(project().items[0].state, "verified");
+  assert.doesNotMatch(JSON.stringify(project()), /private|fixture\.mjs|script|fixArtifact/u);
+  for (const mutation of [{ runId: "other" }, { taskPacketId: "other" }, { actionId: "other" }, { contentVersion: "sha256:" + "f".repeat(64) }, { deliverableId: "other" }]) {
+    raw.verificationPacket.verificationResults = [{ ...check, ...mutation }];
+    assert.equal(project().items[0].state, "pending_verification");
+  }
+  for (const mutation of [{ status: "passed", proofValid: true }, { command: undefined }, { exitCode: 1 }, { synthetic: true }, { evidenceKind: "structural" }, { commandRanAt: "2026-10-21T00:00:00.000Z" }, { runAt: "2026-10-22T09:00:00.000Z" }]) {
+    raw.verificationPacket.verificationResults = [{ ...check, ...mutation }];
+    assert.equal(project().items[0].state, "verification_unconfirmed");
+  }
+  raw.verificationPacket.verificationResults = [check];
+  const compact = buildLiveCompactProjection(raw);
+  assert.equal(buildLiveSnapshot({ governedArtifact: compact, observedAt: now }).revisionReview.items[0].state, "verification_unconfirmed", "stored summaries cannot self-attest a passed check");
+  raw.revisionResponses = [{ ...revision, contentVersion: "sha256:" + "a".repeat(64) }];
+  assert.equal(project().items[0].state, "pending_verification");
+  delete raw.revisionResponses;
+  raw.verificationPacket = { revisionResponses: [revision], verificationResults: [check] };
+  assert.equal(project().items[0].state, "verified", "existing verificationPacket revision records use the same binding");
+});
+
+test("revision verification cannot skip a known finding or an explicit revision response", () => {
+  const raw = artifact();
+  const target = collectLiveDeliverables(raw).find((item) => item.text !== undefined);
+  const contentVersion = publicLiveDeliverable(target, (id) => id, { contentObserved: true }).contentVersion;
+  const now = "2026-10-22T08:00:00.000Z";
+  const revision = { runId, findingId: "F-chain", actionId: "A-chain", taskPacketId, deliverableId: target.id, contentVersion };
+  const check = { ...revision, status: "verified", command: "node --check fixture.mjs", runBy: "backend", runAt: now, commandRanAt: now, observedResult: "exit code 0", successMarkerFormat: "exit-code-only", exitCode: 0 };
+  raw.reviewPacket = { findings: [] };
+  raw.revisionResponses = [revision];
+  raw.verificationPacket = { verificationResults: [check] };
+  const project = () => buildLiveSnapshot({ governedArtifact: raw, observedAt: now }).revisionReview;
+  assert.equal(project().items[0].state, "verification_unconfirmed", "an unknown finding cannot close a revision chain");
+  raw.reviewPacket.findings = [{ ...revision, summary: "Known finding" }];
+  assert.equal(project().items[0].state, "verified", "the complete known chain retains its passing recorded check");
+  delete raw.revisionResponses;
+  assert.equal(project().items[0].state, "verification_unconfirmed", "a finding plus check cannot invent the missing revision response");
+  raw.verificationPacket.revisionResponses = [revision];
+  assert.equal(project().items[0].state, "verified");
 });

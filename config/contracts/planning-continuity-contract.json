@@ -35,6 +35,12 @@
     "rejectsSymlinkEscape": true,
     "rejectsHashDrift": true,
     "rejectsControlInstructionPatterns": true,
+    "implicitPlanRoot": "reuse_only_exact_project_runtime_run_authority",
+    "explicitPlanRootConflict": "refuse_without_rebinding",
+    "missingSavedPlanRoot": "refuse_without_recreating",
+    "crossWorktreeInference": false,
+    "projectionBinding": ["projectRoot", "planRoot", "runtime", "runKey"],
+    "progressProjection": "latest_bounded_structural_status_and_next_action_not_execution_evidence",
     "autoInjectedFiles": [
       "task_plan.md",
       "progress.md"
