@@ -188,18 +188,23 @@ describe("shared Meta_Kim configuration loader", () => {
       path.join(repoRoot, "scripts", "install-global-skills-all-runtimes.mjs"),
       "utf8",
     );
-    assert.ok(
-      setupSource.indexOf("loadMetaKimConfig({ repoRoot: PROJECT_DIR })") <
-        setupSource.indexOf("async function main()"),
-    );
-    assert.ok(
-      installerSource.indexOf("const installerConfig = loadInstallerConfig()") <
-        installerSource.indexOf("setupTeeStdout(parseLogFileArg(cliArgs))"),
-    );
-    assert.ok(
-      installerSource.indexOf("const installerConfig = loadInstallerConfig()") <
-        installerSource.indexOf("await cleanupLegacyGlobalArtifacts(homes)"),
-    );
+    const setupPreflight = setupSource.indexOf("loadMetaKimConfig({ repoRoot: PROJECT_DIR })");
+    const setupMain = setupSource.indexOf("async function main()");
+    const installerPreflight = installerSource.indexOf("const installerConfig = loadInstallerConfig()");
+    const installerTee = installerSource.indexOf("setupTeeStdout(parseLogFileArg(cliArgs))");
+    const installerCleanup = installerSource.search(/\bawait\s+cleanupLegacyGlobalArtifacts\s*\(/u);
+    for (const [anchor, index] of Object.entries({
+      setupPreflight,
+      setupMain,
+      installerPreflight,
+      installerTee,
+      installerCleanup,
+    })) {
+      assert.ok(index >= 0, `${anchor} must exist before checking preflight order`);
+    }
+    assert.ok(setupPreflight < setupMain);
+    assert.ok(installerPreflight < installerTee);
+    assert.ok(installerTee < installerCleanup);
     assert.doesNotMatch(installerSource, /pluginRepoMap|\$\{bareName\}\/\$\{bareName\}/);
   });
 });
