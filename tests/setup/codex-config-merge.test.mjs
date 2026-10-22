@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -33,7 +33,140 @@ function sectionBlock(configText, sectionName) {
   return lines.slice(start, end).join("\n");
 }
 
+function appMaterializationFixture(t, names = ["browser", "codex-app-tools"]) {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-app-materialization-"));
+  t.after(() => {
+    assert.ok(path.resolve(root).startsWith(`${path.resolve(os.tmpdir())}${path.sep}meta-kim-codex-app-materialization-`));
+    rmSync(root, { recursive: true, force: true });
+  });
+  const codexHome = path.join(root, ".codex");
+  const marketplaceRoot = path.join(codexHome, ".tmp", "bundled-marketplaces", "openai-bundled");
+  const keyPath = path.join(marketplaceRoot, ".materialization-key");
+  const marketplacePath = path.join(marketplaceRoot, ".agents", "plugins", "marketplace.json");
+  const plugins = names.map((name, index) => ({ name, version: `1.0.${index}` }));
+  const key = { version: 1, appVersion: "26.1016.51333", marketplaceName: "openai-bundled", plugins };
+  const marketplace = { name: "openai-bundled", plugins: plugins.map(({ name }) => ({ name, source: { source: "local", path: `./plugins/${name}` } })) };
+  mkdirSync(path.dirname(marketplacePath), { recursive: true });
+  writeFileSync(keyPath, JSON.stringify(key));
+  writeFileSync(marketplacePath, JSON.stringify(marketplace));
+  for (const plugin of plugins) {
+    const manifestPath = path.join(marketplaceRoot, "plugins", plugin.name, ".codex-plugin", "plugin.json");
+    mkdirSync(path.dirname(manifestPath), { recursive: true });
+    writeFileSync(manifestPath, JSON.stringify(plugin));
+  }
+  const source = /^[A-Za-z]:\\/.test(marketplaceRoot) ? `\\\\?\\${marketplaceRoot}` : marketplaceRoot;
+  return { root, codexHome, marketplaceRoot, marketplacePath, keyPath, marketplace, key, source, options: { platformName: "win32", windowsAppsRoots: [], codexHome } };
+}
+
 describe("Codex config merge", () => {
+  test("App materialization: keeps a valid current source without a WindowsApps installation", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const sourceLine = `source = '${fixture.source}'`;
+    const input = `[marketplaces.openai-bundled]\nsource_type = "local"\n${sourceLine}\n`;
+    const planned = planCodexAppNativeControls(input, fixture.options);
+    assert.ok(planned.text.split(/\r?\n/u).includes(sourceLine), "existing valid App materialization must remain active");
+    assert.ok(!planned.mutations.some(({ locator }) => locator.table === "marketplaces.openai-bundled" && locator.key === "source"));
+    assert.ok(ensureCodexAppNativeControls(input, fixture.options).includes(sourceLine));
+    assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
+  });
+
+  test("App materialization: normal planner restores a source previously disabled by Meta_Kim", (t) => {
+    const fixture = appMaterializationFixture(t, ["browser", "codex-app-tools", "new-bundled-plugin"]);
+    const sourceLine = `source = '${fixture.source}'`;
+    const disabled = `# Meta_Kim disabled conflicting [marketplaces.openai-bundled].source: ${sourceLine}`;
+    const input = `[marketplaces.openai-bundled]\nsource_type = "local"\n${disabled}\n# keep this user note\n`;
+    const planned = planCodexAppNativeControls(input, fixture.options);
+    assert.ok(planned.text.split(/\r?\n/u).includes(sourceLine), "valid App materialization must be rediscovered from codexHome");
+    assert.doesNotMatch(planned.text, /Meta_Kim disabled conflicting \[marketplaces\.openai-bundled\]\.source/u);
+    assert.ok(planned.text.includes("# keep this user note"));
+    assert.equal(planCodexAppNativeControls(planned.text, fixture.options).text, planned.text);
+    assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
+  });
+
+  test("App materialization: invalid or escaping declarations are not discovered", (t) => {
+    const variants = [
+      ["missing key", fixture => rmSync(fixture.keyPath)],
+      ["malformed key", fixture => writeFileSync(fixture.keyPath, "{broken")],
+      ["unsupported key", fixture => writeFileSync(fixture.keyPath, JSON.stringify({ ...fixture.key, version: 2 }))],
+      ["wrong key name", fixture => writeFileSync(fixture.keyPath, JSON.stringify({ ...fixture.key, marketplaceName: "other" }))],
+      ["missing app version", fixture => writeFileSync(fixture.keyPath, JSON.stringify({ ...fixture.key, appVersion: "" }))],
+      ["oversized key", fixture => writeFileSync(fixture.keyPath, JSON.stringify({ ...fixture.key, padding: "x".repeat(70 * 1024) }))],
+      ["malformed marketplace", fixture => writeFileSync(fixture.marketplacePath, "{broken")],
+      ["wrong marketplace name", fixture => writeFileSync(fixture.marketplacePath, JSON.stringify({ ...fixture.marketplace, name: "other" }))],
+      ["missing key plugin", fixture => writeFileSync(fixture.keyPath, JSON.stringify({ ...fixture.key, plugins: fixture.key.plugins.slice(1) }))],
+      ["duplicate key plugin", fixture => writeFileSync(fixture.keyPath, JSON.stringify({ ...fixture.key, plugins: [fixture.key.plugins[0], fixture.key.plugins[0]] }))],
+      ["duplicate marketplace plugin", fixture => writeFileSync(fixture.marketplacePath, JSON.stringify({ ...fixture.marketplace, plugins: [fixture.marketplace.plugins[0], fixture.marketplace.plugins[0]] }))],
+      ["oversized marketplace", fixture => writeFileSync(fixture.marketplacePath, JSON.stringify({ ...fixture.marketplace, padding: "x".repeat(260 * 1024) }))],
+      ["malformed plugin manifest", fixture => writeFileSync(path.join(fixture.marketplaceRoot, "plugins", "browser", ".codex-plugin", "plugin.json"), "{broken")],
+      ["missing plugin manifest", fixture => rmSync(path.join(fixture.marketplaceRoot, "plugins", "browser", ".codex-plugin", "plugin.json"))],
+      ["mismatched version", fixture => writeFileSync(path.join(fixture.marketplaceRoot, "plugins", "browser", ".codex-plugin", "plugin.json"), JSON.stringify({ name: "browser", version: "changed" }))],
+      ["path traversal", fixture => { fixture.marketplace.plugins[0].source.path = "../outside"; writeFileSync(fixture.marketplacePath, JSON.stringify(fixture.marketplace)); }],
+      ["absolute plugin path", fixture => { fixture.marketplace.plugins[0].source.path = fixture.root; writeFileSync(fixture.marketplacePath, JSON.stringify(fixture.marketplace)); }],
+    ];
+    for (const [label, corrupt] of variants) {
+      const fixture = appMaterializationFixture(t);
+      corrupt(fixture);
+      const planned = planCodexAppNativeControls("", fixture.options);
+      assert.doesNotMatch(sectionBlock(planned.text, "marketplaces.openai-bundled"), /^source\s*=/mu, label);
+      assert.doesNotMatch(sectionBlock(ensureCodexAppNativeControls("", fixture.options), "marketplaces.openai-bundled"), /^source\s*=/mu, label);
+    }
+  });
+
+  test("App materialization: a linked plugin directory cannot escape the fixed source boundary", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const pluginRoot = path.join(fixture.marketplaceRoot, "plugins", "browser");
+    const escaped = path.join(fixture.root, "escaped-plugin");
+    assert.ok(path.resolve(pluginRoot).startsWith(`${path.resolve(fixture.root)}${path.sep}`));
+    assert.ok(path.resolve(escaped).startsWith(`${path.resolve(fixture.root)}${path.sep}`));
+    renameSync(pluginRoot, escaped);
+    try {
+      symlinkSync(escaped, pluginRoot, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if (["EPERM", "EACCES"].includes(error.code)) { t.skip("host does not permit fixture links"); return; }
+      throw error;
+    }
+    const planned = planCodexAppNativeControls("", fixture.options);
+    assert.doesNotMatch(sectionBlock(planned.text, "marketplaces.openai-bundled"), /^source\s*=/mu);
+  });
+
+  test("App materialization: ambiguous or malformed disabled comments are not silently rewritten", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const disabled = `# Meta_Kim disabled conflicting [marketplaces.openai-bundled].source: source = '${fixture.source}'`;
+    assert.throws(() => planCodexAppNativeControls(`[marketplaces.openai-bundled]\n${disabled}\n${disabled}\n`, fixture.options), /disabled comment is ambiguous/u);
+    assert.throws(() => planCodexAppNativeControls('[marketplaces.openai-bundled]\n# Meta_Kim disabled conflicting [marketplaces.openai-bundled].source: unrecognized text\n', fixture.options), /disabled comment drifted/u);
+  });
+
+  test("App materialization: existing unproven sources are preserved without becoming discovery authority", (t) => {
+    const fixture = appMaterializationFixture(t);
+    writeFileSync(fixture.keyPath, "not a valid App materialization key");
+    const sourceLine = `source = '${fixture.source}'`;
+    const input = `[marketplaces.openai-bundled]\nsource_type = "local"\n${sourceLine}\n`;
+    const planned = planCodexAppNativeControls(input, fixture.options);
+    assert.ok(planned.text.split(/\r?\n/u).includes(sourceLine), "an existing source is not known stale merely because validation is unavailable");
+    assert.ok(!planned.mutations.some(({ locator }) => locator.table === "marketplaces.openai-bundled" && locator.key === "source"));
+    const absent = planCodexAppNativeControls("", fixture.options);
+    assert.doesNotMatch(sectionBlock(absent.text, "marketplaces.openai-bundled"), /^source\s*=/mu);
+    const disabled = `# Meta_Kim disabled conflicting [marketplaces.openai-bundled].source: ${sourceLine}`;
+    const notRecovered = planCodexAppNativeControls(`[marketplaces.openai-bundled]\n${disabled}\n`, fixture.options);
+    assert.doesNotMatch(sectionBlock(notRecovered.text, "marketplaces.openai-bundled"), /^source\s*=/mu);
+    assert.ok(notRecovered.text.includes(disabled));
+  });
+
+  test("App materialization: explicit stable source retains priority and unrelated native configuration", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const stable = path.join(fixture.root, "stable-openai-bundled");
+    mkdirSync(stable);
+    const expected = /^[A-Za-z]:\\/.test(stable) ? `\\\\?\\${stable}` : stable;
+    const input = '[mcp_servers.user_owned]\ncommand = "user-command"\n\n[agents]\nmax_threads = 3\nmax_depth = 2\n';
+    const planned = planCodexAppNativeControls(input, { ...fixture.options, bundledMarketplaceSource: stable });
+    assert.ok(planned.text.includes(`source = '${expected}'`));
+    assert.ok(planned.text.includes('command = "user-command"'));
+    assert.match(planned.text, /max_threads = 3/u);
+    assert.match(planned.text, /max_depth = 2/u);
+    assert.match(planned.text, /default_mode_request_user_input = true/u);
+    assert.match(planned.text, /js_repl = true/u);
+  });
+
   test("resource-safe agent defaults migrate the legacy Meta_Kim value and preserve explicit overrides", () => {
     const legacy = ensureCodexAppNativeControls(
       `[agents]\nmax_threads = ${CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS}\n`,

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 export const CODEX_REQUEST_USER_INPUT_FEATURE = "default_mode_request_user_input";
@@ -656,13 +656,93 @@ function normalizeWindowsPathForToml(filePath) {
 
 function isStaleBundledMarketplaceSource(source = "", pathExists = defaultPathExists) {
   const normalized = String(source).replace(/\//g, "\\");
-  if (/\\\.codex\\\.tmp\\bundled-marketplaces\\openai-bundled$/i.test(normalized)) {
-    return true;
-  }
   if (/\\bundled-marketplaces\\openai-bundled$/i.test(normalized)) {
     return !pathExists(source);
   }
   return false;
+}
+
+function isPlainMaterializationPath(root, relative, kind) {
+  try {
+    let current = root;
+    const rootStat = lstatSync(current);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false;
+    const parts = relative.split("/");
+    for (let index = 0; index < parts.length; index += 1) {
+      if (!parts[index] || parts[index] === "." || parts[index] === "..") return false;
+      current = path.join(current, parts[index]);
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) return false;
+      if (index === parts.length - 1 && kind === "file") {
+        if (!stat.isFile()) return false;
+      } else if (!stat.isDirectory()) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read only bounded, regular metadata; neither source declarations nor links escape root. */
+function readMaterializationJson(root, relative, maxBytes) {
+  if (!isPlainMaterializationPath(root, relative, "file")) return null;
+  let descriptor;
+  try {
+    descriptor = openSync(path.join(root, relative), "r");
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > maxBytes) return null;
+    const bytes = Buffer.alloc(maxBytes + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(descriptor, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > maxBytes) return null;
+    return JSON.parse(bytes.subarray(0, length).toString("utf8"));
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+/** Discover only the App's fixed, internally consistent materialization under codexHome. */
+function findCodexAppMaterializedMarketplaceSource(codexHome, pathExists) {
+  if (!codexHome || !path.isAbsolute(withoutExtendedWindowsPrefix(codexHome))) return null;
+  const home = path.resolve(withoutExtendedWindowsPrefix(codexHome));
+  const relative = ".tmp/bundled-marketplaces/openai-bundled";
+  const candidate = path.join(home, relative);
+  if (!pathExists(candidate) || !isPlainMaterializationPath(home, relative, "directory")) return null;
+  const key = readMaterializationJson(candidate, ".materialization-key", 64 * 1024);
+  const marketplace = readMaterializationJson(candidate, ".agents/plugins/marketplace.json", 256 * 1024);
+  const validVersion = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(value);
+  const validName = value => typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,127}$/.test(value);
+  if (
+    key?.version !== 1 || key.marketplaceName !== "openai-bundled" || !validVersion(key.appVersion) ||
+    marketplace?.name !== "openai-bundled" || !Array.isArray(marketplace.plugins) ||
+    marketplace.plugins.length === 0 || marketplace.plugins.length > 128 ||
+    !Array.isArray(key.plugins) || key.plugins.length !== marketplace.plugins.length
+  ) return null;
+  const versions = new Map();
+  for (const plugin of key.plugins) {
+    if (!validName(plugin?.name) || !validVersion(plugin.version) || versions.has(plugin.name)) return null;
+    versions.set(plugin.name, plugin.version);
+  }
+  const declared = new Set();
+  for (const plugin of marketplace.plugins) {
+    if (!validName(plugin?.name) || declared.has(plugin.name) || !versions.has(plugin.name)) return null;
+    declared.add(plugin.name);
+    const expectedPath = `plugins/${plugin.name}`;
+    if (
+      plugin.source?.source !== "local" ||
+      ![expectedPath, `./${expectedPath}`].includes(plugin.source.path) ||
+      (plugin.version !== undefined && plugin.version !== versions.get(plugin.name))
+    ) return null;
+    const manifest = readMaterializationJson(candidate, `${expectedPath}/.codex-plugin/plugin.json`, 64 * 1024);
+    if (manifest?.name !== plugin.name || manifest.version !== versions.get(plugin.name)) return null;
+  }
+  return normalizeWindowsPathForToml(candidate);
 }
 
 function compareVersionLikeNamesDesc(left, right) {
@@ -677,6 +757,7 @@ function findCodexAppBundledMarketplaceSource({
   pathExists = defaultPathExists,
   windowsAppsRoots,
   bundledMarketplaceSource,
+  codexHome,
 } = {}) {
   if (bundledMarketplaceSource && pathExists(bundledMarketplaceSource)) {
     return normalizeWindowsPathForToml(bundledMarketplaceSource);
@@ -715,7 +796,7 @@ function findCodexAppBundledMarketplaceSource({
     }
   }
 
-  return null;
+  return findCodexAppMaterializedMarketplaceSource(codexHome, pathExists);
 }
 
 function ensureOpenAiBundledMarketplace(lines, options = {}) {
@@ -1083,6 +1164,29 @@ function planCodexStaleDisabledCommentCleanup(configText, table, key) {
   };
 }
 
+function planCodexBundledSourceCommentRecovery(configText, desiredValue) {
+  const table = "marketplaces.openai-bundled";
+  const locator = { table, key: "source" };
+  const parsed = parseCodexConfigLocators(configText);
+  const header = assertSinglePlanningTable(parsed, table);
+  const prefix = "# Meta_Kim disabled conflicting [marketplaces.openai-bundled].source:";
+  const comments = parsed.records.filter(record => record.body.startsWith(prefix));
+  if (comments.length === 0) return null;
+  if (comments.length !== 1) throw new Error("Codex config managed disabled comment is ambiguous: marketplaces.openai-bundled.source");
+  const comment = comments[0];
+  const nextHeader = header && parsed.records.find(record => record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body));
+  const original = comment.body.slice(prefix.length).trimStart();
+  if (
+    !header || comment.start < header.end || comment.start >= (nextHeader?.start ?? configText.length) ||
+    !/^source\s*=\s*(?:'[^']*'|"(?:[^"\\]|\\.)*")\s*(?:#.*)?$/u.test(original)
+  ) throw new Error("Codex config managed disabled comment drifted: marketplaces.openai-bundled.source");
+  const afterFragment = `source = ${desiredValue}`;
+  return {
+    text: `${configText.slice(0, comment.start)}${afterFragment}${configText.slice(comment.bodyEnd)}`,
+    mutation: { kind: "replace", locator, beforeFragment: comment.body, afterFragment },
+  };
+}
+
 function planCodexNotifyMutation(configText, platformName, options) {
   if (platformName !== "win32" || !/terminal-notifier/u.test(configText)) {
     return { text: configText, mutation: null };
@@ -1310,7 +1414,10 @@ export function planCodexAppNativeControls(configText = "", options = {}) {
         : null
     );
     const sourcePlan = sourceToKeep
-      ? planCodexSettingMutation(
+      ? (!existingSource && planCodexBundledSourceCommentRecovery(
+          text,
+          tomlLiteralString(normalizeWindowsPathForToml(sourceToKeep)),
+        )) || planCodexSettingMutation(
           text,
           "marketplaces.openai-bundled",
           "source",
