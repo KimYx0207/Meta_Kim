@@ -758,6 +758,7 @@ function findCodexAppBundledMarketplaceSource({
   windowsAppsRoots,
   bundledMarketplaceSource,
   codexHome,
+  existingSource,
 } = {}) {
   if (bundledMarketplaceSource && pathExists(bundledMarketplaceSource)) {
     return normalizeWindowsPathForToml(bundledMarketplaceSource);
@@ -796,6 +797,7 @@ function findCodexAppBundledMarketplaceSource({
     }
   }
 
+  if (existingSource && !isStaleBundledMarketplaceSource(existingSource, pathExists)) return null;
   return findCodexAppMaterializedMarketplaceSource(codexHome, pathExists);
 }
 
@@ -803,7 +805,7 @@ function ensureOpenAiBundledMarketplace(lines, options = {}) {
   const sectionName = "marketplaces.openai-bundled";
   const pathExists = options.pathExists ?? defaultPathExists;
   const existingSource = sectionSettingValue(lines, sectionName, "source");
-  const discoveredSource = findCodexAppBundledMarketplaceSource(options);
+  const discoveredSource = findCodexAppBundledMarketplaceSource({ ...options, existingSource });
   const sourceToKeep =
     discoveredSource ??
     (existingSource && !isStaleBundledMarketplaceSource(existingSource, pathExists)
@@ -1164,7 +1166,15 @@ function planCodexStaleDisabledCommentCleanup(configText, table, key) {
   };
 }
 
-function planCodexBundledSourceCommentRecovery(configText, desiredValue) {
+function normalizedWindowsMarketplacePath(source) {
+  if (typeof source !== "string" || !source) return null;
+  const ordinary = source.replace(/\//gu, "\\")
+    .replace(/^\\\\\?\\UNC\\/iu, "\\\\")
+    .replace(/^\\\\\?\\/u, "");
+  return path.win32.normalize(ordinary).replace(/\\+$/u, "").toLowerCase();
+}
+
+function planCodexBundledSourceCommentRecovery(configText, source, codexHome) {
   const table = "marketplaces.openai-bundled";
   const locator = { table, key: "source" };
   const parsed = parseCodexConfigLocators(configText);
@@ -1180,7 +1190,18 @@ function planCodexBundledSourceCommentRecovery(configText, desiredValue) {
     !header || comment.start < header.end || comment.start >= (nextHeader?.start ?? configText.length) ||
     !/^source\s*=\s*(?:'[^']*'|"(?:[^"\\]|\\.)*")\s*(?:#.*)?$/u.test(original)
   ) throw new Error("Codex config managed disabled comment drifted: marketplaces.openai-bundled.source");
-  const afterFragment = `source = ${desiredValue}`;
+  const materializedSource = codexHome && path.isAbsolute(withoutExtendedWindowsPrefix(codexHome))
+    ? path.join(path.resolve(withoutExtendedWindowsPrefix(codexHome)), ".tmp", "bundled-marketplaces", "openai-bundled")
+    : null;
+  if (materializedSource && normalizedWindowsMarketplacePath(source) === normalizedWindowsMarketplacePath(materializedSource)) {
+    const rhs = codeBeforeTomlComment(original.replace(/^source\s*=\s*/u, "")).trim();
+    let originalSource;
+    try { originalSource = rhs.startsWith("'") ? rhs.slice(1, -1) : JSON.parse(rhs); } catch { originalSource = null; }
+    if (normalizedWindowsMarketplacePath(originalSource) !== normalizedWindowsMarketplacePath(materializedSource)) {
+      throw new Error("Codex config managed disabled source differs from App materialization");
+    }
+  }
+  const afterFragment = `source = ${tomlLiteralString(normalizeWindowsPathForToml(source))}`;
   return {
     text: `${configText.slice(0, comment.start)}${afterFragment}${configText.slice(comment.bodyEnd)}`,
     mutation: { kind: "replace", locator, beforeFragment: comment.body, afterFragment },
@@ -1407,6 +1428,7 @@ export function planCodexAppNativeControls(configText = "", options = {}) {
       ...options,
       platformName,
       pathExists,
+      existingSource,
     });
     const sourceToKeep = discoveredSource ?? (
       existingSource && !isStaleBundledMarketplaceSource(existingSource, pathExists)
@@ -1416,7 +1438,8 @@ export function planCodexAppNativeControls(configText = "", options = {}) {
     const sourcePlan = sourceToKeep
       ? (!existingSource && planCodexBundledSourceCommentRecovery(
           text,
-          tomlLiteralString(normalizeWindowsPathForToml(sourceToKeep)),
+          sourceToKeep,
+          options.codexHome,
         )) || planCodexSettingMutation(
           text,
           "marketplaces.openai-bundled",

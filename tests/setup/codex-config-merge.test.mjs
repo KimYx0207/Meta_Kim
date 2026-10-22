@@ -83,6 +83,59 @@ describe("Codex config merge", () => {
     assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
   });
 
+  test("App materialization S1: valid fallback cannot replace an existing real user source", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const custom = path.join(fixture.root, "user-custom-marketplace");
+    mkdirSync(custom);
+    const customSource = custom.replace(/\\/gu, "/");
+    const sourceLine = `source = '${customSource}'`;
+    const input = `[marketplaces.openai-bundled]\nsource_type = "local"\n${sourceLine}\n# user owns this source\n`;
+    const planned = planCodexAppNativeControls(input, fixture.options);
+    assert.ok(planned.text.split(/\r?\n/u).includes(sourceLine), "new materialization discovery must preserve the active user source");
+    assert.ok(!planned.mutations.some(({ locator }) => locator.table === "marketplaces.openai-bundled" && locator.key === "source"));
+    assert.ok(ensureCodexAppNativeControls(input, fixture.options).split(/\r?\n/u).includes(sourceLine));
+    assert.equal(planCodexAppNativeControls(planned.text, fixture.options).text, planned.text);
+    assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
+  });
+
+  test("App materialization S2: another legal source in an owned comment is not authorization to restore", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const other = path.join(fixture.root, "user-changed-source").replace(/\\/gu, "/");
+    const disabled = `# Meta_Kim disabled conflicting [marketplaces.openai-bundled].source: source = '${other}'`;
+    const input = `[marketplaces.openai-bundled]\nsource_type = "local"\n${disabled}\n# preserve user note\n`;
+    assert.throws(() => planCodexAppNativeControls(input, fixture.options), /disabled source differs from App materialization/u);
+  });
+
+  test("App materialization S2: equivalent Windows slash case and extended prefix restore exactly", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const variants = [fixture.source, fixture.marketplaceRoot.replace(/\\/gu, "/").toUpperCase()];
+    if (/^[A-Za-z]:\\/u.test(fixture.marketplaceRoot)) variants.push(`//?/${fixture.marketplaceRoot.replace(/\\/gu, "/").toUpperCase()}/`);
+    for (const source of variants) {
+      const disabled = `# Meta_Kim disabled conflicting [marketplaces.openai-bundled].source: source = '${source}'`;
+      const input = `[marketplaces.openai-bundled]\nsource_type = "local"\n${disabled}\n# preserve user note\n`;
+      const planned = planCodexAppNativeControls(input, fixture.options);
+      assert.ok(planned.text.split(/\r?\n/u).includes(`source = '${fixture.source}'`));
+      assert.doesNotMatch(planned.text, /Meta_Kim disabled conflicting \[marketplaces\.openai-bundled\]\.source/u);
+      assert.equal(planCodexAppNativeControls(planned.text, fixture.options).text, planned.text);
+      assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
+    }
+  });
+
+  test("App materialization S1: known-stale source permits fallback and explicit stable priority is unchanged", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const stale = path.join(fixture.root, "missing", "bundled-marketplaces", "openai-bundled").replace(/\\/gu, "/");
+    const input = `[marketplaces.openai-bundled]\nsource_type = "local"\nsource = '${stale}'\n`;
+    const planned = planCodexAppNativeControls(input, fixture.options);
+    assert.ok(planned.text.split(/\r?\n/u).includes(`source = '${fixture.source}'`));
+    assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
+    const stable = path.join(fixture.root, "stable-source");
+    mkdirSync(stable);
+    const expected = /^[A-Za-z]:\\/u.test(stable) ? `\\\\?\\${stable}` : stable;
+    const existing = `[marketplaces.openai-bundled]\nsource_type = "local"\nsource = '${fixture.root.replace(/\\/gu, "/")}'\n`;
+    const stablePlanned = planCodexAppNativeControls(existing, { ...fixture.options, bundledMarketplaceSource: stable });
+    assert.ok(stablePlanned.text.split(/\r?\n/u).includes(`source = '${expected}'`));
+  });
+
   test("App materialization: invalid or escaping declarations are not discovered", (t) => {
     const variants = [
       ["missing key", fixture => rmSync(fixture.keyPath)],
