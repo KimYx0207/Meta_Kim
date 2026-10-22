@@ -302,3 +302,14 @@ test("review regression C2 missing optional identity fields and a legitimate new
   f.raw.revisionResponses = [{ ...f.revision, actionId: undefined, taskPacketId: undefined, deliverableId: undefined }];
   assert.equal(f.project().items[0].state, "verification_unconfirmed", "missing optional bindings are not explicit conflicts");
 });
+
+for (const [field, value] of [["deliverableId", "../../outside"], ["actionId", "../../invalid-action"], ["taskPacketId", { invalid: true }], ["taskId", false], ["roleInstanceId", "../../invalid-task-alias"], ["businessRoleId", ["invalid-task-alias"]]]) test("invalid identity regression C2 explicit " + field + " is not a missing optional binding", () => {
+  const f = reviewRegressionCase();
+  f.raw.revisionResponses = [{ ...f.revision, [field]: value }];
+  f.raw.verificationPacket.verificationResults = [{ ...f.check, [field]: value }];
+  const items = f.project().items;
+  assert.equal(items.length, 1);
+  assert.equal(items[0].state, "recorded", "the malformed response/check is isolated and the original finding retained");
+  assert.equal(items[0].deliverableId, f.target.id, "the original finding still belongs to its real deliverable");
+  assert.doesNotMatch(JSON.stringify(items), /outside|invalid-action|invalid-task-alias/u);
+});

@@ -6454,6 +6454,25 @@ return renderRunOverview;`)(overview, element, (node) => { node.children = []; }
   assert.doesNotMatch(form.view.revisionStatus.textContent, /复验记录通过/u);
 });
 
+test("invalid identity regression C2 deliverable feedback still shows the original finding after malformed response", () => {
+  const runId = "run-a";
+  const taskPacketId = "task-invalid-response";
+  const raw = { schemaVersion: 1, runId, updatedAt: new Date().toISOString(), status: "partial",
+    workerTaskPackets: [{ taskPacketId, ownerAgent: "frontend", roleDisplayName: "frontend" }],
+    workerResultPackets: [{ runId, taskPacketId, ownerAgent: "frontend", status: "executed", resultKind: "actual_local_tool_worker_result", output: { text: "The actual result under review" } }] };
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const target = normalize(buildLiveSnapshot({ governedArtifact: raw })).deliverables[0];
+  const finding = { runId, findingId: "F-original-target", actionId: "A-original-target", taskPacketId, deliverableId: target.id, contentVersion: target.contentVersion };
+  raw.reviewPacket = { findings: [finding] };
+  raw.revisionResponses = [{ ...finding, deliverableId: "../../outside" }];
+  const form = localFeedbackFormHarness();
+  form.paint(normalize(buildLiveSnapshot({ governedArtifact: raw })));
+  form.view.target.value = "deliverable:" + target.id;
+  form.view.target.events.change();
+  assert.match(form.view.revisionStatus.textContent, /已登记问题 · 待修订/u, "the actual shipped per-deliverable filter keeps the original finding visible");
+  assert.doesNotMatch(form.view.revisionStatus.textContent, /尚未收到修订|outside/u);
+});
+
 test("the shipped read observer uses the same-origin route and drops stale versions after failures or old responses", async () => {
   const html = renderLiveControlRoomPage();
   const records = new Map();

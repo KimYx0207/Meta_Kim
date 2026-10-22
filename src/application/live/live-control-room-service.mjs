@@ -935,11 +935,22 @@ function buildRevisionReview(artifact, runId) {
   const knownTasks = new Set(boundedArray(artifact.workerTaskPackets ?? artifact.coreLoop?.thinkingPacket?.workerTaskPackets, LIVE_MAX_NODES).map(taskIdFrom).filter(Boolean));
   const deliverables = collectLiveDeliverables(artifact);
   const version = (record) => /^sha256:[a-f0-9]{64}$/u.test(record?.contentVersion || record?.deliverableVersion || "") ? record.contentVersion || record.deliverableVersion : null;
+  // Check raw presence before safeId can collapse an explicit malformed value
+  // into the same null used for an omitted optional field. Validate every task
+  // alias, including aliases that taskIdFrom's normal precedence would skip.
+  const invalidIdentity = (record) => {
+    const fields = ["findingId", "deliverableId", "actionId", "taskPacketId", "taskId", "roleInstanceId", "businessRoleId"];
+    if (fields.some((key) => record?.[key] !== undefined && record?.[key] !== null && record?.[key] !== "" && !safeId(record[key], null))) return true;
+    return record?.actionIds !== undefined && record?.actionIds !== null &&
+      (!Array.isArray(record.actionIds) || record.actionIds.length > 64 || record.actionIds.some((value) => !safeId(value, null)));
+  };
   // Identity declarations constrain a response when both sides supply a field.
   // A finding's original content version is not immutable across a revision.
   const compatibleResponses = responses.filter((response) => {
+    if (invalidIdentity(response)) return false;
     const finding = findings.find((item) => item.findingId === response.findingId);
     if (!finding) return true;
+    if (invalidIdentity(finding)) return false;
     const conflicting = (left, right) => left && right && left !== right;
     if (conflicting(taskIdFrom(finding), taskIdFrom(response)) || conflicting(safeId(finding.deliverableId, null), safeId(response.deliverableId, null)) || conflicting(safeId(finding.actionId, null), safeId(response.actionId, null))) return false;
     const actionIds = boundedArray(finding.actionIds, 64).map((value) => safeId(value, null)).filter(Boolean);
@@ -962,7 +973,7 @@ function buildRevisionReview(artifact, runId) {
     // Match the record's declared identity, not proof that a command ran or that
     // this is the file's current hash. Self-described command/output fields do
     // not establish execution provenance, even when every binding agrees.
-    const matching = compatibleResponses.includes(row) ? results.filter((item) => item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && knownTasks.has(taskId) && taskIdFrom(item) === taskId && target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion) : [];
+    const matching = compatibleResponses.includes(row) ? results.filter((item) => !invalidIdentity(item) && item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && knownTasks.has(taskId) && taskIdFrom(item) === taskId && target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion) : [];
     const state = matching.length ? "verification_unconfirmed" : compatibleResponses.includes(row) ? "pending_verification" : "recorded";
     const id = publicId("revision", `${runId}:${findingId}:${actionId || ""}:${taskId || ""}:${targetId || ""}:${contentVersion || ""}`);
     if (seen.has(id)) continue;
