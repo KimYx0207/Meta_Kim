@@ -1802,7 +1802,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function nodeShortStateCopy(node) {
     const state = nodeDisplayState(node);
     if (state === "planned") return currentLanguage === "zh" ? "尚未派发" : "Not dispatched";
-    if (state === "unreported") return currentLanguage === "zh" ? "缺执行证据" : "No evidence";
+    if (state === "unreported") return nodeStateCopy(node);
     if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "待验证" : "To verify";
     return localize(state);
   }
@@ -4788,10 +4788,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
         prepare.disabled = !raw.value.trim();
         copy.disabled = true;
         notice.textContent = view.idleNotice;
+        view.noticePrepared = undefined;
+        view.copyAttempt = undefined;
       });
       prepared.addEventListener("input", () => {
         localFeedbackDrafts.get(view.context).prepared = prepared.value;
         copy.disabled = !prepared.value.trim();
+        notice.textContent = view.idleNotice;
+        view.noticePrepared = undefined;
+        view.copyAttempt = undefined;
       });
       prepare.addEventListener("click", () => {
         const draft = localFeedbackDrafts.get(view.context);
@@ -4799,19 +4804,28 @@ const CLIENT_SCRIPT = String.raw`(() => {
         prepared.value = draft.prepared;
         copy.disabled = !draft.prepared.trim();
         notice.textContent = view.idleNotice;
+        view.noticePrepared = undefined;
+        view.copyAttempt = undefined;
       });
       copy.addEventListener("click", async () => {
         const draft = localFeedbackDrafts.get(view.context);
         const contextKey = localFeedbackDrafts.key(view.context);
         const value = draft.prepared;
+        if (!value.trim()) return;
+        const attempt = {};
+        view.copyAttempt = attempt;
         try {
-          if (!value.trim() || !navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+          if (typeof navigator.clipboard?.writeText !== "function") throw new Error("clipboard unavailable");
           await navigator.clipboard.writeText(value);
-          if (localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
-          notice.textContent = currentLanguage === "zh" ? "已复制反馈；粘贴到当前 Codex 对话后继续修订。" : "Feedback copied; paste into the current Codex conversation to continue revising.";
+          if (view.copyAttempt !== attempt || localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
+          view.noticePrepared = value;
+          notice.textContent = currentLanguage === "zh" ? "已复制，尚未提交；请粘贴到负责此运行的 Codex 对话继续修订。" : "Copied, not submitted; paste into the Codex conversation responsible for this run to continue revising.";
         } catch {
-          if (localFeedbackDrafts.key(view.context) !== contextKey) return;
-          notice.textContent = currentLanguage === "zh" ? "剪贴板不可用；请选中上方反馈文本手动复制。" : "Clipboard unavailable; select and copy the feedback text above.";
+          if (view.copyAttempt !== attempt || localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
+          view.noticePrepared = value;
+          prepared.focus({ preventScroll: true });
+          prepared.select();
+          notice.textContent = currentLanguage === "zh" ? "剪贴板不可用，尚未提交；已选中反馈文本，请手动复制后粘贴到负责此运行的 Codex 对话。" : "Clipboard unavailable, not submitted; the feedback text is selected. Copy it manually and paste into the Codex conversation responsible for this run.";
         }
       });
     }
@@ -4859,9 +4873,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     view.prepare.disabled = !draft.original.trim();
     view.copy.disabled = !draft.prepared.trim();
     view.idleNotice = currentLanguage === "zh"
-      ? "草稿仅保留在本页面。复制反馈，粘贴到当前 Codex 对话后继续修订。"
-      : "Drafts stay in this page. Copy feedback, then paste into the current Codex conversation to continue revising.";
-    if (view.lastContextKey !== localFeedbackDrafts.key(context)) view.notice.textContent = view.idleNotice;
+      ? "草稿仅保留在本页面，尚未提交。复制后粘贴到负责此运行的 Codex 对话继续修订。"
+      : "Drafts stay in this page and are not submitted. Copy, then paste into the Codex conversation responsible for this run to continue revising.";
+    // A copy receipt belongs to one target and one exact text, including edits
+    // made in the other feedback surface before this snapshot paint.
+    if (view.lastContextKey !== localFeedbackDrafts.key(context)
+      || (view.noticePrepared !== undefined && view.noticePrepared !== draft.prepared)) {
+      view.notice.textContent = view.idleNotice;
+      view.noticePrepared = undefined;
+      view.copyAttempt = undefined;
+    }
     view.lastContextKey = localFeedbackDrafts.key(context);
     if (view.root.parentNode !== host) host.append(view.root);
   }

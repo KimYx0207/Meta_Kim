@@ -154,7 +154,21 @@ ${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((na
 return (node) => [nodeDisplayState(node), nodeStateCopy(node), nodeShortStateCopy(node)];`)(displayFormat);
   assert.deepEqual(view({ displayState: "planned", executionState: "not_executed", status: "pending" }), ["planned", "仅规划 · 尚未派发", "尚未派发"]);
   assert.deepEqual(view({ displayState: "in_doubt", executionState: "executed", status: "in_doubt" }), ["in_doubt", "已执行 · 待验证", "待验证"]);
-  assert.deepEqual(view({ displayState: "unreported", executionState: "unreported", status: "pending" }), ["unreported", "未收到执行回写", "缺执行证据"]);
+  assert.deepEqual(view({ displayState: "unreported", executionState: "unreported", status: "pending" }), ["unreported", "未收到执行回写", "未收到执行回写"]);
+});
+
+test("missing execution reports keep the same graph and detail meaning without becoming failed", () => {
+  const html = renderLiveControlRoomPage();
+  const view = new Function(`
+const currentLanguage = "en";
+const display = (value, fallback) => value ?? fallback;
+const localize = (value) => value;
+${["nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy", "stateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
+return (node) => ({ state: nodeDisplayState(node), detail: nodeStateCopy(node), graph: nodeShortStateCopy(node) });`)();
+  const unreported = view({ displayState: "unreported", executionState: "unreported", status: "pending" });
+  assert.deepEqual(unreported, { state: "unreported", detail: "No execution report", graph: "No execution report" });
+  assert.equal(view({ displayState: "failed", status: "failed" }).state, "failed");
+  assert.notEqual(unreported.detail, view({ displayState: "failed", status: "failed" }).detail);
 });
 
 function modalBehaviorHarness() {
@@ -6349,6 +6363,129 @@ return handleGraphCardResize;`)(state, { dataset: { semanticZoom: "card" } }, { 
   assert.equal(frames.length, 0, "settled sizes do not schedule another pass");
 });
 
+function localFeedbackFormHarness(clipboard, language = "zh") {
+  const html = renderLiveControlRoomPage();
+  const element = (tagName, className = "", textContent = "") => ({
+    tagName, className, textContent, dataset: {}, children: [], parentNode: null, value: "", events: {}, focusCount: 0, selectCount: 0,
+    append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
+    setAttribute() {}, addEventListener(type, handler) { this.events[type] = handler; },
+    focus() { this.focusCount += 1; }, select() { this.selectCount += 1; this.selectionStart = 0; this.selectionEnd = this.value.length; },
+  });
+  const drafts = createLocalFeedbackDraftStore();
+  const surfaces = new Map();
+  const render = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", "navigator", "currentLanguage", `
+const selectedProjectId = "project-a";
+${shippedHelper(html, "renderLocalFeedback")}
+return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.children = []; }, liveDeliverablesForNode, buildLocalFeedbackText, { clipboard }, language);
+  const host = element("div");
+  const snapshot = { run: { id: "run-a", title: "当前运行" }, evidence: [], deliverables: [] };
+  render(host, snapshot, null, "inspector");
+  const view = surfaces.get("inspector");
+  return { view, drafts, snapshot,
+    paint: (nextSnapshot = snapshot, selected = null) => render(host, nextSnapshot, selected, "inspector"),
+    prepare(original = "只修连线，保留其余结果。") { view.raw.value = original; view.raw.events.input(); view.prepare.events.click(); return view.prepared.value; },
+  };
+}
+
+test("editing copied feedback immediately returns the handoff to unsubmitted", async () => {
+  const { view, prepare, paint } = localFeedbackFormHarness({ writeText: async () => {} });
+  const prepared = prepare();
+  await view.copy.events.click();
+  assert.match(view.notice.textContent, /已复制.*尚未提交/u);
+  view.prepared.value = prepared + "\n新增验收要求";
+  view.prepared.events.input();
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  assert.match(view.notice.textContent, /尚未提交/u);
+  paint();
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  await view.copy.events.click();
+  paint();
+  assert.match(view.notice.textContent, /已复制.*尚未提交/u, "a normal snapshot paint preserves a current copy receipt");
+  view.raw.value += "\n改动原话";
+  view.raw.events.input();
+  assert.equal(view.prepared.value, "");
+  assert.equal(view.copy.disabled, true);
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+});
+
+test("clipboard failure selects the current feedback for manual handoff without claiming delivery", async () => {
+  for (const clipboard of [undefined, { writeText: async () => { throw new Error("denied"); } }]) {
+    const { view, prepare } = localFeedbackFormHarness(clipboard);
+    const text = prepare();
+    await view.copy.events.click();
+    assert.equal(view.prepared.value, text);
+    assert.equal(view.prepared.focusCount, 1);
+    assert.equal(view.prepared.selectCount, 1);
+    assert.deepEqual([view.prepared.selectionStart, view.prepared.selectionEnd], [0, text.length]);
+    assert.match(view.notice.textContent, /尚未提交.*已选中.*手动复制/u);
+    assert.doesNotMatch(view.notice.textContent, /已发送|已处理|已提交/u);
+  }
+});
+
+test("English feedback notices distinguish copying from submission and explain manual fallback", async () => {
+  for (const available of [true, false]) {
+    const { view, prepare } = localFeedbackFormHarness(available ? { writeText: async () => {} } : undefined, "en");
+    prepare();
+    assert.match(view.notice.textContent, /not submitted/u);
+    await view.copy.events.click();
+    assert.match(view.notice.textContent, available ? /Copied, not submitted; paste/u : /not submitted.*selected.*Copy it manually/u);
+  }
+});
+
+test("late clipboard results cannot replace the notice or select a newer draft or run", async () => {
+  for (const outcome of ["resolve", "reject"]) {
+    for (const change of ["edit", "run"]) {
+      let settle;
+      const pending = new Promise((resolve, reject) => { settle = outcome === "resolve" ? resolve : () => reject(new Error("denied")); });
+      const { view, prepare, paint, snapshot } = localFeedbackFormHarness({ writeText: () => pending });
+      prepare();
+      const copying = view.copy.events.click();
+      if (change === "edit") {
+        view.prepared.value += "\n复制开始后新增内容";
+        view.prepared.events.input();
+      } else {
+        paint({ ...snapshot, run: { id: "run-b", title: "另一次运行" } });
+        prepare("另一运行的反馈");
+      }
+      const currentText = view.prepared.value;
+      const currentNotice = view.notice.textContent;
+      settle();
+      await copying;
+      assert.equal(view.prepared.value, currentText);
+      assert.equal(view.notice.textContent, currentNotice, outcome + " cannot overwrite " + change);
+      assert.equal(view.prepared.focusCount, 0);
+      assert.equal(view.prepared.selectCount, 0);
+      assert.doesNotMatch(view.notice.textContent, /已复制|剪贴板不可用/u);
+    }
+  }
+});
+
+test("a second feedback surface cannot retain a copy receipt after the shared draft changes", async () => {
+  const { view, prepare, drafts, paint } = localFeedbackFormHarness({ writeText: async () => {} });
+  prepare();
+  await view.copy.events.click();
+  drafts.get(view.context).prepared += "\n另一视图的编辑";
+  paint();
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  assert.match(view.notice.textContent, /尚未提交/u);
+});
+
+test("an older clipboard attempt cannot replace the receipt of a newer copy of the same text", async () => {
+  let rejectFirst;
+  let attempts = 0;
+  const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+  const { view, prepare } = localFeedbackFormHarness({ writeText: () => ++attempts === 1 ? first : Promise.resolve() });
+  prepare();
+  const previous = view.copy.events.click();
+  await view.copy.events.click();
+  const copiedNotice = view.notice.textContent;
+  assert.match(copiedNotice, /已复制.*尚未提交/u);
+  rejectFirst(new Error("late denial"));
+  await previous;
+  assert.equal(view.notice.textContent, copiedNotice);
+  assert.equal(view.prepared.selectCount, 0);
+});
+
 test("the shipped feedback form survives snapshot paints and switching references without rewriting original text", async () => {
   const html = renderLiveControlRoomPage();
   const element = (tagName, className = "", textContent = "") => ({
@@ -6395,7 +6532,7 @@ return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.childr
   assert.equal(view.prepared.value, prepared);
   await view.copy.events.click();
   assert.deepEqual(copied, [prepared]);
-  assert.match(view.notice.textContent, /已复制.*粘贴/u);
+  assert.match(view.notice.textContent, /已复制.*尚未提交.*粘贴/u);
   assert.doesNotMatch(view.notice.textContent, /已发送|已处理/u);
   render(host, { ...snapshot, deliverables: [] }, nodeA, "inspector");
   assert.equal(view.raw.value, original, "a missing descriptor in the next snapshot must not discard its draft");
@@ -6496,7 +6633,7 @@ return (node) => ({ state: nodeDisplayState(node), summary: nodeStateCopy(node),
   assert.equal(snapshot.nodes[0].executionState, "executed");
   assert.deepEqual(view(snapshot.nodes[0]), { state: "in_doubt", summary: "已执行 · 待验证", graph: "待验证" });
   assert.equal(view(snapshot.nodes[1]).state, "completed");
-  assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "缺执行证据" });
+  assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "未收到执行回写" });
 });
 
 test("first overview synchronizes actual layout scale and tier even when the camera value has not changed", () => {
