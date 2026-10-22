@@ -90,7 +90,11 @@ export function buildNativeCodexLiveSnapshot(observation) {
       node.timing.completedAt = agent.completedAt;
       node.lastAt = agent.completedAt;
     } else {
-      node.statusReason = agent.childMetadataVerified ? "已核对原生派发及子会话关联，尚未观察到子任务结束。" : "已观察到原生派发；子会话结束状态尚未核实。";
+      node.status = "in_doubt";
+      node.active = false;
+      node.displayState = "in_doubt";
+      node.executionState = "unknown";
+      node.statusReason = "已观察到原生派发，但尚未确认返回；子任务当前执行状态未知。";
     }
     addEvidence(node, evidence({ runId, taskId, nodeId, eventId: agent.id, at: agent.at, sha256: agent.sha256, label: "原生子任务已派发" }));
     if (agent.completed && agent.childMetadataVerified) {
@@ -98,7 +102,7 @@ export function buildNativeCodexLiveSnapshot(observation) {
     }
     nodes.push(node);
     edges.push({ id: id("edge", agent.id), from: mainId, to: nodeId, kind: "spawned" });
-    replay.push({ id: id("event", agent.id), type: "agent_spawned", kind: "agent", nodeId, at: agent.at, status: "active", label: node.label, summary: "来自同一原生父会话的派发事件。" });
+    replay.push({ id: id("event", agent.id), type: "agent_spawned", kind: "agent", nodeId, at: agent.at, status: "observed", label: node.label, summary: "来自同一原生父会话的派发事件；当前是否仍在执行未确认。" });
     if (agent.completed && agent.childMetadataVerified) replay.push({ id: id("event", `${agent.id}:return`), type: "agent_returned", kind: "agent", nodeId, at: agent.completedAt, status: "executed", label: node.label, summary: node.statusReason });
   }
   main.toolCount = main.toolCalls.length;
@@ -129,7 +133,7 @@ export function buildNativeCodexLiveSnapshot(observation) {
   // The latter is deliberately never inferred from a native terminal event.
   const agents = observation.agents || [];
   const returnedAgentCount = agents.filter((agent) => agent.completed && agent.childMetadataVerified).length;
-  const executionSummary = { observedAgentCount: agents.length, returnedAgentCount, activeAgentCount: agents.length - returnedAgentCount, returnedToolCount: toolCalls.length, failedToolCount: toolCalls.filter((tool) => tool.status === "failed").length, acceptanceState: "unproven" };
+  const executionSummary = { observedAgentCount: agents.length, returnedAgentCount, unconfirmedAgentCount: agents.length - returnedAgentCount, returnedToolCount: toolCalls.length, failedToolCount: toolCalls.filter((tool) => tool.status === "failed").length, acceptanceState: "unproven" };
   const conversation = { sourceRuntime: "codex", conversationLinkState: "verified", conversationRef: observation.threadId, conversationDiscovery: { state: "verified", runtime: "codex", reason: "explicit_thread_turn_and_native_cwd_match" }, verifiedLinks: [{ sourceRuntime: "codex", conversationRef: observation.threadId, matchBasis: "native_session_metadata" }], candidateLinks: [] };
   return {
     schemaVersion: "meta-kim-live-snapshot-v1",

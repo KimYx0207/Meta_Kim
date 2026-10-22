@@ -926,7 +926,7 @@ function completionIsProven(artifact, runId = null) {
 }
 
 /** Project the existing revision chain; status words alone never close a fix. */
-function buildRevisionReview(artifact, runId, observedAt = new Date().toISOString(), staleAfterMs = LIVE_STALE_AFTER_MS) {
+function buildRevisionReview(artifact, runId) {
   if (!artifact || normalizeLiveRunId(artifact.runId) !== runId) return { state: "not_reported", items: [] };
   const belongs = (record) => record && typeof record === "object" && !Array.isArray(record) && (!record.runId || record.runId === runId);
   const findings = boundedArray(artifact.reviewPacket?.findings, 64).filter(belongs);
@@ -935,34 +935,41 @@ function buildRevisionReview(artifact, runId, observedAt = new Date().toISOStrin
   const knownTasks = new Set(boundedArray(artifact.workerTaskPackets ?? artifact.coreLoop?.thinkingPacket?.workerTaskPackets, LIVE_MAX_NODES).map(taskIdFrom).filter(Boolean));
   const deliverables = collectLiveDeliverables(artifact);
   const version = (record) => /^sha256:[a-f0-9]{64}$/u.test(record?.contentVersion || record?.deliverableVersion || "") ? record.contentVersion || record.deliverableVersion : null;
-  const rows = [...responses, ...findings.filter((finding) => !responses.some((row) => row.findingId === finding.findingId))]
+  // Identity declarations constrain a response when both sides supply a field.
+  // A finding's original content version is not immutable across a revision.
+  const compatibleResponses = responses.filter((response) => {
+    const finding = findings.find((item) => item.findingId === response.findingId);
+    if (!finding) return true;
+    const conflicting = (left, right) => left && right && left !== right;
+    if (conflicting(taskIdFrom(finding), taskIdFrom(response)) || conflicting(safeId(finding.deliverableId, null), safeId(response.deliverableId, null)) || conflicting(safeId(finding.actionId, null), safeId(response.actionId, null))) return false;
+    const actionIds = boundedArray(finding.actionIds, 64).map((value) => safeId(value, null)).filter(Boolean);
+    const responseAction = safeId(response.actionId, null);
+    return !responseAction || !Array.isArray(finding.actionIds) || !finding.actionIds.length || actionIds.includes(responseAction);
+  });
+  const rows = [...compatibleResponses, ...findings.filter((finding) => !compatibleResponses.some((row) => row.findingId === finding.findingId))]
     .sort((left, right) => (Date.parse(safeTimestamp(right.updatedAt || right.revisedAt)) || 0) - (Date.parse(safeTimestamp(left.updatedAt || left.revisedAt)) || 0));
   const seen = new Set();
   const items = [];
   for (const row of rows) {
     const findingId = safeId(row.findingId, null);
-    const actionId = safeId(row.actionId, null);
     if (!findingId) continue;
     const finding = findings.find((item) => item.findingId === findingId);
+    const actionId = safeId(row.actionId || finding?.actionId, null);
     const taskId = taskIdFrom(row) || taskIdFrom(finding);
-    if (taskId && !knownTasks.has(taskId)) continue;
     const targetId = safeId(row.deliverableId || finding?.deliverableId, null);
     const target = deliverables.find((item) => item.id === targetId && (!taskId || item.taskPacketId === taskId));
     const contentVersion = version(row);
-    const currentVersion = target && publicLiveDeliverable(target, publicTaskBinding, { contentObserved: true })?.contentVersion;
-    const revisionAt = safeTimestamp(row.updatedAt || row.revisedAt);
-    const matching = results.filter((item) => item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && taskId && taskIdFrom(item) === taskId && target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion && currentVersion === contentVersion);
-    // A check cannot supply either missing predecessor in the existing chain.
-    const actual = finding && responses.includes(row) ? matching.filter((item) => item.synthetic !== true && !evidenceIsStructuralOnly(item) && item.status === "verified" &&
-      workerEvidenceStatus(item) === "completed" && !isStale(safeTimestamp(item.runAt), observedAt, staleAfterMs) &&
-      !isStale(safeTimestamp(item.commandRanAt), observedAt, staleAfterMs) && (!revisionAt || Date.parse(item.commandRanAt) >= Date.parse(revisionAt))) : [];
-    const state = actual.length ? "verified" : matching.length ? "verification_unconfirmed" : responses.includes(row) ? "pending_verification" : "recorded";
+    // Match the record's declared identity, not proof that a command ran or that
+    // this is the file's current hash. Self-described command/output fields do
+    // not establish execution provenance, even when every binding agrees.
+    const matching = compatibleResponses.includes(row) ? results.filter((item) => item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && knownTasks.has(taskId) && taskIdFrom(item) === taskId && target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion) : [];
+    const state = matching.length ? "verification_unconfirmed" : compatibleResponses.includes(row) ? "pending_verification" : "recorded";
     const id = publicId("revision", `${runId}:${findingId}:${actionId || ""}:${taskId || ""}:${targetId || ""}:${contentVersion || ""}`);
     if (seen.has(id)) continue;
     seen.add(id);
     items.push({ id, runId, findingId: publicId("finding", findingId), actionId: actionId ? publicId("action", actionId) : null,
-      taskPacketId: publicTaskBinding(taskId), deliverableId: target?.id || null, contentVersion,
-      state, verificationObservedAt: actual.length ? safeTimestamp(actual.at(-1).commandRanAt) : null });
+      taskPacketId: knownTasks.has(taskId) ? publicTaskBinding(taskId) : null, deliverableId: target?.id || null, contentVersion,
+      state, verificationObservedAt: null });
     if (items.length === 64) break;
   }
   return { state: items.length ? "reported" : "not_reported", items };
@@ -3293,7 +3300,7 @@ export function buildLiveSnapshot({
       .filter((item) => item?.runId === run.runId)
       .map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: Boolean(compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION) })).filter(Boolean),
     revisionReview: compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
-      ? buildRevisionReview(compatibleArtifact, run.runId, safeObservedAt, staleAfterMs) : sanitizeRevisionReview(projection.revisionReview, run.runId),
+      ? buildRevisionReview(compatibleArtifact, run.runId) : sanitizeRevisionReview(projection.revisionReview, run.runId),
     scheduling,
     nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),
     declaredPlan: sanitizeDeclaredPlan(projection.declaredPlan),

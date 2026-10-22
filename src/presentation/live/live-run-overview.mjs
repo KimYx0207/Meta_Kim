@@ -18,8 +18,8 @@ function overviewActivityState(record) {
 /** Native return counters never share the accepted-completion counter. */
 export function normalizeLiveExecutionSummary(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || value.acceptanceState !== "unproven") return null;
-  const keys = ["observedAgentCount", "returnedAgentCount", "activeAgentCount", "returnedToolCount", "failedToolCount"];
-  if (keys.some((key) => !Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 4096) || value.returnedAgentCount + value.activeAgentCount !== value.observedAgentCount || value.failedToolCount > value.returnedToolCount) return null;
+  const keys = ["observedAgentCount", "returnedAgentCount", "unconfirmedAgentCount", "returnedToolCount", "failedToolCount"];
+  if (keys.some((key) => !Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 4096) || value.returnedAgentCount + value.unconfirmedAgentCount !== value.observedAgentCount || value.failedToolCount > value.returnedToolCount) return null;
   return Object.fromEntries([...keys.map((key) => [key, value[key]]), ["acceptanceState", "unproven"]]);
 }
 
@@ -27,7 +27,7 @@ export function normalizeLiveExecutionSummary(value) {
 export function normalizeLiveRevisionReview(value, runId) {
   const items = (Array.isArray(value?.items) ? value.items : []).slice(0, 64).flatMap((item) => {
     if (item?.runId !== runId || !/^revision:[a-f0-9]{20}$/u.test(item.id || "") || !/^finding:[a-f0-9]{20}$/u.test(item.findingId || "")) return [];
-    const state = ["recorded", "pending_verification", "verification_unconfirmed", "verified"].includes(item.state) ? item.state : "verification_unconfirmed";
+    const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
     return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
       taskPacketId: /^task:[a-f0-9]{20}$/u.test(item.taskPacketId || "") ? item.taskPacketId : null,
       deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,

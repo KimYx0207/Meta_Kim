@@ -185,7 +185,7 @@ test("HTTP opening is read-only, sandboxed, run-bound, and absent from public sh
   assert.equal(externalResponse.headers.get("x-meta-kim-content-version"), null, "rendering an external reference has not read its remote content");
 });
 
-test("revision verification needs the exact run, task, action, content version and a fresh recorded command", () => {
+test("revision records match exact identity while self-described command fields remain execution-unconfirmed", () => {
   const raw = artifact();
   const target = collectLiveDeliverables(raw).find((item) => item.text !== undefined);
   const version = publicLiveDeliverable(target, (id) => id, { contentObserved: true }).contentVersion;
@@ -196,7 +196,8 @@ test("revision verification needs the exact run, task, action, content version a
   const check = { ...revision, status: "verified", command: "node --check fixture.mjs", runBy: "backend", runAt: now, commandRanAt: now, observedResult: "exit code 0", successMarkerFormat: "exit-code-only", exitCode: 0 };
   raw.verificationPacket = { verificationResults: [check] };
   const project = () => buildLiveSnapshot({ governedArtifact: raw, observedAt: now }).revisionReview;
-  assert.equal(project().items[0].state, "verified");
+  assert.equal(project().items[0].state, "verification_unconfirmed");
+  assert.equal(project().items[0].verificationObservedAt, null);
   assert.doesNotMatch(JSON.stringify(project()), /private|fixture\.mjs|script|fixArtifact/u);
   for (const mutation of [{ runId: "other" }, { taskPacketId: "other" }, { actionId: "other" }, { contentVersion: "sha256:" + "f".repeat(64) }, { deliverableId: "other" }]) {
     raw.verificationPacket.verificationResults = [{ ...check, ...mutation }];
@@ -213,7 +214,7 @@ test("revision verification needs the exact run, task, action, content version a
   assert.equal(project().items[0].state, "pending_verification");
   delete raw.revisionResponses;
   raw.verificationPacket = { revisionResponses: [revision], verificationResults: [check] };
-  assert.equal(project().items[0].state, "verified", "existing verificationPacket revision records use the same binding");
+  assert.equal(project().items[0].state, "verification_unconfirmed", "existing verificationPacket records remain visible without self-attesting execution");
 });
 
 test("revision verification cannot skip a known finding or an explicit revision response", () => {
@@ -229,9 +230,75 @@ test("revision verification cannot skip a known finding or an explicit revision 
   const project = () => buildLiveSnapshot({ governedArtifact: raw, observedAt: now }).revisionReview;
   assert.equal(project().items[0].state, "verification_unconfirmed", "an unknown finding cannot close a revision chain");
   raw.reviewPacket.findings = [{ ...revision, summary: "Known finding" }];
-  assert.equal(project().items[0].state, "verified", "the complete known chain retains its passing recorded check");
+  assert.equal(project().items[0].state, "verification_unconfirmed", "the complete known chain retains its recheck record without attesting execution");
   delete raw.revisionResponses;
-  assert.equal(project().items[0].state, "verification_unconfirmed", "a finding plus check cannot invent the missing revision response");
+  assert.equal(project().items[0].state, "recorded", "a finding plus check cannot invent the missing revision response");
   raw.verificationPacket.revisionResponses = [revision];
-  assert.equal(project().items[0].state, "verified");
+  assert.equal(project().items[0].state, "verification_unconfirmed");
+});
+
+function reviewRegressionCase() {
+  const raw = artifact();
+  const target = collectLiveDeliverables(raw).find((item) => item.text !== undefined);
+  const contentVersion = publicLiveDeliverable(target, (id) => id, { contentObserved: true }).contentVersion;
+  const now = "2026-10-22T08:00:00.000Z";
+  const revision = { runId, findingId: "F-review", actionId: "A-review", taskPacketId, deliverableId: target.id, contentVersion };
+  const check = { ...revision, status: "verified", command: "node never-executed.mjs", runBy: "backend", runAt: now, commandRanAt: now, observedResult: "claimed exit code 0", successMarkerFormat: "exit-code-only", exitCode: 0 };
+  raw.reviewPacket = { findings: [{ ...revision, summary: "Original finding" }] };
+  raw.revisionResponses = [revision];
+  raw.verificationPacket = { verificationResults: [check] };
+  return { raw, target, revision, check, now, project: () => buildLiveSnapshot({ governedArtifact: raw, observedAt: now }).revisionReview };
+}
+
+test("review regression C1 self-described never-executed command cannot verify a revision", () => {
+  const f = reviewRegressionCase();
+  assert.equal(f.project().items[0].state, "verification_unconfirmed");
+  f.raw.verificationPacket.verificationResults = [{ ...f.check, exitCode: undefined, successMarkerFormat: "stdout-text", actualOutput: "FAIL: validation failed" }];
+  assert.equal(f.project().items[0].state, "verification_unconfirmed");
+});
+
+for (const field of ["actionId", "actionIds", "taskPacketId", "deliverableId"]) test("review regression C2 conflicting finding " + field + " cannot be overwritten by response", () => {
+  const f = reviewRegressionCase();
+  const foreignValue = field === "taskPacketId" ? "other-task" : field === "deliverableId" ? collectLiveDeliverables(f.raw).find((item) => item.kind === "html").id : "other-action";
+  if (field === "taskPacketId") f.raw.workerTaskPackets.push({ taskPacketId: foreignValue, ownerAgent: "backend" });
+  if (field === "actionIds") { delete f.raw.reviewPacket.findings[0].actionId; f.raw.reviewPacket.findings[0].actionIds = [f.revision.actionId]; }
+  const responseField = field === "actionIds" ? "actionId" : field;
+  f.raw.revisionResponses = [{ ...f.revision, [responseField]: foreignValue }];
+  f.raw.verificationPacket.verificationResults = [{ ...f.check, [responseField]: foreignValue }];
+  const items = f.project().items;
+  assert.equal(items.length, 1);
+  assert.equal(items[0].state, "recorded", "the original finding remains visible while the conflicting response/check is isolated");
+  assert.equal(items[0].deliverableId, f.target.id);
+});
+
+test("review regression C4 real file recheck stays visible without claiming current content or execution truth", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "live-revision-file-review-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "outputs"));
+  const file = path.join(root, "outputs/page.html");
+  await writeFile(file, "<h1>Actual file revision</h1>");
+  const f = reviewRegressionCase();
+  const target = collectLiveDeliverables(f.raw).find((item) => item.kind === "html");
+  const actualRead = await readLiveDeliverable(f.raw, target.id, root);
+  const binding = { deliverableId: target.id, contentVersion: actualRead.contentVersion };
+  f.raw.reviewPacket.findings = [{ ...f.revision, ...binding, contentVersion: "sha256:" + "a".repeat(64) }];
+  f.raw.revisionResponses = [{ ...f.revision, ...binding }];
+  f.raw.verificationPacket.verificationResults = [{ ...f.check, ...binding }];
+  assert.equal(f.project().items[0].state, "verification_unconfirmed");
+  await writeFile(file, "<h1>A later unreviewed file revision</h1>");
+  assert.notEqual((await readLiveDeliverable(f.raw, target.id, root)).contentVersion, actualRead.contentVersion);
+  assert.equal(f.project().items[0].state, "verification_unconfirmed");
+  await rm(file);
+  assert.equal(await readLiveDeliverable(f.raw, target.id, root), null);
+  assert.equal(f.project().items[0].state, "verification_unconfirmed");
+});
+
+test("review regression C2 missing optional identity fields and a legitimate new version remain compatible", () => {
+  const f = reviewRegressionCase();
+  f.raw.reviewPacket.findings = [{ runId, findingId: f.revision.findingId, taskPacketId, contentVersion: "sha256:" + "a".repeat(64) }];
+  assert.equal(f.project().items[0].state, "verification_unconfirmed", "the original finding hash is not the revised content hash");
+  f.raw.reviewPacket.findings[0] = { ...f.revision, contentVersion: "sha256:" + "a".repeat(64), actionIds: [f.revision.actionId, "another-allowed-action"] };
+  assert.equal(f.project().items[0].state, "verification_unconfirmed");
+  f.raw.revisionResponses = [{ ...f.revision, actionId: undefined, taskPacketId: undefined, deliverableId: undefined }];
+  assert.equal(f.project().items[0].state, "verification_unconfirmed", "missing optional bindings are not explicit conflicts");
 });

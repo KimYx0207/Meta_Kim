@@ -133,11 +133,12 @@ test("malformed optional collections and scalar entries remain bounded empty obs
 });
 
 test("native return counters remain independent of acceptance and malformed counters cannot add completion", () => {
-  const summary = { observedAgentCount: 3, returnedAgentCount: 1, activeAgentCount: 2, returnedToolCount: 4, failedToolCount: 1, acceptanceState: "unproven", completedCount: 999 };
+  const summary = { observedAgentCount: 3, returnedAgentCount: 1, unconfirmedAgentCount: 2, returnedToolCount: 4, failedToolCount: 1, acceptanceState: "unproven", completedCount: 999 };
   assert.equal(normalizeLiveExecutionSummary(summary).completedCount, undefined);
   assert.equal(resolveLiveRunOverview(snapshot({ run: { id: "r", observationKind: "native_execution", executionSummary: summary } })).execution.returnedAgentCount, 1);
-  assert.equal(normalizeLiveExecutionSummary({ ...summary, activeAgentCount: 10 }), null);
+  assert.equal(normalizeLiveExecutionSummary({ ...summary, unconfirmedAgentCount: 10 }), null);
   assert.equal(normalizeLiveExecutionSummary({ ...summary, acceptanceState: "accepted" }), null);
+  assert.equal(normalizeLiveExecutionSummary({ ...summary, unconfirmedAgentCount: undefined, activeAgentCount: 2 }), null, "missing return is not active execution");
 });
 
 test("the native activity shortcut requires the selected project and server-owned exact conversation shape", () => {
@@ -155,6 +156,7 @@ test("revision descriptors accept only same-run opaque bindings and discard arbi
   assert.equal(normalized.items.length, 1);
   assert.equal(normalized.items[0].fixArtifact, undefined);
   assert.doesNotMatch(JSON.stringify(normalized), /private|script/u);
+  assert.equal(normalizeLiveRevisionReview({ items: [{ ...row, state: "verified" }] }, "r").items[0].state, "verification_unconfirmed");
 });
 
 test("serialized browser selectors match the imported implementation", () => {

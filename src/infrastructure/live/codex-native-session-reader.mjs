@@ -70,7 +70,7 @@ function structuralEntries(entries) {
   return entries.flatMap(({ record, sha256 }) => {
     const p = record.payload || {};
     let payload;
-    if (record.type === "turn_context") payload = { turn_id: p.turn_id, cwd: p.cwd };
+    if (record.type === "turn_context") payload = { turn_id: p.turn_id, thread_id: p.thread_id, cwd: p.cwd };
     else if (record.type === "response_item" && p.type === "function_call") payload = { type: p.type, call_id: p.call_id, namespace: p.namespace, name: p.name, arguments: typeof p.arguments === "string" && Buffer.byteLength(p.arguments) <= 32_768 ? p.arguments : null };
     else if (record.type === "response_item" && p.type === "function_call_output") payload = { type: p.type, call_id: p.call_id };
     else if (record.type === "event_msg" && ["task_started", "task_complete", "turn_complete", "item_completed"].includes(p.type)) {
@@ -272,7 +272,13 @@ export function createCodexNativeSessionReader(options = {}) {
       }
     }
     if (!selected) return { state: "unavailable", reason: "exact_native_turn_not_observed", threadId, turnId: targetTurnId, coverage: { ...coverage, reasons: [...omittedReasons] } };
-    const observation = parseCodexNativeTurn(mergeSegmentEntries(parentSegments), { threadId, turnId: selectedTurn, sinceMs });
+    const parentRecords = mergeSegmentEntries(parentSegments);
+    const turnContexts = parentRecords.filter(({ record }) => record.type === "turn_context" && record.payload?.turn_id === selectedTurn);
+    if (!turnContexts.length || turnContexts.some(({ record }) => {
+      const context = record.payload;
+      return (context.thread_id && context.thread_id !== threadId) || typeof context.cwd !== "string" || !path.isAbsolute(context.cwd) || normalize(context.cwd) !== normalize(realProject);
+    })) return { state: "unavailable", reason: "native_turn_project_binding_unproven", threadId, turnId: selectedTurn, coverage: { ...coverage, reasons: [...omittedReasons] } };
+    const observation = parseCodexNativeTurn(parentRecords, { threadId, turnId: selectedTurn, sinceMs });
     const startedMs = turnStarts.get(selectedTurn)?.task ?? turnStarts.get(selectedTurn)?.context;
     if (Number.isFinite(startedMs)) observation.startedAt = new Date(startedMs).toISOString();
     observation.commands = observation.commands.filter((command) => normalize(command.cwd) === normalize(realProject));

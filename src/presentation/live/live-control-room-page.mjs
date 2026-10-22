@@ -4716,7 +4716,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const activity = item("activity", zh ? "执行活动" : "Execution activity");
     if (overview.execution) {
       const summary = overview.execution;
-      const returned = line(activity, zh ? "已返回 " + summary.returnedAgentCount + " · 进行中 " + summary.activeAgentCount + " · 待验收" : summary.returnedAgentCount + " returned · " + summary.activeAgentCount + " active · acceptance pending");
+      const returned = line(activity, zh ? "已返回 " + summary.returnedAgentCount + " · 尚未确认返回 " + summary.unconfirmedAgentCount + " · 待验收" : summary.returnedAgentCount + " returned · " + summary.unconfirmedAgentCount + " return unconfirmed · acceptance pending");
       returned.dataset.liveExecutionSummary = "";
       line(activity, (zh ? "工具返回 " : "Tool returns ") + summary.returnedToolCount + (zh ? " · 失败 " : " · failed ") + summary.failedToolCount, "run-overview-note");
       if (snapshot.run?.observationCoverage?.state === "partial") line(activity, zh ? "部分来源超出读取范围；以上仅为已观察数量。" : "Some sources were outside the read bounds; these are observed counts only.", "run-overview-note");
@@ -4925,10 +4925,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (context.deliverableId) view.contextCopy.textContent += currentLanguage === "zh" ? " · 本次读取版本：" + (context.contentVersion || "未知") : " · Version read this time: " + (context.contentVersion || "unknown");
     const revisions = (snapshot.revisionReview?.items || []).filter((item) => item.runId === base.runId && (!selected || (selected.taskPacketId && item.taskPacketId === selected.taskPacketId)) && (!context.deliverableId || item.deliverableId === context.deliverableId));
     view.revisionStatus.textContent = revisions.length ? revisions.map((item) => {
-      const verified = item.state === "verified" && context.contentVersion && context.contentVersion === item.contentVersion;
-      const label = verified ? currentLanguage === "zh" ? "本次版本复验记录通过，仍待验收" : "This version has a passing check; acceptance pending"
-        : item.state === "recorded" ? currentLanguage === "zh" ? "已登记问题 · 待修订" : "Finding recorded · revision pending"
-          : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "复验未确认" : "Verification unconfirmed"
+      const label = item.state === "recorded" ? currentLanguage === "zh" ? "已登记问题 · 待修订" : "Finding recorded · revision pending"
+          : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "已有复验记录，执行来源未确认；当前版本仍需核对" : "Recheck recorded; execution provenance unconfirmed; current content version still needs checking"
             : currentLanguage === "zh" ? "已登记修订 · 待复验" : "Revision recorded · verification pending";
       return item.findingId + (item.actionId ? " · " + item.actionId : "") + " · " + label;
     }).join("\n") : currentLanguage === "zh" ? "尚未收到修订/复验回写" : "No revision or verification report received yet";

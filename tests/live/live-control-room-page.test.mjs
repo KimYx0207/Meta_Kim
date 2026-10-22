@@ -6433,6 +6433,27 @@ test("a new result version preserves raw feedback and invalidates even an in-fli
   assert.equal(view.raw.value, original);
 });
 
+test("review regression UI native missing returns and revision reports never imply active or verified outcomes", () => {
+  const html = renderLiveControlRoomPage();
+  const normalized = runNormalizerHarness()({ run: { runId: "native-review", observationKind: "native_execution", executionSummary: { observedAgentCount: 2, returnedAgentCount: 1, unconfirmedAgentCount: 1, returnedToolCount: 3, failedToolCount: 0, acceptanceState: "unproven" } } });
+  const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, append(...items) { this.children.push(...items); }, addEventListener() {} });
+  const overview = element("section");
+  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", `
+const selectedProjectId='p'; const currentLanguage='zh';
+${serializeLiveTokenUsageResolvers()}
+${shippedHelper(html, "renderRunOverview")}
+return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview);
+  render(normalized);
+  const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
+  const activity = overview.children.find((node) => node.dataset.overviewItem === "activity");
+  assert.match(text(activity), /已返回 1 · 尚未确认返回 1 · 待验收/u);
+  assert.doesNotMatch(text(activity), /进行中|active/u);
+  const form = localFeedbackFormHarness();
+  form.paint({ ...form.snapshot, revisionReview: { items: [{ runId: "run-a", findingId: "finding:" + "a".repeat(20), state: "verified" }] } });
+  assert.match(form.view.revisionStatus.textContent, /已有复验记录，执行来源未确认/u);
+  assert.doesNotMatch(form.view.revisionStatus.textContent, /复验记录通过/u);
+});
+
 test("the shipped read observer uses the same-origin route and drops stale versions after failures or old responses", async () => {
   const html = renderLiveControlRoomPage();
   const records = new Map();
