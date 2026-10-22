@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -150,7 +150,7 @@ test("an exact saved plan root resumes through library, CLI and lifecycle hooks 
     assert.equal((await attestPlanningContinuity({ ...implicit, options: { ...implicit.options, ownerReview: true } })).status, "attested");
     const resumed = await resumePlanningContinuity(implicit);
     assert.equal(resumed.status, "resumed");
-    assert.equal(resumed.context.planRoot, path.join(root, planRoot));
+    assert.equal(resumed.context.planRoot, await realpath(path.join(root, planRoot)));
     assert.equal(resumed.context.authority, initialized.context.authority);
     assert.equal(resumed.context.planRootSource, "authority");
     const binding = JSON.parse(resumed.projection.split("\n").find((line) => line.startsWith("Planning binding: ")).slice("Planning binding: ".length));
