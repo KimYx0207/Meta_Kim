@@ -133,8 +133,11 @@ export {
   startLiveControlRoom,
 };
 
+/** A later registry detection calls an enrolled project known, not newly joined. */
 export function liveSelectionForRegistration(registration, runId = null) {
-  const projectRef = registration?.registryStatus === "joined"
+  const enrolled = registration?.registryStatus === "joined"
+    || (registration?.registryStatus === "known" && registration.known === true);
+  const projectRef = enrolled
     ? registration.projectRef
     : null;
   return {

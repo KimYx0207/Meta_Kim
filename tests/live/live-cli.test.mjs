@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { liveSelectionForRegistration } from "../../scripts/meta-kim-live.mjs";
+import { detectProjectRegistryEntry, joinProjectRegistry } from "../../scripts/project-registry.mjs";
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const cli = path.join(repoRoot, "bin", "meta-kim.mjs");
@@ -35,6 +40,49 @@ test("live CLI rejects an invalid port without starting a server", () => {
   const result = runCli(["live", "--port", "not-a-port"]);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /port/iu);
+});
+
+test("Live selection keeps project and run for newly joined and already known registrations", () => {
+  const projectRef = "project-a1b2c3d4e5f6";
+  const runId = "meta-run-selection";
+  for (const registration of [
+    { registryStatus: "joined", known: true, projectRef },
+    { registryStatus: "known", known: true, projectRef },
+  ]) {
+    assert.deepEqual(liveSelectionForRegistration(registration, runId), { projectRef, runId });
+    assert.deepEqual(liveSelectionForRegistration(registration), { projectRef, runId: null });
+  }
+});
+
+test("Live selection does not trust skipped, undecided, absent, or contradictory registrations", () => {
+  const projectRef = "project-a1b2c3d4e5f6";
+  const unavailable = { projectRef: null, runId: null };
+  for (const registryStatus of ["skipped", "prompt_join", "not_applicable", "unknown", "", undefined]) {
+    for (const known of [true, false, undefined]) {
+      assert.deepEqual(liveSelectionForRegistration({ registryStatus, known, projectRef }, "meta-run-selection"), unavailable);
+    }
+  }
+  for (const registration of [null, undefined, {}, { registryStatus: "known", known: false, projectRef }, { registryStatus: "known", projectRef }]) {
+    assert.deepEqual(liveSelectionForRegistration(registration, "meta-run-selection"), unavailable);
+  }
+});
+
+test("an existing joined registry row retains the same Live deep-link selection after detection", async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-selection-"));
+  try {
+    const repoPath = path.join(homeDir, "existing-project");
+    const joined = await joinProjectRegistry({ homeDir, repoPath, runtimeFamily: "codex", sourceRef: "live-selection-test" });
+    const detected = await detectProjectRegistryEntry({ homeDir, repoPath, runtimeFamily: "codex" });
+    assert.equal(joined.registryStatus, "joined");
+    assert.equal(detected.registryStatus, "known");
+    assert.equal(detected.known, true);
+    const expected = { projectRef: joined.projectRef, runId: "meta-run-existing-project" };
+    assert.deepEqual(liveSelectionForRegistration(joined, expected.runId), expected);
+    assert.deepEqual(liveSelectionForRegistration(detected, expected.runId), expected);
+    assert.deepEqual(await detectProjectRegistryEntry({ homeDir, repoPath, runtimeFamily: "codex" }), detected, "selection never rewrites registry status");
+  } finally {
+    await rm(homeDir, { recursive: true, force: true });
+  }
 });
 
 test("published package closes over every Live source layer", () => {

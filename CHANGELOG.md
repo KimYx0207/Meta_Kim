@@ -8,6 +8,24 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+## [3.6.2] - 2026-10-22
+
+### Changed
+
+- **See observed execution without turning it into acceptance.** Live offers a same-project link to observed Codex activity and separates returned agents, unconfirmed agents and tool results from completed work.
+- **Keep revision feedback attached to the result version.** Feedback carries the run, task, deliverable and content hash. Revision records distinguish recorded feedback, pending verification and unconfirmed verification; a matching record does not by itself prove that a fix passed.
+- **Resume the same planning context after interruption.** When no planning root is explicitly supplied, continuity can recover the saved root for the exact project, runtime and run. It shows the binding source and latest current/next-step notes, while conflicting roots, drift and unsafe paths still require review.
+
+### Fixed
+
+- **Keep questions and local actions within their scope.** Pure definition questions no longer create governed runs. Live preserves a previously enrolled project when reopened, keeps feedback with the selected result and does not report an outdated clipboard attempt as success.
+- **Preserve unrelated runtime state during selected updates.** Updating specified skills no longer performs whole-runtime retirement, staging cleanup or generic configuration reconciliation.
+- **Keep valid Codex App marketplace sources available.** Existing App materializations remain usable even under a temporary-looking path. Normal updates can restore an exact Meta-owned disabled source, while preserving active user sources and refusing altered recovery markers.
+
+### Compatibility
+
+- Plans, returned calls and revision records remain distinct from verified completion. ZCode compatibility distribution remains beta and does not add a formal runtime target.
+
 ## [3.6.1] - 2026-10-22
 
 ### Changed

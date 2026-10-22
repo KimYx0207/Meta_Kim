@@ -194,6 +194,7 @@ function deliverableResponse(response, value) {
   response.statusCode = 200;
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.setHeader("cache-control", "no-store");
+  if (value.kind !== "external" && /^sha256:[a-f0-9]{64}$/u.test(value.contentVersion || "")) response.setHeader("x-meta-kim-content-version", value.contentVersion);
   response.setHeader("cross-origin-resource-policy", "same-origin");
   response.setHeader("content-security-policy", value.kind === "external"
     ? "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -662,12 +663,16 @@ export function createLiveControlRoomServer(options = {}) {
             const workerCount = boundedPublicCount(session.workerCount, LIVE_HUB_MAX_NODE_COUNT);
             const nodeCount = boundedPublicCount(session.nodeCount, LIVE_HUB_MAX_NODE_COUNT);
             const eventCount = boundedPublicCount(session.eventCount, LIVE_HUB_MAX_EVENT_COUNT);
+            // Persisted/caller-supplied rows cannot acquire native observation
+            // provenance by copying a label. Only this bound reader supplies it.
+            const nativeSnapshot = project.projectRef === nativeProjectRef ? nativeSnapshots.get(session.runId) : null;
             return {
               sessionId: session.sessionId,
               runId: session.runId,
               title: session.title,
               titleSource: session.titleSource,
               identificationState: session.identificationState,
+              ...(nativeSnapshot ? { observationKind: "native_execution", executionSummary: nativeSnapshot.run.executionSummary, observationCoverage: nativeSnapshot.run.observationCoverage } : {}),
               recordOrigin: liveRecordOrigin(session),
               sourceRuntime: session.sourceRuntime,
               conversationLinkState: session.conversationLinkState,

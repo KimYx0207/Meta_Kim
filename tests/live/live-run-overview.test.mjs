@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveLiveRunOverview, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
+import { resolveLiveRunOverview, resolveLiveNativeActivity, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
 import { serializeLocalFeedbackResolvers } from "../../src/presentation/live/live-feedback-draft.mjs";
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
 
@@ -130,6 +130,33 @@ test("blockers preserve the reported reason and do not substitute task descripti
 
 test("malformed optional collections and scalar entries remain bounded empty observations", () => {
   assert.doesNotThrow(() => resolveLiveRunOverview(snapshot({ toolCalls: [null, 3], replay: [null, "x"], evidence: [null, false], nodes: [null], deliverables: "x" })));
+});
+
+test("native return counters remain independent of acceptance and malformed counters cannot add completion", () => {
+  const summary = { observedAgentCount: 3, returnedAgentCount: 1, unconfirmedAgentCount: 2, returnedToolCount: 4, failedToolCount: 1, acceptanceState: "unproven", completedCount: 999 };
+  assert.equal(normalizeLiveExecutionSummary(summary).completedCount, undefined);
+  assert.equal(resolveLiveRunOverview(snapshot({ run: { id: "r", observationKind: "native_execution", executionSummary: summary } })).execution.returnedAgentCount, 1);
+  assert.equal(normalizeLiveExecutionSummary({ ...summary, unconfirmedAgentCount: 10 }), null);
+  assert.equal(normalizeLiveExecutionSummary({ ...summary, acceptanceState: "accepted" }), null);
+  assert.equal(normalizeLiveExecutionSummary({ ...summary, unconfirmedAgentCount: undefined, activeAgentCount: 2 }), null, "missing return is not active execution");
+});
+
+test("the native activity shortcut requires the selected project and server-owned exact conversation shape", () => {
+  const thread = "11111111-1111-4111-8111-111111111111";
+  const native = { runId: `native-codex-${thread}-22222222-2222-4222-8222-222222222222`, observationKind: "native_execution", sourceRuntime: "codex", conversationLinkState: "verified", conversationRef: thread };
+  assert.equal(resolveLiveNativeActivity({ projectId: "p", sessions: [native] }, "old-plan", "p"), native);
+  assert.equal(resolveLiveNativeActivity({ projectId: "other", sessions: [native] }, "old-plan", "p"), null);
+  assert.equal(resolveLiveNativeActivity({ projectId: "p", sessions: [native] }, native.runId, "p"), null);
+  for (const changed of [{ observationKind: "planned" }, { conversationLinkState: "candidate" }, { conversationRef: "<script>" }, { runId: "other-run" }]) assert.equal(resolveLiveNativeActivity({ projectId: "p", sessions: [{ ...native, ...changed }] }, "old-plan", "p"), null);
+});
+
+test("revision descriptors accept only same-run opaque bindings and discard arbitrary fix payloads", () => {
+  const row = { id: "revision:" + "a".repeat(20), runId: "r", findingId: "finding:" + "b".repeat(20), actionId: "action:" + "c".repeat(20), state: "pending_verification", fixArtifact: "C:/private/file", summary: "<script>" };
+  const normalized = normalizeLiveRevisionReview({ items: [row, { ...row, runId: "other" }] }, "r");
+  assert.equal(normalized.items.length, 1);
+  assert.equal(normalized.items[0].fixArtifact, undefined);
+  assert.doesNotMatch(JSON.stringify(normalized), /private|script/u);
+  assert.equal(normalizeLiveRevisionReview({ items: [{ ...row, state: "verified" }] }, "r").items[0].state, "verification_unconfirmed");
 });
 
 test("serialized browser selectors match the imported implementation", () => {

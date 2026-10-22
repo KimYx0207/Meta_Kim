@@ -153,8 +153,7 @@ test("preserved legacy planning does not block independent skill install, update
         cwd: packageRoot, encoding: "utf8", windowsHide: true, env, timeout: 30_000,
       });
       assert.equal(result.status, 0, result.stdout + result.stderr);
-      assert.match(result.stderr, /retirement deferred/u);
-      assert.match(result.stderr, /independent selected skills/u);
+      assert.doesNotMatch(result.stderr, /retirement deferred/u, "selected dependency updates do not run unrelated retirement");
       for (const runtime of ["claude", "codex"]) {
         assert.equal(readFileSync(path.join(homes[runtime], "skills", "meta-skill-creator", "payload.txt"), "utf8"), `${version}\n`);
       }

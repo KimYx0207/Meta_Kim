@@ -881,6 +881,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let graphCardMeasurementPending = false;
   const localFeedbackDrafts = createLocalFeedbackDraftStore();
   const localFeedbackSurfaces = new Map();
+  const localDeliverableReads = new Map();
   // Start in a full-graph overview so the run topology is legible before the
   // user opts into following a replay target.
   let graphFollowing = false;
@@ -1455,6 +1456,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return {
       schemaVersion: display(input.schemaVersion, "unknown"),
       deliverables: normalizeLiveDeliverables(input.deliverables, safeIdentifier(runInput.id || runInput.runId || input.runId)),
+      revisionReview: normalizeLiveRevisionReview(input.revisionReview, safeIdentifier(runInput.id || runInput.runId || input.runId)),
       source: display(firstValue(sourceInput, ["label", "name", "kind"], input.source), "local observer"),
       run: hasRun ? {
         id: display(firstValue(runInput, ["id", "runId", "key"], input.runId), "unidentified run"),
@@ -1486,6 +1488,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
         demoMode: runInput.demoMode === true,
         executionEvidenceState: display(firstValue(runInput, ["executionEvidenceState"], "unavailable"), "unavailable"),
         stageProgressEvidence: runInput.stageProgressEvidence === "native_execution_only" ? "native_execution_only" : null,
+        observationKind: runInput.observationKind === "native_execution" ? "native_execution" : null,
+        executionSummary: runInput.observationKind === "native_execution" ? normalizeLiveExecutionSummary(runInput.executionSummary) : null,
+        observationCoverage: { state: runInput.observationCoverage?.state === "partial" ? "partial" : "bounded" },
       } : null,
       sessionInfo: {
         title: display(firstValue(sessionInput, ["title", "name"], firstValue(runInput, ["title", "name"], "Live execution")), "Live execution"),
@@ -1802,7 +1807,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function nodeShortStateCopy(node) {
     const state = nodeDisplayState(node);
     if (state === "planned") return currentLanguage === "zh" ? "尚未派发" : "Not dispatched";
-    if (state === "unreported") return currentLanguage === "zh" ? "缺执行证据" : "No evidence";
+    if (state === "unreported") return nodeStateCopy(node);
     if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "待验证" : "To verify";
     return localize(state);
   }
@@ -4629,12 +4634,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   /** A compact reading order before the process map: work, result, block, activity. */
-  function renderRunOverview(snapshot) {
+  function renderRunOverview(snapshot, project = null) {
     if (!runOverview) return;
     const overview = resolveLiveRunOverview(snapshot);
     const coverage = summarizeLiveTokenCoverage((snapshot?.nodes || []).filter((node) => !["stage", "chapter", "stage_summary", "workflow"].includes(node.kind)
       && (!node.runId || node.runId === snapshot?.run?.id)));
-    const renderKey = JSON.stringify([overview, coverage, currentLanguage, selectedProjectId]);
+    const nativeActivity = project ? resolveLiveNativeActivity(project, snapshot?.run?.id, selectedProjectId) : null;
+    const renderKey = JSON.stringify([overview, coverage, nativeActivity?.runId, snapshot?.run?.observationCoverage?.state, currentLanguage, selectedProjectId]);
     if (runOverview.dataset.renderKey === renderKey) return;
     runOverview.dataset.renderKey = renderKey;
     runOverview.dataset.state = overview.state;
@@ -4677,6 +4683,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (available) {
       const link = makeElement("a", "run-overview-value run-overview-result", available.label);
       link.href = deliverableOpenHref(available);
+      link.addEventListener("click", () => { void observeDeliverableRead(available); });
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.dataset.liveOverviewResult = available.id;
@@ -4707,6 +4714,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
 
     const activity = item("activity", zh ? "执行活动" : "Execution activity");
+    if (overview.execution) {
+      const summary = overview.execution;
+      const returned = line(activity, zh ? "已返回 " + summary.returnedAgentCount + " · 尚未确认返回 " + summary.unconfirmedAgentCount + " · 待验收" : summary.returnedAgentCount + " returned · " + summary.unconfirmedAgentCount + " return unconfirmed · acceptance pending");
+      returned.dataset.liveExecutionSummary = "";
+      line(activity, (zh ? "工具返回 " : "Tool returns ") + summary.returnedToolCount + (zh ? " · 失败 " : " · failed ") + summary.failedToolCount, "run-overview-note");
+      if (snapshot.run?.observationCoverage?.state === "partial") line(activity, zh ? "部分来源超出读取范围；以上仅为已观察数量。" : "Some sources were outside the read bounds; these are observed counts only.", "run-overview-note");
+    } else if (nativeActivity) {
+      const action = makeElement("button", "run-overview-action", zh ? "查看实际执行记录" : "View actual execution");
+      action.type = "button";
+      action.dataset.liveNativeActivity = nativeActivity.runId;
+      action.addEventListener("click", () => { void switchSelection(selectedProjectId, nativeActivity.runId, { updateUrl: true }); });
+      activity.append(action);
+      line(activity, zh ? "打开本项目已观测会话的独立记录；不会将本规划标为完成。" : "Open this project's observed conversation as a separate record; this plan stays unchanged.", "run-overview-note");
+    }
     const observed = overview.activity.item;
     line(activity, observed?.label || (zh ? "尚无实际执行记录" : "No execution activity observed"));
     if (observed?.at) {
@@ -4721,6 +4742,35 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (observed?.detail) activity.title = observed.detail;
   }
 
+  /** Read only the existing same-origin route; failures discard prior read hashes. */
+  async function observeDeliverableRead(item) {
+    const projectId = selectedProjectId;
+    const runId = currentSnapshot?.run?.id;
+    if (!runId || item.runId !== runId) return;
+    const key = JSON.stringify([projectId, runId, item.id]);
+    const read = { contentVersion: null, sourceVersion: item.contentVersion || null };
+    localDeliverableReads.set(key, read);
+    if (localDeliverableReads.size > 128) localDeliverableReads.delete(localDeliverableReads.keys().next().value);
+    const repaint = () => {
+      if (selectedProjectId !== projectId || currentSnapshot?.run?.id !== runId) return;
+      for (const [surface, view] of localFeedbackSurfaces) if (view.root.parentNode && view.snapshot?.run?.id === runId) renderLocalFeedback(view.root.parentNode, view.snapshot, view.selected, surface);
+    };
+    repaint();
+    try {
+      const target = new URL(deliverableOpenHref(item), window.location.href);
+      if (target.origin !== window.location.origin || target.pathname !== "/api/deliverable") throw new Error("unbound deliverable route");
+      const response = await fetch(target.href, { headers: { accept: "text/html" }, redirect: "error", cache: "no-store" });
+      const version = response.ok ? response.headers.get("x-meta-kim-content-version") : null;
+      if (response.body?.cancel) await response.body.cancel().catch(() => {});
+      if (localDeliverableReads.get(key) !== read) return;
+      read.contentVersion = /^sha256:[a-f0-9]{64}$/u.test(version || "") ? version : null;
+    } catch {
+      if (localDeliverableReads.get(key) !== read) return;
+      read.contentVersion = null;
+    }
+    repaint();
+  }
+
   function appendLiveDeliverables(parent, snapshot, selected) {
     if (!snapshot?.run) return;
     const deliverables = liveDeliverablesForNode(snapshot.deliverables, selected);
@@ -4729,6 +4779,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       row.dataset.deliverableId = item.id;
       const link = makeElement("a", "live-deliverable-link", (currentLanguage === "zh" ? "打开成品 · " : "Open result · ") + item.label);
       link.href = deliverableOpenHref(item);
+      link.addEventListener("click", () => { void observeDeliverableRead(item); });
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       row.append(link, makeElement("span", "panel-note", item.availability === "available"
@@ -4773,8 +4824,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       copy.type = "button";
       const notice = makeElement("p", "panel-note");
       notice.setAttribute("role", "status");
-      root.append(heading, contextCopy, targetLabel, rawLabel, prepare, preparedLabel, copy, notice);
-      view = { root, heading, contextCopy, targetCopy, target, rawCopy, raw, prepare, preparedCopy, prepared, copy, notice };
+      const revisionStatus = makeElement("p", "panel-note");
+      revisionStatus.dataset.liveRevisionStatus = "";
+      root.append(heading, contextCopy, targetLabel, rawLabel, prepare, preparedLabel, copy, notice, revisionStatus);
+      view = { root, heading, contextCopy, targetCopy, target, rawCopy, raw, prepare, preparedCopy, prepared, copy, notice, revisionStatus };
       localFeedbackSurfaces.set(surface, view);
       target.addEventListener("change", () => {
         localFeedbackDrafts.select(view.base, target.value);
@@ -4788,10 +4841,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
         prepare.disabled = !raw.value.trim();
         copy.disabled = true;
         notice.textContent = view.idleNotice;
+        view.noticePrepared = undefined;
+        view.copyAttempt = undefined;
       });
       prepared.addEventListener("input", () => {
         localFeedbackDrafts.get(view.context).prepared = prepared.value;
         copy.disabled = !prepared.value.trim();
+        notice.textContent = view.idleNotice;
+        view.noticePrepared = undefined;
+        view.copyAttempt = undefined;
       });
       prepare.addEventListener("click", () => {
         const draft = localFeedbackDrafts.get(view.context);
@@ -4799,19 +4857,28 @@ const CLIENT_SCRIPT = String.raw`(() => {
         prepared.value = draft.prepared;
         copy.disabled = !draft.prepared.trim();
         notice.textContent = view.idleNotice;
+        view.noticePrepared = undefined;
+        view.copyAttempt = undefined;
       });
       copy.addEventListener("click", async () => {
         const draft = localFeedbackDrafts.get(view.context);
         const contextKey = localFeedbackDrafts.key(view.context);
         const value = draft.prepared;
+        if (!value.trim()) return;
+        const attempt = {};
+        view.copyAttempt = attempt;
         try {
-          if (!value.trim() || !navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+          if (typeof navigator.clipboard?.writeText !== "function") throw new Error("clipboard unavailable");
           await navigator.clipboard.writeText(value);
-          if (localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
-          notice.textContent = currentLanguage === "zh" ? "已复制反馈；粘贴到当前 Codex 对话后继续修订。" : "Feedback copied; paste into the current Codex conversation to continue revising.";
+          if (view.copyAttempt !== attempt || localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
+          view.noticePrepared = value;
+          notice.textContent = currentLanguage === "zh" ? "已复制，尚未提交；请粘贴到负责此运行的 Codex 对话继续修订。" : "Copied, not submitted; paste into the Codex conversation responsible for this run to continue revising.";
         } catch {
-          if (localFeedbackDrafts.key(view.context) !== contextKey) return;
-          notice.textContent = currentLanguage === "zh" ? "剪贴板不可用；请选中上方反馈文本手动复制。" : "Clipboard unavailable; select and copy the feedback text above.";
+          if (view.copyAttempt !== attempt || localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
+          view.noticePrepared = value;
+          prepared.focus({ preventScroll: true });
+          prepared.select();
+          notice.textContent = currentLanguage === "zh" ? "剪贴板不可用，尚未提交；已选中反馈文本，请手动复制后粘贴到负责此运行的 Codex 对话。" : "Clipboard unavailable, not submitted; the feedback text is selected. Copy it manually and paste into the Codex conversation responsible for this run.";
         }
       });
     }
@@ -4819,7 +4886,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     view.selected = selected;
     const base = { projectId: selectedProjectId || "", runId: snapshot.run.id, nodeId: selected?.id || "", nodeLabel: selected?.label || "" };
     const choices = [
-      ...liveDeliverablesForNode(snapshot.deliverables, selected).map((item) => ({ value: "deliverable:" + item.id, label: item.label, deliverableId: item.id, deliverableLabel: item.label })),
+      ...liveDeliverablesForNode(snapshot.deliverables, selected).map((item) => {
+        const read = typeof localDeliverableReads === "undefined" ? null : localDeliverableReads.get(JSON.stringify([base.projectId, base.runId, item.id]));
+        return { value: "deliverable:" + item.id, label: item.label, deliverableId: item.id, deliverableLabel: item.label,
+          contentVersion: read && read.sourceVersion === (item.contentVersion || null) ? read.contentVersion : item.contentVersion || null };
+      }),
       ...(selected ? snapshot.evidence.filter((item) => item.nodeId === selected.id) : snapshot.evidence).map((item) => ({ value: "evidence:" + item.id, label: item.label, evidenceId: item.id, sourceRef: item.sourceRef })),
     ];
     const selection = localFeedbackDrafts.selected(base);
@@ -4851,6 +4922,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (view.prepared.value !== draft.prepared) view.prepared.value = draft.prepared;
     view.heading.textContent = currentLanguage === "zh" ? "局部反馈" : "Feedback on this result";
     view.contextCopy.textContent = (selected?.label || snapshot.run.title) + " · " + base.runId + (base.nodeId ? " · " + base.nodeId : "");
+    if (context.deliverableId) view.contextCopy.textContent += currentLanguage === "zh" ? " · 本次读取版本：" + (context.contentVersion || "未知") : " · Version read this time: " + (context.contentVersion || "unknown");
+    const revisions = (snapshot.revisionReview?.items || []).filter((item) => item.runId === base.runId && (!selected || (selected.taskPacketId && item.taskPacketId === selected.taskPacketId)) && (!context.deliverableId || item.deliverableId === context.deliverableId));
+    view.revisionStatus.textContent = revisions.length ? revisions.map((item) => {
+      const label = item.state === "recorded" ? currentLanguage === "zh" ? "已登记问题 · 待修订" : "Finding recorded · revision pending"
+          : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "已有复验记录，执行来源未确认；当前版本仍需核对" : "Recheck recorded; execution provenance unconfirmed; current content version still needs checking"
+            : currentLanguage === "zh" ? "已登记修订 · 待复验" : "Revision recorded · verification pending";
+      return item.findingId + (item.actionId ? " · " + item.actionId : "") + " · " + label;
+    }).join("\n") : currentLanguage === "zh" ? "尚未收到修订/复验回写" : "No revision or verification report received yet";
     view.targetCopy.textContent = currentLanguage === "zh" ? "反馈对应的成品或证据" : "Result or evidence being reviewed";
     view.rawCopy.textContent = currentLanguage === "zh" ? "你的反馈原话" : "Your feedback, verbatim";
     view.prepare.textContent = currentLanguage === "zh" ? "整理反馈文本" : "Prepare feedback text";
@@ -4859,9 +4938,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     view.prepare.disabled = !draft.original.trim();
     view.copy.disabled = !draft.prepared.trim();
     view.idleNotice = currentLanguage === "zh"
-      ? "草稿仅保留在本页面。复制反馈，粘贴到当前 Codex 对话后继续修订。"
-      : "Drafts stay in this page. Copy feedback, then paste into the current Codex conversation to continue revising.";
-    if (view.lastContextKey !== localFeedbackDrafts.key(context)) view.notice.textContent = view.idleNotice;
+      ? "草稿仅保留在本页面，尚未提交。复制后粘贴到负责此运行的 Codex 对话继续修订。"
+      : "Drafts stay in this page and are not submitted. Copy, then paste into the Codex conversation responsible for this run to continue revising.";
+    // A copy receipt belongs to one target and one exact text, including edits
+    // made in the other feedback surface before this snapshot paint.
+    if (view.lastContextKey !== localFeedbackDrafts.key(context)
+      || (view.noticePrepared !== undefined && view.noticePrepared !== draft.prepared)) {
+      view.notice.textContent = view.idleNotice;
+      view.noticePrepared = undefined;
+      view.copyAttempt = undefined;
+    }
     view.lastContextKey = localFeedbackDrafts.key(context);
     if (view.root.parentNode !== host) host.append(view.root);
   }
@@ -5386,6 +5472,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         return {
           sessionId: safeIdentifier(session.sessionId) || runId,
           runId,
+          observationKind: session.observationKind === "native_execution" ? "native_execution" : null,
           title: display(session.title, "Session " + runId.slice(0, 12)),
           titleSource: display(session.titleSource, generatedRunTitle(session.title) ? "generated_run_id" : "unknown"),
           identificationState: display(session.identificationState, generatedRunTitle(session.title) ? "unlinked" : "descriptive"),
@@ -5784,6 +5871,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         if (currentProject && currentProject.sessions.some((session) => session.runId === selectedRunId)) {
           populateProjectSelect();
           populateSessionSelect();
+          if (currentSnapshot) renderRunOverview(currentSnapshot, currentProject);
           setHubStatus(currentProject.displayName + " · " + currentProject.sessions.length + " observed run records");
           return true;
         }
@@ -5893,7 +5981,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     hideEmpty();
     updateHeader(snapshot);
-    renderRunOverview(snapshot);
+    renderRunOverview(snapshot, projectForSelection());
     renderStageRail(snapshot);
     renderGraph(snapshot);
     renderEvidence(snapshot);

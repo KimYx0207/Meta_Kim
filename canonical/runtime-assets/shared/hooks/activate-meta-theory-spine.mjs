@@ -204,6 +204,13 @@ const SKILL_NAME_RE =
 
 const EXPLICIT_META_THEORY_RE =
   /(?:^|\b)(?:\/?meta-theory|meta theory|run meta theory|execute meta theory)(?:\b|$)|元理论/u;
+// Mirror the complete definition boundary from the entry classifier. Projected
+// hooks stay self-contained and must not bootstrap work for a named verb alone.
+const DEFINITION_QUERY_RE = /^what\s+(?:does|do)\s+(?:it\s+mean\s+to\s+[^,.?!;，。？！；\r\n]+|[^,.?!;，。？！；\r\n]+\s+mean)[.?？]?\s*$/iu;
+function isDefinitionQuery(text) {
+  return DEFINITION_QUERY_RE.test(text)
+    && !/\b(?:and|then)\s+(?:please\b|(?:can|could|would)\s+you\b)|(?:请|帮我|然后|并且)/iu.test(text);
+}
 const CRITICAL_FETCH_THINKING_RE =
   /critical[\s\S]{0,80}fetch[\s\S]{0,80}thinking[\s\S]{0,80}review|critical\s+and\s+fetch\s+thinking\s+and\s+review|深度.*(?:fetch|检索|研究).*review|critical.*review/iu;
 const CONTINUATION_REQUEST_RE =
@@ -218,10 +225,13 @@ const PRODUCT_BUILD_OBJECT_RE =
   /\b(?:app|web app|dashboard|platform|tool|saas|automation|publisher|scheduler|workflow)\b|(?:系统|平台|工具|应用|网站|面板|看板|自动发布器|发布器|营销.*器|自动化|工作流)/iu;
 // Keep request/constraint binding aligned with the full entry classifier. The
 // hook remains self-contained: a projected hook cannot import repository scripts.
-function productBuildRequested(prompt) {
-  const clauses = String(prompt ?? "").split(/[,.!?;，。！？；\r\n]+|\b(?:and|then|but|while)\b|(?:并且|同时|然后|但是)|并(?=(?:请|帮我|先|再|继续|把|将|新建|新做|新增|做|搭建|开发|打造|构建|实现|修复|排查|纠错|修好|重构|优化|验证|测试|检查|审查|生成|更新|保留|保持|禁止|不要|不得|只用|仅用))/iu)
+function affirmativeRequestClauses(prompt) {
+  return String(prompt ?? "").split(/[,.!?;，。！？；\r\n]+|\b(?:and|then|but|while)\b|(?:并且|同时|然后|但是)|并(?=(?:请|帮我|先|再|继续|把|将|新建|新做|新增|做|搭建|开发|打造|构建|实现|修复|排查|纠错|修好|重构|优化|验证|测试|检查|审查|生成|更新|保留|保持|禁止|不要|不得|只用|仅用))/iu)
     .map((clause) => clause.trim()).filter(Boolean)
     .filter((clause) => !/^(?:(?:please|请|务必)\s*)?(?:keep\b|preserve\b|without\b|do\s+not\b|don't\b|must\s+not\b|保留|保持|禁止|不要|不得|不重做|不新建|不改变|不改动|只用|仅用|零新增成本)/iu.test(clause));
+}
+function productBuildRequested(prompt) {
+  const clauses = affirmativeRequestClauses(prompt);
   const repair = /\b(?:fix|repair|debug|patch|refactor|troubleshoot)\b|(?:修复|排查|纠错|修好|重构|修正|수정|고치)/iu;
   const engineering = /\b(?:code|api|database|test|timeout|crash|bug|error|ui|backend|frontend|software|app|system)\b|(?:代码|测试|超时|崩溃|缺陷|报错|接口|数据库|前端|后端|页面|软件|系统|タイムアウト|バグ|エラー|不具合|오류|버그|타임아웃|코드)/iu;
   const construction = /\b(?:build|create|develop|implement|launch|ship|make)\b|(?:新建|新做|新增|做个|做一个|搭建|开发|打造|构建|从头做|实现(?:一个|新)|作る|作成|開発|만들|개발|구축)/iu;
@@ -232,6 +242,13 @@ const PROJECT_UNDERSTANDING_RE =
   /\b(?:project|repo|repository|codebase|architecture|commerciali[sz]e|market|competitor|business model|strategy|roadmap)\b|(?:项目|仓库|代码库|架构|怎么玩|干啥|做什么|商业化|市场|竞品|商业模式|发展|路线图|战略)/iu;
 const SUBJECTIVE_QUALITY_RE =
   /\b(?:good|bad|beautiful|ugly|smooth|professional|premium|advanced|clean|simple|fast|slow|feels off|hard to use)\b|(?:好看|不好看|顺畅|不顺|高级|专业|简洁|太慢|太快|难用|怪|不对劲)/iu;
+const QUERY_PREAMBLE_RE = /^(?:what|why|how|when|where|who|is|are|can|could|should)\b|^(?:什么|为什么|怎么|如何|是否|能否|可以|介绍|解释|说明)/iu;
+const DESTRUCTIVE_OR_PRODUCTION_RE = /\b(?:delete|remove|drop|truncate|wipe|purge)\b|\b(?:deploy|publish|release)\b(?=.{0,40}\b(?:production|prod|live)\b)|\bproduction\b(?=.{0,40}\b(?:database|deploy|release|environment)\b)|(?:删除|清空|销毁|移除).{0,24}(?:生产|数据库|数据|文件|资源)|(?:发布|部署).{0,16}(?:上线|生产环境)|(?:发布上线|部署上线|上线生产|生产环境)/iu;
+const DIRECT_DESTRUCTIVE_REQUEST_RE = /^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:help\s+me\s+)?(?:delete|remove|drop|truncate|wipe|purge|deploy|publish|release)\b|^(?:请帮我|能否帮我|可以帮我|可否帮我)(?:先|直接)?(?:删除|清空|销毁|移除|发布|部署)/iu;
+function hasDestructiveExecutionIntent(text) {
+  return affirmativeRequestClauses(text).some((clause) => DESTRUCTIVE_OR_PRODUCTION_RE.test(clause)
+    && (!QUERY_PREAMBLE_RE.test(clause) || DIRECT_DESTRUCTIVE_REQUEST_RE.test(clause)));
+}
 
 const DEFAULT_STALE_MINUTES = 360;
 
@@ -278,6 +295,16 @@ function classifyPromptActivation(promptText) {
       taskClassification: "meta_theory_explicit",
       triggerReason: "explicit_meta_theory",
     };
+  }
+  if (isDefinitionQuery(promptText)) {
+    return {
+      triggered: false,
+      taskClassification: "pure_query",
+      triggerReason: "pure_query",
+    };
+  }
+  if (hasDestructiveExecutionIntent(promptText)) {
+    return { triggered: true, taskClassification: "meta_theory_auto", triggerReason: "high_risk_execution_intent" };
   }
   if (CRITICAL_FETCH_THINKING_RE.test(promptText)) {
     return {

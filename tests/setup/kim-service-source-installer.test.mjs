@@ -127,6 +127,80 @@ test("single-runtime local install also uses the real component source", (t) => 
   const ctx=sandbox(t); const source=fixture(ctx.root); passed(run(ctx,source,{targets:"claude"}));
   for (const [id] of specs) assert.ok(existsSync(path.join(ctx.home,".claude/skills",id,id==="hookprompt"?".claude/hooks/user-prompt-submit.js":"SKILL.md")));
 });
+
+test("selected HookPrompt update preserves Codex configuration and unselected runtime content", (t) => {
+  const ctx = sandbox(t); const source = fixture(ctx.root);
+  const configPath = path.join(ctx.home, ".codex/config.toml");
+  const config = "# user-owned formatting and marketplace source\r\n[features]\r\nrequest_user_input = true\r\n[marketplaces.openai-bundled]\r\nsource = 'C:\\unavailable-fixture-marketplace'\r\n[model_providers.user]\r\nname = 'user provider'\r\n";
+  put(configPath, config);
+  const sentinels = [
+    ".claude/.claude/user-owned.txt", ".claude/meta-kim/user-owned.txt",
+    ".claude/skills/other.staged-preserved/user-owned.txt",
+    ".claude/skills/other-active/user-owned.txt", ".claude/skills/.disabled/other-active/user-owned.txt",
+    ".codex/.codex/user-owned.txt", ".codex/plugins/other.staged-preserved/user-owned.txt",
+    ".codex/plugins/other-active/user-owned.txt", ".codex/plugins/.disabled/other-active/user-owned.txt",
+    ".cursor/.cursor/user-owned.txt", ".cursor/skills/other.staged-preserved/user-owned.txt",
+    ".openclaw/.openclaw/user-owned.txt", ".openclaw/plugins/other.staged-preserved/user-owned.txt",
+  ];
+  for (const relative of sentinels) put(path.join(ctx.home, relative), `preserve ${relative}\n`);
+  passed(run(ctx, source, { ids: ["hookprompt"], targets: "claude,codex" }));
+  const hooksPath = path.join(ctx.home, ".codex/hooks.json");
+  const hooks = readFileSync(hooksPath);
+  const customHook = { type: "command", command: "node user-owned-hook.mjs", timeout: 7 };
+  const settingsPath = path.join(ctx.home, ".claude/settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  settings.permissions = { allow: ["Read"] };
+  settings.hooks.UserPromptSubmit.push({ matcher: "user", hooks: [customHook] });
+  put(settingsPath, JSON.stringify(settings, null, 2));
+  const settingsBefore = readFileSync(settingsPath);
+  const component = path.join(source, "hooks/hookprompt");
+  put(path.join(component, "package.json"), '{"private":true,"type":"commonjs"}\n');
+  put(path.join(component, ".claude/hooks/user-prompt-submit.cjs"), "// new dependency closure\n");
+  passed(run(ctx, source, { ids: ["hookprompt"], targets: "claude,codex", update: true }));
+  assert.equal(readFileSync(configPath, "utf8"), config, "selected dependency never reconciles unrelated Codex config");
+  assert.deepEqual(readFileSync(hooksPath), hooks, "existing adapter registration remains byte-identical");
+  assert.deepEqual(readFileSync(settingsPath), settingsBefore, "custom hooks and permissions remain byte-identical");
+  for (const relative of sentinels) assert.equal(readFileSync(path.join(ctx.home, relative), "utf8"), `preserve ${relative}\n`);
+  for (const runtime of ["claude", "codex"]) {
+    const installed = path.join(ctx.home, `.${runtime}/skills/hookprompt`);
+    assert.deepEqual(directoryClosureSync(installed), directoryClosureSync(component), "whole component closure is refreshed");
+  }
+  assert.equal(readFileSync(path.join(ctx.home, ".claude/hooks/user-prompt-submit.cjs"), "utf8"), "// new dependency closure\n");
+});
+
+test("selected HookPrompt update does not retire a different manifest-owned dependency", (t) => {
+  const ctx = sandbox(t); const source = fixture(ctx.root);
+  passed(run(ctx, source, { ids: ["hookprompt"], targets: "claude,codex" }));
+  const ledger = path.join(ctx.home, ".meta-kim/install-manifest.json");
+  const manifest = JSON.parse(readFileSync(ledger, "utf8"));
+  const targets = ["claude", "codex"].map(runtime => path.join(ctx.home, `.${runtime}/skills/planning-with-files`));
+  for (const target of targets) {
+    put(path.join(target, "SKILL.md"), "# Historical planning fixture\n");
+    const closure = directoryClosureSync(target);
+    manifest.entries.push({ path: target, category: "A", kind: "dir", source: "install-global-skills-all-runtimes", purpose: "planning-with-files-global-skill", directoryClosureSha256: closure.sha256, directoryClosureEntryCount: closure.entryCount });
+  }
+  put(ledger, JSON.stringify(manifest, null, 2));
+  const before = targets.map(target => directoryClosureSync(target));
+  const result = run(ctx, source, { ids: ["hookprompt"], targets: "claude,codex", update: true });
+  passed(result);
+  assert.doesNotMatch(result.stderr, /retirement|退役/u);
+  for (const [index, target] of targets.entries()) assert.deepEqual(directoryClosureSync(target), before[index]);
+  const after = JSON.parse(readFileSync(ledger, "utf8"));
+  for (const target of targets) assert.ok(after.entries.some(entry => entry.path === target && entry.purpose === "planning-with-files-global-skill"));
+});
+
+test("Codex-only dependency update leaves Claude legacy and staging directories untouched", (t) => {
+  const ctx = sandbox(t); const source = fixture(ctx.root);
+  const sentinels = [
+    ".claude/meta-kim/user-owned.txt", ".claude/.claude/user-owned.txt",
+    ".claude/skills/other.staged-preserved/user-owned.txt",
+  ];
+  for (const relative of sentinels) put(path.join(ctx.home, relative), `preserve ${relative}\n`);
+  passed(run(ctx, source, { ids: ["hookprompt"], targets: "codex", update: true }));
+  for (const relative of sentinels) assert.equal(readFileSync(path.join(ctx.home, relative), "utf8"), `preserve ${relative}\n`);
+  assert.equal(existsSync(path.join(ctx.home, ".codex/config.toml")), false, "single dependency does not create a Codex config");
+  assert.ok(existsSync(path.join(ctx.home, ".codex/skills/hookprompt/.codex/hooks/user-prompt-submit.js")));
+});
 test("declared whole runtime redirects support repeat install and update without allowing inner links", (t) => {
   const ctx = sandbox(t); const source = fixture(ctx.root);
   const physical = path.join(ctx.root, "physical-claude-home"); mkdirSync(physical);

@@ -3654,8 +3654,8 @@ async function cleanupLegacyGlobalArtifacts(homes) {
   }
 
   // Pattern 2: stale meta-kim install artifact inside Claude home
-  const metaKimLegacy = path.join(homes.claude, "meta-kim");
-  if (await pathExists(metaKimLegacy)) {
+  const metaKimLegacy = homes.claude ? path.join(homes.claude, "meta-kim") : null;
+  if (metaKimLegacy && await pathExists(metaKimLegacy)) {
     console.warn(`${C.yellow}⚠${C.reset} ${t.warnRemovingObsoleteDir}`);
     console.warn(
       `${C.dim}  ${metaKimLegacy}${C.reset} — ${t.warnPre2Artifact}`,
@@ -4596,28 +4596,35 @@ async function main() {
   // Per-target checks remain in the write paths to detect later changes.
   await preflightServiceSkillTargets(homes, activeTargets);
 
-  // Clean up known legacy artifacts before any install operations
-  await cleanupLegacyGlobalArtifacts(homes);
-  const retiredPlanning = await retirePlanningWithFiles({
-    homes,
-    writeBoundary: activeInstallerWriteBoundary,
-    targets: activeTargets.filter((runtime) =>
-      ["claude", "codex", "cursor", "openclaw"].includes(runtime),
-    ),
-    dryRun,
-  });
-  if (retiredPlanning.preserved.length > 0) {
-    // Retirement owns only proven legacy artifacts. Unowned historical files
-    // still require manual review, but must not veto unrelated selected skills.
-    // Keep retirePlanningWithFiles atomic and fail closed for unsafe paths/I/O.
-    console.warn(
-      t.planningRetirementPreserved(
-        retiredPlanning.preserved.length,
-        retiredPlanning.preserved.map((entry) => `${entry.path} (${entry.reason})`),
-      ),
+  // Whole-runtime maintenance is not part of a selected dependency update.
+  // Even owned retirement and old staging cleanup can touch another task.
+  let retiredPlanning = { preserved: [] };
+  if (!skillsFilterActive) {
+    const selectedHomes = Object.fromEntries(
+      activeTargets.filter((id) => homes[id]).map((id) => [id, homes[id]]),
     );
+    await cleanupLegacyGlobalArtifacts(selectedHomes);
+    retiredPlanning = await retirePlanningWithFiles({
+      homes: selectedHomes,
+      writeBoundary: activeInstallerWriteBoundary,
+      targets: activeTargets.filter((runtime) =>
+        ["claude", "codex", "cursor", "openclaw"].includes(runtime),
+      ),
+      dryRun,
+    });
+    if (retiredPlanning.preserved.length > 0) {
+      // Retirement owns only proven legacy artifacts. Unowned historical files
+      // still require manual review, but must not veto unrelated selected skills.
+      // Keep retirePlanningWithFiles atomic and fail closed for unsafe paths/I/O.
+      console.warn(
+        t.planningRetirementPreserved(
+          retiredPlanning.preserved.length,
+          retiredPlanning.preserved.map((entry) => `${entry.path} (${entry.reason})`),
+        ),
+      );
+    }
+    await cleanupStaleStagingDirs(selectedHomes);
   }
-  await cleanupStaleStagingDirs(homes);
 
   const metaSkillCreatorSpec = SKILL_REPOS.find(
     (spec) => spec.id === "meta-skill-creator" && usesGenericSkillInstall(spec),
@@ -4671,7 +4678,12 @@ async function main() {
   }
   await installUpstreamCliSpecs(homes, activeTargets);
   await installPluginBundlesForNonClaudeRuntimes(homes, activeTargets);
-  await ensureCodexChoiceSurfaceAfterInstall(homes, activeTargets);
+  // A selected dependency owns its own configuration transaction. Generic
+  // runtime reconciliation belongs to a full install, never an unrelated
+  // --skills update (for example, refreshing only HookPrompt).
+  if (!skillsFilterActive) {
+    await ensureCodexChoiceSurfaceAfterInstall(homes, activeTargets);
+  }
   await recordManagedDependencyReceipts(homes, activeTargets);
   if (!skipInventoryRefresh) refreshGlobalCapabilityInventory(activeTargets);
 
@@ -4870,9 +4882,11 @@ async function main() {
 
   // Sweep stale .disabled/ entries (covers skills deployed outside the manifest,
   // e.g. meta-theory via sync:runtimes)
-  for (const rid of activeTargets) {
-    if (homes[rid]) {
-      await sweepStaleDisabledDirs(homes[rid]);
+  if (!skillsFilterActive) {
+    for (const rid of activeTargets) {
+      if (homes[rid]) {
+        await sweepStaleDisabledDirs(homes[rid]);
+      }
     }
   }
 

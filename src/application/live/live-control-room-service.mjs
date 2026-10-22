@@ -925,6 +925,79 @@ function completionIsProven(artifact, runId = null) {
   return passingVerificationEvidence(artifact, runId).length > 0;
 }
 
+/** Project the existing revision chain; status words alone never close a fix. */
+function buildRevisionReview(artifact, runId) {
+  if (!artifact || normalizeLiveRunId(artifact.runId) !== runId) return { state: "not_reported", items: [] };
+  const belongs = (record) => record && typeof record === "object" && !Array.isArray(record) && (!record.runId || record.runId === runId);
+  const findings = boundedArray(artifact.reviewPacket?.findings, 64).filter(belongs);
+  const responses = [...boundedArray(artifact.revisionResponses, 64), ...boundedArray(artifact.reviewPacket?.revisionResponses, 64), ...boundedArray(artifact.verificationPacket?.revisionResponses, 64)].filter(belongs);
+  const results = [...boundedArray(artifact.verificationPacket?.verificationResults, 64), ...boundedArray(artifact.verificationPacket?.fixEvidence, 64)].filter(belongs);
+  const knownTasks = new Set(boundedArray(artifact.workerTaskPackets ?? artifact.coreLoop?.thinkingPacket?.workerTaskPackets, LIVE_MAX_NODES).map(taskIdFrom).filter(Boolean));
+  const deliverables = collectLiveDeliverables(artifact);
+  const version = (record) => /^sha256:[a-f0-9]{64}$/u.test(record?.contentVersion || record?.deliverableVersion || "") ? record.contentVersion || record.deliverableVersion : null;
+  // Check raw presence before safeId can collapse an explicit malformed value
+  // into the same null used for an omitted optional field. Validate every task
+  // alias, including aliases that taskIdFrom's normal precedence would skip.
+  const invalidIdentity = (record) => {
+    const fields = ["findingId", "deliverableId", "actionId", "taskPacketId", "taskId", "roleInstanceId", "businessRoleId"];
+    if (fields.some((key) => record?.[key] !== undefined && record?.[key] !== null && record?.[key] !== "" && !safeId(record[key], null))) return true;
+    return record?.actionIds !== undefined && record?.actionIds !== null &&
+      (!Array.isArray(record.actionIds) || record.actionIds.length > 64 || record.actionIds.some((value) => !safeId(value, null)));
+  };
+  // Identity declarations constrain a response when both sides supply a field.
+  // A finding's original content version is not immutable across a revision.
+  const compatibleResponses = responses.filter((response) => {
+    if (invalidIdentity(response)) return false;
+    const finding = findings.find((item) => item.findingId === response.findingId);
+    if (!finding) return true;
+    if (invalidIdentity(finding)) return false;
+    const conflicting = (left, right) => left && right && left !== right;
+    if (conflicting(taskIdFrom(finding), taskIdFrom(response)) || conflicting(safeId(finding.deliverableId, null), safeId(response.deliverableId, null)) || conflicting(safeId(finding.actionId, null), safeId(response.actionId, null))) return false;
+    const actionIds = boundedArray(finding.actionIds, 64).map((value) => safeId(value, null)).filter(Boolean);
+    const responseAction = safeId(response.actionId, null);
+    return !responseAction || !Array.isArray(finding.actionIds) || !finding.actionIds.length || actionIds.includes(responseAction);
+  });
+  const rows = [...compatibleResponses, ...findings.filter((finding) => !compatibleResponses.some((row) => row.findingId === finding.findingId))]
+    .sort((left, right) => (Date.parse(safeTimestamp(right.updatedAt || right.revisedAt)) || 0) - (Date.parse(safeTimestamp(left.updatedAt || left.revisedAt)) || 0));
+  const seen = new Set();
+  const items = [];
+  for (const row of rows) {
+    const findingId = safeId(row.findingId, null);
+    if (!findingId) continue;
+    const finding = findings.find((item) => item.findingId === findingId);
+    const actionId = safeId(row.actionId || finding?.actionId, null);
+    const taskId = taskIdFrom(row) || taskIdFrom(finding);
+    const targetId = safeId(row.deliverableId || finding?.deliverableId, null);
+    const target = deliverables.find((item) => item.id === targetId && (!taskId || item.taskPacketId === taskId));
+    const contentVersion = version(row);
+    // Match the record's declared identity, not proof that a command ran or that
+    // this is the file's current hash. Self-described command/output fields do
+    // not establish execution provenance, even when every binding agrees.
+    const matching = compatibleResponses.includes(row) ? results.filter((item) => !invalidIdentity(item) && item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && knownTasks.has(taskId) && taskIdFrom(item) === taskId && target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion) : [];
+    const state = matching.length ? "verification_unconfirmed" : compatibleResponses.includes(row) ? "pending_verification" : "recorded";
+    const id = publicId("revision", `${runId}:${findingId}:${actionId || ""}:${taskId || ""}:${targetId || ""}:${contentVersion || ""}`);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    items.push({ id, runId, findingId: publicId("finding", findingId), actionId: actionId ? publicId("action", actionId) : null,
+      taskPacketId: knownTasks.has(taskId) ? publicTaskBinding(taskId) : null, deliverableId: target?.id || null, contentVersion,
+      state, verificationObservedAt: null });
+    if (items.length === 64) break;
+  }
+  return { state: items.length ? "reported" : "not_reported", items };
+}
+
+/** Stored summaries preserve bindings, never their own claim of verification. */
+function sanitizeRevisionReview(value, runId) {
+  const items = boundedArray(value?.items, 64).flatMap((item) => {
+    if (item?.runId !== runId || !/^revision:[a-f0-9]{20}$/u.test(item.id || "") || !/^finding:[a-f0-9]{20}$/u.test(item.findingId || "")) return [];
+    const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
+    return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
+      taskPacketId: publicTaskBinding(item.taskPacketId), deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
+      contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state, verificationObservedAt: null }];
+  });
+  return { state: items.length ? "reported" : "not_reported", items };
+}
+
 function runTerminalStatusIsProven(artifact, runId, status) {
   const normalized = normalizeStatus(status, "in_doubt");
   if (normalized === "completed") return completionIsProven(artifact, runId);
@@ -2245,7 +2318,8 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     repository: repositoryProjection(artifact),
     workspace: workspaceProjection(artifact),
     contextTransfers,
-    deliverables: collectLiveDeliverables(artifact).map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
+    deliverables: collectLiveDeliverables(artifact).map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: true })).filter(Boolean),
+    revisionReview: buildRevisionReview(artifact, runId),
     scheduling,
     declaredPlan: declaredStagePlan(artifact),
     nonGoalConstraints,
@@ -2974,6 +3048,7 @@ function sanitizeCompactProjection(value) {
     deliverables: boundedArray(value.deliverables, LIVE_MAX_NODES)
       .filter((item) => item?.runId === runId)
       .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
+    revisionReview: sanitizeRevisionReview(value.revisionReview, runId),
     scheduling,
     nonGoalConstraints,
     declaredPlan: sanitizeDeclaredPlan(value.declaredPlan),
@@ -3231,9 +3306,12 @@ export function buildLiveSnapshot({
     repository: repositoryProjection(projection),
     workspace: workspaceProjection(projection),
     contextTransfers,
-    deliverables: boundedArray(projection.deliverables, LIVE_MAX_NODES)
+    deliverables: (compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
+      ? collectLiveDeliverables(compatibleArtifact) : boundedArray(projection.deliverables, LIVE_MAX_NODES))
       .filter((item) => item?.runId === run.runId)
-      .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
+      .map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: Boolean(compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION) })).filter(Boolean),
+    revisionReview: compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
+      ? buildRevisionReview(compatibleArtifact, run.runId) : sanitizeRevisionReview(projection.revisionReview, run.runId),
     scheduling,
     nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),
     declaredPlan: sanitizeDeclaredPlan(projection.declaredPlan),

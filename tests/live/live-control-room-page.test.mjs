@@ -26,7 +26,7 @@ import {
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
 import { buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 import { buildLocalFeedbackText, createLocalFeedbackDraftStore, liveDeliverablesForNode, normalizeLiveDeliverables } from "../../src/presentation/live/live-feedback-draft.mjs";
-import { resolveLiveRunOverview } from "../../src/presentation/live/live-run-overview.mjs";
+import { resolveLiveRunOverview, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
 import { serializeLiveTokenUsageResolvers } from "../../src/presentation/live/live-token-usage.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
 import {
@@ -154,7 +154,21 @@ ${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((na
 return (node) => [nodeDisplayState(node), nodeStateCopy(node), nodeShortStateCopy(node)];`)(displayFormat);
   assert.deepEqual(view({ displayState: "planned", executionState: "not_executed", status: "pending" }), ["planned", "仅规划 · 尚未派发", "尚未派发"]);
   assert.deepEqual(view({ displayState: "in_doubt", executionState: "executed", status: "in_doubt" }), ["in_doubt", "已执行 · 待验证", "待验证"]);
-  assert.deepEqual(view({ displayState: "unreported", executionState: "unreported", status: "pending" }), ["unreported", "未收到执行回写", "缺执行证据"]);
+  assert.deepEqual(view({ displayState: "unreported", executionState: "unreported", status: "pending" }), ["unreported", "未收到执行回写", "未收到执行回写"]);
+});
+
+test("missing execution reports keep the same graph and detail meaning without becoming failed", () => {
+  const html = renderLiveControlRoomPage();
+  const view = new Function(`
+const currentLanguage = "en";
+const display = (value, fallback) => value ?? fallback;
+const localize = (value) => value;
+${["nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy", "stateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
+return (node) => ({ state: nodeDisplayState(node), detail: nodeStateCopy(node), graph: nodeShortStateCopy(node) });`)();
+  const unreported = view({ displayState: "unreported", executionState: "unreported", status: "pending" });
+  assert.deepEqual(unreported, { state: "unreported", detail: "No execution report", graph: "No execution report" });
+  assert.equal(view({ displayState: "failed", status: "failed" }).state, "failed");
+  assert.notEqual(unreported.detail, view({ displayState: "failed", status: "failed" }).detail);
 });
 
 function modalBehaviorHarness() {
@@ -848,9 +862,11 @@ const GRAPH_TOOLS_KEY = "meta-kim-live-graph-tools-position-v1";
  * of asserting that a call site merely mentions the right helper name.
  */
 function shippedHelper(html, name) {
-  const start = html.indexOf("  function " + name + "(");
+  const regularStart = html.indexOf("  function " + name + "(");
+  const start = regularStart >= 0 ? regularStart : html.indexOf("  async function " + name + "(");
   assert.ok(start >= 0, name + "() must remain in the shipped script");
-  const end = html.indexOf("\n  function ", start + 1);
+  const ends = [html.indexOf("\n  function ", start + 1), html.indexOf("\n  async function ", start + 1)].filter((value) => value > start);
+  const end = Math.min(...ends);
   assert.ok(end > start, name + "() must be followed by another shipped helper");
   return html.slice(start, end);
 }
@@ -3702,7 +3718,7 @@ function runNormalizerHarness({ actualStatus = false } = {}) {
   const normalizeSnapshot = new Function(
     "DISPLAY_FORMAT",
     ...stubNames,
-    `${serializeLiveTokenUsageResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
+    `${serializeLiveTokenUsageResolvers()}\n${serializeLiveRunOverviewResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
       return normalizeSnapshot;
     `,
   )(displayFormat, ...stubNames.map((name) => stubs[name]));
@@ -6349,6 +6365,218 @@ return handleGraphCardResize;`)(state, { dataset: { semanticZoom: "card" } }, { 
   assert.equal(frames.length, 0, "settled sizes do not schedule another pass");
 });
 
+function localFeedbackFormHarness(clipboard, language = "zh") {
+  const html = renderLiveControlRoomPage();
+  const element = (tagName, className = "", textContent = "") => ({
+    tagName, className, textContent, dataset: {}, children: [], parentNode: null, value: "", events: {}, focusCount: 0, selectCount: 0,
+    append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
+    setAttribute() {}, addEventListener(type, handler) { this.events[type] = handler; },
+    focus() { this.focusCount += 1; }, select() { this.selectCount += 1; this.selectionStart = 0; this.selectionEnd = this.value.length; },
+  });
+  const drafts = createLocalFeedbackDraftStore();
+  const surfaces = new Map();
+  const render = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", "navigator", "currentLanguage", `
+const selectedProjectId = "project-a";
+${shippedHelper(html, "renderLocalFeedback")}
+return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.children = []; }, liveDeliverablesForNode, buildLocalFeedbackText, { clipboard }, language);
+  const host = element("div");
+  const snapshot = { run: { id: "run-a", title: "当前运行" }, evidence: [], deliverables: [] };
+  render(host, snapshot, null, "inspector");
+  const view = surfaces.get("inspector");
+  return { view, drafts, snapshot,
+    paint: (nextSnapshot = snapshot, selected = null) => render(host, nextSnapshot, selected, "inspector"),
+    prepare(original = "只修连线，保留其余结果。") { view.raw.value = original; view.raw.events.input(); view.prepare.events.click(); return view.prepared.value; },
+  };
+}
+
+test("editing copied feedback immediately returns the handoff to unsubmitted", async () => {
+  const { view, prepare, paint } = localFeedbackFormHarness({ writeText: async () => {} });
+  const prepared = prepare();
+  await view.copy.events.click();
+  assert.match(view.notice.textContent, /已复制.*尚未提交/u);
+  view.prepared.value = prepared + "\n新增验收要求";
+  view.prepared.events.input();
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  assert.match(view.notice.textContent, /尚未提交/u);
+  paint();
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  await view.copy.events.click();
+  paint();
+  assert.match(view.notice.textContent, /已复制.*尚未提交/u, "a normal snapshot paint preserves a current copy receipt");
+  view.raw.value += "\n改动原话";
+  view.raw.events.input();
+  assert.equal(view.prepared.value, "");
+  assert.equal(view.copy.disabled, true);
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+});
+
+test("a new result version preserves raw feedback and invalidates even an in-flight old copy receipt", async () => {
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const { view, paint, prepare, snapshot } = localFeedbackFormHarness({ writeText: () => pending });
+  const result = { id: "result-a", runId: "run-a", kind: "text", availability: "available", label: "结果", contentVersion: "sha256:" + "a".repeat(64) };
+  paint({ ...snapshot, deliverables: [result] });
+  view.target.value = "deliverable:result-a";
+  view.target.events.change();
+  const original = "  原话保留\n不要清掉新反馈。  ";
+  prepare(original);
+  const oldCopy = view.copy.events.click();
+  paint({ ...snapshot, deliverables: [{ ...result, contentVersion: "sha256:" + "b".repeat(64) }] });
+  assert.equal(view.raw.value, original);
+  assert.equal(view.prepared.value, "");
+  assert.equal(view.copy.disabled, true);
+  assert.match(view.contextCopy.textContent, /本次读取版本：sha256:b{64}/u);
+  assert.match(view.revisionStatus.textContent, /尚未收到修订\/复验回写/u);
+  finish();
+  await oldCopy;
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  assert.equal(view.raw.value, original);
+});
+
+test("review regression UI native missing returns and revision reports never imply active or verified outcomes", () => {
+  const html = renderLiveControlRoomPage();
+  const normalized = runNormalizerHarness()({ run: { runId: "native-review", observationKind: "native_execution", executionSummary: { observedAgentCount: 2, returnedAgentCount: 1, unconfirmedAgentCount: 1, returnedToolCount: 3, failedToolCount: 0, acceptanceState: "unproven" } } });
+  const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, append(...items) { this.children.push(...items); }, addEventListener() {} });
+  const overview = element("section");
+  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", `
+const selectedProjectId='p'; const currentLanguage='zh';
+${serializeLiveTokenUsageResolvers()}
+${shippedHelper(html, "renderRunOverview")}
+return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview);
+  render(normalized);
+  const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
+  const activity = overview.children.find((node) => node.dataset.overviewItem === "activity");
+  assert.match(text(activity), /已返回 1 · 尚未确认返回 1 · 待验收/u);
+  assert.doesNotMatch(text(activity), /进行中|active/u);
+  const form = localFeedbackFormHarness();
+  form.paint({ ...form.snapshot, revisionReview: { items: [{ runId: "run-a", findingId: "finding:" + "a".repeat(20), state: "verified" }] } });
+  assert.match(form.view.revisionStatus.textContent, /已有复验记录，执行来源未确认/u);
+  assert.doesNotMatch(form.view.revisionStatus.textContent, /复验记录通过/u);
+});
+
+test("invalid identity regression C2 deliverable feedback still shows the original finding after malformed response", () => {
+  const runId = "run-a";
+  const taskPacketId = "task-invalid-response";
+  const raw = { schemaVersion: 1, runId, updatedAt: new Date().toISOString(), status: "partial",
+    workerTaskPackets: [{ taskPacketId, ownerAgent: "frontend", roleDisplayName: "frontend" }],
+    workerResultPackets: [{ runId, taskPacketId, ownerAgent: "frontend", status: "executed", resultKind: "actual_local_tool_worker_result", output: { text: "The actual result under review" } }] };
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const target = normalize(buildLiveSnapshot({ governedArtifact: raw })).deliverables[0];
+  const finding = { runId, findingId: "F-original-target", actionId: "A-original-target", taskPacketId, deliverableId: target.id, contentVersion: target.contentVersion };
+  raw.reviewPacket = { findings: [finding] };
+  raw.revisionResponses = [{ ...finding, deliverableId: "../../outside" }];
+  const form = localFeedbackFormHarness();
+  form.paint(normalize(buildLiveSnapshot({ governedArtifact: raw })));
+  form.view.target.value = "deliverable:" + target.id;
+  form.view.target.events.change();
+  assert.match(form.view.revisionStatus.textContent, /已登记问题 · 待修订/u, "the actual shipped per-deliverable filter keeps the original finding visible");
+  assert.doesNotMatch(form.view.revisionStatus.textContent, /尚未收到修订|outside/u);
+});
+
+test("the shipped read observer uses the same-origin route and drops stale versions after failures or old responses", async () => {
+  const html = renderLiveControlRoomPage();
+  const records = new Map();
+  const item = { id: "d", runId: "r", contentVersion: null };
+  const key = JSON.stringify(["p", "r", "d"]);
+  let resolveFirst;
+  let calls = 0;
+  let fail = false;
+  const first = new Promise((resolve) => { resolveFirst = resolve; });
+  const response = (letter) => ({ ok: true, headers: { get: () => "sha256:" + letter.repeat(64) }, body: { cancel: async () => {} } });
+  const observe = new Function("localDeliverableReads", "fetch", "deliverableOpenHref", `
+const selectedProjectId='p'; const currentSnapshot={run:{id:'r'}}; const localFeedbackSurfaces=new Map();
+const window={location:{href:'http://fixture.local/',origin:'http://fixture.local'}};
+${shippedHelper(html, "observeDeliverableRead")}
+return observeDeliverableRead;`)(records, async (_url, options) => { assert.equal(options.redirect, "error"); if (fail) throw new Error("offline"); return ++calls === 1 ? first : response("b"); }, () => "/api/deliverable?runId=r&deliverableId=d");
+  const old = observe(item);
+  await observe(item);
+  assert.equal(records.get(key).contentVersion, "sha256:" + "b".repeat(64));
+  resolveFirst(response("a"));
+  await old;
+  assert.equal(records.get(key).contentVersion, "sha256:" + "b".repeat(64));
+  fail = true;
+  await observe(item);
+  assert.equal(records.get(key).contentVersion, null);
+});
+
+test("clipboard failure selects the current feedback for manual handoff without claiming delivery", async () => {
+  for (const clipboard of [undefined, { writeText: async () => { throw new Error("denied"); } }]) {
+    const { view, prepare } = localFeedbackFormHarness(clipboard);
+    const text = prepare();
+    await view.copy.events.click();
+    assert.equal(view.prepared.value, text);
+    assert.equal(view.prepared.focusCount, 1);
+    assert.equal(view.prepared.selectCount, 1);
+    assert.deepEqual([view.prepared.selectionStart, view.prepared.selectionEnd], [0, text.length]);
+    assert.match(view.notice.textContent, /尚未提交.*已选中.*手动复制/u);
+    assert.doesNotMatch(view.notice.textContent, /已发送|已处理|已提交/u);
+  }
+});
+
+test("English feedback notices distinguish copying from submission and explain manual fallback", async () => {
+  for (const available of [true, false]) {
+    const { view, prepare } = localFeedbackFormHarness(available ? { writeText: async () => {} } : undefined, "en");
+    prepare();
+    assert.match(view.notice.textContent, /not submitted/u);
+    await view.copy.events.click();
+    assert.match(view.notice.textContent, available ? /Copied, not submitted; paste/u : /not submitted.*selected.*Copy it manually/u);
+  }
+});
+
+test("late clipboard results cannot replace the notice or select a newer draft or run", async () => {
+  for (const outcome of ["resolve", "reject"]) {
+    for (const change of ["edit", "run"]) {
+      let settle;
+      const pending = new Promise((resolve, reject) => { settle = outcome === "resolve" ? resolve : () => reject(new Error("denied")); });
+      const { view, prepare, paint, snapshot } = localFeedbackFormHarness({ writeText: () => pending });
+      prepare();
+      const copying = view.copy.events.click();
+      if (change === "edit") {
+        view.prepared.value += "\n复制开始后新增内容";
+        view.prepared.events.input();
+      } else {
+        paint({ ...snapshot, run: { id: "run-b", title: "另一次运行" } });
+        prepare("另一运行的反馈");
+      }
+      const currentText = view.prepared.value;
+      const currentNotice = view.notice.textContent;
+      settle();
+      await copying;
+      assert.equal(view.prepared.value, currentText);
+      assert.equal(view.notice.textContent, currentNotice, outcome + " cannot overwrite " + change);
+      assert.equal(view.prepared.focusCount, 0);
+      assert.equal(view.prepared.selectCount, 0);
+      assert.doesNotMatch(view.notice.textContent, /已复制|剪贴板不可用/u);
+    }
+  }
+});
+
+test("a second feedback surface cannot retain a copy receipt after the shared draft changes", async () => {
+  const { view, prepare, drafts, paint } = localFeedbackFormHarness({ writeText: async () => {} });
+  prepare();
+  await view.copy.events.click();
+  drafts.get(view.context).prepared += "\n另一视图的编辑";
+  paint();
+  assert.doesNotMatch(view.notice.textContent, /已复制/u);
+  assert.match(view.notice.textContent, /尚未提交/u);
+});
+
+test("an older clipboard attempt cannot replace the receipt of a newer copy of the same text", async () => {
+  let rejectFirst;
+  let attempts = 0;
+  const first = new Promise((_resolve, reject) => { rejectFirst = reject; });
+  const { view, prepare } = localFeedbackFormHarness({ writeText: () => ++attempts === 1 ? first : Promise.resolve() });
+  prepare();
+  const previous = view.copy.events.click();
+  await view.copy.events.click();
+  const copiedNotice = view.notice.textContent;
+  assert.match(copiedNotice, /已复制.*尚未提交/u);
+  rejectFirst(new Error("late denial"));
+  await previous;
+  assert.equal(view.notice.textContent, copiedNotice);
+  assert.equal(view.prepared.selectCount, 0);
+});
+
 test("the shipped feedback form survives snapshot paints and switching references without rewriting original text", async () => {
   const html = renderLiveControlRoomPage();
   const element = (tagName, className = "", textContent = "") => ({
@@ -6395,7 +6623,7 @@ return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.childr
   assert.equal(view.prepared.value, prepared);
   await view.copy.events.click();
   assert.deepEqual(copied, [prepared]);
-  assert.match(view.notice.textContent, /已复制.*粘贴/u);
+  assert.match(view.notice.textContent, /已复制.*尚未提交.*粘贴/u);
   assert.doesNotMatch(view.notice.textContent, /已发送|已处理/u);
   render(host, { ...snapshot, deliverables: [] }, nodeA, "inspector");
   assert.equal(view.raw.value, original, "a missing descriptor in the next snapshot must not discard its draft");
@@ -6496,7 +6724,7 @@ return (node) => ({ state: nodeDisplayState(node), summary: nodeStateCopy(node),
   assert.equal(snapshot.nodes[0].executionState, "executed");
   assert.deepEqual(view(snapshot.nodes[0]), { state: "in_doubt", summary: "已执行 · 待验证", graph: "待验证" });
   assert.equal(view(snapshot.nodes[1]).state, "completed");
-  assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "缺执行证据" });
+  assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "未收到执行回写" });
 });
 
 test("first overview synchronizes actual layout scale and tier even when the camera value has not changed", () => {

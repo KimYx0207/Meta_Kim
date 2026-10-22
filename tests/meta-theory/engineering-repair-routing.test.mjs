@@ -44,9 +44,10 @@ test("negated construction and a definition do not grant product-build intent", 
 
 test("the self-contained activation hook follows the same repair/constraint boundary", () => {
   const source = readFileSync(new URL("../../canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs", import.meta.url), "utf8");
-  const start = source.indexOf("function productBuildRequested(");
+  const start = source.indexOf("function affirmativeRequestClauses(");
+  const productStart = source.indexOf("function productBuildRequested(", start);
   const end = source.indexOf("\nconst PROJECT_UNDERSTANDING_RE", start);
-  assert.ok(start >= 0 && end > start);
+  assert.ok(start >= 0 && productStart > start && end > productStart);
   const classify = new Function("ACTION_RE", "PRODUCT_BUILD_OBJECT_RE", `${source.slice(start, end)}; return productBuildRequested;`)(
     /build|create|implement|fix|repair|帮我|修复|做|新建|实现/iu,
     /app|platform|dashboard|平台|系统|产品|发布器/iu,
