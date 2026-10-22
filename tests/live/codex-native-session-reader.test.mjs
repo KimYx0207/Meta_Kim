@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { appendFile, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -29,9 +29,9 @@ const spawn = () => [
   row("event_msg", { type: "item_completed", thread_id: THREAD, turn_id: TURN, item: { type: "SubAgentActivity", id: "call-spawn-1", agent_thread_id: CHILD, agent_path: "/root/native_backend", kind: "started" } }, 5),
 ];
 
-async function fixture(t) {
+async function fixture(t, projectName = "project") {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-native-session-test-"));
-  const projectRoot = path.join(root, "project");
+  const projectRoot = path.join(root, projectName);
   const codexHome = path.join(root, ".codex");
   const day = path.join(codexHome, "sessions", "2026", "10", "21");
   await mkdir(projectRoot, { recursive: true });
@@ -341,6 +341,76 @@ async function request(controller, url) {
     controller.server.emit("request", { method: "GET", url, headers: { host: "127.0.0.1:4331" } }, response);
   });
 }
+
+test("native wrapper keeps distinct POSIX case-sensitive project roots isolated", { skip: process.platform === "win32" ? "Windows path identity is case-insensitive" : false }, async (t) => {
+  const f = await fixture(t, "ProjectCase");
+  const otherProject = path.join(f.root, "projectcase");
+  await mkdir(otherProject, { recursive: true });
+  if (await realpath(otherProject) === await realpath(f.projectRoot)) {
+    t.skip("host filesystem does not distinguish case-only directory names");
+    return;
+  }
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  const baseSnapshot = { run: { runId: "other-project-run" }, source: "other-project" };
+  const calls = [];
+  const base = { async getSnapshot(runId) { calls.push(runId); return baseSnapshot; } };
+  const controller = createLiveControlRoomServer({ projectRoot: otherProject, nativeCodex: f.options, service: base });
+  assert.deepEqual(await controller.service.getSnapshot(), baseSnapshot);
+  assert.deepEqual(calls, [undefined], "another project's request must reach its own base service");
+});
+
+test("native wrapper accepts mixed-case paths with spaces and preserves ordinary service arguments", async (t) => {
+  const f = await fixture(t, "MixedCase Project");
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  const calls = [];
+  const base = Object.fromEntries(["getSnapshot", "getReplay", "getDeliverable", "getShare"].map((name) => [name, async (...args) => { calls.push([name, ...args]); return { source: name }; }]));
+  const controller = createLiveControlRoomServer({ projectRoot: f.projectRoot, nativeCodex: f.options, service: base });
+  assert.equal(createCodexNativeSessionReader(f.options).projectRoot, f.projectRoot);
+  const native = await controller.service.getSnapshot();
+  assert.equal(native.run.runId, `native-codex-${THREAD}-${TURN}`);
+  assert.equal(native.counts.executionEvidence, 1);
+  assert.deepEqual(calls, []);
+  const runId = "Run-MiXeD_Case-123";
+  const deliverableId = "Folder/MixedCase File.md";
+  const shareRequest = { runId, path: path.join(f.projectRoot, "Assets", "MixedCase File.md"), args: ["--Service", "BackEnd"] };
+  await controller.service.getSnapshot(runId);
+  await controller.service.getReplay(runId);
+  await controller.service.getDeliverable(runId, deliverableId);
+  await controller.service.getShare(shareRequest);
+  assert.deepEqual(calls, [["getSnapshot", runId], ["getReplay", runId], ["getDeliverable", runId, deliverableId], ["getShare", shareRequest]]);
+  assert.equal(calls[3][1], shareRequest, "base request object is forwarded unchanged");
+});
+
+test("native wrapper accepts a Windows case-only alias for the same project", { skip: process.platform !== "win32" ? "Windows-only path alias behavior" : false }, async (t) => {
+  const f = await fixture(t, "MixedCase Project");
+  const alias = f.projectRoot.toUpperCase();
+  assert.notEqual(alias, f.projectRoot);
+  assert.equal((await realpath(alias)).toLowerCase(), (await realpath(f.projectRoot)).toLowerCase());
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  let baseCalls = 0;
+  const controller = createLiveControlRoomServer({ projectRoot: alias, nativeCodex: f.options, service: { async getSnapshot() { baseCalls += 1; return null; } } });
+  assert.equal((await controller.service.getSnapshot()).counts.executionEvidence, 1);
+  assert.equal(baseCalls, 0);
+});
+
+test("native UUID bindings remain case-insensitive without changing the project path", async (t) => {
+  const f = await fixture(t, "MixedCase Project");
+  const threadId = "abcdefab-abcd-4abc-8def-abcdefabcdef";
+  const turnId = "feedabcd-abcd-4abc-8def-feedabcdefab";
+  await writeFile(path.join(f.day, `rollout-${threadId}_segment.jsonl`), serialize([meta(f.projectRoot, threadId), context(f.projectRoot, turnId), command(f.projectRoot, { thread: threadId, turn: turnId })]));
+  const args = parseArgs(["--observe-codex-thread", threadId.toUpperCase(), "--observe-codex-turn", turnId.toUpperCase()]);
+  const binding = nativeCodexStartupBinding(args, f.projectRoot, {});
+  assert.deepEqual(binding, { projectRoot: f.projectRoot, threadId, turnId });
+  const nativeCodex = { ...f.options, threadId: threadId.toUpperCase(), turnId: turnId.toUpperCase() };
+  const reader = createCodexNativeSessionReader(nativeCodex);
+  assert.equal(reader.projectRoot, f.projectRoot);
+  assert.equal(reader.threadId, threadId);
+  assert.equal((await reader.readTurn(turnId.toUpperCase())).state, "observed");
+  const controller = createLiveControlRoomServer({ projectRoot: f.projectRoot, nativeCodex, service: { async getSnapshot() { throw new Error("unexpected base service call"); } } });
+  const snapshot = await controller.service.getSnapshot(`native-codex-${threadId}-${turnId}`);
+  assert.equal(snapshot.run.runId, `native-codex-${threadId}-${turnId}`);
+  assert.equal(snapshot.counts.executionEvidence, 1);
+});
 
 test("trusted native observed run joins existing hub catalog and snapshot without rewriting planning history", async (t) => {
   const f = await fixture(t);

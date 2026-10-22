@@ -491,7 +491,8 @@ export function createLiveControlRoomServer(options = {}) {
     return [nativeProject, ...rows.filter((project) => project.projectRef !== nativeProjectRef)];
   };
   const wrapNativeService = (base, repoRoot) => {
-    if (!nativeReader || path.resolve(repoRoot).toLowerCase() !== nativeReader.projectRoot.toLowerCase()) return base;
+    // Use host path identity: case-insensitive on Windows, case-sensitive on POSIX.
+    if (!nativeReader || path.relative(repoRoot, nativeReader.projectRoot) !== "") return base;
     const share = async (request = {}) => {
       const requestedRun = typeof request === "string" ? request : request.runId;
       if (!requestedRun || requestedRun.startsWith("native-codex-")) {
