@@ -42,6 +42,7 @@ export const PROCESS_START_IDENTITY_UNAVAILABLE = "process-start-identity-unavai
 
 const PROJECT_REF_PATTERN = /^project-[a-f0-9]{12}$/u;
 const RUN_ID_PATTERN = /^meta-[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/u;
+const NATIVE_CODEX_RUN_ID_PATTERN = /^native-codex-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
 const INSTANCE_ID_PATTERN = /^[a-f0-9-]{16,64}$/u;
 /**
  * Files whose contents identify the package a running hub was started from.
@@ -462,7 +463,9 @@ async function releaseStartLock(lock) {
 function deepLinkFor(state, { projectRef = null, runId = null } = {}) {
   const url = new URL(state.url);
   if (PROJECT_REF_PATTERN.test(projectRef || "")) url.searchParams.set("projectId", projectRef);
-  if (RUN_ID_PATTERN.test(runId || "")) url.searchParams.set("runId", runId);
+  if (typeof runId === "string" && (RUN_ID_PATTERN.test(runId) || NATIVE_CODEX_RUN_ID_PATTERN.test(runId))) {
+    url.searchParams.set("runId", NATIVE_CODEX_RUN_ID_PATTERN.test(runId) ? runId.toLowerCase() : runId);
+  }
   return url.href;
 }
 
