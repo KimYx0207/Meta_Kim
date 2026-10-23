@@ -6,7 +6,7 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
 
-## Unreleased
+## [3.7.0] - 2026-10-23
 
 - **Explore requirements before designing and splitting work.** Source-backed recommendations, trade-offs and dependent decisions can be discussed without a completed design. Settled designs then feed the existing task board and execution dependencies.
 - **Pass complete professional methods to workers.** Source-checked role steps and input/output contracts enter the actual handoff. Missing facts are reported, prose delivery stays compatible, and producer self-checks remain pending independent review.
