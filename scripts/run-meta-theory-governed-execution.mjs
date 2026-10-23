@@ -88,7 +88,7 @@ import {
   validateWardenWritebackApproval as validateExactWardenWritebackApproval,
 } from "../src/domain/evolution/warden-writeback-approval.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
-import { prepareIntentDialogue, bindIntentToWorkerTasks, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
+import { prepareIntentDialogue, bindIntentToWorkerTasks, applyTaskCriterionAssignments, normalizeTaskCriterionAssignments, buildIntentCriterionCoverage, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
 import {
   buildTaskGoalContract as buildGoalContractPacket,
   evaluateTaskOutcome,
@@ -2764,6 +2764,7 @@ function businessLaneCapabilityNeed(packet, laneId) {
 function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrationReport = null }) {
   const triggerCoveragePass = businessPhasePlanPacket.triggerStandard?.coveragePass === true;
   const routeWorkerTasks = orchestrationReport?.workerTaskPackets ?? [];
+  const criterionCoverage = buildIntentCriterionCoverage({ workerTaskPackets: routeWorkerTasks, dialogue: orchestrationReport?.criticalSummary?.intentBinding });
   const routePlan = orchestrationReport?.thinkingRoute?.dynamicWorkflowPlan ?? {};
   const laneForPhase = (phase) => {
     const selectedOwner = phase.owner.startsWith("meta-") ? phase.owner : "meta-conductor";
@@ -2925,6 +2926,7 @@ function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrati
     deliverableType: "custom",
     deliverableSubtype: "governed_meta_theory_run",
     intentBinding: orchestrationReport?.criticalSummary?.intentBinding ?? null,
+    criterionCoverage,
     requiredLanes,
     optionalLanes: [],
     omittedLanes,
@@ -2940,13 +2942,13 @@ function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrati
       "evolve -> mirror",
     ],
     coverageJudgment:
-      requiredLanes.length > 0 && businessPhasePlanPacket.phaseCount === 11 && triggerCoveragePass
+      requiredLanes.length > 0 && businessPhasePlanPacket.phaseCount === 11 && triggerCoveragePass && criterionCoverage.status !== "incomplete"
         ? "complete"
         : "incomplete",
     coverageDetail:
-      requiredLanes.length > 0 && businessPhasePlanPacket.phaseCount === 11 && triggerCoveragePass
+      requiredLanes.length > 0 && businessPhasePlanPacket.phaseCount === 11 && triggerCoveragePass && criterionCoverage.status !== "incomplete"
         ? "pass_route_selected_lanes_plus_all_11_business_phases_trigger_evaluated"
-        : "fail_missing_route_lane_or_weak_business_phase_trigger_evidence",
+        : criterionCoverage.status === "incomplete" ? "fail_unassigned_required_goal_criteria" : "fail_missing_route_lane_or_weak_business_phase_trigger_evidence",
     phaseTriggerStandard: businessPhasePlanPacket.triggerStandard,
     phasePackage: {
       phaseCount: businessPhasePlanPacket.phaseCount,
@@ -4473,7 +4475,9 @@ function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket) 
           ? "approval_gate"
           : packet.executionMode === "local_tool_execution" && packet.effectClass === "read_only_support"
             ? "read_only_support"
-          : "read_only_worker",
+          : ["read_only", "read_only_target"].includes(packet.mutationPolicy)
+            ? "read_only_worker"
+            : packet.mutationPolicy === "scoped_local_writes_only" ? "local_write" : "unknown_mutation",
       resourceScopes,
       isolation: packet.workspaceIsolation ?? "unspecified",
       status: "planned_not_invoked",
@@ -10372,7 +10376,7 @@ export function buildWorkflowContractPackets({
         ? packet.acceptanceCriteria
         : [intentDialogue?.outcome ?? task],
       deliverableLink: `${primaryDeliverable}:${taskPacketId}`,
-      scopeFiles: packet.scopeFiles?.length ? packet.scopeFiles : [scopeFile],
+      scopeFiles: Array.isArray(packet.scopeFiles) ? packet.scopeFiles : [scopeFile],
       qualityBar: packet.qualityBar ?? "strict packet validation without public-ready overclaim",
       workType: "operations",
       expertLensRefs: ["operations"],
@@ -10386,6 +10390,7 @@ export function buildWorkflowContractPackets({
       referenceDirection: packet.referenceDirection ?? "Use workflow-contract and validator evidence.",
       handoffTarget: packet.handoffTarget ?? "meta-prism",
       handoffContract: {
+        ...packet.handoffContract,
         handoffTo: packet.handoffContract?.handoffTo ?? "meta-prism",
         handoffWhen: packet.handoffContract?.handoffWhen ?? "after artifact packet construction",
         handoffPayload: packet.handoffContract?.handoffPayload ?? "artifact path, worker evidence, validation result",
@@ -10398,7 +10403,7 @@ export function buildWorkflowContractPackets({
       mergeOwner: packet.mergeOwner ?? "meta-conductor",
       shardKey: packet.shardKey ?? `artifact-${index + 1}`,
       shardScope: Array.isArray(packet.shardScope) ? packet.shardScope : [String(packet.shardScope ?? scopeFile)],
-      workspaceIsolation: "same_workspace_readonly_overlap",
+      workspaceIsolation: packet.workspaceIsolation ?? "unproven",
       artifactNamespace: packet.artifactNamespace ?? `${primaryDeliverable}-${index + 1}`,
       collisionPolicy: packet.collisionPolicy ?? "no_overlap",
       verifySteps: (packet.verifySteps?.length ? packet.verifySteps : [{ id: `${taskPacketId}-verify`, step: "Validate artifact", verify: "Validator exits 0" }]).map((step, stepIndex) => ({
@@ -10408,7 +10413,7 @@ export function buildWorkflowContractPackets({
       })),
       preDecisionOptionFrameRef: "preDecisionOptionFrame",
       userChoiceState: choiceState,
-      finalizationGate: "after_no_branching_choice",
+      finalizationGate: packet.finalizationGate ?? "after_no_branching_choice",
     };
   });
   const workerResultPackets = workerTaskPackets.map((packet, index) => {
@@ -10456,7 +10461,7 @@ export function buildWorkflowContractPackets({
       businessRoleId: packet.businessRoleId,
       roleDisplayName: packet.roleDisplayName,
       sequence: index + 1,
-      dependsOn: [],
+      dependsOn: packet.dependsOn,
       deliverable: packet.deliverableLink,
     })),
     synthesisOwner: "meta-conductor",
@@ -10558,7 +10563,7 @@ export function buildWorkflowContractPackets({
     rollbackScope: "Generated governed execution artifacts and code changes from this maintenance run.",
     rollbackTriggers: ["strict validator regression", "choice-surface gate regression"],
     rollbackSteps: ["Remove generated state artifacts", "Revert the producer change through normal git review"],
-    affectedArtifacts: workerTaskPackets.flatMap((packet) => packet.scopeFiles),
+    affectedArtifacts: [primaryDeliverable, ...workerTaskPackets.flatMap((packet) => packet.scopeFiles)],
     rollbackDimensions: [dimension("rollback_path")],
     rollbackStatus: "ready",
     owner: "meta-sentinel",
@@ -11004,12 +11009,14 @@ export function evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) {
   return evaluateTaskOutcome(goal, observations);
 }
 
-function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null }) {
+function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   return [
     "--task",
     task,
+    "--action-task",
+    actionTask,
     "--runtime",
     routeRuntime,
     "--os",
@@ -11023,7 +11030,7 @@ function selectExecutionRouteArgs({ task, runtime = "codex", os = "windows", run
   ];
 }
 
-async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, spawnError = null }) {
+async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, spawnError = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const originalArgv = process.argv;
@@ -11035,7 +11042,7 @@ async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "wi
     process.argv = [
       process.execPath,
       SELECT_EXECUTION_ROUTE_SCRIPT,
-      ...selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest }),
+      ...selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest }),
     ];
     console.log = (...args) => stdout.push(args.join(" "));
     console.error = (...args) => stderr.push(args.join(" "));
@@ -11072,10 +11079,10 @@ async function selectExecutionRouteInProcess({ task, runtime = "codex", os = "wi
   }
 }
 
-async function selectExecutionRoute({ task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, environment = process.env }) {
+async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
-  const args = selectExecutionRouteArgs({ task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest });
+  const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest });
   const result = spawnSync(
     process.execPath,
     [SELECT_EXECUTION_ROUTE_SCRIPT, ...args],
@@ -11090,6 +11097,7 @@ async function selectExecutionRoute({ task, runtime = "codex", os = "windows", r
     if (environment !== process.env) throw new Error("Bound dependency route process unavailable; in-process fallback cannot substitute a different source environment.", { cause: result.error });
     return selectExecutionRouteInProcess({
       task,
+      actionTask,
       runtime: routeRuntime,
       os: routeOs,
       runId,
@@ -11236,7 +11244,7 @@ function providersByLane(routeResult, lane) {
   };
 }
 
-function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
+export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   const route = routeResult.recommendedRoute;
   const routeId = route?.id ?? "unresolved-route";
   const lanes = route?.subjectiveUiCapabilityAmplification?.lanes ?? [];
@@ -11283,9 +11291,9 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
         {
           lane: {
             laneId: "route-execution",
-            roleDisplayName: route?.owner?.replace(/^meta-/, "") ?? "operations",
-            ownerAgent: route?.owner ?? "meta-conductor",
-            purpose: "Execute the selected capability-first route.",
+            roleDisplayName: drafts[0]?.roleDisplayName ?? route?.owner?.replace(/^meta-/, "") ?? "operations",
+            ownerAgent: drafts[0]?.ownerAgent ?? route?.owner ?? "meta-conductor",
+            purpose: drafts[0]?.purpose ?? task,
             decisionImpact: "Turns the selected route into bounded worker execution.",
             dependsOn: [],
             parallelGroup: "route-execution",
@@ -11324,6 +11332,14 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
       : null;
     const isVerification = ["test", "review"].includes(roleDisplayName);
     const isEvolution = lane.laneId === "evolution-signal";
+    const safetyEvidence = lane.safetyEvidence ?? draft.safetyEvidence ?? { status: "unproven" };
+    const shardScope = lane.shardScope ?? draft.shardScope ?? safetyEvidence.shardScope ?? [];
+    const scopeFiles = lane.scopeFiles ?? draft.scopeFiles ?? shardScope;
+    const dependencies = lane.dependsOn ?? draft.dependsOn ?? [];
+    const workOrderReady = scopeFiles.length > 0 && shardScope.length > 0 && safetyEvidence.status === "proven";
+    const taskIdByLaneId = new Map(sourceTasks.map(({ lane: entry, draft: entryDraft }, entryIndex) => [
+      entry.laneId ?? entryDraft.roleInstanceId, `${runId}-${entry.laneId ?? `route-${entryIndex + 1}`}`,
+    ]));
     return {
       taskPacketId,
       taskKind: "run_worker_task",
@@ -11351,11 +11367,14 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
       coreProblem: lane.purpose ?? draft.purpose ?? "Run the selected route lane.",
       todayTask: lane.purpose ?? draft.purpose ?? "Run the selected route lane.",
       nonGoals: [
+        ...(lane.nonGoals ?? draft.nonGoals ?? []),
         "Do not rewrite durable agent identity for this one-run task.",
         "Do not use old capability-gap orchestration as the default path.",
       ],
-      output: isEvolution ? "evolution_decision" : `${roleDisplayName}_lane_result`,
+      output: lane.output ?? draft.output ?? (isEvolution ? "evolution_decision" : `${roleDisplayName}_lane_result`),
+      acceptanceCriterionIds: lane.acceptanceCriterionIds ?? draft.acceptanceCriterionIds,
       acceptanceCriteria: [
+        ...(lane.acceptanceCriteria ?? draft.acceptanceCriteria ?? []),
         "The lane declares capabilityNeed before any concrete provider binding.",
         "Concrete provider bindings are selected from current inventory by capabilityNeed, not by fixed agent-to-skill pairs.",
         "The lane declares agent, skill, MCP, tool, command, and verification loadout when the runtime inventory provides them.",
@@ -11365,7 +11384,7 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
           : []),
       ],
       deliverableLink: `route://${routeId}/${lane.laneId ?? index + 1}`,
-      scopeFiles: [`route://${routeId}/${lane.laneId ?? index + 1}`],
+      scopeFiles,
       qualityBar: "route-driven execution with visible provider loadout and no generic fallback",
       workType: roleDisplayName,
       expertLensRefs: [roleDisplayName],
@@ -11421,15 +11440,21 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
       },
       lengthExpectation: "compact",
       visualOrAssetPlan: roleDisplayName === "frontend" ? "browser and visual review evidence when UI is in scope" : "none",
-      dependsOn: Array.isArray(lane.dependsOn) ? lane.dependsOn.map((dep) => `${runId}-${dep}`) : [],
+      dependsOn: Array.isArray(dependencies) ? dependencies.map((dep) => taskIdByLaneId.get(dep) ?? dep) : [],
       parallelGroup: lane.parallelGroup ?? draft.parallelGroup ?? "route-driven",
-      mergeOwner: "meta-conductor",
+      mergeOwner: lane.mergeOwner ?? draft.mergeOwner ?? "meta-conductor",
       shardKey: lane.laneId ?? `route-${index + 1}`,
-      shardScope: [lane.laneId ?? `route-${index + 1}`],
-      workspaceIsolation: "same_workspace_readonly_overlap",
-      artifactNamespace: `${routeId}/${lane.laneId ?? index + 1}`,
-      collisionPolicy: "no_overlap",
-      verifySteps: [
+      shardScope,
+      workOrderReadiness: workOrderReady ? "ready" : "incomplete",
+      dependencyEvidence: lane.dependencyEvidence ?? draft.dependencyEvidence ?? safetyEvidence.dependencyEvidence ?? "unproven",
+      safetyEvidence,
+      mutationPolicy: lane.mutationPolicy ?? draft.mutationPolicy ?? safetyEvidence.mutationPolicy ?? "unproven",
+      workspaceIsolation: lane.workspaceIsolation ?? draft.workspaceIsolation ?? safetyEvidence.workspaceIsolation ?? "unproven",
+      externalWritePolicy: lane.externalWritePolicy ?? draft.externalWritePolicy ?? safetyEvidence.externalWritePolicy ?? "unproven",
+      externalWriteBoundary: lane.externalWriteBoundary ?? draft.externalWriteBoundary ?? null,
+      artifactNamespace: lane.artifactNamespace ?? draft.artifactNamespace ?? `${routeId}/${lane.laneId ?? index + 1}`,
+      collisionPolicy: lane.collisionPolicy ?? draft.collisionPolicy ?? safetyEvidence.collisionPolicy ?? "unproven",
+      verifySteps: lane.verifySteps ?? draft.verifySteps ?? [
         {
           id: `${taskPacketId}-route-loadout`,
           step: "Check lane provider loadout and route gate state",
@@ -11440,25 +11465,25 @@ function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
       userChoiceState: routeResult.routeExecutionGate?.handoffStatus === "awaiting_native_choice"
         ? "awaiting_native_choice"
         : "no_branching_choice",
-      finalizationGate: routeResult.routeExecutionGate?.handoffStatus === "blocked"
+      finalizationGate: !workOrderReady || routeResult.routeExecutionGate?.handoffStatus === "blocked"
         ? "blocked_before_host_handoff"
         : routeResult.routeExecutionGate?.hostAction ?? "host_action_required",
     };
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, localToolRequest = null, environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
   const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
     ? intentDialogue?.deliveryStrategy ?? null : null;
-  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, environment });
+  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, actionTask: task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, environment });
   routeResult.intentBinding = intentDialogue;
   const route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
   const intentBoundPackets = bindIntentToWorkerTasks({
-    workerTaskPackets: buildRouteDrivenWorkerTasks({ runId, routeResult, task }),
+    workerTaskPackets: applyTaskCriterionAssignments({ workerTaskPackets: buildRouteDrivenWorkerTasks({ runId, routeResult, task }), dialogue: intentDialogue, input: taskCriterionAssignments }),
     routeResult, dialogue: intentDialogue ?? prepareIntentDialogue({ task }),
   });
   const localGate = routeResult.localToolExecutionGate;
@@ -11467,6 +11492,8 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         ...packet, executionMode: "local_tool_execution", effectClass: "read_only_support",
         intentBinding: { ...packet.intentBinding, status: intentDialogue.status },
         scopeFiles: [localGate.input.target], shardScope: [localGate.input.target],
+        workOrderReadiness: "ready", safetyEvidence: { status: "proven", evidenceBasis: "verified_local_tool_contract_and_target" },
+        workspaceIsolation: "same_workspace_readonly_overlap", externalWritePolicy: "forbidden", collisionPolicy: "no_overlap",
         externalWriteBoundary: false, mutationPolicy: "read_only_target", finalizationGate: "local_tool_result_required",
         localToolBinding: { runId, taskHash: taskOutcomeDigest(task), intentDigest: packet.intentBinding.intentDigest,
           selectedCapability: localGate.selectedCapability, input: localGate.input },
@@ -11485,6 +11512,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
   if (intentCapabilityGaps.length) {
     routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", intentCapabilityGaps: intentCapabilityGaps.map((packet) => packet.taskPacketId) };
   }
+  const criterionCoverage = buildIntentCriterionCoverage({ workerTaskPackets, dialogue: intentDialogue });
   const routeGate = routeResult.routeExecutionGate ?? {};
   const blocked = routeGate.handoffStatus === "blocked";
   const capabilityGaps = routeResult.capabilityGapDetected && routeResult.capabilityGapDecision
@@ -11529,6 +11557,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         Array.isArray(packet.toolLoadout) &&
         Array.isArray(packet.commandLoadout),
     ),
+    requiredGoalCriteriaAssigned: criterionCoverage.status !== "incomplete",
   };
   return {
     status: route && !blocked ? "pass" : "partial",
@@ -11548,6 +11577,8 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       ],
       nonGoals: [
         "Do not expand beyond the user's goal and authorization.",
+        ...(Array.isArray(intentDialogue?.constraints?.nonGoals) ? intentDialogue.constraints.nonGoals : []),
+        ...(Array.isArray(intentDialogue?.constraints?.forbidden) ? intentDialogue.constraints.forbidden : []),
       ],
       governanceConstraints: [
         "No old capability-gap orchestration as the default governed execution path.",
@@ -11574,6 +11605,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       oldDefaultPath: 0,
     },
     thinkingRoute: {
+      criterionCoverage,
       boardMode: "route_driven_dispatch",
       businessFlowLaneCount: workerTaskPackets.length,
       dynamicWorkflowPlan: {
@@ -11610,7 +11642,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     workerTaskPackets,
     reviewResult: {
       owner: "meta-prism",
-      status: checks.multiTypeCapabilityInventoryPresent && checks.workerTasksDeclareExecutionMode ? "pass" : "partial",
+      status: checks.multiTypeCapabilityInventoryPresent && checks.workerTasksDeclareExecutionMode && checks.requiredGoalCriteriaAssigned ? "pass" : "partial",
       checks,
       findings: blocked
         ? [
@@ -11650,6 +11682,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   let {
   task,
   confirmedIntent = null,
+  taskCriterionAssignments = null,
   localToolInput = null,
   dependencyCalculationInput = null,
   planChallengeResponses = [],
@@ -11701,6 +11734,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const confirmedIntentSnapshot = confirmedIntent == null ? null : structuredClone(confirmedIntent);
   const understandingSnapshot = sharedUnderstandingConfirmed == null ? null : structuredClone(sharedUnderstandingConfirmed);
   const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
+  const taskCriterionAssignmentsSnapshot = normalizeTaskCriterionAssignments({ dialogue: intentDialogue, input: taskCriterionAssignments == null ? null : structuredClone(taskCriterionAssignments) });
   const calculationRequest = prepareDependencyCalculationInput({ input: dependencyCalculationInput, task: normalizedTask,
     intentDigest: intentDialogue.intentDigest ?? null });
   const calculationEnvironment = calculationRequest?.dependencyRoot
@@ -11731,8 +11765,10 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const boundChallengeResponses = (Array.isArray(planChallengeResponses) ? planChallengeResponses : []).filter((response) =>
     response?.taskHash === intentDialogue.taskHash && (response.intentDigest ?? null) === (intentDialogue.intentDigest ?? null));
   const dialogueTask = intentDialogue.status === "host_provided_understanding" ? intentDialogue.routeTask : normalizedTask;
-  const taskFingerprint = stableId("task", calculationRequest
+  const baseTaskFingerprint = stableId("task", calculationRequest
     ? JSON.stringify([normalizedTask, calculationRequest.summary, runtime, osTarget, stageRunner?.runtime ?? runtime]) : normalizedTask);
+  const taskFingerprint = taskCriterionAssignmentsSnapshot == null ? baseTaskFingerprint
+    : stableId("task", JSON.stringify([baseTaskFingerprint, taskCriterionAssignmentsSnapshot]));
   const durableStageRunnerEnabled = stageRunner?.enabled === true;
   const durableMode = durableStageRunnerEnabled ? (stageRunner.durableMode ?? "fresh") : null;
   if (durableStageRunnerEnabled && !["fresh", "resume"].includes(durableMode)) {
@@ -11843,6 +11879,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       durableDbPath,
     });
     if (materialized) {
+      applyTaskCriterionAssignments({ workerTaskPackets: materialized.workerTaskPackets ?? [], dialogue: intentDialogue, input: taskCriterionAssignmentsSnapshot });
       if (materialized.dependencyCalculationPacket) materialized.dependencyCalculationPacket = {
         ...materialized.dependencyCalculationPacket, observationScope: "historical_materialized_run",
         priorToolInvoked: materialized.dependencyCalculationPacket.toolInvoked, toolInvoked: false,
@@ -11904,6 +11941,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     osTarget: routeOs,
     codexHostToolSchema,
     intentDialogue,
+    taskCriterionAssignments: taskCriterionAssignmentsSnapshot,
     localToolRequest,
     environment: calculationEnvironment,
   });
@@ -12210,11 +12248,13 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         JSON.stringify(packet.localToolBinding.input) === JSON.stringify(localToolRequest.input) &&
         path.resolve(packet.localToolBinding.input.workspaceRoot) === path.resolve(projectRoot) &&
         packet.scopeFiles?.length === 1 && packet.scopeFiles[0] === localToolRequest.input.target);
-    const routeGateAllowsBridge =
-      localToolBridgeEligible || (routeExecutionGate.routeCompatible === true &&
+    const workOrderGateReady = coreLoop.thinkingPacket.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready") &&
+      orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete";
+    const routeGateAllowsBridge = workOrderGateReady &&
+      (localToolBridgeEligible || (routeExecutionGate.routeCompatible === true &&
       routeExecutionGate.canHandoffToHost === true &&
       routeExecutionGate.handoffStatus === "ready_for_host_handoff" &&
-      routeExecutionGate.hostAction === "host_action_required" && localToolRequest.applies !== true);
+      routeExecutionGate.hostAction === "host_action_required" && localToolRequest.applies !== true));
     if (calculationRequest && planChallengeHandoffReady && routeGateAllowsBridge && calculationRequest.summary.status === "prepared") {
       if (normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime) !== normalizeStageRunnerRuntime(routeRuntime)) {
         dependencyCalculationPacket = { ...calculationRequest.summary, status: "blocked", code: "calculation_runtime_binding_rejected" };
@@ -12241,15 +12281,18 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           runId: effectiveRunId,
           routeExecutionGate,
           localToolExecutionGate: localToolGate ?? null,
+          workOrderGate: { ready: workOrderGateReady, criterionCoverage: orchestrationReport.thinkingRoute.criterionCoverage },
           canHandoffToHost: routeExecutionGate.canHandoffToHost === true,
           failure: {
             failureClass: planChallengeBlocked
               ? "plan_challenge_execution_not_authorized"
+              : !workOrderGateReady ? "work_order_design_incomplete"
               : routeGateAllowsBridge && calculationRequest
                 ? dependencyCalculationPacket.code ?? `calculation_${dependencyCalculationPacket.status}`
               : "route_gate_host_native_execution_required",
             reason: planChallengeBlocked
               ? "The plan challenge is still awaiting a real host-native decision."
+              : !workOrderGateReady ? "Worker scope/safety or required goal criterion ownership is incomplete; return to Thinking before invocation."
               : routeGateAllowsBridge && calculationRequest
                 ? `Calculation handoff stopped: ${dependencyCalculationPacket.code ?? dependencyCalculationPacket.status}.`
               : "The route gate is not ready for the explicitly requested read-only host bridge handoff.",

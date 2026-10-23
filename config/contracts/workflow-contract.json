@@ -3596,7 +3596,10 @@
           "no_overlap",
           "merge_by_owner",
           "lock_required",
-          "sequentialize"
+          "sequentialize",
+          "deny_writes_outside_shard_scope_and_merge_through_meta_conductor",
+          "single_worker_bounded_scope",
+          "unproven"
         ],
         "sameOwnerParallelGroupRequiresUnifiedMergeOwner": true,
         "description": "The same ownerAgent may run multiple parallel instances, but each instance must have a short English business roleDisplayName, a unique roleInstanceId, explicit shardKey / shardScope, workspaceIsolation, artifactNamespace, collisionPolicy, and one unified mergeOwner. Parallel instances of the same ownerAgent that share a parallelGroup must point to the same mergeOwner. Repeated ownerAgent entries without those fields or merge rules are pseudo-parallelism."

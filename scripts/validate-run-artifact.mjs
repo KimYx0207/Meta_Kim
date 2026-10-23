@@ -2284,7 +2284,7 @@ function validateFinalizedChoiceState(artifact, packet, context) {
   );
   ensureString(packet.finalizationGate, `${context}.finalizationGate`);
   ensure(
-    !/pending|before/i.test(packet.finalizationGate),
+    !/pending|before/i.test(packet.finalizationGate) || isBlockedWorkerPlan(artifact, packet),
     `${context}.finalizationGate must show dispatch was finalized after user choice or an allowed skip.`,
   );
 }
@@ -3660,6 +3660,19 @@ function normalizeWorkerDependency(contract, dep, context) {
   return dep.taskRef;
 }
 
+/** Unknown scopes are representable only in a visibly blocked, unexecuted plan. */
+function isBlockedWorkerPlan(artifact, packet) {
+  const result = artifact.workerResultPackets?.find((entry) => entry.taskPacketId === packet.taskPacketId);
+  return ["incomplete", "ready"].includes(packet.workOrderReadiness) && packet.finalizationGate === "blocked_before_host_handoff" &&
+    artifact.publicReady !== true && artifact.runHeader?.publicReady !== true && artifact.summaryPacket?.publicReady !== true &&
+    result?.status !== "completed" && !(result?.fileCompletionList ?? []).some((entry) => entry.status === "completed") &&
+    !(result?.executionEvidence ?? []).some((entry) => ["passed", "completed", "pass"].includes(entry.status));
+}
+
+function isIncompleteWorkerPlan(artifact, packet) {
+  return packet.workOrderReadiness === "incomplete" && isBlockedWorkerPlan(artifact, packet);
+}
+
 function validateWorkerWorkOrder(contract, artifact, packet, context) {
   for (const field of [
     "coreProblem",
@@ -3697,7 +3710,7 @@ function validateWorkerWorkOrder(contract, artifact, packet, context) {
   ]) {
     ensureStringArray(packet[field], `${context}.${field}`);
     ensure(
-      packet[field].length >= 1,
+      packet[field].length >= 1 || (field === "scopeFiles" && isIncompleteWorkerPlan(artifact, packet)),
       `${context}.${field} must contain at least one item before the worker starts.`,
     );
   }
@@ -3912,6 +3925,13 @@ function validateWorkerPackets(contract, artifact) {
     "same_workspace_readonly_overlap",
     "isolated_worktree",
     "file_lock_required",
+    "shared_workspace_read_only",
+    "shared_workspace_disjoint_paths",
+    "shared_worktree_disjoint_files",
+    "run_scoped",
+    "isolated_workspace",
+    "single_worker",
+    "unproven",
   ]);
   for (const [index, packet] of taskPackets.entries()) {
     ensureFields(
@@ -3952,7 +3972,7 @@ function validateWorkerPackets(contract, artifact) {
     ensureString(packet.shardKey, `workerTaskPackets[${index}].shardKey`);
     ensureArray(packet.shardScope, `workerTaskPackets[${index}].shardScope`);
     ensure(
-      packet.shardScope.length >= 1,
+      packet.shardScope.length >= 1 || isIncompleteWorkerPlan(artifact, packet),
       `workerTaskPackets[${index}].shardScope must contain at least one shard.`,
     );
     ensureString(
@@ -3973,6 +3993,10 @@ function validateWorkerPackets(contract, artifact) {
     ensure(
       validWorkspaceIsolation.has(packet.workspaceIsolation),
       `workerTaskPackets[${index}].workspaceIsolation must be one of [${[...validWorkspaceIsolation].join(", ")}].`,
+    );
+    ensure(
+      ![packet.workspaceIsolation, packet.collisionPolicy].some((value) => ["unproven", "single_worker", "single_worker_bounded_scope"].includes(value)) || isIncompleteWorkerPlan(artifact, packet),
+      `workerTaskPackets[${index}] unproven isolation or collision policy is allowed only in a blocked, incomplete plan.`,
     );
     ensureArray(packet.dependsOn, `workerTaskPackets[${index}].dependsOn`);
     dependenciesByTaskId.set(packet.taskPacketId, []);

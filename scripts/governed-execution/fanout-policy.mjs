@@ -1,3 +1,5 @@
+import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "../task-scope-comparison.mjs";
+
 function arrayOfStrings(value) {
   return Array.isArray(value)
     ? value.filter((item) => typeof item === "string" && item.trim())
@@ -15,14 +17,23 @@ export function taskDependencyIds(packet) {
 }
 
 function taskCollisionScopes(packet) {
-  const scopeFiles = arrayOfStrings(packet?.scopeFiles).map((item) => `file:${item}`);
-  if (scopeFiles.length > 0) return scopeFiles;
-  if (packet?.artifactNamespace) return [`artifact:${packet.artifactNamespace}`];
-  if (packet?.shardKey) return [`shard:${packet.shardKey}`];
-  if (packet?.workspaceIsolation === "run_scoped" && packet?.taskPacketId) {
-    return [`run-scoped:${packet.taskPacketId}`];
+  const scopeFiles = arrayOfStrings(packet?.scopeFiles).map(scopeComparisonKey);
+  if (scopeFiles.some((scope) => scope === null)) return [];
+  if (scopeFiles.length > 0) return scopeFiles.map((scope) => `file:${scope}`);
+  if (packet?.artifactNamespace && ["run_scoped", "isolated_worktree", "isolated_workspace"].includes(packet.workspaceIsolation)) {
+    return [`artifact:${packet.artifactNamespace}`];
   }
-  return packet?.taskPacketId ? [`task:${packet.taskPacketId}`] : ["unknown-scope"];
+  return [];
+}
+
+function knownPolicy(value) {
+  return typeof value === "string" && value.trim() && !["unknown", "unspecified", "unproven"].includes(value);
+}
+
+function scopesOverlap(left, right) {
+  if (left === right) return true;
+  if (!left.startsWith("file:") || !right.startsWith("file:")) return false;
+  return !scopeKeysAreProvablyDisjoint(left.slice("file:".length), right.slice("file:".length));
 }
 
 function detectDependencyCycles(tasks) {
@@ -58,8 +69,12 @@ export function buildFanoutSafetyPacket(executableTasks) {
       dependsOn: dependencyIds,
       collisionPolicy: packet.collisionPolicy ?? "unspecified",
       workspaceIsolation: packet.workspaceIsolation ?? "unspecified",
+      mutationPolicy: packet.mutationPolicy ?? "unproven",
+      safetyStatus: packet.safetyEvidence?.status ?? null,
       mutationScopes: taskCollisionScopes(packet),
       externalWriteBoundary: packet.externalWriteBoundary === true,
+      externalWriteSafe: packet.externalWriteBoundary !== true &&
+        (packet.externalWritePolicy === "forbidden" || (packet.externalWritePolicy == null && packet.externalWriteBoundary === false)),
     };
   });
   const missingDependencies = rows.flatMap((row) =>
@@ -71,20 +86,22 @@ export function buildFanoutSafetyPacket(executableTasks) {
     .filter((row) => row.dependsOn.includes(row.taskPacketId))
     .map((row) => row.taskPacketId);
   const cycleTaskIds = detectDependencyCycles(executableTasks);
-  const scopeOwners = new Map();
-  for (const row of rows) {
-    for (const scope of row.mutationScopes) {
-      if (!scopeOwners.has(scope)) scopeOwners.set(scope, []);
-      scopeOwners.get(scope).push(row.taskPacketId);
-    }
-  }
-  const collisionConflicts = [...scopeOwners.entries()]
-    .filter(([, owners]) => owners.length > 1)
-    .map(([scope, owners]) => ({ scope, taskPacketIds: owners }));
+  const dependsTransitively = (taskId, dependencyId, seen = new Set()) => {
+    if (seen.has(taskId)) return false;
+    seen.add(taskId);
+    return (rows.find((row) => row.taskPacketId === taskId)?.dependsOn ?? [])
+      .some((id) => id === dependencyId || dependsTransitively(id, dependencyId, seen));
+  };
+  const collisionConflicts = rows.flatMap((row, index) => rows.slice(index + 1).flatMap((other) => {
+    const readOnly = (entry) => ["read_only", "read_only_target"].includes(entry.mutationPolicy);
+    if ((readOnly(row) && readOnly(other)) || dependsTransitively(row.taskPacketId, other.taskPacketId) || dependsTransitively(other.taskPacketId, row.taskPacketId)) return [];
+    const scope = row.mutationScopes.find((left) => other.mutationScopes.some((right) => scopesOverlap(left, right)));
+    return scope ? [{ scope, taskPacketIds: [row.taskPacketId, other.taskPacketId] }] : [];
+  }));
   const explicitParallelMetadata = rows.every(
     (row) => Boolean(row.parallelGroup) &&
-      row.collisionPolicy !== "unspecified" &&
-      row.workspaceIsolation !== "unspecified",
+      knownPolicy(row.collisionPolicy) && knownPolicy(row.workspaceIsolation) && knownPolicy(row.mutationPolicy) &&
+      row.safetyStatus !== "unproven" && row.mutationScopes.length > 0,
   );
   const initialReadyLaneCount = rows.filter((row) => row.dependsOn.length === 0).length;
   const safeForParallelFanout = rows.length >= 2 &&
@@ -93,7 +110,7 @@ export function buildFanoutSafetyPacket(executableTasks) {
     selfDependencies.length === 0 &&
     cycleTaskIds.length === 0 &&
     collisionConflicts.length === 0 &&
-    rows.every((row) => row.externalWriteBoundary === false);
+    rows.every((row) => row.externalWriteSafe && !row.externalWriteBoundary);
   return {
     schemaVersion: "agent-teams-fanout-safety-v0.1",
     status: safeForParallelFanout ? "pass" : rows.length >= 2 ? "partial" : "not_required",
@@ -106,8 +123,8 @@ export function buildFanoutSafetyPacket(executableTasks) {
     collisionConflicts,
     dependencySafe:
       missingDependencies.length === 0 && selfDependencies.length === 0 && cycleTaskIds.length === 0,
-    collisionSafe: collisionConflicts.length === 0,
-    externalWriteSafe: rows.every((row) => row.externalWriteBoundary === false),
+    collisionSafe: rows.every((row) => row.mutationScopes.length > 0) && collisionConflicts.length === 0,
+    externalWriteSafe: rows.every((row) => row.externalWriteSafe && !row.externalWriteBoundary),
     safeForParallelFanout,
     rows,
   };
