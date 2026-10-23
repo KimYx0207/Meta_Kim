@@ -7,6 +7,7 @@ import process from "node:process";
 import test from "node:test";
 
 import {
+  deepLinkFor,
   ensureLiveHub,
   getLiveHubPaths,
   LIVE_HUB_DEFAULT_PORT,
@@ -19,6 +20,12 @@ import {
   writeLiveHubState,
 } from "../../src/infrastructure/live/live-hub-lifecycle.mjs";
 import { getProcessStartIdentity } from "../../scripts/release-state-hardening.mjs";
+import {
+  liveCurrentRunPresentation,
+  nativeCodexStartupBinding,
+  parseArgs,
+  resolveNativeCodexCurrentRun,
+} from "../../scripts/meta-kim-live.mjs";
 
 test("uses one stable default browser entry port", () => {
   assert.equal(LIVE_HUB_DEFAULT_PORT, 4331);
@@ -45,6 +52,95 @@ const address = {
 // measured at 15.6s inside the parallel suite against 0.7s when run alone. Cases
 // that assert an expiry keep their own small explicit budgets.
 const STARTUP_BUDGET_THAT_MUST_NOT_EXPIRE_MS = 30_000;
+
+test("deep links keep the CLI-selected native Codex turn in the current-task link", async () => withTempHome(async (homeDir) => {
+  const threadId = "01a1653c-11d9-7e3c-a2bc-317de741d6fa";
+  const turnId = "01a1654a-f4ed-71ae-9c2a-4f7e280c9e53";
+  const projectRef = "project-a1b2c3d4e5f6";
+  const projectRoot = path.join(homeDir, "project");
+  const codexHome = path.join(homeDir, ".codex");
+  const sessionDir = path.join(codexHome, "sessions", "2026", "10", "24");
+  const timestamp = "2026-10-24T08:00:00.000Z";
+  await mkdir(projectRoot, { recursive: true });
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(path.join(sessionDir, `rollout-2026-10-24T08-00-00-${threadId}.jsonl`), [
+    { type: "session_meta", timestamp, payload: { id: threadId, originator: "Codex Desktop", cwd: projectRoot, source: "vscode" } },
+    { type: "turn_context", timestamp, payload: { turn_id: turnId, cwd: projectRoot } },
+  ].map((record) => JSON.stringify(record)).join("\n") + "\n", "utf8");
+  const options = parseArgs([
+    "--observe-codex-thread", threadId,
+    "--observe-codex-turn", turnId,
+    "--no-open", "--json",
+  ]);
+  const nativeBinding = nativeCodexStartupBinding(options, projectRoot, { CODEX_HOME: codexHome });
+  const runId = await resolveNativeCodexCurrentRun({
+    ...nativeBinding,
+    sinceMs: Date.parse(timestamp),
+    now: () => Date.parse(timestamp) + 60_000,
+  });
+  assert.equal(runId, `native-codex-${threadId}-${turnId}`);
+  const deepLink = deepLinkFor(address, { projectRef, runId });
+  const presentation = liveCurrentRunPresentation({ runId, nativeBinding, deepLink });
+  assert.equal(presentation.currentRunState, "selected");
+  assert.equal(presentation.currentTaskLink, `${address.url}/?projectId=${projectRef}&runId=${runId}`);
+  const url = new URL(presentation.currentTaskLink);
+  assert.equal(url.searchParams.get("projectId"), projectRef);
+  assert.equal(url.searchParams.get("runId"), runId);
+}));
+
+test("deep links normalize an explicitly selected native UUID pair without changing governed IDs or paths", () => {
+  const nativeRunId = "native-codex-01a1653c-11d9-7e3c-a2bc-317de741d6fa-01a1654a-f4ed-71ae-9c2a-4f7e280c9e53";
+  const nativePrefix = "native-codex-";
+  const uppercaseUuidRunId = nativePrefix + nativeRunId.slice(nativePrefix.length).toUpperCase();
+  const projectRef = "project-a1b2c3d4e5f6";
+  const state = { ...address, url: `${address.url}/MixedCase/Path` };
+  for (const [requestedRunId, expectedRunId] of [
+    [uppercaseUuidRunId, nativeRunId],
+    ["meta-MiXeD_1.2-run", "meta-MiXeD_1.2-run"],
+  ]) {
+    const { runId } = parseArgs(["--run-id", requestedRunId, "--no-open", "--json"]);
+    const deepLink = deepLinkFor(state, { projectRef, runId });
+    const presentation = liveCurrentRunPresentation({ runId, deepLink });
+    assert.equal(presentation.currentRunState, "selected");
+    assert.equal(presentation.currentTaskLink, `${state.url}?projectId=${projectRef}&runId=${expectedRunId}`);
+    assert.equal(new URL(presentation.currentTaskLink).searchParams.get("runId"), expectedRunId);
+  }
+});
+
+test("deep links preserve governed run IDs and reject malformed or injected run selection", () => {
+  const threadId = "01a1653c-11d9-7e3c-a2bc-317de741d6fa";
+  const turnId = "01a1654a-f4ed-71ae-9c2a-4f7e280c9e53";
+  const nativeRunId = `native-codex-${threadId}-${turnId}`;
+  const projectRef = "project-a1b2c3d4e5f6";
+  for (const runId of ["meta-a", "meta-MiXeD_1.2-run", `meta-${"a".repeat(120)}`, nativeRunId]) {
+    const url = new URL(deepLinkFor(address, { projectRef, runId }));
+    assert.deepEqual([...url.searchParams], [["projectId", projectRef], ["runId", runId]]);
+  }
+  for (const runId of [
+    null, undefined, "", "meta-", `meta-${"a".repeat(121)}`, "other-run",
+    "native-codex-", `native-codex-${threadId}`, `native-codex--${turnId}`,
+    `native-codex-${threadId}-`, `native-codex-${threadId}-${turnId.slice(0, -1)}`,
+    `native-codex-${threadId}-${turnId.replace("7e28", "ge28")}`,
+    `native-codex-${threadId.replaceAll("-", "")}-${turnId}`,
+    `${nativeRunId}-extra`, `${nativeRunId}${"a".repeat(128)}`,
+    `${nativeRunId}&projectId=project-000000000000`, `${nativeRunId}?runId=meta-other`,
+    `${nativeRunId}#fragment`, `${nativeRunId}\n`, `../${nativeRunId}`,
+    `meta-safe&projectId=project-000000000000`, `meta-safe%26runId%3Dmeta-other`,
+    [nativeRunId], { toString: () => nativeRunId },
+  ]) {
+    const url = new URL(deepLinkFor(address, { projectRef, runId }));
+    assert.deepEqual([...url.searchParams], [["projectId", projectRef]], String(runId));
+    assert.equal(url.hash, "");
+  }
+});
+
+test("deep links retain the exact project boundary for native run selection", () => {
+  const runId = "native-codex-01a1653c-11d9-7e3c-a2bc-317de741d6fa-01a1654a-f4ed-71ae-9c2a-4f7e280c9e53";
+  for (const projectRef of [null, "project-short", "project-A1B2C3D4E5F6", "project-a1b2c3d4e5f6&runId=meta-other"]) {
+    const url = new URL(deepLinkFor(address, { projectRef, runId }));
+    assert.deepEqual([...url.searchParams], [["runId", runId]]);
+  }
+});
 
 test("validates only exact loopback state records", () => {
   const valid = {

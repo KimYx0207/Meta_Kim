@@ -6,6 +6,10 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
 
+## [3.7.2] - 2026-10-24
+
+- **Open the selected Codex turn directly.** Live links now retain the verified native thread and turn identifier, including when reusing an existing Hub. Invalid or incomplete identifiers remain excluded; opening a current task no longer drops its selection to a project-only link.
+
 ## [3.7.1] - 2026-10-23
 
 This release includes the unreleased 3.7.0 changes listed below.
