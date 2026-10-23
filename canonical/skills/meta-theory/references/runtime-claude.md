@@ -16,6 +16,8 @@ False native choice claim guard: do not announce "I used AskUserQuestion", "the 
 
 ## Visible Status Boundary
 
+For a local Claude Code Desktop session, discover the actually exposed Browser pane tools and open the exact current Live link once, then reuse that tab. The official [Desktop preview documentation](https://code.claude.com/docs/en/desktop#preview-your-app) distinguishes local Browser tools from SSH sessions where those tools are absent. Claude Code CLI reports real task state changes through assistant messages or stderr, without replacing the user's status-line configuration or corrupting structured stdout. A launch request or Hook context is not a visible-panel receipt.
+
 Claude Code `UserPromptSubmit` / HookPrompt context can help Claude decide what to do, but it is not the same thing as telling the user what is happening. `MessageDisplay` can transform assistant text while it streams, but it is display-only: it cannot create a missing stage notice, cannot change what Claude sees, and cannot replace the conversation transcript. For Claude Code, the reliable user-visible status surface is the assistant message itself.
 
 Therefore every governed Claude Code run must render localized assistant-message notices for run start, route selected before Execution, blocker/degraded state when present, and closure. Use `AskUserQuestion` only for branch-changing decisions; do not use it for routine progress.

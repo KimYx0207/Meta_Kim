@@ -1,13 +1,16 @@
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  COMPLETE_PRODUCT_INPUTS,
-  runCapabilityGapCompleteProduct,
-  sanitizeProductReportValue,
-} from "../../scripts/run-capability-gap-complete-product.mjs";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+let runtimeFixture, COMPLETE_PRODUCT_INPUTS, runCapabilityGapCompleteProduct, sanitizeProductReportValue;
+before(async () => {
+  runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  ({ COMPLETE_PRODUCT_INPUTS, runCapabilityGapCompleteProduct, sanitizeProductReportValue } =
+    await runtimeFixture.import("scripts/run-capability-gap-complete-product.mjs"));
+});
+after(() => runtimeFixture?.cleanup());
 
 const sourceLeakPattern = new RegExp(
   [
@@ -88,6 +91,20 @@ describe("30 — Capability Gap complete product MVP", () => {
       assert.equal(report.graphValidation.databaseAsPlannerCount, 0);
       assert.equal(report.graphValidation.directCanonicalWriteFromGraphNode, 0);
       assert.equal(report.governedExecutionEvidence.status, "partial");
+      const { requirementsExploration, boundedPlanning } = report.governedExecutionEvidence;
+      for (const slots of [["agent"], ["skill"], ["command"], ["mcpServer", "mcpTool"]]) {
+        assert.ok(slots.some((slot) => requirementsExploration.discoveredSlots.includes(slot)));
+      }
+      assert.ok(requirementsExploration.incompleteWorkOrders > 0);
+      assert.equal(requirementsExploration.safeForParallelFanout, false);
+      assert.equal(requirementsExploration.actualWorkerExecution, false);
+      assert.equal(requirementsExploration.publicReady, false);
+      assert.equal(boundedPlanning.workerTaskPackets.length, 4);
+      assert.ok(boundedPlanning.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready"));
+      assert.equal(boundedPlanning.safeForParallelFanout, true);
+      assert.equal(boundedPlanning.actualWorkerExecution, false);
+      assert.equal(boundedPlanning.publicReady, false);
+      assert.ok(boundedPlanning.workerResultPackets.every((packet) => packet.status === "planned_not_executed"));
       assert.equal(
         report.governedExecutionEvidence.defaultRuntimePath.entry,
         "meta:theory:run"

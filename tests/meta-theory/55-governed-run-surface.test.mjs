@@ -1,7 +1,7 @@
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
@@ -1091,7 +1091,7 @@ describe("55 - governed run identity, language, and chat surface", () => {
     }
   });
 
-  test("conversation progress callback receives real ordered stage transitions", async () => {
+  test("conversation progress callback distinguishes planning snapshots from saved delivery", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-progress-events-"));
     const events = [];
     try {
@@ -1106,12 +1106,14 @@ describe("55 - governed run identity, language, and chat surface", () => {
       });
       assert.deepEqual(
         events.map((event) => event.stage),
-        ["Critical", "Fetch", "Thinking", "Execution", "Review", "Closure", "Aggregate"],
+        ["Critical", "Fetch", "Thinking", "Execution", "Review", "Closure", "Delivery"],
       );
       assert.equal(events[2].status, "route_ready_before_execution");
       assert.equal(run.conversationNotice.progressStreamed, true);
-      assert.equal(run.conversationNotice.progressEvents.length, 6);
-      assert.match(events.at(-1).text, /Route and ownership/u);
+      assert.equal(run.conversationNotice.progressEvents.length, 7);
+      assert.match(events.at(-1).text, /Run records saved/u);
+      assert.ok(events.every((event) => event.eventKind === "coarse_snapshot"));
+      assert.equal(run.conversationNotice.progressEvents.every((event) => event.deliveryStatus === "emitted"), true);
       assert.deepEqual(
         run.conversationNotice.hostObservationExpectations,
         events.map((event) => ({ stage: event.stage, textSha256: event.textSha256 })),
@@ -1147,6 +1149,7 @@ describe("55 - governed run identity, language, and chat surface", () => {
         observedRun.conversationNotice.hostObservation.reason,
         "runner_host_observation_is_diagnostic_only",
       );
+      assert.equal(observedRun.conversationNotice.emitted, false, "a requested notice without a transport callback was not emitted");
       assert.equal(observedRun.userExperienceNotice.status, "partial");
       assert.equal(observedRun.userExperienceNotice.conversationNoticeObserved, false);
 
@@ -1176,10 +1179,11 @@ describe("55 - governed run identity, language, and chat surface", () => {
         .map((marker) => cli.stderr.indexOf(marker));
       assert.ok(stageOffsets.every((offset) => offset >= 0));
       assert.deepEqual(stageOffsets, [...stageOffsets].sort((a, b) => a - b));
-      assert.ok(cli.stderr.indexOf("[Thinking]") < cli.stderr.indexOf("- Route and ownership"));
+      assert.ok(cli.stderr.indexOf("[Thinking]") < cli.stderr.indexOf("[Delivery]"));
+      assert.doesNotMatch(cli.stderr, /- Route and ownership/u);
       assert.match(cli.stderr, /Preparing dispatch and waiting for host confirmation/u);
       assert.match(cli.stderr, /closure check is consolidating the result, verification, and next action/u);
-      assert.match(cli.stderr, /transport only/u);
+      assert.match(cli.stderr, /task acceptance remains subject to verification/u);
       assert.doesNotMatch(cli.stderr, /\[Closure\].*verification=pass/u);
       assert.doesNotMatch(cli.stdout, /\[Critical\]|Route and ownership/u);
       const cliArtifact = JSON.parse(
@@ -1190,6 +1194,26 @@ describe("55 - governed run identity, language, and chat surface", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("a closed CLI stderr pipe preserves JSON stdout and never claims emitted progress", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-closed-progress-"));
+    try {
+      const child = spawn(process.execPath, ["scripts/run-meta-theory-governed-execution.mjs",
+        "--task", "Read package.json and report its name. Do not modify files.",
+        "--run-id", "closed-progress-pipe", "--state-dir", tempDir,
+        "--db", path.join(tempDir, "runs.sqlite"), "--emit-conversation-notice"],
+        { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+      child.stderr.destroy();
+      let output = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk) => { output += chunk; });
+      const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
+      assert.equal(code, 0);
+      assert.equal(JSON.parse(output).runId, "closed-progress-pipe");
+      const artifact = JSON.parse(await readFile(path.join(tempDir, "closed-progress-pipe.json"), "utf8"));
+      assert.equal(artifact.conversationNotice.emitted, false);
+      assert.ok(artifact.conversationNotice.progressEvents.every((event) => event.deliveryStatus === "failed"));
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
 
   test("English, Japanese, and Korean key chat/report surfaces do not leak Chinese templates", async () => {

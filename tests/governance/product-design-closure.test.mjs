@@ -172,7 +172,13 @@ test("actual runner consumes discovery before design and later review without re
   const hash = createHash("sha256").update("Source-bound package name report").digest("hex");
   const currentGoal = first.goalContractPacket;
   const review = { schemaVersion: 1, runId: first.runId, taskHash: currentGoal.taskHash, intentDigest: null, acceptanceDigest: currentGoal.acceptanceDigest, designDigest: first.productDesignPacket.designDigest, reviewRef: "fixture:review", artifactSnapshots: [{ ref: "tmp/final-report.md", sha256: hash, producerTaskId: first.workerTaskPackets[0].taskPacketId }], observations: [{ criterionId: "user-outcome", artifactRefs: ["tmp/final-report.md"], taskHash: currentGoal.taskHash, acceptanceDigest: currentGoal.acceptanceDigest, evidenceKind: "independent_review", verdict: "pass", producer: "fixture-producer", reviewer: "fixture-reviewer", evidenceRef: "fixture:assessment" }] };
-  const reviewed = await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: designInput(), outcomeReviewInput: review });
+  const reviewEvents = [];
+  const reviewed = await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: designInput(), outcomeReviewInput: review,
+    onConversationProgress: (event) => reviewEvents.push(event) });
+  assert.deepEqual(reviewEvents.map((event) => event.stage), ["Review"]);
+  assert.equal(reviewEvents[0].status, "continue_verification");
+  assert.equal(reviewEvents[0].details.nativeInvocationVerified, false);
+  assert.equal(reviewed.conversationNotice.emitted, true);
   assert.equal(reviewed.traceEvalControlPlane.outcomeEvaluation.status, "pass");
   assert.equal(reviewed.outcomeReviewPacket.nativeInvocationVerified, false);
   assert.equal(await readFile(first.paths.json, "utf8"), original);
@@ -197,9 +203,22 @@ test("actual runner consumes discovery before design and later review without re
   const newerLatest = await readFile(first.paths.latest, "utf8");
   await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: designInput(), outcomeReviewInput: review });
   assert.equal(await readFile(first.paths.latest, "utf8"), newerLatest, "Reviewing an older run leaves the newer latest pointer unchanged");
+  const revisionEvents = [];
+  const revisionReview = { ...review, observations: review.observations.map((item) => ({ ...item, verdict: "fail" })),
+    revisionRequests: [{ taskId: first.workerTaskPackets[0].taskPacketId, criterionId: "user-outcome", returnToStage: "Execution",
+      finding: "The exact package name is missing", requiredChange: "Include the exact package name from package.json", evidenceRefs: ["tmp/final-report.md"] }] };
+  const revision = await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: designInput(), outcomeReviewInput: revisionReview,
+    onConversationProgress: (event) => revisionEvents.push(event) });
+  assert.deepEqual(revisionEvents.map((event) => event.status), ["revise"]);
+  assert.match(revisionEvents[0].text, /Include the exact package name/u);
+  assert.equal(revision.reviewPacket.revisionNeeded, true);
+  assert.equal(revision.summaryPacket.publicReady, false);
   const durableReview = { ...review, runId: executed.runId, artifactSnapshots: [{ ...review.artifactSnapshots[0], producerTaskId: executed.workerTaskPackets[0].taskPacketId }] };
   const resume = { ...base, runId: executed.runId, designInput: designInput(), stageRunner: { ...stageRunner, durableMode: "resume" } };
-  const resumed = await runMetaTheoryGovernedExecution({ ...resume, outcomeReviewInput: durableReview });
+  const resumeEvents = [];
+  const resumed = await runMetaTheoryGovernedExecution({ ...resume, outcomeReviewInput: durableReview,
+    onConversationProgress: (event) => resumeEvents.push(event) });
+  assert.deepEqual(resumeEvents.map((event) => event.stage), ["Resume", "Review"]);
   assert.equal(resumed.outcomeReviewPacket.status, "pass");
   assert.equal(calls, 1, "Attaching review never replays a committed worker");
   const resumedAgain = await runMetaTheoryGovernedExecution(resume);

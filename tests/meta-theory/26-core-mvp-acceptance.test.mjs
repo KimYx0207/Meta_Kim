@@ -1,9 +1,15 @@
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { runCoreMvpAcceptance } from "../../scripts/run-core-mvp-acceptance.mjs";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+let runtimeFixture, runCoreMvpAcceptance;
+before(async () => {
+  runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  ({ runCoreMvpAcceptance } = await runtimeFixture.import("scripts/run-core-mvp-acceptance.mjs"));
+});
+after(() => runtimeFixture?.cleanup());
 
 describe("26 — Core MVP acceptance report", async () => {
   test("maps PRD FRs and quantitative metrics to executable evidence", async () => {

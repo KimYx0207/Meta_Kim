@@ -2,7 +2,6 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { URL } from "node:url";
 import { randomBytes } from "node:crypto";
-import path from "node:path";
 
 import {
   createLiveControlRoomService,
@@ -25,9 +24,7 @@ import {
   LIVE_HUB_MAX_NODE_COUNT,
 } from "./live-hub-project-catalog.mjs";
 import { renderLiveControlRoomPage } from "../../presentation/live/live-control-room-page.mjs";
-import { createCodexNativeSessionReader } from "./codex-native-session-reader.mjs";
-import { buildNativeCodexLiveSnapshot, nativeCodexSessionCatalogRow } from "../../application/live/live-native-codex-projection.mjs";
-import { buildProjectRef } from "../../../scripts/project-registry.mjs";
+import { createLiveNativeBindings } from "./live-native-bindings.mjs";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
@@ -449,53 +446,12 @@ function boundedError(error, fallback = "control_unavailable") {
  */
 export function createLiveControlRoomServer(options = {}) {
   const globalHub = options.globalHub === true;
-  // Binding comes only from a trusted startup option, never from an HTTP query.
-  // Native sessions are read-only and have their own run; old planning artifacts
-  // cannot acquire execution truth merely because a Desktop conversation exists.
-  const nativeReader = options.nativeCodex && typeof options.nativeCodex === "object"
-    ? createCodexNativeSessionReader(options.nativeCodex)
-    : null;
-  const nativeProjectRef = nativeReader ? buildProjectRef({ repoPath: nativeReader.projectRoot }) : null;
-  const nativeSnapshots = new Map();
-  const readNativeSnapshot = async (requestedRunId = null) => {
-    if (!nativeReader) return null;
-    let observation;
-    if (requestedRunId) {
-      const prefix = `native-codex-${nativeReader.threadId}-`;
-      if (!requestedRunId.startsWith(prefix)) return null;
-      const turnId = requestedRunId.slice(prefix.length);
-      if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(turnId)) return null;
-      observation = await nativeReader.readTurn(turnId);
-    } else observation = await nativeReader.read();
-    const snapshot = buildNativeCodexLiveSnapshot(observation);
-    if (snapshot) {
-      nativeSnapshots.set(snapshot.run.runId, snapshot);
-      if (nativeSnapshots.size > 16) nativeSnapshots.delete(nativeSnapshots.keys().next().value);
-    }
-    return snapshot;
-  };
-  const mergeNativeProjects = (rows) => {
-    if (!nativeReader || !nativeSnapshots.size) return rows;
-    const snapshots = [...nativeSnapshots.values()].sort((a, b) => String(b.run.startedAt).localeCompare(String(a.run.startedAt)));
-    const sessions = snapshots.map(nativeCodexSessionCatalogRow);
-    const existing = rows.find((project) => project.projectRef === nativeProjectRef);
-    const nativeIds = new Set(sessions.map((session) => session.runId));
-    const nativeProject = {
-      ...(existing || {}), projectRef: nativeProjectRef, repoRoot: nativeReader.projectRoot,
-      displayName: existing?.displayName || path.basename(nativeReader.projectRoot),
-      status: sessions[0].status, activeSessionId: sessions[0].active ? sessions[0].sessionId : existing?.activeSessionId || null,
-      updatedAt: sessions[0].updatedAt,
-      sessions: [...sessions, ...(existing?.sessions || []).filter((item) => !nativeIds.has(item.runId))],
-    };
-    nativeProject.sessionCount = nativeProject.sessions.length;
-    return [nativeProject, ...rows.filter((project) => project.projectRef !== nativeProjectRef)];
-  };
+  const nativeBindings = createLiveNativeBindings(options);
   const wrapNativeService = (base, repoRoot) => {
-    // Use host path identity: case-insensitive on Windows, case-sensitive on POSIX.
-    if (!nativeReader || path.relative(repoRoot, nativeReader.projectRoot) !== "") return base;
+    // Readers are resolved per request, so a reused daemon can learn a new local binding.
     const share = async (request = {}) => {
       const requestedRun = typeof request === "string" ? request : request.runId;
-      if (!requestedRun || requestedRun.startsWith("native-codex-")) {
+      if ((!requestedRun && nativeBindings.hasProject(repoRoot)) || requestedRun?.startsWith("native-codex-")) {
         const error = new Error("Native session sharing is unavailable.");
         error.code = "LIVE_SHARE_UNAVAILABLE";
         throw error;
@@ -506,8 +462,8 @@ export function createLiveControlRoomServer(options = {}) {
       ...base,
       async getSnapshot(runId) {
         if (runId && typeof runId === "object") runId = runId.runId;
-        if (!runId || runId.startsWith(`native-codex-${nativeReader.threadId}-`)) {
-          const snapshot = await readNativeSnapshot(runId || null);
+        if (!runId || runId.startsWith("native-codex-")) {
+          const snapshot = await nativeBindings.read({ projectRoot: repoRoot, runId: runId || null });
           if (snapshot && (!runId || runId === snapshot.run.runId)) return snapshot;
           if (runId) throw new Error("native_turn_not_available");
         }
@@ -515,7 +471,7 @@ export function createLiveControlRoomServer(options = {}) {
       },
       async getReplay(runId) {
         if (runId && typeof runId === "object") runId = runId.runId;
-        if (typeof runId === "string" && runId.startsWith(`native-codex-${nativeReader.threadId}-`)) {
+        if (typeof runId === "string" && runId.startsWith("native-codex-")) {
           const snapshot = await this.getSnapshot(runId);
           return { schemaVersion: LIVE_REPLAY_SCHEMA_VERSION, runId, source: snapshot.source, replay: snapshot.replay, eventCount: snapshot.eventCount, permissions: snapshot.permissions };
         }
@@ -539,7 +495,7 @@ export function createLiveControlRoomServer(options = {}) {
         },
       }
     : options);
-  const service = wrapNativeService(baseService, options.projectRoot || nativeReader?.projectRoot || process.cwd());
+  const service = wrapNativeService(baseService, options.projectRoot || options.nativeCodex?.projectRoot || process.cwd());
   const requestedPort = Number.isInteger(options.port) && options.port >= 0 ? options.port : DEFAULT_PORT;
   const requestedHost = options.host;
   if (!loopbackOnly(requestedHost)) {
@@ -619,8 +575,7 @@ export function createLiveControlRoomServer(options = {}) {
     if (!hubCatalogReadPromise) {
       hubCatalogReadPromise = Promise.resolve(hubCatalog.listProjects())
         .then(async (projects) => {
-          await readNativeSnapshot().catch(() => null);
-          hubCatalogCache = mergeNativeProjects(Array.isArray(projects) ? projects : []);
+          hubCatalogCache = Array.isArray(projects) ? projects : [];
           hubCatalogCacheExpiresAt = hubCatalogClock() + hubCatalogTtlMs;
           return hubCatalogCache;
         })
@@ -647,8 +602,9 @@ export function createLiveControlRoomServer(options = {}) {
   };
 
   const publicHubCatalog = async ({ requestedProjectId = null, requestedRunId = null, refresh = false } = {}) => {
-    if (nativeReader) await readNativeSnapshot(requestedRunId?.startsWith("native-codex-") ? requestedRunId : null).catch(() => null);
-    const internalProjects = mergeNativeProjects(await readHubProjects({ refresh }));
+    await nativeBindings.read({ catalog: true });
+    if (requestedRunId?.startsWith("native-codex-")) await nativeBindings.read({ projectRef: requestedProjectId, runId: requestedRunId, catalog: true });
+    const internalProjects = nativeBindings.mergeProjects(await readHubProjects({ refresh }));
     const unorderedProjects = internalProjects.map((project) => ({
       projectId: project.projectRef,
       displayName: project.displayName,
@@ -666,7 +622,7 @@ export function createLiveControlRoomServer(options = {}) {
             const eventCount = boundedPublicCount(session.eventCount, LIVE_HUB_MAX_EVENT_COUNT);
             // Persisted/caller-supplied rows cannot acquire native observation
             // provenance by copying a label. Only this bound reader supplies it.
-            const nativeSnapshot = project.projectRef === nativeProjectRef ? nativeSnapshots.get(session.runId) : null;
+            const nativeSnapshot = nativeBindings.snapshotFor(project.projectRef, session.runId);
             return {
               sessionId: session.sessionId,
               runId: session.runId,
@@ -766,7 +722,8 @@ export function createLiveControlRoomServer(options = {}) {
     const requestedProjectId = parsed.searchParams.get("projectId");
     const requestedRunId = parsed.searchParams.get("runId");
     const catalog = await publicHubCatalog({ requestedProjectId, requestedRunId });
-    if (catalog.projects.length === 0) return { service: null, projectId: null, runId: null, catalog };
+    if (catalog.projects.length === 0) return { service: null, projectId: null, runId: null, catalog,
+      ...(requestedProjectId ? { invalidProject: true } : requestedRunId ? { invalidRun: true } : {}) };
     if (requestedProjectId && catalog.selected.projectId !== requestedProjectId) {
       return { service: null, projectId: null, runId: null, catalog, invalidProject: true };
     }
@@ -779,8 +736,9 @@ export function createLiveControlRoomServer(options = {}) {
     if (requestedRunId && !selectedProject?.sessions?.some((session) => session.runId === requestedRunId)) {
       return { service: null, projectId, runId: requestedRunId, catalog, invalidRun: true };
     }
-    const internalProject = projectId === nativeProjectRef
-      ? { projectRef: nativeProjectRef, repoRoot: nativeReader.projectRoot }
+    const nativeProject = nativeBindings.projectFor(projectId);
+    const internalProject = nativeProject
+      ? { projectRef: projectId, repoRoot: nativeProject.projectRoot }
       : await hubCatalog.resolveProject(projectId);
     if (!internalProject) return { service: null, projectId, runId, catalog, invalidProject: true };
     const cacheKey = `${projectId}:${internalProject.repoRoot}`;

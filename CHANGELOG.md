@@ -6,7 +6,17 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
 
-## [3.7.0] - 2026-10-23
+## [3.7.1] - 2026-10-23
+
+This release includes the unreleased 3.7.0 changes listed below.
+
+- **Keep Live on the current task.** Reusing a running Hub registers the current project and Codex conversation without replacing other conversations. An explicit run that has not arrived yet stays selected and waits; it no longer falls back to a historical run.
+- **Show actual task progress as it happens.** Durable task events report claimed work, dependencies, results, failures and recovery. Resuming preserves completed work and avoids replaying old notices. CLI progress goes to stderr, keeping structured stdout readable.
+- **Observe long Codex conversations within bounded reads.** Oversized transcripts retain verified identity and turn checks while reading recent complete records and subsequent appends. Omitted history remains explicitly partial.
+- **Request the host panel once when supported.** Local activation retains the exact project/run link even when Live is already running. Host guidance reuses the conversation's browser panel; a request or queued opening is still distinct from a visible panel.
+- **Verify clarification and task planning separately.** The acceptance scenarios retain the original underspecified capability request and check that it cannot execute. A separate bounded request verifies four ready planned tasks, without treating planning or worker return as acceptance.
+
+## [3.7.0] - Unreleased candidate, included in 3.7.1
 
 - **Explore requirements before designing and splitting work.** Source-backed recommendations, trade-offs and dependent decisions can be discussed without a completed design. Settled designs then feed the existing task board and execution dependencies.
 - **Pass complete professional methods to workers.** Source-checked role steps and input/output contracts enter the actual handoff. Missing facts are reported, prose delivery stays compatible, and producer self-checks remain pending independent review.

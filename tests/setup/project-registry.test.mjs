@@ -12,6 +12,8 @@ import {
   getProjectRegistryPaths,
   joinProjectRegistry,
   listJoinedProjectRegistryEntries,
+  listLiveNativeCodexBindings,
+  registerLiveNativeCodexBinding,
   readProjectRegistryEntry,
   repairEphemeralProjectRegistryEntries,
   skipProjectRegistry,
@@ -19,6 +21,38 @@ import {
 import { importDatabaseSync } from "../../scripts/sqlite-runtime.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+
+test("native Live bindings are joined-only, idempotent and preserve independent thread/turn scopes", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-native-registry-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const repoPath = path.join(homeDir, "Mixed Case Project");
+  const threadId = "11111111-1111-4111-8111-111111111111";
+  const turnId = "22222222-2222-4222-8222-222222222222";
+  assert.deepEqual(await listLiveNativeCodexBindings({ homeDir }), []);
+  assert.equal(await registerLiveNativeCodexBinding({ homeDir, repoPath, threadId }), null);
+  await assert.rejects(fs.stat(getProjectRegistryPaths({ homeDir }).projectRegistryPath), { code: "ENOENT" });
+  await joinProjectRegistry({ homeDir, repoPath });
+  const binding = { homeDir, repoPath, threadId, codexHome: path.join(homeDir, ".codex") };
+  await registerLiveNativeCodexBinding(binding);
+  const first = await readProjectRegistryEntry({ homeDir, repoPath });
+  await registerLiveNativeCodexBinding(binding);
+  assert.deepEqual(await readProjectRegistryEntry({ homeDir, repoPath }), first);
+  await registerLiveNativeCodexBinding({ ...binding, turnId });
+  await registerLiveNativeCodexBinding({ ...binding, threadId: turnId });
+  assert.equal((await listLiveNativeCodexBindings({ homeDir })).length, 3);
+  await registerLiveNativeCodexBinding({ ...binding, profile: "other_profile" });
+  assert.equal((await listLiveNativeCodexBindings({ homeDir, profile: "other_profile" })).length, 1);
+  assert.deepEqual(await listLiveNativeCodexBindings({ homeDir, profile: "otherXprofile" }), []);
+  assert.equal((await listLiveNativeCodexBindings({ homeDir, threadId, turnId })).length, 2);
+  assert.equal((await listLiveNativeCodexBindings({ homeDir, limit: 1 })).length, 1);
+  assert.equal(await registerLiveNativeCodexBinding({ ...binding, threadId: "../bad" }), null);
+  assert.equal(await registerLiveNativeCodexBinding({ ...binding, codexHome: "relative" }), null);
+  await skipProjectRegistry({ homeDir, repoPath });
+  assert.equal(await registerLiveNativeCodexBinding(binding), null);
+  assert.deepEqual(await listLiveNativeCodexBindings({ homeDir }), []);
+  assert.deepEqual(await listLiveNativeCodexBindings({ homeDir, profile: "other_profile" }), []);
+  assert.equal((await detectProjectRegistryEntry({ homeDir, repoPath })).registryStatus, "skipped");
+});
 
 describe("project registry", () => {
   test("unknown project resolves to prompt_join with machine-global registry path", async () => {

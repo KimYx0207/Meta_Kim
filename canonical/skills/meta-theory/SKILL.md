@@ -64,6 +64,14 @@ Before adding another checklist, hook rule, or validator gate, classify the rout
 - Type D: review, verification, rollback, public-ready, or warning closure.
 - Type E: orchestration, planning files, business-flow, and cross-runtime release.
 
+## Task progress visible to the user
+
+At the start of governed work, use the exact current project/run Live link supplied by the local launch path. If the active host exposes a supported browser panel, open that link once in this conversation and reuse its existing tab. Subsequent task events update that view; do not create tabs or take focus on every event. Preserve an explicit current-run selection while its first observation is pending, rather than replacing it with a historical run. A generated link, Hook context, queued open request, or healthy server does not prove that the user can see the panel.
+
+The task board and conversation progress must describe the same existing task/DAG/event records. Show concrete work, owner, dependencies, current action, available output, failure and next step. A worker return, process exit, acceptance and release are separate facts. Announce actual state changes in short localized messages; deduplicate repeated observations and reconnects. If no browser panel is exposed, use the host conversation or CLI stderr while keeping structured stdout intact. Do not replace a user's status-line configuration, open an external browser automatically, or introduce another task/status authority.
+
+Host capability discovery comes first: a browser feature documented for a desktop host does not prove that its CLI, remote session or current tool inventory supports it. Use runtime adapter guidance for tool names and report unsupported, pending or unverified states honestly.
+
 ## Complexity Fan-out Trigger
 
 Do not wait for the user to spell out agent names before recognizing complexity. Treat the run as fan-out eligible when any of these signals appear:

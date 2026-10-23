@@ -7,7 +7,7 @@ import test from "node:test";
 import { createCodexNativeSessionReader } from "../../src/infrastructure/live/codex-native-session-reader.mjs";
 import { buildNativeCodexLiveSnapshot } from "../../src/application/live/live-native-codex-projection.mjs";
 import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
-import { nativeCodexStartupBinding, parseArgs } from "../../scripts/meta-kim-live.mjs";
+import { nativeCodexStartupBinding, parseArgs, resolveNativeCodexCurrentRun, liveCurrentRunPresentation } from "../../scripts/meta-kim-live.mjs";
 import { buildProjectRef } from "../../scripts/project-registry.mjs";
 
 const THREAD = "11111111-1111-4111-8111-111111111111";
@@ -22,6 +22,7 @@ const meta = (projectRoot, id = THREAD, parent = null) => row("session_meta", { 
 const context = (projectRoot, turn = TURN, offset = 1) => row("turn_context", { turn_id: turn, cwd: projectRoot }, offset);
 const childStart = (turn = OTHER, offset = 3, parentTurn = TURN) => row("event_msg", { type: "task_started", turn_id: turn, root_turn_id: parentTurn, turn_attribution: { parent_turn_id: parentTurn } }, offset);
 const serialize = (records) => records.map((record) => JSON.stringify(record)).join("\n") + "\n";
+const largePadding = () => Array.from({ length: 300 }, () => JSON.stringify({ type: "response_item", payload: { type: "message", text: "中".repeat(512) } })).join("\n") + "\n";
 const command = (root, { thread = THREAD, turn = TURN, exitCode = 0, offset = 4 } = {}) => row("event_msg", { type: "item_completed", thread_id: thread, turn_id: turn, item: { type: "CommandExecution", id: "exec-native-1", cwd: root, command: "SECRET COMMAND", aggregated_output: "sk-private-content", status: exitCode ? "failed" : "completed", exit_code: exitCode, duration: 8 } }, offset);
 const spawn = () => [
   row("response_item", { type: "function_call", namespace: "collaboration", name: "spawn_agent", call_id: "call-spawn-1", arguments: JSON.stringify({ task_name: "native_backend", agent_type: "javascript-pro", message: "roleDisplayName=backend; PRIVATE PROMPT" }) }, 2),
@@ -41,6 +42,131 @@ async function fixture(t, projectName = "project") {
   const options = { projectRoot, codexHome, threadId: THREAD, turnId: TURN, sinceMs: SINCE, now: () => NOW };
   return { root, projectRoot, codexHome, day, file, options, async write(records) { await writeFile(file, serialize(records)); } };
 }
+
+test("a thread-only launch cannot promote an older observed turn to the current task", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot), row("event_msg", { type: "task_complete", turn_id: TURN }, 10)]);
+  const threadOnly = { ...f.options, turnId: undefined };
+  const oldObservation = await createCodexNativeSessionReader(threadOnly).read();
+  assert.equal(oldObservation.state, "observed");
+  assert.equal(oldObservation.turnComplete, true);
+  const runId = await resolveNativeCodexCurrentRun(threadOnly);
+  assert.equal(runId, null);
+  const presentation = liveCurrentRunPresentation({ runId, nativeBinding: threadOnly, deepLink: "http://127.0.0.1:4331/?projectId=fixture" });
+  assert.equal(presentation.currentRunState, "awaiting_native_turn");
+  assert.equal(presentation.currentTaskLink, null);
+  assert.equal(presentation.autoOpenAllowed, false);
+  assert.equal(await resolveNativeCodexCurrentRun(f.options), `native-codex-${THREAD}-${TURN}`, "an explicit exact turn remains selectable");
+  assert.equal(await resolveNativeCodexCurrentRun({ ...f.options, turnId: OTHER }), null);
+  // Even an unterminated old turn is not proof that it belongs to this launch.
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  assert.equal(await resolveNativeCodexCurrentRun(threadOnly), null);
+});
+
+test("large valid sessions use a bounded tail then zero-body-cache and append-only reads", async (t) => {
+  const f = await fixture(t);
+  let clock = NOW;
+  const options = { ...f.options, maxBytes: 4096, now: () => clock };
+  await writeFile(f.file, serialize([meta(f.projectRoot)]) + largePadding() + serialize([context(f.projectRoot), command(f.projectRoot)]));
+  const before = createHash("sha256").update(await readFile(f.file)).digest("hex");
+  const reader = createCodexNativeSessionReader(options);
+  const initial = await reader.read();
+  assert.equal(initial.state, "observed");
+  assert.equal(initial.commands.length, 1);
+  assert.equal(initial.coverage.state, "partial");
+  assert.ok(initial.coverage.reasons.includes("segment_prefix_omitted"));
+  assert.ok(initial.coverage.bodyBytesRead <= options.maxBytes);
+  assert.ok(initial.coverage.sourceBytesRead <= initial.coverage.readByteLimit);
+  assert.equal(createHash("sha256").update(await readFile(f.file)).digest("hex"), before);
+  clock += 1000;
+  const unchanged = await reader.read();
+  assert.equal(unchanged.coverage.bodyBytesRead, 0);
+  assert.equal(unchanged.coverage.cachedSegmentCount, 1);
+  assert.ok(unchanged.coverage.sourceBytesRead < 2048);
+  const added = command(f.projectRoot, { offset: 20 });
+  added.payload.item.id = "appended-command";
+  const bytes = serialize([added]);
+  await appendFile(f.file, bytes);
+  clock += 1000;
+  const incremental = await reader.read();
+  assert.equal(incremental.commands.length, 2);
+  assert.equal(incremental.coverage.bodyBytesRead, Buffer.byteLength(bytes));
+  assert.ok(incremental.coverage.sourceBytesRead < 2048);
+});
+
+test("a large tail without the exact turn context remains unavailable", async (t) => {
+  const f = await fixture(t);
+  await writeFile(f.file, serialize([meta(f.projectRoot), context(f.projectRoot)]) + largePadding() + serialize([command(f.projectRoot)]));
+  const observed = await createCodexNativeSessionReader({ ...f.options, maxBytes: 4096 }).read();
+  assert.equal(observed.state, "unavailable");
+  assert.equal(observed.reason, "exact_native_turn_not_observed");
+  assert.ok(observed.coverage.reasons.includes("segment_prefix_omitted"));
+});
+
+test("an omitted prefix cannot inherit another segment's active-turn attribution", async (t) => {
+  const f = await fixture(t);
+  let clock = NOW;
+  await writeFile(path.join(f.day, "rollout-0000-" + THREAD + ".jsonl"), serialize([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]));
+  await writeFile(f.file, serialize([meta(f.projectRoot)]) + largePadding() + serialize([
+    row("response_item", { type: "function_call", call_id: "unbound-tail", name: "exec", namespace: "functions", arguments: "{}" }, 20),
+    row("response_item", { type: "function_call_output", call_id: "unbound-tail" }, 21),
+  ]));
+  const reader = createCodexNativeSessionReader({ ...f.options, maxBytes: 4096, now: () => clock });
+  const first = await reader.read();
+  assert.ok(first.coverage.sourceBytesRead <= first.coverage.readByteLimit);
+  clock += 1000;
+  const observed = await reader.read();
+  assert.equal(observed.state, "observed");
+  assert.equal(observed.commands.length, 1);
+  assert.equal(observed.pairedToolCalls.length, 0, "a gap resets inherited activeTurn");
+  assert.equal(observed.coverage.state, "partial");
+});
+
+test("UTF-8 partial append waits for its entire JSON line without replaying prior events", async (t) => {
+  const f = await fixture(t);
+  let clock = NOW;
+  await writeFile(f.file, serialize([meta(f.projectRoot)]) + largePadding() + serialize([context(f.projectRoot), command(f.projectRoot)]));
+  const reader = createCodexNativeSessionReader({ ...f.options, maxBytes: 4096, now: () => clock });
+  await reader.read();
+  const added = command(f.projectRoot, { offset: 20 });
+  added.payload.item.id = "utf8-append";
+  added.payload.item.command = "中间截断";
+  const line = Buffer.from(serialize([added]));
+  const split = line.indexOf(Buffer.from("中")) + 1;
+  await appendFile(f.file, line.subarray(0, split));
+  clock += 1000;
+  const partial = await reader.read();
+  assert.equal(partial.commands.length, 1);
+  assert.ok(partial.coverage.reasons.includes("partial_final_line"));
+  await appendFile(f.file, line.subarray(split));
+  clock += 1000;
+  const complete = await reader.read();
+  assert.equal(complete.commands.length, 2);
+  assert.equal(complete.coverage.reasons.includes("partial_final_line"), false);
+  assert.equal(complete.commands.filter((item) => item.id === "utf8-append").length, 1);
+});
+
+test("cached large sessions reject changed header/cwd and rebuild after truncation or tail-anchor drift", async (t) => {
+  const f = await fixture(t);
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, maxBytes: 4096, now: () => clock });
+  const valid = serialize([meta(f.projectRoot)]) + largePadding() + serialize([context(f.projectRoot), command(f.projectRoot)]);
+  await writeFile(f.file, valid);
+  assert.equal((await reader.read()).state, "observed");
+  await writeFile(f.file, serialize([meta(f.projectRoot)]) + largePadding() + serialize([context(path.join(f.projectRoot, "other")), command(f.projectRoot), command(f.projectRoot, { offset: 30 })]));
+  clock += 1000;
+  assert.equal((await reader.read()).reason, "native_turn_project_binding_unproven");
+  await writeFile(f.file, serialize([meta(f.projectRoot), context(f.projectRoot)]));
+  clock += 1000;
+  const truncated = await reader.read();
+  assert.equal(truncated.state, "observed");
+  assert.equal(truncated.commands.length, 0);
+  await writeFile(f.file, serialize([meta(path.join(f.root, "wrong"))]) + largePadding() + serialize([context(f.projectRoot), command(f.projectRoot)]));
+  clock += 1000;
+  const wrongHeader = await reader.read();
+  assert.equal(wrongHeader.state, "unavailable");
+  assert.equal(wrongHeader.coverage.bodyBytesRead, 0, "reject metadata before parsing a tail");
+});
 
 test("reads bound native command events without raw commands, paths, output or acceptance promotion", async (t) => {
   const f = await fixture(t);
@@ -286,7 +412,7 @@ test("an exact child start and return can span resume segments without promoting
   assert.equal(JSON.stringify(snapshot).includes("PRIVATE RESULT"), false);
 });
 
-test("large omitted parent and child segments stay bounded and expose partial coverage instead of full completion", async (t) => {
+test("malformed large parent and child headers remain untrusted and leave completion unconfirmed", async (t) => {
   const f = await fixture(t);
   await f.write([meta(f.projectRoot), context(f.projectRoot), ...spawn(), command(f.projectRoot)]);
   await writeFile(path.join(f.day, `rollout-large-${THREAD}.jsonl`), "x".repeat(4_096));
@@ -294,7 +420,7 @@ test("large omitted parent and child segments stay bounded and expose partial co
   await writeFile(path.join(f.day, `rollout-b-${CHILD}.jsonl`), "x".repeat(4_096));
   const observation = await createCodexNativeSessionReader({ ...f.options, maxBytes: 3_072 }).read();
   assert.equal(observation.coverage.state, "partial");
-  assert.deepEqual(observation.coverage.reasons, ["segment_size_limit"]);
+  assert.deepEqual(observation.coverage.reasons, ["segment_metadata_unavailable"]);
   assert.equal(observation.agents[0].completed, false, "an omitted child continuation leaves its current return unconfirmed");
   const snapshot = buildNativeCodexLiveSnapshot(observation);
   assert.equal(snapshot.source.coverage.state, "partial");

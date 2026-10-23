@@ -1,6 +1,7 @@
 import process from "node:process";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readJsonFromStdin } from "./utils.mjs";
@@ -554,19 +555,25 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
   try {
     const { ensureLiveHub } = await import(pathToFileURL(lifecycleModule).href);
     const { loadLiveHubLifecycleBudget } = await import(pathToFileURL(budgetModule).href);
-    const { ensureGovernedLiveProjectRegistration } = await import(
+    const { ensureGovernedLiveProjectRegistration, registerLiveNativeCodexBinding } = await import(
       pathToFileURL(join(packageRoot, "scripts", "project-registry.mjs")).href
     );
     const registration = await ensureGovernedLiveProjectRegistration({
+      homeDir: process.env.META_KIM_LIVE_HOME,
       repoPath: root,
       runtimeFamily: "shared",
       sourceRef: "meta-kim-live-hook",
     });
-    const projectRef = registration.registryStatus === "joined"
+    const projectRef = registration.registryStatus === "joined" || (registration.registryStatus === "known" && registration.known === true)
       ? registration.projectRef
       : null;
+    if (projectRef && sourceRuntimeFromPayload() === "codex" && typeof registerLiveNativeCodexBinding === "function") {
+      await registerLiveNativeCodexBinding({ homeDir: process.env.META_KIM_LIVE_HOME, repoPath: root, profile,
+        threadId: process.env.CODEX_THREAD_ID, codexHome: process.env.CODEX_HOME });
+    }
     const result = await ensureLiveHub({
       packageRoot,
+      homeDir: process.env.META_KIM_LIVE_HOME,
       projectRef,
       runId: projectRef ? runId : null,
       profile,
@@ -576,9 +583,21 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
       // reused without spawning, so this is paid at most once per session.
       timeoutMs: loadLiveHubLifecycleBudget().hookAutostartBudgetMs,
     });
-    return result?.started === true && typeof result.deepLink === "string"
-      ? result
-      : null;
+    if (result?.status === "unavailable" || typeof result?.deepLink !== "string") return null;
+    // A Hub root is only a directory of history, never this task's deep link.
+    if (!projectRef || !runId) return null;
+    const runtime = sourceRuntimeFromPayload() || "shared";
+    const hostThread = process.env.CODEX_THREAD_ID || verifiedConversationBinding().conversation?.conversationRef || runtime;
+    const requestKey = createHash("sha256").update(JSON.stringify([runtime, hostThread, projectRef, runId])).digest("hex");
+    const requestDirectory = join(root, ".meta-kim", "state", profile, "live-view-requests");
+    mkdirSync(requestDirectory, { recursive: true });
+    try {
+      writeFileSync(join(requestDirectory, `${requestKey}.json`), JSON.stringify({ state: "requested", projectRef, runId, url: result.deepLink }), { flag: "wx", encoding: "utf8" });
+    } catch (error) {
+      if (error.code === "EEXIST") return null;
+      throw error;
+    }
+    return result;
   } catch {
     // Live is an optional local observation surface. Startup failure must not
     // prevent the governed run itself from starting.
@@ -587,10 +606,10 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
 }
 
 function emitLiveHubStartedContext(live, language = "en") {
-  if (!live?.started || typeof live.deepLink !== "string") return;
+  if (typeof live?.deepLink !== "string") return;
   const additionalContext = language === "zh-CN"
-    ? `Meta_Kim Live 已启动，你可以在这里查看它的实时运行图：${live.deepLink}\n请在本轮正常会话回复中向用户显示这条启动信息和可点击链接；不要把 Hook 上下文当作业务完成证据。`
-    : `Meta_Kim Live has started. View its real-time run graph here: ${live.deepLink}\nShow this startup message and clickable link in the normal assistant response for this turn; do not treat Hook context as business-completion evidence.`;
+    ? `Meta_Kim Live ${live.started ? "已启动" : "已复用"}，当前任务：${live.deepLink}\n请在本轮正常会话回复中显示这条可点击链接。检查宿主实际暴露的侧栏/浏览器工具：有能力时打开或复用当前任务的侧栏视图一次，不重复开页、不抢其他任务焦点；没有工具时只显示链接。只有工具明确成功后才说已打开，queued 仍是等待打开。不要把 Hook 上下文当作业务完成证据。`
+    : `Meta_Kim Live ${live.started ? "has started" : "is reused"}. Current task: ${live.deepLink}\nShow this clickable link in the normal assistant response. Inspect the host's exposed sidebar/browser tools; if supported, open or reuse this task's sidebar once without duplicate tabs or stealing another task's focus. Otherwise show the link only. Report opened only after confirmed tool success; queued is still pending. Hook context is not business-completion evidence.`;
   const isCursor =
     process.env.META_KIM_HOOK_RUNTIME === "cursor" ||
     payload?.hook_event_name === "beforeSubmitPrompt";

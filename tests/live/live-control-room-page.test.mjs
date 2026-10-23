@@ -871,6 +871,46 @@ function shippedHelper(html, name) {
   return html.slice(start, end);
 }
 
+test("an explicit not-yet-indexed run waits, appears automatically, and does not reclaim a manual history selection", async () => {
+  const html = renderLiveControlRoomPage();
+  const loads = [];
+  const empty = [];
+  const api = new Function("loads", "empty", `
+    let requested = { projectId: "project-current", runId: "meta-current" };
+    let projectCatalog = [], selectedProjectId = "", selectedRunId = "", catalogAvailable = false;
+    let currentSnapshot = null, selectionGeneration = 0, snapshotCoalesceTimer = null,
+      pendingSnapshot, refreshQueued, refreshAfterRequest, snapshotRequestInFlight,
+      selectedNodeId, currentReplayIndex, replayFollowingLive;
+    const currentLanguage = "zh", controlPanel = null, controlError = null, controlResult = null, abortController = null;
+    const safeIdentifier = (value) => value;
+    const populateProjectSelect = () => {}, populateSessionSelect = () => {}, stopReplay = () => {},
+      setControlMessage = () => {}, disconnectEvents = () => {}, connectEvents = () => {},
+      setHubStatus = () => {}, renderRunOverview = () => {};
+    const selectionFromLocation = () => requested;
+    const updateSelectionUrl = () => { requested = { projectId: selectedProjectId, runId: selectedRunId }; };
+    const showEmpty = (message) => empty.push(message);
+    const loadSnapshot = async () => { loads.push(selectedRunId); currentSnapshot = { run: { id: selectedRunId } }; };
+    ${shippedHelper(html, "defaultSessionFor")}
+    ${shippedHelper(html, "switchSelection")}
+    ${shippedHelper(html, "applyProjectCatalog")}
+    return { applyProjectCatalog, switchSelection, selection: () => ({ ...requested }), selected: () => selectedRunId };
+  `)(loads, empty);
+  const project = { projectId: "project-current", displayName: "Current", sessions: [{ runId: "meta-old" }] };
+  const catalog = () => ({ projects: [project], selected: { projectId: project.projectId, runId: "meta-old" } });
+  await api.applyProjectCatalog(catalog());
+  assert.deepEqual(api.selection(), { projectId: "project-current", runId: "meta-current" });
+  assert.deepEqual(loads, []);
+  assert.match(empty.at(-1), /等待当前运行记录/u);
+  project.sessions.push({ runId: "meta-current" });
+  await api.applyProjectCatalog(catalog(), { refresh: true });
+  assert.deepEqual(loads, ["meta-current"]);
+  await api.switchSelection(project.projectId, "meta-old");
+  await api.applyProjectCatalog(catalog(), { refresh: true });
+  assert.equal(api.selected(), "meta-old");
+  assert.equal(api.selection().runId, "meta-old");
+  assert.deepEqual(loads, ["meta-current", "meta-old"]);
+});
+
 const SESSION_COPY_HELPERS = [
   "display",
   "firstValue",
@@ -2181,7 +2221,8 @@ test("renders an accessible project and run-record selector with explicit identi
 test("loads the Hub catalog, honors deep links, and reconnects scoped read endpoints", () => {
   const html = renderLiveControlRoomPage();
 
-  assert.match(html, /fetch\(projectsEndpoint/iu);
+  assert.match(html, /new URL\(projectsEndpoint, window.location.href\)/iu);
+  assert.match(html, /fetch\(catalogUrl.href/iu);
   assert.match(html, /selectionFromLocation\(\)/u);
   assert.match(html, /new URL\(window\.location\.href\)\.searchParams/u);
   assert.match(html, /new URLSearchParams\(url\.search\)/u);

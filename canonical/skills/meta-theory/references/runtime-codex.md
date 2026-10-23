@@ -103,6 +103,8 @@ False native choice claim guard: do not announce "I used the Codex choice panel"
 
 ## Visible Status Boundary
 
+When Codex Desktop exposes `open_in_codex`, open the exact current Live URL with `target.type="browser"` and `placement="right"` in the calling conversation. Reuse the returned browser/tab reference on subsequent turns; do not navigate another conversation or repeatedly open tabs. A `queued` result remains pending until the actual panel is observed. If that tool is absent, discover the active host's documented browser surface instead of assuming Desktop support from the runtime name. Codex CLI uses concise task-change messages in stderr/session output; preserve machine-readable stdout. Neither a Hook nor a Node subprocess can invent a successful host tool call.
+
 Codex `UserPromptSubmit` hook output and `hookSpecificOutput.additionalContext` are model/developer context, not the primary product surface. `systemMessage` can appear as a UI warning or event-stream warning, but it is not a governed progress notice. For Codex App, the reliable user-visible status surface is normal assistant chat text, or a captured CLI stdout notice only when the CLI command is explicitly invoked and its stdout is shown to the user. A hook warning, hidden developer context, markdown report, or JSON artifact does not satisfy `conversationNoticeEmitted`.
 
 Therefore every governed Codex run must render localized chat notices for run start, route selected before Execution, blocker/degraded state when present, and closure. Use `request_user_input` only for branch-changing decisions; do not turn routine status into a popup.

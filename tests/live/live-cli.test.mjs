@@ -7,11 +7,25 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { liveSelectionForRegistration } from "../../scripts/meta-kim-live.mjs";
+import { liveSelectionForRegistration, liveCurrentRunPresentation } from "../../scripts/meta-kim-live.mjs";
 import { detectProjectRegistryEntry, joinProjectRegistry } from "../../scripts/project-registry.mjs";
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const cli = path.join(repoRoot, "bin", "meta-kim.mjs");
+
+test("an unavailable native turn never labels or automatically opens a historical project view as the current task", () => {
+  const projectLink = "http://127.0.0.1:4331/?projectId=project-current";
+  const waiting = liveCurrentRunPresentation({ nativeBinding: { threadId: "11111111-1111-4111-8111-111111111111" }, deepLink: projectLink });
+  assert.equal(waiting.currentRunState, "awaiting_native_turn");
+  assert.equal(waiting.currentTaskLink, null);
+  assert.equal(waiting.autoOpenAllowed, false);
+  assert.match(waiting.notice, /当前任务链接暂不可用/u);
+  const explicit = liveCurrentRunPresentation({ runId: "meta-current", deepLink: projectLink + "&runId=meta-current" });
+  assert.equal(explicit.currentRunState, "selected");
+  assert.equal(explicit.currentTaskLink, projectLink + "&runId=meta-current");
+  assert.equal(explicit.autoOpenAllowed, true);
+  assert.equal(liveCurrentRunPresentation({ deepLink: projectLink }).currentRunState, "not_requested");
+});
 
 function runCli(args) {
   return spawnSync(process.execPath, [cli, ...args], {
