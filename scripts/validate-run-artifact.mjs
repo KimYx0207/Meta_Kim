@@ -3749,6 +3749,7 @@ function hasBoundDependencyMaterialsScope(artifact, packet) {
   const scope = packet.workOrderScope;
   if (scope == null) return false;
   const binding = artifact.dependencyCalculationPacket?.binding;
+  const sourceBinding = artifact.dependencyCalculationPacket?.ownerSourceBinding;
   const selected = artifact.selectedExecutionRoute?.recommendedRoute?.selectedCapabilityProviders?.agent;
   const stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
     ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])])) : value;
@@ -3757,7 +3758,7 @@ function hasBoundDependencyMaterialsScope(artifact, packet) {
     typeof artifact.task === "string" && scope.requestSha256 === hash(artifact.task.trim()) &&
     scope.requestSha256 === artifact.goalContractPacket?.taskHash &&
     binding && ["requestSha256", "inputSha256", "intentDigest", "dependencyRootSha256"].every((key) => scope[key] === binding[key]) &&
-    [scope.inputSha256, scope.dependencyRootSha256, scope.componentContentSha256, scope.ownerContractSha256].every((value) => /^[a-f0-9]{64}$/u.test(value ?? "")) &&
+    [scope.inputSha256, scope.dependencyRootSha256, scope.componentContentSha256, scope.ownerContractSha256, scope.ownerContractProjectionSha256].every((value) => /^[a-f0-9]{64}$/u.test(value ?? "")) &&
     scope.intentDigest === (packet.intentBinding?.intentDigest ?? null) &&
     scope.intentDigest === (artifact.preDecisionOptionFrame?.intentBinding?.intentDigest ?? null) &&
     Number.isInteger(scope.inputBytes) && scope.inputBytes > 0 && scope.inputBytes <= 262144 &&
@@ -3766,7 +3767,10 @@ function hasBoundDependencyMaterialsScope(artifact, packet) {
     selected?.id === packet.ownerAgent && selected.ownerContract?.contentDigest === packet.ownerContract?.contentDigest &&
     selected.ownerContract?.componentContentSha256 === scope.componentContentSha256 &&
     scope.componentContentSha256 === packet.ownerContract?.componentContentSha256 &&
-    scope.ownerContractSha256 === hash(JSON.stringify(stable(packet.ownerContract), null, 2) + "\n") &&
+    sourceBinding?.runId === artifact.runId && sourceBinding.taskPacketId === packet.taskPacketId &&
+    sourceBinding.ownerAgent === packet.ownerAgent && sourceBinding.componentContentSha256 === scope.componentContentSha256 &&
+    sourceBinding.ownerContractSha256 === scope.ownerContractSha256 &&
+    scope.ownerContractProjectionSha256 === hash(JSON.stringify(stable(packet.ownerContract), null, 2) + "\n") &&
     Array.isArray(packet.ownerContract?.sideEffects) && packet.ownerContract.sideEffects.length === 0 &&
     packet.scopeFiles?.length === 0 && packet.shardScope?.length === 1 && packet.shardScope[0] === `input-sha256:${scope.inputSha256}` &&
     packet.mutationPolicy === "read_only" && packet.externalWritePolicy === "forbidden" &&

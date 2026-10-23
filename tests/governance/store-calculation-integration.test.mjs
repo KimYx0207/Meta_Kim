@@ -229,7 +229,7 @@ test("altered source and route, owner or receipt handoff bindings cannot gain ex
   const config = options(materials(), { stageRunner: null }), planned = await runner(config);
   const request = handoffApi.prepareDependencyCalculationInput({ input: config.dependencyCalculationInput, task });
   const args = { request, runId: config.runId, runtime: "codex", osTarget: "linux", route: planned.selectedExecutionRoute,
-    workerTaskPackets: planned.workerTaskPackets, environment: { ...process.env, META_KIM_KIM_SERVICE_ROOT: dependencyRoot } };
+    workerTaskPackets: planned.workerTaskPackets, environment: { ...process.env, META_KIM_KIM_SERVICE_ROOT: dependencyRoot }, projectRoot: config.projectRoot };
   const rejectedRoute = structuredClone(args.route); rejectedRoute.routeExecutionGate.canHandoffToHost = false;
   assert.equal((await handoffApi.prepareDependencyCalculationHandoff({ ...args, route: rejectedRoute })).summary.code, "calculation_route_not_ready");
   const badPackets = structuredClone(args.workerTaskPackets); badPackets[0].ownerContract.contentDigest = "a".repeat(64);

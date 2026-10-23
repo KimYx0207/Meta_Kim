@@ -10,7 +10,7 @@
 //   await atomicWriteJson(targetPath, payloadObject);
 //   await withFileLock(lockPath, async () => { ... });
 
-import { writeFile, rename, mkdir, open, readFile, unlink, stat, chmod } from "node:fs/promises";
+import { writeFile, rename, mkdir, open, readFile, unlink, stat, lstat, chmod } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -18,6 +18,7 @@ const LOCK_RETRIES = 25;
 const LOCK_BASE_BACKOFF_MS = 12;
 const LOCK_MAX_BACKOFF_MS = 200;
 const LOCK_STALE_AFTER_MS = 5 * 60 * 1000;
+const RENAME_RETRIES = 6;
 
 function randomSuffix() {
   return randomBytes(6).toString("hex");
@@ -100,7 +101,27 @@ export async function atomicWriteJson(targetPath, payload, options = {}) {
     ...(options.mode == null ? {} : { mode: options.mode }),
   });
   try {
-    await rename(tmpPath, targetPath);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await rename(tmpPath, targetPath);
+        break;
+      } catch (error) {
+        // Windows may briefly deny replacement while a reader/scanner holds
+        // the existing file. Retry only the same atomic rename, only for two
+        // regular files, and for a bounded 700 ms. Never unlink the target or
+        // change permissions: persistent denial must preserve the old state.
+        if (
+          process.platform !== "win32" ||
+          !["EPERM", "EBUSY"].includes(error?.code) ||
+          attempt >= RENAME_RETRIES
+        ) throw error;
+        const regularFiles = await Promise.all([
+          lstat(tmpPath), lstat(targetPath),
+        ]).then((entries) => entries.every((entry) => entry.isFile()), () => false);
+        if (!regularFiles) throw error;
+        await sleep(Math.min(20 * 2 ** attempt, 200));
+      }
+    }
   } catch (err) {
     try {
       await unlink(tmpPath);

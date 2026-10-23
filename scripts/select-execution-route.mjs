@@ -110,7 +110,6 @@ const codexHostToolSchema = {
 };
 const entrySignals = entryClassification.signals ?? {};
 const routeChangingDimensionSignals = entrySignals.routeChangingDimensionSignals ?? [];
-const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true;
 const runtimeChoiceSurface = resolveNativeChoiceSurface(choiceSurfacePolicy, runtime);
 const stateDirRef = toPosix(path.relative(repoPath("."), stateDir));
 const GOVERNANCE_CHAIN_PREFIX_RE =
@@ -973,6 +972,12 @@ const dependencyAgentScopeExclusion = explicitCapabilityLifecycle
 const dependencyAgentMatch = dependencyAgentScopeExclusion
   ? { ...dependencyAgentMatches, selected: null, reason: dependencyAgentScopeExclusion }
   : dependencyAgentMatches;
+// A quality adjective does not change a source-matched professional text task
+// into UI design. The selected method retains its own required inputs/boundaries.
+// An explicit interface/page request still needs its existing design choice.
+const explicitInterfaceScope = /\b(?:ui|ux|website|webpage|user interface)\b|页面|界面|网页|网站/iu.test(task);
+const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true &&
+  (!dependencyAgentMatch.selected || explicitInterfaceScope);
 const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: dependencyAgentMatches, scopeExclusion: dependencyAgentScopeExclusion });
 const repoCanonicalSkillProviders = capabilityEntries(repoCapabilityIndex, "skills").map((entry) => compactCapabilityProvider(entry, "repo_canonical_capability_index", "skills"));
 const projectRuntimeSkillProviders = await projectSkillProviders();
@@ -3716,10 +3721,13 @@ const workerTaskPacketDrafts = selectedWorkerLanes
         const purpose = actions.length === 1 ? actions[0].terms : String(actionTask ?? "").trim();
         // Recognize only a complete, narrow prohibition clause here. A phrase
         // containing further actions remains mutation-like, never stripped.
-        const effectText = purpose.replace(/\b(?:do not|don't|don’t|never)\s+(?:modify|edit|write|delete|remove|create|change|patch)\s+(?:any\s+)?(?:files|source files|code)[.!]?(?=$|[\n;])/giu, "");
+        const effectText = purpose.replace(/\b(?:do not|don't|don’t|never)\s+(?:modify|edit|write|delete|remove|create|change|patch)\s+(?:any\s+)?(?:files|source files|code)[.!]?(?=$|[\n;])/giu, "")
+          .split(/[，,、;；。.!?\n]/u)
+          .filter((clause) => !/^(?:不|不要|不得|禁止)(?:(?:修改|改动|编辑|写入|写|删除|移除|创建|更新)(?:任何|原始|原有|现有)?(?:文件|代码|源码)|(?:代投|投递)简历)$/u.test(clause.trim()))
+          .join("; ");
         const requestsMutation = /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|modify|change|patch|delete|remove)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除/iu.test(effectText);
-        const requestsExternalWrite = /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件/iu.test(effectText);
-        const requestsInspection = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
+        const requestsExternalWrite = /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件|代投|投递/iu.test(effectText);
+        const requestsInspection = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
         const scopeFiles = actions.length === 1 ? extractActionPaths(purpose) : [];
         const readOnly = requestsInspection && !requestsMutation && !requestsExternalWrite;
         const proven = actions.length === 1 && scopeFiles.length > 0 && scopeFiles.every((scope) => scopeComparisonKey(scope) !== null) && !requestsExternalWrite && (readOnly || requestsMutation);

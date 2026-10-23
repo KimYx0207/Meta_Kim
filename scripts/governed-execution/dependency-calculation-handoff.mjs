@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { constants as fsConstants, promises as fs } from "node:fs";
-import { loadDependencyAgentMethod } from "../dependency-agent-discovery.mjs";
+import { loadDependencyAgentMethod, stableJson } from "../dependency-agent-discovery.mjs";
 import { runDependencyCalculation, MAX_CALCULATION_INPUT_BYTES } from "./dependency-calculation.mjs";
 
 export const MAX_CALCULATION_HANDOFF_BYTES = 524288;
@@ -10,6 +10,8 @@ const digest = (value) => createHash("sha256").update(value).digest("hex");
 const runtimeId = (runtime) => runtime === "claude_code" ? "claude" : runtime;
 const summary = (status, fields = {}) => ({ schemaVersion: 1, status, toolInvoked: false,
   nativeAgentInvocation: false, modelSemanticAcceptance: false, ...fields });
+const ownerSourceBinding = (method, runId, taskPacketId) => ({ runId, taskPacketId, ownerAgent: method.ownerAgent,
+  ownerContractSha256: method.ownerContractSha256, componentContentSha256: method.componentContentSha256 });
 
 export async function readDependencyCalculationInputFile(filename) {
   let handle;
@@ -80,8 +82,12 @@ export async function bindDependencyCalculationWorkOrder({ request, runId, route
   if (!method?.tools?.length || method.tools.some((tool) => tool !== "Read") ||
       !Array.isArray(packet.ownerContract?.sideEffects) || packet.ownerContract.sideEffects.length !== 0) return workerTaskPackets;
   const shardScope = [`input-sha256:${request.binding.inputSha256}`];
+  // Record the source observation only after reloading the verified component.
+  // Its original contract digest is distinct from the redacted public projection.
+  request.summary.ownerSourceBinding = ownerSourceBinding(method, runId, packet.taskPacketId);
   const workOrderScope = { kind: "dependency_materials", runId, ...request.binding, inputBytes: request.summary.inputBytes,
-    ownerContractSha256: method.ownerContractSha256, componentContentSha256: method.componentContentSha256 };
+    ownerContractSha256: method.ownerContractSha256, ownerContractProjectionSha256: digest(stableJson(packet.ownerContract)),
+    componentContentSha256: method.componentContentSha256 };
   return workerTaskPackets.map((entry) => entry !== packet ? entry : {
     ...entry, workOrderScope, scopeFiles: [], shardScope, workOrderReadiness: "ready",
     safetyEvidence: { status: "proven", evidenceBasis: "verified_readonly_owner_and_bound_materials",
@@ -97,7 +103,7 @@ export async function bindDependencyCalculationWorkOrder({ request, runId, route
  * no public receipt parameter or callback can create a current tool observation. */
 export async function prepareDependencyCalculationHandoff({ request, runId, runtime, osTarget, route, workerTaskPackets, environment = process.env, projectRoot }) {
   if (!request || request.summary.status !== "prepared") return { summary: request?.summary ?? summary("not_requested"), handoff: null };
-  const fail = (code) => ({ summary: summary("blocked", { code, binding: request.binding }), handoff: null });
+  const fail = (code) => ({ summary: summary("blocked", { ...request.summary, status: "blocked", code }), handoff: null });
   const gate = route?.routeExecutionGate;
   if (gate?.handoffStatus !== "ready_for_host_handoff" || gate.canHandoffToHost !== true || gate.routeCompatible !== true) return fail("calculation_route_not_ready");
   const owner = route.recommendedRoute?.owner;
@@ -111,6 +117,7 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
     dependencyRoot: request.dependencyRoot, runtime, osTarget });
   const publicSummary = summary(calculation.status, {
     code: calculation.code ?? null, binding: request.binding, ownerAgent: owner,
+    ownerSourceBinding: ownerSourceBinding(method, runId, packet.taskPacketId),
     inputBytes: request.summary.inputBytes,
     toolInvoked: calculation.toolInvoked, questions: calculation.questions ?? [], missing: calculation.missing ?? [],
     receiptStatus: calculation.receipt?.status ?? null,

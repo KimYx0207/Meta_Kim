@@ -1,16 +1,17 @@
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+import { createGovernanceRuntimeFixture, createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import {
   assertOptionalPlaybookContract,
   inspectOptionalPlaybookProvider,
 } from "../helpers/optional-playbook-contract.mjs";
-import {
+let runtimeFixture;
+let
   agentTeamsCandidateSkillPaths,
   buildRuntimeProjectionEvidence,
   buildWardenWritebackFlow,
@@ -18,8 +19,16 @@ import {
   exactInvocationBindingMatches,
   evaluateInvocationCoverage,
   readGovernedExecutionRun,
-  runMetaTheoryGovernedExecution,
-} from "../../scripts/run-meta-theory-governed-execution.mjs";
+  runMetaTheoryGovernedExecution;
+before(async () => {
+  // These tests require discoverable execution owners, not the maintainer's
+  // installed roles. Enter the disposable source/HOME before importing paths.
+  runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  ({ agentTeamsCandidateSkillPaths, buildRuntimeProjectionEvidence, buildWardenWritebackFlow,
+    classifyProjectionFailure, exactInvocationBindingMatches, evaluateInvocationCoverage,
+    readGovernedExecutionRun, runMetaTheoryGovernedExecution } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs"));
+});
+after(() => runtimeFixture?.cleanup());
 const multiGapTask = [
   "同一套 PRD review standard 需要 skill。",
   "长期 test coverage owner 需要 agent。",
@@ -933,6 +942,9 @@ describe("32 — Meta-theory three product goals and support gates", () => {
         invocationTruth: report.capabilityInvocationTruthPacket,
         candidates: agentTeamsCandidateSkillPaths("codex"),
         workerTaskIds: report.defaultRuntimePath.workerTaskPackets.map((task) => task.taskPacketId),
+        workerReadiness: report.workerTaskPackets.map((task) => task.workOrderReadiness),
+        actualWorkerExecution: report.executionResult.actualWorkerExecution,
+        pendingFamilies: report.coreLoop.hostInvocationRequestPacket.pendingFamilies,
       }));
     `;
     const execute = (branch) => {
@@ -969,6 +981,20 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     assert.equal(unavailable.packet.providerResolution.selectedSource, null);
     assert.deepEqual(available.workerTaskIds, unavailable.workerTaskIds);
     assert.deepEqual(available.packet.waves, unavailable.packet.waves);
+    // Missing execution owners must remain an incomplete plan. These are only
+    // the six disposable fixture definitions; no user/global files are touched.
+    for (const [runtime, extension] of [[".codex", "toml"], [".claude", "md"]]) {
+      for (const owner of ["worker", "analysis", "frontend", "backend", "test", "review"]) {
+        await rm(path.join(fixture.home, runtime, "agents", `${owner}.${extension}`));
+      }
+    }
+    const withoutOwners = fixture.run(["scripts/discover-global-capabilities.mjs", "--runtime-inventory-only"]);
+    assert.equal(withoutOwners.status, 0, withoutOwners.stderr || withoutOwners.stdout);
+    const missingOwners = execute("execution-owners-absent");
+    await assertOptionalPlaybookContract(missingOwners.packet, missingOwners.invocationTruth, missingOwners.candidates, { ready: false });
+    assert.equal(missingOwners.actualWorkerExecution, false);
+    assert.ok(missingOwners.workerReadiness.every((readiness) => readiness === "incomplete"));
+    assert.equal(missingOwners.pendingFamilies.includes("agent_subagent"), false);
   });
 
   test("T-005 validates the three product goals and support gates", async () => {
@@ -984,6 +1010,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     assert.equal(output.validationStatus, "pass");
     assert.equal(output.evidenceMode, "structural-boundary-plus-synthetic-negative-control");
     assert.equal(output.noPopupDuringSelfTest, true);
+    assert.equal(output.boundedPlanningRun.plannedWorkers, 4);
+    assert.equal(output.boundedPlanningRun.actualWorkerExecution, false);
     assert.equal(output.defaultBoundaryRun.status, "partial");
     assert.equal(output.defaultBoundaryRun.evidenceTier, "structural_only");
     assert.deepEqual(output.defaultBoundaryRun.goals.map((goal) => goal.id), ["P-102", "P-103", "P-104"]);

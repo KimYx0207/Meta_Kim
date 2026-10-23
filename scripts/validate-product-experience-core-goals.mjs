@@ -605,6 +605,11 @@ async function main() {
       invokeCapabilityProbes: true,
     });
     assert.equal(report.status, "partial");
+    assert.equal(report.workerTaskPackets.length, 4,
+      "The four bounded actions require discoverable execution-owner sources in this validation environment");
+    assert.ok(report.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready" && packet.mutationPolicy === "read_only"));
+    assert.equal(report.executionResult.actualWorkerExecution, false,
+      "Discoverable owner fixtures or installed definitions never prove native invocation");
     assertPacketStatus(report);
     assertLangGraphStyle(report);
     assertDynamicWorkflow(report);
@@ -651,6 +656,11 @@ async function main() {
           status: "pass",
           validationStatus: "pass",
           evidenceMode: "structural-boundary-plus-synthetic-negative-control",
+          boundedPlanningRun: {
+            plannedWorkers: report.workerTaskPackets.length,
+            actualWorkerExecution: report.executionResult.actualWorkerExecution,
+            ownerEvidence: "current_environment_discovery_only",
+          },
           productRequirementsPlanningRun: {
             ...summarizeReport(planningReport),
             plannedWorkers: plannedWorkers.length,
