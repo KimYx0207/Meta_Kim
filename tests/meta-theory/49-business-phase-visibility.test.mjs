@@ -75,10 +75,11 @@ describe("49 - 11-phase business workflow visibility", () => {
       assert.equal(result.status, 0, result.stderr);
       JSON.parse(result.stdout);
       assert.match(result.stderr, /Meta_Kim 对话提示:/u);
-      assert.match(result.stderr, /11阶段状态: 业务流程正在推进/u);
+      assert.match(result.stderr, /11阶段状态: 业务流程计划已记录/u);
       assert.doesNotMatch(result.stderr, /done=|skipped=|blocked=|pending=/u);
-      assert.match(result.stderr, /当前阶段: 当前正在进行闭环、验证和用户验收/u);
-      assert.match(result.stderr, /阻塞阶段: 没有已确认的业务阻塞/u);
+      assert.match(result.stderr, /计划状态不代表已执行或验收/u);
+      assert.match(result.stderr, /当前阶段: 反馈 · 等待/u);
+      assert.match(result.stderr, /阻塞阶段: 无/u);
       assert.doesNotMatch(
         result.stderr,
         /businessPhasePlanPacket|workerTaskPackets|cardPlanPacket/u
@@ -87,6 +88,17 @@ describe("49 - 11-phase business workflow visibility", () => {
       const artifact = JSON.parse(
         await readFile(path.join(tempDir, "cli-phase-visibility.json"), "utf8")
       );
+      const closure = artifact.conversationNotice.progressEvents.find((event) => event.stage === "Closure");
+      assert.equal(closure.details.source, "businessPhasePlanPacket");
+      assert.equal(closure.details.phaseCount, artifact.businessPhasePlanPacket.phaseCount);
+      assert.equal(closure.details.currentPhase, artifact.businessPhasePlanPacket.closure.currentPhase);
+      assert.equal(closure.details.currentStatus, artifact.businessPhasePlanPacket.closure.currentStatus);
+      assert.deepEqual(closure.details.blockedPhases, artifact.businessPhasePlanPacket.phases
+        .filter((phase) => phase.status === "blocked").map((phase) => phase.phase));
+      assert.equal(closure.details.nextAction, artifact.businessPhasePlanPacket.closure.currentNextAction);
+      assert.ok(result.stderr.includes(`下一步: ${artifact.businessPhasePlanPacket.closure.currentNextAction}`));
+      assert.equal(closure.details.executionOrAcceptanceEvidence, false);
+      assert.equal(result.stderr.split("11阶段状态:").length - 1, 1);
       assert.equal(artifact.conversationNotice.status, "emitted");
       assert.equal(artifact.conversationNotice.evidenceKind, "transport_emitted_notice");
       assert.equal(artifact.conversationNotice.outputBoundary, "stderr_progress_channel");

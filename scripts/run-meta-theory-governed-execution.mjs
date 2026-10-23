@@ -3025,10 +3025,26 @@ function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrati
   };
 }
 
+function governanceEntrySummary(entryClassification, language) {
+  const kind = entryClassification?.triggerReason === "explicit_meta_theory" ? "explicit"
+    : entryClassification?.triggerReason === "subjective_quality_ambiguous" ? "subjective"
+    : entryClassification?.triggerReason === "natural_language_product_build" ? "product"
+    : entryClassification?.governedEntry === true ? "work" : "direct";
+  const copy = {
+    "zh-CN": { explicit: "已明确请求 Meta-Theory 治理流程", subjective: "质量方向存在取舍，需要先确定目标与验收标准", product: "自然语言产品需求需要先确定范围、路线和验收方式", work: "自然语言工作请求需要规划、证据和结果核对", direct: "已通过治理运行入口请求规划与结果核对" },
+    en: { explicit: "Meta-Theory governance was explicitly requested", subjective: "quality trade-offs need a goal and acceptance standard", product: "the product request needs scope, a route, and acceptance criteria", work: "the work request needs planning, evidence, and outcome checks", direct: "the governed runner was invoked for planning and outcome checks" },
+    "ja-JP": { explicit: "Meta-Theory が明示的に依頼されました", subjective: "品質の選択には目標と受入れ基準が必要です", product: "製品の依頼には範囲、ルート、受入れ基準が必要です", work: "作業の依頼には計画、証拠、結果確認が必要です", direct: "計画と結果確認のために統制実行が呼び出されました" },
+    "ko-KR": { explicit: "Meta-Theory 절차가 명시적으로 요청되었습니다", subjective: "품질 선택에 목표와 승인 기준이 필요합니다", product: "제품 요청에 범위, 경로 및 승인 기준이 필요합니다", work: "작업 요청에 계획, 증거 및 결과 확인이 필요합니다", direct: "계획과 결과 확인을 위해 실행기가 호출되었습니다" },
+  };
+  const prefix = { "zh-CN": "进入 Meta-Theory", en: "Entering Meta-Theory", "ja-JP": "Meta-Theory に入ります", "ko-KR": "Meta-Theory 시작" };
+  return `${prefix[language] ?? prefix.en}: ${(copy[language] ?? copy.en)[kind]}.`;
+}
+
 function buildGovernanceStartReasonPacket({
   orchestrationReport,
   businessPhasePlanPacket,
   cardPlanPacket,
+  entryClassification,
   language = "zh-CN",
 }) {
   const capabilityCount = orchestrationReport.fetchEvidence.capabilityInventory.length;
@@ -3072,7 +3088,7 @@ function buildGovernanceStartReasonPacket({
     placement: "run_start",
     maxLineCharacters: 120,
     language,
-    summary: localized.summary,
+    summary: governanceEntrySummary(entryClassification, language),
     spineReason: localized.spine,
     workflowReason: localized.workflow,
     cardReason: localized.cards,
@@ -3180,6 +3196,36 @@ function renderWorkerProgress(event, language) {
   if (parallel > 1) text += ({ "zh-CN": `；已领取 ${parallel} 项`, "en-US": `; ${parallel} tasks claimed`, "ja-JP": `；${parallel} 件を取得済み`, "ko-KR": `; ${parallel}개 작업 인수됨` })[locale] ?? "";
   if (waiting > 0) text += ({ "zh-CN": `；${waiting} 项等待依赖`, "en-US": `; ${waiting} tasks waiting for dependencies`, "ja-JP": `；${waiting} 件が依存タスク待ち`, "ko-KR": `; ${waiting}개 작업이 선행 작업 대기 중` })[locale] ?? "";
   return text;
+}
+
+function businessPhaseProgress(businessPhasePlanPacket, labels, surfaceLabels) {
+  const language = labels.htmlLang;
+  const phases = businessPhasePlanPacket.phases;
+  const closure = businessPhasePlanPacket.closure;
+  const current = phases.find((phase) => phase.phase === closure.currentPhase);
+  const blocked = phases.filter((phase) => phase.status === "blocked");
+  const copy = {
+    "zh-CN": { plan: "业务流程计划已记录；计划状态不代表已执行或验收", none: "无", states: { done: "已记录", skipped: "已跳过", blocked: "阻塞", pending: "等待" }, names: ["方向", "规划", "执行", "审查", "复审", "返工", "验证", "总结", "反馈", "演化", "投影"] },
+    en: { plan: "Workflow plan recorded; plan status does not prove execution or acceptance", none: "none", states: { done: "recorded", skipped: "skipped", blocked: "blocked", pending: "waiting" }, next: { feedback: "Wait for user confirmation or feedback.", blocked: "Resolve the missing evidence or dependency before continuing.", pending: "Wait for the missing input before continuing.", done: "Continue to the next phase and retain the evidence.", skipped: "Retain the skip reason for review; no work is required for this phase." } },
+    "ja-JP": { plan: "業務フロー計画を記録しました。計画の状態は実行や受入れの証明ではありません", none: "なし", states: { done: "記録済み", skipped: "省略", blocked: "保留", pending: "待機" }, next: { feedback: "ユーザーの確認やフィードバックを待ちます。", blocked: "不足する証拠や依存関係を解決してから続けます。", pending: "不足する入力を待ってから続けます。", done: "証拠を保持し、次の段階へ進みます。", skipped: "省略理由をレビュー用に保持します。この段階の作業は不要です。" } },
+    "ko-KR": { plan: "업무 흐름 계획을 기록했습니다. 계획 상태는 실행이나 승인 증거가 아닙니다", none: "없음", states: { done: "기록됨", skipped: "생략됨", blocked: "차단됨", pending: "대기 중" }, next: { feedback: "사용자 확인이나 피드백을 기다립니다.", blocked: "누락된 증거나 의존성을 해결한 후 계속합니다.", pending: "누락된 입력을 기다린 후 계속합니다.", done: "증거를 보관하고 다음 단계로 진행합니다.", skipped: "검토를 위해 생략 사유를 보관합니다. 이 단계에서는 작업이 필요하지 않습니다." } },
+  };
+  const localized = copy[language] ?? copy.en;
+  const phaseName = (phase) => localized.names?.[BUSINESS_PHASES.findIndex(([id]) => id === phase.phase)] ?? phase.label;
+  const notice = surfaceLabels.notice;
+  const nextKind = current?.phase === "feedback" && current.status === "pending" ? "feedback" : current?.status ?? "pending";
+  return {
+    text: [
+      `${notice.workflowStatus}: ${localized.plan}`,
+      `${notice.currentStage}: ${current ? `${phaseName(current)} · ${localized.states[current.status]}` : localized.none}`,
+      `${notice.blockedStage}: ${blocked.map(phaseName).join(", ") || localized.none}`,
+      `${notice.next}: ${language === "zh-CN" ? closure.currentNextAction : localized.next[nextKind]}`,
+    ].join("; "),
+    details: { source: "businessPhasePlanPacket", phaseCount: businessPhasePlanPacket.phaseCount,
+      currentPhase: closure.currentPhase, currentStatus: closure.currentStatus,
+      blockedPhases: blocked.map((phase) => phase.phase), nextAction: closure.currentNextAction,
+      executionOrAcceptanceEvidence: false },
+  };
 }
 
 function localizedHostObservationBoundary(language) {
@@ -3311,20 +3357,14 @@ function buildConversationNotice({
       ],
     },
   ];
-  const progressLines = progressEvents.map(
-    (event, index) =>
-      event.text ?? renderConversationProgressEvent(event, labels, surfaceLabels, index === 0),
-  );
+  const progressLines = progressEvents.filter((event) => event.deliveryStatus === "emitted").map((event) => event.text);
   const aggregateLines = blocks.flatMap((block) => [
     `- ${block.title}`,
     ...block.lines.map((line) => `  ${line}`),
   ]);
-  const lines = [
-    ...(progressLines.length > 0
-      ? progressLines
-      : [`${labels.conversationNotice.title}: ${labels.plainLanguageSummary}`]),
-    ...aggregateLines,
-  ];
+  // The transcript and its hash cover transport output only. The longer stored
+  // report remains separate and is never evidence of a delivered chat message.
+  const lines = progressLines;
   const text = lines.join("\n");
   const hash = textSha256(text);
   const aggregateText = aggregateLines.join("\n");
@@ -3453,7 +3493,7 @@ function buildUserExperienceNotice({
           channel: conversationNotice.channel,
           adapter: conversationNotice.adapter,
           emittedAt: conversationNotice.emittedAt,
-          textSha256: conversationNotice.textSha256,
+          textSha256: conversationNotice.emittedTextSha256,
           evidenceKind: conversationNotice.evidenceKind,
           outputBoundary: conversationNotice.outputBoundary,
         }
@@ -12047,12 +12087,18 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   };
   const currentCallNotice = (artifact) => {
     const observation = conversationTransportObservation(progressEvents, conversationNoticeChannel, conversationNoticeAdapter);
-    const text = [...progressEvents.map((event) => event.text), artifact.conversationNotice?.aggregateText].filter(Boolean).join("\n");
+    const text = progressEvents.filter((event) => event.deliveryStatus === "emitted").map((event) => event.text).join("\n");
     return { ...artifact, conversationNotice: {
-      ...artifact.conversationNotice, progressEvents, text, textSha256: textSha256(text),
+      ...artifact.conversationNotice, progressEvents, text, lineCount: text ? text.split("\n").length : 0, textSha256: textSha256(text),
       progressObservationScope: "current_call", ...observation,
     }, ...(artifact.userExperienceNotice ? { userExperienceNotice: {
       ...artifact.userExperienceNotice, conversationNoticeEmitted: observation.emitted,
+      conversationNoticeEvidence: observation.emitted ? {
+        schemaVersion: artifact.conversationNotice.schemaVersion,
+        channel: observation.channel, adapter: observation.adapter, emittedAt: observation.emittedAt,
+        textSha256: observation.emittedTextSha256, evidenceKind: observation.evidenceKind,
+        outputBoundary: observation.outputBoundary,
+      } : null,
     } } : {}) };
   };
   if (durableMode === "resume") {
@@ -12119,13 +12165,15 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       `Governed run '${effectiveRunId}' already exists. Pass allowOverwrite=true or --overwrite-run to replace it explicitly.`,
     );
   }
+  const entryClassification = classifyMetaTheoryEntry(normalizedTask);
   await publishProgress(
     progressEvent({
       runId: effectiveRunId,
       stage: "Critical",
       status: "started",
-      reason: surfaceLabels.events.runStart(effectiveRunId),
+      reason: `${surfaceLabels.events.runStart(effectiveRunId)} ${surfaceLabels.notice.startReason}: ${governanceEntrySummary(entryClassification, labels.htmlLang)}`,
       owner: "meta-warden",
+      details: { source: "taskClassification", triggerReason: entryClassification.triggerReason, path: entryClassification.path },
     }),
   );
   const routeRuntime = normalizeRouteRuntime(runtime);
@@ -12217,18 +12265,6 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     task: normalizedTask,
     runId: effectiveRunId,
   });
-  await publishProgress(
-    progressEvent({
-      runId: effectiveRunId,
-      stage: "Thinking",
-      status: "route_ready_before_execution",
-      reason: surfaceLabels.events.thinking(
-        orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
-        orchestrationReport.workerTaskPackets.length,
-      ),
-      owner: orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
-    }),
-  );
   const runtimeEvidence = await buildRuntimeProjectionEvidence({
     repoRoot: REPO_ROOT,
     orchestrationReport,
@@ -12240,6 +12276,22 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     applyWriteback: applyWriteback && planChallengeHandoffReady,
     canonicalRoot,
   });
+  const cardPlanPacket = buildCardPlanPacket({
+    runId: effectiveRunId,
+    orchestrationReport,
+    runtimeEvidence,
+  });
+  const cardSummary = buildUserFacingCardSummary(cardPlanPacket, labels);
+  await publishProgress(
+    progressEvent({
+      runId: effectiveRunId,
+      stage: "Thinking",
+      status: "route_ready_before_execution",
+      reason: `${surfaceLabels.events.thinking(orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner, orchestrationReport.workerTaskPackets.length)} ${surfaceLabels.notice.cardSummary}: ${cardSummary.dealtLine} ${surfaceLabels.notice.cardDetail}`,
+      owner: orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
+      details: { source: "cardPlanPacket", activeCards: cardSummary.activeCards, userRelevantCards: cardSummary.userRelevantCards, nativeChoiceObserved: false },
+    }),
+  );
   await publishProgress(
     progressEvent({
       runId: effectiveRunId,
@@ -12253,11 +12305,6 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       owner: orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
     }),
   );
-  const cardPlanPacket = buildCardPlanPacket({
-    runId: effectiveRunId,
-    orchestrationReport,
-    runtimeEvidence,
-  });
   const businessPhasePlanPacket = buildBusinessPhasePlanPacket({
     runId: effectiveRunId,
     orchestrationReport,
@@ -12274,6 +12321,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     orchestrationReport,
     businessPhasePlanPacket,
     cardPlanPacket,
+    entryClassification,
     language: resolvedOutputLanguage,
   });
   await persistDecisionRuns({ dbPath, decisionResults });
@@ -12684,16 +12732,15 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       owner: orchestrationReport.reviewResult.owner,
     }),
   );
+  const phaseProgress = businessPhaseProgress(businessPhasePlanPacket, labels, surfaceLabels);
   await publishProgress(
     progressEvent({
       runId: effectiveRunId,
       stage: "Closure",
       status: "projection_snapshot",
-      reason: surfaceLabels.events.closure(
-        runtimeEvidence.status,
-        `${businessPhasePlanPacket.closure.currentPhase}=${businessPhasePlanPacket.closure.currentStatus}`,
-      ),
+      reason: `${surfaceLabels.events.closure(runtimeEvidence.status, `${businessPhasePlanPacket.closure.currentPhase}=${businessPhasePlanPacket.closure.currentStatus}`)} ${phaseProgress.text} ${surfaceLabels.notice.verificationDetail("partial")}`,
       owner: orchestrationReport.verificationResult.owner,
+      details: phaseProgress.details,
     }),
   );
   conversationNotice = buildConversationNotice({

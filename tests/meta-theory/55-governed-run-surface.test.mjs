@@ -1114,6 +1114,12 @@ describe("55 - governed run identity, language, and chat surface", () => {
       assert.match(events.at(-1).text, /Run records saved/u);
       assert.ok(events.every((event) => event.eventKind === "coarse_snapshot"));
       assert.equal(run.conversationNotice.progressEvents.every((event) => event.deliveryStatus === "emitted"), true);
+      assert.equal(run.conversationNotice.text, events.map((event) => event.text).join("\n"));
+      assert.equal(run.conversationNotice.textSha256, run.conversationNotice.emittedTextSha256);
+      assert.equal(run.userExperienceNotice.conversationNoticeEvidence.textSha256, run.conversationNotice.emittedTextSha256);
+      assert.match(events[2].text, /Card summary: Card dealing:/u);
+      assert.match(events[5].text, /Workflow plan recorded; plan status does not prove execution or acceptance/u);
+      assert.match(events[5].text, /Wait for user confirmation or feedback/u);
       assert.deepEqual(
         run.conversationNotice.hostObservationExpectations,
         events.map((event) => ({ stage: event.stage, textSha256: event.textSha256 })),
@@ -1150,6 +1156,8 @@ describe("55 - governed run identity, language, and chat surface", () => {
         "runner_host_observation_is_diagnostic_only",
       );
       assert.equal(observedRun.conversationNotice.emitted, false, "a requested notice without a transport callback was not emitted");
+      assert.equal(observedRun.conversationNotice.text, "", "untransported progress remains in event records, not in the emitted transcript");
+      assert.equal(observedRun.userExperienceNotice.conversationNoticeEvidence, null);
       assert.equal(observedRun.userExperienceNotice.status, "partial");
       assert.equal(observedRun.userExperienceNotice.conversationNoticeObserved, false);
 
@@ -1212,6 +1220,8 @@ describe("55 - governed run identity, language, and chat surface", () => {
       assert.equal(JSON.parse(output).runId, "closed-progress-pipe");
       const artifact = JSON.parse(await readFile(path.join(tempDir, "closed-progress-pipe.json"), "utf8"));
       assert.equal(artifact.conversationNotice.emitted, false);
+      assert.equal(artifact.conversationNotice.text, "");
+      assert.equal(artifact.conversationNotice.emittedTextSha256, null);
       assert.ok(artifact.conversationNotice.progressEvents.every((event) => event.deliveryStatus === "failed"));
     } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
@@ -1232,7 +1242,9 @@ describe("55 - governed run identity, language, and chat surface", () => {
           stateDir: tempDir,
           dbPath: path.join(tempDir, "runs.sqlite"),
           emitConversationNotice: true,
+          onConversationProgress: () => {},
         });
+        assert.ok(run.conversationNotice.text.length > 0, "locale assertions inspect successfully transported text");
         assert.doesNotMatch(run.conversationNotice.text, forbidden);
         const markdown = await readFile(run.paths.markdown, "utf8");
         assert.doesNotMatch(markdown, forbidden);
