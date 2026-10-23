@@ -235,11 +235,12 @@ function planChallengeQuestion({
   };
 }
 
-export function selectHighestImpactOpenQuestion(questions) {
+export function selectReadyDecisionFrontier(questions) {
   const byId = new Map((questions ?? []).map((question) => [question.questionId, question]));
   return [...(questions ?? [])]
     .filter((question) => {
       if (question.status !== "open") return false;
+      if (question.resolutionClass && question.resolutionClass !== "material_user_decision") return false;
       return (question.dependsOn ?? []).every(
         (dependencyId) => byId.get(dependencyId)?.status === "answered",
       );
@@ -248,7 +249,11 @@ export function selectHighestImpactOpenQuestion(questions) {
       (left, right) =>
         Number(right.impactPriority ?? 0) - Number(left.impactPriority ?? 0) ||
         String(left.questionId).localeCompare(String(right.questionId)),
-    )[0] ?? null;
+    );
+}
+
+export function selectHighestImpactOpenQuestion(questions) {
+  return selectReadyDecisionFrontier(questions)[0] ?? null;
 }
 
 export function parsePlanChallengeControl(text) {
@@ -290,6 +295,9 @@ export function buildPlanChallengeState({
   branchingOptions = [],
   outputLanguage = "zh-CN",
   priorChallengeState = null,
+  decisionItems = [],
+  settledDecisions = [],
+  resolvedFacts = [],
 } = {}) {
   const signals = planChallengeSignals(
     task,
@@ -297,7 +305,8 @@ export function buildPlanChallengeState({
     requestedSideEffectActions,
     branchingOptions,
   );
-  const active = signals.triggerReasons.length > 0;
+  const active = signals.triggerReasons.length > 0 || decisionItems.length > 0;
+  if (decisionItems.length > 0) signals.triggerReasons.push("requirements_discovery");
   const authorizationRequired =
     active && !signals.explicitlyReadOnly && signals.sideEffectActions.length > 0;
   const locale = String(outputLanguage).toLowerCase();
@@ -434,6 +443,7 @@ export function buildPlanChallengeState({
   const explicitEvidenceRef = signals.explicitUserRequest
     ? addTriggerEvidence("explicit_user_request", "user_request", task)
     : null;
+  if (decisionItems.length > 0) addTriggerEvidence("requirements_discovery", "normalized_requirements_input", "Concrete requirements decisions were supplied; proposal presence is observed, not user-answer or invocation authority.", true, "requirementsDiscoveryPacket");
   const riskEvidenceRef = signals.materialRisk
     ? addTriggerEvidence(
         "material_risk",
@@ -501,7 +511,7 @@ export function buildPlanChallengeState({
     );
   }
 
-  if (signals.branchingDecision) {
+  if (signals.branchingDecision && decisionItems.length === 0) {
     const options = signals.branchingOptions;
     const optionLines = options.slice(0, 6).map((option) => {
       const line = option.summary ? `• ${option.label} — ${option.summary}` : `• ${option.label}`;
@@ -528,7 +538,7 @@ export function buildPlanChallengeState({
     );
   }
 
-  if (signals.evidenceContradiction) {
+  if (signals.evidenceContradiction && decisionItems.length === 0) {
     questions.push(
       planChallengeQuestion({
         questionId: "plan-challenge-evidence-conflict",
@@ -544,7 +554,7 @@ export function buildPlanChallengeState({
     );
   }
 
-  if (signals.explicitUserRequest && signals.evidenceInsufficient && questions.length === 0) {
+  if (signals.explicitUserRequest && signals.evidenceInsufficient && questions.length === 0 && decisionItems.length === 0) {
     questions.push(
       planChallengeQuestion({
         questionId: "plan-challenge-missing-evidence",
@@ -560,7 +570,7 @@ export function buildPlanChallengeState({
     );
   }
 
-  if (signals.explicitUserRequest && questions.length === 0) {
+  if (signals.explicitUserRequest && questions.length === 0 && decisionItems.length === 0) {
     questions.push(
       planChallengeQuestion({
         questionId: "plan-challenge-unacceptable-outcome",
@@ -574,6 +584,32 @@ export function buildPlanChallengeState({
         recommendationRationale: copy.preferenceRationale,
       }),
     );
+  }
+
+  const dynamicIds = new Set();
+  for (const item of decisionItems) {
+    if (!item || typeof item.questionId !== "string" || dynamicIds.has(item.questionId) || questions.some((question) => question.questionId === item.questionId)) throw new TypeError("Dynamic decision identities must be unique");
+    dynamicIds.add(item.questionId);
+    questions.push({ ...planChallengeQuestion(item), resolutionClass: item.resolutionClass, options: item.options ?? [], affects: item.affects ?? {} });
+  }
+  // Facts and ordinary implementation choices do not become user questions.
+  // Settled decisions are supplied from the existing confirmed host dialogue,
+  // never read from an answer/status field in model-produced question data.
+  for (const question of questions.filter((item) => dynamicIds.has(item.questionId))) {
+    const settled = settledDecisions.find((item) => item.decisionId === question.questionId && Array.isArray(item.evidenceRefs) && item.evidenceRefs.length > 0);
+    const fact = resolvedFacts.find((item) => item.questionId === question.questionId && typeof item.value === "string" && Array.isArray(item.evidenceRefs) && item.evidenceRefs.length > 0);
+    const resolution = settled ?? (question.resolutionClass === "discoverable_fact" ? fact : null);
+    if (resolution) {
+      question.status = "answered";
+      question.userAnswer = resolution.value;
+      question.answerEvidenceRefs = [...resolution.evidenceRefs];
+      question.resolutionSource = settled ? "existing_settled_decision" : "supplied_fact_evidence";
+    } else if (question.resolutionClass === "routine_design_decision" && question.recommendedAnswer && question.evidenceRefs.length) {
+      question.status = "answered";
+      question.userAnswer = question.recommendedAnswer;
+      question.answerEvidenceRefs = [...question.evidenceRefs];
+      question.resolutionSource = "routine_recommendation_no_permission_granted";
+    }
   }
 
   const decisionEvidence = [];
@@ -650,7 +686,10 @@ export function buildPlanChallengeState({
       const prior = priorQuestions.get(question.questionId);
       if (
         !prior ||
+        question.status !== "open" ||
+        ["supplied_fact_evidence", "routine_recommendation_no_permission_granted"].includes(prior.resolutionSource) ||
         prior.questionTarget !== question.questionTarget ||
+        (dynamicIds.has(question.questionId) && (prior.question !== question.question || prior.decisionImpact !== question.decisionImpact)) ||
         JSON.stringify(prior.dependsOn ?? []) !== JSON.stringify(question.dependsOn ?? []) ||
         !["answered", "skipped"].includes(prior.status)
       ) continue;
@@ -666,7 +705,6 @@ export function buildPlanChallengeState({
       .filter((item) => item.kind === "question_response" && Number.isInteger(item.sequence))
       .map((item) => item.sequence),
   );
-  let currentTurnResponseApplied = false;
   const orderedResponses = (Array.isArray(responses) ? responses : [])
     .filter(
       (response) =>
@@ -676,18 +714,16 @@ export function buildPlanChallengeState({
         response.sequence >= 1,
     )
     .sort((left, right) => left.sequence - right.sequence);
-  for (const response of orderedResponses) {
-    if (seenResponseSequences.has(response.sequence)) continue;
-    if (response.historical !== true && currentTurnResponseApplied) continue;
-    const selected = selectHighestImpactOpenQuestion(questions);
-    if (!selected || String(response.questionId) !== selected.questionId) continue;
+  const applyResponse = (response, selected) => {
+    if (seenResponseSequences.has(response.sequence) || !selected || selected.status !== "open") return;
+    if (String(response.questionId) !== selected.questionId) return;
     const trustedResponse =
       response.trusted === true &&
       response.binding === `plan-challenge-response:${selected.questionId}` &&
       response.selectionBinding === `plan-challenge-selection:${selected.questionId}` &&
       Array.isArray(response.evidenceRefs) &&
       response.evidenceRefs.length > 0;
-    if (!trustedResponse || !PLAN_CHALLENGE_QUESTION_STATUSES.has(response.status)) continue;
+    if (!trustedResponse || !PLAN_CHALLENGE_QUESTION_STATUSES.has(response.status)) return;
     const evidenceRef = addDecisionEvidence({
       kind: "question_response",
       binding: response.binding,
@@ -705,11 +741,23 @@ export function buildPlanChallengeState({
       selected.answerEvidenceRefs = [evidenceRef];
     } else {
       decisionEvidence.pop();
-      continue;
+      return;
     }
     seenResponseSequences.add(response.sequence);
-    if (response.historical !== true) currentTurnResponseApplied = true;
     invalidateDerivedQuestions();
+  };
+  // Replay earlier turns in sequence before freezing this turn's frontier.
+  // Current answers may settle independent questions together, but may not
+  // answer a successor that only those same answers have just unlocked.
+  const firstCurrentSequence = orderedResponses.find((response) => response.historical !== true)?.sequence ?? Infinity;
+  for (const response of orderedResponses) {
+    if (response.historical !== true || response.sequence >= firstCurrentSequence) continue;
+    applyResponse(response, selectReadyDecisionFrontier(questions).find((question) => question.questionId === String(response.questionId)));
+  }
+  const initialFrontier = new Map(selectReadyDecisionFrontier(questions).map((question) => [question.questionId, question]));
+  for (const response of orderedResponses) {
+    if (response.historical === true) continue;
+    applyResponse(response, initialFrontier.get(String(response.questionId)));
   }
 
   const parsedControl = !active
@@ -817,14 +865,17 @@ export function buildPlanChallengeState({
     : priorUnderstandingConfirmed
       ? [...priorChallenge.sharedUnderstandingEvidenceRefs]
       : [];
+  const pendingDynamicDecisions = questions.some((question) => dynamicIds.has(question.questionId) && question.status === "open");
   const planChallengeSatisfied =
-    active && !stopRequested && selectedQuestion == null && understandingConfirmed;
+    active && !stopRequested && selectedQuestion == null && !pendingDynamicDecisions && understandingConfirmed;
   const phase = stopRequested
     ? "stopped_by_user"
     : !active
     ? "inactive"
     : selectedQuestion
       ? "awaiting_user_answer"
+      : pendingDynamicDecisions
+        ? "awaiting_fact_discovery"
       : !understandingConfirmed
         ? "awaiting_understanding_confirmation"
         : planChallengeSatisfied
@@ -869,6 +920,8 @@ export function buildPlanChallengeState({
   }
   const nextStep = phase === "inactive"
     ? copy.inactiveNext
+    : phase === "awaiting_fact_discovery"
+      ? (zh ? "先检索未解决事实，再根据结果重算问题与建议；不把检索工作交给用户。" : "Resolve the pending facts, then recompute questions and recommendations before execution.")
     : phase === "awaiting_user_answer"
       ? copy.answerNext(selectedQuestion.question)
       : phase === "awaiting_understanding_confirmation"
@@ -967,6 +1020,8 @@ export function buildPlanChallengeState({
 
   return {
     unresolvedQuestions: questions,
+    readyDecisionFrontier: selectReadyDecisionFrontier(questions),
+    pendingFactRequests: questions.filter((question) => question.status === "open" && question.resolutionClass === "discoverable_fact"),
     planChallengeState: {
       active,
       planChallengeSatisfied,

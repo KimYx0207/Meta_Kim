@@ -31,6 +31,7 @@ export function normalizeLiveRevisionReview(value, runId) {
     return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
       taskPacketId: /^task:[a-f0-9]{20}$/u.test(item.taskPacketId || "") ? item.taskPacketId : null,
       deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
+      summary: overviewText(item.summary), requiredChange: overviewText(item.requiredChange),
       contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state }];
   });
   return { state: items.length ? "reported" : "not_reported", items };

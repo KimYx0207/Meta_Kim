@@ -467,7 +467,7 @@ test("bridge application cannot promote an injected callback to native execution
   );
 });
 
-async function dependencyMethodFixture(t) {
+async function dependencyMethodFixture(t, { structured = false } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-owner-method-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const id = "resume-editor";
@@ -486,6 +486,9 @@ async function dependencyMethodFixture(t) {
   const contract = { schemaVersion: 1, id, componentType: "agent", componentVersion: "0.1.0", entrypoint: "AGENT.md", capabilities: [capability] };
   writeFileSync(path.join(componentRoot, "AGENT.md"), sourceText);
   writeFileSync(path.join(componentRoot, "capability.json"), stableJson(contract));
+  if (structured) writeFileSync(path.join(componentRoot, "method.json"), stableJson({ schemaVersion: 1, roleId: id,
+    protocol: "host-bound-task-method-v1", steps: ["Compare supplied facts before drafting", "Keep missing facts explicit"],
+    acceptance: ["Every experience claim points to a supplied fact"], automaticInvocation: false, finalAcceptance: "caller_only" }));
   writeFileSync(path.join(componentRoot, "check.mjs"), 'throw new Error("dependency validation must not execute");\n');
   const component = { id, componentType: "agent", componentVersion: "0.1.0", path: componentPath, entrypoint: "AGENT.md", capabilityIds: [capability.id], validation: capability.validation, contentSha256: await componentHash(componentRoot), contractSha256: sha256(stableJson(contract)) };
   const indexed = { ...capability, componentId: id, componentType: "agent", componentVersion: "0.1.0", componentPath, entrypoint: "AGENT.md", componentContentSha256: component.contentSha256, contractSha256: component.contractSha256 };
@@ -523,7 +526,9 @@ test("verified dependency methods preserve exact source and use one restricted C
       assert.equal(plan.args[plan.args.indexOf("--permission-mode") + 1], "plan");
       assert.equal(plan.args[plan.args.indexOf("--allowedTools") + 1], "Read");
       assert.ok(plan.args.includes("--no-session-persistence"));
-      assert.equal(plan.input, "bounded task");
+      assert.ok(plan.input.startsWith("bounded task"));
+      assert.match(plan.input, /legacy_compatible/u);
+      assert.match(plan.input, /"missingInputFields":\["facts"\]/u);
       assert.equal(plan.ownerMethodBinding.nativeCustomAgent, "requested_unverified");
     } else {
       assert.ok(plan.input.endsWith(fixture.sourceText));
@@ -584,6 +589,58 @@ test("packet contract prose cannot inject methods or widen the verified source t
   assert.deepEqual(JSON.parse(plan.args[plan.args.indexOf("--agents") + 1])["resume-editor"].tools, ["Read"]);
 });
 
+test("structured methods load source contracts and reach both native adapters and injected prompts", async (t) => {
+  const fixture = await dependencyMethodFixture(t, { structured: true });
+  useDependencyEnvironment(t, fixture.environment);
+  fixture.selected.methodInputs = { facts: "Customer support, 2024; no unverified experience" };
+  fixture.selected.ownerContract.input = { required: ["forgedPacketSchema"] };
+  fixture.selected.ownerContract.method = { steps: ["FORGED_METHOD"] };
+  const loaded = await loadDependencyAgentMethod({ packet: fixture.selected, environment: fixture.environment });
+  assert.equal(loaded.methodStatus, "structured_method_loaded");
+  assert.equal(loaded.capabilityId, "kim-service:resume-editing");
+  assert.deepEqual(loaded.inputContract.required, ["facts"]);
+  assert.deepEqual(loaded.outputContract.required, ["draft"]);
+  assert.equal(loaded.method.steps[0], "Compare supplied facts before drafting");
+  for (const runtime of ["codex", "claude"]) {
+    const plan = await prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot: process.cwd(), packet: fixture.selected, prompt: "bounded task", env: fixture.environment });
+    assert.equal(plan.methodInputStatus, "ready");
+    assert.match(plan.input, /Compare supplied facts before drafting/u);
+    assert.match(plan.input, /Every experience claim points to a supplied fact/u);
+    assert.match(plan.input, /Customer support, 2024/u);
+    assert.match(plan.input, /"outputContract"/u);
+    assert.doesNotMatch(plan.input, /FORGED_METHOD|forgedPacketSchema/u);
+  }
+  let seenPrompt;
+  const bridge = await runStageRunnerBridge({ runId: "structured-method", runtime: "codex", stageDagPacket: dagFor(["method"]),
+    workerTaskPackets: [fixture.selected], workspaceRoot: process.cwd(), invokeWorker: async ({ prompt }) => {
+      seenPrompt = prompt; return { status: "pass", outputText: "Normal prose remains valid; experience is supplied, dates remain unchanged." };
+    } });
+  assert.match(seenPrompt, /Compare supplied facts before drafting/u);
+  assert.match(seenPrompt, /"outputContract"/u);
+  assert.equal(bridge.workerResults[0].deliveryEnvelope.deliveryFormat, "conceptual-human-delivery");
+  assert.equal(bridge.workerResults[0].deliveryEnvelope.acceptanceStatus, "pending_independent_review");
+  assert.equal(bridge.workerResults[0].deliveryEnvelope.sourceBinding.methodSha256, loaded.methodSha256);
+  assert.equal(bridge.workerResults[0].deliveryEnvelope.actualOutput.sha256, bridge.workerResults[0].outputSha256);
+});
+
+test("structured required inputs stop before native or injected invocation and method drift is rejected", async (t) => {
+  const fixture = await dependencyMethodFixture(t, { structured: true });
+  useDependencyEnvironment(t, fixture.environment);
+  let invoked = false;
+  const bridge = await runStageRunnerBridge({ runId: "method-input-missing", runtime: "codex", stageDagPacket: dagFor(["method"]),
+    workerTaskPackets: [fixture.selected], workspaceRoot: process.cwd(), invokeWorker: async () => { invoked = true; return { status: "pass" }; } });
+  assert.equal(invoked, false);
+  assert.equal(bridge.failure.failureClass, "dependency_method_inputs_missing");
+  assert.deepEqual(bridge.nodeRecords[0].methodInputProblems, [{ field: "facts", reason: "missing" }]);
+  const native = await invokeReadOnlyRuntimeWorker({ runtime: "claude", workspaceRoot: process.cwd(), packet: fixture.selected,
+    prompt: "must not launch", env: { ...fixture.environment, PATH: "" } });
+  assert.equal(native.failureClass, "dependency_method_inputs_missing");
+  assert.equal(native.runtimeProcessInvoked, undefined);
+  fixture.selected.methodInputs = { facts: "Known facts" };
+  writeFileSync(path.join(fixture.componentRoot, "method.json"), '{"schemaVersion":1,"steps":["drift"]}');
+  await assert.rejects(loadDependencyAgentMethod({ packet: fixture.selected, environment: fixture.environment }), /not verified/u);
+});
+
 function coreLoopForMethod(bridge, selected) {
   return { requestRecord: { runId: bridge.runId }, thinkingPacket: { workerTaskPackets: [selected] }, stageDagPacket: bridge.stageDagPacket,
     executionResult: { workerResultPackets: [{ taskPacketId: selected.taskPacketId, ownerAgent: selected.ownerAgent }], workerExecutionEvidence: [{ taskPacketId: selected.taskPacketId }], mergeResult: {} },
@@ -609,6 +666,7 @@ test("callback cannot forge native owner loading; writeback binds source to the 
   const applied = applyStageRunnerBridgeResult(core, bridge);
   assert.deepEqual(applied.executionResult.workerExecutionEvidence[0].ownerMethodBinding, method);
   assert.deepEqual(applied.executionResult.workerResultPackets[0].output.ownerMethodBinding, method);
+  assert.equal(applied.executionResult.workerResultPackets[0].output.deliveryEnvelope.actualOutput.sha256, sha256("callback observation"));
   assert.equal(applied.executionResult.actualWorkerExecution, false);
   for (const changed of [
     { ...core, requestRecord: { runId: "another-run" } },
@@ -616,6 +674,7 @@ test("callback cannot forge native owner loading; writeback binds source to the 
     { ...core, executionResult: { ...core.executionResult, workerResultPackets: [{ taskPacketId: fixture.selected.taskPacketId, ownerAgent: "other" }] } },
   ]) assert.equal(applyStageRunnerBridgeResult(changed, bridge).executionResult.workerExecutionEvidence[0].ownerMethodBinding, null);
   assert.equal(applyStageRunnerBridgeResult(core, structuredClone(bridge)).executionResult.workerExecutionEvidence[0].ownerMethodBinding, null);
+  assert.equal(applyStageRunnerBridgeResult(core, structuredClone(bridge)).executionResult.workerResultPackets[0].output.deliveryEnvelope, null);
   bridge.workerResults[0].outputText = "changed after completion";
   assert.equal(applyStageRunnerBridgeResult(core, bridge).executionResult.workerExecutionEvidence[0].ownerMethodBinding, null);
 });

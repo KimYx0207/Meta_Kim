@@ -1647,6 +1647,11 @@ function validatePreDecisionOptionFrame(contract, artifact) {
       questionTargets,
       `preDecisionOptionFrame.unresolvedQuestions[${index}].questionTarget`,
     );
+    if (question.resolutionClass != null) {
+      ensureEnum(question.resolutionClass,
+        ["discoverable_fact", "routine_design_decision", "material_user_decision"],
+        `preDecisionOptionFrame.unresolvedQuestions[${index}].resolutionClass`);
+    }
     ensureString(
       question.decisionImpact,
       `preDecisionOptionFrame.unresolvedQuestions[${index}].decisionImpact`,
@@ -1860,10 +1865,15 @@ function validatePreDecisionOptionFrame(contract, artifact) {
       new Set(questionResponseSequences).size === questionResponseSequences.length,
       "plan challenge question response sequences must be unique.",
     );
-    ensure(
-      questionResponseEvidence.filter((item) => item.historical === false).length <= 1,
-      "plan challenge may record at most one current-run question response.",
-    );
+    const currentResponseQuestionIds = new Set(questionResponseEvidence
+      .filter((item) => item.historical === false)
+      .map((item) => item.binding.replace(/^plan-challenge-response:/, "")));
+    for (const questionId of currentResponseQuestionIds) {
+      const question = packet.unresolvedQuestions.find((item) => item.questionId === questionId);
+      ensure(question != null, "current-run question response must bind an existing question.");
+      ensure(question?.dependsOn.every((id) => !currentResponseQuestionIds.has(id)),
+        "current-run question responses cannot consume a dependency answered in the same round.");
+    }
     for (const [index, question] of packet.unresolvedQuestions.entries()) {
       if (!["answered", "skipped"].includes(question.status)) continue;
       ensureArray(
@@ -1879,6 +1889,42 @@ function validatePreDecisionOptionFrame(contract, artifact) {
         question.answerEvidenceRefs,
         `preDecisionOptionFrame.unresolvedQuestions[${index}].answerEvidenceRefs`,
       );
+      if (question.resolutionSource != null) {
+        const discovery = artifact.requirementsDiscoveryPacket;
+        let source;
+        let expectedRefs;
+        let expectedValue;
+        if (question.resolutionSource === "supplied_fact_evidence") {
+          ensure(question.resolutionClass === "discoverable_fact", "fact evidence cannot settle a material user decision.");
+          const position = discovery?.resolvedFacts?.findIndex((item) => item.questionId === question.questionId) ?? -1;
+          source = discovery?.resolvedFacts?.[position];
+          expectedRefs = source?.evidenceRefs?.map((_, i) => `requirementsDiscoveryPacket.resolvedFacts[${position}].evidenceRefs[${i}]`);
+          expectedValue = source?.value;
+        } else if (question.resolutionSource === "routine_recommendation_no_permission_granted") {
+          ensure(question.resolutionClass === "routine_design_decision", "routine recommendation cannot settle a material user decision.");
+          const position = discovery?.decisionItems?.findIndex((item) => item.questionId === question.questionId) ?? -1;
+          source = discovery?.decisionItems?.[position];
+          ensure(source?.resolutionClass === "routine_design_decision", "routine decision must match the original discovery class.");
+          expectedRefs = source?.evidenceRefs?.map((_, i) => `requirementsDiscoveryPacket.decisionItems[${position}].evidenceRefs[${i}]`);
+          expectedValue = source?.recommendedAnswer;
+        } else if (question.resolutionSource === "existing_settled_decision") {
+          const intent = packet.intentBinding;
+          ensure(intent?.status === "host_provided_understanding" &&
+            intent.taskHash === artifact.goalContractPacket?.taskHash &&
+            intent.intentDigest === artifact.goalContractPacket?.intentBinding?.intentDigest,
+          "settled decision must come from the current host-provided understanding.");
+          const position = intent?.settledDecisionRefs?.findIndex((item) => item.decisionId === question.questionId) ?? -1;
+          source = intent?.settledDecisionRefs?.[position];
+          expectedRefs = source?.evidenceRefs?.map((_, i) => `preDecisionOptionFrame.intentBinding.settledDecisionRefs[${position}].evidenceRefs[${i}]`);
+          expectedValue = source?.value;
+        } else {
+          ensure(false, "unknown dynamic question resolution source.");
+        }
+        ensure(source != null && question.status === "answered" && question.userAnswer === expectedValue &&
+          JSON.stringify(question.answerEvidenceRefs) === JSON.stringify(expectedRefs),
+        "dynamic answer must match its current source identity, value and exact evidence references.");
+        continue;
+      }
       const expectedResponseBinding = `plan-challenge-response:${question.questionId}`;
       ensure(
         question.answerEvidenceRefs.some((ref) => {
@@ -2032,6 +2078,7 @@ function validatePreDecisionOptionFrame(contract, artifact) {
       .filter(
         (question) =>
           question.status === "open" &&
+          (!question.resolutionClass || question.resolutionClass === "material_user_decision") &&
           question.dependsOn.every(
             (dependencyId) =>
               packet.unresolvedQuestions.find((candidate) => candidate.questionId === dependencyId)?.status === "answered",
@@ -2046,11 +2093,35 @@ function validatePreDecisionOptionFrame(contract, artifact) {
       challenge.selectedQuestionId === (eligibleOpen[0]?.questionId ?? null),
       "preDecisionOptionFrame.planChallengeState.selectedQuestionId must be the single highest-impact eligible open question.",
     );
+    if (artifact.requirementsDiscoveryPacket != null) {
+      ensureArray(packet.readyDecisionFrontier, "preDecisionOptionFrame.readyDecisionFrontier");
+      ensureArray(packet.pendingFactRequests, "preDecisionOptionFrame.pendingFactRequests");
+    }
+    if (packet.readyDecisionFrontier != null) {
+      ensureArray(packet.readyDecisionFrontier, "preDecisionOptionFrame.readyDecisionFrontier");
+      ensure(
+        JSON.stringify(packet.readyDecisionFrontier.map((question) => question?.questionId)) ===
+          JSON.stringify(eligibleOpen.map((question) => question.questionId)),
+        "preDecisionOptionFrame.readyDecisionFrontier must match the dependency-ready material questions in impact order.",
+      );
+    }
+    if (packet.pendingFactRequests != null) {
+      ensureArray(packet.pendingFactRequests, "preDecisionOptionFrame.pendingFactRequests");
+      const factIds = packet.unresolvedQuestions.filter((question) => question.status === "open" && question.resolutionClass === "discoverable_fact").map((question) => question.questionId);
+      ensure(
+        JSON.stringify(packet.pendingFactRequests.map((question) => question?.questionId)) === JSON.stringify(factIds),
+        "preDecisionOptionFrame.pendingFactRequests must match the unanswered discoverable facts.",
+      );
+    }
     const awaitingUserInput = [
       "awaiting_user_answer",
       "awaiting_understanding_confirmation",
       "awaiting_execution_authorization",
     ].includes(challenge.phase);
+    if (challenge.phase === "awaiting_fact_discovery") {
+      ensure(eligibleOpen.length === 0 && packet.unresolvedQuestions.some((question) => question.status === "open" && question.resolutionClass),
+        "awaiting_fact_discovery requires unresolved discovery dependencies and no ready user decision.");
+    }
     ensure(
       challenge.pendingUserChoice.status ===
         (awaitingUserInput ? "required_not_invoked" : "not_required"),

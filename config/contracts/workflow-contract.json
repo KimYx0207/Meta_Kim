@@ -1211,7 +1211,7 @@
         "dependencyDetection": "auto",
         "linearFormat": "sequential_questions",
         "parallelFormat": "batch_list",
-        "description": "Optional host-supported batching for independent questions outside an active plan challenge. An active plan challenge selects only the highest-impact unresolved question; no batching quota, repeated settled decision, or dependent question may override that single question authority."
+        "description": "Optional host-supported batching for independent questions whose prerequisites were settled before this round. An active plan challenge orders the ready frontier by impact and retains selectedQuestionId for hosts that support one question. A batch cannot include questions unlocked by answers in that same batch. No batching quota or repeated settled decision is required."
       },
       "codexVisibleMultiOptionOutput": {
         "required": true,
@@ -2593,6 +2593,7 @@
         ],
         "phaseEnum": [
           "inactive",
+          "awaiting_fact_discovery",
           "awaiting_user_answer",
           "awaiting_understanding_confirmation",
           "awaiting_execution_authorization",
@@ -2605,7 +2606,8 @@
           "explicit_user_request",
           "material_risk",
           "branching_decision",
-          "evidence_contradiction"
+          "evidence_contradiction",
+          "requirements_discovery"
         ],
         "executionAuthorizationRequiredFields": [
           "state",
@@ -2629,8 +2631,8 @@
           "nextStep",
           "visibleLines"
         ],
-        "activationRule": "Activate only when the user explicitly requests a plan challenge or Fetch/Thinking records material risk or contradictory evidence. Low-risk work with no branch-changing choice remains inactive.",
-        "questionSelectionRule": "Select exactly one highest-impact open question. Answered, skipped, and invalidated questions remain in unresolvedQuestions as history; invalidated dependencies are never selected.",
+        "activationRule": "Activate when requirements exploration supplies concrete decisions, the user explicitly requests a plan challenge, or Fetch/Thinking records material risk or contradictory evidence. Requirements exploration can precede any design. Low-risk work with no branch-changing choice remains inactive.",
+        "questionSelectionRule": "Project the dependency-ready material decision frontier in impact order; selectedQuestionId remains its first item for compatibility. Facts and routine implementation choices are not user questions. Answered, skipped, and invalidated questions remain in unresolvedQuestions as history; recompute the frontier after answers without selecting unsettled dependencies.",
         "recommendationRule": "A recommendation is optional. Preference-only questions use preference_only and evidence-insufficient questions use insufficient_evidence without inventing a recommended answer.",
         "authorizationRule": "sharedUnderstandingConfirmed is derived only from trusted evidence bound to plan-challenge-understanding-confirmation and is never execution authorization. Mutation requires trusted evidence bound to all concrete sideEffectActions; untrusted or incomplete scope remains pending. Explicit denial enters execution_denied without another authorization prompt. Caller-supplied invalidation is ignored, and stopped runs remain executionAllowed=false.",
         "continuationRule": "Cross-turn continuation accepts only a validator-passing prior artifact from the same governed output directory with the same task fingerprint and a pending phase. The current host verifier must bind the exact previous run id, and the runner may append at most one phase-appropriate current decision to restored history. Terminal runs cannot resume and prior artifacts cannot be overwritten."

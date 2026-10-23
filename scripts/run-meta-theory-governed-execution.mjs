@@ -19,6 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
+import { withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
 import { prepareDependencyCalculationInput, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
@@ -89,6 +90,7 @@ import {
 } from "../src/domain/evolution/warden-writeback-approval.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
 import { prepareIntentDialogue, bindIntentToWorkerTasks, applyTaskCriterionAssignments, normalizeTaskCriterionAssignments, buildIntentCriterionCoverage, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
+import { normalizeRequirementsDiscovery, normalizeProductDesign, projectDesignWorkerTasks, evaluateProductOutcomeReview, projectProductReview, productDesignDigest } from "./governed-execution/product-design.mjs";
 import {
   buildTaskGoalContract as buildGoalContractPacket,
   evaluateTaskOutcome,
@@ -1472,6 +1474,64 @@ async function loadAlreadyMaterializedDurableRun({
       db: dbPath,
     },
   };
+}
+
+/** Read/revalidate the latest review without mutating the immutable run or files. */
+export async function readProductReviewProjection({ artifact, projectRoot, jsonPath, outputDir = path.dirname(jsonPath) }) {
+  const pointerPath = resolveOutputFile(outputDir, `${artifact.runId}.outcome-review.json`);
+  const baseArtifactSha256 = await fileDigestIfExists(jsonPath);
+  let saved;
+  try { saved = JSON.parse(await fs.readFile(pointerPath, "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return artifact; throw error; }
+  if (saved.runId !== artifact.runId || saved.baseArtifactSha256 !== baseArtifactSha256) throw new Error("Review projection base artifact changed");
+  const review = await evaluateProductOutcomeReview({ input: saved.input, artifact, projectRoot });
+  const reviewed = projectProductReview(artifact, review);
+  const projectionPath = resolveOutputFile(outputDir, `${artifact.runId}.review-${review.reviewDigest.slice(0, 20)}.json`);
+  return { ...reviewed, paths: { ...(artifact.paths ?? {}), json: projectionPath, executionJson: jsonPath, review: pointerPath } };
+}
+
+// Both initial publication and review refresh share the existing filesystem
+// lock so a review cannot replace a newer run's latest pointer after a race.
+async function updateLatestGovernedProjection(outputDir, operation) {
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    const result = await withSafeManagedFileLock({
+      trustedRoot: outputDir, controlDirRel: ".projection-locks", lockKey: "latest",
+      injectPauseAfterLockMs: 0, injectPauseReleaseFile: "",
+    }, operation);
+    if (result.ok) return result.value;
+    if (result.status !== "locked" || Date.now() >= deadline) {
+      throw new Error(`Cannot update latest governed projection: ${result.reason}`);
+    }
+    await sleep(25);
+  }
+}
+
+/** Append a review projection without changing immutable execution receipts. */
+async function applyPersistedOutcomeReview({ artifact, input, projectRoot, jsonPath, outputDir }) {
+  if (!input) return readProductReviewProjection({ artifact, projectRoot, jsonPath, outputDir });
+  const pointerPath = resolveOutputFile(outputDir, `${artifact.runId}.outcome-review.json`);
+  const baseArtifactSha256 = await fileDigestIfExists(jsonPath);
+  const review = await evaluateProductOutcomeReview({ input, artifact, projectRoot });
+  const reviewed = projectProductReview(artifact, review);
+  const projectionPath = resolveOutputFile(outputDir, `${artifact.runId}.review-${review.reviewDigest.slice(0, 20)}.json`);
+  const livePath = resolveOutputFile(outputDir, `${artifact.runId}.live.json`);
+  const live = prepareLiveProjectionRecord(reviewed);
+  await atomicWriteFile(projectionPath, `${JSON.stringify(reviewed, null, 2)}\n`);
+  await atomicWriteFile(pointerPath, `${JSON.stringify({ schemaVersion: 1, runId: artifact.runId, baseArtifactSha256, input, projectionPath: path.basename(projectionPath) }, null, 2)}\n`);
+  await updateLatestGovernedProjection(outputDir, async () => {
+    await atomicWriteFile(livePath, live.content);
+    const latestPath = resolveOutputFile(outputDir, "latest.json");
+    let latest;
+    try { latest = JSON.parse(await fs.readFile(latestPath, "utf8")); }
+    catch (error) { if (error.code === "ENOENT") return; throw error; }
+    if (latest.runId !== artifact.runId) return;
+    await atomicWriteFile(latestPath, `${JSON.stringify({
+      ...latest, liveProjectionPath: relative(livePath),
+      liveProjectionSha256: live.sha256, liveProjectionBytes: live.bytes,
+    }, null, 2)}\n`);
+  });
+  return { ...reviewed, paths: { ...(artifact.paths ?? {}), json: projectionPath, executionJson: jsonPath, review: pointerPath, liveProjection: livePath } };
 }
 
 async function openRunnerDurableCoordinator({
@@ -10255,6 +10315,8 @@ export function buildWorkflowContractPackets({
     builtFromContentEvidence: true,
     contentEvidenceRefs: ["contentEvidencePacket.decisionImpactMap[0]"],
     unresolvedQuestions: planChallenge.unresolvedQuestions,
+    readyDecisionFrontier: planChallenge.readyDecisionFrontier ?? [],
+    pendingFactRequests: planChallenge.pendingFactRequests ?? [],
     planChallengeState: planChallenge.planChallengeState,
     candidateOptions: routeCandidateOptions(orchestrationReport.selectedExecutionRoute),
     recommendedDefault: orchestrationReport.selectedExecutionRoute?.decisionCard?.recommendedDefault ?? orchestrationReport.selectedExecutionRoute?.recommendedRoute?.id ?? "unresolved-route",
@@ -11472,7 +11534,7 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, design = null, designRequirement = null, environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
@@ -11480,12 +11542,44 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     ? intentDialogue?.deliveryStrategy ?? null : null;
   const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, actionTask: task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, environment });
   routeResult.intentBinding = intentDialogue;
-  const route = routeResult.recommendedRoute;
+  let route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
+  let plannedPackets = buildRouteDrivenWorkerTasks({ runId, routeResult, task });
+  const designRouteEvidence = [];
+  if (design) {
+    const templates = [];
+    for (const slice of design.taskSlices) {
+      const sliceTask = [task, slice.outcome, ...slice.capabilityNeed, ...slice.scopeFiles].join("\n");
+      const sliceRoute = await selectExecutionRoute({ task: sliceTask, actionTask: [slice.outcome, ...slice.scopeFiles].join("\n"), runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, environment });
+      const candidates = buildRouteDrivenWorkerTasks({ runId, routeResult: sliceRoute, task: sliceTask });
+      const selected = candidates.find((packet) => packet.ownerAgent === sliceRoute.recommendedRoute?.owner) ?? candidates[0];
+      if (!selected) throw new TypeError(`No discovered owner route for design slice ${slice.id}`);
+      templates.push(selected);
+      designRouteEvidence.push({ sliceId: slice.id, capabilityNeed: slice.capabilityNeed, selectedOwner: selected.ownerAgent, route: sliceRoute.recommendedRoute, gate: sliceRoute.routeExecutionGate });
+      providerList.push(...providerListFromRoute(sliceRoute));
+    }
+    plannedPackets = projectDesignWorkerTasks({ design, runId, templates });
+    if (designRouteEvidence.length) {
+      route = designRouteEvidence[0].route;
+      routeResult.recommendedRoute = route;
+      const firstGate = designRouteEvidence[0].gate ?? {};
+      const allReady = designRouteEvidence.every((item) => item.gate?.routeCompatible === true && item.gate?.canHandoffToHost === true && item.gate?.handoffStatus === "ready_for_host_handoff");
+      routeResult.routeExecutionGate = { ...firstGate, canHandoffToHost: allReady, handoffStatus: allReady ? "ready_for_host_handoff" : "blocked", hostAction: allReady ? "host_action_required" : "return_to_thinking", designRouteEvidence };
+    }
+    if (taskCriterionAssignments) {
+      const assigned = applyTaskCriterionAssignments({ workerTaskPackets: plannedPackets, dialogue: intentDialogue, input: taskCriterionAssignments });
+      if (assigned.some((packet, index) => JSON.stringify([...packet.acceptanceCriterionIds].sort()) !== JSON.stringify([...plannedPackets[index].acceptanceCriterionIds].sort()))) throw new TypeError("Explicit criterion assignment conflicts with the product design");
+    }
+  }
+  const designMissing = designRequirement?.required === true && !design;
+  if (designMissing || (design && design.readiness !== "structure_ready_not_reviewed")) {
+    routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", reason: designMissing ? "A host design must follow requirements discovery before execution" : "Product design is not ready for delivery" };
+    plannedPackets = plannedPackets.map((packet) => ({ ...packet, workOrderReadiness: "incomplete", finalizationGate: "blocked_before_host_handoff" }));
+  }
   const intentBoundPackets = bindIntentToWorkerTasks({
-    workerTaskPackets: applyTaskCriterionAssignments({ workerTaskPackets: buildRouteDrivenWorkerTasks({ runId, routeResult, task }), dialogue: intentDialogue, input: taskCriterionAssignments }),
+    workerTaskPackets: applyTaskCriterionAssignments({ workerTaskPackets: plannedPackets, dialogue: intentDialogue, input: taskCriterionAssignments }),
     routeResult, dialogue: intentDialogue ?? prepareIntentDialogue({ task }),
-  });
+  }).map((packet, index) => design ? { ...packet, coreProblem: plannedPackets[index].coreProblem, todayTask: plannedPackets[index].todayTask } : packet);
   const localGate = routeResult.localToolExecutionGate;
   const workerTaskPackets = localGate?.status === "ready"
     ? intentBoundPackets.map((packet) => ({
@@ -11566,6 +11660,10 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       os: routeOs,
     },
     selectedExecutionRoute: routeResult,
+    productDesignPacket: design,
+    designRouteEvidence,
+    designRequirementPacket: designRequirement ? { ...designRequirement, status: designMissing ? "thinking_handoff_required" : design ? design.readiness : "not_required", nativeInvocationVerified: false,
+      nextAction: designMissing ? { stage: "Thinking", action: "invoke_discovered_design_owner", inputRefs: ["criticalSummary.intentBinding", "fetchEvidence", "preDecisionOptionFrame"], expectedOutput: "Concrete user journeys, rules, recovery, resources, then complete task slices and true dependencies; preserve settled decisions." } : null } : null,
     criticalSummary: {
       realGoal: intentDialogue?.outcome ?? task,
       successCriteria: intentDialogue?.acceptanceCriteria?.length ? intentDialogue.acceptanceCriteria.map((criterion) => criterion.description) : [intentDialogue?.outcome ?? task],
@@ -11682,6 +11780,11 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   let {
   task,
   confirmedIntent = null,
+  requirementsDiscoveryInput = null,
+  designInput = null,
+  designRequired = false,
+  designRequirement = null,
+  outcomeReviewInput = null,
   taskCriterionAssignments = null,
   localToolInput = null,
   dependencyCalculationInput = null,
@@ -11734,6 +11837,19 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const confirmedIntentSnapshot = confirmedIntent == null ? null : structuredClone(confirmedIntent);
   const understandingSnapshot = sharedUnderstandingConfirmed == null ? null : structuredClone(sharedUnderstandingConfirmed);
   const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
+  const designGoal = buildGoalContractPacket({ task: normalizedTask, acceptanceCriteria: intentDialogue.acceptanceCriteria });
+  // The existing goal supplies user-outcome even without a separate confirmed
+  // dialogue. Reuse that criterion for explicit designs without promoting the
+  // dialogue to confirmed or granting execution permission.
+  if (designInput != null && intentDialogue.acceptanceCriteria.length === 0) intentDialogue.acceptanceCriteria = designGoal.acceptanceCriteria;
+  const requirementsDiscovery = normalizeRequirementsDiscovery({ input: requirementsDiscoveryInput == null ? null : structuredClone(requirementsDiscoveryInput), dialogue: intentDialogue });
+  const discoveryDecisionItems = (requirementsDiscovery?.decisionItems ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `requirementsDiscoveryPacket.decisionItems[${index}].evidenceRefs[${refIndex}]`) }));
+  const discoveryResolvedFacts = (requirementsDiscovery?.resolvedFacts ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `requirementsDiscoveryPacket.resolvedFacts[${index}].evidenceRefs[${refIndex}]`) }));
+  const discoverySettledDecisions = (intentDialogue.settledDecisionRefs ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `preDecisionOptionFrame.intentBinding.settledDecisionRefs[${index}].evidenceRefs[${refIndex}]`) }));
+  const productDesign = normalizeProductDesign({ input: designInput == null ? null : structuredClone(designInput), dialogue: intentDialogue, goalContract: designGoal });
+  const designRequirementSnapshot = designRequirement == null ? (designRequired ? { required: true, reason: "Current host requires product design after requirements discovery" } : null) : structuredClone(designRequirement);
+  if (designRequirementSnapshot && (typeof designRequirementSnapshot.required !== "boolean" || typeof designRequirementSnapshot.reason !== "string" || !designRequirementSnapshot.reason.trim())) throw new TypeError("Design requirement needs explicit host judgment and reason");
+  const outcomeReviewSnapshot = outcomeReviewInput == null ? null : structuredClone(outcomeReviewInput);
   const taskCriterionAssignmentsSnapshot = normalizeTaskCriterionAssignments({ dialogue: intentDialogue, input: taskCriterionAssignments == null ? null : structuredClone(taskCriterionAssignments) });
   const calculationRequest = prepareDependencyCalculationInput({ input: dependencyCalculationInput, task: normalizedTask,
     intentDigest: intentDialogue.intentDigest ?? null });
@@ -11767,8 +11883,12 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const dialogueTask = intentDialogue.status === "host_provided_understanding" ? intentDialogue.routeTask : normalizedTask;
   const baseTaskFingerprint = stableId("task", calculationRequest
     ? JSON.stringify([normalizedTask, calculationRequest.summary, runtime, osTarget, stageRunner?.runtime ?? runtime]) : normalizedTask);
-  const taskFingerprint = taskCriterionAssignmentsSnapshot == null ? baseTaskFingerprint
+  const allocatedTaskFingerprint = taskCriterionAssignmentsSnapshot == null ? baseTaskFingerprint
     : stableId("task", JSON.stringify([baseTaskFingerprint, taskCriterionAssignmentsSnapshot]));
+  // Requirements dialogue evolves before execution. Its content digest is not
+  // the immutable execution identity; the confirmed intent/design still is.
+  const taskFingerprint = productDesign || designRequirementSnapshot
+    ? stableId("task", JSON.stringify([allocatedTaskFingerprint, productDesign?.designDigest ?? null, designRequirementSnapshot])) : allocatedTaskFingerprint;
   const durableStageRunnerEnabled = stageRunner?.enabled === true;
   const durableMode = durableStageRunnerEnabled ? (stageRunner.durableMode ?? "fresh") : null;
   if (durableStageRunnerEnabled && !["fresh", "resume"].includes(durableMode)) {
@@ -11796,6 +11916,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         artifactPath: resolveOutputFile(outputDir, `${requestedPreviousRunId}.json`),
         previousRunId: requestedPreviousRunId,
         taskFingerprint,
+        taskHash: intentDialogue.taskHash,
+        intentDigest: intentDialogue.intentDigest ?? null,
       });
   }
   // No branchingOptions here: this preview runs before route selection, so no
@@ -11804,6 +11926,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   // add only the route selector's own decision-card options.
   let planChallengePreview = buildPlanChallengeState({
     task: dialogueTask,
+    decisionItems: discoveryDecisionItems,
+    resolvedFacts: discoveryResolvedFacts,
+    settledDecisions: discoverySettledDecisions,
     responses: boundChallengeResponses,
     control: planChallengeControl,
     sharedUnderstandingConfirmed: boundUnderstanding,
@@ -11838,6 +11963,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     throw new Error("A continuation run must use a new runId instead of overwriting its prior artifact.");
   }
   const jsonPath = resolveOutputFile(outputDir, `${effectiveRunId}.json`);
+  if (productDesign?.revisionContext?.previousRunId === effectiveRunId) throw new TypeError("Changed design requires a new run identity");
   const liveProjectionPath = resolveOutputFile(outputDir, `${effectiveRunId}.live.json`);
   const markdownFileName = `${effectiveRunId}.${resolvedOutputLanguage}.md`;
   const markdownPath = resolveOutputFile(outputDir, markdownFileName);
@@ -11879,12 +12005,13 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       durableDbPath,
     });
     if (materialized) {
+      if ((materialized.requirementsDiscoveryPacket?.discoveryDigest ?? null) !== (requirementsDiscovery?.discoveryDigest ?? null)) throw new TypeError("Materialized execution cannot resume with changed requirements; create a new run");
       applyTaskCriterionAssignments({ workerTaskPackets: materialized.workerTaskPackets ?? [], dialogue: intentDialogue, input: taskCriterionAssignmentsSnapshot });
       if (materialized.dependencyCalculationPacket) materialized.dependencyCalculationPacket = {
         ...materialized.dependencyCalculationPacket, observationScope: "historical_materialized_run",
         priorToolInvoked: materialized.dependencyCalculationPacket.toolInvoked, toolInvoked: false,
       };
-      return materialized;
+      return await applyPersistedOutcomeReview({ artifact: materialized, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
     }
   } else if (durableMode === "fresh") {
     await reserveExplicitRunId(reservationPath, {
@@ -11892,6 +12019,10 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       taskFingerprint,
       stagingRefs,
     });
+  } else if (outcomeReviewSnapshot && requestedRunId != null && existsSync(jsonPath)) {
+    const previous = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+    if (previous.runId !== effectiveRunId || previous.taskFingerprint !== taskFingerprint || previous.task !== normalizedTask) throw new TypeError("Review continuation task or design fingerprint mismatch");
+    return await applyPersistedOutcomeReview({ artifact: previous, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
   } else if (requestedRunId != null && allowOverwrite !== true) {
     await reserveExplicitRunId(reservationPath, {
       runId: effectiveRunId,
@@ -11942,11 +12073,16 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     codexHostToolSchema,
     intentDialogue,
     taskCriterionAssignments: taskCriterionAssignmentsSnapshot,
+    design: productDesign,
+    designRequirement: designRequirementSnapshot,
     localToolRequest,
     environment: calculationEnvironment,
   });
   planChallengePreview = buildPlanChallengeState({
     task: dialogueTask,
+    decisionItems: discoveryDecisionItems,
+    resolvedFacts: discoveryResolvedFacts,
+    settledDecisions: discoverySettledDecisions,
     responses: boundChallengeResponses,
     control: planChallengeControl,
     sharedUnderstandingConfirmed: boundUnderstanding,
@@ -12065,6 +12201,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     businessPhasePlanPacket,
     orchestrationReport,
   });
+  if (productDesign) Object.assign(businessFlowBlueprintPacket, { designBinding: { designId: productDesign.designId, revision: productDesign.revision, designDigest: productDesign.designDigest }, userJourneys: productDesign.userJourneys, artifactFlow: productDesign.artifactFlow, revisionImpact: productDesign.revisionImpact });
   const governanceStartReasonPacket = buildGovernanceStartReasonPacket({
     orchestrationReport,
     businessPhasePlanPacket,
@@ -12226,6 +12363,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   });
   coreLoop = {
     ...coreLoop,
+    productDesignPacket: productDesign,
+    requirementsDiscoveryPacket: requirementsDiscovery,
+    designRequirementPacket: orchestrationReport.designRequirementPacket,
     runnerSpineBindingPacket: {
       schemaVersion: "governed-runner-spine-bindings-v1",
       runId: effectiveRunId,
@@ -12615,7 +12755,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     ...coreLoop,
     preDecisionOptionFrame: workflowContractPackets.preDecisionOptionFrame,
   };
-  const artifact = {
+  let artifact = {
     schemaVersion: 1,
     runId: effectiveRunId,
     requestedRunId,
@@ -12632,6 +12772,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           mode: allowOverwrite === true ? "explicit_overwrite" : "exclusive_wx",
         },
     taskFingerprint,
+    productDesignPacket: productDesign,
+    requirementsDiscoveryPacket: requirementsDiscovery,
+    designRequirementPacket: orchestrationReport.designRequirementPacket,
     ...(durableExecution ? { durableExecution } : {}),
     resolvedOutputLanguage,
     languageResolution,
@@ -12862,7 +13005,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     await atomicWriteFile(markdownPath, userReportMarkdown);
   }
   await atomicWriteFile(liveProjectionPath, liveProjectionRecord.content);
-  await atomicWriteFile(
+  await updateLatestGovernedProjection(outputDir, () => atomicWriteFile(
     latestPath,
     `${JSON.stringify(
       {
@@ -12879,17 +13022,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       null,
       2
     )}\n`
-  );
-  return {
-    ...artifact,
-    paths: {
-      json: jsonPath,
-      liveProjection: liveProjectionPath,
-      markdown: markdownPath,
-      latest: latestPath,
-      db: dbPath,
-    },
-  };
+  ));
+  const deliveredArtifact = { ...artifact, paths: { json: jsonPath, liveProjection: liveProjectionPath, markdown: markdownPath, latest: latestPath, db: dbPath } };
+  return outcomeReviewSnapshot ? await applyPersistedOutcomeReview({ artifact: deliveredArtifact, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir }) : deliveredArtifact;
   } catch (error) {
     durableBodyError = error;
     if (durableCoordinator?.claim && error?.simulatedProcessCrash !== true) {
@@ -12937,6 +13072,7 @@ export async function readGovernedExecutionRun({
   runId,
   stateDir = DEFAULT_STATE_DIR,
   artifactDir = null,
+  projectRoot = process.env.META_KIM_CALLER_CWD || process.cwd(),
 } = {}) {
   const outputDir = artifactDir ? path.resolve(artifactDir) : stateDir;
   const selectionMode = runId === "latest" || !runId
@@ -12950,12 +13086,13 @@ export async function readGovernedExecutionRun({
   }
   const safeRunId = validateRunId(effectiveRunId, "read runId");
   const jsonPath = resolveOutputFile(outputDir, `${safeRunId}.json`);
-  const artifact = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+  let artifact = JSON.parse(await fs.readFile(jsonPath, "utf8"));
   if (artifact?.runId !== safeRunId) {
     throw new Error(
       `Governed run binding mismatch: requested '${safeRunId}' but artifact contains '${artifact?.runId ?? "missing"}'.`,
     );
   }
+  artifact = await readProductReviewProjection({ artifact, projectRoot, jsonPath, outputDir });
   const recordedMarkdown = artifact?.runReport?.markdownPath;
   const language = normalizeOutputLanguage(
     artifact?.resolvedOutputLanguage ?? artifact?.runReport?.language,
@@ -13001,7 +13138,7 @@ export async function readGovernedExecutionRun({
     runId: safeRunId,
     artifact,
     markdown: await fs.readFile(markdownPath, "utf8"),
-    paths: { json: jsonPath, markdown: markdownPath },
+    paths: { json: artifact.paths?.json ?? jsonPath, executionJson: jsonPath, markdown: markdownPath },
     selection,
   };
 }
@@ -13037,6 +13174,9 @@ function positionalTask(fallback = null) {
         "--host-invocation-evidence",
         "--native-choice-evidence",
         "--confirmed-intent",
+        "--requirements-discovery-input",
+        "--design-input",
+        "--outcome-review-input",
         "--local-tool-input",
         "--calculation-materials",
         "--codex-host-tool-schema",
@@ -13078,6 +13218,9 @@ function rawPositionals() {
         "--host-invocation-evidence",
         "--native-choice-evidence",
         "--confirmed-intent",
+        "--requirements-discovery-input",
+        "--design-input",
+        "--outcome-review-input",
         "--local-tool-input",
         "--calculation-materials",
         "--codex-host-tool-schema",
@@ -13103,6 +13246,7 @@ function rawPositionals() {
 
 async function main() {
   if (process.argv.includes("--help")) {
+    process.stdout.write("Product workflow: --requirements-discovery-input <json-file> proposes source-backed questions, recommendations and tradeoffs before design; --design-required requests a Thinking handoff when a design is absent; --design-input <json-file> consumes the resulting bound design; --outcome-review-input <json-file> attaches an independent review of current artifact bytes, including to an existing same-identity run without repeating Execution. Files are content, not native invocation proof, user answers or permissions. Default remains planned_only.\n\n");
     process.stdout.write("Calculation handoff: --calculation-materials <utf8-json-file> supplies complete materials (procurement max 262144 bytes; store rows max 65536 bytes with schemaVersion:1 and required rows, optional definitions/comparison); configure META_KIM_KIM_SERVICE_ROOT for the reviewed dependency. Add --execute-stage-dag for the existing read-only worker bridge. The selected AGENT.md determines the output contract; store definition conflicts retain row metrics without cross-period comparisons or attribution. Materials alone do not execute tools or models, waive route/choice gates, or establish a native invocation. The public API accepts dependencyCalculationInput={inputJson,dependencyRoot?}; request/intent/owner bindings are created internally.\n\n");
     process.stdout.write("Usage: node scripts/run-meta-theory-governed-execution.mjs --task <request> [--confirmed-intent <json-file>] [--local-tool-input <json-file>] [--execute-stage-dag]\n\n--local-tool-input binds {taskHash,intentDigest,input:{schemaVersion:1,workspaceRoot,target,rules?}}. It is planning input, not an execution flag or a native Permission grant. --execute-stage-dag requests execution through the existing bridge; confirmed host understanding, exact authorized scope and the reviewed local contract remain required. Caller-supplied CLI intent JSON remains advisory. A host may call the public runMetaTheoryGovernedExecution API with its existing confirmed understanding; the built-in local worker is then selected automatically without a callback. Local receipts do not prove native/model invocation or complete source security.\n");
     return;
@@ -13213,10 +13357,15 @@ async function main() {
     return;
   }
   const confirmedIntent = confirmedIntentPath ? JSON.parse(await fs.readFile(path.resolve(confirmedIntentPath), "utf8")) : null;
+  const readContentInput = async (flag) => { const file = argValue(flag, null); return file ? JSON.parse(await fs.readFile(path.resolve(file), "utf8")) : null; };
   // CLI JSON remains advisory; it cannot supply the host-only understanding boundary.
   const report = await runMetaTheoryGovernedExecution({
     task,
     confirmedIntent,
+    requirementsDiscoveryInput: await readContentInput("--requirements-discovery-input"),
+    designInput: await readContentInput("--design-input"),
+    outcomeReviewInput: await readContentInput("--outcome-review-input"),
+    designRequired: process.argv.includes("--design-required"),
     localToolInput,
     dependencyCalculationInput,
     runId: runIdArg ?? (taskArg ? null : positional[1] ?? null),

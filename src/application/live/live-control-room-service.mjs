@@ -980,6 +980,8 @@ function buildRevisionReview(artifact, runId) {
     seen.add(id);
     items.push({ id, runId, findingId: publicId("finding", findingId), actionId: actionId ? publicId("action", actionId) : null,
       taskPacketId: knownTasks.has(taskId) ? publicTaskBinding(taskId) : null, deliverableId: target?.id || null, contentVersion,
+      summary: safeText(finding?.summary || finding?.finding || row.summary || row.finding, "", 240),
+      requiredChange: safeText(finding?.requiredChange || row.requiredChange, "", 240),
       state, verificationObservedAt: null });
     if (items.length === 64) break;
   }
@@ -993,6 +995,7 @@ function sanitizeRevisionReview(value, runId) {
     const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
     return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
       taskPacketId: publicTaskBinding(item.taskPacketId), deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
+      summary: safeText(item.summary, "", 240), requiredChange: safeText(item.requiredChange, "", 240),
       contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state, verificationObservedAt: null }];
   });
   return { state: items.length ? "reported" : "not_reported", items };
@@ -1224,6 +1227,10 @@ function recordBelongsToRun(record, runId) {
 }
 
 function readableWorkerScope(packet) {
+  if (packet?.designBinding?.sliceId) {
+    const outcome = firstString(packet, ["coreProblem", "todayTask", "description"]);
+    if (outcome) return safeText(outcome, null, 96);
+  }
   const shard = boundedArray(packet?.shardScope, 1).find((item) => typeof item === "string");
   const raw = firstString(packet, ["roleInstanceId", "taskLabel", "laneLabel"]) || shard;
   if (!raw) return null;
@@ -2062,6 +2069,17 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       capabilityTruth,
       promptEras: [
         { era: "assignment", label: "Task assigned", summary: "Governed worker scope selected" },
+        ...(packet?.designBinding?.sliceId ? [
+          {
+            era: "design", label: "任务交付要求",
+            summary: safeText(packet?.designTask?.completionDemo, "任务设计尚缺演示方式", 320),
+          },
+          {
+            era: "deliverables", label: "计划产物（尚不代表已完成）",
+            summary: safeText(boundedArray(packet?.designTask?.deliverables, 8)
+              .map((item) => typeof item?.description === "string" ? item.description : "").filter(Boolean).join("；"), "尚无产物说明", 320),
+          },
+        ] : []),
         {
           era: "execution",
           label: status === "pending" ? "Execution pending" : "Execution evidence",

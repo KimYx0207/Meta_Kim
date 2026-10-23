@@ -275,6 +275,21 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
   const componentRoot = await checkedPath(root, `agents/${owner.componentId}`, true);
   const entrypoint = await checkedPath(componentRoot, "AGENT.md");
   const sourceText = await fs.readFile(entrypoint, "utf8");
+  const contract = JSON.parse(await fs.readFile(await checkedPath(componentRoot, "capability.json"), "utf8"));
+  const requestedCapability = packet.methodCapabilityId;
+  const capabilities = contract.capabilities.filter((capability) => !requestedCapability ||
+    requestedCapability === capability.id || requestedCapability === `${project.id}:${capability.id}`);
+  assert.equal(capabilities.length, 1, "selected dependency method capability is unknown or ambiguous; provide methodCapabilityId");
+  const capability = capabilities[0];
+  let method = null;
+  try {
+    method = JSON.parse(await fs.readFile(await checkedPath(componentRoot, "method.json"), "utf8"));
+    assert.equal(method.schemaVersion, 1, "unsupported dependency method schema");
+    assert.equal(method.roleId, owner.componentId, "dependency method role differs from selected owner");
+    assert.equal(method.protocol, "host-bound-task-method-v1", "unsupported dependency method protocol");
+    stringArray(method.steps, "method.steps", true);
+    stringArray(method.acceptance, "method.acceptance", true);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
   assert.equal(sha256(sourceText), owner.contentDigest, "owner method changed after discovery");
   assert.equal(await componentHash(componentRoot), owner.ownerContract.componentContentSha256, "owner component changed after discovery");
   return {
@@ -288,5 +303,11 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
     contentDigest: owner.contentDigest,
     componentContentSha256: owner.ownerContract.componentContentSha256,
     ownerContractSha256: sha256(stableJson(owner.ownerContract)),
+    capabilityId: `${project.id}:${capability.id}`,
+    inputContract: capability.input,
+    outputContract: capability.output,
+    method,
+    methodStatus: method ? "structured_method_loaded" : "legacy_agent_text_only",
+    methodSha256: method ? sha256(stableJson(method)) : null,
   };
 }

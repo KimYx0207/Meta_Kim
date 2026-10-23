@@ -8,6 +8,11 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## Unreleased
 
+- **Explore requirements before designing and splitting work.** Source-backed recommendations, trade-offs and dependent decisions can be discussed without a completed design. Settled designs then feed the existing task board and execution dependencies.
+- **Pass complete professional methods to workers.** Source-checked role steps and input/output contracts enter the actual handoff. Missing facts are reported, prose delivery stays compatible, and producer self-checks remain pending independent review.
+- **Bind reviews to current deliverables.** Later reviews check the task, design, criteria and artifact hashes and identify concrete rework. Same-design recovery stays separate from design revisions and fresh acceptance.
+- **Show deliverable tasks and actionable rework in Live.** Design slices display the user outcome, planned outputs and demonstration. Review findings and required changes survive storage and readback, while execution remains distinct from acceptance.
+
 ## [3.6.2] - 2026-10-22
 
 ### Changed
