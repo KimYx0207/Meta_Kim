@@ -114,6 +114,21 @@ function declaredRoot(project, localOverrides, environment) {
   return { value: project.source?.localPath, source: `dependency-project-registry.json#${project.id}.source.localPath` };
 }
 
+/** Local bindings belong to the caller project; registry policy stays in the package. */
+export async function readDependencyProjectOverrides(projectRoot) {
+  assert(typeof projectRoot === "string" && path.isAbsolute(projectRoot), "caller project root must be absolute");
+  try { return JSON.parse(await fs.readFile(path.join(projectRoot, ".meta-kim/local.overrides.json"), "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return {}; throw error; }
+}
+
+export async function resolveDependencyProjectRoot({ dependencyId, projectRoot, environment = process.env }) {
+  const { projects } = JSON.parse(await fs.readFile(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"), "utf8"));
+  const project = projects.find((entry) => entry.id === dependencyId && entry.interface?.capabilityIndex);
+  if (!project) return null;
+  const binding = declaredRoot(project, await readDependencyProjectOverrides(projectRoot), environment);
+  return typeof binding.value === "string" && binding.value.trim() ? path.resolve(projectRoot, binding.value) : null;
+}
+
 async function readDependency(project, root, projectRoot) {
   const rootStat = await fs.lstat(root);
   assert(rootStat.isDirectory() && !rootStat.isSymbolicLink(), "dependency root must be a directory, not a symlink or junction");
@@ -235,7 +250,7 @@ export async function discoverDependencyAgentContracts({ projects = [], projectR
 
 /** Resolve authority from the installed package, never from worker-supplied paths
  * or prompt text. Discovery is selection evidence; reread it at invocation time. */
-export async function loadDependencyAgentMethod({ packet, environment = process.env } = {}) {
+export async function loadDependencyAgentMethod({ packet, environment = process.env, projectRoot = environment.META_KIM_CALLER_CWD || repoRoot } = {}) {
   const ownerId = packet?.ownerAgent ?? packet?.owner;
   if (packet?.ownerSource !== "dependency_agent_contract" && !packet?.ownerContract && !String(ownerId ?? "").includes(":")) return null;
   const { projects } = JSON.parse(await fs.readFile(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"), "utf8"));
@@ -248,16 +263,14 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
   assert(!packet.nativeAgentType, "dependency Markdown owner cannot claim a native agent type");
   assert(!packet.owner || packet.owner === ownerId, "worker owner identities disagree");
   const project = candidates[0];
-  let localOverrides = {};
-  try { localOverrides = JSON.parse(await fs.readFile(path.join(repoRoot, ".meta-kim/local.overrides.json"), "utf8")); }
-  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const localOverrides = await readDependencyProjectOverrides(projectRoot);
   const binding = declaredRoot(project, localOverrides, environment);
   assert(typeof binding.value === "string" && binding.value.trim(), "explicit dependency root is required");
-  const root = path.resolve(repoRoot, binding.value);
+  const root = path.resolve(projectRoot, binding.value);
   const realRoot = await fs.realpath(root);
   const samePath = (left, right) => process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
   assert(samePath(root, realRoot), "dependency root cannot traverse a symlink or junction");
-  const discovered = await discoverDependencyAgentContracts({ projects: [project], projectRoot: repoRoot, localOverrides, environment });
+  const discovered = await discoverDependencyAgentContracts({ projects: [project], projectRoot, localOverrides, environment });
   const owners = discovered.agents.filter((owner) => owner.id === ownerId);
   assert.equal(owners.length, 1, `selected dependency source is not verified: ${discovered.sources[0]?.reason ?? "missing owner"}`);
   const owner = owners[0];

@@ -10,6 +10,8 @@ import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execu
 
 const PRODUCT_EXPERIENCE_TASK =
   "帮团队做一个内容工作台：成员能把零散素材整理成草稿，编辑审核后安排发布时间；失败时能看出原因并重试，不同成员权限不同。先完成可审查的方案和本地验证，不连接生产账号，也不要真实发布。";
+const BOUNDED_FANOUT_TASK =
+  "Run meta-theory. In parallel inspect package.json; review AGENTS.md; read README.md; audit config/contracts/workflow-contract.json.";
 
 const REQUIRED_GOAL_IDS = ["P-102", "P-103", "P-104"];
 const REQUIRED_SUPPORT_GATE_IDS = ["P-105", "P-106", "P-107", "P-108", "P-109", "P-110"];
@@ -575,8 +577,27 @@ function summarizeReport(report) {
 async function main() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-product-experience-"));
   try {
-    const report = await runMetaTheoryGovernedExecution({
+    const planningReport = await runMetaTheoryGovernedExecution({
       task: PRODUCT_EXPERIENCE_TASK,
+      runId: "validate-content-workbench-planning",
+      stateDir: tempDir,
+      dbPath: path.join(tempDir, "runs.sqlite"),
+    });
+    assert.equal(planningReport.task, PRODUCT_EXPERIENCE_TASK);
+    assert.equal(planningReport.status, "partial");
+    assert.equal(planningReport.coreLoop.executionResult.actualWorkerExecution, false);
+    assert.equal(planningReport.publicReadyDecision.publicReady, false);
+    assertLangGraphStyle(planningReport);
+    assertPeerMesh(planningReport);
+    const plannedWorkers = planningReport.coreLoop.thinkingPacket.workerTaskPackets;
+    assert.ok(plannedWorkers.length > 1, "The original product request must retain its full worker plan");
+    assert.ok(plannedWorkers.some((packet) => packet.workOrderReadiness === "incomplete"));
+    assert.equal(planningReport.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, false);
+    assert.equal(planningReport.stageOperationPlan.stages.length, 8);
+    assert.ok(planningReport.visibleMetaTheorySurfacePacket.capabilityInventory.notSkillOnly);
+    const report = await runMetaTheoryGovernedExecution({
+      task: BOUNDED_FANOUT_TASK,
+      outputLanguage: "zh-CN",
       runId: "validate-product-experience-core-goals",
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite"),
@@ -598,7 +619,8 @@ async function main() {
     await assertReadableReportShowsVisibleSurface(report);
 
     const negativeControlReport = await runMetaTheoryGovernedExecution({
-      task: PRODUCT_EXPERIENCE_TASK,
+      task: BOUNDED_FANOUT_TASK,
+      outputLanguage: "zh-CN",
       runId: "validate-product-experience-synthetic-negative-control",
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite"),
@@ -629,6 +651,11 @@ async function main() {
           status: "pass",
           validationStatus: "pass",
           evidenceMode: "structural-boundary-plus-synthetic-negative-control",
+          productRequirementsPlanningRun: {
+            ...summarizeReport(planningReport),
+            plannedWorkers: plannedWorkers.length,
+            executionReady: false,
+          },
           defaultBoundaryRun: summarizeReport(report),
           syntheticNegativeControlRun: summarizeReport(negativeControlReport),
           noPopupDuringSelfTest: true,

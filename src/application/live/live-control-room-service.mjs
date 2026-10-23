@@ -447,6 +447,13 @@ function safeId(value, fallback = "in_doubt", prefix = "") {
   return `${prefix}${text}`;
 }
 
+function safeReviewText(value) {
+  // Review details are prose. Do not turn executable markup and its private
+  // payload into visible text merely by removing angle brackets.
+  if (typeof value === "string" && /<\/?(?:script|style|iframe|object)\b/iu.test(value)) return "";
+  return safeText(value, "", 240);
+}
+
 function normalizeStatus(value, fallback = "in_doubt") {
   return normalizeLiveStatus(value, fallback);
 }
@@ -980,8 +987,8 @@ function buildRevisionReview(artifact, runId) {
     seen.add(id);
     items.push({ id, runId, findingId: publicId("finding", findingId), actionId: actionId ? publicId("action", actionId) : null,
       taskPacketId: knownTasks.has(taskId) ? publicTaskBinding(taskId) : null, deliverableId: target?.id || null, contentVersion,
-      summary: safeText(finding?.summary || finding?.finding || row.summary || row.finding, "", 240),
-      requiredChange: safeText(finding?.requiredChange || row.requiredChange, "", 240),
+      summary: safeReviewText(finding?.summary || finding?.finding || row.summary || row.finding),
+      requiredChange: safeReviewText(finding?.requiredChange || row.requiredChange),
       state, verificationObservedAt: null });
     if (items.length === 64) break;
   }
@@ -995,7 +1002,7 @@ function sanitizeRevisionReview(value, runId) {
     const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
     return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
       taskPacketId: publicTaskBinding(item.taskPacketId), deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
-      summary: safeText(item.summary, "", 240), requiredChange: safeText(item.requiredChange, "", 240),
+      summary: safeReviewText(item.summary), requiredChange: safeReviewText(item.requiredChange),
       contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state, verificationObservedAt: null }];
   });
   return { state: items.length ? "reported" : "not_reported", items };

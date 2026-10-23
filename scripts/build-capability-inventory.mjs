@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OS_TARGETS, RUNTIMES, exists, listFiles, readJson, repoPath, stateDir, toPosix, writeJson } from "./governance-lib.mjs";
 import { getProfilePaths, toRepoRelative } from "./meta-kim-local-state.mjs";
-import { discoverDependencyAgentContracts } from "./dependency-agent-discovery.mjs";
+import { discoverDependencyAgentContracts, readDependencyProjectOverrides } from "./dependency-agent-discovery.mjs";
 import {
   claimIsExecutable,
   runtimeCapabilityNameForTool,
@@ -427,16 +427,16 @@ async function configAndStateCapabilities() {
   ];
 }
 
-export async function buildCapabilityInventory({ environment = process.env } = {}) {
+export async function buildCapabilityInventory({ environment = process.env, projectRoot = environment.META_KIM_CALLER_CWD || repoPath(".") } = {}) {
   const dependencies = await readJson("config/capability-index/dependency-project-registry.json");
   const weapons = await readJson("config/capability-index/weapon-registry.json");
   const skills = await readJson("config/skills.json");
   const runtimeMatrix = await readJson("config/runtime-capability-matrix.json");
   const osMatrix = await readJson("config/os-compatibility-matrix.json");
-  const localOverrides = await readJsonIfExists(".meta-kim/local.overrides.json");
+  const localOverrides = await readDependencyProjectOverrides(projectRoot);
   const projectProjectionMode = localOverrides?.projectProjectionMode ?? "project";
   const dependencyAgents = await discoverDependencyAgentContracts({
-    projects: dependencies.projects, projectRoot: repoPath("."), localOverrides: localOverrides ?? {}, environment,
+    projects: dependencies.projects, projectRoot, localOverrides: localOverrides ?? {}, environment,
   });
   const records = [
     ...(await fileCapabilities("canonical/agents", "agent", ["meta-warden"], { match: (file) => file.endsWith(".md"), mustPreserve: true, routeEligibility: "governance_owner" })),
@@ -649,8 +649,8 @@ export async function buildCapabilityInventory({ environment = process.env } = {
   };
 }
 
-export async function writeCapabilityInventory(targetPath = outputPath) {
-  const result = await buildCapabilityInventory();
+export async function writeCapabilityInventory(targetPath = outputPath, options = {}) {
+  const result = await buildCapabilityInventory(options);
   await writeJson(targetPath, result);
   return result;
 }

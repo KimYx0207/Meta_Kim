@@ -12,6 +12,7 @@ The changelog explains the user-facing problem or risk each release solved, what
 - **Pass complete professional methods to workers.** Source-checked role steps and input/output contracts enter the actual handoff. Missing facts are reported, prose delivery stays compatible, and producer self-checks remain pending independent review.
 - **Bind reviews to current deliverables.** Later reviews check the task, design, criteria and artifact hashes and identify concrete rework. Same-design recovery stays separate from design revisions and fresh acceptance.
 - **Show deliverable tasks and actionable rework in Live.** Design slices display the user outcome, planned outputs and demonstration. Review findings and required changes survive storage and readback, while execution remains distinct from acceptance.
+- **Use the current project's professional components after installation.** Discovery and worker handoff resolve the same explicit project configuration, including paths with spaces and mixed case. Existing read-only material calculations retain their source-bound scope.
 
 ## [3.6.2] - 2026-10-22
 

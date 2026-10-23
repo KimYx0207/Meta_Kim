@@ -22,7 +22,8 @@ import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
 import { withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
-import { prepareDependencyCalculationInput, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
+import { prepareDependencyCalculationInput, bindDependencyCalculationWorkOrder, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
+import { resolveDependencyProjectRoot } from "./dependency-agent-discovery.mjs";
 import {
   openRunStateStore,
 } from "./capability-gap-mvp.mjs";
@@ -11071,7 +11072,7 @@ export function evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) {
   return evaluateTaskOutcome(goal, observations);
 }
 
-function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null }) {
+function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, projectRoot = activeProjectRoot() }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   return [
@@ -11085,6 +11086,7 @@ function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", 
     routeOs,
     "--json",
     "--runner-compact",
+    "--project-root", path.resolve(projectRoot),
     ...(runId ? ["--run-id", runId] : []),
     ...(codexHostToolSchema ? ["--codex-host-tool-schema", codexHostToolSchema] : []),
     ...(intentDeliveryStrategy ? ["--intent-delivery-strategy", intentDeliveryStrategy] : []),
@@ -11092,7 +11094,7 @@ function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", 
   ];
 }
 
-async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, spawnError = null }) {
+async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, projectRoot = activeProjectRoot(), spawnError = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const originalArgv = process.argv;
@@ -11104,7 +11106,7 @@ async function selectExecutionRouteInProcess({ task, actionTask = task, runtime 
     process.argv = [
       process.execPath,
       SELECT_EXECUTION_ROUTE_SCRIPT,
-      ...selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest }),
+      ...selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, projectRoot }),
     ];
     console.log = (...args) => stdout.push(args.join(" "));
     console.error = (...args) => stderr.push(args.join(" "));
@@ -11141,10 +11143,10 @@ async function selectExecutionRouteInProcess({ task, actionTask = task, runtime 
   }
 }
 
-async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, environment = process.env }) {
+async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
-  const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest });
+  const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, projectRoot });
   const result = spawnSync(
     process.execPath,
     [SELECT_EXECUTION_ROUTE_SCRIPT, ...args],
@@ -11166,6 +11168,7 @@ async function selectExecutionRoute({ task, actionTask = task, runtime = "codex"
       codexHostToolSchema,
       intentDeliveryStrategy,
       localToolRequest,
+      projectRoot,
       spawnError: result.error,
     });
   }
@@ -11534,23 +11537,26 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, design = null, designRequirement = null, environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
   const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
     ? intentDialogue?.deliveryStrategy ?? null : null;
-  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, actionTask: task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, environment });
+  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, actionTask: task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, projectRoot, environment });
   routeResult.intentBinding = intentDialogue;
   let route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
   let plannedPackets = buildRouteDrivenWorkerTasks({ runId, routeResult, task });
+  if (!design && calculationRequest) plannedPackets = await bindDependencyCalculationWorkOrder({
+    request: calculationRequest, runId, route: routeResult, workerTaskPackets: plannedPackets, environment, projectRoot,
+  });
   const designRouteEvidence = [];
   if (design) {
     const templates = [];
     for (const slice of design.taskSlices) {
       const sliceTask = [task, slice.outcome, ...slice.capabilityNeed, ...slice.scopeFiles].join("\n");
-      const sliceRoute = await selectExecutionRoute({ task: sliceTask, actionTask: [slice.outcome, ...slice.scopeFiles].join("\n"), runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, environment });
+      const sliceRoute = await selectExecutionRoute({ task: sliceTask, actionTask: [slice.outcome, ...slice.scopeFiles].join("\n"), runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, projectRoot, environment });
       const candidates = buildRouteDrivenWorkerTasks({ runId, routeResult: sliceRoute, task: sliceTask });
       const selected = candidates.find((packet) => packet.ownerAgent === sliceRoute.recommendedRoute?.owner) ?? candidates[0];
       if (!selected) throw new TypeError(`No discovered owner route for design slice ${slice.id}`);
@@ -11851,7 +11857,13 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   if (designRequirementSnapshot && (typeof designRequirementSnapshot.required !== "boolean" || typeof designRequirementSnapshot.reason !== "string" || !designRequirementSnapshot.reason.trim())) throw new TypeError("Design requirement needs explicit host judgment and reason");
   const outcomeReviewSnapshot = outcomeReviewInput == null ? null : structuredClone(outcomeReviewInput);
   const taskCriterionAssignmentsSnapshot = normalizeTaskCriterionAssignments({ dialogue: intentDialogue, input: taskCriterionAssignments == null ? null : structuredClone(taskCriterionAssignments) });
-  const calculationRequest = prepareDependencyCalculationInput({ input: dependencyCalculationInput, task: normalizedTask,
+  const calculationInput = dependencyCalculationInput == null ? null : structuredClone(dependencyCalculationInput);
+  if (calculationInput && typeof calculationInput === "object" && !Array.isArray(calculationInput) &&
+      calculationInput.dependencyRoot == null && !Object.hasOwn(process.env, "META_KIM_KIM_SERVICE_ROOT")) {
+    const configuredRoot = await resolveDependencyProjectRoot({ dependencyId: "kim-service", projectRoot: path.resolve(projectRoot) });
+    if (configuredRoot) calculationInput.dependencyRoot = configuredRoot;
+  }
+  const calculationRequest = prepareDependencyCalculationInput({ input: calculationInput, task: normalizedTask,
     intentDigest: intentDialogue.intentDigest ?? null });
   const calculationEnvironment = calculationRequest?.dependencyRoot
     ? { ...process.env, META_KIM_KIM_SERVICE_ROOT: calculationRequest.dependencyRoot } : process.env;
@@ -12076,6 +12088,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     design: productDesign,
     designRequirement: designRequirementSnapshot,
     localToolRequest,
+    calculationRequest,
+    projectRoot: path.resolve(projectRoot),
     environment: calculationEnvironment,
   });
   planChallengePreview = buildPlanChallengeState({
@@ -12133,6 +12147,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   });
   const capabilityInventoryBus = await writeCapabilityInventory(
     path.join(stateDir, "capability-inventory.json"),
+    { projectRoot: path.resolve(projectRoot), environment: calculationEnvironment },
   );
   await publishProgress(
     progressEvent({
@@ -12390,18 +12405,18 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         packet.scopeFiles?.length === 1 && packet.scopeFiles[0] === localToolRequest.input.target);
     const workOrderGateReady = coreLoop.thinkingPacket.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready") &&
       orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete";
-    const routeGateAllowsBridge = workOrderGateReady &&
-      (localToolBridgeEligible || (routeExecutionGate.routeCompatible === true &&
+    const routeHandoffReady = localToolBridgeEligible || (routeExecutionGate.routeCompatible === true &&
       routeExecutionGate.canHandoffToHost === true &&
       routeExecutionGate.handoffStatus === "ready_for_host_handoff" &&
-      routeExecutionGate.hostAction === "host_action_required" && localToolRequest.applies !== true));
+      routeExecutionGate.hostAction === "host_action_required" && localToolRequest.applies !== true);
+    const routeGateAllowsBridge = workOrderGateReady && routeHandoffReady;
     if (calculationRequest && planChallengeHandoffReady && routeGateAllowsBridge && calculationRequest.summary.status === "prepared") {
       if (normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime) !== normalizeStageRunnerRuntime(routeRuntime)) {
         dependencyCalculationPacket = { ...calculationRequest.summary, status: "blocked", code: "calculation_runtime_binding_rejected" };
       } else {
         const prepared = await prepareDependencyCalculationHandoff({ request: calculationRequest, runId: effectiveRunId,
           runtime: routeRuntime, osTarget: routeOs, route: orchestrationReport.selectedExecutionRoute,
-          workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets, environment: calculationEnvironment });
+          workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets, environment: calculationEnvironment, projectRoot: path.resolve(projectRoot) });
         dependencyCalculationPacket = prepared.summary;
         dependencyCalculationHandoff = prepared.handoff;
       }
@@ -12426,12 +12441,14 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           failure: {
             failureClass: planChallengeBlocked
               ? "plan_challenge_execution_not_authorized"
+              : !routeHandoffReady ? "route_gate_host_native_execution_required"
               : !workOrderGateReady ? "work_order_design_incomplete"
               : routeGateAllowsBridge && calculationRequest
                 ? dependencyCalculationPacket.code ?? `calculation_${dependencyCalculationPacket.status}`
               : "route_gate_host_native_execution_required",
             reason: planChallengeBlocked
               ? "The plan challenge is still awaiting a real host-native decision."
+              : !routeHandoffReady ? "The route gate is not ready for the explicitly requested read-only host bridge handoff."
               : !workOrderGateReady ? "Worker scope/safety or required goal criterion ownership is incomplete; return to Thinking before invocation."
               : routeGateAllowsBridge && calculationRequest
                 ? `Calculation handoff stopped: ${dependencyCalculationPacket.code ?? dependencyCalculationPacket.status}.`

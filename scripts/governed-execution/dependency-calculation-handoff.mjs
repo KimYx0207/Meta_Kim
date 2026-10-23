@@ -62,9 +62,40 @@ export function prepareDependencyCalculationInput({ input, task, intentDigest = 
     summary: summary("prepared", { binding, inputBytes: Buffer.byteLength(input.inputJson, "utf8") }) };
 }
 
+/** Thinking binds a non-file work order to the actual bounded materials and a
+ * freshly verified read-only owner. This does not execute the calculation or
+ * establish native invocation; the existing handoff verifies those separately. */
+export async function bindDependencyCalculationWorkOrder({ request, runId, route, workerTaskPackets, environment = process.env, projectRoot }) {
+  if (request?.summary?.status !== "prepared") return workerTaskPackets;
+  const rebound = prepareDependencyCalculationInput({ input: { inputJson: request.inputJson, dependencyRoot: request.dependencyRoot },
+    task: request.task, intentDigest: request.binding?.intentDigest, environment });
+  if (rebound.summary.status !== "prepared" || JSON.stringify(rebound.binding) !== JSON.stringify(request.binding)) return workerTaskPackets;
+  const owner = route?.recommendedRoute?.owner;
+  const selected = workerTaskPackets.filter((packet) => (packet.ownerAgent ?? packet.owner) === owner);
+  if (selected.length !== 1 || selected[0].ownerSource !== "dependency_agent_contract") return workerTaskPackets;
+  const packet = selected[0];
+  let method;
+  try { method = await loadDependencyAgentMethod({ packet, environment, projectRoot }); }
+  catch { return workerTaskPackets; }
+  if (!method?.tools?.length || method.tools.some((tool) => tool !== "Read") ||
+      !Array.isArray(packet.ownerContract?.sideEffects) || packet.ownerContract.sideEffects.length !== 0) return workerTaskPackets;
+  const shardScope = [`input-sha256:${request.binding.inputSha256}`];
+  const workOrderScope = { kind: "dependency_materials", runId, ...request.binding, inputBytes: request.summary.inputBytes,
+    ownerContractSha256: method.ownerContractSha256, componentContentSha256: method.componentContentSha256 };
+  return workerTaskPackets.map((entry) => entry !== packet ? entry : {
+    ...entry, workOrderScope, scopeFiles: [], shardScope, workOrderReadiness: "ready",
+    safetyEvidence: { status: "proven", evidenceBasis: "verified_readonly_owner_and_bound_materials",
+      shardScope, dependencyEvidence: "single_materials_owner", mutationPolicy: "read_only",
+      workspaceIsolation: "shared_workspace_read_only", externalWritePolicy: "forbidden", collisionPolicy: "no_overlap" },
+    dependencyEvidence: "single_materials_owner", mutationPolicy: "read_only",
+    workspaceIsolation: "shared_workspace_read_only", externalWritePolicy: "forbidden", externalWriteBoundary: false,
+    collisionPolicy: "no_overlap", finalizationGate: route.routeExecutionGate?.hostAction ?? "host_action_required",
+  });
+}
+
 /** Called only after the existing plan/route gate. It always runs the real helper;
  * no public receipt parameter or callback can create a current tool observation. */
-export async function prepareDependencyCalculationHandoff({ request, runId, runtime, osTarget, route, workerTaskPackets, environment = process.env }) {
+export async function prepareDependencyCalculationHandoff({ request, runId, runtime, osTarget, route, workerTaskPackets, environment = process.env, projectRoot }) {
   if (!request || request.summary.status !== "prepared") return { summary: request?.summary ?? summary("not_requested"), handoff: null };
   const fail = (code) => ({ summary: summary("blocked", { code, binding: request.binding }), handoff: null });
   const gate = route?.routeExecutionGate;
@@ -74,12 +105,13 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
   if (selected.length !== 1 || selected[0].ownerSource !== "dependency_agent_contract") return fail("calculation_owner_binding_rejected");
   const packet = selected[0];
   let method;
-  try { method = await loadDependencyAgentMethod({ packet, environment }); }
+  try { method = await loadDependencyAgentMethod({ packet, environment, projectRoot }); }
   catch { return fail("calculation_owner_source_rejected"); }
   const calculation = await runDependencyCalculation({ task: request.task, inputJson: request.inputJson,
     dependencyRoot: request.dependencyRoot, runtime, osTarget });
   const publicSummary = summary(calculation.status, {
     code: calculation.code ?? null, binding: request.binding, ownerAgent: owner,
+    inputBytes: request.summary.inputBytes,
     toolInvoked: calculation.toolInvoked, questions: calculation.questions ?? [], missing: calculation.missing ?? [],
     receiptStatus: calculation.receipt?.status ?? null,
     receiptSha256: calculation.receipt ? digest(JSON.stringify(calculation.receipt)) : null,

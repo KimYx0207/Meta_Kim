@@ -18,7 +18,7 @@ import {
 } from "./runtime-capability-claims.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "./runtime-execution-gate.mjs";
-import { discoverDependencyAgentContracts, matchDependencyAgentContracts, stableJson } from "./dependency-agent-discovery.mjs";
+import { discoverDependencyAgentContracts, matchDependencyAgentContracts, readDependencyProjectOverrides, stableJson } from "./dependency-agent-discovery.mjs";
 import { discoverDependencySkillContracts } from "./dependency-skill-discovery.mjs";
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT } from "./governed-execution/local-dependency-tool-contract.mjs";
 import { durableCapabilityRequestsFromTask } from "./capability-request-intent.mjs";
@@ -220,9 +220,8 @@ function activeRuntimeSupport() {
   if (claims.some((claim) => ["native", "partial"].includes(claim.hostSupport))) return "partial";
   return claims.some((claim) => claim.hostSupport === "unsupported") ? "unsupported" : "unknown";
 }
-const localOverrides = (await exists(repoPath(".meta-kim/local.overrides.json")))
-  ? await readJson(".meta-kim/local.overrides.json")
-  : {};
+const dependencyProjectRoot = path.resolve(argValue("--project-root") || process.env.META_KIM_CALLER_CWD || repoPath("."));
+const localOverrides = await readDependencyProjectOverrides(dependencyProjectRoot);
 const projectProjectionMode = localOverrides.projectProjectionMode ?? "project";
 const projectProjectionPolicy = {
   projectProjectionMode,
@@ -903,13 +902,13 @@ for (const agent of [...liveGlobalAgents, ...cacheOnlyGlobalAgents]) {
 }
 const projectRuntimeAgentCandidates = await projectRuntimeAgents();
 const dependencyAgentDiscovery = await discoverDependencyAgentContracts({
-  projects: registryDependencies, projectRoot: repoPath("."), localOverrides,
+  projects: registryDependencies, projectRoot: dependencyProjectRoot, localOverrides,
 });
 const dependencySkillDiscovery = localToolRequest?.status === "ready"
   ? await discoverDependencySkillContracts({
       request: localToolRequest.request,
       capabilityNeedIds: [LOCAL_DEPENDENCY_TOOL_CONTRACT.capabilityId],
-      projects: registryDependencies, projectRoot: repoPath("."), localOverrides,
+      projects: registryDependencies, projectRoot: dependencyProjectRoot, localOverrides,
     })
   : { skills: [], capabilities: [], sources: [], matches: [], canExecute: false, invocationStatus: "not_invoked" };
 const dependencySkillCandidate = dependencySkillDiscovery.capabilities.length === 1

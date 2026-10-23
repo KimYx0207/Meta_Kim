@@ -13,6 +13,7 @@ const MULTI_CAPABILITY_TASK = [
   "release summary JSON 需要脚本。",
   "内部知识库需要 MCP provider 边界。"
 ].join("\n");
+const BOUNDED_FANOUT_TASK = "Run meta-theory. In parallel inspect package.json; review AGENTS.md; read README.md; audit config/contracts/workflow-contract.json.";
 
 const REQUIRED_GOVERNANCE_AGENTS = [
   "meta-warden",
@@ -127,9 +128,10 @@ function validateWorkerExecutionEvidence(report) {
   assert.equal(report.coreLoop.reviewPacket.protocolCompliance.governanceAgentResultPacketsPresent, true);
   assert.equal(report.coreLoop.reviewPacket.protocolCompliance.conductorConsumptionEvidencePresent, true);
   assert.equal(report.coreLoop.reviewPacket.protocolCompliance.executionEvidenceLayerIsHonest, true);
-  assert.equal(report.coreLoop.verificationResult.workerEvidence.workerResultPackets, 4);
-  assert.equal(report.coreLoop.verificationResult.workerEvidence.workerExecutionEvidence, 4);
-  assert.equal(report.coreLoop.verificationResult.workerEvidence.nestedWorkerExecutionEvidence, 4);
+  assert.equal(report.coreLoop.verificationResult.workerEvidence.workerResultPackets, report.coreLoop.thinkingPacket.workerTaskPackets.length);
+  assert.equal(report.coreLoop.verificationResult.workerEvidence.workerExecutionEvidence, report.coreLoop.executionResult.workerExecutionEvidence.length);
+  assert.equal(report.coreLoop.verificationResult.workerEvidence.nestedWorkerExecutionEvidence,
+    report.coreLoop.executionResult.workerResultPackets.reduce((total, packet) => total + packet.workerExecutionEvidence.length, 0));
   assert.equal(report.coreLoop.publicReadyDecision.publicReady, false);
 }
 
@@ -295,8 +297,26 @@ function validateDefaultCompletionStatus(report) {
 async function main() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-default-evidence-"));
   try {
-    const report = await runMetaTheoryGovernedExecution({
+    const discoveryReport = await runMetaTheoryGovernedExecution({
       task: MULTI_CAPABILITY_TASK,
+      runId: "validate-default-multi-capability-planning",
+      stateDir: tempDir,
+      dbPath: path.join(tempDir, "runs.sqlite")
+    });
+    validateDefaultCompletionStatus(discoveryReport);
+    validateGovernanceEvidence(discoveryReport);
+    validateWorkerExecutionEvidence(discoveryReport);
+    const inventory = discoveryReport.sourceArtifacts.orchestrationReport.fetchEvidence.capabilityInventory;
+    const discoveredTypes = inventory.map((item) => item.capabilityType);
+    for (const slots of [["agent"], ["skill"], ["command"], ["mcpServer", "mcpTool"]]) {
+      assert.ok(inventory.some((item) => slots.includes(item.slot)), `Original multi-capability request must still discover ${slots.join("/")}`);
+    }
+    assert.equal(discoveryReport.coreLoop.langGraphRunPacket.status, "pass");
+    assert.equal(discoveryReport.coreLoop.peerAgentMeshPacket.status, "pass");
+    assert.ok(discoveryReport.coreLoop.thinkingPacket.workerTaskPackets.some((packet) => packet.workOrderReadiness === "incomplete"));
+    assert.equal(discoveryReport.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, false);
+    const report = await runMetaTheoryGovernedExecution({
+      task: BOUNDED_FANOUT_TASK,
       runId: "validate-default-governed-execution-evidence",
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite")
@@ -312,6 +332,13 @@ async function main() {
         status: report.status === "pass" ? "validated_pass" : "validated_partial",
         validationStatus: "pass",
         governedExecutionStatus: report.status,
+        multiCapabilityPlanning: {
+          status: discoveryReport.status,
+          discoveredTypes,
+          plannedWorkers: discoveryReport.coreLoop.thinkingPacket.workerTaskPackets.length,
+          actualWorkerExecution: discoveryReport.coreLoop.executionResult.actualWorkerExecution,
+          executionReady: false,
+        },
         governanceAgentResultPackets: report.coreLoop.governanceAgentResultPackets.length,
         consumedGovernancePackets: report.coreLoop.conductorConsumptionEvidence.consumedPacketRefs.length,
         workerResultPackets: report.coreLoop.executionResult.workerResultPackets.length,

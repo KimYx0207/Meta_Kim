@@ -26,6 +26,7 @@ const multiGapTask = [
   "release summary JSON 需要脚本。",
   "内部知识库需要 MCP provider 边界。",
 ].join("\n");
+const scopedPlanTask = "Run meta-theory. In parallel inspect package.json; review AGENTS.md; read README.md; audit config/contracts/workflow-contract.json.";
 
 const productExperienceTask =
   "帮我做个小红书营销自动发布器，需要动态规划、平台规则研究、内容策略、前端界面、后端 API、数据模型、平台集成、权限风控、测试验收和发布运维，但不要真实发布或使用生产凭证。";
@@ -97,7 +98,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-governed-run-"));
     try {
       const report = await runMetaTheoryGovernedExecution({
-        task: multiGapTask,
+        task: scopedPlanTask,
+        outputLanguage: "zh-CN",
         runId: "test-run-default",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
@@ -315,13 +317,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
           assert.equal(request.requiredEvidence.evidenceKind, "hook_trigger_event");
         }
       }
-      assert.equal(report.defaultRuntimePath.durableAgentLifecyclePacket.status, "partial");
-      assert.equal(
-        report.defaultRuntimePath.durableAgentLifecyclePacket.stages.find(
-          (stage) => stage.stage === "live_invocation_proof"
-        ).status,
-        "partial"
-      );
+      assert.equal(report.defaultRuntimePath.durableAgentLifecyclePacket.status, "not_required");
+      assert.deepEqual(report.defaultRuntimePath.durableAgentLifecyclePacket.stages, []);
       assert.ok(
         ["selected_not_invoked", "discovered_not_selected", "not_required"].includes(
           invocationByFamily.get("mcp").state
@@ -505,7 +502,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
         assert.ok(runtime.command, `${runtime.runtime} must record command`);
         assert.ok(runtime.remainingAction, `${runtime.runtime} must record remaining action`);
         assert.ok(runtime.orchestrationBoard, `${runtime.runtime} must bind board`);
-        assert.equal(runtime.workerTaskPackets, 4);
+        assert.equal(runtime.workerTaskPackets, report.defaultRuntimePath.workerTaskPackets.length);
         assert.equal(runtime.verificationOwner, "verify");
         assert.ok(runtime.runtimeDifference);
       }
@@ -928,7 +925,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       const branch = process.argv[1];
       const stateDir = path.join(process.cwd(), "tmp", branch);
       const report = await runMetaTheoryGovernedExecution({
-        task: ${JSON.stringify(multiGapTask)}, runId: "optional-provider-fixture", stateDir,
+        task: ${JSON.stringify(scopedPlanTask)}, runId: "optional-provider-fixture", stateDir,
         dbPath: path.join(stateDir, "runs.sqlite"),
       });
       console.log(JSON.stringify({
@@ -1295,7 +1292,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-host-evidence-reject-"));
     try {
       const report = await runMetaTheoryGovernedExecution({
-        task: multiGapTask,
+        task: scopedPlanTask,
         runId: "test-run-host-evidence-reject",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),

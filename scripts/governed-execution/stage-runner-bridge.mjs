@@ -480,7 +480,7 @@ function appendOwnerMethod(prompt, method) {
 /** A source-verified invocation plan is not evidence that a process/model ran. */
 export async function prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot, packet, prompt, upstreamResults = [], env = process.env }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
-  const method = await loadDependencyAgentMethod({ packet, environment: env });
+  const method = await loadDependencyAgentMethod({ packet, environment: env, projectRoot: path.resolve(workspaceRoot) });
   const methodContext = buildMethodInvocationContext({ method, packet, upstreamResults });
   assertMethodInputsReady(methodContext);
   const methodPrompt = appendMethodInvocationContext(prompt, methodContext);
@@ -1340,7 +1340,7 @@ export async function runStageRunnerBridge({
             if (!nativeRuntimeInvokerSelected && !localToolInvokerSelected &&
               (packet.ownerSource === "dependency_agent_contract" || packet.ownerContract || String(packet.ownerAgent ?? packet.owner ?? "").includes(":"))) {
               sourceValidationPending = true;
-              const method = await loadDependencyAgentMethod({ packet, environment: workerEnv });
+              const method = await loadDependencyAgentMethod({ packet, environment: workerEnv, projectRoot: resolvedWorkspace });
               sourceValidationPending = false;
               const methodContext = buildMethodInvocationContext({ method, packet, upstreamResults });
               assertMethodInputsReady(methodContext);
