@@ -247,6 +247,60 @@ test("engineering work mentioning a professional domain does not select a read-o
   assert.equal(route.ownerDiscoveryPacket.dependencyAgentDiscovery.match.selected, null);
 });
 
+test("real Chinese read-only resume requests keep the professional owner and a bounded read-only work order", async (t) => {
+  const { root } = fixture(t);
+  for (const task of [
+    "Run meta-theory. 只读审阅 ResumeFacts.md，帮我把简历改得更清楚，匹配客户支持岗位。只返回文字建议，不修改文件、不伪造经历，不代投简历。",
+    "Run meta-theory. 只读审阅 ResumeFacts.md 中的简历真实经历，列出与客户支持岗位要求相符的已证实事实及证据缺口；只返回文字，不写文件、不代投简历。",
+  ]) await t.test(task, () => {
+    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
+      encoding: "utf8", timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const route = JSON.parse(result.stdout);
+    assert.equal(route.recommendedRoute?.owner, "kim-service:resume-editor");
+    assert.equal(route.subjectiveUiCapabilityAmplification, null);
+    assert.equal(route.routeExecutionGate.canHandoffToHost, true);
+    assert.equal(route.workerTaskPacketDrafts.length, 1);
+    const packet = route.workerTaskPacketDrafts[0];
+    assert.deepEqual(packet.scopeFiles, ["ResumeFacts.md"]);
+    assert.equal(packet.safetyEvidence.status, "proven");
+    assert.equal(packet.mutationPolicy, "read_only");
+    assert.equal(packet.externalWritePolicy, "forbidden");
+    assert.doesNotMatch(JSON.stringify(route.decisionCard), /视觉升级|重做页面体验/u);
+  });
+});
+
+test("Chinese read-only wording never erases a later requested write or submission", async (t) => {
+  const { root } = fixture(t);
+  for (const [task, expectedMutation, expectedExternal] of [
+    ["Run meta-theory. 只读审阅 ResumeFacts.md 中的简历，不修改文件，随后修改 ResumeFacts.md", "scoped_local_writes_only", "forbidden"],
+    ["Run meta-theory. 只读审阅 ResumeFacts.md 中的简历，不写文件，代投简历", "unproven", "requested_not_parallel_safe"],
+  ]) await t.test(task, () => {
+    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
+      encoding: "utf8", timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const route = JSON.parse(result.stdout);
+    assert.ok(route.workerTaskPacketDrafts.some((packet) => packet.mutationPolicy === expectedMutation),
+      "The actual write/submission must remain visible even if decomposed into another worker");
+    assert.ok(route.workerTaskPacketDrafts.some((packet) => packet.externalWritePolicy === expectedExternal));
+  });
+});
+
+test("a professional text match cannot suppress an explicit subjective page design choice", (t) => {
+  const { root } = fixture(t);
+  const task = "帮我把简历改得更清楚，这个页面不好看，帮我弄高级一点";
+  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
+    encoding: "utf8", timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const route = JSON.parse(result.stdout);
+  assert.equal(route.recommendedRoute?.id, "subjective-ui-design-orchestration:codex:windows");
+  assert.equal(route.routeExecutionGate.canHandoffToHost, false);
+  assert.equal(route.routeExecutionGate.entryChoiceDecision.choicePolicy, "must_ask");
+});
+
 test("capability discovery complaints are not claimed by a tutor through generic question words", (t) => {
   const { root } = fixture(t);
   const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "Critical Thinking Fetch Deep Thinking Review 为什么 Codex 一直创建 agent 而不是找全局 agent", "--runtime", "codex", "--os", "windows", "--json"], {

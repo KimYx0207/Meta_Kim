@@ -60,6 +60,10 @@ test("formal governed entrypoint records a synthetic bridge result without claim
     },
   });
   assert.equal(report.stageRunnerBridgePacket.status, "pass");
+  assert.equal(report.workerTaskPackets.length, 1);
+  assert.deepEqual(report.workerTaskPackets[0].scopeFiles, ["package.json"]);
+  assert.equal(report.workerTaskPackets[0].workOrderReadiness, "ready");
+  assert.match(report.workerTaskPackets[0].todayTask, /exact package name and version/);
   assert.equal(report.stageRunnerBridgePacket.executionProjection.durable.enabled, true);
   assert.equal(report.stageRunnerBridgePacket.executionProjection.durable.resumed, false);
   assert.equal(

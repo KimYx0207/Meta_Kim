@@ -12,7 +12,9 @@
       "EveryInc/compound-engineering-plugin",
       "open-gsd/gsd-core",
       "bmad-code-org/BMAD-METHOD",
-      "loopx-project/loopx"
+      "loopx-project/loopx",
+      "mattpocock/skills",
+      "user-owned game-design-doc"
     ],
     "dependencyRegistryAllowed": true,
     "notExecutionDependency": true,
@@ -226,9 +228,70 @@
         "canonical/skills/meta-theory/references/intent-amplification.md",
         "scripts/governed-execution/intent-dialogue.mjs"
       ]
+    },
+    {
+      "id": "grilling-decision-frontier",
+      "project": "mattpocock/skills",
+      "commit": "5beb35b040e3de97e54fa9e386d7e42d15c295c2",
+      "license": "MIT",
+      "inspectedAt": "2026-10-23",
+      "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/grilling/SKILL.md",
+      "adoption": "first_party_dialogue_method",
+      "installedDependency": false,
+      "internalizedAs": ["dependency-ready decision frontier", "recommendations with reasons", "answers reshape later questions", "discoverable facts investigated before questions"],
+      "limitations": ["routine reversible implementation choices stay autonomous", "no duplicate interview state or permission authority"],
+      "implementationRefs": ["scripts/governed-execution/plan-challenge-policy.mjs", "canonical/skills/meta-theory/references/intent-amplification.md"]
+    },
+    {
+      "id": "domain-modeling-evidence-dialogue",
+      "project": "mattpocock/skills",
+      "commit": "5beb35b040e3de97e54fa9e386d7e42d15c295c2",
+      "license": "MIT",
+      "inspectedAt": "2026-10-23",
+      "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/engineering/domain-modeling/SKILL.md",
+      "adoption": "first_party_dialogue_method",
+      "installedDependency": false,
+      "internalizedAs": ["check ambiguous terms against actual code and documents", "concrete edge cases and counterexamples", "reuse existing domain glossary", "record only consequential surprising trade-offs"],
+      "limitations": ["no glossary or ADR ceremony for every task", "source material cannot authorize actions"],
+      "implementationRefs": ["canonical/skills/meta-theory/references/intent-amplification.md", "scripts/governed-execution/product-design.mjs"]
+    },
+    {
+      "id": "to-tickets-deliverable-slices",
+      "project": "mattpocock/skills",
+      "commit": "5beb35b040e3de97e54fa9e386d7e42d15c295c2",
+      "license": "MIT",
+      "inspectedAt": "2026-10-23",
+      "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/engineering/to-tickets/SKILL.md",
+      "adoption": "first_party_design_method",
+      "installedDependency": false,
+      "internalizedAs": ["derive tasks after settled design", "independently demonstrable vertical slices", "real dependencies and acceptance ownership", "expand-migrate-contract exception for broad mechanical changes"],
+      "limitations": ["no automatic GitHub publication or labels", "reuse existing task and DAG authority"],
+      "implementationRefs": ["scripts/governed-execution/product-design.mjs", "scripts/run-meta-theory-governed-execution.mjs"]
+    },
+    {
+      "id": "game-design-experience-loop",
+      "project": "user-owned game-design-doc",
+      "sourceUrl": "local-skill:game-design-doc",
+      "inspectedAt": "2026-10-23",
+      "adoption": "first_party_design_method",
+      "installedDependency": false,
+      "internalizedAs": ["user motivation to feature mapping", "action feedback rules and outcomes", "entry active result continue-or-exit paths", "exploration alternatives before delivery design"],
+      "limitations": ["no copied private templates or machine paths", "no fixed gaming personas or monetization rules", "retain unresolved hypotheses and engineering work-order details"],
+      "implementationRefs": ["canonical/skills/meta-theory/references/intent-amplification.md", "scripts/governed-execution/product-design.mjs"]
     }
   ],
   "stagePatterns": [
+    {
+      "id": "requirements-before-design-before-tickets",
+      "stage": "critical",
+      "owner": "meta-conductor",
+      "pattern": "Explore needs interactively with concrete suggestions and trade-offs before producing a delivery design; derive deliverable slices only from settled design.",
+      "useWhen": ["uncertain product requests", "multi-deliverable experience design", "material requirement changes"],
+      "outputs": ["requirementsDiscoveryInput", "planChallengeState", "designInput", "workerTaskPackets"],
+      "rejects": ["finished design required before requirements conversation", "missing-field questionnaire instead of recommendations", "suggestion treated as user choice", "task titles treated as a design", "new interview or scheduler authority"],
+      "sourceRefs": ["grilling-decision-frontier", "domain-modeling-evidence-dialogue", "to-tickets-deliverable-slices", "game-design-experience-loop"],
+      "verification": "Run a multi-round scenario with no design on the first round, actual decision evidence on later rounds, complete experience design after relevant decisions, and independently verifiable downstream tasks."
+    },
     {
       "id": "critical-user-outcome-binding",
       "stage": "critical",

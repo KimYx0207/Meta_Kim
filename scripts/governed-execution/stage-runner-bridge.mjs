@@ -15,6 +15,10 @@ import { loadDependencyAgentMethod } from "../dependency-agent-discovery.mjs";
 import { calculationHandoffForWorker } from "./dependency-calculation-handoff.mjs";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import {
+  appendMethodInvocationContext, assertMethodInputsReady, buildMethodInvocationContext,
+  buildMethodDeliveryEnvelope, methodDeliveryMatches,
+} from "./method-delivery.mjs";
+import {
   invokeLocalDependencyToolWorker,
   isObservedLocalDependencyToolResult,
 } from "./local-dependency-tool-worker.mjs";
@@ -48,6 +52,7 @@ const nativeRuntimeBridgeAttestations = new WeakMap();
 const localToolBridgeAttestations = new WeakMap();
 const runtimeMethodObservations = new WeakMap();
 const ownerMethodBridgeAttestations = new WeakMap();
+const deliveryBridgeAttestations = new WeakMap();
 const MAX_RESULT_TEXT = 16_000;
 const MANAGED_PARENT_MARKERS = HOST_INHERITED_ENV_NAMES;
 const CHILD_ENV_SYSTEM_ALLOWLIST = new Set([
@@ -360,6 +365,8 @@ export function buildReadOnlyWorkerPrompt({
     description: packet.description ?? packet.task ?? packet.referenceDirection ?? null,
     expectedOutput: packet.output ?? packet.deliverable ?? packet.deliverableLink ?? "concise evidence-backed result",
     acceptanceCriteria: Array.isArray(packet.acceptanceCriteria) ? packet.acceptanceCriteria : [],
+    acceptanceCriterionIds: Array.isArray(packet.acceptanceCriterionIds) ? packet.acceptanceCriterionIds : [],
+    requiredConstraintReview: packet.handoffContract?.requiredConstraintReview ?? null,
     scopeFiles: Array.isArray(packet.scopeFiles) ? packet.scopeFiles : [],
     shardScope: Array.isArray(packet.shardScope) ? packet.shardScope : [],
     nonGoals: Array.isArray(packet.nonGoals) ? packet.nonGoals : [],
@@ -381,6 +388,7 @@ export function buildReadOnlyWorkerPrompt({
     "Inspect the minimum relevant project evidence, complete the assigned task, and return a concise result with the facts you actually observed.",
     "Do not claim that another worker ran. Do not claim a command or file was observed unless you personally observed it.",
     "Preserve the confirmed outcome, constraints, settled decisions and acceptance criteria in this work order. They do not grant additional permissions; identify missing deliverable evidence instead of substituting workflow or test success.",
+    "User constraints and non-goals take precedence over generic Skill or method recommendations. Report a conflict and its effect on the actual deliverable; never silently replace the user's requirement or claim semantic compliance without review evidence.",
     `Runtime: ${runtime}`,
     `Run ID: ${runId}`,
     `DAG node: ${node.nodeId}`,
@@ -453,6 +461,9 @@ function ownerMethodBinding(method, runtime, delivery) {
     contentDigest: method.contentDigest,
     componentContentSha256: method.componentContentSha256,
     ownerContractSha256: method.ownerContractSha256,
+    capabilityId: method.capabilityId,
+    methodSha256: method.methodSha256,
+    methodStatus: method.methodStatus,
     sourceVerified: true,
     bindingMode: "run_scoped_owner_contract",
     methodDelivery: delivery,
@@ -467,12 +478,17 @@ function appendOwnerMethod(prompt, method) {
 }
 
 /** A source-verified invocation plan is not evidence that a process/model ran. */
-export async function prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot, packet, prompt, env = process.env }) {
+export async function prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot, packet, prompt, upstreamResults = [], env = process.env }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
-  const method = await loadDependencyAgentMethod({ packet, environment: env });
+  const method = await loadDependencyAgentMethod({ packet, environment: env, projectRoot: path.resolve(workspaceRoot) });
+  const methodContext = buildMethodInvocationContext({ method, packet, upstreamResults });
+  assertMethodInputsReady(methodContext);
+  const methodPrompt = appendMethodInvocationContext(prompt, methodContext);
   return {
     ...runtimeInvocation(normalizedRuntime, path.resolve(workspaceRoot), method),
-    input: normalizedRuntime === "codex" ? appendOwnerMethod(prompt, method) : prompt,
+    input: normalizedRuntime === "codex" ? appendOwnerMethod(methodPrompt, method) : methodPrompt,
+    methodInputStatus: methodContext?.status ?? null,
+    methodInputProblems: methodContext?.inputProblems ?? [],
     ownerMethodBinding: ownerMethodBinding(method, normalizedRuntime,
       normalizedRuntime === "claude" ? "claude_explicit_agent" : "codex_contract_method_prompt"),
   };
@@ -493,6 +509,7 @@ export async function invokeReadOnlyRuntimeWorker({
   packet = null,
   workspaceRoot,
   requestTask = null,
+  upstreamResults = [],
   timeoutMs = 300_000,
   env = process.env,
   signal = null,
@@ -502,9 +519,10 @@ export async function invokeReadOnlyRuntimeWorker({
   const redactionContext = buildRedactionContext(workspaceRoot, childEnv);
   let invocation;
   try {
-    invocation = await prepareReadOnlyRuntimeInvocation({ runtime: normalizedRuntime, workspaceRoot, packet, prompt, env });
+    invocation = await prepareReadOnlyRuntimeInvocation({ runtime: normalizedRuntime, workspaceRoot, packet, prompt, upstreamResults, env });
   } catch (error) {
-    return { status: "failed", failureClass: "dependency_owner_method_rejected", failureMessage: redactSensitiveText(error.message, redactionContext), runtime: normalizedRuntime };
+    return { status: "failed", failureClass: error.code === "dependency_method_inputs_missing" ? error.code : "dependency_owner_method_rejected",
+      methodInputProblems: error.methodInputProblems ?? [], failureMessage: redactSensitiveText(error.message, redactionContext), runtime: normalizedRuntime };
   }
   const result = await spawnCli(invocation.command, invocation.args, {
     cwd: path.resolve(workspaceRoot),
@@ -1190,6 +1208,13 @@ export async function runStageRunnerBridge({
     if (!record || record.nodeId !== completed.nodeId || record.status !== "completed") {
       throw new Error(`Durable completed node output is not a valid bridge record: ${completed.nodeId}`);
     }
+    if (record.deliveryEnvelope) {
+      const packet = workerTaskForNode(workerTaskPackets, completed.nodeId);
+      if (!packet || !methodDeliveryMatches({ envelope: record.deliveryEnvelope, runId, packet, outputText: record.outputText })) {
+        throw new Error(`Durable delivery does not match the current task, intent, design or output: ${completed.nodeId}`);
+      }
+      record = { ...record, deliveryEnvelope: { ...record.deliveryEnvelope, observationOrigin: "durable_history" } };
+    }
     if (record.ownerMethodBinding) record = { ...record, ownerMethodBinding: {
       ...record.ownerMethodBinding,
       sourceVerified: false,
@@ -1315,9 +1340,11 @@ export async function runStageRunnerBridge({
             if (!nativeRuntimeInvokerSelected && !localToolInvokerSelected &&
               (packet.ownerSource === "dependency_agent_contract" || packet.ownerContract || String(packet.ownerAgent ?? packet.owner ?? "").includes(":"))) {
               sourceValidationPending = true;
-              const method = await loadDependencyAgentMethod({ packet, environment: workerEnv });
+              const method = await loadDependencyAgentMethod({ packet, environment: workerEnv, projectRoot: resolvedWorkspace });
               sourceValidationPending = false;
-              prompt = appendOwnerMethod(prompt, method);
+              const methodContext = buildMethodInvocationContext({ method, packet, upstreamResults });
+              assertMethodInputsReady(methodContext);
+              prompt = appendOwnerMethod(appendMethodInvocationContext(prompt, methodContext), method);
               methodBinding = method ? {
                 ...ownerMethodBinding(method, normalizedRuntime, "injected_callback_prompt"),
                 methodProvidedToRuntime: false,
@@ -1332,6 +1359,7 @@ export async function runStageRunnerBridge({
               timeoutMs,
               node,
               packet,
+              upstreamResults,
               signal,
               env: workerEnv,
             });
@@ -1343,7 +1371,8 @@ export async function runStageRunnerBridge({
           } catch (error) {
             result = {
               status: "failed",
-              failureClass: sourceValidationPending ? "dependency_owner_method_rejected" : "runtime_invoker_threw",
+              failureClass: error.code === "dependency_method_inputs_missing" ? error.code : sourceValidationPending ? "dependency_owner_method_rejected" : "runtime_invoker_threw",
+              methodInputProblems: error.methodInputProblems ?? [],
               failureMessage: error.message,
             };
           }
@@ -1359,6 +1388,7 @@ export async function runStageRunnerBridge({
           if (localToolInvokerSelected && result.status === "pass" && !observedLocalToolResult) {
             result = { status: "failed", failureClass: "local_tool_result_binding_unobserved", failureMessage: "The local tool result has no current-run first-party observation for the selected binding." };
           }
+          const outputText = typeof result.outputText === "string" ? redactSensitiveText(result.outputText, redactionContext, MAX_RESULT_TEXT) : null;
           normalizedResult = bridgeNodeRecord(node, {
             runId,
             status: result.status === "pass" ? "completed" : "failed",
@@ -1378,8 +1408,10 @@ export async function runStageRunnerBridge({
             exitCode: result.exitCode ?? null,
             sessionId: localToolInvokerSelected ? null : result.sessionId ?? null,
             messageId: localToolInvokerSelected ? null : result.messageId ?? null,
-            outputText: result.outputText ?? null,
+            outputText,
             outputSha256: result.outputSha256 ?? null,
+            deliveryEnvelope: buildMethodDeliveryEnvelope({ runId, packet, outputText, methodBinding, evidenceKind: resolvedEvidenceKind }),
+            methodInputProblems: result.methodInputProblems ?? [],
             rawOutputSha256: result.rawOutputSha256 ?? null,
             hostEventCount: localToolInvokerSelected ? 0 : result.hostEventCount ?? 0,
             toolEventCount: localToolInvokerSelected ? 0 : result.toolEventCount ?? 0,
@@ -1976,6 +2008,7 @@ export async function runStageRunnerBridge({
     digest: canonicalDigestReference(bridge),
     taskPacketDigests: initialWorkOrderDigests,
   };
+  deliveryBridgeAttestations.set(bridge, workOrderAttestation);
   if (nativeRuntimeInvokerSelected) nativeRuntimeBridgeAttestations.set(bridge, workOrderAttestation);
   if (observedMethodWorkOrderDigests.size) ownerMethodBridgeAttestations.set(bridge, {
     digest: workOrderAttestation.digest, taskPacketDigests: observedMethodWorkOrderDigests,
@@ -2066,6 +2099,12 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
   const localResultObserved = (result) => localToolResultObservedForCoreLoop(bridge, coreLoop, result);
   const observedOwnerMethod = (result) => matchesBridgeWorkOrder(ownerMethodBridgeAttestations.get(bridge), bridge, coreLoop, result)
     ? structuredClone(result.ownerMethodBinding) : null;
+  const observedDelivery = (result) => {
+    const packet = coreLoop.thinkingPacket?.workerTaskPackets?.find((entry) => entry.taskPacketId === result.taskPacketId);
+    return packet && matchesBridgeWorkOrder(deliveryBridgeAttestations.get(bridge), bridge, coreLoop, result) &&
+      methodDeliveryMatches({ envelope: result.deliveryEnvelope, runId: bridge.runId, packet, outputText: result.outputText })
+      ? structuredClone(result.deliveryEnvelope) : null;
+  };
   const actualToolExecution = bridgeCompleted &&
     bridge.executionProjection?.invocationTruth?.actualToolExecution === true &&
     bridge.workerResults.every(localResultObserved);
@@ -2105,6 +2144,7 @@ export function applyStageRunnerBridgeResult(coreLoop, bridge) {
         externalWritePerformed: false,
         text: result.outputText,
         textSha256: result.outputSha256,
+        deliveryEnvelope: observedDelivery(result),
         ...(result.ownerMethodBinding ? { ownerMethodBinding: observedOwnerMethod(result) } : {}),
         ...(localExecutionObserved ? { localToolReceipt: result.localToolReceipt, actualToolExecution: true, localToolProcessInvoked: true } : {}),
       },

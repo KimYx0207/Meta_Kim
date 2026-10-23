@@ -82,7 +82,7 @@ jobs:
       - name: Test planning recovery and linked project boundaries
         run: |
           node scripts/validate-planning-continuity.mjs
-          node --test tests/governance/planning-continuity.test.mjs tests/governance/planning-continuity-project-root.test.mjs
+          node --test tests/governance/planning-continuity.test.mjs tests/governance/planning-continuity-project-root.test.mjs tests/governance/spine-state-atomic-write.test.mjs
 
   global-sync-policy:
     name: Global sync policy (${{ matrix.os }})

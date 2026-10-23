@@ -6,7 +6,14 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
 
-## Unreleased
+## [3.7.0] - 2026-10-23
+
+- **Explore requirements before designing and splitting work.** Source-backed recommendations, trade-offs and dependent decisions can be discussed without a completed design. Settled designs then feed the existing task board and execution dependencies.
+- **Pass complete professional methods to workers.** Source-checked role steps and input/output contracts enter the actual handoff. Missing facts are reported, prose delivery stays compatible, and producer self-checks remain pending independent review.
+- **Bind reviews to current deliverables.** Later reviews check the task, design, criteria and artifact hashes and identify concrete rework. Same-design recovery stays separate from design revisions and fresh acceptance.
+- **Show deliverable tasks and actionable rework in Live.** Design slices display the user outcome, planned outputs and demonstration. Review findings and required changes survive storage and readback, while execution remains distinct from acceptance.
+- **Use the current project's professional components after installation.** Discovery and worker handoff resolve the same explicit project configuration, including paths with spaces and mixed case. Existing read-only material calculations retain their source-bound scope.
+- **Keep text requests and saved progress on the right path.** Chinese read-only requests retain their professional role and file restrictions. Windows planning writes tolerate brief file-handle contention while preserving the previous state when replacement fails.
 
 ## [3.6.2] - 2026-10-22
 

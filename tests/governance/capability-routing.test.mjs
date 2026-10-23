@@ -635,7 +635,7 @@ test("routing fixtures recall internal patterns and platform/OS matrices", (t) =
         packet.workspaceIsolation === "unproven" ||
         packet.safetyEvidence?.status !== "proven",
     );
-  assert.equal(smoke.routeExecutionGate?.canEnterExecution, !smokeHasUnsafeParallelDrafts);
+  assert.equal(smoke.routeExecutionGate?.canEnterExecution, false, "A compatible preview never proves current host execution");
   if (smokeHasUnsafeParallelDrafts) {
     assert.ok(smoke.routeExecutionGate?.blockedBy.includes("parallel_lane_safety_not_proven"));
     assert.equal(smoke.routeExecutionGate?.returnToStage, "Thinking");
@@ -774,8 +774,18 @@ test("routing fixtures recall internal patterns and platform/OS matrices", (t) =
   for (const packet of codexExplicitParallelDispatch.workerTaskPacketDrafts) {
     assertNativeCodexSpawn(packet.codexSpawnBinding, packet.ownerAgent, packet);
   }
-  assert.equal(codexExplicitParallelDispatch.dispatchBoardDraft?.dispatchMode, "fan_out_ready");
-  assert.equal(codexExplicitParallelDispatch.dispatchBoardDraft?.fanoutReadiness?.thinkingApproved, true);
+  assert.equal(codexExplicitParallelDispatch.dispatchBoardDraft?.dispatchMode, "fanout_eligible");
+  assert.equal(codexExplicitParallelDispatch.dispatchBoardDraft?.fanoutReadiness?.thinkingApproved, false);
+  const boundedReadOnlyFanout = route(
+    "Run meta-theory. In parallel inspect package.json; review AGENTS.md; read README.md; audit config/contracts/workflow-contract.json.",
+    "codex",
+    "windows",
+  );
+  assert.equal(boundedReadOnlyFanout.dispatchBoardDraft?.dispatchMode, "fan_out_ready");
+  assert.equal(boundedReadOnlyFanout.dispatchBoardDraft?.fanoutReadiness?.thinkingApproved, true);
+  assert.equal(boundedReadOnlyFanout.workerTaskPacketDrafts.length, 4);
+  assert.ok(boundedReadOnlyFanout.workerTaskPacketDrafts.every((packet) =>
+    packet.shardScope.length > 0 && packet.mutationPolicy === "read_only" && packet.safetyEvidence.status === "proven"));
   assert.equal(
     new Set(codexExplicitParallelDispatch.workerTaskPacketDrafts.map((packet) => packet.codexSpawnBinding.task_name)).size,
     codexExplicitParallelDispatch.workerTaskPacketDrafts.length,

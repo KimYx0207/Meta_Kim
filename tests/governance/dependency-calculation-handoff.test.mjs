@@ -7,6 +7,7 @@ import os from "node:os";
 import test, { before, after } from "node:test";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { readDependencyCalculationInputFile } from "../../scripts/governed-execution/dependency-calculation-handoff.mjs";
+import { stableJson, sha256 } from "../../scripts/dependency-agent-discovery.mjs";
 
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
 const sourceOptions = { skip: !dependencyRoot && "Requires explicitly selected real Kim_Service source", timeout: 120000 };
@@ -124,6 +125,35 @@ test("formal entry passes complete >2000-character materials and real receipt to
   assert.equal(report.executionResult.actualWorkerExecution, false);
   assert.equal(JSON.stringify(report).includes(input.quotes[1].qualityEvidence), false, "raw materials are not published in artifacts");
   assert.equal(report.workerTaskPackets[0].ownerContract.sideEffects.length, 0);
+  assert.deepEqual(packet.scopeFiles, [], "Materials do not become invented filesystem paths");
+  assert.equal(packet.workOrderReadiness, "ready");
+  assert.equal(packet.workOrderScope.kind, "dependency_materials");
+  assert.equal(packet.workOrderScope.inputSha256, report.dependencyCalculationPacket.binding.inputSha256);
+  assert.equal(packet.workOrderScope.ownerContractSha256, context.ownerContract.ownerContractSha256,
+    "The original verified source digest survives public path redaction");
+  assert.equal(packet.workOrderScope.ownerContractProjectionSha256, sha256(stableJson(packet.ownerContract)));
+  assert.equal(report.dependencyCalculationPacket.ownerSourceBinding.ownerContractSha256, context.ownerContract.ownerContractSha256);
+  const { validateArtifactFile } = await fixture.import("scripts/validate-run-artifact.mjs");
+  await validateArtifactFile(report.paths.json);
+  for (const [field, value] of [
+    ["runId", "another-run"], ["requestSha256", "a".repeat(64)], ["inputSha256", "b".repeat(64)],
+    ["intentDigest", "another-intent"], ["componentContentSha256", "c".repeat(64)],
+    ["ownerContractSha256", "d".repeat(64)], ["ownerContractProjectionSha256", "e".repeat(64)], ["inputBytes", 1],
+  ]) {
+    const forged = JSON.parse(fs.readFileSync(report.paths.json, "utf8"));
+    forged.workerTaskPackets[0].workOrderScope[field] = value;
+    const forgedPath = path.join(config.artifactDir, `invalid-scope-${field}.json`);
+    fs.writeFileSync(forgedPath, JSON.stringify(forged));
+    await assert.rejects(validateArtifactFile(forgedPath), /workOrderScope must bind/);
+  }
+  for (const [field, value] of [["runId", "other-run"], ["taskPacketId", "another-task"],
+    ["ownerAgent", "unverified-owner"], ["ownerContractSha256", "f".repeat(64)], ["componentContentSha256", "f".repeat(64)]]) {
+    const forged = JSON.parse(fs.readFileSync(report.paths.json, "utf8"));
+    forged.dependencyCalculationPacket.ownerSourceBinding[field] = value;
+    const forgedPath = path.join(config.artifactDir, `invalid-source-binding-${field}.json`);
+    fs.writeFileSync(forgedPath, JSON.stringify(forged));
+    await assert.rejects(validateArtifactFile(forgedPath), /workOrderScope must bind/);
+  }
   const plan = await bridgeApi.prepareReadOnlyRuntimeInvocation({ runtime: "claude", workspaceRoot: fixture.repoRoot,
     packet, prompt, env: captures[0].env });
   assert.equal(plan.ownerMethodBinding.sourceVerified, true);
@@ -146,6 +176,42 @@ test("formal entry passes complete >2000-character materials and real receipt to
     stageRunner: { ...config.stageRunner, durableMode: "resume" } }), /fingerprint|identity/iu);
 });
 
+test("caller-only dependency configuration reaches discovery, materials and both method transports from a separate package directory", sourceOptions, async () => {
+  const callerRoot = path.join(fixture.root, "independent caller project");
+  fs.mkdirSync(path.join(callerRoot, ".meta-kim"), { recursive: true });
+  fs.writeFileSync(path.join(callerRoot, ".meta-kim/local.overrides.json"), JSON.stringify({
+    dependencyRoots: { "kim-service": path.relative(callerRoot, dependencyRoot) },
+  }));
+  assert.equal(fs.realpathSync(process.cwd()), fs.realpathSync(fixture.repoRoot), "The package and the caller are separate roots");
+  assert.equal(process.env.META_KIM_KIM_SERVICE_ROOT, undefined, "Project config must work without a global dependency override");
+  const captures = [];
+  const config = options(materials(), { projectRoot: callerRoot,
+    dependencyCalculationInput: { inputJson: JSON.stringify(materials()) } });
+  config.stageRunner.invokeWorker = captureWorker(captures);
+  const report = await runner(config);
+  assert.equal(report.dependencyCalculationPacket.toolInvoked, true);
+  assert.equal(captures.length, 1);
+  const { packet, prompt } = captures[0];
+  assert.equal(packet.ownerAgent, "kim-service:supplier-comparison-analyst");
+  assert.equal(packet.workOrderReadiness, "ready");
+  const inventory = JSON.parse(fs.readFileSync(path.join(config.stateDir, "capability-inventory.json"), "utf8"));
+  assert.equal(inventory.dependencyAgentDiscovery.sources.find((source) => source.dependencyId === "kim-service").status, "verified_local");
+  const env = { ...fixture.env };
+  delete env.META_KIM_KIM_SERVICE_ROOT;
+  delete env.META_KIM_CALLER_CWD;
+  const nativePlan = await bridgeApi.prepareReadOnlyRuntimeInvocation({ runtime: "claude", workspaceRoot: callerRoot, packet, prompt, env });
+  assert.equal(nativePlan.ownerMethodBinding.sourceVerified, true);
+  const wrongRoot = path.join(fixture.root, "unconfigured caller");
+  fs.mkdirSync(wrongRoot);
+  await assert.rejects(bridgeApi.prepareReadOnlyRuntimeInvocation({ runtime: "claude", workspaceRoot: wrongRoot,
+    packet: { ...packet, projectRoot: callerRoot, dependencyRoot }, prompt, env }), /explicit dependency root is required/);
+  const wrongConfig = options(materials(), { projectRoot: wrongRoot,
+    dependencyCalculationInput: { inputJson: JSON.stringify(materials()) } });
+  const rejected = await runner(wrongConfig);
+  assert.equal(rejected.dependencyCalculationPacket.toolInvoked, false);
+  assert.equal(process.env.META_KIM_KIM_SERVICE_ROOT, undefined);
+});
+
 test("complete payload size limit fails explicitly after a real receipt, never truncates into worker", sourceOptions, async () => {
   const input = materials(); input.specification = "s".repeat(256);
   input.quotes = Array.from({ length: 100 }, (_, index) => ({ ...input.quotes[0],
@@ -165,7 +231,7 @@ test("handoff clones, altered bindings and unverified owner contracts cannot inv
   const request = handoffApi.prepareDependencyCalculationInput({ input: config.dependencyCalculationInput, task });
   const environment = { ...process.env, META_KIM_KIM_SERVICE_ROOT: dependencyRoot };
   const args = { request, runId: config.runId, runtime: "codex", osTarget: "linux",
-    route: planned.selectedExecutionRoute, workerTaskPackets: planned.workerTaskPackets, environment };
+    route: planned.selectedExecutionRoute, workerTaskPackets: planned.workerTaskPackets, environment, projectRoot: config.projectRoot };
   const prepared = await handoffApi.prepareDependencyCalculationHandoff(args);
   assert.equal(prepared.summary.status, "ready_for_worker");
   const packet = planned.workerTaskPackets.find((value) => value.taskPacketId === prepared.handoff.taskPacketId);

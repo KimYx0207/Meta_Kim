@@ -151,11 +151,13 @@ test("the native activity shortcut requires the selected project and server-owne
 });
 
 test("revision descriptors accept only same-run opaque bindings and discard arbitrary fix payloads", () => {
-  const row = { id: "revision:" + "a".repeat(20), runId: "r", findingId: "finding:" + "b".repeat(20), actionId: "action:" + "c".repeat(20), state: "pending_verification", fixArtifact: "C:/private/file", summary: "<script>" };
+  const row = { id: "revision:" + "a".repeat(20), runId: "r", findingId: "finding:" + "b".repeat(20), actionId: "action:" + "c".repeat(20), state: "pending_verification", fixArtifact: "C:/private/file<script>", summary: "目录遗漏章节", requiredChange: "补齐目录并检查跳转" };
   const normalized = normalizeLiveRevisionReview({ items: [row, { ...row, runId: "other" }] }, "r");
   assert.equal(normalized.items.length, 1);
   assert.equal(normalized.items[0].fixArtifact, undefined);
   assert.doesNotMatch(JSON.stringify(normalized), /private|script/u);
+  assert.equal(normalized.items[0].summary, row.summary);
+  assert.equal(normalized.items[0].requiredChange, row.requiredChange);
   assert.equal(normalizeLiveRevisionReview({ items: [{ ...row, state: "verified" }] }, "r").items[0].state, "verification_unconfirmed");
 });
 

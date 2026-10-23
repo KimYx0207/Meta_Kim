@@ -6462,7 +6462,7 @@ test("invalid identity regression C2 deliverable feedback still shows the origin
     workerResultPackets: [{ runId, taskPacketId, ownerAgent: "frontend", status: "executed", resultKind: "actual_local_tool_worker_result", output: { text: "The actual result under review" } }] };
   const normalize = runNormalizerHarness({ actualStatus: true });
   const target = normalize(buildLiveSnapshot({ governedArtifact: raw })).deliverables[0];
-  const finding = { runId, findingId: "F-original-target", actionId: "A-original-target", taskPacketId, deliverableId: target.id, contentVersion: target.contentVersion };
+  const finding = { runId, findingId: "F-original-target", actionId: "A-original-target", taskPacketId, deliverableId: target.id, contentVersion: target.contentVersion, summary: "目录遗漏章节", requiredChange: "补齐目录并检查跳转" };
   raw.reviewPacket = { findings: [finding] };
   raw.revisionResponses = [{ ...finding, deliverableId: "../../outside" }];
   const form = localFeedbackFormHarness();
@@ -6470,6 +6470,8 @@ test("invalid identity regression C2 deliverable feedback still shows the origin
   form.view.target.value = "deliverable:" + target.id;
   form.view.target.events.change();
   assert.match(form.view.revisionStatus.textContent, /已登记问题 · 待修订/u, "the actual shipped per-deliverable filter keeps the original finding visible");
+  assert.match(form.view.revisionStatus.textContent, /目录遗漏章节/u);
+  assert.match(form.view.revisionStatus.textContent, /下一步：补齐目录并检查跳转/u);
   assert.doesNotMatch(form.view.revisionStatus.textContent, /尚未收到修订|outside/u);
 });
 

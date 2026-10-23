@@ -14,6 +14,66 @@ function refs(value) {
     value.every((ref) => typeof ref === "string" && ref.trim());
 }
 
+function strings(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim()) : [];
+}
+
+/** Attach Thinking's allocation to existing goal and task identities only.
+ * This input cannot create a task, change a requirement or grant permission.
+ */
+export function normalizeTaskCriterionAssignments({ dialogue, input = null }) {
+  if (input == null) return null;
+  if (dialogue?.status !== "host_provided_understanding" || input.taskHash !== dialogue.taskHash || input.intentDigest !== dialogue.intentDigest) {
+    throw new TypeError("Task criterion assignments must bind the existing confirmed goal and intent digest");
+  }
+  if (!Array.isArray(input.assignments)) throw new TypeError("Task criterion assignments must be an array");
+  const criteria = new Set(dialogue.acceptanceCriteria.map((criterion) => criterion.id));
+  const identities = new Set();
+  const assignments = [];
+  for (const assignment of input.assignments) {
+    if (!assignment || Boolean(assignment.taskPacketId) === Boolean(assignment.roleInstanceId)) throw new TypeError("Each criterion assignment requires exactly one selected task identity");
+    const key = assignment.taskPacketId ? "taskPacketId" : "roleInstanceId";
+    if (typeof assignment[key] !== "string" || !assignment[key].trim() || identities.has(`${key}:${assignment[key]}`)) throw new TypeError("Unknown, ambiguous or duplicate task criterion assignment");
+    identities.add(`${key}:${assignment[key]}`);
+    if (!Array.isArray(assignment.criterionIds) || assignment.criterionIds.some((id) => !criteria.has(id)) || new Set(assignment.criterionIds).size !== assignment.criterionIds.length) {
+      throw new TypeError("Task criterion assignment references unknown or duplicate goal criterion IDs");
+    }
+    assignments.push({ [key]: assignment[key], criterionIds: [...assignment.criterionIds].sort() });
+  }
+  assignments.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return { taskHash: input.taskHash, intentDigest: input.intentDigest, assignments };
+}
+
+export function applyTaskCriterionAssignments({ workerTaskPackets, dialogue, input = null }) {
+  const normalized = normalizeTaskCriterionAssignments({ dialogue, input });
+  if (normalized == null) return workerTaskPackets;
+  const assigned = new Map();
+  for (const assignment of normalized.assignments) {
+    const matches = workerTaskPackets.filter((packet) => assignment.taskPacketId ? packet.taskPacketId === assignment.taskPacketId : packet.roleInstanceId === assignment.roleInstanceId);
+    if (matches.length !== 1 || assigned.has(matches[0].taskPacketId)) throw new TypeError("Unknown, ambiguous or duplicate task criterion assignment");
+    assigned.set(matches[0].taskPacketId, assignment.criterionIds);
+  }
+  return workerTaskPackets.map((packet) => ({ ...packet, acceptanceCriterionIds: assigned.get(packet.taskPacketId) ?? [] }));
+}
+
+/** Derived coverage of the existing goal IDs, never a second requirements ledger. */
+export function buildIntentCriterionCoverage({ workerTaskPackets, dialogue }) {
+  const criteria = dialogue?.acceptanceCriteria ?? [];
+  const rows = criteria.map((criterion) => {
+    const assigned = workerTaskPackets.filter((packet) => packet.acceptanceCriterionIds?.includes(criterion.id));
+    const producers = assigned.filter((packet) => ["primary_execution", "local_tool_execution", "factory_then_dispatch", "verification_execution"].includes(packet.executionMode));
+    return { criterionId: criterion.id, required: criterion.required !== false,
+      producerTaskIds: producers.map((packet) => packet.taskPacketId),
+      verificationOwners: [...new Set(producers.map((packet) => packet.handoffTarget).filter(Boolean))],
+      status: producers.length && producers.every((packet) => packet.handoffTarget) ? "assigned_not_verified" : "unassigned" };
+  });
+  const unknownAssignments = workerTaskPackets.flatMap((packet) => strings(packet.acceptanceCriterionIds)
+    .filter((id) => !criteria.some((criterion) => criterion.id === id))
+    .map((criterionId) => ({ taskPacketId: packet.taskPacketId, criterionId })));
+  return { source: "intentBinding.acceptanceCriteria", status: unknownAssignments.length || rows.some((row) => row.required && row.status === "unassigned") ? "incomplete" : criteria.length ? "assigned_not_verified" : "not_supplied", rows, unknownAssignments,
+    claimBoundary: "Ownership projection only; no deliverable evidence or semantic compliance has been established." };
+}
+
 export function intentDialogueDigest(intent) {
   return createHash("sha256").update(JSON.stringify(canonical({
     taskHash: intent.taskHash,
@@ -108,6 +168,10 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
     selectedArchitecture?.routeEligible !== false && selectedArchitecture?.executionEligible !== false &&
     selectedArchitecture?.cacheEvidenceOnly !== true
       ? selectedArchitecture : null;
+  const primaryWorkers = workerTaskPackets.filter((packet) => ["primary_execution", "local_tool_execution", "factory_then_dispatch"].includes(packet.executionMode));
+  const outcomeWorkers = primaryWorkers.length ? primaryWorkers
+    : workerTaskPackets.filter((packet) => packet.executionMode === "verification_execution");
+  const globalNonGoals = [...strings(dialogue.constraints?.nonGoals), ...strings(dialogue.constraints?.forbidden)];
   return workerTaskPackets.map((packet) => {
     const implementation = packet.executionMode === "primary_execution" &&
       ["backend", "frontend", "worker"].includes(packet.roleDisplayName);
@@ -121,13 +185,25 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
       acceptanceCriteria: dialogue.acceptanceCriteria,
       settledDecisionRefs: dialogue.settledDecisionRefs,
       invocationState: "selected_not_invoked",
+      acceptanceRole: "global_context_not_per_worker_ownership",
+      constraintPrecedence: "User constraints and non-goals take precedence over generic Skill or method recommendations; unresolved conflicts require review evidence, not a success claim.",
     };
+    const hasExplicitAssignment = Array.isArray(packet.acceptanceCriterionIds);
+    const acceptanceCriterionIds = hasExplicitAssignment ? [...new Set(strings(packet.acceptanceCriterionIds))]
+      : outcomeWorkers.length === 1 && outcomeWorkers[0] === packet ? dialogue.acceptanceCriteria.map((criterion) => criterion.id) : [];
+    const assignedCriteria = dialogue.acceptanceCriteria.filter((criterion) => acceptanceCriterionIds.includes(criterion.id));
     return {
       ...packet, intentBinding: binding,
+      acceptanceCriterionIds,
+      criterionAssignmentSource: hasExplicitAssignment ? "explicit_goal_ids" : acceptanceCriterionIds.length ? primaryWorkers.length ? "sole_primary_outcome_owner" : "sole_verification_outcome_owner" : "unassigned",
+      nonGoals: [...new Set([...strings(packet.nonGoals), ...globalNonGoals])],
       coreProblem: dialogue.outcome,
       todayTask: implementation ? `${dialogue.outcome}\n${packet.todayTask ?? ""}`.trim() : packet.todayTask,
       acceptanceCriteria: [...(packet.acceptanceCriteria ?? []),
-        ...dialogue.acceptanceCriteria.map((criterion) => criterion.description)],
+        ...assignedCriteria.map((criterion) => criterion.description)],
+      handoffContract: { ...packet.handoffContract,
+        requiredConstraintReview: { constraints: dialogue.constraints, nonGoals: globalNonGoals, criterionIds: acceptanceCriterionIds,
+          status: "required_not_reviewed", evidenceRequirement: "Review the actual deliverable against user constraints, including conflicts with generic selected methods." } },
       skillLoadout: skills,
       capabilityBindings: { ...packet.capabilityBindings, skills, intentBinding: binding },
       capabilityLoadout: { ...packet.capabilityLoadout,

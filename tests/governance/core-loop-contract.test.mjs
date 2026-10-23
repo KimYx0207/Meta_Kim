@@ -528,7 +528,7 @@ test("caller-provided host-visible names remain unverified hints", () => {
     artifact.coreLoop.capabilityInvocationTruthPacket.rows.map((row) => [row.family, row]),
   );
   assert.equal(invocationByFamily.get("app_visible_subagent").state, "not_required");
-  assert.equal(invocationByFamily.get("agent_subagent").state, "unavailable");
+  assert.equal(invocationByFamily.get("agent_subagent").state, "not_required", "Unscoped host-visible names do not create an executable fanout demand");
   assert.equal(artifact.coreLoop.stageDagPacket.status, "planned_not_invoked");
   assert.ok(
     artifact.coreLoop.stageDagPacket.nodes.some(

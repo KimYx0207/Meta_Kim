@@ -4928,7 +4928,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const label = item.state === "recorded" ? currentLanguage === "zh" ? "已登记问题 · 待修订" : "Finding recorded · revision pending"
           : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "已有复验记录，执行来源未确认；当前版本仍需核对" : "Recheck recorded; execution provenance unconfirmed; current content version still needs checking"
             : currentLanguage === "zh" ? "已登记修订 · 待复验" : "Revision recorded · verification pending";
-      return item.findingId + (item.actionId ? " · " + item.actionId : "") + " · " + label;
+      return (item.summary || item.findingId) + " · " + label
+        + (item.requiredChange ? "\n" + (currentLanguage === "zh" ? "下一步：" : "Next: ") + item.requiredChange : "");
     }).join("\n") : currentLanguage === "zh" ? "尚未收到修订/复验回写" : "No revision or verification report received yet";
     view.targetCopy.textContent = currentLanguage === "zh" ? "反馈对应的成品或证据" : "Result or evidence being reviewed";
     view.rawCopy.textContent = currentLanguage === "zh" ? "你的反馈原话" : "Your feedback, verbatim";

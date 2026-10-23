@@ -29,6 +29,26 @@
       "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active"
+    },
+    "requirements-design-20261023:methods": {
+      "appliedAt": "2026-10-23T12:09:48.878Z",
+      "approvalDigest": "sha256:b6af20052dea048c199d325ab38282d2adacb0c7c2c8b96453c92280d95528d9",
+      "candidateDigest": "sha256:2bba6aa9e8aa63388f71023b07a797d413b7a31f97d3c1b6e8d8935567122f4a",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "config/governance/decision-pattern-catalog.json",
+      "toStatus": "active"
+    },
+    "requirements-design-20261023:skill": {
+      "appliedAt": "2026-10-23T12:09:48.860Z",
+      "approvalDigest": "sha256:1a8bfb5881cbcabb25828f7877642ec673855fa784deae818c0e338a20fca5b9",
+      "candidateDigest": "sha256:a6116a915c5b25eaa96c27a32d13cd97dfdd70666b8e66febf4275413d586143",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
     }
   },
   "entries": {
@@ -37,9 +57,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-10-21T14:08:10.970Z",
-        "lastTransitionId": "publish-both-20261021:reviewed-meta-theory-skill",
-        "reason": "Proposed source review for actual worker delivery constraints and contract-aligned cached discovery policy; preserve active foundational status and execution class."
+        "changedAt": "2026-10-23T12:09:48.860Z",
+        "lastTransitionId": "requirements-design-20261023:skill",
+        "reason": "Bind independently reviewed requirements-before-design and source-backed method changes. Preserve existing status and execution eligibility."
       },
       "provenance": {
         "evidenceRefs": [
@@ -51,7 +71,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:aaad55a44426b8ff1f399f12dcbb90d70428cbdec65805c0f7a222eca30be51f",
+      "sourceDigest": "sha256:553d49562ec011565c0dfd616cda767dd4285f37189a2ced35298b237d4504cf",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -83,9 +103,9 @@
       "foundational": false,
       "kind": "capability_index",
       "lifecycle": {
-        "changedAt": "2026-10-02T20:01:28.004Z",
-        "lastTransitionId": "intent-tools-20261002:method-catalog",
-        "reason": "Bind reviewed confirmed-intent and reference-method source changes; retain existing lifecycle status and execution class."
+        "changedAt": "2026-10-23T12:09:48.878Z",
+        "lastTransitionId": "requirements-design-20261023:methods",
+        "reason": "Bind independently reviewed requirements-before-design and source-backed method changes. Preserve existing status and execution eligibility."
       },
       "provenance": {
         "evidenceRefs": [
@@ -97,7 +117,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:11f5d7ce6ee09eeeeb5f337be611f03ce6559556d809ca8a245bd4fd7c6033a0",
+      "sourceDigest": "sha256:0da258405e424e3606a0fa1563b99f4ccfe06042ea17350463b16efee1ad3afd",
       "status": "active",
       "targetRef": "config/governance/decision-pattern-catalog.json"
     }
@@ -201,6 +221,72 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active",
       "transitionId": "publish-both-20261021:reviewed-meta-theory-skill"
+    },
+    {
+      "appliedAt": "2026-10-23T12:09:48.860Z",
+      "approvalDigest": "sha256:1a8bfb5881cbcabb25828f7877642ec673855fa784deae818c0e338a20fca5b9",
+      "candidateDigest": "sha256:a6116a915c5b25eaa96c27a32d13cd97dfdd70666b8e66febf4275413d586143",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-10-21T14:08:10.970Z",
+          "lastTransitionId": "publish-both-20261021:reviewed-meta-theory-skill",
+          "reason": "Proposed source review for actual worker delivery constraints and contract-aligned cached discovery policy; preserve active foundational status and execution class."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:aaad55a44426b8ff1f399f12dcbb90d70428cbdec65805c0f7a222eca30be51f",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "requirements-design-20261023:skill"
+    },
+    {
+      "appliedAt": "2026-10-23T12:09:48.878Z",
+      "approvalDigest": "sha256:b6af20052dea048c199d325ab38282d2adacb0c7c2c8b96453c92280d95528d9",
+      "candidateDigest": "sha256:2bba6aa9e8aa63388f71023b07a797d413b7a31f97d3c1b6e8d8935567122f4a",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "reference_only",
+        "foundational": false,
+        "kind": "capability_index",
+        "lifecycle": {
+          "changedAt": "2026-10-02T20:01:28.004Z",
+          "lastTransitionId": "intent-tools-20261002:method-catalog",
+          "reason": "Bind reviewed confirmed-intent and reference-method source changes; retain existing lifecycle status and execution class."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "config/capability-index/dependency-project-registry.json"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/governance/decision-pattern-catalog.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:11f5d7ce6ee09eeeeb5f337be611f03ce6559556d809ca8a245bd4fd7c6033a0",
+        "status": "active",
+        "targetRef": "config/governance/decision-pattern-catalog.json"
+      },
+      "targetRef": "config/governance/decision-pattern-catalog.json",
+      "toStatus": "active",
+      "transitionId": "requirements-design-20261023:methods"
     }
   ],
   "policy": {
@@ -210,7 +296,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 3,
+  "revision": 5,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-10-21T14:08:10.970Z"
+  "updatedAt": "2026-10-23T12:09:48.878Z"
 }

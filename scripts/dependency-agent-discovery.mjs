@@ -114,6 +114,21 @@ function declaredRoot(project, localOverrides, environment) {
   return { value: project.source?.localPath, source: `dependency-project-registry.json#${project.id}.source.localPath` };
 }
 
+/** Local bindings belong to the caller project; registry policy stays in the package. */
+export async function readDependencyProjectOverrides(projectRoot) {
+  assert(typeof projectRoot === "string" && path.isAbsolute(projectRoot), "caller project root must be absolute");
+  try { return JSON.parse(await fs.readFile(path.join(projectRoot, ".meta-kim/local.overrides.json"), "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return {}; throw error; }
+}
+
+export async function resolveDependencyProjectRoot({ dependencyId, projectRoot, environment = process.env }) {
+  const { projects } = JSON.parse(await fs.readFile(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"), "utf8"));
+  const project = projects.find((entry) => entry.id === dependencyId && entry.interface?.capabilityIndex);
+  if (!project) return null;
+  const binding = declaredRoot(project, await readDependencyProjectOverrides(projectRoot), environment);
+  return typeof binding.value === "string" && binding.value.trim() ? path.resolve(projectRoot, binding.value) : null;
+}
+
 async function readDependency(project, root, projectRoot) {
   const rootStat = await fs.lstat(root);
   assert(rootStat.isDirectory() && !rootStat.isSymbolicLink(), "dependency root must be a directory, not a symlink or junction");
@@ -235,7 +250,7 @@ export async function discoverDependencyAgentContracts({ projects = [], projectR
 
 /** Resolve authority from the installed package, never from worker-supplied paths
  * or prompt text. Discovery is selection evidence; reread it at invocation time. */
-export async function loadDependencyAgentMethod({ packet, environment = process.env } = {}) {
+export async function loadDependencyAgentMethod({ packet, environment = process.env, projectRoot = environment.META_KIM_CALLER_CWD || repoRoot } = {}) {
   const ownerId = packet?.ownerAgent ?? packet?.owner;
   if (packet?.ownerSource !== "dependency_agent_contract" && !packet?.ownerContract && !String(ownerId ?? "").includes(":")) return null;
   const { projects } = JSON.parse(await fs.readFile(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"), "utf8"));
@@ -248,16 +263,14 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
   assert(!packet.nativeAgentType, "dependency Markdown owner cannot claim a native agent type");
   assert(!packet.owner || packet.owner === ownerId, "worker owner identities disagree");
   const project = candidates[0];
-  let localOverrides = {};
-  try { localOverrides = JSON.parse(await fs.readFile(path.join(repoRoot, ".meta-kim/local.overrides.json"), "utf8")); }
-  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const localOverrides = await readDependencyProjectOverrides(projectRoot);
   const binding = declaredRoot(project, localOverrides, environment);
   assert(typeof binding.value === "string" && binding.value.trim(), "explicit dependency root is required");
-  const root = path.resolve(repoRoot, binding.value);
+  const root = path.resolve(projectRoot, binding.value);
   const realRoot = await fs.realpath(root);
   const samePath = (left, right) => process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
   assert(samePath(root, realRoot), "dependency root cannot traverse a symlink or junction");
-  const discovered = await discoverDependencyAgentContracts({ projects: [project], projectRoot: repoRoot, localOverrides, environment });
+  const discovered = await discoverDependencyAgentContracts({ projects: [project], projectRoot, localOverrides, environment });
   const owners = discovered.agents.filter((owner) => owner.id === ownerId);
   assert.equal(owners.length, 1, `selected dependency source is not verified: ${discovered.sources[0]?.reason ?? "missing owner"}`);
   const owner = owners[0];
@@ -275,6 +288,21 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
   const componentRoot = await checkedPath(root, `agents/${owner.componentId}`, true);
   const entrypoint = await checkedPath(componentRoot, "AGENT.md");
   const sourceText = await fs.readFile(entrypoint, "utf8");
+  const contract = JSON.parse(await fs.readFile(await checkedPath(componentRoot, "capability.json"), "utf8"));
+  const requestedCapability = packet.methodCapabilityId;
+  const capabilities = contract.capabilities.filter((capability) => !requestedCapability ||
+    requestedCapability === capability.id || requestedCapability === `${project.id}:${capability.id}`);
+  assert.equal(capabilities.length, 1, "selected dependency method capability is unknown or ambiguous; provide methodCapabilityId");
+  const capability = capabilities[0];
+  let method = null;
+  try {
+    method = JSON.parse(await fs.readFile(await checkedPath(componentRoot, "method.json"), "utf8"));
+    assert.equal(method.schemaVersion, 1, "unsupported dependency method schema");
+    assert.equal(method.roleId, owner.componentId, "dependency method role differs from selected owner");
+    assert.equal(method.protocol, "host-bound-task-method-v1", "unsupported dependency method protocol");
+    stringArray(method.steps, "method.steps", true);
+    stringArray(method.acceptance, "method.acceptance", true);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
   assert.equal(sha256(sourceText), owner.contentDigest, "owner method changed after discovery");
   assert.equal(await componentHash(componentRoot), owner.ownerContract.componentContentSha256, "owner component changed after discovery");
   return {
@@ -288,5 +316,11 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
     contentDigest: owner.contentDigest,
     componentContentSha256: owner.ownerContract.componentContentSha256,
     ownerContractSha256: sha256(stableJson(owner.ownerContract)),
+    capabilityId: `${project.id}:${capability.id}`,
+    inputContract: capability.input,
+    outputContract: capability.output,
+    method,
+    methodStatus: method ? "structured_method_loaded" : "legacy_agent_text_only",
+    methodSha256: method ? sha256(stableJson(method)) : null,
   };
 }

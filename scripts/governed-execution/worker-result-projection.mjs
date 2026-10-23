@@ -1,3 +1,5 @@
+import { methodDeliveryMatches } from "./method-delivery.mjs";
+
 /**
  * Keep the planner's public task board and the observed execution result on the
  * same identity. A result from another run, task, or owner cannot replace a plan.
@@ -10,6 +12,8 @@ export function projectWorkflowWorkerResults({ runId, workerTaskPackets, planned
     if (!packet || result.runId !== runId ||
       (result.ownerAgent ?? result.owner) !== (packet.ownerAgent ?? packet.owner) ||
       !["native_read_only_worker_result", "actual_local_tool_worker_result"].includes(result.resultKind)) return [];
+    if (result.output?.deliveryEnvelope && !methodDeliveryMatches({ envelope: result.output.deliveryEnvelope,
+      runId, packet, outputText: result.output.text })) return [];
     return [[result.taskPacketId, result]];
   }));
   return plannedResults.map((planned) => {

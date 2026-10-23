@@ -15,6 +15,7 @@ import {
   selectHighestImpactOpenQuestion,
 } from "../../scripts/run-meta-theory-governed-execution.mjs";
 import { validateArtifactFile } from "../../scripts/validate-run-artifact.mjs";
+import { selectReadyDecisionFrontier } from "../../scripts/governed-execution/plan-challenge-policy.mjs";
 
 const CORE_LOOP_CONTRACT = JSON.parse(
   readFileSync(new URL("../../config/contracts/core-loop-contract.json", import.meta.url), "utf8"),
@@ -640,7 +641,7 @@ describe("57 - risk-adaptive plan challenge", () => {
     assert.equal(answered.summaryData.confirmedDecisions[0]?.questionId, questionId);
   });
 
-  test("one call accepts at most one new answer while replaying ordered history", () => {
+  test("one batch cannot consume a dependent question unlocked by that same batch", () => {
     const task = "请压力测试这个方案；如果通过，将版本发布到生产环境并迁移数据库。";
     const initial = build(task);
     const permission = initial.planChallengeState.currentQuestion;
@@ -1237,6 +1238,7 @@ describe("57 - risk-adaptive plan challenge", () => {
       }
       routeFrame.planChallengeState.selectedQuestionId = routeQuestionId;
       routeFrame.planChallengeState.pendingUserChoice.question.binding = `plan-challenge-response:${routeQuestionId}`;
+      routeFrame.readyDecisionFrontier = selectReadyDecisionFrontier(routeFrame.unresolvedQuestions);
       const routeChoicePath = path.join(tempDir, "route-choice-no-routes.json");
       await writeFile(routeChoicePath, `${JSON.stringify(routeChoice, null, 2)}\n`, "utf8");
       await assert.rejects(validateArtifactFile(routeChoicePath), /at least two paths for a required route choice/iu);

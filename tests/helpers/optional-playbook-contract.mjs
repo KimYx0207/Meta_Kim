@@ -32,13 +32,26 @@ export async function inspectOptionalPlaybookProvider(candidatePaths) {
 }
 
 /** Assert discovery provenance, native fanout readiness, and the absence of host invocation. */
-export async function assertOptionalPlaybookContract(packet, invocationTruth, candidatePaths) {
+export async function assertOptionalPlaybookContract(packet, invocationTruth, candidatePaths, { ready = true } = {}) {
   const expected = await inspectOptionalPlaybookProvider(candidatePaths);
   const resolution = packet.providerResolution;
   assert.equal(resolution.schemaVersion, "agent-teams-playbook-provider-resolution-v0.1");
   assert.equal(resolution.providerId, "agent-teams-playbook");
   for (const [field, value] of Object.entries(expected)) {
     assert.deepEqual(resolution[field], value, `optional provider ${field} must match the nearest real source`);
+  }
+  if (!ready) {
+    assert.equal(packet.status, "partial");
+    assert.equal(packet.selected, false);
+    assert.equal(packet.fanoutSafetyPacket.safeForParallelFanout, false);
+    assert.equal(packet.acceptance.orchestrationReadyWhenParallelLanes, false);
+    assert.equal(packet.evidenceKind, "fanout_safety_or_wave_unproven");
+    assert.deepEqual(packet.waves, [], "Unsafe planned lanes must not enter dispatch waves");
+    assert.ok(packet.totalWorkerTaskCount >= 2, "The worker plan remains available before dispatch readiness");
+    const invocation = invocationTruth.rows.find((row) => row.family === "agent_teams_playbook");
+    assert.equal(invocation.state, "unavailable");
+    assert.equal(invocation.invokedCount, 0);
+    return expected;
   }
   assert.equal(packet.status, "pass");
   assert.equal(packet.triggered, true);

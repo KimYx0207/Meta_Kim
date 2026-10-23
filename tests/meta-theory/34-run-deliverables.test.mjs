@@ -685,8 +685,8 @@ describe("34 — Meta-theory run deliverables", () => {
       const invocationByFamily = new Map(
         runArtifact.capabilityInvocationTruthPacket.rows.map((row) => [row.family, row])
       );
-      assert.equal(runArtifact.runtimeSubagentInvocationPacket.status, "unavailable");
-      assert.equal(invocationByFamily.get("agent_subagent").state, "unavailable");
+      assert.equal(runArtifact.runtimeSubagentInvocationPacket.status, "not_required");
+      assert.equal(invocationByFamily.get("agent_subagent").state, "not_required");
       assert.equal(invocationByFamily.get("app_visible_subagent").state, "not_required");
       assert.equal(invocationByFamily.get("worker_task").state, "blocked");
       assert.equal(invocationByFamily.get("prompt_rule").state, "applied");
@@ -694,15 +694,16 @@ describe("34 — Meta-theory run deliverables", () => {
         runArtifact.agentTeamsPlaybookPacket,
         runArtifact.capabilityInvocationTruthPacket,
         agentTeamsCandidateSkillPaths("codex"),
+        { ready: false },
       );
       assert.equal(invocationByFamily.get("mcp").state, "selected_not_invoked");
       assert.equal(runArtifact.capabilityInvocationProbePacket.status, "not_run");
       assert.equal(runArtifact.capabilityInvocationTruthPacket.realInvocationCoverage.status, "partial");
-      assert.equal(runArtifact.agentTeamsPlaybookPacket.status, "pass");
-      assert.equal(runArtifact.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, true);
-      assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.independentLanesProven, true);
-      assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.parallelWaveExists, true);
-      assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.dagAndCollisionSafe, true);
+      assert.equal(runArtifact.agentTeamsPlaybookPacket.status, "partial");
+      assert.equal(runArtifact.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, false);
+      assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.independentLanesProven, false);
+      assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.parallelWaveExists, false);
+      assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.dagAndCollisionSafe, false);
       assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.waveSizeWithinRuntimeCapacity, true);
       assert.equal(runArtifact.agentTeamsPlaybookPacket.acceptance.noArbitraryMetaKimCap, true);
       assert.equal(runArtifact.visibleMetaTheorySurfacePacket.capabilityInvocationTruth, undefined);
@@ -711,7 +712,7 @@ describe("34 — Meta-theory run deliverables", () => {
         "not_confirmed"
       );
       assert.equal(runArtifact.visibleMetaTheorySurfacePacket.dynamicWorkflow.status, "partial");
-      assert.equal(runArtifact.visibleMetaTheorySurfacePacket.agentTeamsPlaybook.status, "pass");
+      assert.equal(runArtifact.visibleMetaTheorySurfacePacket.agentTeamsPlaybook.status, "partial");
       assert.equal(runArtifact.visibleMetaTheorySurfacePacket.peerAgentMesh.status, "pass");
       assert.equal(runArtifact.visibleMetaTheorySurfacePacket.langGraph.status, "pass");
       assert.equal(runArtifact.langGraphRunPacket.runtimeDependency, "none");
@@ -753,7 +754,7 @@ describe("34 — Meta-theory run deliverables", () => {
       );
       assert.equal(runArtifact.productExperiencePacket.generalizationGate.status, "pass");
       assert.equal(runArtifact.productExperiencePacket.capabilityInvocationTruthGate.status, "partial");
-      assert.equal(runArtifact.productExperiencePacket.agentTeamsPlaybookGate.status, "pass");
+      assert.equal(runArtifact.productExperiencePacket.agentTeamsPlaybookGate.status, "partial");
       assert.equal(runArtifact.productExperiencePacket.automationDecisionBoundary.status, "pass");
       assert.equal(
         runArtifact.productExperiencePacket.automationDecisionBoundary.decisionAuthority,
@@ -879,27 +880,28 @@ describe("34 — Meta-theory run deliverables", () => {
       assert.ok(selectedLaneIds.includes("backend-api"));
       assert.ok(omittedLaneIds.includes("frontend-ui"));
       assert.equal(artifact.defaultRuntimePath.workerTaskPackets.length, selectedLaneIds.length);
-      assert.equal(artifact.defaultRuntimePath.agentTeamsPlaybookPacket.status, "pass");
+      assert.equal(artifact.defaultRuntimePath.agentTeamsPlaybookPacket.status, "partial");
       await assertOptionalPlaybookContract(
         artifact.defaultRuntimePath.agentTeamsPlaybookPacket,
         artifact.capabilityInvocationTruthPacket,
         agentTeamsCandidateSkillPaths("codex"),
+        { ready: false },
       );
       assert.equal(
         artifact.defaultRuntimePath.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout,
-        true
+        false
       );
       assert.equal(
         artifact.defaultRuntimePath.agentTeamsPlaybookPacket.acceptance.independentLanesProven,
-        true
+        false
       );
       assert.equal(
         artifact.defaultRuntimePath.agentTeamsPlaybookPacket.acceptance.parallelWaveExists,
-        true
+        false
       );
       assert.equal(
         artifact.defaultRuntimePath.agentTeamsPlaybookPacket.acceptance.dagAndCollisionSafe,
-        true
+        false
       );
       assert.equal(
         artifact.defaultRuntimePath.agentTeamsPlaybookPacket.acceptance.waveSizeWithinRuntimeCapacity,

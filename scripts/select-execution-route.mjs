@@ -18,10 +18,12 @@ import {
 } from "./runtime-capability-claims.mjs";
 import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "./runtime-execution-gate.mjs";
-import { discoverDependencyAgentContracts, matchDependencyAgentContracts, stableJson } from "./dependency-agent-discovery.mjs";
+import { discoverDependencyAgentContracts, matchDependencyAgentContracts, readDependencyProjectOverrides, stableJson } from "./dependency-agent-discovery.mjs";
 import { discoverDependencySkillContracts } from "./dependency-skill-discovery.mjs";
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT } from "./governed-execution/local-dependency-tool-contract.mjs";
 import { durableCapabilityRequestsFromTask } from "./capability-request-intent.mjs";
+import { decomposeTaskActions, extractActionPaths } from "./task-action-decomposition.mjs";
+import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
 import {
   sanitizeCapabilityPublicationText,
   sanitizeCapabilityPublicationValue,
@@ -64,6 +66,7 @@ async function readGlobalInventoryJson(fallback) {
 }
 
 const task = argValue("--task", "");
+const actionTask = argValue("--action-task", task);
 const requestedRouteRunId = argValue("--run-id", null);
 // A route-search constraint, never a claim of native confirmation or Permission.
 const intentDeliveryStrategy = argValue("--intent-delivery-strategy", null);
@@ -107,7 +110,6 @@ const codexHostToolSchema = {
 };
 const entrySignals = entryClassification.signals ?? {};
 const routeChangingDimensionSignals = entrySignals.routeChangingDimensionSignals ?? [];
-const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true;
 const runtimeChoiceSurface = resolveNativeChoiceSurface(choiceSurfacePolicy, runtime);
 const stateDirRef = toPosix(path.relative(repoPath("."), stateDir));
 const GOVERNANCE_CHAIN_PREFIX_RE =
@@ -217,9 +219,8 @@ function activeRuntimeSupport() {
   if (claims.some((claim) => ["native", "partial"].includes(claim.hostSupport))) return "partial";
   return claims.some((claim) => claim.hostSupport === "unsupported") ? "unsupported" : "unknown";
 }
-const localOverrides = (await exists(repoPath(".meta-kim/local.overrides.json")))
-  ? await readJson(".meta-kim/local.overrides.json")
-  : {};
+const dependencyProjectRoot = path.resolve(argValue("--project-root") || process.env.META_KIM_CALLER_CWD || repoPath("."));
+const localOverrides = await readDependencyProjectOverrides(dependencyProjectRoot);
 const projectProjectionMode = localOverrides.projectProjectionMode ?? "project";
 const projectProjectionPolicy = {
   projectProjectionMode,
@@ -900,13 +901,13 @@ for (const agent of [...liveGlobalAgents, ...cacheOnlyGlobalAgents]) {
 }
 const projectRuntimeAgentCandidates = await projectRuntimeAgents();
 const dependencyAgentDiscovery = await discoverDependencyAgentContracts({
-  projects: registryDependencies, projectRoot: repoPath("."), localOverrides,
+  projects: registryDependencies, projectRoot: dependencyProjectRoot, localOverrides,
 });
 const dependencySkillDiscovery = localToolRequest?.status === "ready"
   ? await discoverDependencySkillContracts({
       request: localToolRequest.request,
       capabilityNeedIds: [LOCAL_DEPENDENCY_TOOL_CONTRACT.capabilityId],
-      projects: registryDependencies, projectRoot: repoPath("."), localOverrides,
+      projects: registryDependencies, projectRoot: dependencyProjectRoot, localOverrides,
     })
   : { skills: [], capabilities: [], sources: [], matches: [], canExecute: false, invocationStatus: "not_invoked" };
 const dependencySkillCandidate = dependencySkillDiscovery.capabilities.length === 1
@@ -971,6 +972,12 @@ const dependencyAgentScopeExclusion = explicitCapabilityLifecycle
 const dependencyAgentMatch = dependencyAgentScopeExclusion
   ? { ...dependencyAgentMatches, selected: null, reason: dependencyAgentScopeExclusion }
   : dependencyAgentMatches;
+// A quality adjective does not change a source-matched professional text task
+// into UI design. The selected method retains its own required inputs/boundaries.
+// An explicit interface/page request still needs its existing design choice.
+const explicitInterfaceScope = /\b(?:ui|ux|website|webpage|user interface)\b|页面|界面|网页|网站/iu.test(task);
+const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true &&
+  (!dependencyAgentMatch.selected || explicitInterfaceScope);
 const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: dependencyAgentMatches, scopeExclusion: dependencyAgentScopeExclusion });
 const repoCanonicalSkillProviders = capabilityEntries(repoCapabilityIndex, "skills").map((entry) => compactCapabilityProvider(entry, "repo_canonical_capability_index", "skills"));
 const projectRuntimeSkillProviders = await projectSkillProviders();
@@ -2420,44 +2427,44 @@ function resolveProvider({ kind, terms, runtime: runtimeName = runtime }) {
 }
 
 function buildParallelExecutionLanes() {
-  // 最大限度放开：>=2 个独立工作单元就拆 lane。
-  // lane terms 来自 taskText 临时提取（路径 + 显式 lane 标记 + 句子分段），
-  // 不预设 DOMAIN_KEYWORDS。owner 通过 resolveProvider 按 9 类池（agent → skill → mcp
-  // → command → runtimeTool → hook → plugin → memory → dependency）优先级链探测，
-  // 第一个命中的 kind 就用；都找不到就别硬塞。
+  // Draft whole actions from the original text; normalized matching text must
+  // never become the authority for file paths, task content or dependencies.
+  const actions = decomposeTaskActions(String(actionTask ?? "").replace(GOVERNANCE_CHAIN_PREFIX_RE, "").trim());
   const laneSegments = new Map();
-  function addLaneSegment(key, laneHint, terms) {
+  function addLaneSegment(key, laneHint, terms, metadata = {}) {
     const normalizedTerms = String(terms ?? "").trim();
-    if (!normalizedTerms || normalizedTerms.length < 3) return;
+    if (!normalizedTerms) return;
     if (!laneSegments.has(key)) {
-      laneSegments.set(key, { laneHint, terms: normalizedTerms });
+      laneSegments.set(key, { laneHint, terms: normalizedTerms, ...metadata });
     }
   }
 
   function deriveLaneSafetyEvidence(segment, laneId) {
     const segmentText = String(segment?.terms ?? "");
-    const mutationRequested = /\b(?:fix|implement|build|refactor|rebuild|migrate|write|edit|update|delete|remove|deploy|publish|release|upload|send)\b|修复|实现|构建|重构|迁移|写入|编辑|更新|删除|移除|部署|发布|上传|发送/iu.test(taskText);
-    const inspectionRequested = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate)\b|检查|审查|审核|分析|验证|排查/iu.test(taskText);
+    const mutationRequested = /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|delete|remove|deploy|publish|release|upload|send)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除|部署|发布|上传|发送/iu.test(taskText);
+    const inspectionRequested = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(taskText);
     const externalWriteRequested = /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件/iu.test(taskText);
-    const explicitPaths = [...segmentText.matchAll(/\b(?:src|test|tests|canonical|config|scripts|docs|app|apps|packages|lib|api|database)(?:[\\/][a-z0-9_.-]+)+/giu)]
-      .map((match) => match[0].replace(/\\/g, "/").toLowerCase());
+    const explicitPaths = extractActionPaths(segmentText);
     const readOnly = inspectionRequested && !mutationRequested && !externalWriteRequested;
+    const dependencyKnown = segment.dependencyEvidence !== "unproven";
     const shardScope = explicitPaths.length > 0
       ? [...new Set(explicitPaths)]
-      : readOnly
+      : readOnly && segment.source === "capability_anchor" && dependencyKnown
         ? [`read-only-capability:${laneId}`]
         : [];
     const proven =
-      !externalWriteRequested &&
-      (readOnly || explicitPaths.length > 0);
+      dependencyKnown && !externalWriteRequested && shardScope.length > 0;
     return {
       status: proven ? "proven" : "unproven",
-      evidenceBasis: readOnly
-        ? "read_only_lane_with_unique_capability_scope"
+      evidenceBasis: !dependencyKnown
+        ? "dependency_relationship_unproven"
+        : readOnly && shardScope.length > 0
+        ? "read_only_lane_with_explicit_scope_and_dependency_evidence"
         : explicitPaths.length > 0
           ? "explicit_local_path_scope"
           : "missing_non_overlapping_shard_scope",
       shardScope,
+      dependencyEvidence: segment.dependencyEvidence,
       mutationPolicy: readOnly ? "read_only" : explicitPaths.length > 0 ? "scoped_local_writes_only" : "unproven",
       workspaceIsolation: readOnly ? "shared_workspace_read_only" : explicitPaths.length > 0 ? "shared_workspace_disjoint_paths" : "unproven",
       externalWritePolicy: externalWriteRequested ? "requested_not_parallel_safe" : "forbidden",
@@ -2467,25 +2474,8 @@ function buildParallelExecutionLanes() {
     };
   }
 
-  // 1. 路径型 segment：src/ui、src/api、database/migrations —— 每个顶层目录一个 lane
-  for (const match of taskText.matchAll(/(?:^|[\s,;:(])([a-z][\w-]*\/[\w.-]+)/g)) {
-    const path = match[1];
-    const top = path.split("/")[0];
-    if (["the", "and", "for", "with", "under", "into", "from", "in", "on", "to"].includes(top)) continue;
-    addLaneSegment(`path:${top}`, top, path.replace(/[\/_.]/g, " "));
-  }
-
-  // 2. 显式 lane 标记：lane A / lane B —— laneHint 当 key
-  for (const match of taskText.matchAll(/lane\s+([a-z0-9]+)/gi)) {
-    const label = match[1].toLowerCase();
-    addLaneSegment(`lane:${label}`, label, `lane ${label}`);
-  }
-
-  // 3. 句子分段：换行、中英文句读、冒号/分号/「and」/「与」断句
-  for (const segment of taskText.split(/\n+|[.!?。！？,;，、；:：]|\band\b|与|和|以及/)) {
-    const trimmed = segment.trim().replace(GOVERNANCE_CHAIN_PREFIX_RE, "").trim();
-    if (trimmed.length < 4) continue;
-    addLaneSegment(`seg:${trimmed}`, trimmed.slice(0, 24), trimmed);
+  for (const [index, action] of actions.entries()) {
+    addLaneSegment(`action:${index}`, action.laneHint, action.terms, action);
   }
 
   // 4. 无显式标点时，用能力锚点拆 lane。很多真实任务会写成
@@ -2493,7 +2483,7 @@ function buildParallelExecutionLanes() {
   // 多 lane，但句子分段会只得到一整句。这里只在文本已表达并行/治理/
   // 产品多线意图时构造候选 lane；真正的 fan-out 仍由后面的 Thinking
   // worker packets、DAG 与碰撞边界裁决。
-  if (concurrentDispatchIntentPresent) {
+  if (concurrentDispatchIntentPresent && actions.length < 2 && !actions.some((action) => action.dependencyEvidence.startsWith("explicit_sequence")) && !actions.some((action) => extractActionPaths(action.terms).length > 0)) {
     const anchorPatterns = [
       {
         key: "meta-theory-rules",
@@ -2538,7 +2528,11 @@ function buildParallelExecutionLanes() {
         terms: "upload evidence proof",
       },
     ];
-    for (const pattern of anchorPatterns) {
+    const matchingAnchors = anchorPatterns.filter((pattern) => pattern.re.test(taskText));
+    // These are candidate capability partitions only. Do not keep the original
+    // umbrella task as a sibling, or describe inferred partitions as independent.
+    if (matchingAnchors.length >= 2) laneSegments.clear();
+    for (const pattern of matchingAnchors.length >= 2 ? matchingAnchors : []) {
       if (pattern.re.test(taskText)) {
         if (
           laneSegments.size >= 2 &&
@@ -2548,7 +2542,13 @@ function buildParallelExecutionLanes() {
         ) {
           continue;
         }
-        addLaneSegment(`anchor:${pattern.key}`, pattern.hint, pattern.terms);
+        addLaneSegment(`anchor:${pattern.key}`, pattern.hint, pattern.terms, {
+          source: "capability_anchor",
+          dependsOnIndexes: [],
+          dependencyEvidence: actions[0]?.dependencyEvidence === "explicit_parallel_request"
+            ? "explicit_parallel_request"
+            : "unproven",
+        });
       }
     }
   }
@@ -2576,7 +2576,9 @@ function buildParallelExecutionLanes() {
         if (provider) break;
       }
     }
-    if (!provider) continue;
+    // A missing provider must not silently remove a predecessor and promote a
+    // dependent action. Let the normal capability-gap route handle no binding.
+    if (!provider) return null;
     const laneId = `exec-${segment.laneHint.replace(/[^a-z0-9一-鿿-]/gi, "-").toLowerCase()}-${lanes.length + 1}`;
     const safetyEvidence = deriveLaneSafetyEvidence(segment, laneId);
     lanes.push({
@@ -2585,10 +2587,12 @@ function buildParallelExecutionLanes() {
       ownerKind: provider.kind,
       ownerAgent: provider.id,
       codexSpawnBinding: codexSpawnBindingForOwner(provider.id, provider.kind, laneId),
-      purpose: `并行执行 "${segment.terms.trim().slice(0, 60)}"；独立交付，由 ${provider.kind}/${provider.id} owner 负责`,
+      purpose: segment.terms,
       capabilityProvider,
       decisionImpact: `${provider.kind}/${provider.id} 是 runtime-scoped 真 owner，匹配到 lane terms：${segment.terms.trim().slice(0, 40)}`,
-      dependsOn: [],
+      dependsOn: (segment.dependsOnIndexes ?? []).map((index) => lanes[index].laneId),
+      dependencyEvidence: segment.dependencyEvidence,
+      scopeFiles: safetyEvidence.shardScope,
       parallelGroup: "parallel-execution",
       safetyEvidence,
     });
@@ -3683,6 +3687,7 @@ const workerTaskPacketDrafts = selectedWorkerLanes
         verificationOwner: recommendedRoute.verificationOwner,
         verification: recommendedRoute.verificationMethod,
         dependsOn: lane.dependsOn ?? [],
+        dependencyEvidence: lane.dependencyEvidence ?? "unproven",
         parallelGroup: lane.parallelGroup ?? null,
         mergeOwner: "meta-conductor",
         shardScope: lane.safetyEvidence?.shardScope ?? [],
@@ -3712,6 +3717,28 @@ const workerTaskPacketDrafts = selectedWorkerLanes
           recommendedRoute.selectedCapabilityProviders?.agent?.id ??
           recommendedRoute.owner;
         const roleInstanceId = `exec-${selectedOwner ?? "unknown"}-1`;
+        const actions = decomposeTaskActions(String(actionTask ?? "").replace(GOVERNANCE_CHAIN_PREFIX_RE, "").trim());
+        const purpose = actions.length === 1 ? actions[0].terms : String(actionTask ?? "").trim();
+        // Recognize only a complete, narrow prohibition clause here. A phrase
+        // containing further actions remains mutation-like, never stripped.
+        const effectText = purpose.replace(/\b(?:do not|don't|don’t|never)\s+(?:modify|edit|write|delete|remove|create|change|patch)\s+(?:any\s+)?(?:files|source files|code)[.!]?(?=$|[\n;])/giu, "")
+          .split(/[，,、;；。.!?\n]/u)
+          .filter((clause) => !/^(?:不|不要|不得|禁止)(?:(?:修改|改动|编辑|写入|写|删除|移除|创建|更新)(?:任何|原始|原有|现有)?(?:文件|代码|源码)|(?:代投|投递)简历)$/u.test(clause.trim()))
+          .join("; ");
+        const requestsMutation = /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|modify|change|patch|delete|remove)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除/iu.test(effectText);
+        const requestsExternalWrite = /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件|代投|投递/iu.test(effectText);
+        const requestsInspection = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
+        const scopeFiles = actions.length === 1 ? extractActionPaths(purpose) : [];
+        const readOnly = requestsInspection && !requestsMutation && !requestsExternalWrite;
+        const proven = actions.length === 1 && scopeFiles.length > 0 && scopeFiles.every((scope) => scopeComparisonKey(scope) !== null) && !requestsExternalWrite && (readOnly || requestsMutation);
+        const safetyEvidence = {
+          status: proven ? "proven" : "unproven", evidenceBasis: proven ? "single_action_explicit_scope" : "single_action_scope_or_effect_unproven",
+          shardScope: scopeFiles, dependencyEvidence: actions.length === 1 ? "single_action_no_other_workers" : "unproven",
+          mutationPolicy: proven ? readOnly ? "read_only" : "scoped_local_writes_only" : "unproven",
+          workspaceIsolation: proven ? readOnly ? "shared_workspace_read_only" : "shared_workspace_disjoint_paths" : "unproven",
+          externalWritePolicy: requestsExternalWrite ? "requested_not_parallel_safe" : "forbidden",
+          collisionPolicy: proven ? "no_overlap" : "unproven",
+        };
         const taskPacket = {
           taskPacketId: `worker-task:${roleInstanceId}:1`,
           ownerKind: "agent",
@@ -3727,12 +3754,15 @@ const workerTaskPacketDrafts = selectedWorkerLanes
           dependsOn: [],
           parallelGroup: null,
           mergeOwner: "meta-conductor",
-          shardScope: [],
-          mutationPolicy: "single_worker",
-          workspaceIsolation: "single_worker",
-          externalWritePolicy: "bounded_by_route",
-          collisionPolicy: "single_worker_bounded_scope",
-          purpose: `Execute route ${recommendedRoute.id} within its declared scope.`,
+          scopeFiles,
+          shardScope: safetyEvidence.shardScope,
+          dependencyEvidence: safetyEvidence.dependencyEvidence,
+          mutationPolicy: safetyEvidence.mutationPolicy,
+          workspaceIsolation: safetyEvidence.workspaceIsolation,
+          externalWritePolicy: safetyEvidence.externalWritePolicy,
+          collisionPolicy: safetyEvidence.collisionPolicy,
+          safetyEvidence,
+          purpose,
           decisionImpact: "Single-worker route selected by Thinking.",
         };
         const codexSpawnBinding = codexSpawnBindingForOwner(
@@ -3754,23 +3784,24 @@ const parallelGroupIds = [...new Set(
     .map((packet) => packet.parallelGroup)
     .filter(Boolean),
 )];
-function scopesArePairwiseDisjoint(packets) {
+function scopesPermitConcurrentAccess(packets, { allowSharedReads = false } = {}) {
+  if (packets.some((packet) => !Array.isArray(packet.shardScope) || packet.shardScope.length === 0)) return false;
   const ownedScopes = packets.flatMap((packet) =>
     (packet.shardScope ?? []).map((scope) => ({
       packetId: packet.taskPacketId,
-      scope: String(scope).replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase(),
+      readOnly: ["read_only", "read_only_target"].includes(packet.mutationPolicy),
+      scope: scopeComparisonKey(scope),
     })),
   );
-  if (ownedScopes.length < packets.length) return false;
+  if (ownedScopes.some((entry) => entry.scope === null)) return false;
   for (let leftIndex = 0; leftIndex < ownedScopes.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < ownedScopes.length; rightIndex += 1) {
       const left = ownedScopes[leftIndex];
       const right = ownedScopes[rightIndex];
       if (left.packetId === right.packetId) continue;
+      if (allowSharedReads && left.readOnly && right.readOnly) continue;
       if (
-        left.scope === right.scope ||
-        left.scope.startsWith(`${right.scope}/`) ||
-        right.scope.startsWith(`${left.scope}/`)
+        !scopeKeysAreProvablyDisjoint(left.scope, right.scope)
       ) {
         return false;
       }
@@ -3794,11 +3825,32 @@ const safeFanoutReady =
       packet.collisionPolicy !== "unproven" &&
       packet.workspaceIsolation !== "unproven",
   ) &&
-  scopesArePairwiseDisjoint(workerTaskPacketDrafts);
+  scopesPermitConcurrentAccess(workerTaskPacketDrafts, { allowSharedReads: true });
+// An explicitly ordered, fully scoped chain is a valid host handoff plan even
+// though it has no initial parallel wave. This establishes neither invocation
+// nor execution authorization; the host must still enforce each predecessor.
+const safeOrderedExecutionReady =
+  workerTaskPacketDrafts.length >= 2 &&
+  workerTaskPacketDrafts.every((packet, index, packets) => {
+    const expectedDependencies = packets.slice(0, index).map((previous) => previous.roleInstanceId);
+    return Boolean(
+      packet.ownerAgent &&
+      packet.mergeOwner === "meta-conductor" &&
+      packet.safetyEvidence?.status === "proven" &&
+      packet.shardScope.length > 0 &&
+      packet.externalWritePolicy === "forbidden" &&
+      packet.collisionPolicy !== "unproven" &&
+      packet.workspaceIsolation !== "unproven" &&
+      packet.dependencyEvidence === (index === 0 ? "explicit_sequence_start" : "explicit_sequence") &&
+      Array.isArray(packet.dependsOn) &&
+      packet.dependsOn.length === expectedDependencies.length &&
+      packet.dependsOn.every((dependency, dependencyIndex) => dependency === expectedDependencies[dependencyIndex]),
+    );
+  });
 const unprovenMultiLaneExecution =
   Array.isArray(recommendedRoute?.parallelExecutionLanes) &&
   recommendedRoute.parallelExecutionLanes.length >= 2 &&
-  !safeFanoutReady;
+  !safeFanoutReady && !safeOrderedExecutionReady;
 const nativeChoicePending = criticalChoiceBlocksExecution || thinkingChoiceBlocksExecution;
 const fastPathNativeChoicePending =
   entryClassification.path === "fast_path" && nativeChoicePending;
@@ -3970,13 +4022,18 @@ const output = {
       collisionBoundaryDeclared: workerTaskPacketDrafts.every(
         (packet) => packet.safetyEvidence?.status === "proven" && packet.collisionPolicy !== "unproven",
       ),
-      shardScopesPairwiseDisjoint: scopesArePairwiseDisjoint(workerTaskPacketDrafts),
+      shardScopesPairwiseDisjoint: scopesPermitConcurrentAccess(workerTaskPacketDrafts),
       externalWritesForbidden: workerTaskPacketDrafts.every(
         (packet) => packet.externalWritePolicy === "forbidden",
       ),
       hostInvocationBoundary: runtime === "codex"
         ? "probe current top-level spawn_agent surface before invocation"
         : "use the current runtime native agent surface",
+    },
+    orderedExecutionReadiness: {
+      ready: safeOrderedExecutionReady,
+      dependencyPolicy: "each_explicit_successor_waits_for_all_preceding_tasks",
+      executionAuthorized: false,
     },
     parallelGroups: parallelGroupIds,
     orchestratorKinds: classifyOrchestratorKinds(
