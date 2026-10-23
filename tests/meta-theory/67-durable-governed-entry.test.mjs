@@ -324,41 +324,36 @@ test("67 — resume strictly binds reservation schema, runId, and task fingerpri
   );
 });
 
-test("67 — progress callback crash after reservation resumes by creating the missing kernel run", async (t) => {
+test("67 — progress callback failure preserves execution and a materialized resume emits no task replay", async (t) => {
   const root = await tempRoot(t);
-  const runId = "p118-progress-crash-resume";
-  await assert.rejects(
-    runMetaTheoryGovernedExecution({
-      task: TASK,
-      runId,
-      stateDir: root,
-      artifactDir: root,
-      dbPath: path.join(root, "analytics.sqlite"),
-      projectRoot: process.cwd(),
-      projectCapabilityMutationMode: "read_only",
-      onConversationProgress() {
-        throw new Error("progress callback crash");
-      },
-      stageRunner: durableStageRunner(root, { count: 0 }, "fresh"),
-    }),
-    /progress callback crash/iu,
-  );
-  assert.equal((await fs.stat(path.join(root, `${runId}.reservation.json`))).isFile(), true);
-  await assert.rejects(fs.stat(path.join(root, "durable-runs.sqlite")), /ENOENT/iu);
-  const counter = { count: 0 };
-  const resumed = await runMetaTheoryGovernedExecution({
-    task: TASK,
-    runId,
-    stateDir: root,
-    artifactDir: root,
-    dbPath: path.join(root, "analytics.sqlite"),
-    projectRoot: process.cwd(),
+  const runId = "p118-progress-sink-failure";
+  const initialCounter = { count: 0 };
+  const first = await runMetaTheoryGovernedExecution({
+    task: TASK, runId, stateDir: root, artifactDir: root,
+    dbPath: path.join(root, "analytics.sqlite"), projectRoot: process.cwd(),
     projectCapabilityMutationMode: "read_only",
+    onConversationProgress() { throw new Error("progress callback crash"); },
+    stageRunner: durableStageRunner(root, initialCounter, "fresh"),
+  });
+  assert.ok(initialCounter.count > 0);
+  assert.equal(first.durableExecution.status, "materialized");
+  assert.equal(first.conversationNotice.emitted, false);
+  assert.ok(first.conversationNotice.progressEvents.every((event) => event.deliveryStatus === "failed"));
+  const counter = { count: 0 };
+  const events = [];
+  const resumed = await runMetaTheoryGovernedExecution({
+    task: TASK, runId, stateDir: root, artifactDir: root,
+    dbPath: path.join(root, "analytics.sqlite"), projectRoot: process.cwd(),
+    projectCapabilityMutationMode: "read_only",
+    onConversationProgress(event) { events.push(event); },
     stageRunner: durableStageRunner(root, counter, "resume"),
   });
   assert.equal(resumed.durableExecution.mode, "resume");
-  assert.equal(resumed.durableExecution.status, "materialized");
-  assert.ok(counter.count > 0);
+  assert.equal(resumed.durableExecution.status, "already_materialized");
+  assert.equal(counter.count, 0);
+  assert.equal(resumed.conversationNotice.emitted, true);
+  assert.deepEqual(events.map((event) => event.stage), ["Resume"]);
+  assert.equal(events.some((event) => event.eventKind === "durable_task_event"), false);
 });
 
 test("67 — already_materialized validates paired digests and CLI reports resume with zero workers", async (t) => {

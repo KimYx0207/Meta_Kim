@@ -20,6 +20,16 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active"
     },
+    "live-task-progress-20261023:skill": {
+      "appliedAt": "2026-10-23T14:52:05.604Z",
+      "approvalDigest": "sha256:70bb991c7702f0691d9c3ff527a9fe0248704f80dfed621f747b6e7d2f10c6f8",
+      "candidateDigest": "sha256:dbf90fb7de6f45114ff9e83c7493c2152929b338cdd48051cd53f0b486421fd2",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
     "publish-both-20261021:reviewed-meta-theory-skill": {
       "appliedAt": "2026-10-21T14:08:10.970Z",
       "approvalDigest": "sha256:25450021a3af89b61b47573cac68c321901624018146f3dadb65a53e649e0d5a",
@@ -57,9 +67,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-10-23T12:09:48.860Z",
-        "lastTransitionId": "requirements-design-20261023:skill",
-        "reason": "Bind independently reviewed requirements-before-design and source-backed method changes. Preserve existing status and execution eligibility."
+        "changedAt": "2026-10-23T14:52:05.604Z",
+        "lastTransitionId": "live-task-progress-20261023:skill",
+        "reason": "Bind independently reviewed current-run host panel and truthful task-progress guidance; no new execution authority."
       },
       "provenance": {
         "evidenceRefs": [
@@ -71,7 +81,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:553d49562ec011565c0dfd616cda767dd4285f37189a2ced35298b237d4504cf",
+      "sourceDigest": "sha256:8bfffdf668f1787624931b543256b4d33dc7238af777758b8a26def566d35ac5",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -287,6 +297,39 @@
       "targetRef": "config/governance/decision-pattern-catalog.json",
       "toStatus": "active",
       "transitionId": "requirements-design-20261023:methods"
+    },
+    {
+      "appliedAt": "2026-10-23T14:52:05.604Z",
+      "approvalDigest": "sha256:70bb991c7702f0691d9c3ff527a9fe0248704f80dfed621f747b6e7d2f10c6f8",
+      "candidateDigest": "sha256:dbf90fb7de6f45114ff9e83c7493c2152929b338cdd48051cd53f0b486421fd2",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-10-23T12:09:48.860Z",
+          "lastTransitionId": "requirements-design-20261023:skill",
+          "reason": "Bind independently reviewed requirements-before-design and source-backed method changes. Preserve existing status and execution eligibility."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:553d49562ec011565c0dfd616cda767dd4285f37189a2ced35298b237d4504cf",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "live-task-progress-20261023:skill"
     }
   ],
   "policy": {
@@ -296,7 +339,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 5,
+  "revision": 6,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-10-23T12:09:48.878Z"
+  "updatedAt": "2026-10-23T14:52:05.604Z"
 }

@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 
 import { runStageRunnerBridge } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
 import { openDurableRunKernel } from "../../scripts/governed-execution/durable-run-kernel.mjs";
+import { projectWorkerProgressEvent } from "../../scripts/governed-execution/worker-result-projection.mjs";
 import {
   buildStageDagPacket,
   stageLaneNodeId,
@@ -52,6 +53,92 @@ function dagFor(taskPacketIds) {
     runtimeCapacity: taskPacketIds.length,
   });
 }
+
+test("task progress uses committed kernel events, shows actual parallel claims, and resumes without replay", async () => {
+  const kernel = await openDurableRunKernel();
+  const runId = "progress-committed-events";
+  const ids = ["one", "two", "after"];
+  const stageDagPacket = buildStageDagPacket({ stageOrder: ["Execution"], runtimeCapacity: 2,
+    stageLanes: { Execution: ids.map((id) => ({ ...lane(id), ...(id === "after" ? {
+      dependsOn: [stageLaneNodeId("Execution", "one"), stageLaneNodeId("Execution", "two")],
+    } : {}) })) } });
+  const events = [];
+  const authorityChecks = [];
+  const calls = [];
+  let failTwo = true;
+  const options = { runId, runtime: "codex", stageDagPacket, workerTaskPackets: ids.map(packet),
+    workspaceRoot: process.cwd(), evidenceKind: "synthetic_transport",
+    durable: { enabled: true, kernel, mode: "create", taskFingerprint: "progress-task", leaseMs: 30_000 },
+    onExecutionProgress: async (event) => {
+      const committed = kernel.projectRun(runId).events.find((item) => item.eventId === event.eventId);
+      authorityChecks.push(committed?.eventType === event.eventType);
+      events.push(event);
+      await Promise.resolve();
+    },
+    invokeWorker: async ({ packet: work }) => {
+      assert.ok(events.some((event) => event.taskPacketId === work.taskPacketId && event.eventType === "NodeAttemptClaimed"));
+      calls.push(work.taskPacketId);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (work.taskPacketId === "two" && failTwo) return { status: "failed", failureClass: "controlled_test_failure", failureMessage: "Test failure", durationMs: 1 };
+      return { status: "pass", durationMs: 1, outputText: work.taskPacketId, outputSha256: "a".repeat(64) };
+    } };
+  try {
+    const first = await runStageRunnerBridge(options);
+    assert.ok(authorityChecks.every(Boolean), "notification follows durable commit");
+    assert.equal(events.length, 4, "two actual claims and their committed outcomes");
+    assert.equal(first.status, "failed");
+    assert.ok(events.some((event) => event.activeTaskCount === 2));
+    assert.ok(events.some((event) => event.waitingTaskCount === 1));
+    assert.deepEqual(calls.sort(), ["one", "two"]);
+    assert.deepEqual(events.filter((event) => event.eventType === "NodeAttemptFailed").map((event) => event.taskPacketId), ["two"]);
+    assert.ok(events.every((event) => event.evidenceKind === "synthetic_transport" && !event.accepted));
+    const oldIds = new Set(events.map((event) => event.eventId));
+    events.length = 0;
+    calls.length = 0;
+    failTwo = false;
+    const resumed = await runStageRunnerBridge({ ...options, durable: { ...options.durable, mode: "resume" } });
+    assert.ok(authorityChecks.every(Boolean));
+    assert.equal(events.length, 4, "only the failed task and its successor generate fresh events");
+    assert.equal(resumed.status, "pass");
+    assert.deepEqual(calls, ["two", "after"]);
+    assert.ok(events.every((event) => !oldIds.has(event.eventId)));
+    assert.equal(new Set(events.map((event) => event.eventId)).size, events.length);
+    assert.deepEqual(events.map((event) => event.eventSeq), events.map((event) => event.eventSeq).sort((a, b) => a - b));
+    assert.ok(events.findIndex((event) => event.taskPacketId === "two" && event.eventType === "NodeAttemptCompleted") <
+      events.findIndex((event) => event.taskPacketId === "after" && event.eventType === "NodeAttemptClaimed"));
+    const event = kernel.projectRun(runId).events.find((item) => item.eventType === "NodeAttemptClaimed");
+    assert.equal(projectWorkerProgressEvent({ runId: "other-run", stageDagPacket, workerTaskPackets: ids.map(packet), event }), null);
+    assert.equal(projectWorkerProgressEvent({ runId, stageDagPacket, workerTaskPackets: [], event }), null);
+    assert.equal(projectWorkerProgressEvent({ runId, stageDagPacket, workerTaskPackets: ids.map(packet), event: { ...event, eventType: "accepted" } }), null);
+    const history = kernel.projectRun(runId).events;
+    const terminal = history.filter((item) => item.nodeId === stageLaneNodeId("Execution", "after") && item.eventType === "NodeAttemptCompleted").at(-1);
+    const projected = projectWorkerProgressEvent({ runId, stageDagPacket, workerTaskPackets: ids.map(packet), event: terminal, events: [...history].reverse() });
+    assert.equal(projected.activeTaskCount, 0, "Read model selects latest sequence even when history arrives out of order");
+    assert.equal(projected.waitingTaskCount, 0);
+    assert.equal(projectWorkerProgressEvent({ runId, stageDagPacket, workerTaskPackets: null, event }), null);
+  } finally { kernel.close(); }
+});
+
+test("task progress sink failures cannot abort execution or create completed events before persistence", async () => {
+  const kernel = await openDurableRunKernel();
+  const events = [];
+  const completeNode = kernel.completeNode.bind(kernel);
+  kernel.completeNode = (input) => {
+    if (input.nodeId.endsWith(":lane:one")) throw new Error("controlled persistence failure");
+    return completeNode(input);
+  };
+  try {
+    const result = await runStageRunnerBridge({ runId: "progress-terminal-failure", runtime: "codex",
+      stageDagPacket: dagFor(["one"]), workerTaskPackets: [packet("one")], workspaceRoot: process.cwd(),
+      durable: { enabled: true, kernel, mode: "create", taskFingerprint: "terminal-failure-task" },
+      invokeWorker: async () => ({ status: "pass", durationMs: 1, outputText: "one", outputSha256: "a".repeat(64) }),
+      onExecutionProgress: (event) => { events.push(event); throw new Error("broken sink"); },
+    });
+    assert.equal(result.failure.failureClass, "durable_terminal_commit_failed");
+    assert.ok(events.some((event) => event.eventType === "NodeAttemptClaimed"));
+    assert.equal(events.some((event) => event.eventType === "NodeAttemptCompleted"), false);
+  } finally { kernel.close(); }
+});
 
 test("66 — bridge contract exposes the optional P-118 durable kernel boundary", () => {
   assert.equal(CONTRACT.durableExtension.prdTaskId, "P-118");

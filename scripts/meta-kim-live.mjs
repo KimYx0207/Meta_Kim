@@ -29,7 +29,9 @@ import {
 } from "../src/infrastructure/live/live-hub-lifecycle.mjs";
 import {
   ensureGovernedLiveProjectRegistration,
+  registerLiveNativeCodexBinding,
 } from "./project-registry.mjs";
+import { createCodexNativeSessionReader } from "../src/infrastructure/live/codex-native-session-reader.mjs";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -106,7 +108,7 @@ function usage() {
     "Usage: meta-kim live [--project-root DIR] [--profile NAME] [--port PORT] [--restart] [--no-open] [--json] [--enable-control]",
     "Default mode starts or reuses one user-level Hub on 127.0.0.1, listing only registered projects and governed sessions; it exposes no mutation endpoint.",
     "--enable-control records an explicit control request, but the singleton CLI stays read-only unless a complete authority loadout is injected through the programmatic server API; otherwise it is fail-closed.",
-    "A newly started Hub can observe the exact current Codex thread from CODEX_THREAD_ID (or --observe-codex-thread UUID); --observe-codex-turn UUID pins one turn. This only reads native events and never calls a model. Reusing an existing Hub does not silently replace its native binding.",
+    "The Hub can observe the exact Codex thread from CODEX_THREAD_ID (or --observe-codex-thread UUID). A current-task link requires --run-id or --observe-codex-turn UUID; a thread alone cannot identify the current turn. A reused Hub adds this trusted local binding without replacing other viewers. This only reads native events and never calls a model.",
   ].join("\n");
 }
 
@@ -148,6 +150,22 @@ export function liveSelectionForRegistration(registration, runId = null) {
 
 export { parseArgs };
 
+export function liveCurrentRunPresentation({ runId = null, nativeBinding = null, deepLink = null } = {}) {
+  const currentRunState = runId ? "selected" : nativeBinding ? "awaiting_native_turn" : "not_requested";
+  return { currentRunState, currentTaskLink: runId ? deepLink : null,
+    autoOpenAllowed: currentRunState !== "awaiting_native_turn",
+    ...(currentRunState === "awaiting_native_turn" ? { notice: "当前任务链接暂不可用（尚未确定本轮原生记录）；下方仅为项目入口。可用 --run-id 或 --observe-codex-turn 指定本轮。" } : {}) };
+}
+
+/** A thread's latest observed turn may be yesterday's work, not this launch. */
+export async function resolveNativeCodexCurrentRun(nativeBinding) {
+  if (!nativeBinding?.turnId) return null;
+  const observed = await createCodexNativeSessionReader(nativeBinding).read().catch(() => null);
+  return observed?.state === "observed" && observed.threadId === nativeBinding.threadId.toLowerCase()
+    && observed.turnId === nativeBinding.turnId.toLowerCase()
+    ? `native-codex-${observed.threadId}-${observed.turnId}` : null;
+}
+
 /** Existing host metadata can bind a new daemon; no arbitrary HTTP binding exists. */
 export function nativeCodexStartupBinding(options, projectRoot, environment = process.env) {
   const threadId = options.nativeCodexThreadId || environment.CODEX_THREAD_ID;
@@ -171,7 +189,8 @@ async function main(argv = process.argv.slice(2)) {
       runtimeFamily: "shared",
       sourceRef: "meta-kim-live",
     });
-    const { projectRef, runId } = liveSelectionForRegistration(registration, options.runId);
+    const { projectRef } = liveSelectionForRegistration(registration, options.runId);
+    let { runId } = liveSelectionForRegistration(registration, options.runId);
     const profile = options.profile || process.env.META_KIM_PROFILE || "default";
     const budget = loadLiveHubLifecycleBudget();
     if (options.restart === true) {
@@ -189,7 +208,13 @@ async function main(argv = process.argv.slice(2)) {
         throw error;
       }
     }
-    const nativeBinding = nativeCodexStartupBinding(options, projectRoot);
+    const nativeBinding = projectRef ? nativeCodexStartupBinding(options, projectRoot) : null;
+    if (nativeBinding) {
+      await registerLiveNativeCodexBinding({ homeDir: process.env.META_KIM_LIVE_HOME, repoPath: projectRoot, profile, ...nativeBinding });
+      if (!runId) {
+        runId = await resolveNativeCodexCurrentRun(nativeBinding);
+      }
+    }
     const previousBinding = process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING;
     if (nativeBinding) process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING = JSON.stringify(nativeBinding);
     else delete process.env.META_KIM_LIVE_NATIVE_CODEX_BINDING;
@@ -226,6 +251,7 @@ async function main(argv = process.argv.slice(2)) {
       error.code = result.reason || "startup_unavailable";
       throw error;
     }
+    const currentRun = liveCurrentRunPresentation({ runId, nativeBinding, deepLink: result.deepLink });
     const publicResult = {
       status: result.status,
       started: result.started,
@@ -242,11 +268,12 @@ async function main(argv = process.argv.slice(2)) {
       singleton: true,
       profile,
       projectRegistered: projectRef !== null,
+      ...currentRun,
     };
     process.stdout.write(options.json
       ? `${JSON.stringify(publicResult)}\n`
-      : `Meta_Kim Live Hub ${result.started ? "started" : "reused"} (${options.enableControl ? "control requested; fail-closed read-only" : "read-only"}): ${result.deepLink}\n`);
-    if (options.open !== false) openBrowser(result.deepLink);
+      : `${currentRun.notice ? currentRun.notice + "\n" : ""}Meta_Kim Live Hub ${result.started ? "started" : "reused"} (${options.enableControl ? "control requested; fail-closed read-only" : "read-only"}): ${result.deepLink}\n`);
+    if (options.open !== false && currentRun.autoOpenAllowed) openBrowser(result.deepLink);
     return null;
   }
 

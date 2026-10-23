@@ -3025,10 +3025,26 @@ function buildBusinessFlowBlueprintPacket({ businessPhasePlanPacket, orchestrati
   };
 }
 
+function governanceEntrySummary(entryClassification, language) {
+  const kind = entryClassification?.triggerReason === "explicit_meta_theory" ? "explicit"
+    : entryClassification?.triggerReason === "subjective_quality_ambiguous" ? "subjective"
+    : entryClassification?.triggerReason === "natural_language_product_build" ? "product"
+    : entryClassification?.governedEntry === true ? "work" : "direct";
+  const copy = {
+    "zh-CN": { explicit: "已明确请求 Meta-Theory 治理流程", subjective: "质量方向存在取舍，需要先确定目标与验收标准", product: "自然语言产品需求需要先确定范围、路线和验收方式", work: "自然语言工作请求需要规划、证据和结果核对", direct: "已通过治理运行入口请求规划与结果核对" },
+    en: { explicit: "Meta-Theory governance was explicitly requested", subjective: "quality trade-offs need a goal and acceptance standard", product: "the product request needs scope, a route, and acceptance criteria", work: "the work request needs planning, evidence, and outcome checks", direct: "the governed runner was invoked for planning and outcome checks" },
+    "ja-JP": { explicit: "Meta-Theory が明示的に依頼されました", subjective: "品質の選択には目標と受入れ基準が必要です", product: "製品の依頼には範囲、ルート、受入れ基準が必要です", work: "作業の依頼には計画、証拠、結果確認が必要です", direct: "計画と結果確認のために統制実行が呼び出されました" },
+    "ko-KR": { explicit: "Meta-Theory 절차가 명시적으로 요청되었습니다", subjective: "품질 선택에 목표와 승인 기준이 필요합니다", product: "제품 요청에 범위, 경로 및 승인 기준이 필요합니다", work: "작업 요청에 계획, 증거 및 결과 확인이 필요합니다", direct: "계획과 결과 확인을 위해 실행기가 호출되었습니다" },
+  };
+  const prefix = { "zh-CN": "进入 Meta-Theory", en: "Entering Meta-Theory", "ja-JP": "Meta-Theory に入ります", "ko-KR": "Meta-Theory 시작" };
+  return `${prefix[language] ?? prefix.en}: ${(copy[language] ?? copy.en)[kind]}.`;
+}
+
 function buildGovernanceStartReasonPacket({
   orchestrationReport,
   businessPhasePlanPacket,
   cardPlanPacket,
+  entryClassification,
   language = "zh-CN",
 }) {
   const capabilityCount = orchestrationReport.fetchEvidence.capabilityInventory.length;
@@ -3072,7 +3088,7 @@ function buildGovernanceStartReasonPacket({
     placement: "run_start",
     maxLineCharacters: 120,
     language,
-    summary: localized.summary,
+    summary: governanceEntrySummary(entryClassification, language),
     spineReason: localized.spine,
     workflowReason: localized.workflow,
     cardReason: localized.cards,
@@ -3098,7 +3114,7 @@ function progressEvent({ runId, stage, status, reason, owner = null, details = {
   return {
     schemaVersion: "conversation-progress-event-v0.1",
     eventKind: "coarse_snapshot",
-    eventId: stableId("conversation-progress", `${runId}-${stage}-${status}-${nowIso()}`),
+    eventId: stableId("conversation-progress", `${runId}-${stage}-${status}-${reason}`),
     runId,
     stage,
     status,
@@ -3111,7 +3127,10 @@ function progressEvent({ runId, stage, status, reason, owner = null, details = {
 
 function renderConversationProgressEvent(event, labels, surfaceLabels, first = false) {
   const prefix = first ? `${labels.conversationNotice.title}: ` : "";
-  return `${prefix}[${event.stage}] ${event.reason}`;
+  const stage = labels.htmlLang === "zh-CN"
+    ? ({ Critical: "目标", Fetch: "查证", Thinking: "计划", Execution: "执行", Review: "审查", Closure: "核对", Waiting: "等待", Resume: "恢复", Delivery: "交付" })[event.stage] ?? event.stage
+    : event.stage;
+  return `${prefix}[${stage}] ${event.reason}`;
 }
 
 async function publishConversationProgress({
@@ -3122,16 +3141,91 @@ async function publishConversationProgress({
   enabled,
   onConversationProgress,
 }) {
+  if (events.some((item) => item.runId === event.runId && item.eventId === event.eventId)) return;
   const text = renderConversationProgressEvent(
     event,
     labels,
     surfaceLabels,
-    events.length === 1,
+    events.length === 0,
   );
-  const enrichedEvent = { ...event, text, textSha256: textSha256(text) };
+  const enrichedEvent = { ...event, text, textSha256: textSha256(text), deliveryStatus: "not_emitted" };
   events.push(enrichedEvent);
   if (!enabled || typeof onConversationProgress !== "function") return;
-  await onConversationProgress(enrichedEvent);
+  try {
+    await onConversationProgress(structuredClone(enrichedEvent));
+    enrichedEvent.deliveryStatus = "emitted";
+    enrichedEvent.emittedAt = nowIso();
+  } catch {
+    enrichedEvent.deliveryStatus = "failed";
+    // An unavailable display or broken pipe cannot change execution truth.
+  }
+}
+
+function taskProgressReason(language, kind, label = "") {
+  const copy = {
+    "zh-CN": { NodeAttemptClaimed: "已领取，开始处理", NodeAttemptCompleted: "执行结束，待验收", NodeAttemptFailed: "执行失败，需处理", NodeAttemptInDoubt: "执行结果待核实", resume: "已恢复当前运行；保留已完成任务，不重复执行。", waiting: "执行暂未开始，等待当前阻塞项解决。", delivery: "本次运行记录已保存；任务是否通过以验收结果为准。", revision: "审查要求返工", reviewed: "审查材料已更新，继续验证；尚未代表用户验收。", failure: "本次运行中断，保留已有记录供恢复。" },
+    "en-US": { NodeAttemptClaimed: "Task claimed for processing", NodeAttemptCompleted: "Execution ended; awaiting verification", NodeAttemptFailed: "Execution failed; action required", NodeAttemptInDoubt: "Execution outcome needs confirmation", resume: "Run restored; completed tasks are retained without replay.", waiting: "Execution has not started; the current blocker needs resolution.", delivery: "Run records saved; task acceptance remains subject to verification.", revision: "Review requires revision", reviewed: "Review evidence updated; continue verification. User acceptance is not established.", failure: "Run interrupted; existing records are retained for recovery." },
+    "ja-JP": { NodeAttemptClaimed: "タスクを取得、処理開始", NodeAttemptCompleted: "実行終了、検証待ち", NodeAttemptFailed: "実行失敗、対応が必要", NodeAttemptInDoubt: "実行結果の確認が必要", resume: "実行を復元しました。完了済みタスクは再実行しません。", waiting: "現在の阻害要因の解決を待っています。実行はまだ開始していません。", delivery: "実行記録を保存しました。タスクの受入れには検証が必要です。", revision: "レビューで修正が必要", reviewed: "レビュー資料を更新しました。検証を続けます。利用者の受入れは未確認です。", failure: "実行が中断しました。復旧用の記録を保持しています。" },
+    "ko-KR": { NodeAttemptClaimed: "작업 인수, 처리 시작", NodeAttemptCompleted: "실행 종료, 검증 대기", NodeAttemptFailed: "실행 실패, 조치 필요", NodeAttemptInDoubt: "실행 결과 확인 필요", resume: "실행을 복원했습니다. 완료된 작업은 다시 실행하지 않습니다.", waiting: "현재 차단 요인의 해결을 기다립니다. 실행은 아직 시작되지 않았습니다.", delivery: "실행 기록을 저장했습니다. 작업 승인은 검증 결과에 따릅니다.", revision: "검토 결과 수정 필요", reviewed: "검토 자료를 갱신했습니다. 검증을 계속하며 사용자 승인은 아직 확인되지 않았습니다.", failure: "실행이 중단되었습니다. 복구를 위해 기존 기록을 보존합니다." },
+  };
+  const locale = ({ zh: "zh-CN", en: "en-US", ja: "ja-JP", ko: "ko-KR" })[language] ?? language;
+  const message = (copy[locale] ?? copy["en-US"])[kind];
+  return label ? `${message}: ${String(label).replace(/[\r\n\u0000-\u001f\u007f]/gu, " ").slice(0, 140)}` : message;
+}
+
+function conversationTransportObservation(events, channel, adapter) {
+  const delivered = events.filter((event) => event.deliveryStatus === "emitted");
+  const emitted = delivered.length > 0;
+  return {
+    status: emitted ? "emitted" : "not_emitted", emitted,
+    channel: emitted ? channel : null, adapter: emitted ? adapter : null,
+    emittedAt: delivered.at(-1)?.emittedAt ?? null,
+    emittedTextSha256: emitted ? textSha256(delivered.map((event) => event.text).join("\n")) : null,
+    evidenceKind: emitted ? "transport_emitted_notice" : "not_emitted",
+    outputBoundary: emitted ? conversationNoticeOutputBoundary(channel) : null,
+    progressStreamed: emitted,
+    hostObservationExpectations: delivered.map((event) => ({ stage: event.stage, textSha256: event.textSha256 })),
+  };
+}
+
+function renderWorkerProgress(event, language) {
+  let text = taskProgressReason(language, event.eventType, event.taskLabel);
+  const locale = normalizeOutputLanguage(language);
+  const parallel = event.activeTaskCount;
+  const waiting = event.waitingTaskCount;
+  if (parallel > 1) text += ({ "zh-CN": `；已领取 ${parallel} 项`, "en-US": `; ${parallel} tasks claimed`, "ja-JP": `；${parallel} 件を取得済み`, "ko-KR": `; ${parallel}개 작업 인수됨` })[locale] ?? "";
+  if (waiting > 0) text += ({ "zh-CN": `；${waiting} 项等待依赖`, "en-US": `; ${waiting} tasks waiting for dependencies`, "ja-JP": `；${waiting} 件が依存タスク待ち`, "ko-KR": `; ${waiting}개 작업이 선행 작업 대기 중` })[locale] ?? "";
+  return text;
+}
+
+function businessPhaseProgress(businessPhasePlanPacket, labels, surfaceLabels) {
+  const language = labels.htmlLang;
+  const phases = businessPhasePlanPacket.phases;
+  const closure = businessPhasePlanPacket.closure;
+  const current = phases.find((phase) => phase.phase === closure.currentPhase);
+  const blocked = phases.filter((phase) => phase.status === "blocked");
+  const copy = {
+    "zh-CN": { plan: "业务流程计划已记录；计划状态不代表已执行或验收", none: "无", states: { done: "已记录", skipped: "已跳过", blocked: "阻塞", pending: "等待" }, names: ["方向", "规划", "执行", "审查", "复审", "返工", "验证", "总结", "反馈", "演化", "投影"] },
+    en: { plan: "Workflow plan recorded; plan status does not prove execution or acceptance", none: "none", states: { done: "recorded", skipped: "skipped", blocked: "blocked", pending: "waiting" }, next: { feedback: "Wait for user confirmation or feedback.", blocked: "Resolve the missing evidence or dependency before continuing.", pending: "Wait for the missing input before continuing.", done: "Continue to the next phase and retain the evidence.", skipped: "Retain the skip reason for review; no work is required for this phase." } },
+    "ja-JP": { plan: "業務フロー計画を記録しました。計画の状態は実行や受入れの証明ではありません", none: "なし", states: { done: "記録済み", skipped: "省略", blocked: "保留", pending: "待機" }, next: { feedback: "ユーザーの確認やフィードバックを待ちます。", blocked: "不足する証拠や依存関係を解決してから続けます。", pending: "不足する入力を待ってから続けます。", done: "証拠を保持し、次の段階へ進みます。", skipped: "省略理由をレビュー用に保持します。この段階の作業は不要です。" } },
+    "ko-KR": { plan: "업무 흐름 계획을 기록했습니다. 계획 상태는 실행이나 승인 증거가 아닙니다", none: "없음", states: { done: "기록됨", skipped: "생략됨", blocked: "차단됨", pending: "대기 중" }, next: { feedback: "사용자 확인이나 피드백을 기다립니다.", blocked: "누락된 증거나 의존성을 해결한 후 계속합니다.", pending: "누락된 입력을 기다린 후 계속합니다.", done: "증거를 보관하고 다음 단계로 진행합니다.", skipped: "검토를 위해 생략 사유를 보관합니다. 이 단계에서는 작업이 필요하지 않습니다." } },
+  };
+  const localized = copy[language] ?? copy.en;
+  const phaseName = (phase) => localized.names?.[BUSINESS_PHASES.findIndex(([id]) => id === phase.phase)] ?? phase.label;
+  const notice = surfaceLabels.notice;
+  const nextKind = current?.phase === "feedback" && current.status === "pending" ? "feedback" : current?.status ?? "pending";
+  return {
+    text: [
+      `${notice.workflowStatus}: ${localized.plan}`,
+      `${notice.currentStage}: ${current ? `${phaseName(current)} · ${localized.states[current.status]}` : localized.none}`,
+      `${notice.blockedStage}: ${blocked.map(phaseName).join(", ") || localized.none}`,
+      `${notice.next}: ${language === "zh-CN" ? closure.currentNextAction : localized.next[nextKind]}`,
+    ].join("; "),
+    details: { source: "businessPhasePlanPacket", phaseCount: businessPhasePlanPacket.phaseCount,
+      currentPhase: closure.currentPhase, currentStatus: closure.currentStatus,
+      blockedPhases: blocked.map((phase) => phase.phase), nextAction: closure.currentNextAction,
+      executionOrAcceptanceEvidence: false },
+  };
 }
 
 function localizedHostObservationBoundary(language) {
@@ -3263,42 +3357,20 @@ function buildConversationNotice({
       ],
     },
   ];
-  const progressLines = progressEvents.map(
-    (event, index) =>
-      event.text ?? renderConversationProgressEvent(event, labels, surfaceLabels, index === 0),
-  );
+  const progressLines = progressEvents.filter((event) => event.deliveryStatus === "emitted").map((event) => event.text);
   const aggregateLines = blocks.flatMap((block) => [
     `- ${block.title}`,
     ...block.lines.map((line) => `  ${line}`),
   ]);
-  const lines = [
-    ...(progressLines.length > 0
-      ? progressLines
-      : [`${labels.conversationNotice.title}: ${labels.plainLanguageSummary}`]),
-    ...aggregateLines,
-  ];
+  // The transcript and its hash cover transport output only. The longer stored
+  // report remains separate and is never evidence of a delivered chat message.
+  const lines = progressLines;
   const text = lines.join("\n");
   const hash = textSha256(text);
   const aggregateText = aggregateLines.join("\n");
-  const hostObservationExpectations = [
-    ...progressEvents.map((event, index) => {
-      const progressText =
-        event.text ?? renderConversationProgressEvent(event, labels, surfaceLabels, index === 0);
-      return {
-        stage: event.stage,
-        textSha256: event.textSha256 ?? textSha256(progressText),
-      };
-    }),
-    { stage: "Aggregate", textSha256: textSha256(aggregateText) },
-  ];
-  const emitted = emitConversationNotice === true;
   return {
     schemaVersion: CONVERSATION_NOTICE_SCHEMA_VERSION,
-    status: emitted ? "emitted" : "not_emitted",
-    emitted,
-    channel: emitted ? conversationNoticeChannel : null,
-    adapter: emitted ? conversationNoticeAdapter : null,
-    emittedAt: emitted ? new Date().toISOString() : null,
+    ...conversationTransportObservation(progressEvents, conversationNoticeChannel, conversationNoticeAdapter),
     language: labels.htmlLang,
     blockCount: blocks.length,
     blocks,
@@ -3306,11 +3378,7 @@ function buildConversationNotice({
     lineCount: lines.length,
     text,
     aggregateText,
-    hostObservationExpectations,
     textSha256: hash,
-    emittedTextSha256: emitted ? hash : null,
-    evidenceKind: emitted ? "transport_emitted_notice" : "not_emitted",
-    outputBoundary: emitted ? conversationNoticeOutputBoundary(conversationNoticeChannel) : null,
     routeSummary: {
       capabilityCount,
       workerTaskCount,
@@ -3425,7 +3493,7 @@ function buildUserExperienceNotice({
           channel: conversationNotice.channel,
           adapter: conversationNotice.adapter,
           emittedAt: conversationNotice.emittedAt,
-          textSha256: conversationNotice.textSha256,
+          textSha256: conversationNotice.emittedTextSha256,
           evidenceKind: conversationNotice.evidenceKind,
           outputBoundary: conversationNotice.outputBoundary,
         }
@@ -11993,6 +12061,46 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const durableDbPath = durableStageRunnerEnabled
     ? path.resolve(stageRunner.durableDbPath ?? path.join(stateDir, "durable-runs.sqlite"))
     : null;
+  const labels = getReportLabelsForPath(markdownPath);
+  const surfaceLabels = getGovernedRunSurfaceLabels(resolvedOutputLanguage);
+  const progressEvents = [];
+  const progressEnabled =
+    emitConversationNotice === true || typeof onConversationProgress === "function";
+  const publishProgress = async (event) =>
+    publishConversationProgress({
+      event,
+      events: progressEvents,
+      labels,
+      surfaceLabels,
+      enabled: progressEnabled,
+      onConversationProgress,
+    });
+  const notifyReviewed = async (reviewed) => {
+    const review = reviewed.outcomeReviewPacket;
+    if (!review) return;
+    await publishProgress({ ...progressEvent({ runId: effectiveRunId, stage: "Review",
+      status: review.nextAction?.action ?? "review_updated",
+      reason: taskProgressReason(resolvedOutputLanguage, review.revisionRequests?.length ? "revision" : "reviewed",
+        review.revisionRequests?.length ? review.revisionRequests.map((item) => item.requiredChange).join("; ") : ""),
+      details: { reviewDigest: review.reviewDigest, nextAction: review.nextAction, source: "outcomeReviewPacket", nativeInvocationVerified: false } }),
+      eventId: stableId("conversation-progress", `${effectiveRunId}-review-${review.reviewDigest}`) });
+  };
+  const currentCallNotice = (artifact) => {
+    const observation = conversationTransportObservation(progressEvents, conversationNoticeChannel, conversationNoticeAdapter);
+    const text = progressEvents.filter((event) => event.deliveryStatus === "emitted").map((event) => event.text).join("\n");
+    return { ...artifact, conversationNotice: {
+      ...artifact.conversationNotice, progressEvents, text, lineCount: text ? text.split("\n").length : 0, textSha256: textSha256(text),
+      progressObservationScope: "current_call", ...observation,
+    }, ...(artifact.userExperienceNotice ? { userExperienceNotice: {
+      ...artifact.userExperienceNotice, conversationNoticeEmitted: observation.emitted,
+      conversationNoticeEvidence: observation.emitted ? {
+        schemaVersion: artifact.conversationNotice.schemaVersion,
+        channel: observation.channel, adapter: observation.adapter, emittedAt: observation.emittedAt,
+        textSha256: observation.emittedTextSha256, evidenceKind: observation.evidenceKind,
+        outputBoundary: observation.outputBoundary,
+      } : null,
+    } } : {}) };
+  };
   if (durableMode === "resume") {
     const reservation = await readDurableReservation(reservationPath, {
       runId: effectiveRunId,
@@ -12023,7 +12131,10 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         ...materialized.dependencyCalculationPacket, observationScope: "historical_materialized_run",
         priorToolInvoked: materialized.dependencyCalculationPacket.toolInvoked, toolInvoked: false,
       };
-      return await applyPersistedOutcomeReview({ artifact: materialized, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
+      const restored = await applyPersistedOutcomeReview({ artifact: materialized, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
+      await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Resume", status: "already_materialized", reason: taskProgressReason(resolvedOutputLanguage, "resume"), details: { source: "durableExecution", replayedTaskCount: 0 } }));
+      await notifyReviewed(restored);
+      return currentCallNotice(restored);
     }
   } else if (durableMode === "fresh") {
     await reserveExplicitRunId(reservationPath, {
@@ -12034,7 +12145,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   } else if (outcomeReviewSnapshot && requestedRunId != null && existsSync(jsonPath)) {
     const previous = JSON.parse(await fs.readFile(jsonPath, "utf8"));
     if (previous.runId !== effectiveRunId || previous.taskFingerprint !== taskFingerprint || previous.task !== normalizedTask) throw new TypeError("Review continuation task or design fingerprint mismatch");
-    return await applyPersistedOutcomeReview({ artifact: previous, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
+    const reviewed = await applyPersistedOutcomeReview({ artifact: previous, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
+    await notifyReviewed(reviewed);
+    return currentCallNotice(reviewed);
   } else if (requestedRunId != null && allowOverwrite !== true) {
     await reserveExplicitRunId(reservationPath, {
       runId: effectiveRunId,
@@ -12052,27 +12165,15 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       `Governed run '${effectiveRunId}' already exists. Pass allowOverwrite=true or --overwrite-run to replace it explicitly.`,
     );
   }
-  const labels = getReportLabelsForPath(markdownPath);
-  const surfaceLabels = getGovernedRunSurfaceLabels(resolvedOutputLanguage);
-  const progressEvents = [];
-  const progressEnabled =
-    emitConversationNotice === true || typeof onConversationProgress === "function";
-  const publishProgress = async (event) =>
-    publishConversationProgress({
-      event,
-      events: progressEvents,
-      labels,
-      surfaceLabels,
-      enabled: progressEnabled,
-      onConversationProgress,
-    });
+  const entryClassification = classifyMetaTheoryEntry(normalizedTask);
   await publishProgress(
     progressEvent({
       runId: effectiveRunId,
       stage: "Critical",
       status: "started",
-      reason: surfaceLabels.events.runStart(effectiveRunId),
+      reason: `${surfaceLabels.events.runStart(effectiveRunId)} ${surfaceLabels.notice.startReason}: ${governanceEntrySummary(entryClassification, labels.htmlLang)}`,
       owner: "meta-warden",
+      details: { source: "taskClassification", triggerReason: entryClassification.triggerReason, path: entryClassification.path },
     }),
   );
   const routeRuntime = normalizeRouteRuntime(runtime);
@@ -12164,18 +12265,6 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     task: normalizedTask,
     runId: effectiveRunId,
   });
-  await publishProgress(
-    progressEvent({
-      runId: effectiveRunId,
-      stage: "Thinking",
-      status: "route_ready_before_execution",
-      reason: surfaceLabels.events.thinking(
-        orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
-        orchestrationReport.workerTaskPackets.length,
-      ),
-      owner: orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
-    }),
-  );
   const runtimeEvidence = await buildRuntimeProjectionEvidence({
     repoRoot: REPO_ROOT,
     orchestrationReport,
@@ -12187,6 +12276,22 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     applyWriteback: applyWriteback && planChallengeHandoffReady,
     canonicalRoot,
   });
+  const cardPlanPacket = buildCardPlanPacket({
+    runId: effectiveRunId,
+    orchestrationReport,
+    runtimeEvidence,
+  });
+  const cardSummary = buildUserFacingCardSummary(cardPlanPacket, labels);
+  await publishProgress(
+    progressEvent({
+      runId: effectiveRunId,
+      stage: "Thinking",
+      status: "route_ready_before_execution",
+      reason: `${surfaceLabels.events.thinking(orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner, orchestrationReport.workerTaskPackets.length)} ${surfaceLabels.notice.cardSummary}: ${cardSummary.dealtLine} ${surfaceLabels.notice.cardDetail}`,
+      owner: orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
+      details: { source: "cardPlanPacket", activeCards: cardSummary.activeCards, userRelevantCards: cardSummary.userRelevantCards, nativeChoiceObserved: false },
+    }),
+  );
   await publishProgress(
     progressEvent({
       runId: effectiveRunId,
@@ -12200,11 +12305,6 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       owner: orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
     }),
   );
-  const cardPlanPacket = buildCardPlanPacket({
-    runId: effectiveRunId,
-    orchestrationReport,
-    runtimeEvidence,
-  });
   const businessPhasePlanPacket = buildBusinessPhasePlanPacket({
     runId: effectiveRunId,
     orchestrationReport,
@@ -12221,32 +12321,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     orchestrationReport,
     businessPhasePlanPacket,
     cardPlanPacket,
+    entryClassification,
     language: resolvedOutputLanguage,
   });
-  await publishProgress(
-    progressEvent({
-      runId: effectiveRunId,
-      stage: "Review",
-      status: "structural_review_snapshot",
-      reason: surfaceLabels.events.review(
-        "structural_review_snapshot",
-        orchestrationReport.reviewResult.owner,
-      ),
-      owner: orchestrationReport.reviewResult.owner,
-    }),
-  );
-  await publishProgress(
-    progressEvent({
-      runId: effectiveRunId,
-      stage: "Closure",
-      status: "projection_snapshot",
-      reason: surfaceLabels.events.closure(
-        runtimeEvidence.status,
-        `${businessPhasePlanPacket.closure.currentPhase}=${businessPhasePlanPacket.closure.currentStatus}`,
-      ),
-      owner: orchestrationReport.verificationResult.owner,
-    }),
-  );
   await persistDecisionRuns({ dbPath, decisionResults });
   const analytics = await persistRuntimeEvidenceEvents({
     dbPath,
@@ -12470,6 +12547,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           workerCount: 0,
         };
       }
+      await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Waiting", status: "blocked_before_execution",
+        reason: taskProgressReason(resolvedOutputLanguage, "waiting"),
+        details: { source: "coreLoop.stageRunnerBridgePacket.failure", failureClass: coreLoop.stageRunnerBridgePacket.failure.failureClass } }));
     } else {
       const coordinatorLeaseMs = Math.max(
         1_000,
@@ -12496,6 +12576,12 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           leaseMs: coordinatorLeaseMs,
           heartbeatIntervalMs: coordinatorHeartbeatIntervalMs,
         });
+        if (durableMode === "resume") {
+          const restored = durableCoordinator.kernel.projectRun(effectiveRunId);
+          await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Resume", status: "restored_checkpoint",
+            reason: taskProgressReason(resolvedOutputLanguage, "resume"),
+            details: { source: "durable_run_kernel", cursor: restored.cursor, completedNodeCount: restored.completedNodes.length } }));
+        }
       }
       if (localToolBridgeEligible) {
         for (const packet of localToolPackets) {
@@ -12536,6 +12622,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         ),
         readySetTimeoutMs: stageRunner.readySetTimeoutMs ?? null,
         evidenceKind: localToolBridgeEligible ? "first_party_local_tool_subprocess" : stageRunner.evidenceKind ?? "native_read_only_stage_runner",
+        onExecutionProgress: (event) => publishProgress({ ...event,
+          schemaVersion: "conversation-progress-event-v0.1", stage: "Execution",
+          status: event.eventType, reason: renderWorkerProgress(event, resolvedOutputLanguage) }),
         durable: durableCoordinator
           ? {
               enabled: true,
@@ -12631,6 +12720,29 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   );
   const liveInvocationPass =
     coreLoop.capabilityInvocationTruthPacket.realInvocationCoverage?.status === "pass";
+  await publishProgress(
+    progressEvent({
+      runId: effectiveRunId,
+      stage: "Review",
+      status: "structural_review_snapshot",
+      reason: surfaceLabels.events.review(
+        "structural_review_snapshot",
+        orchestrationReport.reviewResult.owner,
+      ),
+      owner: orchestrationReport.reviewResult.owner,
+    }),
+  );
+  const phaseProgress = businessPhaseProgress(businessPhasePlanPacket, labels, surfaceLabels);
+  await publishProgress(
+    progressEvent({
+      runId: effectiveRunId,
+      stage: "Closure",
+      status: "projection_snapshot",
+      reason: `${surfaceLabels.events.closure(runtimeEvidence.status, `${businessPhasePlanPacket.closure.currentPhase}=${businessPhasePlanPacket.closure.currentStatus}`)} ${phaseProgress.text} ${surfaceLabels.notice.verificationDetail("partial")}`,
+      owner: orchestrationReport.verificationResult.owner,
+      details: phaseProgress.details,
+    }),
+  );
   conversationNotice = buildConversationNotice({
     orchestrationReport,
     runtimeEvidence,
@@ -12677,21 +12789,6 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     hostAssistantMessageEvidence,
     conversationNotice.hostObservationExpectations,
   );
-  if (progressEnabled && typeof onConversationProgress === "function") {
-    await onConversationProgress({
-      schemaVersion: "conversation-progress-event-v0.1",
-      eventId: stableId("conversation-progress", `${effectiveRunId}-aggregate`),
-      runId: effectiveRunId,
-      stage: "Aggregate",
-      status: artifactStatus,
-      reason: "final_user_visible_aggregate",
-      owner: orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner,
-      occurredAt: nowIso(),
-      text: conversationNotice.aggregateText,
-      textSha256: textSha256(conversationNotice.aggregateText),
-    });
-    conversationNotice.progressStreamed = true;
-  }
   userExperienceNotice = buildUserExperienceNotice({
     orchestrationReport,
     runtimeEvidence,
@@ -13041,9 +13138,14 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     )}\n`
   ));
   const deliveredArtifact = { ...artifact, paths: { json: jsonPath, liveProjection: liveProjectionPath, markdown: markdownPath, latest: latestPath, db: dbPath } };
-  return outcomeReviewSnapshot ? await applyPersistedOutcomeReview({ artifact: deliveredArtifact, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir }) : deliveredArtifact;
+  const reviewedArtifact = outcomeReviewSnapshot ? await applyPersistedOutcomeReview({ artifact: deliveredArtifact, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir }) : deliveredArtifact;
+  if (outcomeReviewSnapshot) await notifyReviewed(reviewedArtifact);
+  await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Delivery", status: "records_saved", reason: taskProgressReason(resolvedOutputLanguage, "delivery"), details: { source: "committed_run_artifacts" } }));
+  return currentCallNotice(reviewedArtifact);
   } catch (error) {
     durableBodyError = error;
+    await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Execution", status: "run_interrupted",
+      reason: taskProgressReason(resolvedOutputLanguage, "failure"), details: { source: "runner_error" } }));
     if (durableCoordinator?.claim && error?.simulatedProcessCrash !== true) {
       try {
         const projection = durableCoordinator.kernel.projectRun(effectiveRunId);
@@ -13296,6 +13398,7 @@ async function main() {
   const emitConversationProgress =
     process.argv.includes("--emit-conversation-notice") &&
     !process.argv.includes("--no-emit-conversation-notice");
+  if (emitConversationProgress) process.stderr.on("error", () => {});
   const runtime = normalizeRouteRuntime(runtimeArg);
   const executeStageDag = process.argv.includes("--execute-stage-dag");
   const resumeStageDag = process.argv.includes("--resume-stage-dag");
@@ -13404,9 +13507,9 @@ async function main() {
     canonicalRoot: path.resolve(argValue("--canonical-root", path.join(REPO_ROOT, "canonical"))),
     emitConversationNotice: emitConversationProgress,
     onConversationProgress: emitConversationProgress
-      ? ({ text }) => {
-          process.stderr.write(`${text}\n`);
-        }
+      ? ({ text }) => new Promise((resolve, reject) => {
+          process.stderr.write(`${text}\n`, (error) => error ? reject(error) : resolve());
+        })
       : null,
     conversationNoticeChannel: "stderr",
     conversationNoticeAdapter: CONVERSATION_NOTICE_ADAPTER,
@@ -13446,9 +13549,6 @@ async function main() {
         }
       : null,
   });
-  if (report.conversationNotice.emitted && !report.conversationNotice.progressStreamed) {
-    process.stderr.write(`${report.conversationNotice.text}\n`);
-  }
   process.stdout.write(
     `${JSON.stringify(
       {

@@ -28,41 +28,117 @@ async function plainDirectory(directory) {
   return resolved;
 }
 
-/** Read one append-safe bounded snapshot; source files are never changed. */
-async function snapshot(file, maximum, acceptMeta, onOmitted = () => {}) {
+const MAX_HEADER_BYTES = 128 * 1024;
+const MAX_METADATA_READ_BYTES = 512 * 1024;
+const MAX_ANCHOR_READ_BYTES = 16 * 1024;
+const ANCHOR_BYTES = 256;
+const MAX_CACHED_SEGMENTS = 16;
+const MAX_CACHED_ENTRIES = 4096;
+
+async function boundedRead(handle, offset, length, budget, kind) {
+  const remaining = budget[kind + "Remaining"];
+  if (length > remaining) return null;
+  const buffer = Buffer.alloc(length);
+  let count = 0;
+  while (count < length) {
+    const part = await handle.read(buffer, count, length - count, offset + count);
+    if (!part.bytesRead) break;
+    count += part.bytesRead;
+  }
+  budget[kind + "Remaining"] -= count;
+  budget[kind + "ReadBytes"] += count;
+  return buffer.subarray(0, count);
+}
+
+/** A trusted header plus a bounded complete-line tail; subsequent reads consume only appends. */
+async function snapshot(file, maximum, acceptMeta, onOmitted, segmentCache, budget) {
   const before = await lstat(file);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink > 1) fail("native_session_file_rejected");
-  if (before.size > maximum) { onOmitted("segment_size_limit"); return null; }
   if (normalize(await realpath(file)) !== normalize(file)) fail("native_session_file_rejected");
   const handle = await open(file, "r");
   try {
     const opened = await handle.stat();
-    if (opened.ino !== before.ino || opened.dev !== before.dev || opened.size > maximum) fail("native_session_file_changed");
-    const prefix = Buffer.alloc(Math.min(opened.size, 128 * 1024));
-    const headerRead = await handle.read(prefix, 0, prefix.length, 0);
-    const header = prefix.subarray(0, headerRead.bytesRead).toString("utf8").split("\n")[0];
+    if (!opened.isFile() || opened.nlink > 1 || opened.ino !== before.ino || opened.dev !== before.dev) fail("native_session_file_changed");
+    let cached = segmentCache.get(file);
+    if (cached && (cached.ino !== opened.ino || cached.dev !== opened.dev || cached.birthtimeMs !== opened.birthtimeMs
+      || opened.size < cached.size || (opened.size === cached.size && opened.mtimeMs !== cached.mtimeMs))) cached = null;
+    // Metadata is revalidated even on an unchanged segment. A cached pathname or
+    // thread id never substitutes for the native session header's authority.
+    const prefix = await boundedRead(handle, 0, Math.min(opened.size, cached?.headerEnd || MAX_HEADER_BYTES), budget, "metadata");
+    if (!prefix) { onOmitted("metadata_read_budget_exhausted"); return null; }
+    const headerEnd = prefix.indexOf(10) + 1;
     let meta;
-    try { meta = JSON.parse(header); } catch { onOmitted("segment_metadata_unavailable"); return null; }
-    if (meta.type !== "session_meta" || !acceptMeta(meta)) return null;
-    const buffer = Buffer.alloc(opened.size);
-    let count = 0;
-    while (count < buffer.length) {
-      const part = await handle.read(buffer, count, buffer.length - count, count);
-      if (!part.bytesRead) break;
-      count += part.bytesRead;
+    try { if (!headerEnd) throw new Error(); meta = JSON.parse(prefix.subarray(0, headerEnd).toString("utf8")); }
+    catch { segmentCache.delete(file); onOmitted("segment_metadata_unavailable"); return null; }
+    if (meta.type !== "session_meta" || !acceptMeta(meta)) { segmentCache.delete(file); return null; }
+    const headerSha = digest(prefix.subarray(0, headerEnd));
+    if (cached?.headerSha !== headerSha) cached = null;
+    if (cached) {
+      const anchor = await boundedRead(handle, cached.anchorStart, cached.cursor - cached.anchorStart, budget, "anchor");
+      if (!anchor) { onOmitted("anchor_read_budget_exhausted"); return null; }
+      if (digest(anchor) !== cached.anchorSha) cached = null;
     }
+    let start = cached?.cursor ?? headerEnd;
+    let entries = cached ? [...cached.entries] : [];
+    const reasons = new Set(cached?.reasons || []);
+    let gap = false;
+    if (opened.size - start > Math.min(maximum, budget.bodyRemaining)) {
+      if (!budget.bodyRemaining) { onOmitted("segment_read_budget_exhausted"); return null; }
+      start = Math.max(headerEnd, opened.size - Math.min(maximum, budget.bodyRemaining));
+      entries = [];
+      gap = start > headerEnd;
+      if (gap) reasons.add("segment_prefix_omitted");
+    }
+    let cursor = start;
+    if (opened.size > start) {
+      const buffer = await boundedRead(handle, start, opened.size - start, budget, "body");
+      if (!buffer) { onOmitted("segment_read_budget_exhausted"); return null; }
+      // Start/end may cut UTF-8 or JSON. Only LF-delimited complete bytes are decoded.
+      let lineStart = gap ? buffer.indexOf(10) + 1 : 0;
+      if (gap && !lineStart) {
+        for (const reason of reasons) onOmitted(reason);
+        onOmitted("partial_final_line");
+        return null;
+      }
+      cursor = start + lineStart;
+      let firstNewEntry = true;
+      for (let newline = buffer.indexOf(10, lineStart); newline >= 0; newline = buffer.indexOf(10, lineStart)) {
+        const lineEnd = buffer[newline - 1] === 13 ? newline - 1 : newline;
+        const line = buffer.subarray(lineStart, lineEnd);
+        try {
+          if (line.length) {
+            const record = JSON.parse(line.toString("utf8"));
+            const projected = structuralEntries([{ record, sha256: digest(line) }]);
+            for (const entry of projected) {
+              entries.push({ ...entry, startOffset: start + lineStart, ...(gap && firstNewEntry ? { gapBefore: true } : {}) });
+              firstNewEntry = false;
+            }
+          }
+        } catch { reasons.add("invalid_event_line"); gap = true; firstNewEntry = true; }
+        lineStart = newline + 1;
+        cursor = start + lineStart;
+      }
+    } else budget.cachedSegments += 1;
+    // Bound retained memory by the same byte window and by structural event count.
+    // Dropping an unread/evicted prefix resets turn attribution at the retained edge.
+    const retained = entries.filter((entry) => entry.startOffset >= opened.size - maximum).slice(-MAX_CACHED_ENTRIES);
+    if (retained.length !== entries.length) {
+      reasons.add("segment_structure_window_omitted");
+      if (retained.length) retained[0] = { ...retained[0], gapBefore: true };
+    }
+    const anchorStart = Math.max(headerEnd, cursor - ANCHOR_BYTES);
+    const anchor = await boundedRead(handle, anchorStart, Math.max(0, cursor - anchorStart), budget, "anchor");
+    if (!anchor) { onOmitted("anchor_read_budget_exhausted"); return null; }
     const after = await lstat(file);
-    if (after.isSymbolicLink() || after.ino !== opened.ino || after.dev !== opened.dev) fail("native_session_file_changed");
-    const text = buffer.subarray(0, count).toString("utf8");
-    // A concurrently appended final line is not a complete event yet.
-    if (!text.endsWith("\n")) onOmitted("partial_final_line");
-    const complete = text.endsWith("\n") ? text : text.slice(0, text.lastIndexOf("\n") + 1);
-    return complete.split(/\r?\n/u).filter(Boolean).map((line) => {
-      try { return { record: JSON.parse(line), sha256: digest(line) }; } catch { onOmitted("invalid_event_line"); return null; }
-    }).filter(Boolean);
-  } finally {
-    await handle.close();
-  }
+    if (!after.isFile() || after.isSymbolicLink() || after.nlink > 1 || after.ino !== opened.ino || after.dev !== opened.dev || after.size < opened.size) fail("native_session_file_changed");
+    segmentCache.delete(file);
+    segmentCache.set(file, { ino: opened.ino, dev: opened.dev, birthtimeMs: opened.birthtimeMs, size: opened.size, mtimeMs: opened.mtimeMs,
+      headerEnd, headerSha, cursor, anchorStart, anchorSha: digest(anchor), entries: retained, reasons: [...reasons] });
+    if (segmentCache.size > MAX_CACHED_SEGMENTS) segmentCache.delete(segmentCache.keys().next().value);
+    for (const reason of reasons) onOmitted(reason);
+    if (cursor < opened.size) onOmitted("partial_final_line");
+    return retained;
+  } finally { await handle.close(); }
 }
 
 /** Keep only parser inputs while joining bounded resume segments in memory. */
@@ -71,7 +147,11 @@ function structuralEntries(entries) {
     const p = record.payload || {};
     let payload;
     if (record.type === "turn_context") payload = { turn_id: p.turn_id, thread_id: p.thread_id, cwd: p.cwd };
-    else if (record.type === "response_item" && p.type === "function_call") payload = { type: p.type, call_id: p.call_id, namespace: p.namespace, name: p.name, arguments: typeof p.arguments === "string" && Buffer.byteLength(p.arguments) <= 32_768 ? p.arguments : null };
+    else if (record.type === "response_item" && p.type === "function_call") {
+      const args = boundedArguments(p.arguments);
+      payload = { type: p.type, call_id: p.call_id, namespace: p.namespace, name: p.name,
+        arguments: JSON.stringify({ task_name: args.taskName, agent_type: args.owner, message: args.role ? "roleDisplayName=" + args.role : "" }) };
+    }
     else if (record.type === "response_item" && p.type === "function_call_output") payload = { type: p.type, call_id: p.call_id };
     else if (record.type === "event_msg" && ["task_started", "task_complete", "turn_complete", "item_completed"].includes(p.type)) {
       payload = { type: p.type, thread_id: p.thread_id, turn_id: p.turn_id, started_at: p.started_at, completed_at_ms: p.completed_at_ms, root_turn_id: p.root_turn_id, turn_attribution: { parent_turn_id: p.turn_attribution?.parent_turn_id } };
@@ -85,7 +165,10 @@ function structuralEntries(entries) {
 /** Exact source-line duplicates do not replay terminals or double-count work. */
 function mergeSegmentEntries(segments) {
   const unique = new Map();
-  for (const entries of segments) for (const entry of entries) if (!unique.has(entry.sha256)) unique.set(entry.sha256, entry);
+  for (const entries of segments) for (const entry of entries) {
+    const previous = unique.get(entry.sha256);
+    unique.set(entry.sha256, previous?.gapBefore ? { ...entry, gapBefore: true } : entry);
+  }
   return [...unique.values()].sort((a, b) => (Date.parse(a.record.timestamp) || 0) - (Date.parse(b.record.timestamp) || 0));
 }
 
@@ -181,7 +264,8 @@ export function parseCodexNativeTurn(records, { threadId, turnId, sinceMs = 0 } 
   let turnComplete = false;
   let turnCompletedAt = null;
   const unique = new Map();
-  for (const { record, sha256 } of records) {
+  for (const { record, sha256, gapBefore } of records) {
+    if (gapBefore) activeTurn = null;
     const p = record.payload || {};
     const timestamp = Date.parse(record.timestamp);
     rememberTurnStart(turnStarts, record, threadId);
@@ -241,6 +325,7 @@ export function createCodexNativeSessionReader(options = {}) {
   if (!Number.isFinite(sinceMs) || sinceMs < 0 || sinceMs > now()) fail("native_session_since_invalid");
   const maxBytes = Number.isSafeInteger(options.maxBytes) && options.maxBytes >= 1024 && options.maxBytes <= DEFAULT_MAX_BYTES ? options.maxBytes : DEFAULT_MAX_BYTES;
   const cache = new Map();
+  const segmentCache = new Map();
   const readCurrent = async (requestedTurnId = null) => {
     const root = await plainDirectory(codexHome);
     const sessions = await plainDirectory(path.join(root, "sessions"));
@@ -251,14 +336,15 @@ export function createCodexNativeSessionReader(options = {}) {
     let selected = null;
     const parentSegments = [];
     const omittedReasons = new Set();
+    const budget = { bodyRemaining: maxBytes, metadataRemaining: MAX_METADATA_READ_BYTES, anchorRemaining: MAX_ANCHOR_READ_BYTES, bodyReadBytes: 0, metadataReadBytes: 0, anchorReadBytes: 0, cachedSegments: 0 };
     const coverage = { state: "bounded", parentSegmentCount: candidates.length, parentReadCount: 0, childSegmentCount: 0, childReadCount: 0, reasons: [] };
+    const finishCoverage = () => ({ ...coverage, reasons: [...omittedReasons], sourceBytesRead: budget.bodyReadBytes + budget.metadataReadBytes + budget.anchorReadBytes, bodyBytesRead: budget.bodyReadBytes, cachedSegmentCount: budget.cachedSegments, readByteLimit: maxBytes + MAX_METADATA_READ_BYTES + MAX_ANCHOR_READ_BYTES });
     const noteOmitted = (reason) => { coverage.state = "partial"; omittedReasons.add(reason); };
     const turnStarts = new Map();
     const targetTurnId = requestedTurnId || explicitTurnId;
     let selectedTurn = targetTurnId;
     for (const file of candidates) {
-      const rawRecords = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], threadId, realProject), noteOmitted);
-      const records = rawRecords && structuralEntries(rawRecords);
+      const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], threadId, realProject), noteOmitted, segmentCache, budget);
       if (!records) continue;
       coverage.parentReadCount += 1;
       parentSegments.push(records);
@@ -271,13 +357,13 @@ export function createCodexNativeSessionReader(options = {}) {
         selectedTurn = match.record.payload.turn_id;
       }
     }
-    if (!selected) return { state: "unavailable", reason: "exact_native_turn_not_observed", threadId, turnId: targetTurnId, coverage: { ...coverage, reasons: [...omittedReasons] } };
+    if (!selected) return { state: "unavailable", reason: "exact_native_turn_not_observed", threadId, turnId: targetTurnId, coverage: finishCoverage() };
     const parentRecords = mergeSegmentEntries(parentSegments);
     const turnContexts = parentRecords.filter(({ record }) => record.type === "turn_context" && record.payload?.turn_id === selectedTurn);
     if (!turnContexts.length || turnContexts.some(({ record }) => {
       const context = record.payload;
       return (context.thread_id && context.thread_id !== threadId) || typeof context.cwd !== "string" || !path.isAbsolute(context.cwd) || normalize(context.cwd) !== normalize(realProject);
-    })) return { state: "unavailable", reason: "native_turn_project_binding_unproven", threadId, turnId: selectedTurn, coverage: { ...coverage, reasons: [...omittedReasons] } };
+    })) return { state: "unavailable", reason: "native_turn_project_binding_unproven", threadId, turnId: selectedTurn, coverage: finishCoverage() };
     const observation = parseCodexNativeTurn(parentRecords, { threadId, turnId: selectedTurn, sinceMs });
     const startedMs = turnStarts.get(selectedTurn)?.task ?? turnStarts.get(selectedTurn)?.context;
     if (Number.isFinite(startedMs)) observation.startedAt = new Date(startedMs).toISOString();
@@ -291,8 +377,8 @@ export function createCodexNativeSessionReader(options = {}) {
       const childSegments = [];
       let childIncomplete = false;
       for (const file of childFiles) {
-        const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], agent.childThreadId, realProject, threadId) && Date.parse(meta.timestamp) >= spawnMs - 5_000 && Date.parse(meta.timestamp) <= endMs, (reason) => { childIncomplete = true; noteOmitted(reason); });
-        if (records) { coverage.childReadCount += 1; childSegments.push(structuralEntries(records)); }
+        const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], agent.childThreadId, realProject, threadId) && Date.parse(meta.timestamp) >= spawnMs - 5_000 && Date.parse(meta.timestamp) <= endMs, (reason) => { childIncomplete = true; noteOmitted(reason); }, segmentCache, budget);
+        if (records) { coverage.childReadCount += 1; childSegments.push(records); }
       }
       const records = mergeSegmentEntries(childSegments);
       const starts = records.filter(({ record }) => {
@@ -329,7 +415,7 @@ export function createCodexNativeSessionReader(options = {}) {
     }
     // Remove the raw cwd as soon as its exact match has been checked.
     observation.commands = observation.commands.map(({ cwd: _cwd, ...item }) => item);
-    coverage.reasons = [...omittedReasons];
+    Object.assign(coverage, finishCoverage());
     return { state: "observed", sourceKind: "codex_desktop_native_session", readOnly: true, ...observation, coverage, observedAt: new Date(now()).toISOString(), binding: { threadId, turnId: selectedTurn, projectRootMatched: true }, limitations: ["Native execution observation is not semantic task acceptance.", "Only the bound current turn and verified child metadata are inspected.", ...(coverage.state === "partial" ? ["Some bounded native source segments or events were omitted; counts are partial observations."] : [])] };
   };
   const read = async (requestedTurnId = null) => {

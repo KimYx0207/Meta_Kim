@@ -5763,8 +5763,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   // sessions.find((session) => session.active), so the liveness term the policy
   // already ranks below drawability was silently overriding it here.
   function defaultSessionFor(project, preferredRunId = "") {
+    if (preferredRunId) return preferredRunId;
     if (!project) return "";
-    if (preferredRunId && project.sessions.some((session) => session.runId === preferredRunId)) return preferredRunId;
     const row = pickDefaultRow(
       project.sessions.map((session) => sessionSelectionRow(session)),
       DEFAULT_SELECTION,
@@ -5849,13 +5849,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     disconnectEvents();
     abortController?.abort();
     if (!project) {
-      showEmpty("Choose a registered Meta_Kim project to inspect its governed runs.");
-      setHubStatus("No project selected");
+      showEmpty(currentLanguage === "zh" ? "等待当前项目登记，保留当前任务链接。" : "Waiting for this project to be registered; keeping the current task link.");
+      setHubStatus(currentLanguage === "zh" ? "等待当前项目" : "Waiting for current project");
       return;
     }
     if (!selectedRunId) {
       showEmpty("This project has no governed runs yet. Start a Meta_Kim task and its session will appear here.");
       setHubStatus(project.displayName + " · waiting for its first governed run");
+      return;
+    }
+    if (!project.sessions.some((session) => session.runId === selectedRunId)) {
+      showEmpty(currentLanguage === "zh" ? "等待当前运行记录；记录出现后会自动显示。" : "Waiting for this run record; it will appear automatically when available.");
+      setHubStatus(currentLanguage === "zh" ? "等待当前运行记录" : "Waiting for current run record");
       return;
     }
     showEmpty("Loading the selected run…");
@@ -5870,21 +5875,33 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (refresh && selectedProjectId) {
         const currentProject = projectCatalog.find((item) => item.projectId === selectedProjectId) || null;
         if (currentProject && currentProject.sessions.some((session) => session.runId === selectedRunId)) {
+          if (!currentSnapshot) {
+            await switchSelection(selectedProjectId, selectedRunId, { updateUrl: false });
+            return true;
+          }
           populateProjectSelect();
           populateSessionSelect();
           if (currentSnapshot) renderRunOverview(currentSnapshot, currentProject);
           setHubStatus(currentProject.displayName + " · " + currentProject.sessions.length + " observed run records");
           return true;
         }
+        await switchSelection(selectedProjectId, selectedRunId, { updateUrl: false });
+        return true;
       }
       const requested = selectionFromLocation();
       const preferredProjectId = requested.projectId || catalog.selected.projectId;
-      const project = pickDefaultRow(
+      const project = requested.projectId
+        ? projectCatalog.find((item) => item.projectId === requested.projectId) || null
+        : pickDefaultRow(
         projectCatalog.map((item) => projectSelectionRow(item, DEFAULT_SELECTION)),
         DEFAULT_SELECTION,
         preferredProjectId,
       )?.project || null;
       if (!project) {
+        if (requested.projectId) {
+          await switchSelection(requested.projectId, requested.runId, { updateUrl: false });
+          return true;
+        }
         populateProjectSelect();
         populateSessionSelect();
         showEmpty("No Meta_Kim projects are registered yet. Install or update Meta_Kim in a project, then start a governed run.");
@@ -5900,7 +5917,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (catalogRequestInFlight) return catalogAvailable;
     catalogRequestInFlight = true;
     try {
-      const response = await fetch(projectsEndpoint, { headers: { accept: "application/json" } });
+      const requested = selectionFromLocation();
+      const catalogUrl = new URL(projectsEndpoint, window.location.href);
+      if (selectedProjectId || requested.projectId) catalogUrl.searchParams.set("projectId", selectedProjectId || requested.projectId);
+      if (selectedRunId || requested.runId) catalogUrl.searchParams.set("runId", selectedRunId || requested.runId);
+      const response = await fetch(catalogUrl.href, { headers: { accept: "application/json" } });
       if (!response.ok) throw new Error("project catalog request failed");
       const catalog = normalizeCatalog(await response.json());
       if (!catalog) throw new Error("project catalog unavailable");

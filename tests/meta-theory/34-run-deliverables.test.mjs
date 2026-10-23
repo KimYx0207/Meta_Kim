@@ -808,17 +808,13 @@ describe("34 — Meta-theory run deliverables", () => {
       JSON.parse(result.stdout);
       assert.match(result.stderr, /Meta_Kim 对话提示:/u);
       assert.match(result.stderr, /开始原因: 进入 Meta-Theory/u);
-      assert.match(result.stderr, /本轮会确认目标、核对证据、选择路线、执行工作、审查质量并验证结果/u);
       assert.match(result.stderr, /只有会改变范围、风险或验收方式的决策才会提示用户/u);
-      assert.match(result.stderr, /许愿式自然语言需求/u);
-      assert.match(result.stderr, /阶段进度/u);
-      assert.match(result.stderr, /Verification/u);
-      assert.match(result.stderr, /Evolution/u);
-      assert.match(result.stderr, /能力路线/u);
+      assert.match(result.stderr, /自然语言产品需求需要先确定范围、路线和验收方式/u);
       assert.match(result.stderr, /Meta_Kim 协调能力/u);
       assert.match(result.stderr, /协作角色/u);
-      assert.match(result.stderr, /本次工作已部分完成/u);
-      assert.match(result.stderr, /请查看当前可见结果/u);
+      assert.match(result.stderr, /计划状态不代表已执行或验收/u);
+      assert.match(result.stderr, /等待用户确认/u);
+      assert.doesNotMatch(result.stderr, /本次工作已部分完成|本次工作及相关检查已完成/u);
       assert.match(result.stderr, /验证/u);
       assert.doesNotMatch(
         result.stderr,
@@ -830,6 +826,18 @@ describe("34 — Meta-theory run deliverables", () => {
       );
       const emittedText = artifact.conversationNotice.text;
       assert.ok(result.stderr.includes(emittedText));
+      assert.equal(emittedText, artifact.conversationNotice.progressEvents
+        .filter((event) => event.deliveryStatus === "emitted").map((event) => event.text).join("\n"));
+      assert.ok(!emittedText.includes(artifact.conversationNotice.aggregateText), "the stored full report is not a second chat announcement");
+      const start = artifact.conversationNotice.progressEvents.find((event) => event.stage === "Critical");
+      assert.equal(start.details.triggerReason, "natural_language_product_build");
+      assert.ok(start.text.includes(artifact.governanceStartReasonPacket.summary));
+      const thinking = artifact.conversationNotice.progressEvents.find((event) => event.stage === "Thinking");
+      assert.ok(thinking.text.includes(artifact.conversationNotice.routeSummary.cardSummary.dealtLine));
+      assert.deepEqual(thinking.details.activeCards, artifact.conversationNotice.routeSummary.cardSummary.activeCards);
+      assert.equal(thinking.details.nativeChoiceObserved, false);
+      assert.equal(result.stderr.split("开始原因:").length - 1, 1);
+      assert.equal(result.stderr.split("发牌摘要:").length - 1, 1);
       assert.equal(
         artifact.governanceStartReasonPacket.schemaVersion,
         "governance-start-reason-v0.1"

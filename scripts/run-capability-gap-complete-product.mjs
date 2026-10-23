@@ -534,6 +534,31 @@ async function buildGovernedExecutionEvidence() {
       stateDir: path.join(tempDir, "smoke"),
       dbPath: path.join(tempDir, "smoke.sqlite"),
     });
+    // Keep the original underspecified request as a planning-boundary case.
+    // A separate explicit task proves decomposition without inventing a design
+    // or treating a larger worker count as user-goal completion.
+    const boundedRun = await runMetaTheoryGovernedExecution({
+      task: "Run meta-theory. In parallel inspect package.json; review AGENTS.md; read README.md; audit config/contracts/workflow-contract.json.",
+      runId: "complete-product-bounded-planning",
+      stateDir: path.join(tempDir, "bounded"),
+      dbPath: path.join(tempDir, "bounded.sqlite"),
+    });
+    const inventory = smokeRun.sourceArtifacts.orchestrationReport.fetchEvidence.capabilityInventory;
+    const requirementsExploration = {
+      discoveredSlots: [...new Set(inventory.map((item) => item.slot))],
+      incompleteWorkOrders: smokeRun.coreLoop.thinkingPacket.workerTaskPackets.filter((item) => item.workOrderReadiness === "incomplete").length,
+      safeForParallelFanout: smokeRun.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout,
+      actualWorkerExecution: smokeRun.coreLoop.executionResult.actualWorkerExecution,
+      publicReady: smokeRun.coreLoop.publicReadyDecision.publicReady,
+    };
+    const boundedPlanning = {
+      status: boundedRun.defaultRuntimePath.status,
+      workerTaskPackets: boundedRun.coreLoop.thinkingPacket.workerTaskPackets,
+      workerResultPackets: boundedRun.coreLoop.executionResult.workerResultPackets,
+      safeForParallelFanout: boundedRun.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout,
+      actualWorkerExecution: boundedRun.coreLoop.executionResult.actualWorkerExecution,
+      publicReady: boundedRun.coreLoop.publicReadyDecision.publicReady,
+    };
     const approvedCandidate = await runMetaTheoryGovernedExecution({
       task: "同一套 PRD review standard 需要 skill。",
       runId: "complete-product-warden-candidate-proof",
@@ -570,6 +595,8 @@ async function buildGovernedExecutionEvidence() {
     return {
       status: structuralPass ? (fullPass ? "pass" : "partial") : "fail",
       defaultRuntimePath: smokeRun.defaultRuntimePath,
+      requirementsExploration,
+      boundedPlanning,
       runtimeProjectionEvidence: smokeRun.runtimeProjectionEvidence,
       approvedWriteback: approvedRun.wardenWritebackFlow,
       runReport: smokeRun.runReport,
@@ -960,8 +987,20 @@ function buildAcceptanceChecks({
       "默认 meta-theory orchestration runtime path",
       ["pass", "partial"].includes(governedExecutionEvidence.defaultRuntimePath.status) &&
         governedExecutionEvidence.defaultRuntimePath.entry === "meta:theory:run" &&
-        governedExecutionEvidence.defaultRuntimePath.workerTaskPackets.length >= 4,
-      `entry=${governedExecutionEvidence.defaultRuntimePath.entry}, workers=${governedExecutionEvidence.defaultRuntimePath.workerTaskPackets.length}`
+        [["agent"], ["skill"], ["command"], ["mcpServer", "mcpTool"]].every((slots) =>
+          slots.some((slot) => governedExecutionEvidence.requirementsExploration.discoveredSlots.includes(slot))) &&
+        governedExecutionEvidence.requirementsExploration.incompleteWorkOrders > 0 &&
+        governedExecutionEvidence.requirementsExploration.safeForParallelFanout === false &&
+        governedExecutionEvidence.requirementsExploration.actualWorkerExecution === false &&
+        governedExecutionEvidence.requirementsExploration.publicReady === false &&
+        governedExecutionEvidence.boundedPlanning.workerTaskPackets.length === 4 &&
+        governedExecutionEvidence.boundedPlanning.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready") &&
+        governedExecutionEvidence.boundedPlanning.safeForParallelFanout === true &&
+        governedExecutionEvidence.boundedPlanning.workerResultPackets.length === 4 &&
+        governedExecutionEvidence.boundedPlanning.workerResultPackets.every((packet) => packet.status === "planned_not_executed") &&
+        governedExecutionEvidence.boundedPlanning.actualWorkerExecution === false &&
+        governedExecutionEvidence.boundedPlanning.publicReady === false,
+      `entry=${governedExecutionEvidence.defaultRuntimePath.entry}, explorationIncomplete=${governedExecutionEvidence.requirementsExploration.incompleteWorkOrders}, boundedWorkers=${governedExecutionEvidence.boundedPlanning.workerTaskPackets.length}, boundedFanoutReady=${governedExecutionEvidence.boundedPlanning.safeForParallelFanout}, actualWorkerExecution=${governedExecutionEvidence.boundedPlanning.actualWorkerExecution}`
     ),
     check(
       "R-008",

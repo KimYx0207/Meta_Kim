@@ -108,6 +108,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/infrastructure/live/live-projection-backfill.mjs",
   "src/infrastructure/live/live-read-repository.mjs",
   "src/infrastructure/live/codex-native-session-reader.mjs",
+  "src/infrastructure/live/live-native-bindings.mjs",
   "src/infrastructure/live/live-run-retention-store.mjs",
   "src/infrastructure/live/live-runtime-adapter-registry.mjs",
   "src/presentation/live/live-control-room-page.mjs",

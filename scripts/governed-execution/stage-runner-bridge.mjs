@@ -12,6 +12,7 @@ import {
 } from "../live-acceptance/observe-host-events.mjs";
 import { spawnCli } from "../runtime-cli-invocation.mjs";
 import { loadDependencyAgentMethod } from "../dependency-agent-discovery.mjs";
+import { projectWorkerProgressEvent } from "./worker-result-projection.mjs";
 import { calculationHandoffForWorker } from "./dependency-calculation-handoff.mjs";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import {
@@ -326,7 +327,7 @@ function sanitizeBridgeNodeRecord(record, context) {
       );
     }
     if (typeof value !== "string") return value;
-    if (!["outputText", "stderrTail", "failureMessage", "reason", "summary", "text"].includes(key)) {
+    if (!["outputText", "stderrTail", "failureMessage", "reason", "summary", "text", "taskLabel"].includes(key)) {
       return value;
     }
     return redactSensitiveText(value, context, key === "outputText" ? MAX_RESULT_TEXT : 2_000);
@@ -1170,6 +1171,7 @@ export async function runStageRunnerBridge({
   workerEnv = process.env,
   dependencyCalculationHandoff = null,
   routeHandoffEvidence = null,
+  onExecutionProgress = null,
 }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
   const routeHandoffSnapshot = routeHandoffEvidence == null ? null : structuredClone(routeHandoffEvidence);
@@ -1191,6 +1193,29 @@ export async function runStageRunnerBridge({
   validateStageDagPacket(stageDagPacket, { requireDigest: true });
   const durableContext = await prepareDurableBridgeContext({ durable, runId, stageDagPacket });
   try {
+  // The durable kernel remains the only event authority. A resume starts at its
+  // current cursor: historical completed work is restored below, never replayed
+  // as new activity. Reserve each sequence before awaiting a transport callback
+  // so concurrent claims cannot duplicate or reorder notifications.
+  let progressCursor = durableContext?.resume.cursor ?? 0;
+  let progressDelivery = Promise.resolve();
+  const publishCommittedProgress = async () => {
+    if (!durableContext || typeof onExecutionProgress !== "function") return;
+    try {
+      const projection = durableContext.kernel.projectRun(runId);
+      const fresh = projection.events.filter((event) => event.eventSeq > progressCursor);
+      progressCursor = Math.max(progressCursor, projection.cursor);
+      for (const event of fresh) {
+        const projected = projectWorkerProgressEvent({ runId, stageDagPacket, workerTaskPackets, event, events: projection.events, evidenceKind: resolvedEvidenceKind });
+        if (!projected) continue;
+        const notification = sanitizeBridgeNodeRecord(projected, redactionContext);
+        progressDelivery = progressDelivery.then(() => onExecutionProgress(notification)).catch(() => {});
+      }
+      await progressDelivery;
+    } catch {
+      // Progress is an optional observation channel, never execution authority.
+    }
+  };
   const resolvedWorkspace = path.resolve(workspaceRoot);
   const redactionContext = buildRedactionContext(resolvedWorkspace, redactionEnv);
   const completedNodeIds = new Set(executionPrefixCompletedNodeIds(stageDagPacket));
@@ -1256,6 +1281,7 @@ export async function runStageRunnerBridge({
       const claim = durableClaimForNode(durableContext, node, dependencyResults);
       if (claim) durableClaimsByNodeId.set(node.nodeId, claim);
       const heartbeat = startDurableHeartbeat(durableContext, node, claim);
+      await publishCommittedProgress();
       let normalizedResult;
       if (node.laneKind === "stage_merge") {
         const mergeDurationMs = Math.max(
@@ -1445,6 +1471,7 @@ export async function runStageRunnerBridge({
         redactionContext,
       );
       normalizedResult = sanitizeBridgeNodeRecord(normalizedResult, redactionContext);
+      await publishCommittedProgress();
       nodeRecordsById.set(node.nodeId, normalizedResult);
       if (normalizedResult.status === "completed") {
         completedNodeIds.add(node.nodeId);

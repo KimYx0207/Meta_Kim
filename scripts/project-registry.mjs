@@ -360,6 +360,70 @@ export async function ensureGovernedLiveProjectRegistration({
   });
 }
 
+const LIVE_NATIVE_CODEX_SOURCE = "live_native_codex";
+const LIVE_UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
+const LIVE_NATIVE_BINDING_SCHEMA = "meta-kim-live-native-binding-v1";
+const LIVE_PROFILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+
+function nativeBindingMetadata({ threadId, turnId, codexHome, profile = "default" } = {}) {
+  if (typeof threadId !== "string" || !LIVE_UUID.test(threadId) || (turnId && (typeof turnId !== "string" || !LIVE_UUID.test(turnId)))) return null;
+  if (codexHome && (typeof codexHome !== "string" || !path.isAbsolute(codexHome))) return null;
+  if (typeof profile !== "string" || !LIVE_PROFILE.test(profile)) return null;
+  return { schemaVersion: LIVE_NATIVE_BINDING_SCHEMA, profile, threadId: threadId.toLowerCase(), ...(turnId ? { turnId: turnId.toLowerCase() } : {}), ...(codexHome ? { codexHome: path.resolve(codexHome) } : {}) };
+}
+
+/** Trusted local launch only. This never enrolls a project or accepts an HTTP path. */
+export async function registerLiveNativeCodexBinding({ homeDir = os.homedir(), repoPath, ...supplied } = {}) {
+  const metadata = nativeBindingMetadata(supplied);
+  if (!metadata || typeof repoPath !== "string" || !path.isAbsolute(repoPath)) return null;
+  const { projectRegistryPath } = getProjectRegistryPaths({ homeDir });
+  const db = await openProjectRegistry(projectRegistryPath, { create: false });
+  if (!db) return null;
+  try {
+    const project = db.prepare("SELECT project_ref, repo_root FROM projects WHERE project_ref = ? AND enrollment_status = 'joined'").get(buildProjectRef({ repoPath }));
+    if (!project || path.relative(project.repo_root, path.resolve(repoPath)) !== "") return null;
+    const sourceRef = `${metadata.profile}:${metadata.threadId}:${metadata.turnId || "current"}`;
+    const encoded = JSON.stringify(metadata);
+    const previous = db.prepare("SELECT metadata_json FROM project_sources WHERE project_ref = ? AND source_type = ? AND source_ref = ?").get(project.project_ref, LIVE_NATIVE_CODEX_SOURCE, sourceRef);
+    if (previous?.metadata_json !== encoded) {
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO project_sources (project_ref, source_type, source_ref, metadata_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_ref, source_type, source_ref) DO UPDATE SET metadata_json = excluded.metadata_json, updated_at = excluded.updated_at`)
+        .run(project.project_ref, LIVE_NATIVE_CODEX_SOURCE, sourceRef, encoded, now, now);
+    }
+    return { projectRef: project.project_ref, projectRoot: project.repo_root, ...metadata };
+  } finally { db.close(); }
+}
+
+/** Missing registry is an empty read, never an implicit install or enrollment. */
+export async function listLiveNativeCodexBindings({ homeDir = os.homedir(), profile = "default", projectRef = null, threadId = null, turnId = null, limit = 32 } = {}) {
+  if (typeof profile !== "string" || !LIVE_PROFILE.test(profile) || (threadId && (typeof threadId !== "string" || !LIVE_UUID.test(threadId))) || (turnId && (typeof turnId !== "string" || !LIVE_UUID.test(turnId)))) return [];
+  const { projectRegistryPath } = getProjectRegistryPaths({ homeDir });
+  const db = await openProjectRegistry(projectRegistryPath, { readOnly: true, create: false });
+  if (!db) return [];
+  try {
+    const prefix = `${profile}:${threadId ? threadId.toLowerCase() + ":" : ""}`;
+    const filters = ["s.source_type = ?", "p.enrollment_status = 'joined'", "substr(s.source_ref, 1, ?) = ?"];
+    const values = [LIVE_NATIVE_CODEX_SOURCE, prefix.length, prefix];
+    if (projectRef) { filters.push("p.project_ref = ?"); values.push(projectRef); }
+    if (threadId && turnId) { filters.push("s.source_ref IN (?, ?)"); values.push(`${profile}:${threadId.toLowerCase()}:current`, `${profile}:${threadId.toLowerCase()}:${turnId.toLowerCase()}`); }
+    return db.prepare(`SELECT p.project_ref, p.repo_root, s.metadata_json FROM project_sources s
+      JOIN projects p ON p.project_ref = s.project_ref
+      WHERE ${filters.join(" AND ")} ORDER BY s.updated_at DESC, s.source_ref ASC LIMIT ?`)
+      .all(...values, Math.min(64, Math.max(1, Number.isInteger(limit) ? limit : 32))).flatMap((row) => {
+        let metadata;
+        try {
+          if (Buffer.byteLength(row.metadata_json) > 4_096) return [];
+          const parsed = JSON.parse(row.metadata_json);
+          if (parsed.schemaVersion !== LIVE_NATIVE_BINDING_SCHEMA || parsed.profile !== profile) return [];
+          metadata = nativeBindingMetadata(parsed);
+        } catch { return []; }
+        return metadata && path.isAbsolute(row.repo_root)
+          ? [{ projectRef: row.project_ref, projectRoot: row.repo_root, ...metadata }] : [];
+      });
+  } finally { db.close(); }
+}
+
 export async function skipProjectRegistry({
   homeDir = os.homedir(),
   repoPath = process.cwd(),
