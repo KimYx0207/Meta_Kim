@@ -30,6 +30,8 @@
 
 Meta_Kim is a general agent governance framework that runs through hosts such as Claude Code and Codex. Its core is intent, decision-making and orchestration across research, operations, learning, writing, software and other tasks supported by discovered capabilities. Industry roles are optional capabilities. The framework compares feasible routes, coordinates owners and dependencies, verifies outcomes, and preserves useful lessons.
 
+Current release: [v3.7.2](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.7.2). Release notes: [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md).
+
 > You say: “Compare the feasible options under my budget and time constraints, recommend one with evidence, organize the work, and tell me which outcomes were actually verified.”
 
 | What happens next | What you can see |
@@ -45,7 +47,7 @@ Meta_Kim is a general agent governance framework that runs through hosts such as
 - The thing you asked for: a decision with evidence, a research report, an executable plan, learning materials, code, a review, documentation, or a release-ready change.
 - A readable explanation of what changed and why.
 - Test and verification evidence, with unknown or unproven claims kept visible instead of being called “done.”
-- A local Live control room whose default view is one execution graph, with named sessions, work-item status, AI roles, tool activity, blockers, outputs, evidence, and replay history.
+- A local Live control room that leads with the current task, available results and blockers, with an execution graph, work board, evidence and replay history for closer inspection.
 
 ### What it looks like while running
 
@@ -57,16 +59,20 @@ Meta_Kim is a general agent governance framework that runs through hosts such as
 
 <p align="center"><sub>The real Meta_Kim Live renderer with representative demo data, shown on the work board view. The page is local and read-only by default.</sub></p>
 
-The default view is one execution graph: named sessions on the left, the run's dependency graph on the canvas, and an Inspector that holds secondary evidence when you open it. A four-column work board and a project/session repository view are one click away when you want work-item status or project facts instead of dependencies. Historical status-only records are labeled honestly; new runtime projections preserve conversation identity and richer work telemetry.
+Live leads with the current task, available results, blockers and observed activity. Named sessions, the dependency graph and its Inspector let you inspect ownership and evidence; the four-column work board and project/session repository view remain available. Task progress follows durable events, while returned calls and producer self-checks remain distinct from accepted results.
+
+For an explicitly bound local Codex project, conversation and turn, Live can read the selected turn and verified child-task records within bounded reads. It projects structural execution summaries, without publishing raw prompt or response text. Omitted history stays visibly partial; this does not claim equivalent observation of arbitrary Claude Code conversations.
 
 ### Recent upgrades on `main`
 
 | Upgrade | What changed |
 | --- | --- |
-| One Hub, many projects | One user-level loopback Hub lists explicitly registered Meta_Kim projects and sessions without scanning the disk. |
-| Graph-first default view | One execution graph answers what depends on what, which stage is live, who owns each node, and what evidence exists — with stage progress, minimap, fit/follow/zoom, and replay on the same canvas. |
-| Board and repository views | A four-column work board and a project/session repository view stay one click away for work-item status, ownership, active tool, and project facts. |
-| Cross-runtime conversation identity | Claude Code, Codex, Cursor, and OpenClaw can attach supported conversation metadata to new run records; unsupported legacy records stay visibly unlinked. |
+| Requirements before design | Discuss evidence-backed recommendations, trade-offs and dependent decisions before producing a complete design and demonstrable tasks. |
+| Complete professional methods | Source-checked role steps and input/output contracts reach workers; missing facts and pending independent review remain explicit. |
+| Reviews bound to results | Reviews identify the current task, design, criteria and artifact hashes, with concrete rework attached to the affected deliverable. |
+| Tasks and results first | Inspect current work, available outputs, blockers and result-bound feedback before exploring the process graph. |
+| Open the current Codex turn | Verified conversation and turn identifiers survive Hub reuse; bounded long-conversation observation keeps omitted history partial. |
+| One Hub, several views | Explicitly registered projects share one local Hub, with graph, work-board and repository views, without scanning the disk. |
 | Evidence-first and local | Missing telemetry stays visibly unavailable; the UI is loopback-only, has no third-party assets, and remains read-only by default. |
 
 ### What the final handoff looks like
@@ -126,7 +132,7 @@ Good first requests include building a feature across frontend/backend/tests, in
 
 ### Meta_Kim Live: proof you can see
 
-Meta_Kim Live turns durable run records into a local **Proof-Carrying Run Graph**. One user-level Hub lists explicitly registered Meta_Kim projects, then lets you choose a Session / Run and inspect its stages, owners, evidence, uncertainty, and replay. It never scans the whole disk, reads raw Codex or Claude Code conversations, replaces the agent, creates a second scheduler, or pretends an unverified node is done.
+Meta_Kim Live turns durable run records and explicitly bound local Codex observations into a local **Proof-Carrying Run Graph**. One user-level Hub lists explicitly registered Meta_Kim projects, then lets you choose a Session / Run and inspect its tasks, results, stages, owners, evidence, uncertainty, and replay. Codex observation is read-only, limited to the selected turn and verified child-task records, and projects summaries rather than raw conversation text; omitted history stays partial. It never scans the whole disk, replaces the agent, creates a second scheduler, or pretends an unverified node is done.
 
 The Hub opens in Chinese by default; use the `EN` switch in the top-right corner for English. The preference is remembered locally. A marker-backed project joins the catalog when you explicitly open Live for it or start its first governed run, while an existing explicit skip is preserved.
 
