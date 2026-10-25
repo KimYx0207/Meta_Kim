@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,24 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const SESSION_ID = "b5799d00-ef7a-4882-818d-d9053cacba71";
 const TRANSCRIPT_DIR = "/home/kim/.claude/projects/D--KimProject-Meta-Kim";
 const TRANSCRIPT_PATH = `${TRANSCRIPT_DIR}/${SESSION_ID}.jsonl`;
+const ANCESTOR_SESSION_ID = "019a0000-0000-7000-8000-111111111111";
+
+function codexTranscript(t, content, { fork = false, name } = {}) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "meta-kim-conversation-binding-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const filename = name ?? `rollout-2026-10-25T16-37-37-${fork ? `${ANCESTOR_SESSION_ID}_` : ""}${SESSION_ID}.jsonl`;
+  const transcriptPath = path.join(directory, filename);
+  writeFileSync(transcriptPath, content);
+  return { session_id: SESSION_ID, transcript_path: transcriptPath };
+}
+
+function codexMetadata(overrides = {}) {
+  return JSON.stringify({
+    timestamp: "2026-10-25T16:37:37.752Z",
+    type: "session_meta",
+    payload: { id: SESSION_ID, session_id: SESSION_ID, originator: "Codex Desktop", ...overrides },
+  });
+}
 
 function presentFile(size = 4096) {
   return () => ({ exists: true, isFile: true, size });
@@ -94,6 +113,86 @@ test("normalizes the claude-code runtime alias and accepts every declared runtim
     });
     assert.equal(resolved.conversation?.runtime, runtime, `${runtime} must bind`);
   }
+});
+
+test("binds native Codex rollout filenames from their first session_meta identity", (t) => {
+  const payload = codexTranscript(t, `${codexMetadata()}\r\n{"type":"event_msg"}\n`);
+  const resolved = resolveVerifiedSourceConversation(payload, { runtime: "codex" });
+  assert.equal(resolved.binding.state, "verified");
+  assert.equal(resolved.conversation.conversationId, SESSION_ID);
+  assert.equal(resolved.conversation.matchBasis, CONVERSATION_BINDING_MATCH_BASIS);
+  assert.equal(JSON.stringify(resolved).includes(payload.transcript_path), false);
+});
+
+test("a fork binds its own metadata id rather than an ancestor retained in the filename", (t) => {
+  const payload = codexTranscript(t, `${codexMetadata()}\n`, { fork: true });
+  assert.equal(resolveVerifiedSourceConversation(payload, { runtime: "codex" }).binding.state, "verified");
+  const ancestor = resolveVerifiedSourceConversation({ ...payload, session_id: ANCESTOR_SESSION_ID }, { runtime: "codex" });
+  assert.equal(ancestor.binding.reason, "transcript_identity_mismatch");
+  assert.equal(ancestor.conversation, null);
+});
+
+test("Codex metadata validation stays bounded when a transcript has a large body", (t) => {
+  const payload = codexTranscript(t, `${codexMetadata({ base_instructions: "x".repeat(24000) })}\n${"x".repeat(300000)}\n`);
+  assert.equal(resolveVerifiedSourceConversation(payload, { runtime: "codex" }).binding.state, "verified");
+});
+
+test("Codex accepts an id-only session_meta record without requiring a desktop alias", (t) => {
+  const payload = codexTranscript(t, JSON.stringify({ type: "session_meta", payload: { id: SESSION_ID } }));
+  assert.equal(resolveVerifiedSourceConversation(payload, { runtime: "codex" }).binding.state, "verified");
+});
+
+test("Windows transcript separators are handled independently of the executing OS", () => {
+  const resolved = resolveVerifiedSourceConversation(
+    claudePayload({ transcript_path: `C:\\Users\\Kim\\.claude\\projects\\sample\\${SESSION_ID}.jsonl` }),
+    { runtime: "claude", fileFacts: presentFile() },
+  );
+  assert.equal(resolved.binding.state, "verified");
+});
+
+test("rollout metadata cannot loosen another runtime's exact-name contract", (t) => {
+  const payload = codexTranscript(t, `${codexMetadata()}\n`);
+  for (const runtime of ["claude", "cursor", "openclaw"]) {
+    assert.equal(resolveVerifiedSourceConversation(payload, { runtime }).binding.reason, "transcript_identity_mismatch");
+  }
+});
+
+test("an id appearing in an arbitrary filename never grants a Codex binding", (t) => {
+  for (const name of [
+    `notes-${SESSION_ID}.jsonl`,
+    `rollout-garbage-${SESSION_ID}.jsonl`,
+    `rollout-2026-10-25T16-37-37-${SESSION_ID}.json`,
+  ]) {
+    const payload = codexTranscript(t, `${codexMetadata()}\n`, { name });
+    assert.equal(resolveVerifiedSourceConversation(payload, { runtime: "codex" }).binding.reason, "transcript_identity_mismatch");
+  }
+});
+
+test("a Codex rollout filename alone cannot substitute for valid first-record metadata", (t) => {
+  for (const content of [
+    "not json\n",
+    "{\"type\":\"session_meta\"\n",
+    JSON.stringify({ type: "response_item", payload: { type: "session_meta", id: SESSION_ID } }),
+    JSON.stringify({ type: "session_meta", payload: [] }),
+    JSON.stringify({ type: "session_meta", payload: { session_id: SESSION_ID } }),
+    `${JSON.stringify({ type: "event_msg" })}\n${codexMetadata()}\n`,
+    `${codexMetadata({ id: ANCESTOR_SESSION_ID })}\n`,
+    `${codexMetadata({ session_id: ANCESTOR_SESSION_ID })}\n`,
+    `${codexMetadata({ session_id: 123 })}\n`,
+    `${codexMetadata({ base_instructions: "x".repeat(256 * 1024) })}\n`,
+  ]) {
+    const payload = codexTranscript(t, content);
+    const resolved = resolveVerifiedSourceConversation(payload, { runtime: "codex" });
+    assert.equal(resolved.conversation, null, content.slice(0, 100));
+    assert.equal(resolved.binding.reason, "transcript_identity_mismatch", content.slice(0, 100));
+  }
+});
+
+test("missing and empty Codex rollouts retain explicit filesystem refusal reasons", (t) => {
+  const payload = codexTranscript(t, "");
+  assert.equal(resolveVerifiedSourceConversation(payload, { runtime: "codex" }).binding.reason, "transcript_file_empty");
+  rmSync(payload.transcript_path);
+  assert.equal(resolveVerifiedSourceConversation(payload, { runtime: "codex" }).binding.reason, "transcript_file_absent");
 });
 
 test("refuses to bind when the runtime is not identified", () => {

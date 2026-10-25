@@ -37,7 +37,7 @@ function installBudgetLayer(packageRoot) {
   );
 }
 
-function runHook({ started, registryStatus = "joined", withBudget = true, runtime = "" }) {
+function runHook({ started, registryStatus = "joined", withBudget = true, runtime = "", conversationId = null, verifiedTranscript = true, initialEnvironment = {} }) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-live-hook-"));
   const projectRoot = path.join(root, "project");
   const packageRoot = path.join(root, "package");
@@ -46,6 +46,8 @@ function runHook({ started, registryStatus = "joined", withBudget = true, runtim
   mkdirSync(path.join(projectRoot, ".git"), { recursive: true });
   mkdirSync(path.join(packageRoot, "scripts"), { recursive: true });
   mkdirSync(path.join(packageRoot, "src", "infrastructure", "live"), { recursive: true });
+  const transcriptPath = conversationId ? path.join(root, conversationId + ".jsonl") : null;
+  if (transcriptPath && verifiedTranscript) writeFileSync(transcriptPath, JSON.stringify({ type: "session_meta", payload: { id: conversationId } }) + "\n");
   if (withBudget) installBudgetLayer(packageRoot);
   writeFileSync(
     path.join(packageRoot, "src", "infrastructure", "live", "live-hub-lifecycle.mjs"),
@@ -74,6 +76,7 @@ function runHook({ started, registryStatus = "joined", withBudget = true, runtim
     input: JSON.stringify({
       hook_event_name: "UserPromptSubmit",
       prompt: "请用 meta-theory 帮我实现并验证这个功能",
+      ...(conversationId ? { session_id: conversationId, transcript_path: transcriptPath } : {}),
     }),
     encoding: "utf8",
     env: {
@@ -84,6 +87,7 @@ function runHook({ started, registryStatus = "joined", withBudget = true, runtim
       META_KIM_PROFILE: "hook-profile",
       META_KIM_HOOK_RUNTIME: runtime,
       CODEX_THREAD_ID: "11111111-1111-4111-8111-111111111111",
+      ...initialEnvironment,
       ...environment,
     },
     windowsHide: true,
@@ -179,4 +183,31 @@ test("a package missing the budget layer does not autostart on a guessed fuse", 
   } finally {
     fixture.cleanup();
   }
+});
+
+test("Codex registers the verified hook conversation when the host omits its thread environment", () => {
+  const thread = "22222222-2222-4222-8222-222222222222";
+  const fixture = runHook({ started: false, runtime: "codex", conversationId: thread, initialEnvironment: { CODEX_THREAD_ID: "" } });
+  try {
+    assert.equal(fixture.result.status, 0, fixture.result.stderr);
+    assert.equal(JSON.parse(readFileSync(fixture.bindingPath, "utf8")).threadId, thread);
+    assert.equal(fixture.invoke({ CODEX_THREAD_ID: "" }).stdout.trim(), "", "the same verified conversation must reuse its view request");
+  } finally { fixture.cleanup(); }
+});
+
+test("Codex prefers the verified transcript identity over an inherited thread hint", () => {
+  const thread = "22222222-2222-4222-8222-222222222222";
+  const fixture = runHook({ started: false, runtime: "codex", conversationId: thread });
+  try {
+    assert.equal(fixture.result.status, 0, fixture.result.stderr);
+    assert.equal(JSON.parse(readFileSync(fixture.bindingPath, "utf8")).threadId, thread);
+  } finally { fixture.cleanup(); }
+});
+
+test("a raw session id without a verified transcript or host hint cannot register native observation", () => {
+  const fixture = runHook({ started: false, runtime: "codex", conversationId: "22222222-2222-4222-8222-222222222222", verifiedTranscript: false, initialEnvironment: { CODEX_THREAD_ID: "" } });
+  try {
+    assert.equal(fixture.result.status, 0, fixture.result.stderr);
+    assert.equal(existsSync(fixture.bindingPath), false);
+  } finally { fixture.cleanup(); }
 });

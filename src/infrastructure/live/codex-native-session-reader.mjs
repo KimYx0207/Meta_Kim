@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
@@ -13,6 +14,19 @@ const normalize = (value) => {
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const within = (root, value) => !path.relative(root, value).startsWith("..") && !path.isAbsolute(path.relative(root, value));
 const safeId = (value) => typeof value === "string" && /^[A-Za-z0-9_:/.-]{1,180}$/u.test(value) ? value : null;
+
+function commandProjectMatches(cwd, projectRoot) {
+  try {
+    let localPath = cwd;
+    if (typeof cwd !== "string") return false;
+    if (/^file:/iu.test(cwd)) {
+      const url = new URL(cwd);
+      if (url.hostname && url.hostname !== "localhost" || url.search || url.hash) return false;
+      localPath = fileURLToPath(url);
+    }
+    return path.isAbsolute(localPath) && normalize(localPath) === normalize(projectRoot);
+  } catch { return false; }
+}
 
 function fail(code) {
   const error = new Error(code);
@@ -172,19 +186,32 @@ function mergeSegmentEntries(segments) {
   return [...unique.values()].sort((a, b) => (Date.parse(a.record.timestamp) || 0) - (Date.parse(b.record.timestamp) || 0));
 }
 
-function dayDirectories(sinceMs, nowMs) {
+function dayDirectories(sinceMs, nowMs, threadId) {
   const start = Math.max(sinceMs - 86_400_000, nowMs - 2 * 86_400_000);
   const result = new Set();
-  for (let time = start; time <= nowMs + 86_400_000; time += 86_400_000) {
+  const addDay = (time) => {
     const date = new Date(time);
     result.add([String(date.getUTCFullYear()), String(date.getUTCMonth() + 1).padStart(2, "0"), String(date.getUTCDate()).padStart(2, "0")].join("/"));
+  };
+  for (let time = start; time <= nowMs + 86_400_000; time += 86_400_000) {
+    addDay(time);
+  }
+  // Desktop appends to the creation-day file when an older chat resumes. The
+  // UUIDv7 timestamp is only a bounded filename-search hint: metadata, project,
+  // exact turn and event-window checks below still establish source authority.
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(threadId)) {
+    const createdMs = Number.parseInt(threadId.replaceAll("-", "").slice(0, 12), 16);
+    if (createdMs <= nowMs) {
+      // Date directories may use the host timezone rather than UTC.
+      for (const offset of [-86_400_000, 0, 86_400_000]) addDay(createdMs + offset);
+    }
   }
   return [...result];
 }
 
 async function locateSegments(root, threadId, sinceMs, nowMs) {
   const files = [];
-  for (const day of dayDirectories(sinceMs, nowMs)) {
+  for (const day of dayDirectories(sinceMs, nowMs, threadId)) {
     let cursor = root;
     try {
       for (const part of day.split("/")) {
@@ -367,7 +394,7 @@ export function createCodexNativeSessionReader(options = {}) {
     const observation = parseCodexNativeTurn(parentRecords, { threadId, turnId: selectedTurn, sinceMs });
     const startedMs = turnStarts.get(selectedTurn)?.task ?? turnStarts.get(selectedTurn)?.context;
     if (Number.isFinite(startedMs)) observation.startedAt = new Date(startedMs).toISOString();
-    observation.commands = observation.commands.filter((command) => normalize(command.cwd) === normalize(realProject));
+    observation.commands = observation.commands.filter((command) => commandProjectMatches(command.cwd, realProject));
     for (const agent of observation.agents) {
       agent.completed = false;
       const spawnMs = Date.parse(agent.at);

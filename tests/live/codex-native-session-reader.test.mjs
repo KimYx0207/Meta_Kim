@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { appendFile, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { createCodexNativeSessionReader } from "../../src/infrastructure/live/codex-native-session-reader.mjs";
 import { buildNativeCodexLiveSnapshot } from "../../src/application/live/live-native-codex-projection.mjs";
@@ -61,6 +62,70 @@ test("a thread-only launch cannot promote an older observed turn to the current 
   // Even an unterminated old turn is not proof that it belongs to this launch.
   await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
   assert.equal(await resolveNativeCodexCurrentRun(threadOnly), null);
+});
+
+test("resumed UUIDv7 chats read the creation-day file without expanding the event or byte window", async (t) => {
+  const f = await fixture(t);
+  const createdMs = SINCE - 4 * 86_400_000;
+  const stamp = createdMs.toString(16).padStart(12, "0");
+  const thread = `${stamp.slice(0, 8)}-${stamp.slice(8)}-7000-8000-111111111111`;
+  // Some hosts put the UTC creation instant in the next local calendar day.
+  const creationDay = new Date(createdMs + 86_400_000).toISOString().slice(0, 10).split("-");
+  const directory = path.join(f.codexHome, "sessions", ...creationDay);
+  await mkdir(directory, { recursive: true });
+  const file = path.join(directory, `rollout-created-earlier-${thread}.jsonl`);
+  const staleContext = context(f.projectRoot, OTHER, -3 * 86_400_000);
+  await writeFile(file, serialize([meta(f.projectRoot, thread), staleContext]) + largePadding() + serialize([
+    context(f.projectRoot), command(f.projectRoot, { thread }),
+  ]));
+  const options = { ...f.options, threadId: thread, maxBytes: 4_096 };
+  const reader = createCodexNativeSessionReader(options);
+  const observed = await reader.read();
+  assert.equal(observed.state, "observed");
+  assert.equal(observed.turnId, TURN);
+  assert.equal(observed.commands.length, 1);
+  assert.equal(observed.coverage.parentSegmentCount, 1);
+  assert.ok(observed.coverage.bodyBytesRead <= options.maxBytes);
+  assert.ok(observed.coverage.sourceBytesRead <= observed.coverage.readByteLimit);
+  assert.equal((await createCodexNativeSessionReader({ ...options, turnId: OTHER }).read()).reason, "exact_native_turn_not_observed");
+});
+
+test("UUIDv7 creation-day hints do not trust mismatched headers or projects", async (t) => {
+  const f = await fixture(t);
+  const createdMs = SINCE - 4 * 86_400_000;
+  const stamp = createdMs.toString(16).padStart(12, "0");
+  const thread = `${stamp.slice(0, 8)}-${stamp.slice(8)}-7000-8000-111111111111`;
+  const directory = path.join(f.codexHome, "sessions", ...new Date(createdMs).toISOString().slice(0, 10).split("-"));
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, `rollout-wrong-thread-${thread}.jsonl`), serialize([
+    meta(f.projectRoot, OTHER), context(f.projectRoot), command(f.projectRoot, { thread }),
+  ]));
+  await writeFile(path.join(directory, `rollout-wrong-project-${thread}.jsonl`), serialize([
+    meta(path.join(f.root, "other"), thread), context(f.projectRoot), command(f.projectRoot, { thread }),
+  ]));
+  const observed = await createCodexNativeSessionReader({ ...f.options, threadId: thread }).read();
+  assert.equal(observed.state, "unavailable");
+  assert.equal(observed.reason, "exact_native_turn_not_observed");
+  assert.equal(observed.coverage.parentSegmentCount, 2);
+  assert.equal(observed.coverage.bodyBytesRead, 0);
+});
+
+test("Desktop command file URLs bind only to the same local project", async (t) => {
+  const f = await fixture(t, "Project with spaces");
+  const sameProject = pathToFileURL(f.projectRoot).href;
+  const sources = [sameProject, pathToFileURL(path.join(f.root, "other")).href,
+    `${sameProject}?untrusted=1`, `${sameProject}#fragment`, "file://remote.example/project", "../Project with spaces"];
+  const events = sources.map((cwd, index) => {
+    const event = command(cwd, { offset: 2 + index });
+    event.payload.item.id = `file-cwd-${index}`;
+    return event;
+  });
+  await f.write([meta(f.projectRoot), context(f.projectRoot), ...events]);
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.deepEqual(observed.commands.map((item) => item.id), ["file-cwd-0"]);
+  assert.equal(Object.hasOwn(observed.commands[0], "cwd"), false);
+  const serialized = JSON.stringify(buildNativeCodexLiveSnapshot(observed));
+  assert.equal(serialized.includes(sameProject), false);
 });
 
 test("large valid sessions use a bounded tail then zero-body-cache and append-only reads", async (t) => {

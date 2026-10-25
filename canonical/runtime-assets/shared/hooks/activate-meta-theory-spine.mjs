@@ -35,10 +35,18 @@ function argumentValue(name) {
 }
 
 // The run + conversation association is proved on disk, not asserted by the
-// caller: conversation-binding.mjs requires the payload transcript to exist and
-// to be named after the very session id the payload claims.
+// caller: conversation-binding.mjs verifies the transcript's runtime-specific
+// identity before returning a conversation.
 function verifiedConversationBinding() {
   return resolveVerifiedSourceConversation(payload, { runtime: sourceRuntimeFromPayload() });
+}
+
+function nativeCodexLiveThreadId() {
+  const verified = verifiedConversationBinding().conversation?.conversationId;
+  const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
+  if (typeof verified === "string" && uuid.test(verified)) return verified;
+  const hostHint = process.env.CODEX_THREAD_ID;
+  return typeof hostHint === "string" && uuid.test(hostHint) ? hostHint : null;
 }
 
 function sourceRuntimeFromPayload() {
@@ -567,9 +575,10 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
     const projectRef = registration.registryStatus === "joined" || (registration.registryStatus === "known" && registration.known === true)
       ? registration.projectRef
       : null;
-    if (projectRef && sourceRuntimeFromPayload() === "codex" && typeof registerLiveNativeCodexBinding === "function") {
+    const nativeThreadId = sourceRuntimeFromPayload() === "codex" ? nativeCodexLiveThreadId() : null;
+    if (projectRef && nativeThreadId && typeof registerLiveNativeCodexBinding === "function") {
       await registerLiveNativeCodexBinding({ homeDir: process.env.META_KIM_LIVE_HOME, repoPath: root, profile,
-        threadId: process.env.CODEX_THREAD_ID, codexHome: process.env.CODEX_HOME });
+        threadId: nativeThreadId, codexHome: process.env.CODEX_HOME });
     }
     const result = await ensureLiveHub({
       packageRoot,
@@ -587,7 +596,7 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
     // A Hub root is only a directory of history, never this task's deep link.
     if (!projectRef || !runId) return null;
     const runtime = sourceRuntimeFromPayload() || "shared";
-    const hostThread = process.env.CODEX_THREAD_ID || verifiedConversationBinding().conversation?.conversationRef || runtime;
+    const hostThread = nativeThreadId || verifiedConversationBinding().conversation?.conversationId || runtime;
     const requestKey = createHash("sha256").update(JSON.stringify([runtime, hostThread, projectRef, runId])).digest("hex");
     const requestDirectory = join(root, ".meta-kim", "state", profile, "live-view-requests");
     mkdirSync(requestDirectory, { recursive: true });
