@@ -124,6 +124,8 @@ export const SPINE_CONVERSATION_BINDING_REFUSALS = Object.freeze([
   "spine_conversation_unverified_basis",
   "spine_conversation_host_session_absent",
   "spine_conversation_host_session_mismatch",
+  "spine_conversation_host_runtime_mismatch",
+  "spine_conversation_host_runtime_conflict",
   "governed_run_id_missing",
 ]);
 
@@ -168,6 +170,12 @@ export function detectHostRuntimeFromEnv(env = process.env) {
  */
 export function detectHostSessionConversationId(env = process.env) {
   const source = env && typeof env === "object" ? env : {};
+  const detected = detectHostRuntimeFromEnv(source);
+  // Codex already exports its current thread as a runtime marker. Reuse that
+  // same value for the separate session-equality check; do not let an inherited
+  // Claude session id select a different chat under a known Codex host.
+  if (detected.runtime === "codex") return envValue(source, "CODEX_THREAD_ID") || null;
+  if (detected.basis === "conflicting_host_env_markers") return null;
   for (const marker of HOST_SESSION_ENV_MARKERS) {
     const value = envValue(source, marker.envName);
     if (value !== "") return value;
@@ -179,8 +187,9 @@ export function detectHostSessionConversationId(env = process.env) {
  * Precedence, strongest evidence first:
  *   1. an explicit runtime from the caller — the only way to record a run
  *      produced on behalf of a host this process is not running under;
- *   2. a live spine binding — written by the host's own activation hook after it
- *      verified its transcript file, which is proof, not a hint;
+ *   2. a same-host spine binding — written by the host's own activation hook
+ *      after it verified its transcript file; it cannot override a conflicting
+ *      current host identity;
  *   3. env markers — last, because they survive nested launches.
  * An unknown name is not evidence and falls through instead of reaching a reader.
  */
@@ -196,16 +205,17 @@ export function resolveGovernedRunProvenance({
   const spineBasis = SPINE_CONVERSATION_BINDING_BASIS.includes(spineBindingBasis)
     ? spineBindingBasis
     : "live_spine_binding";
-  for (const [value, basis] of [
-    [declaredRuntime, "declared_runtime_flag"],
-    [spineRuntime, spineBasis],
-  ]) {
-    const family = conversationRuntimeFamily(value);
-    if (family !== CONVERSATION_RUNTIME_UNAVAILABLE) {
-      return { sourceRuntime: family, basis, observedMarkers: Object.freeze([]) };
-    }
+  const declaredFamily = conversationRuntimeFamily(declaredRuntime);
+  if (declaredFamily !== CONVERSATION_RUNTIME_UNAVAILABLE) {
+    return { sourceRuntime: declaredFamily, basis: "declared_runtime_flag", observedMarkers: Object.freeze([]) };
   }
   const detected = detectHostRuntimeFromEnv(env);
+  const spineFamily = conversationRuntimeFamily(spineRuntime);
+  if (spineFamily !== CONVERSATION_RUNTIME_UNAVAILABLE
+    && detected.basis !== "conflicting_host_env_markers"
+    && (detected.runtime === CONVERSATION_RUNTIME_UNAVAILABLE || detected.runtime === spineFamily)) {
+    return { sourceRuntime: spineFamily, basis: spineBasis, observedMarkers: Object.freeze([]) };
+  }
   return {
     sourceRuntime: detected.runtime,
     basis: detected.basis,
@@ -241,7 +251,8 @@ function refuseSpineBinding(refusal) {
 /**
  * Which route, if any, is allowed to lend this spine run's chat.
  *
- * An active run lends it outright. A deactivated one may still lend it, because
+ * An active run lends it only to the same current host session. A deactivated
+ * one may still lend it under the same equality check, because
  * Claude Code's `Stop` hook fires at every turn boundary rather than at session
  * end — so a spine terminalized with `session_stop` routinely belongs to a chat
  * that is still open, and refusing all of them left every governed run after the
@@ -258,10 +269,14 @@ function refuseSpineBinding(refusal) {
  * by the equality check and declared on the record through `bindingBasis` rather
  * than hidden behind the live route's name.
  */
-function spineBindingRoute(spineState, recordedConversationId, hostSessionId) {
-  if (spineState.active === true) return { basis: "live_spine_binding" };
-  if (!REVIVABLE_DEACTIVATION_REASONS.includes(spineState.deactivationReason)) {
+function spineBindingRoute(spineState, recordedConversationId, hostSessionId, hostRuntime) {
+  if (spineState.active !== true && !REVIVABLE_DEACTIVATION_REASONS.includes(spineState.deactivationReason)) {
     return { refusal: "spine_run_inactive" };
+  }
+  if (hostRuntime.basis === "conflicting_host_env_markers") return { refusal: "spine_conversation_host_runtime_conflict" };
+  const recordedRuntime = conversationRuntimeFamily(spineState.sourceConversation?.runtime || spineState.sourceRuntime);
+  if (hostRuntime.runtime !== CONVERSATION_RUNTIME_UNAVAILABLE && hostRuntime.runtime !== recordedRuntime) {
+    return { refusal: "spine_conversation_host_runtime_mismatch" };
   }
   if (typeof hostSessionId !== "string" || !hostSessionId.trim()) {
     return { refusal: "spine_conversation_host_session_absent" };
@@ -269,7 +284,7 @@ function spineBindingRoute(spineState, recordedConversationId, hostSessionId) {
   if (hostSessionId.trim().toLowerCase() !== String(recordedConversationId).toLowerCase()) {
     return { refusal: "spine_conversation_host_session_mismatch" };
   }
-  return { basis: "revived_host_session_binding" };
+  return { basis: spineState.active === true ? "live_spine_binding" : "revived_host_session_binding" };
 }
 
 /**
@@ -287,6 +302,7 @@ export function resolveSpineConversationBinding({
   runId = null,
   runProfile = "default",
   hostSessionId = null,
+  env = {},
 } = {}) {
   if (!spineState || typeof spineState !== "object") return refuseSpineBinding("no_spine_state");
   if (sanitizeStateProfile(spineState.profile) !== sanitizeStateProfile(runProfile)) {
@@ -301,9 +317,6 @@ export function resolveSpineConversationBinding({
   if (typeof runId !== "string" || !runId.trim()) {
     return refuseSpineBinding("governed_run_id_missing");
   }
-  const route = spineBindingRoute(spineState, candidate.conversationId, hostSessionId);
-  if (route.refusal) return refuseSpineBinding(route.refusal);
-
   // Spine state files the chat under the *spine* run id. The canonical
   // normalizer refuses to restamp a foreign run id — it returns null — so a
   // verbatim copy lands on the read surface as another run's candidate rather
@@ -323,6 +336,8 @@ export function resolveSpineConversationBinding({
   if (!bound.sourceConversation.matchBasis) {
     return refuseSpineBinding("spine_conversation_unverified_basis");
   }
+  const route = spineBindingRoute(spineState, bound.sourceConversation.conversationId, hostSessionId, detectHostRuntimeFromEnv(env));
+  if (route.refusal) return refuseSpineBinding(route.refusal);
   return {
     linked: true,
     refusal: null,

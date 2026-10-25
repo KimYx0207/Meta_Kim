@@ -1271,6 +1271,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // DOM without limit.
     const nodes = nodeInput.slice(0, 128).map((node, index) => {
       const item = node && typeof node === "object" ? node : {};
+      const ownerReport = normalizeLiveOwnerReport(item, safeIdentifier(runInput.id || runInput.runId));
       const loadoutValue = item.loadout && typeof item.loadout === "object" ? item.loadout : {};
       const loadout = {
         skills: Math.max(0, numberOr(loadoutValue.skills, 0)),
@@ -1293,6 +1294,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return {
         id: display(firstValue(item, ["id", "nodeId"], "node-" + (index + 1)), "node-" + (index + 1)),
         taskPacketId: safeIdentifier(item.taskPacketId) || null,
+        ...(ownerReport ? { ownerReport, ownerAgent: ownerReport.ownerAgent } : {}),
         executionState: ["not_executed", "executed", "unreported"].includes(item.executionState) ? item.executionState : "unreported",
         label: display(firstValue(item, ["label", "title", "name", "nodeId"], "Untitled task"), "Untitled task"),
         kind: display(firstValue(item, ["kind", "nodeKind", "type"], "worker"), "worker").toLowerCase().replace(/[\s-]+/gu, "_"),
@@ -1304,7 +1306,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         active: item.active === true,
         observedOnly: item.observedOnly === true,
         executionObserved: item.executionObserved === true,
-        runId: safeIdentifier(item.runId),
+        runId: safeIdentifier(item.runId) || ownerReport?.runId || "",
         declaredNotStarted: item.declaredNotStarted === true,
         role: display(firstValue(item, ["roleDisplayName", "role", "ownerRole"], "worker"), "worker"),
         agent: display(firstValue(item, ["agent", "ownerAgent", "owner"])),
@@ -1771,6 +1773,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function nodeDisplayState(node) {
     const state = display(node?.displayState, "").toLowerCase().replace(/[\s-]+/gu, "_");
+    if (node?.ownerReport && node.executionState !== "executed" && normalizeLiveOwnerReport(node)) return "in_doubt";
     // An older public-state projection can still say unknown after a real
     // execution report arrived. Preserve the known execution and pending proof.
     if (node?.executionState === "executed" && node?.status === "in_doubt") return "in_doubt";
@@ -1791,6 +1794,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function nodeStateCopy(node) {
     const state = nodeDisplayState(node);
+    if (node?.ownerReport && node.executionState !== "executed" && normalizeLiveOwnerReport(node)) return currentLanguage === "zh" ? "已回报 · 待独立验证" : "Reported · awaiting independent verification";
     if (state === "planned") return currentLanguage === "zh" ? "仅规划 · 尚未派发" : "Planned · not dispatched";
     if (state === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
     if (state === "unknown") return currentLanguage === "zh" ? "状态未知" : "Unknown state";
@@ -1806,6 +1810,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function nodeShortStateCopy(node) {
     const state = nodeDisplayState(node);
+    if (node?.ownerReport && node.executionState !== "executed" && normalizeLiveOwnerReport(node)) return currentLanguage === "zh" ? "已回报" : "Reported";
     if (state === "planned") return currentLanguage === "zh" ? "尚未派发" : "Not dispatched";
     if (state === "unreported") return nodeStateCopy(node);
     if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "待验证" : "To verify";
@@ -4664,16 +4669,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
       : overview.state === "planned" ? (zh ? "仅有规划，尚未派发" : "Planned; not dispatched")
         : overview.state === "completed" ? (zh ? "已验证完成，结果仍需核对" : "Verified complete; result review still needed")
           : overview.state === "blocked" ? (zh ? "工作受阻，查看原因" : "Work blocked; see the reason")
+            : overview.ownerReported ? (zh ? "负责人已回报，待独立验证" : "Owner reported; awaiting independent verification")
             : overview.state === "active" ? (zh ? "运行中，当前执行任务未回写" : "Running; current task not reported")
               : (zh ? "历史记录，未确认当前执行" : "Historical record; no current execution confirmed");
     line(task, overview.task?.label || taskEmpty);
-    if (overview.task) {
-      const action = makeElement("button", "run-overview-action", zh ? "查看任务" : "Inspect task");
+    const inspectTask = overview.task || overview.ownerReported?.task;
+    if (inspectTask) {
+      const action = makeElement("button", "run-overview-action", overview.task ? (zh ? "查看任务" : "Inspect task") : (zh ? "查看回报" : "Inspect report"));
       action.type = "button";
-      action.addEventListener("click", () => selectNode(overview.task.nodeId, { inspectorTab: "summary" }));
+      action.addEventListener("click", () => selectNode(inspectTask.nodeId, { inspectorTab: "summary" }));
       task.append(action);
-      if (overview.task.moreCount) line(task, (zh ? "另有 " : "+ ") + overview.task.moreCount + (zh ? " 项正在执行" : " active tasks"), "run-overview-note");
+      if (overview.task?.moreCount) line(task, (zh ? "另有 " : "+ ") + overview.task.moreCount + (zh ? " 项正在执行" : " active tasks"), "run-overview-note");
     }
+    if (overview.ownerReported) line(task, overview.ownerReported.count + (zh ? " 项负责人回报，待独立验证" : " owner reports awaiting independent verification"), "run-overview-note");
     const tokenCoverage = line(task, (zh ? "输出计量 " : "Output measured ") + coverage.outputMeasuredNodeCount + "/" + coverage.nodeCount, "run-overview-note");
     tokenCoverage.dataset.liveTokenCoverage = "";
     tokenCoverage.title = zh ? "仅统计当前运行中已报告输出 token 数的节点；其余节点未计量，0 也是有效计量。" : "Nodes in this run with an observed output token count; other nodes are not measured. Zero is measured.";

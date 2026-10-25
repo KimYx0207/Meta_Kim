@@ -1234,6 +1234,9 @@ function recordBelongsToRun(record, runId) {
 }
 
 function readableWorkerScope(packet) {
+  if (packet?.evidenceLevel === "owner_reported" && firstString(packet, ["scope"])) {
+    return safeText(packet.scope, null, 96);
+  }
   if (packet?.designBinding?.sliceId) {
     const outcome = firstString(packet, ["coreProblem", "todayTask", "description"]);
     if (outcome) return safeText(outcome, null, 96);
@@ -1251,8 +1254,22 @@ function readableWorkerScope(packet) {
 
 function readableRunTask(artifact) {
   const candidate = firstString(artifact, ["task"])
-    || firstString(artifact?.requestRecord, ["task"]);
+    || firstString(artifact?.requestRecord, ["task"])
+    || (artifact?.hostCheckpointSummary?.evidenceLevel === "owner_reported" ? firstString(artifact?.criticalRecord, ["realIntent"]) : null);
   return safeText(candidate, "Governed execution", 240);
+}
+
+function safeOwnerReportedResult(result, { runId, taskId, ownerAgent }) {
+  if (result?.evidenceLevel !== "owner_reported" || result.nativeInvocationVerified !== false
+    || result.runId !== runId || publicTaskBinding(result.taskPacketId) !== publicTaskBinding(taskId)
+    || result.ownerAgent !== ownerAgent || !["reported_complete", "reported_failed", "reported_blocked"].includes(result.resultStatus)) return null;
+  return { runId, taskPacketId: publicTaskBinding(taskId), ownerAgent: safeText(ownerAgent, "unavailable", 96),
+    resultStatus: result.resultStatus, summary: safeText(result.summary, "负责人已回报，待独立验证。", 180),
+    reportedAt: safeTimestamp(result.reportedAt), evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+}
+
+function ownerReportedDisplay(ownerReport) {
+  return ownerReport ? { displayState: "unknown", statusReason: "负责人已回报，待独立验证。" } : {};
 }
 
 function readableRunTitle(artifact, task) {
@@ -1972,13 +1989,15 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   const workerNodes = graphPackets.map((packet, index) => {
     const taskId = taskIdFrom(packet) || `${runId}:worker:${index + 1}`;
     const result = results.get(taskId) || null;
-    const taskEvidence = safeExecutionEvidence(result, taskId, runId);
+    const ownerReport = safeOwnerReportedResult(result, { runId, taskId, ownerAgent: firstString(packet, ["ownerAgent", "owner", "agent"]) });
+    const taskEvidence = safeExecutionEvidence(ownerReport ? null : result, taskId, runId);
     const classificationConflict = sanitizeClassificationConflict(packet.__classificationConflict);
     let status = normalizeStatus(
       firstString(result, ["status", "resultStatus"]) || firstString(packet, ["status"]),
       "pending",
     );
-    const executionState = taskExecutionState(result, runId, taskId);
+    if (ownerReport) status = "in_doubt";
+    const executionState = ownerReport ? "unreported" : taskExecutionState(result, runId, taskId);
     if (result?.status === "executed" && executionState === "executed") status = "in_doubt";
     if (TRUSTED_TERMINAL_STATUSES.has(status) && !terminalStatusIsProven(result, status, { runId, taskId })) {
       status = "in_doubt";
@@ -2036,10 +2055,12 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       status: resolvedStatus,
       active: nodeActive,
       ...display,
+      ...ownerReportedDisplay(ownerReport),
+      ...(ownerReport ? { ownerReport } : {}),
       executionState,
       declaredStatus: status,
       observedOnly,
-      declaredNotStarted: status === "pending" && observed.count === 0,
+      declaredNotStarted: !ownerReport && status === "pending" && observed.count === 0,
       observedStatus: observed.state,
       observedCount: observed.count,
       observedAt: observed.lastAt,
@@ -2064,7 +2085,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       firstAt: startedAt,
       lastAt: completedAt,
       durationMs: Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : null,
-      summary: status === "pending"
+      summary: ownerReport ? ownerReport.summary : status === "pending"
         ? `${safeText(role, "worker", 80)} lane · awaiting real host execution evidence`
         : "Worker state projected from governed evidence",
       terminalEvidence: taskEvidence.filter((item) => ["completed", "failed", "blocked", "cancelled"].includes(item.status)),
@@ -2132,7 +2153,8 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   // unknown. `in_doubt` is the read model's existing marker for that, and the
   // page already treats it as non-informative. Defaulting to a real agent name
   // instead used to put a governance agent on the graph that nothing had run.
-  const declaredRootOwner = firstString(artifact?.dispatchEnvelopePacket, ["ownerAgent", "owner"]);
+  const declaredRootOwner = firstString(artifact?.dispatchEnvelopePacket, ["ownerAgent", "owner"])
+    || (artifact?.hostCheckpointSummary?.evidenceLevel === "owner_reported" ? firstString(artifact, ["ownerAgent"]) : null);
   const rootOwner = declaredRootOwner || "in_doubt";
   const mainNode = {
     id: publicId("agent", `${runId}:main:${rootOwner}`),
@@ -2792,13 +2814,16 @@ function sanitizeCompactProjection(value) {
       : null;
     let status = normalizeStatus(raw.status, "in_doubt");
     const rawTaskId = safeId(raw.taskPacketId || raw.taskId, null);
+    const ownerReport = raw.kind === "agent" && raw.isMain !== true && rawTaskId
+      ? safeOwnerReportedResult(raw.ownerReport, { runId, taskId: rawTaskId, ownerAgent: raw.ownerAgent }) : null;
+    if (ownerReport) status = "in_doubt";
     const terminalProven = raw.kind === "agent" && raw.isMain !== true && rawTaskId
       ? boundedArray(raw.terminalEvidence, 24).some((item) =>
           evidenceMatchesBinding(item, { runId, taskId: rawTaskId }) &&
           !evidenceIsStructuralOnly(item) &&
           workerEvidenceStatus(item) === status)
       : false;
-    const executionState = structuralOnly ? "not_executed" : evidence.some((item) =>
+    const executionState = ownerReport ? "unreported" : structuralOnly ? "not_executed" : evidence.some((item) =>
       evidenceMatchesBinding(item, { runId, taskId: publicTaskBinding(rawTaskId) }) &&
       (item.executionObserved === true || item.status === "completed")) ? "executed" : "unreported";
     if (TRUSTED_TERMINAL_STATUSES.has(status) && raw.kind === "agent" && raw.isMain !== true && !terminalProven) {
@@ -2826,10 +2851,12 @@ function sanitizeCompactProjection(value) {
       status,
       active: nodeActive,
       ...publicDisplay(status, { active: nodeActive, structuralOnly }),
+      ...ownerReportedDisplay(ownerReport),
+      ...(ownerReport ? { ownerReport } : {}),
       executionState,
       declaredStatus: normalizeStatus(raw.declaredStatus ?? raw.status, "in_doubt"),
       observedOnly,
-      declaredNotStarted: raw.declaredNotStarted === true,
+      declaredNotStarted: !ownerReport && raw.declaredNotStarted === true,
       observedStatus,
       classificationConflict: sanitizeClassificationConflict(raw.classificationConflict),
       ownerAgent: safeText(raw.ownerAgent, "unavailable", 96),
@@ -2846,9 +2873,9 @@ function sanitizeCompactProjection(value) {
       lastAt: completedAt,
       observedAt: safeTimestamp(raw.observedAt),
       durationMs,
-      summary: safeText(raw.summary, "No safe execution summary is available", 180),
-      terminalEvidence,
-      workerExecutionEvidence: evidence,
+      summary: ownerReport ? ownerReport.summary : safeText(raw.summary, "No safe execution summary is available", 180),
+      terminalEvidence: ownerReport ? [] : terminalEvidence,
+      workerExecutionEvidence: ownerReport ? [] : evidence,
       toolCalls,
       toolCount: toolCalls.length,
       latestTool: toolCalls.at(-1)?.name || null,
@@ -3279,6 +3306,7 @@ export function buildLiveSnapshot({
       // "is this queue still moving", which is what turns a pending worker
       // into 排队中 rather than 未收到执行回写.
       ...publicDisplay(nodeStatus, { active: runActive, structuralOnly }),
+      ...ownerReportedDisplay(node.ownerReport),
       ...(nodeStatus === "in_doubt" && node.executionState === "executed"
         ? { statusReason: "执行回合已结束，等待任务验证；尚不能确认任务完成。" } : {}),
     };

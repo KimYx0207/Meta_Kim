@@ -6770,6 +6770,46 @@ return (node) => ({ state: nodeDisplayState(node), summary: nodeStateCopy(node),
   assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "未收到执行回写" });
 });
 
+test("bound owner reports survive normalization and agree across badges and the actual overview", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const runId = "meta-owner-report-ui";
+  const ownerReport = { runId, taskPacketId: "task:owner-report", ownerAgent: "debugger", resultStatus: "reported_complete",
+    summary: "修复已回报，等待独立检查", reportedAt: "2026-10-22T08:00:00Z", evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+  const input = { run: { id: runId, active: true, status: "active", completionEvidenceState: "unproven" }, nodes: [
+    { id: "reported", runId, kind: "agent", taskPacketId: ownerReport.taskPacketId, ownerAgent: "debugger", status: "in_doubt",
+      displayState: "unknown", executionState: "unreported", active: false, task: "恢复数字人任务展示", summary: ownerReport.summary, ownerReport },
+  ] };
+  const snapshot = normalize(input);
+  const html = renderLiveControlRoomPage();
+  const displayFormat = JSON.parse(html.match(/const DISPLAY_FORMAT = (\{.*?\});\n/su)[1]);
+  const view = new Function("DISPLAY_FORMAT", `
+const currentLanguage='zh'; const stateCopy=(state)=>state; const localize=(state)=>state;
+${serializeLiveRunOverviewResolvers()}
+${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
+return (node)=>[nodeDisplayState(node),nodeStateCopy(node),nodeShortStateCopy(node)];`)(displayFormat);
+  assert.equal(snapshot.nodes[0].executionState, "unreported");
+  assert.deepEqual(view(snapshot.nodes[0]), ["in_doubt", "已回报 · 待独立验证", "已回报"]);
+  const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, append(...items) { this.children.push(...items); }, addEventListener() {} });
+  const overview = element("section");
+  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", `
+const selectedProjectId='p'; const currentLanguage='zh';
+${serializeLiveTokenUsageResolvers()}
+${shippedHelper(html, "renderRunOverview")}
+return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview);
+  render(snapshot);
+  const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
+  const task = overview.children.find((node) => node.dataset.overviewItem === "task");
+  assert.match(text(task), /负责人已回报，待独立验证/u);
+  assert.doesNotMatch(text(task), /未回写|未收到执行回写|已验证完成/u);
+  assert.equal(resolveLiveRunOverview(snapshot).activity.item, null);
+  assert.equal(resolveLiveRunOverview(snapshot).execution, null);
+  for (const mutation of [{ runId: "other" }, { taskPacketId: "task:other" }, { ownerAgent: "other" }, { nativeInvocationVerified: true }]) {
+    const rejected = normalize({ ...input, nodes: [{ ...input.nodes[0], ownerReport: { ...ownerReport, ...mutation } }] });
+    assert.equal(rejected.nodes[0].ownerReport, undefined);
+    assert.equal(view(rejected.nodes[0])[1], "未收到执行回写");
+  }
+});
+
 test("first overview synchronizes actual layout scale and tier even when the camera value has not changed", () => {
   const html = renderLiveControlRoomPage();
   const policy = loadLiveGraphLayoutPolicy();

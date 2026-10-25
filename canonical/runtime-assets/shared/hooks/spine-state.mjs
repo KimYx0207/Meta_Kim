@@ -1263,6 +1263,16 @@ export async function writeSpineState(cwd, state, options = {}) {
     if (current && current.runId !== expectedRunId) {
       return { written: false, reason: "expected_run_changed", runId: current.runId };
     }
+    if (options.expectedActive !== undefined && current?.active !== options.expectedActive) {
+      return { written: false, reason: "expected_active_changed", runId: current?.runId || null };
+    }
+    if (options.expectedStage !== undefined && current?.currentStage !== options.expectedStage) {
+      return { written: false, reason: "expected_stage_changed", runId: current?.runId || null };
+    }
+    if (options.expectedCheckpointRevision !== undefined
+      && (current?.hostCheckpointRevision || 0) !== options.expectedCheckpointRevision) {
+      return { written: false, reason: "expected_checkpoint_revision_changed", runId: current?.runId || null };
+    }
     await safeAtomicWriteJson(cwd, filePath, safeState);
     if (options.interruptAfter === "spine") {
       throw new Error("Injected interruption after authoritative spine write.");
@@ -1857,6 +1867,10 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     sourceRuntime,
     conversationLinkState,
     workerLifecycle,
+    ...(safeState.hostCheckpointSummary?.evidenceLevel === "owner_reported" ? {
+      hostCheckpointSummary: safeState.hostCheckpointSummary,
+      workerTaskPackets: (Array.isArray(safeState.workerTaskPackets) ? safeState.workerTaskPackets : []).slice(0, 32),
+    } : {}),
     substanceClass: substance.substanceClass,
     substanceSignals: substance.substanceSignals,
     ...(sourceConversation ? { sourceConversation } : {}),

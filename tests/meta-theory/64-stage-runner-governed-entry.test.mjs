@@ -193,7 +193,7 @@ test("a governed run under a live chat records that chat and the host it came fr
     root,
     outputRoot,
     runId: "meta-runner-hostprov-linked-1",
-    hostEnv: {},
+    hostEnv: { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: HOST_PROVENANCE_CHAT_ID },
   });
 
   assert.equal(report.conversationLinkState, "verified");
@@ -218,6 +218,29 @@ test("a governed run under a live chat records that chat and the host it came fr
   assert.equal(projection.run.conversationLinkState, "verified");
   assert.equal(projection.run.sourceRuntime, "claude");
   assert.equal(projection.run.conversationRef, HOST_PROVENANCE_CHAT_ID);
+});
+
+test("an active chat cannot lend its identity to an unidentified, different-chat or different-runtime runner", async (t) => {
+  const { root, outputRoot, spine } = await governedRunnerSpineFixture(t);
+  const activated = verifiedChatSpineState(spine);
+  await spine.activateSpineState(root, activated);
+  const cases = [
+    { hostEnv: {}, reason: "spine_conversation_host_session_absent", runtime: "unavailable" },
+    { hostEnv: { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "39a0b1c2-0000-4000-8000-000000000000" },
+      reason: "spine_conversation_host_session_mismatch", runtime: "claude" },
+    { hostEnv: { CODEX_THREAD_ID: HOST_PROVENANCE_CHAT_ID }, reason: "spine_conversation_host_runtime_mismatch", runtime: "codex" },
+  ];
+  for (const [index, candidate] of cases.entries()) {
+    const runId = `meta-runner-hostprov-active-unmatched-${index}`;
+    const report = await governedRunnerSpineRun({ root, outputRoot, runId, hostEnv: candidate.hostEnv });
+    assert.equal(report.conversationLinkState, "unlinked");
+    assert.equal(report.sourceConversation, undefined);
+    assert.equal(report.hostProvenancePacket.conversationBindingRefusal, candidate.reason);
+    assert.equal(report.sourceRuntime, candidate.runtime);
+    const projection = JSON.parse(await fs.readFile(path.join(outputRoot, `${runId}.live.json`), "utf8"));
+    assert.equal(projection.run.conversationLinkState, "unlinked");
+    assert.notEqual(projection.run.conversationRef, HOST_PROVENANCE_CHAT_ID);
+  }
 });
 
 test("a governed run outside any live chat records the host without inventing a link", async (t) => {

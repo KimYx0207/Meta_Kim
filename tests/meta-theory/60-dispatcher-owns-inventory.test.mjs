@@ -34,12 +34,13 @@ test("60 — Claude canonical hooks contain runtime adapters and thin shared-cor
   const hooksDir = resolve(repoRoot, "canonical/runtime-assets/claude/hooks");
   const hooks = readdirSync(hooksDir).filter((f) => f.endsWith(".mjs"));
   // Cross-runtime implementations live exclusively under shared/hooks and are
-  // projected into .claude/hooks by sync-runtimes.mjs. These four thin files
+  // projected into .claude/hooks by sync-runtimes.mjs. These thin files
   // keep canonical Claude adapters directly executable in source tests.
   const expected = [
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "block-dangerous-bash.mjs",
+    "conversation-binding.mjs",
     "ecc-permission-cache-wrapper.mjs",
     "enforce-agent-dispatch.mjs",
     "graphify-context.mjs",

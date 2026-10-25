@@ -1421,6 +1421,7 @@ const GLOBAL_META_KIM_HOOK_PACKAGE_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
@@ -1447,6 +1448,7 @@ const PROJECT_CLAUDE_HOOK_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
@@ -3034,6 +3036,7 @@ const CLAUDE_PROJECT_HOOK_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3065,6 +3068,7 @@ const CODEX_PROJECT_HOOK_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "codex_hook_adapter.py",
@@ -3098,6 +3102,7 @@ const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3123,6 +3128,7 @@ const CURSOR_PROJECT_HOOK_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
@@ -3149,6 +3155,7 @@ const CURSOR_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
@@ -3951,6 +3958,7 @@ Examples:
         "spine-state-utils.mjs",
         "spine-state-gates.mjs",
         "spine-state.mjs",
+        "governed-host-checkpoint.mjs",
       ]) {
         const sourcePath = await canonicalGlobalHookSource(hookName, "codex");
         if (!sourcePath) {
@@ -4245,6 +4253,7 @@ Examples:
         "spine-state-utils.mjs",
         "spine-state-gates.mjs",
         "spine-state.mjs",
+        "governed-host-checkpoint.mjs",
       ]) {
         const sourcePath = await canonicalGlobalHookSource(hookName, "cursor");
         if (!sourcePath) {

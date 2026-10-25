@@ -2280,6 +2280,7 @@ const META_KIM_HOOK_FILE_NAMES = new Set([
   "session-start.sh",
   "skip-reminder.mjs",
   "spine-state.mjs",
+  "governed-host-checkpoint.mjs",
   "spine-state-gates.mjs",
   "spine-state-utils.mjs",
   "stop.py",

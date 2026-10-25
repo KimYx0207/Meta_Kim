@@ -7,8 +7,11 @@ function route(task, runtime = "claude_code", os = "windows") {
   const result = spawnSync(
     process.execPath,
     ["scripts/select-execution-route.mjs", "--task", task, "--runtime", runtime, "--os", os, "--json"],
-    { encoding: "utf8" }
+    // The explicit capability-gap route includes the bounded discovery packet,
+    // which can exceed Node's default 1 MiB on a populated runtime inventory.
+    { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }
   );
+  assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }

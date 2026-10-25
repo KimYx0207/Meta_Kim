@@ -133,7 +133,9 @@ test("a skipped project does not announce the Hub root as the current task or re
     const options = JSON.parse(readFileSync(fixture.invocationPath, "utf8"));
     assert.equal(options.projectRef, null);
     assert.equal(options.runId, null);
-    assert.equal(fixture.result.stdout.trim(), "");
+    const context = JSON.parse(fixture.result.stdout).hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(context, /Meta_Kim Live|http:\/\/127\.0\.0\.1:43127/u);
+    assert.match(context, /后台执行接续/u);
     assert.equal(existsSync(path.join(fixture.projectRoot, ".meta-kim", "state", "hook-profile", "live-view-requests")), false);
   } finally {
     fixture.cleanup();
@@ -153,7 +155,9 @@ test("an already-running Hub requests the current known-project view once", () =
     assert.ok(options.runId);
     const repeated = fixture.invoke();
     assert.equal(repeated.status, 0, repeated.stderr);
-    assert.equal(repeated.stdout.trim(), "", "the same host/project/run must not request a second tab");
+    const repeatedContext = JSON.parse(repeated.stdout).hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(repeatedContext, /Meta_Kim Live|侧栏视图一次/u, "the same host/project/run must not request a second tab");
+    assert.match(repeatedContext, /后台执行接续/u);
     const binding = JSON.parse(readFileSync(fixture.bindingPath, "utf8"));
     assert.equal(binding.repoPath, fixture.projectRoot);
     assert.equal(binding.threadId, "11111111-1111-4111-8111-111111111111");
@@ -175,11 +179,9 @@ test("a package missing the budget layer does not autostart on a guessed fuse", 
       false,
       "the hub must not be started on a fuse the data layer never supplied",
     );
-    assert.equal(
-      fixture.result.stdout.trim(),
-      "",
-      "no Live link may be announced when the measured fuse cannot be read",
-    );
+    const context = JSON.parse(fixture.result.stdout).hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(context, /Meta_Kim Live|http:\/\/127\.0\.0\.1:43127/u, "no Live link may be announced when the measured fuse cannot be read");
+    assert.match(context, /后台执行接续/u);
   } finally {
     fixture.cleanup();
   }
@@ -191,7 +193,9 @@ test("Codex registers the verified hook conversation when the host omits its thr
   try {
     assert.equal(fixture.result.status, 0, fixture.result.stderr);
     assert.equal(JSON.parse(readFileSync(fixture.bindingPath, "utf8")).threadId, thread);
-    assert.equal(fixture.invoke({ CODEX_THREAD_ID: "" }).stdout.trim(), "", "the same verified conversation must reuse its view request");
+    const repeatedContext = JSON.parse(fixture.invoke({ CODEX_THREAD_ID: "" }).stdout).hookSpecificOutput.additionalContext;
+    assert.doesNotMatch(repeatedContext, /Meta_Kim Live|侧栏视图一次/u, "the same verified conversation must reuse its view request");
+    assert.match(repeatedContext, /后台执行接续/u);
   } finally { fixture.cleanup(); }
 });
 

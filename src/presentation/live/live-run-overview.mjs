@@ -55,6 +55,23 @@ function overviewTimestamp(value) {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
+/** A bound owner's report is distinct from native execution and verification. */
+export function normalizeLiveOwnerReport(node, runId = node?.runId) {
+  const report = node?.ownerReport;
+  const taskId = overviewText(node?.taskPacketId);
+  const owner = overviewText(node?.ownerAgent || node?.agent || node?.owner);
+  const boundRun = overviewText(runId);
+  if (!report || typeof report !== "object" || Array.isArray(report) || node.isMain === true
+    || !["agent", "worker"].includes(overviewState(node.kind)) || !boundRun || !taskId || !owner
+    || (node.runId && node.runId !== boundRun) || report.runId !== boundRun || report.taskPacketId !== taskId
+    || report.ownerAgent !== owner || report.evidenceLevel !== "owner_reported" || report.nativeInvocationVerified !== false
+    || !["reported_complete", "reported_failed", "reported_blocked"].includes(report.resultStatus)
+    || !overviewText(report.summary)) return null;
+  return { runId: boundRun, taskPacketId: taskId, ownerAgent: owner, resultStatus: report.resultStatus,
+    summary: overviewText(report.summary), reportedAt: overviewTimestamp(report.reportedAt),
+    evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+}
+
 /** Host replay's display mapping needs its independent actual-invocation fact. */
 function overviewHostExecutionEvent(record, snapshot) {
   const kinds = { agent_event: "agent", tool_started: "tool_start", tool_finished: "tool_end", host_failure: "failure" };
@@ -125,6 +142,12 @@ export function resolveLiveRunOverview(snapshot) {
     && (node.active === true || ["active", "running"].includes(overviewState(node.displayState || node.status)))) : [];
   activeNodes.sort((left, right) => Number(right.id === activity.item?.nodeId) - Number(left.id === activity.item?.nodeId) || Number(left.isMain === true) - Number(right.isMain === true) || overviewText(left.id).localeCompare(overviewText(right.id)));
   const current = activeNodes[0];
+  const ownerReports = nodes.flatMap((node) => {
+    const report = normalizeLiveOwnerReport(node, runId);
+    return report ? [{ node, report }] : [];
+  }).sort((left, right) => String(right.report.reportedAt || "").localeCompare(String(left.report.reportedAt || ""))
+    || overviewText(left.node.id).localeCompare(overviewText(right.node.id)));
+  const reported = ownerReports[0];
   const blockers = planned ? [] : nodes.filter((node) => ["blocked", "failed"].includes(overviewState(node.displayState || node.status)) && !node.declaredNotStarted);
   blockers.sort((left, right) => overviewText(left.id).localeCompare(overviewText(right.id)));
   const blocked = blockers[0];
@@ -133,6 +156,8 @@ export function resolveLiveRunOverview(snapshot) {
   return {
     state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : "historical",
     task: current ? { label: overviewText(current.task) || overviewText(current.label), nodeId: overviewText(current.id), moreCount: activeNodes.length - 1 } : null,
+    ownerReported: reported ? { count: ownerReports.length, task: { label: overviewText(reported.node.task) || overviewText(reported.node.label),
+      nodeId: overviewText(reported.node.id), summary: reported.report.summary, reportedAt: reported.report.reportedAt } } : null,
     result: { items: deliverables.filter((item) => item.availability === "available"), declaredCount: deliverables.filter((item) => item.availability === "declared").length },
     blocker: blocked ? { kind: "blocked", label: overviewText(blocked.statusReason), nodeLabel: overviewText(blocked.label), nodeId: overviewText(blocked.id), moreCount: blockers.length - 1 }
       : runBlocked ? { kind: "blocked", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 }
@@ -145,6 +170,6 @@ export function resolveLiveRunOverview(snapshot) {
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveNativeActivity, overviewTimestamp, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }

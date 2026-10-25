@@ -75,18 +75,21 @@ export function buildNativeCodexLiveSnapshot(observation) {
     replay.push({ id: id("event", command.id), type: "command_returned", kind: "tool", nodeId: mainId, at: command.at, status: failed ? "failed" : "executed", label: "shell", summary: tool.summary });
   }
   for (const agent of observation.agents || []) {
+    const childSource = agent.observationBasis === "verified_child_parent_turn" && agent.childMetadataVerified === true && agent.spawnReturned !== true;
     const taskId = id("native-task", agent.id);
     const nodeId = id("agent", `${runId}:${agent.id}`);
     const node = baseNode({ nodeId, taskId, label: agent.role || agent.owner || "worker", owner: agent.owner, at: agent.at });
     node.parentId = mainId;
-    node.task = agent.taskName || "原生派发的子任务";
-    node.provenance.push({ kind: "native_spawn", state: "observed", sourceCallId: agent.id, sourceThreadId: observation.threadId, childThreadId: agent.childThreadId });
+    node.task = agent.taskName || (childSource ? "子会话源已观察的任务" : "原生派发的子任务");
+    node.provenance.push({ kind: childSource ? "source_parent_link" : "native_spawn", state: "observed",
+      ...(childSource ? { sourceEventId: agent.id, parentDispatchCovered: false } : { sourceCallId: agent.id }),
+      sourceThreadId: observation.threadId, childThreadId: agent.childThreadId });
     if (agent.completed && agent.childMetadataVerified) {
       node.status = "in_doubt";
       node.active = false;
       node.displayState = "in_doubt";
       node.executionState = "executed";
-      node.statusReason = "同一父会话派发的子任务已返回；任务结果尚未验收。";
+      node.statusReason = childSource ? "子会话源已验证本轮父任务关联与返回；父派发记录未覆盖，任务结果尚未验收。" : "同一父会话派发的子任务已返回；任务结果尚未验收。";
       node.timing.completedAt = agent.completedAt;
       node.lastAt = agent.completedAt;
     } else {
@@ -94,15 +97,16 @@ export function buildNativeCodexLiveSnapshot(observation) {
       node.active = false;
       node.displayState = "in_doubt";
       node.executionState = "unknown";
-      node.statusReason = "已观察到原生派发，但尚未确认返回；子任务当前执行状态未知。";
+      node.statusReason = childSource ? "子会话源已验证本轮父任务关联；父派发记录未覆盖，当前返回状态尚未确认。" : "已观察到原生派发，但尚未确认返回；子任务当前执行状态未知。";
     }
-    addEvidence(node, evidence({ runId, taskId, nodeId, eventId: agent.id, at: agent.at, sha256: agent.sha256, label: "原生子任务已派发" }));
+    addEvidence(node, evidence({ runId, taskId, nodeId, eventId: agent.id, at: agent.at, sha256: agent.sha256, label: childSource ? "子会话源已观察，父派发记录未覆盖" : "原生子任务已派发" }));
     if (agent.completed && agent.childMetadataVerified) {
       addEvidence(node, evidence({ runId, taskId, nodeId, eventId: `${agent.id}:return`, at: agent.completedAt, sha256: agent.completionSha256, label: "原生子任务已返回" }));
     }
     nodes.push(node);
-    edges.push({ id: id("edge", agent.id), from: mainId, to: nodeId, kind: "spawned" });
-    replay.push({ id: id("event", agent.id), type: "agent_spawned", kind: "agent", nodeId, at: agent.at, status: "observed", label: node.label, summary: "来自同一原生父会话的派发事件；当前是否仍在执行未确认。" });
+    edges.push({ id: id("edge", agent.id), from: mainId, to: nodeId, kind: childSource ? "source_parent_link" : "spawned" });
+    replay.push({ id: id("event", agent.id), type: childSource ? "child_source_observed" : "agent_spawned", kind: "agent", nodeId, at: agent.at, status: "observed", label: node.label,
+      summary: childSource ? "原生子会话元数据及task_started已关联本轮；父派发事件不在观察范围内。" : "来自同一原生父会话的派发事件；当前是否仍在执行未确认。" });
     if (agent.completed && agent.childMetadataVerified) replay.push({ id: id("event", `${agent.id}:return`), type: "agent_returned", kind: "agent", nodeId, at: agent.completedAt, status: "executed", label: node.label, summary: node.statusReason });
   }
   main.toolCount = main.toolCalls.length;

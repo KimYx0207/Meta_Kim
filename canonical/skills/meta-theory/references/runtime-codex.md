@@ -165,6 +165,31 @@ Respect user choices (after questioning). Base the analysis on the user's actual
 
 ## Hook progression
 
+The prompt Hook hands the host its existing run identity and the installed
+`governed-host-checkpoint.mjs` command. Apply the installed meta-theory skill,
+use `--inspect` and `--template <stage>` to read the current task contract, and
+record each stage's actual owner result with that command before advancing.
+Resume the same run after a turn boundary; do not start another planned-only
+runner to make the panel look active. Thinking records bounded worker work
+orders before dispatch. The checkpoint is an owner report, not native execution
+proof: worker returns, verification and user acceptance still need their own
+evidence. An ordinary Stop retains an unfinished checkpointed task; another
+conversation or worker's Stop has no authority to end it.
+
+When evidence or a capability is still missing, a `blocked` or `in_progress`
+checkpoint may contain an empty `record` and the owner's actual summary and
+evidence references. It preserves the stage and existing work orders; it cannot
+complete a stage or invent a matching capability.
+
+HookPrompt display is a separate user preference. The generated Codex adapter
+accepts an adjacent user-owned `hookprompt-display.json` with `{"mode":"full"}`
+or `{"mode":"summary"}` and passes that choice to the actual HookPrompt process.
+An explicit `HOOKPROMPT_DISPLAY_MODE` environment value takes priority. Missing,
+malformed, linked, or oversized preference files leave the installed HookPrompt
+default unchanged. Sync updates the adapter and preserves this user preference.
+Receiving context and rendering the optimized prompt in chat are separate checks;
+verify the requested visible result before calling display restored.
+
 Codex hooks are the last fuse after preflight. Current Codex documentation describes project hooks as trusted lifecycle guardrails loaded from hook/config layers, including managed/plugin/project sources and Windows-specific command variants. Do not treat them as an exhaustive all-tool policy engine.
 
 Before mutation, Conductor must confirm the route has the key behavior minimum: real intent, success criteria, Fetch evidence, capability discovery, selected owner, owner loadout across agent/skill/command/MCP/tool/abstract prompt, runtime/OS not known-unsupported, memory strategy, and Review standard. Hook output that blocks an action must name `returnToStage`, `repairOwner`, `repairAction`, `allowedNextAction`, and `forbiddenRetry`. Detailed rollback, dependency, warning, writeback, and verification-owner fields are public-ready/validator gates unless their absence makes the action unsafe.

@@ -4,12 +4,13 @@ import {
   readSpineStateIncludingInactive,
   terminalizeSpineState,
 } from "./spine-state.mjs";
+import { resolveVerifiedSourceConversation } from "./conversation-binding.mjs";
 
 // Claude Code Stop entrypoint. Keep this runtime-facing adapter independent
 // from the generic Codex/Cursor entrypoint: only the lifecycle implementation
 // in spine-state.mjs is shared across runtimes.
 
-await readJsonFromStdin();
+const payload = await readJsonFromStdin();
 
 const cwd = process.cwd();
 
@@ -19,9 +20,22 @@ try {
     process.exit(0);
   }
 
+  if (state.sourceConversation?.conversationId) {
+    const bound = resolveVerifiedSourceConversation(payload, { runtime: state.sourceConversation.runtime });
+    if (bound.conversation?.conversationId !== state.sourceConversation.conversationId
+      || (payload?.run_id && payload.run_id !== state.runId)) {
+      process.stderr.write("[spine-cleanup] preserved another or unverified conversation's run\n");
+      process.exit(0);
+    }
+  }
+
   const evolutionCompleted =
     state.deactivationReason === "evolution_completed" ||
     state.stages?.evolution?.status === "completed";
+  if (!evolutionCompleted && Number.isSafeInteger(state.hostCheckpointRevision) && state.hostCheckpointRevision > 0) {
+    process.stderr.write("[spine-cleanup] preserved the host task across its turn boundary\n");
+    process.exit(0);
+  }
   const result = await terminalizeSpineState(cwd, {
     expectedRunId: state.runId,
     reason: evolutionCompleted ? "evolution_completed" : "session_stop",
