@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-25T17:24:21.854Z",
+  "generatedAt": "2026-10-26T09:01:48.076Z",
   "registryName": "meta-kim-capabilities",
   "scope": "repo-canonical",
   "canonicalProjection": "config/capability-index/meta-kim-capabilities.json",
@@ -20,7 +20,7 @@
   "summary": {
     "totalAgents": 9,
     "totalSkills": 18,
-    "totalHooks": 28,
+    "totalHooks": 29,
     "totalMcpServers": 1,
     "totalMcpTools": 7,
     "totalPlugins": 3,
@@ -255,8 +255,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/global-owner-discovery.md",
         "relativePath": "global-owner-discovery.md",
-        "size": 9568,
-        "modified": "2026-10-23T19:28:29.047Z"
+        "size": 11695,
+        "modified": "2026-10-26T07:19:50.105Z"
       },
       "repo:canonical-reference:intent-amplification": {
         "id": "intent-amplification",
@@ -336,8 +336,8 @@
         "namespace": "canonical-reference",
         "path": "canonical/skills/meta-theory/references/runtime-codex.md",
         "relativePath": "runtime-codex.md",
-        "size": 32590,
-        "modified": "2026-10-25T17:11:53.395Z"
+        "size": 37373,
+        "modified": "2026-10-26T07:59:39.646Z"
       },
       "repo:canonical-reference:spine-state": {
         "id": "spine-state",
@@ -374,8 +374,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs",
         "relativePath": "activate-meta-theory-spine.mjs",
-        "size": 41515,
-        "modified": "2026-10-25T17:17:51.741Z",
+        "size": 42482,
+        "modified": "2026-10-25T17:31:03.106Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs",
         "adapterPath": "canonical/runtime-assets/claude/hooks/activate-meta-theory-spine.mjs"
       },
@@ -396,9 +396,19 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/governed-host-checkpoint.mjs",
         "relativePath": "governed-host-checkpoint.mjs",
-        "size": 18565,
-        "modified": "2026-10-25T17:22:40.692Z",
+        "size": 37232,
+        "modified": "2026-10-26T07:57:36.345Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/governed-host-checkpoint.mjs"
+      },
+      "repo:canonical-runtime-assets:governed-task-reference.mjs": {
+        "id": "governed-task-reference.mjs",
+        "type": "hooks",
+        "namespace": "canonical-runtime-assets",
+        "path": "canonical/runtime-assets/shared/hooks/governed-task-reference.mjs",
+        "relativePath": "governed-task-reference.mjs",
+        "size": 389,
+        "modified": "2026-10-26T07:57:36.343Z",
+        "canonicalPath": "canonical/runtime-assets/shared/hooks/governed-task-reference.mjs"
       },
       "repo:canonical-runtime-assets:meta-kim-memory-save.mjs": {
         "id": "meta-kim-memory-save.mjs",
@@ -467,8 +477,8 @@
         "namespace": "canonical-runtime-assets",
         "path": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "relativePath": "spine-state.mjs",
-        "size": 75944,
-        "modified": "2026-10-25T17:10:15.702Z",
+        "size": 78603,
+        "modified": "2026-10-26T07:58:50.342Z",
         "canonicalPath": "canonical/runtime-assets/shared/hooks/spine-state.mjs",
         "adapterPath": "canonical/runtime-assets/claude/hooks/spine-state.mjs"
       },

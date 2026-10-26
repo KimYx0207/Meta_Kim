@@ -46,11 +46,11 @@ async function fixture(t, projectName = "project") {
   return { root, projectRoot, codexHome, day, file, options, async write(records) { await writeFile(file, serialize(records)); } };
 }
 
-function nativeTurnHint(f, { thread = THREAD, turn = TURN, offset = 0, rootTurn = TURN, ordinal = 1 } = {}) {
+function nativeTurnHint(f, { thread = THREAD, turn = TURN, offset = 0, endOffset = null, rootTurn = TURN, ordinal = 1 } = {}) {
   const file = path.join(f.codexHome, "thread_history_1.sqlite");
   const db = new DatabaseSync(file);
-  db.exec("CREATE TABLE IF NOT EXISTS thread_turns (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, rollout_byte_offset INTEGER, root_turn_id TEXT, PRIMARY KEY (thread_id, turn_id)); CREATE INDEX IF NOT EXISTS idx_native_turn_page ON thread_turns (thread_id, rollout_ordinal)");
-  db.prepare("INSERT OR REPLACE INTO thread_turns VALUES (?, ?, ?, ?, ?)").run(thread, turn, ordinal, offset, rootTurn);
+  db.exec("CREATE TABLE IF NOT EXISTS thread_turns (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, rollout_byte_offset INTEGER, root_turn_id TEXT, rollout_end_byte_offset INTEGER, PRIMARY KEY (thread_id, turn_id)); CREATE INDEX IF NOT EXISTS idx_native_turn_page ON thread_turns (thread_id, rollout_ordinal)");
+  db.prepare("INSERT OR REPLACE INTO thread_turns VALUES (?, ?, ?, ?, ?, ?)").run(thread, turn, ordinal, offset, rootTurn, endOffset);
   db.close();
   return file;
 }
@@ -215,6 +215,136 @@ test("indexed start records survive later compactions and unchanged reads consum
   const unchanged = await reader.read();
   assert.equal(unchanged.agents.length, 1);
   assert.equal(unchanged.coverage.bodyBytesRead, 0);
+});
+
+const THIRD = "55555555-5555-4555-8555-555555555555";
+const toolPair = (id, offset) => [
+  row("response_item", { type: "function_call", namespace: "functions", name: "exec", call_id: id, arguments: "{}" }, offset),
+  row("response_item", { type: "function_call_output", call_id: id }, offset + 1),
+];
+const compactPadding = (size = 40_000) => JSON.stringify({ type: "compacted", payload: { text: "x".repeat(size) } }) + "\n";
+
+test("historical terminal offsets and latest hints keep three long turns separate in cold and warm readers", async (t) => {
+  const f = await fixture(t);
+  let source = serialize([meta(f.projectRoot)]);
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, turnId: undefined, maxBytes: 16_384, now: () => clock });
+  const turns = [TURN, OTHER, THIRD];
+  for (const [index, turn] of turns.entries()) {
+    const offset = Buffer.byteLength(source);
+    source += serialize([row("event_msg", { type: "task_started", turn_id: turn }, index * 10), context(f.projectRoot, turn, index * 10 + 1), ...toolPair(`turn-${index}`, index * 10 + 2)])
+      + compactPadding()
+      + serialize([row("event_msg", { type: "task_complete", turn_id: turn }, index * 10 + 6)]);
+    const endOffset = Buffer.byteLength(source);
+    source += compactPadding();
+    await writeFile(f.file, source);
+    nativeTurnHint(f, { turn, offset, endOffset, ordinal: index + 1 });
+    clock += 1000;
+    const current = await reader.read();
+    assert.equal(current.turnId, turn, "latest must rebind when the indexed turn changes");
+    assert.equal(current.turnComplete, true, "a source-verified indexed end survives an unread later suffix");
+    assert.deepEqual(current.pairedToolCalls.map((item) => item.id), [`turn-${index}`]);
+    assert.ok(current.coverage.bodyBytesRead <= 16_384);
+  }
+  for (const [index, turn] of turns.entries()) {
+    clock += 1000;
+    const warm = await reader.readTurn(turn);
+    const cold = await createCodexNativeSessionReader({ ...f.options, turnId: turn, maxBytes: 16_384 }).read();
+    assert.equal(warm.turnComplete, true);
+    assert.equal(cold.turnComplete, true);
+    assert.equal(warm.turnCompletedAt, at(index * 10 + 6));
+    assert.deepEqual(warm.pairedToolCalls.map((item) => item.id), [`turn-${index}`]);
+    assert.deepEqual(cold.pairedToolCalls.map((item) => item.id), [`turn-${index}`]);
+    assert.ok(warm.coverage.sourceBytesRead <= warm.coverage.readByteLimit);
+  }
+});
+
+test("retaining a pinned turn start never loses the gap before a cropped later-turn window", async (t) => {
+  const f = await fixture(t);
+  const prelude = serialize([meta(f.projectRoot)]);
+  const initial = prelude + serialize([row("event_msg", { type: "task_started", turn_id: TURN }), context(f.projectRoot), ...toolPair("old-call", 2)])
+    + compactPadding(10_000) + serialize([context(f.projectRoot, OTHER, 10), ...toolPair("foreign-before-crop", 11)]);
+  await writeFile(f.file, initial);
+  nativeTurnHint(f, { offset: Buffer.byteLength(prelude) });
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, maxBytes: 8192, now: () => clock });
+  assert.deepEqual((await reader.read()).pairedToolCalls.map((item) => item.id), ["old-call"]);
+  await appendFile(f.file, compactPadding(3700) + serialize(toolPair("foreign-after-crop", 20)));
+  clock += 1000;
+  const warm = await reader.read();
+  assert.deepEqual(warm.pairedToolCalls.map((item) => item.id), ["old-call"], "evicting the original gap marker must not restore the old turn's attribution");
+  clock += 1000;
+  assert.deepEqual((await reader.read()).pairedToolCalls.map((item) => item.id), ["old-call"]);
+});
+
+test("task_started changes unbound tool attribution even when the next turn context is absent", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), ...toolPair("old-call", 2),
+    row("event_msg", { type: "task_complete", turn_id: TURN }, 4),
+    row("event_msg", { type: "task_started", turn_id: OTHER }, 10), ...toolPair("new-call", 11)]);
+  const observation = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observation.turnComplete, true);
+  assert.deepEqual(observation.pairedToolCalls.map((item) => item.id), ["old-call"]);
+  const latest = await createCodexNativeSessionReader({ ...f.options, turnId: undefined }).read();
+  assert.equal(latest.state, "unavailable", "missing newest-turn context must not present the old turn as current");
+});
+
+test("terminal hints are offsets only and require an exact source terminal at their boundary", async (t) => {
+  const f = await fixture(t);
+  const prelude = serialize([meta(f.projectRoot)]);
+  const beginning = prelude + serialize([row("event_msg", { type: "task_started", turn_id: TURN }), context(f.projectRoot), ...toolPair("old-call", 2)]) + compactPadding();
+  for (const terminal of [
+    row("event_msg", { type: "task_complete", turn_id: OTHER }, 6),
+    row("event_msg", { type: "task_complete", turn_id: TURN, thread_id: CHILD }, 6),
+    row("event_msg", { type: "task_started", turn_id: TURN }, 6),
+    row("response_item", { type: "message", text: "task_complete" }, 6),
+  ]) {
+    const end = beginning + serialize([terminal]);
+    await writeFile(f.file, end + compactPadding());
+    nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset: Buffer.byteLength(end) });
+    assert.equal((await createCodexNativeSessionReader({ ...f.options, maxBytes: 16_384 }).read()).turnComplete, false);
+  }
+  const end = beginning + serialize([row("event_msg", { type: "task_complete", turn_id: TURN }, 6)]);
+  await writeFile(f.file, end + compactPadding());
+  for (const endOffset of [Buffer.byteLength(end) - 1, Buffer.byteLength(end) + 1, Number.MAX_SAFE_INTEGER]) {
+    nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset });
+    assert.equal((await createCodexNativeSessionReader({ ...f.options, maxBytes: 16_384 }).read()).turnComplete, false);
+  }
+});
+
+test("indexed completion does not hide later unbound activity in the same fully read turn", async (t) => {
+  const f = await fixture(t);
+  const prelude = serialize([meta(f.projectRoot)]);
+  const ended = prelude + serialize([row("event_msg", { type: "task_started", turn_id: TURN }), context(f.projectRoot),
+    ...toolPair("initial", 2), row("event_msg", { type: "task_complete", turn_id: TURN }, 4)]);
+  await writeFile(f.file, ended + serialize(toolPair("resumed", 6)));
+  nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset: Buffer.byteLength(ended) });
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, now: () => clock });
+  const running = await reader.read();
+  assert.equal(running.turnComplete, false, "the indexed terminal cannot cut an otherwise contiguous source range");
+  assert.deepEqual(running.pairedToolCalls.map((item) => item.id), ["initial", "resumed"]);
+  clock += 1000;
+  const cached = await reader.read();
+  assert.equal(cached.turnComplete, false, "cached ordinary terminal continuity survives endpoint pin refresh");
+  assert.deepEqual(cached.pairedToolCalls.map((item) => item.id), ["initial", "resumed"]);
+  await appendFile(f.file, serialize([row("event_msg", { type: "task_complete", turn_id: TURN }, 8)]));
+  nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset: Buffer.byteLength(await readFile(f.file)) });
+  clock += 1000;
+  const completed = await reader.read();
+  assert.equal(completed.turnComplete, true);
+  assert.equal(completed.turnCompletedAt, at(8));
+  clock += 1000;
+  assert.equal((await reader.read()).coverage.bodyBytesRead, 0);
+});
+
+test("an old indexed schema without end offsets still provides bounded start hints", async (t) => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(path.join(f.codexHome, "thread_history_1.sqlite"));
+  db.exec("CREATE TABLE thread_turns (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, rollout_byte_offset INTEGER, root_turn_id TEXT, PRIMARY KEY(thread_id, turn_id)); CREATE INDEX idx_native_turn_page ON thread_turns(thread_id, rollout_ordinal)");
+  db.prepare("INSERT INTO thread_turns VALUES(?, ?, 1, 99, ?)").run(THREAD, TURN, TURN);
+  db.close();
+  assert.deepEqual(await locateCodexNativeTurn({ codexHome: f.codexHome, threadId: THREAD, turnId: TURN }), { threadId: THREAD, turnId: TURN, offset: 99 });
 });
 
 test("a changed indexed start invalidates pinned evidence even when the old tail anchor survives", async (t) => {

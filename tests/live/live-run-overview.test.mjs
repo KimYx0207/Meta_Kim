@@ -141,6 +141,17 @@ test("inactive historical and completed runs never revive a current worker", () 
   }
 });
 
+test("governance activity remains distinct from native execution and cannot revive a stopped run", () => {
+  const run = { id: "run-current", active: false, displayState: "unknown", governance: { runId: "run-current", active: true, state: "active", currentStage: "execution", evidenceLevel: "durable_lifecycle" } };
+  const result = resolveLiveRunOverview(snapshot({ run, nodes: [node("stale-worker")] }));
+  assert.equal(result.state, "governance_active");
+  assert.equal(result.task, null);
+  assert.equal(result.activity.item, null);
+  for (const governance of [{ ...run.governance, runId: "other" }, { ...run.governance, active: false }, { ...run.governance, evidenceLevel: "caller_claim" }]) {
+    assert.equal(resolveLiveRunOverview(snapshot({ run: { ...run, governance } })).state, "historical");
+  }
+});
+
 test("blockers preserve the reported reason and do not substitute task descriptions", () => {
   const result = resolveLiveRunOverview(snapshot({ nodes: [node("blocked", { displayState: "blocked", active: false, summary: "任务说明不是阻塞原因", statusReason: "" })] }));
   assert.equal(result.blocker.kind, "blocked");

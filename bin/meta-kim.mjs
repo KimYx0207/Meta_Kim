@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateSetupCliArgs } from "../scripts/setup-cli-policy.mjs";
+import { collectHookPromptDiagnostics, renderHookPromptDiagnostics } from "../scripts/hookprompt-diagnostics.mjs";
 import {
   getStatusCliCopy,
   resolveMetaKimCliLanguage,
@@ -43,6 +44,7 @@ ${status.usageHeading}:
   ${status.usage}
   meta-kim doctor
   meta-kim doctor hooks [--fix] [--project|--all] [--project-root <dir>]
+  meta-kim capability search --query <capability need> [--runtime codex] [--type agents|skills|commands|tools] [--keyword <term>] [--limit 8] [--json]
   meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--verify-asset-download] [--json]
   meta-kim release close --issue <queue-id> --prd <repo-relative-file> [--profile default] [--json]
   meta-kim mcp serve
@@ -62,7 +64,7 @@ ${status.optionsHeading}:
 `;
 }
 
-const commands = new Set(["install", "update", "check", "live", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime"]);
+const commands = new Set(["install", "update", "check", "live", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime", "capability"]);
 
 function fail(message, copy = statusCopy()) {
   console.error(`meta-kim: ${message}`);
@@ -142,6 +144,8 @@ function renderConciseStatus(payload, copy) {
     `${copy.portable}: ${payload.machinePortable?.portable ? copy.yes : copy.no}`,
     ...(!payload.machinePortable?.portable ? [copy.portabilityReason] : []),
     "",
+    renderHookPromptDiagnostics(payload.hookPrompt, payload.lang),
+    "",
     copy.uninstallDryRun,
     copy.uninstallApply,
     copy.details,
@@ -155,7 +159,7 @@ function runConciseStatus(args, copy) {
   const result = spawnSync(process.execPath, [join(root, "scripts/footprint.mjs"), "--json", ...forwarded], {
     cwd: root,
     encoding: "utf8",
-    env: process.env,
+    env: { ...process.env, META_KIM_CALLER_CWD: callerCwd },
     maxBuffer: 32 * 1024 * 1024,
   });
   if (result.status !== 0) {
@@ -269,6 +273,7 @@ switch (command) {
     break;
   case "doctor":
     if (commandArgs.length === 0) {
+      console.log(renderHookPromptDiagnostics(collectHookPromptDiagnostics({ projectRoot: callerCwd }), resolvedLanguage()));
       run("scripts/doctor-interactive.mjs");
     }
     if (commandArgs[0] !== "hooks") {
@@ -311,6 +316,10 @@ switch (command) {
       run("scripts/project-capability-copy.mjs", commandArgs.slice(2));
     }
     fail("project subcommand must be 'bootstrap' or 'capability copy'");
+    break;
+  case "capability":
+    if (commandArgs[0] === "search") run("scripts/search-capabilities.mjs", commandArgs.slice(1));
+    fail("capability subcommand must be 'search'");
     break;
   case "mcp":
     if (!['serve', 'self-test'].includes(commandArgs[0]) || commandArgs.length !== 1) {

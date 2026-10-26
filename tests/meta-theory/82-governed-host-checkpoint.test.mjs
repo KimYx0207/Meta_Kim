@@ -81,7 +81,7 @@ test("fresh host checkpoints keep an older active run current through the real L
   assert.equal(snapshot.run.active, true);
   assert.equal(snapshot.run.currentStage, "execution");
   assert.equal(snapshot.run.task, critical().realIntent);
-  assert.ok(snapshot.nodes.some((node) => !node.isMain && node.ownerAgent === "debugger" && node.task === "Implement the host handoff"));
+  assert.ok(snapshot.nodes.some((node) => !node.isMain && node.ownerAgent === "debugger" && node.task === "Adapter and regression tests"));
   assert.equal(snapshot.nodes.some((node) => !node.isMain && node.ownerAgent === "debugger" && node.status === "in_doubt"), false);
   assert.equal(snapshot.nodes.find((node) => node.isMain)?.ownerAgent, "meta-conductor");
 });

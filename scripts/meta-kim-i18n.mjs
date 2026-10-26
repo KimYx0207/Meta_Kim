@@ -238,6 +238,29 @@ export function getStatusCliCopy(language) {
   return STATUS_CLI_COPY[normalizeOutputLanguage(language) ?? "en"] ?? STATUS_CLI_COPY.en;
 }
 
+const HOOKPROMPT_DIAGNOSTICS_COPY = Object.freeze({
+  en: {
+    title: "HookPrompt",
+    precedence: "Precedence: environment > adjacent preference > inner default; current CLI environment, no hook execution.",
+    noEntry: "no confirmed native entry", multipleEntries: "multiple entries; no unique source",
+    display: "display", requested: "requested", source: "source", implementation: "implementation",
+    provenance: "repository / version", preference: "preference",
+    modeSource: (source) => source || "unknown",
+  },
+  "zh-CN": {
+    title: "HookPrompt",
+    precedence: "覆盖顺序：环境变量 > 适配器旁显示偏好 > 内层默认；按当前命令环境读取，未执行 Hook。",
+    noEntry: "未确认配置或无原生入口", multipleEntries: "发现多个入口，不能选定唯一来源",
+    display: "显示模式", requested: "配置要求", source: "实际源文件", implementation: "实现文件",
+    provenance: "来源仓库 / 版本", preference: "显示偏好",
+    modeSource: (source) => ({ environment: "环境变量", adjacent_preference: "适配器旁偏好", inner_default: "内层默认" }[source] || "unknown"),
+  },
+});
+
+export function getHookPromptDiagnosticsCopy(language) {
+  return HOOKPROMPT_DIAGNOSTICS_COPY[normalizeOutputLanguage(language) ?? "en"] ?? HOOKPROMPT_DIAGNOSTICS_COPY.en;
+}
+
 const META_RUN_STATUS_COPY = Object.freeze({
   en: {
     labels: { inactive: "meta_governance_status=inactive", active: "meta_governance_active", completed: "completed", current: "current", next: "next", blocked: "blocked", none: "none", separator: "=", listSeparator: ",", missing: "meta_governance_latest=missing", latestRun: "latest_run", task: "task", status: "status", publicReady: "public_ready", summary: "summary", ownerHandoff: "owner_handoff", runtimeEvidence: "runtime_evidence", releaseBoundary: "release_boundary", report: "report", nextCommand: "next_command", title: "Latest governed run" },

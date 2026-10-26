@@ -1468,6 +1468,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         displayState: normalizedRunDisplayState(runInput, firstValue(runInput, ["status", "state", "runStatus"], input.status)),
         statusReason: display(firstValue(runInput, ["statusReason", "stateReason"], ""), ""),
         active: runInput.active === true,
+        governance: normalizeLiveGovernance(runInput.governance, safeIdentifier(runInput.id || runInput.runId || input.runId)),
         sourceRuntime: display(firstValue(runInput, ["sourceRuntime", "runtime"], firstValue(sessionInput, ["sourceRuntime", "runtime"], "unknown")), "unknown"),
         conversationLinkState: display(firstValue(runInput, ["conversationLinkState"], firstValue(sessionInput, ["conversationLinkState"], "unlinked")), "unlinked").toLowerCase(),
         conversationLinkRefusal: display(firstValue(runInput, ["conversationLinkRefusal"], firstValue(sessionInput, ["conversationLinkRefusal"], "")), ""),
@@ -4670,6 +4671,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         : overview.state === "completed" ? (zh ? "已验证完成，结果仍需核对" : "Verified complete; result review still needed")
           : overview.state === "blocked" ? (zh ? "工作受阻，查看原因" : "Work blocked; see the reason")
             : overview.ownerReported ? (zh ? "负责人已回报，待独立验证" : "Owner reported; awaiting independent verification")
+            : overview.state === "governance_active" ? (zh ? "治理任务进行中，待执行回报" : "Governance work is active; awaiting execution reports")
             : overview.state === "active" ? (zh ? "运行中，当前执行任务未回写" : "Running; current task not reported")
               : (zh ? "历史记录，未确认当前执行" : "Historical record; no current execution confirmed");
     line(task, overview.task?.label || taskEmpty);
@@ -4682,6 +4684,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (overview.task?.moreCount) line(task, (zh ? "另有 " : "+ ") + overview.task.moreCount + (zh ? " 项正在执行" : " active tasks"), "run-overview-note");
     }
     if (overview.ownerReported) line(task, overview.ownerReported.count + (zh ? " 项负责人回报，待独立验证" : " owner reports awaiting independent verification"), "run-overview-note");
+    if (overview.governance?.active && overview.state !== "active") line(task, zh ? "治理记录仍进行中；原生执行证据尚未确认。" : "Governance remains active; native execution evidence is unconfirmed.", "run-overview-note");
     const tokenCoverage = line(task, (zh ? "输出计量 " : "Output measured ") + coverage.outputMeasuredNodeCount + "/" + coverage.nodeCount, "run-overview-note");
     tokenCoverage.dataset.liveTokenCoverage = "";
     tokenCoverage.title = zh ? "仅统计当前运行中已报告输出 token 数的节点；其余节点未计量，0 也是有效计量。" : "Nodes in this run with an observed output token count; other nodes are not measured. Zero is measured.";
@@ -4834,17 +4837,25 @@ const CLIENT_SCRIPT = String.raw`(() => {
       notice.setAttribute("role", "status");
       const revisionStatus = makeElement("p", "panel-note");
       revisionStatus.dataset.liveRevisionStatus = "";
-      root.append(heading, contextCopy, targetLabel, rawLabel, prepare, preparedLabel, copy, notice, revisionStatus);
-      view = { root, heading, contextCopy, targetCopy, target, rawCopy, raw, prepare, preparedCopy, prepared, copy, notice, revisionStatus };
+      const storageNotice = makeElement("p", "panel-note");
+      storageNotice.setAttribute("role", "status");
+      root.append(heading, contextCopy, targetLabel, rawLabel, prepare, preparedLabel, copy, notice, storageNotice, revisionStatus);
+      view = { root, heading, contextCopy, targetCopy, target, rawCopy, raw, prepare, preparedCopy, prepared, copy, notice, storageNotice, revisionStatus };
+      view.refreshStorageNotice = () => {
+        const saved = localFeedbackDrafts.persistence(view.context);
+        storageNotice.textContent = saved.state === "saved"
+          ? currentLanguage === "zh" ? "草稿已保存在本浏览器，刷新后可恢复。" : "Draft saved in this browser; it can be restored after reload."
+          : currentLanguage === "zh" ? "草稿尚未持久化，仅保留在本页面内存；请先复制，避免刷新后丢失。" : "Draft is not saved persistently and remains in page memory; copy it before reloading.";
+        if (saved.reason === "corrupt_storage") storageNotice.textContent += currentLanguage === "zh" ? " 原有存储数据异常，已保留原记录。" : " Existing stored data is unreadable and has been preserved.";
+      };
       localFeedbackSurfaces.set(surface, view);
       target.addEventListener("change", () => {
         localFeedbackDrafts.select(view.base, target.value);
         renderLocalFeedback(host, view.snapshot, view.selected, surface);
       });
       raw.addEventListener("input", () => {
-        const draft = localFeedbackDrafts.get(view.context);
-        draft.original = raw.value;
-        draft.prepared = "";
+        localFeedbackDrafts.update(view.context, { original: raw.value, prepared: "" });
+        view.refreshStorageNotice();
         prepared.value = "";
         prepare.disabled = !raw.value.trim();
         copy.disabled = true;
@@ -4853,7 +4864,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
         view.copyAttempt = undefined;
       });
       prepared.addEventListener("input", () => {
-        localFeedbackDrafts.get(view.context).prepared = prepared.value;
+        localFeedbackDrafts.update(view.context, { prepared: prepared.value });
+        view.refreshStorageNotice();
         copy.disabled = !prepared.value.trim();
         notice.textContent = view.idleNotice;
         view.noticePrepared = undefined;
@@ -4861,7 +4873,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       });
       prepare.addEventListener("click", () => {
         const draft = localFeedbackDrafts.get(view.context);
-        draft.prepared = buildLocalFeedbackText(view.context, draft.original, currentLanguage);
+        localFeedbackDrafts.update(view.context, { prepared: buildLocalFeedbackText(view.context, draft.original, currentLanguage) });
+        view.refreshStorageNotice();
         prepared.value = draft.prepared;
         copy.disabled = !draft.prepared.trim();
         notice.textContent = view.idleNotice;
@@ -4892,7 +4905,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     view.snapshot = snapshot;
     view.selected = selected;
-    const base = { projectId: selectedProjectId || "", runId: snapshot.run.id, nodeId: selected?.id || "", nodeLabel: selected?.label || "" };
+    const base = { projectId: selectedProjectId || "", runId: snapshot.run.id, nodeId: selected?.id || "", nodeLabel: selected?.label || "", taskPacketId: selected?.taskPacketId || "" };
     const choices = [
       ...liveDeliverablesForNode(snapshot.deliverables, selected).map((item) => {
         const read = typeof localDeliverableReads === "undefined" ? null : localDeliverableReads.get(JSON.stringify([base.projectId, base.runId, item.id]));
@@ -4924,18 +4937,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // Overview shortcuts can change selection without changing the option list.
     if (view.target.value !== selection) view.target.value = selection;
     view.base = base;
-    view.context = context;
+    view.context = { ...context, ...localFeedbackDrafts.binding(context) };
     const draft = localFeedbackDrafts.get(context);
     if (view.raw.value !== draft.original) view.raw.value = draft.original;
     if (view.prepared.value !== draft.prepared) view.prepared.value = draft.prepared;
     view.heading.textContent = currentLanguage === "zh" ? "局部反馈" : "Feedback on this result";
     view.contextCopy.textContent = (selected?.label || snapshot.run.title) + " · " + base.runId + (base.nodeId ? " · " + base.nodeId : "");
     if (context.deliverableId) view.contextCopy.textContent += currentLanguage === "zh" ? " · 本次读取版本：" + (context.contentVersion || "未知") : " · Version read this time: " + (context.contentVersion || "unknown");
-    const revisions = (snapshot.revisionReview?.items || []).filter((item) => item.runId === base.runId && (!selected || (selected.taskPacketId && item.taskPacketId === selected.taskPacketId)) && (!context.deliverableId || item.deliverableId === context.deliverableId));
+    const revisions = localFeedbackDrafts.matching(context, snapshot.revisionReview?.items);
     view.revisionStatus.textContent = revisions.length ? revisions.map((item) => {
       const label = item.state === "recorded" ? currentLanguage === "zh" ? "已登记问题 · 待修订" : "Finding recorded · revision pending"
-          : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "已有复验记录，执行来源未确认；当前版本仍需核对" : "Recheck recorded; execution provenance unconfirmed; current content version still needs checking"
-            : currentLanguage === "zh" ? "已登记修订 · 待复验" : "Revision recorded · verification pending";
+          : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "复验待确认 · 已有复验记录，执行来源未确认；尚未确认用户验收" : "Recheck awaiting confirmation; owner record exists, execution provenance and user acceptance remain unconfirmed"
+            : currentLanguage === "zh" ? "负责人已回报 · 待复验" : "Owner reported · awaiting recheck";
       return (item.summary || item.findingId) + " · " + label
         + (item.requiredChange ? "\n" + (currentLanguage === "zh" ? "下一步：" : "Next: ") + item.requiredChange : "");
     }).join("\n") : currentLanguage === "zh" ? "尚未收到修订/复验回写" : "No revision or verification report received yet";
@@ -4947,8 +4960,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     view.prepare.disabled = !draft.original.trim();
     view.copy.disabled = !draft.prepared.trim();
     view.idleNotice = currentLanguage === "zh"
-      ? "草稿仅保留在本页面，尚未提交。复制后粘贴到负责此运行的 Codex 对话继续修订。"
-      : "Drafts stay in this page and are not submitted. Copy, then paste into the Codex conversation responsible for this run to continue revising.";
+      ? "反馈尚未提交。复制后粘贴到负责此运行的 Codex 对话继续修订。"
+      : "Feedback is not submitted. Copy, then paste into the Codex conversation responsible for this run to continue revising.";
+    view.refreshStorageNotice();
     // A copy receipt belongs to one target and one exact text, including edits
     // made in the other feedback surface before this snapshot paint.
     if (view.lastContextKey !== localFeedbackDrafts.key(context)

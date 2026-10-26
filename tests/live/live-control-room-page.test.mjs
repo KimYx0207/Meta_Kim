@@ -6406,7 +6406,7 @@ return handleGraphCardResize;`)(state, { dataset: { semanticZoom: "card" } }, { 
   assert.equal(frames.length, 0, "settled sizes do not schedule another pass");
 });
 
-function localFeedbackFormHarness(clipboard, language = "zh") {
+function localFeedbackFormHarness(clipboard, language = "zh", draftOptions = {}) {
   const html = renderLiveControlRoomPage();
   const element = (tagName, className = "", textContent = "") => ({
     tagName, className, textContent, dataset: {}, children: [], parentNode: null, value: "", events: {}, focusCount: 0, selectCount: 0,
@@ -6414,7 +6414,7 @@ function localFeedbackFormHarness(clipboard, language = "zh") {
     setAttribute() {}, addEventListener(type, handler) { this.events[type] = handler; },
     focus() { this.focusCount += 1; }, select() { this.selectCount += 1; this.selectionStart = 0; this.selectionEnd = this.value.length; },
   });
-  const drafts = createLocalFeedbackDraftStore();
+  const drafts = createLocalFeedbackDraftStore(draftOptions);
   const surfaces = new Map();
   const render = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", "navigator", "currentLanguage", `
 const selectedProjectId = "project-a";
@@ -6429,6 +6429,39 @@ return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.childr
     prepare(original = "只修连线，保留其余结果。") { view.raw.value = original; view.raw.events.input(); view.prepare.events.click(); return view.prepared.value; },
   };
 }
+
+test("shipped feedback copy is injected with the browser helper for both languages", () => {
+  const html = renderLiveControlRoomPage();
+  const resource = html.match(/const LIVE_FEEDBACK_COPY = ([^\n]+);\n/u);
+  assert.ok(resource, "the shipped page must carry the external copy resource");
+  const start = html.indexOf("const LIVE_FEEDBACK_COPY = ");
+  const end = html.indexOf("\nfunction createLocalFeedbackDraftStore(", start);
+  assert.ok(end > start, "the serialized resource and builder precede the unchanged draft store");
+  const browserBuild = new Function(html.slice(start, end) + "\nreturn buildLocalFeedbackText;")();
+  const context = { runId: "run-a", feedbackId: "feedback-a", taskPacketId: "task:aaaaaaaaaaaaaaaaaaaa", deliverableId: "output-a" };
+  for (const language of ["zh", "en"]) {
+    const original = "  Preserve\n原话  ";
+    assert.equal(browserBuild(context, original, language), buildLocalFeedbackText(context, original, language));
+  }
+});
+
+test("rendered feedback form restores a saved draft after reload and discloses persistence failure", () => {
+  const data = new Map();
+  const storage = { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  const first = localFeedbackFormHarness(undefined, "zh", { storage });
+  const original = "  原话\n保留空白  ";
+  const prepared = first.prepare(original);
+  assert.match(first.view.storageNotice.textContent, /已保存在本浏览器/u);
+  const restored = localFeedbackFormHarness(undefined, "zh", { storage });
+  assert.equal(restored.view.raw.value, original);
+  assert.equal(restored.view.prepared.value, prepared);
+  assert.match(restored.view.notice.textContent, /尚未提交/u);
+  assert.doesNotMatch(restored.view.notice.textContent, /已复制|已发送/u);
+  const broken = localFeedbackFormHarness(undefined, "zh", { storage: { getItem: () => null, setItem: () => { throw new Error("quota"); } } });
+  broken.prepare(original);
+  assert.equal(broken.view.raw.value, original);
+  assert.match(broken.view.storageNotice.textContent, /尚未持久化.*复制/u);
+});
 
 test("editing copied feedback immediately returns the handoff to unsubmitted", async () => {
   const { view, prepare, paint } = localFeedbackFormHarness({ writeText: async () => {} });

@@ -2,6 +2,7 @@ import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runti
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
 let runtimeFixture;
@@ -11,10 +12,10 @@ before(async () => {
 after(() => runtimeFixture?.cleanup());
 
 
-function route(task, runtime = "claude_code", os = "windows") {
+function route(task, runtime = "claude_code", os = "windows", outputArgs = ["--json"]) {
   const result = spawnSync(
     process.execPath,
-    ["scripts/select-execution-route.mjs", "--task", task, "--runtime", runtime, "--os", os, "--json"],
+    ["scripts/select-execution-route.mjs", "--task", task, "--runtime", runtime, "--os", os, ...outputArgs],
     { encoding: "utf8" }
   );
   assert.equal(result.status, 0, result.stderr);
@@ -78,6 +79,64 @@ describe("50 — Parallel execution lanes (engineering fan-out)", () => {
         pool.has(lane.ownerAgent),
         `lane ownerAgent "${lane.ownerAgent}" (kind=${kind}) must be in runtime-scoped candidate set`
       );
+    }
+  });
+
+  test("selected real providers survive raw 100 and compact 80/30 evidence limits", () => {
+    const task = "refactor frontend components in src/ui, rebuild backend api routes in src/api, and migrate database schema.";
+    const original = readFileSync("package.json", "utf8");
+    const packageJson = JSON.parse(original);
+    const id = "package-script:migrate:meta-kim";
+    const baselineOwners = route(task).workerTaskPacketDrafts.map(({ ownerAgent, ownerKind }) => ({ ownerAgent, ownerKind }));
+    // Discovery-only fixture commands never run. Their nonmatching names move
+    // the actual selected command beyond both existing evidence cutoffs.
+    const padding = Object.fromEntries(Array.from({ length: 130 }, (_, i) => [`unrelated-inventory-${i}`, "node --version"]));
+    packageJson.scripts = { ...padding, ...packageJson.scripts };
+    assert.ok(Object.keys(packageJson.scripts).indexOf("migrate:meta-kim") > 100);
+    writeFileSync("package.json", JSON.stringify(packageJson, null, 2));
+    try {
+      for (const [outputArgs, candidateLimit, projectLimit] of [[[], 100, 80], [["--json"], 80, 30]]) {
+        const result = route(task, "claude_code", "windows", outputArgs);
+        const packet = result.ownerDiscoveryPacket;
+        assert.deepEqual(result.workerTaskPacketDrafts.map(({ ownerAgent, ownerKind }) => ({ ownerAgent, ownerKind })), baselineOwners);
+        assert.ok(packet.candidateReusableCapabilityProviders.includes(id), `selected command must remain in ${outputArgs.length ? "compact" : "raw"} candidate evidence`);
+        const provider = packet.projectRuntimeCapabilityProviders.find((entry) => entry.id === id);
+        assert.ok(provider, "selected command must retain its actual discovered source record");
+        assert.equal(provider.sourceRef, "package.json#scripts.migrate:meta-kim");
+        assert.equal(provider.source, "package_script_inventory");
+        assert.equal(provider.type, "commands");
+        assert.equal(provider.runtime, "shared");
+        assert.equal(packet.candidateReusableCapabilityProviders.length, candidateLimit);
+        assert.equal(packet.projectRuntimeCapabilityProviders.length, projectLimit);
+        assert.equal(new Set(packet.candidateReusableCapabilityProviders).size, candidateLimit);
+      }
+    } finally {
+      writeFileSync("package.json", original);
+    }
+  });
+
+  test("publication never synthesizes discovery evidence for an unknown selected reference", () => {
+    const file = "scripts/select-execution-route.mjs";
+    const original = readFileSync(file, "utf8");
+    const marker = "\nfunction compactProvider(provider) {";
+    const unknown = "package-script:never-discovered-r5";
+    assert.ok(original.includes(marker));
+    // Inject a corrupt selected claim into this disposable fixture only. There
+    // is no production override, unknown command execution, or real inventory edit.
+    const injection = `\noutput.workerTaskPacketDrafts.push({ownerKind: "command", ownerAgent: ${JSON.stringify(unknown)}});\noutput.recommendedRoute.selectedCapabilityProviders.untrustedFixture = {id: ${JSON.stringify(unknown)}, type: "commands", sourceRef: "fabricated-reference"};\n`;
+    writeFileSync(file, original.replace(marker, injection + marker));
+    try {
+      for (const outputArgs of [[], ["--json"]]) {
+        const result = route("refactor frontend components, rebuild backend api, and migrate database schema.", "claude_code", "windows", outputArgs);
+        const packet = result.ownerDiscoveryPacket;
+        assert.ok(result.workerTaskPacketDrafts.some((draft) => draft.ownerAgent === unknown));
+        assert.equal(packet.candidateReusableCapabilityProviders.includes(unknown), false);
+        for (const field of ["repoCanonicalCapabilityProviders", "projectRuntimeCapabilityProviders", "localGlobalCapabilityProviders", "runtimeToolProviders"]) {
+          assert.equal(packet[field].some((provider) => provider.id === unknown || provider.sourceRef === "fabricated-reference"), false);
+        }
+      }
+    } finally {
+      writeFileSync(file, original);
     }
   });
 

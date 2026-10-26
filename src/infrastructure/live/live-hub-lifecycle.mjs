@@ -67,6 +67,7 @@ const INSTANCE_ID_PATTERN = /^[a-f0-9-]{16,64}$/u;
  * tests/live/live-package-closure.test.mjs.
  */
 export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
+  "canonical/runtime-assets/shared/hooks/governed-task-reference.mjs",
   "scripts/meta-kim-live.mjs",
   "scripts/project-registry.mjs",
   "scripts/release-state-hardening.mjs",
@@ -115,6 +116,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/infrastructure/live/live-runtime-adapter-registry.mjs",
   "src/presentation/live/live-control-room-page.mjs",
   "src/presentation/live/live-feedback-draft.mjs",
+  "src/presentation/live/live-feedback-copy.mjs",
   "src/presentation/live/live-run-overview.mjs",
   "src/presentation/live/live-token-usage.mjs",
   "src/presentation/live/render-live-share-card.mjs",

@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 /**
  * Narrow governance health check: contract readable, Claude hook commands match
- * expected set, runtime mirrors in sync, sample run artifact passes meta:validate:run.
- *
- * Keep EXPECTED_CLAUDE_HOOK_COMMANDS in sync with generated .claude/settings.json.
+ * canonical required subset, runtime mirrors in sync, and sample run validation.
  */
 
 import { promises as fs } from "node:fs";
@@ -20,26 +18,13 @@ import {
   toRepoRelative,
 } from "./meta-kim-local-state.mjs";
 import { resolveTargetContext } from "./meta-kim-sync-config.mjs";
+import { buildMetaKimHooksTemplate } from "./claude-settings-merge.mjs";
+import { collectHookRegistrations, inspectRequiredHooks } from "./hook-registration-diagnostics.mjs";
+import { collectHookPromptDiagnostics, renderHookPromptDiagnostics } from "./hookprompt-diagnostics.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const execFileAsync = promisify(execFile);
-
-/** @type {string[]} Same order as generated .claude/settings.json hook commands. */
-const EXPECTED_CLAUDE_HOOK_COMMANDS = [
-  "node .claude/hooks/activate-meta-theory-spine.mjs",
-  "node .claude/hooks/graphify-context.mjs",
-  "node .claude/hooks/enforce-agent-dispatch.mjs",
-  "node .claude/hooks/activate-meta-theory-spine.mjs",
-  "node .claude/hooks/post-format.mjs",
-  "node .claude/hooks/post-typecheck.mjs",
-  "node .claude/hooks/post-console-log-warn.mjs",
-  "node .claude/hooks/subagent-context.mjs",
-  "node .claude/hooks/stop-compaction.mjs",
-  "node .claude/hooks/stop-console-log-audit.mjs",
-  "node .claude/hooks/stop-completion-guard.mjs",
-  "node .claude/hooks/stop-spine-cleanup.mjs",
-];
 
 const CONTRACT = path.join(
   repoRoot,
@@ -56,129 +41,29 @@ const FIXTURE = path.join(
   "valid-run.json",
 );
 
-/**
- * Normalize a hook command to its canonical hook name (e.g. "graphify-context").
- * Handles both relative paths ("node .claude/hooks/graphify-context.mjs")
- * and absolute Windows paths (node "C:\...\graphify-context.mjs").
- */
-function normalizeHookName(command) {
-  const trimmed = command.trim();
-  // Strip the leading "node" and any quotes around the path
-  const withoutNode = trimmed
-    .replace(/^node\s+/, "")
-    .replace(/^["']|["']$/g, "");
-  // Drop trailing args (e.g. "--runtime claude") first so path.basename is not confused by them
-  const pathOnly = withoutNode.split(/\s+/)[0];
-  const normalized = path.normalize(pathOnly);
-  const basename = path.basename(normalized, ".mjs");
-  return basename;
-}
-
-function collectClaudeHookCommands(hooksRoot) {
-  const commands = [];
-  if (!hooksRoot || typeof hooksRoot !== "object") {
-    return commands;
-  }
-  for (const entries of Object.values(hooksRoot)) {
-    if (!Array.isArray(entries)) {
-      continue;
-    }
-    for (const entry of entries) {
-      for (const hook of entry.hooks ?? []) {
-        if (hook?.type === "command" && typeof hook.command === "string") {
-          commands.push(hook.command.trim());
-        }
-      }
-    }
-  }
-  return commands;
-}
-
-function hookCommandScriptPath(command) {
-  const trimmed = String(command ?? "").trim();
-  const quoted = trimmed.match(/^node\s+"([^"]+)"/u);
-  if (quoted) {
-    return quoted[1];
-  }
-  const unquoted = trimmed.match(/^node\s+([^\s]+)/u);
-  return unquoted?.[1] ?? null;
-}
-
-async function fileExists(filePath) {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function checkGlobalClaudeHooksFallback() {
-  const claudeHome = process.env.META_KIM_CLAUDE_HOME ?? path.join(os.homedir(), ".claude");
+async function checkGlobalClaudeHooksFallback(claudeHome = process.env.META_KIM_CLAUDE_HOME ?? path.join(os.homedir(), ".claude")) {
   const settingsPath = path.join(claudeHome, "settings.json");
-  let settings;
   try {
-    settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `global Claude settings unreadable at ${settingsPath}: ${error.message}`,
-    };
-  }
-
-  const commands = collectClaudeHookCommands(settings.hooks);
-  const required = [
-    "hooks/meta-kim/activate-meta-theory-spine.mjs",
-    "hooks/meta-kim/block-dangerous-bash.mjs",
-  ];
-  const missing = [];
-
-  for (const requiredFragment of required) {
-    const command = commands.find((candidate) =>
-      candidate.replace(/\\/g, "/").includes(requiredFragment),
-    );
-    if (!command) {
-      missing.push(requiredFragment);
-      continue;
+    const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    const expected = buildMetaKimHooksTemplate(path.join(claudeHome, "hooks", "meta-kim"));
+    const result = inspectRequiredHooks(settings.hooks, expected, { projectRoot: claudeHome });
+    const prompts = collectHookRegistrations(settings.hooks).filter((item) => item.event === "UserPromptSubmit" && !item.matcher
+      && ["user-prompt-submit.js", "hookprompt-adapter.mjs"].includes(path.basename((item.script || "").replace(/\\/gu, "/"))));
+    let promptHealthy = false;
+    for (const prompt of prompts) {
+      try { if ((await fs.stat(prompt.script)).isFile()) promptHealthy = true; } catch { /* Missing scripts are unhealthy. */ }
     }
-    const scriptPath = hookCommandScriptPath(command);
-    if (!scriptPath || !(await fileExists(scriptPath))) {
-      missing.push(`${requiredFragment} (registered script missing)`);
+    const missingFiles = [];
+    for (const row of collectHookRegistrations(expected)) {
+      try { if (!(await fs.stat(row.script)).isFile()) missingFiles.push(row.script); }
+      catch { missingFiles.push(row.script); }
     }
-  }
-
-  async function hasExistingCommand(fragment) {
-    const command = commands.find((candidate) =>
-      candidate.replace(/\\/g, "/").includes(fragment),
-    );
-    if (!command) return false;
-    const scriptPath = hookCommandScriptPath(command);
-    return !scriptPath || (await fileExists(scriptPath));
-  }
-
-  const promptEntryCandidates = [
-    "hooks/meta-kim/hookprompt-adapter.mjs",
-    "hooks/user-prompt-submit.js",
-  ];
-  let promptEntryHealthy = false;
-  for (const candidateFragment of promptEntryCandidates) {
-    if (await hasExistingCommand(candidateFragment)) {
-      promptEntryHealthy = true;
-      break;
+    if (!result.ok || !promptHealthy || missingFiles.length) {
+      return { ok: false, reason: `global Claude hooks missing or invalid: ${JSON.stringify(result.missing)}${promptHealthy ? "" : "; prompt entry hook missing"}${missingFiles.length ? "; registered script missing: " + [...new Set(missingFiles)].join(", ") : ""}` };
     }
-  }
-  if (!promptEntryHealthy) {
-    missing.push(`prompt entry hook (${promptEntryCandidates.join(" or ")})`);
-  }
-
-  return missing.length === 0
-    ? { ok: true, settingsPath }
-    : {
-        ok: false,
-        reason: `global Claude hooks missing: ${missing.join(", ")}`,
-      };
+    return { ok: true, settingsPath, requiredCount: result.requiredCount };
+  } catch (error) { return { ok: false, reason: `global Claude settings unreadable at ${settingsPath}: ${error.message}` }; }
 }
-
 async function checkContract() {
   const raw = await fs.readFile(CONTRACT, "utf8");
   const json = JSON.parse(raw);
@@ -191,34 +76,36 @@ async function checkContract() {
   return v;
 }
 
-async function checkHooks() {
+export async function checkHooks({ settingsPath: providedSettingsPath, claudeHome, projectProjectionMode, projectRoot } = {}) {
   const settingsPath =
-    process.env.META_KIM_DOCTOR_PROJECT_SETTINGS ?? SETTINGS;
-  const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    providedSettingsPath ?? process.env.META_KIM_DOCTOR_PROJECT_SETTINGS ?? SETTINGS;
+  let settings;
+  try { settings = JSON.parse(await fs.readFile(settingsPath, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; settings = {}; }
   const hooks = settings.hooks;
-  if (!hooks?.PreToolUse?.length || !hooks?.PostToolUse?.length) {
-    const globalFallback = await checkGlobalClaudeHooksFallback();
+  const canonical = JSON.parse(await fs.readFile(path.join(repoRoot, "canonical/runtime-assets/claude/settings.json"), "utf8"));
+  const canonicalNames = new Set(collectHookRegistrations(canonical.hooks).map((item) => path.posix.basename(item.script)));
+  const hasProjectManagedHooks = collectHookRegistrations(hooks).some((item) => canonicalNames.has(path.posix.basename((item.script || "").replace(/\\/gu, "/"))));
+  if (!hasProjectManagedHooks) {
+    if (projectProjectionMode === "project") throw new Error("Required project hooks missing: project projection mode requires canonical registrations");
+    const globalFallback = await checkGlobalClaudeHooksFallback(claudeHome);
     if (globalFallback.ok) {
       return {
         mode: "global",
         settingsPath: globalFallback.settingsPath,
+        requiredCount: globalFallback.requiredCount,
       };
     }
     throw new Error(
-      `.claude/settings.json has no project PreToolUse/PostToolUse hooks, and ${globalFallback.reason}`,
+      `.claude/settings.json has no managed project hooks, and ${globalFallback.reason}`,
     );
   }
-  // Compare by hook name: normalize both relative paths and absolute paths
-  const found = collectClaudeHookCommands(hooks).map(normalizeHookName).sort();
-  const expected = [...EXPECTED_CLAUDE_HOOK_COMMANDS]
-    .map(normalizeHookName)
-    .sort();
-  if (JSON.stringify(found) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Hook command set mismatch.\n  expected (${expected.length}): ${expected.join(", ")}\n  found (${found.length}): ${found.join(", ")}`,
-    );
-  }
-  return { mode: "project", settingsPath };
+  const settingsDirectory = path.dirname(path.resolve(settingsPath));
+  const trustedProjectRoot = projectRoot ? path.resolve(projectRoot)
+    : path.basename(settingsDirectory).toLowerCase() === ".claude" ? path.dirname(settingsDirectory) : settingsDirectory;
+  const result = inspectRequiredHooks(hooks, canonical.hooks, { projectRoot: trustedProjectRoot });
+  if (!result.ok) throw new Error(`Required project hooks missing or invalid: ${JSON.stringify(result.missing)}`);
+  return { mode: "project", settingsPath, requiredCount: result.requiredCount };
 }
 
 export function buildDoctorSyncCheckPlan(targetContext) {
@@ -415,11 +302,12 @@ async function main() {
   }
 
   try {
-    const hookStatus = await checkHooks();
+    const hookTarget = await resolveTargetContext();
+    const hookStatus = await checkHooks({ projectProjectionMode: hookTarget.localOverrides?.projectProjectionMode });
     runtimeLines.push(
       hookStatus.mode === "global"
         ? `  [ok] Claude global Meta_Kim hooks (${hookStatus.settingsPath})`
-        : `  [ok] .claude/settings.json hook commands (${EXPECTED_CLAUDE_HOOK_COMMANDS.length} commands)`,
+        : `  [ok] .claude/settings.json required hooks (${hookStatus.requiredCount} canonical registrations; user hooks preserved)`,
     );
   } catch (e) {
     failed = true;
@@ -453,6 +341,7 @@ async function main() {
   console.log(mirrorLines.join("\n"));
   console.log("Runtime health");
   console.log(runtimeLines.join("\n"));
+  console.log(renderHookPromptDiagnostics(collectHookPromptDiagnostics({ projectRoot: repoRoot })));
   console.log("Local index health");
   console.log(localLines.join("\n"));
 

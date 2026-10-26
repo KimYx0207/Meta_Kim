@@ -36,6 +36,7 @@ import {
   supportedTargetIds,
 } from "./meta-kim-sync-config.mjs";
 import { resolveMetaKimCliLanguage } from "./meta-kim-i18n.mjs";
+import { collectHookPromptDiagnostics, renderHookPromptDiagnostics } from "./hookprompt-diagnostics.mjs";
 
 // Intentionally NOT importing `isGlobalMetaKimManagedHookCommand` /
 // `isRepoMetaKimHookCommand` from claude-settings-merge.mjs.
@@ -625,6 +626,7 @@ async function main() {
 
   const repoRoot = REPO_ROOT;
   const findings = collectFindings({ scope, repoRoot });
+  const hookPrompt = collectHookPromptDiagnostics({ scope, projectRoot: process.env.META_KIM_CALLER_CWD || process.cwd() });
 
   let manifest = null;
   if (scope === "both") {
@@ -653,12 +655,14 @@ async function main() {
           }
         : null,
       findings,
+      hookPrompt,
     };
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
 
   process.stdout.write(`${renderTree(findings, t, scope)}\n`);
+  process.stdout.write(`\n${renderHookPromptDiagnostics(hookPrompt, lang)}\n`);
   if (diff) {
     process.stdout.write(`\n${renderDiff(findings, manifest, t)}\n`);
   }

@@ -42,20 +42,28 @@ function indexedStatement(database, table, sql, args) {
 export async function locateCodexNativeTurn({ codexHome, threadId, turnId = null, rootTurnId = null } = {}) {
   if (rootTurnId && !UUID.test(String(rootTurnId))) return null;
   return queryNativeIndex({ codexHome, threadId, turnId }, (database) => {
+    // Older host indexes do not have an end locator. Keep their start lookup
+    // working; neither column is a statement about execution or completion.
+    const hasEndOffset = database.prepare("PRAGMA table_info(thread_turns)").all().some((column) => column.name === "rollout_end_byte_offset");
+    const endColumn = hasEndOffset ? "rollout_end_byte_offset" : "NULL AS rollout_end_byte_offset";
+    const hint = (row) => {
+      if (!UUID.test(String(row?.turn_id)) || !Number.isSafeInteger(row.rollout_byte_offset) || row.rollout_byte_offset < 0) return null;
+      return { threadId, turnId: row.turn_id, offset: row.rollout_byte_offset,
+        ...(Number.isSafeInteger(row.rollout_end_byte_offset) && row.rollout_end_byte_offset > row.rollout_byte_offset
+          ? { endOffset: row.rollout_end_byte_offset } : {}) };
+    };
     if (!turnId && rootTurnId) {
-      const sql = "SELECT turn_id, rollout_byte_offset, root_turn_id FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 64";
+      const sql = `SELECT turn_id, rollout_byte_offset, root_turn_id, ${endColumn} FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 64`;
       const row = indexedStatement(database, "thread_turns", sql, [threadId])?.all(threadId)
         .find((item) => item.root_turn_id === rootTurnId);
-      return UUID.test(String(row?.turn_id)) && Number.isSafeInteger(row.rollout_byte_offset) && row.rollout_byte_offset >= 0
-        ? { threadId, turnId: row.turn_id, offset: row.rollout_byte_offset } : null;
+      return hint(row);
     }
     const sql = turnId
-      ? "SELECT turn_id, rollout_byte_offset FROM thread_turns WHERE thread_id = ? AND turn_id = ? LIMIT 1"
-      : "SELECT turn_id, rollout_byte_offset FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1";
+      ? `SELECT turn_id, rollout_byte_offset, ${endColumn} FROM thread_turns WHERE thread_id = ? AND turn_id = ? LIMIT 1`
+      : `SELECT turn_id, rollout_byte_offset, ${endColumn} FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 1`;
     const args = turnId ? [threadId, turnId] : [threadId];
     const row = indexedStatement(database, "thread_turns", sql, args)?.get(...args);
-    if (!UUID.test(String(row?.turn_id)) || !Number.isSafeInteger(row.rollout_byte_offset) || row.rollout_byte_offset < 0) return null;
-    return { threadId, turnId: row.turn_id, offset: row.rollout_byte_offset };
+    return hint(row);
   });
 }
 

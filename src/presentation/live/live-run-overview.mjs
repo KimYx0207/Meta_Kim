@@ -29,12 +29,25 @@ export function normalizeLiveRevisionReview(value, runId) {
     if (item?.runId !== runId || !/^revision:[a-f0-9]{20}$/u.test(item.id || "") || !/^finding:[a-f0-9]{20}$/u.test(item.findingId || "")) return [];
     const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
     return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
+      feedbackId: /^feedback:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(item.feedbackId || "") ? item.feedbackId : null,
+      findingRef: /^finding:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(item.findingRef || "") ? item.findingRef : null,
+      sourceTaskPacketId: /^task:[a-f0-9]{20}$/u.test(item.sourceTaskPacketId || "") ? item.sourceTaskPacketId : null,
+      sourceDeliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.sourceDeliverableId || "") ? item.sourceDeliverableId : null,
+      sourceContentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.sourceContentVersion || "") ? item.sourceContentVersion : null,
       taskPacketId: /^task:[a-f0-9]{20}$/u.test(item.taskPacketId || "") ? item.taskPacketId : null,
       deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
       summary: overviewText(item.summary), requiredChange: overviewText(item.requiredChange),
       contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state }];
   });
   return { state: items.length ? "reported" : "not_reported", items };
+}
+
+/** Coordination state never authorizes a native running or completion claim. */
+export function normalizeLiveGovernance(value, runId) {
+  if (!value || value.runId !== runId || value.evidenceLevel !== "durable_lifecycle"
+    || typeof value.active !== "boolean" || !["active", "inactive"].includes(value.state)
+    || value.active !== (value.state === "active")) return null;
+  return { runId, active: value.active, state: value.state, currentStage: overviewText(value.currentStage), evidenceLevel: "durable_lifecycle" };
 }
 
 /** Offer an explicit same-project navigation; never merge this into a plan. */
@@ -136,6 +149,7 @@ export function resolveLiveRunOverview(snapshot) {
   const state = overviewState(run.displayState || run.status);
   const planned = state === "planned" || run.executionEvidenceState === "structural_planning_only";
   const active = !planned && run.active === true;
+  const governance = normalizeLiveGovernance(run.governance, runId);
   const nodes = (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).filter((node) => node && !["stage", "chapter", "stage_summary", "workflow"].includes(overviewState(node.kind)) && (!node.runId || node.runId === runId));
   const activity = planned ? { item: null, undatedCount: 0 } : overviewExecutionActivity(snapshot, runId);
   const activeNodes = active ? nodes.filter((node) => !node.declaredNotStarted && node.executionState !== "not_executed"
@@ -154,7 +168,8 @@ export function resolveLiveRunOverview(snapshot) {
   const runBlocked = ["blocked", "failed"].includes(state);
   const deliverables = normalizeLiveDeliverables(snapshot.deliverables, runId);
   return {
-    state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : "historical",
+    state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : governance?.active ? "governance_active" : "historical",
+    governance,
     task: current ? { label: overviewText(current.task) || overviewText(current.label), nodeId: overviewText(current.id), moreCount: activeNodes.length - 1 } : null,
     ownerReported: reported ? { count: ownerReports.length, task: { label: overviewText(reported.node.task) || overviewText(reported.node.label),
       nodeId: overviewText(reported.node.id), summary: reported.report.summary, reportedAt: reported.report.reportedAt } } : null,
@@ -170,6 +185,6 @@ export function resolveLiveRunOverview(snapshot) {
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }
