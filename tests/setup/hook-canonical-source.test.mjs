@@ -39,6 +39,7 @@ const SHARED_HOOK_DIR = join(REPO_ROOT, "canonical", "runtime-assets", "shared",
 const CLAUDE_HOOK_DIR = join(REPO_ROOT, "canonical", "runtime-assets", "claude", "hooks");
 const CLAUDE_COMPATIBILITY_ADAPTERS = new Set([
   "activate-meta-theory-spine.mjs",
+  "conversation-binding.mjs",
   "skip-reminder.mjs",
   "spine-state.mjs",
   "utils.mjs",
@@ -160,9 +161,15 @@ test("cross-runtime hook core has one canonical owner", () => {
     "spine-state-utils.mjs",
     "spine-state-gates.mjs",
     "spine-state.mjs",
+    "governed-task-reference.mjs",
+    "governed-host-checkpoint.mjs",
     "activate-meta-theory-spine.mjs",
     "planning-continuity.mjs",
   ]);
+  for (const runtime of ["claude", "codex", "cursor"]) {
+    assert.equal(runtimeHookSourceOwner(runtime, "governed-host-checkpoint.mjs"), "shared");
+    assert.equal(runtimeHookSourceOwner(runtime, "governed-task-reference.mjs"), "shared");
+  }
 
   for (const fileName of SHARED_RUNTIME_HOOK_FILES) {
     assert.equal(existsSync(join(SHARED_HOOK_DIR, fileName)), true, fileName);
@@ -401,6 +408,8 @@ test("global hook sync projects universal core and runtime-owned memory entrypoi
         "spine-state.mjs",
         "spine-state-utils.mjs",
         "utils.mjs",
+        "governed-task-reference.mjs",
+        "governed-host-checkpoint.mjs",
         "stop-spine-cleanup.mjs",
       ]) {
         assert.equal(existsSync(join(hooksDir, dependency)), true, `${runtime}:${dependency}`);

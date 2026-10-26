@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { locateCodexNativeChildren, locateCodexNativeTurn } from "./codex-native-turn-locator.mjs";
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
@@ -13,6 +15,19 @@ const normalize = (value) => {
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const within = (root, value) => !path.relative(root, value).startsWith("..") && !path.isAbsolute(path.relative(root, value));
 const safeId = (value) => typeof value === "string" && /^[A-Za-z0-9_:/.-]{1,180}$/u.test(value) ? value : null;
+
+function commandProjectMatches(cwd, projectRoot) {
+  try {
+    let localPath = cwd;
+    if (typeof cwd !== "string") return false;
+    if (/^file:/iu.test(cwd)) {
+      const url = new URL(cwd);
+      if (url.hostname && url.hostname !== "localhost" || url.search || url.hash) return false;
+      localPath = fileURLToPath(url);
+    }
+    return path.isAbsolute(localPath) && normalize(localPath) === normalize(projectRoot);
+  } catch { return false; }
+}
 
 function fail(code) {
   const error = new Error(code);
@@ -50,8 +65,32 @@ async function boundedRead(handle, offset, length, budget, kind) {
   return buffer.subarray(0, count);
 }
 
+/** Read only the complete source record ending at an optional indexed offset. */
+async function indexedTerminal(handle, hint, opened, headerEnd, maximum, budget) {
+  if (!Number.isSafeInteger(hint?.endOffset) || hint.endOffset <= hint.offset || hint.endOffset > opened.size) return null;
+  const length = Math.min(16 * 1024, Math.max(128, Math.floor(maximum / 8)), hint.endOffset - headerEnd, budget.bodyRemaining);
+  if (!length) return null;
+  const start = hint.endOffset - length;
+  const bytes = await boundedRead(handle, start, length, budget, "body");
+  if (!bytes?.length || bytes.at(-1) !== 10) return null;
+  const previousNewline = bytes.lastIndexOf(10, bytes.length - 2);
+  if (previousNewline < 0 && start !== headerEnd) return null;
+  const from = previousNewline + 1;
+  const to = bytes.at(-2) === 13 ? bytes.length - 2 : bytes.length - 1;
+  const line = bytes.subarray(from, to);
+  try {
+    const record = JSON.parse(line.toString("utf8"));
+    const p = record.payload || {};
+    if (record.type !== "event_msg" || !["task_complete", "turn_complete"].includes(p.type)
+      || p.turn_id !== hint.turnId || (p.thread_id && p.thread_id !== hint.threadId)
+      || !Number.isFinite(Date.parse(record.timestamp))) return null;
+    const [entry] = structuralEntries([{ record, sha256: digest(line) }]);
+    return { ...entry, startOffset: start + from, pinnedEnd: true, terminalOnly: true, terminalSourceVerified: true, gapBefore: true };
+  } catch { return null; }
+}
+
 /** A trusted header plus a bounded complete-line tail; subsequent reads consume only appends. */
-async function snapshot(file, maximum, acceptMeta, onOmitted, segmentCache, budget) {
+async function snapshot(file, maximum, acceptMeta, onOmitted, segmentCache, budget, turnHint = null) {
   const before = await lstat(file);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink > 1) fail("native_session_file_rejected");
   if (normalize(await realpath(file)) !== normalize(file)) fail("native_session_file_rejected");
@@ -60,12 +99,25 @@ async function snapshot(file, maximum, acceptMeta, onOmitted, segmentCache, budg
     const opened = await handle.stat();
     if (!opened.isFile() || opened.nlink > 1 || opened.ino !== before.ino || opened.dev !== before.dev) fail("native_session_file_changed");
     let cached = segmentCache.get(file);
+    const hintKey = turnHint ? `${turnHint.threadId}:${turnHint.turnId}:${turnHint.offset}` : null;
+    // The same file can be read for "latest" and for several historical turns.
+    // Its pinned window belongs to a verified start, never just to a pathname.
+    if (cached?.hintKey !== hintKey) cached = null;
     if (cached && (cached.ino !== opened.ino || cached.dev !== opened.dev || cached.birthtimeMs !== opened.birthtimeMs
       || opened.size < cached.size || (opened.size === cached.size && opened.mtimeMs !== cached.mtimeMs))) cached = null;
     // Metadata is revalidated even on an unchanged segment. A cached pathname or
     // thread id never substitutes for the native session header's authority.
-    const prefix = await boundedRead(handle, 0, Math.min(opened.size, cached?.headerEnd || MAX_HEADER_BYTES), budget, "metadata");
-    if (!prefix) { onOmitted("metadata_read_budget_exhausted"); return null; }
+    const headerParts = [];
+    let headerLength = 0;
+    const headerLimit = Math.min(opened.size, cached?.headerEnd || MAX_HEADER_BYTES);
+    while (headerLength < headerLimit) {
+      const part = await boundedRead(handle, headerLength, Math.min(cached?.headerEnd || 4096, headerLimit - headerLength), budget, "metadata");
+      if (!part) { onOmitted("metadata_read_budget_exhausted"); return null; }
+      headerParts.push(part);
+      headerLength += part.length;
+      if (part.includes(10) || !part.length) break;
+    }
+    const prefix = Buffer.concat(headerParts);
     const headerEnd = prefix.indexOf(10) + 1;
     let meta;
     try { if (!headerEnd) throw new Error(); meta = JSON.parse(prefix.subarray(0, headerEnd).toString("utf8")); }
@@ -78,29 +130,77 @@ async function snapshot(file, maximum, acceptMeta, onOmitted, segmentCache, budg
       if (!anchor) { onOmitted("anchor_read_budget_exhausted"); return null; }
       if (digest(anchor) !== cached.anchorSha) cached = null;
     }
-    let start = cached?.cursor ?? headerEnd;
-    let entries = cached ? [...cached.entries] : [];
-    const reasons = new Set(cached?.reasons || []);
-    let gap = false;
-    if (opened.size - start > Math.min(maximum, budget.bodyRemaining)) {
-      if (!budget.bodyRemaining) { onOmitted("segment_read_budget_exhausted"); return null; }
-      start = Math.max(headerEnd, opened.size - Math.min(maximum, budget.bodyRemaining));
-      entries = [];
-      gap = start > headerEnd;
-      if (gap) reasons.add("segment_prefix_omitted");
+    if (cached?.startAnchor) {
+      const source = await boundedRead(handle, cached.startAnchor.offset, cached.startAnchor.length, budget, "anchor");
+      if (!source) { onOmitted("anchor_read_budget_exhausted"); return null; }
+      if (digest(source) !== cached.startAnchor.sha256) cached = null;
     }
-    let cursor = start;
-    if (opened.size > start) {
-      const buffer = await boundedRead(handle, start, opened.size - start, budget, "body");
+    let start = cached?.cursor ?? headerEnd;
+    let entries = cached ? cached.entries.flatMap((entry) => {
+      if (entry.terminalOnly) return [];
+      // A terminal also read through an ordinary window retains that window's
+      // continuity. Only its optional indexed pin needs fresh validation.
+      const { pinnedEnd, terminalSourceVerified, ...ordinary } = entry;
+      return [ordinary];
+    }) : [];
+    const reasons = new Set(cached?.reasons || []);
+    let startAnchor = cached?.startAnchor || null;
+    let validatedHint = cached?.hintValidated ? turnHint : null;
+    // An indexed location is untrusted until the exact source record binds it.
+    if (!cached && Number.isSafeInteger(turnHint?.offset) && turnHint.offset >= headerEnd && turnHint.offset < opened.size) {
+      const probe = await boundedRead(handle, turnHint.offset, Math.min(4096, Math.floor(maximum / 4), opened.size - turnHint.offset, budget.bodyRemaining), budget, "body");
+      const end = probe?.indexOf(10) ?? -1;
+      if (end >= 0) {
+        try {
+          const source = JSON.parse(probe.subarray(0, end).toString("utf8"));
+          const p = source.payload || {};
+          if (source.type === "event_msg" && p.type === "task_started" && p.turn_id === turnHint.turnId
+            && (!p.thread_id || p.thread_id === turnHint.threadId)) validatedHint = turnHint;
+        } catch { /* The ordinary bounded tail remains available. */ }
+      }
+    }
+    // The index supplies only a boundary. Source type, exact turn/thread and LF
+    // framing must prove the terminal. Re-read on append or a changed end hint;
+    // unchanged files may reuse the previously source-verified structural row.
+    const terminal = validatedHint && cached?.size === opened.size && cached?.mtimeMs === opened.mtimeMs
+      && cached?.endOffset === turnHint?.endOffset ? cached.terminalEntry
+      : validatedHint ? await indexedTerminal(handle, validatedHint, opened, headerEnd, maximum, budget) : null;
+    if (terminal) entries.push(terminal);
+    const windows = [];
+    const allowance = Math.min(maximum, budget.bodyRemaining);
+    if (!cached && validatedHint && opened.size - validatedHint.offset > allowance && allowance >= 1024) {
+      const firstLength = Math.floor(allowance / 2);
+      const lastLength = allowance - firstLength;
+      windows.push({ start: validatedHint.offset, length: firstLength, aligned: true, gap: true, pinned: true });
+      windows.push({ start: opened.size - lastLength, length: lastLength, aligned: false, gap: true });
+      reasons.add("segment_prefix_omitted");
+      reasons.add("segment_middle_omitted");
+    } else if (!cached && validatedHint) {
+      start = validatedHint.offset;
+      windows.push({ start, length: Math.min(opened.size - start, allowance), aligned: true, gap: start > headerEnd, pinned: true });
+      if (start > headerEnd) reasons.add("pre_turn_history_omitted");
+    } else if (opened.size - start > allowance) {
+      if (!budget.bodyRemaining) { onOmitted("segment_read_budget_exhausted"); return null; }
+      start = Math.max(headerEnd, opened.size - allowance);
+      entries = entries.filter((entry) => entry.pinnedStart === true || entry.pinnedEnd === true);
+      windows.push({ start, length: opened.size - start, aligned: false, gap: true });
+      if (start > headerEnd) reasons.add("segment_prefix_omitted");
+    } else if (opened.size > start) {
+      windows.push({ start, length: opened.size - start, aligned: true, gap: false });
+    }
+    // A tail entirely inside an unfinished large line has no new safe cursor.
+    let cursor = cached?.cursor ?? headerEnd;
+    for (const window of windows) {
+      const buffer = await boundedRead(handle, window.start, window.length, budget, "body");
       if (!buffer) { onOmitted("segment_read_budget_exhausted"); return null; }
       // Start/end may cut UTF-8 or JSON. Only LF-delimited complete bytes are decoded.
-      let lineStart = gap ? buffer.indexOf(10) + 1 : 0;
-      if (gap && !lineStart) {
-        for (const reason of reasons) onOmitted(reason);
-        onOmitted("partial_final_line");
-        return null;
+      let lineStart = window.aligned ? 0 : buffer.indexOf(10) + 1;
+      if (!window.aligned && !lineStart) {
+        reasons.add("partial_final_line");
+        continue;
       }
-      cursor = start + lineStart;
+      cursor = Math.max(cursor, window.start + lineStart);
+      let gap = window.gap;
       let firstNewEntry = true;
       for (let newline = buffer.indexOf(10, lineStart); newline >= 0; newline = buffer.indexOf(10, lineStart)) {
         const lineEnd = buffer[newline - 1] === 13 ? newline - 1 : newline;
@@ -110,21 +210,51 @@ async function snapshot(file, maximum, acceptMeta, onOmitted, segmentCache, budg
             const record = JSON.parse(line.toString("utf8"));
             const projected = structuralEntries([{ record, sha256: digest(line) }]);
             for (const entry of projected) {
-              entries.push({ ...entry, startOffset: start + lineStart, ...(gap && firstNewEntry ? { gapBefore: true } : {}) });
+              entries.push({ ...entry, startOffset: window.start + lineStart, latestWindow: !window.pinned,
+                ...(window.pinned ? { pinnedStart: true } : {}), ...(gap && firstNewEntry ? { gapBefore: true } : {}) });
               firstNewEntry = false;
             }
           }
         } catch { reasons.add("invalid_event_line"); gap = true; firstNewEntry = true; }
         lineStart = newline + 1;
-        cursor = start + lineStart;
+        cursor = Math.max(cursor, window.start + lineStart);
       }
-    } else budget.cachedSegments += 1;
+      if (window.pinned && buffer.length) {
+        const length = Math.min(ANCHOR_BYTES, buffer.length);
+        startAnchor = { offset: window.start, length, sha256: digest(buffer.subarray(0, length)) };
+      }
+    }
+    if (!windows.length) budget.cachedSegments += 1;
     // Bound retained memory by the same byte window and by structural event count.
     // Dropping an unread/evicted prefix resets turn attribution at the retained edge.
-    const retained = entries.filter((entry) => entry.startOffset >= opened.size - maximum).slice(-MAX_CACHED_ENTRIES);
-    if (retained.length !== entries.length) {
+    const byOffset = new Map();
+    for (const entry of entries) {
+      const previous = byOffset.get(entry.startOffset);
+      byOffset.set(entry.startOffset, previous ? { ...previous, ...entry,
+        // A synthetic endpoint has unknown preceding bytes. When the same row
+        // was read contiguously, preserve the real window's gap information.
+        gapBefore: previous.terminalOnly && !entry.terminalOnly ? entry.gapBefore
+          : entry.terminalOnly && !previous.terminalOnly ? previous.gapBefore : previous.gapBefore || entry.gapBefore,
+        terminalOnly: Boolean(previous.terminalOnly && entry.terminalOnly),
+        pinnedStart: previous.pinnedStart || entry.pinnedStart,
+        pinnedEnd: previous.pinnedEnd || entry.pinnedEnd,
+        terminalSourceVerified: previous.terminalSourceVerified || entry.terminalSourceVerified } : entry);
+    }
+    const ordered = [...byOffset.values()].sort((a, b) => a.startOffset - b.startOffset);
+    const pinned = ordered.filter((entry) => entry.pinnedStart || entry.pinnedEnd).slice(0, MAX_CACHED_ENTRIES / 2);
+    const recent = ordered.filter((entry) => !entry.pinnedStart && !entry.pinnedEnd && entry.startOffset >= opened.size - maximum).slice(-(MAX_CACHED_ENTRIES - pinned.length));
+    const retainedEntries = new Set([...pinned, ...recent]);
+    const retained = [];
+    let previousIndex = -1;
+    for (const [index, entry] of ordered.entries()) {
+      if (!retainedEntries.has(entry)) continue;
+      // Each removed structural interval breaks attribution. Mark its next
+      // survivor, including the boundary between pinned and recent windows.
+      retained.push(index > previousIndex + 1 ? { ...entry, gapBefore: true } : entry);
+      previousIndex = index;
+    }
+    if (retained.length !== ordered.length) {
       reasons.add("segment_structure_window_omitted");
-      if (retained.length) retained[0] = { ...retained[0], gapBefore: true };
     }
     const anchorStart = Math.max(headerEnd, cursor - ANCHOR_BYTES);
     const anchor = await boundedRead(handle, anchorStart, Math.max(0, cursor - anchorStart), budget, "anchor");
@@ -133,7 +263,8 @@ async function snapshot(file, maximum, acceptMeta, onOmitted, segmentCache, budg
     if (!after.isFile() || after.isSymbolicLink() || after.nlink > 1 || after.ino !== opened.ino || after.dev !== opened.dev || after.size < opened.size) fail("native_session_file_changed");
     segmentCache.delete(file);
     segmentCache.set(file, { ino: opened.ino, dev: opened.dev, birthtimeMs: opened.birthtimeMs, size: opened.size, mtimeMs: opened.mtimeMs,
-      headerEnd, headerSha, cursor, anchorStart, anchorSha: digest(anchor), entries: retained, reasons: [...reasons] });
+      headerEnd, headerSha, cursor, anchorStart, anchorSha: digest(anchor), startAnchor, hintKey, hintValidated: Boolean(validatedHint),
+      endOffset: turnHint?.endOffset, terminalEntry: terminal, entries: retained, reasons: [...reasons] });
     if (segmentCache.size > MAX_CACHED_SEGMENTS) segmentCache.delete(segmentCache.keys().next().value);
     for (const reason of reasons) onOmitted(reason);
     if (cursor < opened.size) onOmitted("partial_final_line");
@@ -149,10 +280,10 @@ function structuralEntries(entries) {
     if (record.type === "turn_context") payload = { turn_id: p.turn_id, thread_id: p.thread_id, cwd: p.cwd };
     else if (record.type === "response_item" && p.type === "function_call") {
       const args = boundedArguments(p.arguments);
-      payload = { type: p.type, call_id: p.call_id, namespace: p.namespace, name: p.name,
+      payload = { type: p.type, call_id: p.call_id, namespace: p.namespace, name: p.name, turn_id: p.turn_id, thread_id: p.thread_id,
         arguments: JSON.stringify({ task_name: args.taskName, agent_type: args.owner, message: args.role ? "roleDisplayName=" + args.role : "" }) };
     }
-    else if (record.type === "response_item" && p.type === "function_call_output") payload = { type: p.type, call_id: p.call_id };
+    else if (record.type === "response_item" && p.type === "function_call_output") payload = { type: p.type, call_id: p.call_id, turn_id: p.turn_id, thread_id: p.thread_id };
     else if (record.type === "event_msg" && ["task_started", "task_complete", "turn_complete", "item_completed"].includes(p.type)) {
       payload = { type: p.type, thread_id: p.thread_id, turn_id: p.turn_id, started_at: p.started_at, completed_at_ms: p.completed_at_ms, root_turn_id: p.root_turn_id, turn_attribution: { parent_turn_id: p.turn_attribution?.parent_turn_id } };
       if (p.item?.type === "CommandExecution") payload.item = { type: p.item.type, id: p.item.id, cwd: p.item.cwd, status: p.item.status, exit_code: p.item.exit_code, duration: p.item.duration };
@@ -172,19 +303,32 @@ function mergeSegmentEntries(segments) {
   return [...unique.values()].sort((a, b) => (Date.parse(a.record.timestamp) || 0) - (Date.parse(b.record.timestamp) || 0));
 }
 
-function dayDirectories(sinceMs, nowMs) {
+function dayDirectories(sinceMs, nowMs, threadId) {
   const start = Math.max(sinceMs - 86_400_000, nowMs - 2 * 86_400_000);
   const result = new Set();
-  for (let time = start; time <= nowMs + 86_400_000; time += 86_400_000) {
+  const addDay = (time) => {
     const date = new Date(time);
     result.add([String(date.getUTCFullYear()), String(date.getUTCMonth() + 1).padStart(2, "0"), String(date.getUTCDate()).padStart(2, "0")].join("/"));
+  };
+  for (let time = start; time <= nowMs + 86_400_000; time += 86_400_000) {
+    addDay(time);
+  }
+  // Desktop appends to the creation-day file when an older chat resumes. The
+  // UUIDv7 timestamp is only a bounded filename-search hint: metadata, project,
+  // exact turn and event-window checks below still establish source authority.
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(threadId)) {
+    const createdMs = Number.parseInt(threadId.replaceAll("-", "").slice(0, 12), 16);
+    if (createdMs <= nowMs) {
+      // Date directories may use the host timezone rather than UTC.
+      for (const offset of [-86_400_000, 0, 86_400_000]) addDay(createdMs + offset);
+    }
   }
   return [...result];
 }
 
 async function locateSegments(root, threadId, sinceMs, nowMs) {
   const files = [];
-  for (const day of dayDirectories(sinceMs, nowMs)) {
+  for (const day of dayDirectories(sinceMs, nowMs, threadId)) {
     let cursor = root;
     try {
       for (const part of day.split("/")) {
@@ -269,8 +413,8 @@ export function parseCodexNativeTurn(records, { threadId, turnId, sinceMs = 0 } 
     const p = record.payload || {};
     const timestamp = Date.parse(record.timestamp);
     rememberTurnStart(turnStarts, record, threadId);
-    if (record.type === "turn_context") {
-      activeTurn = p.turn_id;
+    if (record.type === "turn_context" || (record.type === "event_msg" && p.type === "task_started")) {
+      activeTurn = UUID.test(String(p.turn_id)) && (!p.thread_id || p.thread_id === threadId) ? p.turn_id : null;
     }
     if (!Number.isFinite(timestamp) || timestamp < sinceMs) continue;
     const matches = p.turn_id ? p.turn_id === turnId && (!p.thread_id || p.thread_id === threadId) : activeTurn === turnId;
@@ -342,14 +486,17 @@ export function createCodexNativeSessionReader(options = {}) {
     const noteOmitted = (reason) => { coverage.state = "partial"; omittedReasons.add(reason); };
     const turnStarts = new Map();
     const targetTurnId = requestedTurnId || explicitTurnId;
+    const turnHint = await locateCodexNativeTurn({ codexHome: root, threadId, turnId: targetTurnId });
     let selectedTurn = targetTurnId;
     for (const file of candidates) {
-      const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], threadId, realProject), noteOmitted, segmentCache, budget);
+      // Leave half of the unchanged total byte budget for child-source proof.
+      const records = await snapshot(file, Math.floor(maxBytes / 2), (meta) => validMeta([{ record: meta }], threadId, realProject), noteOmitted, segmentCache, budget, turnHint);
       if (!records) continue;
       coverage.parentReadCount += 1;
       parentSegments.push(records);
       for (const { record } of records) rememberTurnStart(turnStarts, record, threadId);
-      const turns = records.filter(({ record }) => record.type === "turn_context" && UUID.test(String(record.payload?.turn_id || "")) && Date.parse(record.timestamp) >= sinceMs);
+      const turns = records.filter(({ record }) => (record.type === "turn_context" || (!targetTurnId && record.type === "event_msg" && record.payload?.type === "task_started"))
+        && UUID.test(String(record.payload?.turn_id || "")) && (!record.payload.thread_id || record.payload.thread_id === threadId) && Date.parse(record.timestamp) >= sinceMs);
       const match = targetTurnId ? turns.find(({ record }) => record.payload.turn_id === targetTurnId) : turns.at(-1);
       if (!match) continue;
       if (!selected || Date.parse(match.record.timestamp) > Date.parse(selected.timestamp)) {
@@ -367,17 +514,46 @@ export function createCodexNativeSessionReader(options = {}) {
     const observation = parseCodexNativeTurn(parentRecords, { threadId, turnId: selectedTurn, sinceMs });
     const startedMs = turnStarts.get(selectedTurn)?.task ?? turnStarts.get(selectedTurn)?.context;
     if (Number.isFinite(startedMs)) observation.startedAt = new Date(startedMs).toISOString();
-    observation.commands = observation.commands.filter((command) => normalize(command.cwd) === normalize(realProject));
-    for (const agent of observation.agents) {
+    observation.commands = observation.commands.filter((command) => commandProjectMatches(command.cwd, realProject));
+    const agentCandidates = [...observation.agents];
+    const nativeChildren = await locateCodexNativeChildren({ codexHome: root, threadId, turnId: selectedTurn,
+      maxBytes: Math.min(256 * 1024, budget.metadataRemaining) });
+    if (nativeChildren) {
+      budget.metadataRemaining -= nativeChildren.bytesRead;
+      budget.metadataReadBytes += nativeChildren.bytesRead;
+      if (nativeChildren.truncated) noteOmitted("child_candidate_limit");
+      const known = new Set(agentCandidates.map((agent) => agent.childThreadId));
+      for (const childThreadId of nativeChildren.candidates) {
+        if (known.has(childThreadId)) continue;
+        if (agentCandidates.length >= 64) { noteOmitted("child_candidate_limit"); break; }
+        known.add(childThreadId);
+        agentCandidates.push({ id: `child-source-${childThreadId}`, childThreadId, sourceOnlyCandidate: true });
+      }
+    }
+    for (const agent of agentCandidates) {
       agent.completed = false;
-      const spawnMs = Date.parse(agent.at);
+      const sourceOnly = agent.sourceOnlyCandidate === true;
+      const spawnMs = sourceOnly ? sinceMs : Date.parse(agent.at);
       const endMs = observation.turnCompletedAt ? Date.parse(observation.turnCompletedAt) : Infinity;
       const childFiles = await locateSegments(sessions, agent.childThreadId, sinceMs, now());
+      const childHint = await locateCodexNativeTurn({ codexHome: root, threadId: agent.childThreadId, rootTurnId: selectedTurn });
       coverage.childSegmentCount += childFiles.length;
       const childSegments = [];
       let childIncomplete = false;
+      let childHasGap = false;
+      let childSpawnMetadata = null;
       for (const file of childFiles) {
-        const records = await snapshot(file, maxBytes, (meta) => validMeta([{ record: meta }], agent.childThreadId, realProject, threadId) && Date.parse(meta.timestamp) >= spawnMs - 5_000 && Date.parse(meta.timestamp) <= endMs, (reason) => { childIncomplete = true; noteOmitted(reason); }, segmentCache, budget);
+        const records = await snapshot(file, Math.max(1024, Math.floor(maxBytes / 16)), (meta) => {
+          const valid = validMeta([{ record: meta }], agent.childThreadId, realProject, threadId)
+            && Number.isFinite(Date.parse(meta.timestamp)) && Date.parse(meta.timestamp) <= endMs
+            && (sourceOnly || Date.parse(meta.timestamp) >= spawnMs - 5_000);
+          if (valid) childSpawnMetadata = meta.payload.source.subagent.thread_spawn;
+          return valid;
+        }, (reason) => {
+          if (["segment_prefix_omitted", "segment_middle_omitted", "segment_structure_window_omitted"].includes(reason)) childHasGap = true;
+          else if (reason !== "pre_turn_history_omitted") childIncomplete = true;
+          noteOmitted(reason);
+        }, segmentCache, budget, childHint);
         if (records) { coverage.childReadCount += 1; childSegments.push(records); }
       }
       const records = mergeSegmentEntries(childSegments);
@@ -388,26 +564,41 @@ export function createCodexNativeSessionReader(options = {}) {
       });
       const childStart = starts.reduce((latest, entry) => !latest || taskStartedMs(entry.record) >= taskStartedMs(latest.record) ? entry : latest, null)?.record;
       if (!childStart) continue;
-      const firstContextIndex = records.findIndex(({ record }) => record.type === "turn_context" && record.payload?.turn_id === childStart.payload.turn_id);
-      if (firstContextIndex < 0) continue;
-      const childContext = records[firstContextIndex].record;
-      if (typeof childContext.payload?.cwd === "string" && normalize(childContext.payload.cwd) !== normalize(realProject)) continue;
+      const childStartIndex = records.findIndex(({ record }) => record === childStart);
+      const childContexts = records.filter(({ record }) => record.type === "turn_context" && record.payload?.turn_id === childStart.payload.turn_id);
+      if (childContexts.some(({ record }) => typeof record.payload?.cwd === "string" && normalize(record.payload.cwd) !== normalize(realProject))) continue;
+      // The source header already binds cwd and parent thread; task_started
+      // independently binds this exact parent turn. A huge turn_context line is
+      // not required to rediscover the same project association.
+      if (!childContexts.length) noteOmitted("child_turn_context_not_covered");
       // Copied parent history cannot select a child turn. Join only the latest
       // child start attributed to this exact parent turn, then replay its bounded
       // segments chronologically so resumed activity invalidates an old terminal.
       let completion = null;
       const startedAtMs = taskStartedMs(childStart);
-      for (const entry of records.slice(firstContextIndex + 1)) {
-        if (entry.record.type === "turn_context" && entry.record.payload?.turn_id !== childContext.payload?.turn_id) break;
+      for (const entry of records.slice(childStartIndex + 1)) {
+        if (entry.gapBefore) completion = null;
+        if (entry.record.type === "turn_context" && entry.record.payload?.turn_id !== childStart.payload.turn_id) { completion = null; break; }
         const time = Date.parse(entry.record.timestamp);
         const p = entry.record.payload || {};
+        if (entry.record.type === "event_msg" && p.type === "task_started" && p.turn_id !== childStart.payload.turn_id) { completion = null; break; }
         if (!Number.isFinite(time) || time < startedAtMs || time > endMs || (p.turn_id && p.turn_id !== childStart.payload.turn_id) || (p.thread_id && p.thread_id !== agent.childThreadId)) continue;
         if (nativeExecutionActivity(entry.record, agent.childThreadId, childStart.payload.turn_id)) completion = null;
         if (entry.record.type === "event_msg" && ["task_complete", "turn_complete"].includes(p.type) && p.turn_id === childStart.payload.turn_id) completion = entry;
       }
       agent.childMetadataVerified = true;
       agent.childTurnId = childStart.payload.turn_id;
-      if (completion && !childIncomplete) {
+      if (sourceOnly) {
+        const sourcePath = safeId(childSpawnMetadata?.agent_path);
+        Object.assign(agent, { observationBasis: "verified_child_parent_turn", spawnReturned: false,
+          at: new Date(taskStartedMs(childStart)).toISOString(), sha256: childStart.sha256,
+          childPath: sourcePath, taskName: sourcePath?.split("/").filter(Boolean).at(-1) || null,
+          owner: safeId(childSpawnMetadata?.agent_role), role: "worker" });
+        delete agent.sourceOnlyCandidate;
+        observation.agents.push(agent);
+        noteOmitted("parent_dispatch_record_not_covered");
+      }
+      if (completion && !childIncomplete && (!childHasGap || completion.latestWindow === true || completion.terminalSourceVerified === true)) {
         agent.completed = true;
         agent.completedAt = completion.record.timestamp;
         agent.completionSha256 = completion.sha256;

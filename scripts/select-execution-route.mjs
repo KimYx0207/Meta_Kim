@@ -997,7 +997,7 @@ const projectRuntimeCapabilityProviders = [
   return aPs - bPs;
 });
 
-function selectProjectRuntimeCapabilityEvidence(providers, limit = 80) {
+function selectProjectRuntimeCapabilityEvidence(providers, limit = 80, selectedIds = new Set()) {
   const requiredConfigIds = new Set([
     "codex-hooks-json",
     "claude-settings-json",
@@ -1014,6 +1014,7 @@ function selectProjectRuntimeCapabilityEvidence(providers, limit = 80) {
   };
   const ordered = [...providers].sort((a, b) => evidencePriority(a) - evidencePriority(b));
   const requiredEvidence = [
+    ...providers.filter((provider) => selectedIds.has(provider?.id)),
     ...ordered.filter((provider) => requiredConfigIds.has(provider?.id)),
     ...ordered.filter(
       (provider) => typeof provider?.id === "string" && provider.id.startsWith("package-script:"),
@@ -4053,6 +4054,56 @@ const output = {
   requiredUserChoiceIfAny: userChoiceNeeded ? decisionCard : null,
 };
 
+// Publication must retain discovery evidence for the route it publishes. Only
+// select records from the discovered pools: a reference is never an inventory
+// record, and unknown references must not manufacture providers.
+function selectedProviderIdsForPublication(raw) {
+  const ids = new Set();
+  const add = (provider) => {
+    const id = typeof provider === "string" ? provider : provider?.id;
+    if (id) ids.add(id);
+  };
+  const addBinding = (binding) => {
+    if (!binding) return;
+    [binding.owner, binding.ownerAgent, binding.dependency, binding.capabilityProvider,
+      binding.runtimeTool, binding.providerMatch?.selectedProvider,
+      binding.capabilityBinding?.selectedProvider].forEach(add);
+    Object.values(binding.selectedCapabilityProviders ?? {}).forEach(add);
+    Object.values(binding.capabilityBinding?.selectedProviders ?? {}).forEach(add);
+  };
+  const route = raw.recommendedRoute;
+  addBinding(route);
+  (raw.workerTaskPacketDrafts ?? []).forEach(addBinding);
+  (route?.parallelExecutionLanes ?? []).forEach(addBinding);
+  (route?.subjectiveUiCapabilityAmplification?.lanes ?? []).forEach(addBinding);
+  (route?.subjectiveUiCapabilityAmplification?.capabilityTeamBlueprint?.rows ?? [])
+    .forEach((row) => add(row.selectedProvider));
+  return ids;
+}
+
+function boundedSelectedProviderEvidence(providers, selectedIds, limit) {
+  const selected = (provider) => selectedIds.has(typeof provider === "string" ? provider : provider?.id);
+  return [...providers.filter(selected), ...providers.filter((provider) => !selected(provider))].slice(0, limit);
+}
+
+function retainSelectedProviderEvidence(raw, selectedIds) {
+  const allProviders = uniqueById([
+    ...repoCanonicalCapabilityProviders, ...projectRuntimeCapabilityProviders,
+    ...localGlobalCapabilityProvidersAll, ...runtimeToolProviders,
+  ]);
+  return {
+    ...raw,
+    ownerDiscoveryPacket: {
+      ...raw.ownerDiscoveryPacket,
+      repoCanonicalCapabilityProviders: boundedSelectedProviderEvidence(repoCanonicalCapabilityProviders, selectedIds, 60),
+      projectRuntimeCapabilityProviders: selectProjectRuntimeCapabilityEvidence(projectRuntimeCapabilityProviders, 80, selectedIds),
+      localGlobalCapabilityProviders: boundedSelectedProviderEvidence(localGlobalCapabilityProvidersAll, selectedIds, 120),
+      runtimeToolProviders: boundedSelectedProviderEvidence(runtimeToolProviders, selectedIds, 40),
+      candidateReusableCapabilityProviders: boundedSelectedProviderEvidence(allProviders, selectedIds, 100).map((provider) => provider.id),
+    },
+  };
+}
+
 function compactProvider(provider) {
   if (!provider || typeof provider !== "object") return provider;
   // The local adapter re-reads these exact source hashes and the full contract.
@@ -4174,7 +4225,7 @@ function countPacketArray(packet, field) {
   return Array.isArray(packet?.[field]) ? packet[field].length : 0;
 }
 
-function compactOwnerDiscoveryPacket(packet) {
+function compactOwnerDiscoveryPacket(packet, selectedIds) {
   if (!packet || typeof packet !== "object") return packet;
   return {
     discoveryPrinciple: packet.discoveryPrinciple,
@@ -4208,7 +4259,7 @@ function compactOwnerDiscoveryPacket(packet) {
       40,
     ),
     projectRuntimeCapabilityProviders: compactProviderCollection(
-      selectProjectRuntimeCapabilityEvidence(packet.projectRuntimeCapabilityProviders ?? [], 30),
+      selectProjectRuntimeCapabilityEvidence(packet.projectRuntimeCapabilityProviders ?? [], 30, selectedIds),
       30,
     ),
     localGlobalCapabilityProviders: compactProviderCollection(
@@ -4243,10 +4294,10 @@ function compactOwnerDiscoveryPacket(packet) {
   };
 }
 
-function compactRouteOutput(raw) {
+function compactRouteOutput(raw, selectedIds) {
   return {
     ...raw,
-    ownerDiscoveryPacket: compactOwnerDiscoveryPacket(raw.ownerDiscoveryPacket),
+    ownerDiscoveryPacket: compactOwnerDiscoveryPacket(raw.ownerDiscoveryPacket, selectedIds),
     candidateOwners: (raw.candidateOwners ?? []).slice(0, 80),
     candidateWeapons: (raw.candidateWeapons ?? []).slice(0, 80),
     candidateDependencies: (raw.candidateDependencies ?? []).slice(0, 80),
@@ -4264,12 +4315,14 @@ function compactRouteOutput(raw) {
   };
 }
 
+const selectedPublicationProviderIds = selectedProviderIdsForPublication(output);
+const publicationOutput = retainSelectedProviderEvidence(output, selectedPublicationProviderIds);
 const outputForPublication =
   json ||
   process.argv.includes("--runner-compact") ||
   process.argv.includes("--compact-json")
-    ? compactRouteOutput(output)
-    : output;
+    ? compactRouteOutput(publicationOutput, selectedPublicationProviderIds)
+    : publicationOutput;
 const printableOutput = sanitizeCapabilityPublicationValue(outputForPublication, {
   repoRoot: repoPath("."),
   homeDir: process.env.USERPROFILE ?? process.env.HOME ?? "",

@@ -90,7 +90,9 @@ function runProjectSyncFromFixture(tempRoot, args = [], extraEnv = {}) {
       cwd: repoRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, META_KIM_REPO_ROOT: tempRoot, ...extraEnv },
+      // Source and caller roots are independent; keep host local overrides out
+      // of the fixture while allowing individual cases to override the caller.
+      env: { ...process.env, META_KIM_REPO_ROOT: tempRoot, META_KIM_CALLER_CWD: tempRoot, ...extraEnv },
     },
   );
 }

@@ -1263,6 +1263,20 @@ export async function writeSpineState(cwd, state, options = {}) {
     if (current && current.runId !== expectedRunId) {
       return { written: false, reason: "expected_run_changed", runId: current.runId };
     }
+    if (options.expectedActive !== undefined && current?.active !== options.expectedActive) {
+      return { written: false, reason: "expected_active_changed", runId: current?.runId || null };
+    }
+    if (options.expectedStage !== undefined && current?.currentStage !== options.expectedStage) {
+      return { written: false, reason: "expected_stage_changed", runId: current?.runId || null };
+    }
+    if (options.expectedStageStatus !== undefined
+      && current?.stages?.[current.currentStage]?.status !== options.expectedStageStatus) {
+      return { written: false, reason: "expected_stage_status_changed", runId: current?.runId || null };
+    }
+    if (options.expectedCheckpointRevision !== undefined
+      && (current?.hostCheckpointRevision || 0) !== options.expectedCheckpointRevision) {
+      return { written: false, reason: "expected_checkpoint_revision_changed", runId: current?.runId || null };
+    }
     await safeAtomicWriteJson(cwd, filePath, safeState);
     if (options.interruptAfter === "spine") {
       throw new Error("Injected interruption after authoritative spine write.");
@@ -1716,6 +1730,19 @@ export function isHookObservedState(state) {
   );
 }
 
+/** Bounded read-model projection; archival authority remains in the full spine. */
+function projectOwnerVerificationPacket(packet) {
+  if (!packet || typeof packet !== "object" || Array.isArray(packet)) return null;
+  const fields = ["runId", "revisionId", "actionId", "findingId", "feedbackId", "taskPacketId", "sourceTaskPacketId", "deliverableId", "sourceDeliverableId", "contentVersion", "sourceContentVersion", "name", "observedResult", "recordedAt"];
+  const project = (item) => ({
+    ...Object.fromEntries(fields.filter((key) => typeof item?.[key] === "string").map((key) => [key, item[key].slice(0, 256)])),
+    ...(typeof item?.passed === "boolean" ? { passed: item.passed } : {}),
+    evidenceLevel: "owner_reported", nativeInvocationVerified: false,
+  });
+  return { ...project(packet), ...Object.fromEntries(["checks", "verificationResults", "fixEvidence"]
+    .filter((key) => Array.isArray(packet[key])).map((key) => [key, packet[key].slice(-64).filter((item) => item && typeof item === "object" && !Array.isArray(item)).map(project)])) };
+}
+
 export function createMetaRunStatusEnvelope(state, options = {}) {
   const safeState = stripRawPromptFields(state);
   const currentStage = normalizeStage(
@@ -1857,6 +1884,25 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     sourceRuntime,
     conversationLinkState,
     workerLifecycle,
+    ...(safeState.hostCheckpointSummary?.evidenceLevel === "owner_reported" ? {
+      hostCheckpointSummary: safeState.hostCheckpointSummary,
+      hostCheckpointRevision: safeState.hostCheckpointRevision || 0,
+      workerTaskPackets: (Array.isArray(safeState.workerTaskPackets) ? safeState.workerTaskPackets : []).slice(0, 32),
+      workerResultPackets: (Array.isArray(safeState.workerResultPackets) ? safeState.workerResultPackets : []).slice(0, 32),
+      ...(safeState.hostRevision ? {
+        hostRevision: safeState.hostRevision,
+        hostRevisionHistory: (Array.isArray(safeState.hostRevisionHistory) ? safeState.hostRevisionHistory : []).slice(-64).map((entry) => ({
+          runId: entry.runId || runId, revisionId: entry.revisionId, findings: (Array.isArray(entry.findings) ? entry.findings : []).slice(0, 64),
+          invalidated: {
+            workerTaskPackets: (Array.isArray(entry.invalidated?.workerTaskPackets) ? entry.invalidated.workerTaskPackets : []).slice(0, 32),
+            ...(entry.invalidated?.previousRevision ? { previousRevision: { runId: entry.invalidated.previousRevision.runId, revisionId: entry.invalidated.previousRevision.revisionId } } : {}),
+            records: { verificationPacket: projectOwnerVerificationPacket(entry.invalidated?.records?.verificationPacket) },
+          },
+        })),
+        revisionResponses: (Array.isArray(safeState.revisionResponses) ? safeState.revisionResponses : []).slice(-64),
+        ...(safeState.verificationPacket ? { verificationPacket: projectOwnerVerificationPacket(safeState.verificationPacket) } : {}),
+      } : {}),
+    } : {}),
     substanceClass: substance.substanceClass,
     substanceSignals: substance.substanceSignals,
     ...(sourceConversation ? { sourceConversation } : {}),

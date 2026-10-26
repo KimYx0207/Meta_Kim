@@ -29,6 +29,29 @@ test("current task follows observed execution activity among active same-run nod
   assert.equal(result.activity.item.source, "tool");
 });
 
+test("owner-reported tasks remain separate from active execution, native counters and verified completion", () => {
+  const report = { runId: "run-current", taskPacketId: "task:reported", ownerAgent: "debugger", resultStatus: "reported_complete",
+    summary: "负责人提交了检查结果", reportedAt: at, evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+  const reported = node("reported", { runId: "run-current", ownerAgent: "debugger", taskPacketId: report.taskPacketId,
+    active: false, status: "in_doubt", displayState: "unknown", executionState: "unreported", ownerReport: report });
+  const fixture = snapshot({ nodes: [reported] });
+  const result = resolveLiveRunOverview(fixture);
+  assert.equal(result.state, "active");
+  assert.equal(result.task, null, "a report does not invent a currently executing task");
+  assert.equal(result.ownerReported.count, 1);
+  assert.equal(result.ownerReported.task.nodeId, "reported");
+  assert.equal(result.ownerReported.task.summary, report.summary);
+  assert.equal(result.activity.item, null);
+  assert.equal(result.execution, null);
+  assert.equal(result.result.items.length, 0);
+  for (const mutation of [{ runId: "other" }, { taskPacketId: "task:other" }, { ownerAgent: "other" }, { nativeInvocationVerified: true }]) {
+    assert.equal(resolveLiveRunOverview(snapshot({ nodes: [{ ...reported, ownerReport: { ...report, ...mutation } }] })).ownerReported, null);
+  }
+  const withExecution = resolveLiveRunOverview(snapshot({ nodes: [reported, node("actually-running")] }));
+  assert.equal(withExecution.task.nodeId, "actually-running");
+  assert.equal(withExecution.ownerReported.count, 1);
+});
+
 test("available results require a valid same-run opaque descriptor", () => {
   const result = resolveLiveRunOverview(snapshot({ deliverables: [
     { id: "declared", runId: "run-current", kind: "html", availability: "declared", label: "仅有路径" },
@@ -115,6 +138,17 @@ test("inactive historical and completed runs never revive a current worker", () 
     const result = resolveLiveRunOverview(snapshot({ run: { id: "run-current", active: false, displayState }, nodes: [node("stale-worker")] }));
     assert.equal(result.task, null);
     assert.equal(result.state, displayState === "completed" ? "completed" : "historical");
+  }
+});
+
+test("governance activity remains distinct from native execution and cannot revive a stopped run", () => {
+  const run = { id: "run-current", active: false, displayState: "unknown", governance: { runId: "run-current", active: true, state: "active", currentStage: "execution", evidenceLevel: "durable_lifecycle" } };
+  const result = resolveLiveRunOverview(snapshot({ run, nodes: [node("stale-worker")] }));
+  assert.equal(result.state, "governance_active");
+  assert.equal(result.task, null);
+  assert.equal(result.activity.item, null);
+  for (const governance of [{ ...run.governance, runId: "other" }, { ...run.governance, active: false }, { ...run.governance, evidenceLevel: "caller_claim" }]) {
+    assert.equal(resolveLiveRunOverview(snapshot({ run: { ...run, governance } })).state, "historical");
   }
 });
 

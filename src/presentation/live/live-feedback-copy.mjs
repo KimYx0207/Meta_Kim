@@ -1,0 +1,33 @@
+/** Foreground handoff copy shared by the Node helper and serialized Live page. */
+export const LIVE_FEEDBACK_COPY = Object.freeze({
+  zh: Object.freeze({
+    instruction: "请依据下面的反馈局部修订当前结果，保留已确认需求及不相关改动；修订后复查同一结果。",
+    project: "项目：",
+    run: "运行：",
+    feedback: "反馈编号：",
+    finding: "问题编号：",
+    taskReference: "任务显示引用（请在同 project/run/chat 的 governed-host-checkpoint.mjs 使用 --resolve-task-ref 解析真实工单与最新 CAS；旧引用须重新核对）：",
+    node: "节点：",
+    deliverable: "交付物：",
+    version: "本次读取版本：",
+    unknownVersion: "未知（尚未取得内容哈希）",
+    evidence: "证据：",
+    source: "可见来源引用：",
+    original: "用户反馈原话：",
+  }),
+  en: Object.freeze({
+    instruction: "Revise this result using the feedback below, preserve confirmed requirements and unrelated work, then check the same result again.",
+    project: "Project: ",
+    run: "Run: ",
+    feedback: "Feedback ID: ",
+    finding: "Finding ID: ",
+    taskReference: "Display task reference (use governed-host-checkpoint.mjs --resolve-task-ref with the same project/run/chat for the actual work order and fresh CAS; recheck stale references): ",
+    node: "Node: ",
+    deliverable: "Deliverable: ",
+    version: "Version read this time: ",
+    unknownVersion: "unknown (content hash not obtained)",
+    evidence: "Evidence: ",
+    source: "Visible source reference: ",
+    original: "User feedback, verbatim:",
+  }),
+});

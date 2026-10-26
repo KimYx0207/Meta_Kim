@@ -19,6 +19,7 @@ import { homedir, platform } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { collectHookPromptDiagnostics, renderHookPromptDiagnostics } from "./hookprompt-diagnostics.mjs";
 
 const C = {
   reset: "\x1b[0m",
@@ -705,6 +706,7 @@ async function main() {
 
   if (!silent) {
     console.log(`${C.bold}${C.cyan}${t.title}${C.reset}`);
+    console.log(renderHookPromptDiagnostics(collectHookPromptDiagnostics({ projectRoot, scope: projectOnly ? "project" : allMode ? "both" : "global" }), lang));
     if (!langArg) {
       console.log(`${C.dim}${t.langAutoDetected(lang)}${C.reset}`);
     }

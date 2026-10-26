@@ -35,6 +35,40 @@ Source catalog, considered in order of locality then priority under the machine 
 
 The search query is the **capability needed** (e.g. "frontend Next.js", "graph code review", "i18n string extraction"), not the agent name. Match by boundary, not by title. The result of discovery is a shortlist of owner candidates with file refs, never a hardcoded dispatch.
 
+Use the read-only, bounded query entrypoint instead of relying on the host to list
+every installed skill in one prompt:
+
+```sh
+meta-kim capability search --query "code security review" --runtime codex --type agents --limit 5 --json
+meta-kim capability search --query "安全审查" --keyword security --keyword review --runtime codex --type skills --limit 5
+```
+
+`--keyword` may be repeated up to eight times to add domain terms or translated
+synonyms. Types include agents, skills, commands, tools, hooks, plugins and their
+cached index types; `tools` searches MCP and runtime-tool entries. Runtime
+filtering is exact (`codexapp` is distinct from `codex`). Canonical entries without
+declared runtime coverage remain reference candidates only in an unfiltered query.
+The result contains bounded descriptions, portable source references, qualified
+provider identity, source/collision provenance, and the terms and fields that
+matched. It reuses the inventory's source-aware winner and explicit alias mapping;
+different providers with the same name remain distinct.
+
+The command reads the existing global inventory and packaged canonical index. It
+does not rescan runtime homes, read all capability bodies, access the network,
+install, create, select or invoke providers. Missing/malformed indexes yield an
+explicit gap; caches older than seven days are marked stale, and future timestamps
+are disclosed. The output names the existing `discover:global` refresh command;
+refresh is a separate explicit action. `--inventory` and `--canonical` permit
+read-only queries against explicit index files, and `--profile` selects a global
+state profile. A no-match query is a gap to refine or record, never an excuse to
+guess an owner.
+
+Relevance scores only order text matches. They are not the 85-point provider
+qualification gate, native support, safety approval, or execution evidence. Check
+the candidate's current source and task boundary before choosing it, then retain
+the actual native dispatch result and worker artifact separately. A cached match
+remains `not_invoked`, even if its cached definition was valid when discovered.
+
 When multiple candidates match:
 
 - Prefer the most local durable owner (canonical asset > capability index > global home > local).

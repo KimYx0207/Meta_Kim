@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { publicTaskBinding } from "../../../canonical/runtime-assets/shared/hooks/governed-task-reference.mjs";
 import {
   createLiveReadRepository,
   isLiveRunId,
@@ -148,12 +149,6 @@ function containsSecret(value) {
 function publicId(kind, value) {
   const digest = createHash("sha256").update(String(value ?? "unknown"), "utf8").digest("hex").slice(0, 20);
   return `${kind}:${digest}`;
-}
-
-function publicTaskBinding(value) {
-  const taskId = exactTaskId(value);
-  if (!taskId) return null;
-  return /^task:[a-f0-9]{20}$/u.test(taskId) ? taskId : publicId("task", taskId);
 }
 
 function exactTaskId(value) {
@@ -721,6 +716,7 @@ function durableOnlySnapshot(durable, { observedAt, stale, active }) {
   // "no chat id was saved" on the very surface that proves the run is live.
   const publicRun = {
     ...run,
+    governance: governanceProjection(durable, run.runId),
     active: runActive,
     substanceClass: substance.substanceClass,
     ...conversationLinkProjection(durable, run.runId),
@@ -768,6 +764,14 @@ function durableOnlySnapshot(durable, { observedAt, stale, active }) {
     },
     permissions: permissions(),
   };
+}
+
+/** Durable lifecycle describes coordination, independently of native worker freshness. */
+function governanceProjection(durable, runId) {
+  if (!durable || normalizeLiveRunId(durable.runId) !== runId) return null;
+  const active = durable.active === true && normalizeStatus(durable.lifecycleStatus) === "active";
+  return { runId, active, state: active ? "active" : "inactive", currentStage: normalizeStage(firstString(durable, ["currentStageKey", "currentStage", "stage"])),
+    updatedAt: updatedAtFor(durable), evidenceLevel: "durable_lifecycle" };
 }
 
 function emptySnapshot(observedAt, kind = "empty", stale = true) {
@@ -936,18 +940,33 @@ function completionIsProven(artifact, runId = null) {
 function buildRevisionReview(artifact, runId) {
   if (!artifact || normalizeLiveRunId(artifact.runId) !== runId) return { state: "not_reported", items: [] };
   const belongs = (record) => record && typeof record === "object" && !Array.isArray(record) && (!record.runId || record.runId === runId);
-  const findings = boundedArray(artifact.reviewPacket?.findings, 64).filter(belongs);
+  const revisions = [artifact.hostRevision, ...boundedArray(artifact.hostRevisionHistory, 64)].filter((item) => belongs(item) && safeId(item.revisionId, null));
+  const findings = [...revisions.flatMap((revision) => boundedArray(revision.findings, 64).filter(belongs).map((finding) => ({ ...finding, revisionId: revision.revisionId }))),
+    ...boundedArray(artifact.reviewPacket?.findings, 64).filter(belongs)];
+  const findingFor = (row) => findings.find((item) => item.findingId === row.findingId && (!row.revisionId || item.revisionId === row.revisionId));
   const responses = [...boundedArray(artifact.revisionResponses, 64), ...boundedArray(artifact.reviewPacket?.revisionResponses, 64), ...boundedArray(artifact.verificationPacket?.revisionResponses, 64)].filter(belongs);
-  const results = [...boundedArray(artifact.verificationPacket?.verificationResults, 64), ...boundedArray(artifact.verificationPacket?.fixEvidence, 64)].filter(belongs);
-  const knownTasks = new Set(boundedArray(artifact.workerTaskPackets ?? artifact.coreLoop?.thinkingPacket?.workerTaskPackets, LIVE_MAX_NODES).map(taskIdFrom).filter(Boolean));
+  // An archive belongs to the revision it invalidated, not the later revision
+  // that created the archive. Never infer a check's revision from the current run.
+  const verificationPackets = [{ packet: artifact.verificationPacket, revisionId: artifact.hostRevision?.revisionId || null },
+    ...revisions.filter((entry) => belongs(entry.invalidated?.previousRevision) && safeId(entry.invalidated.previousRevision.revisionId, null)).map((entry) => ({
+      packet: entry.invalidated?.records?.verificationPacket, revisionId: entry.invalidated.previousRevision.revisionId,
+    }))];
+  const results = verificationPackets.filter(({ packet, revisionId }) => belongs(packet)
+    && (!packet.revisionId || packet.revisionId === revisionId) && (!packet.actionId || packet.actionId === revisionId))
+    .flatMap(({ packet, revisionId }) => [packet.checks, packet.verificationResults, packet.fixEvidence]
+      .flatMap((records) => boundedArray(records, 64)).filter((item) => belongs(item) && (!revisionId || item.revisionId === revisionId)));
+  const tasks = [...boundedArray(artifact.workerTaskPackets ?? artifact.coreLoop?.thinkingPacket?.workerTaskPackets, LIVE_MAX_NODES),
+    ...revisions.flatMap((revision) => boundedArray(revision.invalidated?.workerTaskPackets, LIVE_MAX_NODES))];
+  const knownTasks = new Set(tasks.map(taskIdFrom).filter(Boolean));
   const deliverables = collectLiveDeliverables(artifact);
   const version = (record) => /^sha256:[a-f0-9]{64}$/u.test(record?.contentVersion || record?.deliverableVersion || "") ? record.contentVersion || record.deliverableVersion : null;
   // Check raw presence before safeId can collapse an explicit malformed value
   // into the same null used for an omitted optional field. Validate every task
   // alias, including aliases that taskIdFrom's normal precedence would skip.
   const invalidIdentity = (record) => {
-    const fields = ["findingId", "deliverableId", "actionId", "taskPacketId", "taskId", "roleInstanceId", "businessRoleId"];
+    const fields = ["findingId", "feedbackId", "revisionId", "deliverableId", "sourceDeliverableId", "sourceTaskPacketId", "actionId", "taskPacketId", "taskId", "roleInstanceId", "businessRoleId"];
     if (fields.some((key) => record?.[key] !== undefined && record?.[key] !== null && record?.[key] !== "" && !safeId(record[key], null))) return true;
+    if (["contentVersion", "deliverableVersion", "sourceContentVersion"].some((key) => record?.[key] !== undefined && record?.[key] !== null && !/^sha256:[a-f0-9]{64}$/u.test(record[key]))) return true;
     return record?.actionIds !== undefined && record?.actionIds !== null &&
       (!Array.isArray(record.actionIds) || record.actionIds.length > 64 || record.actionIds.some((value) => !safeId(value, null)));
   };
@@ -955,7 +974,18 @@ function buildRevisionReview(artifact, runId) {
   // A finding's original content version is not immutable across a revision.
   const compatibleResponses = responses.filter((response) => {
     if (invalidIdentity(response)) return false;
-    const finding = findings.find((item) => item.findingId === response.findingId);
+    const finding = findingFor(response);
+    if (response.revisionId) {
+      const task = tasks.find((packet) => taskIdFrom(packet) === taskIdFrom(response));
+      if (!finding || response.runId !== runId || !task || response.actionId !== response.revisionId
+        || (task.revisionId && task.revisionId !== response.revisionId)
+        || (finding.taskPacketId && (response.sourceTaskPacketId !== finding.taskPacketId || task.replacesTaskPacketId !== finding.taskPacketId))
+        || (finding.feedbackId && response.feedbackId !== finding.feedbackId)
+        || (finding.deliverableId && response.deliverableId !== finding.deliverableId && response.sourceDeliverableId !== finding.deliverableId)
+        || (response.sourceDeliverableId && response.sourceDeliverableId !== finding.deliverableId)
+        || (version(finding) && response.sourceContentVersion !== version(finding))) return false;
+      return true;
+    }
     if (!finding) return true;
     if (invalidIdentity(finding)) return false;
     const conflicting = (left, right) => left && right && left !== right;
@@ -964,14 +994,14 @@ function buildRevisionReview(artifact, runId) {
     const responseAction = safeId(response.actionId, null);
     return !responseAction || !Array.isArray(finding.actionIds) || !finding.actionIds.length || actionIds.includes(responseAction);
   });
-  const rows = [...compatibleResponses, ...findings.filter((finding) => !compatibleResponses.some((row) => row.findingId === finding.findingId))]
+  const rows = [...compatibleResponses, ...findings.filter((finding) => !compatibleResponses.some((row) => row.findingId === finding.findingId && (!finding.revisionId || row.revisionId === finding.revisionId)))]
     .sort((left, right) => (Date.parse(safeTimestamp(right.updatedAt || right.revisedAt)) || 0) - (Date.parse(safeTimestamp(left.updatedAt || left.revisedAt)) || 0));
   const seen = new Set();
   const items = [];
   for (const row of rows) {
     const findingId = safeId(row.findingId, null);
-    if (!findingId) continue;
-    const finding = findings.find((item) => item.findingId === findingId);
+    if (!findingId || invalidIdentity(row)) continue;
+    const finding = findingFor(row);
     const actionId = safeId(row.actionId || finding?.actionId, null);
     const taskId = taskIdFrom(row) || taskIdFrom(finding);
     const targetId = safeId(row.deliverableId || finding?.deliverableId, null);
@@ -980,13 +1010,21 @@ function buildRevisionReview(artifact, runId) {
     // Match the record's declared identity, not proof that a command ran or that
     // this is the file's current hash. Self-described command/output fields do
     // not establish execution provenance, even when every binding agrees.
-    const matching = compatibleResponses.includes(row) ? results.filter((item) => !invalidIdentity(item) && item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && knownTasks.has(taskId) && taskIdFrom(item) === taskId && target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion) : [];
+    const matching = compatibleResponses.includes(row) ? results.filter((item) => !invalidIdentity(item) && item.runId === runId && item.findingId === findingId && actionId && item.actionId === actionId && knownTasks.has(taskId) && taskIdFrom(item) === taskId
+      && (row.revisionId ? item.revisionId === row.revisionId && (item.deliverableId || null) === targetId && version(item) === contentVersion
+        && ["sourceTaskPacketId", "sourceDeliverableId", "sourceContentVersion", "feedbackId"].every((key) => item[key] === undefined || item[key] === row[key])
+        : target && item.deliverableId === target.id && contentVersion && version(item) === contentVersion)) : [];
     const state = matching.length ? "verification_unconfirmed" : compatibleResponses.includes(row) ? "pending_verification" : "recorded";
     const id = publicId("revision", `${runId}:${findingId}:${actionId || ""}:${taskId || ""}:${targetId || ""}:${contentVersion || ""}`);
     if (seen.has(id)) continue;
     seen.add(id);
+    const localRef = (value, kind) => new RegExp(`^${kind}:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$`, "u").test(value || "") ? value : null;
     items.push({ id, runId, findingId: publicId("finding", findingId), actionId: actionId ? publicId("action", actionId) : null,
-      taskPacketId: knownTasks.has(taskId) ? publicTaskBinding(taskId) : null, deliverableId: target?.id || null, contentVersion,
+      feedbackId: localRef(row.feedbackId || finding?.feedbackId, "feedback"), findingRef: localRef(findingId, "finding"),
+      sourceTaskPacketId: knownTasks.has(row.sourceTaskPacketId) ? publicTaskBinding(row.sourceTaskPacketId) : null,
+      sourceDeliverableId: /^deliverable:[a-f0-9]{24}$/u.test(row.sourceDeliverableId || "") ? row.sourceDeliverableId : null,
+      sourceContentVersion: /^sha256:[a-f0-9]{64}$/u.test(row.sourceContentVersion || "") ? row.sourceContentVersion : null,
+      taskPacketId: knownTasks.has(taskId) ? publicTaskBinding(taskId) : null, deliverableId: target?.id || (row.revisionId && /^deliverable:[a-f0-9]{24}$/u.test(targetId || "") ? targetId : null), contentVersion,
       summary: safeReviewText(finding?.summary || finding?.finding || row.summary || row.finding),
       requiredChange: safeReviewText(finding?.requiredChange || row.requiredChange),
       state, verificationObservedAt: null });
@@ -1001,6 +1039,11 @@ function sanitizeRevisionReview(value, runId) {
     if (item?.runId !== runId || !/^revision:[a-f0-9]{20}$/u.test(item.id || "") || !/^finding:[a-f0-9]{20}$/u.test(item.findingId || "")) return [];
     const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
     return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
+      feedbackId: /^feedback:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(item.feedbackId || "") ? item.feedbackId : null,
+      findingRef: /^finding:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(item.findingRef || "") ? item.findingRef : null,
+      sourceTaskPacketId: publicTaskBinding(item.sourceTaskPacketId),
+      sourceDeliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.sourceDeliverableId || "") ? item.sourceDeliverableId : null,
+      sourceContentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.sourceContentVersion || "") ? item.sourceContentVersion : null,
       taskPacketId: publicTaskBinding(item.taskPacketId), deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
       summary: safeReviewText(item.summary), requiredChange: safeReviewText(item.requiredChange),
       contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state, verificationObservedAt: null }];
@@ -1052,7 +1095,7 @@ function artifactIsStructuralOnly(artifact) {
       boundedArray(result?.workerExecutionEvidence, 24).every(evidenceIsStructuralOnly)));
 }
 
-function publicDisplay(status, { active = false, structuralOnly = false } = {}) {
+function publicDisplay(status, { active = false, structuralOnly = false, governanceActive = false } = {}) {
   const normalized = normalizeStatus(status, "in_doubt");
   if (structuralOnly) {
     return { ...LIVE_PLANNING_DISPLAY };
@@ -1064,6 +1107,7 @@ function publicDisplay(status, { active = false, structuralOnly = false } = {}) 
     return { displayState: "queued", statusReason: "运行仍在进行，该任务等待执行或等待可信回报。" };
   }
   if (["pending", "session_stopped", "archived"].includes(normalized)) {
+    if (governanceActive && normalized === "pending") return { displayState: "unreported", statusReason: "治理任务进行中，待执行回报；尚未确认此任务的原生执行。" };
     return { displayState: "unreported", statusReason: "运行当前不活跃，尚未发现该任务的可信执行回报。" };
   }
   return { displayState: "unknown", statusReason: "现有记录不足以判断该任务是否执行或完成。" };
@@ -1234,6 +1278,12 @@ function recordBelongsToRun(record, runId) {
 }
 
 function readableWorkerScope(packet) {
+  const output = safeText(firstString(packet, ["expectedOutput", "taskLabel"]), null, 96);
+  if (output && !["redacted", "[path omitted]"].includes(output)) return output;
+  if (packet?.evidenceLevel === "owner_reported" && firstString(packet, ["scope"])) {
+    const scope = safeText(packet.scope, null, 96);
+    if (scope && !["redacted", "[path omitted]"].includes(scope)) return scope;
+  }
   if (packet?.designBinding?.sliceId) {
     const outcome = firstString(packet, ["coreProblem", "todayTask", "description"]);
     if (outcome) return safeText(outcome, null, 96);
@@ -1251,8 +1301,22 @@ function readableWorkerScope(packet) {
 
 function readableRunTask(artifact) {
   const candidate = firstString(artifact, ["task"])
-    || firstString(artifact?.requestRecord, ["task"]);
+    || firstString(artifact?.requestRecord, ["task"])
+    || (artifact?.hostCheckpointSummary?.evidenceLevel === "owner_reported" ? firstString(artifact?.criticalRecord, ["realIntent"]) : null);
   return safeText(candidate, "Governed execution", 240);
+}
+
+function safeOwnerReportedResult(result, { runId, taskId, ownerAgent }) {
+  if (result?.evidenceLevel !== "owner_reported" || result.nativeInvocationVerified !== false
+    || result.runId !== runId || publicTaskBinding(result.taskPacketId) !== publicTaskBinding(taskId)
+    || result.ownerAgent !== ownerAgent || !["reported_complete", "reported_failed", "reported_blocked"].includes(result.resultStatus)) return null;
+  return { runId, taskPacketId: publicTaskBinding(taskId), ownerAgent: safeText(ownerAgent, "unavailable", 96),
+    resultStatus: result.resultStatus, summary: safeText(result.summary, "负责人已回报，待独立验证。", 180),
+    reportedAt: safeTimestamp(result.reportedAt), evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+}
+
+function ownerReportedDisplay(ownerReport) {
+  return ownerReport ? { displayState: "unknown", statusReason: "负责人已回报，待独立验证。" } : {};
 }
 
 function readableRunTitle(artifact, task) {
@@ -1972,13 +2036,15 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   const workerNodes = graphPackets.map((packet, index) => {
     const taskId = taskIdFrom(packet) || `${runId}:worker:${index + 1}`;
     const result = results.get(taskId) || null;
-    const taskEvidence = safeExecutionEvidence(result, taskId, runId);
+    const ownerReport = safeOwnerReportedResult(result, { runId, taskId, ownerAgent: firstString(packet, ["ownerAgent", "owner", "agent"]) });
+    const taskEvidence = safeExecutionEvidence(ownerReport ? null : result, taskId, runId);
     const classificationConflict = sanitizeClassificationConflict(packet.__classificationConflict);
     let status = normalizeStatus(
       firstString(result, ["status", "resultStatus"]) || firstString(packet, ["status"]),
       "pending",
     );
-    const executionState = taskExecutionState(result, runId, taskId);
+    if (ownerReport) status = "in_doubt";
+    const executionState = ownerReport ? "unreported" : taskExecutionState(result, runId, taskId);
     if (result?.status === "executed" && executionState === "executed") status = "in_doubt";
     if (TRUSTED_TERMINAL_STATUSES.has(status) && !terminalStatusIsProven(result, status, { runId, taskId })) {
       status = "in_doubt";
@@ -2036,10 +2102,12 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       status: resolvedStatus,
       active: nodeActive,
       ...display,
+      ...ownerReportedDisplay(ownerReport),
+      ...(ownerReport ? { ownerReport } : {}),
       executionState,
       declaredStatus: status,
       observedOnly,
-      declaredNotStarted: status === "pending" && observed.count === 0,
+      declaredNotStarted: !ownerReport && status === "pending" && observed.count === 0,
       observedStatus: observed.state,
       observedCount: observed.count,
       observedAt: observed.lastAt,
@@ -2064,7 +2132,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
       firstAt: startedAt,
       lastAt: completedAt,
       durationMs: Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : null,
-      summary: status === "pending"
+      summary: ownerReport ? ownerReport.summary : status === "pending"
         ? `${safeText(role, "worker", 80)} lane · awaiting real host execution evidence`
         : "Worker state projected from governed evidence",
       terminalEvidence: taskEvidence.filter((item) => ["completed", "failed", "blocked", "cancelled"].includes(item.status)),
@@ -2132,7 +2200,8 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
   // unknown. `in_doubt` is the read model's existing marker for that, and the
   // page already treats it as non-informative. Defaulting to a real agent name
   // instead used to put a governance agent on the graph that nothing had run.
-  const declaredRootOwner = firstString(artifact?.dispatchEnvelopePacket, ["ownerAgent", "owner"]);
+  const declaredRootOwner = firstString(artifact?.dispatchEnvelopePacket, ["ownerAgent", "owner"])
+    || (artifact?.hostCheckpointSummary?.evidenceLevel === "owner_reported" ? firstString(artifact, ["ownerAgent"]) : null);
   const rootOwner = declaredRootOwner || "in_doubt";
   const mainNode = {
     id: publicId("agent", `${runId}:main:${rootOwner}`),
@@ -2792,13 +2861,16 @@ function sanitizeCompactProjection(value) {
       : null;
     let status = normalizeStatus(raw.status, "in_doubt");
     const rawTaskId = safeId(raw.taskPacketId || raw.taskId, null);
+    const ownerReport = raw.kind === "agent" && raw.isMain !== true && rawTaskId
+      ? safeOwnerReportedResult(raw.ownerReport, { runId, taskId: rawTaskId, ownerAgent: raw.ownerAgent }) : null;
+    if (ownerReport) status = "in_doubt";
     const terminalProven = raw.kind === "agent" && raw.isMain !== true && rawTaskId
       ? boundedArray(raw.terminalEvidence, 24).some((item) =>
           evidenceMatchesBinding(item, { runId, taskId: rawTaskId }) &&
           !evidenceIsStructuralOnly(item) &&
           workerEvidenceStatus(item) === status)
       : false;
-    const executionState = structuralOnly ? "not_executed" : evidence.some((item) =>
+    const executionState = ownerReport ? "unreported" : structuralOnly ? "not_executed" : evidence.some((item) =>
       evidenceMatchesBinding(item, { runId, taskId: publicTaskBinding(rawTaskId) }) &&
       (item.executionObserved === true || item.status === "completed")) ? "executed" : "unreported";
     if (TRUSTED_TERMINAL_STATUSES.has(status) && raw.kind === "agent" && raw.isMain !== true && !terminalProven) {
@@ -2826,10 +2898,12 @@ function sanitizeCompactProjection(value) {
       status,
       active: nodeActive,
       ...publicDisplay(status, { active: nodeActive, structuralOnly }),
+      ...ownerReportedDisplay(ownerReport),
+      ...(ownerReport ? { ownerReport } : {}),
       executionState,
       declaredStatus: normalizeStatus(raw.declaredStatus ?? raw.status, "in_doubt"),
       observedOnly,
-      declaredNotStarted: raw.declaredNotStarted === true,
+      declaredNotStarted: !ownerReport && raw.declaredNotStarted === true,
       observedStatus,
       classificationConflict: sanitizeClassificationConflict(raw.classificationConflict),
       ownerAgent: safeText(raw.ownerAgent, "unavailable", 96),
@@ -2846,9 +2920,9 @@ function sanitizeCompactProjection(value) {
       lastAt: completedAt,
       observedAt: safeTimestamp(raw.observedAt),
       durationMs,
-      summary: safeText(raw.summary, "No safe execution summary is available", 180),
-      terminalEvidence,
-      workerExecutionEvidence: evidence,
+      summary: ownerReport ? ownerReport.summary : safeText(raw.summary, "No safe execution summary is available", 180),
+      terminalEvidence: ownerReport ? [] : terminalEvidence,
+      workerExecutionEvidence: ownerReport ? [] : evidence,
       toolCalls,
       toolCount: toolCalls.length,
       latestTool: toolCalls.at(-1)?.name || null,
@@ -3252,7 +3326,9 @@ export function buildLiveSnapshot({
   const runActive = Boolean(sameRunDurable && durableActive) || observedRunActive;
   if (observedRunActive && ["pending"].includes(run.status)) run.status = "active";
   run.active = runActive;
-  Object.assign(run, publicDisplay(run.status, { active: runActive, structuralOnly }));
+  run.governance = governanceProjection(sameRunDurable ? selectedDurable : null, run.runId);
+  Object.assign(run, publicDisplay(run.status, { active: runActive, structuralOnly, governanceActive: run.governance?.active }));
+  if (!runActive && run.governance?.active) run.statusReason = "治理任务进行中，待执行回报；原生执行状态仍未确认。";
   // Substance rides on every snapshot path, not only the artifact-less one, so a
   // reader never has to work out which path produced the record it is holding.
   const substance = runSubstance(selectedDurable || {}, {
@@ -3278,7 +3354,8 @@ export function buildLiveSnapshot({
       // The display's `active` argument is run-level on purpose: it answers
       // "is this queue still moving", which is what turns a pending worker
       // into 排队中 rather than 未收到执行回写.
-      ...publicDisplay(nodeStatus, { active: runActive, structuralOnly }),
+      ...publicDisplay(nodeStatus, { active: runActive, structuralOnly, governanceActive: run.governance?.active }),
+      ...ownerReportedDisplay(node.ownerReport),
       ...(nodeStatus === "in_doubt" && node.executionState === "executed"
         ? { statusReason: "执行回合已结束，等待任务验证；尚不能确认任务完成。" } : {}),
     };
@@ -3287,7 +3364,7 @@ export function buildLiveSnapshot({
     ...projection.session,
     status: run.status,
     active: runActive,
-    ...publicDisplay(run.status, { active: runActive, structuralOnly }),
+    ...publicDisplay(run.status, { active: runActive, structuralOnly, governanceActive: run.governance?.active }),
   } : null;
   const kind = compatibleArtifact
     ? compatibleArtifact.__source === "live_projection" || compatibleArtifact.schemaVersion === LIVE_COMPACT_PROJECTION_SCHEMA_VERSION

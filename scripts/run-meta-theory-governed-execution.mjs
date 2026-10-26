@@ -266,6 +266,7 @@ async function resolveGovernedRunHostProvenance({ projectRoot, runId, declaredRu
     runId,
     runProfile: governedRunStateProfile(hostEnv),
     hostSessionId: detectHostSessionConversationId(hostEnv),
+    env: hostEnv,
   });
   const provenance = resolveGovernedRunProvenance({
     declaredRuntime,

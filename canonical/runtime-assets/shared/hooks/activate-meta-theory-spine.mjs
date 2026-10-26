@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readJsonFromStdin } from "./utils.mjs";
 import {
@@ -10,6 +11,7 @@ import {
   resolveProjectRoot,
 } from "./project-root.mjs";
 import { resolveVerifiedSourceConversation } from "./conversation-binding.mjs";
+import { buildGovernedHostHandoff } from "./governed-host-checkpoint.mjs";
 import {
   readSpineState,
   readSpineStateIncludingInactive,
@@ -35,10 +37,18 @@ function argumentValue(name) {
 }
 
 // The run + conversation association is proved on disk, not asserted by the
-// caller: conversation-binding.mjs requires the payload transcript to exist and
-// to be named after the very session id the payload claims.
+// caller: conversation-binding.mjs verifies the transcript's runtime-specific
+// identity before returning a conversation.
 function verifiedConversationBinding() {
   return resolveVerifiedSourceConversation(payload, { runtime: sourceRuntimeFromPayload() });
+}
+
+function nativeCodexLiveThreadId() {
+  const verified = verifiedConversationBinding().conversation?.conversationId;
+  const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
+  if (typeof verified === "string" && uuid.test(verified)) return verified;
+  const hostHint = process.env.CODEX_THREAD_ID;
+  return typeof hostHint === "string" && uuid.test(hostHint) ? hostHint : null;
 }
 
 function sourceRuntimeFromPayload() {
@@ -264,7 +274,14 @@ function getRawPromptText() {
     payload?.message,
   ];
   for (const value of candidates) {
-    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "string" && value.trim()) {
+      const raw = value.trim();
+      // Desktop prepends this one known ambient block to the user message.
+      // Its URLs and screen labels are not user intent or task identity. Keep
+      // every other document/XML/HTML fragment, including the request body.
+      const ambient = /^<in-app-browser-context\s+source=["']ambient-ui-state["']\s*>[\s\S]*?<\/in-app-browser-context>\s*## My request:\s*/u.exec(raw);
+      return ambient ? raw.slice(ambient[0].length).trim() : raw;
+    }
   }
   return "";
 }
@@ -419,6 +436,7 @@ function isManagedStageState(state) {
 
 function shouldReplaceActiveState(existing, promptFingerprint) {
   if (!existing?.active) return true;
+  if (canResumeHostCheckpoint(existing)) return false;
 
   const existingFingerprint =
     existing?.stageRuntimeControl?.promptFingerprint ||
@@ -433,6 +451,22 @@ function shouldReplaceActiveState(existing, promptFingerprint) {
   if (legacyWithoutControl && ageMs(existing) > staleCutoffMs) return true;
 
   return !isManagedStageState(existing) && ageMs(existing) > staleCutoffMs;
+}
+
+function isHostSteeringPrompt(promptText) {
+  if (/(?:新任务|换个任务|换一个任务|另一个任务|切换(?:主题|任务)|开始(?:另一|新)(?:个)?任务)|\b(?:new\s+task|different\s+task|switch\s+(?:the\s+)?(?:task|topic))\b/iu.test(promptText)) return false;
+  return CONTINUATION_REQUEST_RE.test(promptText)
+    || /(?:都修复好了吗|都修好了吗|修复好了以后.{0,20}(?:提交|推送)|我要的是修好|hookprompt.{0,20}(?:没有|没).{0,20}(?:对话|显示|执行))/iu.test(promptText)
+    || /(?:进度|状态)(?:怎么样|如何|到哪|怎样|呢|情况|更新)|(?:现在|目前)(?:的)?(?:进度|状态|怎么样)|(?:做到哪|做得怎么样|还没好|补充(?:一下|条件|要求)|另外要求|改成)|(?:你(?:自己|直接)|直接|赶紧)(?:给我|帮我)?(?:修(?:复|好)?|处理|解决|完成)(?:啊|吧|了|一下|[。！!]|$)|\b(?:status\s+update|progress\s+update|follow[- ]?up|additional\s+(?:constraint|requirement)|what(?:'s| is)\s+(?:the\s+)?(?:status|progress))\b/iu.test(promptText);
+}
+
+function canResumeHostCheckpoint(existing) {
+  if (!existing?.active || !(existing.hostCheckpointRevision > 0) || existing.stages?.evolution?.status === "completed"
+    || !isHostSteeringPrompt(getRawPromptText())) return false;
+  const current = verifiedConversationBinding().conversation;
+  return current && existing.conversationLinkState === "verified"
+    && existing.sourceConversation?.conversationId === current.conversationId
+    && existing.sourceConversation?.runtime === current.runtime;
 }
 
 // ── EXECUTION_DELTA ─────────────────────────────────────────────────────────
@@ -567,9 +601,10 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
     const projectRef = registration.registryStatus === "joined" || (registration.registryStatus === "known" && registration.known === true)
       ? registration.projectRef
       : null;
-    if (projectRef && sourceRuntimeFromPayload() === "codex" && typeof registerLiveNativeCodexBinding === "function") {
+    const nativeThreadId = sourceRuntimeFromPayload() === "codex" ? nativeCodexLiveThreadId() : null;
+    if (projectRef && nativeThreadId && typeof registerLiveNativeCodexBinding === "function") {
       await registerLiveNativeCodexBinding({ homeDir: process.env.META_KIM_LIVE_HOME, repoPath: root, profile,
-        threadId: process.env.CODEX_THREAD_ID, codexHome: process.env.CODEX_HOME });
+        threadId: nativeThreadId, codexHome: process.env.CODEX_HOME });
     }
     const result = await ensureLiveHub({
       packageRoot,
@@ -587,7 +622,7 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
     // A Hub root is only a directory of history, never this task's deep link.
     if (!projectRef || !runId) return null;
     const runtime = sourceRuntimeFromPayload() || "shared";
-    const hostThread = process.env.CODEX_THREAD_ID || verifiedConversationBinding().conversation?.conversationRef || runtime;
+    const hostThread = nativeThreadId || verifiedConversationBinding().conversation?.conversationId || runtime;
     const requestKey = createHash("sha256").update(JSON.stringify([runtime, hostThread, projectRef, runId])).digest("hex");
     const requestDirectory = join(root, ".meta-kim", "state", profile, "live-view-requests");
     mkdirSync(requestDirectory, { recursive: true });
@@ -605,11 +640,16 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
   }
 }
 
-function emitLiveHubStartedContext(live, language = "en") {
-  if (typeof live?.deepLink !== "string") return;
-  const additionalContext = language === "zh-CN"
+function emitLiveHubStartedContext(live, language = "en", state, projectRoot) {
+  const liveContext = typeof live?.deepLink !== "string" ? "" : language === "zh-CN"
     ? `Meta_Kim Live ${live.started ? "已启动" : "已复用"}，当前任务：${live.deepLink}\n请在本轮正常会话回复中显示这条可点击链接。检查宿主实际暴露的侧栏/浏览器工具：有能力时打开或复用当前任务的侧栏视图一次，不重复开页、不抢其他任务焦点；没有工具时只显示链接。只有工具明确成功后才说已打开，queued 仍是等待打开。不要把 Hook 上下文当作业务完成证据。`
     : `Meta_Kim Live ${live.started ? "has started" : "is reused"}. Current task: ${live.deepLink}\nShow this clickable link in the normal assistant response. Inspect the host's exposed sidebar/browser tools; if supported, open or reuse this task's sidebar once without duplicate tabs or stealing another task's focus. Otherwise show the link only. Report opened only after confirmed tool success; queued is still pending. Hook context is not business-completion evidence.`;
+  const runtime = sourceRuntimeFromPayload();
+  const globalSkill = join(runtime === "codex" ? process.env.CODEX_HOME || join(homedir(), ".codex")
+    : join(homedir(), runtime === "claude" ? ".claude" : runtime === "cursor" ? ".cursor" : ".openclaw"), "skills", "meta-theory", "SKILL.md");
+  const skillPath = existsSync(globalSkill) ? globalSkill : join(packageRoot || dirname(fileURLToPath(import.meta.url)), "canonical", "skills", "meta-theory", "SKILL.md");
+  const additionalContext = [liveContext, buildGovernedHostHandoff({ state, projectRoot,
+    adapterPath: join(dirname(fileURLToPath(import.meta.url)), "governed-host-checkpoint.mjs"), skillPath, language })].filter(Boolean).join("\n\n");
   const isCursor =
     process.env.META_KIM_HOOK_RUNTIME === "cursor" ||
     payload?.hook_event_name === "beforeSubmitPrompt";
@@ -625,7 +665,7 @@ function emitLiveHubStartedContext(live, language = "en") {
 
 const activation = isMetaTheoryTrigger();
 const lifecycleHook = isLifecycleHookPayload();
-if (!activation.triggered && !lifecycleHook) {
+if (!activation.triggered && !lifecycleHook && !isHostSteeringPrompt(getRawPromptText())) {
   process.exit(0);
 }
 
@@ -641,9 +681,8 @@ if (!projectRoot) {
   process.exit(0);
 }
 
-startPostCopyAutoInit(projectRoot);
-
 if (lifecycleHook) {
+  startPostCopyAutoInit(projectRoot);
   await recordLifecycleHook(projectRoot);
   process.exit(0);
 }
@@ -651,6 +690,8 @@ if (lifecycleHook) {
 const rawPromptText = getRawPromptText();
 const rawExisting = await readSpineStateIncludingInactive(projectRoot);
 const existing = rawExisting?.active === false ? null : rawExisting || (await readSpineState(projectRoot));
+if (!activation.triggered && !canResumeHostCheckpoint(existing)) process.exit(0);
+startPostCopyAutoInit(projectRoot);
 const identityBinding = await readExistingTaskIdentityBinding(projectRoot);
 const taskIdentity = await createProjectTaskIdentity(projectRoot, rawPromptText, {
   profile: identityBinding.profile,
@@ -666,7 +707,12 @@ const promptFingerprint = taskIdentity.taskFingerprint;
     existing?.stageRuntimeControl?.promptFingerprint ||
     existing?.promptFingerprint ||
     null;
-  if (existingFingerprint && existingFingerprint === promptFingerprint) {
+  if (canResumeHostCheckpoint(existing) && existingFingerprint !== promptFingerprint) {
+    await writeSpineState(projectRoot, { ...existing,
+      lastUserSteering: { taskFingerprint: promptFingerprint, receivedAt: new Date().toISOString(), kind: "same_conversation_followup", stage: existing.currentStage },
+    }, { expectedRunId: existing.runId, expectedActive: true, expectedStage: existing.currentStage,
+      expectedCheckpointRevision: existing.hostCheckpointRevision || 0 });
+  } else if (existingFingerprint && existingFingerprint === promptFingerprint) {
     const observedRuntime = sourceRuntimeFromPayload();
     const refreshBinding = verifiedConversationBinding();
     const refreshedState = existing.sourceConversation
@@ -683,6 +729,8 @@ const promptFingerprint = taskIdentity.taskFingerprint;
   emitLiveHubStartedContext(
     await ensureLiveHubOnFirstUse(projectRoot, existing.runId || null, identityBinding.profile),
     detectPromptLanguage(rawPromptText),
+    await readSpineState(projectRoot) || existing,
+    projectRoot,
   );
   process.exit(0);
 }
@@ -770,6 +818,8 @@ await activateSpineState(projectRoot, state, {
 emitLiveHubStartedContext(
   await ensureLiveHubOnFirstUse(projectRoot, state.runId || null, identityBinding.profile),
   detectPromptLanguage(rawPromptText),
+  state,
+  projectRoot,
 );
 
 // ── multi-agent helpers ───────────────────────────────────────────────────────

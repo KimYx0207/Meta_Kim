@@ -29,12 +29,25 @@ export function normalizeLiveRevisionReview(value, runId) {
     if (item?.runId !== runId || !/^revision:[a-f0-9]{20}$/u.test(item.id || "") || !/^finding:[a-f0-9]{20}$/u.test(item.findingId || "")) return [];
     const state = ["recorded", "pending_verification", "verification_unconfirmed"].includes(item.state) ? item.state : "verification_unconfirmed";
     return [{ id: item.id, runId, findingId: item.findingId, actionId: /^action:[a-f0-9]{20}$/u.test(item.actionId || "") ? item.actionId : null,
+      feedbackId: /^feedback:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(item.feedbackId || "") ? item.feedbackId : null,
+      findingRef: /^finding:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(item.findingRef || "") ? item.findingRef : null,
+      sourceTaskPacketId: /^task:[a-f0-9]{20}$/u.test(item.sourceTaskPacketId || "") ? item.sourceTaskPacketId : null,
+      sourceDeliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.sourceDeliverableId || "") ? item.sourceDeliverableId : null,
+      sourceContentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.sourceContentVersion || "") ? item.sourceContentVersion : null,
       taskPacketId: /^task:[a-f0-9]{20}$/u.test(item.taskPacketId || "") ? item.taskPacketId : null,
       deliverableId: /^deliverable:[a-f0-9]{24}$/u.test(item.deliverableId || "") ? item.deliverableId : null,
       summary: overviewText(item.summary), requiredChange: overviewText(item.requiredChange),
       contentVersion: /^sha256:[a-f0-9]{64}$/u.test(item.contentVersion || "") ? item.contentVersion : null, state }];
   });
   return { state: items.length ? "reported" : "not_reported", items };
+}
+
+/** Coordination state never authorizes a native running or completion claim. */
+export function normalizeLiveGovernance(value, runId) {
+  if (!value || value.runId !== runId || value.evidenceLevel !== "durable_lifecycle"
+    || typeof value.active !== "boolean" || !["active", "inactive"].includes(value.state)
+    || value.active !== (value.state === "active")) return null;
+  return { runId, active: value.active, state: value.state, currentStage: overviewText(value.currentStage), evidenceLevel: "durable_lifecycle" };
 }
 
 /** Offer an explicit same-project navigation; never merge this into a plan. */
@@ -53,6 +66,23 @@ function overviewTimestamp(value) {
   if (month < 1 || month > 12 || day < 1 || day > monthDays[month - 1] || hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) return null;
   const parsed = Date.parse(text);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+/** A bound owner's report is distinct from native execution and verification. */
+export function normalizeLiveOwnerReport(node, runId = node?.runId) {
+  const report = node?.ownerReport;
+  const taskId = overviewText(node?.taskPacketId);
+  const owner = overviewText(node?.ownerAgent || node?.agent || node?.owner);
+  const boundRun = overviewText(runId);
+  if (!report || typeof report !== "object" || Array.isArray(report) || node.isMain === true
+    || !["agent", "worker"].includes(overviewState(node.kind)) || !boundRun || !taskId || !owner
+    || (node.runId && node.runId !== boundRun) || report.runId !== boundRun || report.taskPacketId !== taskId
+    || report.ownerAgent !== owner || report.evidenceLevel !== "owner_reported" || report.nativeInvocationVerified !== false
+    || !["reported_complete", "reported_failed", "reported_blocked"].includes(report.resultStatus)
+    || !overviewText(report.summary)) return null;
+  return { runId: boundRun, taskPacketId: taskId, ownerAgent: owner, resultStatus: report.resultStatus,
+    summary: overviewText(report.summary), reportedAt: overviewTimestamp(report.reportedAt),
+    evidenceLevel: "owner_reported", nativeInvocationVerified: false };
 }
 
 /** Host replay's display mapping needs its independent actual-invocation fact. */
@@ -119,20 +149,30 @@ export function resolveLiveRunOverview(snapshot) {
   const state = overviewState(run.displayState || run.status);
   const planned = state === "planned" || run.executionEvidenceState === "structural_planning_only";
   const active = !planned && run.active === true;
+  const governance = normalizeLiveGovernance(run.governance, runId);
   const nodes = (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).filter((node) => node && !["stage", "chapter", "stage_summary", "workflow"].includes(overviewState(node.kind)) && (!node.runId || node.runId === runId));
   const activity = planned ? { item: null, undatedCount: 0 } : overviewExecutionActivity(snapshot, runId);
   const activeNodes = active ? nodes.filter((node) => !node.declaredNotStarted && node.executionState !== "not_executed"
     && (node.active === true || ["active", "running"].includes(overviewState(node.displayState || node.status)))) : [];
   activeNodes.sort((left, right) => Number(right.id === activity.item?.nodeId) - Number(left.id === activity.item?.nodeId) || Number(left.isMain === true) - Number(right.isMain === true) || overviewText(left.id).localeCompare(overviewText(right.id)));
   const current = activeNodes[0];
+  const ownerReports = nodes.flatMap((node) => {
+    const report = normalizeLiveOwnerReport(node, runId);
+    return report ? [{ node, report }] : [];
+  }).sort((left, right) => String(right.report.reportedAt || "").localeCompare(String(left.report.reportedAt || ""))
+    || overviewText(left.node.id).localeCompare(overviewText(right.node.id)));
+  const reported = ownerReports[0];
   const blockers = planned ? [] : nodes.filter((node) => ["blocked", "failed"].includes(overviewState(node.displayState || node.status)) && !node.declaredNotStarted);
   blockers.sort((left, right) => overviewText(left.id).localeCompare(overviewText(right.id)));
   const blocked = blockers[0];
   const runBlocked = ["blocked", "failed"].includes(state);
   const deliverables = normalizeLiveDeliverables(snapshot.deliverables, runId);
   return {
-    state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : "historical",
+    state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : governance?.active ? "governance_active" : "historical",
+    governance,
     task: current ? { label: overviewText(current.task) || overviewText(current.label), nodeId: overviewText(current.id), moreCount: activeNodes.length - 1 } : null,
+    ownerReported: reported ? { count: ownerReports.length, task: { label: overviewText(reported.node.task) || overviewText(reported.node.label),
+      nodeId: overviewText(reported.node.id), summary: reported.report.summary, reportedAt: reported.report.reportedAt } } : null,
     result: { items: deliverables.filter((item) => item.availability === "available"), declaredCount: deliverables.filter((item) => item.availability === "declared").length },
     blocker: blocked ? { kind: "blocked", label: overviewText(blocked.statusReason), nodeLabel: overviewText(blocked.label), nodeId: overviewText(blocked.id), moreCount: blockers.length - 1 }
       : runBlocked ? { kind: "blocked", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 }
@@ -145,6 +185,6 @@ export function resolveLiveRunOverview(snapshot) {
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveNativeActivity, overviewTimestamp, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }

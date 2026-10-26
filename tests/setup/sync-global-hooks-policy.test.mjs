@@ -669,6 +669,8 @@ console.log("About to git push");
         "spine-state-gates.mjs",
         "spine-state.mjs",
         "spine-state-utils.mjs",
+        "governed-task-reference.mjs",
+        "governed-host-checkpoint.mjs",
         "stop-save-progress.mjs",
         "stop-memory-save.mjs",
         "utils.mjs",

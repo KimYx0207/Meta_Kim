@@ -3,8 +3,11 @@ import { createHash } from "node:crypto";
 import { appendFile, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { createCodexNativeSessionReader } from "../../src/infrastructure/live/codex-native-session-reader.mjs";
+import { locateCodexNativeTurn } from "../../src/infrastructure/live/codex-native-turn-locator.mjs";
 import { buildNativeCodexLiveSnapshot } from "../../src/application/live/live-native-codex-projection.mjs";
 import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
 import { nativeCodexStartupBinding, parseArgs, resolveNativeCodexCurrentRun, liveCurrentRunPresentation } from "../../scripts/meta-kim-live.mjs";
@@ -43,6 +46,409 @@ async function fixture(t, projectName = "project") {
   return { root, projectRoot, codexHome, day, file, options, async write(records) { await writeFile(file, serialize(records)); } };
 }
 
+function nativeTurnHint(f, { thread = THREAD, turn = TURN, offset = 0, endOffset = null, rootTurn = TURN, ordinal = 1 } = {}) {
+  const file = path.join(f.codexHome, "thread_history_1.sqlite");
+  const db = new DatabaseSync(file);
+  db.exec("CREATE TABLE IF NOT EXISTS thread_turns (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, rollout_byte_offset INTEGER, root_turn_id TEXT, rollout_end_byte_offset INTEGER, PRIMARY KEY (thread_id, turn_id)); CREATE INDEX IF NOT EXISTS idx_native_turn_page ON thread_turns (thread_id, rollout_ordinal)");
+  db.prepare("INSERT OR REPLACE INTO thread_turns VALUES (?, ?, ?, ?, ?, ?)").run(thread, turn, ordinal, offset, rootTurn, endOffset);
+  db.close();
+  return file;
+}
+
+function nativeChildHint(f, child = CHILD, extra = {}) {
+  const db = new DatabaseSync(path.join(f.codexHome, "thread_history_1.sqlite"));
+  db.exec("CREATE TABLE IF NOT EXISTS thread_items (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, item_type TEXT NOT NULL, item_json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_native_item_turn ON thread_items (thread_id, turn_id, rollout_ordinal)");
+  db.prepare("INSERT INTO thread_items VALUES (?, ?, 1, 'subAgentActivity', ?)").run(THREAD, TURN,
+    JSON.stringify({ type: "subAgentActivity", kind: "started", agentThreadId: child, agentPath: "/root/UNTRUSTED_INDEX_NAME", agentRole: "UNTRUSTED_INDEX_OWNER", ...extra }));
+  db.close();
+}
+
+test("a child locator needs exact native parent-turn source proof and never invents a parent dispatch", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  nativeChildHint(f);
+  const metadata = meta(f.projectRoot, CHILD, THREAD);
+  Object.assign(metadata.payload.source.subagent.thread_spawn, { agent_path: "/root/source_only_worker", agent_role: "javascript-pro" });
+  await writeFile(path.join(f.day, `rollout-child-${CHILD}.jsonl`), serialize([metadata, childStart(), context(f.projectRoot, OTHER, 4), row("event_msg", { type: "task_complete", turn_id: OTHER }, 10)]));
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observed.agents.length, 1);
+  assert.equal(observed.agents[0].observationBasis, "verified_child_parent_turn");
+  assert.equal(observed.agents[0].spawnReturned, false);
+  assert.equal(observed.agents[0].completed, true);
+  assert.equal(observed.agents[0].taskName, "source_only_worker");
+  assert.equal(observed.agents[0].owner, "javascript-pro");
+  const snapshot = buildNativeCodexLiveSnapshot(observed);
+  assert.equal(snapshot.edges[0].kind, "source_parent_link");
+  assert.equal(snapshot.nodes[1].provenance[0].kind, "source_parent_link");
+  assert.equal(snapshot.replay.some((event) => event.type === "agent_spawned"), false);
+  assert.equal(snapshot.replay.some((event) => event.type === "child_source_observed"), true);
+  assert.equal(snapshot.run.executionSummary.acceptanceState, "unproven");
+  assert.equal(JSON.stringify(snapshot).includes("UNTRUSTED_INDEX"), false);
+  assert.ok(observed.coverage.reasons.includes("parent_dispatch_record_not_covered"));
+});
+
+test("child locator rows cannot substitute for matching native header, project and exact parent turn", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  nativeChildHint(f);
+  const file = path.join(f.day, `rollout-child-${CHILD}.jsonl`);
+  const variants = [
+    [meta(f.projectRoot, CHILD, OTHER), childStart(), context(f.projectRoot, OTHER)],
+    [meta(path.join(f.root, "other"), CHILD, THREAD), childStart(), context(f.projectRoot, OTHER)],
+    [meta(f.projectRoot, CHILD, THREAD), childStart(OTHER, 3, OTHER), context(f.projectRoot, OTHER)],
+    [meta(f.projectRoot, CHILD, THREAD), { ...childStart(), payload: { ...childStart().payload, root_turn_id: OTHER } }, context(f.projectRoot, OTHER)],
+    [meta(f.projectRoot, CHILD, THREAD), childStart(), context(path.join(f.root, "other"), OTHER)],
+    [meta(f.projectRoot, CHILD, THREAD), context(f.projectRoot, OTHER)],
+  ];
+  for (const records of variants) {
+    await writeFile(file, serialize(records));
+    const observed = await createCodexNativeSessionReader(f.options).read();
+    assert.equal(observed.agents.length, 0);
+  }
+});
+
+test("a child source with a huge context still proves its exact current parent turn", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  nativeChildHint(f);
+  const metadata = meta(f.projectRoot, CHILD, THREAD);
+  const prelude = serialize([metadata]);
+  const giant = context(f.projectRoot, OTHER, 4);
+  giant.payload.base_instructions = "x".repeat(100_000);
+  await writeFile(path.join(f.day, `rollout-child-${CHILD}.jsonl`), prelude + serialize([childStart(), giant, row("event_msg", { type: "task_complete", turn_id: OTHER }, 10)]));
+  nativeTurnHint(f, { thread: CHILD, turn: OTHER, offset: Buffer.byteLength(prelude) });
+  const observed = await createCodexNativeSessionReader({ ...f.options, maxBytes: 32_768 }).read();
+  assert.equal(observed.agents.length, 1);
+  assert.equal(observed.agents[0].childMetadataVerified, true);
+  assert.equal(observed.agents[0].spawnReturned, false);
+  assert.equal(observed.agents[0].completed, true, "the exact terminal in the complete tail can attest return after the gap");
+  assert.ok(observed.coverage.reasons.includes("child_turn_context_not_covered"));
+  assert.ok(observed.coverage.bodyBytesRead <= 32_768);
+});
+
+test("a child return cannot survive later execution, a new turn or an unfinished source suffix", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  nativeChildHint(f);
+  const prelude = serialize([meta(f.projectRoot, CHILD, THREAD)]);
+  nativeTurnHint(f, { thread: CHILD, turn: OTHER, offset: Buffer.byteLength(prelude) });
+  const gap = JSON.stringify({ type: "compacted", payload: { text: "x".repeat(100_000) } }) + "\n";
+  const beginning = prelude + serialize([childStart(), context(f.projectRoot, OTHER, 4)]) + gap;
+  const terminal = row("event_msg", { type: "task_complete", turn_id: OTHER }, 10);
+  const file = path.join(f.day, `rollout-child-${CHILD}.jsonl`);
+  const options = { ...f.options, maxBytes: 32_768 };
+  await writeFile(file, beginning + serialize([terminal]));
+  assert.equal((await createCodexNativeSessionReader(options).read()).agents[0].completed, true);
+  for (const suffix of [
+    serialize([command(f.projectRoot, { thread: CHILD, turn: OTHER, offset: 12 })]),
+    serialize([childStart(TURN, 12, TURN), context(f.projectRoot, TURN, 13)]),
+    '{"type":"event_msg"',
+  ]) {
+    await writeFile(file, beginning + serialize([terminal]) + suffix);
+    assert.equal((await createCodexNativeSessionReader(options).read()).agents[0].completed, false);
+  }
+  await writeFile(file, prelude + serialize([childStart(), context(f.projectRoot, OTHER, 4), terminal]) + gap + serialize([command(f.projectRoot, { thread: CHILD, turn: OTHER, offset: 20 })]));
+  assert.equal((await createCodexNativeSessionReader(options).read()).agents[0].completed, false, "a prefix return cannot cross an unread gap");
+});
+
+test("a reused child's newer root task cannot hide the exact earlier parent-turn source", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  nativeChildHint(f);
+  const prelude = serialize([meta(f.projectRoot, CHILD, THREAD)]);
+  const original = serialize([childStart(), context(f.projectRoot, OTHER, 4), row("event_msg", { type: "task_complete", turn_id: OTHER }, 10)]);
+  const differentRoot = "55555555-5555-4555-8555-555555555555";
+  const differentTurn = "66666666-6666-4666-8666-666666666666";
+  await writeFile(path.join(f.day, `rollout-child-${CHILD}.jsonl`), prelude + original + serialize([childStart(differentTurn, 20, differentRoot), context(f.projectRoot, differentTurn, 21)]));
+  nativeTurnHint(f, { thread: CHILD, turn: OTHER, offset: Buffer.byteLength(prelude), rootTurn: TURN, ordinal: 1 });
+  nativeTurnHint(f, { thread: CHILD, turn: differentTurn, offset: Buffer.byteLength(prelude + original), rootTurn: differentRoot, ordinal: 2 });
+  const hint = await locateCodexNativeTurn({ codexHome: f.codexHome, threadId: CHILD, rootTurnId: TURN });
+  assert.equal(hint.turnId, OTHER);
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observed.agents.length, 1);
+  assert.equal(observed.agents[0].childTurnId, OTHER);
+  assert.equal(observed.agents[0].spawnReturned, false);
+  assert.equal(observed.agents[0].completed, false, "later new-turn work cannot attest an old task's current return state");
+});
+
+async function indexedCompactionFixture(t) {
+  const f = await fixture(t);
+  const prelude = serialize([meta(f.projectRoot), context(f.projectRoot, OTHER, -10)]) + largePadding();
+  const taskStart = row("event_msg", { type: "task_started", turn_id: TURN }, 0);
+  const beginning = serialize([taskStart, context(f.projectRoot), ...spawn(), command(f.projectRoot)]);
+  const largeCompaction = JSON.stringify({ type: "compacted", payload: { replacement_history: "x".repeat(100_000) } }) + "\n";
+  const tailCommand = command(f.projectRoot, { offset: 20 });
+  tailCommand.payload.item.id = "after-compaction";
+  await writeFile(f.file, prelude + beginning + largeCompaction + serialize([context(f.projectRoot, TURN, 19), tailCommand]));
+  const offset = Buffer.byteLength(prelude);
+  const indexFile = nativeTurnHint(f, { offset });
+  return { ...f, offset, indexFile, options: { ...f.options, maxBytes: 32_768 } };
+}
+
+test("an indexed source offset recovers native workers across a large compaction within the original byte budget", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  const before = createHash("sha256").update(await readFile(f.indexFile)).digest("hex");
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observed.state, "observed");
+  assert.equal(observed.startedAt, at());
+  assert.equal(observed.agents.length, 1);
+  assert.ok(observed.commands.some((item) => item.id === "after-compaction"));
+  assert.ok(observed.coverage.reasons.includes("segment_middle_omitted"));
+  assert.ok(observed.coverage.bodyBytesRead <= f.options.maxBytes);
+  assert.ok(observed.coverage.sourceBytesRead <= observed.coverage.readByteLimit);
+  assert.equal(createHash("sha256").update(await readFile(f.indexFile)).digest("hex"), before, "native index stays read-only");
+});
+
+test("indexed start records survive later compactions and unchanged reads consume no body bytes", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, now: () => clock });
+  assert.equal((await reader.read()).agents.length, 1);
+  const later = command(f.projectRoot, { offset: 30 });
+  later.payload.item.id = "later-after-compaction";
+  await appendFile(f.file, JSON.stringify({ type: "compacted", payload: { text: "x".repeat(100_000) } }) + "\n" + serialize([context(f.projectRoot, TURN, 29), later]));
+  clock += 1000;
+  const resumed = await reader.read();
+  assert.equal(resumed.agents.length, 1);
+  assert.ok(resumed.commands.some((item) => item.id === "later-after-compaction"));
+  clock += 1000;
+  const unchanged = await reader.read();
+  assert.equal(unchanged.agents.length, 1);
+  assert.equal(unchanged.coverage.bodyBytesRead, 0);
+});
+
+const THIRD = "55555555-5555-4555-8555-555555555555";
+const toolPair = (id, offset) => [
+  row("response_item", { type: "function_call", namespace: "functions", name: "exec", call_id: id, arguments: "{}" }, offset),
+  row("response_item", { type: "function_call_output", call_id: id }, offset + 1),
+];
+const compactPadding = (size = 40_000) => JSON.stringify({ type: "compacted", payload: { text: "x".repeat(size) } }) + "\n";
+
+test("historical terminal offsets and latest hints keep three long turns separate in cold and warm readers", async (t) => {
+  const f = await fixture(t);
+  let source = serialize([meta(f.projectRoot)]);
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, turnId: undefined, maxBytes: 16_384, now: () => clock });
+  const turns = [TURN, OTHER, THIRD];
+  for (const [index, turn] of turns.entries()) {
+    const offset = Buffer.byteLength(source);
+    source += serialize([row("event_msg", { type: "task_started", turn_id: turn }, index * 10), context(f.projectRoot, turn, index * 10 + 1), ...toolPair(`turn-${index}`, index * 10 + 2)])
+      + compactPadding()
+      + serialize([row("event_msg", { type: "task_complete", turn_id: turn }, index * 10 + 6)]);
+    const endOffset = Buffer.byteLength(source);
+    source += compactPadding();
+    await writeFile(f.file, source);
+    nativeTurnHint(f, { turn, offset, endOffset, ordinal: index + 1 });
+    clock += 1000;
+    const current = await reader.read();
+    assert.equal(current.turnId, turn, "latest must rebind when the indexed turn changes");
+    assert.equal(current.turnComplete, true, "a source-verified indexed end survives an unread later suffix");
+    assert.deepEqual(current.pairedToolCalls.map((item) => item.id), [`turn-${index}`]);
+    assert.ok(current.coverage.bodyBytesRead <= 16_384);
+  }
+  for (const [index, turn] of turns.entries()) {
+    clock += 1000;
+    const warm = await reader.readTurn(turn);
+    const cold = await createCodexNativeSessionReader({ ...f.options, turnId: turn, maxBytes: 16_384 }).read();
+    assert.equal(warm.turnComplete, true);
+    assert.equal(cold.turnComplete, true);
+    assert.equal(warm.turnCompletedAt, at(index * 10 + 6));
+    assert.deepEqual(warm.pairedToolCalls.map((item) => item.id), [`turn-${index}`]);
+    assert.deepEqual(cold.pairedToolCalls.map((item) => item.id), [`turn-${index}`]);
+    assert.ok(warm.coverage.sourceBytesRead <= warm.coverage.readByteLimit);
+  }
+});
+
+test("retaining a pinned turn start never loses the gap before a cropped later-turn window", async (t) => {
+  const f = await fixture(t);
+  const prelude = serialize([meta(f.projectRoot)]);
+  const initial = prelude + serialize([row("event_msg", { type: "task_started", turn_id: TURN }), context(f.projectRoot), ...toolPair("old-call", 2)])
+    + compactPadding(10_000) + serialize([context(f.projectRoot, OTHER, 10), ...toolPair("foreign-before-crop", 11)]);
+  await writeFile(f.file, initial);
+  nativeTurnHint(f, { offset: Buffer.byteLength(prelude) });
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, maxBytes: 8192, now: () => clock });
+  assert.deepEqual((await reader.read()).pairedToolCalls.map((item) => item.id), ["old-call"]);
+  await appendFile(f.file, compactPadding(3700) + serialize(toolPair("foreign-after-crop", 20)));
+  clock += 1000;
+  const warm = await reader.read();
+  assert.deepEqual(warm.pairedToolCalls.map((item) => item.id), ["old-call"], "evicting the original gap marker must not restore the old turn's attribution");
+  clock += 1000;
+  assert.deepEqual((await reader.read()).pairedToolCalls.map((item) => item.id), ["old-call"]);
+});
+
+test("task_started changes unbound tool attribution even when the next turn context is absent", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), ...toolPair("old-call", 2),
+    row("event_msg", { type: "task_complete", turn_id: TURN }, 4),
+    row("event_msg", { type: "task_started", turn_id: OTHER }, 10), ...toolPair("new-call", 11)]);
+  const observation = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observation.turnComplete, true);
+  assert.deepEqual(observation.pairedToolCalls.map((item) => item.id), ["old-call"]);
+  const latest = await createCodexNativeSessionReader({ ...f.options, turnId: undefined }).read();
+  assert.equal(latest.state, "unavailable", "missing newest-turn context must not present the old turn as current");
+});
+
+test("terminal hints are offsets only and require an exact source terminal at their boundary", async (t) => {
+  const f = await fixture(t);
+  const prelude = serialize([meta(f.projectRoot)]);
+  const beginning = prelude + serialize([row("event_msg", { type: "task_started", turn_id: TURN }), context(f.projectRoot), ...toolPair("old-call", 2)]) + compactPadding();
+  for (const terminal of [
+    row("event_msg", { type: "task_complete", turn_id: OTHER }, 6),
+    row("event_msg", { type: "task_complete", turn_id: TURN, thread_id: CHILD }, 6),
+    row("event_msg", { type: "task_started", turn_id: TURN }, 6),
+    row("response_item", { type: "message", text: "task_complete" }, 6),
+  ]) {
+    const end = beginning + serialize([terminal]);
+    await writeFile(f.file, end + compactPadding());
+    nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset: Buffer.byteLength(end) });
+    assert.equal((await createCodexNativeSessionReader({ ...f.options, maxBytes: 16_384 }).read()).turnComplete, false);
+  }
+  const end = beginning + serialize([row("event_msg", { type: "task_complete", turn_id: TURN }, 6)]);
+  await writeFile(f.file, end + compactPadding());
+  for (const endOffset of [Buffer.byteLength(end) - 1, Buffer.byteLength(end) + 1, Number.MAX_SAFE_INTEGER]) {
+    nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset });
+    assert.equal((await createCodexNativeSessionReader({ ...f.options, maxBytes: 16_384 }).read()).turnComplete, false);
+  }
+});
+
+test("indexed completion does not hide later unbound activity in the same fully read turn", async (t) => {
+  const f = await fixture(t);
+  const prelude = serialize([meta(f.projectRoot)]);
+  const ended = prelude + serialize([row("event_msg", { type: "task_started", turn_id: TURN }), context(f.projectRoot),
+    ...toolPair("initial", 2), row("event_msg", { type: "task_complete", turn_id: TURN }, 4)]);
+  await writeFile(f.file, ended + serialize(toolPair("resumed", 6)));
+  nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset: Buffer.byteLength(ended) });
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, now: () => clock });
+  const running = await reader.read();
+  assert.equal(running.turnComplete, false, "the indexed terminal cannot cut an otherwise contiguous source range");
+  assert.deepEqual(running.pairedToolCalls.map((item) => item.id), ["initial", "resumed"]);
+  clock += 1000;
+  const cached = await reader.read();
+  assert.equal(cached.turnComplete, false, "cached ordinary terminal continuity survives endpoint pin refresh");
+  assert.deepEqual(cached.pairedToolCalls.map((item) => item.id), ["initial", "resumed"]);
+  await appendFile(f.file, serialize([row("event_msg", { type: "task_complete", turn_id: TURN }, 8)]));
+  nativeTurnHint(f, { offset: Buffer.byteLength(prelude), endOffset: Buffer.byteLength(await readFile(f.file)) });
+  clock += 1000;
+  const completed = await reader.read();
+  assert.equal(completed.turnComplete, true);
+  assert.equal(completed.turnCompletedAt, at(8));
+  clock += 1000;
+  assert.equal((await reader.read()).coverage.bodyBytesRead, 0);
+});
+
+test("an old indexed schema without end offsets still provides bounded start hints", async (t) => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(path.join(f.codexHome, "thread_history_1.sqlite"));
+  db.exec("CREATE TABLE thread_turns (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, rollout_byte_offset INTEGER, root_turn_id TEXT, PRIMARY KEY(thread_id, turn_id)); CREATE INDEX idx_native_turn_page ON thread_turns(thread_id, rollout_ordinal)");
+  db.prepare("INSERT INTO thread_turns VALUES(?, ?, 1, 99, ?)").run(THREAD, TURN, TURN);
+  db.close();
+  assert.deepEqual(await locateCodexNativeTurn({ codexHome: f.codexHome, threadId: THREAD, turnId: TURN }), { threadId: THREAD, turnId: TURN, offset: 99 });
+});
+
+test("a changed indexed start invalidates pinned evidence even when the old tail anchor survives", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  let clock = NOW;
+  const reader = createCodexNativeSessionReader({ ...f.options, now: () => clock });
+  assert.equal((await reader.read()).agents.length, 1);
+  const bytes = await readFile(f.file);
+  const replacement = Buffer.from(bytes);
+  const turnOffset = replacement.indexOf(Buffer.from(TURN), f.offset);
+  replacement.write(OTHER, turnOffset, "utf8");
+  await writeFile(f.file, replacement);
+  await appendFile(f.file, serialize([command(f.projectRoot, { offset: 40 })]));
+  clock += 1000;
+  const changed = await reader.read();
+  assert.equal(changed.state, "observed");
+  assert.equal(changed.agents.length, 0, "a surviving tail cannot attest a changed turn start");
+});
+
+test("index hints cannot import a stale or forged turn offset and missing indexes keep the bounded tail", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  for (const offset of [f.offset + 1, Number.MAX_SAFE_INTEGER]) {
+    nativeTurnHint(f, { offset });
+    const observed = await createCodexNativeSessionReader(f.options).read();
+    assert.equal(observed.state, "observed");
+    assert.equal(observed.agents.length, 0);
+    assert.ok(observed.commands.some((item) => item.id === "after-compaction"));
+    assert.ok(observed.coverage.bodyBytesRead <= f.options.maxBytes);
+  }
+  await writeFile(f.indexFile, "not a SQLite database");
+  assert.equal(await locateCodexNativeTurn({ codexHome: f.codexHome, threadId: THREAD, turnId: TURN }), null);
+  assert.equal((await createCodexNativeSessionReader(f.options).read()).agents.length, 0);
+});
+
+test("a source gap cannot attribute another turn's unbound spawn to the indexed turn", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  const foreign = spawn().map((record) => structuredClone(record));
+  for (const record of foreign) {
+    record.timestamp = at(40);
+    const p = record.payload;
+    if (p.call_id) p.call_id = "foreign-spawn";
+    if (p.item) { p.item.id = "foreign-spawn"; p.thread_id = THREAD; p.turn_id = TURN; }
+  }
+  await appendFile(f.file, JSON.stringify({ type: "compacted", payload: { text: "x".repeat(100_000) } }) + "\n" + serialize(foreign));
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.deepEqual(observed.agents.map((item) => item.id), ["call-spawn-1"]);
+});
+
+test("the native index remains a locator rather than a replacement for source project and thread metadata", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  const bytes = await readFile(f.file, "utf8");
+  await writeFile(f.file, bytes.replace(JSON.stringify(f.projectRoot), JSON.stringify(path.join(f.root, "other"))));
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observed.state, "unavailable");
+  assert.equal(observed.reason, "exact_native_turn_not_observed");
+});
+
+test("index hints can select the latest exact source turn without making a thread-only launch current", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  const options = { ...f.options, turnId: undefined };
+  assert.equal((await createCodexNativeSessionReader(options).read()).agents.length, 1);
+  assert.equal(await resolveNativeCodexCurrentRun(options), null);
+});
+
+test("an indexed child's complete own turn can return without reading copied pre-turn history", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  const prelude = serialize([meta(f.projectRoot, CHILD, THREAD)]) + largePadding();
+  const file = path.join(f.day, `rollout-child-${CHILD}.jsonl`);
+  await writeFile(file, prelude + serialize([childStart(), context(f.projectRoot, OTHER, 4), row("event_msg", { type: "task_complete", turn_id: OTHER }, 10)]));
+  nativeTurnHint(f, { thread: CHILD, turn: OTHER, offset: Buffer.byteLength(prelude) });
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.equal(observed.agents[0].childMetadataVerified, true);
+  assert.equal(observed.agents[0].completed, true);
+  assert.ok(observed.coverage.reasons.includes("pre_turn_history_omitted"));
+  assert.equal(buildNativeCodexLiveSnapshot(observed).run.executionSummary.acceptanceState, "unproven");
+  assert.ok(observed.coverage.bodyBytesRead <= f.options.maxBytes);
+});
+
+test("native offset lookup refuses an unindexed schema and multiply linked database", async (t) => {
+  const f = await fixture(t);
+  const file = path.join(f.codexHome, "thread_history_1.sqlite");
+  const db = new DatabaseSync(file);
+  db.exec("CREATE TABLE thread_turns (thread_id TEXT, turn_id TEXT, rollout_byte_offset INTEGER, rollout_ordinal INTEGER)");
+  db.prepare("INSERT INTO thread_turns VALUES (?, ?, 100, 1)").run(THREAD, TURN);
+  db.close();
+  const options = { codexHome: f.codexHome, threadId: THREAD, turnId: TURN };
+  assert.equal(await locateCodexNativeTurn(options), null, "a schema without a point-lookup index cannot trigger a full-table scan");
+  await rm(file);
+  nativeTurnHint(f, { offset: 100 });
+  await link(file, path.join(f.root, "database-alias.sqlite"));
+  assert.equal(await locateCodexNativeTurn(options), null);
+});
+
+test("a locked native index quickly yields to ordinary source observation", async (t) => {
+  const f = await indexedCompactionFixture(t);
+  const writer = new DatabaseSync(f.indexFile);
+  writer.exec("BEGIN EXCLUSIVE");
+  try {
+    const started = performance.now();
+    assert.equal(await locateCodexNativeTurn({ codexHome: f.codexHome, threadId: THREAD, turnId: TURN }), null);
+    assert.ok(performance.now() - started < 2_000, "the optional index must not block on a native writer");
+  } finally { writer.exec("ROLLBACK"); writer.close(); }
+});
+
 test("a thread-only launch cannot promote an older observed turn to the current task", async (t) => {
   const f = await fixture(t);
   await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot), row("event_msg", { type: "task_complete", turn_id: TURN }, 10)]);
@@ -61,6 +467,70 @@ test("a thread-only launch cannot promote an older observed turn to the current 
   // Even an unterminated old turn is not proof that it belongs to this launch.
   await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
   assert.equal(await resolveNativeCodexCurrentRun(threadOnly), null);
+});
+
+test("resumed UUIDv7 chats read the creation-day file without expanding the event or byte window", async (t) => {
+  const f = await fixture(t);
+  const createdMs = SINCE - 4 * 86_400_000;
+  const stamp = createdMs.toString(16).padStart(12, "0");
+  const thread = `${stamp.slice(0, 8)}-${stamp.slice(8)}-7000-8000-111111111111`;
+  // Some hosts put the UTC creation instant in the next local calendar day.
+  const creationDay = new Date(createdMs + 86_400_000).toISOString().slice(0, 10).split("-");
+  const directory = path.join(f.codexHome, "sessions", ...creationDay);
+  await mkdir(directory, { recursive: true });
+  const file = path.join(directory, `rollout-created-earlier-${thread}.jsonl`);
+  const staleContext = context(f.projectRoot, OTHER, -3 * 86_400_000);
+  await writeFile(file, serialize([meta(f.projectRoot, thread), staleContext]) + largePadding() + serialize([
+    context(f.projectRoot), command(f.projectRoot, { thread }),
+  ]));
+  const options = { ...f.options, threadId: thread, maxBytes: 4_096 };
+  const reader = createCodexNativeSessionReader(options);
+  const observed = await reader.read();
+  assert.equal(observed.state, "observed");
+  assert.equal(observed.turnId, TURN);
+  assert.equal(observed.commands.length, 1);
+  assert.equal(observed.coverage.parentSegmentCount, 1);
+  assert.ok(observed.coverage.bodyBytesRead <= options.maxBytes);
+  assert.ok(observed.coverage.sourceBytesRead <= observed.coverage.readByteLimit);
+  assert.equal((await createCodexNativeSessionReader({ ...options, turnId: OTHER }).read()).reason, "exact_native_turn_not_observed");
+});
+
+test("UUIDv7 creation-day hints do not trust mismatched headers or projects", async (t) => {
+  const f = await fixture(t);
+  const createdMs = SINCE - 4 * 86_400_000;
+  const stamp = createdMs.toString(16).padStart(12, "0");
+  const thread = `${stamp.slice(0, 8)}-${stamp.slice(8)}-7000-8000-111111111111`;
+  const directory = path.join(f.codexHome, "sessions", ...new Date(createdMs).toISOString().slice(0, 10).split("-"));
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, `rollout-wrong-thread-${thread}.jsonl`), serialize([
+    meta(f.projectRoot, OTHER), context(f.projectRoot), command(f.projectRoot, { thread }),
+  ]));
+  await writeFile(path.join(directory, `rollout-wrong-project-${thread}.jsonl`), serialize([
+    meta(path.join(f.root, "other"), thread), context(f.projectRoot), command(f.projectRoot, { thread }),
+  ]));
+  const observed = await createCodexNativeSessionReader({ ...f.options, threadId: thread }).read();
+  assert.equal(observed.state, "unavailable");
+  assert.equal(observed.reason, "exact_native_turn_not_observed");
+  assert.equal(observed.coverage.parentSegmentCount, 2);
+  assert.equal(observed.coverage.bodyBytesRead, 0);
+});
+
+test("Desktop command file URLs bind only to the same local project", async (t) => {
+  const f = await fixture(t, "Project with spaces");
+  const sameProject = pathToFileURL(f.projectRoot).href;
+  const sources = [sameProject, pathToFileURL(path.join(f.root, "other")).href,
+    `${sameProject}?untrusted=1`, `${sameProject}#fragment`, "file://remote.example/project", "../Project with spaces"];
+  const events = sources.map((cwd, index) => {
+    const event = command(cwd, { offset: 2 + index });
+    event.payload.item.id = `file-cwd-${index}`;
+    return event;
+  });
+  await f.write([meta(f.projectRoot), context(f.projectRoot), ...events]);
+  const observed = await createCodexNativeSessionReader(f.options).read();
+  assert.deepEqual(observed.commands.map((item) => item.id), ["file-cwd-0"]);
+  assert.equal(Object.hasOwn(observed.commands[0], "cwd"), false);
+  const serialized = JSON.stringify(buildNativeCodexLiveSnapshot(observed));
+  assert.equal(serialized.includes(sameProject), false);
 });
 
 test("large valid sessions use a bounded tail then zero-body-cache and append-only reads", async (t) => {

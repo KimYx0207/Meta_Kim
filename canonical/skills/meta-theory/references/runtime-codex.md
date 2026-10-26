@@ -165,6 +165,85 @@ Respect user choices (after questioning). Base the analysis on the user's actual
 
 ## Hook progression
 
+The prompt Hook hands the host its existing run identity and the installed
+`governed-host-checkpoint.mjs` command. Apply the installed meta-theory skill,
+use `--inspect` and `--template <stage>` to read the current task contract, and
+record each stage's actual owner result with that command before advancing.
+Resume the same run after a turn boundary; do not start another planned-only
+runner to make the panel look active. Thinking records bounded worker work
+orders before dispatch. The checkpoint is an owner report, not native execution
+proof: worker returns, verification and user acceptance still need their own
+evidence. An ordinary Stop retains an unfinished checkpointed task; another
+conversation or worker's Stop has no authority to end it.
+
+When evidence or a capability is still missing, a `blocked` or `in_progress`
+checkpoint may contain an empty `record` and the owner's actual summary and
+evidence references. It preserves the stage and existing work orders; it cannot
+complete a stage or invent a matching capability.
+
+For review findings or feedback that requires rework, keep the same run and use
+`--return-to fetch|thinking|execution --input <project-local-JSON-file-or->`.
+First use `--inspect` to obtain `revision`, `currentStage`, and
+`currentStageStatus`; submit these as `expectedRevision`, `expectedStage`, and
+`expectedStatus`, together with the owner's summary, evidence references and
+structured `findings` (`findingId`, `summary`, optional `feedbackId`, current
+`taskPacketId`, `deliverableId`, and `contentVersion`). `--template-return` is a
+read-only input template. Foreign run/chat bindings, stale CAS values, and
+forward or same-stage returns are refused. The target and its successors lose
+their completion state; earlier prerequisites are preserved. Invalidated stage
+reports, work orders, results and lifecycle evidence remain in
+`hostRevisionHistory`; `hostRevision` identifies the current rework.
+
+Live feedback carries a public `task:<20hex>` display reference. The host must
+resolve it through the installed checkpoint adapter with the same trusted
+`--project-root`, `--run-id`, and verified `--conversation-id`:
+`--resolve-task-ref <copied-task-reference>`. This read-only command returns one
+`taskReference` containing the raw `taskPacketId`, `publicTaskRef`, owner,
+logical/replaced IDs, and the current `expectedRevision`, `expectedStage`, and
+`expectedStatus`. Use that raw ID in the finding and the returned CAS in the
+return request. `--inspect` also lists at most 32 current `taskReferences` with
+unique/ambiguous resolution status. Identical labels or owners are not identity
+evidence. Unknown, ambiguous, wrong-run/chat/project, and historical references
+are refused; an old display reference never silently resolves to a replacement.
+
+Historical verification owner reports remain visible after later unrelated
+returns, joined to their original revision, action, task, source/output IDs and
+content versions. Both spine and the bounded active-run projection retain that
+association. A previous check cannot satisfy the new revision; even a matching
+report remains `verification_unconfirmed`, not native proof or user acceptance.
+
+New revision work orders require fresh `taskPacketId` values. Link replacements
+with `replacesTaskPacketId`; `logicalTaskPacketId` preserves their original task
+identity without reusing native invocation or completion evidence. A direct
+return to Execution requires a complete, same-design replacement set with the
+same owners, scope and mapped dependencies. Changes to design belong in Thinking.
+Execution reports must answer each active finding through `revisionResponses`
+with its current task, summary and evidence references; Verification checks must
+match those finding/task/artifact-version bindings. If a new work order produces
+a new deliverable identity, `sourceDeliverableId` and `sourceContentVersion`
+bind the original finding, while `deliverableId` and `contentVersion` identify
+the revised output; the recheck must match the revised output. Same-ID revisions
+remain compatible. These append-only responses
+remain `reported_revised` owner reports. Even `verification_reported` does not
+grant native execution proof, user acceptance or public-ready authority.
+
+HookPrompt display is a separate user preference. The generated Codex adapter
+accepts an adjacent user-owned `hookprompt-display.json` with `{"mode":"full"}`
+or `{"mode":"summary"}` and passes that choice to the actual HookPrompt process.
+An explicit `HOOKPROMPT_DISPLAY_MODE` environment value takes priority. Missing,
+malformed, linked, or oversized preference files leave the installed HookPrompt
+default unchanged. Sync updates the adapter and preserves this user preference.
+Receiving context and rendering the optimized prompt in chat are separate checks;
+verify the requested visible result before calling display restored.
+`meta-kim status` (including `--json`) and `meta-kim doctor hooks --all` show
+registered runtime entry paths, the selected inner source, SHA256, and display
+precedence: environment > adjacent preference > inner default. Diagnostics read
+configuration and recognized source branches without executing hooks. They describe
+the current CLI environment, not an already-running host's environment. An unknown
+implementation, ambiguous entries, or unproven repository/version stays `unknown`;
+a declared dependency repository alone is not proof of installed source ownership.
+These commands do not change display preferences or synchronize other hosts.
+
 Codex hooks are the last fuse after preflight. Current Codex documentation describes project hooks as trusted lifecycle guardrails loaded from hook/config layers, including managed/plugin/project sources and Windows-specific command variants. Do not treat them as an exhaustive all-tool policy engine.
 
 Before mutation, Conductor must confirm the route has the key behavior minimum: real intent, success criteria, Fetch evidence, capability discovery, selected owner, owner loadout across agent/skill/command/MCP/tool/abstract prompt, runtime/OS not known-unsupported, memory strategy, and Review standard. Hook output that blocks an action must name `returnToStage`, `repairOwner`, `repairAction`, `allowedNextAction`, and `forbiddenRetry`. Detailed rollback, dependency, warning, writeback, and verification-owner fields are public-ready/validator gates unless their absence makes the action unsafe.

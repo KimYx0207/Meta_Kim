@@ -220,6 +220,8 @@ const GLOBAL_HOOK_PACKAGE_FILES = new Set([
   "spine-state-utils.mjs",
   "spine-state-gates.mjs",
   "spine-state.mjs",
+  "governed-task-reference.mjs",
+  "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   // ── canonical/runtime-assets/claude/hooks/ ──

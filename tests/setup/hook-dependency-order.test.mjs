@@ -94,3 +94,17 @@ test("Codex and Cursor manual copy dependencies before the spine-state facade", 
   assertDependenciesBeforeFacade(codexCopy, "Codex manual copy");
   assertDependenciesBeforeFacade(cursorCopy, "Cursor manual copy");
 });
+
+test("task-reference helper closes the activation-to-checkpoint dependency in every hook projection and ownership list", () => {
+  const helper = "governed-task-reference.mjs";
+  const adapter = "governed-host-checkpoint.mjs";
+  for (const file of ["scripts/runtime-hook-mapping.mjs", "scripts/sync-global-meta-theory.mjs", "scripts/sync-runtimes.mjs", "scripts/discover-global-capabilities.mjs", "setup.mjs"]) {
+    const source = readSource(file);
+    const lines = source.split(/\r?\n/u);
+    const checkpointIndexes = lines.flatMap((line, index) => line.trim() === `"${adapter}",` ? [index] : []);
+    assert.ok(checkpointIndexes.length > 0, file);
+    for (const index of checkpointIndexes) assert.equal(lines[index - 1].trim(), `"${helper}",`, `${file} must copy/own the dependency before the checkpoint`);
+  }
+  assert.match(readSource(`canonical/runtime-assets/shared/hooks/${adapter}`), /from "\.\/governed-task-reference\.mjs"/u);
+  assert.match(readSource("src/application/live/live-control-room-service.mjs"), /from "\.\.\/\.\.\/\.\.\/canonical\/runtime-assets\/shared\/hooks\/governed-task-reference\.mjs"/u);
+});

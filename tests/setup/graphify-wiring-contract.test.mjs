@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -18,6 +19,27 @@ import { enrichMetaKimGraph } from "../../scripts/graphify-enrichment.mjs";
 import { applyGraphNodeIdentityProof } from "../../scripts/graphify-node-identity.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+function assertActivationHandoffWithoutExecution(result, projectRoot) {
+  const stateDir = path.join(projectRoot, ".meta-kim", "state", "default");
+  const state = JSON.parse(readFileSync(path.join(stateDir, "spine", "spine-state.json"), "utf8"));
+  const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+  assert.match(context, /Meta_Kim (?:host execution handoff|后台执行接续)/u);
+  assert.ok(context.includes(state.runId), "handoff must continue the run this hook actually activated");
+  assert.ok(context.includes(path.resolve(projectRoot)), "handoff must bind the actual project");
+  assert.match(context, /governed-host-checkpoint\.mjs/u);
+  assert.match(context, /--inspect/u);
+  assert.doesNotMatch(context, /Meta_Kim Live|http:\/\/127\.0\.0\.1:\d+/u, "Live-off activation must not announce or open a Hub");
+  assert.equal(state.currentStage, "critical");
+  assert.equal(state.executionStarted, false, "a handoff cannot manufacture actual execution");
+  assert.equal(state.stages.fetch.status, "pending");
+  assert.equal((state.workerTaskPackets || []).length, 0);
+  assert.equal((state.workerLifecycle || []).length, 0);
+  assert.equal(existsSync(path.join(projectRoot, "graphify-out")), false, "activation must not run Graphify");
+  assert.equal(existsSync(path.join(stateDir, "post-copy-init.json")), false);
+  assert.equal(existsSync(path.join(stateDir, "project-bootstrap.json")), false);
+  assert.equal(existsSync(path.join(stateDir, "live-view-requests")), false);
+}
 
 function writeFakeExecutable(dir, name, source) {
   const scriptPath = path.join(dir, `${name}.mjs`);
@@ -568,6 +590,7 @@ console.log("forced rebuild ok");
           ...process.env,
           META_KIM_PACKAGE_ROOT: root,
           META_KIM_POST_COPY_AUTO: "off",
+          META_KIM_LIVE_AUTO: "off",
         },
       });
 
@@ -580,7 +603,7 @@ console.log("forced rebuild ok");
         existsSync(path.join(tempDir, ".meta-kim", "state", "default", "project-bootstrap.json")),
         false,
       );
-      assert.equal(result.stdout.trim(), "");
+      assertActivationHandoffWithoutExecution(result, tempDir);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -612,11 +635,13 @@ console.log("forced rebuild ok");
           META_KIM_PROJECT_BOOTSTRAP_PROBE: "off",
           META_KIM_GLOBAL_STATE_DIR: globalStateDir,
           META_KIM_POST_COPY_AUTO: "off",
+          META_KIM_LIVE_AUTO: "off",
         },
       });
 
       assert.equal(result.status, 0, result.stderr || result.stdout);
-      assert.equal(result.stdout.trim(), "");
+      assertActivationHandoffWithoutExecution(result, tempDir);
+      assert.deepEqual(readdirSync(globalStateDir), [], "probe-off activation must leave global automation state untouched");
       assert.equal(existsSync(path.join(tempDir, ".meta-kim", "state", "default", "spine", "spine-state.json")), true);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

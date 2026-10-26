@@ -6406,7 +6406,7 @@ return handleGraphCardResize;`)(state, { dataset: { semanticZoom: "card" } }, { 
   assert.equal(frames.length, 0, "settled sizes do not schedule another pass");
 });
 
-function localFeedbackFormHarness(clipboard, language = "zh") {
+function localFeedbackFormHarness(clipboard, language = "zh", draftOptions = {}) {
   const html = renderLiveControlRoomPage();
   const element = (tagName, className = "", textContent = "") => ({
     tagName, className, textContent, dataset: {}, children: [], parentNode: null, value: "", events: {}, focusCount: 0, selectCount: 0,
@@ -6414,7 +6414,7 @@ function localFeedbackFormHarness(clipboard, language = "zh") {
     setAttribute() {}, addEventListener(type, handler) { this.events[type] = handler; },
     focus() { this.focusCount += 1; }, select() { this.selectCount += 1; this.selectionStart = 0; this.selectionEnd = this.value.length; },
   });
-  const drafts = createLocalFeedbackDraftStore();
+  const drafts = createLocalFeedbackDraftStore(draftOptions);
   const surfaces = new Map();
   const render = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", "navigator", "currentLanguage", `
 const selectedProjectId = "project-a";
@@ -6429,6 +6429,39 @@ return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.childr
     prepare(original = "只修连线，保留其余结果。") { view.raw.value = original; view.raw.events.input(); view.prepare.events.click(); return view.prepared.value; },
   };
 }
+
+test("shipped feedback copy is injected with the browser helper for both languages", () => {
+  const html = renderLiveControlRoomPage();
+  const resource = html.match(/const LIVE_FEEDBACK_COPY = ([^\n]+);\n/u);
+  assert.ok(resource, "the shipped page must carry the external copy resource");
+  const start = html.indexOf("const LIVE_FEEDBACK_COPY = ");
+  const end = html.indexOf("\nfunction createLocalFeedbackDraftStore(", start);
+  assert.ok(end > start, "the serialized resource and builder precede the unchanged draft store");
+  const browserBuild = new Function(html.slice(start, end) + "\nreturn buildLocalFeedbackText;")();
+  const context = { runId: "run-a", feedbackId: "feedback-a", taskPacketId: "task:aaaaaaaaaaaaaaaaaaaa", deliverableId: "output-a" };
+  for (const language of ["zh", "en"]) {
+    const original = "  Preserve\n原话  ";
+    assert.equal(browserBuild(context, original, language), buildLocalFeedbackText(context, original, language));
+  }
+});
+
+test("rendered feedback form restores a saved draft after reload and discloses persistence failure", () => {
+  const data = new Map();
+  const storage = { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  const first = localFeedbackFormHarness(undefined, "zh", { storage });
+  const original = "  原话\n保留空白  ";
+  const prepared = first.prepare(original);
+  assert.match(first.view.storageNotice.textContent, /已保存在本浏览器/u);
+  const restored = localFeedbackFormHarness(undefined, "zh", { storage });
+  assert.equal(restored.view.raw.value, original);
+  assert.equal(restored.view.prepared.value, prepared);
+  assert.match(restored.view.notice.textContent, /尚未提交/u);
+  assert.doesNotMatch(restored.view.notice.textContent, /已复制|已发送/u);
+  const broken = localFeedbackFormHarness(undefined, "zh", { storage: { getItem: () => null, setItem: () => { throw new Error("quota"); } } });
+  broken.prepare(original);
+  assert.equal(broken.view.raw.value, original);
+  assert.match(broken.view.storageNotice.textContent, /尚未持久化.*复制/u);
+});
 
 test("editing copied feedback immediately returns the handoff to unsubmitted", async () => {
   const { view, prepare, paint } = localFeedbackFormHarness({ writeText: async () => {} });
@@ -6768,6 +6801,46 @@ return (node) => ({ state: nodeDisplayState(node), summary: nodeStateCopy(node),
   assert.deepEqual(view(snapshot.nodes[0]), { state: "in_doubt", summary: "已执行 · 待验证", graph: "待验证" });
   assert.equal(view(snapshot.nodes[1]).state, "completed");
   assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "未收到执行回写" });
+});
+
+test("bound owner reports survive normalization and agree across badges and the actual overview", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const runId = "meta-owner-report-ui";
+  const ownerReport = { runId, taskPacketId: "task:owner-report", ownerAgent: "debugger", resultStatus: "reported_complete",
+    summary: "修复已回报，等待独立检查", reportedAt: "2026-10-22T08:00:00Z", evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+  const input = { run: { id: runId, active: true, status: "active", completionEvidenceState: "unproven" }, nodes: [
+    { id: "reported", runId, kind: "agent", taskPacketId: ownerReport.taskPacketId, ownerAgent: "debugger", status: "in_doubt",
+      displayState: "unknown", executionState: "unreported", active: false, task: "恢复数字人任务展示", summary: ownerReport.summary, ownerReport },
+  ] };
+  const snapshot = normalize(input);
+  const html = renderLiveControlRoomPage();
+  const displayFormat = JSON.parse(html.match(/const DISPLAY_FORMAT = (\{.*?\});\n/su)[1]);
+  const view = new Function("DISPLAY_FORMAT", `
+const currentLanguage='zh'; const stateCopy=(state)=>state; const localize=(state)=>state;
+${serializeLiveRunOverviewResolvers()}
+${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
+return (node)=>[nodeDisplayState(node),nodeStateCopy(node),nodeShortStateCopy(node)];`)(displayFormat);
+  assert.equal(snapshot.nodes[0].executionState, "unreported");
+  assert.deepEqual(view(snapshot.nodes[0]), ["in_doubt", "已回报 · 待独立验证", "已回报"]);
+  const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, append(...items) { this.children.push(...items); }, addEventListener() {} });
+  const overview = element("section");
+  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", `
+const selectedProjectId='p'; const currentLanguage='zh';
+${serializeLiveTokenUsageResolvers()}
+${shippedHelper(html, "renderRunOverview")}
+return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview);
+  render(snapshot);
+  const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
+  const task = overview.children.find((node) => node.dataset.overviewItem === "task");
+  assert.match(text(task), /负责人已回报，待独立验证/u);
+  assert.doesNotMatch(text(task), /未回写|未收到执行回写|已验证完成/u);
+  assert.equal(resolveLiveRunOverview(snapshot).activity.item, null);
+  assert.equal(resolveLiveRunOverview(snapshot).execution, null);
+  for (const mutation of [{ runId: "other" }, { taskPacketId: "task:other" }, { ownerAgent: "other" }, { nativeInvocationVerified: true }]) {
+    const rejected = normalize({ ...input, nodes: [{ ...input.nodes[0], ownerReport: { ...ownerReport, ...mutation } }] });
+    assert.equal(rejected.nodes[0].ownerReport, undefined);
+    assert.equal(view(rejected.nodes[0])[1], "未收到执行回写");
+  }
 });
 
 test("first overview synchronizes actual layout scale and tier even when the camera value has not changed", () => {

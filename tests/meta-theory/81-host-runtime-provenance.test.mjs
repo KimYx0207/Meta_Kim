@@ -115,12 +115,15 @@ test("an explicitly declared runtime outranks both the spine binding and the env
   assert.equal(declared.sourceRuntime, "cursor");
   assert.equal(declared.basis, "declared_runtime_flag");
 
-  const spineOverEnv = resolveGovernedRunProvenance({
+  const conflictingSpine = resolveGovernedRunProvenance({
     spineRuntime: "claude",
     env: codexHostEnv(),
   });
-  assert.equal(spineOverEnv.sourceRuntime, "claude");
-  assert.equal(spineOverEnv.basis, "live_spine_binding");
+  assert.equal(conflictingSpine.sourceRuntime, "codex");
+  assert.equal(conflictingSpine.basis, "host_env_marker");
+  const matchingSpine = resolveGovernedRunProvenance({ spineRuntime: "claude", env: claudeHostEnv() });
+  assert.equal(matchingSpine.sourceRuntime, "claude");
+  assert.equal(matchingSpine.basis, "live_spine_binding");
 
   // An unknown name is not evidence of anything, so it must fall through to the
   // next source rather than reach a reader raw.
@@ -154,7 +157,7 @@ test("every provenance answer stays inside the declared basis vocabulary", () =>
 });
 
 test("an active spine run hands its verified chat to the governed run under the run's own id", () => {
-  const binding = bindingFor(verifiedSpineState());
+  const binding = bindingFor(verifiedSpineState(), { hostSessionId: CHAT_ID, env: claudeHostEnv() });
 
   assert.equal(binding.linked, true);
   assert.equal(binding.refusal, null);
@@ -170,6 +173,46 @@ test("an active spine run hands its verified chat to the governed run under the 
   // the only trace of which activation proved the link, and keeping it in place
   // of the governed id makes the read surface treat the link as another run's.
   assert.equal(binding.spineRunId, SPINE_RUN_ID);
+});
+
+test("an active spine cannot lend another host or chat its verified conversation", () => {
+  const state = verifiedSpineState();
+  const differentHost = bindingFor(state, { hostSessionId: CHAT_ID, env: codexHostEnv() });
+  assert.equal(differentHost.refusal, "spine_conversation_host_runtime_mismatch");
+  assert.equal(differentHost.linked, false);
+  const differentChat = bindingFor(state, { hostSessionId: "39a0b1c2-0000-4000-8000-000000000000", env: claudeHostEnv() });
+  assert.equal(differentChat.refusal, "spine_conversation_host_session_mismatch");
+  assert.equal(differentChat.linked, false);
+  const absent = bindingFor(state, { env: claudeHostEnv() });
+  assert.equal(absent.refusal, "spine_conversation_host_session_absent");
+  assert.equal(absent.sourceConversation, null);
+  const nested = bindingFor(state, { hostSessionId: CHAT_ID, env: claudeHostEnv(codexHostEnv()) });
+  assert.equal(nested.refusal, "spine_conversation_host_runtime_conflict");
+  assert.equal(nested.linked, false);
+});
+
+test("active Codex binding uses only the matching current Codex thread identity", () => {
+  const state = verifiedSpineState({ sourceRuntime: "codex", sourceConversation: {
+    runtime: "codex", conversationId: CHAT_ID, runId: SPINE_RUN_ID, matchBasis: "transcript_file_verified",
+  } });
+  const env = codexHostEnv({ CODEX_THREAD_ID: CHAT_ID, CLAUDE_CODE_SESSION_ID: "stale-claude-session" });
+  const matched = bindingFor(state, { hostSessionId: detectHostSessionConversationId(env), env });
+  assert.equal(matched.linked, true);
+  assert.equal(matched.sourceRuntime, "codex");
+  assert.equal(matched.sourceConversation.conversationId, CHAT_ID);
+  const otherEnv = codexHostEnv();
+  assert.equal(bindingFor(state, { hostSessionId: detectHostSessionConversationId(otherEnv), env: otherEnv }).refusal, "spine_conversation_host_session_mismatch");
+  assert.equal(bindingFor(state, { env: codexHostEnv({ CODEX_THREAD_ID: "", CODEX_PERMISSION_PROFILE: "read-only" }) }).refusal, "spine_conversation_host_session_absent");
+});
+
+test("explicit session adapters stay isolated from the ambient process environment", () => {
+  const matched = bindingFor(verifiedSpineState(), { hostSessionId: CHAT_ID, env: {} });
+  assert.equal(matched.linked, true);
+  assert.equal(matched.bindingBasis, "live_spine_binding");
+  assert.equal(bindingFor(verifiedSpineState(), { hostSessionId: null, env: {} }).refusal, "spine_conversation_host_session_absent");
+  const nested = resolveGovernedRunProvenance({ spineRuntime: "claude", env: claudeHostEnv(codexHostEnv()) });
+  assert.equal(nested.sourceRuntime, "unavailable");
+  assert.equal(nested.basis, "conflicting_host_env_markers");
 });
 
 /**
@@ -303,6 +346,8 @@ test("the host chat id is read from the injected environment under the name the 
   // fail silently — an absent variable is indistinguishable from a host that
   // exports no chat id, so the tier would simply never fire.
   assert.equal(detectHostSessionConversationId({ CLAUDE_SESSION_ID: CHAT_ID }), null);
+  assert.equal(detectHostSessionConversationId({ CODEX_THREAD_ID: CHAT_ID }), CHAT_ID);
+  assert.equal(detectHostSessionConversationId(claudeHostEnv(codexHostEnv())), null);
   assert.deepEqual(HOST_SESSION_ENV_MARKER_NAMES, ["CLAUDE_CODE_SESSION_ID"]);
 });
 
@@ -395,18 +440,10 @@ test("a CLI run with no declared runtime records the host it was actually starte
   assert.equal(artifact.sourceRuntime, "claude");
   assert.notEqual(artifact.sourceRuntime, "codex");
   assert.equal(artifact.requestRecord.runtimeContext.runtimeFamily, "claude");
-  // The spine tier reads this repo's own state file, which cwd makes unavoidable
-  // and whose liveness depends on whoever ran the suite. Stripping the inherited
-  // chat id above rules out the revived route; an activated spine would still win
-  // over the env markers, so the basis is asserted as any route that proves a
-  // host rather than pinned to one. The defect being guarded is a vendor default
-  // reaching this field at all, which `sourceRuntime` above pins exactly.
-  assert.ok(
-    ["host_env_marker", "live_spine_binding"].includes(
-      artifact.hostProvenancePacket.provenanceBasis,
-    ),
-    `provenanceBasis ${artifact.hostProvenancePacket.provenanceBasis} must name a proven route`,
-  );
+  // This invocation exports no current chat id. A long-running active spine in
+  // the same project is another task's state, not permission to borrow its chat.
+  assert.equal(artifact.hostProvenancePacket.provenanceBasis, "host_env_marker");
+  assert.equal(artifact.hostProvenancePacket.conversationLinkState, "unlinked");
   // The route still plans against its own default; only provenance changed.
   assert.equal(artifact.requestRecord.runtimeContext.routeTarget, "codex");
 });
