@@ -5415,6 +5415,56 @@ test("the compact run title keeps its complete identity available in task detail
  * because leading multiplies the step and the caption carried the looser family.
  * So the tokens are pinned as literals and the resulting line boxes are ordered.
  */
+test("the whole page uses Microsoft YaHei across ordinary text, code and form controls", () => {
+  const html = renderLiveControlRoomPage();
+  const rules = stylesheetRules(html);
+  const family = rootCustomProperty(rules, "--font-ui");
+  assert.match(family, /^"Microsoft YaHei",/u, "the requested Microsoft YaHei face must cover both Chinese and Latin text first");
+  assert.match(family, /"PingFang SC"/u);
+  assert.match(family, /"Noto Sans CJK SC"/u);
+  assert.equal(resolvedDeclaration(rules, { selector: ":root", property: "font-family" }), "var(--font-ui)");
+  for (const selector of ["button", "select", "input", "textarea", "summary"]) {
+    assert.equal(resolvedDeclaration(rules, { selector, property: "font" }), "inherit", selector + " must inherit the same UI typography");
+  }
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback-label", property: "font-size" }), "var(--fs-entity-body)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback select", property: "font-size" }), "var(--fs-entity-body)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback textarea", property: "font-size" }), "var(--fs-body)", "editable feedback must not inherit the smaller label size");
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback textarea", property: "line-height" }), "var(--lh-normal)");
+  for (const rule of rules) for (const [property, value] of rule.declarations) {
+    if (property === "font-family") {
+      assert.ok(["var(--font-ui)", "inherit"].includes(value), rule.selectors.join(", ") + " introduces a different UI face: " + value);
+    }
+    if (property === "font") assert.doesNotMatch(value, /monospace/iu, "ordinary font shorthands must not introduce a second face");
+  }
+  for (const selector of ["pre", "code", "samp"]) assert.equal(resolvedDeclaration(rules, { selector, property: "font-family" }), "var(--font-ui)");
+  assert.doesNotMatch(html, /@font-face|fonts\.googleapis|fonts\.gstatic/u, "the UI must remain usable without downloading a font");
+});
+
+test("UI emphasis uses regular text and semibold headings while labels retain natural case and spacing", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  for (const [token, weight] of [["--weight-regular", "400"], ["--weight-semibold", "600"]]) {
+    assert.equal(rootCustomProperty(rules, token), weight);
+  }
+  for (const rule of rules) for (const [property, value] of rule.declarations) {
+    if (property === "font-weight") assert.match(value, /^var\(--weight-(?:regular|semibold)\)$/u, rule.selectors.join(", ") + " bypasses the weight roles");
+    if (property === "text-transform") assert.equal(value, "none", "ordinary UI labels must retain their source casing");
+    if (property === "letter-spacing") assert.equal(value, "0", "ordinary UI text must not carry decorative tracking");
+  }
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-context-title", property: "font-weight" }), "var(--weight-semibold)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".node-capability-kind", property: "font-weight" }), "var(--weight-regular)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".node-capability-value", property: "font-weight" }), "var(--weight-regular)");
+});
+
+test("mobile brand uses the body tier to leave room for header controls while desktop keeps its hierarchy", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  for (const width of [390, 720]) {
+    assert.equal(resolvedForViewport(rules, { selector: ".brand-title", property: "font-size", viewport: { width, height: 844 } }), "var(--fs-body)");
+  }
+  for (const width of [721, 884, 1512]) {
+    assert.equal(resolvedForViewport(rules, { selector: ".brand-title", property: "font-size", viewport: { width, height: 982 } }), "var(--fs-view-title)");
+  }
+});
+
 test("the type scale runs from the brand mark down to the legend caption, not back up", () => {
   const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
 

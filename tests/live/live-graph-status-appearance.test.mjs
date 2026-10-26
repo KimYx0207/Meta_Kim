@@ -7,6 +7,7 @@ import {
 } from "../../src/application/live/live-graph-readability.mjs";
 import { loadLiveGraphLayoutPolicy, resolveFanoutArrangement } from "../../src/application/live/live-graph-layout.mjs";
 import { resolveReplayNodeView } from "../../src/application/live/live-replay-visibility.mjs";
+import { evaluateMediaCondition, extractMediaBlocks } from "./_viewport-profiles.mjs";
 
 const html = renderLiveControlRoomPage();
 const css = html.match(/<style>([\s\S]*?)<\/style>/u)[1];
@@ -257,6 +258,37 @@ test("actual running evidence gives the native main a large gold indicator witho
   assert.ok(Number(indicator.width.match(/calc\(([\d.]+)px/u)[1]) >= 14, "the node indicator is at least 14 screen pixels across");
   assert.ok(Number(particle.r.match(/calc\(([\d.]+)px/u)[1]) >= 5, "the routed dot is at least 10 screen pixels across");
   assert.equal(indicator.background, "var(--task-flow-ink)");
+});
+
+test("running markers keep screen dimensions in the mobile reading stack and the transformed desktop scene", () => {
+  const selector = '.graph-canvas[data-semantic-zoom] .node-card[data-running-observed="true"] .node-marker';
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const mediaBlocks = extractMediaBlocks(css);
+  const markerRules = [...css.matchAll(new RegExp(escaped + "\\s*\\{([^}]*)\\}", "gu"))].map((match) => ({
+    paint: declarations(match[1]),
+    media: mediaBlocks.find((block) => match.index >= block.startIndex
+      && match.index < css.indexOf("{", block.startIndex) + 1 + block.body.length),
+  }));
+  for (const widthPx of [390, 720, 721, 884, 1440]) {
+    const profile = { widthPx, heightPx: 871 };
+    const applies = (block) => evaluateMediaCondition(block.condition, profile).applies;
+    const untransformed = mediaBlocks.filter(applies).some((block) => /\.graph-scene\s*\{[^}]*transform:\s*none\s*!important/u.test(block.body));
+    assert.equal(untransformed, widthPx <= 720, "the marker follows the shipped scene's mobile transform boundary");
+    const paint = Object.assign({}, ...markerRules.filter(({ media }) => !media || applies(media)).map((entry) => entry.paint));
+    for (const cameraScale of [.28, .45, 1]) {
+      const screenLength = (value) => {
+        const compensated = /^calc\(([\d.]+)px \/ var\(--camera-scale, 1\)\)$/u.exec(value);
+        const cssPixels = compensated ? Number(compensated[1]) / cameraScale : parseFloat(value);
+        return cssPixels * (untransformed ? 1 : cameraScale);
+      };
+      for (const value of [paint.width, paint.height, paint.flex.replace(/^0 0\s+/u, "")]) {
+        assert.ok(Math.abs(screenLength(value) - 14) < .001, widthPx + "px viewport keeps a 14px running dot at camera scale " + cameraScale);
+      }
+      const halo = [...paint["box-shadow"].matchAll(/calc\([\d.]+px \/ var\(--camera-scale, 1\)\)|[\d.]+px/gu)].map(([value]) => screenLength(value));
+      assert.equal(halo.length, 2);
+      for (const [index, expected] of [4, 10].entries()) assert.ok(Math.abs(halo[index] - expected) < .001, "the visible halo follows the marker's screen scale");
+    }
+  }
 });
 
 test("native main gold indicators require current bound observed execution and reject contradictory or later terminal facts", () => {
