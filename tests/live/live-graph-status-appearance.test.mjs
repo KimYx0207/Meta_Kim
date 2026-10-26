@@ -71,7 +71,7 @@ function graphHarness({ reduced = false } = {}) {
       return { positions, kind: "layered", bounds: { width: 3000, height: 1100 } };
     },
   };
-  const names = ["graphNodesForSnapshot", "graphEdgesForSnapshot", "edgeMarkerId", "edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "setGraphRelationMode", "createGraphEdgeMotion", "renderGraph", "updateReplayPosition"];
+  const names = ["graphNodesForSnapshot", "graphEdgesForSnapshot", "edgeMarkerId", "edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "setGraphRelationMode", "graphNodeIsActuallyRunning", "createGraphEdgeMotion", "renderGraph", "updateReplayPosition"];
   const api = new Function("env", "with (env) {\n" + names.map(shippedHelper).join("\n")
     + "\nreturn { renderGraph, refreshGraphEdgeGeometry, setGraphRelationMode, updateReplayPosition };\n}")(env);
   return { env, ...api, renderGraph(snapshot) { env.currentSnapshot = snapshot; api.renderGraph(snapshot); } };
@@ -119,26 +119,31 @@ function luminance(hex) {
 }
 function contrast(a, b) { return (Math.max(luminance(a), luminance(b)) + .05) / (Math.min(luminance(a), luminance(b)) + .05); }
 
-test("rendered task states select red, yellow and green card fills with dark readable text in both camera tiers", () => {
+test("only status words use red for in progress, yellow for completed and green for not started on neutral dark cards", () => {
   const view = graphHarness();
   view.renderGraph(snapshotFixture());
   const paint = rule('.graph-canvas .node-card[data-task-state], .graph-canvas[data-semantic-zoom] .node-card[data-task-state]');
-  const fills = [];
-  for (const [id, expectedState] of [["waiting", "not_started"], ["working", "in_progress"], ["returned", "completed"]]) {
+  const statusPaint = rule('.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-status, .graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-state-short');
+  const inks = [];
+  for (const [id, expectedState] of [["working", "in_progress"], ["returned", "completed"], ["waiting", "not_started"]]) {
     const card = view.env.graphState.nodeElements.get(id);
     assert.equal(card.dataset.taskState, expectedState);
     const tokens = { ...rootTokens, ...rule('.node-card[data-task-state="' + card.dataset.taskState + '"]'), ...paint };
     const fill = resolveValue(paint.background, tokens);
-    fills.push(rgb(fill));
+    inks.push(rgb(resolveValue(statusPaint.color, tokens)));
     for (const ink of [paint.color, tokens["--muted"], tokens["--node-state-ink"]]) {
-      assert.ok(contrast(fill, resolveValue(ink, tokens)) >= 4.5, id + " text must remain readable on its pale fill");
+      assert.ok(contrast(fill, resolveValue(ink, tokens)) >= 4.5, id + " text must remain readable on the dark neutral fill");
     }
+    assert.ok(luminance(fill) < .04, "all states keep the same dark card surface");
+    assert.equal(paint["--text"], undefined, "status styling cannot replace title or capability text tokens");
+    assert.doesNotMatch(paint.border, /task-|node-state/u, "card borders stay neutral");
     assert.equal(card.dataset.status, snapshotFixture().nodes.find((node) => node.id === id).status, "raw source state is untouched");
   }
-  assert.ok(fills[0][0] > fills[0][1] && fills[0][0] > fills[0][2], "not started is pale red");
-  assert.ok(fills[1][0] > fills[1][2] + 20 && fills[1][1] > fills[1][2] + 20, "in progress is pale yellow");
-  assert.ok(fills[2][1] > fills[2][0] && fills[2][1] > fills[2][2], "completed is pale green");
-  assert.ok(rule('.graph-canvas[data-semantic-zoom] .node-card[data-task-state]:is(:hover, :focus-visible, :focus-within, [data-selected="true"])').outline, "focus and selection remain visible independently of fill");
+  assert.ok(inks[0][0] > inks[0][1] && inks[0][0] > inks[0][2], "in progress text is pale red");
+  assert.ok(inks[1][0] > inks[1][2] + 20 && inks[1][1] > inks[1][2] + 20, "completed text is pale yellow");
+  assert.ok(inks[2][1] > inks[2][0] && inks[2][1] > inks[2][2], "not started text is pale green");
+  assert.ok(luminance(rule(".node-capability").background) < .04, "capability chips retain their original dark fill");
+  assert.doesNotMatch(css, /node-card\[data-task-state\][^\n]*\s\.node-(?:title|glyph|capability)\b/u, "status state must not recolor titles, glyphs or capability contents");
 });
 
 test("ownership-only snapshots show real associations by default and respect an explicit dependency filter", () => {
@@ -180,7 +185,8 @@ test("only an actively progressing target gets a gold particle on its own route;
       const path = route.paths[0];
       assert.equal(path.dataset.taskState, expected);
       const paint = rule('.edge[data-task-state="' + expected + '"]');
-      assert.equal(paint["stroke-dasharray"], id === "waiting" ? "5 9" : "none");
+      if (id === "waiting") assert.match(paint["stroke-dasharray"], /var\(--camera-scale, 1\)/u, "waiting dashes retain visible screen lengths at every zoom");
+      else assert.equal(paint["stroke-dasharray"], "none");
       assert.equal(paint.animation, "none", "the moving object is not a rolling dash");
       assert.equal(Boolean(route.motion), id === "working");
       if (route.motion) {
@@ -224,14 +230,85 @@ test("uncertain work has neutral static lines and arrows, while stale running re
   assert.equal(returned.getAttribute("marker-end"), "url(#live-edge-arrow-completed)");
 });
 
-test("keyboard focus on the actual card buttons uses an opaque outline with contrast on every pale fill", () => {
-  const focus = rule('.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-identity-button:focus-visible, .graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-capability:focus-visible');
-  const ink = focus.outline.split(" ").at(-1);
-  assert.match(ink, /^#[a-f0-9]{6}$/u);
-  for (const state of ["not_started", "in_progress", "completed"]) {
-    const tokens = { ...rootTokens, ...rule('.node-card[data-task-state="' + state + '"]') };
-    assert.ok(contrast(ink, resolveValue("var(--node-state-bg)", tokens)) >= 3, state + " internal button focus remains distinguishable");
+test("dark card focus keeps the original accent instead of borrowing a task state color", () => {
+  const focus = rule('.graph-canvas[data-semantic-zoom] .node-card[data-task-state]:is(:hover, :focus-visible, :focus-within, [data-selected="true"])');
+  assert.equal(focus["border-color"], "var(--accent)");
+  assert.ok(contrast(resolveValue(focus["border-color"], rootTokens), "#151d29") >= 3);
+  assert.match(rule(".node-identity-button:focus-visible").outline, /rgba\(79,209,197/u, "the original internal focus appearance remains available");
+});
+
+test("actual running evidence gives the native main a large gold indicator without lighting unknown or queued children", () => {
+  const view = graphHarness();
+  const fixture = snapshotFixture();
+  fixture.run.demoMode = false;
+  fixture.run.observationKind = "native_execution";
+  Object.assign(fixture.nodes[0], { status: "active", displayState: "active", active: true, executionState: "executing", executionObserved: true });
+  Object.assign(fixture.nodes.find((node) => node.id === "unknown"), { active: true });
+  Object.assign(fixture.nodes.find((node) => node.id === "waiting"), { active: true, declaredNotStarted: false });
+  view.renderGraph(fixture);
+  assert.equal(view.env.graphState.nodeElements.get("owner").dataset.runningObserved, "true");
+  assert.equal(view.env.graphState.nodeElements.get("working").dataset.runningObserved, "true");
+  for (const id of ["unknown", "waiting", "returned", "failed", "blocked"]) {
+    assert.equal(view.env.graphState.nodeElements.get(id).dataset.runningObserved, "false", id + " must not get the gold running dot");
+    assert.equal(view.env.graphState.edgeRoutes.get("edge-" + id).motion, null);
   }
+  const indicator = rule('.graph-canvas[data-semantic-zoom] .node-card[data-running-observed="true"] .node-marker');
+  const particle = rule('.edge-flow-particle[data-stage-focus="recorded"], .edge-flow-particle[data-stage-focus="live"]');
+  assert.ok(Number(indicator.width.match(/calc\(([\d.]+)px/u)[1]) >= 14, "the node indicator is at least 14 screen pixels across");
+  assert.ok(Number(particle.r.match(/calc\(([\d.]+)px/u)[1]) >= 5, "the routed dot is at least 10 screen pixels across");
+  assert.equal(indicator.background, "var(--task-flow-ink)");
+});
+
+test("native main gold indicators require current bound observed execution and reject contradictory or later terminal facts", () => {
+  const base = snapshotFixture();
+  base.run.demoMode = false;
+  base.run.observationKind = "native_execution";
+  Object.assign(base.nodes[0], { active: true, status: "active", displayState: "active", executionState: "executing", executionObserved: true });
+  const cases = [
+    ["completed main", { status: "completed", displayState: "completed" }],
+    ["failed main", { status: "failed" }],
+    ["blocked main", { displayState: "blocked" }],
+    ["cancelled main", { status: "cancelled" }],
+    ["unknown main", { status: "unknown", displayState: "unknown" }],
+    ["in-doubt main", { status: "in_doubt" }],
+    ["planned main", { status: "planned" }],
+    ["not executed main", { executionState: "not_executed" }],
+    ["missing executing state", { executionState: undefined }],
+    ["missing actual observation", { executionObserved: false }],
+    ["cross-run main", { runId: "another-run" }],
+    ["unbound main", { runId: undefined }],
+    ["inactive main", { active: false }],
+    ["newer completion metadata", { timing: { startedAt: "2026-10-27T00:00:00Z", completedAt: "2026-10-27T00:01:00Z" } }],
+    ["inactive run", {}, { active: false }],
+    ["completed run", {}, { status: "completed" }],
+    ["newer terminal display", {}, { displayState: "failed" }],
+    ["unknown run", {}, { status: "unknown" }],
+  ];
+  for (const [label, nodePatch, runPatch] of cases) {
+    const fixture = structuredClone(base);
+    Object.assign(fixture.nodes[0], nodePatch);
+    Object.assign(fixture.run, runPatch);
+    const view = graphHarness();
+    view.renderGraph(fixture);
+    assert.equal(view.env.graphState.nodeElements.get("owner").dataset.runningObserved, "false", label + " cannot produce a gold node indicator");
+  }
+  const demo = graphHarness();
+  demo.renderGraph(snapshotFixture());
+  assert.equal(demo.env.graphState.nodeElements.get("owner").dataset.runningObserved, "true", "explicit demo running states remain usable for visible acceptance");
+});
+
+test("waiting edges retain clearly separated light gray dashes at the minimum camera scale", () => {
+  const view = graphHarness();
+  view.renderGraph(snapshotFixture());
+  const waiting = view.env.graphState.edgeElements.get("edge-waiting");
+  const paint = rule('.edge[data-task-state="' + waiting.dataset.taskState + '"]');
+  const ink = resolveValue(paint.stroke, rootTokens);
+  assert.ok(Math.max(...rgb(ink)) - Math.min(...rgb(ink)) < 40, "waiting lines remain neutral gray");
+  assert.ok(contrast(ink, "#0e151f") >= 5, "waiting lines are visible on the dark grid without glow");
+  const dashLengths = [...paint["stroke-dasharray"].matchAll(/calc\(([\d.]+)px \/ var\(--camera-scale, 1\)\)/gu)].map((match) => Number(match[1]));
+  assert.equal(dashLengths.length, 2, "dash and gap are both compensated for the enclosing camera transform");
+  assert.ok(dashLengths[0] >= 8 && dashLengths[1] >= 6, "the painted dash and gap stay distinct on screen");
+  assert.ok(parseFloat(paint["--edge-screen-width"]) >= 2, "the gray route has a visible screen-space stroke");
 });
 
 test("replay lazily animates a recorded active transition from a completed snapshot and reuses that route safely", () => {
@@ -333,4 +410,19 @@ test("configured gutters keep complete cards separate in card and cell dependenc
     inset: { top: 26, right: 26, bottom: 26, left: 26 }, childWidth: 252, childHeight: 333, chainWidth: 252, chainHeight: 333 }, policy);
   assert.equal(fanout.rows, 2);
   assert.ok(fanout.chainGap >= 64, "the ownership bus has its own lane");
+});
+
+test("the narrow-pane overview retains clear screen gaps without shrinking complete cards or lowering the zoom floor", () => {
+  const policy = loadLiveGraphLayoutPolicy();
+  const arrangement = resolveFanoutArrangement({ childCount: 9, chainLength: 1, mode: "compact", canvas: { width: 868.67, height: 360 },
+    inset: { top: 26, right: 26, bottom: 26, left: 26 }, childWidth: policy.card.entityWidthPx, childHeight: policy.card.measuredMinHeightPx,
+    chainWidth: policy.card.entityWidthPx, chainHeight: policy.card.measuredMinHeightPx }, policy);
+  const mode = policy.modes.compact;
+  assert.equal(policy.card.entityWidthPx, 252);
+  assert.equal(policy.card.measuredMinHeightPx, 333);
+  assert.ok(arrangement.fittedScale >= .28);
+  assert.equal(arrangement.rows, 2);
+  assert.ok((mode.childColumnStepPx - policy.card.entityWidthPx) * arrangement.fittedScale >= 56, "sibling cards have a clear horizontal screen gutter");
+  assert.ok(mode.childRowGapPx * arrangement.fittedScale >= 50, "the reserved row gutter remains visible after fitting");
+  assert.ok(arrangement.chainGap * arrangement.fittedScale >= 30, "the owner bus retains its own visible route lane");
 });

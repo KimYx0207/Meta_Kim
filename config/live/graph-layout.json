@@ -12,28 +12,28 @@
   "defaultMode": "compact",
   "modes": {
     "compact": {
-      "childColumnStepPx": 380,
-      "childRowGapPx": 124,
-      "chainColumnStepPx": 380,
-      "chainRowGapPx": 140,
-      "chainToBlockGapPx": 64,
-      "entityColumnStepPx": 404,
-      "entityRowGapPx": 124,
+      "childColumnStepPx": 444,
+      "childRowGapPx": 176,
+      "chainColumnStepPx": 444,
+      "chainRowGapPx": 180,
+      "chainToBlockGapPx": 112,
+      "entityColumnStepPx": 460,
+      "entityRowGapPx": 176,
       "stageColumns": 4,
-      "stageColumnGapPx": 324,
-      "stageRowGapPx": 242
+      "stageColumnGapPx": 372,
+      "stageRowGapPx": 278
     },
     "flow": {
-      "childColumnStepPx": 412,
-      "childRowGapPx": 144,
-      "chainColumnStepPx": 412,
-      "chainRowGapPx": 160,
-      "chainToBlockGapPx": 80,
-      "entityColumnStepPx": 436,
-      "entityRowGapPx": 144,
+      "childColumnStepPx": 476,
+      "childRowGapPx": 196,
+      "chainColumnStepPx": 476,
+      "chainRowGapPx": 200,
+      "chainToBlockGapPx": 128,
+      "entityColumnStepPx": 492,
+      "entityRowGapPx": 196,
       "stageColumns": 8,
-      "stageColumnGapPx": 296,
-      "stageRowGapPx": 226
+      "stageColumnGapPx": 344,
+      "stageRowGapPx": 262
     }
   },
   "scenePaddingPx": {
@@ -55,7 +55,7 @@
     "left": 40,
     "branchGap": 32
   },
-  "renderedColumnGapPx": 112,
+  "renderedColumnGapPx": 160,
   "fanout": {
     "minimumChildren": 2,
     "chainOrientations": ["chain-horizontal", "chain-vertical"]

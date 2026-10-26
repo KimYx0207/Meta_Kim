@@ -197,10 +197,10 @@ export function liveTaskLifecycleCopy(lifecycle, language = "zh") {
 /** Ordinary task copy stays separate from the technical record's vocabulary. */
 export function liveWorkOverviewCopy(language = "zh") {
   const copy = {
-    zh: { current: "本次工作", completed: "已做的工作", work: "工作清单", details: "详细记录", inspect: "查看详细记录", more: "查看其余", items: "项",
+    zh: { current: "本次工作", completed: "已做的工作", work: "工作清单", details: "详细记录", inspect: "查看详细记录", detailLink: "详情", more: "查看其余", items: "项",
       waiting: "等待安排工作", unavailable: "工作清单尚未保存", noFiles: "未附可打开的文件", output: "打开成果", feedback: "我有修改意见",
       attention: "需要处理", activity: "最近活动", unknownTime: "活动时间未记录", latest: "最近记录 · ", measurements: "输出计量", partial: "仅包含已观察到的记录。", nativeCurrent: "本次对话的工作" },
-    en: { current: "Current work", completed: "Work completed", work: "Work list", details: "Details", inspect: "View details", more: "Show remaining", items: "items",
+    en: { current: "Current work", completed: "Work completed", work: "Work list", details: "Details", inspect: "View details", detailLink: "Details", more: "Show remaining", items: "items",
       waiting: "Waiting for work to be scheduled", unavailable: "The work list was not saved", noFiles: "No attached files", output: "Open output", feedback: "Request a change",
       attention: "Needs attention", activity: "Recent activity", unknownTime: "Activity time not recorded", latest: "Latest timed record · ", measurements: "Output measured", partial: "Only observed records are included.", nativeCurrent: "Work in this chat" },
   };

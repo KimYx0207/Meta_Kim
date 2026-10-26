@@ -58,7 +58,9 @@ test("browser normalization keeps only precise native returns and counts six ret
         sourceEventId: "synthetic-source-" + index + (index < 6 ? ":return" : ":spawn"), observedAt, sourceDigest: "a".repeat(64),
         executionObserved: true, synthetic: false, privatePayload: "PRIVATE RAW PROOF" }] };
   });
-  const input = { run: { runId, active: true, status: "active", observationKind: "native_execution" }, nodes,
+  const input = { run: { runId, active: true, status: "active", observationKind: "native_execution" }, nodes: [...nodes,
+    { id: "native-main", runId, kind: "agent", isMain: true, label: "Codex", status: "active", displayState: "active", active: true,
+      executionState: "executing", executionObserved: true }],
     provenance: [{ nodeId: nodes[0].id, reasoningExcerpt: "原生任务别名：internal_alias_0；任务说明未记录。" }] };
   const normalized = runNormalizerHarness({ actualStatus: true })(input);
   assert.equal(resolveLiveRunTaskLifecycle(input).completedCount, 6);
@@ -72,6 +74,8 @@ test("browser normalization keeps only precise native returns and counts six ret
   assert.equal(normalized.nodes[0].nativeInvocationVerified, undefined);
   assert.equal(normalized.nodes[6].nativeReturnEvidence, undefined);
   assert.equal(normalized.nodes[0].status, "in_doubt");
+  assert.equal(normalized.nodes.at(-1).executionState, "executing");
+  assert.equal(normalized.nodes.at(-1).executionObserved, true);
   assert.deepEqual(normalized.provenance, [{ nodeId: nodes[0].id, triggerPromptId: "", reasoningExcerpt: input.provenance[0].reasoningExcerpt.normalize("NFKC") }]);
   assert.doesNotMatch(JSON.stringify(normalized), /PRIVATE RAW PROOF/u);
   const page = ordinaryOverviewHarness();
@@ -165,6 +169,49 @@ test("ordinary summary reveals only actionable issues and scoped available outpu
   assert.ok(ui.root.children.some((item) => item.dataset.overviewItem === "activity"));
   ui.render({ ...fixture, nodes: [], toolCalls: [], deliverables: [], run: { id: runId, status: "active", statusReason: "缺少审计关联" } });
   assert.deepEqual(ui.root.children.map((item) => item.dataset.overviewItem), ["task"], "missing audit proof is not an actionable blocker or an empty activity card");
+});
+
+test("completed work keeps compact adjacent detail controls and a single activity row without losing the remaining work", () => {
+  const runId = "compact-work-preview";
+  const completed = Array.from({ length: 8 }, (_, index) => ({ id: "completed-" + index, runId, kind: "worker", status: "completed",
+    active: false, task: "已完成工作 " + (index + 1) }));
+  const unknown = { id: "unknown", runId, kind: "worker", status: "in_doubt", executionState: "unreported", task: "未确认工作" };
+  const activityLabel = "完整活动原文 — 保留原始详情";
+  const ui = ordinaryOverviewHarness();
+  ui.render({ run: { id: runId, active: true, status: "active" }, nodes: [...completed, unknown], deliverables: [],
+    toolCalls: [{ id: "observed", runId, state: "completed", name: activityLabel, endedAt: "2026-10-27T08:00:00Z" }] });
+  const task = ui.root.children.find((item) => item.dataset.overviewItem === "task");
+  const first = task.children.find((item) => item.tagName === "ol");
+  const more = task.children.find((item) => item.tagName === "details");
+  assert.equal(first.children.length, 3);
+  assert.equal(more.children[1].children.length, 5);
+  assert.notEqual(more.open, true);
+  assert.doesNotMatch(ui.text(task), /未确认工作/u, "the completed subset retains its original meaning");
+  for (const [index, row] of first.children.entries()) {
+    const [title, action] = row.children;
+    assert.equal(title.textContent, completed[index].task);
+    assert.match(action.className, /run-work-detail/u);
+    assert.equal(action.type, "button");
+    assert.equal(action.textContent, "详情");
+    assert.equal(action.ariaLabel, completed[index].task + " · 查看详细记录");
+    action.listeners.click();
+    assert.equal(ui.opened.at(-1)[0], completed[index].id);
+  }
+  more.children[1].children.at(-1).children[1].listeners.click();
+  assert.equal(ui.opened.at(-1)[0], completed.at(-1).id);
+  const feedback = task.children.find((item) => item.dataset.liveOverviewFeedback === "");
+  feedback.listeners.click();
+  assert.equal(ui.feedback.length, 1);
+  const activity = ui.root.children.find((item) => item.dataset.overviewItem === "activity");
+  assert.match(activity.className, /run-overview-activity/u);
+  assert.equal(activity.children.find((item) => item.tagName === "p").title, activityLabel);
+  assert.equal(activity.children.find((item) => item.tagName === "time").title, "2026-10-27T08:00:00.000Z");
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-work-item", property: "justify-content" }), "flex-start");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-work-item", property: "padding-block" }), "0");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-overview .run-overview-action", property: "min-height" }), "24px");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-overview .run-overview-action", property: "border" }), "0");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-overview-activity", property: "flex-wrap" }), "nowrap");
 });
 
 test("technical facts are preserved inside closed records while the header stays concise", () => {
@@ -2575,7 +2622,8 @@ test("draws curved status-aware edges and a live flow animation with reduced-mot
   assert.match(html, /edge-running/iu);
   assert.match(html, /edge-failed/iu);
   assert.match(html, /edge-queued/iu);
-  assert.match(html, /const stageFocusState\s*=\s*snapshot\.run\?\.active\s*&&\s*!terminalRun\s*&&\s*targetLifecycle\.state\s*===\s*"in_progress"[\s\S]{0,180}!edgeProblem[\s\S]{0,160}"unconfirmed", "result_unconfirmed"[\s\S]{0,80}\?\s*"live"\s*:\s*"none"/u);
+  assert.match(html, /const stageFocusState\s*=\s*snapshot\.run\?\.active\s*&&\s*!terminalRun\s*&&\s*targetRunning\s*&&\s*!edgeProblem\s*\?\s*"live"\s*:\s*"none"/u);
+  assert.match(html, /const targetRunning = graphNodeIsActuallyRunning\(targetNode, snapshot\)/u);
   assert.match(html, /EXECUTION_EDGE_KINDS\.has\(edge\.kind \|\| "sequence"\)/u);
   assert.match(html, /executionRelation \? nodeClass\(edge\.status\) : "structural"/u);
   assert.match(html, /path\.dataset\.liveFocus\s*=\s*stageFocusState/u);
@@ -2763,7 +2811,7 @@ test("lays out high-fanout work as a searched non-crossing grid and ships an iso
   }
   assert.match(html, /nodeId:\s*"demo-requirements"/u);
   assert.match(html, /演示数据 · 非真实运行/u);
-  assert.match(html, /淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成/u);
+  assert.match(html, /状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始/u);
   assert.match(html, /浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成/u);
   assert.match(html, /\.edge-completed\s*\{[^}]*stroke:\s*var\(--green\)[^}]*stroke-dasharray:\s*none/su);
   // Only the dash is pinned here. The opacity used to be pinned at .38 alongside it,
@@ -3262,7 +3310,7 @@ test("adapts service field aliases and safely summarizes structured terminal evi
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']var\(--task-flow-ink\)["'][\s\S]*completed:\s*["']var\(--task-completed-border\)["'][\s\S]*skipped:\s*["']#a3b0c9["']/u);
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']var\(--task-flow-ink\)["'][\s\S]*completed:\s*["']var\(--task-edge-completed\)["'][\s\S]*skipped:\s*["']#a3b0c9["']/u);
   assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
   assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
 });
@@ -4863,10 +4911,10 @@ test("the graph legend keeps task colors and recorded relationship meanings at e
   // now distinguishes.
   const legend = html.match(/<span class="graph-edge-legend"[^>]*>/u);
   assert.ok(legend, "markup must contain the edge legend");
-  for (const state of ["pale red = not started", "pale yellow = in progress", "pale green = completed", "Green solid = done", "Gray dashed = queued", "Gold moving dot = running (observed)", "Amber dashed = blocked", "Arrows = dependencies; no arrow = ownership", "Dashed card = declared, not started"]) {
+  for (const state of ["pale red = in progress", "pale yellow = completed", "pale green = not started", "Gold node dot = actually running", "Green solid = done", "Gray dashed = queued", "Gold moving dot = running (observed)", "Amber dashed = blocked", "Arrows = dependencies; no arrow = ownership", "Dashed card = declared, not started"]) {
     assert.ok(legend[0].includes(state), `the English legend must document "${state}"`);
   }
-  for (const state of ["淡红＝未开始", "淡黄＝进行中", "淡绿＝已完成", "浅灰虚线＝未开始", "金色动点＝运行中", "淡绿实线＝已完成", "琥珀虚线＝阻塞", "无箭头＝结构归属", "虚线卡片＝声明未执行", "连线颜色取自目标任务，不表示依赖执行证据"]) {
+  for (const state of ["状态文字：淡红＝进行中", "淡黄＝已完成", "淡绿＝未开始", "节点金点＝实际运行中", "浅灰虚线＝未开始", "金色动点＝运行中", "淡绿实线＝已完成", "琥珀虚线＝阻塞", "无箭头＝结构归属", "虚线卡片＝声明未执行", "连线颜色取自目标任务，不表示依赖执行证据"]) {
     assert.ok(legend[0].includes(state), `the Chinese legend must document "${state}"`);
   }
 });
@@ -5755,7 +5803,7 @@ function visibleEdgeGeometryHarness() {
     edgeRoutes: new Map(),
     rootEntries: new Map(),
   };
-  const graphNodes = [...positions.keys()].map((id) => ({ id, status: "active", displayState: "active" }));
+  const graphNodes = [...positions.keys()].map((id) => ({ id, runId: "demo-visible-edge-geometry", status: "active", displayState: "active" }));
   const graphEdges = [
     { id: "vertical-edge", from: "owner", to: "vertical", kind: "fork", status: "active" },
     { id: "bus-edge", from: "owner", to: "bus", kind: "fork", status: "active" },
@@ -5764,7 +5812,7 @@ function visibleEdgeGeometryHarness() {
     "graphState", "graph", "graphScene", "document", "edgeLayer", "GRAPH_CAMERA", "resolveSemanticZoom",
     "window", "graphNodes", "graphEdges", "layout", "graphNodeById", "resolveLiveTaskLifecycle", "resolveLiveNodeTaskLifecycle",
     `let camera = { x: 0, y: 0, scale: 1 };
-const snapshot = { run: { active: true } };
+const snapshot = { run: { id: "demo-visible-edge-geometry", active: true, status: "active", demoMode: true } };
 const terminalRun = false;
 const reducedMotion = { matches: false };
 const graphMinimapScene = null;
@@ -5777,7 +5825,7 @@ const updateMinimap = () => {};
 const updateSelectedNodeVisuals = () => {};
 const updateGraphRelationPresentation = () => {};
 const observeGraphCardSizes = () => {};
-${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "createGraphEdgeMotion", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
+${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "graphNodeIsActuallyRunning", "createGraphEdgeMotion", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
 function draw() {
 ${tail}
 }

@@ -1303,7 +1303,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         ...(["explorer", "javascript-pro", "code-reviewer", "ui-ux-designer", "meta-prism", "subtask"].includes(item.nativeTaskCaption)
           && Number.isSafeInteger(item.nativeTaskOrdinal) && item.nativeTaskOrdinal > 0 && item.nativeTaskOrdinal <= 4096
           ? { nativeTaskCaption: item.nativeTaskCaption, nativeTaskOrdinal: item.nativeTaskOrdinal } : {}),
-        executionState: ["not_executed", "executed", "unreported"].includes(item.executionState) ? item.executionState : "unreported",
+        executionState: ["not_executed", "executing", "executed", "unreported"].includes(item.executionState) ? item.executionState : "unreported",
         label: display(firstValue(item, ["label", "title", "name", "nodeId"], "Untitled task"), "Untitled task"),
         kind: display(firstValue(item, ["kind", "nodeKind", "type"], "worker"), "worker").toLowerCase().replace(/[\s-]+/gu, "_"),
         isMain: item.isMain === true,
@@ -3908,11 +3908,31 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (liveRegion) liveRegion.textContent = localize(copy);
   }
 
+  /** A lifecycle can be unfinished without proving that this node is running. */
+  function graphNodeIsActuallyRunning(node, snapshot) {
+    if (!node || snapshot?.run?.active !== true || node.declaredNotStarted === true) return false;
+    const runId = String(snapshot.run.id || snapshot.run.runId || "").trim();
+    const demo = snapshot.run.demoMode === true;
+    if (!runId || (node.runId && node.runId !== runId) || (!node.runId && !demo)) return false;
+    const excluded = ["completed", "failed", "blocked", "cancelled", "planned", "not_executed", "unknown", "unreported", "in_doubt", "not_started", "queued", "pending", "declared"];
+    const runStates = [snapshot.run.status, snapshot.run.displayState].map((state) => String(state || "").toLowerCase());
+    if (runStates.some((state) => excluded.includes(state))) return false;
+    const states = [node.status, node.displayState].map((state) => String(state || "").toLowerCase());
+    if (states.some((state) => excluded.includes(state)) || node.executionState === "not_executed" || node.active === false) return false;
+    const lifecycle = resolveLiveTaskLifecycle(node, runId);
+    if (lifecycle.state !== "in_progress" || ["unconfirmed", "result_unconfirmed", "failed", "blocked", "cancelled"].includes(lifecycle.detail)) return false;
+    const finishedAt = Date.parse(node.timing?.completedAt || node.completedAt || "");
+    const startedAt = Date.parse(node.timing?.startedAt || node.startedAt || node.firstAt || "");
+    if (Number.isFinite(finishedAt) && (!Number.isFinite(startedAt) || finishedAt >= startedAt)) return false;
+    if (node.isMain === true && !demo) return node.active === true && node.executionState === "executing" && node.executionObserved === true;
+    return node.executionState === "executing" || states.some((state) => ["running", "active", "executing", "live"].includes(state));
+  }
+
   /** Create one native route animation when live or recorded execution needs it. */
   function createGraphEdgeMotion(effectGroup, routePath, stageFocus) {
     if (!["live", "recorded"].includes(stageFocus) || reducedMotion.matches) return null;
     const particle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    particle.setAttribute("r", "3.2");
+    particle.setAttribute("r", "5.5");
     particle.setAttribute("class", "edge-flow-particle");
     particle.dataset.stageFocus = stageFocus;
     const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
@@ -3970,7 +3990,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (edgeLayer) {
       edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
       const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      const markerColors = { running: "var(--task-flow-ink)", active: "var(--task-flow-ink)", completed: "var(--task-completed-border)", skipped: "#a3b0c9", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#d8a84e", cancelled: "#a3b0c9", queued: "var(--edge-ink-idle)", unreported: "var(--edge-ink-idle)", unknown: "#a3b0c9", "stage-live": "var(--task-flow-ink)", "stage-recorded": "var(--task-flow-ink)" };
+      const markerColors = { running: "var(--task-flow-ink)", active: "var(--task-flow-ink)", completed: "var(--task-edge-completed)", skipped: "#a3b0c9", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#d8a84e", cancelled: "#a3b0c9", queued: "var(--task-edge-pending)", unreported: "var(--edge-ink-idle)", unknown: "#a3b0c9", "stage-live": "var(--task-flow-ink)", "stage-recorded": "var(--task-flow-ink)" };
       for (const [status, color] of Object.entries(markerColors)) {
         const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         marker.id = edgeMarkerId(status);
@@ -3999,6 +4019,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       card.dataset.displayState = publicState;
       card.dataset.taskState = lifecycle.state;
       card.dataset.taskDetail = lifecycle.detail || "";
+      card.dataset.runningObserved = String(graphNodeIsActuallyRunning(node, snapshot));
       card.dataset.executionState = node.executionState || "unreported";
       card.dataset.replayStatus = node.status;
       card.dataset.selected = "false";
@@ -4272,11 +4293,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const targetLifecycle = resolveLiveNodeTaskLifecycle(targetNode, snapshot);
       const edgeProblem = ["failed", "blocked", "cancelled"].includes(targetLifecycle.detail)
         ? targetLifecycle.detail : ["failed", "blocked", "cancelled"].includes(edge.status) ? edge.status : "";
-      const edgeDetail = edgeProblem || targetLifecycle.detail || "";
+      const targetRunning = graphNodeIsActuallyRunning(targetNode, snapshot);
+      const edgeDetail = edgeProblem || targetLifecycle.detail || (targetLifecycle.state === "in_progress" && !targetRunning ? "unconfirmed" : "");
       // State comes from the target task; an ownership route never turns into
       // execution evidence. Unconfirmed and blocked work has no advancing dot.
-      const stageFocusState = snapshot.run?.active && !terminalRun && targetLifecycle.state === "in_progress"
-        && !edgeProblem && !["unconfirmed", "result_unconfirmed"].includes(targetLifecycle.detail) ? "live" : "none";
+      const stageFocusState = snapshot.run?.active && !terminalRun && targetRunning && !edgeProblem ? "live" : "none";
       path.dataset.taskState = targetLifecycle.state;
       path.dataset.taskDetail = edgeDetail;
       path.dataset.stageFocus = stageFocusState;
@@ -4702,8 +4723,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
         const row = makeElement("li", "run-work-item");
         const title = makeElement("span", "", liveTaskDisplayLabel(node, currentLanguage));
         title.title = liveTaskDisplayLabel(node, currentLanguage);
-        const action = makeElement("button", "run-overview-action", copy.inspect);
+        const action = makeElement("button", "run-overview-action run-work-detail", copy.detailLink);
         action.type = "button";
+        action.ariaLabel = liveTaskDisplayLabel(node, currentLanguage) + " · " + copy.inspect;
         action.addEventListener("click", () => selectNode(node.id, { inspectorTab: "summary" }));
         row.append(title, action);
         list.append(row);
@@ -4756,6 +4778,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const observed = overview.activity.item;
     if (observed) {
       const activity = item("activity", copy.activity);
+      activity.className += " run-overview-activity";
       const label = makeElement("p", "run-overview-value", plainLiveTaskLabel(observed.label, currentLanguage));
       label.title = observed.label;
       activity.append(label);
@@ -5505,6 +5528,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       element.dataset.replayVisible = visible ? "true" : "false";
       element.setAttribute("aria-hidden", String(!visible));
       element.dataset.replayStatus = replayView.statusByNodeId[element.dataset.nodeId] || "queued";
+      const replayNode = currentSnapshot.nodes.find((node) => node.id === element.dataset.nodeId);
+      element.dataset.runningObserved = String(replayFollowingLive ? graphNodeIsActuallyRunning(replayNode, currentSnapshot)
+        : active && ["running", "active", "executing", "live"].includes(element.dataset.replayStatus));
     });
     if (events[currentReplayIndex]?.nodeId && currentSnapshot.nodes.some((node) => node.id === events[currentReplayIndex].nodeId)) {
       selectedNodeId = events[currentReplayIndex].nodeId;
@@ -5540,7 +5566,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
           : ["pending", "queued", "planned", "declared", "not_started"].includes(replayState) ? "not_started" : "in_progress";
       const edgeProblem = ["failed", "blocked", "cancelled"].includes(replayState) ? replayState
         : replayFollowingLive && ["failed", "blocked", "cancelled"].includes(targetLifecycle.detail) ? targetLifecycle.detail : "";
-      const edgeDetail = edgeProblem || (replayFollowingLive ? targetLifecycle.detail
+      const edgeDetail = edgeProblem || (replayFollowingLive ? targetLifecycle.detail || (targetLifecycle.state === "in_progress" && !graphNodeIsActuallyRunning(liveTarget, currentSnapshot) ? "unconfirmed" : "")
         : ["unknown", "unreported", "in_doubt"].includes(replayState) ? "unconfirmed" : "");
       const replayCanFlow = visualState === "in_progress" && !edgeProblem && !["unconfirmed", "result_unconfirmed"].includes(edgeDetail);
       path.dataset.taskState = visualState;
@@ -6751,7 +6777,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
 const GRAPH_FIRST_CSS = String.raw`
 :root { color-scheme: dark; --ink: #0b0e14; --panel: #111620; --panel-2: #151b26; --completion: #68a4ff; --completion-bright: #a7c7ff; --accent: #4fd1c5; --running: #4fd1c5; --green: #63ca9b; --amber: #d8a84e; --dim: #606b7d; --edge-ink-dim: #8f9db8; --edge-ink-idle: #97a4bd; --line-soft: #1d2634; --line: #273043; --line-strong: #3a465c; --text: #e8edf5; --muted: #929db0; --danger: #df7a8f; --radius-sm: 7px; --radius: 11px; --clamp-lines-title: 2; --clamp-lines-hero: 3; ${TYPOGRAPHY_TOKENS} ${SPACING_TOKENS} ${CAMERA_LEGIBILITY_TOKENS} ${CHROME_BUDGET_TOKENS} ${DOCK_BUDGET_TOKENS} font-family: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; }
-:root { --task-not-started-bg: #f7dddd; --task-not-started-border: #ce9298; --task-not-started-ink: #713d45; --task-in-progress-bg: #f8edc9; --task-in-progress-border: #bda056; --task-in-progress-ink: #69541c; --task-completed-bg: #dcf0e2; --task-completed-border: #82b592; --task-completed-ink: #315e3e; --task-flow-ink: #d3b25b; --task-flow-light: #fff1ae; }
+:root { --task-not-started-ink: #b5e2c1; --task-in-progress-ink: #f4b8bd; --task-completed-ink: #f4dfa1; --task-edge-pending: #bac6d5; --task-edge-completed: #82b592; --task-flow-ink: #f1c65f; --task-flow-light: #ffe5a1; }
 * { box-sizing: border-box; }
 html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
 body { font-size: var(--fs-body); letter-spacing: 0; }
@@ -6782,27 +6808,35 @@ button { color: inherit; }
 .topbar-button { padding: 0 var(--sp-cozy); font-size: var(--fs-body); }
 .topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
 .main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
-.run-overview { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-default); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
-.run-overview-item { min-width: 0; display: flex; flex-wrap: wrap; align-content: start; align-items: baseline; gap: var(--sp-cozy); }
-.run-overview-item h2 { flex-basis: 100%; margin: 0; color: var(--muted); font-size: var(--fs-label); font-weight: 500; line-height: var(--lh-snug); }
+.run-overview { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-snug); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
+.run-overview-item { min-width: 0; display: flex; flex-wrap: wrap; align-content: start; align-items: baseline; gap: var(--sp-snug) var(--sp-default); }
+.run-overview-item h2 { flex-basis: 100%; margin: 0; color: var(--muted); font-size: var(--fs-label); font-weight: 500; line-height: var(--lh-flat); }
 .run-overview-value { flex-basis: 100%; min-width: 0; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-entity-body); line-height: var(--lh-snug); }
 .run-overview-note { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-snug); }
 .run-overview-result { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .run-overview-action { min-height: 28px; max-width: 100%; padding: var(--sp-cozy); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: var(--fs-label); line-height: var(--lh-snug); cursor: pointer; }
+.run-overview .run-overview-action { min-height: 24px; padding: 0; border: 0; border-radius: 0; color: var(--accent); font-family: inherit; line-height: var(--lh-flat); text-decoration: underline; text-underline-offset: 3px; }
 .run-overview-action:focus-visible, .run-overview-result:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .run-overview[data-state="blocked"] [data-overview-item="blocker"] .run-overview-value { color: var(--amber); }
 @media (max-width: 1024px) { .run-overview { grid-template-columns: minmax(0,1fr); } }
-.run-work-list { flex-basis: 100%; width: 100%; list-style: none; padding: 0; margin: 0; }
-.run-work-item { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); padding-block: var(--sp-tight); }
-.run-work-item > span { min-width: 0; overflow-wrap: anywhere; }
+.run-work-list { flex-basis: 100%; width: 100%; display: flex; flex-wrap: wrap; gap: var(--sp-snug) var(--sp-section); list-style: none; padding: 0; margin: 0; }
+.run-work-item { min-width: 0; max-width: 100%; display: inline-flex; align-items: baseline; justify-content: flex-start; gap: var(--sp-cozy); padding-block: 0; }
+.run-work-item > span { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-body); line-height: var(--lh-flat); }
 .run-work-item .run-overview-action { flex-shrink: 0; }
-.run-work-more { width: 100%; }
+.run-work-more { min-width: 0; }
+.run-work-more[open] { flex-basis: 100%; }
+.run-work-more > summary { min-height: 24px; display: list-item; line-height: var(--lh-flat); }
+.run-work-more[open] > .run-work-list { margin-top: var(--sp-cozy); }
 .run-work-more > summary, .graph-record-controls > summary, .status-records > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-label); }
+.run-overview-activity { flex-wrap: nowrap; gap: var(--sp-cozy); }
+.run-overview-activity h2 { flex: 0 0 auto; }
+.run-overview-activity .run-overview-value { flex: 0 1 auto; display: block; white-space: nowrap; text-overflow: ellipsis; line-height: var(--lh-flat); }
+.run-overview-activity .run-overview-note { flex: 0 0 auto; white-space: nowrap; line-height: var(--lh-flat); }
 .run-records-content { display: grid; gap: var(--sp-cozy); max-height: 40vh; overflow: auto; padding-top: var(--sp-cozy); }
 .run-context-technical { display: flex; flex-wrap: wrap; gap: var(--sp-cozy) var(--sp-section); padding-top: var(--sp-cozy); }
 .graph-record-controls[open] .graph-relation-summary { display: block; }
 .status-records { border-top: 1px solid var(--line); padding-inline: var(--sp-cozy); }
-@media (max-width: 720px) { .run-overview { gap: var(--sp-cozy); padding: var(--sp-cozy); max-height: 36dvh; overflow: auto; } }
+@media (max-width: 720px) { .run-overview { padding: var(--sp-cozy); max-height: 36dvh; overflow: auto; } .run-overview-activity { flex-wrap: wrap; } }
 .run-context { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--sp-cozy) var(--sp-section); padding: var(--sp-snug) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-context-heading { min-width: 0; grid-column: 1 / -1; }
 .run-context-heading > .context-kicker { display: none; }
@@ -6874,12 +6908,12 @@ button { color: inherit; }
 .work-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); min-height: 38px; padding: 0 var(--sp-cozy); border-bottom: 1px solid var(--line); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; letter-spacing: .04em; }
 .work-column-header span:first-child { display: inline-flex; align-items: center; gap: var(--sp-snug); }
 .work-column-header span:first-child::before { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); content: ""; }
-.work-column[data-column="todo"] { --work-state-bg: var(--task-not-started-bg); --work-state-ink: var(--task-not-started-ink); --work-state-border: var(--task-not-started-border); }
-.work-column[data-column="doing"] { --work-state-bg: var(--task-in-progress-bg); --work-state-ink: var(--task-in-progress-ink); --work-state-border: var(--task-in-progress-border); }
-.work-column[data-column="done"] { --work-state-bg: var(--task-completed-bg); --work-state-ink: var(--task-completed-ink); --work-state-border: var(--task-completed-border); }
-.work-column[data-column] .work-column-header span:first-child::before { background: var(--work-state-border); }
+.work-column[data-column="todo"] { --work-state-ink: var(--task-not-started-ink); }
+.work-column[data-column="doing"] { --work-state-ink: var(--task-in-progress-ink); }
+.work-column[data-column="done"] { --work-state-ink: var(--task-completed-ink); }
+.work-column[data-column] .work-column-header span:first-child::before { background: var(--dim); }
 .work-column[data-column="review"] .work-column-header span:first-child::before { background: var(--amber); }
-.work-column[data-column] .work-item-kicker span:last-child { padding: var(--sp-hairline) var(--sp-snug); border: 1px solid var(--work-state-border); border-radius: 4px; color: var(--work-state-ink); background: var(--work-state-bg); }
+.work-column[data-column] .work-item-kicker span:last-child { color: var(--work-state-ink); }
 .work-column-count { display: grid; min-width: 20px; height: 20px; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--text); background: #090e15; }
 .work-column-list { display: grid; align-content: start; gap: var(--sp-snug); padding: var(--sp-cozy); overflow: auto; }
 .work-item-card { min-width: 0; display: grid; gap: var(--sp-snug); padding: var(--sp-cozy); border: 1px solid #2a3445; border-left: 3px solid #53647e; border-radius: var(--radius-sm); background: #141b25; color: var(--text); text-align: left; cursor: pointer; }
@@ -6998,7 +7032,7 @@ button { color: inherit; }
 .edge-flow-tracer { stroke-width: 3.4; stroke-dasharray: 24 96; stroke-dashoffset: 0; }
 .edge-flow-tracer[data-stage-focus="recorded"], .edge-flow-tracer[data-stage-focus="live"] { opacity: 0; animation: none; }
 .edge-flow-particle { opacity: 0; pointer-events: none; }
-.edge-flow-particle[data-stage-focus="recorded"], .edge-flow-particle[data-stage-focus="live"] { r: calc(3.2px / var(--camera-scale, 1)); fill: var(--task-flow-light); stroke: var(--task-flow-ink); stroke-width: calc(1px / var(--camera-scale, 1)); opacity: 1; filter: drop-shadow(0 0 4px rgba(211,178,91,.7)); }
+.edge-flow-particle[data-stage-focus="recorded"], .edge-flow-particle[data-stage-focus="live"] { r: calc(5.5px / var(--camera-scale, 1)); fill: var(--task-flow-light); stroke: var(--task-flow-ink); stroke-width: calc(1.5px / var(--camera-scale, 1)); opacity: 1; filter: drop-shadow(0 0 6px rgba(241,198,95,.9)); }
 @keyframes live-flow { to { stroke-dashoffset: -120; } }
 @keyframes stage-route-flow { to { stroke-dashoffset: -120; } }
 .node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: var(--sp-snug); width: 232px; min-height: 140px; max-height: 152px; padding: var(--sp-default); overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #151d29; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.28); cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, opacity .18s ease; }
@@ -7394,25 +7428,21 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .node-capability { min-height: 38px; padding: var(--sp-snug) var(--sp-cozy); }
   .node-capability-kind, .node-capability-value, .node-capability-state { font-size: var(--fs-entity-body); }
 }
-/* Task colors are shared with the work board. These rules deliberately follow
- * every semantic-zoom variant: changing camera tier must never change a state. */
-.node-card[data-task-state="not_started"] { --node-state-bg: var(--task-not-started-bg); --node-state-border: var(--task-not-started-border); --node-state-ink: var(--task-not-started-ink); }
-.node-card[data-task-state="in_progress"] { --node-state-bg: var(--task-in-progress-bg); --node-state-border: var(--task-in-progress-border); --node-state-ink: var(--task-in-progress-ink); }
-.node-card[data-task-state="completed"] { --node-state-bg: var(--task-completed-bg); --node-state-border: var(--task-completed-border); --node-state-ink: var(--task-completed-ink); }
-.graph-canvas .node-card[data-task-state], .graph-canvas[data-semantic-zoom] .node-card[data-task-state] { --text: #26332d; --muted: #505b54; --completion-bright: #3d5950; --running: var(--node-state-ink); --green: var(--task-completed-ink); --accent: #216e73; --line: var(--node-state-border); --line-strong: var(--node-state-border); color-scheme: light; color: var(--text); background: var(--node-state-bg); border: 1px solid var(--node-state-border); border-left: 4px solid var(--node-state-border); box-shadow: 0 5px 18px rgba(0,0,0,.22); opacity: 1; animation: none; }
+/* Only the status words use the task palette. Cards, titles, capability chips,
+ * and focus retain the dark neutral surface across both camera tiers. */
+.node-card[data-task-state="not_started"] { --node-state-ink: var(--task-not-started-ink); }
+.node-card[data-task-state="in_progress"] { --node-state-ink: var(--task-in-progress-ink); }
+.node-card[data-task-state="completed"] { --node-state-ink: var(--task-completed-ink); }
+.graph-canvas .node-card[data-task-state], .graph-canvas[data-semantic-zoom] .node-card[data-task-state] { color: var(--text); background: #151d29; border: 1px solid var(--line); border-left: 3px solid #53647e; box-shadow: 0 8px 24px rgba(0,0,0,.28); opacity: 1; animation: none; }
 .graph-canvas[data-semantic-zoom] .node-card[data-task-state][data-declared-not-started="true"] { border-style: dashed; }
-.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-card-top { color: var(--node-state-ink); }
-.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-marker { color: var(--node-state-ink); box-shadow: none; }
-.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-title { color: var(--text); }
-.node-card[data-task-state] .node-glyph { color: var(--node-state-ink); border-color: var(--node-state-border); background: rgba(255,255,255,.35); }
-.node-card[data-task-state] .node-capability, .node-card[data-task-state] .activity-chip { color: var(--text); background: rgba(255,255,255,.55); border-color: var(--node-state-border); }
-.node-card[data-task-state] .node-declared-chip, .node-card[data-task-state] .node-wave-badge { color: var(--node-state-ink); background: rgba(255,255,255,.45); }
-.graph-canvas[data-semantic-zoom] .node-card[data-task-state]:is(:hover, :focus-visible, :focus-within, [data-selected="true"]) { border-color: #216e73; outline: 2px solid #216e73; outline-offset: 3px; box-shadow: 0 5px 18px rgba(0,0,0,.3); }
-.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-identity-button:focus-visible, .graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-capability:focus-visible { border-color: #216e73; outline: 2px solid #216e73; outline-offset: 2px; }
-.graph-canvas[data-semantic-zoom] .node-card[data-task-detail="failed"], .graph-canvas[data-semantic-zoom] .node-card[data-task-detail="blocked"], .graph-canvas[data-semantic-zoom] .node-card[data-task-detail="cancelled"] { border-left-style: double; border-left-width: 6px; }
-.edge[data-task-state="not_started"] { stroke: var(--edge-ink-idle); --edge-screen-width: 1.8px; stroke-dasharray: 5 9; opacity: 1; animation: none; }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-card-top { color: var(--muted); }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-status, .graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-state-short { color: var(--node-state-ink); }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-marker { color: var(--muted); background: currentColor; box-shadow: none; }
+.graph-canvas[data-semantic-zoom] .node-card[data-running-observed="true"] .node-marker { width: calc(14px / var(--camera-scale, 1)); height: calc(14px / var(--camera-scale, 1)); flex: 0 0 calc(14px / var(--camera-scale, 1)); color: var(--task-flow-ink); background: var(--task-flow-ink); box-shadow: 0 0 0 calc(4px / var(--camera-scale, 1)) rgba(241,198,95,.16), 0 0 calc(10px / var(--camera-scale, 1)) rgba(241,198,95,.75); }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state]:is(:hover, :focus-visible, :focus-within, [data-selected="true"]) { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px rgba(88,212,207,.2), 0 8px 24px rgba(0,0,0,.35); }
+.edge[data-task-state="not_started"] { stroke: var(--task-edge-pending); --edge-screen-width: 2.4px; stroke-dasharray: calc(10px / var(--camera-scale, 1)) calc(7px / var(--camera-scale, 1)); opacity: 1; animation: none; }
 .edge[data-task-state="in_progress"] { stroke: var(--task-flow-ink); --edge-screen-width: 2px; stroke-dasharray: none; opacity: 1; animation: none; }
-.edge[data-task-state="completed"] { stroke: var(--task-completed-border); --edge-screen-width: 2px; stroke-dasharray: none; opacity: 1; animation: none; }
+.edge[data-task-state="completed"] { stroke: var(--task-edge-completed); --edge-screen-width: 2px; stroke-dasharray: none; opacity: 1; animation: none; }
 .edge[data-task-state="in_progress"][data-task-detail="unconfirmed"], .edge[data-task-state="in_progress"][data-task-detail="result_unconfirmed"] { stroke: var(--edge-ink-dim); stroke-dasharray: 3 6; }
 .edge[data-task-detail="failed"] { stroke: var(--danger); stroke-dasharray: 3 6; }
 .edge[data-task-detail="blocked"], .edge[data-task-detail="cancelled"] { stroke: var(--amber); stroke-dasharray: 3 6; }
@@ -7539,7 +7569,7 @@ export function renderLiveControlRoomPage({
           <div class="graph-stage" data-live-graph-viewport>
             <h1 class="sr-only" id="graph-title" data-live-graph-title data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
             <details class="stage-overview" aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-stage-rail-state="collapse" data-i18n-en="Collapse" data-i18n-zh="收起">收起</span><span data-stage-rail-state="expand" data-i18n-en="Expand" data-i18n-zh="展开">展开</span></summary><div class="stage-overview-body"><ol class="stage-rail" data-live-stage-rail></ol></div></details>
-            <div class="graph-stage-bar"><details class="graph-record-controls"><summary data-i18n-en="Map settings" data-i18n-zh="图表设置">图表设置</summary><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span></details><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Relations · State key" data-i18n-zh="关系连线 · 状态图例">关系连线 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Cards: pale red = not started · pale yellow = in progress · pale green = completed. Lines: Gray dashed = queued · Gold moving dot = running (observed) · Green solid = done · Amber dashed = blocked. Arrows = dependencies; no arrow = ownership · Dashed card = declared, not started" data-i18n-zh="卡片：淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行">卡片：淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
+            <div class="graph-stage-bar"><details class="graph-record-controls"><summary data-i18n-en="Map settings" data-i18n-zh="图表设置">图表设置</summary><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span></details><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Relations · State key" data-i18n-zh="关系连线 · 状态图例">关系连线 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Status text: pale red = in progress · pale yellow = completed · pale green = not started. Gold node dot = actually running. Lines: Gray dashed = queued · Gold moving dot = running (observed) · Green solid = done · Amber dashed = blocked. Arrows = dependencies; no arrow = ownership · Dashed card = declared, not started" data-i18n-zh="状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始。节点金点＝实际运行中。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行">状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始。节点金点＝实际运行中。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
