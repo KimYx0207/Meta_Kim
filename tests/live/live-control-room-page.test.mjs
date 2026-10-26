@@ -2888,7 +2888,7 @@ test("two or three ownership siblings fit the observed short canvas without clip
 test("a narrow run pane scrolls to its canvas budget so all nine ownership children fit Overview", () => {
   const observed = { width: 884, height: 223.72 };
   const inset = { top: 26, right: 26, bottom: 26, left: 26 };
-  const condition = "@media (min-width: 721px) and (max-width: 1024px)";
+  const condition = "@media (min-width: 721px) and (max-width: 900px)";
   const cameraPolicy = loadLiveGraphCameraPolicy();
   const rules = stylesheetRules(renderLiveControlRoomPage());
   const allocatedHeight = lengthToPixels(resolvedDeclaration(rules, {
@@ -2896,10 +2896,17 @@ test("a narrow run pane scrolls to its canvas budget so all nine ownership child
   }));
   assert.equal(allocatedHeight, loadLiveChromeBudget().minCanvasHeightPx, "responsive sizing uses the existing canvas budget");
   assert.equal(resolvedDeclaration(rules, { selector: '.main:has(.workspace-grid[data-work-view="run"])', property: "overflow-y", condition }), "auto");
-  assert.equal(resolvedDeclaration(rules, { selector: '.main:has(.workspace-grid[data-work-view="run"])', property: "grid-template-rows", condition }), "auto auto minmax(min-content, 1fr)");
+  assert.equal(resolvedDeclaration(rules, { selector: '.main:has(.workspace-grid[data-work-view="run"])', property: "display", condition }), "block", "scene dimensions cannot inflate an intrinsic main grid track");
   for (const selector of ['.workspace-grid[data-work-view="run"]', '.workspace-grid[data-work-view="run"] .graph-panel', '.workspace-grid[data-work-view="run"] .graph-stage']) {
-    assert.equal(resolvedDeclaration(rules, { selector, property: "min-height", condition }), "min-content", selector + " must carry the canvas floor through its ancestor tracks");
+    assert.equal(resolvedDeclaration(rules, { selector, property: "min-height", condition }), "0", selector + " must not promote world-scene height into an intrinsic viewport floor");
   }
+  for (const property of ["height", "max-height"]) assert.equal(lengthToPixels(resolvedDeclaration(rules, {
+    selector: '.workspace-grid[data-work-view="run"] .graph-canvas', property, condition,
+  })), allocatedHeight, property + " must bound the same definite measured viewport");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .graph-canvas', property: "flex", condition }), "0 0 " + allocatedHeight + "px", "flex layout cannot grow the viewport from its scene content");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .graph-panel', property: "display", condition }), "block", "auto grid tracks must not distribute intrinsic world height into the graph and collapsed replay");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .graph-panel', property: "align-self", condition }), "start", "a taller neighboring panel must not stretch the graph container");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .evidence-panel[data-open="false"]', property: "display", condition }), "none", "a hidden zero-width inspector must not contribute its text's min-content height to the row");
   assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"]', property: "height", condition }), "auto");
   assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"]', property: "overflow", condition }), "visible");
   const nodes = [
