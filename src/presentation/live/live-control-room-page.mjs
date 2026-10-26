@@ -7375,6 +7375,13 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
 }
 @media (max-width: 380px) { .brand-title { display: none; }.topbar-button { font-size: var(--fs-label); }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: var(--sp-cozy); } }
 @media (min-width: 721px) and (max-width: 1024px) {
+  /* Narrow panes need room for the complete topology. Keep the established
+   * canvas budget and let the main reading surface scroll when the header and
+   * overview consume the viewport, rather than cropping a min-scale graph. */
+  .main:has(.workspace-grid[data-work-view="run"]) { grid-template-rows: auto auto minmax(min-content, 1fr); overflow-x: hidden; overflow-y: auto; }
+  .workspace-grid[data-work-view="run"] { height: auto; min-height: min-content; overflow: visible; }
+  .workspace-grid[data-work-view="run"] .graph-panel, .workspace-grid[data-work-view="run"] .graph-stage { min-height: min-content; }
+  .workspace-grid[data-work-view="run"] .graph-canvas { min-height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; }
   .node-card { padding: var(--sp-roomy); gap: var(--sp-cozy); }
   .node-summary { display: none; }
   .node-owner-line { display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-cozy); }

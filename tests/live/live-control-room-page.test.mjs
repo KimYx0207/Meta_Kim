@@ -2885,6 +2885,48 @@ test("two or three ownership siblings fit the observed short canvas without clip
   }
 });
 
+test("a narrow run pane scrolls to its canvas budget so all nine ownership children fit Overview", () => {
+  const observed = { width: 884, height: 223.72 };
+  const inset = { top: 26, right: 26, bottom: 26, left: 26 };
+  const condition = "@media (min-width: 721px) and (max-width: 1024px)";
+  const cameraPolicy = loadLiveGraphCameraPolicy();
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const allocatedHeight = lengthToPixels(resolvedDeclaration(rules, {
+    selector: '.workspace-grid[data-work-view="run"] .graph-canvas', property: "min-height", condition,
+  }));
+  assert.equal(allocatedHeight, loadLiveChromeBudget().minCanvasHeightPx, "responsive sizing uses the existing canvas budget");
+  assert.equal(resolvedDeclaration(rules, { selector: '.main:has(.workspace-grid[data-work-view="run"])', property: "overflow-y", condition }), "auto");
+  assert.equal(resolvedDeclaration(rules, { selector: '.main:has(.workspace-grid[data-work-view="run"])', property: "grid-template-rows", condition }), "auto auto minmax(min-content, 1fr)");
+  for (const selector of ['.workspace-grid[data-work-view="run"]', '.workspace-grid[data-work-view="run"] .graph-panel', '.workspace-grid[data-work-view="run"] .graph-stage']) {
+    assert.equal(resolvedDeclaration(rules, { selector, property: "min-height", condition }), "min-content", selector + " must carry the canvas floor through its ancestor tracks");
+  }
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"]', property: "height", condition }), "auto");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"]', property: "overflow", condition }), "visible");
+  const nodes = [
+    { id: "owner", kind: "main_agent", isMain: true, label: "主任务" },
+    ...Array.from({ length: 9 }, (_, index) => ({ id: "child-" + index, kind: "worker", label: "子任务 " + index })),
+  ];
+  const fixture = { nodes, edges: nodes.slice(1).map((node) => ({ id: "ownership-" + node.id, from: "owner", to: node.id, kind: "contains" })) };
+  const original = graphLayoutHarness(observed).layoutGraph(fixture);
+  const clipped = resolveOverviewCamera(observed, original.bounds, inset, cameraPolicy);
+  assert.equal(clipped.wholeGraphFits, false, "the actual 884x223.72 canvas reproduces the insufficient-space defect");
+  assert.equal(clipped.scale, cameraPolicy.minScale, "the old allocation hits the unchanged zoom floor");
+  const canvas = { width: observed.width, height: allocatedHeight };
+  const layout = graphLayoutHarness(canvas).layoutGraph(fixture);
+  const camera = resolveOverviewCamera(canvas, layout.bounds, inset, cameraPolicy);
+  assert.equal(layout.positions.size, 10);
+  assert.equal(layout.arrangement.rows, 2, "the additional real viewport height permits a wrapped layout");
+  assert.equal(camera.wholeGraphFits, true, "Overview now contains all recorded task nodes");
+  assert.ok(camera.scale >= cameraPolicy.minScale);
+  for (const box of layout.positions.values()) {
+    assert.ok(box.height >= 333, "full-card reservations do not shrink to make the test pass");
+    const left = camera.x + box.x * camera.scale, top = camera.y + box.y * camera.scale;
+    const right = left + box.width * camera.scale, bottom = top + box.height * camera.scale;
+    assert.ok(left >= inset.left && top >= inset.top && right <= canvas.width - inset.right && bottom <= canvas.height - inset.bottom,
+      "the complete footprint of every card stays within the allocated canvas");
+  }
+});
+
 const RANK_FIXTURE_WORKER = (id, second) => ({
   id,
   label: id.toUpperCase(),
