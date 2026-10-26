@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveLiveRunOverview, resolveLiveNativeActivity, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveTaskLifecycle, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, plainLiveTaskLabel, liveWorkOverviewCopy, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
+import { resolveLiveRunOverview, resolveLiveNativeActivity, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveTaskLifecycle, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveWorkOverviewCopy, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
 import { serializeLocalFeedbackResolvers } from "../../src/presentation/live/live-feedback-draft.mjs";
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
 
@@ -357,4 +357,84 @@ test("the actual page places the compact overview before the graph and uses the 
   const client = html.match(/<script>\s*([\s\S]*?)<\/script>/u)?.[1];
   assert.ok(client);
   assert.doesNotThrow(() => new Function(client));
+});
+
+/** Native return fixtures contain opaque synthetic bindings, never real sessions. */
+function nativeReturnedTask(index = 1) {
+  const runId = "native-codex-11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222";
+  const id = "agent:" + String(index).padStart(20, "0");
+  const taskPacketId = "native-task:" + String(index).padStart(20, "0");
+  return { id, taskPacketId, kind: "agent", runtime: "codex", status: "in_doubt", displayState: "in_doubt", active: false,
+    executionState: "executed", terminalEvidence: [], timing: { completedAt: at }, lastAt: at,
+    workerExecutionEvidence: [{ runId, taskPacketId, nodeId: id, evidenceKind: "native_host_observation", sourceKind: "codex_desktop_native_session",
+      executionObserved: true, synthetic: false, sourceEventId: "source-" + index + ":return", observedAt: at, sourceDigest: "a".repeat(64) }] };
+}
+
+test("precisely bound native child returns finish the task display without promoting acceptance or audit state", () => {
+  const returned = nativeReturnedTask();
+  const runId = returned.workerExecutionEvidence[0].runId;
+  const before = JSON.stringify(returned);
+  assert.deepEqual(resolveLiveTaskLifecycle(returned, runId), { state: "completed", detail: "result_unconfirmed" });
+  assert.equal(JSON.stringify(returned), before);
+  const base = returned.workerExecutionEvidence[0];
+  for (const changed of [{ runId: "other" }, { taskPacketId: "other" }, { nodeId: "other" }, { evidenceKind: "owner_reported" },
+    { sourceKind: "other" }, { executionObserved: false }, { synthetic: true }, { sourceEventId: "source-1:spawn" },
+    { sourceDigest: "a".repeat(63) }, { sourceDigest: "g".repeat(64) }, { observedAt: "2026-02-30T08:00:00Z" }, { observedAt: "invalid" }]) {
+    assert.equal(resolveLiveTaskLifecycle({ ...returned, workerExecutionEvidence: [{ ...base, ...changed }] }, runId).state, "in_progress", JSON.stringify(changed));
+  }
+  for (const changed of [{ active: true }, { displayState: "active" }, { status: "active" }, { executionState: "executing" },
+    { lastAt: "2026-10-22T08:01:00Z" }, { firstAt: "2026-10-22T08:01:00Z" }]) {
+    assert.equal(resolveLiveTaskLifecycle({ ...returned, ...changed }, runId).state, "in_progress", JSON.stringify(changed));
+  }
+  assert.equal(resolveLiveTaskLifecycle(returned, "other-turn").state, "in_progress");
+  assert.equal(resolveLiveTaskLifecycle({ ...returned, isMain: true }, runId).state, "in_progress");
+  assert.equal(resolveLiveTaskLifecycle({ ...returned, workerExecutionEvidence: [] }, runId).state, "in_progress");
+  const client = new Function(serializeLiveRunOverviewResolvers() + "; return resolveLiveTaskLifecycle;")();
+  assert.deepEqual(client(returned, runId), resolveLiveTaskLifecycle(returned, runId));
+});
+
+test("a native main task stays in progress after every child returns while all returned children are counted", () => {
+  const nodes = Array.from({ length: 6 }, (_, index) => nativeReturnedTask(index + 1));
+  const runId = nodes[0].workerExecutionEvidence[0].runId;
+  const fixture = snapshot({ run: { id: runId, observationKind: "native_execution", active: true, status: "active" },
+    nodes: [{ id: "main", kind: "agent", isMain: true, active: true, status: "active" }, ...nodes] });
+  const lifecycle = resolveLiveRunTaskLifecycle(fixture);
+  assert.equal(lifecycle.state, "in_progress");
+  assert.equal(lifecycle.completedCount, 6);
+  assert.equal(lifecycle.totalCount, 6);
+  assert.equal(lifecycle.verificationPendingCount, 0);
+  assert.equal(liveTaskLifecycleCopy(lifecycle, "zh").progress, "任务完成 6/6");
+  const finished = { ...fixture, run: { ...fixture.run, active: false, status: "in_doubt" } };
+  assert.equal(resolveLiveRunTaskLifecycle(finished).state, "completed");
+  assert.equal(resolveLiveRunTaskLifecycle(finished).detail, "result_unconfirmed");
+  const client = new Function(serializeLiveRunOverviewResolvers() + "; return resolveLiveNodeTaskLifecycle;")();
+  assert.equal(client(fixture.nodes[0], fixture).state, "in_progress");
+  assert.equal(client(finished.nodes[0], finished).state, "completed");
+  assert.equal(client(fixture.nodes[0], { ...finished, nodes: [fixture.nodes[0]] }).state, "in_progress", "inactive main status alone never supplies child completion");
+  assert.equal(finished.nodes[0].status, "active", "display aggregation leaves the original main audit record intact");
+});
+
+test("native display captions use actual coarse roles and never treat a dispatch alias as a task brief", () => {
+  const captions = [["explorer", "问题排查 1", "Investigation 1"], ["javascript-pro", "代码实现 1", "Code implementation 1"],
+    ["code-reviewer", "代码检查 1", "Code review 1"], ["ui-ux-designer", "页面设计 1", "Page design 1"], ["meta-prism", "质量检查 1", "Quality review 1"],
+    ["subtask", "子任务 1", "Subtask 1"]];
+  const client = new Function(serializeLiveRunOverviewResolvers() + "; return liveTaskDisplayLabel;")();
+  for (const [nativeTaskCaption, zh, en] of captions) {
+    const task = { task: "internal_alias", nativeTaskCaption, nativeTaskOrdinal: 1 };
+    assert.equal(liveTaskDisplayLabel(task, "zh"), zh);
+    assert.equal(liveTaskDisplayLabel(task, "en"), en);
+    assert.equal(client(task, "en"), en);
+  }
+  assert.equal(liveTaskDisplayLabel({ task: "用户保存的工作目标" }, "zh"), "用户保存的工作目标");
+});
+
+test("only the known native run placeholder receives ordinary bilingual header copy", () => {
+  const client = new Function(serializeLiveRunOverviewResolvers() + "; return liveRunDisplayTitle;")();
+  const run = { observationKind: "native_execution", title: "当前 Codex 真实执行记录" };
+  assert.equal(client(run, "zh"), "本次对话的工作");
+  assert.equal(client(run, "en"), "Work in this chat");
+  assert.equal(client({ ...run, title: "用户自己的任务标题" }, "zh"), "用户自己的任务标题");
+  assert.equal(client({ ...run, title: "检查 turn 0 与原始目标" }, "zh"), "检查 turn 0 与原始目标");
+  assert.equal(client({ title: run.title }, "zh"), run.title);
+  assert.match(renderLiveControlRoomPage(), /setText\(contextTitle, liveRunDisplayTitle\(snapshot\.run, currentLanguage\)\)/u);
 });

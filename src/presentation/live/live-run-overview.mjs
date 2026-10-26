@@ -85,6 +85,32 @@ export function normalizeLiveOwnerReport(node, runId = node?.runId) {
     evidenceLevel: "owner_reported", nativeInvocationVerified: false };
 }
 
+/** Retain only an exactly bound native child return, never a spawn acknowledgement. */
+export function normalizeLiveNativeTaskReturn(node, runId = node?.runId) {
+  const boundRun = overviewText(runId);
+  const taskPacketId = overviewText(node?.taskPacketId);
+  const nodeId = overviewText(node?.id);
+  if (!node || node.isMain === true || !["agent", "worker"].includes(overviewState(node.kind))
+    || !boundRun || !taskPacketId || !nodeId || (node.runId && node.runId !== boundRun)
+    || node.executionState !== "executed" || node.active === true
+    || [node.status, node.displayState].some((state) => ["active", "running", "live"].includes(overviewState(state)))) return null;
+  const candidates = [node.nativeReturnEvidence, ...(Array.isArray(node.workerExecutionEvidence) ? node.workerExecutionEvidence.slice(0, 256) : [])];
+  const records = candidates.flatMap((record) => {
+    if (!record || record.runId !== boundRun || record.taskPacketId !== taskPacketId || record.nodeId !== nodeId
+      || record.evidenceKind !== "native_host_observation" || record.sourceKind !== "codex_desktop_native_session"
+      || record.executionObserved !== true || record.synthetic !== false
+      || typeof record.sourceEventId !== "string" || record.sourceEventId !== overviewText(record.sourceEventId)
+      || !/^.+:return$/u.test(record.sourceEventId) || typeof record.sourceDigest !== "string" || !/^[a-f0-9]{64}$/iu.test(record.sourceDigest)) return [];
+    const observedAt = overviewTimestamp(record.observedAt);
+    if (!observedAt || [node.firstAt, node.lastAt, node.startedAt, node.timing?.startedAt, node.timing?.completedAt]
+      .map(overviewTimestamp).some((time) => time && time > observedAt)) return [];
+    return [{ runId: boundRun, taskPacketId, nodeId, evidenceKind: "native_host_observation", sourceKind: "codex_desktop_native_session",
+      executionObserved: true, synthetic: false, sourceEventId: record.sourceEventId, observedAt, sourceDigest: record.sourceDigest.toLowerCase() }];
+  });
+  records.sort((left, right) => right.observedAt.localeCompare(left.observedAt) || left.sourceEventId.localeCompare(right.sourceEventId));
+  return records[0] || null;
+}
+
 /** Present task progress independently of execution provenance and acceptance. */
 export function resolveLiveTaskLifecycle(node, runId = node?.runId) {
   if (!node || typeof node !== "object" || (node.runId && runId && node.runId !== runId)) return { state: "in_progress", detail: "unconfirmed" };
@@ -96,12 +122,13 @@ export function resolveLiveTaskLifecycle(node, runId = node?.runId) {
     return { state: "in_progress", detail: states.find((state) => ["failed", "blocked", "cancelled"].includes(state)) };
   }
   // A currently executing revision takes precedence over an older result.
-  if (["running", "active", "live"].includes(displayState) || (node.active === true && !states.includes("completed"))
+  if (node.executionState === "executing" || ["running", "active", "live"].includes(displayState) || (node.active === true && !states.includes("completed"))
     || (["running", "active", "live"].includes(status) && displayState !== "completed")) return { state: "in_progress", detail: node.observedOnly === true ? "observed" : "" };
   const report = normalizeLiveOwnerReport(node, runId);
   if (report) return report.resultStatus === "reported_complete"
     ? { state: "completed", detail: "verification_pending" }
     : { state: "in_progress", detail: report.resultStatus === "reported_failed" ? "failed" : "blocked" };
+  if (normalizeLiveNativeTaskReturn(node, runId)) return { state: "completed", detail: "result_unconfirmed" };
   if (states.includes("completed")) return runId && !node.runId
     ? { state: "in_progress", detail: "unconfirmed" } : { state: "completed", detail: "" };
   if (node.executionState === "executed") return { state: "in_progress", detail: "result_unconfirmed" };
@@ -132,13 +159,23 @@ export function resolveLiveRunTaskLifecycle(snapshot) {
   if (states.includes("planned") || run.executionEvidenceState === "structural_planning_only") return { state: "not_started", detail: "not_dispatched", ...counts };
   const failure = states.find((state) => ["failed", "blocked", "cancelled"].includes(state));
   if (failure) return { state: "in_progress", detail: failure, ...counts };
+  if (run.observationKind === "native_execution" && run.active === true) return { state: "in_progress", detail: "unfinished", ...counts };
   if (tasks.length) {
-    if (counts.completedCount === counts.totalCount) return { state: "completed", detail: counts.verificationPendingCount ? "verification_pending" : "", ...counts };
+    if (counts.completedCount === counts.totalCount) return { state: "completed", detail: counts.verificationPendingCount ? "verification_pending"
+      : tasks.some((task) => task.detail === "result_unconfirmed") ? "result_unconfirmed" : "", ...counts };
     if (counts.notStartedCount === counts.totalCount) return { state: "not_started", detail: "waiting", ...counts };
     return { state: "in_progress", detail: tasks.find((task) => ["failed", "blocked", "cancelled"].includes(task.detail))?.detail || "unfinished", ...counts };
   }
   const lifecycle = resolveLiveTaskLifecycle({ ...run, runId }, runId);
   return { ...lifecycle, detail: lifecycle.detail || "no_tasks", ...counts };
+}
+
+/** The visible main node shares the run's task aggregate without rewriting audit status. */
+export function resolveLiveNodeTaskLifecycle(node, snapshot) {
+  const runId = overviewText(snapshot?.run?.id || snapshot?.run?.runId);
+  if (node?.isMain === true && runId && (!node.runId || node.runId === runId)
+    && (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).some((item) => item?.id === node.id && item.isMain === true)) return resolveLiveRunTaskLifecycle(snapshot);
+  return resolveLiveTaskLifecycle(node, runId || node?.runId);
 }
 
 /** One bilingual vocabulary for badges, overview, header and workspace columns. */
@@ -162,10 +199,10 @@ export function liveWorkOverviewCopy(language = "zh") {
   const copy = {
     zh: { current: "本次工作", completed: "已做的工作", work: "工作清单", details: "详细记录", inspect: "查看详细记录", more: "查看其余", items: "项",
       waiting: "等待安排工作", unavailable: "工作清单尚未保存", noFiles: "未附可打开的文件", output: "打开成果", feedback: "我有修改意见",
-      attention: "需要处理", activity: "最近活动", unknownTime: "活动时间未记录", latest: "最近记录 · ", measurements: "输出计量", partial: "仅包含已观察到的记录。" },
+      attention: "需要处理", activity: "最近活动", unknownTime: "活动时间未记录", latest: "最近记录 · ", measurements: "输出计量", partial: "仅包含已观察到的记录。", nativeCurrent: "本次对话的工作" },
     en: { current: "Current work", completed: "Work completed", work: "Work list", details: "Details", inspect: "View details", more: "Show remaining", items: "items",
       waiting: "Waiting for work to be scheduled", unavailable: "The work list was not saved", noFiles: "No attached files", output: "Open output", feedback: "Request a change",
-      attention: "Needs attention", activity: "Recent activity", unknownTime: "Activity time not recorded", latest: "Latest timed record · ", measurements: "Output measured", partial: "Only observed records are included." },
+      attention: "Needs attention", activity: "Recent activity", unknownTime: "Activity time not recorded", latest: "Latest timed record · ", measurements: "Output measured", partial: "Only observed records are included.", nativeCurrent: "Work in this chat" },
   };
   return copy[language === "zh" || language === "zh-CN" ? "zh" : "en"];
 }
@@ -196,6 +233,26 @@ export function plainLiveTaskLabel(value, language = "zh") {
     .replace(/有界发现证据/gu, "检索记录").replace(/持久草稿/gu, "保存草稿");
   const first = plain.split(/(?:[。！？!?]\s*|[.;]\s+|\r?\n)/u, 1)[0].trim();
   return first.length > 88 ? first.slice(0, 87) + "…" : first;
+}
+
+/** Native task aliases are identifiers; role captions never invent task intent. */
+export function liveTaskDisplayLabel(node, language = "zh") {
+  if (!node || typeof node !== "object") return plainLiveTaskLabel("", language);
+  if (node.nativeTaskCaption || node.nativeTaskOrdinal) {
+    const captions = { explorer: ["问题排查", "Investigation"], "javascript-pro": ["代码实现", "Code implementation"],
+      "code-reviewer": ["代码检查", "Code review"], "ui-ux-designer": ["页面设计", "Page design"], "meta-prism": ["质量检查", "Quality review"],
+      subtask: ["子任务", "Subtask"] };
+    const caption = Object.prototype.hasOwnProperty.call(captions, node.nativeTaskCaption) ? captions[node.nativeTaskCaption] : captions.subtask;
+    const ordinal = Number.isSafeInteger(node.nativeTaskOrdinal) && node.nativeTaskOrdinal > 0 && node.nativeTaskOrdinal <= 4096 ? " " + node.nativeTaskOrdinal : "";
+    return caption[language === "zh" || language === "zh-CN" ? 0 : 1] + ordinal;
+  }
+  return plainLiveTaskLabel(node.task || node.label, language);
+}
+
+/** Explain only the known native placeholder; a saved user title stays intact. */
+export function liveRunDisplayTitle(run, language = "zh") {
+  if (run?.observationKind === "native_execution" && run.title === "当前 Codex 真实执行记录") return liveWorkOverviewCopy(language).nativeCurrent;
+  return typeof run?.title === "string" && run.title ? run.title : plainLiveTaskLabel("", language);
 }
 
 /** Host replay's display mapping needs its independent actual-invocation fact. */
@@ -255,7 +312,7 @@ function overviewExecutionActivity(snapshot, runId) {
  * A descriptor marked declared stays out of available results; array order never
  * claims a result is newest. Inactive historical rows cannot become current work.
  */
-export function resolveLiveRunOverview(snapshot) {
+export function resolveLiveRunOverview(snapshot, language = "zh") {
   const run = snapshot?.run;
   if (!run || !overviewText(run.id || run.runId)) return { state: "empty", taskLifecycle: resolveLiveRunTaskLifecycle(snapshot), task: null, result: { items: [], declaredCount: 0 }, blocker: null, activity: { item: null, undatedCount: 0 } };
   const runId = overviewText(run.id || run.runId);
@@ -284,11 +341,11 @@ export function resolveLiveRunOverview(snapshot) {
     state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : governance?.active ? "governance_active" : "historical",
     taskLifecycle: resolveLiveRunTaskLifecycle(snapshot),
     governance,
-    task: current ? { label: overviewText(current.task) || overviewText(current.label), nodeId: overviewText(current.id), moreCount: activeNodes.length - 1 } : null,
-    ownerReported: reported ? { count: ownerReports.length, task: { label: overviewText(reported.node.task) || overviewText(reported.node.label),
+    task: current ? { label: liveTaskDisplayLabel(current, language), nodeId: overviewText(current.id), moreCount: activeNodes.length - 1 } : null,
+    ownerReported: reported ? { count: ownerReports.length, task: { label: liveTaskDisplayLabel(reported.node, language),
       nodeId: overviewText(reported.node.id), summary: reported.report.summary, reportedAt: reported.report.reportedAt } } : null,
     result: { items: deliverables.filter((item) => item.availability === "available"), declaredCount: deliverables.filter((item) => item.availability === "declared").length },
-    blocker: blocked ? { kind: "blocked", label: overviewText(blocked.statusReason), nodeLabel: overviewText(blocked.label), nodeId: overviewText(blocked.id), moreCount: blockers.length - 1 }
+    blocker: blocked ? { kind: "blocked", label: overviewText(blocked.statusReason), nodeLabel: liveTaskDisplayLabel(blocked, language), nodeId: overviewText(blocked.id), moreCount: blockers.length - 1 }
       : runBlocked ? { kind: "blocked", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 }
         : overviewText(run.statusReason) ? { kind: "status", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 } : null,
     activity,
@@ -299,6 +356,6 @@ export function resolveLiveRunOverview(snapshot) {
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, resolveLiveTaskLifecycle, liveRunTaskNodes, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, normalizeLiveNativeTaskReturn, resolveLiveTaskLifecycle, liveRunTaskNodes, resolveLiveRunTaskLifecycle, resolveLiveNodeTaskLifecycle, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunDisplayTitle, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }

@@ -26,7 +26,7 @@ import {
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
 import { buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 import { buildLocalFeedbackText, createLocalFeedbackDraftStore, liveDeliverablesForNode, normalizeLiveDeliverables } from "../../src/presentation/live/live-feedback-draft.mjs";
-import { resolveLiveRunOverview, resolveLiveRunTaskLifecycle, resolveLiveTaskLifecycle, liveRunTaskNodes, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, normalizeLiveOwnerReport, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
+import { resolveLiveRunOverview, resolveLiveRunTaskLifecycle, resolveLiveNodeTaskLifecycle, resolveLiveTaskLifecycle, liveRunTaskNodes, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, normalizeLiveOwnerReport, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
 import { serializeLiveTokenUsageResolvers } from "../../src/presentation/live/live-token-usage.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
 import {
@@ -42,7 +42,58 @@ import {
   renderLiveControlRoomPage,
 } from "../../src/presentation/live/live-control-room-page.mjs";
 
-const workOverviewHelpers = { liveWorkOverviewCopy, plainLiveTaskLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport };
+const workOverviewHelpers = { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport };
+
+test("browser normalization keeps only precise native returns and counts six returned tasks without ending active main work", () => {
+  const runId = "native-codex-11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222";
+  const observedAt = "2026-10-22T08:00:00Z";
+  const nodes = Array.from({ length: 7 }, (_, index) => {
+    const id = "agent:" + String(index).padStart(20, "0");
+    const taskPacketId = "native-task:" + String(index).padStart(20, "0");
+    return { id, taskPacketId, kind: "agent", nativeTaskCaption: "javascript-pro", nativeTaskOrdinal: index + 1,
+      task: "internal_alias_" + index, label: "javascript-pro", status: "in_doubt", displayState: "in_doubt", active: false,
+      ownerAgent: "javascript-pro", executionState: index < 6 ? "executed" : "unknown", terminalEvidence: [],
+      timing: { completedAt: index < 6 ? observedAt : null }, lastAt: observedAt,
+      workerExecutionEvidence: [{ runId, taskPacketId, nodeId: id, evidenceKind: "native_host_observation", sourceKind: "codex_desktop_native_session",
+        sourceEventId: "synthetic-source-" + index + (index < 6 ? ":return" : ":spawn"), observedAt, sourceDigest: "a".repeat(64),
+        executionObserved: true, synthetic: false, privatePayload: "PRIVATE RAW PROOF" }] };
+  });
+  const input = { run: { runId, active: true, status: "active", observationKind: "native_execution" }, nodes,
+    provenance: [{ nodeId: nodes[0].id, reasoningExcerpt: "原生任务别名：internal_alias_0；任务说明未记录。" }] };
+  const normalized = runNormalizerHarness({ actualStatus: true })(input);
+  assert.equal(resolveLiveRunTaskLifecycle(input).completedCount, 6);
+  assert.equal(resolveLiveRunTaskLifecycle(normalized).completedCount, 6);
+  assert.equal(resolveLiveRunTaskLifecycle(normalized).state, "in_progress");
+  assert.equal(resolveLiveRunTaskLifecycle(normalized).totalCount, 7);
+  assert.equal(normalized.nodes[0].nativeReturnEvidence.sourceEventId, "synthetic-source-0:return");
+  assert.equal(normalized.nodes[0].nativeTaskCaption, "javascript-pro");
+  assert.equal(normalized.nodes[0].nativeTaskOrdinal, 1);
+  assert.equal(normalized.nodes[0].workerExecutionEvidence, undefined);
+  assert.equal(normalized.nodes[0].nativeInvocationVerified, undefined);
+  assert.equal(normalized.nodes[6].nativeReturnEvidence, undefined);
+  assert.equal(normalized.nodes[0].status, "in_doubt");
+  assert.deepEqual(normalized.provenance, [{ nodeId: nodes[0].id, triggerPromptId: "", reasoningExcerpt: input.provenance[0].reasoningExcerpt.normalize("NFKC") }]);
+  assert.doesNotMatch(JSON.stringify(normalized), /PRIVATE RAW PROOF/u);
+  const page = ordinaryOverviewHarness();
+  page.render(normalized);
+  assert.match(page.text(page.root), /代码实现 1/u);
+  assert.doesNotMatch(page.text(page.root), /internal_alias/u);
+  const makeElement = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {},
+    append(...items) { this.children.push(...items); }, addEventListener() {} });
+  const board = makeElement("section");
+  const html = renderLiveControlRoomPage();
+  const renderBoard = new Function("workspaceBoard", "makeElement", "clearChildren", `
+const currentLanguage = "zh"; const selectedNodeId = null; const usefulNodeMeta = Boolean;
+${serializeLiveRunOverviewResolvers()}
+const nodeStateCopy = (node, runId) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node, runId), currentLanguage).label;
+const nodeStateDetailCopy = (node, runId) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node, runId), currentLanguage).detail;
+${["workspaceColumnForStatus", "appendWorkspaceTag", "renderWorkspaceBoard"].map((name) => shippedHelper(html, name)).join("\n")}
+return renderWorkspaceBoard;`)(board, makeElement, (element) => { element.children = []; });
+  renderBoard(normalized);
+  assert.match(page.text(board), /代码实现 1/u);
+  assert.doesNotMatch(JSON.stringify(board), /internal_alias/u);
+  assert.equal(board.children.find((column) => column.dataset.column === "done").children[1].children.length, 6);
+});
 
 function ordinaryOverviewHarness(language = "zh") {
   const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, listeners: {},
@@ -53,7 +104,7 @@ function ordinaryOverviewHarness(language = "zh") {
   const feedback = [];
   const html = renderLiveControlRoomPage();
   const render = new Function("runOverview", "makeElement", "clearChildren", "helpers", "currentLanguage", "selectNode", "openOverviewFeedback", "observeDeliverableRead", `
-const { resolveLiveRunOverview, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = helpers;
+const { resolveLiveRunOverview, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = helpers;
 const selectedProjectId = "project-a";
 const formatSessionTime = (at) => at;
 const appendObservedTime = (parent, at) => { const time = makeElement("time"); time.dateTime = at; parent.append(time); return time; };
@@ -84,7 +135,7 @@ test("ordinary summary shows seven finished tasks without empty result, blocker 
   assert.equal(first.children.length, 3);
   assert.equal(more.children[1].children.length, 4);
   assert.notEqual(more.open, true);
-  assert.equal(first.children[0].children[0].title, tasks[0].task);
+  assert.equal(first.children[0].children[0].title, "检查 对话回合 0");
   first.children[0].children[1].listeners.click();
   assert.equal(ui.opened[0][0], tasks[0].id);
   const changed = { ...snapshot, nodes: tasks.map((node, index) => index === 2 ? { ...node, task: "第三项标题已更新" } : node) };
@@ -160,12 +211,12 @@ test("workspace cards use public state instead of reviving an inactive queue", (
     addEventListener() {},
   });
   const board = makeElement("div");
-  const render = new Function("workspaceBoard", "makeElement", "clearChildren", "usefulNodeMeta", "localize", "nodeStateCopy", "nodeStateDetailCopy", "resolveLiveTaskLifecycle", "resolveLiveRunTaskLifecycle", "liveTaskLifecycleCopy", "liveRunTaskNodes", "plainLiveTaskLabel",
+  const render = new Function("workspaceBoard", "makeElement", "clearChildren", "usefulNodeMeta", "localize", "nodeStateCopy", "nodeStateDetailCopy", "resolveLiveTaskLifecycle", "resolveLiveRunTaskLifecycle", "liveTaskLifecycleCopy", "liveRunTaskNodes", "plainLiveTaskLabel", "liveTaskDisplayLabel",
     `const currentLanguage='zh'; let selectedNodeId=null; ${source}; return renderWorkspaceBoard;`)(
     board, makeElement, (element) => { element.children = []; }, Boolean, (value) => value,
     (node) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node), "zh").label,
     (node) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node), "zh").detail,
-    resolveLiveTaskLifecycle, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, liveRunTaskNodes, plainLiveTaskLabel,
+    resolveLiveTaskLifecycle, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, liveRunTaskNodes, plainLiveTaskLabel, liveTaskDisplayLabel,
   );
   render({ run: { status: "partial" }, nodes: [
     { id: "old", kind: "agent", status: "queued", displayState: "unreported", active: false, label: "旧任务" },
@@ -2524,18 +2575,21 @@ test("draws curved status-aware edges and a live flow animation with reduced-mot
   assert.match(html, /edge-running/iu);
   assert.match(html, /edge-failed/iu);
   assert.match(html, /edge-queued/iu);
-  assert.match(html, /const stageFocusState\s*=\s*executionRelation\s*&&\s*snapshot\.run\?\.active[\s\S]{0,180}targetState\s*===\s*"active"\s*\?\s*"live"\s*:\s*"none"/u);
+  assert.match(html, /const stageFocusState\s*=\s*snapshot\.run\?\.active\s*&&\s*!terminalRun\s*&&\s*targetLifecycle\.state\s*===\s*"in_progress"[\s\S]{0,180}!edgeProblem[\s\S]{0,160}"unconfirmed", "result_unconfirmed"[\s\S]{0,80}\?\s*"live"\s*:\s*"none"/u);
   assert.match(html, /EXECUTION_EDGE_KINDS\.has\(edge\.kind \|\| "sequence"\)/u);
   assert.match(html, /executionRelation \? nodeClass\(edge\.status\) : "structural"/u);
   assert.match(html, /path\.dataset\.liveFocus\s*=\s*stageFocusState/u);
-  assert.match(html, /\.edge-flow-glow\[data-stage-focus="recorded"\][^{]*\{[^}]*stroke:\s*#d8a84e[^}]*filter:\s*blur\(3px\)/su);
-  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="recorded"\][^{]*\{[^}]*animation:\s*stage-route-flow/su);
-  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="live"\][^{]*\{[^}]*animation:\s*live-flow/su);
+  assert.match(html, /\.edge-flow-glow\[data-stage-focus="recorded"\][^{]*\{[^}]*stroke:\s*var\(--task-flow-ink\)[^}]*filter:\s*blur\(3px\)/su);
+  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="recorded"\], \.edge-flow-tracer\[data-stage-focus="live"\][^{]*\{[^}]*opacity:\s*0[^}]*animation:\s*none/su);
   assert.match(html, /createElementNS\("http:\/\/www\.w3\.org\/2000\/svg", "animateMotion"\)/u);
-  assert.match(html, /!reducedMotion\.matches/u);
-  assert.match(html, /"stage-live":\s*"#58d4cf"[\s\S]{0,80}"stage-recorded":\s*"#d8a84e"/u);
-  assert.match(html, /const replayFocus\s*=\s*executionRelation\s*&&\s*!replayFollowingLive[\s\S]{0,180}\?\s*"recorded"[\s\S]{0,140}path\.dataset\.liveFocus/u);
-  assert.match(html, /replayFocus\s*===\s*"recorded"[\s\S]{0,100}\?\s*"stage-recorded"[\s\S]{0,100}: replayState/u);
+  assert.match(html, /if \(!\["live", "recorded"\]\.includes\(stageFocus\) \|\| reducedMotion\.matches\) return null/u);
+  assert.match(html, /"stage-live":\s*"var\(--task-flow-ink\)"[\s\S]{0,80}"stage-recorded":\s*"var\(--task-flow-ink\)"/u);
+  assert.match(html, /const replayCanFlow\s*=\s*visualState\s*===\s*"in_progress"\s*&&\s*!edgeProblem/u);
+  assert.match(html, /const replayFocus\s*=\s*!replayFollowingLive\s*&&\s*replayCanFlow[\s\S]{0,220}\?\s*"recorded"[\s\S]{0,140}path\.dataset\.liveFocus/u);
+  assert.match(html, /motion\.setAttribute\("dur", "2\.4s"\)/u);
+  assert.match(html, /motion\.setAttribute\("keyPoints", "0\.04;0\.94"\)/u);
+  assert.match(html, /motion\.setAttribute\("calcMode", "linear"\)/u);
+  assert.match(html, /replayFocus\s*===\s*"recorded"[\s\S]{0,100}\?\s*"stage-recorded"[\s\S]{0,100}: "running"/u);
   assert.match(html, /march|dash|flow/iu);
   assert.match(html, /prefers-reduced-motion\s*:\s*reduce/iu);
 });
@@ -2557,7 +2611,8 @@ test("every edge state clears the non-text contrast floor against whatever the c
   // computed against a token that does not apply where the reader is looking.
   for (const token of ["--edge-ink-dim", "--edge-ink-idle", "--green", "--amber", "--danger"]) {
     const shadowing = rules
-      .filter((rule) => rule.conditions.length > 0 || !rule.selectors.includes(":root"))
+      .filter((rule) => (rule.conditions.length > 0 || !rule.selectors.includes(":root"))
+        && !(rule.conditions.length === 0 && rule.selectors.every((selector) => /^\.graph-canvas(?:\[data-semantic-zoom\])? \.node-card\[data-task-state\]$/u.test(selector))))
       .filter((rule) => rule.declarations.some(([property]) => property === token))
       .map((rule) => [...rule.conditions, ...rule.selectors].join(" "));
     assert.deepEqual(shadowing, [], `${token} is declared outside the unconditional :root block, so the measured ink is not the painted one`);
@@ -2708,7 +2763,8 @@ test("lays out high-fanout work as a searched non-crossing grid and ships an iso
   }
   assert.match(html, /nodeId:\s*"demo-requirements"/u);
   assert.match(html, /演示数据 · 非真实运行/u);
-  assert.match(html, /青色流光＝运行中 · 运行中\(observed\) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属/u);
+  assert.match(html, /淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成/u);
+  assert.match(html, /浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成/u);
   assert.match(html, /\.edge-completed\s*\{[^}]*stroke:\s*var\(--green\)[^}]*stroke-dasharray:\s*none/su);
   // Only the dash is pinned here. The opacity used to be pinned at .38 alongside it,
   // and .38 was the defect: 1.41:1 against the canvas, a line the reporter could not
@@ -2797,6 +2853,37 @@ ${helpers.map((name) => shippedHelper(html, name)).join("\n")}\nreturn { layoutG
     resolveSemanticZoom,
   );
 }
+
+test("two or three ownership siblings fit the observed short canvas without clipping the final card", () => {
+  const canvas = { width: 1224, height: 278.5 };
+  const inset = { top: 26, right: 26, bottom: 26, left: 26 };
+  const cameraPolicy = loadLiveGraphCameraPolicy();
+  const { layoutGraph } = graphLayoutHarness(canvas);
+  for (const childCount of [2, 3]) {
+    const nodes = [
+      { id: "owner", kind: "main_agent", isMain: true, label: "演示主线" },
+      ...Array.from({ length: childCount }, (_, index) => ({ id: "child-" + index, kind: "worker", label: "演示子任务 " + index })),
+    ];
+    const edges = nodes.slice(1).map((node) => ({ id: "ownership-" + node.id, from: "owner", to: node.id, kind: "contains" }));
+    const result = layoutGraph({ nodes, edges });
+    const camera = resolveOverviewCamera(canvas, result.bounds, inset, cameraPolicy);
+    assert.equal(result.kind, "fanout", childCount + " siblings must search shapes rather than default to a vertical lane");
+    assert.equal(camera.wholeGraphFits, true, "Overview must not be partial on the observed canvas");
+    assert.ok(camera.scale >= cameraPolicy.minScale, "the fix preserves the camera's legibility floor");
+    assert.equal(resolveSemanticZoom(camera.scale, cameraPolicy), "cell");
+    for (const position of result.positions.values()) {
+      assert.ok(position.height >= 333, "the complete-card reservation remains intact in cell mode");
+      const left = camera.x + position.x * camera.scale;
+      const top = camera.y + position.y * camera.scale;
+      const right = left + position.width * camera.scale;
+      const bottom = top + position.height * camera.scale;
+      assert.ok(left >= inset.left && top >= inset.top, "the entire card starts inside Overview");
+      assert.ok(right <= canvas.width - inset.right && bottom <= canvas.height - inset.bottom,
+        "the entire full-card footprint, including the last child, ends inside Overview");
+    }
+    assert.ok(edges.every((edge) => edge.kind === "contains"), "wrapping never promotes ownership to execution dependency");
+  }
+});
 
 const RANK_FIXTURE_WORKER = (id, second) => ({
   id,
@@ -3126,7 +3213,7 @@ test("adapts service field aliases and safely summarizes structured terminal evi
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#58d4cf["'][\s\S]*completed:\s*["']#5b8cff["'][\s\S]*skipped:\s*["']#585858["']/u);
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']var\(--task-flow-ink\)["'][\s\S]*completed:\s*["']var\(--task-completed-border\)["'][\s\S]*skipped:\s*["']#a3b0c9["']/u);
   assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
   assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
 });
@@ -3435,7 +3522,7 @@ test("annotates planned scheduling waves without turning them into edges or anim
 
 test("keeps the reference-inspired cool-tech surface restrained, stateful, and mobile-bounded", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
-  const themeCss = html.slice(html.lastIndexOf(":root {"));
+  const themeCss = html.slice(html.indexOf(":root {"));
   const variable = (name) => themeCss.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "iu"))?.[1].toLowerCase();
   const pixelVariable = (name) => Number(themeCss.match(new RegExp(`--${name}:\\s*([0-9]+(?:\\.[0-9]+)?)px`, "iu"))?.[1]);
   const rgbToHsl = (hex) => {
@@ -3458,7 +3545,7 @@ test("keeps the reference-inspired cool-tech surface restrained, stateful, and m
   assert.equal(completion, "#68a4ff", "completion must use the cool-blue state color");
   assert.equal(running, "#4fd1c5", "running must use the teal state color");
   assert.equal(new Set([completion, running, success, danger]).size, 4, "completion, running, success, and failed states need distinct colors");
-  assert.doesNotMatch(html, /gold|#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b|#d7af00|#f0d56a|#87d787/iu, "the full generated HTML and script must not retain gold names or warm completion swatches");
+  assert.doesNotMatch(html, /#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b|#d7af00|#f0d56a|#87d787/iu, "the full generated HTML and script must not retain obsolete completion swatches");
   assert.match(themeCss, /--accent:\s*#4fd1c5/iu);
   assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--running\)/su);
   assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--green\)/su);
@@ -3922,7 +4009,7 @@ test("overview reuses guarded timestamp rendering with localized copy and no emp
     const overview = makeElement("section");
     const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "DISPLAY_FORMAT", "currentLanguage", "workHelpers", `
 const selectedProjectId = "";
-const { liveWorkOverviewCopy, plainLiveTaskLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
+const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${["renderRunOverview", "appendObservedTime", "formatTime", "formatSessionTime", "display"].map((name) => shippedHelper(html, name)).join("\n")}
 return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, displayFormat, language, workOverviewHelpers);
@@ -4701,7 +4788,7 @@ test("the run context keeps its title readable at body size so the graph remains
  * 1024px and 29px at 501px, which dropped `琥珀虚线＝阻塞 · 点线＝结构归属` —
  * two of the four states — with the ellipsis as the only hint anything was gone.
  */
-test("the edge legend keeps all four locked edge states at every width", () => {
+test("the graph legend keeps task colors and recorded relationship meanings at every width", () => {
   const html = renderLiveControlRoomPage();
   const rules = stylesheetRules(html);
 
@@ -4727,10 +4814,10 @@ test("the edge legend keeps all four locked edge states at every width", () => {
   // now distinguishes.
   const legend = html.match(/<span class="graph-edge-legend"[^>]*>/u);
   assert.ok(legend, "markup must contain the edge legend");
-  for (const state of ["Green solid = done", "Gray dashed = queued", "Amber dashed = blocked", "Dotted = ownership", "Dashed card = declared, not started", "running (observed)"]) {
+  for (const state of ["pale red = not started", "pale yellow = in progress", "pale green = completed", "Green solid = done", "Gray dashed = queued", "Gold moving dot = running (observed)", "Amber dashed = blocked", "Arrows = dependencies; no arrow = ownership", "Dashed card = declared, not started"]) {
     assert.ok(legend[0].includes(state), `the English legend must document "${state}"`);
   }
-  for (const state of ["绿色实线＝已完成", "灰色虚线＝排队", "琥珀虚线＝阻塞", "点线＝结构归属", "虚线卡片＝声明未执行", "运行中(observed)"]) {
+  for (const state of ["淡红＝未开始", "淡黄＝进行中", "淡绿＝已完成", "浅灰虚线＝未开始", "金色动点＝运行中", "淡绿实线＝已完成", "琥珀虚线＝阻塞", "无箭头＝结构归属", "虚线卡片＝声明未执行", "连线颜色取自目标任务，不表示依赖执行证据"]) {
     assert.ok(legend[0].includes(state), `the Chinese legend must document "${state}"`);
   }
 });
@@ -5626,7 +5713,7 @@ function visibleEdgeGeometryHarness() {
   ];
   const api = new Function(
     "graphState", "graph", "graphScene", "document", "edgeLayer", "GRAPH_CAMERA", "resolveSemanticZoom",
-    "window", "graphNodes", "graphEdges", "layout", "graphNodeById",
+    "window", "graphNodes", "graphEdges", "layout", "graphNodeById", "resolveLiveTaskLifecycle", "resolveLiveNodeTaskLifecycle",
     `let camera = { x: 0, y: 0, scale: 1 };
 const snapshot = { run: { active: true } };
 const terminalRun = false;
@@ -5641,7 +5728,7 @@ const updateMinimap = () => {};
 const updateSelectedNodeVisuals = () => {};
 const updateGraphRelationPresentation = () => {};
 const observeGraphCardSizes = () => {};
-${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
+${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "createGraphEdgeMotion", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
 function draw() {
 ${tail}
 }
@@ -5651,7 +5738,7 @@ return { updateCamera, refreshGraphEdgeGeometry, camera: () => ({ ...camera }) }
     graphState, graph, { style: {} }, { createElementNS: (_namespace, tagName) => makeSvgElement(tagName) },
     makeSvgElement("svg"), loadLiveGraphCameraPolicy(), resolveSemanticZoom,
     { innerWidth: 1351 }, graphNodes, graphEdges, { positions, kind: "fanout" },
-    new Map(graphNodes.map((node) => [node.id, node])),
+    new Map(graphNodes.map((node) => [node.id, node])), resolveLiveTaskLifecycle, resolveLiveNodeTaskLifecycle,
   );
   return { ...api, graph, graphState, dimensionReads: () => dimensionReads };
 }
@@ -6924,7 +7011,7 @@ return (node)=>[nodeDisplayState(node),nodeStateCopy(node),nodeShortStateCopy(no
   const overview = element("section");
   const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "workHelpers", `
 const selectedProjectId='p'; const currentLanguage='zh';
-const { liveWorkOverviewCopy, plainLiveTaskLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
+const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${shippedHelper(html, "renderRunOverview")}
 return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, workOverviewHelpers);
