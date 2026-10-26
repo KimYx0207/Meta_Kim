@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveLiveRunOverview, resolveLiveNativeActivity, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
+import { resolveLiveRunOverview, resolveLiveNativeActivity, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, resolveLiveTaskLifecycle, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, plainLiveTaskLabel, liveWorkOverviewCopy, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
 import { serializeLocalFeedbackResolvers } from "../../src/presentation/live/live-feedback-draft.mjs";
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
 
@@ -44,12 +44,156 @@ test("owner-reported tasks remain separate from active execution, native counter
   assert.equal(result.activity.item, null);
   assert.equal(result.execution, null);
   assert.equal(result.result.items.length, 0);
+  assert.equal(result.taskLifecycle.state, "completed", "the task result is complete while independent proof remains separate");
+  assert.equal(result.taskLifecycle.verificationPendingCount, 1);
+  assert.equal(reported.status, "in_doubt");
+  assert.equal(reported.executionState, "unreported");
   for (const mutation of [{ runId: "other" }, { taskPacketId: "task:other" }, { ownerAgent: "other" }, { nativeInvocationVerified: true }]) {
     assert.equal(resolveLiveRunOverview(snapshot({ nodes: [{ ...reported, ownerReport: { ...report, ...mutation } }] })).ownerReported, null);
   }
   const withExecution = resolveLiveRunOverview(snapshot({ nodes: [reported, node("actually-running")] }));
   assert.equal(withExecution.task.nodeId, "actually-running");
   assert.equal(withExecution.ownerReported.count, 1);
+});
+
+test("task lifecycle exposes exactly three primary states and keeps failure and verification as details", () => {
+  const runId = "run-current";
+  const report = { runId, taskPacketId: "task:one", ownerAgent: "debugger", resultStatus: "reported_complete",
+    summary: "完成本项修复", reportedAt: at, evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+  const reported = { runId, id: "one", kind: "agent", taskPacketId: report.taskPacketId, ownerAgent: report.ownerAgent,
+    active: false, status: "in_doubt", displayState: "unknown", executionState: "unreported", ownerReport: report };
+  const cases = [
+    [{ status: "pending" }, "not_started", "waiting"],
+    [{ status: "running", active: true }, "in_progress", ""],
+    [{ status: "completed" }, "completed", ""],
+    [{ status: "failed" }, "in_progress", "failed"],
+    [{ status: "blocked" }, "in_progress", "blocked"],
+    [{ status: "cancelled" }, "in_progress", "cancelled"],
+    [{ status: "unknown" }, "in_progress", "unconfirmed"],
+    [{ status: "in_doubt", executionState: "executed" }, "in_progress", "result_unconfirmed"],
+    [{ status: "completed", declaredNotStarted: true }, "not_started", "not_dispatched"],
+  ];
+  for (const [input, state, detail] of cases) assert.deepEqual(resolveLiveTaskLifecycle({ runId, ...input }, runId), { state, detail });
+  assert.deepEqual(resolveLiveTaskLifecycle(reported, runId), { state: "completed", detail: "verification_pending" });
+  assert.equal(resolveLiveTaskLifecycle({ ...reported, active: true }, runId).state, "in_progress", "new active work overrides its old successful report even if the audit status is unchanged");
+  assert.equal(resolveLiveTaskLifecycle({ ...reported, active: true, status: "completed", displayState: "active" }, runId).state, "in_progress", "an explicit current active display overrides a stale terminal status");
+  for (const resultStatus of ["reported_failed", "reported_blocked"]) assert.equal(resolveLiveTaskLifecycle({ ...reported, ownerReport: { ...report, resultStatus } }, runId).state, "in_progress");
+  for (const changed of [{ runId: "other" }, { ownerAgent: "other" }, { taskPacketId: "task:other" }, { nativeInvocationVerified: true }]) {
+    assert.equal(resolveLiveTaskLifecycle({ ...reported, ownerReport: { ...report, ...changed } }, runId).state, "in_progress");
+  }
+  assert.equal(resolveLiveTaskLifecycle({ runId: "other", status: "completed" }, runId).state, "in_progress");
+  assert.equal(resolveLiveTaskLifecycle({ status: "completed" }, runId).state, "in_progress", "unbound completion cannot become current-run completion");
+  assert.equal(resolveLiveTaskLifecycle({ ...reported, runId: undefined }, runId).state, "completed", "a correctly bound owner report independently supplies run attribution");
+  assert.equal(liveTaskLifecycleCopy(resolveLiveTaskLifecycle(reported), "zh").label, "已完成");
+  assert.equal(liveTaskLifecycleCopy(resolveLiveTaskLifecycle(reported), "en").label, "Completed");
+  assert.match(liveTaskLifecycleCopy(resolveLiveTaskLifecycle(reported), "zh").detail, /独立验证待完成/u);
+});
+
+test("seven completed task results finish the displayed lifecycle without finishing audit or unfinished work", () => {
+  const runId = "run-current";
+  const tasks = Array.from({ length: 7 }, (_, index) => {
+    const taskPacketId = "task:" + index;
+    return { id: "worker-" + index, runId, taskPacketId, kind: "worker", ownerAgent: "debugger", status: "in_doubt", displayState: "unknown", active: false,
+      executionState: "unreported", ownerReport: { runId, taskPacketId, ownerAgent: "debugger", resultStatus: "reported_complete", summary: "本项完成",
+        reportedAt: at, evidenceLevel: "owner_reported", nativeInvocationVerified: false } };
+  });
+  const fixture = snapshot({ nodes: [{ id: "root", kind: "agent", isMain: true, active: true, status: "active" },
+    { id: "group", kind: "stage", status: "pending" }, ...tasks],
+    run: { id: runId, active: true, status: "in_doubt", governance: { runId, active: true, state: "active", evidenceLevel: "durable_lifecycle" } } });
+  const before = JSON.stringify(fixture);
+  const lifecycle = resolveLiveRunTaskLifecycle(fixture);
+  assert.deepEqual(lifecycle, { state: "completed", detail: "verification_pending", totalCount: 7, completedCount: 7, notStartedCount: 0, inProgressCount: 0, verificationPendingCount: 7 });
+  assert.equal(liveTaskLifecycleCopy(lifecycle, "zh").progress, "任务完成 7/7");
+  assert.equal(resolveLiveRunOverview(fixture).state, "active", "the raw run/audit selector is preserved");
+  assert.equal(JSON.stringify(fixture), before, "display selectors never rewrite task history or evidence");
+  for (const extra of [{ runId, kind: "agent", status: "pending" }, { runId, kind: "agent", status: "active", active: true },
+    { runId, kind: "agent", status: "failed" }, { kind: "worker", status: "completed" }]) {
+    assert.notEqual(resolveLiveRunTaskLifecycle({ ...fixture, nodes: [...fixture.nodes, extra] }).state, "completed");
+  }
+  assert.equal(resolveLiveRunTaskLifecycle({ ...fixture, nodes: [...fixture.nodes, { kind: "worker", runId: "other", status: "pending" }] }).state, "completed");
+  assert.equal(resolveLiveRunTaskLifecycle({ ...fixture, run: { ...fixture.run, executionEvidenceState: "structural_planning_only" } }).state, "not_started");
+  for (const status of ["failed", "blocked", "cancelled"]) {
+    const result = resolveLiveRunTaskLifecycle({ ...fixture, run: { ...fixture.run, displayState: "unknown", status } });
+    assert.equal(result.state, "in_progress");
+    assert.equal(result.detail, status);
+  }
+  assert.notEqual(resolveLiveRunTaskLifecycle({ run: { id: runId }, nodes: [] }).state, "completed");
+  assert.equal(resolveLiveRunTaskLifecycle({ run: { id: runId, status: "completed" }, nodes: [] }).state, "completed", "a server-recorded terminal run needs no invented task count");
+  assert.equal(resolveLiveRunTaskLifecycle({ run: { id: runId, status: "pending" }, nodes: [{ kind: "worker", runId, status: "pending" }] }).state, "not_started");
+});
+
+test("ordinary task labels use a finite glossary and preserve unfamiliar wording", () => {
+  assert.equal(plainLiveTaskLabel("Governed execution", "zh"), "本次工作");
+  assert.equal(plainLiveTaskLabel("", "en"), "Current work");
+  assert.equal(plainLiveTaskLabel("同run带CAS返工，provider与runtime核对。第二句保留在原始详情"), "同任务带版本检查返工，能力来源与运行环境核对");
+  assert.equal(plainLiveTaskLabel("project/global/user Hook与turn终态对账"), "项目/全局/用户 触发脚本与对话回合结束状态核对交付");
+  assert.equal(plainLiveTaskLabel("保留 AcmeSDK v2.1 的用户原话"), "保留 AcmeSDK v2.1 的用户原话");
+  assert.equal(plainLiveTaskLabel("有界发现证据与持久草稿"), "检索记录与保存草稿");
+  assert.equal(plainLiveTaskLabel("x".repeat(100)), "x".repeat(100));
+  assert.equal(plainLiveTaskLabel("旧turn终态" + "检查".repeat(60)).length, 88);
+  assert.equal(liveWorkOverviewCopy("en").completed, "Work completed");
+  const client = new Function(serializeLiveRunOverviewResolvers() + "; return plainLiveTaskLabel;")();
+  assert.equal(client("旧turn终态检查"), plainLiveTaskLabel("旧turn终态检查"));
+});
+
+test("task label glossary preserves natural English in both languages", () => {
+  for (const language of ["zh", "en"]) {
+    for (const title of ["Run tests", "Turn on dark mode", "Write user stories"]) assert.equal(plainLiveTaskLabel(title, language), title);
+    assert.equal(plainLiveTaskLabel("请 Run tests", language), "请 Run tests");
+  }
+});
+
+test("task label glossary preserves complete prose and quoted field names", () => {
+  const client = new Function(serializeLiveRunOverviewResolvers() + "; return plainLiveTaskLabel;")();
+  const titles = [
+    "Run tests. Then review the output",
+    "Review the user stories and explain what changed. " + Array(6).fill("Keep the original wording.").join(" "),
+    '检查字段 "runtime版本"',
+    "检查字段 'run状态'",
+    "保留“provider名称”和‘turn编号’字段",
+  ];
+  for (const language of ["zh", "en"]) for (const title of titles) {
+    assert.equal(plainLiveTaskLabel(title, language), title);
+    assert.equal(client(title, language), title);
+  }
+});
+
+test("task label glossary preserves literal paths, code, filenames and names in mixed titles", () => {
+  const titles = [
+    "检查turn与 `npm run tests` 命令",
+    "检查run与 C:/projects/provider/run.js 文件",
+    String.raw`检查turn与 C:\projects\provider\run.js 文件`,
+    "检查runtime与 /usr/local/bin/run 路径",
+    "检查provider与 ./src/run 路径",
+    "检查turn与 https://example.test/run?user=kim&provider=one 链接",
+    "检查run与 user.config.json 文件",
+    "检查turn与 HookPrompt 专名",
+    "检查run与 npm run test 命令",
+    "检查turn与 run(provider) 代码",
+  ];
+  for (const language of ["zh", "en"]) for (const title of titles) assert.equal(plainLiveTaskLabel(title, language), title);
+  assert.equal(plainLiveTaskLabel("完成财务对账", "zh"), "完成财务对账", "ordinary domain words do not enter a runtime glossary");
+});
+
+test("task label glossary preserves relative scope-like paths outside legacy metadata headers", () => {
+  const titles = [
+    "检查路径 project/global/user",
+    "检查目录 project/global/user",
+    "检查文件 project/global/user",
+    "检查 project/global/user",
+    "project/global/user",
+    "project/global/user hook路径检查",
+    "project/global/user Hook目录检查",
+    "project/global/user hook文件检查",
+    "检查 `project/global/user`",
+    "npm run project/global/user",
+  ];
+  const client = new Function(serializeLiveRunOverviewResolvers() + "; return plainLiveTaskLabel;")();
+  for (const language of ["zh", "en"]) for (const title of titles) {
+    assert.equal(plainLiveTaskLabel(title, language), title);
+    assert.equal(client(title, language), title);
+  }
+  assert.equal(plainLiveTaskLabel("project/global/user hook与turn终态对账", "zh"), "项目/全局/用户 触发脚本与对话回合结束状态核对交付");
 });
 
 test("available results require a valid same-run opaque descriptor", () => {

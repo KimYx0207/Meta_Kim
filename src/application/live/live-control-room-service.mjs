@@ -1299,8 +1299,20 @@ function readableWorkerScope(packet) {
   return safeText(cleaned, null, 96);
 }
 
+/** Read an explicit public title without invoking accessors or inherited data. */
+function readablePublicRunTitle(artifact) {
+  const ownValue = (value, key) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor?.enumerable && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  };
+  const title = ownValue(ownValue(artifact, "publicSummary"), "title");
+  return typeof title === "string" ? safeText(title, null, 120) : null;
+}
+
 function readableRunTask(artifact) {
-  const candidate = firstString(artifact, ["task"])
+  const candidate = readablePublicRunTitle(artifact)
+    || firstString(artifact, ["task"])
     || firstString(artifact?.requestRecord, ["task"])
     || (artifact?.hostCheckpointSummary?.evidenceLevel === "owner_reported" ? firstString(artifact?.criticalRecord, ["realIntent"]) : null);
   return safeText(candidate, "Governed execution", 240);
@@ -1320,7 +1332,7 @@ function ownerReportedDisplay(ownerReport) {
 }
 
 function readableRunTitle(artifact, task) {
-  const explicit = firstString(artifact, ["title"]);
+  const explicit = readablePublicRunTitle(artifact) || firstString(artifact, ["title"]);
   if (explicit) return safeText(explicit, "Governed run", 120);
   const firstClause = String(task || "Governed execution").split(/[;；\n]/u)[0].trim();
   return safeText(firstClause, "Governed run", 120);

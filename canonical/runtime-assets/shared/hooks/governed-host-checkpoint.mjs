@@ -74,7 +74,7 @@ export function readGovernedHostCheckpointInput(inputPath, projectRoot) {
 export function governedHostCheckpointTemplate(stage) {
   requireValue(STAGE_ORDER.includes(stage), "checkpoint_stage_invalid");
   const records = {
-    critical: { realIntent: "", successCriteria: [""], nonGoals: [], blockingUnknowns: [], noQuotaClarification: true },
+    critical: { realIntent: "", publicTitle: "", successCriteria: [""], nonGoals: [], blockingUnknowns: [], noQuotaClarification: true },
     fetch: { evidence: [""], decisionImpactMap: [""], capabilityDiscovery: { sources: [""], matches: [""] }, memoryStrategy: "" },
     thinking: { designFrame: "", chosenRationale: "", consideredLanes: [""], dependencyPolicy: "", reviewStandard: "", workerTaskPackets: [{ taskPacketId: "", ownerAgent: "", ownerSource: "", roleDisplayName: "", roleInstanceId: "", scope: "", expectedOutput: "", verification: "", mergeOwner: "", weapon: "", dependsOn: [] }] },
     execution: { workerResultPackets: [{ taskPacketId: "", ownerAgent: "", resultStatus: "reported_complete", summary: "", evidenceRefs: [""] }] },
@@ -186,7 +186,16 @@ function checkedRevisionResponses(raw, state, completing) {
   return responses;
 }
 
-function checkedRecord(stage, raw, state, completing) {
+/** Check the optional public identity before JSON sizing can execute a getter. */
+function checkedPublicTitle(raw) {
+  const descriptor = object(raw) ? Object.getOwnPropertyDescriptor(raw, "publicTitle") : null;
+  if (!descriptor) return null;
+  requireValue(descriptor.enumerable && Object.hasOwn(descriptor, "value") && typeof descriptor.value === "string"
+    && descriptor.value.trim().length <= 120 && !/[\u0000-\u001f\u007f]/u.test(descriptor.value), "critical_public_title_invalid");
+  return descriptor.value.trim() || null;
+}
+
+function checkedRecord(stage, raw, state, completing, publicTitle = null) {
   requireValue(object(raw), "checkpoint_stage_record_missing");
   if (!completing && Object.keys(raw).length === 0) return { incomplete: true };
   // Whitelist stage content. Caller-supplied trust, native proof, public-ready,
@@ -199,6 +208,7 @@ function checkedRecord(stage, raw, state, completing) {
   if (stage === "critical") {
     take("realIntent"); take("successCriteria", texts); take("nonGoals", (v) => texts(v, true));
     take("blockingUnknowns", (v) => texts(v, true)); take("noQuotaClarification", (v) => v === true);
+    if (publicTitle) record.publicTitle = publicTitle;
     requireValue(!completing || record.blockingUnknowns.length === 0, "critical_blocking_unknowns_unsettled");
   } else if (stage === "fetch") {
     take("evidence", texts); take("decisionImpactMap", texts); take("memoryStrategy");
@@ -394,17 +404,22 @@ export async function checkpointGovernedHost(options) {
   requireValue(STAGE_ORDER.includes(options.stage) && options.stage === state.currentStage, "checkpoint_stage_out_of_order");
   requireValue(state.stages[options.stage]?.status !== "completed", "checkpoint_stage_already_completed");
   const request = options.input;
-  requireValue(object(request) && Buffer.byteLength(JSON.stringify(request)) <= MAX_INPUT_BYTES, "checkpoint_input_invalid");
+  requireValue(object(request), "checkpoint_input_invalid");
+  const publicTitle = options.stage === "critical" ? checkedPublicTitle(request.record) : null;
+  requireValue(Buffer.byteLength(JSON.stringify(request)) <= MAX_INPUT_BYTES, "checkpoint_input_invalid");
   requireValue(text(request.ownerAgent) && text(request.summary) && texts(request.evidenceRefs), "checkpoint_report_incomplete");
   requireValue(["complete", "blocked", "in_progress"].includes(request.status), "checkpoint_status_invalid");
   const completing = request.status === "complete";
-  const record = checkedRecord(options.stage, request.record, state, completing);
+  const record = checkedRecord(options.stage, request.record, state, completing, publicTitle);
   const report = { stage: options.stage, ownerAgent: request.ownerAgent, summary: request.summary, evidenceRefs: request.evidenceRefs,
     status: request.status, evidenceLevel: "owner_reported", nativeInvocationVerified: false, recordedAt: new Date().toISOString() };
   const next = structuredClone(state);
   next.updatedAt = report.recordedAt;
   if (!next.ownerAgent) next.ownerAgent = report.ownerAgent;
   next[REPORT_FIELDS[options.stage]] = { ...(record.incomplete ? next[REPORT_FIELDS[options.stage]] : {}), ...record, ...report };
+  if (options.stage === "critical" && record.publicTitle) {
+    next.publicSummary = { ...(object(next.publicSummary) ? next.publicSummary : {}), title: record.publicTitle };
+  }
   next.hostStageReports = { ...next.hostStageReports, [options.stage]: report };
   next.hostCheckpointRevision = (state.hostCheckpointRevision || 0) + 1;
   next.hostCheckpointSummary = { ...report, revision: next.hostCheckpointRevision };

@@ -1743,8 +1743,19 @@ function projectOwnerVerificationPacket(packet) {
     .filter((key) => Array.isArray(packet[key])).map((key) => [key, packet[key].slice(-64).filter((item) => item && typeof item === "object" && !Array.isArray(item)).map(project)])) };
 }
 
+/** Preserve only the caller's explicit public label, never a private request. */
+function projectPublicRunSummary(state) {
+  const summary = ownEnumerableDataField(state, "publicSummary");
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return null;
+  const rawTitle = ownEnumerableDataField(summary, "title");
+  if (typeof rawTitle !== "string") return null;
+  const title = rawTitle.replace(/[\u0000-\u001f\u007f]/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 120);
+  return title ? { title } : null;
+}
+
 export function createMetaRunStatusEnvelope(state, options = {}) {
   const safeState = stripRawPromptFields(state);
+  const publicSummary = projectPublicRunSummary(safeState);
   const currentStage = normalizeStage(
     options.currentStage || safeState?.currentStage || "critical",
   );
@@ -1833,6 +1844,7 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
     runId,
     taskFingerprint,
     taskIdentitySource,
+    ...(publicSummary ? { publicSummary } : {}),
     taskClassification: safeState?.taskClassification || null,
     triggeredBy:
       safeState?.triggerReason || safeState?.triggeredBy || "meta-theory",

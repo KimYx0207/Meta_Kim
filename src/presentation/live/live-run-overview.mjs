@@ -85,6 +85,119 @@ export function normalizeLiveOwnerReport(node, runId = node?.runId) {
     evidenceLevel: "owner_reported", nativeInvocationVerified: false };
 }
 
+/** Present task progress independently of execution provenance and acceptance. */
+export function resolveLiveTaskLifecycle(node, runId = node?.runId) {
+  if (!node || typeof node !== "object" || (node.runId && runId && node.runId !== runId)) return { state: "in_progress", detail: "unconfirmed" };
+  const status = overviewState(node.status);
+  const displayState = overviewState(node.displayState);
+  const states = [displayState, status];
+  if (node.declaredNotStarted === true || node.executionState === "not_executed" || states.includes("planned")) return { state: "not_started", detail: "not_dispatched" };
+  if (states.some((state) => ["failed", "blocked", "cancelled"].includes(state))) {
+    return { state: "in_progress", detail: states.find((state) => ["failed", "blocked", "cancelled"].includes(state)) };
+  }
+  // A currently executing revision takes precedence over an older result.
+  if (["running", "active", "live"].includes(displayState) || (node.active === true && !states.includes("completed"))
+    || (["running", "active", "live"].includes(status) && displayState !== "completed")) return { state: "in_progress", detail: node.observedOnly === true ? "observed" : "" };
+  const report = normalizeLiveOwnerReport(node, runId);
+  if (report) return report.resultStatus === "reported_complete"
+    ? { state: "completed", detail: "verification_pending" }
+    : { state: "in_progress", detail: report.resultStatus === "reported_failed" ? "failed" : "blocked" };
+  if (states.includes("completed")) return runId && !node.runId
+    ? { state: "in_progress", detail: "unconfirmed" } : { state: "completed", detail: "" };
+  if (node.executionState === "executed") return { state: "in_progress", detail: "result_unconfirmed" };
+  if (states.some((state) => ["unknown", "unreported", "in_doubt", "archived_legacy", "superseded"].includes(state))) return { state: "in_progress", detail: "unconfirmed" };
+  if (states.some((state) => ["pending", "queued", "declared", "not_started"].includes(state))) return { state: "not_started", detail: "waiting" };
+  return { state: "in_progress", detail: states.some((state) => ["running", "active", "live"].includes(state)) ? "" : "unconfirmed" };
+}
+
+/** Reuse one task boundary in the run summary and its three-column board. */
+export function liveRunTaskNodes(snapshot) {
+  const runId = overviewText(snapshot?.run?.id || snapshot?.run?.runId);
+  return (Array.isArray(snapshot?.nodes) ? snapshot.nodes : []).filter((node) => node && node.isMain !== true
+    && ["agent", "worker"].includes(overviewState(node.kind)) && (!node.runId || node.runId === runId));
+}
+
+/** Root and organization rows do not turn seven finished work items into eight. */
+export function resolveLiveRunTaskLifecycle(snapshot) {
+  const run = snapshot?.run;
+  const runId = overviewText(run?.id || run?.runId);
+  const nodes = liveRunTaskNodes(snapshot);
+  const tasks = nodes.map((node) => resolveLiveTaskLifecycle(node, runId));
+  const counts = { totalCount: tasks.length, completedCount: tasks.filter((task) => task.state === "completed").length,
+    notStartedCount: tasks.filter((task) => task.state === "not_started").length,
+    inProgressCount: tasks.filter((task) => task.state === "in_progress").length,
+    verificationPendingCount: tasks.filter((task) => task.detail === "verification_pending").length };
+  if (!runId) return { state: "not_started", detail: "no_tasks", ...counts };
+  const states = [overviewState(run.displayState), overviewState(run.status)];
+  if (states.includes("planned") || run.executionEvidenceState === "structural_planning_only") return { state: "not_started", detail: "not_dispatched", ...counts };
+  const failure = states.find((state) => ["failed", "blocked", "cancelled"].includes(state));
+  if (failure) return { state: "in_progress", detail: failure, ...counts };
+  if (tasks.length) {
+    if (counts.completedCount === counts.totalCount) return { state: "completed", detail: counts.verificationPendingCount ? "verification_pending" : "", ...counts };
+    if (counts.notStartedCount === counts.totalCount) return { state: "not_started", detail: "waiting", ...counts };
+    return { state: "in_progress", detail: tasks.find((task) => ["failed", "blocked", "cancelled"].includes(task.detail))?.detail || "unfinished", ...counts };
+  }
+  const lifecycle = resolveLiveTaskLifecycle({ ...run, runId }, runId);
+  return { ...lifecycle, detail: lifecycle.detail || "no_tasks", ...counts };
+}
+
+/** One bilingual vocabulary for badges, overview, header and workspace columns. */
+export function liveTaskLifecycleCopy(lifecycle, language = "zh") {
+  const copy = {
+    zh: { not_started: "未开始", in_progress: "进行中", completed: "已完成", not_dispatched: "尚未派发", waiting: "等待开始",
+      verification_pending: "执行者已完成，独立验证待完成", failed: "执行失败，仍需处理", blocked: "工作受阻，等待处理", cancelled: "执行已取消，尚未完成",
+      result_unconfirmed: "执行已返回，结果待确认", unconfirmed: "缺少执行记录，状态待确认", unfinished: "还有工作未完成", no_tasks: "尚无工作项记录", native_unconfirmed: "原生执行证据尚未确认。", observed: "已观察到执行", inspect: "查看任务" },
+    en: { not_started: "Not started", in_progress: "In progress", completed: "Completed", not_dispatched: "Not dispatched", waiting: "Waiting to start",
+      verification_pending: "Worker finished; independent verification pending", failed: "Execution failed; action required", blocked: "Work blocked; action required", cancelled: "Execution cancelled; work unfinished",
+      result_unconfirmed: "Execution returned; outcome unconfirmed", unconfirmed: "Execution record missing; status unconfirmed", unfinished: "Work remains unfinished", no_tasks: "No work-item records yet", native_unconfirmed: "Native execution evidence is unconfirmed.", observed: "Execution observed", inspect: "Inspect task" },
+  };
+  const selected = copy[language === "zh" || language === "zh-CN" ? "zh" : "en"];
+  return { label: selected[lifecycle?.state] || selected.in_progress, detail: selected[lifecycle?.detail] || "", inspect: selected.inspect,
+    progress: Number.isSafeInteger(lifecycle?.totalCount) && lifecycle.totalCount > 0
+      ? (selected === copy.zh ? "任务完成 " : "Tasks completed ") + lifecycle.completedCount + "/" + lifecycle.totalCount : "" };
+}
+
+/** Ordinary task copy stays separate from the technical record's vocabulary. */
+export function liveWorkOverviewCopy(language = "zh") {
+  const copy = {
+    zh: { current: "本次工作", completed: "已做的工作", work: "工作清单", details: "详细记录", inspect: "查看详细记录", more: "查看其余", items: "项",
+      waiting: "等待安排工作", unavailable: "工作清单尚未保存", noFiles: "未附可打开的文件", output: "打开成果", feedback: "我有修改意见",
+      attention: "需要处理", activity: "最近活动", unknownTime: "活动时间未记录", latest: "最近记录 · ", measurements: "输出计量", partial: "仅包含已观察到的记录。" },
+    en: { current: "Current work", completed: "Work completed", work: "Work list", details: "Details", inspect: "View details", more: "Show remaining", items: "items",
+      waiting: "Waiting for work to be scheduled", unavailable: "The work list was not saved", noFiles: "No attached files", output: "Open output", feedback: "Request a change",
+      attention: "Needs attention", activity: "Recent activity", unknownTime: "Activity time not recorded", latest: "Latest timed record · ", measurements: "Output measured", partial: "Only observed records are included." },
+  };
+  return copy[language === "zh" || language === "zh-CN" ? "zh" : "en"];
+}
+
+/** Explain legacy Chinese technical labels without translating user prose/code. */
+export function plainLiveTaskLabel(value, language = "zh") {
+  const source = typeof value === "string" ? value.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/gu, " ").trim() : "";
+  if (!source || ["governed execution", "untitled task", "untitled run", "unidentified run"].includes(source.toLowerCase())) return liveWorkOverviewCopy(language).current;
+  const zh = language === "zh" || language === "zh-CN";
+  if (!zh) return source;
+  // Literal identities must survive both terminology changes and abbreviation.
+  // Only a legacy scope header before Chinese Hook prose is a glossary entry.
+  const literalText = /路径|目录|文件/u.test(source) ? source
+    : source.replace(/^project\/global\/user(?=[ \t]+(?:Hook|hook)[ \t]{0,2}\p{Script=Han})/u, "");
+  const literal = ["`", "'", '"', "“", "”", "‘", "’", "/", "\\", "(", ")", "[", "]", "{", "}", "<", ">", "="].some((marker) => literalText.includes(marker))
+    || /\b[\w-]+(?:\.[\w-]+)+\b/u.test(literalText) || /\bHookPrompt\b/iu.test(literalText)
+    || /\b(?:npm|npx|node|git|python3?|pwsh|powershell|bash|sh|curl|uv|pnpm|yarn|bun|cargo|docker)\s+[\w@.-]/iu.test(literalText)
+    || /\b[\w-]+\s+--?[\w-]/u.test(literalText) || /\b(?:return|const|let|var|function|class|import|export|await)\b/u.test(literalText);
+  if (literal) return source;
+  const terms = { turn: "对话回合", run: "任务", CAS: "版本检查", provider: "能力来源", runtime: "运行环境", Hook: "触发脚本", hook: "触发脚本" };
+  const mixedTerm = /(\p{Script=Han}[ \t]{0,2})(turn|run|CAS|provider|runtime|Hook|hook)\b(?![ \t]+[A-Za-z])|\b(turn|run|CAS|provider|runtime|Hook|hook)(?=[ \t]{0,2}\p{Script=Han})/gu;
+  const legacy = mixedTerm.test(source) || /\bproject\/global\/user\b|有界发现证据|持久草稿|各宿主|交付[^。！？\n]{0,40}对账/u.test(source);
+  mixedTerm.lastIndex = 0;
+  if (!legacy) return source;
+  const plain = source.replace(/\bproject\/global\/user\b/gu, "项目/全局/用户")
+    .replace(mixedTerm, (_match, prefix, afterChinese, beforeChinese) => (prefix || "") + terms[afterChinese || beforeChinese])
+    .replace(/宿主/gu, "运行工具").replace(/终态/gu, "结束状态").replace(/对账/gu, "核对交付")
+    .replace(/有界发现证据/gu, "检索记录").replace(/持久草稿/gu, "保存草稿");
+  const first = plain.split(/(?:[。！？!?]\s*|[.;]\s+|\r?\n)/u, 1)[0].trim();
+  return first.length > 88 ? first.slice(0, 87) + "…" : first;
+}
+
 /** Host replay's display mapping needs its independent actual-invocation fact. */
 function overviewHostExecutionEvent(record, snapshot) {
   const kinds = { agent_event: "agent", tool_started: "tool_start", tool_finished: "tool_end", host_failure: "failure" };
@@ -144,7 +257,7 @@ function overviewExecutionActivity(snapshot, runId) {
  */
 export function resolveLiveRunOverview(snapshot) {
   const run = snapshot?.run;
-  if (!run || !overviewText(run.id || run.runId)) return { state: "empty", task: null, result: { items: [], declaredCount: 0 }, blocker: null, activity: { item: null, undatedCount: 0 } };
+  if (!run || !overviewText(run.id || run.runId)) return { state: "empty", taskLifecycle: resolveLiveRunTaskLifecycle(snapshot), task: null, result: { items: [], declaredCount: 0 }, blocker: null, activity: { item: null, undatedCount: 0 } };
   const runId = overviewText(run.id || run.runId);
   const state = overviewState(run.displayState || run.status);
   const planned = state === "planned" || run.executionEvidenceState === "structural_planning_only";
@@ -169,6 +282,7 @@ export function resolveLiveRunOverview(snapshot) {
   const deliverables = normalizeLiveDeliverables(snapshot.deliverables, runId);
   return {
     state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : governance?.active ? "governance_active" : "historical",
+    taskLifecycle: resolveLiveRunTaskLifecycle(snapshot),
     governance,
     task: current ? { label: overviewText(current.task) || overviewText(current.label), nodeId: overviewText(current.id), moreCount: activeNodes.length - 1 } : null,
     ownerReported: reported ? { count: ownerReports.length, task: { label: overviewText(reported.node.task) || overviewText(reported.node.label),
@@ -185,6 +299,6 @@ export function resolveLiveRunOverview(snapshot) {
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, resolveLiveTaskLifecycle, liveRunTaskNodes, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }

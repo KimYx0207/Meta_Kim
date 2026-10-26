@@ -830,6 +830,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const contextTask = app.querySelector("[data-live-context-task]");
   const contextStage = app.querySelector("[data-live-context-stage]");
   const contextStatus = app.querySelector("[data-live-context-status]");
+  const contextProgress = app.querySelector("[data-live-context-progress]");
+  const runDiagnostics = app.querySelector("[data-live-run-diagnostics]");
   const contextUpdated = app.querySelector("[data-live-context-updated]");
   const contextSource = app.querySelector("[data-live-context-source]");
   const contextNodes = app.querySelector("[data-live-context-nodes]");
@@ -1793,29 +1795,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return "unknown";
   }
 
-  function nodeStateCopy(node) {
-    const state = nodeDisplayState(node);
-    if (node?.ownerReport && node.executionState !== "executed" && normalizeLiveOwnerReport(node)) return currentLanguage === "zh" ? "已回报 · 待独立验证" : "Reported · awaiting independent verification";
-    if (state === "planned") return currentLanguage === "zh" ? "仅规划 · 尚未派发" : "Planned · not dispatched";
-    if (state === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
-    if (state === "unknown") return currentLanguage === "zh" ? "状态未知" : "Unknown state";
-    // Observed running is a different claim from declared running: the host
-    // evidence shows the invocation, while the declared lifecycle stays
-    // queued. The suffix keeps the two claims from collapsing into one word.
-    if (state === "active" && node?.observedOnly === true) return currentLanguage === "zh" ? "运行中·observed" : "Running · observed";
-    if (state === "active") return currentLanguage === "zh" ? "执行中" : "Running";
-    if (state === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
-    if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "已执行 · 待验证" : "Executed · awaiting verification";
-    return stateCopy(state);
+  function nodeStateCopy(node, runId = node?.runId) {
+    return liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node, runId), currentLanguage).label;
   }
 
-  function nodeShortStateCopy(node) {
-    const state = nodeDisplayState(node);
-    if (node?.ownerReport && node.executionState !== "executed" && normalizeLiveOwnerReport(node)) return currentLanguage === "zh" ? "已回报" : "Reported";
-    if (state === "planned") return currentLanguage === "zh" ? "尚未派发" : "Not dispatched";
-    if (state === "unreported") return nodeStateCopy(node);
-    if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "待验证" : "To verify";
-    return localize(state);
+  function nodeShortStateCopy(node, runId = node?.runId) {
+    return nodeStateCopy(node, runId);
+  }
+
+  function nodeStateDetailCopy(node, runId = node?.runId) {
+    return liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node, runId), currentLanguage).detail;
   }
 
   function sourceRuntimeLabel(value) {
@@ -1947,6 +1936,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
    * the shared fallback word, which would put a verdict on a silent record.
    */
   function sessionStateCopy(session) {
+    if (typeof currentSnapshot !== "undefined" && currentSnapshot?.run?.id === session?.runId) return liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(currentSnapshot), currentLanguage).label;
     const state = display(session?.displayState, "") || display(session?.status, "");
     return state ? stateCopy(state) : "";
   }
@@ -2033,7 +2023,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const dependencyButton = app.querySelector('[data-live-graph-relations="dependency"]');
     setTranslatedText(dependencyButton, planningOnly ? "Planned dependencies" : "Execution dependencies", planningOnly ? "规划依赖" : "执行依赖");
     setTranslatedText(contextEvidenceLabel, "Execution evidence", "执行证据");
-    setText(contextTitle, snapshot.run.title, "Live execution");
+    setText(contextTitle, plainLiveTaskLabel(snapshot.run.title, currentLanguage));
+    if (contextTitle) contextTitle.title = snapshot.run.title;
 
     const shortRunId = shortenIdentifier(snapshot.run.id, DISPLAY_FORMAT.identifierShortForm);
     setText(runId, shortRunId === "" ? "" : "Run ID · " + shortRunId, "unidentified run");
@@ -2051,7 +2042,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(contextTask, runTaskCopy(runTaskSupplement(snapshot.run.task, snapshot.run.title)));
     if (planningOnly) setText(contextStage, currentLanguage === "zh" ? "尚未派发" : "Not dispatched");
     else setText(contextStage, informativeValue(snapshot.run.stage, "Stage unconfirmed"), "Stage unconfirmed");
-    setText(contextStatus, stateCopy(snapshot.run.displayState || snapshot.run.status), "In doubt");
+    const taskLifecycle = resolveLiveRunTaskLifecycle(snapshot);
+    const taskState = liveTaskLifecycleCopy(taskLifecycle, currentLanguage);
+    setText(contextStatus, taskState.label);
+    setText(contextProgress, taskState.progress);
+    if (contextStatus) contextStatus.title = taskState.detail;
     setText(contextUpdated, formatTime(snapshot.run.updatedAt));
     // Joined from the parts that exist rather than a fixed two-part string: the
     // chat id is absent for every run that was never bound, and a trailing
@@ -2088,9 +2083,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       "0",
     );
     setText(contextEvidence, String(executionEvidenceCount(snapshot)), "0");
-    const status = snapshot.run.displayState || snapshot.run.status;
-    if (stateChip) stateChip.dataset.state = status;
-    setText(stateLabel, stateCopy(status), "Stale");
+    if (stateChip) stateChip.dataset.state = taskLifecycle.state;
+    setText(stateLabel, taskState.label);
+    if (stateLabel) stateLabel.title = taskState.detail;
     if (liveRegion) liveRegion.textContent = localize("Run snapshot updated: " + snapshot.run.title);
     if (lastUpdate) {
       const observedAt = formatTime(snapshot.run.updatedAt);
@@ -2362,7 +2357,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function graphNodeReadingLabel(node) {
     // Exact vocabulary translations only; an unknown identity keeps its source.
     const label = String(node.label || node.id);
-    return currentLanguage === "zh" ? zhText.get(label) || label : label;
+    return plainLiveTaskLabel(currentLanguage === "zh" ? zhText.get(label) || label : label, currentLanguage);
   }
 
   function nodeCapabilityCount(node) {
@@ -3684,7 +3679,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const toolCount = selected ? Math.max(selected.toolCount, nodeTools.length) : 0;
     setText(selectedNodeLabel, selected ? "Selected · " + selected.label : "Select a node to inspect provenance", "Select a node to inspect provenance");
     setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") + " · " + nodeTools.length + " tools · " + nodeEvents.length + " events" : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
-    setText(selectedNodeStatus, labeledFact("Status", selected ? nodeStateCopy(selected) : ""));
+    setText(selectedNodeStatus, labeledFact("Status", selected ? [nodeStateCopy(selected, currentSnapshot.run.id), nodeStateDetailCopy(selected, currentSnapshot.run.id)].filter(Boolean).join(" · ") : ""));
     setText(selectedNodeOwner, labeledFact("Owner", selected ? selected.agent : ""));
     setText(selectedNodeRuntime, labeledFact("Runtime", selected ? selected.runtime : ""));
     setText(selectedNodeModel, labeledFact("Model", selected ? selected.model : ""));
@@ -3962,8 +3957,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       edgeLayer.append(defs);
     }
     graphNodes.forEach((node) => {
-      const publicState = nodeDisplayState(node);
-      const taskLine = resolveNodeTaskLine(node, DISPLAY_FORMAT);
+      const lifecycle = resolveLiveTaskLifecycle(node, snapshot.run.id);
+      const publicState = lifecycle.state === "completed" ? "completed" : lifecycle.state === "not_started" ? "queued" : "active";
+      const sourceTaskLine = resolveNodeTaskLine(node, DISPLAY_FORMAT);
+      const taskLine = sourceTaskLine ? plainLiveTaskLabel(sourceTaskLine, currentLanguage) : "";
       const card = makeElement("article", "node-card node-" + nodeClass(publicState));
       card.dataset.nodeId = node.id;
       card.dataset.status = node.status;
@@ -3976,7 +3973,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       // state visually separate from both running and completed work while the
       // node stays on screen as queued.
       if (node.declaredNotStarted === true) card.dataset.declaredNotStarted = "true";
-      card.title = node.label + (taskLine && taskLine !== node.label ? " · " + taskLine : "");
+      card.title = node.label + (sourceTaskLine && sourceTaskLine !== node.label ? " · " + sourceTaskLine : "");
       card.setAttribute("role", "listitem");
       const position = layout.positions.get(node.id) || { x: 32, y: 32, width: 132, height: 76 };
       card.style.left = position.x + "px";
@@ -3986,10 +3983,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const top = makeElement("div", "node-card-top");
       const marker = makeElement("span", "node-marker");
       marker.setAttribute("aria-hidden", "true");
-      const statusCopy = nodeStateCopy(node);
-      const shortState = nodeShortStateCopy(node);
+      const statusCopy = nodeStateCopy(node, snapshot.run.id);
+      const shortState = nodeShortStateCopy(node, snapshot.run.id);
       top.append(marker, makeElement("span", "node-status", statusCopy), makeElement("span", "node-state-short", shortState));
-      top.title = statusCopy;
+      top.title = [statusCopy, nodeStateDetailCopy(node, snapshot.run.id)].filter(Boolean).join(" · ");
       if (node.declaredNotStarted === true) {
         const declaredChip = makeElement("span", "node-declared-chip",
           currentLanguage === "zh" ? "声明未执行" : "declared, not started");
@@ -4016,10 +4013,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
       }
       const heading = makeElement("span", "node-title", graphNodeReadingLabel(node));
       heading.title = node.label;
-      const summary = makeElement("span", "node-summary", node.summary);
+      const summary = makeElement("span", "node-summary", node.ownerReport ? "" : node.summary);
+      summary.title = node.summary;
+      summary.hidden = Boolean(node.ownerReport);
       const identity = makeElement("button", "node-identity-row node-identity-button");
       identity.type = "button";
-      identity.setAttribute("aria-label", node.label + ", " + nodeStateCopy(node) + ", " + node.toolCount + " tools, "
+      identity.setAttribute("aria-label", node.label + ", " + [nodeStateCopy(node, snapshot.run.id), nodeStateDetailCopy(node, snapshot.run.id)].filter(Boolean).join(" · ") + ", " + node.toolCount + " tools, "
         + (currentLanguage === "zh" ? "输出 token " : "output tokens ") + formatLiveTokenCount(node.outputTokens, currentLanguage));
       const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       glyph.setAttribute("class", "node-glyph");
@@ -4524,10 +4523,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function workspaceColumnForStatus(status) {
-    if (status === "completed" || status === "skipped") return "done";
-    if (status === "blocked" || status === "failed" || status === "in_doubt") return "review";
-    if (status === "running" || status === "active") return "doing";
-    return "todo";
+    if (status === "completed") return "done";
+    return status === "not_started" ? "todo" : "doing";
   }
 
   function appendWorkspaceTag(parent, value, className = "") {
@@ -4562,13 +4559,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function renderWorkspaceBoard(snapshot) {
     clearChildren(workspaceBoard);
     const columns = [
-      ["todo", currentLanguage === "zh" ? "待处理" : "To do"],
-      ["doing", currentLanguage === "zh" ? "执行中" : "In progress"],
-      ["review", currentLanguage === "zh" ? "审查 / 阻塞" : "Review / blocked"],
-      ["done", currentLanguage === "zh" ? "已完成" : "Done"],
+      ["todo", liveTaskLifecycleCopy({ state: "not_started" }, currentLanguage).label],
+      ["doing", liveTaskLifecycleCopy({ state: "in_progress" }, currentLanguage).label],
+      ["done", liveTaskLifecycleCopy({ state: "completed" }, currentLanguage).label],
     ];
     const grouped = new Map(columns.map(([key]) => [key, []]));
-    snapshot.nodes.forEach((node) => grouped.get(workspaceColumnForStatus(nodeDisplayState(node)))?.push(node));
+    liveRunTaskNodes(snapshot).forEach((node) => grouped.get(workspaceColumnForStatus(resolveLiveTaskLifecycle(node, snapshot.run.id).state))?.push(node));
     columns.forEach(([key, label]) => {
       const column = makeElement("section", "work-column");
       column.dataset.column = key;
@@ -4577,7 +4573,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const list = makeElement("div", "work-column-list");
       const nodes = grouped.get(key);
       if (!nodes.length) {
-        const message = key === workspaceColumnForStatus(snapshot.run.status === "live" ? "running" : snapshot.run.status) && !snapshot.nodes.length
+        const message = key === workspaceColumnForStatus(resolveLiveRunTaskLifecycle(snapshot).state) && !snapshot.nodes.length
           ? (currentLanguage === "zh" ? "当前只采集到运行状态，尚无工作项明细。" : "Only run status is available; work-item telemetry has not been captured.")
           : (currentLanguage === "zh" ? "暂无工作项" : "No work items");
         list.append(makeElement("p", "work-board-empty", message));
@@ -4589,12 +4585,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
         card.dataset.status = node.status;
         card.dataset.selected = node.id === selectedNodeId ? "true" : "false";
         const kicker = makeElement("span", "work-item-kicker");
-        kicker.append(makeElement("span", "", node.kind || "work item"), makeElement("span", "", nodeStateCopy(node)));
+        kicker.append(makeElement("span", "", node.kind || "work item"), makeElement("span", "", nodeStateCopy(node, snapshot.run.id)));
         const tags = makeElement("span", "work-item-tags");
+        appendWorkspaceTag(tags, nodeStateDetailCopy(node, snapshot.run.id));
         appendWorkspaceTag(tags, node.agent, "work-item-tag-owner");
         appendWorkspaceTag(tags, node.runtime);
         appendWorkspaceTag(tags, node.latestTool, "work-item-tag-tool");
-        card.append(kicker, makeElement("h3", "work-item-title", node.label), makeElement("p", "work-item-summary", node.summary), tags);
+        const title = makeElement("h3", "work-item-title", plainLiveTaskLabel(node.task || node.label, currentLanguage));
+        title.title = node.task || node.label;
+        const summary = makeElement("p", "work-item-summary", node.ownerReport ? "" : node.summary);
+        summary.hidden = Boolean(node.ownerReport);
+        card.append(kicker, title, summary, tags);
         card.addEventListener("click", () => {
           selectedNodeId = node.id;
           updateSelectedNodeVisuals();
@@ -4639,8 +4640,100 @@ const CLIENT_SCRIPT = String.raw`(() => {
     localFeedbackSurfaces.get("inspector")?.raw.focus();
   }
 
-  /** A compact reading order before the process map: work, result, block, activity. */
+  /** Default view answers what was done; technical records remain collapsible. */
   function renderRunOverview(snapshot, project = null) {
+    if (!runOverview) return;
+    const overview = resolveLiveRunOverview(snapshot);
+    const copy = liveWorkOverviewCopy(currentLanguage);
+    const work = liveRunTaskNodes(snapshot).map((node) => ({ node, lifecycle: resolveLiveTaskLifecycle(node, snapshot?.run?.id) }));
+    const completed = work.filter((item) => item.lifecycle.state === "completed");
+    const listed = completed.length ? completed : work;
+    const renderKey = JSON.stringify([overview, work, currentLanguage, selectedProjectId]);
+    if (runOverview.dataset.renderKey === renderKey) return;
+    runOverview.dataset.renderKey = renderKey;
+    runOverview.dataset.state = overview.taskLifecycle.state;
+    clearChildren(runOverview);
+    const item = (key, heading) => {
+      const row = makeElement("article", "run-overview-item");
+      row.dataset.overviewItem = key;
+      row.append(makeElement("h2", "", heading));
+      runOverview.append(row);
+      return row;
+    };
+    const task = item("task", completed.length ? copy.completed : copy.work);
+    const appendWork = (parent, entries) => {
+      const list = makeElement("ol", "run-work-list");
+      entries.forEach(({ node }) => {
+        const row = makeElement("li", "run-work-item");
+        const title = makeElement("span", "", plainLiveTaskLabel(node.task || node.label, currentLanguage));
+        title.title = node.task || node.label;
+        const action = makeElement("button", "run-overview-action", copy.inspect);
+        action.type = "button";
+        action.addEventListener("click", () => selectNode(node.id, { inspectorTab: "summary" }));
+        row.append(title, action);
+        list.append(row);
+      });
+      parent.append(list);
+    };
+    if (listed.length) appendWork(task, listed.slice(0, 3));
+    else task.append(makeElement("p", "run-overview-note", overview.taskLifecycle.state === "not_started" ? copy.waiting : copy.unavailable));
+    if (listed.length > 3) {
+      const more = makeElement("details", "run-work-more");
+      more.append(makeElement("summary", "", copy.more + " " + (listed.length - 3) + " " + copy.items));
+      appendWork(more, listed.slice(3));
+      task.append(more);
+    }
+    const available = overview.result.items[0];
+    if (available) {
+      const output = item("result", copy.output);
+      overview.result.items.forEach((available) => {
+        const link = makeElement("a", "run-overview-value run-overview-result", plainLiveTaskLabel(available.label, currentLanguage));
+        link.href = deliverableOpenHref(available);
+        link.addEventListener("click", () => { void observeDeliverableRead(available); });
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.dataset.liveOverviewResult = available.id;
+        link.title = available.label;
+        output.append(link);
+      });
+    } else task.append(makeElement("p", "run-overview-note", copy.noFiles));
+    if (snapshot?.run) {
+      const feedback = makeElement("button", "run-overview-action", copy.feedback);
+      feedback.type = "button";
+      feedback.dataset.liveOverviewFeedback = "";
+      feedback.addEventListener("click", () => openOverviewFeedback(available));
+      task.append(feedback);
+    }
+    const issues = work.filter((item) => ["failed", "blocked", "cancelled"].includes(item.lifecycle.detail));
+    const runNeedsAction = ["failed", "blocked", "cancelled"].includes(overview.taskLifecycle.detail);
+    if (issues.length || runNeedsAction) {
+      const attention = item("blocker", copy.attention);
+      if (!issues.length) attention.append(makeElement("p", "run-overview-value", snapshot?.run?.statusReason
+        ? plainLiveTaskLabel(snapshot.run.statusReason, currentLanguage) : liveTaskLifecycleCopy(overview.taskLifecycle, currentLanguage).detail));
+      issues.forEach(({ node, lifecycle }) => {
+        const reason = node.statusReason || normalizeLiveOwnerReport(node, snapshot?.run?.id)?.summary;
+        const row = makeElement("p", "run-overview-value", plainLiveTaskLabel(node.task || node.label, currentLanguage)
+          + " · " + (reason ? plainLiveTaskLabel(reason, currentLanguage) : liveTaskLifecycleCopy(lifecycle, currentLanguage).detail));
+        row.title = reason || "";
+        attention.append(row);
+      });
+    }
+    const observed = overview.activity.item;
+    if (observed) {
+      const activity = item("activity", copy.activity);
+      const label = makeElement("p", "run-overview-value", plainLiveTaskLabel(observed.label, currentLanguage));
+      label.title = observed.label;
+      activity.append(label);
+      if (observed.at) {
+        const time = appendObservedTime(activity, observed.at);
+        if (time) { time.className = "run-overview-note"; time.textContent = copy.latest + formatSessionTime(observed.at); time.title = observed.at; }
+      } else activity.append(makeElement("p", "run-overview-note", copy.unknownTime));
+    }
+    if (typeof runDiagnostics !== "undefined" && runDiagnostics) renderRunDiagnostics(snapshot, project, runDiagnostics);
+  }
+
+  /** Detailed counters and provenance never occupy the ordinary summary cards. */
+  function renderRunDiagnostics(snapshot, project = null, runOverview = null) {
     if (!runOverview) return;
     const overview = resolveLiveRunOverview(snapshot);
     const coverage = summarizeLiveTokenCoverage((snapshot?.nodes || []).filter((node) => !["stage", "chapter", "stage_summary", "workflow"].includes(node.kind)
@@ -4666,54 +4759,26 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return element;
     };
     const task = item("task", zh ? "当前任务" : "Current task");
-    const taskEmpty = overview.state === "empty" ? (zh ? "等待运行记录" : "Waiting for a run record")
-      : overview.state === "planned" ? (zh ? "仅有规划，尚未派发" : "Planned; not dispatched")
-        : overview.state === "completed" ? (zh ? "已验证完成，结果仍需核对" : "Verified complete; result review still needed")
-          : overview.state === "blocked" ? (zh ? "工作受阻，查看原因" : "Work blocked; see the reason")
-            : overview.ownerReported ? (zh ? "负责人已回报，待独立验证" : "Owner reported; awaiting independent verification")
-            : overview.state === "governance_active" ? (zh ? "治理任务进行中，待执行回报" : "Governance work is active; awaiting execution reports")
-            : overview.state === "active" ? (zh ? "运行中，当前执行任务未回写" : "Running; current task not reported")
-              : (zh ? "历史记录，未确认当前执行" : "Historical record; no current execution confirmed");
-    line(task, overview.task?.label || taskEmpty);
+    const taskState = liveTaskLifecycleCopy(overview.taskLifecycle, currentLanguage);
+    line(task, taskState.label);
+    if (overview.task?.label) line(task, overview.task.label, "run-overview-note");
+    if (taskState.detail) line(task, taskState.detail, "run-overview-note");
+    if (taskState.progress) line(task, taskState.progress, "run-overview-note");
     const inspectTask = overview.task || overview.ownerReported?.task;
     if (inspectTask) {
-      const action = makeElement("button", "run-overview-action", overview.task ? (zh ? "查看任务" : "Inspect task") : (zh ? "查看回报" : "Inspect report"));
+      const action = makeElement("button", "run-overview-action", taskState.inspect);
       action.type = "button";
       action.addEventListener("click", () => selectNode(inspectTask.nodeId, { inspectorTab: "summary" }));
       task.append(action);
       if (overview.task?.moreCount) line(task, (zh ? "另有 " : "+ ") + overview.task.moreCount + (zh ? " 项正在执行" : " active tasks"), "run-overview-note");
     }
-    if (overview.ownerReported) line(task, overview.ownerReported.count + (zh ? " 项负责人回报，待独立验证" : " owner reports awaiting independent verification"), "run-overview-note");
-    if (overview.governance?.active && overview.state !== "active") line(task, zh ? "治理记录仍进行中；原生执行证据尚未确认。" : "Governance remains active; native execution evidence is unconfirmed.", "run-overview-note");
+    if (overview.ownerReported) line(task, liveTaskLifecycleCopy({ detail: "native_unconfirmed" }, currentLanguage).detail, "run-overview-note");
     const tokenCoverage = line(task, (zh ? "输出计量 " : "Output measured ") + coverage.outputMeasuredNodeCount + "/" + coverage.nodeCount, "run-overview-note");
     tokenCoverage.dataset.liveTokenCoverage = "";
     tokenCoverage.title = zh ? "仅统计当前运行中已报告输出 token 数的节点；其余节点未计量，0 也是有效计量。" : "Nodes in this run with an observed output token count; other nodes are not measured. Zero is measured.";
 
-    const result = item("result", zh ? "可用结果" : "Available result");
-    const available = overview.result.items[0];
-    if (available) {
-      const link = makeElement("a", "run-overview-value run-overview-result", available.label);
-      link.href = deliverableOpenHref(available);
-      link.addEventListener("click", () => { void observeDeliverableRead(available); });
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.dataset.liveOverviewResult = available.id;
-      link.title = available.label;
-      result.append(link);
-      line(result, (overview.result.items.length > 1 ? (zh ? "共 " : "") + overview.result.items.length + (zh ? " 份可用 · " : " available · ") : "") + (zh ? "有内容，尚待用户验收" : "Content present; user acceptance pending"), "run-overview-note");
-    } else {
-      line(result, overview.result.declaredCount ? (zh ? "仅声明产出，尚无可用内容" : "Output declared; no available content") : (zh ? "尚无可用结果" : "No available result yet"));
-    }
-    if (snapshot?.run) {
-      const feedback = makeElement("button", "run-overview-action", available ? (zh ? "反馈此结果" : "Give result feedback") : (zh ? "反馈当前工作" : "Give work feedback"));
-      feedback.type = "button";
-      feedback.dataset.liveOverviewFeedback = "";
-      feedback.addEventListener("click", () => openOverviewFeedback(available));
-      result.append(feedback);
-    }
-
     const blocker = item("blocker", overview.blocker?.kind === "status" ? (zh ? "状态说明" : "Status detail") : (zh ? "阻塞原因" : "Blocker"));
-    line(blocker, overview.blocker?.label || (overview.blocker?.kind === "blocked" ? (zh ? "已报告阻塞，原因未提供" : "Blocked; reason not reported")
+    line(blocker, (overview.blocker?.kind === "status" && overview.taskLifecycle?.state === "completed" ? taskState.detail : overview.blocker?.label) || (overview.blocker?.kind === "blocked" ? (zh ? "已报告阻塞，原因未提供" : "Blocked; reason not reported")
       : overview.state === "empty" || overview.state === "planned" ? (zh ? "尚无执行阻塞记录" : "No execution blocker recorded")
         : (zh ? "未报告阻塞" : "No blocker reported")));
     if (overview.blocker?.nodeLabel) line(blocker, overview.blocker.nodeLabel + (overview.blocker.moreCount ? (zh ? " · 另有 " : " · + ") + overview.blocker.moreCount : ""), "run-overview-note");
@@ -4989,7 +5054,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const detailTitle = selected?.label || snapshot.run.title;
     const detailSummary = selected?.summary || snapshot.run.task || (currentLanguage === "zh" ? "这条运行没有保存可读的任务说明。" : "This run did not preserve a readable task brief.");
     const tags = makeElement("div", "workspace-detail-tags");
-    appendWorkspaceTag(tags, selected ? nodeStateCopy(selected) : stateCopy(snapshot.run.displayState || snapshot.run.status), "work-item-tag-owner");
+    appendWorkspaceTag(tags, selected ? nodeStateCopy(selected, snapshot.run.id) : liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).label, "work-item-tag-owner");
+    appendWorkspaceTag(tags, selected ? nodeStateDetailCopy(selected, snapshot.run.id) : liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).detail);
     appendWorkspaceTag(tags, selected?.agent || snapshot.sessionInfo?.runtime);
     appendWorkspaceTag(tags, selected?.latestTool, "work-item-tag-tool");
     hero.append(makeElement("h3", "", detailTitle), makeElement("p", "", detailSummary), tags);
@@ -5063,7 +5129,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const workspaceData = snapshot.workspace || {};
     const session = snapshot.sessionInfo || {};
     setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace");
-    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(informativeValue(snapshot.run.stage, "Stage unconfirmed")) + " · " + stateCopy(snapshot.run.status), "Workspace telemetry unavailable");
+    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(informativeValue(snapshot.run.stage, "Stage unconfirmed")) + " · " + liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).label, "Workspace telemetry unavailable");
     clearChildren(workspaceFacts);
     appendOperationalRow(workspaceFacts, "Work items", String(snapshot.nodes.length), snapshot.nodes.length ? "observed" : "unavailable");
     appendOperationalRow(workspaceFacts, "Events", String(snapshot.replay.length), snapshot.replay.length ? "observed" : "unavailable");
@@ -6661,7 +6727,7 @@ button { color: inherit; }
 .topbar-button { padding: 0 var(--sp-cozy); font-size: var(--fs-body); }
 .topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
 .main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
-.run-overview { min-width: 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: var(--sp-default); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
+.run-overview { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-default); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-overview-item { min-width: 0; display: flex; flex-wrap: wrap; align-content: start; align-items: baseline; gap: var(--sp-cozy); }
 .run-overview-item h2 { flex-basis: 100%; margin: 0; color: var(--muted); font-size: var(--fs-label); font-weight: 500; line-height: var(--lh-snug); }
 .run-overview-value { flex-basis: 100%; min-width: 0; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-entity-body); line-height: var(--lh-snug); }
@@ -6670,12 +6736,22 @@ button { color: inherit; }
 .run-overview-action { min-height: 28px; max-width: 100%; padding: var(--sp-cozy); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: var(--fs-label); line-height: var(--lh-snug); cursor: pointer; }
 .run-overview-action:focus-visible, .run-overview-result:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .run-overview[data-state="blocked"] [data-overview-item="blocker"] .run-overview-value { color: var(--amber); }
-@media (max-width: 1024px) { .run-overview { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 1024px) { .run-overview { grid-template-columns: minmax(0,1fr); } }
+.run-work-list { flex-basis: 100%; width: 100%; list-style: none; padding: 0; margin: 0; }
+.run-work-item { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); padding-block: var(--sp-tight); }
+.run-work-item > span { min-width: 0; overflow-wrap: anywhere; }
+.run-work-item .run-overview-action { flex-shrink: 0; }
+.run-work-more { width: 100%; }
+.run-work-more > summary, .graph-record-controls > summary, .status-records > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-label); }
+.run-records-content { display: grid; gap: var(--sp-cozy); max-height: 40vh; overflow: auto; padding-top: var(--sp-cozy); }
+.run-context-technical { display: flex; flex-wrap: wrap; gap: var(--sp-cozy) var(--sp-section); padding-top: var(--sp-cozy); }
+.graph-record-controls[open] .graph-relation-summary { display: block; }
+.status-records { border-top: 1px solid var(--line); padding-inline: var(--sp-cozy); }
 @media (max-width: 720px) { .run-overview { gap: var(--sp-cozy); padding: var(--sp-cozy); max-height: 36dvh; overflow: auto; } }
 .run-context { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--sp-cozy) var(--sp-section); padding: var(--sp-snug) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-context-heading { min-width: 0; grid-column: 1 / -1; }
 .run-context-heading > .context-kicker { display: none; }
-.run-context-description { margin-top: var(--sp-tight); color: var(--muted); font-size: var(--fs-body); }
+.run-context-description { grid-column: 1 / -1; width: 100%; margin-top: var(--sp-tight); color: var(--muted); font-size: var(--fs-body); }
 .run-context-description summary { width: fit-content; cursor: pointer; }
 .run-context-description summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .run-context-description[open] .run-context-task { display: block; -webkit-line-clamp: unset; max-height: 20vh; overflow: auto; }
@@ -6738,7 +6814,7 @@ button { color: inherit; }
 .workspace-session-item[data-running="true"] .workspace-session-meta::before { background: var(--green); }
 .workspace-session-note { margin: var(--sp-snug); color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-normal); }
 .company-board-shell { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: #0b1018; }
-.company-board { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(4,minmax(190px,1fr)); gap: var(--sp-cozy); padding: var(--sp-cozy); overflow: auto; }
+.company-board { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(3,minmax(190px,1fr)); gap: var(--sp-cozy); padding: var(--sp-cozy); overflow: auto; }
 .work-column { min-width: 190px; min-height: 100%; display: grid; grid-template-rows: auto minmax(0,1fr); border: 1px solid var(--line); border-radius: var(--radius-sm); background: #0d141e; }
 .work-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); min-height: 38px; padding: 0 var(--sp-cozy); border-bottom: 1px solid var(--line); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; letter-spacing: .04em; }
 .work-column-header span:first-child { display: inline-flex; align-items: center; gap: var(--sp-snug); }
@@ -7090,7 +7166,7 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
 }
 @media (max-width: 1180px) {
   .company-workspace { grid-template-columns: 200px minmax(0,1fr) 300px; }
-  .company-board { grid-template-columns: repeat(4,minmax(176px,1fr)); }
+  .company-board { grid-template-columns: repeat(3,minmax(176px,1fr)); }
   .work-column { min-width: 176px; }
 }
 @media (max-width: 720px) {
@@ -7107,7 +7183,7 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .company-session-rail { max-height: 190px; border-right: 0; border-bottom: 1px solid var(--line); }
   .workspace-session-list { display: flex; overflow-x: auto; }
   .workspace-session-item { flex: 0 0 210px; }
-  .company-board { grid-template-columns: repeat(4,minmax(210px,1fr)); }
+  .company-board { grid-template-columns: repeat(3,minmax(210px,1fr)); }
   .company-context-panel { min-height: 360px; border-top: 1px solid var(--line); border-left: 0; }
   .company-board-header { align-items: flex-start; }
   .company-board-actions .surface-state { display: none; }
@@ -7228,9 +7304,9 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .work-view-menu .work-view-switcher { right: 0; width: 150px; }
   .topbar-actions { margin-left: 0; }
   .connection, [data-live-open-help], [data-live-open-info] { display: none; }
-  .run-context { min-height: 42px; display: flex; align-items: center; gap: var(--sp-cozy); padding: var(--sp-tight) var(--sp-cozy); }
+  .run-context { min-height: 42px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-cozy); padding: var(--sp-tight) var(--sp-cozy); }
   .run-context-heading { flex: 1; }
-  .run-context-facts, .run-context-source { display: none; }
+  .run-context-facts { width: 100%; }
   .stage-overview-toggle { min-height: 32px; }
   .node-list { grid-template-columns: 1fr; }
   .node-card, .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 166px !important; }
@@ -7328,20 +7404,25 @@ export function renderLiveControlRoomPage({
       <section class="run-context" aria-label="Run context">
         <div class="run-context-heading">
           <span class="context-kicker" data-i18n-en="Current run" data-i18n-zh="当前运行">当前运行</span>
-          <h1 class="run-context-title" data-live-context-title>正在等待运行快照</h1>
-          <p class="planning-notice" data-live-planning-notice role="status" hidden data-i18n-en="This record contains a task plan only. No work was dispatched; planned steps and relationships are not execution progress." data-i18n-zh="这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。">这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。</p>
-          <details class="run-context-description"><summary data-i18n-en="View task description" data-i18n-zh="查看任务说明">查看任务说明</summary><p class="run-context-task" data-live-context-task>正在等待任务摘要</p><p class="run-context-identifier" data-live-run-id>未识别运行</p></details>
+          <h1 class="run-context-title" data-live-context-title>本次工作</h1>
         </div>
         <div class="run-context-facts" role="list" aria-label="Run facts">
-          <div class="context-fact" role="listitem"><span data-i18n-en="Status" data-i18n-zh="状态">状态</span><strong data-live-context-status>存疑</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Status" data-i18n-zh="状态">状态</span><strong data-live-context-status>未开始</strong></div>
+          <div class="context-fact" role="listitem"><strong data-live-context-progress></strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
+        </div>
+        <details class="run-context-description"><summary data-i18n-en="Details" data-i18n-zh="详细记录">详细记录</summary>
+          <p class="run-context-task" data-live-context-task>正在等待任务摘要</p><p class="run-context-identifier" data-live-run-id>未识别运行</p>
+          <p class="planning-notice" data-live-planning-notice role="status" hidden data-i18n-en="This record contains a task plan only. No work was dispatched; planned steps and relationships are not execution progress." data-i18n-zh="这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。">这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。</p>
+          <div class="run-context-technical">
           <div class="context-fact" role="listitem"><span data-i18n-en="Stage" data-i18n-zh="阶段">阶段</span><strong data-live-context-stage>${EMPTY_PLACEHOLDER}</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Nodes" data-i18n-zh="节点">节点</span><strong data-live-context-nodes>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Events" data-i18n-zh="事件">事件</span><strong data-live-context-events>0</strong></div>
           <div class="context-fact" role="listitem"><span data-live-context-evidence-label data-i18n-en="Execution evidence" data-i18n-zh="执行证据">执行证据</span><strong data-live-context-evidence>0</strong></div>
-          <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
           <div class="context-fact" role="listitem" data-live-context-chat hidden><button class="context-fact-copy" type="button" data-live-context-chat-copy title="Copy the full chat id">${EMPTY_PLACEHOLDER}</button></div>
-        </div>
-        <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
+          <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
+          </div><div class="run-records-content" data-live-run-diagnostics></div>
+        </details>
       </section>
       <section class="run-overview" data-live-run-overview aria-label="Run overview"><p class="run-overview-note" data-i18n-en="Waiting for a run record" data-i18n-zh="等待运行记录">等待运行记录</p></section>
       <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
@@ -7367,7 +7448,7 @@ export function renderLiveControlRoomPage({
           <div class="graph-stage" data-live-graph-viewport>
             <h1 class="sr-only" id="graph-title" data-live-graph-title data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
             <details class="stage-overview" aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-stage-rail-state="collapse" data-i18n-en="Collapse" data-i18n-zh="收起">收起</span><span data-stage-rail-state="expand" data-i18n-en="Expand" data-i18n-zh="展开">展开</span></summary><div class="stage-overview-body"><ol class="stage-rail" data-live-stage-rail></ol></div></details>
-            <div class="graph-stage-bar"><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Arrows = dependencies · State key" data-i18n-zh="箭头＝依赖 · 状态图例">箭头＝依赖 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Teal glow = running · running (observed) uses the same teal · Green solid = done · Gray dashed = queued · Dashed card = declared, not started · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
+            <div class="graph-stage-bar"><details class="graph-record-controls"><summary data-i18n-en="Map settings" data-i18n-zh="图表设置">图表设置</summary><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span></details><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Arrows = dependencies · State key" data-i18n-zh="箭头＝依赖 · 状态图例">箭头＝依赖 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Teal glow = running · running (observed) uses the same teal · Green solid = done · Gray dashed = queued · Dashed card = declared, not started · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
@@ -7383,7 +7464,7 @@ export function renderLiveControlRoomPage({
             <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div><div class="replay-ticks" data-replay-ticks aria-hidden="true"></div></div>
             <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
           </details>
-          <div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span><span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>${EMPTY_PLACEHOLDER}</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-run-updated>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-source>本地观察器</span></div>
+          <details class="status-records"><summary data-i18n-en="Details" data-i18n-zh="详细记录">详细记录</summary><div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span><span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>${EMPTY_PLACEHOLDER}</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-run-updated>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-source>本地观察器</span></div></details>
         </section>
         <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
           <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
