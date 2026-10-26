@@ -12,28 +12,28 @@
   "defaultMode": "compact",
   "modes": {
     "compact": {
-      "childColumnStepPx": 328,
-      "childRowGapPx": 88,
-      "chainColumnStepPx": 328,
-      "chainRowGapPx": 104,
-      "chainToBlockGapPx": 28,
-      "entityColumnStepPx": 356,
-      "entityRowGapPx": 88,
+      "childColumnStepPx": 380,
+      "childRowGapPx": 124,
+      "chainColumnStepPx": 380,
+      "chainRowGapPx": 140,
+      "chainToBlockGapPx": 64,
+      "entityColumnStepPx": 404,
+      "entityRowGapPx": 124,
       "stageColumns": 4,
-      "stageColumnGapPx": 276,
-      "stageRowGapPx": 206
+      "stageColumnGapPx": 324,
+      "stageRowGapPx": 242
     },
     "flow": {
-      "childColumnStepPx": 356,
-      "childRowGapPx": 104,
-      "chainColumnStepPx": 356,
-      "chainRowGapPx": 124,
-      "chainToBlockGapPx": 44,
-      "entityColumnStepPx": 384,
-      "entityRowGapPx": 104,
+      "childColumnStepPx": 412,
+      "childRowGapPx": 144,
+      "chainColumnStepPx": 412,
+      "chainRowGapPx": 160,
+      "chainToBlockGapPx": 80,
+      "entityColumnStepPx": 436,
+      "entityRowGapPx": 144,
       "stageColumns": 8,
-      "stageColumnGapPx": 248,
-      "stageRowGapPx": 190
+      "stageColumnGapPx": 296,
+      "stageRowGapPx": 226
     }
   },
   "scenePaddingPx": {
@@ -55,9 +55,9 @@
     "left": 40,
     "branchGap": 32
   },
-  "renderedColumnGapPx": 88,
+  "renderedColumnGapPx": 112,
   "fanout": {
-    "minimumChildren": 4,
+    "minimumChildren": 2,
     "chainOrientations": ["chain-horizontal", "chain-vertical"]
   },
   "policyNotes": {
@@ -84,7 +84,7 @@
     "stageScenePaddingPx": "Scene margin for the stage-spine layout, kept separate from scenePaddingPx because the spine has no owner chain entering from the left and needs less gutter on that side. top and left are the origin the first spine card is placed at; right and bottom are added to the furthest card to report the scene box.",
     "stageScenePaddingPx.branchGap": "Vertical separation between the last spine row and the first branch row. It is the only distance here that may legally be 0, because a run with no branches never crosses it, which is why the loader validates it as non-negative while the four sides must be positive.",
     "renderedColumnGapPx": "Vertical separation enforced after the cards render and their real heights are known. It is deliberately smaller than the layout row gaps because it only has to keep measured boxes apart, not reserve a routing lane.",
-    "fanout.minimumChildren": "A parent with fewer children than this is laid out by the layered path instead. Below four siblings the grid search has nothing to choose and the layered arrangement reads the dependency depth more directly.",
+    "fanout.minimumChildren": "Two siblings already offer a row-versus-column choice. Search those shapes against the measured canvas as well: forcing three 333px cards and their gutters into one vertical lane needs a scale below 0.28 on the observed 1224x278.5 canvas and clips the last card. The page still requires same-rank siblings and a fully accounted owner chain, so wrapping cannot erase a dependency or absorb unrelated nodes.",
     "fanout.chainOrientations": "Both arrangements are scored and the higher fitted scale wins. chain-horizontal places the owner chain as a left-to-right spine with the child grid to its right; chain-vertical keeps the historical centred column above the grid. On a short wide canvas the horizontal chain wins by a wide margin because a vertical chain spends the scarce axis on two cards."
   }
 }

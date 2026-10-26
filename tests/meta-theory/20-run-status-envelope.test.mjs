@@ -236,6 +236,38 @@ describe("meta-theory run status envelope", () => {
     assert.equal(unknown.conversationLinkState, "unlinked");
   });
 
+  test("run status keeps only an explicit bounded public title", async () => {
+    const spine = await import("../../canonical/runtime-assets/shared/hooks/spine-state.mjs");
+    const state = spine.createInitialState({ taskClassification: "public_title" });
+    const envelope = spine.createMetaRunStatusEnvelope({
+      ...state,
+      task: "private original request must stay private",
+      criticalRecord: { realIntent: "private intent must not become a public title" },
+      publicSummary: { title: "  修复任务面板\n让结果清楚可见  ", internalNote: "private summary detail" },
+    });
+    assert.deepEqual(envelope.publicSummary, { title: "修复任务面板 让结果清楚可见" });
+    assert.doesNotMatch(JSON.stringify(envelope), /private original|private intent|private summary detail/u);
+    assert.equal(envelope.publicReadyAuthority, false);
+    assert.equal(envelope.conversationLinkState, "unlinked");
+    assert.equal(spine.createMetaRunStatusEnvelope({ ...state, publicSummary: { title: "界".repeat(300) } }).publicSummary.title.length, 120);
+    for (const publicSummary of [null, [], "title", { title: 42 }, { title: "   " }, { internalNote: "not a title" }]) {
+      assert.equal(spine.createMetaRunStatusEnvelope({ ...state, publicSummary }).publicSummary, undefined);
+    }
+    const withoutPublicTitle = spine.createMetaRunStatusEnvelope({ ...state,
+      task: "private original request must stay private", criticalRecord: { realIntent: "private intent" } });
+    assert.equal(withoutPublicTitle.publicSummary, undefined, "raw request and intent are never title fallbacks");
+  });
+
+  test("a public title cannot execute an accessor or inherit a title", async () => {
+    const spine = await import("../../canonical/runtime-assets/shared/hooks/spine-state.mjs");
+    const state = spine.createInitialState({ taskClassification: "public_title_boundary" });
+    let reads = 0;
+    const publicSummary = Object.defineProperty({}, "title", { enumerable: true, get() { reads += 1; return "unsafe"; } });
+    assert.throws(() => spine.createMetaRunStatusEnvelope({ ...state, publicSummary }), /accessor|data propert/iu);
+    assert.equal(reads, 0);
+    assert.throws(() => spine.createMetaRunStatusEnvelope({ ...state, publicSummary: Object.create({ title: "inherited" }) }), /plain object|prototype/iu);
+  });
+
   test("an unlinked run records why the conversation binding was refused", async () => {
     const stamp = Date.now();
     const spine = await import(

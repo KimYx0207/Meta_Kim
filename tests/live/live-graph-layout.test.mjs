@@ -217,7 +217,7 @@ test("the chosen arrangement is the highest-scoring one over every orientation a
   );
 });
 
-test("the measured canvas resolves to the arrangement recorded from the browser", () => {
+test("the measured canvas keeps its wrapped arrangement with the wider routing gutters", () => {
   const policy = loadLiveGraphLayoutPolicy();
   const arrangement = resolveFanoutArrangement(arrangementRequest({ policy }), policy);
 
@@ -227,8 +227,8 @@ test("the measured canvas resolves to the arrangement recorded from the browser"
   assert.equal(arrangement.orientation, "chain-horizontal");
   assert.equal(arrangement.columns, 8);
   assert.equal(arrangement.rows, 2);
-  assert.equal(arrangement.sceneWidth, 3296);
-  assert.equal(arrangement.sceneHeight, 894);
+  assert.equal(arrangement.sceneWidth, 3748);
+  assert.equal(arrangement.sceneHeight, 930);
 });
 
 test("the search reaches the same winner whichever orientation the configuration lists first", () => {

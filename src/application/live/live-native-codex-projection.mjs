@@ -39,6 +39,7 @@ export function buildNativeCodexLiveSnapshot(observation) {
   const edges = [];
   const replay = [];
   const allEvidence = [];
+  const provenance = [];
   const toolCalls = [];
   const addEvidence = (node, record) => {
     node.workerExecutionEvidence.push(record);
@@ -74,13 +75,19 @@ export function buildNativeCodexLiveSnapshot(observation) {
     addEvidence(main, evidence({ runId, taskId: mainTaskId, nodeId: mainId, eventId: command.id, at: command.at, sha256: command.sha256, label: failed ? "原生命令失败记录" : "原生命令执行记录" }));
     replay.push({ id: id("event", command.id), type: "command_returned", kind: "tool", nodeId: mainId, at: command.at, status: failed ? "failed" : "executed", label: "shell", summary: tool.summary });
   }
-  for (const agent of observation.agents || []) {
+  for (const [index, agent] of (observation.agents || []).entries()) {
     const childSource = agent.observationBasis === "verified_child_parent_turn" && agent.childMetadataVerified === true && agent.spawnReturned !== true;
     const taskId = id("native-task", agent.id);
     const nodeId = id("agent", `${runId}:${agent.id}`);
     const node = baseNode({ nodeId, taskId, label: agent.role || agent.owner || "worker", owner: agent.owner, at: agent.at });
     node.parentId = mainId;
-    node.task = agent.taskName || (childSource ? "子会话源已观察的任务" : "原生派发的子任务");
+    node.nativeTaskOrdinal = index + 1;
+    node.nativeTaskCaption = ["explorer", "javascript-pro", "code-reviewer", "ui-ux-designer", "meta-prism"].includes(agent.owner)
+      ? agent.owner : ["explorer", "javascript-pro", "code-reviewer", "ui-ux-designer", "meta-prism"].includes(agent.role) ? agent.role : "subtask";
+    node.task = "子任务 " + node.nativeTaskOrdinal;
+    node.summary = "任务说明未记录；仅根据原生事件显示派发与返回情况，任务结果尚未验收。";
+    const alias = typeof agent.taskName === "string" ? agent.taskName.replace(/[\u0000-\u001f\u007f]/gu, " ").trim().slice(0, 120) : "";
+    if (provenance.length < 128) provenance.push({ nodeId, reasoningExcerpt: (alias ? "原生任务别名：" + alias + "；" : "") + "源记录未提供任务说明。" });
     node.provenance.push({ kind: childSource ? "source_parent_link" : "native_spawn", state: "observed",
       ...(childSource ? { sourceEventId: agent.id, parentDispatchCovered: false } : { sourceCallId: agent.id }),
       sourceThreadId: observation.threadId, childThreadId: agent.childThreadId });
@@ -144,9 +151,9 @@ export function buildNativeCodexLiveSnapshot(observation) {
     source: { kind: "codex_desktop_native_session", observedAt: observation.observedAt, stale: false, readOnly: true, limitations: observation.limitations, coverage: observation.coverage || null },
     run: { runId, title: "当前 Codex 真实执行记录", task: "当前会话中实际观察到的工具调用与子任务；不代表用户验收。", status: state, active, displayState: state, statusReason, currentStage: "execution", stageProgressEvidence: "native_execution_only", observationKind: "native_execution", executionSummary, observationCoverage: observation.coverage || null, executionEvidenceState: hasExecution ? "recorded" : "not_observed", completionEvidenceState: "unproven", recordOrigin: "governed_run", substanceClass: "substantive", startedAt: observation.startedAt, updatedAt, ...conversation },
     session: { sessionId: id("session", runId), title: "当前 Codex 真实执行记录", status: state, active, displayState: state, statusReason, runtime: "codex", mode: "native observed", executionSummary, nodeCount: nodes.length, eventCount: replay.length, plannedCount: 0, completedCount: 0, failedCount: 0, blockedCount: 0, proofState: "native execution observed; task acceptance unproven", ...conversation },
-    nodes, edges, evidence: allEvidence, replay, prompts: [], toolCalls, provenance: [], repository: null, workspace: null, contextTransfers: [], deliverables: [], scheduling: null, nonGoalConstraints: [], declaredPlan: null,
+    nodes, edges, evidence: allEvidence, replay, prompts: [], toolCalls, provenance, repository: null, workspace: null, contextTransfers: [], deliverables: [], scheduling: null, nonGoalConstraints: [], declaredPlan: null,
     eventIndex: replay.length, eventCount: replay.length,
-    counts: { nodes: nodes.length, edges: edges.length, evidence: allEvidence.length, executionEvidence: allEvidence.length, planningEvidence: 0, events: replay.length, toolCalls: toolCalls.length, prompts: 0, provenance: 0, contextTransfers: 0 },
+    counts: { nodes: nodes.length, edges: edges.length, evidence: allEvidence.length, executionEvidence: allEvidence.length, planningEvidence: 0, events: replay.length, toolCalls: toolCalls.length, prompts: 0, provenance: provenance.length, contextTransfers: 0 },
     permissions: { projectionOnly: true, executionAllowed: false, mutationAllowed: false, controlEnabled: false },
   };
 }

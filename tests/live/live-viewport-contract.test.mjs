@@ -165,6 +165,30 @@ test("regression baselines keep the canvas-first grid and never collapse to the 
   }
 });
 
+test("the narrow-run scroll allocation stops before the declared dense grid boundary", () => {
+  const scopedPanel = '.workspace-grid[data-work-view="run"] .graph-panel';
+  const scopedCanvas = '.workspace-grid[data-work-view="run"] .graph-canvas';
+  const appliedBody = (profile) => resolveApplicableMediaBlocks(css, profile).map((block) => block.body).join("\n");
+  const observedNarrow = appliedBody({ widthPx: 884, heightPx: 871 });
+  assert.equal(resolvedDeclarationValue(scopedPanel, "display", observedNarrow), "block");
+  assert.equal(resolvedDeclarationValue(scopedCanvas, "height", observedNarrow), config.chromeBudget.minCanvasHeightPx + "px");
+  const tablet = config.collapseGates.find((gate) => gate.id === "tablet");
+  const denseFeatures = evaluateMediaCondition(config.denseLayoutGate.condition, config.profiles[0]).features;
+  const denseMinWidth = denseFeatures.find((feature) => feature.axis === "width" && feature.bound === "min").threshold;
+  const denseMinHeight = denseFeatures.find((feature) => feature.axis === "height" && feature.bound === "min").threshold;
+  const tabletMaxWidth = evaluateMediaCondition(tablet.condition, config.profiles[0]).features.find((feature) => feature.axis === "width" && feature.bound === "max").threshold;
+  for (const widthPx of [denseMinWidth, tabletMaxWidth]) {
+    const denseOverlap = appliedBody({ widthPx, heightPx: denseMinHeight });
+    assert.equal(resolvedDeclarationValue(scopedPanel, "display", denseOverlap), null,
+      widthPx + "px keeps the existing dense graph container");
+    assert.equal(resolvedDeclarationValue(scopedCanvas, "height", denseOverlap), null,
+      widthPx + "px must retain the dense canvas's flexible height allocation");
+    assert.equal(resolvedDeclarationValue(".graph-panel", "display", denseOverlap), "contents");
+    assert.equal(resolvedDeclarationValue(".node-card", "padding", denseOverlap), "var(--sp-roomy)",
+      "the original tablet card styling still applies in the dense overlap");
+  }
+});
+
 test("the shipped page defers the stage rail's expanded state to the measured canvas", () => {
   // `<details open>` in the markup is a height decision taken without knowing the
   // viewport. At 1024x768 it rendered a 337px canvas against a declared 360px

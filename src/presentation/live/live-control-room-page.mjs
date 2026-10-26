@@ -830,6 +830,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const contextTask = app.querySelector("[data-live-context-task]");
   const contextStage = app.querySelector("[data-live-context-stage]");
   const contextStatus = app.querySelector("[data-live-context-status]");
+  const contextProgress = app.querySelector("[data-live-context-progress]");
+  const runDiagnostics = app.querySelector("[data-live-run-diagnostics]");
   const contextUpdated = app.querySelector("[data-live-context-updated]");
   const contextSource = app.querySelector("[data-live-context-source]");
   const contextNodes = app.querySelector("[data-live-context-nodes]");
@@ -874,6 +876,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let replayTickEvents = [];
   let layoutMode = "compact";
   let relationMode = "dependency";
+  let relationModeExplicit = false;
   let relationFocusActive = false;
   let minimapExpanded = false;
   let graphCardResizeObserver = null;
@@ -1272,6 +1275,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const nodes = nodeInput.slice(0, 128).map((node, index) => {
       const item = node && typeof node === "object" ? node : {};
       const ownerReport = normalizeLiveOwnerReport(item, safeIdentifier(runInput.id || runInput.runId));
+      const nativeReturnEvidence = normalizeLiveNativeTaskReturn(item, safeIdentifier(runInput.id || runInput.runId));
       const loadoutValue = item.loadout && typeof item.loadout === "object" ? item.loadout : {};
       const loadout = {
         skills: Math.max(0, numberOr(loadoutValue.skills, 0)),
@@ -1295,6 +1299,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
         id: display(firstValue(item, ["id", "nodeId"], "node-" + (index + 1)), "node-" + (index + 1)),
         taskPacketId: safeIdentifier(item.taskPacketId) || null,
         ...(ownerReport ? { ownerReport, ownerAgent: ownerReport.ownerAgent } : {}),
+        ...(nativeReturnEvidence ? { nativeReturnEvidence } : {}),
+        ...(["explorer", "javascript-pro", "code-reviewer", "ui-ux-designer", "meta-prism", "subtask"].includes(item.nativeTaskCaption)
+          && Number.isSafeInteger(item.nativeTaskOrdinal) && item.nativeTaskOrdinal > 0 && item.nativeTaskOrdinal <= 4096
+          ? { nativeTaskCaption: item.nativeTaskCaption, nativeTaskOrdinal: item.nativeTaskOrdinal } : {}),
         executionState: ["not_executed", "executed", "unreported"].includes(item.executionState) ? item.executionState : "unreported",
         label: display(firstValue(item, ["label", "title", "name", "nodeId"], "Untitled task"), "Untitled task"),
         kind: display(firstValue(item, ["kind", "nodeKind", "type"], "worker"), "worker").toLowerCase().replace(/[\s-]+/gu, "_"),
@@ -1793,29 +1801,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return "unknown";
   }
 
-  function nodeStateCopy(node) {
-    const state = nodeDisplayState(node);
-    if (node?.ownerReport && node.executionState !== "executed" && normalizeLiveOwnerReport(node)) return currentLanguage === "zh" ? "已回报 · 待独立验证" : "Reported · awaiting independent verification";
-    if (state === "planned") return currentLanguage === "zh" ? "仅规划 · 尚未派发" : "Planned · not dispatched";
-    if (state === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
-    if (state === "unknown") return currentLanguage === "zh" ? "状态未知" : "Unknown state";
-    // Observed running is a different claim from declared running: the host
-    // evidence shows the invocation, while the declared lifecycle stays
-    // queued. The suffix keeps the two claims from collapsing into one word.
-    if (state === "active" && node?.observedOnly === true) return currentLanguage === "zh" ? "运行中·observed" : "Running · observed";
-    if (state === "active") return currentLanguage === "zh" ? "执行中" : "Running";
-    if (state === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
-    if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "已执行 · 待验证" : "Executed · awaiting verification";
-    return stateCopy(state);
+  function nodeStateCopy(node, runId = node?.runId) {
+    const snapshot = typeof currentSnapshot !== "undefined" && currentSnapshot?.run?.id === runId ? currentSnapshot : null;
+    return liveTaskLifecycleCopy(snapshot ? resolveLiveNodeTaskLifecycle(node, snapshot) : resolveLiveTaskLifecycle(node, runId), currentLanguage).label;
   }
 
-  function nodeShortStateCopy(node) {
-    const state = nodeDisplayState(node);
-    if (node?.ownerReport && node.executionState !== "executed" && normalizeLiveOwnerReport(node)) return currentLanguage === "zh" ? "已回报" : "Reported";
-    if (state === "planned") return currentLanguage === "zh" ? "尚未派发" : "Not dispatched";
-    if (state === "unreported") return nodeStateCopy(node);
-    if (state === "in_doubt" && node?.executionState === "executed") return currentLanguage === "zh" ? "待验证" : "To verify";
-    return localize(state);
+  function nodeShortStateCopy(node, runId = node?.runId) {
+    return nodeStateCopy(node, runId);
+  }
+
+  function nodeStateDetailCopy(node, runId = node?.runId) {
+    const snapshot = typeof currentSnapshot !== "undefined" && currentSnapshot?.run?.id === runId ? currentSnapshot : null;
+    return liveTaskLifecycleCopy(snapshot ? resolveLiveNodeTaskLifecycle(node, snapshot) : resolveLiveTaskLifecycle(node, runId), currentLanguage).detail;
   }
 
   function sourceRuntimeLabel(value) {
@@ -1947,6 +1944,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
    * the shared fallback word, which would put a verdict on a silent record.
    */
   function sessionStateCopy(session) {
+    if (typeof currentSnapshot !== "undefined" && currentSnapshot?.run?.id === session?.runId) return liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(currentSnapshot), currentLanguage).label;
     const state = display(session?.displayState, "") || display(session?.status, "");
     return state ? stateCopy(state) : "";
   }
@@ -2033,7 +2031,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const dependencyButton = app.querySelector('[data-live-graph-relations="dependency"]');
     setTranslatedText(dependencyButton, planningOnly ? "Planned dependencies" : "Execution dependencies", planningOnly ? "规划依赖" : "执行依赖");
     setTranslatedText(contextEvidenceLabel, "Execution evidence", "执行证据");
-    setText(contextTitle, snapshot.run.title, "Live execution");
+    setText(contextTitle, liveRunDisplayTitle(snapshot.run, currentLanguage));
+    if (contextTitle) contextTitle.title = snapshot.run.title;
 
     const shortRunId = shortenIdentifier(snapshot.run.id, DISPLAY_FORMAT.identifierShortForm);
     setText(runId, shortRunId === "" ? "" : "Run ID · " + shortRunId, "unidentified run");
@@ -2051,7 +2050,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(contextTask, runTaskCopy(runTaskSupplement(snapshot.run.task, snapshot.run.title)));
     if (planningOnly) setText(contextStage, currentLanguage === "zh" ? "尚未派发" : "Not dispatched");
     else setText(contextStage, informativeValue(snapshot.run.stage, "Stage unconfirmed"), "Stage unconfirmed");
-    setText(contextStatus, stateCopy(snapshot.run.displayState || snapshot.run.status), "In doubt");
+    const taskLifecycle = resolveLiveRunTaskLifecycle(snapshot);
+    const taskState = liveTaskLifecycleCopy(taskLifecycle, currentLanguage);
+    setText(contextStatus, taskState.label);
+    setText(contextProgress, taskState.progress);
+    if (contextStatus) contextStatus.title = taskState.detail;
     setText(contextUpdated, formatTime(snapshot.run.updatedAt));
     // Joined from the parts that exist rather than a fixed two-part string: the
     // chat id is absent for every run that was never bound, and a trailing
@@ -2088,9 +2091,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       "0",
     );
     setText(contextEvidence, String(executionEvidenceCount(snapshot)), "0");
-    const status = snapshot.run.displayState || snapshot.run.status;
-    if (stateChip) stateChip.dataset.state = status;
-    setText(stateLabel, stateCopy(status), "Stale");
+    if (stateChip) stateChip.dataset.state = taskLifecycle.state;
+    setText(stateLabel, taskState.label);
+    if (stateLabel) stateLabel.title = taskState.detail;
     if (liveRegion) liveRegion.textContent = localize("Run snapshot updated: " + snapshot.run.title);
     if (lastUpdate) {
       const observedAt = formatTime(snapshot.run.updatedAt);
@@ -2348,6 +2351,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function setGraphRelationMode(mode) {
+    relationModeExplicit = true;
     relationMode = mode === "all" ? "all" : "dependency";
     if (graphState.layout?.kind === "dependency") {
       graphState.layout.inputs.includeContext = relationMode === "all";
@@ -2362,7 +2366,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function graphNodeReadingLabel(node) {
     // Exact vocabulary translations only; an unknown identity keeps its source.
     const label = String(node.label || node.id);
-    return currentLanguage === "zh" ? zhText.get(label) || label : label;
+    return plainLiveTaskLabel(currentLanguage === "zh" ? zhText.get(label) || label : label, currentLanguage);
   }
 
   function nodeCapabilityCount(node) {
@@ -3682,9 +3686,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const nodeTools = selected ? currentSnapshot.toolCalls.filter((item) => item.nodeId === selected.id) : [];
     const nodeEvents = selected ? currentSnapshot.replay.filter((item) => item.nodeId === selected.id) : [];
     const toolCount = selected ? Math.max(selected.toolCount, nodeTools.length) : 0;
-    setText(selectedNodeLabel, selected ? "Selected · " + selected.label : "Select a node to inspect provenance", "Select a node to inspect provenance");
+    setText(selectedNodeLabel, selected ? "Selected · " + liveTaskDisplayLabel(selected, currentLanguage) : "Select a node to inspect provenance", "Select a node to inspect provenance");
     setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") + " · " + nodeTools.length + " tools · " + nodeEvents.length + " events" : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
-    setText(selectedNodeStatus, labeledFact("Status", selected ? nodeStateCopy(selected) : ""));
+    setText(selectedNodeStatus, labeledFact("Status", selected ? [nodeStateCopy(selected, currentSnapshot.run.id), nodeStateDetailCopy(selected, currentSnapshot.run.id)].filter(Boolean).join(" · ") : ""));
     setText(selectedNodeOwner, labeledFact("Owner", selected ? selected.agent : ""));
     setText(selectedNodeRuntime, labeledFact("Runtime", selected ? selected.runtime : ""));
     setText(selectedNodeModel, labeledFact("Model", selected ? selected.model : ""));
@@ -3859,7 +3863,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setInspectorOpen(true);
     if (graphFollowing) centerGraphNode(nodeId);
     const node = currentSnapshot.nodes.find((item) => item.id === nodeId);
-    if (liveRegion && node) liveRegion.textContent = localize("Selected node: " + node.label);
+    if (liveRegion && node) liveRegion.textContent = localize("Selected node: " + liveTaskDisplayLabel(node, currentLanguage));
     if (focus) graphState.nodeElements.get(nodeId)?.querySelector(".node-identity-button")?.focus();
   }
 
@@ -3904,10 +3908,33 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (liveRegion) liveRegion.textContent = localize(copy);
   }
 
+  /** Create one native route animation when live or recorded execution needs it. */
+  function createGraphEdgeMotion(effectGroup, routePath, stageFocus) {
+    if (!["live", "recorded"].includes(stageFocus) || reducedMotion.matches) return null;
+    const particle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    particle.setAttribute("r", "3.2");
+    particle.setAttribute("class", "edge-flow-particle");
+    particle.dataset.stageFocus = stageFocus;
+    const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
+    motion.setAttribute("dur", "2.4s");
+    motion.setAttribute("repeatCount", "indefinite");
+    motion.setAttribute("path", routePath);
+    // Stay clear of both endpoint cards and the arrowhead.
+    motion.setAttribute("keyPoints", "0.04;0.94");
+    motion.setAttribute("keyTimes", "0;1");
+    motion.setAttribute("calcMode", "linear");
+    particle.append(motion);
+    effectGroup.append(particle);
+    return motion;
+  }
+
   function renderGraph(snapshot) {
     const graphNodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, graphNodes);
     const relationPlan = classifyGraphRelations(graphNodes, graphEdges, EXECUTION_EDGE_KINDS);
+    // Ownership is still ownership. Show the recorded graph when it has no
+    // execution dependencies, while preserving any filter the viewer chose.
+    if (!relationModeExplicit) relationMode = !relationPlan.executionEdges.length && graphEdges.length ? "all" : "dependency";
     const graphNodeById = new Map(graphNodes.map((node) => [node.id, node]));
     // Wave membership is read from the projection, never inferred from graph
     // shape. The page cannot observe scheduling order, so a node the projection
@@ -3943,7 +3970,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (edgeLayer) {
       edgeLayer.setAttribute("viewBox", "0 0 " + layout.bounds.width + " " + layout.bounds.height);
       const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      const markerColors = { running: "#58d4cf", active: "#58d4cf", completed: "#5b8cff", skipped: "#585858", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#a98bff", cancelled: "#697386", queued: "#a3b0c9", unreported: "#d7a94a", unknown: "#697386", "stage-live": "#58d4cf", "stage-recorded": "#d8a84e" };
+      const markerColors = { running: "var(--task-flow-ink)", active: "var(--task-flow-ink)", completed: "var(--task-completed-border)", skipped: "#a3b0c9", failed: "#e06c75", "in-doubt": "#e06c75", blocked: "#d8a84e", cancelled: "#a3b0c9", queued: "var(--edge-ink-idle)", unreported: "var(--edge-ink-idle)", unknown: "#a3b0c9", "stage-live": "var(--task-flow-ink)", "stage-recorded": "var(--task-flow-ink)" };
       for (const [status, color] of Object.entries(markerColors)) {
         const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         marker.id = edgeMarkerId(status);
@@ -3962,12 +3989,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
       edgeLayer.append(defs);
     }
     graphNodes.forEach((node) => {
-      const publicState = nodeDisplayState(node);
-      const taskLine = resolveNodeTaskLine(node, DISPLAY_FORMAT);
+      const lifecycle = resolveLiveNodeTaskLifecycle(node, snapshot);
+      const publicState = lifecycle.state === "completed" ? "completed" : lifecycle.state === "not_started" ? "queued" : "active";
+      const sourceTaskLine = resolveNodeTaskLine(node, DISPLAY_FORMAT);
+      const taskLine = sourceTaskLine || node.nativeTaskCaption ? liveTaskDisplayLabel(node, currentLanguage) : "";
       const card = makeElement("article", "node-card node-" + nodeClass(publicState));
       card.dataset.nodeId = node.id;
       card.dataset.status = node.status;
       card.dataset.displayState = publicState;
+      card.dataset.taskState = lifecycle.state;
+      card.dataset.taskDetail = lifecycle.detail || "";
       card.dataset.executionState = node.executionState || "unreported";
       card.dataset.replayStatus = node.status;
       card.dataset.selected = "false";
@@ -3976,7 +4007,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       // state visually separate from both running and completed work while the
       // node stays on screen as queued.
       if (node.declaredNotStarted === true) card.dataset.declaredNotStarted = "true";
-      card.title = node.label + (taskLine && taskLine !== node.label ? " · " + taskLine : "");
+      card.title = node.label + (sourceTaskLine && sourceTaskLine !== node.label ? " · " + sourceTaskLine : "");
       card.setAttribute("role", "listitem");
       const position = layout.positions.get(node.id) || { x: 32, y: 32, width: 132, height: 76 };
       card.style.left = position.x + "px";
@@ -3986,10 +4017,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const top = makeElement("div", "node-card-top");
       const marker = makeElement("span", "node-marker");
       marker.setAttribute("aria-hidden", "true");
-      const statusCopy = nodeStateCopy(node);
-      const shortState = nodeShortStateCopy(node);
+      const statusCopy = nodeStateCopy(node, snapshot.run.id);
+      const shortState = nodeShortStateCopy(node, snapshot.run.id);
       top.append(marker, makeElement("span", "node-status", statusCopy), makeElement("span", "node-state-short", shortState));
-      top.title = statusCopy;
+      top.title = [statusCopy, nodeStateDetailCopy(node, snapshot.run.id)].filter(Boolean).join(" · ");
       if (node.declaredNotStarted === true) {
         const declaredChip = makeElement("span", "node-declared-chip",
           currentLanguage === "zh" ? "声明未执行" : "declared, not started");
@@ -4014,12 +4045,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
         card.dataset.waveIndex = String(nodeWave.waveIndex);
         top.append(waveBadge);
       }
-      const heading = makeElement("span", "node-title", graphNodeReadingLabel(node));
+      const heading = makeElement("span", "node-title", node.nativeTaskCaption ? liveTaskDisplayLabel(node, currentLanguage) : graphNodeReadingLabel(node));
       heading.title = node.label;
-      const summary = makeElement("span", "node-summary", node.summary);
+      const summary = makeElement("span", "node-summary", node.ownerReport ? "" : node.summary);
+      summary.title = node.summary;
+      summary.hidden = Boolean(node.ownerReport);
       const identity = makeElement("button", "node-identity-row node-identity-button");
       identity.type = "button";
-      identity.setAttribute("aria-label", node.label + ", " + nodeStateCopy(node) + ", " + node.toolCount + " tools, "
+      identity.setAttribute("aria-label", node.label + ", " + [nodeStateCopy(node, snapshot.run.id), nodeStateDetailCopy(node, snapshot.run.id)].filter(Boolean).join(" · ") + ", " + node.toolCount + " tools, "
         + (currentLanguage === "zh" ? "输出 token " : "output tokens ") + formatLiveTokenCount(node.outputTokens, currentLanguage));
       const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       glyph.setAttribute("class", "node-glyph");
@@ -4058,7 +4091,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
               : (currentLanguage === "zh" ? "暂无可信证据" : "No trusted evidence linked")
         ));
       const task = taskLine === "" ? null : makeElement("p", "node-task", taskLine);
-      if (task) task.title = taskLine;
+      if (task) task.title = sourceTaskLine || node.label;
       const meta = makeElement("div", "node-meta activity-chips");
       const role = makeElement("span", "node-meta-item activity-chip chip-role", node.role);
       role.title = localize("Role");
@@ -4236,17 +4269,30 @@ const CLIENT_SCRIPT = String.raw`(() => {
       relationTitle.textContent = (edge.kind || "sequence") + " · " + edge.from + " → " + edge.to;
       path.append(relationTitle);
       const targetNode = graphNodeById.get(edge.to);
-      const targetState = nodeDisplayState(targetNode);
-      const targetTerminal = ["completed", "failed", "blocked", "cancelled", "skipped"].includes(nodeDisplayState(targetNode));
-      const stageFocusState = executionRelation && snapshot.run?.active && !terminalRun && !targetTerminal && targetState === "active" ? "live" : "none";
+      const targetLifecycle = resolveLiveNodeTaskLifecycle(targetNode, snapshot);
+      const edgeProblem = ["failed", "blocked", "cancelled"].includes(targetLifecycle.detail)
+        ? targetLifecycle.detail : ["failed", "blocked", "cancelled"].includes(edge.status) ? edge.status : "";
+      const edgeDetail = edgeProblem || targetLifecycle.detail || "";
+      // State comes from the target task; an ownership route never turns into
+      // execution evidence. Unconfirmed and blocked work has no advancing dot.
+      const stageFocusState = snapshot.run?.active && !terminalRun && targetLifecycle.state === "in_progress"
+        && !edgeProblem && !["unconfirmed", "result_unconfirmed"].includes(targetLifecycle.detail) ? "live" : "none";
+      path.dataset.taskState = targetLifecycle.state;
+      path.dataset.taskDetail = edgeDetail;
       path.dataset.stageFocus = stageFocusState;
       path.dataset.liveFocus = stageFocusState;
-      if (executionRelation) path.setAttribute("marker-end", "url(#" + edgeMarkerId(stageFocusState === "none" ? edge.status : "stage-" + stageFocusState) + ")");
+      const markerState = edgeProblem || (targetLifecycle.state === "completed" ? "completed"
+        : targetLifecycle.state === "not_started" ? "queued"
+          : ["unconfirmed", "result_unconfirmed"].includes(edgeDetail) ? "unknown"
+            : stageFocusState === "live" ? "stage-live" : "running");
+      if (executionRelation) path.setAttribute("marker-end", "url(#" + edgeMarkerId(markerState) + ")");
       path.setAttribute("vector-effect", "non-scaling-stroke");
       const effectGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
       effectGroup.setAttribute("class", "edge-effects");
       effectGroup.dataset.edgeId = edge.id;
       effectGroup.dataset.stageFocus = stageFocusState;
+      effectGroup.dataset.taskState = targetLifecycle.state;
+      effectGroup.dataset.taskDetail = edgeDetail;
       const glow = document.createElementNS("http://www.w3.org/2000/svg", "path");
       glow.setAttribute("d", geometry.path);
       glow.setAttribute("class", "edge-flow-glow");
@@ -4258,19 +4304,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       tracer.dataset.stageFocus = stageFocusState;
       tracer.setAttribute("vector-effect", "non-scaling-stroke");
       effectGroup.append(glow, tracer);
-      let motion = null;
-      if (stageFocusState !== "none" && !reducedMotion.matches) {
-        const particle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        particle.setAttribute("r", stageFocusState === "live" ? "4" : "3.5");
-        particle.setAttribute("class", "edge-flow-particle");
-        particle.dataset.stageFocus = stageFocusState;
-        motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
-        motion.setAttribute("dur", stageFocusState === "live" ? "1.35s" : "1.8s");
-        motion.setAttribute("repeatCount", "indefinite");
-        motion.setAttribute("path", geometry.path);
-        particle.append(motion);
-        effectGroup.append(particle);
-      }
+      const motion = createGraphEdgeMotion(effectGroup, geometry.path, stageFocusState);
       edgeLayer.append(path, effectGroup);
       graphState.edgeElements.set(edge.id, path);
       graphState.edgeEffects.set(edge.id, effectGroup);
@@ -4524,10 +4558,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function workspaceColumnForStatus(status) {
-    if (status === "completed" || status === "skipped") return "done";
-    if (status === "blocked" || status === "failed" || status === "in_doubt") return "review";
-    if (status === "running" || status === "active") return "doing";
-    return "todo";
+    if (status === "completed") return "done";
+    return status === "not_started" ? "todo" : "doing";
   }
 
   function appendWorkspaceTag(parent, value, className = "") {
@@ -4562,13 +4594,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function renderWorkspaceBoard(snapshot) {
     clearChildren(workspaceBoard);
     const columns = [
-      ["todo", currentLanguage === "zh" ? "待处理" : "To do"],
-      ["doing", currentLanguage === "zh" ? "执行中" : "In progress"],
-      ["review", currentLanguage === "zh" ? "审查 / 阻塞" : "Review / blocked"],
-      ["done", currentLanguage === "zh" ? "已完成" : "Done"],
+      ["todo", liveTaskLifecycleCopy({ state: "not_started" }, currentLanguage).label],
+      ["doing", liveTaskLifecycleCopy({ state: "in_progress" }, currentLanguage).label],
+      ["done", liveTaskLifecycleCopy({ state: "completed" }, currentLanguage).label],
     ];
     const grouped = new Map(columns.map(([key]) => [key, []]));
-    snapshot.nodes.forEach((node) => grouped.get(workspaceColumnForStatus(nodeDisplayState(node)))?.push(node));
+    liveRunTaskNodes(snapshot).forEach((node) => grouped.get(workspaceColumnForStatus(resolveLiveTaskLifecycle(node, snapshot.run.id).state))?.push(node));
     columns.forEach(([key, label]) => {
       const column = makeElement("section", "work-column");
       column.dataset.column = key;
@@ -4577,7 +4608,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const list = makeElement("div", "work-column-list");
       const nodes = grouped.get(key);
       if (!nodes.length) {
-        const message = key === workspaceColumnForStatus(snapshot.run.status === "live" ? "running" : snapshot.run.status) && !snapshot.nodes.length
+        const message = key === workspaceColumnForStatus(resolveLiveRunTaskLifecycle(snapshot).state) && !snapshot.nodes.length
           ? (currentLanguage === "zh" ? "当前只采集到运行状态，尚无工作项明细。" : "Only run status is available; work-item telemetry has not been captured.")
           : (currentLanguage === "zh" ? "暂无工作项" : "No work items");
         list.append(makeElement("p", "work-board-empty", message));
@@ -4589,12 +4620,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
         card.dataset.status = node.status;
         card.dataset.selected = node.id === selectedNodeId ? "true" : "false";
         const kicker = makeElement("span", "work-item-kicker");
-        kicker.append(makeElement("span", "", node.kind || "work item"), makeElement("span", "", nodeStateCopy(node)));
+        kicker.append(makeElement("span", "", node.kind || "work item"), makeElement("span", "", nodeStateCopy(node, snapshot.run.id)));
         const tags = makeElement("span", "work-item-tags");
+        appendWorkspaceTag(tags, nodeStateDetailCopy(node, snapshot.run.id));
         appendWorkspaceTag(tags, node.agent, "work-item-tag-owner");
         appendWorkspaceTag(tags, node.runtime);
         appendWorkspaceTag(tags, node.latestTool, "work-item-tag-tool");
-        card.append(kicker, makeElement("h3", "work-item-title", node.label), makeElement("p", "work-item-summary", node.summary), tags);
+        const title = makeElement("h3", "work-item-title", liveTaskDisplayLabel(node, currentLanguage));
+        title.title = liveTaskDisplayLabel(node, currentLanguage);
+        const summary = makeElement("p", "work-item-summary", node.ownerReport ? "" : node.summary);
+        summary.hidden = Boolean(node.ownerReport);
+        card.append(kicker, title, summary, tags);
         card.addEventListener("click", () => {
           selectedNodeId = node.id;
           updateSelectedNodeVisuals();
@@ -4639,10 +4675,102 @@ const CLIENT_SCRIPT = String.raw`(() => {
     localFeedbackSurfaces.get("inspector")?.raw.focus();
   }
 
-  /** A compact reading order before the process map: work, result, block, activity. */
+  /** Default view answers what was done; technical records remain collapsible. */
   function renderRunOverview(snapshot, project = null) {
     if (!runOverview) return;
-    const overview = resolveLiveRunOverview(snapshot);
+    const overview = resolveLiveRunOverview(snapshot, currentLanguage);
+    const copy = liveWorkOverviewCopy(currentLanguage);
+    const work = liveRunTaskNodes(snapshot).map((node) => ({ node, lifecycle: resolveLiveTaskLifecycle(node, snapshot?.run?.id) }));
+    const completed = work.filter((item) => item.lifecycle.state === "completed");
+    const listed = completed.length ? completed : work;
+    const renderKey = JSON.stringify([overview, work, currentLanguage, selectedProjectId]);
+    if (runOverview.dataset.renderKey === renderKey) return;
+    runOverview.dataset.renderKey = renderKey;
+    runOverview.dataset.state = overview.taskLifecycle.state;
+    clearChildren(runOverview);
+    const item = (key, heading) => {
+      const row = makeElement("article", "run-overview-item");
+      row.dataset.overviewItem = key;
+      row.append(makeElement("h2", "", heading));
+      runOverview.append(row);
+      return row;
+    };
+    const task = item("task", completed.length ? copy.completed : copy.work);
+    const appendWork = (parent, entries) => {
+      const list = makeElement("ol", "run-work-list");
+      entries.forEach(({ node }) => {
+        const row = makeElement("li", "run-work-item");
+        const title = makeElement("span", "", liveTaskDisplayLabel(node, currentLanguage));
+        title.title = liveTaskDisplayLabel(node, currentLanguage);
+        const action = makeElement("button", "run-overview-action", copy.inspect);
+        action.type = "button";
+        action.addEventListener("click", () => selectNode(node.id, { inspectorTab: "summary" }));
+        row.append(title, action);
+        list.append(row);
+      });
+      parent.append(list);
+    };
+    if (listed.length) appendWork(task, listed.slice(0, 3));
+    else task.append(makeElement("p", "run-overview-note", overview.taskLifecycle.state === "not_started" ? copy.waiting : copy.unavailable));
+    if (listed.length > 3) {
+      const more = makeElement("details", "run-work-more");
+      more.append(makeElement("summary", "", copy.more + " " + (listed.length - 3) + " " + copy.items));
+      appendWork(more, listed.slice(3));
+      task.append(more);
+    }
+    const available = overview.result.items[0];
+    if (available) {
+      const output = item("result", copy.output);
+      overview.result.items.forEach((available) => {
+        const link = makeElement("a", "run-overview-value run-overview-result", plainLiveTaskLabel(available.label, currentLanguage));
+        link.href = deliverableOpenHref(available);
+        link.addEventListener("click", () => { void observeDeliverableRead(available); });
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.dataset.liveOverviewResult = available.id;
+        link.title = available.label;
+        output.append(link);
+      });
+    } else task.append(makeElement("p", "run-overview-note", copy.noFiles));
+    if (snapshot?.run) {
+      const feedback = makeElement("button", "run-overview-action", copy.feedback);
+      feedback.type = "button";
+      feedback.dataset.liveOverviewFeedback = "";
+      feedback.addEventListener("click", () => openOverviewFeedback(available));
+      task.append(feedback);
+    }
+    const issues = work.filter((item) => ["failed", "blocked", "cancelled"].includes(item.lifecycle.detail));
+    const runNeedsAction = ["failed", "blocked", "cancelled"].includes(overview.taskLifecycle.detail);
+    if (issues.length || runNeedsAction) {
+      const attention = item("blocker", copy.attention);
+      if (!issues.length) attention.append(makeElement("p", "run-overview-value", snapshot?.run?.statusReason
+        ? plainLiveTaskLabel(snapshot.run.statusReason, currentLanguage) : liveTaskLifecycleCopy(overview.taskLifecycle, currentLanguage).detail));
+      issues.forEach(({ node, lifecycle }) => {
+        const reason = node.statusReason || normalizeLiveOwnerReport(node, snapshot?.run?.id)?.summary;
+        const row = makeElement("p", "run-overview-value", liveTaskDisplayLabel(node, currentLanguage)
+          + " · " + (reason ? plainLiveTaskLabel(reason, currentLanguage) : liveTaskLifecycleCopy(lifecycle, currentLanguage).detail));
+        row.title = reason || "";
+        attention.append(row);
+      });
+    }
+    const observed = overview.activity.item;
+    if (observed) {
+      const activity = item("activity", copy.activity);
+      const label = makeElement("p", "run-overview-value", plainLiveTaskLabel(observed.label, currentLanguage));
+      label.title = observed.label;
+      activity.append(label);
+      if (observed.at) {
+        const time = appendObservedTime(activity, observed.at);
+        if (time) { time.className = "run-overview-note"; time.textContent = copy.latest + formatSessionTime(observed.at); time.title = observed.at; }
+      } else activity.append(makeElement("p", "run-overview-note", copy.unknownTime));
+    }
+    if (typeof runDiagnostics !== "undefined" && runDiagnostics) renderRunDiagnostics(snapshot, project, runDiagnostics);
+  }
+
+  /** Detailed counters and provenance never occupy the ordinary summary cards. */
+  function renderRunDiagnostics(snapshot, project = null, runOverview = null) {
+    if (!runOverview) return;
+    const overview = resolveLiveRunOverview(snapshot, currentLanguage);
     const coverage = summarizeLiveTokenCoverage((snapshot?.nodes || []).filter((node) => !["stage", "chapter", "stage_summary", "workflow"].includes(node.kind)
       && (!node.runId || node.runId === snapshot?.run?.id)));
     const nativeActivity = project ? resolveLiveNativeActivity(project, snapshot?.run?.id, selectedProjectId) : null;
@@ -4666,54 +4794,26 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return element;
     };
     const task = item("task", zh ? "当前任务" : "Current task");
-    const taskEmpty = overview.state === "empty" ? (zh ? "等待运行记录" : "Waiting for a run record")
-      : overview.state === "planned" ? (zh ? "仅有规划，尚未派发" : "Planned; not dispatched")
-        : overview.state === "completed" ? (zh ? "已验证完成，结果仍需核对" : "Verified complete; result review still needed")
-          : overview.state === "blocked" ? (zh ? "工作受阻，查看原因" : "Work blocked; see the reason")
-            : overview.ownerReported ? (zh ? "负责人已回报，待独立验证" : "Owner reported; awaiting independent verification")
-            : overview.state === "governance_active" ? (zh ? "治理任务进行中，待执行回报" : "Governance work is active; awaiting execution reports")
-            : overview.state === "active" ? (zh ? "运行中，当前执行任务未回写" : "Running; current task not reported")
-              : (zh ? "历史记录，未确认当前执行" : "Historical record; no current execution confirmed");
-    line(task, overview.task?.label || taskEmpty);
+    const taskState = liveTaskLifecycleCopy(overview.taskLifecycle, currentLanguage);
+    line(task, taskState.label);
+    if (overview.task?.label) line(task, overview.task.label, "run-overview-note");
+    if (taskState.detail) line(task, taskState.detail, "run-overview-note");
+    if (taskState.progress) line(task, taskState.progress, "run-overview-note");
     const inspectTask = overview.task || overview.ownerReported?.task;
     if (inspectTask) {
-      const action = makeElement("button", "run-overview-action", overview.task ? (zh ? "查看任务" : "Inspect task") : (zh ? "查看回报" : "Inspect report"));
+      const action = makeElement("button", "run-overview-action", taskState.inspect);
       action.type = "button";
       action.addEventListener("click", () => selectNode(inspectTask.nodeId, { inspectorTab: "summary" }));
       task.append(action);
       if (overview.task?.moreCount) line(task, (zh ? "另有 " : "+ ") + overview.task.moreCount + (zh ? " 项正在执行" : " active tasks"), "run-overview-note");
     }
-    if (overview.ownerReported) line(task, overview.ownerReported.count + (zh ? " 项负责人回报，待独立验证" : " owner reports awaiting independent verification"), "run-overview-note");
-    if (overview.governance?.active && overview.state !== "active") line(task, zh ? "治理记录仍进行中；原生执行证据尚未确认。" : "Governance remains active; native execution evidence is unconfirmed.", "run-overview-note");
+    if (overview.ownerReported) line(task, liveTaskLifecycleCopy({ detail: "native_unconfirmed" }, currentLanguage).detail, "run-overview-note");
     const tokenCoverage = line(task, (zh ? "输出计量 " : "Output measured ") + coverage.outputMeasuredNodeCount + "/" + coverage.nodeCount, "run-overview-note");
     tokenCoverage.dataset.liveTokenCoverage = "";
     tokenCoverage.title = zh ? "仅统计当前运行中已报告输出 token 数的节点；其余节点未计量，0 也是有效计量。" : "Nodes in this run with an observed output token count; other nodes are not measured. Zero is measured.";
 
-    const result = item("result", zh ? "可用结果" : "Available result");
-    const available = overview.result.items[0];
-    if (available) {
-      const link = makeElement("a", "run-overview-value run-overview-result", available.label);
-      link.href = deliverableOpenHref(available);
-      link.addEventListener("click", () => { void observeDeliverableRead(available); });
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.dataset.liveOverviewResult = available.id;
-      link.title = available.label;
-      result.append(link);
-      line(result, (overview.result.items.length > 1 ? (zh ? "共 " : "") + overview.result.items.length + (zh ? " 份可用 · " : " available · ") : "") + (zh ? "有内容，尚待用户验收" : "Content present; user acceptance pending"), "run-overview-note");
-    } else {
-      line(result, overview.result.declaredCount ? (zh ? "仅声明产出，尚无可用内容" : "Output declared; no available content") : (zh ? "尚无可用结果" : "No available result yet"));
-    }
-    if (snapshot?.run) {
-      const feedback = makeElement("button", "run-overview-action", available ? (zh ? "反馈此结果" : "Give result feedback") : (zh ? "反馈当前工作" : "Give work feedback"));
-      feedback.type = "button";
-      feedback.dataset.liveOverviewFeedback = "";
-      feedback.addEventListener("click", () => openOverviewFeedback(available));
-      result.append(feedback);
-    }
-
     const blocker = item("blocker", overview.blocker?.kind === "status" ? (zh ? "状态说明" : "Status detail") : (zh ? "阻塞原因" : "Blocker"));
-    line(blocker, overview.blocker?.label || (overview.blocker?.kind === "blocked" ? (zh ? "已报告阻塞，原因未提供" : "Blocked; reason not reported")
+    line(blocker, (overview.blocker?.kind === "status" && overview.taskLifecycle?.state === "completed" ? taskState.detail : overview.blocker?.label) || (overview.blocker?.kind === "blocked" ? (zh ? "已报告阻塞，原因未提供" : "Blocked; reason not reported")
       : overview.state === "empty" || overview.state === "planned" ? (zh ? "尚无执行阻塞记录" : "No execution blocker recorded")
         : (zh ? "未报告阻塞" : "No blocker reported")));
     if (overview.blocker?.nodeLabel) line(blocker, overview.blocker.nodeLabel + (overview.blocker.moreCount ? (zh ? " · 另有 " : " · + ") + overview.blocker.moreCount : ""), "run-overview-note");
@@ -4802,8 +4902,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       ? "尚未保存可打开的成品；执行日志和验证证据仍可在下方核对。"
       : "No openable result was saved; inspect execution and verification evidence below."));
     parent?.append(makeElement("p", "panel-note", currentLanguage === "zh"
-      ? "已完成表示任务验证通过；执行回合结束仍需验证。它不代表用户已验收，缺证记录不会补成完成。"
-      : "Completed means task verification passed. A finished execution still needs verification; neither means user acceptance, and missing evidence stays missing."));
+      ? "已完成表示工作已结束；结果核对与用户验收另行确认。"
+      : "Completed means the work has ended; result review and user acceptance are confirmed separately."));
   }
 
   /** Reuse the same form across snapshot paints so live updates do not eat input. */
@@ -4986,10 +5086,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     clearChildren(workspaceDetail);
     const selected = snapshot.nodes.find((node) => node.id === selectedNodeId) || null;
     const hero = makeElement("section", "workspace-detail-hero");
-    const detailTitle = selected?.label || snapshot.run.title;
+    const detailTitle = selected ? liveTaskDisplayLabel(selected, currentLanguage) : snapshot.run.title;
     const detailSummary = selected?.summary || snapshot.run.task || (currentLanguage === "zh" ? "这条运行没有保存可读的任务说明。" : "This run did not preserve a readable task brief.");
     const tags = makeElement("div", "workspace-detail-tags");
-    appendWorkspaceTag(tags, selected ? nodeStateCopy(selected) : stateCopy(snapshot.run.displayState || snapshot.run.status), "work-item-tag-owner");
+    appendWorkspaceTag(tags, selected ? nodeStateCopy(selected, snapshot.run.id) : liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).label, "work-item-tag-owner");
+    appendWorkspaceTag(tags, selected ? nodeStateDetailCopy(selected, snapshot.run.id) : liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).detail);
     appendWorkspaceTag(tags, selected?.agent || snapshot.sessionInfo?.runtime);
     appendWorkspaceTag(tags, selected?.latestTool, "work-item-tag-tool");
     hero.append(makeElement("h3", "", detailTitle), makeElement("p", "", detailSummary), tags);
@@ -5063,7 +5164,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const workspaceData = snapshot.workspace || {};
     const session = snapshot.sessionInfo || {};
     setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace");
-    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(informativeValue(snapshot.run.stage, "Stage unconfirmed")) + " · " + stateCopy(snapshot.run.status), "Workspace telemetry unavailable");
+    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(informativeValue(snapshot.run.stage, "Stage unconfirmed")) + " · " + liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).label, "Workspace telemetry unavailable");
     clearChildren(workspaceFacts);
     appendOperationalRow(workspaceFacts, "Work items", String(snapshot.nodes.length), snapshot.nodes.length ? "observed" : "unavailable");
     appendOperationalRow(workspaceFacts, "Events", String(snapshot.replay.length), snapshot.replay.length ? "observed" : "unavailable");
@@ -5432,21 +5533,40 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (!hasReplayState) replayState = edge.status;
       const executionRelation = EXECUTION_EDGE_KINDS.has(edge.kind || "sequence");
       path.setAttribute("class", "edge edge-" + (executionRelation ? nodeClass(replayState) : "structural"));
-      const replayFocus = executionRelation && !replayFollowingLive && edgeVisible && events[currentReplayIndex]?.nodeId === edge.to
+      const liveTarget = currentSnapshot.nodes.find((node) => node.id === edge.to);
+      const targetLifecycle = resolveLiveNodeTaskLifecycle(liveTarget, currentSnapshot);
+      const visualState = replayFollowingLive ? targetLifecycle.state
+        : ["completed", "done", "succeeded"].includes(replayState) ? "completed"
+          : ["pending", "queued", "planned", "declared", "not_started"].includes(replayState) ? "not_started" : "in_progress";
+      const edgeProblem = ["failed", "blocked", "cancelled"].includes(replayState) ? replayState
+        : replayFollowingLive && ["failed", "blocked", "cancelled"].includes(targetLifecycle.detail) ? targetLifecycle.detail : "";
+      const edgeDetail = edgeProblem || (replayFollowingLive ? targetLifecycle.detail
+        : ["unknown", "unreported", "in_doubt"].includes(replayState) ? "unconfirmed" : "");
+      const replayCanFlow = visualState === "in_progress" && !edgeProblem && !["unconfirmed", "result_unconfirmed"].includes(edgeDetail);
+      path.dataset.taskState = visualState;
+      path.dataset.taskDetail = edgeDetail;
+      const replayFocus = !replayFollowingLive && replayCanFlow && ["running", "active", "live"].includes(replayState) && edgeVisible && events[currentReplayIndex]?.nodeId === edge.to
         ? "recorded"
-        : executionRelation ? (path.dataset.liveFocus || "none") : "none";
+        : replayFollowingLive && replayCanFlow ? (path.dataset.liveFocus || "none") : "none";
       path.dataset.stageFocus = replayFocus;
       if (effects) {
+        const route = graphState.edgeRoutes.get(edge.id);
+        if (route && !route.motion && replayFocus !== "none") {
+          route.motion = createGraphEdgeMotion(effects, path.getAttribute("d"), replayFocus);
+        }
         effects.dataset.stageFocus = replayFocus;
+        effects.dataset.taskState = visualState;
+        effects.dataset.taskDetail = edgeDetail;
         effects.querySelectorAll("[data-stage-focus]").forEach((effect) => { effect.dataset.stageFocus = replayFocus; });
       }
-      const stageMarkerState = !executionRelation
-        ? "queued"
-        : replayFocus === "live"
+      const stageMarkerState = edgeProblem || (visualState === "completed" ? "completed"
+        : visualState === "not_started" ? "queued"
+          : ["unconfirmed", "result_unconfirmed"].includes(edgeDetail) ? "unknown"
+            : replayFocus === "live"
           ? "stage-live"
         : replayFocus === "recorded"
           ? "stage-recorded"
-          : replayState;
+          : "running");
       if (executionRelation) path.setAttribute("marker-end", "url(#" + edgeMarkerId(stageMarkerState) + ")");
       else path.removeAttribute("marker-end");
     }
@@ -6631,6 +6751,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
 const GRAPH_FIRST_CSS = String.raw`
 :root { color-scheme: dark; --ink: #0b0e14; --panel: #111620; --panel-2: #151b26; --completion: #68a4ff; --completion-bright: #a7c7ff; --accent: #4fd1c5; --running: #4fd1c5; --green: #63ca9b; --amber: #d8a84e; --dim: #606b7d; --edge-ink-dim: #8f9db8; --edge-ink-idle: #97a4bd; --line-soft: #1d2634; --line: #273043; --line-strong: #3a465c; --text: #e8edf5; --muted: #929db0; --danger: #df7a8f; --radius-sm: 7px; --radius: 11px; --clamp-lines-title: 2; --clamp-lines-hero: 3; ${TYPOGRAPHY_TOKENS} ${SPACING_TOKENS} ${CAMERA_LEGIBILITY_TOKENS} ${CHROME_BUDGET_TOKENS} ${DOCK_BUDGET_TOKENS} font-family: "Segoe UI Variable Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; }
+:root { --task-not-started-bg: #f7dddd; --task-not-started-border: #ce9298; --task-not-started-ink: #713d45; --task-in-progress-bg: #f8edc9; --task-in-progress-border: #bda056; --task-in-progress-ink: #69541c; --task-completed-bg: #dcf0e2; --task-completed-border: #82b592; --task-completed-ink: #315e3e; --task-flow-ink: #d3b25b; --task-flow-light: #fff1ae; }
 * { box-sizing: border-box; }
 html, body { width: 100%; min-width: 0; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); }
 body { font-size: var(--fs-body); letter-spacing: 0; }
@@ -6661,7 +6782,7 @@ button { color: inherit; }
 .topbar-button { padding: 0 var(--sp-cozy); font-size: var(--fs-body); }
 .topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
 .main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
-.run-overview { min-width: 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: var(--sp-default); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
+.run-overview { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-default); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-overview-item { min-width: 0; display: flex; flex-wrap: wrap; align-content: start; align-items: baseline; gap: var(--sp-cozy); }
 .run-overview-item h2 { flex-basis: 100%; margin: 0; color: var(--muted); font-size: var(--fs-label); font-weight: 500; line-height: var(--lh-snug); }
 .run-overview-value { flex-basis: 100%; min-width: 0; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-entity-body); line-height: var(--lh-snug); }
@@ -6670,12 +6791,22 @@ button { color: inherit; }
 .run-overview-action { min-height: 28px; max-width: 100%; padding: var(--sp-cozy); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: var(--fs-label); line-height: var(--lh-snug); cursor: pointer; }
 .run-overview-action:focus-visible, .run-overview-result:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .run-overview[data-state="blocked"] [data-overview-item="blocker"] .run-overview-value { color: var(--amber); }
-@media (max-width: 1024px) { .run-overview { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 1024px) { .run-overview { grid-template-columns: minmax(0,1fr); } }
+.run-work-list { flex-basis: 100%; width: 100%; list-style: none; padding: 0; margin: 0; }
+.run-work-item { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); padding-block: var(--sp-tight); }
+.run-work-item > span { min-width: 0; overflow-wrap: anywhere; }
+.run-work-item .run-overview-action { flex-shrink: 0; }
+.run-work-more { width: 100%; }
+.run-work-more > summary, .graph-record-controls > summary, .status-records > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-label); }
+.run-records-content { display: grid; gap: var(--sp-cozy); max-height: 40vh; overflow: auto; padding-top: var(--sp-cozy); }
+.run-context-technical { display: flex; flex-wrap: wrap; gap: var(--sp-cozy) var(--sp-section); padding-top: var(--sp-cozy); }
+.graph-record-controls[open] .graph-relation-summary { display: block; }
+.status-records { border-top: 1px solid var(--line); padding-inline: var(--sp-cozy); }
 @media (max-width: 720px) { .run-overview { gap: var(--sp-cozy); padding: var(--sp-cozy); max-height: 36dvh; overflow: auto; } }
 .run-context { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--sp-cozy) var(--sp-section); padding: var(--sp-snug) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
 .run-context-heading { min-width: 0; grid-column: 1 / -1; }
 .run-context-heading > .context-kicker { display: none; }
-.run-context-description { margin-top: var(--sp-tight); color: var(--muted); font-size: var(--fs-body); }
+.run-context-description { grid-column: 1 / -1; width: 100%; margin-top: var(--sp-tight); color: var(--muted); font-size: var(--fs-body); }
 .run-context-description summary { width: fit-content; cursor: pointer; }
 .run-context-description summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .run-context-description[open] .run-context-task { display: block; -webkit-line-clamp: unset; max-height: 20vh; overflow: auto; }
@@ -6738,14 +6869,17 @@ button { color: inherit; }
 .workspace-session-item[data-running="true"] .workspace-session-meta::before { background: var(--green); }
 .workspace-session-note { margin: var(--sp-snug); color: var(--muted); font-size: var(--fs-micro); line-height: var(--lh-normal); }
 .company-board-shell { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr); background: #0b1018; }
-.company-board { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(4,minmax(190px,1fr)); gap: var(--sp-cozy); padding: var(--sp-cozy); overflow: auto; }
+.company-board { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(3,minmax(190px,1fr)); gap: var(--sp-cozy); padding: var(--sp-cozy); overflow: auto; }
 .work-column { min-width: 190px; min-height: 100%; display: grid; grid-template-rows: auto minmax(0,1fr); border: 1px solid var(--line); border-radius: var(--radius-sm); background: #0d141e; }
 .work-column-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); min-height: 38px; padding: 0 var(--sp-cozy); border-bottom: 1px solid var(--line); color: var(--muted); font-weight: 600; font-size: var(--fs-label); line-height: var(--lh-flat); font-family: monospace; text-transform: uppercase; letter-spacing: .04em; }
 .work-column-header span:first-child { display: inline-flex; align-items: center; gap: var(--sp-snug); }
 .work-column-header span:first-child::before { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); content: ""; }
-.work-column[data-column="doing"] .work-column-header span:first-child::before { background: var(--accent); }
+.work-column[data-column="todo"] { --work-state-bg: var(--task-not-started-bg); --work-state-ink: var(--task-not-started-ink); --work-state-border: var(--task-not-started-border); }
+.work-column[data-column="doing"] { --work-state-bg: var(--task-in-progress-bg); --work-state-ink: var(--task-in-progress-ink); --work-state-border: var(--task-in-progress-border); }
+.work-column[data-column="done"] { --work-state-bg: var(--task-completed-bg); --work-state-ink: var(--task-completed-ink); --work-state-border: var(--task-completed-border); }
+.work-column[data-column] .work-column-header span:first-child::before { background: var(--work-state-border); }
 .work-column[data-column="review"] .work-column-header span:first-child::before { background: var(--amber); }
-.work-column[data-column="done"] .work-column-header span:first-child::before { background: var(--green); }
+.work-column[data-column] .work-item-kicker span:last-child { padding: var(--sp-hairline) var(--sp-snug); border: 1px solid var(--work-state-border); border-radius: 4px; color: var(--work-state-ink); background: var(--work-state-bg); }
 .work-column-count { display: grid; min-width: 20px; height: 20px; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--text); background: #090e15; }
 .work-column-list { display: grid; align-content: start; gap: var(--sp-snug); padding: var(--sp-cozy); overflow: auto; }
 .work-item-card { min-width: 0; display: grid; gap: var(--sp-snug); padding: var(--sp-cozy); border: 1px solid #2a3445; border-left: 3px solid #53647e; border-radius: var(--radius-sm); background: #141b25; color: var(--text); text-align: left; cursor: pointer; }
@@ -6859,14 +6993,12 @@ button { color: inherit; }
 .edge-blocked { stroke: var(--amber); --edge-screen-width: 2.1px; stroke-dasharray: 3 6; opacity: .9; }
 .edge-effects { pointer-events: none; }
 .edge-flow-glow, .edge-flow-tracer { fill: none; stroke-linecap: round; opacity: 0; pointer-events: none; }
-.edge-flow-glow[data-stage-focus="recorded"] { stroke: #d8a84e; stroke-width: 10; opacity: .18; filter: blur(3px); }
-.edge-flow-glow[data-stage-focus="live"] { stroke: #58d4cf; stroke-width: 11; opacity: .24; filter: blur(3px); }
+.edge-flow-glow[data-stage-focus="recorded"] { stroke: var(--task-flow-ink); stroke-width: 7; opacity: .12; filter: blur(3px); }
+.edge-flow-glow[data-stage-focus="live"] { stroke: var(--task-flow-ink); stroke-width: 7; opacity: .12; filter: blur(3px); }
 .edge-flow-tracer { stroke-width: 3.4; stroke-dasharray: 24 96; stroke-dashoffset: 0; }
-.edge-flow-tracer[data-stage-focus="recorded"] { stroke: #ffd86b; opacity: 1; filter: drop-shadow(0 0 4px rgba(255,216,107,.95)); animation: stage-route-flow 1.35s linear infinite; }
-.edge-flow-tracer[data-stage-focus="live"] { stroke: #b8fffb; opacity: 1; filter: drop-shadow(0 0 5px rgba(88,212,207,1)); animation: live-flow .95s linear infinite; }
+.edge-flow-tracer[data-stage-focus="recorded"], .edge-flow-tracer[data-stage-focus="live"] { opacity: 0; animation: none; }
 .edge-flow-particle { opacity: 0; pointer-events: none; }
-.edge-flow-particle[data-stage-focus="recorded"] { fill: #fff3b5; stroke: #d8a84e; stroke-width: 1.5; opacity: 1; filter: drop-shadow(0 0 6px rgba(255,216,107,1)); }
-.edge-flow-particle[data-stage-focus="live"] { fill: #e9fffd; stroke: #58d4cf; stroke-width: 1.5; opacity: 1; filter: drop-shadow(0 0 7px rgba(88,212,207,1)); }
+.edge-flow-particle[data-stage-focus="recorded"], .edge-flow-particle[data-stage-focus="live"] { r: calc(3.2px / var(--camera-scale, 1)); fill: var(--task-flow-light); stroke: var(--task-flow-ink); stroke-width: calc(1px / var(--camera-scale, 1)); opacity: 1; filter: drop-shadow(0 0 4px rgba(211,178,91,.7)); }
 @keyframes live-flow { to { stroke-dashoffset: -120; } }
 @keyframes stage-route-flow { to { stroke-dashoffset: -120; } }
 .node-card { position: absolute; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto auto; gap: var(--sp-snug); width: 232px; min-height: 140px; max-height: 152px; padding: var(--sp-default); overflow: hidden; border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #151d29; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.28); cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, opacity .18s ease; }
@@ -7090,7 +7222,7 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
 }
 @media (max-width: 1180px) {
   .company-workspace { grid-template-columns: 200px minmax(0,1fr) 300px; }
-  .company-board { grid-template-columns: repeat(4,minmax(176px,1fr)); }
+  .company-board { grid-template-columns: repeat(3,minmax(176px,1fr)); }
   .work-column { min-width: 176px; }
 }
 @media (max-width: 720px) {
@@ -7107,7 +7239,7 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .company-session-rail { max-height: 190px; border-right: 0; border-bottom: 1px solid var(--line); }
   .workspace-session-list { display: flex; overflow-x: auto; }
   .workspace-session-item { flex: 0 0 210px; }
-  .company-board { grid-template-columns: repeat(4,minmax(210px,1fr)); }
+  .company-board { grid-template-columns: repeat(3,minmax(210px,1fr)); }
   .company-context-panel { min-height: 360px; border-top: 1px solid var(--line); border-left: 0; }
   .company-board-header { align-items: flex-start; }
   .company-board-actions .surface-state { display: none; }
@@ -7228,9 +7360,9 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .work-view-menu .work-view-switcher { right: 0; width: 150px; }
   .topbar-actions { margin-left: 0; }
   .connection, [data-live-open-help], [data-live-open-info] { display: none; }
-  .run-context { min-height: 42px; display: flex; align-items: center; gap: var(--sp-cozy); padding: var(--sp-tight) var(--sp-cozy); }
+  .run-context { min-height: 42px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-cozy); padding: var(--sp-tight) var(--sp-cozy); }
   .run-context-heading { flex: 1; }
-  .run-context-facts, .run-context-source { display: none; }
+  .run-context-facts { width: 100%; }
   .stage-overview-toggle { min-height: 32px; }
   .node-list { grid-template-columns: 1fr; }
   .node-card, .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 166px !important; }
@@ -7242,6 +7374,17 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .replay-panel[open] .replay-dock-header { padding-left: calc(var(--w-replay-collapse) + var(--sp-cozy)); }
 }
 @media (max-width: 380px) { .brand-title { display: none; }.topbar-button { font-size: var(--fs-label); }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: var(--sp-cozy); } }
+@media (min-width: 721px) and (max-width: 900px) {
+  /* A definite canvas box breaks the scene-size -> intrinsic track -> canvas
+   * measurement feedback loop. The surrounding reading surface scrolls, while
+   * graph world bounds never become the viewport's CSS height. */
+  .main:has(.workspace-grid[data-work-view="run"]) { display: block; overflow-x: hidden; overflow-y: auto; }
+  .workspace-grid[data-work-view="run"] { height: auto; min-height: 0; grid-template-rows: auto; overflow: visible; }
+  .workspace-grid[data-work-view="run"] .graph-panel { display: block; align-self: start; height: auto; min-height: 0; }
+  .workspace-grid[data-work-view="run"] .graph-stage { height: auto; min-height: 0; }
+  .workspace-grid[data-work-view="run"] .evidence-panel[data-open="false"] { display: none; }
+  .workspace-grid[data-work-view="run"] .graph-canvas { height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; min-height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; max-height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; flex: 0 0 ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; }
+}
 @media (min-width: 721px) and (max-width: 1024px) {
   .node-card { padding: var(--sp-roomy); gap: var(--sp-cozy); }
   .node-summary { display: none; }
@@ -7251,7 +7394,31 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .node-capability { min-height: 38px; padding: var(--sp-snug) var(--sp-cozy); }
   .node-capability-kind, .node-capability-value, .node-capability-state { font-size: var(--fs-entity-body); }
 }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
+/* Task colors are shared with the work board. These rules deliberately follow
+ * every semantic-zoom variant: changing camera tier must never change a state. */
+.node-card[data-task-state="not_started"] { --node-state-bg: var(--task-not-started-bg); --node-state-border: var(--task-not-started-border); --node-state-ink: var(--task-not-started-ink); }
+.node-card[data-task-state="in_progress"] { --node-state-bg: var(--task-in-progress-bg); --node-state-border: var(--task-in-progress-border); --node-state-ink: var(--task-in-progress-ink); }
+.node-card[data-task-state="completed"] { --node-state-bg: var(--task-completed-bg); --node-state-border: var(--task-completed-border); --node-state-ink: var(--task-completed-ink); }
+.graph-canvas .node-card[data-task-state], .graph-canvas[data-semantic-zoom] .node-card[data-task-state] { --text: #26332d; --muted: #505b54; --completion-bright: #3d5950; --running: var(--node-state-ink); --green: var(--task-completed-ink); --accent: #216e73; --line: var(--node-state-border); --line-strong: var(--node-state-border); color-scheme: light; color: var(--text); background: var(--node-state-bg); border: 1px solid var(--node-state-border); border-left: 4px solid var(--node-state-border); box-shadow: 0 5px 18px rgba(0,0,0,.22); opacity: 1; animation: none; }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state][data-declared-not-started="true"] { border-style: dashed; }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-card-top { color: var(--node-state-ink); }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-marker { color: var(--node-state-ink); box-shadow: none; }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-title { color: var(--text); }
+.node-card[data-task-state] .node-glyph { color: var(--node-state-ink); border-color: var(--node-state-border); background: rgba(255,255,255,.35); }
+.node-card[data-task-state] .node-capability, .node-card[data-task-state] .activity-chip { color: var(--text); background: rgba(255,255,255,.55); border-color: var(--node-state-border); }
+.node-card[data-task-state] .node-declared-chip, .node-card[data-task-state] .node-wave-badge { color: var(--node-state-ink); background: rgba(255,255,255,.45); }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state]:is(:hover, :focus-visible, :focus-within, [data-selected="true"]) { border-color: #216e73; outline: 2px solid #216e73; outline-offset: 3px; box-shadow: 0 5px 18px rgba(0,0,0,.3); }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-identity-button:focus-visible, .graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-capability:focus-visible { border-color: #216e73; outline: 2px solid #216e73; outline-offset: 2px; }
+.graph-canvas[data-semantic-zoom] .node-card[data-task-detail="failed"], .graph-canvas[data-semantic-zoom] .node-card[data-task-detail="blocked"], .graph-canvas[data-semantic-zoom] .node-card[data-task-detail="cancelled"] { border-left-style: double; border-left-width: 6px; }
+.edge[data-task-state="not_started"] { stroke: var(--edge-ink-idle); --edge-screen-width: 1.8px; stroke-dasharray: 5 9; opacity: 1; animation: none; }
+.edge[data-task-state="in_progress"] { stroke: var(--task-flow-ink); --edge-screen-width: 2px; stroke-dasharray: none; opacity: 1; animation: none; }
+.edge[data-task-state="completed"] { stroke: var(--task-completed-border); --edge-screen-width: 2px; stroke-dasharray: none; opacity: 1; animation: none; }
+.edge[data-task-state="in_progress"][data-task-detail="unconfirmed"], .edge[data-task-state="in_progress"][data-task-detail="result_unconfirmed"] { stroke: var(--edge-ink-dim); stroke-dasharray: 3 6; }
+.edge[data-task-detail="failed"] { stroke: var(--danger); stroke-dasharray: 3 6; }
+.edge[data-task-detail="blocked"], .edge[data-task-detail="cancelled"] { stroke: var(--amber); stroke-dasharray: 3 6; }
+.edge-effects[data-task-detail="failed"], .edge-effects[data-task-detail="blocked"], .edge-effects[data-task-detail="cancelled"] { visibility: hidden; }
+.edge[data-task-state][data-relation-focus="far"], .edge-effects[data-task-state][data-relation-focus="far"] { opacity: .22; }
+@media (prefers-reduced-motion: reduce) { .edge-flow-particle, .edge-flow-tracer, .edge-flow-glow { display: none; } *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
 `;
 
 const FIXED_UI_ICONS = Object.freeze({
@@ -7328,20 +7495,25 @@ export function renderLiveControlRoomPage({
       <section class="run-context" aria-label="Run context">
         <div class="run-context-heading">
           <span class="context-kicker" data-i18n-en="Current run" data-i18n-zh="当前运行">当前运行</span>
-          <h1 class="run-context-title" data-live-context-title>正在等待运行快照</h1>
-          <p class="planning-notice" data-live-planning-notice role="status" hidden data-i18n-en="This record contains a task plan only. No work was dispatched; planned steps and relationships are not execution progress." data-i18n-zh="这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。">这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。</p>
-          <details class="run-context-description"><summary data-i18n-en="View task description" data-i18n-zh="查看任务说明">查看任务说明</summary><p class="run-context-task" data-live-context-task>正在等待任务摘要</p><p class="run-context-identifier" data-live-run-id>未识别运行</p></details>
+          <h1 class="run-context-title" data-live-context-title>本次工作</h1>
         </div>
         <div class="run-context-facts" role="list" aria-label="Run facts">
-          <div class="context-fact" role="listitem"><span data-i18n-en="Status" data-i18n-zh="状态">状态</span><strong data-live-context-status>存疑</strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Status" data-i18n-zh="状态">状态</span><strong data-live-context-status>未开始</strong></div>
+          <div class="context-fact" role="listitem"><strong data-live-context-progress></strong></div>
+          <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
+        </div>
+        <details class="run-context-description"><summary data-i18n-en="Details" data-i18n-zh="详细记录">详细记录</summary>
+          <p class="run-context-task" data-live-context-task>正在等待任务摘要</p><p class="run-context-identifier" data-live-run-id>未识别运行</p>
+          <p class="planning-notice" data-live-planning-notice role="status" hidden data-i18n-en="This record contains a task plan only. No work was dispatched; planned steps and relationships are not execution progress." data-i18n-zh="这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。">这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。</p>
+          <div class="run-context-technical">
           <div class="context-fact" role="listitem"><span data-i18n-en="Stage" data-i18n-zh="阶段">阶段</span><strong data-live-context-stage>${EMPTY_PLACEHOLDER}</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Nodes" data-i18n-zh="节点">节点</span><strong data-live-context-nodes>0</strong></div>
           <div class="context-fact" role="listitem"><span data-i18n-en="Events" data-i18n-zh="事件">事件</span><strong data-live-context-events>0</strong></div>
           <div class="context-fact" role="listitem"><span data-live-context-evidence-label data-i18n-en="Execution evidence" data-i18n-zh="执行证据">执行证据</span><strong data-live-context-evidence>0</strong></div>
-          <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
           <div class="context-fact" role="listitem" data-live-context-chat hidden><button class="context-fact-copy" type="button" data-live-context-chat-copy title="Copy the full chat id">${EMPTY_PLACEHOLDER}</button></div>
-        </div>
-        <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
+          <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
+          </div><div class="run-records-content" data-live-run-diagnostics></div>
+        </details>
       </section>
       <section class="run-overview" data-live-run-overview aria-label="Run overview"><p class="run-overview-note" data-i18n-en="Waiting for a run record" data-i18n-zh="等待运行记录">等待运行记录</p></section>
       <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
@@ -7367,7 +7539,7 @@ export function renderLiveControlRoomPage({
           <div class="graph-stage" data-live-graph-viewport>
             <h1 class="sr-only" id="graph-title" data-live-graph-title data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
             <details class="stage-overview" aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-stage-rail-state="collapse" data-i18n-en="Collapse" data-i18n-zh="收起">收起</span><span data-stage-rail-state="expand" data-i18n-en="Expand" data-i18n-zh="展开">展开</span></summary><div class="stage-overview-body"><ol class="stage-rail" data-live-stage-rail></ol></div></details>
-            <div class="graph-stage-bar"><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Arrows = dependencies · State key" data-i18n-zh="箭头＝依赖 · 状态图例">箭头＝依赖 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Teal glow = running · running (observed) uses the same teal · Green solid = done · Gray dashed = queued · Dashed card = declared, not started · Amber dashed = blocked · Dotted = ownership" data-i18n-zh="青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属">青色流光＝运行中 · 运行中(observed) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
+            <div class="graph-stage-bar"><details class="graph-record-controls"><summary data-i18n-en="Map settings" data-i18n-zh="图表设置">图表设置</summary><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span></details><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Relations · State key" data-i18n-zh="关系连线 · 状态图例">关系连线 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Cards: pale red = not started · pale yellow = in progress · pale green = completed. Lines: Gray dashed = queued · Gold moving dot = running (observed) · Green solid = done · Amber dashed = blocked. Arrows = dependencies; no arrow = ownership · Dashed card = declared, not started" data-i18n-zh="卡片：淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行">卡片：淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
@@ -7383,7 +7555,7 @@ export function renderLiveControlRoomPage({
             <div class="replay-range-wrap"><label class="sr-only" for="replay-range" data-i18n-en="Replay position" data-i18n-zh="回放位置">回放位置</label><input class="replay-range" id="replay-range" data-replay-range type="range" min="0" max="0" value="0" step="1" aria-label="Replay position" disabled><div class="replay-track" data-replay-track aria-hidden="true"><span class="replay-progress" data-replay-progress></span></div><div class="replay-ticks" data-replay-ticks aria-hidden="true"></div></div>
             <ol class="replay-events" data-replay-events data-replay-timeline aria-label="Replay events"></ol>
           </details>
-          <div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span><span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>${EMPTY_PLACEHOLDER}</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-run-updated>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-source>本地观察器</span></div>
+          <details class="status-records"><summary data-i18n-en="Details" data-i18n-zh="详细记录">详细记录</summary><div class="status-bar" role="status"><span class="status-transport"><span data-live-state data-state="stale"><span data-live-state-label>未更新</span></span></span><span><span data-live-run-stage>观测中</span></span><span class="status-nodes"><span data-live-run-workers>${EMPTY_PLACEHOLDER}</span></span><span class="status-camera"><span data-i18n-en="Camera" data-i18n-zh="相机">相机</span> <strong data-live-camera-mode>跟随</strong></span><span class="sr-only" data-live-run-started>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-run-updated>${EMPTY_PLACEHOLDER}</span><span class="sr-only" data-live-source>本地观察器</span></div></details>
         </section>
         <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
           <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>

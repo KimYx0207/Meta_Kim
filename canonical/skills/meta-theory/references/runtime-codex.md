@@ -266,6 +266,10 @@ Use when Codex runtime, sandbox, approval, hooks, subagents, and choice behavior
 
 ## Do
 
+During Critical, the host should author `record.publicTitle`: a short, plain-language heading of at most 120 characters for the task panel. Keep technical scope in the work order. The host supplies this heading without asking the user to fill another field; do not copy sensitive paths, credentials, or a long raw request into it. The checkpoint validates and saves this explicit heading as `publicSummary.title` in the same guarded state update, so it remains readable after the full planning state is stopped. The field is optional for older callers; an omitted or blank value keeps an existing public title and never infers one from `realIntent` or raw task text. A display title does not establish execution, verification, or user acceptance.
+
+Write `workerTaskPacket.expectedOutput` as a concrete result that an ordinary user can understand; put file paths, technical IDs, and constraints in `scope` and `verification`. Begin a worker result `summary` with what changed and what still needs work; put version-reuse and native-evidence audit details in `evidenceRefs` or detailed records instead of repeatedly prefixing the summary with r3/r4 notes.
+
 - Assign an owner for each action.
 - Produce a checkable packet or artifact.
 - Bind pass/fail to evidence, threshold, or command output.

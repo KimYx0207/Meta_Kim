@@ -665,6 +665,52 @@ test("durable host lifecycle projects verified queued active completed and stopp
   assert.equal(stopped.nodes.find((node) => node.isMain === false).displayState, "unreported");
 });
 
+test("an explicit public title survives stopped envelope-only Live readback", async () => {
+  const spine = await import("../../canonical/runtime-assets/shared/hooks/spine-state.mjs");
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-public-title-"));
+  try {
+    const state = spine.advanceStage(spine.createInitialState({ taskClassification: "public_title" }), "fetch");
+    state.publicSummary = { title: "让任务进度和结果一目了然", internalNote: "not for publication" };
+    state.task = "private original task";
+    state.workerTaskPackets = [{ taskPacketId: "task-title-fallback", roleDisplayName: "frontend", ownerAgent: "javascript-pro" }];
+    await spine.writeSpineState(tempDir, state);
+    await spine.terminalizeSpineState(tempDir, { expectedRunId: state.runId, reason: "session_stop" });
+    await rm(path.join(tempDir, ".meta-kim", "state", "default", "spine", "spine-state.json"), { force: true });
+    const durableStatus = await spine.readMetaRunStatus(tempDir);
+    assert.equal(durableStatus.active, false);
+    assert.deepEqual({ ...durableStatus.publicSummary }, { title: state.publicSummary.title });
+    assert.doesNotMatch(JSON.stringify(durableStatus), /private original task|not for publication/u);
+    const snapshot = buildLiveSnapshot({ durableStatus, governedArtifact: null, observedAt: new Date().toISOString() });
+    assert.equal(snapshot.run.title, state.publicSummary.title);
+    assert.equal(snapshot.run.task, state.publicSummary.title);
+    assert.equal(snapshot.run.active, false);
+    const withoutTitle = { ...durableStatus, publicSummary: null };
+    const baseline = buildLiveSnapshot({ durableStatus: withoutTitle, governedArtifact: null, observedAt: new Date().toISOString() });
+    assert.equal(snapshot.run.status, baseline.run.status, "a title does not change execution evidence");
+    assert.notEqual(snapshot.run.status, "completed");
+    assert.equal(snapshot.evidence.length, 0);
+    assert.equal(durableStatus.publicReadyAuthority, false);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("public title selection rejects inherited and accessor fields without executing them", () => {
+  const artifact = sampleArtifact("meta-public-title-selection");
+  artifact.publicSummary = { title: "用户可读的公开标题", ignored: "private display note" };
+  artifact.task = "legacy technical task";
+  artifact.title = "Legacy technical title";
+  assert.equal(buildLiveCompactProjection(artifact).run.title, artifact.publicSummary.title);
+  assert.equal(buildLiveCompactProjection(artifact).run.task, artifact.publicSummary.title);
+  let reads = 0;
+  const publicSummary = Object.defineProperty({}, "title", { enumerable: true, get() { reads += 1; return "unsafe"; } });
+  assert.equal(buildLiveCompactProjection({ ...artifact, publicSummary }).run.task, artifact.task);
+  assert.equal(buildLiveCompactProjection({ ...artifact, publicSummary: Object.create({ title: "inherited" }) }).run.task, artifact.task);
+  const accessor = Object.defineProperty({ ...artifact }, "publicSummary", { enumerable: true, get() { reads += 1; return { title: "unsafe" }; } });
+  assert.equal(buildLiveCompactProjection(accessor).run.task, artifact.task);
+  assert.equal(reads, 0);
+});
+
 test("conversation candidates remain candidates and cannot promote completion", () => {
   const snapshot = buildLiveSnapshot({
     governedArtifact: {

@@ -63,6 +63,73 @@ test("owner checkpoints advance exactly one stage on the same run and publish pl
   assert.equal(status.publicReadyAuthority, false);
 });
 
+test("Critical publishes an owner-authored title through stopped envelope-only Live readback", async (t) => {
+  const f = await fixture(t);
+  const publicTitle = "让任务进度和结果一目了然";
+  await f.checkpoint("critical", { ...critical(), publicTitle, realIntent: "PRIVATE ORIGINAL OBJECTIVE must remain outside public status" });
+  const current = await readSpineState(f.root);
+  assert.equal(current.publicSummary.title, publicTitle);
+  assert.equal(current.criticalRecord.publicTitle, publicTitle);
+  await f.checkpoint("fetch", fetchRecord()); await f.checkpoint("thinking", thinking());
+  await terminalizeSpineState(f.root, { expectedRunId: f.state.runId, reason: "session_stop" });
+  rmSync(path.join(f.root, ".meta-kim/state", profile, "spine", "spine-state.json"), { force: true });
+  const durable = await createLiveReadRepository({ projectRoot: f.root, cwd: f.root, profile }).readDurableStatus();
+  assert.equal(durable.publicSummary.title, publicTitle);
+  assert.equal(durable.active, false);
+  assert.doesNotMatch(JSON.stringify(durable), /PRIVATE ORIGINAL OBJECTIVE/u);
+  assert.equal(Object.hasOwn(durable, "task"), false);
+  const snapshot = buildLiveSnapshot({ durableStatus: durable, observedAt: new Date().toISOString() });
+  assert.equal(snapshot.run.title, publicTitle);
+  assert.equal(snapshot.run.task, publicTitle);
+  assert.equal(snapshot.run.completionEvidenceState, "unproven");
+  assert.equal(snapshot.counts.executionEvidence, 0);
+  assert.equal(durable.publicReadyAuthority, false);
+});
+
+test("blank legacy Critical titles preserve existing public identity and missing titles are not inferred", async (t) => {
+  assert.equal(governedHostCheckpointTemplate("critical").record.publicTitle, "");
+  const f = await fixture(t);
+  const initial = await readSpineState(f.root);
+  initial.publicSummary = { title: "已有公开标题" };
+  await writeSpineState(f.root, initial);
+  await f.checkpoint("critical", { ...critical(), publicTitle: "   " }, { status: "in_progress" });
+  assert.equal((await readSpineState(f.root)).publicSummary.title, initial.publicSummary.title);
+  await f.checkpoint("critical", critical(), { status: "in_progress" });
+  assert.equal((await readSpineState(f.root)).publicSummary.title, initial.publicSummary.title);
+  const legacy = await fixture(t);
+  await legacy.checkpoint("critical", critical());
+  assert.equal((await readSpineState(legacy.root)).publicSummary, undefined);
+});
+
+test("invalid Critical public titles leave persisted state unchanged without reading accessors", async (t) => {
+  const f = await fixture(t);
+  await f.checkpoint("critical", { ...critical(), publicTitle: "保留此公开标题" }, { status: "in_progress" });
+  const statePath = path.join(f.root, ".meta-kim/state", profile, "spine", "spine-state.json");
+  const before = readFileSync(statePath, "utf8");
+  for (const publicTitle of [null, undefined, 42, {}, [], true, "界".repeat(121), "标题\n不可换行", "标题\u0000不可控制", "\t"]) {
+    await assert.rejects(f.checkpoint("critical", { ...critical(), publicTitle }), /critical_public_title_invalid/);
+    assert.equal(readFileSync(statePath, "utf8"), before);
+  }
+  let reads = 0;
+  const record = Object.defineProperty(critical(), "publicTitle", { enumerable: true, get() { reads += 1; return "不应被读取"; } });
+  await assert.rejects(f.checkpoint("critical", record), /critical_public_title_invalid/);
+  assert.equal(reads, 0);
+  assert.equal(readFileSync(statePath, "utf8"), before);
+});
+
+test("only the winning Critical CAS may update a public title", async (t) => {
+  const f = await fixture(t);
+  await f.checkpoint("critical", { ...critical(), publicTitle: "原公开标题" }, { status: "in_progress" });
+  const titles = ["并发标题甲", "并发标题乙"];
+  const results = await Promise.allSettled(titles.map((publicTitle) => f.checkpoint("critical", { ...critical(), publicTitle })));
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  const state = await readSpineState(f.root);
+  assert.equal(state.publicSummary.title, titles[results.findIndex((result) => result.status === "fulfilled")]);
+  assert.equal(state.currentStage, "fetch");
+  assert.equal(state.hostCheckpointRevision, 2);
+});
+
 test("fresh host checkpoints keep an older active run current through the real Live repository and snapshot", async (t) => {
   const f = await fixture(t);
   const stale = await readSpineState(f.root);

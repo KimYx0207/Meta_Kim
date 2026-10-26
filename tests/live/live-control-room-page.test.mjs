@@ -26,7 +26,7 @@ import {
 import { LIVE_RECORD_ORIGINS } from "../../src/application/live/live-record-origin.mjs";
 import { buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 import { buildLocalFeedbackText, createLocalFeedbackDraftStore, liveDeliverablesForNode, normalizeLiveDeliverables } from "../../src/presentation/live/live-feedback-draft.mjs";
-import { resolveLiveRunOverview, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
+import { resolveLiveRunOverview, resolveLiveRunTaskLifecycle, resolveLiveNodeTaskLifecycle, resolveLiveTaskLifecycle, liveRunTaskNodes, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, normalizeLiveOwnerReport, serializeLiveRunOverviewResolvers } from "../../src/presentation/live/live-run-overview.mjs";
 import { serializeLiveTokenUsageResolvers } from "../../src/presentation/live/live-token-usage.mjs";
 import { loadLiveSpacingScale } from "../../src/application/live/live-spacing-scale.mjs";
 import {
@@ -41,6 +41,147 @@ import {
   LIVE_SNAPSHOT_SCHEMA_VERSION,
   renderLiveControlRoomPage,
 } from "../../src/presentation/live/live-control-room-page.mjs";
+
+const workOverviewHelpers = { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport };
+
+test("browser normalization keeps only precise native returns and counts six returned tasks without ending active main work", () => {
+  const runId = "native-codex-11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222";
+  const observedAt = "2026-10-22T08:00:00Z";
+  const nodes = Array.from({ length: 7 }, (_, index) => {
+    const id = "agent:" + String(index).padStart(20, "0");
+    const taskPacketId = "native-task:" + String(index).padStart(20, "0");
+    return { id, taskPacketId, kind: "agent", nativeTaskCaption: "javascript-pro", nativeTaskOrdinal: index + 1,
+      task: "internal_alias_" + index, label: "javascript-pro", status: "in_doubt", displayState: "in_doubt", active: false,
+      ownerAgent: "javascript-pro", executionState: index < 6 ? "executed" : "unknown", terminalEvidence: [],
+      timing: { completedAt: index < 6 ? observedAt : null }, lastAt: observedAt,
+      workerExecutionEvidence: [{ runId, taskPacketId, nodeId: id, evidenceKind: "native_host_observation", sourceKind: "codex_desktop_native_session",
+        sourceEventId: "synthetic-source-" + index + (index < 6 ? ":return" : ":spawn"), observedAt, sourceDigest: "a".repeat(64),
+        executionObserved: true, synthetic: false, privatePayload: "PRIVATE RAW PROOF" }] };
+  });
+  const input = { run: { runId, active: true, status: "active", observationKind: "native_execution" }, nodes,
+    provenance: [{ nodeId: nodes[0].id, reasoningExcerpt: "原生任务别名：internal_alias_0；任务说明未记录。" }] };
+  const normalized = runNormalizerHarness({ actualStatus: true })(input);
+  assert.equal(resolveLiveRunTaskLifecycle(input).completedCount, 6);
+  assert.equal(resolveLiveRunTaskLifecycle(normalized).completedCount, 6);
+  assert.equal(resolveLiveRunTaskLifecycle(normalized).state, "in_progress");
+  assert.equal(resolveLiveRunTaskLifecycle(normalized).totalCount, 7);
+  assert.equal(normalized.nodes[0].nativeReturnEvidence.sourceEventId, "synthetic-source-0:return");
+  assert.equal(normalized.nodes[0].nativeTaskCaption, "javascript-pro");
+  assert.equal(normalized.nodes[0].nativeTaskOrdinal, 1);
+  assert.equal(normalized.nodes[0].workerExecutionEvidence, undefined);
+  assert.equal(normalized.nodes[0].nativeInvocationVerified, undefined);
+  assert.equal(normalized.nodes[6].nativeReturnEvidence, undefined);
+  assert.equal(normalized.nodes[0].status, "in_doubt");
+  assert.deepEqual(normalized.provenance, [{ nodeId: nodes[0].id, triggerPromptId: "", reasoningExcerpt: input.provenance[0].reasoningExcerpt.normalize("NFKC") }]);
+  assert.doesNotMatch(JSON.stringify(normalized), /PRIVATE RAW PROOF/u);
+  const page = ordinaryOverviewHarness();
+  page.render(normalized);
+  assert.match(page.text(page.root), /代码实现 1/u);
+  assert.doesNotMatch(page.text(page.root), /internal_alias/u);
+  const makeElement = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {},
+    append(...items) { this.children.push(...items); }, addEventListener() {} });
+  const board = makeElement("section");
+  const html = renderLiveControlRoomPage();
+  const renderBoard = new Function("workspaceBoard", "makeElement", "clearChildren", `
+const currentLanguage = "zh"; const selectedNodeId = null; const usefulNodeMeta = Boolean;
+${serializeLiveRunOverviewResolvers()}
+const nodeStateCopy = (node, runId) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node, runId), currentLanguage).label;
+const nodeStateDetailCopy = (node, runId) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node, runId), currentLanguage).detail;
+${["workspaceColumnForStatus", "appendWorkspaceTag", "renderWorkspaceBoard"].map((name) => shippedHelper(html, name)).join("\n")}
+return renderWorkspaceBoard;`)(board, makeElement, (element) => { element.children = []; });
+  renderBoard(normalized);
+  assert.match(page.text(board), /代码实现 1/u);
+  assert.doesNotMatch(JSON.stringify(board), /internal_alias/u);
+  assert.equal(board.children.find((column) => column.dataset.column === "done").children[1].children.length, 6);
+});
+
+function ordinaryOverviewHarness(language = "zh") {
+  const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, listeners: {},
+    append(...items) { this.children.push(...items); }, addEventListener(name, listener) { this.listeners[name] = listener; } });
+  const root = element("section");
+  const opened = [];
+  const read = [];
+  const feedback = [];
+  const html = renderLiveControlRoomPage();
+  const render = new Function("runOverview", "makeElement", "clearChildren", "helpers", "currentLanguage", "selectNode", "openOverviewFeedback", "observeDeliverableRead", `
+const { resolveLiveRunOverview, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = helpers;
+const selectedProjectId = "project-a";
+const formatSessionTime = (at) => at;
+const appendObservedTime = (parent, at) => { const time = makeElement("time"); time.dateTime = at; parent.append(time); return time; };
+${shippedHelper(html, "deliverableOpenHref")}
+${shippedHelper(html, "renderRunOverview")}
+return renderRunOverview;`)(root, element, (node) => { node.children = []; }, { ...workOverviewHelpers, resolveLiveRunOverview, liveTaskLifecycleCopy }, language,
+    (...args) => opened.push(args), (item) => feedback.push(item), (item) => read.push(item));
+  const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
+  return { root, render, text, opened, read, feedback };
+}
+
+test("ordinary summary shows seven finished tasks without empty result, blocker or activity cards", () => {
+  const runId = "ordinary-seven";
+  const tasks = Array.from({ length: 7 }, (_, index) => ({ id: "task-" + index, runId, kind: "worker", taskPacketId: "task:" + index,
+    ownerAgent: "javascript-pro", active: false, status: "in_doubt", displayState: "unknown", executionState: "unreported", task: "检查 turn " + index,
+    ownerReport: { runId, taskPacketId: "task:" + index, ownerAgent: "javascript-pro", resultStatus: "reported_complete",
+      summary: "r4 native 审计原文保留在详细记录", evidenceLevel: "owner_reported", nativeInvocationVerified: false } }));
+  const snapshot = { run: { id: runId, title: "Governed execution", active: true, status: "in_doubt" }, nodes: tasks, deliverables: [] };
+  const ui = ordinaryOverviewHarness();
+  ui.render(snapshot);
+  assert.deepEqual(ui.root.children.map((item) => item.dataset.overviewItem), ["task"]);
+  assert.match(ui.text(ui.root), /已做的工作.*检查 对话回合 0/su);
+  assert.match(ui.text(ui.root), /未附可打开的文件/u);
+  assert.doesNotMatch(ui.text(ui.root), /尚无可用结果|没有结果|原生|native|r4|0\/8|执行证据|输出计量/u);
+  const task = ui.root.children[0];
+  const first = task.children.find((item) => item.tagName === "ol");
+  const more = task.children.find((item) => item.tagName === "details");
+  assert.equal(first.children.length, 3);
+  assert.equal(more.children[1].children.length, 4);
+  assert.notEqual(more.open, true);
+  assert.equal(first.children[0].children[0].title, "检查 对话回合 0");
+  first.children[0].children[1].listeners.click();
+  assert.equal(ui.opened[0][0], tasks[0].id);
+  const changed = { ...snapshot, nodes: tasks.map((node, index) => index === 2 ? { ...node, task: "第三项标题已更新" } : node) };
+  ui.render(changed);
+  assert.match(ui.text(ui.root), /第三项标题已更新/u, "all displayed task identities participate in the render cache key");
+  const english = ordinaryOverviewHarness("en");
+  english.render(snapshot);
+  assert.match(english.text(english.root), /Work completed/u);
+  assert.match(english.text(english.root), /No attached files/u);
+});
+
+test("ordinary summary reveals only actionable issues and scoped available output links", () => {
+  const runId = "ordinary-issues";
+  const ui = ordinaryOverviewHarness();
+  const fixture = { run: { id: runId, status: "active" }, nodes: [{ id: "blocked", runId, kind: "worker", status: "blocked", task: "读取资料", statusReason: "资料未提供" }],
+    deliverables: [{ id: "output-one", runId, kind: "html", availability: "available", label: "成果页面", url: "https://outside.invalid/" }],
+    toolCalls: [{ id: "call", runId, state: "completed", name: "资料检查", endedAt: "2026-10-26T13:00:00Z" }] };
+  ui.render(fixture);
+  assert.match(ui.text(ui.root), /需要处理.*资料未提供/su);
+  const output = ui.root.children.find((item) => item.dataset.overviewItem === "result");
+  const link = output.children.find((item) => item.tagName === "a");
+  assert.equal(new URL(link.href, "http://localhost").pathname, "/api/deliverable");
+  assert.deepEqual(Object.fromEntries(new URL(link.href, "http://localhost").searchParams), { runId, deliverableId: "output-one", projectId: "project-a" });
+  assert.equal(link.rel, "noopener noreferrer");
+  link.listeners.click();
+  assert.equal(ui.read[0].id, "output-one");
+  assert.ok(ui.root.children.some((item) => item.dataset.overviewItem === "activity"));
+  ui.render({ ...fixture, nodes: [], toolCalls: [], deliverables: [], run: { id: runId, status: "active", statusReason: "缺少审计关联" } });
+  assert.deepEqual(ui.root.children.map((item) => item.dataset.overviewItem), ["task"], "missing audit proof is not an actionable blocker or an empty activity card");
+});
+
+test("technical facts are preserved inside closed records while the header stays concise", () => {
+  const html = renderLiveControlRoomPage();
+  const header = html.slice(html.indexOf('<section class="run-context"'), html.indexOf('<section class="run-overview"'));
+  const details = header.match(/<details class="run-context-description">([\s\S]*?)<\/details>/u);
+  assert.ok(details);
+  for (const name of ["context-stage", "context-nodes", "context-events", "context-evidence", "context-source", "context-chat-copy", "run-diagnostics"]) assert.ok(details[1].includes("data-live-" + name));
+  const primary = header.slice(0, header.indexOf('<details class="run-context-description">'));
+  assert.match(primary, /data-live-context-progress/u);
+  assert.match(primary, /data-live-context-updated/u);
+  assert.doesNotMatch(primary, /context-nodes|context-events|context-evidence|context-source/u);
+  assert.equal((header.match(/data-live-context-updated/gu) || []).length, 1);
+  assert.match(html, /<details class="status-records"><summary/u);
+  assert.match(html, /<details class="graph-record-controls"><summary/u);
+  assert.doesNotMatch(shippedHelper(html, "renderRunOverview"), /innerHTML/u);
+});
 
 test("navigation and footer do not repeat the task heading", () => {
   const html = renderLiveControlRoomPage();
@@ -70,29 +211,31 @@ test("workspace cards use public state instead of reviving an inactive queue", (
     addEventListener() {},
   });
   const board = makeElement("div");
-  const render = new Function("workspaceBoard", "makeElement", "clearChildren", "usefulNodeMeta", "localize", "nodeDisplayState", "nodeStateCopy",
+  const render = new Function("workspaceBoard", "makeElement", "clearChildren", "usefulNodeMeta", "localize", "nodeStateCopy", "nodeStateDetailCopy", "resolveLiveTaskLifecycle", "resolveLiveRunTaskLifecycle", "liveTaskLifecycleCopy", "liveRunTaskNodes", "plainLiveTaskLabel", "liveTaskDisplayLabel",
     `const currentLanguage='zh'; let selectedNodeId=null; ${source}; return renderWorkspaceBoard;`)(
     board, makeElement, (element) => { element.children = []; }, Boolean, (value) => value,
-    (node) => node.displayState,
-    (node) => node.displayState === "unreported" ? "未收到执行回写" : "运行中",
+    (node) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node), "zh").label,
+    (node) => liveTaskLifecycleCopy(resolveLiveTaskLifecycle(node), "zh").detail,
+    resolveLiveTaskLifecycle, resolveLiveRunTaskLifecycle, liveTaskLifecycleCopy, liveRunTaskNodes, plainLiveTaskLabel, liveTaskDisplayLabel,
   );
   render({ run: { status: "partial" }, nodes: [
     { id: "old", kind: "agent", status: "queued", displayState: "unreported", active: false, label: "旧任务" },
     { id: "live", kind: "agent", status: "active", displayState: "active", active: true, label: "当前任务" },
   ] });
   const textOf = (element) => [element.text, ...element.children.map(textOf)].join(" ");
-  assert.match(textOf(board), /未收到执行回写/u);
+  assert.match(textOf(board), /缺少执行记录，状态待确认/u);
+  assert.deepEqual(board.children.map((column) => column.children[0].children[0].text), ["未开始", "进行中", "已完成"]);
   const doing = board.children.find((column) => column.dataset.column === "doing");
   assert.match(textOf(doing), /当前任务/u, "the active public state belongs in the running column");
 });
 
-test("run header uses the same public execution state as the footer", () => {
+test("run header and footer share the three-state task lifecycle", () => {
   const html = renderLiveControlRoomPage();
-  const write = /setText\(contextStatus, stateCopy\(([^)]+)\)/u.exec(html);
-  assert.ok(write);
-  const state = new Function("snapshot", `return ${write[1]};`);
-  assert.equal(state({ run: { status: "active", displayState: "unreported" } }), "unreported");
-  assert.equal(state({ run: { status: "active", displayState: "active" } }), "active");
+  assert.match(html, /const taskLifecycle = resolveLiveRunTaskLifecycle\(snapshot\)/u);
+  assert.match(html, /setText\(contextStatus, taskState\.label\)/u);
+  assert.match(html, /setText\(stateLabel, taskState\.label\)/u);
+  assert.equal(liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle({ run: { id: "r", status: "active", displayState: "unreported" } }), "zh").label, "进行中");
+  assert.equal(liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle({ run: { id: "r", status: "pending" } }), "zh").label, "未开始");
 });
 
 test("planning placeholders do not inflate the execution evidence header", () => {
@@ -150,11 +293,12 @@ test("not dispatched is distinct from an executed task with missing verification
   const displayFormat = { emptyPlaceholder: "—", nonInformativeValues: [] };
   const view = new Function("DISPLAY_FORMAT", `
 const currentLanguage = "zh"; const localize = (value) => value; const stateCopy = (value) => value;
+${serializeLiveRunOverviewResolvers()}
 ${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
 return (node) => [nodeDisplayState(node), nodeStateCopy(node), nodeShortStateCopy(node)];`)(displayFormat);
-  assert.deepEqual(view({ displayState: "planned", executionState: "not_executed", status: "pending" }), ["planned", "仅规划 · 尚未派发", "尚未派发"]);
-  assert.deepEqual(view({ displayState: "in_doubt", executionState: "executed", status: "in_doubt" }), ["in_doubt", "已执行 · 待验证", "待验证"]);
-  assert.deepEqual(view({ displayState: "unreported", executionState: "unreported", status: "pending" }), ["unreported", "未收到执行回写", "未收到执行回写"]);
+  assert.deepEqual(view({ displayState: "planned", executionState: "not_executed", status: "pending" }), ["planned", "未开始", "未开始"]);
+  assert.deepEqual(view({ displayState: "in_doubt", executionState: "executed", status: "in_doubt" }), ["in_doubt", "进行中", "进行中"]);
+  assert.deepEqual(view({ displayState: "unreported", executionState: "unreported", status: "pending" }), ["unreported", "进行中", "进行中"]);
 });
 
 test("missing execution reports keep the same graph and detail meaning without becoming failed", () => {
@@ -163,12 +307,13 @@ test("missing execution reports keep the same graph and detail meaning without b
 const currentLanguage = "en";
 const display = (value, fallback) => value ?? fallback;
 const localize = (value) => value;
+${serializeLiveRunOverviewResolvers()}
 ${["nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy", "stateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
 return (node) => ({ state: nodeDisplayState(node), detail: nodeStateCopy(node), graph: nodeShortStateCopy(node) });`)();
   const unreported = view({ displayState: "unreported", executionState: "unreported", status: "pending" });
-  assert.deepEqual(unreported, { state: "unreported", detail: "No execution report", graph: "No execution report" });
+  assert.deepEqual(unreported, { state: "unreported", detail: "In progress", graph: "In progress" });
   assert.equal(view({ displayState: "failed", status: "failed" }).state, "failed");
-  assert.notEqual(unreported.detail, view({ displayState: "failed", status: "failed" }).detail);
+  assert.notEqual(resolveLiveTaskLifecycle({ displayState: "unreported" }).detail, resolveLiveTaskLifecycle({ displayState: "failed" }).detail);
 });
 
 function modalBehaviorHarness() {
@@ -1321,7 +1466,7 @@ test("the client keeps the declared-not-started and observed-only node flags the
   assert.equal(normalized.nodes.find((node) => node.id === "n-plain").observedOnly, false);
 });
 
-test("declared-not-started cards get a dashed border and a chip, and observed running gets its own label", () => {
+test("declared-not-started cards retain the dashed distinction while observed execution is a detail", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /card\.dataset\.declaredNotStarted = "true"/u, "the card must expose the flag for the CSS treatment");
@@ -1329,7 +1474,9 @@ test("declared-not-started cards get a dashed border and a chip, and observed ru
   assert.match(html, /声明未执行/u);
   assert.match(html, /declared, not started/u);
   assert.match(html, /\.node-card\[data-declared-not-started="true"\]\s*\{[^}]*border-style:\s*dashed/su, "the distinction must be visual, not only a label");
-  assert.match(html, /运行中·observed/u, "observed running must stay a separate claim from declared running");
+  const observed = liveTaskLifecycleCopy(resolveLiveTaskLifecycle({ displayState: "active", status: "queued", observedOnly: true }), "zh");
+  assert.deepEqual({ label: observed.label, detail: observed.detail }, { label: "进行中", detail: "已观察到执行" });
+  assert.equal(liveTaskLifecycleCopy(resolveLiveTaskLifecycle({ declaredNotStarted: true }), "zh").label, "未开始");
 });
 
 test("includes graph, evidence drawer, and replay controls", () => {
@@ -2428,18 +2575,21 @@ test("draws curved status-aware edges and a live flow animation with reduced-mot
   assert.match(html, /edge-running/iu);
   assert.match(html, /edge-failed/iu);
   assert.match(html, /edge-queued/iu);
-  assert.match(html, /const stageFocusState\s*=\s*executionRelation\s*&&\s*snapshot\.run\?\.active[\s\S]{0,180}targetState\s*===\s*"active"\s*\?\s*"live"\s*:\s*"none"/u);
+  assert.match(html, /const stageFocusState\s*=\s*snapshot\.run\?\.active\s*&&\s*!terminalRun\s*&&\s*targetLifecycle\.state\s*===\s*"in_progress"[\s\S]{0,180}!edgeProblem[\s\S]{0,160}"unconfirmed", "result_unconfirmed"[\s\S]{0,80}\?\s*"live"\s*:\s*"none"/u);
   assert.match(html, /EXECUTION_EDGE_KINDS\.has\(edge\.kind \|\| "sequence"\)/u);
   assert.match(html, /executionRelation \? nodeClass\(edge\.status\) : "structural"/u);
   assert.match(html, /path\.dataset\.liveFocus\s*=\s*stageFocusState/u);
-  assert.match(html, /\.edge-flow-glow\[data-stage-focus="recorded"\][^{]*\{[^}]*stroke:\s*#d8a84e[^}]*filter:\s*blur\(3px\)/su);
-  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="recorded"\][^{]*\{[^}]*animation:\s*stage-route-flow/su);
-  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="live"\][^{]*\{[^}]*animation:\s*live-flow/su);
+  assert.match(html, /\.edge-flow-glow\[data-stage-focus="recorded"\][^{]*\{[^}]*stroke:\s*var\(--task-flow-ink\)[^}]*filter:\s*blur\(3px\)/su);
+  assert.match(html, /\.edge-flow-tracer\[data-stage-focus="recorded"\], \.edge-flow-tracer\[data-stage-focus="live"\][^{]*\{[^}]*opacity:\s*0[^}]*animation:\s*none/su);
   assert.match(html, /createElementNS\("http:\/\/www\.w3\.org\/2000\/svg", "animateMotion"\)/u);
-  assert.match(html, /!reducedMotion\.matches/u);
-  assert.match(html, /"stage-live":\s*"#58d4cf"[\s\S]{0,80}"stage-recorded":\s*"#d8a84e"/u);
-  assert.match(html, /const replayFocus\s*=\s*executionRelation\s*&&\s*!replayFollowingLive[\s\S]{0,180}\?\s*"recorded"[\s\S]{0,140}path\.dataset\.liveFocus/u);
-  assert.match(html, /replayFocus\s*===\s*"recorded"[\s\S]{0,100}\?\s*"stage-recorded"[\s\S]{0,100}: replayState/u);
+  assert.match(html, /if \(!\["live", "recorded"\]\.includes\(stageFocus\) \|\| reducedMotion\.matches\) return null/u);
+  assert.match(html, /"stage-live":\s*"var\(--task-flow-ink\)"[\s\S]{0,80}"stage-recorded":\s*"var\(--task-flow-ink\)"/u);
+  assert.match(html, /const replayCanFlow\s*=\s*visualState\s*===\s*"in_progress"\s*&&\s*!edgeProblem/u);
+  assert.match(html, /const replayFocus\s*=\s*!replayFollowingLive\s*&&\s*replayCanFlow[\s\S]{0,220}\?\s*"recorded"[\s\S]{0,140}path\.dataset\.liveFocus/u);
+  assert.match(html, /motion\.setAttribute\("dur", "2\.4s"\)/u);
+  assert.match(html, /motion\.setAttribute\("keyPoints", "0\.04;0\.94"\)/u);
+  assert.match(html, /motion\.setAttribute\("calcMode", "linear"\)/u);
+  assert.match(html, /replayFocus\s*===\s*"recorded"[\s\S]{0,100}\?\s*"stage-recorded"[\s\S]{0,100}: "running"/u);
   assert.match(html, /march|dash|flow/iu);
   assert.match(html, /prefers-reduced-motion\s*:\s*reduce/iu);
 });
@@ -2461,7 +2611,8 @@ test("every edge state clears the non-text contrast floor against whatever the c
   // computed against a token that does not apply where the reader is looking.
   for (const token of ["--edge-ink-dim", "--edge-ink-idle", "--green", "--amber", "--danger"]) {
     const shadowing = rules
-      .filter((rule) => rule.conditions.length > 0 || !rule.selectors.includes(":root"))
+      .filter((rule) => (rule.conditions.length > 0 || !rule.selectors.includes(":root"))
+        && !(rule.conditions.length === 0 && rule.selectors.every((selector) => /^\.graph-canvas(?:\[data-semantic-zoom\])? \.node-card\[data-task-state\]$/u.test(selector))))
       .filter((rule) => rule.declarations.some(([property]) => property === token))
       .map((rule) => [...rule.conditions, ...rule.selectors].join(" "));
     assert.deepEqual(shadowing, [], `${token} is declared outside the unconditional :root block, so the measured ink is not the painted one`);
@@ -2612,7 +2763,8 @@ test("lays out high-fanout work as a searched non-crossing grid and ships an iso
   }
   assert.match(html, /nodeId:\s*"demo-requirements"/u);
   assert.match(html, /演示数据 · 非真实运行/u);
-  assert.match(html, /青色流光＝运行中 · 运行中\(observed\) 同为青色 · 绿色实线＝已完成 · 灰色虚线＝排队 · 虚线卡片＝声明未执行 · 琥珀虚线＝阻塞 · 点线＝结构归属/u);
+  assert.match(html, /淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成/u);
+  assert.match(html, /浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成/u);
   assert.match(html, /\.edge-completed\s*\{[^}]*stroke:\s*var\(--green\)[^}]*stroke-dasharray:\s*none/su);
   // Only the dash is pinned here. The opacity used to be pinned at .38 alongside it,
   // and .38 was the defect: 1.41:1 against the canvas, a line the reporter could not
@@ -2701,6 +2853,86 @@ ${helpers.map((name) => shippedHelper(html, name)).join("\n")}\nreturn { layoutG
     resolveSemanticZoom,
   );
 }
+
+test("two or three ownership siblings fit the observed short canvas without clipping the final card", () => {
+  const canvas = { width: 1224, height: 278.5 };
+  const inset = { top: 26, right: 26, bottom: 26, left: 26 };
+  const cameraPolicy = loadLiveGraphCameraPolicy();
+  const { layoutGraph } = graphLayoutHarness(canvas);
+  for (const childCount of [2, 3]) {
+    const nodes = [
+      { id: "owner", kind: "main_agent", isMain: true, label: "演示主线" },
+      ...Array.from({ length: childCount }, (_, index) => ({ id: "child-" + index, kind: "worker", label: "演示子任务 " + index })),
+    ];
+    const edges = nodes.slice(1).map((node) => ({ id: "ownership-" + node.id, from: "owner", to: node.id, kind: "contains" }));
+    const result = layoutGraph({ nodes, edges });
+    const camera = resolveOverviewCamera(canvas, result.bounds, inset, cameraPolicy);
+    assert.equal(result.kind, "fanout", childCount + " siblings must search shapes rather than default to a vertical lane");
+    assert.equal(camera.wholeGraphFits, true, "Overview must not be partial on the observed canvas");
+    assert.ok(camera.scale >= cameraPolicy.minScale, "the fix preserves the camera's legibility floor");
+    assert.equal(resolveSemanticZoom(camera.scale, cameraPolicy), "cell");
+    for (const position of result.positions.values()) {
+      assert.ok(position.height >= 333, "the complete-card reservation remains intact in cell mode");
+      const left = camera.x + position.x * camera.scale;
+      const top = camera.y + position.y * camera.scale;
+      const right = left + position.width * camera.scale;
+      const bottom = top + position.height * camera.scale;
+      assert.ok(left >= inset.left && top >= inset.top, "the entire card starts inside Overview");
+      assert.ok(right <= canvas.width - inset.right && bottom <= canvas.height - inset.bottom,
+        "the entire full-card footprint, including the last child, ends inside Overview");
+    }
+    assert.ok(edges.every((edge) => edge.kind === "contains"), "wrapping never promotes ownership to execution dependency");
+  }
+});
+
+test("a narrow run pane scrolls to its canvas budget so all nine ownership children fit Overview", () => {
+  const observed = { width: 884, height: 223.72 };
+  const inset = { top: 26, right: 26, bottom: 26, left: 26 };
+  const condition = "@media (min-width: 721px) and (max-width: 900px)";
+  const cameraPolicy = loadLiveGraphCameraPolicy();
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const allocatedHeight = lengthToPixels(resolvedDeclaration(rules, {
+    selector: '.workspace-grid[data-work-view="run"] .graph-canvas', property: "min-height", condition,
+  }));
+  assert.equal(allocatedHeight, loadLiveChromeBudget().minCanvasHeightPx, "responsive sizing uses the existing canvas budget");
+  assert.equal(resolvedDeclaration(rules, { selector: '.main:has(.workspace-grid[data-work-view="run"])', property: "overflow-y", condition }), "auto");
+  assert.equal(resolvedDeclaration(rules, { selector: '.main:has(.workspace-grid[data-work-view="run"])', property: "display", condition }), "block", "scene dimensions cannot inflate an intrinsic main grid track");
+  for (const selector of ['.workspace-grid[data-work-view="run"]', '.workspace-grid[data-work-view="run"] .graph-panel', '.workspace-grid[data-work-view="run"] .graph-stage']) {
+    assert.equal(resolvedDeclaration(rules, { selector, property: "min-height", condition }), "0", selector + " must not promote world-scene height into an intrinsic viewport floor");
+  }
+  for (const property of ["height", "max-height"]) assert.equal(lengthToPixels(resolvedDeclaration(rules, {
+    selector: '.workspace-grid[data-work-view="run"] .graph-canvas', property, condition,
+  })), allocatedHeight, property + " must bound the same definite measured viewport");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .graph-canvas', property: "flex", condition }), "0 0 " + allocatedHeight + "px", "flex layout cannot grow the viewport from its scene content");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .graph-panel', property: "display", condition }), "block", "auto grid tracks must not distribute intrinsic world height into the graph and collapsed replay");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .graph-panel', property: "align-self", condition }), "start", "a taller neighboring panel must not stretch the graph container");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"] .evidence-panel[data-open="false"]', property: "display", condition }), "none", "a hidden zero-width inspector must not contribute its text's min-content height to the row");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"]', property: "height", condition }), "auto");
+  assert.equal(resolvedDeclaration(rules, { selector: '.workspace-grid[data-work-view="run"]', property: "overflow", condition }), "visible");
+  const nodes = [
+    { id: "owner", kind: "main_agent", isMain: true, label: "主任务" },
+    ...Array.from({ length: 9 }, (_, index) => ({ id: "child-" + index, kind: "worker", label: "子任务 " + index })),
+  ];
+  const fixture = { nodes, edges: nodes.slice(1).map((node) => ({ id: "ownership-" + node.id, from: "owner", to: node.id, kind: "contains" })) };
+  const original = graphLayoutHarness(observed).layoutGraph(fixture);
+  const clipped = resolveOverviewCamera(observed, original.bounds, inset, cameraPolicy);
+  assert.equal(clipped.wholeGraphFits, false, "the actual 884x223.72 canvas reproduces the insufficient-space defect");
+  assert.equal(clipped.scale, cameraPolicy.minScale, "the old allocation hits the unchanged zoom floor");
+  const canvas = { width: observed.width, height: allocatedHeight };
+  const layout = graphLayoutHarness(canvas).layoutGraph(fixture);
+  const camera = resolveOverviewCamera(canvas, layout.bounds, inset, cameraPolicy);
+  assert.equal(layout.positions.size, 10);
+  assert.equal(layout.arrangement.rows, 2, "the additional real viewport height permits a wrapped layout");
+  assert.equal(camera.wholeGraphFits, true, "Overview now contains all recorded task nodes");
+  assert.ok(camera.scale >= cameraPolicy.minScale);
+  for (const box of layout.positions.values()) {
+    assert.ok(box.height >= 333, "full-card reservations do not shrink to make the test pass");
+    const left = camera.x + box.x * camera.scale, top = camera.y + box.y * camera.scale;
+    const right = left + box.width * camera.scale, bottom = top + box.height * camera.scale;
+    assert.ok(left >= inset.left && top >= inset.top && right <= canvas.width - inset.right && bottom <= canvas.height - inset.bottom,
+      "the complete footprint of every card stays within the allocated canvas");
+  }
+});
 
 const RANK_FIXTURE_WORKER = (id, second) => ({
   id,
@@ -3030,7 +3262,7 @@ test("adapts service field aliases and safely summarizes structured terminal evi
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']#58d4cf["'][\s\S]*completed:\s*["']#5b8cff["'][\s\S]*skipped:\s*["']#585858["']/u);
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']var\(--task-flow-ink\)["'][\s\S]*completed:\s*["']var\(--task-completed-border\)["'][\s\S]*skipped:\s*["']#a3b0c9["']/u);
   assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
   assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
 });
@@ -3339,7 +3571,7 @@ test("annotates planned scheduling waves without turning them into edges or anim
 
 test("keeps the reference-inspired cool-tech surface restrained, stateful, and mobile-bounded", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
-  const themeCss = html.slice(html.lastIndexOf(":root {"));
+  const themeCss = html.slice(html.indexOf(":root {"));
   const variable = (name) => themeCss.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "iu"))?.[1].toLowerCase();
   const pixelVariable = (name) => Number(themeCss.match(new RegExp(`--${name}:\\s*([0-9]+(?:\\.[0-9]+)?)px`, "iu"))?.[1]);
   const rgbToHsl = (hex) => {
@@ -3362,7 +3594,7 @@ test("keeps the reference-inspired cool-tech surface restrained, stateful, and m
   assert.equal(completion, "#68a4ff", "completion must use the cool-blue state color");
   assert.equal(running, "#4fd1c5", "running must use the teal state color");
   assert.equal(new Set([completion, running, success, danger]).size, 4, "completion, running, success, and failed states need distinct colors");
-  assert.doesNotMatch(html, /gold|#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b|#d7af00|#f0d56a|#87d787/iu, "the full generated HTML and script must not retain gold names or warm completion swatches");
+  assert.doesNotMatch(html, /#a68d5e|#cfbd96|#5a4b08|#e5c07b|#c8a96b|#d7af00|#f0d56a|#87d787/iu, "the full generated HTML and script must not retain obsolete completion swatches");
   assert.match(themeCss, /--accent:\s*#4fd1c5/iu);
   assert.match(themeCss, /\.node-running\s*\{[^}]*border-left-color:\s*var\(--running\)/su);
   assert.match(themeCss, /\.node-completed\s*\{[^}]*border-left-color:\s*var\(--green\)/su);
@@ -3824,11 +4056,12 @@ test("overview reuses guarded timestamp rendering with localized copy and no emp
   });
   for (const language of ["zh", "en"]) {
     const overview = makeElement("section");
-    const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "DISPLAY_FORMAT", "currentLanguage", `
+    const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "DISPLAY_FORMAT", "currentLanguage", "workHelpers", `
 const selectedProjectId = "";
+const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${["renderRunOverview", "appendObservedTime", "formatTime", "formatSessionTime", "display"].map((name) => shippedHelper(html, name)).join("\n")}
-return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, displayFormat, language);
+return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, displayFormat, language, workOverviewHelpers);
     const snapshot = { run: { id: "run-time", active: true, status: "active" }, nodes: [], replay: [
       { id: "call", eventType: "command_returned", label: "shell", at: "2026-10-22T09:00:00Z" },
     ] };
@@ -4604,7 +4837,7 @@ test("the run context keeps its title readable at body size so the graph remains
  * 1024px and 29px at 501px, which dropped `琥珀虚线＝阻塞 · 点线＝结构归属` —
  * two of the four states — with the ellipsis as the only hint anything was gone.
  */
-test("the edge legend keeps all four locked edge states at every width", () => {
+test("the graph legend keeps task colors and recorded relationship meanings at every width", () => {
   const html = renderLiveControlRoomPage();
   const rules = stylesheetRules(html);
 
@@ -4630,10 +4863,10 @@ test("the edge legend keeps all four locked edge states at every width", () => {
   // now distinguishes.
   const legend = html.match(/<span class="graph-edge-legend"[^>]*>/u);
   assert.ok(legend, "markup must contain the edge legend");
-  for (const state of ["Green solid = done", "Gray dashed = queued", "Amber dashed = blocked", "Dotted = ownership", "Dashed card = declared, not started", "running (observed)"]) {
+  for (const state of ["pale red = not started", "pale yellow = in progress", "pale green = completed", "Green solid = done", "Gray dashed = queued", "Gold moving dot = running (observed)", "Amber dashed = blocked", "Arrows = dependencies; no arrow = ownership", "Dashed card = declared, not started"]) {
     assert.ok(legend[0].includes(state), `the English legend must document "${state}"`);
   }
-  for (const state of ["绿色实线＝已完成", "灰色虚线＝排队", "琥珀虚线＝阻塞", "点线＝结构归属", "虚线卡片＝声明未执行", "运行中(observed)"]) {
+  for (const state of ["淡红＝未开始", "淡黄＝进行中", "淡绿＝已完成", "浅灰虚线＝未开始", "金色动点＝运行中", "淡绿实线＝已完成", "琥珀虚线＝阻塞", "无箭头＝结构归属", "虚线卡片＝声明未执行", "连线颜色取自目标任务，不表示依赖执行证据"]) {
     assert.ok(legend[0].includes(state), `the Chinese legend must document "${state}"`);
   }
 });
@@ -5529,7 +5762,7 @@ function visibleEdgeGeometryHarness() {
   ];
   const api = new Function(
     "graphState", "graph", "graphScene", "document", "edgeLayer", "GRAPH_CAMERA", "resolveSemanticZoom",
-    "window", "graphNodes", "graphEdges", "layout", "graphNodeById",
+    "window", "graphNodes", "graphEdges", "layout", "graphNodeById", "resolveLiveTaskLifecycle", "resolveLiveNodeTaskLifecycle",
     `let camera = { x: 0, y: 0, scale: 1 };
 const snapshot = { run: { active: true } };
 const terminalRun = false;
@@ -5544,7 +5777,7 @@ const updateMinimap = () => {};
 const updateSelectedNodeVisuals = () => {};
 const updateGraphRelationPresentation = () => {};
 const observeGraphCardSizes = () => {};
-${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
+${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "createGraphEdgeMotion", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
 function draw() {
 ${tail}
 }
@@ -5554,7 +5787,7 @@ return { updateCamera, refreshGraphEdgeGeometry, camera: () => ({ ...camera }) }
     graphState, graph, { style: {} }, { createElementNS: (_namespace, tagName) => makeSvgElement(tagName) },
     makeSvgElement("svg"), loadLiveGraphCameraPolicy(), resolveSemanticZoom,
     { innerWidth: 1351 }, graphNodes, graphEdges, { positions, kind: "fanout" },
-    new Map(graphNodes.map((node) => [node.id, node])),
+    new Map(graphNodes.map((node) => [node.id, node])), resolveLiveTaskLifecycle, resolveLiveNodeTaskLifecycle,
   );
   return { ...api, graph, graphState, dimensionReads: () => dimensionReads };
 }
@@ -6512,11 +6745,11 @@ test("review regression UI native missing returns and revision reports never imp
   const normalized = runNormalizerHarness()({ run: { runId: "native-review", observationKind: "native_execution", executionSummary: { observedAgentCount: 2, returnedAgentCount: 1, unconfirmedAgentCount: 1, returnedToolCount: 3, failedToolCount: 0, acceptanceState: "unproven" } } });
   const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, append(...items) { this.children.push(...items); }, addEventListener() {} });
   const overview = element("section");
-  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", `
+  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", `
 const selectedProjectId='p'; const currentLanguage='zh';
 ${serializeLiveTokenUsageResolvers()}
-${shippedHelper(html, "renderRunOverview")}
-return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview);
+${shippedHelper(html, "renderRunDiagnostics")}
+return (snapshot) => renderRunDiagnostics(snapshot, null, runOverview);`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy);
   render(normalized);
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
   const activity = overview.children.find((node) => node.dataset.overviewItem === "activity");
@@ -6794,13 +7027,14 @@ test("real snapshot normalization keeps executed-but-unverified distinct from mi
 const currentLanguage = "zh";
 const localize = (value) => value;
 const stateCopy = (state) => state;
+${serializeLiveRunOverviewResolvers()}
 ${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
 return (node) => ({ state: nodeDisplayState(node), summary: nodeStateCopy(node), graph: nodeShortStateCopy(node) });`)(displayFormat);
   assert.equal(snapshot.nodes[0].taskPacketId, "task:making");
   assert.equal(snapshot.nodes[0].executionState, "executed");
-  assert.deepEqual(view(snapshot.nodes[0]), { state: "in_doubt", summary: "已执行 · 待验证", graph: "待验证" });
+  assert.deepEqual(view(snapshot.nodes[0]), { state: "in_doubt", summary: "进行中", graph: "进行中" });
   assert.equal(view(snapshot.nodes[1]).state, "completed");
-  assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "未收到执行回写", graph: "未收到执行回写" });
+  assert.deepEqual(view(snapshot.nodes[2]), { state: "unreported", summary: "进行中", graph: "进行中" });
 });
 
 test("bound owner reports survive normalization and agree across badges and the actual overview", () => {
@@ -6821,25 +7055,28 @@ ${serializeLiveRunOverviewResolvers()}
 ${["display", "nodeDisplayState", "nodeStateCopy", "nodeShortStateCopy"].map((name) => shippedHelper(html, name)).join("\n")}
 return (node)=>[nodeDisplayState(node),nodeStateCopy(node),nodeShortStateCopy(node)];`)(displayFormat);
   assert.equal(snapshot.nodes[0].executionState, "unreported");
-  assert.deepEqual(view(snapshot.nodes[0]), ["in_doubt", "已回报 · 待独立验证", "已回报"]);
+  assert.deepEqual(view(snapshot.nodes[0]), ["in_doubt", "已完成", "已完成"]);
   const element = (tagName, className = "", textContent = "") => ({ tagName, className, textContent, children: [], dataset: {}, append(...items) { this.children.push(...items); }, addEventListener() {} });
   const overview = element("section");
-  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", `
+  const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "workHelpers", `
 const selectedProjectId='p'; const currentLanguage='zh';
+const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${shippedHelper(html, "renderRunOverview")}
-return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview);
+return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, workOverviewHelpers);
   render(snapshot);
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
   const task = overview.children.find((node) => node.dataset.overviewItem === "task");
-  assert.match(text(task), /负责人已回报，待独立验证/u);
-  assert.doesNotMatch(text(task), /未回写|未收到执行回写|已验证完成/u);
+  assert.match(text(task), /已做的工作/u);
+  assert.match(text(task), /恢复数字人任务展示/u);
+  assert.doesNotMatch(text(task), /未回写|未收到执行回写|已验证完成|独立验证|原生/u);
+  assert.equal(resolveLiveRunOverview(snapshot).taskLifecycle.verificationPendingCount, 1);
   assert.equal(resolveLiveRunOverview(snapshot).activity.item, null);
   assert.equal(resolveLiveRunOverview(snapshot).execution, null);
   for (const mutation of [{ runId: "other" }, { taskPacketId: "task:other" }, { ownerAgent: "other" }, { nativeInvocationVerified: true }]) {
     const rejected = normalize({ ...input, nodes: [{ ...input.nodes[0], ownerReport: { ...ownerReport, ...mutation } }] });
     assert.equal(rejected.nodes[0].ownerReport, undefined);
-    assert.equal(view(rejected.nodes[0])[1], "未收到执行回写");
+    assert.equal(view(rejected.nodes[0])[1], "进行中");
   }
 });
 

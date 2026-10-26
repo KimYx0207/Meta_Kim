@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createCodexNativeSessionReader } from "../../src/infrastructure/live/codex-native-session-reader.mjs";
 import { locateCodexNativeTurn } from "../../src/infrastructure/live/codex-native-turn-locator.mjs";
 import { buildNativeCodexLiveSnapshot } from "../../src/application/live/live-native-codex-projection.mjs";
+import { liveTaskDisplayLabel, resolveLiveTaskLifecycle } from "../../src/presentation/live/live-run-overview.mjs";
 import { createLiveControlRoomServer } from "../../src/infrastructure/live/live-control-room-server.mjs";
 import { nativeCodexStartupBinding, parseArgs, resolveNativeCodexCurrentRun, liveCurrentRunPresentation } from "../../scripts/meta-kim-live.mjs";
 import { buildProjectRef } from "../../scripts/project-registry.mjs";
@@ -663,6 +664,22 @@ test("typed host spawn completion alone cannot attest child task completion", as
   assert.equal(buildNativeCodexLiveSnapshot(observed).nodes[1].active, false);
 });
 
+test("native projection gives unknown owners a numbered subtask caption and bounded alias details", () => {
+  const snapshot = buildNativeCodexLiveSnapshot({ state: "observed", binding: { projectRootMatched: true }, threadId: THREAD, turnId: TURN,
+    startedAt: at(), observedAt: at(20), turnComplete: false,
+    agents: [{ id: "opaque-dispatch", owner: "unknown-specialist", role: "worker", taskName: "internal_alias_".repeat(40), at: at(2), sha256: "a".repeat(64) }] });
+  const node = snapshot.nodes[1];
+  assert.equal(liveTaskDisplayLabel(node, "zh"), "子任务 1");
+  assert.equal(liveTaskDisplayLabel(node, "en"), "Subtask 1");
+  assert.equal(node.ownerAgent, "unknown-specialist");
+  assert.equal(node.roleDisplayName, "worker");
+  assert.match(node.summary, /任务说明未记录/u);
+  assert.ok(snapshot.provenance[0].reasoningExcerpt.length < 160);
+  assert.equal(snapshot.provenance[0].nodeId, node.id);
+  assert.equal(snapshot.run.executionSummary.returnedAgentCount, 0);
+  assert.equal(resolveLiveTaskLifecycle(node, snapshot.run.runId).state, "in_progress");
+});
+
 test("paired parent spawn plus exact child parent metadata and terminal event yields returned, never accepted", async (t) => {
   const f = await fixture(t);
   await f.write([meta(f.projectRoot), context(f.projectRoot), ...spawn()]);
@@ -670,11 +687,24 @@ test("paired parent spawn plus exact child parent metadata and terminal event yi
   await writeFile(child, serialize([meta(f.projectRoot, CHILD, THREAD), childStart(), context(f.projectRoot, OTHER, 3), row("event_msg", { type: "task_complete", turn_id: OTHER, last_agent_message: "PRIVATE RESULT" }, 10)]));
   const observed = await createCodexNativeSessionReader(f.options).read();
   assert.equal(observed.agents[0].completed, true);
-  const node = buildNativeCodexLiveSnapshot(observed).nodes[1];
+  const snapshot = buildNativeCodexLiveSnapshot(observed);
+  const node = snapshot.nodes[1];
   assert.equal(node.status, "in_doubt");
   assert.equal(node.executionState, "executed");
   assert.equal(node.active, false);
   assert.equal(node.terminalEvidence.length, 0);
+  assert.deepEqual(resolveLiveTaskLifecycle(node, snapshot.run.runId), { state: "completed", detail: "result_unconfirmed" });
+  assert.equal(snapshot.session.completedCount, 0);
+  assert.equal(snapshot.run.completionEvidenceState, "unproven");
+  assert.equal(snapshot.run.executionSummary.acceptanceState, "unproven");
+  assert.equal(node.nativeInvocationVerified, undefined);
+  assert.equal(node.nativeTaskCaption, "javascript-pro");
+  assert.equal(node.nativeTaskOrdinal, 1);
+  assert.equal(liveTaskDisplayLabel(node, "zh"), "代码实现 1");
+  assert.equal(liveTaskDisplayLabel(node, "en"), "Code implementation 1");
+  assert.notEqual(node.task, "native_backend");
+  assert.match(snapshot.provenance.find((item) => item.nodeId === node.id).reasoningExcerpt, /native_backend.*源记录未提供任务说明/u);
+  assert.equal(node.ownerAgent, "javascript-pro");
 });
 
 test("wrong child parent and unpaired parent spawn cannot mint a returned worker", async (t) => {
