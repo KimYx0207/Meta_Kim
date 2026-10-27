@@ -6,8 +6,9 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
 
-## [3.7.3] - 2026-10-27
+## [3.7.3] - 2026-10-28
 
+- **Recognize a healthy memory service at Windows startup.** The generated Windows PowerShell 5.1 check now loads its required HTTP component, preventing a false failure and about five minutes of needless waiting. Exact older generated scripts remain recognizable for safe upgrade; user-modified scripts remain protected.
 - **Restore the selected HookPrompt display.** The saved display preference survives updates, and hook diagnostics identify the implementation and display mode actually in use.
 - **Keep tasks with the correct conversation turn.** Resuming or compacting a conversation preserves task history and same-run revisions. Observations from a later turn no longer make an older task appear active.
 - **Read task progress in three states.** Live uses Not started, In progress and Completed consistently. Only the status text is colored: pale green for Not started, pale red for In progress and pale yellow for Completed; cards keep their dark backgrounds. A completed worker return remains distinct from verified results and user acceptance.

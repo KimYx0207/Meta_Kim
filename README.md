@@ -67,6 +67,7 @@ For an explicitly bound local Codex project, conversation and turn, Live can rea
 
 | Upgrade | What changed |
 | --- | --- |
+| Reliable Windows startup check | Windows PowerShell 5.1 recognizes a healthy memory service without about five minutes of needless waiting. Exact older generated scripts can be upgraded while user-modified scripts stay protected. |
 | Requirements before design | Discuss evidence-backed recommendations, trade-offs and dependent decisions before producing a complete design and demonstrable tasks. |
 | Complete professional methods | Source-checked role steps and input/output contracts reach workers; missing facts and pending independent review remain explicit. |
 | Reviews bound to results | Reviews identify the current task, design, criteria and artifact hashes, with concrete rework attached to the affected deliverable. |
