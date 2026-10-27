@@ -30,7 +30,7 @@
 
 Meta_Kim is a general agent governance framework that runs through hosts such as Claude Code and Codex. Its core is intent, decision-making and orchestration across research, operations, learning, writing, software and other tasks supported by discovered capabilities. Industry roles are optional capabilities. The framework compares feasible routes, coordinates owners and dependencies, verifies outcomes, and preserves useful lessons.
 
-Current release: [v3.7.2](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.7.2). Release notes: [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md).
+Current release: [v3.7.3](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.7.3). Release notes: [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md) · [日本語](CHANGELOG.ja-JP.md) · [한국어](CHANGELOG.ko-KR.md).
 
 > You say: “Compare the feasible options under my budget and time constraints, recommend one with evidence, organize the work, and tell me which outcomes were actually verified.”
 
@@ -70,8 +70,11 @@ For an explicitly bound local Codex project, conversation and turn, Live can rea
 | Requirements before design | Discuss evidence-backed recommendations, trade-offs and dependent decisions before producing a complete design and demonstrable tasks. |
 | Complete professional methods | Source-checked role steps and input/output contracts reach workers; missing facts and pending independent review remain explicit. |
 | Reviews bound to results | Reviews identify the current task, design, criteria and artifact hashes, with concrete rework attached to the affected deliverable. |
-| Tasks and results first | Inspect current work, available outputs, blockers and result-bound feedback before exploring the process graph. |
-| Open the current Codex turn | Verified conversation and turn identifiers survive Hub reuse; bounded long-conversation observation keeps omitted history partial. |
+| Saved HookPrompt display | Updates retain the selected display preference; diagnostics identify the implementation and display mode actually in use. |
+| Three readable task states | Not started, In progress and Completed use pale green, pale red and pale yellow status text on dark cards. Execution completion remains separate from verification and user acceptance. |
+| Consistent Live views | Microsoft YaHei typography and compact work lists carry through views and dialogs. Bounded details preserve at least 360px for the graph; wider spacing, gray dashed waiting lines and gold running markers make activity easier to follow. |
+| Keep the correct Codex turn | Hub reuse, resume and compaction retain the selected turn and task history; later-turn activity no longer reactivates older tasks. Unread history stays partial. |
+| Feedback stays with its result | Local drafts retain the project, run, target and result version across refreshes. Copying prepares a handoff; it does not automatically submit or run a revision. |
 | One Hub, several views | Explicitly registered projects share one local Hub, with graph, work-board and repository views, without scanning the disk. |
 | Evidence-first and local | Missing telemetry stays visibly unavailable; the UI is loopback-only, has no third-party assets, and remains read-only by default. |
 
