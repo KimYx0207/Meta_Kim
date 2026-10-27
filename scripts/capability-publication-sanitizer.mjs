@@ -66,6 +66,7 @@ export function sanitizeCapabilityPublicationValue(value, options = {}) {
   if (value && typeof value === "object") {
     if (value instanceof Date) return value.toISOString();
     return Object.fromEntries(Object.entries(value).map(([key, nested]) => {
+      if (isSensitiveKey(key)) return [key, "[REDACTED_SECRET]"];
       if (key === "developer_instructions" && typeof nested === "string") {
         return [key, {
           present: nested.trim().length > 0,
@@ -89,4 +90,12 @@ export function sanitizeCapabilityPublicationValue(value, options = {}) {
     return sanitizeCapabilityPublicationText(value, options);
   }
   return value;
+}
+
+export function projectCapabilityRetrievalForPublication(items, options = {}) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    source: sanitizeCapabilityPublicationValue(item?.source, options),
+    checked: item?.checked,
+    result: sanitizeCapabilityPublicationValue(item?.result, options),
+  }));
 }

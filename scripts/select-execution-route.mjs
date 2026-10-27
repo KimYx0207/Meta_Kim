@@ -334,7 +334,7 @@ function taskTerms() {
 function decisionAdjustmentRequested() {
   if (taskShape !== "strategy_product_decision") return false;
   if (productBuildExecutionRequested()) return false;
-  return /decision|judge|判断|决策|选择|取舍|pass.?kill|要不要|值不值得|怎么改|怎么做|路径|方案|策略|高流量|标题|文案|封面/.test(taskText);
+  return /decision|judge|判断|决策|选择|取舍|pass.?kill|要不要|是否要|值不值得|怎么改|怎么做|how should|路径|方案|策略|优化|improve conversion|高流量|标题|文案|封面/.test(taskText);
 }
 
 function fitsTask(entry) {
@@ -963,10 +963,59 @@ const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some
 const technicalScriptRequest = /脚本|\bscript\b/iu.test(task) &&
   /\b(?:json|node(?:\.js)?|python|powershell|bash|shell|sql|javascript|typescript)\b|代码|程序|命令行/iu.test(task) &&
   !/口播|分镜|拍摄|台词|screenplay|scriptwriting/iu.test(task);
+const explicitProfessionalTextProduction =
+  /(?:^|[.!?;:]\s*|[,，;；]\s*)(?:(?:please\s+)?(?:(?:directly\s+)?(?:help me\s+)?|help me\s+directly\s+)|(?:请)?(?:(?:直接)?(?:帮我)?|帮我直接))?(?:write|draft|generate|create|produce|rewrite|compose|写(?:出)?|撰写|生成|产出|创作|改写|起草)/iu.test(task) &&
+  /\b(?:titles?|headlines?|covers?|captions?|copy|text|drafts?|scripts?|descriptions?)\b|标题|封面|文案|文字|脚本|详情页/u.test(task);
+const PRODUCT_BUILD_INTENT_SIGNALS = {
+  content: [
+    /article|essay|post|copy|content|writing|newsletter|script|draft/i,
+    /文章|稿子|帖子|内容|写作|文案|脚本|草稿|随手记|想法|发出去/,
+  ],
+  currentResearch: [
+    /market|research|competitor|policy|platform|rule|current/i,
+    /市场|研究|竞品|平台|规则|最新|调研|内容渠道|外部服务|第三方/,
+  ],
+  interface: [
+    /app|web|site|dashboard|frontend|ui|ux|interface|page|tool|product|mvp/i,
+    /应用|网站|网页|页面|前端|界面|工具|产品|面板|后台|MVP/i,
+  ],
+  implementation: [
+    /build|implement|develop|ship|launch|api|backend|database|service|queue|workflow/i,
+    /实现|开发|上线|接口|API|后端|数据库|服务|队列|工作流/,
+  ],
+  automationIntegration: [
+    /auto[-\s]?publish|scheduler|integration|callback|oauth|account|adapter/i,
+    /自动发布|发布器|定时|排期|集成|回调|账号|授权|适配|连接/,
+  ],
+  dataState: [
+    /database|state|history|record|storage|analytics|observability/i,
+    /数据库|状态|历史|记录|存储|数据|追踪|观测|统计/,
+  ],
+  safety: [
+    /security|permission|approval|risk|compliance|credential|auth/i,
+    /安全|权限|审批|风险|合规|凭证|授权|账号/,
+  ],
+  verification: [
+    /test|qa|verify|acceptance|regression|release|launch/i,
+    /测试|验收|验证|回归|发布|上线/,
+  ],
+  monetization: [
+    /payment|billing|subscription|pricing|monetization/i,
+    /付费|支付|订阅|定价|商业化|收款/,
+  ],
+  mobile: [
+    /ios|android|native mobile|mobile app/i,
+    /原生|移动端|手机 App|安卓|苹果/,
+  ],
+};
 const dependencyAgentScopeExclusion = explicitCapabilityLifecycle
   ? "explicit_capability_lifecycle_uses_existing_governance"
   : ["engineering_execution", "platform_governance", "goal_contract"].includes(taskShape) ||
-      entrySignals.productBuildIntent === true || entrySignals.serialOrSlowRouteComplaint === true || technicalScriptRequest
+    (/decision|judge|判断|决策|选择|取舍|怎么改|怎么做|是否要|要不要|路径|方案|策略|转化|how should|improve conversion/.test(taskText) &&
+      !explicitProfessionalTextProduction) ||
+    (entrySignals.productBuildIntent === true &&
+      !(taskShape === "strategy_product_decision" && explicitProfessionalTextProduction && !productBuildExecutionRequested())) ||
+    entrySignals.serialOrSlowRouteComplaint === true || technicalScriptRequest
     ? "task_scope_exceeds_read_only_professional_contract"
     : null;
 const dependencyAgentMatch = dependencyAgentScopeExclusion
@@ -1805,49 +1854,6 @@ function taskMatchesPattern(pattern) {
 function taskMatchesAnyPattern(patterns) {
   return patterns.some((pattern) => taskMatchesPattern(pattern));
 }
-
-const PRODUCT_BUILD_INTENT_SIGNALS = {
-  content: [
-    /article|essay|post|copy|content|writing|newsletter|script|draft/i,
-    /文章|稿子|帖子|内容|写作|文案|脚本|草稿|随手记|想法|发出去/,
-  ],
-  currentResearch: [
-    /market|research|competitor|policy|platform|rule|current/i,
-    /市场|研究|竞品|平台|规则|最新|调研|内容渠道|外部服务|第三方/,
-  ],
-  interface: [
-    /app|web|site|dashboard|frontend|ui|ux|interface|page|tool|product|mvp/i,
-    /应用|网站|网页|页面|前端|界面|工具|产品|面板|后台|MVP/i,
-  ],
-  implementation: [
-    /build|implement|develop|ship|launch|api|backend|database|service|queue|workflow/i,
-    /实现|开发|上线|接口|API|后端|数据库|服务|队列|工作流/,
-  ],
-  automationIntegration: [
-    /auto[-\s]?publish|scheduler|integration|callback|oauth|account|adapter/i,
-    /自动发布|发布器|定时|排期|集成|回调|账号|授权|适配|连接/,
-  ],
-  dataState: [
-    /database|state|history|record|storage|analytics|observability/i,
-    /数据库|状态|历史|记录|存储|数据|追踪|观测|统计/,
-  ],
-  safety: [
-    /security|permission|approval|risk|compliance|credential|auth/i,
-    /安全|权限|审批|风险|合规|凭证|授权|账号/,
-  ],
-  verification: [
-    /test|qa|verify|acceptance|regression|release|launch/i,
-    /测试|验收|验证|回归|发布|上线/,
-  ],
-  monetization: [
-    /payment|billing|subscription|pricing|monetization/i,
-    /付费|支付|订阅|定价|商业化|收款/,
-  ],
-  mobile: [
-    /ios|android|native mobile|mobile app/i,
-    /原生|移动端|手机 App|安卓|苹果/,
-  ],
-};
 
 function hasProductBuildSignal(name) {
   return taskMatchesAnyPattern(PRODUCT_BUILD_INTENT_SIGNALS[name] ?? []);
