@@ -38,6 +38,7 @@ import { buildAgentProjectionTargets } from "./runtime-tool-profiles.mjs";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
 import { resolveRuntimeHomeDir } from "./meta-kim-sync-config.mjs";
 import { copyProjectCapability } from "./project-capability-copy.mjs";
+import { projectCapabilityRetrievalForPublication } from "./capability-publication-sanitizer.mjs";
 import { durableCapabilityRequestsFromTask, safeSlug } from "./capability-request-intent.mjs";
 import {
   buildPlanChallengeState,
@@ -4651,11 +4652,9 @@ function buildTraceEvalControlPlane({
         .filter(Boolean),
     ),
   ];
-  const retrieval = capabilitySearchLog.map((item) => ({
-    source: item.source,
-    checked: item.checked,
-    result: item.result,
-  }));
+  const retrieval = projectCapabilityRetrievalForPublication(capabilitySearchLog, {
+    repoRoot: REPO_ROOT,
+  });
   const handoffs = workerTaskPackets.map((packet) => ({
     taskPacketId: packet.taskPacketId,
     owner: packet.owner,

@@ -51,7 +51,7 @@ function fixture(t, { tools = "Read" } = {}) {
     ["lesson-planner", "备课与课堂设计：按学生起点安排教学", ["设计一节数学课", "明天这课怎么讲", "教案里怎样安排练习"]],
     ["product-listing-writer", "商品页文案：把商品参数写成详情页", ["写商品详情页", "把商品参数改成卖点", "检查商品文案有没有夸大"]],
     ["topic-planner", "为自媒体账号产出有角度与排期的选题", ["不知道发什么", "找几个可用的话题", "计划下周内容"]],
-    ["headline-cover-optimizer", "标题封面优化：校准封面文字与正文承诺", ["正文已有，标题不知道怎么写", "封面放什么文字", "起一个小红书标题"]],
+    ["headline-cover-optimizer", "标题封面优化：校准封面文字与正文承诺", ["正文已有，标题不知道怎么写", "封面放什么文字", "起一个小红书标题", "write three headlines and cover copy", "Please write three headlines to improve conversion", "how should we rewrite headlines to improve conversion"]],
     ["script-writer", "脚本文案：按已有选题写正文", ["根据选题和素材写小红书正文", "口播怎么写", "写脚本文案"]],
     ["interview-coach", "面试练习：按岗位提供真实经历反馈", ["陪我练面试", "我的经历怎么回答", "目标岗位怎么自我介绍"]],
     ["workplace-writer", "周报邮件整理：把实际工作进度写清楚", ["写一份工作周报", "邮件怎么说清进度", "汇报已完成和待确认的事"]],
@@ -245,6 +245,56 @@ test("engineering work mentioning a professional domain does not select a read-o
   const route = JSON.parse(result.stdout);
   assert.notEqual(route.recommendedRoute?.owner, "kim-service:product-listing-writer");
   assert.equal(route.ownerDiscoveryPacket.dependencyAgentDiscovery.match.selected, null);
+});
+
+test("strategy questions retain professional discovery without handing off unless a concrete text deliverable is requested", (t) => {
+  const { root } = fixture(t);
+  const run = (task) => {
+    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
+      encoding: "utf8", timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  const decision = run("内容营销中，标题文案和封面设计怎样提升转化，帮我判断怎么改");
+  assert.equal(decision.taskShape, "strategy_product_decision");
+  assert.equal(decision.ownerDiscoveryPacket.dependencyAgentDiscovery.match.candidates[0]?.id, "kim-service:headline-cover-optimizer");
+  assert.notEqual(decision.recommendedRoute?.owner, "kim-service:headline-cover-optimizer");
+  assert.ok(decision.recommendedRoute?.decisionExperiencePlan);
+
+  for (const task of [
+    "帮我判断是否要改写标题",
+    "帮我判断要不要直接改写标题",
+    "请给出标题封面优化方案",
+    "How should we rewrite headlines to improve conversion?",
+  ]) {
+    const route = run(task);
+    assert.notEqual(route.recommendedRoute?.owner, "kim-service:headline-cover-optimizer", task);
+  }
+
+  for (const task of [
+    "内容营销要提高转化，请直接生成3个标题并改写封面文案",
+    "内容营销提高转化，帮我写3个标题",
+    "内容营销要提高转化，帮我直接写3个标题",
+    "内容营销要提高转化，请帮我直接写3个标题",
+    "Please write three headlines and cover copy to improve content marketing conversion.",
+    "Please write three headlines to improve conversion.",
+  ]) {
+    const route = run(task);
+    assert.equal(route.taskShape, "strategy_product_decision", task);
+    const match = route.ownerDiscoveryPacket.dependencyAgentDiscovery.match;
+    assert.equal(route.recommendedRoute?.owner, "kim-service:headline-cover-optimizer", JSON.stringify({
+      task, taskShape: route.taskShape, reason: match.reason, selected: match.selected?.id,
+      candidates: match.candidates.map(({ id, score }) => ({ id, score })),
+      recommendedId: route.recommendedRoute?.id, recommendedOwner: route.recommendedRoute?.owner,
+    }));
+  }
+
+  const mixedBuild = run("内容营销要提高转化，请直接生成3个标题，并开发一个带数据库的发布网站");
+  const mixedMatch = mixedBuild.ownerDiscoveryPacket.dependencyAgentDiscovery.match;
+  assert.ok(mixedMatch.candidates.some(({ id }) => id === "kim-service:headline-cover-optimizer"));
+  assert.notEqual(mixedBuild.recommendedRoute?.owner, "kim-service:headline-cover-optimizer");
+  assert.ok(/product|build|web|website|implementation|engineering|产品|网站|工程|构建/iu.test(JSON.stringify(mixedBuild.recommendedRoute)));
 });
 
 test("real Chinese read-only resume requests keep the professional owner and a bounded read-only work order", async (t) => {
