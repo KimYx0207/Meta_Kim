@@ -22,6 +22,7 @@ import {
   renderCurrentWindowsMcpMemoryPowerShellBytes,
   renderCurrentWindowsMcpMemoryStartupVbsBytes,
   renderHistoricalWindowsMcpMemoryPowerShellBytesV1,
+  renderHistoricalWindowsMcpMemoryPowerShellBytesV2,
   resolveMcpMemoryBootArtifactDescriptors,
   snapshotMcpMemoryBootArtifactFile,
 } from "../../scripts/mcp-memory-boot-artifacts.mjs";
@@ -81,6 +82,31 @@ test("Windows health probe bypasses system proxy and rejects non-success HTTP re
   assert.match(script, /\$response\.Content\.ReadAsStringAsync\(\)\.GetAwaiter\(\)\.GetResult\(\) \| ConvertFrom-Json/u);
   assert.match(script, /catch \{ return \$false \}/u);
   assert.doesNotMatch(script, /Invoke-WebRequest/u);
+});
+
+test("Windows PowerShell recovery preserves exact pre-assembly-load bytes across hosts", () => {
+  const homeRoot = "C:\\Users\\Fixture";
+  const filePath = path.win32.join(homeRoot, ".meta-kim", "mcp-memory-start.ps1");
+  const options = powerShellOptions(homeRoot);
+  const current = renderCurrentWindowsMcpMemoryPowerShellBytes(options);
+  const historical = renderHistoricalWindowsMcpMemoryPowerShellBytesV2(options);
+  // Golden bytes rendered by the previously shipped 99-line template.
+  assert.equal(sha256(historical), "36eeaf9e2df9795a94c7fe866a65d60556bf828650b450ddd2aff2ca0ea5fc38");
+  const classify = (bytes) => classifyMcpMemoryBootRecoveryFile({ filePath, bytes, homeRoot, platformName: "win32" });
+  for (const [bytes, expected, count] of [
+    [current, "current-windows-powershell", 100],
+    [historical, "historical-windows-powershell-httpclient-v2", 99],
+    [renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options), "historical-windows-powershell-proxy-v1", 86],
+  ]) {
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+    const text = bytes.toString("utf8");
+    assert.equal(text.replaceAll("\r\n", "").includes("\n"), false);
+    assert.equal(text.slice(0, -2).split("\r\n").length, count);
+    assert.equal(classify(bytes), expected);
+  }
+  assert.equal(classify(Buffer.from(current.toString("utf8").replace("System.Net.Http -ErrorAction Stop", "System.Net.Http.Headers -ErrorAction Stop"))), null);
+  assert.equal(classify(Buffer.from(historical.toString("utf8").replace("$handler.UseProxy = $false", "$handler.UseProxy = $true"))), null);
+  assert.equal(classify(Buffer.concat([historical, Buffer.from("# user change\r\n")])), null);
 });
 
 test("current descriptors are exact, stable, and platform-specific", () => {
@@ -496,9 +522,7 @@ test("current Windows CMD and strong-marker PS1 classify only with exact generat
   }
 });
 
-test("historical Windows boot adoption requires the complete exact chain and active runtime binding", {
-  skip: process.platform !== "win32",
-}, async () => {
+async function assertHistoricalWindowsBootAdoption(renderHistorical, recoverySignature) {
   const fixture = windowsFixture();
   try {
     const runtimeDir = path.win32.join(
@@ -516,7 +540,7 @@ test("historical Windows boot adoption requires the complete exact chain and act
     writeFileSync(options.databasePath, "sqlite fixture\n");
     writeFileSync(
       fixture.byId.get("windows-powershell").path,
-      renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options),
+      renderHistorical(options),
     );
     writeFileSync(
       fixture.byId.get("windows-command").path,
@@ -551,7 +575,7 @@ test("historical Windows boot adoption requires the complete exact chain and act
         platformName: "win32",
       }).map((entry) => entry.recoverySignature),
       [
-        "historical-windows-powershell-proxy-v1",
+        recoverySignature,
         "current-windows-command",
         "current-windows-startup-vbs",
       ],
@@ -611,10 +635,28 @@ test("historical Windows boot adoption requires the complete exact chain and act
     });
     assert.equal(collision.reason, "historical_boot_manifest_path_already_owned");
 
+    const mismatch = await adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
+      homeRoot: fixture.homeRoot,
+      platformName: "win32",
+      metaKimVersion: "2.9.27",
+      manifestEntries: [],
+      expectedMemoryBin: path.win32.join(runtimeDir, "Scripts", "other-memory.exe"),
+      expectedPythonPaths: [pythonPath],
+      endpoint: {
+        endpointUrl: options.endpointUrl,
+        healthUrl: options.healthUrl,
+        hostname: options.hostname,
+        port: Number(options.port),
+      },
+      expectedLockDir: options.lockDir,
+      recorderFactory: () => { throw new Error("must not record a different runtime binding"); },
+    });
+    assert.equal(mismatch.reason, "historical_active_runtime_binding_mismatch");
+
     writeFileSync(
       fixture.byId.get("windows-powershell").path,
       Buffer.concat([
-        renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options),
+        renderHistorical(options),
         Buffer.from("# user change\r\n"),
       ]),
     );
@@ -638,7 +680,16 @@ test("historical Windows boot adoption requires the complete exact chain and act
   } finally {
     rmSync(fixture.homeRoot, { recursive: true, force: true });
   }
-});
+}
+
+for (const [version, renderHistorical, recoverySignature] of [
+  ["V1", renderHistoricalWindowsMcpMemoryPowerShellBytesV1, "historical-windows-powershell-proxy-v1"],
+  ["V2", renderHistoricalWindowsMcpMemoryPowerShellBytesV2, "historical-windows-powershell-httpclient-v2"],
+]) {
+  test(`historical Windows ${version} adoption requires the complete exact chain and active runtime binding`, {
+    skip: process.platform !== "win32",
+  }, () => assertHistoricalWindowsBootAdoption(renderHistorical, recoverySignature));
+}
 
 test("earliest legacy Windows Startup CMD and its VBS require the exact historical shape", {
   skip: process.platform !== "win32",
