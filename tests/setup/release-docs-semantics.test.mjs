@@ -84,6 +84,8 @@ describe("release documentation semantics", () => {
         "config/contracts/deliverable-type-profiles.json",
         "CHANGELOG.md",
         "CHANGELOG.zh-CN.md",
+        "CHANGELOG.ja-JP.md",
+        "CHANGELOG.ko-KR.md",
       ]) {
         assert.equal(packageFiles.has(requiredFile), true, `package missing ${requiredFile}`);
       }
