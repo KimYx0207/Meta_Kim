@@ -6,6 +6,19 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
 
+## [Unreleased]
+
+These changes are merged into source; a new version has not been published.
+
+- **Restore the selected HookPrompt display.** The saved display preference survives updates, and hook diagnostics identify the implementation and display mode actually in use.
+- **Keep tasks with the correct conversation turn.** Resuming or compacting a conversation preserves task history and same-run revisions. Observations from a later turn no longer make an older task appear active.
+- **Read task progress in three states.** Live uses Not started, In progress and Completed consistently. A completed worker return remains distinct from verified results and user acceptance.
+- **Read every Live view with consistent typography.** Microsoft YaHei, compact work lists and shorter history rows now carry through the graph, workspace, repository and dialogs. Technical details stay available on demand; missing repository information, counts and durations are not presented as invented values.
+- **Keep the graph visible while inspecting details.** Expanded records scroll within a bounded area, with at least 360px reserved for the graph on desktop and mobile. Wider node spacing, gray dashed waiting lines, status text colors and gold indicators for observed running work make activity easier to follow. Live refreshes preserve open menus, and dialog keyboard navigation includes disclosure controls.
+- **Retain feedback for the selected result.** Local drafts keep their project, run, target and result version when refreshed. Copying feedback prepares a handoff; it does not submit feedback or execute a revision automatically.
+
+Related changes: [#125](https://github.com/KimYx0207/Meta_Kim/pull/125), [#126](https://github.com/KimYx0207/Meta_Kim/pull/126), [#127](https://github.com/KimYx0207/Meta_Kim/pull/127).
+
 ## [3.7.2] - 2026-10-24
 
 - **Open the selected Codex turn directly.** Live links now retain the verified native thread and turn identifier, including when reusing an existing Hub. Invalid or incomplete identifiers remain excluded; opening a current task no longer drops its selection to a project-only link.
