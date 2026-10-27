@@ -44,6 +44,29 @@ import {
 
 const workOverviewHelpers = { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport };
 
+test("browser normalization keeps partial session counters unknown instead of inventing zero", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const snapshot = normalize({ run: { id: "partial-counts" }, sessionInfo: { artifactCount: 2, blockedCount: 1 }, nodes: [] });
+  assert.equal(snapshot.sessionInfo.fileChangeCount, null);
+  assert.equal(snapshot.sessionInfo.artifactCount, 2);
+  assert.equal(snapshot.sessionInfo.failedCount, null);
+  assert.equal(snapshot.sessionInfo.blockedCount, 1);
+  const recordedZero = normalize({ run: { id: "reported-zero" }, sessionInfo: { fileChangeCount: 0, failedCount: 0 }, nodes: [] });
+  assert.equal(recordedZero.sessionInfo.fileChangeCount, 0);
+  assert.equal(recordedZero.sessionInfo.failedCount, 0);
+});
+
+test("browser normalization preserves explicitly observed durations without fabricating a zero", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const snapshot = normalize({ run: { id: "duration-observation" }, nodes: [
+    { id: "absent" },
+    { id: "zero", durationMs: 0 },
+    { id: "fractional", timing: { durationMs: 1.25 } },
+    { id: "invalid", durationMs: -1 },
+  ] });
+  assert.deepEqual(snapshot.nodes.map((node) => node.durationMs), [null, 0, 1.25, null]);
+});
+
 test("browser normalization keeps only precise native returns and counts six returned tasks without ending active main work", () => {
   const runId = "native-codex-11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222";
   const observedAt = "2026-10-22T08:00:00Z";
@@ -58,7 +81,9 @@ test("browser normalization keeps only precise native returns and counts six ret
         sourceEventId: "synthetic-source-" + index + (index < 6 ? ":return" : ":spawn"), observedAt, sourceDigest: "a".repeat(64),
         executionObserved: true, synthetic: false, privatePayload: "PRIVATE RAW PROOF" }] };
   });
-  const input = { run: { runId, active: true, status: "active", observationKind: "native_execution" }, nodes,
+  const input = { run: { runId, active: true, status: "active", observationKind: "native_execution" }, nodes: [...nodes,
+    { id: "native-main", runId, kind: "agent", isMain: true, label: "Codex", status: "active", displayState: "active", active: true,
+      executionState: "executing", executionObserved: true }],
     provenance: [{ nodeId: nodes[0].id, reasoningExcerpt: "原生任务别名：internal_alias_0；任务说明未记录。" }] };
   const normalized = runNormalizerHarness({ actualStatus: true })(input);
   assert.equal(resolveLiveRunTaskLifecycle(input).completedCount, 6);
@@ -72,6 +97,8 @@ test("browser normalization keeps only precise native returns and counts six ret
   assert.equal(normalized.nodes[0].nativeInvocationVerified, undefined);
   assert.equal(normalized.nodes[6].nativeReturnEvidence, undefined);
   assert.equal(normalized.nodes[0].status, "in_doubt");
+  assert.equal(normalized.nodes.at(-1).executionState, "executing");
+  assert.equal(normalized.nodes.at(-1).executionObserved, true);
   assert.deepEqual(normalized.provenance, [{ nodeId: nodes[0].id, triggerPromptId: "", reasoningExcerpt: input.provenance[0].reasoningExcerpt.normalize("NFKC") }]);
   assert.doesNotMatch(JSON.stringify(normalized), /PRIVATE RAW PROOF/u);
   const page = ordinaryOverviewHarness();
@@ -165,6 +192,49 @@ test("ordinary summary reveals only actionable issues and scoped available outpu
   assert.ok(ui.root.children.some((item) => item.dataset.overviewItem === "activity"));
   ui.render({ ...fixture, nodes: [], toolCalls: [], deliverables: [], run: { id: runId, status: "active", statusReason: "缺少审计关联" } });
   assert.deepEqual(ui.root.children.map((item) => item.dataset.overviewItem), ["task"], "missing audit proof is not an actionable blocker or an empty activity card");
+});
+
+test("completed work keeps compact adjacent detail controls and a single activity row without losing the remaining work", () => {
+  const runId = "compact-work-preview";
+  const completed = Array.from({ length: 8 }, (_, index) => ({ id: "completed-" + index, runId, kind: "worker", status: "completed",
+    active: false, task: "已完成工作 " + (index + 1) }));
+  const unknown = { id: "unknown", runId, kind: "worker", status: "in_doubt", executionState: "unreported", task: "未确认工作" };
+  const activityLabel = "完整活动原文 — 保留原始详情";
+  const ui = ordinaryOverviewHarness();
+  ui.render({ run: { id: runId, active: true, status: "active" }, nodes: [...completed, unknown], deliverables: [],
+    toolCalls: [{ id: "observed", runId, state: "completed", name: activityLabel, endedAt: "2026-10-27T08:00:00Z" }] });
+  const task = ui.root.children.find((item) => item.dataset.overviewItem === "task");
+  const first = task.children.find((item) => item.tagName === "ol");
+  const more = task.children.find((item) => item.tagName === "details");
+  assert.equal(first.children.length, 3);
+  assert.equal(more.children[1].children.length, 5);
+  assert.notEqual(more.open, true);
+  assert.doesNotMatch(ui.text(task), /未确认工作/u, "the completed subset retains its original meaning");
+  for (const [index, row] of first.children.entries()) {
+    const [title, action] = row.children;
+    assert.equal(title.textContent, completed[index].task);
+    assert.match(action.className, /run-work-detail/u);
+    assert.equal(action.type, "button");
+    assert.equal(action.textContent, "详情");
+    assert.equal(action.ariaLabel, completed[index].task + " · 查看详细记录");
+    action.listeners.click();
+    assert.equal(ui.opened.at(-1)[0], completed[index].id);
+  }
+  more.children[1].children.at(-1).children[1].listeners.click();
+  assert.equal(ui.opened.at(-1)[0], completed.at(-1).id);
+  const feedback = task.children.find((item) => item.dataset.liveOverviewFeedback === "");
+  feedback.listeners.click();
+  assert.equal(ui.feedback.length, 1);
+  const activity = ui.root.children.find((item) => item.dataset.overviewItem === "activity");
+  assert.match(activity.className, /run-overview-activity/u);
+  assert.equal(activity.children.find((item) => item.tagName === "p").title, activityLabel);
+  assert.equal(activity.children.find((item) => item.tagName === "time").title, "2026-10-27T08:00:00.000Z");
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-work-item", property: "justify-content" }), "flex-start");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-work-item", property: "padding-block" }), "0");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-overview .run-overview-action", property: "min-height" }), "24px");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-overview .run-overview-action", property: "border" }), "0");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-overview-activity", property: "flex-wrap" }), "nowrap");
 });
 
 test("technical facts are preserved inside closed records while the header stays concise", () => {
@@ -324,6 +394,8 @@ function modalBehaviorHarness() {
   const keydownEnd = html.indexOf("\n  replayPlay?.addEventListener", keydownStart);
   assert.ok(modalStart >= 0 && modalEnd > modalStart, "modal controller must remain in the shipped client script");
   assert.ok(keydownStart >= 0 && keydownEnd > keydownStart, "modal keyboard binding must remain in the shipped client script");
+  const focusableSelector = html.match(/const FOCUSABLE_DIALOG_SELECTOR\s*=\s*([^;]+);/u);
+  assert.ok(focusableSelector);
 
   const document = {
     activeElement: null,
@@ -333,9 +405,11 @@ function modalBehaviorHarness() {
     },
   };
   class FakeElement {
-    constructor(name, { dialog = false } = {}) {
+    constructor(name, { dialog = false, tagName = "BUTTON" } = {}) {
       this.name = name;
       this.dialog = dialog;
+      this.tagName = tagName;
+      this.parentElement = null;
       this.hidden = false;
       this.inert = false;
       this.children = [];
@@ -364,12 +438,17 @@ function modalBehaviorHarness() {
       return this.focusables[0] || null;
     }
 
-    querySelectorAll() {
+    querySelectorAll(selector) {
+      this.lastSelector = selector;
       return this.focusables;
     }
 
+    getClientRects() {
+      return this.hidden || this.rectless ? [] : [{ width: 1, height: 1 }];
+    }
+
     contains(element) {
-      return element === this || this.focusables.includes(element);
+      return element === this || this.focusables.includes(element) || this.children.some((child) => child.contains(element));
     }
 
     focus() {
@@ -421,7 +500,8 @@ function modalBehaviorHarness() {
       let dialogOpener = null;
       let activeDialog = null;
       const modalBackgroundState = new Map();
-      const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      const FOCUSABLE_DIALOG_SELECTOR = ${focusableSelector[1]};
+      const getComputedStyle = (element) => ({ visibility: element.visibility || "visible" });
       let selectedNodeId = null;
       let relationFocusActive = false;
       const updateGraphRelationPresentation = () => {};
@@ -433,6 +513,7 @@ function modalBehaviorHarness() {
       return {
         setDialogOpen,
         trapDialogFocus,
+        dialogFocusables,
         keydownHandler: () => app.keydownHandler,
         activeDialog: () => activeDialog,
         setRelationFocus: (value) => { relationFocusActive = value; selectedNodeId = "selected"; },
@@ -1466,6 +1547,37 @@ test("the client keeps the declared-not-started and observed-only node flags the
   assert.equal(normalized.nodes.find((node) => node.id === "n-plain").observedOnly, false);
 });
 
+test("native parent-bound nodes inherit only a missing run binding and retain their real execution facts", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const runId = "native-codex-parent-bound-run";
+  const main = { id: "native-main", kind: "agent", isMain: true, label: "Codex", status: "active", displayState: "active", active: true,
+    executionState: "executing", executionObserved: true, timing: { startedAt: "2026-10-27T00:00:00Z", completedAt: null } };
+  const input = { run: { runId, active: true, status: "active", displayState: "active", observationKind: "native_execution" }, nodes: [
+    main,
+    { ...main, id: "foreign", runId: "another-run" },
+    { ...main, id: "invalid", runId: 42 },
+    { id: "unknown", status: "unknown", displayState: "unknown", active: false, executionState: "unreported", executionObserved: false },
+    { id: "planned", status: "planned", displayState: "planned", executionState: "not_executed", declaredNotStarted: true },
+    { ...main, id: "terminal", status: "completed", displayState: "completed", executionState: "executed", timing: { completedAt: "2026-10-27T00:01:00Z" } },
+  ] };
+  assert.equal(Object.hasOwn(main, "runId"), false, "fixture matches the real parent-bound native API shape");
+  const normalized = normalize(input);
+  const running = new Function("resolveLiveTaskLifecycle", `${shippedHelper(renderLiveControlRoomPage(), "graphNodeIsActuallyRunning")}\nreturn graphNodeIsActuallyRunning;`)(resolveLiveTaskLifecycle);
+  assert.equal(normalized.nodes[0].runId, runId);
+  assert.equal(normalized.nodes[0].executionState, "executing");
+  assert.equal(normalized.nodes[0].executionObserved, true);
+  assert.equal(running(normalized.nodes[0], normalized), true, "real observed native execution produces the gold indicator");
+  assert.equal(normalized.nodes[1].runId, "another-run", "explicit cross-run identity is preserved for rejection");
+  assert.equal(normalized.nodes[2].runId, "", "an invalid explicit binding cannot acquire the parent binding");
+  for (const node of normalized.nodes.slice(1)) assert.equal(running(node, normalized), false, node.id + " remains ineligible for gold");
+  assert.equal(normalized.nodes[3].executionState, "unreported");
+  assert.equal(normalized.nodes[3].executionObserved, false);
+  assert.equal(normalized.nodes[4].executionState, "not_executed");
+  assert.equal(running(normalize({ nodes: [main] }).nodes[0], { run: { id: runId, active: true, status: "active" } }), false,
+    "an absent run container cannot manufacture membership");
+  assert.equal(Object.hasOwn(main, "runId"), false, "normalization does not mutate the raw API node");
+});
+
 test("declared-not-started cards retain the dashed distinction while observed execution is a detail", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
@@ -2214,7 +2326,7 @@ test("keeps the workspace session emphasis bar clear of its own label text", () 
   // The row had `padding: .72rem 0` while hover drew `inset 3px 0 0`, so the
   // emphasis bar landed on the first glyph of the session title.
   assert.match(html, /\.operational-section\s*\{(?:(?!\})[\s\S])*--section-inline:/u);
-  assert.match(html, /\.workspace-child\s*\{(?:(?!\})[\s\S])*padding:\s*var\(--sp-default\) var\(--section-inline, 0px\)/u);
+  assert.match(html, /\.workspace-child\s*\{(?:(?!\})[\s\S])*padding:\s*var\(--sp-[\w-]+\) var\(--section-inline, 0px\)/u);
   assert.match(html, /\.workspace-child:hover, \.workspace-child\[data-active="true"\]\s*\{(?:(?!\})[\s\S])*inset 3px 0 0/u);
 
   // The default row state draws no bar at all, so asserting the two rules exist
@@ -2348,7 +2460,8 @@ test("renders an accessible project and run-record selector with explicit identi
   assert.match(html, /aria-label="Choose a Meta_Kim project"/u);
   assert.match(html, /aria-label="Choose a governed run record"/u);
   assert.match(html, /data-live-session-search/u);
-  assert.match(html, /这里显示的是 Meta_Kim 运行记录，不是聊天列表/u);
+  assert.match(html, /聊天关联和运行编号在“详情”中查看/u);
+  assert.match(html, /class="hub-record-picker"><summary[^>]*[\s\S]*?data-live-session-select/u);
   // "未关联" reads as a link that went missing. These runs never wrote one, so
   // the title has to name the absent id rather than an absent association.
   assert.match(html, /没有保存聊天标识的运行记录/u);
@@ -2575,7 +2688,8 @@ test("draws curved status-aware edges and a live flow animation with reduced-mot
   assert.match(html, /edge-running/iu);
   assert.match(html, /edge-failed/iu);
   assert.match(html, /edge-queued/iu);
-  assert.match(html, /const stageFocusState\s*=\s*snapshot\.run\?\.active\s*&&\s*!terminalRun\s*&&\s*targetLifecycle\.state\s*===\s*"in_progress"[\s\S]{0,180}!edgeProblem[\s\S]{0,160}"unconfirmed", "result_unconfirmed"[\s\S]{0,80}\?\s*"live"\s*:\s*"none"/u);
+  assert.match(html, /const stageFocusState\s*=\s*snapshot\.run\?\.active\s*&&\s*!terminalRun\s*&&\s*targetRunning\s*&&\s*!edgeProblem\s*\?\s*"live"\s*:\s*"none"/u);
+  assert.match(html, /const targetRunning = graphNodeIsActuallyRunning\(targetNode, snapshot\)/u);
   assert.match(html, /EXECUTION_EDGE_KINDS\.has\(edge\.kind \|\| "sequence"\)/u);
   assert.match(html, /executionRelation \? nodeClass\(edge\.status\) : "structural"/u);
   assert.match(html, /path\.dataset\.liveFocus\s*=\s*stageFocusState/u);
@@ -2763,7 +2877,7 @@ test("lays out high-fanout work as a searched non-crossing grid and ships an iso
   }
   assert.match(html, /nodeId:\s*"demo-requirements"/u);
   assert.match(html, /演示数据 · 非真实运行/u);
-  assert.match(html, /淡红＝未开始 · 淡黄＝进行中 · 淡绿＝已完成/u);
+  assert.match(html, /状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始/u);
   assert.match(html, /浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成/u);
   assert.match(html, /\.edge-completed\s*\{[^}]*stroke:\s*var\(--green\)[^}]*stroke-dasharray:\s*none/su);
   // Only the dash is pinned here. The opacity used to be pinned at .38 alongside it,
@@ -2931,6 +3045,72 @@ test("a narrow run pane scrolls to its canvas budget so all nine ownership child
     const right = left + box.width * camera.scale, bottom = top + box.height * camera.scale;
     assert.ok(left >= inset.left && top >= inset.top && right <= canvas.width - inset.right && bottom <= canvas.height - inset.bottom,
       "the complete footprint of every card stays within the allocated canvas");
+  }
+});
+
+test("expanded run details have one bounded reading area around all diagnostics", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const details = html.match(/<details class="run-context-description">([\s\S]*?)<\/details>/u)?.[1];
+  assert.ok(details);
+  const body = details.match(/<div class="run-context-details-body">([\s\S]*)<\/div>\s*$/u)?.[1];
+  assert.ok(body, "task identity and diagnostic content share one scrolling wrapper");
+  for (const marker of ["data-live-context-task", "data-live-run-id", "data-live-planning-notice", "run-context-technical", "data-live-run-diagnostics"]) {
+    assert.ok(body.includes(marker), marker + " must remain accessible within the bounded details area");
+  }
+  const rules = stylesheetRules(html);
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-context-details-body", property: "max-height" }), "min(240px, 36dvh)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-context-details-body", property: "overflow" }), "auto");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-records-content", property: "max-height" }), null,
+    "a second independent diagnostics budget would grow the disclosure or create nested scrollers");
+});
+
+test("wide run panes retain the configured canvas floor when details and the inspector expand", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const floor = loadLiveChromeBudget().minCanvasHeightPx;
+  for (const viewport of [{ width: 901, height: 720 }, { width: 1440, height: 900 }, { width: 2048, height: 1119 }, { width: 1440, height: 600 }]) {
+    const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+    assert.equal(resolve('.main:has(.workspace-grid[data-work-view="run"])', "overflow-y"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"]', "height"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"]', "flex"), "1 0 auto",
+      "expanded details must produce page overflow rather than shrink the graph to zero");
+    assert.equal(lengthToPixels(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', "min-height")), floor);
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', "flex"), "1 0 " + floor + "px",
+      "the canvas uses a definite basis and may grow without charging world-scene dimensions to the page");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .evidence-panel', "contain"), "size",
+      "inspector text does not define the canvas row's intrinsic height");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .evidence-panel[data-open="false"]', "display"), "none");
+  }
+});
+
+test("phone workspace reads in one column without fixed-width board or session tracks", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const viewport = { width: 390, height: 844 };
+  const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+  assert.equal(resolve(".company-workspace", "grid-template-rows"), "auto auto auto");
+  assert.equal(resolve(".company-board", "grid-template-columns"), "minmax(0,1fr)");
+  assert.equal(resolve(".work-column", "min-width"), "0");
+  assert.equal(resolve(".workspace-session-list", "display"), "grid");
+  assert.equal(resolve(".workspace-session-list", "overflow-x"), "hidden");
+  assert.equal(resolve(".workspace-session-item", "width"), "100%");
+});
+
+test("phone run details scroll the reading surface rather than consume the canvas floor", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const floor = loadLiveChromeBudget().minCanvasHeightPx;
+  // CSS is resolved at both sides of the phone boundary so live resizing needs
+  // no reload or JavaScript-only viewport preference to keep the graph usable.
+  for (const viewport of [{ width: 390, height: 844 }, { width: 720, height: 844 }]) {
+    const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+    assert.equal(resolve('.main:has(.workspace-grid[data-work-view="run"])', "display"), "block");
+    assert.equal(resolve('.main:has(.workspace-grid[data-work-view="run"])', "overflow-y"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"]', "height"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-panel', "height"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-stage', "height"), "auto");
+    for (const property of ["height", "min-height", "max-height"]) {
+      assert.equal(lengthToPixels(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', property)), floor,
+        "opened diagnostics must leave the same definite, independently scrolling card viewport");
+    }
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', "flex"), "0 0 " + floor + "px");
   }
 });
 
@@ -3262,7 +3442,7 @@ test("adapts service field aliases and safely summarizes structured terminal evi
 test("uses explicit marker colors so SVG arrows do not inherit an unreliable currentColor", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']var\(--task-flow-ink\)["'][\s\S]*completed:\s*["']var\(--task-completed-border\)["'][\s\S]*skipped:\s*["']#a3b0c9["']/u);
+  assert.match(html, /markerColors\s*=\s*\{[\s\S]*running:\s*["']var\(--task-flow-ink\)["'][\s\S]*completed:\s*["']var\(--task-edge-completed\)["'][\s\S]*skipped:\s*["']#a3b0c9["']/u);
   assert.match(html, /marker-end["'],\s*["']url\(#\s*["']\s*\+\s*edgeMarkerId/u);
   assert.doesNotMatch(html, /fill["'],\s*["']currentColor["']/u);
 });
@@ -3347,6 +3527,54 @@ test("makes aria-modal dialogs isolate the app, trap focus, and restore the open
   assert.equal(background.inert, false);
 });
 
+test("dialog focus includes native disclosure summaries and skips closed or invisible descendants", () => {
+  const { controller, sessionsDialog, first, last, document, FakeElement } = modalBehaviorHarness();
+  const details = new FakeElement("details", { tagName: "DETAILS" });
+  const summary = new FakeElement("summary", { tagName: "SUMMARY" });
+  const select = new FakeElement("select", { tagName: "SELECT" });
+  details.children = [summary, select];
+  details.open = false;
+  details.parentElement = sessionsDialog;
+  summary.parentElement = details;
+  select.parentElement = details;
+  const cssHidden = new FakeElement("css-hidden");
+  cssHidden.visibility = "hidden";
+  const rectless = new FakeElement("display-none");
+  rectless.rectless = true;
+  const hiddenParent = new FakeElement("hidden-parent");
+  hiddenParent.hidden = true;
+  const hiddenChild = new FakeElement("hidden-child");
+  hiddenChild.parentElement = hiddenParent;
+  const ariaParent = new FakeElement("aria-hidden-parent");
+  ariaParent.setAttribute("aria-hidden", "true");
+  const ariaChild = new FakeElement("aria-hidden-child");
+  ariaChild.parentElement = ariaParent;
+  sessionsDialog.focusables = [first, last, summary, select, cssHidden, rectless, hiddenChild, ariaChild];
+  controller.setDialogOpen(sessionsDialog, true);
+  assert.match(sessionsDialog.lastSelector, /details > summary/u, "the real shipped selector must include native disclosure controls");
+  assert.deepEqual(controller.dialogFocusables(sessionsDialog), [first, last, summary]);
+  const tab = (shiftKey = false) => ({ key: "Tab", shiftKey, prevented: false, preventDefault() { this.prevented = true; } });
+  last.focus();
+  const beforeSummary = tab();
+  controller.trapDialogFocus(beforeSummary);
+  assert.equal(beforeSummary.prevented, false, "the button before Details must allow native Tab to reach its summary");
+  summary.focus();
+  const afterSummary = tab();
+  controller.trapDialogFocus(afterSummary);
+  assert.equal(afterSummary.prevented, true);
+  assert.equal(document.activeElement, first);
+  const backward = tab(true);
+  controller.trapDialogFocus(backward);
+  assert.equal(document.activeElement, summary, "Shift+Tab must wrap to the last visible disclosure");
+  details.open = true;
+  assert.deepEqual(controller.dialogFocusables(sessionsDialog), [first, last, summary, select]);
+  select.focus();
+  const afterOpenSelect = tab();
+  controller.trapDialogFocus(afterOpenSelect);
+  assert.equal(afterOpenSelect.prevented, true);
+  assert.equal(document.activeElement, first);
+});
+
 test("Escape clears one-hop emphasis before closing the selected node inspector", () => {
   const { controller, first } = modalBehaviorHarness();
   controller.setRelationFocus(true);
@@ -3421,7 +3649,7 @@ test("keeps secondary Repository and Workspace surfaces in an on-demand keyboard
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /class="work-view-menu"/u);
-  assert.match(html, /class="work-view-switcher" role="tablist" aria-label="Optional work surface views"/u);
+  assert.match(html, /class="work-view-tabs" role="tablist" aria-label="Optional work surface views"/u);
   for (const view of ["repository", "workspace", "run"]) {
     assert.match(html, new RegExp(`role="tab"[^>]+data-live-work-view="${view}"`, "u"));
     assert.match(html, new RegExp(`data-live-${view === "run" ? "run" : view}-view`, "u"));
@@ -3435,6 +3663,108 @@ test("keeps secondary Repository and Workspace surfaces in an on-demand keyboard
   assert.match(html, /setWorkView\(currentWorkView, \{ persist: false \}\)/u);
   assert.match(html, /params\.set\("projectId", selectedProjectId\)[\s\S]*params\.set\("runId", selectedRunId\)/u);
   assert.doesNotMatch(html, /worktree children|session worktree/iu);
+});
+
+test("snapshot refreshes preserve an open view menu until the user selects a view", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const menu = { open: true, removeAttribute(name) { if (name === "open") this.open = false; } };
+  const surfaces = { repository: {}, workspace: {}, run: {} };
+  const stored = [];
+  const select = new Function("app", "repositoryView", "workspaceView", "workspace", "persistStoredChoice", `
+let currentWorkView = "run";
+const WORK_VIEWS = ["run", "workspace", "repository"];
+const WORK_VIEW_STORAGE_KEY = "test-work-view";
+const workViewTabs = [];
+const currentSnapshot = null;
+const setInspectorOpen = () => {};
+${shippedHelper(html, "setWorkView")}
+return setWorkView;`)(
+    { querySelector: (selector) => selector === ".work-view-menu" ? menu : surfaces.run },
+    surfaces.repository, surfaces.workspace, { setAttribute() {} }, (key, value) => stored.push([key, value]),
+  );
+  for (let index = 0; index < 3; index += 1) select("run", { persist: false });
+  assert.equal(menu.open, true, "SSE refresh cannot steal a menu the user is reading");
+  assert.deepEqual(stored, [], "snapshot refresh does not change a saved view preference");
+  select("repository");
+  assert.equal(menu.open, false, "a deliberate tab selection dismisses its menu");
+  assert.equal(surfaces.repository.hidden, false);
+  assert.equal(surfaces.run.hidden, true);
+  assert.deepEqual(stored, [["test-work-view", "repository"]]);
+});
+
+test("hidden graph refreshes defer measurement until the run surface is revealed", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const priorCard = { id: "kept-card" };
+  const graphState = { bounds: { width: 1800, height: 900 }, nodeElements: new Map([["a", priorCard]]) };
+  const hiddenSnapshot = new Proxy({}, { get() { throw new Error("a hidden graph must not consume or measure the snapshot"); } });
+  new Function("graph", "graphState", "snapshot", `${shippedHelper(html, "renderGraph")}\nrenderGraph(snapshot);`)(
+    { clientWidth: 0, clientHeight: 0 }, graphState, hiddenSnapshot,
+  );
+  assert.equal(graphState.renderPending, true);
+  assert.equal(graphState.nodeElements.get("a"), priorCard, "background live updates preserve the last measured graph");
+  assert.deepEqual(graphState.bounds, { width: 1800, height: 900 });
+  const frames = [], calls = [], graphPanel = { hidden: true };
+  const reveal = new Function("app", "graphState", "window", "renderGraph", "reconcileCamera", `
+let currentWorkView = "workspace";
+const currentSnapshot = {};
+const WORK_VIEWS = ["run", "workspace", "repository"];
+const workViewTabs = [];
+const repositoryView = {}, workspaceView = {}, workspace = { setAttribute() {} };
+const setInspectorOpen = () => {};
+${shippedHelper(html, "setWorkView")}
+return () => setWorkView("run", { persist: false });`)(
+    { querySelector: () => graphPanel }, graphState, { requestAnimationFrame: (callback) => frames.push(callback) },
+    () => { calls.push("render"); graphState.renderPending = false; }, () => calls.push("reconcile"),
+  );
+  reveal();
+  assert.equal(graphPanel.hidden, false);
+  assert.deepEqual(calls, [], "revealing first gives the browser a layout opportunity");
+  frames.shift()();
+  assert.deepEqual(calls, ["render", "reconcile"], "fresh visible geometry reaches the existing mode-aware camera path");
+});
+
+test("a hidden canvas never acquires an invented overview size", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const graphState = { bounds: { width: 1800, height: 900 } };
+  for (const graph of [{ clientWidth: 0, clientHeight: 0 }, { clientWidth: 1440, clientHeight: 0 }]) {
+    assert.doesNotThrow(() => new Function("graph", "graphState", `${shippedHelper(html, "fitGraph")}\nfitGraph();`)(graph, graphState));
+  }
+});
+
+test("footer details span the full graph grid and own an expandable auto row", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  for (const viewport of [{ width: 390, height: 844 }, { width: 884, height: 871 }, { width: 1440, height: 900 }]) {
+    const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+    assert.equal(resolve(".status-records", "grid-column"), "1 / -1");
+    assert.equal(resolve(".status-records", "grid-row"), "3");
+    assert.match(resolve(".graph-panel", "grid-template-rows"), /auto auto$/u,
+      "disclosing the footer cannot overflow a fixed-height last row");
+    assert.equal(resolve(".status-records .status-bar", "margin-left"), "0");
+  }
+  assert.match(resolvedForViewport(rules, { selector: ".workspace-grid", property: "grid-template-rows", viewport: { width: 1440, height: 900 } }), /auto auto$/u,
+    "the dense display:contents layout gives the wrapper a full-width auto row too");
+});
+
+test("phone help and information menu actions open the same dialogs as the desktop controls", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const controls = new Map(["help", "info"].map((kind) => [kind, Array.from({ length: 2 }, () => ({ addEventListener(name, handler) { this[name] = handler; } }))]));
+  const opened = [];
+  const helpDialog = { id: "help" }, infoDialog = { id: "info" };
+  const source = html.match(/  app\.querySelectorAll\("\[data-live-open-help\]"\)[^\n]*\n  app\.querySelectorAll\("\[data-live-open-info\]"\)[^\n]*/u)?.[0];
+  assert.ok(source, "each visible help/info control must receive the modal handler");
+  new Function("app", "setDialogOpen", "helpDialog", "infoDialog", source)(
+    { querySelectorAll: (selector) => controls.get(selector.includes("help") ? "help" : "info") },
+    (dialog, open) => opened.push([dialog.id, open]), helpDialog, infoDialog,
+  );
+  for (const button of controls.get("help")) button.click();
+  for (const button of controls.get("info")) button.click();
+  assert.deepEqual(opened, [["help", true], ["help", true], ["info", true], ["info", true]]);
+  assert.match(html, /class="work-view-utilities"[^>]*>[\s\S]*?data-live-open-help[\s\S]*?data-live-open-info[\s\S]*?<\/div>/u);
+  const rules = stylesheetRules(html), viewport = { width: 390, height: 844 };
+  assert.equal(resolvedForViewport(rules, { selector: ".work-view-utilities", property: "display", viewport }), "grid");
+  assert.equal(resolvedForViewport(rules, { selector: ".topbar-actions [data-live-open-help]", property: "display", viewport }), "none");
+  assert.equal(resolvedForViewport(rules, { selector: "[data-live-open-help]", property: "display", viewport }), null,
+    "the phone rule must hide only the desktop entry, not its menu counterpart");
 });
 
 test("renders repository and workspace facts without inventing unavailable source-control data", () => {
@@ -3461,7 +3791,8 @@ test("renders repository and workspace facts without inventing unavailable sourc
   assert.match(html, /\["Worktree", repository\.worktree\]/u);
   assert.match(html, /\["Pull request", repository\.pullRequest\]/u);
   assert.match(html, /\["Diff", repository\.diff\]/u);
-  assert.match(html, /fact\?\.summary \|\| "Unavailable"/u);
+  assert.match(html, /fact\?\.state === "observed" && usefulNodeMeta\(fact\.summary\)/u);
+  assert.match(html, /此记录没有仓库信息/u);
   assert.match(html, /data-live-workspace-boundary/u);
   assert.match(html, /function renderWorkspaceSessions/u);
   assert.match(html, /function renderWorkspaceBoard/u);
@@ -3991,7 +4322,7 @@ function runNormalizerHarness({ actualStatus = false } = {}) {
   const normalizeSnapshot = new Function(
     "DISPLAY_FORMAT",
     ...stubNames,
-    `${serializeLiveTokenUsageResolvers()}\n${serializeLiveRunOverviewResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
+    `${serializeLiveTokenUsageResolvers()}\n${serializeLiveRunOverviewResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "nullableCountOf", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
       return normalizeSnapshot;
     `,
   )(displayFormat, ...stubNames.map((name) => stubs[name]));
@@ -4863,10 +5194,10 @@ test("the graph legend keeps task colors and recorded relationship meanings at e
   // now distinguishes.
   const legend = html.match(/<span class="graph-edge-legend"[^>]*>/u);
   assert.ok(legend, "markup must contain the edge legend");
-  for (const state of ["pale red = not started", "pale yellow = in progress", "pale green = completed", "Green solid = done", "Gray dashed = queued", "Gold moving dot = running (observed)", "Amber dashed = blocked", "Arrows = dependencies; no arrow = ownership", "Dashed card = declared, not started"]) {
+  for (const state of ["pale red = in progress", "pale yellow = completed", "pale green = not started", "Gold node dot = actually running", "Green solid = done", "Gray dashed = queued", "Gold moving dot = running (observed)", "Amber dashed = blocked", "Arrows = dependencies; no arrow = ownership", "Dashed card = declared, not started"]) {
     assert.ok(legend[0].includes(state), `the English legend must document "${state}"`);
   }
-  for (const state of ["淡红＝未开始", "淡黄＝进行中", "淡绿＝已完成", "浅灰虚线＝未开始", "金色动点＝运行中", "淡绿实线＝已完成", "琥珀虚线＝阻塞", "无箭头＝结构归属", "虚线卡片＝声明未执行", "连线颜色取自目标任务，不表示依赖执行证据"]) {
+  for (const state of ["状态文字：淡红＝进行中", "淡黄＝已完成", "淡绿＝未开始", "节点金点＝实际运行中", "浅灰虚线＝未开始", "金色动点＝运行中", "淡绿实线＝已完成", "琥珀虚线＝阻塞", "无箭头＝结构归属", "虚线卡片＝声明未执行", "连线颜色取自目标任务，不表示依赖执行证据"]) {
     assert.ok(legend[0].includes(state), `the Chinese legend must document "${state}"`);
   }
 });
@@ -5367,6 +5698,56 @@ test("the compact run title keeps its complete identity available in task detail
  * because leading multiplies the step and the caption carried the looser family.
  * So the tokens are pinned as literals and the resulting line boxes are ordered.
  */
+test("the whole page uses Microsoft YaHei across ordinary text, code and form controls", () => {
+  const html = renderLiveControlRoomPage();
+  const rules = stylesheetRules(html);
+  const family = rootCustomProperty(rules, "--font-ui");
+  assert.match(family, /^"Microsoft YaHei",/u, "the requested Microsoft YaHei face must cover both Chinese and Latin text first");
+  assert.match(family, /"PingFang SC"/u);
+  assert.match(family, /"Noto Sans CJK SC"/u);
+  assert.equal(resolvedDeclaration(rules, { selector: ":root", property: "font-family" }), "var(--font-ui)");
+  for (const selector of ["button", "select", "input", "textarea", "summary"]) {
+    assert.equal(resolvedDeclaration(rules, { selector, property: "font" }), "inherit", selector + " must inherit the same UI typography");
+  }
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback-label", property: "font-size" }), "var(--fs-entity-body)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback select", property: "font-size" }), "var(--fs-entity-body)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback textarea", property: "font-size" }), "var(--fs-body)", "editable feedback must not inherit the smaller label size");
+  assert.equal(resolvedDeclaration(rules, { selector: ".local-feedback textarea", property: "line-height" }), "var(--lh-normal)");
+  for (const rule of rules) for (const [property, value] of rule.declarations) {
+    if (property === "font-family") {
+      assert.ok(["var(--font-ui)", "inherit"].includes(value), rule.selectors.join(", ") + " introduces a different UI face: " + value);
+    }
+    if (property === "font") assert.doesNotMatch(value, /monospace/iu, "ordinary font shorthands must not introduce a second face");
+  }
+  for (const selector of ["pre", "code", "samp"]) assert.equal(resolvedDeclaration(rules, { selector, property: "font-family" }), "var(--font-ui)");
+  assert.doesNotMatch(html, /@font-face|fonts\.googleapis|fonts\.gstatic/u, "the UI must remain usable without downloading a font");
+});
+
+test("UI emphasis uses regular text and semibold headings while labels retain natural case and spacing", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  for (const [token, weight] of [["--weight-regular", "400"], ["--weight-semibold", "600"]]) {
+    assert.equal(rootCustomProperty(rules, token), weight);
+  }
+  for (const rule of rules) for (const [property, value] of rule.declarations) {
+    if (property === "font-weight") assert.match(value, /^var\(--weight-(?:regular|semibold)\)$/u, rule.selectors.join(", ") + " bypasses the weight roles");
+    if (property === "text-transform") assert.equal(value, "none", "ordinary UI labels must retain their source casing");
+    if (property === "letter-spacing") assert.equal(value, "0", "ordinary UI text must not carry decorative tracking");
+  }
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-context-title", property: "font-weight" }), "var(--weight-semibold)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".node-capability-kind", property: "font-weight" }), "var(--weight-regular)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".node-capability-value", property: "font-weight" }), "var(--weight-regular)");
+});
+
+test("mobile brand uses the body tier to leave room for header controls while desktop keeps its hierarchy", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  for (const width of [390, 720]) {
+    assert.equal(resolvedForViewport(rules, { selector: ".brand-title", property: "font-size", viewport: { width, height: 844 } }), "var(--fs-body)");
+  }
+  for (const width of [721, 884, 1512]) {
+    assert.equal(resolvedForViewport(rules, { selector: ".brand-title", property: "font-size", viewport: { width, height: 982 } }), "var(--fs-view-title)");
+  }
+});
+
 test("the type scale runs from the brand mark down to the legend caption, not back up", () => {
   const rules = stylesheetRules(renderLiveControlRoomPage({ snapshot: snapshotFixture }));
 
@@ -5755,7 +6136,7 @@ function visibleEdgeGeometryHarness() {
     edgeRoutes: new Map(),
     rootEntries: new Map(),
   };
-  const graphNodes = [...positions.keys()].map((id) => ({ id, status: "active", displayState: "active" }));
+  const graphNodes = [...positions.keys()].map((id) => ({ id, runId: "demo-visible-edge-geometry", status: "active", displayState: "active" }));
   const graphEdges = [
     { id: "vertical-edge", from: "owner", to: "vertical", kind: "fork", status: "active" },
     { id: "bus-edge", from: "owner", to: "bus", kind: "fork", status: "active" },
@@ -5764,7 +6145,7 @@ function visibleEdgeGeometryHarness() {
     "graphState", "graph", "graphScene", "document", "edgeLayer", "GRAPH_CAMERA", "resolveSemanticZoom",
     "window", "graphNodes", "graphEdges", "layout", "graphNodeById", "resolveLiveTaskLifecycle", "resolveLiveNodeTaskLifecycle",
     `let camera = { x: 0, y: 0, scale: 1 };
-const snapshot = { run: { active: true } };
+const snapshot = { run: { id: "demo-visible-edge-geometry", active: true, status: "active", demoMode: true } };
 const terminalRun = false;
 const reducedMotion = { matches: false };
 const graphMinimapScene = null;
@@ -5777,7 +6158,7 @@ const updateMinimap = () => {};
 const updateSelectedNodeVisuals = () => {};
 const updateGraphRelationPresentation = () => {};
 const observeGraphCardSizes = () => {};
-${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "createGraphEdgeMotion", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
+${["edgePortSlot", "edgeGeometry", "visibleGraphPositions", "refreshGraphEdgeGeometry", "setRootEntryGeometry", "graphNodeIsActuallyRunning", "createGraphEdgeMotion", "updateCamera"].map((name) => shippedHelper(html, name)).join("\n")}
 function draw() {
 ${tail}
 }

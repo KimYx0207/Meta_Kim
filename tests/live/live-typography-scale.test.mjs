@@ -24,7 +24,7 @@ import { renderLiveControlRoomPage } from "../../src/presentation/live/live-cont
  * own width and height, so the value controls the fallback glyph metric and
  * never participates in the reading hierarchy.
  */
-const NUMERIC_FONT_ALLOW_LIST = Object.freeze(["400 1.35rem/1 monospace"]);
+const NUMERIC_FONT_ALLOW_LIST = Object.freeze(["var(--weight-regular) 1.35rem/1 var(--font-ui)"]);
 
 /**
  * Font sizes the camera owns instead of the ladder. Cell mode counter-scales the
@@ -355,7 +355,7 @@ test("the rendered page emits the ladder and no level-affecting hardcoded sizes"
   );
 
   // The allow-listed declaration must still be the glyph box it claims to be.
-  assert.match(css, /\.stage-step-icon\s*\{(?:(?!\})[\s\S])*font:\s*400 1\.35rem\/1 monospace/u);
+  assert.match(css, /\.stage-step-icon\s*\{(?:(?!\})[\s\S])*font:\s*var\(--weight-regular\) 1\.35rem\/1 var\(--font-ui\)/u);
   assert.match(css, /\.stage-step-icon\s*\{(?:(?!\})[\s\S])*flex:\s*0 0 1\.55rem/u);
   assert.match(css, /\.stage-step-icon svg\s*\{(?:(?!\})[\s\S])*width:\s*1\.55rem;\s*height:\s*1\.55rem/u);
 });

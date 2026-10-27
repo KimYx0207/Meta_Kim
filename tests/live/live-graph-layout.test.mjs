@@ -227,8 +227,8 @@ test("the measured canvas keeps its wrapped arrangement with the wider routing g
   assert.equal(arrangement.orientation, "chain-horizontal");
   assert.equal(arrangement.columns, 8);
   assert.equal(arrangement.rows, 2);
-  assert.equal(arrangement.sceneWidth, 3748);
-  assert.equal(arrangement.sceneHeight, 930);
+  assert.equal(arrangement.sceneWidth, 4308);
+  assert.equal(arrangement.sceneHeight, 982);
 });
 
 test("the search reaches the same winner whichever orientation the configuration lists first", () => {

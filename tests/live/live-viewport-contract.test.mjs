@@ -165,7 +165,7 @@ test("regression baselines keep the canvas-first grid and never collapse to the 
   }
 });
 
-test("the narrow-run scroll allocation stops before the declared dense grid boundary", () => {
+test("the fixed narrow-run allocation becomes a growing canvas at the dense grid boundary", () => {
   const scopedPanel = '.workspace-grid[data-work-view="run"] .graph-panel';
   const scopedCanvas = '.workspace-grid[data-work-view="run"] .graph-canvas';
   const appliedBody = (profile) => resolveApplicableMediaBlocks(css, profile).map((block) => block.body).join("\n");
@@ -181,8 +181,12 @@ test("the narrow-run scroll allocation stops before the declared dense grid boun
     const denseOverlap = appliedBody({ widthPx, heightPx: denseMinHeight });
     assert.equal(resolvedDeclarationValue(scopedPanel, "display", denseOverlap), null,
       widthPx + "px keeps the existing dense graph container");
-    assert.equal(resolvedDeclarationValue(scopedCanvas, "height", denseOverlap), null,
-      widthPx + "px must retain the dense canvas's flexible height allocation");
+    assert.equal(resolvedDeclarationValue(scopedCanvas, "height", denseOverlap), config.chromeBudget.minCanvasHeightPx + "px",
+      widthPx + "px gives the wide canvas a definite starting box independent of world-scene size");
+    assert.equal(resolvedDeclarationValue(scopedCanvas, "flex", denseOverlap), "1 0 " + config.chromeBudget.minCanvasHeightPx + "px",
+      widthPx + "px lets extra room grow the canvas while preventing expanded details from crushing it");
+    assert.equal(resolvedDeclarationValue(scopedCanvas, "max-height", denseOverlap), null,
+      widthPx + "px must not inherit the narrow pane's fixed-height ceiling");
     assert.equal(resolvedDeclarationValue(".graph-panel", "display", denseOverlap), "contents");
     assert.equal(resolvedDeclarationValue(".node-card", "padding", denseOverlap), "var(--sp-roomy)",
       "the original tablet card styling still applies in the dense overlap");
