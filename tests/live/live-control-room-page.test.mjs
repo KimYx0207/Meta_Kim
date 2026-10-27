@@ -44,6 +44,29 @@ import {
 
 const workOverviewHelpers = { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport };
 
+test("browser normalization keeps partial session counters unknown instead of inventing zero", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const snapshot = normalize({ run: { id: "partial-counts" }, sessionInfo: { artifactCount: 2, blockedCount: 1 }, nodes: [] });
+  assert.equal(snapshot.sessionInfo.fileChangeCount, null);
+  assert.equal(snapshot.sessionInfo.artifactCount, 2);
+  assert.equal(snapshot.sessionInfo.failedCount, null);
+  assert.equal(snapshot.sessionInfo.blockedCount, 1);
+  const recordedZero = normalize({ run: { id: "reported-zero" }, sessionInfo: { fileChangeCount: 0, failedCount: 0 }, nodes: [] });
+  assert.equal(recordedZero.sessionInfo.fileChangeCount, 0);
+  assert.equal(recordedZero.sessionInfo.failedCount, 0);
+});
+
+test("browser normalization preserves explicitly observed durations without fabricating a zero", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const snapshot = normalize({ run: { id: "duration-observation" }, nodes: [
+    { id: "absent" },
+    { id: "zero", durationMs: 0 },
+    { id: "fractional", timing: { durationMs: 1.25 } },
+    { id: "invalid", durationMs: -1 },
+  ] });
+  assert.deepEqual(snapshot.nodes.map((node) => node.durationMs), [null, 0, 1.25, null]);
+});
+
 test("browser normalization keeps only precise native returns and counts six returned tasks without ending active main work", () => {
   const runId = "native-codex-11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222";
   const observedAt = "2026-10-22T08:00:00Z";
@@ -371,6 +394,8 @@ function modalBehaviorHarness() {
   const keydownEnd = html.indexOf("\n  replayPlay?.addEventListener", keydownStart);
   assert.ok(modalStart >= 0 && modalEnd > modalStart, "modal controller must remain in the shipped client script");
   assert.ok(keydownStart >= 0 && keydownEnd > keydownStart, "modal keyboard binding must remain in the shipped client script");
+  const focusableSelector = html.match(/const FOCUSABLE_DIALOG_SELECTOR\s*=\s*([^;]+);/u);
+  assert.ok(focusableSelector);
 
   const document = {
     activeElement: null,
@@ -380,9 +405,11 @@ function modalBehaviorHarness() {
     },
   };
   class FakeElement {
-    constructor(name, { dialog = false } = {}) {
+    constructor(name, { dialog = false, tagName = "BUTTON" } = {}) {
       this.name = name;
       this.dialog = dialog;
+      this.tagName = tagName;
+      this.parentElement = null;
       this.hidden = false;
       this.inert = false;
       this.children = [];
@@ -411,12 +438,17 @@ function modalBehaviorHarness() {
       return this.focusables[0] || null;
     }
 
-    querySelectorAll() {
+    querySelectorAll(selector) {
+      this.lastSelector = selector;
       return this.focusables;
     }
 
+    getClientRects() {
+      return this.hidden || this.rectless ? [] : [{ width: 1, height: 1 }];
+    }
+
     contains(element) {
-      return element === this || this.focusables.includes(element);
+      return element === this || this.focusables.includes(element) || this.children.some((child) => child.contains(element));
     }
 
     focus() {
@@ -468,7 +500,8 @@ function modalBehaviorHarness() {
       let dialogOpener = null;
       let activeDialog = null;
       const modalBackgroundState = new Map();
-      const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      const FOCUSABLE_DIALOG_SELECTOR = ${focusableSelector[1]};
+      const getComputedStyle = (element) => ({ visibility: element.visibility || "visible" });
       let selectedNodeId = null;
       let relationFocusActive = false;
       const updateGraphRelationPresentation = () => {};
@@ -480,6 +513,7 @@ function modalBehaviorHarness() {
       return {
         setDialogOpen,
         trapDialogFocus,
+        dialogFocusables,
         keydownHandler: () => app.keydownHandler,
         activeDialog: () => activeDialog,
         setRelationFocus: (value) => { relationFocusActive = value; selectedNodeId = "selected"; },
@@ -1513,6 +1547,37 @@ test("the client keeps the declared-not-started and observed-only node flags the
   assert.equal(normalized.nodes.find((node) => node.id === "n-plain").observedOnly, false);
 });
 
+test("native parent-bound nodes inherit only a missing run binding and retain their real execution facts", () => {
+  const normalize = runNormalizerHarness({ actualStatus: true });
+  const runId = "native-codex-parent-bound-run";
+  const main = { id: "native-main", kind: "agent", isMain: true, label: "Codex", status: "active", displayState: "active", active: true,
+    executionState: "executing", executionObserved: true, timing: { startedAt: "2026-10-27T00:00:00Z", completedAt: null } };
+  const input = { run: { runId, active: true, status: "active", displayState: "active", observationKind: "native_execution" }, nodes: [
+    main,
+    { ...main, id: "foreign", runId: "another-run" },
+    { ...main, id: "invalid", runId: 42 },
+    { id: "unknown", status: "unknown", displayState: "unknown", active: false, executionState: "unreported", executionObserved: false },
+    { id: "planned", status: "planned", displayState: "planned", executionState: "not_executed", declaredNotStarted: true },
+    { ...main, id: "terminal", status: "completed", displayState: "completed", executionState: "executed", timing: { completedAt: "2026-10-27T00:01:00Z" } },
+  ] };
+  assert.equal(Object.hasOwn(main, "runId"), false, "fixture matches the real parent-bound native API shape");
+  const normalized = normalize(input);
+  const running = new Function("resolveLiveTaskLifecycle", `${shippedHelper(renderLiveControlRoomPage(), "graphNodeIsActuallyRunning")}\nreturn graphNodeIsActuallyRunning;`)(resolveLiveTaskLifecycle);
+  assert.equal(normalized.nodes[0].runId, runId);
+  assert.equal(normalized.nodes[0].executionState, "executing");
+  assert.equal(normalized.nodes[0].executionObserved, true);
+  assert.equal(running(normalized.nodes[0], normalized), true, "real observed native execution produces the gold indicator");
+  assert.equal(normalized.nodes[1].runId, "another-run", "explicit cross-run identity is preserved for rejection");
+  assert.equal(normalized.nodes[2].runId, "", "an invalid explicit binding cannot acquire the parent binding");
+  for (const node of normalized.nodes.slice(1)) assert.equal(running(node, normalized), false, node.id + " remains ineligible for gold");
+  assert.equal(normalized.nodes[3].executionState, "unreported");
+  assert.equal(normalized.nodes[3].executionObserved, false);
+  assert.equal(normalized.nodes[4].executionState, "not_executed");
+  assert.equal(running(normalize({ nodes: [main] }).nodes[0], { run: { id: runId, active: true, status: "active" } }), false,
+    "an absent run container cannot manufacture membership");
+  assert.equal(Object.hasOwn(main, "runId"), false, "normalization does not mutate the raw API node");
+});
+
 test("declared-not-started cards retain the dashed distinction while observed execution is a detail", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
@@ -2261,7 +2326,7 @@ test("keeps the workspace session emphasis bar clear of its own label text", () 
   // The row had `padding: .72rem 0` while hover drew `inset 3px 0 0`, so the
   // emphasis bar landed on the first glyph of the session title.
   assert.match(html, /\.operational-section\s*\{(?:(?!\})[\s\S])*--section-inline:/u);
-  assert.match(html, /\.workspace-child\s*\{(?:(?!\})[\s\S])*padding:\s*var\(--sp-default\) var\(--section-inline, 0px\)/u);
+  assert.match(html, /\.workspace-child\s*\{(?:(?!\})[\s\S])*padding:\s*var\(--sp-[\w-]+\) var\(--section-inline, 0px\)/u);
   assert.match(html, /\.workspace-child:hover, \.workspace-child\[data-active="true"\]\s*\{(?:(?!\})[\s\S])*inset 3px 0 0/u);
 
   // The default row state draws no bar at all, so asserting the two rules exist
@@ -2395,7 +2460,8 @@ test("renders an accessible project and run-record selector with explicit identi
   assert.match(html, /aria-label="Choose a Meta_Kim project"/u);
   assert.match(html, /aria-label="Choose a governed run record"/u);
   assert.match(html, /data-live-session-search/u);
-  assert.match(html, /这里显示的是 Meta_Kim 运行记录，不是聊天列表/u);
+  assert.match(html, /聊天关联和运行编号在“详情”中查看/u);
+  assert.match(html, /class="hub-record-picker"><summary[^>]*[\s\S]*?data-live-session-select/u);
   // "未关联" reads as a link that went missing. These runs never wrote one, so
   // the title has to name the absent id rather than an absent association.
   assert.match(html, /没有保存聊天标识的运行记录/u);
@@ -2982,6 +3048,72 @@ test("a narrow run pane scrolls to its canvas budget so all nine ownership child
   }
 });
 
+test("expanded run details have one bounded reading area around all diagnostics", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const details = html.match(/<details class="run-context-description">([\s\S]*?)<\/details>/u)?.[1];
+  assert.ok(details);
+  const body = details.match(/<div class="run-context-details-body">([\s\S]*)<\/div>\s*$/u)?.[1];
+  assert.ok(body, "task identity and diagnostic content share one scrolling wrapper");
+  for (const marker of ["data-live-context-task", "data-live-run-id", "data-live-planning-notice", "run-context-technical", "data-live-run-diagnostics"]) {
+    assert.ok(body.includes(marker), marker + " must remain accessible within the bounded details area");
+  }
+  const rules = stylesheetRules(html);
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-context-details-body", property: "max-height" }), "min(240px, 36dvh)");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-context-details-body", property: "overflow" }), "auto");
+  assert.equal(resolvedDeclaration(rules, { selector: ".run-records-content", property: "max-height" }), null,
+    "a second independent diagnostics budget would grow the disclosure or create nested scrollers");
+});
+
+test("wide run panes retain the configured canvas floor when details and the inspector expand", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const floor = loadLiveChromeBudget().minCanvasHeightPx;
+  for (const viewport of [{ width: 901, height: 720 }, { width: 1440, height: 900 }, { width: 2048, height: 1119 }, { width: 1440, height: 600 }]) {
+    const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+    assert.equal(resolve('.main:has(.workspace-grid[data-work-view="run"])', "overflow-y"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"]', "height"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"]', "flex"), "1 0 auto",
+      "expanded details must produce page overflow rather than shrink the graph to zero");
+    assert.equal(lengthToPixels(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', "min-height")), floor);
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', "flex"), "1 0 " + floor + "px",
+      "the canvas uses a definite basis and may grow without charging world-scene dimensions to the page");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .evidence-panel', "contain"), "size",
+      "inspector text does not define the canvas row's intrinsic height");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .evidence-panel[data-open="false"]', "display"), "none");
+  }
+});
+
+test("phone workspace reads in one column without fixed-width board or session tracks", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const viewport = { width: 390, height: 844 };
+  const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+  assert.equal(resolve(".company-workspace", "grid-template-rows"), "auto auto auto");
+  assert.equal(resolve(".company-board", "grid-template-columns"), "minmax(0,1fr)");
+  assert.equal(resolve(".work-column", "min-width"), "0");
+  assert.equal(resolve(".workspace-session-list", "display"), "grid");
+  assert.equal(resolve(".workspace-session-list", "overflow-x"), "hidden");
+  assert.equal(resolve(".workspace-session-item", "width"), "100%");
+});
+
+test("phone run details scroll the reading surface rather than consume the canvas floor", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  const floor = loadLiveChromeBudget().minCanvasHeightPx;
+  // CSS is resolved at both sides of the phone boundary so live resizing needs
+  // no reload or JavaScript-only viewport preference to keep the graph usable.
+  for (const viewport of [{ width: 390, height: 844 }, { width: 720, height: 844 }]) {
+    const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+    assert.equal(resolve('.main:has(.workspace-grid[data-work-view="run"])', "display"), "block");
+    assert.equal(resolve('.main:has(.workspace-grid[data-work-view="run"])', "overflow-y"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"]', "height"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-panel', "height"), "auto");
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-stage', "height"), "auto");
+    for (const property of ["height", "min-height", "max-height"]) {
+      assert.equal(lengthToPixels(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', property)), floor,
+        "opened diagnostics must leave the same definite, independently scrolling card viewport");
+    }
+    assert.equal(resolve('.workspace-grid[data-work-view="run"] .graph-canvas', "flex"), "0 0 " + floor + "px");
+  }
+});
+
 const RANK_FIXTURE_WORKER = (id, second) => ({
   id,
   label: id.toUpperCase(),
@@ -3395,6 +3527,54 @@ test("makes aria-modal dialogs isolate the app, trap focus, and restore the open
   assert.equal(background.inert, false);
 });
 
+test("dialog focus includes native disclosure summaries and skips closed or invisible descendants", () => {
+  const { controller, sessionsDialog, first, last, document, FakeElement } = modalBehaviorHarness();
+  const details = new FakeElement("details", { tagName: "DETAILS" });
+  const summary = new FakeElement("summary", { tagName: "SUMMARY" });
+  const select = new FakeElement("select", { tagName: "SELECT" });
+  details.children = [summary, select];
+  details.open = false;
+  details.parentElement = sessionsDialog;
+  summary.parentElement = details;
+  select.parentElement = details;
+  const cssHidden = new FakeElement("css-hidden");
+  cssHidden.visibility = "hidden";
+  const rectless = new FakeElement("display-none");
+  rectless.rectless = true;
+  const hiddenParent = new FakeElement("hidden-parent");
+  hiddenParent.hidden = true;
+  const hiddenChild = new FakeElement("hidden-child");
+  hiddenChild.parentElement = hiddenParent;
+  const ariaParent = new FakeElement("aria-hidden-parent");
+  ariaParent.setAttribute("aria-hidden", "true");
+  const ariaChild = new FakeElement("aria-hidden-child");
+  ariaChild.parentElement = ariaParent;
+  sessionsDialog.focusables = [first, last, summary, select, cssHidden, rectless, hiddenChild, ariaChild];
+  controller.setDialogOpen(sessionsDialog, true);
+  assert.match(sessionsDialog.lastSelector, /details > summary/u, "the real shipped selector must include native disclosure controls");
+  assert.deepEqual(controller.dialogFocusables(sessionsDialog), [first, last, summary]);
+  const tab = (shiftKey = false) => ({ key: "Tab", shiftKey, prevented: false, preventDefault() { this.prevented = true; } });
+  last.focus();
+  const beforeSummary = tab();
+  controller.trapDialogFocus(beforeSummary);
+  assert.equal(beforeSummary.prevented, false, "the button before Details must allow native Tab to reach its summary");
+  summary.focus();
+  const afterSummary = tab();
+  controller.trapDialogFocus(afterSummary);
+  assert.equal(afterSummary.prevented, true);
+  assert.equal(document.activeElement, first);
+  const backward = tab(true);
+  controller.trapDialogFocus(backward);
+  assert.equal(document.activeElement, summary, "Shift+Tab must wrap to the last visible disclosure");
+  details.open = true;
+  assert.deepEqual(controller.dialogFocusables(sessionsDialog), [first, last, summary, select]);
+  select.focus();
+  const afterOpenSelect = tab();
+  controller.trapDialogFocus(afterOpenSelect);
+  assert.equal(afterOpenSelect.prevented, true);
+  assert.equal(document.activeElement, first);
+});
+
 test("Escape clears one-hop emphasis before closing the selected node inspector", () => {
   const { controller, first } = modalBehaviorHarness();
   controller.setRelationFocus(true);
@@ -3469,7 +3649,7 @@ test("keeps secondary Repository and Workspace surfaces in an on-demand keyboard
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
   assert.match(html, /class="work-view-menu"/u);
-  assert.match(html, /class="work-view-switcher" role="tablist" aria-label="Optional work surface views"/u);
+  assert.match(html, /class="work-view-tabs" role="tablist" aria-label="Optional work surface views"/u);
   for (const view of ["repository", "workspace", "run"]) {
     assert.match(html, new RegExp(`role="tab"[^>]+data-live-work-view="${view}"`, "u"));
     assert.match(html, new RegExp(`data-live-${view === "run" ? "run" : view}-view`, "u"));
@@ -3483,6 +3663,108 @@ test("keeps secondary Repository and Workspace surfaces in an on-demand keyboard
   assert.match(html, /setWorkView\(currentWorkView, \{ persist: false \}\)/u);
   assert.match(html, /params\.set\("projectId", selectedProjectId\)[\s\S]*params\.set\("runId", selectedRunId\)/u);
   assert.doesNotMatch(html, /worktree children|session worktree/iu);
+});
+
+test("snapshot refreshes preserve an open view menu until the user selects a view", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const menu = { open: true, removeAttribute(name) { if (name === "open") this.open = false; } };
+  const surfaces = { repository: {}, workspace: {}, run: {} };
+  const stored = [];
+  const select = new Function("app", "repositoryView", "workspaceView", "workspace", "persistStoredChoice", `
+let currentWorkView = "run";
+const WORK_VIEWS = ["run", "workspace", "repository"];
+const WORK_VIEW_STORAGE_KEY = "test-work-view";
+const workViewTabs = [];
+const currentSnapshot = null;
+const setInspectorOpen = () => {};
+${shippedHelper(html, "setWorkView")}
+return setWorkView;`)(
+    { querySelector: (selector) => selector === ".work-view-menu" ? menu : surfaces.run },
+    surfaces.repository, surfaces.workspace, { setAttribute() {} }, (key, value) => stored.push([key, value]),
+  );
+  for (let index = 0; index < 3; index += 1) select("run", { persist: false });
+  assert.equal(menu.open, true, "SSE refresh cannot steal a menu the user is reading");
+  assert.deepEqual(stored, [], "snapshot refresh does not change a saved view preference");
+  select("repository");
+  assert.equal(menu.open, false, "a deliberate tab selection dismisses its menu");
+  assert.equal(surfaces.repository.hidden, false);
+  assert.equal(surfaces.run.hidden, true);
+  assert.deepEqual(stored, [["test-work-view", "repository"]]);
+});
+
+test("hidden graph refreshes defer measurement until the run surface is revealed", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const priorCard = { id: "kept-card" };
+  const graphState = { bounds: { width: 1800, height: 900 }, nodeElements: new Map([["a", priorCard]]) };
+  const hiddenSnapshot = new Proxy({}, { get() { throw new Error("a hidden graph must not consume or measure the snapshot"); } });
+  new Function("graph", "graphState", "snapshot", `${shippedHelper(html, "renderGraph")}\nrenderGraph(snapshot);`)(
+    { clientWidth: 0, clientHeight: 0 }, graphState, hiddenSnapshot,
+  );
+  assert.equal(graphState.renderPending, true);
+  assert.equal(graphState.nodeElements.get("a"), priorCard, "background live updates preserve the last measured graph");
+  assert.deepEqual(graphState.bounds, { width: 1800, height: 900 });
+  const frames = [], calls = [], graphPanel = { hidden: true };
+  const reveal = new Function("app", "graphState", "window", "renderGraph", "reconcileCamera", `
+let currentWorkView = "workspace";
+const currentSnapshot = {};
+const WORK_VIEWS = ["run", "workspace", "repository"];
+const workViewTabs = [];
+const repositoryView = {}, workspaceView = {}, workspace = { setAttribute() {} };
+const setInspectorOpen = () => {};
+${shippedHelper(html, "setWorkView")}
+return () => setWorkView("run", { persist: false });`)(
+    { querySelector: () => graphPanel }, graphState, { requestAnimationFrame: (callback) => frames.push(callback) },
+    () => { calls.push("render"); graphState.renderPending = false; }, () => calls.push("reconcile"),
+  );
+  reveal();
+  assert.equal(graphPanel.hidden, false);
+  assert.deepEqual(calls, [], "revealing first gives the browser a layout opportunity");
+  frames.shift()();
+  assert.deepEqual(calls, ["render", "reconcile"], "fresh visible geometry reaches the existing mode-aware camera path");
+});
+
+test("a hidden canvas never acquires an invented overview size", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const graphState = { bounds: { width: 1800, height: 900 } };
+  for (const graph of [{ clientWidth: 0, clientHeight: 0 }, { clientWidth: 1440, clientHeight: 0 }]) {
+    assert.doesNotThrow(() => new Function("graph", "graphState", `${shippedHelper(html, "fitGraph")}\nfitGraph();`)(graph, graphState));
+  }
+});
+
+test("footer details span the full graph grid and own an expandable auto row", () => {
+  const rules = stylesheetRules(renderLiveControlRoomPage());
+  for (const viewport of [{ width: 390, height: 844 }, { width: 884, height: 871 }, { width: 1440, height: 900 }]) {
+    const resolve = (selector, property) => resolvedForViewport(rules, { selector, property, viewport });
+    assert.equal(resolve(".status-records", "grid-column"), "1 / -1");
+    assert.equal(resolve(".status-records", "grid-row"), "3");
+    assert.match(resolve(".graph-panel", "grid-template-rows"), /auto auto$/u,
+      "disclosing the footer cannot overflow a fixed-height last row");
+    assert.equal(resolve(".status-records .status-bar", "margin-left"), "0");
+  }
+  assert.match(resolvedForViewport(rules, { selector: ".workspace-grid", property: "grid-template-rows", viewport: { width: 1440, height: 900 } }), /auto auto$/u,
+    "the dense display:contents layout gives the wrapper a full-width auto row too");
+});
+
+test("phone help and information menu actions open the same dialogs as the desktop controls", () => {
+  const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
+  const controls = new Map(["help", "info"].map((kind) => [kind, Array.from({ length: 2 }, () => ({ addEventListener(name, handler) { this[name] = handler; } }))]));
+  const opened = [];
+  const helpDialog = { id: "help" }, infoDialog = { id: "info" };
+  const source = html.match(/  app\.querySelectorAll\("\[data-live-open-help\]"\)[^\n]*\n  app\.querySelectorAll\("\[data-live-open-info\]"\)[^\n]*/u)?.[0];
+  assert.ok(source, "each visible help/info control must receive the modal handler");
+  new Function("app", "setDialogOpen", "helpDialog", "infoDialog", source)(
+    { querySelectorAll: (selector) => controls.get(selector.includes("help") ? "help" : "info") },
+    (dialog, open) => opened.push([dialog.id, open]), helpDialog, infoDialog,
+  );
+  for (const button of controls.get("help")) button.click();
+  for (const button of controls.get("info")) button.click();
+  assert.deepEqual(opened, [["help", true], ["help", true], ["info", true], ["info", true]]);
+  assert.match(html, /class="work-view-utilities"[^>]*>[\s\S]*?data-live-open-help[\s\S]*?data-live-open-info[\s\S]*?<\/div>/u);
+  const rules = stylesheetRules(html), viewport = { width: 390, height: 844 };
+  assert.equal(resolvedForViewport(rules, { selector: ".work-view-utilities", property: "display", viewport }), "grid");
+  assert.equal(resolvedForViewport(rules, { selector: ".topbar-actions [data-live-open-help]", property: "display", viewport }), "none");
+  assert.equal(resolvedForViewport(rules, { selector: "[data-live-open-help]", property: "display", viewport }), null,
+    "the phone rule must hide only the desktop entry, not its menu counterpart");
 });
 
 test("renders repository and workspace facts without inventing unavailable source-control data", () => {
@@ -3509,7 +3791,8 @@ test("renders repository and workspace facts without inventing unavailable sourc
   assert.match(html, /\["Worktree", repository\.worktree\]/u);
   assert.match(html, /\["Pull request", repository\.pullRequest\]/u);
   assert.match(html, /\["Diff", repository\.diff\]/u);
-  assert.match(html, /fact\?\.summary \|\| "Unavailable"/u);
+  assert.match(html, /fact\?\.state === "observed" && usefulNodeMeta\(fact\.summary\)/u);
+  assert.match(html, /此记录没有仓库信息/u);
   assert.match(html, /data-live-workspace-boundary/u);
   assert.match(html, /function renderWorkspaceSessions/u);
   assert.match(html, /function renderWorkspaceBoard/u);
@@ -4039,7 +4322,7 @@ function runNormalizerHarness({ actualStatus = false } = {}) {
   const normalizeSnapshot = new Function(
     "DISPLAY_FORMAT",
     ...stubNames,
-    `${serializeLiveTokenUsageResolvers()}\n${serializeLiveRunOverviewResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
+    `${serializeLiveTokenUsageResolvers()}\n${serializeLiveRunOverviewResolvers()}\n${actualStatusSource}\n${["normalizeSnapshot", "display", "firstValue", "numberOr", "nullableCount", "nullableCountOf", "safeIdentifier"].map((name) => shippedHelper(html, name)).join("\n")}
       return normalizeSnapshot;
     `,
   )(displayFormat, ...stubNames.map((name) => stubs[name]));

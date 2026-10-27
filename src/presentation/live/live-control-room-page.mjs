@@ -463,6 +463,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Stale": "未更新",
     "running": "运行中",
     "completed": "已完成",
+    "Running": "进行中",
+    "Completed": "已完成",
+    "Queued": "排队中",
+    "Failed": "失败",
+    "Blocked": "已阻塞",
+    "Skipped": "已跳过",
+    "In doubt": "存疑",
+    "Stale": "记录已过期",
+    "executed": "已执行",
+    "Conversation transcript unavailable for this selection.": "此任务没有可查看的对话记录。",
+    "Diff telemetry unavailable for this selection.": "此任务没有代码变更记录。",
+    "Terminal adapter telemetry unavailable for this selection.": "此任务没有工具执行记录。",
+    "No context transfer records are available for this selection.": "此任务没有上下文交接记录。",
     "skipped": "已跳过",
     "failed": "失败",
     "blocked": "已阻塞",
@@ -593,7 +606,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     ,"Snapshots": "快照"
     ,"Terminal": "终态"
     ,"Proof": "证据状态"
-    ,"Prompt summary": "任务摘要"
+    ,"Prompt summary": "提示词摘要"
+    ,"native observed": "原生运行观察"
+    ,"native execution observed; task acceptance unproven": "已观察到执行，任务结果尚未验收"
     ,"Loadout": "能力装载"
     ,"Declared capability loadout": "已声明能力装载"
     ,"observed": "已观测"
@@ -783,6 +798,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const inspectorFeedbackHost = app.querySelector("[data-live-feedback-host]");
   const inspectorDeliverablesHost = app.querySelector("[data-live-deliverables-host]");
   const selectedNodeStatus = app.querySelector("[data-live-selected-node-status]");
+  const selectedNodeStateNote = app.querySelector("[data-live-selected-node-state-note]");
   const selectedNodeOwner = app.querySelector("[data-live-selected-node-owner]");
   const selectedNodeRuntime = app.querySelector("[data-live-selected-node-runtime]");
   const selectedNodeModel = app.querySelector("[data-live-selected-node-model]");
@@ -913,6 +929,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let selectedRunId = "";
   let sessionSearchQuery = "";
   let showUnlinkedSessions = false;
+  const expandedSessionRecords = new Set();
   let catalogAvailable = false;
   let catalogRequestInFlight = false;
   let catalogRefreshTimer = null;
@@ -932,7 +949,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const controlActions = ["pause", "resume", "reassign", "handoff"];
   const SNAPSHOT_COALESCE_MS = 75;
   const POLLING_FALLBACK_INTERVAL_MS = 10000;
-  const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  const FOCUSABLE_DIALOG_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), details > summary:first-of-type:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
   function safeIdentifier(value) {
     if (typeof value !== "string") return "";
@@ -1240,6 +1257,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!input || typeof input !== "object" || Array.isArray(input)) return null;
     const hasRun = Boolean(input.run && typeof input.run === "object" && !Array.isArray(input.run));
     const runInput = hasRun ? input.run : {};
+    const snapshotRunId = hasRun ? safeIdentifier(firstValue(runInput, ["id", "runId", "key"], input.runId)) : "";
     const sourceInput = input.source && typeof input.source === "object" ? input.source : {};
     const sessionCandidate = input.sessionInfo ?? input.session;
     const sessionInput = sessionCandidate && typeof sessionCandidate === "object" && !Array.isArray(sessionCandidate) ? sessionCandidate : {};
@@ -1295,6 +1313,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         memoryGraphNames: capabilityNames(loadoutValue.memoryGraphNames),
         dependencyNames: capabilityNames(loadoutValue.dependencyNames),
       };
+      const reportedDurationMs = item.durationMs ?? item.timing?.durationMs;
       return {
         id: display(firstValue(item, ["id", "nodeId"], "node-" + (index + 1)), "node-" + (index + 1)),
         taskPacketId: safeIdentifier(item.taskPacketId) || null,
@@ -1314,7 +1333,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
         active: item.active === true,
         observedOnly: item.observedOnly === true,
         executionObserved: item.executionObserved === true,
-        runId: safeIdentifier(item.runId) || ownerReport?.runId || "",
+        // Native snapshots bind their nodes through the enclosing run. Supply
+        // only an absent binding; an explicit foreign or invalid binding must
+        // never be silently rewritten into the current run.
+        runId: safeIdentifier(item.runId) || ownerReport?.runId
+          || ([undefined, null, ""].includes(item.runId) ? snapshotRunId : ""),
         declaredNotStarted: item.declaredNotStarted === true,
         role: display(firstValue(item, ["roleDisplayName", "role", "ownerRole"], "worker"), "worker"),
         agent: display(firstValue(item, ["agent", "ownerAgent", "owner"])),
@@ -1327,6 +1350,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         ...normalizeLiveTokenUsage(item),
         firstAt: display(firstValue(item, ["firstAt", "startedAt", "createdAt"], ""), ""),
         lastAt: display(firstValue(item, ["lastAt", "endedAt", "updatedAt"], ""), ""),
+        durationMs: Number.isFinite(reportedDurationMs) && reportedDurationMs >= 0 ? reportedDurationMs : null,
         terminalEvidence: summarizeTerminalEvidence(firstValue(item, ["terminalEvidence", "completionEvidence", "resultSummary"], "")),
         toolCount: Math.max(0, numberOr(firstValue(item, ["toolCount", "toolsUsed", "toolCalls"], 0), 0)),
         latestTool: display(firstValue(item, ["latestTool", "lastTool", "activeTool"], ""), ""),
@@ -1511,12 +1535,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
         runtime: display(firstValue(sessionInput, ["runtime", "transport"], firstValue(runInput, ["transport"], "local")), "local"),
         mode: display(firstValue(sessionInput, ["mode", "sessionMode"], "observed"), "observed"),
         lastPromptSummary: display(firstValue(sessionInput, ["lastPromptSummary", "promptSummary"], "Prompt summary withheld"), "Prompt summary withheld"),
-        fileChangeCount: Math.max(0, numberOr(firstValue(sessionInput, ["fileChangeCount", "fileSnapshots"], 0), 0)),
-        artifactCount: Math.max(0, numberOr(firstValue(sessionInput, ["artifactCount", "artifacts"], 0), 0)),
+        fileChangeCount: nullableCountOf(sessionInput, ["fileChangeCount", "fileSnapshots"]),
+        artifactCount: nullableCountOf(sessionInput, ["artifactCount", "artifacts"]),
         plannedCount: Math.max(0, numberOr(firstValue(sessionInput, ["plannedCount"], 0), 0)),
         completedCount: Math.max(0, numberOr(firstValue(sessionInput, ["completedCount"], 0), 0)),
-        failedCount: Math.max(0, numberOr(firstValue(sessionInput, ["failedCount"], 0), 0)),
-        blockedCount: Math.max(0, numberOr(firstValue(sessionInput, ["blockedCount"], 0), 0)),
+        failedCount: nullableCountOf(sessionInput, ["failedCount"]),
+        blockedCount: nullableCountOf(sessionInput, ["blockedCount"]),
         proofState: display(firstValue(sessionInput, ["proofState"], "structural evidence only"), "structural evidence only"),
       },
       repository: {
@@ -1648,6 +1672,23 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (seconds < 60) return seconds + " s";
     const minutes = Math.floor(seconds / 60);
     return minutes + "m " + String(seconds % 60).padStart(2, "0") + "s";
+  }
+
+  /** Show a reported duration, or an observed finished interval; never a live zero. */
+  function inspectorNodeDuration(node) {
+    if (!node) return "";
+    if (typeof node.durationMs === "number" && Number.isFinite(node.durationMs) && node.durationMs >= 0) {
+      if (node.durationMs < 1000) return node.durationMs + " ms";
+      const seconds = Math.round(node.durationMs / 1000);
+      if (seconds < 60) return seconds + " s";
+      return Math.floor(seconds / 60) + "m " + String(seconds % 60).padStart(2, "0") + "s";
+    }
+    if (node.executionState !== "executed" && !["completed", "failed", "cancelled"].includes(node.status)) return "";
+    const startedAt = Date.parse(node.firstAt);
+    const endedAt = Date.parse(node.lastAt);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) return "";
+    const duration = formatDuration(node.firstAt, node.lastAt);
+    return usefulNodeMeta(duration) ? duration : "";
   }
 
   function formatSessionTime(value) {
@@ -1950,11 +1991,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function sessionRowMeta(session) {
+    const state = sessionStateCopy(session);
     return [
-      session.active ? "Running" : "Observed run",
+      state || (session.active ? "Running" : "Observed run"),
       informativeValue(session.currentStage, "Stage unconfirmed"),
       formatSessionTime(session.updatedAt),
-    ].filter(Boolean).map(localize).concat(sessionStateCopy(session) || []).join(" · ");
+    ].filter(Boolean).map(localize).join(" · ");
   }
 
   // The updatedAt value carries two very different claims. Either the run
@@ -2000,7 +2042,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // the record is genuinely silent rather than merely unread.
     if (status === "unknown") return currentLanguage === "zh" ? "记录不足以判断" : "Record is not enough to judge";
     if (status === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
-    if (status === "active") return currentLanguage === "zh" ? "执行中" : "Running";
+    if (status === "active") return currentLanguage === "zh" ? "进行中" : "Running";
     return localize("Stale");
   }
 
@@ -3302,13 +3344,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (graphPanel) graphPanel.hidden = currentWorkView !== "run";
     workspace?.setAttribute("data-work-view", currentWorkView);
     if (currentWorkView !== "run") setInspectorOpen(false);
-    if (persist) persistStoredChoice(WORK_VIEW_STORAGE_KEY, currentWorkView);
+    if (persist) {
+      persistStoredChoice(WORK_VIEW_STORAGE_KEY, currentWorkView);
+      app.querySelector(".work-view-menu")?.removeAttribute("open");
+    }
     if (currentWorkView === "run" && currentSnapshot) {
-      const refreshCamera = () => reconcileCamera();
+      const refreshCamera = () => {
+        if (graphState.renderPending) renderGraph(currentSnapshot);
+        reconcileCamera();
+      };
       if (window.requestAnimationFrame) window.requestAnimationFrame(refreshCamera);
       else refreshCamera();
     }
-    app.querySelector(".work-view-menu")?.removeAttribute("open");
   }
 
   function setInspectorTab(tabName, { focus = false } = {}) {
@@ -3448,7 +3495,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function reconcileCamera({ inspectorOpen = evidencePanel?.dataset.open === "true" } = {}) {
     reclampGraphTools();
-    if (!graph || !currentSnapshot) return;
+    if (!graph || !currentSnapshot || graph.clientWidth === 0 || graph.clientHeight === 0) return;
     const layout = graphState.layout;
     // Responsive capability grids can change full-card height while cell LOD
     // stays fixed. Measure that independent budget before the next zoom-in.
@@ -3509,7 +3556,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function dialogFocusables(dialog) {
     return Array.from(dialog?.querySelectorAll(FOCUSABLE_DIALOG_SELECTOR) || [])
-      .filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+      .filter((element) => {
+        if (element.hidden || element.inert || element.getAttribute("aria-hidden") === "true" || !element.getClientRects().length) return false;
+        const visibility = getComputedStyle(element).visibility;
+        if (visibility === "hidden" || visibility === "collapse") return false;
+        for (let ancestor = element.parentElement; ancestor && ancestor !== dialog; ancestor = ancestor.parentElement) {
+          if (ancestor.hidden || ancestor.inert || ancestor.getAttribute("aria-hidden") === "true") return false;
+          if (ancestor.tagName === "DETAILS" && !ancestor.open) {
+            const summary = Array.from(ancestor.children).find((child) => child.tagName === "SUMMARY");
+            if (!summary || (element !== summary && !summary.contains(element))) return false;
+          }
+        }
+        return true;
+      });
   }
 
   function trapDialogFocus(event) {
@@ -3548,7 +3607,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     dialog.hidden = !active;
     dialog.setAttribute("aria-hidden", String(!active));
-    if (active) dialog.querySelector("button, select, [tabindex]")?.focus();
+    if (active) dialogFocusables(dialog)[0]?.focus();
     else if (activeDialog === dialog) {
       activeDialog = null;
       restoreModalBackground();
@@ -3611,8 +3670,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
    * showing.
    */
   function fitGraph() {
-    if (!graph || !graphState.bounds.width) return;
-    const canvas = { width: graph.clientWidth || 760, height: graph.clientHeight || 420 };
+    if (!graph || !graphState.bounds.width || graph.clientWidth === 0 || graph.clientHeight === 0) return;
+    const canvas = { width: graph.clientWidth, height: graph.clientHeight };
     if (graphState.layout?.kind === "dependency") reflowReadableGraph(GRAPH_CAMERA.minScale, { search: true, preserveAnchor: false });
     let fit = resolveOverviewCamera(canvas, graphState.bounds, graphFitInset(), GRAPH_CAMERA);
     // Screen-sized cells and world-space scene bounds are coupled. This bounded
@@ -3686,13 +3745,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const nodeTools = selected ? currentSnapshot.toolCalls.filter((item) => item.nodeId === selected.id) : [];
     const nodeEvents = selected ? currentSnapshot.replay.filter((item) => item.nodeId === selected.id) : [];
     const toolCount = selected ? Math.max(selected.toolCount, nodeTools.length) : 0;
-    setText(selectedNodeLabel, selected ? "Selected · " + liveTaskDisplayLabel(selected, currentLanguage) : "Select a node to inspect provenance", "Select a node to inspect provenance");
+    setText(selectedNodeLabel, selected ? liveTaskDisplayLabel(selected, currentLanguage) : "Select a node to inspect provenance", "Select a node to inspect provenance");
     setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") + " · " + nodeTools.length + " tools · " + nodeEvents.length + " events" : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
-    setText(selectedNodeStatus, labeledFact("Status", selected ? [nodeStateCopy(selected, currentSnapshot.run.id), nodeStateDetailCopy(selected, currentSnapshot.run.id)].filter(Boolean).join(" · ") : ""));
+    setText(selectedNodeStatus, selected ? nodeStateCopy(selected, currentSnapshot.run.id) : "");
+    if (selectedNodeStatus) selectedNodeStatus.dataset.taskState = selected ? resolveLiveNodeTaskLifecycle(selected, currentSnapshot).state : "";
+    setText(selectedNodeStateNote, selected ? nodeStateDetailCopy(selected, currentSnapshot.run.id) : "", "");
+    if (selectedNodeStateNote) selectedNodeStateNote.hidden = !selected || !usefulNodeMeta(nodeStateDetailCopy(selected, currentSnapshot.run.id));
     setText(selectedNodeOwner, labeledFact("Owner", selected ? selected.agent : ""));
+    if (selectedNodeOwner) selectedNodeOwner.hidden = !usefulNodeMeta(selected?.agent);
     setText(selectedNodeRuntime, labeledFact("Runtime", selected ? selected.runtime : ""));
     setText(selectedNodeModel, labeledFact("Model", selected ? selected.model : ""));
-    setText(selectedNodeDuration, labeledFact("Duration", selected ? formatDuration(selected.firstAt, selected.lastAt) : ""));
+    if (selectedNodeModel) selectedNodeModel.hidden = !usefulNodeMeta(selected?.model);
+    const duration = inspectorNodeDuration(selected);
+    setText(selectedNodeDuration, labeledFact("Duration", duration));
+    if (selectedNodeDuration) selectedNodeDuration.hidden = !duration;
     setText(selectedNodeTools, labeledFact("Tools", selected ? toolCount + (usefulNodeMeta(selected.latestTool) ? " · " + selected.latestTool : "") : ""));
     setText(selectedNodeTokens, selected
       ? (currentLanguage === "zh" ? "输入 · " : "Input · ") + formatLiveTokenCount(selected.inputTokens, currentLanguage)
@@ -3719,7 +3785,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(selectedNodePrompt, labeledFact("Prompt era", selected && activePrompt ? activePrompt.label + " · " + activePrompt.excerpt : ""));
     renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents });
     clearChildren(inspectorDeliverablesHost);
-    appendLiveDeliverables(inspectorDeliverablesHost, currentSnapshot, selected);
+    appendLiveDeliverables(inspectorDeliverablesHost, currentSnapshot, selected, { compactEmpty: true });
     renderLocalFeedback(inspectorFeedbackHost, currentSnapshot, selected, "inspector");
   }
 
@@ -3949,6 +4015,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function renderGraph(snapshot) {
+    // A background work surface gives this canvas a real 0x0 box. Defer graph
+    // measurement until reveal instead of replacing its cached card geometry
+    // with hidden-element measurements on every live update.
+    if (graph?.clientWidth === 0 || graph?.clientHeight === 0) {
+      graphState.renderPending = true;
+      return;
+    }
     const graphNodes = graphNodesForSnapshot(snapshot);
     const graphEdges = graphEdgesForSnapshot(snapshot, graphNodes);
     const relationPlan = classifyGraphRelations(graphNodes, graphEdges, EXECUTION_EDGE_KINDS);
@@ -3975,6 +4048,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       graphState = { positions: new Map(), nodeElements: new Map(), edgeElements: new Map(), edgeEffects: new Map(), edgeRoutes: new Map(), rootEntries: new Map(), bounds: { width: 1, height: 1 } };
       graphState.relationPlan = relationPlan;
       updateGraphRelationControls(relationPlan);
+      graphState.renderPending = false;
       return;
     }
     if (graphEmpty) graphEmpty.hidden = true;
@@ -4372,6 +4446,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     updateGraphRelationPresentation();
     updateSelectedNodeVisuals();
     observeGraphCardSizes();
+    graphState.renderPending = false;
   }
 
   function renderStageRail(snapshot) {
@@ -4483,24 +4558,39 @@ const CLIENT_SCRIPT = String.raw`(() => {
       totals.commands += Number(loadout.commands) || 0;
       return totals;
     }, { skills: 0, mcp: 0, tools: 0, commands: 0 });
+    const loadoutCopy = [
+      ["skills", currentLanguage === "zh" ? "技能" : "skills"],
+      ["mcp", "MCP"],
+      ["tools", currentLanguage === "zh" ? "工具" : "tools"],
+      ["commands", currentLanguage === "zh" ? "命令" : "commands"],
+    ].filter(([key]) => loadoutTotals[key] > 0).map(([key, label]) => loadoutTotals[key] + " " + label).join(" · ");
+    const countGroup = (entries) => entries
+      .filter(([key]) => Number.isSafeInteger(session[key]) && session[key] >= 0)
+      .map(([key, zh, en]) => session[key] + " " + (currentLanguage === "zh" ? zh : en)).join(" · ");
     const facts = [
       ["Mode", session.mode],
       ["Runtime", session.runtime],
-      ["Workers", String(session.workerCount) + " total · " + String(session.completedCount) + " completed · " + String(session.plannedCount) + " queued"],
-      ["Events", String(snapshot.replay.length) + " replay events · " + String(snapshot.evidence.length) + " evidence"],
-      ["Snapshots", String(session.fileChangeCount) + " file snapshots · " + String(session.artifactCount) + " artifacts"],
-      ["Loadout", loadoutTotals.skills + " skills · " + loadoutTotals.mcp + " MCP · " + loadoutTotals.tools + " tools · " + loadoutTotals.commands + " commands"],
-      ["Terminal", String(session.failedCount) + " failed · " + String(session.blockedCount) + " blocked"],
+      ["Workers", Number(session.workerCount) > 0 ? (currentLanguage === "zh" ? session.workerCount + " 个执行者" : session.workerCount + " workers") : ""],
+      ["Events", snapshot.replay.length || snapshot.evidence.length ? (currentLanguage === "zh" ? snapshot.replay.length + " 条活动 · " + snapshot.evidence.length + " 条证据" : snapshot.replay.length + " events · " + snapshot.evidence.length + " evidence") : ""],
+      ["Snapshots", countGroup([["fileChangeCount", "个文件快照", "file snapshots"], ["artifactCount", "个产出", "artifacts"]])],
+      ["Loadout", loadoutCopy],
+      ["Terminal", countGroup([["failedCount", "项失败", "failed"], ["blockedCount", "项受阻", "blocked"]])],
       ["Proof", session.proofState],
     ];
     facts.forEach(([label, value]) => {
+      if (!usefulNodeMeta(value)) return;
       const row = makeElement("div", "info-fact-row");
       row.append(makeElement("span", "info-fact-label", localize(label)), makeElement("span", "info-fact-value", display(value)));
       infoFacts.append(row);
     });
-    const prompt = makeElement("div", "info-fact-prompt");
-    prompt.append(makeElement("span", "info-fact-label", localize("Prompt summary")), makeElement("p", "info-fact-value", session.lastPromptSummary));
-    infoFacts.append(prompt);
+    if (session.lastPromptSummary === "Prompt summary withheld") {
+      infoFacts.append(makeElement("p", "panel-note", currentLanguage === "zh" ? "未记录可显示的提示词摘要。" : "No displayable prompt summary was recorded."));
+    } else if (usefulNodeMeta(session.lastPromptSummary)) {
+      const prompt = makeElement("div", "info-fact-prompt");
+      prompt.append(makeElement("span", "info-fact-label", localize("Prompt summary")), makeElement("p", "info-fact-value", session.lastPromptSummary));
+      infoFacts.append(prompt);
+    }
+    if (!infoFacts.children.length) infoFacts.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "此记录没有更多会话信息。" : "No additional session information was recorded."));
   }
 
   function appendOperationalRow(container, label, value, state = "unavailable") {
@@ -4515,14 +4605,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const project = projectForSelection();
     const repository = snapshot.repository || {};
     setText(repositoryTitle, repository.name?.state === "observed" ? repository.name.summary : project?.displayName || "Registered project", "Registered project");
-    setText(repositoryBoundary, "Repository boundary · " + (project?.projectId || "unavailable"), "Repository boundary unavailable");
+    setText(repositoryBoundary, currentLanguage === "zh" ? "当前项目的运行记录" : "Run records for this project");
+    if (repositoryBoundary) repositoryBoundary.title = project?.projectId || "";
     clearChildren(repositoryFacts);
-    for (const [label, fact] of [
+    const availableFacts = [
       ["Branch", repository.branch],
       ["Worktree", repository.worktree],
       ["Pull request", repository.pullRequest],
       ["Diff", repository.diff],
-    ]) appendOperationalRow(repositoryFacts, label, fact?.summary || "Unavailable", fact?.state || "unavailable");
+    ].filter(([, fact]) => fact?.state === "observed" && usefulNodeMeta(fact.summary));
+    for (const [label, fact] of availableFacts) appendOperationalRow(repositoryFacts, localize(label), fact.summary, fact.state);
+    if (!availableFacts.length) repositoryFacts?.append(makeElement("p", "panel-empty repository-empty", currentLanguage === "zh" ? "此记录没有仓库信息" : "No repository information was recorded for this run."));
     clearChildren(repositorySessions);
     const foldedAway = Number(project?.omittedSessionCount) > 0
       ? Number(project.omittedSessionCount)
@@ -4550,8 +4643,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
       row.type = "button";
       row.dataset.runId = session.runId;
       row.dataset.active = session.runId === selectedRunId ? "true" : "false";
+      row.title = sessionDisplayTitle(session);
+      const title = makeElement("span", "workspace-child-title", sessionDisplayTitle(session));
+      title.title = sessionDisplayTitle(session);
       row.append(
-        makeElement("span", "workspace-child-title", sessionDisplayTitle(session)),
+        title,
         makeElement("span", "workspace-child-meta", sessionRowMeta(session)),
       );
       row.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
@@ -4601,6 +4697,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       button.type = "button";
       button.dataset.active = session.runId === selectedRunId ? "true" : "false";
       button.dataset.running = session.active ? "true" : "false";
+      button.title = sessionDisplayTitle(session);
       button.append(
         makeElement("span", "workspace-session-title", sessionDisplayTitle(session)),
         makeElement("span", "workspace-session-meta", sessionRowMeta(session)),
@@ -4641,16 +4738,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
         card.dataset.status = node.status;
         card.dataset.selected = node.id === selectedNodeId ? "true" : "false";
         const kicker = makeElement("span", "work-item-kicker");
-        kicker.append(makeElement("span", "", node.kind || "work item"), makeElement("span", "", nodeStateCopy(node, snapshot.run.id)));
+        kicker.append(makeElement("span", "", nodeStateCopy(node, snapshot.run.id)));
         const tags = makeElement("span", "work-item-tags");
         appendWorkspaceTag(tags, nodeStateDetailCopy(node, snapshot.run.id));
         appendWorkspaceTag(tags, node.agent, "work-item-tag-owner");
-        appendWorkspaceTag(tags, node.runtime);
-        appendWorkspaceTag(tags, node.latestTool, "work-item-tag-tool");
         const title = makeElement("h3", "work-item-title", liveTaskDisplayLabel(node, currentLanguage));
         title.title = liveTaskDisplayLabel(node, currentLanguage);
-        const summary = makeElement("p", "work-item-summary", node.ownerReport ? "" : node.summary);
-        summary.hidden = Boolean(node.ownerReport);
+        // The projection's generic missing-brief warning belongs in task details,
+        // where it remains intact, rather than repeating on every work card.
+        const summaryCopy = node.ownerReport || node.summary === "任务说明未记录；仅根据原生事件显示派发与返回情况，任务结果尚未验收。" ? "" : node.summary;
+        const summary = makeElement("p", "work-item-summary", summaryCopy);
+        summary.hidden = !usefulNodeMeta(summaryCopy);
         card.append(kicker, title, summary, tags);
         card.addEventListener("click", () => {
           selectedNodeId = node.id;
@@ -4905,9 +5003,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
     repaint();
   }
 
-  function appendLiveDeliverables(parent, snapshot, selected) {
+  function appendLiveDeliverables(parent, snapshot, selected, { compactEmpty = false } = {}) {
     if (!snapshot?.run) return;
     const deliverables = liveDeliverablesForNode(snapshot.deliverables, selected);
+    if (compactEmpty && !deliverables.length) {
+      parent?.append(makeElement("p", "panel-note live-deliverable-empty", currentLanguage === "zh"
+        ? "未附可打开的文件；已完成不代表已通过验收。"
+        : "No openable file was attached; completed work still needs acceptance."));
+      return;
+    }
     for (const item of deliverables) {
       const row = makeElement("article", "live-deliverable");
       row.dataset.deliverableId = item.id;
@@ -5122,11 +5226,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const factsSection = makeElement("section", "workspace-detail-section");
     factsSection.append(makeElement("h3", "", currentLanguage === "zh" ? "运行信息" : "Run information"));
     const facts = makeElement("div", "workspace-detail-list");
-    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "负责人" : "Owner", selected?.agent);
-    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "运行时" : "Runtime", selected?.runtime || snapshot.sessionInfo?.runtime);
+    if (usefulNodeMeta(selected?.agent)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "负责人" : "Owner", selected.agent);
+    const runtime = selected?.runtime || snapshot.sessionInfo?.runtime;
+    if (usefulNodeMeta(runtime)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "运行时" : "Runtime", runtime);
     appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前阶段" : "Stage", informativeValue(snapshot.run.stage, "Stage unconfirmed"));
-    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前工具" : "Current tool", selected?.latestTool);
-    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "上级工作项" : "Depends on", selected?.parentId);
+    if (usefulNodeMeta(selected?.latestTool)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前工具" : "Current tool", selected.latestTool);
+    if (usefulNodeMeta(selected?.parentId)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "上级工作项" : "Depends on", selected.parentId);
     factsSection.append(facts);
     workspaceDetail?.append(factsSection);
 
@@ -5852,8 +5957,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
         sessionList.append(groupHeading);
         lastGroup = group;
       }
-      const card = makeElement("button", "session-card");
-      card.type = "button";
+      const card = makeElement("article", "session-card");
+      card.setAttribute("role", "listitem");
       card.dataset.runId = session.runId;
       card.dataset.active = session.runId === selectedRunId ? "true" : "false";
       card.dataset.identity = group;
@@ -5864,10 +5969,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       activity.dataset.linkState = session.conversationLinkState;
       const originCopy = sessionOriginCopy(session);
       const facts = makeElement("span", "session-card-facts");
-      // The tool name and the link verdict already sit in the activity line above.
-      // Repeating them here printed both twice on all 21 measured cards, so the
-      // row carries the chat id instead — the one fact that line cannot show, and
-      // the only thing that makes a verified verdict checkable rather than a claim.
+      // Detailed identities and counts stay available without dominating every row.
       const chatIdentity = conversationChatIdentityCopy(session);
       const timeCopy = sessionTimeCopy(session);
       const timeFact = makeElement("span", "", timeCopy.text);
@@ -5880,18 +5982,27 @@ const CLIENT_SCRIPT = String.raw`(() => {
         makeElement("span", "", session.eventCount === null ? "No event report" : session.eventCount + " events"),
       );
       if (chatIdentity) {
-        // The card is itself a button, so the id cannot host a second control
-        // here. It carries the whole value on the element instead: hover and
-        // selection reach it, and the run header keeps the control that copies it.
         const chatFact = makeElement("span", "", chatIdentity);
         chatFact.dataset.chatId = conversationChatIdentityValue(session);
         chatFact.title = chatFact.dataset.chatId;
         facts.append(chatFact);
       }
-      card.append(heading, activity);
+      const open = makeElement("button", "session-card-open");
+      open.type = "button";
+      open.title = sessionDisplayTitle(session);
+      const summary = makeElement("span", "session-card-summary", timeCopy.text + " · " + sourceLabel + (session.active ? (currentLanguage === "zh" ? " · 实时" : " · Live") : ""));
+      open.append(heading, summary);
+      open.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
+      const details = makeElement("details", "session-card-details");
+      details.open = expandedSessionRecords.has(session.runId);
+      details.append(makeElement("summary", "", currentLanguage === "zh" ? "详情" : "Details"), activity, facts);
+      details.addEventListener("toggle", () => {
+        if (details.open) expandedSessionRecords.add(session.runId);
+        else expandedSessionRecords.delete(session.runId);
+      });
+      card.append(open);
       if (originCopy) card.append(makeElement("span", "session-card-origin", originCopy));
-      card.append(facts);
-      card.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
+      card.append(details);
       sessionList.append(card);
     });
     if (unlinkedSessions.length && !shouldShowUnlinked) {
@@ -6413,8 +6524,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   app.querySelector("[data-live-open-sessions]")?.addEventListener("click", () => setDialogOpen(sessionsDialog, true));
   workspaceOpenSessions?.addEventListener("click", () => setDialogOpen(sessionsDialog, true));
   workspaceOpenRunMap?.addEventListener("click", () => setWorkView("run", { focus: true }));
-  app.querySelector("[data-live-open-help]")?.addEventListener("click", () => setDialogOpen(helpDialog, true));
-  app.querySelector("[data-live-open-info]")?.addEventListener("click", () => setDialogOpen(infoDialog, true));
+  app.querySelectorAll("[data-live-open-help]").forEach((button) => button.addEventListener("click", () => setDialogOpen(helpDialog, true)));
+  app.querySelectorAll("[data-live-open-info]").forEach((button) => button.addEventListener("click", () => setDialogOpen(infoDialog, true)));
   app.querySelectorAll("[data-live-dialog-close]").forEach((button) => button.addEventListener("click", () => setDialogOpen(button.closest("[data-live-dialog]"), false)));
   app.querySelectorAll("[data-live-dialog]").forEach((dialog) => dialog.addEventListener("pointerdown", (event) => {
     if (event.target === dialog) setDialogOpen(dialog, false);
@@ -6835,18 +6946,22 @@ button { color: inherit; }
 .run-overview-activity h2 { flex: 0 0 auto; }
 .run-overview-activity .run-overview-value { flex: 0 1 auto; display: block; white-space: nowrap; text-overflow: ellipsis; line-height: var(--lh-flat); }
 .run-overview-activity .run-overview-note { flex: 0 0 auto; white-space: nowrap; line-height: var(--lh-flat); }
-.run-records-content { display: grid; gap: var(--sp-cozy); max-height: 40vh; overflow: auto; padding-top: var(--sp-cozy); }
+.run-records-content { display: grid; gap: var(--sp-default); padding-top: var(--sp-default); }
 .run-context-technical { display: flex; flex-wrap: wrap; gap: var(--sp-cozy) var(--sp-section); padding-top: var(--sp-cozy); }
 .graph-record-controls[open] .graph-relation-summary { display: block; }
-.status-records { border-top: 1px solid var(--line); padding-inline: var(--sp-cozy); }
+.status-records { min-width: 0; grid-column: 1 / -1; grid-row: 3; border-top: 1px solid var(--line); padding-inline: var(--sp-cozy); }
+.status-records > summary { min-height: var(--h-status-bar); padding-block: var(--sp-tight); }
+.status-records .status-bar { width: 100%; margin-left: 0; padding-inline: 0; border-top: 0; }
 @media (max-width: 720px) { .run-overview { padding: var(--sp-cozy); max-height: 36dvh; overflow: auto; } .run-overview-activity { flex-wrap: wrap; } }
 .run-context { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--sp-cozy) var(--sp-section); padding: var(--sp-snug) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
-.run-context-heading { min-width: 0; grid-column: 1 / -1; }
+.run-context-heading { min-width: 0; }
 .run-context-heading > .context-kicker { display: none; }
-.run-context-description { grid-column: 1 / -1; width: 100%; margin-top: var(--sp-tight); color: var(--muted); font-size: var(--fs-body); }
+.run-context-description { grid-column: 1 / -1; width: 100%; margin-top: 0; color: var(--muted); font-size: var(--fs-entity-body); }
 .run-context-description summary { width: fit-content; cursor: pointer; }
 .run-context-description summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.run-context-description[open] .run-context-task { display: block; -webkit-line-clamp: unset; max-height: 20vh; overflow: auto; }
+.run-context-details-body { max-height: min(240px, 36dvh); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-block: var(--sp-cozy); }
+.run-context-description[open] .run-context-task { display: block; -webkit-line-clamp: unset; }
+.run-context-identifier { margin: var(--sp-cozy) 0 0; overflow-wrap: anywhere; font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
 .context-kicker { display: block; margin-bottom: var(--sp-tight); color: var(--completion); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); text-transform: none; letter-spacing: 0; }
 .run-context-title { min-width: 0; margin: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--clamp-lines-title); overflow: hidden; color: var(--text); font-size: var(--fs-body); font-weight: var(--weight-semibold); line-height: var(--lh-snug); overflow-wrap: anywhere; }
 .run-context-heading:has(.run-context-description[open]) .run-context-title { -webkit-line-clamp: unset; }
@@ -6867,8 +6982,11 @@ button { color: inherit; }
 .work-surface-header p { max-width: 72ch; margin: var(--sp-cozy) 0 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); font-family: var(--font-ui); }
 .surface-state { flex: 0 0 auto; padding: var(--sp-tight) var(--sp-snug); border: 1px solid #385275; border-radius: var(--radius-sm); color: var(--completion-bright); background: rgba(91,140,255,.08); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); text-transform: none; }
 .repository-view { display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.repository-layout { display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); min-height: 0; }
-.operational-section { --section-inline: var(--sp-section); min-width: 0; padding: var(--sp-roomy) var(--section-inline); }
+.repository-layout { display: grid; grid-template-columns: minmax(240px,.6fr) minmax(0,1.4fr); min-height: 0; overflow: auto; }
+.repository-layout:has(.repository-empty) { grid-template-columns: minmax(0,1fr); align-content: start; }
+.repository-layout:has(.repository-empty) > .operational-section + .operational-section { border-left: 0; border-top: 1px solid var(--line); }
+.repository-empty { margin: 0; }
+.operational-section { --section-inline: var(--sp-default); min-width: 0; padding: var(--sp-default) var(--section-inline); }
 .operational-section + .operational-section { border-left: 1px solid var(--line); }
 .operational-section h3 { margin: 0 0 var(--sp-default); color: var(--muted); font-weight: var(--weight-semibold); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); text-transform: none; }
 .operational-list { border-top: 1px solid var(--line); }
@@ -6878,10 +6996,10 @@ button { color: inherit; }
 .operational-row[data-state="unavailable"] .operational-value { color: #777; font-weight: var(--weight-regular); }
 .operational-row[data-state="planned"] .operational-value { color: var(--completion-bright); }
 .workspace-children { display: grid; margin-inline: calc(var(--section-inline, 0px) * -1); border-top: 1px solid var(--line); }
-.workspace-child { min-width: 0; display: grid; gap: var(--sp-cozy); padding: var(--sp-default) var(--section-inline, 0px); text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; }
+.workspace-child { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-snug); padding: var(--sp-cozy) var(--section-inline, 0px); text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
 .workspace-child:hover, .workspace-child[data-active="true"] { background: rgba(88,212,207,.05); box-shadow: inset 3px 0 0 var(--accent); }
 .workspace-child:focus-visible { background: rgba(88,212,207,.05); outline: 2px solid var(--accent); outline-offset: -2px; }
-.workspace-child-title { overflow: hidden; color: var(--text); font-size: var(--fs-entity-title); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.workspace-child-title { min-width: 0; max-width: 100%; display: block; overflow: hidden; color: var(--text); font-size: var(--fs-body); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-child-meta { overflow: hidden; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-availability { max-width: 920px; }
 .workspace-view { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
@@ -6900,7 +7018,7 @@ button { color: inherit; }
 .workspace-session-item { min-width: 0; display: grid; gap: var(--sp-cozy); padding: var(--sp-cozy); border: 1px solid transparent; border-left: 3px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .workspace-session-item:hover, .workspace-session-item:focus-visible { background: #121a27; outline: none; }
 .workspace-session-item[data-active="true"] { border-color: #403831; border-left-color: var(--accent); background: #171b21; }
-.workspace-session-title { min-width: 0; overflow: hidden; font-size: var(--fs-entity-title); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.workspace-session-title { min-width: 0; overflow: hidden; font-size: var(--fs-body); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-session-meta { display: flex; align-items: center; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); }
 .workspace-session-meta::before { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--dim); content: ""; }
 .workspace-session-item[data-running="true"] .workspace-session-meta::before { background: var(--green); }
@@ -6921,13 +7039,11 @@ button { color: inherit; }
 .work-column-list { display: grid; align-content: start; gap: var(--sp-snug); padding: var(--sp-cozy); overflow: auto; }
 .work-item-card { min-width: 0; display: grid; gap: var(--sp-snug); padding: var(--sp-cozy); border: 1px solid #2a3445; border-left: 3px solid #53647e; border-radius: var(--radius-sm); background: #141b25; color: var(--text); text-align: left; cursor: pointer; }
 .work-item-card:hover, .work-item-card:focus-visible, .work-item-card[data-selected="true"] { border-color: var(--accent); background: #17222d; outline: none; }
-.work-item-card[data-status="running"] { border-left-color: var(--accent); }
-.work-item-card[data-status="completed"] { border-left-color: var(--green); }
-.work-item-card[data-status="blocked"], .work-item-card[data-status="failed"], .work-item-card[data-status="in_doubt"] { border-left-color: var(--amber); }
 .work-item-kicker { display: flex; justify-content: space-between; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); text-transform: none; }
-.work-item-title { margin: 0; overflow-wrap: anywhere; font-size: var(--fs-entity-title); line-height: var(--lh-snug); }
+.work-item-title { margin: 0; overflow-wrap: anywhere; font-size: var(--fs-body); line-height: var(--lh-snug); }
 .work-item-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .work-item-tags { display: flex; flex-wrap: wrap; gap: var(--sp-snug); }
+.work-item-tags:empty { display: none; }
 .work-item-tag { max-width: 100%; padding: var(--sp-hairline) var(--sp-tight); overflow: hidden; border: 1px solid var(--line); border-radius: 4px; color: #b7c7dd; font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
 .work-item-tag-owner { color: var(--accent); border-color: rgba(79,209,197,.34); }
 .work-item-tag-tool { color: var(--green); }
@@ -6963,7 +7079,7 @@ button { color: inherit; }
 .workspace-activity span { color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-snug); font-family: var(--font-ui); }
 .workspace-telemetry-warning { margin: var(--sp-default); padding: var(--sp-default); border: 1px solid rgba(216,168,78,.35); border-radius: var(--radius-sm); background: rgba(216,168,78,.06); color: #d9bb78; font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
 .workspace-grid[data-inspector-open="true"] { grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 420px); }
-.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto var(--h-status-bar); border: 0; background: var(--ink); overflow: hidden; }
+.graph-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; border: 0; background: var(--ink); overflow: hidden; }
 .graph-stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .graph-stage-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-snug); min-height: 40px; padding: var(--sp-cozy) var(--sp-default); border-bottom: 1px solid var(--line-soft); background: #0e141e; }
 .graph-relation-controls { display: inline-flex; flex: 0 0 auto; gap: var(--sp-snug); padding: var(--sp-hairline); border: 1px solid var(--line); border-radius: var(--radius-sm); }
@@ -6971,14 +7087,17 @@ button { color: inherit; }
 .graph-relation-controls button[aria-pressed="true"] { color: var(--accent); background: rgba(88,212,207,.1); }
 .graph-relation-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .graph-relation-summary { flex: 1 1 170px; min-width: 0; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-snug); }
-.graph-legend-details { order: 5; flex: 0 1 auto; color: var(--muted); font-size: var(--fs-label); }
+.graph-record-controls { order: 2; flex: 0 1 auto; color: var(--muted); font-size: var(--fs-label); }
+.graph-record-controls[open] { flex-basis: 100%; }
+.graph-record-controls[open] .graph-relation-controls { margin-top: var(--sp-cozy); }
+.graph-legend-details { order: 3; flex: 0 1 auto; color: var(--muted); font-size: var(--fs-label); }
 .graph-legend-details summary { cursor: pointer; }
 .graph-legend-details[open] { flex-basis: 100%; }
-.graph-canvas-title { display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--sp-cozy); color: var(--text); font-size: var(--fs-view-title); font-weight: var(--weight-semibold); white-space: nowrap; }
+.graph-canvas-title { order: 0; display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--sp-cozy); margin-right: auto; color: var(--text); font-size: var(--fs-view-title); font-weight: var(--weight-semibold); white-space: nowrap; }
 .graph-canvas-title .ui-icon { width: 1.05rem; height: 1.05rem; color: var(--muted); }
 .graph-edge-legend { order: 3; flex-basis: 100%; min-width: 0; margin-right: auto; color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-snug); }
 .graph-edge-legend::before { content: ""; display: inline-block; width: 24px; margin-right: var(--sp-snug); border-top: 1px dashed #53647e; vertical-align: middle; }
-.graph-canvas-tools { min-width: 0; flex: 0 1 auto; display: flex; align-items: stretch; gap: var(--sp-snug); transition: box-shadow .18s ease; }
+.graph-canvas-tools { order: 1; min-width: 0; max-width: 100%; flex: 0 1 auto; display: flex; align-items: stretch; gap: var(--sp-snug); transition: box-shadow .18s ease; }
 .graph-canvas-tools[data-floating="true"] { position: absolute; z-index: 9; top: var(--tools-y, 0px); left: var(--tools-x, 0px); }
 .graph-canvas-tools[data-dragging="true"] { box-shadow: 0 12px 30px rgba(0,0,0,.45); }
 .graph-tools-handle { flex: 0 0 auto; min-width: 22px; display: inline-flex; align-items: center; justify-content: center; padding: 0 var(--sp-tight); border: 1px solid var(--line); border-radius: 6px; background: rgba(17,22,32,.94); color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-flat); cursor: grab; touch-action: none; user-select: none; }
@@ -7147,17 +7266,27 @@ button { color: inherit; }
 .panel-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-cozy); min-width: 0; padding: var(--sp-cozy) var(--sp-default); border-bottom: 1px solid var(--line); }
 .evidence-panel .panel-header { position: sticky; top: 0; z-index: 3; background: var(--panel); }
 .evidence-panel [data-live-inspector-close] { position: relative; z-index: 4; display: grid; flex: 0 0 36px; width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; place-items: center; border: 1px solid var(--line-strong); color: var(--accent); background: #101722; font-size: var(--fs-view-title); line-height: var(--lh-display); }
-.inspector-tabs { min-width: 0; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.inspector-tabs { min-width: 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border-bottom: 1px solid var(--line); overflow-x: auto; }
 .inspector-tabs button { min-width: 62px; min-height: 34px; padding: 0 var(--sp-snug); border: 0; border-right: 1px solid var(--line-soft); background: #101725; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); cursor: pointer; }
 .inspector-tabs button[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .inspector-panel { min-width: 0; min-height: 0; overflow: auto; }
 .kicker { margin: 0 0 var(--sp-hairline); color: var(--completion); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); text-transform: none; }
 .panel-count { color: var(--completion-bright); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); }
 .selected-node-summary { padding: var(--sp-default); border-bottom: 1px solid var(--line); }
-.selected-node-summary strong { display: block; color: var(--completion-bright); font-size: var(--fs-view-title); }
+.selected-node-summary strong { display: block; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-entity-title); line-height: var(--lh-snug); }
 .selected-node-summary p { color: var(--muted); font-size: var(--fs-body); line-height: var(--lh-normal); }
+.selected-node-summary > p { margin: var(--sp-cozy) 0 0; }
+.selected-node-summary [data-live-selected-node-state-note] { font-size: var(--fs-entity-body); }
+.selected-node-summary [data-live-selected-node-status] { font-weight: var(--weight-semibold); }
+.selected-node-summary [data-task-state="in_progress"] { color: var(--task-in-progress-ink); }
+.selected-node-summary [data-task-state="completed"] { color: var(--task-completed-ink); }
+.selected-node-summary [data-task-state="not_started"] { color: var(--task-not-started-ink); }
+.selected-node-technical { margin-top: var(--sp-default); color: var(--muted); }
+.selected-node-technical > summary { width: fit-content; min-height: 32px; padding-block: var(--sp-cozy); font-size: var(--fs-entity-body); line-height: var(--lh-snug); cursor: pointer; }
+.selected-node-technical p { margin: var(--sp-cozy) 0 0; overflow-wrap: anywhere; font-size: var(--fs-entity-body); }
+.workspace-detail-section:has(.live-deliverable-empty) > h3 { display: none; }
 .selected-node-facts { display: flex; flex-wrap: wrap; gap: var(--sp-snug); margin-top: var(--sp-cozy); }
-.selected-node-facts span, [data-live-selected-node-evidence] { padding: var(--sp-tight) var(--sp-snug); border: 1px solid var(--line); border-radius: var(--radius-sm); color: #bdd0ec; background: #101725; font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); }
+.selected-node-facts span, [data-live-selected-node-evidence] { padding: var(--sp-tight) 0; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); overflow-wrap: anywhere; }
 .selected-node-summary [data-live-selected-node-provenance], .selected-node-summary [data-live-selected-node-prompt] { margin: var(--sp-snug) 0 0; padding-left: var(--sp-cozy); border-left: 2px solid #444; overflow-wrap: anywhere; }
 .evidence-drawer { min-height: 0; overflow: auto; padding: var(--sp-cozy); }
 .evidence-list { display: grid; gap: var(--sp-snug); }
@@ -7174,27 +7303,48 @@ button { color: inherit; }
 .empty-title { color: var(--text); font-size: var(--fs-view-title); }.empty-copy { margin: 0; font-size: var(--fs-micro); }
 .live-dialog { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: clamp(20px,3vw,36px); overflow: auto; background: rgba(0,0,0,.72); }
 .dialog-card { width: min(640px,calc(100vw - 48px)); max-height: calc(100dvh - 48px); display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); background-clip: padding-box; box-shadow: 0 24px 80px rgba(0,0,0,.6); }
-.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: var(--sp-default) var(--sp-default); border-bottom: 1px solid var(--line); background: var(--panel); }
-.dialog-title { margin: 0; font-size: var(--fs-view-title); }
+.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-default); min-height: 56px; padding: var(--sp-cozy) var(--sp-default); border-bottom: 1px solid var(--line); background: var(--panel); }
+.dialog-title { margin: 0; font-size: var(--fs-entity-title); font-weight: var(--weight-semibold); line-height: var(--lh-snug); }
+.dialog-header [data-live-dialog-close] { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--radius-sm); font-size: var(--fs-view-title); }
 .dialog-body { min-height: 0; padding: var(--sp-default); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .node-card[data-replay-visible="false"] { opacity: 0; pointer-events: none; visibility: hidden; }
-.info-facts { display: grid; gap: var(--sp-cozy); margin: var(--sp-tight) 0 var(--sp-roomy); padding: var(--sp-default); border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.018); }
-.info-fact-row { display: grid; grid-template-columns: 8rem minmax(0,1fr); gap: var(--sp-default); align-items: baseline; padding-bottom: var(--sp-snug); border-bottom: 1px solid rgba(255,255,255,.06); }
+.info-facts { display: grid; gap: var(--sp-cozy); margin: var(--sp-default) 0; }
+.info-fact-row { display: grid; grid-template-columns: minmax(72px,.28fr) minmax(0,1fr); gap: var(--sp-default); align-items: baseline; padding-bottom: var(--sp-cozy); border-bottom: 1px solid var(--line-soft); }
 .info-fact-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .info-fact-label { color: var(--subtle); font-size: var(--fs-entity-body); text-transform: none; letter-spacing: 0; }
 .info-fact-value { min-width: 0; color: var(--bright); font-size: var(--fs-body); overflow-wrap: anywhere; }
 .info-fact-prompt { display: grid; gap: var(--sp-cozy); margin-top: var(--sp-tight); }
 .info-fact-prompt p { margin: 0; line-height: var(--lh-normal); }
-.hub-switcher { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-default); }
+.hub-switcher { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); gap: var(--sp-cozy) var(--sp-default); }
 .run-record-dialog { width: min(760px,100%); }
-.run-record-guide { display: grid; gap: var(--sp-cozy); margin-bottom: var(--sp-default); padding: var(--sp-default) var(--sp-default); border: 1px solid rgba(79,209,197,.28); border-radius: var(--radius); background: rgba(79,209,197,.055); }
-.run-record-guide strong { color: var(--text); font-size: var(--fs-entity-title); }
-.run-record-guide span { color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
-.hub-search { grid-column: 1 / -1; }
-.hub-field { display: grid; gap: var(--sp-cozy); color: var(--muted); font-size: var(--fs-body); }
+.run-record-guide { margin: 0 0 var(--sp-default); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); }
+.hub-search { min-width: 0; }
+.hub-field { min-width: 0; display: grid; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-entity-body); }
 .hub-select { width: 100%; min-width: 0; height: 36px; padding: 0 var(--sp-cozy); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--text); }
-.hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: var(--fs-body); }
-.session-list { display: grid; gap: var(--sp-snug); margin-top: var(--sp-default); }.session-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-default); margin-top: var(--sp-cozy); padding: var(--sp-cozy) var(--sp-hairline) var(--sp-tight); border-bottom: 1px solid var(--line); }.session-group-heading strong { color: var(--text); font-size: var(--fs-entity-title); }.session-group-heading span { color: var(--muted); font-size: var(--fs-label); }.session-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--sp-cozy) var(--sp-default); padding: var(--sp-default); border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius); background: #101725; color: var(--text); text-align: left; cursor: pointer; }.session-card[data-identity="unlinked"] { border-left-color: var(--amber); background: rgba(216,168,78,.035); }.session-card:hover,.session-card:focus-visible,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.05); outline: none; }.session-card-title { min-width: 0; overflow: hidden; font-size: var(--fs-entity-title); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }.session-card-activity { color: var(--completion-bright); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); }.session-card[data-identity="unlinked"] .session-card-activity { color: var(--amber); }.session-card-origin { grid-column: 1 / -1; justify-self: start; padding: var(--sp-hairline) var(--sp-tight); border: 1px solid var(--amber); border-radius: var(--radius-sm); color: var(--amber); font-size: var(--fs-micro); line-height: var(--lh-flat); }.session-card-facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--sp-snug); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); }.session-card-facts span + span::before { margin-right: var(--sp-snug); color: var(--dim); content: "·"; }
+.hub-status { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: var(--fs-entity-body); }
+.hub-record-picker { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-entity-body); }
+.hub-record-picker > summary { width: fit-content; cursor: pointer; }
+.hub-record-picker .hub-field { margin-top: var(--sp-cozy); }
+.session-list { display: grid; gap: var(--sp-snug); margin-top: var(--sp-default); }
+.session-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-default); margin-top: var(--sp-cozy); padding: var(--sp-cozy) 0 var(--sp-tight); }
+.session-group-heading strong { color: var(--text); font-size: var(--fs-body); }
+.session-group-heading span { color: var(--muted); font-size: var(--fs-entity-body); }
+.session-card { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 0 var(--sp-cozy); align-items: start; padding: 0 var(--sp-cozy); border: 1px solid var(--line); border-left: 3px solid #53647e; border-radius: var(--radius-sm); background: #101725; color: var(--text); }
+.session-card[data-identity="unlinked"] { border-left-color: var(--amber); }
+.session-card:hover,.session-card:focus-within,.session-card[data-active="true"] { border-color: var(--accent); background: rgba(88,212,207,.05); }
+.session-card-open { min-width: 0; min-height: 66px; display: grid; align-content: center; gap: var(--sp-snug); padding: var(--sp-cozy) 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.session-card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.session-card-title { min-width: 0; overflow: hidden; font-size: var(--fs-body); font-weight: var(--weight-semibold); line-height: var(--lh-snug); text-overflow: ellipsis; white-space: nowrap; }
+.session-card-summary { color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-flat); overflow-wrap: anywhere; }
+.session-card-activity { display: block; margin-top: var(--sp-cozy); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); overflow-wrap: anywhere; }
+.session-card[data-identity="unlinked"] .session-card-activity { color: var(--amber); }
+.session-card-origin { grid-column: 1; grid-row: 2; justify-self: start; margin-bottom: var(--sp-cozy); color: var(--amber); font-size: var(--fs-entity-body); line-height: var(--lh-flat); }
+.session-card-details { grid-column: 2; grid-row: 1; align-self: center; color: var(--muted); font-size: var(--fs-entity-body); }
+.session-card-details > summary { min-height: 36px; display: list-item; padding-block: var(--sp-cozy); color: var(--muted); cursor: pointer; }
+.session-card-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.session-card-details[open] { grid-column: 1 / -1; grid-row: 3; padding-bottom: var(--sp-cozy); }
+.session-card-facts { display: flex; flex-wrap: wrap; gap: var(--sp-snug); margin-block: var(--sp-cozy); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); font-family: var(--font-ui); overflow-wrap: anywhere; }
+.session-card-facts span + span::before { margin-right: var(--sp-snug); color: var(--dim); content: "·"; }
 .session-identity-empty { display: grid; justify-items: start; gap: var(--sp-cozy); padding: var(--sp-roomy); border: 1px dashed var(--line-strong); border-radius: var(--radius); background: #101725; }
 .session-identity-empty strong { color: var(--text); font-size: var(--fs-view-title); }.session-identity-empty p { max-width: 64ch; margin: 0; color: var(--muted); font-size: var(--fs-body); line-height: var(--lh-normal); }
 .session-unlinked-toggle { width: 100%; min-height: 36px; padding: var(--sp-cozy) var(--sp-default); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--muted); text-align: left; font-size: var(--fs-body); cursor: pointer; }
@@ -7272,11 +7422,13 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .connection { margin: 0 var(--sp-hairline) 0 0; }
   .topbar-button { min-width: 30px; padding-inline: var(--sp-tight); }
   .workspace-grid, .workspace-grid[data-inspector-open="true"] { display: block; }
-  .company-workspace { height: auto; min-height: 100%; grid-template-columns: 1fr; grid-template-rows: auto minmax(520px,1fr) auto; }
+  .company-workspace { height: auto; min-height: 100%; grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
   .company-session-rail { max-height: 190px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .workspace-session-list { display: flex; overflow-x: auto; }
-  .workspace-session-item { flex: 0 0 210px; }
-  .company-board { grid-template-columns: repeat(3,minmax(210px,1fr)); }
+  .workspace-session-list { display: grid; grid-template-columns: minmax(0,1fr); overflow-x: hidden; overflow-y: auto; }
+  .workspace-session-item { min-width: 0; width: 100%; }
+  .company-board { grid-template-columns: minmax(0,1fr); overflow: visible; }
+  .work-column { min-width: 0; min-height: 0; }
+  .work-column-list { overflow: visible; }
   .company-context-panel { min-height: 360px; border-top: 1px solid var(--line); border-left: 0; }
   .company-board-header { align-items: flex-start; }
   .company-board-actions .surface-state { display: none; }
@@ -7325,6 +7477,9 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
 .work-view-menu .work-view-switcher { position: absolute; top: calc(100% + .45rem); right: 0; left: auto; width: 164px; height: auto; display: grid; grid-template-columns: 1fr; padding: var(--sp-tight); border: 1px solid var(--line-strong); border-radius: var(--radius); background: #101722; box-shadow: 0 16px 40px rgba(0,0,0,.42); transform: none; }
 .work-view-menu .work-view-tab { width: 100%; min-width: 0; min-height: 36px; border: 0; border-radius: var(--radius-sm); text-align: left; }
 .work-view-menu .work-view-tab[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--accent); }
+.work-view-tabs { display: grid; grid-template-columns: minmax(0,1fr); }
+.work-view-utilities { display: none; }
+.work-view-utilities .topbar-button { min-height: 36px; padding-inline: var(--sp-default); text-align: left; }
 .stage-overview { flex: 0 0 auto; width: 100%; height: auto; margin: 0; padding: 0; overflow: visible; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: #0c1119; }
 .stage-overview-toggle, .replay-collapse-summary { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-default); padding: 0 var(--sp-default); list-style: none; color: var(--muted); background: #101722; cursor: pointer; font-weight: var(--weight-regular); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: var(--font-ui); }
 .stage-overview-toggle::-webkit-details-marker, .replay-collapse-summary::-webkit-details-marker { display: none; }
@@ -7371,7 +7526,7 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .topbar { gap: var(--sp-default); }
   .work-view-menu { margin-left: auto; }
   .topbar-actions { margin-left: 0; }
-  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0, 1fr) auto var(--h-status-bar); }
+  .workspace-grid, .workspace-grid[data-inspector-open="true"] { grid-template-rows: minmax(0, 1fr) auto auto; }
   .stage-overview { z-index: 12; }
   .stage-overview-body { padding: var(--sp-tight) 0 var(--sp-snug); overflow-x: hidden; }
   .stage-rail { display: flex; flex-wrap: nowrap; align-items: stretch; gap: var(--sp-snug); width: 100%; }
@@ -7392,12 +7547,18 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
 
 @media (max-width: 720px) {
   .shell { grid-template-rows: 58px minmax(0,1fr); }
+  .main:has(.workspace-grid[data-work-view="run"]) { display: block; overflow-x: hidden; overflow-y: auto; }
+  .workspace-grid[data-work-view="run"] { height: auto; min-height: 0; overflow: visible; }
+  .workspace-grid[data-work-view="run"] .graph-panel { display: block; height: auto; min-height: 0; }
+  .workspace-grid[data-work-view="run"] .graph-stage { height: auto; min-height: 0; }
+  .workspace-grid[data-work-view="run"] .graph-canvas { height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; min-height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; max-height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; flex: 0 0 ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; }
   .topbar { display: flex; min-height: 58px; padding-inline: var(--sp-cozy); }
   .brand-title { font-size: var(--fs-body); }
   .work-view-menu { margin-left: auto; }
   .work-view-menu .work-view-switcher { right: 0; width: 150px; }
   .topbar-actions { margin-left: 0; }
-  .connection, [data-live-open-help], [data-live-open-info] { display: none; }
+  .connection, .topbar-actions [data-live-open-help], .topbar-actions [data-live-open-info] { display: none; }
+  .work-view-utilities { display: grid; padding-top: var(--sp-tight); margin-top: var(--sp-tight); border-top: 1px solid var(--line); }
   .run-context { min-height: 42px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-cozy); padding: var(--sp-tight) var(--sp-cozy); }
   .run-context-heading { flex: 1; }
   .run-context-facts { width: 100%; }
@@ -7412,6 +7573,18 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .replay-panel[open] .replay-dock-header { padding-left: calc(var(--w-replay-collapse) + var(--sp-cozy)); }
 }
 @media (max-width: 380px) { .brand-title { display: none; }.topbar-button { font-size: var(--fs-label); }.status-bar .status-camera { display: none; }.operational-row { grid-template-columns: 82px minmax(0,1fr); }.work-surface-header { gap: var(--sp-cozy); } }
+/* The reading surface owns overflow. A definite canvas flex basis stops the
+ * absolute graph scene from becoming a new intrinsic viewport height, while
+ * leaving a roomy display free to grow the canvas beyond its configured floor. */
+@media (min-width: 901px) {
+  .main:has(.workspace-grid[data-work-view="run"]) { display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+  .main:has(.workspace-grid[data-work-view="run"]) > .run-context,
+  .main:has(.workspace-grid[data-work-view="run"]) > .run-overview { flex: 0 0 auto; }
+  .workspace-grid[data-work-view="run"] { flex: 1 0 auto; height: auto; min-height: 0; overflow: visible; }
+  .workspace-grid[data-work-view="run"] .graph-canvas { height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; min-height: ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; flex: 1 0 ${PAGE_CHROME_BUDGET.minCanvasHeightPx}px; }
+  .workspace-grid[data-work-view="run"] .evidence-panel { contain: size; }
+  .workspace-grid[data-work-view="run"] .evidence-panel[data-open="false"] { display: none; }
+}
 @media (min-width: 721px) and (max-width: 900px) {
   /* A definite canvas box breaks the scene-size -> intrinsic track -> canvas
    * measurement feedback loop. The surrounding reading surface scrolls, while
@@ -7526,7 +7699,7 @@ export function renderLiveControlRoomPage({
         <p class="brand-title">Meta_Kim Live</p>
       </div>
 
-      <details class="work-view-menu"><summary class="topbar-button" data-i18n-en="Other views" data-i18n-zh="其他视图">其他视图</summary><div class="work-view-switcher" role="tablist" aria-label="Optional work surface views"><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Flow map" data-i18n-zh="流程图">流程图</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</button><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button></div></details>
+      <details class="work-view-menu"><summary class="topbar-button" data-i18n-en="Other views" data-i18n-zh="其他视图">其他视图</summary><div class="work-view-switcher" role="group" aria-label="Views and help"><div class="work-view-tabs" role="tablist" aria-label="Optional work surface views"><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Flow map" data-i18n-zh="流程图">流程图</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</button><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button></div><div class="work-view-utilities" role="group" aria-label="Help and session information"><button class="topbar-button" type="button" data-live-open-help data-i18n-en="Help" data-i18n-zh="使用帮助">使用帮助</button><button class="topbar-button" type="button" data-live-open-info data-i18n-en="Session info" data-i18n-zh="运行信息">运行信息</button></div></div></details>
       <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</button><button class="topbar-button" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
     <main class="main" id="live-main" tabindex="-1">
@@ -7542,6 +7715,7 @@ export function renderLiveControlRoomPage({
           <div class="context-fact" role="listitem"><span data-i18n-en="Updated" data-i18n-zh="更新">更新</span><strong data-live-context-updated>${EMPTY_PLACEHOLDER}</strong></div>
         </div>
         <details class="run-context-description"><summary data-i18n-en="Details" data-i18n-zh="详细记录">详细记录</summary>
+          <div class="run-context-details-body">
           <p class="run-context-task" data-live-context-task>正在等待任务摘要</p><p class="run-context-identifier" data-live-run-id>未识别运行</p>
           <p class="planning-notice" data-live-planning-notice role="status" hidden data-i18n-en="This record contains a task plan only. No work was dispatched; planned steps and relationships are not execution progress." data-i18n-zh="这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。">这份记录仅包含任务规划，尚未派发实际工作；规划步骤和关系不代表执行进展。</p>
           <div class="run-context-technical">
@@ -7552,6 +7726,7 @@ export function renderLiveControlRoomPage({
           <div class="context-fact" role="listitem" data-live-context-chat hidden><button class="context-fact-copy" type="button" data-live-context-chat-copy title="Copy the full chat id">${EMPTY_PLACEHOLDER}</button></div>
           <div class="run-context-source"><span data-i18n-en="Source" data-i18n-zh="来源">来源</span><strong data-live-context-source>local observer</strong></div>
           </div><div class="run-records-content" data-live-run-diagnostics></div>
+          </div>
         </details>
       </section>
       <section class="run-overview" data-live-run-overview aria-label="Run overview"><p class="run-overview-note" data-i18n-en="Waiting for a run record" data-i18n-zh="等待运行记录">等待运行记录</p></section>
@@ -7599,7 +7774,19 @@ export function renderLiveControlRoomPage({
         <aside class="panel evidence-panel" id="live-inspector" data-live-inspector data-open="false" aria-hidden="true" aria-labelledby="evidence-title">
           <header class="panel-header"><div><p class="kicker" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</p><h2 class="panel-title" id="evidence-title" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</h2></div><div class="replay-controls"><span class="panel-count" data-live-evidence-count>00</span><button class="graph-tool-button" type="button" data-live-inspector-close aria-label="Close inspector" title="Close inspector">×</button></div></header>
           <div class="inspector-tabs" role="tablist" aria-label="Inspector sections"><button type="button" role="tab" id="inspector-tab-summary" aria-controls="inspector-panel-summary" aria-selected="true" data-live-inspector-tab="summary" data-i18n-en="Summary" data-i18n-zh="摘要">摘要</button><button type="button" role="tab" id="inspector-tab-evidence" aria-controls="inspector-panel-evidence" aria-selected="false" tabindex="-1" data-live-inspector-tab="evidence" data-i18n-en="Evidence" data-i18n-zh="证据">证据</button><button type="button" role="tab" id="inspector-tab-terminal" aria-controls="inspector-panel-terminal" aria-selected="false" tabindex="-1" data-live-inspector-tab="terminal" data-i18n-en="Tools" data-i18n-zh="工具">工具</button><button type="button" role="tab" id="inspector-tab-context" aria-controls="inspector-panel-context" aria-selected="false" tabindex="-1" data-live-inspector-tab="context" data-i18n-en="Decisions" data-i18n-zh="决策">决策</button></div>
-          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0"><div class="selected-node-summary" data-live-selected-node aria-live="polite"><strong data-live-selected-node-label>选择节点查看来源与依据</strong><div class="selected-node-facts"><span data-live-selected-node-status>状态 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-owner>负责人 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-runtime>运行时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-model>模型 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-duration>耗时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tools>工具 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tokens>输出 · ${EMPTY_PLACEHOLDER}</span></div><p data-live-selected-node-summary>选择节点查看执行摘要。</p><p data-live-selected-node-relations></p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-prompt>提示词阶段 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-loadout>能力装载 · ${EMPTY_PLACEHOLDER}</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span></div><section class="workspace-detail-section"><h3 data-i18n-en="Outputs" data-i18n-zh="成品">成品</h3><div class="workspace-detail-list" data-live-deliverables-host></div></section><div data-live-feedback-host></div></div>
+          <div class="inspector-panel" id="inspector-panel-summary" role="tabpanel" aria-labelledby="inspector-tab-summary" data-live-inspector-panel="summary" data-item-count="0">
+            <div class="selected-node-summary" data-live-selected-node aria-live="polite">
+              <strong data-live-selected-node-label>选择节点查看任务详情</strong>
+              <div class="selected-node-facts"><span data-live-selected-node-status>${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-owner hidden></span></div>
+              <p data-live-selected-node-summary>选择节点查看执行摘要。</p>
+              <p data-live-selected-node-state-note hidden></p>
+              <details class="selected-node-technical"><summary data-i18n-en="Technical details" data-i18n-zh="技术详情">技术详情</summary>
+                <div class="selected-node-facts"><span data-live-selected-node-runtime>运行时 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-model hidden></span><span data-live-selected-node-duration hidden></span><span data-live-selected-node-tools>工具 · ${EMPTY_PLACEHOLDER}</span><span data-live-selected-node-tokens>输出 · ${EMPTY_PLACEHOLDER}</span></div>
+                <p data-live-selected-node-relations></p><p data-live-selected-node-evidence-detail>选择节点后将在这里显示终态依据。</p><p data-live-selected-node-provenance>来源 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-prompt>提示词阶段 · ${EMPTY_PLACEHOLDER}</p><p data-live-selected-node-loadout>能力装载 · ${EMPTY_PLACEHOLDER}</p><span data-live-selected-node-evidence>证据会持续显示在抽屉中</span>
+              </details>
+            </div>
+            <section class="workspace-detail-section"><h3 data-i18n-en="Outputs" data-i18n-zh="成品">成品</h3><div class="workspace-detail-list" data-live-deliverables-host></div></section><div data-live-feedback-host></div>
+          </div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-terminal" role="tabpanel" aria-labelledby="inspector-tab-terminal" data-live-inspector-panel="terminal" data-item-count="0" hidden><div class="evidence-list" data-live-terminal-list role="list" aria-label="Terminal evidence"></div></div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-evidence" role="tabpanel" aria-labelledby="inspector-tab-evidence" data-live-inspector-panel="evidence" data-item-count="0" data-evidence-drawer hidden><div class="evidence-list" data-live-conversation-list role="list" aria-label="Conversation summaries"></div><div class="evidence-list" data-live-changes-list role="list" aria-label="Observed changes"></div><div class="evidence-list" data-live-evidence-list role="list" aria-label="Observed evidence"></div></div>
           <div class="inspector-panel evidence-drawer" id="inspector-panel-context" role="tabpanel" aria-labelledby="inspector-tab-context" data-live-inspector-panel="context" data-item-count="0" hidden><div class="evidence-list" data-live-context-transfer-list role="list" aria-label="Context transfers"></div></div>
@@ -7607,7 +7794,7 @@ export function renderLiveControlRoomPage({
       </section>
       <section class="panel share-panel" aria-labelledby="share-title">
         <header class="panel-header"><div><h2 class="panel-title" id="share-title" data-i18n-en="Share locally" data-i18n-zh="本地分享">本地分享</h2><p class="panel-note" data-i18n-en="No upload, no external assets, no mutation." data-i18n-zh="不上传、不加载外部资源、不修改运行。">不上传、不加载外部资源、不修改运行。</p></div><span class="panel-count" data-i18n-en="LOCAL ONLY" data-i18n-zh="仅限本地">仅限本地</span></header>
-        <div class="share-content"><div class="share-actions"><button class="replay-button share-button" type="button" data-live-share-export-json data-i18n-en="Export JSON" data-i18n-zh="导出 JSON">导出 JSON</button><button class="replay-button share-button" type="button" data-live-share-copy-pr data-i18n-en="Copy PR card" data-i18n-zh="复制 PR 卡片">复制 PR 卡片</button><button class="replay-button share-button" type="button" data-live-share-copy-readme data-i18n-en="README embed" data-i18n-zh="README 嵌入">README 嵌入</button></div><p class="share-status" id="meta-kim-live-share-status" data-live-share-status role="status" aria-live="polite" data-i18n-en="Share actions stay local and require the local /api/share endpoint." data-i18n-zh="分享操作仅在本地进行，并使用本地 /api/share 接口。">分享操作仅在本地进行，并使用本地 /api/share 接口。</p></div>
+        <div class="share-content"><div class="share-actions"><button class="replay-button share-button" type="button" data-live-share-export-json data-i18n-en="Export JSON" data-i18n-zh="导出 JSON">导出 JSON</button><button class="replay-button share-button" type="button" data-live-share-copy-pr data-i18n-en="Copy PR card" data-i18n-zh="复制 PR 卡片">复制 PR 卡片</button><button class="replay-button share-button" type="button" data-live-share-copy-readme data-i18n-en="README embed" data-i18n-zh="README 嵌入">README 嵌入</button></div><p class="share-status" id="meta-kim-live-share-status" data-live-share-status role="status" aria-live="polite" data-i18n-en="Copy or export to this device." data-i18n-zh="复制或导出到本机。">复制或导出到本机。</p></div>
       </section>
       <section class="panel control-panel" data-live-control-panel aria-labelledby="control-title" aria-busy="false"${safeControlConfig ? "" : " hidden"}>
         <header class="panel-header"><div><h2 class="panel-title" id="control-title" data-i18n-en="Continuation controls" data-i18n-zh="继续执行控制">继续执行控制</h2><p class="panel-note" data-i18n-en="Opt-in commands require explicit local capabilities and durable verification." data-i18n-zh="可选控制命令需要明确的本地能力与耐久验证。">可选控制命令需要明确的本地能力与耐久验证。</p></div><span class="panel-count" data-i18n-en="AUTHORITY-BOUND" data-i18n-zh="受权限约束">受权限约束</span></header>
@@ -7619,18 +7806,18 @@ export function renderLiveControlRoomPage({
       <div class="dialog-card run-record-dialog">
         <header class="dialog-header"><h2 class="dialog-title" id="sessions-title" data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close run records">×</button></header>
         <div class="dialog-body">
-          <div class="run-record-guide"><strong data-i18n-en="These are Meta_Kim run records, not your chat list." data-i18n-zh="这里显示的是 Meta_Kim 运行记录，不是聊天列表。">这里显示的是 Meta_Kim 运行记录，不是聊天列表。</strong><span data-i18n-en="Claude Code, Codex, Cursor, and OpenClaw records are linked only when the runtime saved a title and conversation identifier. Otherwise they stay in the unlinked group and can be located by time and run ID." data-i18n-zh="Claude Code、Codex、Cursor、OpenClaw 只有在运行时保存了标题和会话标识后才会关联；否则会留在未关联分组，只能按时间和运行 ID 定位。">Claude Code、Codex、Cursor、OpenClaw 只有在运行时保存了标题和会话标识后才会关联；否则会留在未关联分组，只能按时间和运行 ID 定位。</span></div>
+          <p class="run-record-guide" data-i18n-en="Find saved runs by project, title, or date. Open Details to check the chat link and run ID." data-i18n-zh="按项目、标题或日期查找运行；聊天关联和运行编号在“详情”中查看。">按项目、标题或日期查找运行；聊天关联和运行编号在“详情”中查看。</p>
           <section class="hub-switcher" aria-label="Meta_Kim project and run record selection">
             <label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label>
-            <label class="hub-field" for="live-session-select"><span data-i18n-en="Current run record" data-i18n-zh="当前运行记录">当前运行记录</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed run record" disabled><option value="">请先选择项目</option></select></label>
             <label class="hub-field hub-search" for="live-session-search"><span data-i18n-en="Search title, date, or run ID" data-i18n-zh="搜索标题、日期或运行 ID">搜索标题、日期或运行 ID</span><input class="hub-select" id="live-session-search" data-live-session-search type="search" maxlength="120" autocomplete="off" placeholder="例如：课程、08/30、E126426F"></label>
+            <details class="hub-record-picker"><summary data-i18n-en="Choose by run ID" data-i18n-zh="按运行编号选择">按运行编号选择</summary><label class="hub-field" for="live-session-select"><span data-i18n-en="Current run record" data-i18n-zh="当前运行记录">当前运行记录</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed run record" disabled><option value="">请先选择项目</option></select></label></details>
             <p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p>
           </section>
           <div class="session-list" data-live-session-list role="list" aria-label="Governed run records"></div>
         </div>
       </div>
     </section>
-    <section class="live-dialog" data-live-dialog data-live-help-dialog role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="help-title" data-i18n-en="Keyboard and camera" data-i18n-zh="键盘与相机">键盘与相机</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close help">×</button></header><div class="dialog-body"><div class="shortcut-grid"><div><span>Overview</span><kbd>O</kbd></div><div><span>Follow active</span><kbd>F</kbd></div><div><span>Relayout</span><kbd>R</kbd></div><div><span>Play / pause</span><kbd>Space</kbd></div><div><span>Previous event</span><kbd>[</kbd></div><div><span>Next event</span><kbd>]</kbd></div><div><span>Jump live</span><kbd>End</kbd></div><div><span>Session info</span><kbd>I</kbd></div><div><span>Close</span><kbd>Esc</kbd></div><div><span>Help</span><kbd>?</kbd></div></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-help-dialog role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="help-title" data-i18n-en="Keyboard shortcuts" data-i18n-zh="快捷键">快捷键</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close help">×</button></header><div class="dialog-body"><div class="shortcut-grid"><div><span data-i18n-en="Overview" data-i18n-zh="查看全图">查看全图</span><kbd>O</kbd></div><div><span data-i18n-en="Follow active" data-i18n-zh="跟随当前任务">跟随当前任务</span><kbd>F</kbd></div><div><span data-i18n-en="Relayout" data-i18n-zh="重新排列">重新排列</span><kbd>R</kbd></div><div><span data-i18n-en="Play / pause" data-i18n-zh="播放／暂停">播放／暂停</span><kbd>Space</kbd></div><div><span data-i18n-en="Previous event" data-i18n-zh="上一条活动">上一条活动</span><kbd>[</kbd></div><div><span data-i18n-en="Next event" data-i18n-zh="下一条活动">下一条活动</span><kbd>]</kbd></div><div><span data-i18n-en="Jump live" data-i18n-zh="回到实时">回到实时</span><kbd>End</kbd></div><div><span data-i18n-en="Session info" data-i18n-zh="会话信息">会话信息</span><kbd>I</kbd></div><div><span data-i18n-en="Close" data-i18n-zh="关闭弹窗">关闭弹窗</span><kbd>Esc</kbd></div><div><span data-i18n-en="Help" data-i18n-zh="打开帮助">打开帮助</span><kbd>?</kbd></div></div></div></div></section>
     <section class="live-dialog" data-live-dialog data-live-info-dialog role="dialog" aria-modal="true" aria-labelledby="info-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="info-title" data-i18n-en="Session info and local tools" data-i18n-zh="会话信息与本地工具">会话信息与本地工具</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close session info">×</button></header><div class="dialog-body"><p class="panel-note"><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 ${EMPTY_PLACEHOLDER}</span> · <span data-i18n-en="Read-only by default" data-i18n-zh="默认只读">默认只读</span></p><div class="info-facts" data-live-info-facts></div><div data-live-info-tools></div></div></div></section>
   </div>
   <script type="application/json" id="live-initial-snapshot">${initialJson}</script>
