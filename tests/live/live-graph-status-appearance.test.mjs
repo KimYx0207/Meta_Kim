@@ -94,6 +94,44 @@ function snapshotFixture(kind = "contains") {
     edges: nodes.slice(1).map((node) => ({ id: "edge-" + node.id, from: "owner", to: node.id, kind, status: node.status })) };
 }
 
+test("revealing a deferred graph completes its render once and later live view refreshes do not rebuild it again", () => {
+  const view = graphHarness();
+  const fixture = snapshotFixture();
+  view.env.graph.clientWidth = 0;
+  view.env.graph.clientHeight = 0;
+  view.renderGraph(fixture);
+  assert.equal(view.env.graphState.renderPending, true, "hidden updates remain deferred");
+  view.env.graph.clientWidth = 1400;
+  view.env.graph.clientHeight = 700;
+  const frames = [];
+  let deferredRenders = 0, reconciles = 0;
+  Object.assign(view.env, {
+    currentWorkView: "workspace", WORK_VIEWS: ["run", "workspace", "repository"], workViewTabs: [],
+    repositoryView: {}, workspaceView: {}, workspace: { setAttribute() {} },
+    app: { querySelector: () => ({ hidden: true }) },
+    setInspectorOpen() {},
+    renderGraph(snapshot) { deferredRenders += 1; view.renderGraph(snapshot); },
+    reconcileCamera() { reconciles += 1; },
+  });
+  view.env.window.requestAnimationFrame = (callback) => frames.push(callback);
+  const selectRun = new Function("env", "with (env) {\n" + shippedHelper("setWorkView")
+    + '\nreturn () => setWorkView("run", { persist: false });\n}')(view.env);
+  selectRun();
+  frames.shift()();
+  assert.equal(view.env.graphState.renderPending, false, "a successful visible render explicitly consumes the pending work");
+  assert.equal(deferredRenders, 1);
+  const card = view.env.graphState.nodeElements.get("owner");
+  for (let index = 0; index < 3; index += 1) {
+    selectRun();
+    frames.shift()();
+  }
+  assert.equal(deferredRenders, 1, "ordinary snapshot view refreshes do not schedule a second render");
+  assert.equal(view.env.graphState.nodeElements.get("owner"), card, "view reconciliation preserves the existing node listeners and DOM");
+  assert.equal(reconciles, 4);
+  view.renderGraph({ ...fixture, nodes: [], edges: [] });
+  assert.equal(view.env.graphState.renderPending, false, "an empty visible graph also completes deferred work");
+});
+
 function declarations(body) {
   return Object.fromEntries(body.split(";").map((part) => part.split(/:(.*)/su).slice(0, 2).map((value) => value.trim())).filter(([key, value]) => key && value));
 }
