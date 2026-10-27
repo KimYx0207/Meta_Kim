@@ -428,6 +428,7 @@ function renderCurrentWindowsHealthProbe(healthUrl) {
     `  $client = $null\r\n` +
     `  $response = $null\r\n` +
     `  try {\r\n` +
+    `    Add-Type -AssemblyName System.Net.Http -ErrorAction Stop\r\n` +
     `    $handler = [System.Net.Http.HttpClientHandler]::new()\r\n` +
     `    $handler.UseProxy = $false\r\n` +
     `    $client = [System.Net.Http.HttpClient]::new($handler)\r\n` +
@@ -454,6 +455,31 @@ function renderHistoricalWindowsHealthProbeV1(healthUrl) {
     `    $payload = $response.Content | ConvertFrom-Json\r\n` +
     `    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
     `  } catch { return $false }\r\n` +
+    `}\r\n`
+  );
+}
+
+function renderHistoricalWindowsHealthProbeV2(healthUrl) {
+  return (
+    `function Test-MetaKimMemoryHealth {\r\n` +
+    `  $handler = $null\r\n` +
+    `  $client = $null\r\n` +
+    `  $response = $null\r\n` +
+    `  try {\r\n` +
+    `    $handler = [System.Net.Http.HttpClientHandler]::new()\r\n` +
+    `    $handler.UseProxy = $false\r\n` +
+    `    $client = [System.Net.Http.HttpClient]::new($handler)\r\n` +
+    `    $client.Timeout = [System.TimeSpan]::FromSeconds(3)\r\n` +
+    `    $response = $client.GetAsync(${psSingleQuote(healthUrl)}).GetAwaiter().GetResult()\r\n` +
+    `    $statusCode = [int]$response.StatusCode\r\n` +
+    `    $payload = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json\r\n` +
+    `    return ($statusCode -ge 200 -and $statusCode -lt 300 -and $payload.status -eq "healthy")\r\n` +
+    `  } catch { return $false }\r\n` +
+    `  finally {\r\n` +
+    `    if ($response) { $response.Dispose() }\r\n` +
+    `    if ($client) { $client.Dispose() }\r\n` +
+    `    if ($handler) { $handler.Dispose() }\r\n` +
+    `  }\r\n` +
     `}\r\n`
   );
 }
@@ -567,11 +593,9 @@ export function renderCurrentWindowsMcpMemoryPowerShellBytes({
   return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(content, "utf8")]);
 }
 
-/** Render the exact pre-proxy-bypass Windows template shipped before v2.9.26. */
-export function renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options = {}) {
+function renderWindowsPowerShellWithHistoricalProbe(options, historicalProbe) {
   const current = renderCurrentWindowsMcpMemoryPowerShellBytes(options).toString("utf8");
   const currentProbe = renderCurrentWindowsHealthProbe(options.healthUrl);
-  const historicalProbe = renderHistoricalWindowsHealthProbeV1(options.healthUrl);
   const first = current.indexOf(currentProbe);
   if (first < 0 || current.indexOf(currentProbe, first + currentProbe.length) >= 0) {
     throw new Error("current Windows MCP Memory health probe template is not unique");
@@ -579,6 +603,22 @@ export function renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options = {}) 
   return Buffer.from(
     `${current.slice(0, first)}${historicalProbe}${current.slice(first + currentProbe.length)}`,
     "utf8",
+  );
+}
+
+/** Render the exact pre-proxy-bypass Windows template shipped before v2.9.26. */
+export function renderHistoricalWindowsMcpMemoryPowerShellBytesV1(options = {}) {
+  return renderWindowsPowerShellWithHistoricalProbe(
+    options,
+    renderHistoricalWindowsHealthProbeV1(options.healthUrl),
+  );
+}
+
+/** Render the exact HttpClient template before its explicit assembly load. */
+export function renderHistoricalWindowsMcpMemoryPowerShellBytesV2(options = {}) {
+  return renderWindowsPowerShellWithHistoricalProbe(
+    options,
+    renderHistoricalWindowsHealthProbeV2(options.healthUrl),
   );
 }
 
@@ -642,12 +682,24 @@ function quotedPowerShellValue(line, prefix, suffix = "'") {
   return raw.replaceAll("''", "'");
 }
 
-function parseWindowsPowerShellBindings(bytes, homeRoot, { historicalV1 = false } = {}) {
+const HISTORICAL_WINDOWS_POWERSHELL_VERSIONS = Object.freeze({
+  "historical-windows-powershell-proxy-v1": "proxy-v1",
+  "historical-windows-powershell-httpclient-v2": "httpclient-v2",
+});
+
+function parseWindowsPowerShellBindings(bytes, homeRoot, { template = "current" } = {}) {
+  const layouts = {
+    current: { lineCount: 100, healthLine: 30, render: renderCurrentWindowsMcpMemoryPowerShellBytes },
+    "httpclient-v2": { lineCount: 99, healthLine: 29, render: renderHistoricalWindowsMcpMemoryPowerShellBytesV2 },
+    "proxy-v1": { lineCount: 86, healthLine: 22, render: renderHistoricalWindowsMcpMemoryPowerShellBytesV1 },
+  };
+  const layout = layouts[template];
+  if (!layout) return null;
+  const usesWebRequest = template === "proxy-v1";
   const text = decodeStrictCrLf(bytes, { bom: true });
   if (!text) return null;
   const lines = text.slice(0, -2).split("\r\n");
-  const expectedLineCount = historicalV1 ? 86 : 99;
-  if (lines.length !== expectedLineCount || lines.some((line) => !line)) return null;
+  if (lines.length !== layout.lineCount || lines.some((line) => !line)) return null;
   const sqlitePath = quotedPowerShellValue(lines[7], "$env:MCP_MEMORY_SQLITE_PATH = '");
   const endpointUrl = quotedPowerShellValue(lines[8], "$env:MCP_MEMORY_URL = '");
   const port = quotedPowerShellValue(lines[9], "$env:META_KIM_MEMORY_PORT = '");
@@ -657,11 +709,11 @@ function parseWindowsPowerShellBindings(bytes, homeRoot, { historicalV1 = false 
   const failureMessage = quotedPowerShellValue(lines[13], "$failureMessage = '");
   const lockDir = quotedPowerShellValue(lines[17], "$lockDir = '");
   const healthUrl = quotedPowerShellValue(
-    lines[historicalV1 ? 22 : 29],
-    historicalV1
+    lines[layout.healthLine],
+    usesWebRequest
       ? "    $response = Invoke-WebRequest -Uri '"
       : "    $response = $client.GetAsync('",
-    historicalV1
+    usesWebRequest
       ? "' -UseBasicParsing -TimeoutSec 3"
       : "').GetAwaiter().GetResult()",
   );
@@ -688,10 +740,7 @@ function parseWindowsPowerShellBindings(bytes, homeRoot, { historicalV1 = false 
     !lockDir || !path.win32.isAbsolute(lockDir) ||
     !sameArtifactPath(path.win32.dirname(lockDir), path.win32.join(homeRoot, ".meta-kim", "locks"), "win32")
   ) return null;
-  const render = historicalV1
-    ? renderHistoricalWindowsMcpMemoryPowerShellBytesV1
-    : renderCurrentWindowsMcpMemoryPowerShellBytes;
-  if (!bytes.equals(render({
+  if (!bytes.equals(layout.render({
     memoryBin,
     databasePath: sqlitePath,
     endpointUrl,
@@ -717,10 +766,6 @@ function isCurrentWindowsPowerShell(bytes, homeRoot) {
   return Boolean(parseWindowsPowerShellBindings(bytes, homeRoot));
 }
 
-function isHistoricalWindowsPowerShellV1(bytes, homeRoot) {
-  return Boolean(parseWindowsPowerShellBindings(bytes, homeRoot, { historicalV1: true }));
-}
-
 /** Classify one exact Windows candidate from bytes; no target is required to exist. */
 export function classifyMcpMemoryBootRecoveryFile({ filePath, bytes, homeRoot, platformName = process.platform } = {}) {
   if (platformName !== "win32" || !Buffer.isBuffer(bytes)) return null;
@@ -734,9 +779,10 @@ export function classifyMcpMemoryBootRecoveryFile({ filePath, bytes, homeRoot, p
   }
   if (sameArtifactPath(filePath, expected.powershell, "win32")) {
     if (isCurrentWindowsPowerShell(bytes, home)) return "current-windows-powershell";
-    return isHistoricalWindowsPowerShellV1(bytes, home)
-      ? "historical-windows-powershell-proxy-v1"
-      : null;
+    for (const [signature, template] of Object.entries(HISTORICAL_WINDOWS_POWERSHELL_VERSIONS)) {
+      if (parseWindowsPowerShellBindings(bytes, home, { template })) return signature;
+    }
+    return null;
   }
   if (sameArtifactPath(filePath, expected.legacyCommand, "win32")) {
     return isLegacyWindowsCommand(bytes) ? "legacy-windows-command" : null;
@@ -819,7 +865,7 @@ function exactObjectKeys(value, expectedKeys) {
 }
 
 /**
- * Adopt only the complete pre-proxy-bypass Windows boot chain. The caller must
+ * Adopt only a complete, exact historical Windows boot chain. The caller must
  * already have verified the live listener identity and health. This function
  * independently binds the historical bytes to the active runtime state and
  * uses a manifest compare-and-swap precondition so an existing owner or a
@@ -860,20 +906,21 @@ export async function adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
     realpath,
   });
   const requiredSignatures = new Set([
-    "historical-windows-powershell-proxy-v1",
     "current-windows-command",
     "current-windows-startup-vbs",
   ]);
+  const historicalPowerShellFindings = findings.filter((finding) =>
+    Object.hasOwn(HISTORICAL_WINDOWS_POWERSHELL_VERSIONS, finding.recoverySignature)
+  );
   const actualSignatures = new Set(findings.map((finding) => finding.recoverySignature));
   if (
-    findings.length !== requiredSignatures.size ||
+    findings.length !== requiredSignatures.size + 1 ||
+    historicalPowerShellFindings.length !== 1 ||
     [...requiredSignatures].some((signature) => !actualSignatures.has(signature))
   ) return fail("historical_boot_chain_unverified");
 
   const expectedPaths = windowsRecoveryPaths(home);
-  const powerShellFinding = findings.find((finding) =>
-    finding.recoverySignature === "historical-windows-powershell-proxy-v1"
-  );
+  const [powerShellFinding] = historicalPowerShellFindings;
   let powerShellSnapshot;
   let stateSnapshot;
   let active;
@@ -908,7 +955,7 @@ export async function adoptHistoricalWindowsMcpMemoryBootArtifactOwnership({
   const bindings = parseWindowsPowerShellBindings(
     powerShellSnapshot.bytes,
     home,
-    { historicalV1: true },
+    { template: HISTORICAL_WINDOWS_POWERSHELL_VERSIONS[powerShellFinding.recoverySignature] },
   );
   const activeKeys = [
     "schemaVersion",
