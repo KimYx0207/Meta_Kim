@@ -85,26 +85,27 @@ export function normalizeLiveOwnerReport(node, runId = node?.runId) {
     evidenceLevel: "owner_reported", nativeInvocationVerified: false };
 }
 
-/** Retain only an exactly bound native child return, never a spawn acknowledgement. */
+/** Retain an exactly bound native return, never a spawn acknowledgement. */
 export function normalizeLiveNativeTaskReturn(node, runId = node?.runId) {
   const boundRun = overviewText(runId);
   const taskPacketId = overviewText(node?.taskPacketId);
   const nodeId = overviewText(node?.id);
-  if (!node || node.isMain === true || !["agent", "worker"].includes(overviewState(node.kind))
+  if (!node || !["agent", "worker"].includes(overviewState(node.kind))
     || !boundRun || !taskPacketId || !nodeId || (node.runId && node.runId !== boundRun)
     || node.executionState !== "executed" || node.active === true
     || [node.status, node.displayState].some((state) => ["active", "running", "live"].includes(overviewState(state)))) return null;
   const candidates = [node.nativeReturnEvidence, ...(Array.isArray(node.workerExecutionEvidence) ? node.workerExecutionEvidence.slice(0, 256) : [])];
   const records = candidates.flatMap((record) => {
     if (!record || record.runId !== boundRun || record.taskPacketId !== taskPacketId || record.nodeId !== nodeId
-      || record.evidenceKind !== "native_host_observation" || record.sourceKind !== "codex_desktop_native_session"
+      || record.evidenceKind !== "native_host_observation" || !["codex_desktop_native_session", "claude_native_session"].includes(record.sourceKind)
+      || (node.isMain === true && record.sourceKind !== "claude_native_session")
       || record.executionObserved !== true || record.synthetic !== false
       || typeof record.sourceEventId !== "string" || record.sourceEventId !== overviewText(record.sourceEventId)
       || !/^.+:return$/u.test(record.sourceEventId) || typeof record.sourceDigest !== "string" || !/^[a-f0-9]{64}$/iu.test(record.sourceDigest)) return [];
     const observedAt = overviewTimestamp(record.observedAt);
     if (!observedAt || [node.firstAt, node.lastAt, node.startedAt, node.timing?.startedAt, node.timing?.completedAt]
       .map(overviewTimestamp).some((time) => time && time > observedAt)) return [];
-    return [{ runId: boundRun, taskPacketId, nodeId, evidenceKind: "native_host_observation", sourceKind: "codex_desktop_native_session",
+    return [{ runId: boundRun, taskPacketId, nodeId, evidenceKind: "native_host_observation", sourceKind: record.sourceKind,
       executionObserved: true, synthetic: false, sourceEventId: record.sourceEventId, observedAt, sourceDigest: record.sourceDigest.toLowerCase() }];
   });
   records.sort((left, right) => right.observedAt.localeCompare(left.observedAt) || left.sourceEventId.localeCompare(right.sourceEventId));
@@ -166,7 +167,8 @@ export function resolveLiveRunTaskLifecycle(snapshot) {
     if (counts.notStartedCount === counts.totalCount) return { state: "not_started", detail: "waiting", ...counts };
     return { state: "in_progress", detail: tasks.find((task) => ["failed", "blocked", "cancelled"].includes(task.detail))?.detail || "unfinished", ...counts };
   }
-  const lifecycle = resolveLiveTaskLifecycle({ ...run, runId }, runId);
+  const returnedMain = (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).find((node) => node?.isMain === true && normalizeLiveNativeTaskReturn(node, runId));
+  const lifecycle = resolveLiveTaskLifecycle(returnedMain || { ...run, runId }, runId);
   return { ...lifecycle, detail: lifecycle.detail || "no_tasks", ...counts };
 }
 

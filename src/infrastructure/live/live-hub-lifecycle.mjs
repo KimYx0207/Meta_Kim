@@ -68,6 +68,10 @@ const INSTANCE_ID_PATTERN = /^[a-f0-9-]{16,64}$/u;
  */
 export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "canonical/runtime-assets/shared/hooks/governed-task-reference.mjs",
+  "canonical/runtime-assets/shared/hooks/conversation-binding.mjs",
+  "canonical/runtime-assets/shared/hooks/spine-state.mjs",
+  "canonical/runtime-assets/shared/hooks/spine-state-gates.mjs",
+  "canonical/runtime-assets/shared/hooks/spine-state-utils.mjs",
   "scripts/meta-kim-live.mjs",
   "scripts/project-registry.mjs",
   "scripts/release-state-hardening.mjs",
@@ -87,6 +91,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/application/live/live-graph-readability.mjs",
   "src/application/live/live-hub-lifecycle-budget.mjs",
   "src/application/live/live-native-codex-projection.mjs",
+  "src/application/live/live-native-zcode-projection.mjs",
   "src/application/live/live-projection-backfill-policy.mjs",
   "src/application/live/live-record-origin.mjs",
   "src/application/live/live-replay-visibility.mjs",
@@ -110,6 +115,8 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/infrastructure/live/live-projection-backfill.mjs",
   "src/infrastructure/live/live-read-repository.mjs",
   "src/infrastructure/live/codex-native-session-reader.mjs",
+  "src/infrastructure/live/claude-native-session-reader.mjs",
+  "src/infrastructure/live/zcode-native-session-reader.mjs",
   "src/infrastructure/live/codex-native-turn-locator.mjs",
   "src/infrastructure/live/live-native-bindings.mjs",
   "src/infrastructure/live/live-run-retention-store.mjs",

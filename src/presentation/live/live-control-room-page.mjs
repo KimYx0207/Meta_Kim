@@ -542,6 +542,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "No project selected": "尚未选择项目",
     "This project has no governed runs yet. Start a Meta_Kim task and its session will appear here.": "这个项目还没有治理运行。启动一个 Meta_Kim 任务后，会话会显示在这里。",
     "Loading the selected run…": "正在加载选中的运行…",
+    "ZCode native session": "当前 ZCode 执行记录",
     "No Meta_Kim projects are registered yet. Install or update Meta_Kim in a project, then start a governed run.": "尚未登记 Meta_Kim 项目。请先在项目中安装或更新 Meta_Kim，再启动治理运行。",
     "No registered projects · the Hub never scans your disk": "没有已登记项目 · Hub 不会扫描你的磁盘",
     "Project catalog refresh paused · showing the last verified list": "项目目录刷新已暂停 · 正在显示上次验证的列表",
@@ -550,6 +551,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "No observation recorded yet": "尚未记录观测",
     "No governed run has been observed in this project yet.": "这个项目中尚未观测到治理运行。",
     "The local observer is not serving a snapshot yet.": "本地观察器尚未提供运行快照。",
+    "Selected run not found": "尚未找到所选运行记录",
+    "No live snapshot yet": "尚无实时快照",
+    "The selected run has not been found; your selection is preserved. Open Run records to check the current task.": "尚未找到所选运行记录；当前选择已保留。可从运行记录中核对当前任务。",
     "The embedded snapshot could not be read.": "无法读取页面内嵌的运行快照。",
     "Select a node to inspect provenance": "选择节点查看来源与依据",
     "Evidence stays visible in the drawer": "证据会持续显示在抽屉中",
@@ -1861,6 +1865,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (runtime === "demo") return currentLanguage === "zh" ? "本地状态演示" : "Local state demo";
     if (runtime === "claude") return "Claude Code";
     if (runtime === "codex") return "Codex";
+    if (runtime === "zcode") return "ZCode";
     if (runtime === "cursor") return "Cursor";
     if (runtime === "openclaw") return "OpenClaw";
     // The runtime is either absent from the record or a name this surface is not
@@ -3247,15 +3252,6 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function centerGraphNode(nodeId) {
     if (!graph || !nodeId) return;
-    const card = graphState.nodeElements.get(nodeId);
-    if (window.matchMedia?.("(max-width: 720px)").matches && card) {
-      graph.scrollTo({
-        top: Math.max(0, card.offsetTop - graph.clientHeight / 2 + card.offsetHeight / 2),
-        left: 0,
-        behavior: reducedMotion.matches ? "auto" : "smooth",
-      });
-      return;
-    }
     const position = graphState.positions.get(nodeId);
     if (!position) return;
     updateCamera({
@@ -6221,12 +6217,26 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
   }
 
-  function showEmpty(message) {
+  function showEmpty(message, title = "No live snapshot yet") {
+    // A missing selection has no task facts. Retaining the previous header made
+    // an unreadable run look like it was still executing.
+    currentSnapshot = null;
+    selectedNodeId = null;
+    pendingSnapshot = null;
+    setText(contextTitle, title);
+    if (contextTitle) contextTitle.title = localize(title);
+    for (const element of [contextStatus, contextProgress, contextStage, contextUpdated, contextSource, contextNodes, contextEvents, contextEvidence,
+      stage, started, updated, source, runWorkers]) setText(element, "—");
+    if (contextStatus) contextStatus.title = "";
+    setText(contextTask, message || "Waiting for a run snapshot");
+    if (contextChat) contextChat.hidden = true;
+    if (contextChatCopy) contextChatCopy.dataset.chatId = "";
     renderRunOverview(null);
     if (emptyState) emptyState.hidden = false;
     for (const element of [workspace, replayPanel]) {
       if (element) element.hidden = true;
     }
+    setText(app.querySelector("[data-live-empty] .empty-title"), title);
     if (message) setText(app.querySelector("[data-live-empty-message]"), message, "Waiting for a run snapshot");
   }
 
@@ -6395,6 +6405,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
         signal: abortController.signal,
       });
       if (generation !== selectionGeneration) return;
+      if (response.status === 404) {
+        showEmpty("The selected run has not been found; your selection is preserved. Open Run records to check the current task.", "Selected run not found");
+        updateConnection("stale", "Selected run not found");
+        return;
+      }
       if (!response.ok) throw new Error("snapshot request failed");
       let payload = await response.json();
       if (generation !== selectionGeneration) return;
@@ -7204,8 +7219,8 @@ button { color: inherit; }
 .node-connection, .node-progress { display: none; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card { --cell-title-fs: max(var(--fs-entity-body), calc(var(--min-onscreen-text-px) / var(--camera-scale)), calc(var(--fs-body) / var(--camera-scale))); height: 140px !important; min-height: 140px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; content: none; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: hidden; }
-@media (min-width: 721px) {
+/* Compact graph cells keep their title and status at every viewport width.
+ * Their text compensates for camera scale; narrow panes use this same renderer. */
   .graph-canvas[data-semantic-zoom="cell"] .node-card { padding: var(--sp-cozy) var(--sp-default); overflow: hidden; border: 1px solid rgba(79,209,197,.46); border-left: 3px solid var(--accent); border-radius: 12px; background: linear-gradient(135deg, rgba(79,209,197,.16), #121e2d 62%); box-shadow: 0 0 0 1px rgba(79,209,197,.12), 0 10px 26px rgba(0,0,0,.34); }
   .graph-canvas[data-semantic-zoom="cell"] .node-card.node-running { border-color: rgba(79,209,197,.78); border-left-color: var(--running); background: linear-gradient(135deg, rgba(79,209,197,.2), #121e2d 62%); box-shadow: 0 0 0 1px rgba(79,209,197,.2), 0 0 24px rgba(79,209,197,.16), 0 10px 26px rgba(0,0,0,.34); }
   .graph-canvas[data-semantic-zoom="cell"] .node-card.node-completed { border-color: rgba(99,202,155,.6); border-left-color: var(--green); background: linear-gradient(135deg, rgba(99,202,155,.12), #121e2d 62%); }
@@ -7221,7 +7236,6 @@ button { color: inherit; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-identity-row { display: block; flex: 1 0 auto; min-height: calc(var(--cell-title-fs) * 2.56); }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-glyph, .graph-canvas[data-semantic-zoom="cell"] .node-card .node-summary { display: none; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; display: -webkit-box; height: auto; padding: 0; color: var(--text); font-weight: var(--weight-semibold); font-size: var(--cell-title-fs); line-height: var(--lh-flat); font-family: inherit; }
-}
 .graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card { height: var(--readable-cell-height) !important; min-height: var(--readable-cell-height) !important; }
 .graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-identity-row { flex: 1 1 auto; min-height: 0; }
 .graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-title { -webkit-line-clamp: 3; }
@@ -7446,17 +7460,18 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .graph-canvas-title { display: none; }
   .graph-toolbar { width: 100%; max-width: none; overflow-x: auto; flex-wrap: nowrap; }
   .graph-tool-button { min-width: 40px; min-height: 40px; }
-  [data-live-graph-fit], [data-live-graph-layout], [data-live-graph-zoom-out], [data-live-graph-zoom-in] { display: none; }
+  [data-live-graph-layout] { display: none; }
   [data-live-graph-live], [data-live-graph-reset] { display: none; }
-  .graph-canvas { overflow: auto; touch-action: pan-y; }
-  .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
-  .node-list { position: relative; inset: auto; display: grid; gap: var(--sp-cozy); padding: var(--sp-cozy) var(--sp-cozy); }
-  .node-card { position: relative !important; top: auto !important; left: auto !important; width: 100% !important; min-height: 84px !important; }
-  .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: var(--sp-cozy); overflow: hidden; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius); background: #172131; }
-  .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; }
-  .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: visible; }
-  .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; height: auto; padding: 0; font: inherit; }
-  .edge-layer, .graph-minimap { display: none; }
+  .workspace-grid:not([data-work-view="run"]) .graph-canvas { overflow: auto; touch-action: pan-y; }
+  .workspace-grid:not([data-work-view="run"]) .graph-scene { position: relative; width: 100% !important; height: auto !important; transform: none !important; }
+  .workspace-grid:not([data-work-view="run"]) .node-list { position: relative; inset: auto; display: grid; gap: var(--sp-cozy); padding: var(--sp-cozy) var(--sp-cozy); }
+  .workspace-grid:not([data-work-view="run"]) .node-card { position: relative !important; top: auto !important; left: auto !important; width: 100% !important; min-height: 84px !important; }
+  .workspace-grid:not([data-work-view="run"]) .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 84px !important; height: auto !important; padding: var(--sp-cozy); overflow: hidden; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius); background: #172131; }
+  .workspace-grid:not([data-work-view="run"]) .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; }
+  .workspace-grid:not([data-work-view="run"]) .graph-canvas[data-semantic-zoom="cell"] .node-card > * { visibility: visible; }
+  .workspace-grid:not([data-work-view="run"]) .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; height: auto; padding: 0; font: inherit; }
+  .workspace-grid:not([data-work-view="run"]) .edge-layer, .graph-minimap { display: none; }
+  .workspace-grid[data-work-view="run"] .graph-canvas { overflow: hidden; touch-action: none; }
   .replay-dock-header { grid-row: 1; width: 100%; min-width: 0; grid-template-columns: minmax(64px,1fr) auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .replay-range-wrap { grid-column: 1; grid-row: 2; }
   .replay-events { grid-column: 1; grid-row: 3; }
@@ -7563,8 +7578,8 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
   .run-context-heading { flex: 1; }
   .run-context-facts { width: 100%; }
   .stage-overview-toggle { min-height: 32px; }
-  .node-list { grid-template-columns: 1fr; }
-  .node-card, .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 166px !important; }
+  .workspace-grid:not([data-work-view="run"]) .node-list { grid-template-columns: 1fr; }
+  .workspace-grid:not([data-work-view="run"]) .node-card, .workspace-grid:not([data-work-view="run"]) .graph-canvas[data-semantic-zoom="cell"] .node-card { min-height: 166px !important; }
   .node-capability-strip { grid-template-columns: 1fr; }
   .node-capability { min-height: 34px; }
   .node-capability-kind, .node-capability-value, .node-capability-state { font-size: var(--fs-entity-body); }
@@ -7617,9 +7632,8 @@ kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px 
 .graph-canvas[data-semantic-zoom] .node-card[data-task-state] .node-marker { color: var(--muted); background: currentColor; box-shadow: none; }
 .graph-canvas[data-semantic-zoom] .node-card[data-running-observed="true"] .node-marker { width: calc(14px / var(--camera-scale, 1)); height: calc(14px / var(--camera-scale, 1)); flex: 0 0 calc(14px / var(--camera-scale, 1)); color: var(--task-flow-ink); background: var(--task-flow-ink); box-shadow: 0 0 0 calc(4px / var(--camera-scale, 1)) rgba(241,198,95,.16), 0 0 calc(10px / var(--camera-scale, 1)) rgba(241,198,95,.75); }
 @media (max-width: 720px) {
-  /* The mobile scene is an untransformed reading stack, so its marker already
-   * uses screen pixels and must not compensate for the inactive camera scale. */
-  .graph-canvas[data-semantic-zoom] .node-card[data-running-observed="true"] .node-marker { width: 14px; height: 14px; flex: 0 0 14px; box-shadow: 0 0 0 4px rgba(241,198,95,.16), 0 0 10px rgba(241,198,95,.75); }
+  /* Only the non-graph reading stack lacks a camera transform. */
+  .workspace-grid:not([data-work-view="run"]) .graph-canvas[data-semantic-zoom] .node-card[data-running-observed="true"] .node-marker { width: 14px; height: 14px; flex: 0 0 14px; box-shadow: 0 0 0 4px rgba(241,198,95,.16), 0 0 10px rgba(241,198,95,.75); }
 }
 .graph-canvas[data-semantic-zoom] .node-card[data-task-state]:is(:hover, :focus-visible, :focus-within, [data-selected="true"]) { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px rgba(88,212,207,.2), 0 8px 24px rgba(0,0,0,.35); }
 .edge[data-task-state="not_started"] { stroke: var(--task-edge-pending); --edge-screen-width: 2.4px; stroke-dasharray: calc(10px / var(--camera-scale, 1)) calc(7px / var(--camera-scale, 1)); opacity: 1; animation: none; }

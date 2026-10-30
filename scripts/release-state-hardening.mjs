@@ -68,8 +68,8 @@ export function getProcessStartIdentity(pid, {
     }
     if (platform === "win32") {
       const script = [
-        `$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -ErrorAction Stop`,
-        "if ($null -ne $p) { [Console]::Out.Write($p.CreationDate.ToUniversalTime().Ticks) }",
+        `$p = Get-Process -Id ${pid} -ErrorAction Stop`,
+        "if ($null -ne $p) { [Console]::Out.Write($p.StartTime.ToUniversalTime().Ticks) }",
       ].join("; ");
       const result = runCommand(
         "powershell.exe",
@@ -77,8 +77,10 @@ export function getProcessStartIdentity(pid, {
         { encoding: "utf8", windowsHide: true, timeout: 5_000 },
       );
       const ticks = String(result?.stdout ?? "").trim();
-      const identity = result?.status === 0 && /^\d+$/u.test(ticks)
-        ? `windows-creation-ticks:${ticks}`
+      // Existing CIM DATETIME identities retain microseconds (ten .NET ticks).
+      // Keep that precision exactly when reading the native process timestamp.
+      const identity = result?.status === 0 && !result?.error && /^\d+$/u.test(ticks)
+        ? `windows-creation-ticks:${BigInt(ticks) / 10n * 10n}`
         : null;
       return rememberOwnIdentity(cacheKey, cacheable, identity);
     }

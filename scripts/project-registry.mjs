@@ -424,6 +424,73 @@ export async function listLiveNativeCodexBindings({ homeDir = os.homedir(), prof
   } finally { db.close(); }
 }
 
+const LIVE_NATIVE_ZCODE_SOURCE = "live_native_zcode";
+const LIVE_ZCODE_SESSION = /^sess_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
+const LIVE_ZCODE_TURN = /^turn_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
+const LIVE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+
+function zcodeBindingMetadata({ sessionId, turnId, runId, zcodeHome, profile = "default" } = {}) {
+  if (!LIVE_ZCODE_SESSION.test(sessionId || "") || !LIVE_ZCODE_TURN.test(turnId || "")) return null;
+  const nativeRunId = `native-zcode-${sessionId}-${turnId}`;
+  // Local registration selects native identity; only a verified HMAC join may
+  // associate a native turn with an existing governed meta-* run.
+  if (runId !== undefined && runId !== nativeRunId) return null;
+  if (zcodeHome && (typeof zcodeHome !== "string" || !path.isAbsolute(zcodeHome))) return null;
+  if (typeof profile !== "string" || !LIVE_PROFILE.test(profile)) return null;
+  return { schemaVersion: LIVE_NATIVE_BINDING_SCHEMA, profile, runtime: "zcode", sessionId, turnId,
+    ...(zcodeHome ? { zcodeHome: path.resolve(zcodeHome) } : {}) };
+}
+
+/** Local opt-in observation; source identity is rechecked by the read-only reader. */
+export async function registerLiveNativeZcodeBinding({ homeDir = os.homedir(), repoPath, ...supplied } = {}) {
+  const metadata = zcodeBindingMetadata(supplied);
+  if (!metadata || typeof repoPath !== "string" || !path.isAbsolute(repoPath)) return null;
+  const { projectRegistryPath } = getProjectRegistryPaths({ homeDir });
+  const db = await openProjectRegistry(projectRegistryPath, { create: false });
+  if (!db) return null;
+  try {
+    const project = db.prepare("SELECT project_ref, repo_root FROM projects WHERE project_ref = ? AND enrollment_status = 'joined'").get(buildProjectRef({ repoPath }));
+    if (!project || path.relative(project.repo_root, path.resolve(repoPath)) !== "") return null;
+    const sourceRef = `${metadata.profile}:${metadata.sessionId}:${metadata.turnId}:native`;
+    const encoded = JSON.stringify(metadata);
+    const previous = db.prepare("SELECT metadata_json FROM project_sources WHERE project_ref = ? AND source_type = ? AND source_ref = ?").get(project.project_ref, LIVE_NATIVE_ZCODE_SOURCE, sourceRef);
+    if (previous?.metadata_json !== encoded) {
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO project_sources (project_ref, source_type, source_ref, metadata_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_ref, source_type, source_ref) DO UPDATE SET metadata_json = excluded.metadata_json, updated_at = excluded.updated_at`)
+        .run(project.project_ref, LIVE_NATIVE_ZCODE_SOURCE, sourceRef, encoded, now, now);
+    }
+    return { projectRef: project.project_ref, projectRoot: project.repo_root, ...metadata };
+  } finally { db.close(); }
+}
+
+/** No disk scan or implicit enrollment; only explicit local bindings are candidates. */
+export async function listLiveNativeZcodeBindings({ homeDir = os.homedir(), profile = "default", projectRef = null, runId = null, limit = 32 } = {}) {
+  if (typeof profile !== "string" || !LIVE_PROFILE.test(profile) || (runId && (typeof runId !== "string" || !LIVE_RUN_ID.test(runId)))) return [];
+  const { projectRegistryPath } = getProjectRegistryPaths({ homeDir });
+  const db = await openProjectRegistry(projectRegistryPath, { readOnly: true, create: false });
+  if (!db) return [];
+  try {
+    const prefix = `${profile}:`;
+    const filters = ["s.source_type = ?", "p.enrollment_status = 'joined'", "substr(s.source_ref, 1, ?) = ?"];
+    const values = [LIVE_NATIVE_ZCODE_SOURCE, prefix.length, prefix];
+    if (projectRef) { filters.push("p.project_ref = ?"); values.push(projectRef); }
+    return db.prepare(`SELECT p.project_ref, p.repo_root, s.metadata_json FROM project_sources s JOIN projects p ON p.project_ref = s.project_ref
+      WHERE ${filters.join(" AND ")} ORDER BY s.updated_at DESC, s.source_ref ASC LIMIT ?`)
+      .all(...values, Math.min(64, Math.max(1, Number.isInteger(limit) ? limit : 32))).flatMap((row) => {
+        try {
+          if (Buffer.byteLength(row.metadata_json) > 4_096) return [];
+          const parsed = JSON.parse(row.metadata_json);
+          if (parsed.schemaVersion !== LIVE_NATIVE_BINDING_SCHEMA || parsed.profile !== profile || parsed.runtime !== "zcode") return [];
+          const metadata = zcodeBindingMetadata(parsed);
+          const selectedRun = metadata?.runId || `native-zcode-${metadata?.sessionId}-${metadata?.turnId}`;
+          return metadata && path.isAbsolute(row.repo_root) && (!runId || selectedRun === runId)
+            ? [{ projectRef: row.project_ref, projectRoot: row.repo_root, ...metadata }] : [];
+        } catch { return []; }
+      });
+  } finally { db.close(); }
+}
+
 export async function skipProjectRegistry({
   homeDir = os.homedir(),
   repoPath = process.cwd(),

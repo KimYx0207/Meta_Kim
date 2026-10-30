@@ -93,6 +93,46 @@ const graphEmptyReason = new Function(
 
 const reasonValues = Object.values(LIVE_GRAPH_AVAILABILITY_REASONS);
 
+test("an empty selection clears the previous task header while retaining the selected link", () => {
+  const names = ["contextTitle", "contextStatus", "contextProgress", "contextStage", "contextUpdated", "contextSource", "contextNodes", "contextEvents", "contextEvidence",
+    "stage", "started", "updated", "source", "runWorkers", "contextTask", "contextChat", "contextChatCopy", "emptyState", "workspace", "replayPanel"];
+  const elements = Object.fromEntries(names.map((name) => [name, { textContent: "Previous task", title: "Previous task", hidden: false, dataset: { chatId: "previous-chat" } }]));
+  const message = { textContent: "" };
+  const heading = { textContent: "" };
+  const show = new Function("elements", "message", "heading", "zhText", `
+    const { ${names.join(", ")} } = elements;
+    const app = { querySelector: (selector) => selector.includes("empty-message") ? message : heading };
+    const localize = (value) => zhText[value] || value;
+    const setText = (element, value) => { if (element) element.textContent = localize(value); };
+    const renderRunOverview = () => {};
+    let currentSnapshot = { run: { id: "previous" } }, selectedNodeId = "previous-node", pendingSnapshot = currentSnapshot;
+    const selectedRunId = "selected-current-run";
+    ${extractFunction("showEmpty")}
+    showEmpty("The selected run has not been found; your selection is preserved. Open Run records to check the current task.", "Selected run not found");
+    return { currentSnapshot, selectedNodeId, pendingSnapshot, selectedRunId };
+  `)(elements, message, heading, zhText);
+  assert.equal(show.currentSnapshot, null);
+  assert.equal(show.selectedNodeId, null);
+  assert.equal(show.pendingSnapshot, null);
+  assert.equal(show.selectedRunId, "selected-current-run");
+  assert.equal(elements.contextStatus.textContent, "—");
+  assert.equal(elements.contextUpdated.textContent, "—");
+  assert.equal(elements.contextChat.hidden, true);
+  assert.equal(elements.contextChatCopy.dataset.chatId, "");
+  assert.match(heading.textContent, /尚未找到所选运行记录/u);
+  assert.match(message.textContent, /当前选择已保留.*运行记录.*当前任务/u);
+});
+
+test("404 is shown as a missing exact selection and ZCode keeps its real runtime name", () => {
+  const start = clientScript.indexOf("  async function loadSnapshot(");
+  const end = clientScript.indexOf("\n  function startPollingFallback", start);
+  const loader = clientScript.slice(start, end);
+  assert.match(loader, /response\.status === 404[\s\S]*?showEmpty\([\s\S]*?Selected run not found[\s\S]*?return;/u);
+  const runtimeLabel = new Function("display", "currentLanguage", `${extractFunction("sourceRuntimeLabel")}\nreturn sourceRuntimeLabel;`)((value, fallback) => value || fallback, "zh");
+  assert.equal(runtimeLabel("zcode"), "ZCode");
+  assert.equal(runtimeLabel("unknown"), "未记录运行来源");
+});
+
 test("the reason vocabulary is a non-trivial exported set", () => {
   assert.ok(reasonValues.length >= 3, "the service emits at least three distinct empty-graph reasons");
   assert.equal(new Set(reasonValues).size, reasonValues.length, "reason values must be unique");

@@ -30,8 +30,10 @@ import {
 import {
   ensureGovernedLiveProjectRegistration,
   registerLiveNativeCodexBinding,
+  registerLiveNativeZcodeBinding,
 } from "./project-registry.mjs";
 import { createCodexNativeSessionReader } from "../src/infrastructure/live/codex-native-session-reader.mjs";
+import { createZcodeNativeSessionReader, nativeZcodeRunId } from "../src/infrastructure/live/zcode-native-session-reader.mjs";
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -93,11 +95,26 @@ function parseArgs(argv) {
       if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(value)) throw new LiveCliUsageError(`${arg} requires a UUID.`);
       options[arg === "--observe-codex-thread" ? "nativeCodexThreadId" : "nativeCodexTurnId"] = value.toLowerCase();
       index += 1;
+    } else if (arg === "--observe-zcode-session" || arg === "--observe-zcode-turn") {
+      const value = nextValue(argv, index, arg);
+      const pattern = arg === "--observe-zcode-session" ? /^sess_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu : /^turn_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
+      if (!pattern.test(value)) throw new LiveCliUsageError(`${arg} requires an exact native identifier.`);
+      options[arg === "--observe-zcode-session" ? "nativeZcodeSessionId" : "nativeZcodeTurnId"] = value;
+      index += 1;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
       throw new LiveCliUsageError(`Unknown option: ${arg}`);
     }
+  }
+  if (Boolean(options.nativeZcodeSessionId) !== Boolean(options.nativeZcodeTurnId)) {
+    throw new LiveCliUsageError("--observe-zcode-session and --observe-zcode-turn must be supplied together.");
+  }
+  if (options.nativeZcodeSessionId && (options.nativeCodexThreadId || options.nativeCodexTurnId)) {
+    throw new LiveCliUsageError("Choose one native runtime for this launch.");
+  }
+  if (options.nativeZcodeSessionId && options.runId && options.runId !== `native-zcode-${options.nativeZcodeSessionId}-${options.nativeZcodeTurnId}`) {
+    throw new LiveCliUsageError("ZCode observation requires its deterministic native --run-id; governed run links require automatic task identity verification.");
   }
   return options;
 }
@@ -109,6 +126,7 @@ function usage() {
     "Default mode starts or reuses one user-level Hub on 127.0.0.1, listing only registered projects and governed sessions; it exposes no mutation endpoint.",
     "--enable-control records an explicit control request, but the singleton CLI stays read-only unless a complete authority loadout is injected through the programmatic server API; otherwise it is fail-closed.",
     "The Hub can observe the exact Codex thread from CODEX_THREAD_ID (or --observe-codex-thread UUID). A current-task link requires --run-id or --observe-codex-turn UUID; a thread alone cannot identify the current turn. A reused Hub adds this trusted local binding without replacing other viewers. This only reads native events and never calls a model.",
+    "ZCode read-only observation is opt-in: --observe-zcode-session sess_ID --observe-zcode-turn turn_ID. Both native identifiers and the project's directory are verified against the local session database. Manual observation uses its deterministic native run link; existing governed links require an automatic exact task-identity match. No model is called and no ZCode data is written.",
   ].join("\n");
 }
 
@@ -174,6 +192,13 @@ export function nativeCodexStartupBinding(options, projectRoot, environment = pr
   return { projectRoot, threadId: threadId.toLowerCase(), ...(options.nativeCodexTurnId ? { turnId: options.nativeCodexTurnId } : {}), ...(environment.CODEX_HOME ? { codexHome: environment.CODEX_HOME } : {}) };
 }
 
+/** Explicit local session selection is distinct from runtime installation/support. */
+export function nativeZcodeStartupBinding(options, projectRoot, environment = process.env) {
+  if (!options.nativeZcodeSessionId || !options.nativeZcodeTurnId || !path.isAbsolute(projectRoot || "")) return null;
+  return { projectRoot, sessionId: options.nativeZcodeSessionId, turnId: options.nativeZcodeTurnId,
+    ...(environment.ZCODE_HOME ? { zcodeHome: environment.ZCODE_HOME } : {}) };
+}
+
 async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (options.help) {
@@ -208,7 +233,23 @@ async function main(argv = process.argv.slice(2)) {
         throw error;
       }
     }
-    const nativeBinding = projectRef ? nativeCodexStartupBinding(options, projectRoot) : null;
+    const zcodeBinding = projectRef ? nativeZcodeStartupBinding(options, projectRoot) : null;
+    if (zcodeBinding) {
+      const observed = await createZcodeNativeSessionReader(zcodeBinding).read();
+      if (observed?.state !== "observed") {
+        const error = new Error("zcode_turn_not_available");
+        error.code = "zcode_turn_not_available";
+        throw error;
+      }
+      const registered = await registerLiveNativeZcodeBinding({ homeDir: process.env.META_KIM_LIVE_HOME, repoPath: projectRoot, profile, ...zcodeBinding });
+      if (!registered) {
+        const error = new Error("zcode_binding_not_registered");
+        error.code = "zcode_binding_not_registered";
+        throw error;
+      }
+      runId ||= nativeZcodeRunId(zcodeBinding);
+    }
+    const nativeBinding = projectRef && !zcodeBinding ? nativeCodexStartupBinding(options, projectRoot) : null;
     if (nativeBinding) {
       await registerLiveNativeCodexBinding({ homeDir: process.env.META_KIM_LIVE_HOME, repoPath: projectRoot, profile, ...nativeBinding });
       if (!runId) {
@@ -251,7 +292,7 @@ async function main(argv = process.argv.slice(2)) {
       error.code = result.reason || "startup_unavailable";
       throw error;
     }
-    const currentRun = liveCurrentRunPresentation({ runId, nativeBinding, deepLink: result.deepLink });
+    const currentRun = liveCurrentRunPresentation({ runId, nativeBinding: nativeBinding || zcodeBinding, deepLink: result.deepLink });
     const publicResult = {
       status: result.status,
       started: result.started,

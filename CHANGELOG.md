@@ -6,6 +6,13 @@ This file is the reader-facing release history for Meta_Kim.
 
 The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
 
+## [Unreleased]
+
+- **Claude Code execution now appears in Live automatically.** The existing entry Hook and task identity bind the native session to its current run. A read-only JSONL reader feeds actual tool calls and Agent tasks into the existing graph without another Hook or saved status index. Native API errors are shown as failures; unread child-tool history remains partial.
+- **Show the current ZCode task graph in the read-only beta.** A registered project's existing task HMAC can match its native user turn automatically, so the current Live link shows observed Agent/tool activity and updates with new events. Reads are bounded to the parent turn; unobserved child-tool history stays partial, and raw prompts and command output are not exposed. Missing or ambiguous associations remain unavailable. Narrow side panels retain graph connections and fit controls, and observed Agent/tool badges no longer appear as planned.
+- **Clear stale progress when a run is missing.** Live keeps the explicitly selected run and gives a useful missing-record message, rather than retaining old progress or switching to a historical task.
+- Windows service identity queries now use local process start time, preserving compatibility with existing records and protection when verification fails.
+
 ## [3.7.3] - 2026-10-28
 
 - **Recognize a healthy memory service at Windows startup.** The generated Windows PowerShell 5.1 check now loads its required HTTP component, preventing a false failure and about five minutes of needless waiting. Exact older generated scripts remain recognizable for safe upgrade; user-modified scripts remain protected.

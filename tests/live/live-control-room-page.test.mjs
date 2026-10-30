@@ -3632,7 +3632,15 @@ test("preserves real edge state without replay evidence and uses interactive lis
   assert.doesNotMatch(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-current\s*\{[^}]*display:\s*none/su);
   assert.doesNotMatch(html, /class="top-run-context"/u, "navigation does not repeat the task heading at any viewport");
   assert.match(html, /data-live-open-sessions[\s\S]{0,500}data-live-language-toggle[\s\S]{0,500}data-live-open-help[\s\S]{0,500}data-live-open-info/u);
-  assert.match(html, /\[data-live-graph-fit\], \[data-live-graph-layout\], \[data-live-graph-zoom-out\], \[data-live-graph-zoom-in\]\s*\{\s*display:\s*none/su);
+  const rules = stylesheetRules(html);
+  for (const selector of ["[data-live-graph-fit]", "[data-live-graph-zoom-out]", "[data-live-graph-zoom-in]"]) {
+    assert.ok(!declaredValues(rules, { selector, property: "display" }).includes("none"), `${selector} remains available in the narrow graph`);
+  }
+  for (const rule of rules.filter((candidate) => candidate.conditions.includes("@media (max-width: 720px)"))) {
+    const readingStack = rule.declarations.some(([property, value]) => (property === "position" && value === "relative !important")
+      || (property === "transform" && value === "none !important"));
+    if (readingStack) assert.ok(rule.selectors.every((selector) => selector.includes(':not([data-work-view="run"])')), "mobile reading stacks cannot override run graph coordinates");
+  }
   assert.match(html, /\.replay-events\s*\{[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*hidden/su);
   assert.match(html, /scrollIntoView\?\.\(\{ behavior:\s*"auto", block:\s*"nearest", inline:\s*"nearest" \}\)/u);
   assert.match(html, /for \(const other of \[sessionsDialog, helpDialog, infoDialog\]\)/u);
@@ -3642,7 +3650,8 @@ test("preserves real edge state without replay evidence and uses interactive lis
   assert.match(html, /class="status-bar"/u);
   assert.match(html, /\.activity-chips\s*\{[^}]*display:\s*flex/su);
   assert.match(html, /\.activity-chip\s*\{[^}]*min-width:\s*0/su);
-  assert.match(html, /graph\.scrollTo\(\{[\s\S]{0,260}behavior:\s*reducedMotion\.matches\s*\?\s*"auto"\s*:\s*"smooth"/u);
+  assert.match(shippedHelper(html, "centerGraphNode"), /updateCamera\(\{/u);
+  assert.doesNotMatch(shippedHelper(html, "centerGraphNode"), /scrollTo|matchMedia/u, "node focus uses the graph camera at every viewport width");
 });
 
 test("keeps secondary Repository and Workspace surfaces in an on-demand keyboard menu", () => {
@@ -5836,13 +5845,16 @@ test("overview cards reserve a clickable two-line title instead of a painted tex
     "overview titles retain two readable lines",
   );
   assert.equal(
-    resolvedDeclaration(rules, { selector: `${cellCard} .node-identity-row`, property: "min-height", condition: "@media (min-width: 721px)" }),
+    resolvedDeclaration(rules, { selector: `${cellCard} .node-identity-row`, property: "min-height" }),
     "calc(var(--cell-title-fs) * 2.56)",
-    "the real click target must reserve both lines even when other card content is collapsed",
+    "the shared click target must reserve both lines at narrow and wide widths when other card content is collapsed",
   );
 
   assert.equal(resolvedDeclaration(rules, { selector: `${cellCard}::after`, property: "display" }), "none");
-  assert.equal(resolvedDeclaration(rules, { selector: `${cellCard} .node-title`, property: "height", condition: "@media (min-width: 721px)" }), "auto");
+  assert.equal(resolvedDeclaration(rules, { selector: `${cellCard} .node-title`, property: "height" }), "auto");
+  for (const child of ["node-card-top", "node-identity-row", "node-title"]) {
+    assert.equal(resolvedDeclaration(rules, { selector: `${cellCard} .${child}`, property: "visibility" }), "visible", `${child} must be visible in the shared renderer, not only a desktop media branch`);
+  }
 });
 
 /**

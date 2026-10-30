@@ -67,6 +67,8 @@ For an explicitly bound local Codex project, conversation and turn, Live can rea
 
 | Upgrade | What changed |
 | --- | --- |
+| Unreleased: Claude Code Live graph | Automatically reads the bound native session and updates the existing graph with observed tools and Agent tasks. Reuses the existing entry Hook; no manual session IDs are required. Child-tool history remains partial. |
+| Unreleased: ZCode Live graph | The read-only beta matches the registered project and existing task HMAC to its native user turn automatically. The current run shows observed Agent/tool activity and live updates; unobserved child-tool history stays partial. Missing or ambiguous bindings remain unavailable, and missing selections clear stale progress without switching to another run. |
 | Reliable Windows startup check | Windows PowerShell 5.1 recognizes a healthy memory service without about five minutes of needless waiting. Exact older generated scripts can be upgraded while user-modified scripts stay protected. |
 | Requirements before design | Discuss evidence-backed recommendations, trade-offs and dependent decisions before producing a complete design and demonstrable tasks. |
 | Complete professional methods | Source-checked role steps and input/output contracts reach workers; missing facts and pending independent review remain explicit. |

@@ -451,7 +451,7 @@ export function createLiveControlRoomServer(options = {}) {
     // Readers are resolved per request, so a reused daemon can learn a new local binding.
     const share = async (request = {}) => {
       const requestedRun = typeof request === "string" ? request : request.runId;
-      if ((!requestedRun && nativeBindings.hasProject(repoRoot)) || requestedRun?.startsWith("native-codex-")) {
+      if ((!requestedRun && nativeBindings.hasProject(repoRoot)) || await nativeBindings.isNativeRun(repoRoot, requestedRun)) {
         const error = new Error("Native session sharing is unavailable.");
         error.code = "LIVE_SHARE_UNAVAILABLE";
         throw error;
@@ -462,23 +462,21 @@ export function createLiveControlRoomServer(options = {}) {
       ...base,
       async getSnapshot(runId) {
         if (runId && typeof runId === "object") runId = runId.runId;
-        if (!runId || runId.startsWith("native-codex-")) {
-          const snapshot = await nativeBindings.read({ projectRoot: repoRoot, runId: runId || null });
-          if (snapshot && (!runId || runId === snapshot.run.runId)) return snapshot;
-          if (runId) throw new Error("native_turn_not_available");
-        }
+        const snapshot = await nativeBindings.read({ projectRoot: repoRoot, runId: runId || null });
+        if (snapshot && (!runId || runId === snapshot.run.runId)) return snapshot;
+        if (await nativeBindings.isNativeRun(repoRoot, runId)) throw new Error("native_turn_not_available");
         return base.getSnapshot(runId);
       },
       async getReplay(runId) {
         if (runId && typeof runId === "object") runId = runId.runId;
-        if (typeof runId === "string" && runId.startsWith("native-codex-")) {
+        if (await nativeBindings.isNativeRun(repoRoot, runId)) {
           const snapshot = await this.getSnapshot(runId);
           return { schemaVersion: LIVE_REPLAY_SCHEMA_VERSION, runId, source: snapshot.source, replay: snapshot.replay, eventCount: snapshot.eventCount, permissions: snapshot.permissions };
         }
         return base.getReplay(runId);
       },
       async getDeliverable(runId, deliverableId) {
-        if (typeof runId === "string" && runId.startsWith("native-codex-")) return null;
+        if (await nativeBindings.isNativeRun(repoRoot, runId)) return null;
         return typeof base.getDeliverable === "function" ? base.getDeliverable(runId, deliverableId) : null;
       },
       getShare: share,
@@ -495,7 +493,7 @@ export function createLiveControlRoomServer(options = {}) {
         },
       }
     : options);
-  const service = wrapNativeService(baseService, options.projectRoot || options.nativeCodex?.projectRoot || process.cwd());
+  const service = wrapNativeService(baseService, options.projectRoot || options.nativeCodex?.projectRoot || options.nativeZcode?.projectRoot || process.cwd());
   const requestedPort = Number.isInteger(options.port) && options.port >= 0 ? options.port : DEFAULT_PORT;
   const requestedHost = options.host;
   if (!loopbackOnly(requestedHost)) {
@@ -603,8 +601,14 @@ export function createLiveControlRoomServer(options = {}) {
 
   const publicHubCatalog = async ({ requestedProjectId = null, requestedRunId = null, refresh = false } = {}) => {
     await nativeBindings.read({ catalog: true });
-    if (requestedRunId?.startsWith("native-codex-")) await nativeBindings.read({ projectRef: requestedProjectId, runId: requestedRunId, catalog: true });
-    const internalProjects = nativeBindings.mergeProjects(await readHubProjects({ refresh }));
+    const durableProjects = await readHubProjects({ refresh });
+    if (requestedRunId) {
+      // Catalog rows intentionally omit filesystem roots. Resolve the enrolled
+      // selection through the private boundary, as snapshot reads already do.
+      const requestedProject = requestedProjectId ? await hubCatalog.resolveProject(requestedProjectId) : null;
+      await nativeBindings.read({ projectRef: requestedProjectId, projectRoot: requestedProject?.repoRoot || null, runId: requestedRunId, catalog: true });
+    }
+    const internalProjects = await nativeBindings.mergeProjects(durableProjects);
     const unorderedProjects = internalProjects.map((project) => ({
       projectId: project.projectRef,
       displayName: project.displayName,
@@ -970,7 +974,12 @@ export function createLiveControlRoomServer(options = {}) {
         }
         jsonResponse(response, 200, withoutControlProjection(await selection.service.getSnapshot(selection.runId)));
       } catch {
-        jsonResponse(response, 200, withoutControlProjection(await service.getSnapshot().catch(() => ({ error: "snapshot_unavailable" }))));
+        // A failed exact selection must never display a different project's latest run.
+        if (parsed.searchParams.has("projectId") || parsed.searchParams.has("runId")) {
+          jsonResponse(response, 404, safeError("snapshot_unavailable"));
+        } else {
+          jsonResponse(response, 200, withoutControlProjection(await service.getSnapshot().catch(() => ({ error: "snapshot_unavailable" }))));
+        }
       }
       return;
     }

@@ -20,6 +20,39 @@ import {
   writeLiveHubState,
 } from "../../src/infrastructure/live/live-hub-lifecycle.mjs";
 import { getProcessStartIdentity } from "../../scripts/release-state-hardening.mjs";
+
+test("Windows native start time keeps the exact legacy CIM microsecond identity", () => {
+  const calls = [];
+  const identity = getProcessStartIdentity(51224, { platform: "win32", runCommand: (command, args, options) => {
+    calls.push({ command, args, options });
+    return { status: 0, stdout: "639289762733897894\r\n" };
+  } });
+  assert.equal(identity, "windows-creation-ticks:639289762733897890");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "powershell.exe");
+  assert.match(calls[0].args.at(-1), /Get-Process -Id 51224 -ErrorAction Stop/u);
+  assert.match(calls[0].args.at(-1), /StartTime\.ToUniversalTime\(\)\.Ticks/u);
+  assert.doesNotMatch(calls[0].args.at(-1), /Get-CimInstance|Win32_Process/u);
+  assert.equal(calls[0].options.timeout, 5000);
+  assert.equal(calls[0].options.windowsHide, true);
+  for (const [ticks, expected] of [["639289762733897890", "639289762733897890"], ["639289762733897899", "639289762733897890"], ["639289762733897900", "639289762733897900"]]) {
+    assert.equal(getProcessStartIdentity(51224, { platform: "win32", runCommand: () => ({ status: 0, stdout: ticks }) }), `windows-creation-ticks:${expected}`);
+  }
+});
+
+test("Windows identity probes preserve fail-closed behavior for missing or invalid process evidence", () => {
+  for (const result of [
+    { status: 1, stdout: "" },
+    { status: 1, stdout: "639289762733897894" },
+    { status: null, stdout: "", error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }) },
+    { status: 0, stdout: "639289762733897894", error: new Error("query failed") },
+    ...["", "not-a-date", "639289762733897894 extra", "6.392897627338979e17", "-1"].map((stdout) => ({ status: 0, stdout })),
+  ]) {
+    assert.equal(getProcessStartIdentity(51224, { platform: "win32", runCommand: () => result }), null);
+  }
+  assert.equal(getProcessStartIdentity(51224, { platform: "win32", runCommand: () => { throw new Error("query failed"); } }), null);
+  assert.equal(getProcessStartIdentity(-1, { platform: "win32", runCommand: () => assert.fail("invalid PID must not launch a query") }), null);
+});
 import {
   liveCurrentRunPresentation,
   nativeCodexStartupBinding,

@@ -43,6 +43,15 @@ function verifiedConversationBinding() {
   return resolveVerifiedSourceConversation(payload, { runtime: sourceRuntimeFromPayload() });
 }
 
+function withNativeSessionHint(state) {
+  const sessionId = payload?.session_id || payload?.sessionId;
+  if (sourceRuntimeFromPayload() !== "claude" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(sessionId || "") || state.sourceConversation) return state;
+  const previous = state.stageRuntimeControl?.nativeSessionHint;
+  if (previous?.runtime === "claude" && previous.sessionId === sessionId.toLowerCase()) return state;
+  return { ...state, stageRuntimeControl: { ...state.stageRuntimeControl,
+    nativeSessionHint: { runtime: "claude", sessionId: sessionId.toLowerCase() } } };
+}
+
 function nativeCodexLiveThreadId() {
   const verified = verifiedConversationBinding().conversation?.conversationId;
   const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
@@ -436,6 +445,11 @@ function isManagedStageState(state) {
 
 function shouldReplaceActiveState(existing, promptFingerprint) {
   if (!existing?.active) return true;
+  const incomingSession = payload?.session_id || payload?.sessionId;
+  const existingSession = existing.sourceConversation?.runtime === "claude" ? existing.sourceConversation.conversationId
+    : existing.stageRuntimeControl?.nativeSessionHint?.runtime === "claude" ? existing.stageRuntimeControl.nativeSessionHint.sessionId : null;
+  if (sourceRuntimeFromPayload() === "claude" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(incomingSession || "")
+    && existingSession && existingSession.toLowerCase() !== incomingSession.toLowerCase()) return true;
   if (canResumeHostCheckpoint(existing)) return false;
 
   const existingFingerprint =
@@ -513,6 +527,11 @@ function resolveReusableRunIdentity(previous, taskFingerprint) {
   if (typeof taskFingerprint !== "string" || !taskFingerprint) return null;
   if (!previous || typeof previous !== "object") return null;
   if (previous.active !== false) return null;
+  const incomingSession = payload?.session_id || payload?.sessionId;
+  const previousSession = previous.sourceConversation?.runtime === "claude" ? previous.sourceConversation.conversationId
+    : previous.stageRuntimeControl?.nativeSessionHint?.runtime === "claude" ? previous.stageRuntimeControl.nativeSessionHint.sessionId : null;
+  if (sourceRuntimeFromPayload() === "claude" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(incomingSession || "")
+    && previousSession && previousSession.toLowerCase() !== incomingSession.toLowerCase()) return null;
   if (previous.taskFingerprint !== taskFingerprint) return null;
   const runId = typeof previous.runId === "string" ? previous.runId : "";
   if (!/^meta-[a-z0-9][a-z0-9._-]{0,115}$/u.test(runId)) return null;
@@ -715,12 +734,12 @@ const promptFingerprint = taskIdentity.taskFingerprint;
   } else if (existingFingerprint && existingFingerprint === promptFingerprint) {
     const observedRuntime = sourceRuntimeFromPayload();
     const refreshBinding = verifiedConversationBinding();
-    const refreshedState = existing.sourceConversation
+    const refreshedState = withNativeSessionHint(existing.sourceConversation
       ? existing
       : bindSourceConversation(existing, refreshBinding.conversation, {
         sourceRuntime: observedRuntime,
         refusalReason: refreshBinding.binding?.reason,
-      });
+      }));
     await activateSpineState(projectRoot, refreshedState, {
       expectedRunId: existing.runId || null,
       refreshExisting: true,
@@ -740,7 +759,7 @@ const reusableRunIdentity = resolveReusableRunIdentity(
   taskIdentity.taskFingerprint,
 );
 const activationBinding = verifiedConversationBinding();
-const state = createInitialState({
+const state = withNativeSessionHint(createInitialState({
   taskClassification: activation.taskClassification,
   triggerReason: activation.triggerReason,
   activationMode: "hook_observed",
@@ -755,7 +774,7 @@ const state = createInitialState({
   sourceConversation: activationBinding.conversation,
   sourceRuntime: sourceRuntimeFromPayload(),
   conversationLinkRefusal: activationBinding.binding?.reason,
-});
+}));
 
 const continuationBoundary = reusableRunIdentity
   ? null
