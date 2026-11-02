@@ -34,6 +34,7 @@ import {
   getGlobalProfilePaths,
 } from "./meta-kim-local-state.mjs";
 
+async function selectRouteMain() {
 function argValue(name, fallback = null) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : fallback;
@@ -69,6 +70,8 @@ async function readGlobalInventoryJson(fallback) {
 
 const task = argValue("--task", "");
 const actionTask = argValue("--action-task", task);
+const fetchOnly = process.argv.includes("--fetch-only");
+const hostWorkOrder = JSON.parse(argValue("--thinking-work-order-json", "null"));
 const methodWorkKind = argValue("--method-work-kind", null);
 const methodCapabilityId = argValue("--method-capability-id", null);
 const methodContextRaw = argValue("--method-context-json", null);
@@ -1026,14 +1029,7 @@ const readOnlyProfessionalReview = (methodWorkKind === "support" || requirements
   methodContractOwners[0].routeEligible === true && methodContractOwners[0].executionBlock !== true &&
   !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition &&
   (!requirementsContext || currentMethodOperation.readOnlyReview);
-// Ordinary requirements/Skill materials do not request a dependency Agent.
-// Admit the actual read-only source review through the existing full inventory,
-// even when a reviewed feature word classified the parent text as strategy.
-const readOnlyEngineeringReview = Boolean(requirementsContext && !professionalMethodDemand &&
-  /\bread[- ]only\b|只读/iu.test(actionTask) &&
-  classifyTaskShape(requirementsContext.capabilityNeed.join("\n")) === "engineering_execution" &&
-  !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition);
-const currentReadOnlyOperation = readOnlyProfessionalReview || readOnlyEngineeringReview;
+const currentReadOnlyOperation = readOnlyProfessionalReview;
 const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some(
   (request) => request.mutationAuthorized && request.candidateType !== "script",
 );
@@ -1387,7 +1383,7 @@ const runtimeScopedLocalGlobalAgents = runtimeScopedAgents
 const candidateExecutionAgents = [
   ...runtimeScopedProjectExecutionAgents,
   ...runtimeScopedLocalGlobalAgents,
-  ...(dependencyAgentMatch.selected ? [dependencyAgentMatch.selected] : []),
+  ...(fetchOnly || hostWorkOrder ? dependencyAgentDiscovery.agents : dependencyAgentMatch.selected ? [dependencyAgentMatch.selected] : []),
 ]
   .filter(
     (agent) =>
@@ -1879,6 +1875,145 @@ function applyAgentProfilesToRoute(route) {
   };
 }
 
+const routeRunId = resolveRouteRunId(requestedRouteRunId);
+const routeOccurredAt = new Date().toISOString();
+
+// Fetch and host-selected work orders stop before lexical route synthesis.
+// Inventory references identify observed records, not native invocation or trust.
+if (fetchOnly || hostWorkOrder) {
+  const fact = (provider) => Object.fromEntries(["id", "type", "providerType", "source", "sourceRef", "sourceRoot", "sourceKey",
+    "contentDigest", "description", "boundary", "ownerContract", "runtime", "platformId", "runtimeSupport", "osSupport",
+    "routeEligible", "executionEligible", "executionBlock", "layer", "routeEligibility", "cacheEvidenceOnly",
+    "validCustomAgentDefinition", "nativeCustomAgentEligible", "ownerBindingMode", "metadata", "risk"]
+    .filter((key) => provider[key] !== undefined).map((key) => [key, key === "metadata" && provider.metadata
+      ? Object.fromEntries(["name", "description", "developer_instructions", "capabilityLoadout", "permissions", "sideEffects"].filter((field) => provider.metadata[field] !== undefined).map((field) => [field, provider.metadata[field]]))
+      : provider[key]]));
+  const agents = candidateExecutionAgents.map(fact);
+  const providers = reusableProviders.map(fact);
+  const inventory = { projectRoot: dependencyProjectRoot, runtime, os: osTarget, agents, providers };
+  const inventoryDigest = createHash("sha256").update(stableJson(inventory)).digest("hex");
+  const identify = (provider) => ({ ...provider,
+    inventoryRef: "sha256:" + createHash("sha256").update(stableJson(provider)).digest("hex") });
+  const fetchPacket = { stage: "Fetch", capabilityDiscovery: { inventoryDigest,
+    agents: agents.map(identify), providers: providers.map(identify),
+    searchLog: ownerDiscoveryPacket.capabilityDiscoverySearchLog },
+    claimBoundary: "Current discovered source records only; no semantic fit, native invocation or execution authorization." };
+  const gap = (missing) => ({ gap: "The host-selected work order has an unresolved current capability binding.",
+    missing, returnToStage: "Thinking" });
+  if (fetchOnly) {
+    console.log(JSON.stringify({ schemaVersion: 1, task, taskShape, runtime, os: osTarget,
+      status: "needs_thinking", fetchPacket, ownerDiscoveryPacket,
+      recommendedRoute: null, rankedRoutes: [], workerTaskPacketDrafts: [],
+      routeExecutionGate: { canHandoffToHost: false, canEnterExecution: false, executionAuthorized: false,
+        handoffStatus: "pending_host_thinking", hostAction: "return_to_thinking", returnToStage: "Thinking" } }));
+    return;
+  }
+  const blockers = [];
+  if (!/^[a-f0-9]{64}$/u.test(hostWorkOrder.inventoryDigest ?? "")) blockers.push("fetch_inventory_binding_required");
+  const selected = {};
+  for (const [slot, requested] of Object.entries(hostWorkOrder.selectedCapabilityProviders ?? {})) {
+    const pool = ["agent", "verificationAgent"].includes(slot) ? fetchPacket.capabilityDiscovery.agents : fetchPacket.capabilityDiscovery.providers;
+    const matches = pool.filter((provider) => requested?.inventoryRef === provider.inventoryRef &&
+      requested.id === provider.id && requested.source === provider.source &&
+      requested.sourceRef === provider.sourceRef && (requested.contentDigest ?? null) === (provider.contentDigest ?? null));
+    if (matches.length !== 1 || !providerEligibleForRoute(matches[0])) blockers.push("selected_inventory_binding_unavailable:" + slot);
+    else selected[slot] = matches[0];
+  }
+  const owner = selected.agent;
+  for (const method of requirementsContext?.methods ?? []) {
+    const requestedSource = typeof method.sourceRef === "string" ? path.resolve(dependencyProjectRoot, method.sourceRef) : null;
+    const actualSource = owner?.sourceRef ? path.resolve(dependencyProjectRoot, owner.sourceRef) : null;
+    const sameSource = requestedSource && actualSource && (osTarget === "windows"
+      ? requestedSource.toLowerCase() === actualSource.toLowerCase() : requestedSource === actualSource);
+    if (owner?.source !== "dependency_agent_contract" || !sameSource ||
+        hostWorkOrder.methodCapabilityId !== method.methodCapabilityId) blockers.push("explicit_material_method_source_conflicts_with_selected_contract");
+  }
+  if (!owner || !/^[a-f0-9]{64}$/iu.test(String(owner.contentDigest ?? "").replace(/^sha256:/u, ""))) {
+    blockers.push("selected_owner_source_hash_required");
+  }
+  if (!hostWorkOrder.selectionReason || !Array.isArray(hostWorkOrder.toolRequirements) ||
+      !Array.isArray(hostWorkOrder.scopeFiles) || !Array.isArray(hostWorkOrder.shardScope) || !hostWorkOrder.shardScope.length) blockers.push("current_work_order_required");
+  if (!selected.verificationAgent || hostWorkOrder.handoffTarget !== selected.verificationAgent.id ||
+      !/^[a-f0-9]{64}$/iu.test(String(selected.verificationAgent.contentDigest ?? "").replace(/^sha256:/u, ""))) {
+    blockers.push("current_verification_owner_source_required");
+  }
+  const readOnly = ["read_only_worker", "read_only_support"].includes(hostWorkOrder.effectClass);
+  if (owner?.source === "dependency_agent_contract") {
+    const capabilities = owner.ownerContract.capabilities.filter((capability) =>
+      !hostWorkOrder.methodCapabilityId || capability.id === hostWorkOrder.methodCapabilityId ||
+      owner.dependencyId + ":" + capability.id === hostWorkOrder.methodCapabilityId);
+    if (capabilities.length !== 1 || !readOnly || capabilities[0].sideEffects.length) blockers.push("exact_read_only_method_contract_required");
+    if (hostWorkOrder.toolRequirements.some((tool) => !capabilities[0]?.permissions.includes(tool))) blockers.push("method_tool_requirement_exceeds_contract");
+  } else if (hostWorkOrder.methodCapabilityId) blockers.push("explicit_method_requires_exact_discovered_contract");
+  for (const tool of hostWorkOrder.toolRequirements ?? []) {
+    if (!Object.values(selected).some((provider) => provider.id === tool ||
+      provider.ownerContract?.capabilities?.some((capability) => capability.permissions.includes(tool)))) {
+      blockers.push("tool_requirement_not_bound:" + tool);
+    }
+  }
+  const scopeFiles = [];
+  for (const file of hostWorkOrder.scopeFiles ?? []) {
+    try { scopeFiles.push(inspectTrustedPath(dependencyProjectRoot, file, { allowMissing: !readOnly }).target); }
+    catch { blockers.push("scope_outside_current_project_or_unavailable"); }
+  }
+  const snapshot = owner ? profileForExecutionOwner(owner, hostWorkOrder.capabilityNeed ?? [], Object.values(selected), hostWorkOrder.todayTask) : null;
+  if (snapshot?.status === "capability_gap") blockers.push(...snapshot.blockedReasons);
+  // A profile is a constraint on the host choice, not another selector.
+  const profileSlotKeys = { skill: "skill", mcp_tool: "mcpTool", command: "command", runtime_tool: "runtimeTool" };
+  for (const slot of snapshot?.slots ?? []) {
+    const slotKey = "profile:" + slot.bindingType + ":" + slot.capabilitySlot;
+    const hostProvider = selected[slotKey] ?? selected[profileSlotKeys[slot.bindingType]];
+    if (!hostProvider) blockers.push("host_profile_slot_binding_required:" + slot.capabilitySlot);
+    else if (["id", "source", "sourceRef", "sourceRoot", "contentDigest"].some((key) =>
+      (hostProvider[key] ?? null) !== (slot.provider[key] ?? null))) {
+      blockers.push("host_profile_slot_binding_conflict:" + slot.capabilitySlot);
+    }
+  }
+  const providersAfterProfile = selected;
+  for (const provider of Object.values(providersAfterProfile).filter(Boolean)) {
+    const known = [...agents, ...providers].filter((entry) => entry.id === provider.id && entry.source === provider.source &&
+      entry.sourceRef === provider.sourceRef && (entry.contentDigest ?? null) === (provider.contentDigest ?? null));
+    const identities = new Set(known.map((entry) => stableJson([entry.id, entry.source, entry.sourceRef, entry.sourceRoot, entry.contentDigest])));
+    if (identities.size !== 1 || !providerEligibleForRoute(known[0])) blockers.push("merged_provider_not_current:" + provider.id);
+  }
+  if (skillAuthoringRequested(actionTask) && providersAfterProfile.skill?.id !== "meta-skill-creator") {
+    blockers.push("meta_skill_creator_required_for_skill_authoring");
+  }
+  const route = { id: "host-thinking:" + runtime + ":" + hostWorkOrder.roleInstanceId,
+    owner: owner?.id ?? null, weapon: providersAfterProfile.skill?.id ?? providersAfterProfile.command?.id ?? providersAfterProfile.runtimeTool?.id ?? null,
+    dependency: providersAfterProfile.skill?.id ?? null, dependencyProject: owner?.dependencyId ?? null,
+    runtime, os: osTarget, verificationOwner: selected.verificationAgent?.id ?? null,
+    verificationMethod: "Current work order verifySteps and actual host results",
+    selectionPolicy: "host_selected_current_bindings", selectionStatus: blockers.length ? "blocked" : "bindings_verified_not_invoked",
+    selectedCapabilityProviders: providersAfterProfile, agentCapabilityProfile: snapshot,
+    ownerBinding: { selectedOwner: owner?.id ?? null, source: owner?.source, sourceRef: owner?.sourceRef,
+      providerEvidenceRef: owner?.inventoryRef, existingOwnerMatched: Boolean(owner), bindingStage: "Thinking" },
+    blockedReasons: blockers, selectionReason: hostWorkOrder.selectionReason, nativeInvocationVerified: false };
+  const executionGate = evaluateRouteExecutionGate({ route, runtime, taskShape: "standard_path", choiceRequired: false, effectiveMatrix: runtimeMatrix });
+  const ready = !blockers.length && executionGate.routeCompatible === true;
+  const binding = owner ? codexSpawnBindingForOwner(owner.id, "agent", hostWorkOrder.roleInstanceId,
+    { ...hostWorkOrder, purpose: hostWorkOrder.todayTask, roleDisplayName: hostWorkOrder.roleDisplayName,
+      verificationOwner: selected.verificationAgent?.id, verification: hostWorkOrder.verifySteps, agentCapabilityProfile: snapshot,
+      capabilityLoadout: { ...snapshot, selectedProviders: providersAfterProfile } }) : null;
+  const draft = { ...hostWorkOrder, ownerAgent: owner?.id, ownerSource: owner?.source, sourceRef: owner?.sourceRef,
+    ownerContract: owner?.ownerContract ?? null, purpose: hostWorkOrder.todayTask, scopeFiles, shardScope: hostWorkOrder.shardScope,
+    codexSpawnBinding: binding, agentCapabilityProfile: snapshot,
+    mutationPolicy: readOnly ? "read_only" : "scoped_local_writes_only", externalWriteBoundary: hostWorkOrder.effectClass === "external_write",
+    workspaceIsolation: readOnly ? "shared_read_only_workspace" : "unproven", externalWritePolicy: "forbidden_without_host_authorization",
+    collisionPolicy: readOnly ? "single_worker_bounded_scope" : "unproven",
+    safetyEvidence: { status: ready && readOnly ? "proven" : "unproven", shardScope: hostWorkOrder.shardScope,
+      evidenceBasis: "current_discovered_sources_and_requested_read_only_scope_not_permission" } };
+  console.log(JSON.stringify({ schemaVersion: 1, task, taskShape, runtime, os: osTarget, fetchPacket, ownerDiscoveryPacket,
+    recommendedRoute: blockers.length ? null : { ...route, executionCapabilityGate: executionGate },
+    rankedRoutes: [route], workerTaskPacketDrafts: ready ? [draft] : [],
+    capabilityGapPacket: ready ? null : gap([...blockers, ...executionGate.blockers ?? []]),
+    capabilityGapDetected: !ready, capabilityGapDecision: ready ? null : { decision: "blocked_or_needs_approval" },
+    routeExecutionGate: { routeCompatible: executionGate.routeCompatible, canHandoffToHost: ready,
+      canEnterExecution: false, executionAuthorized: false, handoffStatus: ready ? "ready_for_host_handoff" : "blocked",
+      hostAction: ready ? "host_action_required" : "return_to_thinking", returnToStage: ready ? null : "Thinking", blockedBy: blockers } }));
+  return;
+}
+
 const CAPABILITY_NEED_TERMS = {
   "software-architecture-and-extension-boundaries": ["architecture", "architectural", "maintainability", "extension", "system-design", "架构", "可扩展", "可维护"],
   "product-intent-and-context": ["product", "context", "get-context", "design-consultation", "strategy", "用户", "产品"],
@@ -2231,8 +2366,6 @@ function resolveRouteRunId(value) {
   return `route-${Date.now().toString(36)}-${randomUUID().replaceAll("-", "").slice(0, 16)}`;
 }
 
-const routeRunId = resolveRouteRunId(requestedRouteRunId);
-const routeOccurredAt = new Date().toISOString();
 
 function codexProviderId(provider, ownerId) {
   const scope = provider?.source === "local_global_agent_inventory"
@@ -2358,12 +2491,13 @@ function buildCodexWorkerMessage(ownerId, ownerKind, roleInstanceId, taskPacket 
     ownerContract: provider?.ownerContract ?? null,
     capabilityLoadout,
     agentCapabilityProfile: taskPacket?.agentCapabilityProfile ?? null,
-    referenceDirection: taskPacket?.agentCapabilityProfile?.referenceDirection ?? taskPacket?.decisionImpact ?? null,
+    referenceDirection: taskPacket?.agentCapabilityProfile?.referenceDirection ?? taskPacket?.referenceDirection ?? taskPacket?.decisionImpact ?? null,
     requiredMaterials: taskPacket?.agentCapabilityProfile?.materials ?? [],
     scope: {
       purpose: taskPacket?.purpose ?? `Execute the bounded worker task owned by ${ownerId}.`,
       decisionImpact: taskPacket?.decisionImpact ?? null,
-      nonGoals: ["Do not absorb sibling lanes", "Do not mutate outside the declared scope"],
+      scopeFiles: taskPacket?.scopeFiles ?? [],
+      nonGoals: [...taskPacket?.nonGoals ?? [], "Do not absorb sibling lanes", "Do not mutate outside the declared scope"],
     },
     coordination: {
       dependsOn: taskPacket?.dependsOn ?? [],
@@ -2375,7 +2509,9 @@ function buildCodexWorkerMessage(ownerId, ownerKind, roleInstanceId, taskPacket 
       collisionPolicy: taskPacket?.collisionPolicy ?? "unproven",
     },
     outputContract: {
-      deliverable: "Return the scoped result, changed files or evidence, and unresolved blockers.",
+      deliverable: taskPacket?.output ?? "Return the scoped result, changed files or evidence, and unresolved blockers.",
+      acceptanceCriterionIds: taskPacket?.acceptanceCriterionIds ?? [],
+      verifySteps: taskPacket?.verifySteps ?? [],
       verificationOwner: taskPacket?.verificationOwner ?? "meta-prism",
       verification: taskPacket?.verification ?? "Run the lane-specific checks named by the work order.",
     },
@@ -2569,12 +2705,8 @@ function selectExecutionOwner() {
   if (workKind === "inspection") {
     const reviewer = findInAvailable(["code-reviewer", "architect-review", "review", "reviewer"]);
     if (reviewer) return reviewer;
-    if (!readOnlyEngineeringReview) return findInAvailable(["analysis", "worker"]);
-    const matchingSpecialists = candidates.map((id) => ({ id,
-      ...scoreProviderForCapabilityNeed(candidateExecutionAgents.find((agent) => agent.id === id), requirementsContext.capabilityNeed),
-    })).filter((entry) => entry.matchedTerms.length > 0).sort((left, right) => right.score - left.score);
-    return matchingSpecialists.length && matchingSpecialists[0].score !== matchingSpecialists[1]?.score
-      ? matchingSpecialists[0].id : null;
+    return findInAvailable(["analysis", "worker"]);
+
   }
   if (workKind === "test_execution") return findInAvailable(["test", "verify", "qa", "e2e-runner", "worker"]);
   if (workKind === "build_repair") {
@@ -2957,7 +3089,7 @@ function executionCapabilityDiscoveryRoute() {
   const explicitDiscoveryRoute = capabilityDiscoveryTaskRequested();
   const wantsSkillAuthoring = skillAuthoringRequested();
   if (subjectiveRouteChoice) return null;
-  if (taskShape !== "engineering_execution" && !readOnlyEngineeringReview && !explicitDiscoveryRoute && !dependencyAgentMatch.selected && !wantsSkillAuthoring) return null;
+  if (taskShape !== "engineering_execution" && !explicitDiscoveryRoute && !dependencyAgentMatch.selected && !wantsSkillAuthoring) return null;
   const selectedOwner = selectExecutionOwner();
   const selectedAgentProvider = [
     ...runtimeScopedProjectExecutionAgents,
@@ -3726,8 +3858,6 @@ const intentDirectionSelection = {
     ? "not_required" : intentArchitectureProvider ? "selected_not_invoked" : "capability_gap",
   claimBoundary: "Discovery and route selection only; no native confirmation, invocation or Permission.",
 };
-const inspectionOwnerId = readOnlyEngineeringReview ? selectExecutionOwner() : null;
-const inspectionOwner = candidateExecutionAgents.find((agent) => agent.id === inspectionOwnerId) ?? null;
 const rankedRoutes = (localToolRequest?.applies === true
   ? [localDependencyToolRoute()].filter(Boolean)
   : [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes])
@@ -3743,11 +3873,6 @@ const rankedRoutes = (localToolRequest?.applies === true
         candidateRoute.owner !== requestedMethodOwner.id || routeMethodOwner?.source !== "dependency_agent_contract" ||
         routeMethodOwner.id !== requestedMethodOwner.id || routeMethodOwner.sourceRef !== requestedMethodOwner.sourceRef ||
         routeMethodOwner.contentDigest !== requestedMethodOwner.contentDigest);
-    const missingInspectionOwner = readOnlyEngineeringReview &&
-      (!inspectionOwner || !inspectionOwner.sourceRef || !/^[a-f0-9]{64}$/iu.test(inspectionOwner.contentDigest ?? "") ||
-        !providerEligibleForRoute(inspectionOwner) || candidateRoute.owner !== inspectionOwner.id ||
-        routeMethodOwner?.id !== inspectionOwner.id || routeMethodOwner.source !== inspectionOwner.source ||
-        routeMethodOwner.sourceRef !== inspectionOwner.sourceRef || routeMethodOwner.contentDigest !== inspectionOwner.contentDigest);
     const route = {
       ...candidateRoute,
       intentDirectionSelection,
@@ -3755,10 +3880,9 @@ const rankedRoutes = (localToolRequest?.applies === true
         ? { ...candidateRoute.selectedCapabilityProviders, intentArchitecture: intentArchitectureProvider }
         : candidateRoute.selectedCapabilityProviders,
       blockedReasons: [...(candidateRoute.blockedReasons ?? []), ...(missingDirectionCapability ? ["confirmed long-term direction lacks an eligible architecture provider"] : []),
-        ...(missingRequestedMethod ? ["explicit method demand lacks its unique eligible source-bound owner for the current operation"] : []),
-        ...(missingInspectionOwner ? ["current read-only engineering review lacks an eligible discovered owner route"] : [])],
-      score: missingDirectionCapability || missingRequestedMethod || missingInspectionOwner ? Math.min(candidateRoute.score, 49) : candidateRoute.score,
-      scoreBand: missingDirectionCapability || missingRequestedMethod || missingInspectionOwner ? "blocked" : candidateRoute.scoreBand,
+        ...(missingRequestedMethod ? ["explicit method demand lacks its unique eligible source-bound owner for the current operation"] : [])],
+      score: missingDirectionCapability || missingRequestedMethod ? Math.min(candidateRoute.score, 49) : candidateRoute.score,
+      scoreBand: missingDirectionCapability || missingRequestedMethod ? "blocked" : candidateRoute.scoreBand,
     };
     const executionCapabilityGate = evaluateRouteExecutionGate({
       route,
@@ -4205,7 +4329,7 @@ const unprovenMultiLaneExecution =
 const nativeChoicePending = criticalChoiceBlocksExecution || thinkingChoiceBlocksExecution;
 const fastPathNativeChoicePending =
   entryClassification.path === "fast_path" && nativeChoicePending;
-const executionGateApplies = professionalMethodDemand || readOnlyEngineeringReview || entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
+const executionGateApplies = professionalMethodDemand || entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
 const routeCompatibilityBlocked =
   executionGateApplies &&
   recommendedRoute &&
@@ -4685,3 +4809,6 @@ if (process.argv.includes("--runner-compact") && localToolExecutionGate.applies)
 
 if (json) console.log(JSON.stringify(printableOutput));
 else console.log(JSON.stringify(printableOutput, null, 2));
+
+}
+await selectRouteMain();

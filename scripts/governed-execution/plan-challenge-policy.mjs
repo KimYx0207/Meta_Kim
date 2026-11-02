@@ -769,7 +769,7 @@ export function buildPlanChallengeState({
         Array.isArray(control?.evidenceRefs) &&
         control.evidenceRefs.length > 0
       ? control.action
-      : parsePlanChallengeControl(task);
+      : null;
   let stopRequested = false;
   let stopReason = null;
   let selectedQuestion = active ? selectHighestImpactOpenQuestion(questions) : null;

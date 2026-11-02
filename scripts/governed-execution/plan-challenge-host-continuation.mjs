@@ -1,5 +1,5 @@
 import { validateArtifactFile } from "../validate-run-artifact.mjs";
-import { readFileSync, createReadStream } from "node:fs";
+import { readFileSync, createReadStream, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { createDecision, presentDecision, invalidateDecision } from "../../src/domain/decision/decision.mjs";
@@ -18,6 +18,122 @@ const desktopConsumers = new WeakSet();
 const labels = Object.freeze({ "option:accept": "确认本版", "option:revise": "提出修改", "option:return": "退回方案" });
 const policy = JSON.parse(readFileSync(new URL("../../config/contracts/workflow-contract.json", import.meta.url), "utf8"))
   .protocols.preDecisionOptionFrame.humanMilestonePolicy;
+
+/** Bind current-question evidence, its actual prerequisites and common context.
+ * Opaque/external references are not silently reinterpreted as local files.
+ */
+export function collectPlanChallengeMaterials({ artifact, questionId = null, projectRoot }) {
+  const questions = new Map((artifact.preDecisionOptionFrame?.unresolvedQuestions ?? []).map((question) => [question.questionId, question]));
+  for (const question of artifact.requirementsDiscoveryPacket?.decisionItems ?? []) questions.set(question.questionId, question);
+  const closure = new Set();
+  const gaps = [];
+  const visit = (id) => {
+    if (closure.has(id)) return;
+    const question = questions.get(id);
+    if (!question) { gaps.push({ questionId: id, reason: "question_dependency_material_missing" }); return; }
+    closure.add(id);
+    for (const dependency of question.dependsOn ?? []) visit(dependency);
+  };
+  if (questionId) visit(questionId);
+  const scopedRefs = new Set([...questions.values()].flatMap((question) => question.evidenceRefs ?? []));
+  const references = new Set(artifact.intentPacket?.evidenceRefs ?? []);
+  for (const ref of artifact.requirementsDiscoveryPacket?.evidenceRefs ?? []) {
+    if (!scopedRefs.has(ref)) references.add(ref);
+  }
+  for (const id of closure) for (const ref of questions.get(id).evidenceRefs ?? []) references.add(ref);
+  const bindings = [];
+  const packetRoots = { requirementsDiscoveryPacket: artifact.requirementsDiscoveryPacket, intentPacket: artifact.intentPacket };
+  for (const sourceRef of [...references].sort()) {
+    const version = sourceRef.match(/(?:^|[#?&])sha256[:=]([a-f0-9]{64})$/iu)?.[1];
+    if (version) { bindings.push({ kind: "content_addressed_reference", sourceRef, sha256: version.toLowerCase() }); continue; }
+    if (/^(?:requirementsDiscoveryPacket|intentPacket)(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])*$/u.test(sourceRef)) {
+      const keys = sourceRef.match(/[A-Za-z_][A-Za-z0-9_]*|\d+/gu);
+      let value = packetRoots[keys.shift()];
+      for (const key of keys) value = value != null && Object.hasOwn(value, key) ? value[key] : undefined;
+      if (value !== undefined) { bindings.push({ kind: "packet_reference", sourceRef, sha256: digest(value) }); continue; }
+      gaps.push({ sourceRef, kind: "packet_reference", reason: "current_packet_reference_missing" });
+      continue;
+    }
+    const external = !path.isAbsolute(sourceRef) && /^[a-z][a-z0-9+.-]*:/iu.test(sourceRef);
+    const fileRef = sourceRef.split("#", 1)[0];
+    const fileLike = path.isAbsolute(fileRef) || /[\\/]|\.[A-Za-z0-9]+$/u.test(fileRef);
+    if (external || !fileLike) {
+      gaps.push({ sourceRef, kind: external ? "external_reference" : "non_file_reference", reason: "bound_snapshot_or_content_version_required" });
+      continue;
+    }
+    const relative = path.relative(projectRoot, path.resolve(projectRoot, fileRef));
+    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+      gaps.push({ sourceRef, kind: "external_file_reference", reason: "bound_project_snapshot_or_content_version_required" });
+      continue;
+    }
+    try {
+      const target = inspectTrustedPath(projectRoot, relative, { allowMissing: false }).target;
+      if (!statSync(target).isFile()) throw new Error("Material is not a file");
+      bindings.push({ kind: "local_file", sourceRef, fileRef: relative,
+        sha256: createHash("sha256").update(readFileSync(target)).digest("hex") });
+    } catch (error) {
+      gaps.push({ sourceRef, kind: "local_file", reason: "current_local_material_unavailable", code: error.code ?? "invalid_material_path" });
+    }
+  }
+  return { questionIds: [...closure].sort(), bindings, gaps };
+}
+
+/** Prepare a current pre-execution question without inventing a producer node. */
+export function createPlanChallengeQuestion({ artifact, questionId, projectRoot, at = new Date().toISOString() }) {
+  if (artifact.preparation?.status !== "needs_input" || artifact.workerTaskPackets?.length || artifact.coreLoop?.stageDagPacket) {
+    throw new Error("Plan-challenge preparation requires a pending pre-execution artifact, not an execution run");
+  }
+  const question = artifact.preDecisionOptionFrame.unresolvedQuestions.find((item) => item.questionId === questionId);
+  if (!question || question.status !== "open" || question.resolutionClass !== "material_user_decision" ||
+      !Array.isArray(question.options) || question.options.length < 2 ||
+      !artifact.preDecisionOptionFrame.readyDecisionFrontier.some((item) => item.questionId === questionId)) {
+    throw new Error("Only the current dependency-ready material question can be presented");
+  }
+  const options = question.options.map((option, index) => ({ optionId: "option:q" + index,
+    label: option.label, description: option.tradeoff, value: option.value ?? option.label }));
+  if (options.some((option) => typeof option.label !== "string" || typeof option.description !== "string" || typeof option.value !== "string") ||
+      new Set(options.map((option) => option.label)).size !== options.length) throw new TypeError("Question options require unique labels and exact values");
+  const materials = collectPlanChallengeMaterials({ artifact, questionId, projectRoot });
+  if (materials.gaps.length) return { status: "needs_material_evidence", questionId, materialGaps: materials.gaps,
+    returnToStage: "Fetch", executionAllowed: false };
+  const binding = { runId: artifact.runId, taskHash: artifact.goalContractPacket.taskHash,
+    intentDigest: artifact.intentPacket.intentBinding?.intentDigest ?? null,
+    taskFingerprint: artifact.taskFingerprint, projectRoot: path.resolve(projectRoot), runtime: "codex",
+    preparationDigest: artifact.preparation.bindingDigest, questionId,
+    questionDigest: digest({ question: question.question, options, evidenceRefs: question.evidenceRefs }), options,
+    materialBindings: materials.bindings, materialQuestionIds: materials.questionIds };
+  binding.bindingDigest = digest(binding);
+  const evidence = [{ evidenceRef: "evidence:preparation", digest: "sha256:" + binding.preparationDigest },
+    { evidenceRef: "evidence:question", digest: "sha256:" + binding.questionDigest },
+    { evidenceRef: "evidence:materials", digest: "sha256:" + digest(binding.materialBindings) }];
+  const evidenceRefs = evidence.map((item) => item.evidenceRef);
+  const decision = presentDecision(createDecision({ identity: { runId: "run:" + digest(binding.runId),
+    taskFingerprint: "sha256:" + digest(binding.taskFingerprint), decisionKey: "decision:" + digest(questionId),
+    scopeRef: "sha256:" + binding.bindingDigest }, decisionType: "decision:plan-challenge",
+    routeChangingDimensions: ["scope"], evidence,
+    options: options.map((option) => ({ optionId: option.optionId, displayRef: "display:" + option.optionId.slice(7),
+      tradeoffRefs: ["tradeoff:" + option.optionId.slice(7)], evidenceRefs })),
+    requirement: { required: true, reasonRef: "reason:material-choice", evidenceRefs },
+    nativeSurface: { runtime: "codex", surface: "request_user_input", primary: true }, createdAt: at }), { at });
+  return { binding, decision, presentation: { questions: [{ header: "当前选择", question: question.question,
+    options: options.map(({ optionId, label, description }) => ({ optionId, label, description })) }] } };
+}
+
+/** Map the observed chosen value, never a recommendation or milestone accept. */
+export function consumePlanChallengeChoice({ question, result }) {
+  if (result.state !== "consumed" || !result.answerEvidenceRef) return { status: "pending", executionAllowed: false };
+  const selected = question.binding.options.find((option) => option.optionId === result.selectedOptionId);
+  if (!selected) throw new Error("Consumed plan-challenge choice is not in this question version");
+  return { status: "consumed", executionAllowed: false, originAuthenticatedByLibrary: false,
+    binding: question.binding, selectedOptionId: selected.optionId,
+    settledDecision: { decisionId: question.binding.questionId, value: selected.value, evidenceRefs: [result.answerEvidenceRef] },
+    response: { questionId: question.binding.questionId, userAnswer: selected.value, status: "answered",
+      binding: "plan-challenge-response:" + question.binding.questionId,
+      selectionBinding: "plan-challenge-selection:" + question.binding.questionId,
+      evidenceRefs: [result.answerEvidenceRef] },
+    questionTurnRef: result.questionTurnRef, replyTurnRef: result.replyTurnRef, substrateRef: result.substrateRef,
+    observedClaimDigest: result.observedClaimDigest };
+}
 
 /** Bind only the evidence relevant to a declared milestone, never unrelated logs. */
 export function bindHumanMilestones(requests = [], context) {
@@ -267,6 +383,18 @@ export async function loadPlanChallengeContinuationCandidate({
   taskHash,
   intentDigest,
 }) {
+  const raw = JSON.parse(readFileSync(artifactPath, "utf8"));
+  if (raw.preparation) {
+    const markdownPath = path.join(path.dirname(artifactPath), raw.runId + "." + raw.resolvedOutputLanguage + ".md");
+    if (raw.runId !== previousRunId || raw.goalContractPacket?.taskHash !== taskHash ||
+        (raw.intentPacket.intentBinding?.intentDigest ?? null) !== (intentDigest ?? null) ||
+        raw.workerTaskPackets.length || raw.coreLoop?.stageDagPacket ||
+        createHash("sha256").update(readFileSync(markdownPath)).digest("hex") !== raw.preparation.markdownSha256) {
+      throw new Error("Pending preparation identity or paired material mismatch");
+    }
+    return { previousRunId, taskHash, intentDigest, planChallengeState: raw.preDecisionOptionFrame.planChallengeState,
+      unresolvedQuestions: raw.preDecisionOptionFrame.unresolvedQuestions, preparationArtifact: raw };
+  }
   const artifact = await validateArtifactFile(artifactPath);
   if (artifact.runId !== previousRunId) {
     throw new Error("Plan challenge continuation run id does not match the prior artifact.");

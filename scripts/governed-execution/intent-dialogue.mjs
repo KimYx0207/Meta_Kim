@@ -86,6 +86,90 @@ export function intentDialogueDigest(intent) {
   }))).digest("hex");
 }
 
+/** Consume the current host's Thinking work orders, not a second task planner.
+ * The host performs semantic judgment. These bindings grant no tool permission.
+ */
+export function normalizeHostThinking({ input = null, task, dialogue, requirementsDiscovery = null }) {
+  if (input == null) return null;
+  if (!input || typeof input !== "object" || Array.isArray(input) || input.taskHash !== taskOutcomeDigest(task) ||
+      (input.intentDigest ?? null) !== (dialogue.intentDigest ?? null) ||
+      (input.requirementsDigest ?? null) !== (requirementsDiscovery?.discoveryDigest ?? null)) {
+    throw new TypeError("Thinking must bind the current original task, intent and requirements materials");
+  }
+  if (!refs(input.evidenceRefs) || !input.intentPacket || input.intentPacket.realIntent !== dialogue.outcome ||
+      !Array.isArray(input.intentPacket.blockingUnknowns) || !Array.isArray(input.intentPacket.nonGoals) ||
+      !Array.isArray(input.intentPacket.successCriteria) || !input.intentPacket.successCriteria.length ||
+      !refs(input.intentPacket.evidenceRefs)) {
+    throw new TypeError("The current host must supply Critical understanding, evidence and its unresolved questions");
+  }
+  const thinking = input.thinkingPacket;
+  if (!thinking || typeof thinking.designFrame !== "string" || !thinking.designFrame.trim() ||
+      !Array.isArray(thinking.consideredLanes) || !thinking.consideredLanes.length ||
+      !Array.isArray(thinking.omittedLanesWithReason) || !Array.isArray(thinking.workerTaskPackets) ||
+      !thinking.workerTaskPackets.length || !/^[a-f0-9]{64}$/u.test(input.fetchPacket?.capabilityDiscovery?.inventoryDigest ?? "")) {
+    throw new TypeError("Thinking needs the actual Fetch inventory, considered routes and existing worker task fields");
+  }
+  const ids = new Set();
+  for (const packet of thinking.workerTaskPackets) {
+    if (!packet || typeof packet !== "object" || Array.isArray(packet) ||
+        typeof packet.roleInstanceId !== "string" || !packet.roleInstanceId.trim() || ids.has(packet.roleInstanceId) ||
+        typeof packet.todayTask !== "string" || !packet.todayTask.trim() ||
+        typeof packet.output !== "string" || !packet.output.trim() ||
+        !refs(packet.capabilityNeed) || !refs(packet.evidenceRefs) ||
+        !Array.isArray(packet.scopeFiles) || packet.scopeFiles.some((file) => typeof file !== "string" || !file.trim()) ||
+        !refs(packet.shardScope) ||
+        !Array.isArray(packet.nonGoals) || !Array.isArray(packet.toolRequirements) ||
+        !Array.isArray(packet.dependsOn) || !Array.isArray(packet.acceptanceCriterionIds) ||
+        !Array.isArray(packet.verifySteps) || !packet.verifySteps.length ||
+        typeof packet.selectionReason !== "string" || !packet.selectionReason.trim() ||
+        typeof packet.roleDisplayName !== "string" || !packet.roleDisplayName.trim() ||
+        typeof packet.handoffTarget !== "string" || !packet.handoffTarget.trim() || packet.qualityBar == null ||
+        typeof packet.referenceDirection !== "string" || !packet.referenceDirection.trim() ||
+        !packet.selectedCapabilityProviders?.agent ||
+        !["read_only_worker", "read_only_support", "local_write", "external_write"].includes(packet.effectClass)) {
+      throw new TypeError("Each Thinking work order needs its current operation, scope, needs, selected inventory objects and verification");
+    }
+    if (packet.verifySteps.some((step) => !step || !["id", "step", "verify"].every((key) => typeof step[key] === "string" && step[key].trim()))) {
+      throw new TypeError("Thinking verification must retain the existing verifySteps contract");
+    }
+    if (packet.handoffContract?.handoffTo && packet.handoffContract.handoffTo !== packet.handoffTarget) throw new TypeError("Thinking handoff target conflict");
+    for (const key of ["trusted", "permissions", "authorization", "executionAllowed", "nativeInvocationVerified", "workOrderReadiness", "safetyEvidence", "ownerSource", "ownerContract", "ownerBindingMode", "nativeAgentType", "codexSpawnBinding", "agentCapabilityProfile"]) {
+      if (Object.hasOwn(packet, key)) throw new TypeError("A Thinking work order cannot assert " + key);
+    }
+    ids.add(packet.roleInstanceId);
+  }
+  const criteria = new Set(dialogue.acceptanceCriteria.map((criterion) => criterion.id));
+  const pending = new Map(thinking.workerTaskPackets.map((packet) => {
+    if (packet.acceptanceCriterionIds.some((id) => !criteria.has(id)) ||
+        packet.dependsOn.some((id) => !ids.has(id) || id === packet.roleInstanceId)) {
+      throw new TypeError("Thinking must preserve the existing goal criterion and task dependency identities");
+    }
+    return [packet.roleInstanceId, new Set(packet.dependsOn)];
+  }));
+  while (pending.size) {
+    const ready = [...pending].filter(([, dependencies]) => dependencies.size === 0).map(([id]) => id);
+    if (!ready.length) throw new TypeError("Thinking task dependency cycle");
+    for (const id of ready) pending.delete(id);
+    for (const dependencies of pending.values()) for (const id of ready) dependencies.delete(id);
+  }
+  return { taskHash: input.taskHash, intentDigest: input.intentDigest ?? null,
+    requirementsDigest: input.requirementsDigest ?? null, evidenceRefs: [...input.evidenceRefs],
+    intentPacket: structuredClone(input.intentPacket), fetchPacket: structuredClone(input.fetchPacket),
+    thinkingPacket: structuredClone(thinking), nativeInvocationVerified: false, executionAllowed: false };
+}
+
+/** The native host supplies Critical reasoning; absence is not clarity. */
+export function normalizeHostCritical({ input = null, task, dialogue }) {
+  if (input == null) return null;
+  if (!input || input.taskHash !== taskOutcomeDigest(task) || (input.intentDigest ?? null) !== (dialogue.intentDigest ?? null) ||
+      input.realIntent !== dialogue.outcome || !refs(input.evidenceRefs) ||
+      !Array.isArray(input.blockingUnknowns) || input.blockingUnknowns.some((id) => typeof id !== "string" || !id.trim()) ||
+      !Array.isArray(input.nonGoals) || !Array.isArray(input.successCriteria) || !input.successCriteria.length) {
+    throw new TypeError("Critical requires the current task/intent, evidence, success criteria, non-goals and unresolved decision IDs");
+  }
+  return structuredClone(input);
+}
+
 /** Consume the existing host-provided understanding boundary, never grant authority.
  * The caller must source that boundary from parsed conversation input. A CLI
  * object, native challenge claim or host-answer substrate is not confirmation.
