@@ -1000,7 +1000,7 @@ const localToolExecutionGate = {
   sourceReviewBinding: localSourceReviewMatches ? { status: "exact_review_bound", evidenceRefs: localSourceReview.evidenceRefs } : { status: "not_verified" },
   effectClass: "read_only_support",
 };
-const professionalMethodDemand = Boolean(methodCapabilityId || requirementsContext);
+const professionalMethodDemand = Boolean(methodCapabilityId || requirementsContext?.methods.length);
 const dependencyAgentMatches = matchDependencyAgentContracts(professionalMethodDemand
   ? [actionTask, ...(requirementsContext?.capabilityNeed ?? methodContext.capabilityNeed)].join("\n") : task, dependencyAgentDiscovery.agents);
 const explorationMethod = requirementsContext?.methods.length === 1 ? requirementsContext.methods[0] : null;
@@ -1016,8 +1016,8 @@ const methodContractOwners = methodCapabilityId ? dependencyAgentDiscovery.agent
     const requestedSource = path.resolve(dependencyProjectRoot, explorationMethod.sourceRef);
     const discoveredSource = path.resolve(dependencyProjectRoot, agent.sourceRef);
     return osTarget === "windows" ? requestedSource.toLowerCase() === discoveredSource.toLowerCase() : requestedSource === discoveredSource;
-  }) : requirementsContext?.methods.length === 0 && dependencyAgentMatches.selected ? [dependencyAgentMatches.selected] : [];
-const currentMethodOperation = professionalMethodDemand ? inspectCurrentMethodOperation(requirementsContext
+  }) : [];
+const currentMethodOperation = professionalMethodDemand || requirementsContext ? inspectCurrentMethodOperation(requirementsContext
   ? actionTask : [actionTask, ...methodContext.capabilityNeed].join("\n")) : null;
 // Dependency discovery already verifies source bytes, read-only permissions and
 // sideEffects=[]. A support demand selects that bounded method, not a verb-prefix
@@ -1026,6 +1026,14 @@ const readOnlyProfessionalReview = (methodWorkKind === "support" || requirements
   methodContractOwners[0].routeEligible === true && methodContractOwners[0].executionBlock !== true &&
   !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition &&
   (!requirementsContext || currentMethodOperation.readOnlyReview);
+// Ordinary requirements/Skill materials do not request a dependency Agent.
+// Admit the actual read-only source review through the existing full inventory,
+// even when a reviewed feature word classified the parent text as strategy.
+const readOnlyEngineeringReview = Boolean(requirementsContext && !professionalMethodDemand &&
+  /\bread[- ]only\b|只读/iu.test(actionTask) &&
+  classifyTaskShape(requirementsContext.capabilityNeed.join("\n")) === "engineering_execution" &&
+  !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition);
+const currentReadOnlyOperation = readOnlyProfessionalReview || readOnlyEngineeringReview;
 const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some(
   (request) => request.mutationAuthorized && request.candidateType !== "script",
 );
@@ -1098,7 +1106,7 @@ const dependencyAgentMatch = dependencyAgentScopeExclusion
 // An explicit interface/page request still needs its existing design choice.
 const explicitInterfaceScope = /\b(?:ui|ux|website|webpage|user interface)\b|页面|界面|网页|网站/iu.test(task);
 const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true &&
-  explicitInterfaceScope && !readOnlyProfessionalReview;
+  explicitInterfaceScope && !currentReadOnlyOperation;
 const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: professionalMethodDemand
   ? { ...dependencyAgentMatch, selected: methodContractOwners.length === 1 && methodContractOwners[0].routeEligible === true &&
     methodContractOwners[0].executionBlock !== true ? methodContractOwners[0] : null }
@@ -2448,7 +2456,7 @@ function codexSpawnBindingForOwner(ownerId, ownerKind = "agent", roleInstanceId 
 // Remove complete prohibition clauses without erasing a later requested action.
 function taskEffectText(text) {
   return String(text ?? "").replace(/\b(?:do not|don't|don’t|never)\s+(?:modify|edit|write|delete|remove|create|change|patch)\s+(?:any\s+)?(?:files|source files|code)[.!]?(?=$|[\n;])/giu, "")
-    .split(/[，,、;；。.!?\n]/u)
+    .split(/[，,;；。.!?\n]/u)
     .filter((clause) => {
       const statement = clause.trim();
       // A direct prohibition governs its whole object, including coordinated
@@ -2472,7 +2480,7 @@ function inspectCurrentMethodOperation(text) {
   const mutationHead = new RegExp(`^(?:${mutation})`, "iu");
   const retainedEffect = new RegExp(`(?:${mutation})`, "iu");
   const useMethod = new RegExp(`^use\\b.*?\\bto\\s+(?=${inspection}|${mutation})`, "iu");
-  const nextAction = new RegExp(`\\s+(?:and|then|but|also)\\s+(?=${inspection}|${mutation}|do not\\b)|(?:并且|然后|随后|接着|并)(?=${inspection}|${mutation})`, "iu");
+  const nextAction = new RegExp(`\\s+(?:and|then|but|also)\\s+(?=${inspection}|${mutation}|do not\\b)|(?:并且|然后|随后|接着|并|、)(?=${inspection}|${mutation})`, "iu");
   let review = false;
   let sideEffect = false;
   let unclearProhibition = false;
@@ -2495,13 +2503,13 @@ function inspectCurrentMethodOperation(text) {
 }
 
 function selectExecutionOwner() {
-  const effectText = taskEffectText(readOnlyProfessionalReview ? actionTask : taskText);
+  const effectText = taskEffectText(currentReadOnlyOperation ? actionTask : taskText);
   const inspectionRequested = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
   const mutationRequested = implementationActionPattern.test(effectText);
   const testExecutionRequested = /\b(?:run|execute)\b.{0,50}\b(?:tests?|regressions?|smoke|validation|qa)\b|(?:运行|执行|跑|进行).{0,30}(?:测试|回归|验证)/iu.test(effectText);
   const buildFailureRequested = /\b(?:build|compile|typecheck|type-check|tsc)\b.{0,50}\b(?:fail(?:ure|ed)?|error|broken|cannot|unable)\b|\b(?:fail(?:ed|ure)?|error)\b.{0,50}\b(?:build|compile|typecheck|type-check|tsc)\b|构建失败|编译失败|类型错误|类型检查失败/iu.test(effectText);
   const documentationRequested = /\b(?:docs?|readme|documentation)\b|文档/iu.test(effectText);
-  const workKind = readOnlyProfessionalReview ? "inspection" : mutationRequested
+  const workKind = currentReadOnlyOperation ? "inspection" : mutationRequested
     ? buildFailureRequested ? "build_repair" : "implementation"
     : testExecutionRequested ? "test_execution"
       : inspectionRequested ? "inspection"
@@ -2517,7 +2525,7 @@ function selectExecutionOwner() {
   // or domain name never upgrades a read-only/review contract into an executor.
   const ownerPermitsWork = (id) => {
     const agent = candidateExecutionAgents.find((candidate) => candidate.id === id);
-    if (explicitOwnerRefusalConflict(agent, readOnlyProfessionalReview ? actionTask : taskText)) return false;
+    if (explicitOwnerRefusalConflict(agent, currentReadOnlyOperation ? actionTask : taskText)) return false;
     const declaredCapabilities = [agent?.description, agent?.own,
       agent?.metadata?.description, agent?.metadata?.developer_instructions].filter(Boolean).join("\n");
     const contract = [declaredCapabilities, agent?.boundary].filter(Boolean).join("\n");
@@ -2558,7 +2566,16 @@ function selectExecutionOwner() {
     }
     return null;
   };
-  if (workKind === "inspection") return findInAvailable(["code-reviewer", "architect-review", "review", "reviewer", "analysis", "worker"]);
+  if (workKind === "inspection") {
+    const reviewer = findInAvailable(["code-reviewer", "architect-review", "review", "reviewer"]);
+    if (reviewer) return reviewer;
+    if (!readOnlyEngineeringReview) return findInAvailable(["analysis", "worker"]);
+    const matchingSpecialists = candidates.map((id) => ({ id,
+      ...scoreProviderForCapabilityNeed(candidateExecutionAgents.find((agent) => agent.id === id), requirementsContext.capabilityNeed),
+    })).filter((entry) => entry.matchedTerms.length > 0).sort((left, right) => right.score - left.score);
+    return matchingSpecialists.length && matchingSpecialists[0].score !== matchingSpecialists[1]?.score
+      ? matchingSpecialists[0].id : null;
+  }
   if (workKind === "test_execution") return findInAvailable(["test", "verify", "qa", "e2e-runner", "worker"]);
   if (workKind === "build_repair") {
     const buildOwner = findInAvailable(["build-error-resolver"]);
@@ -2940,7 +2957,7 @@ function executionCapabilityDiscoveryRoute() {
   const explicitDiscoveryRoute = capabilityDiscoveryTaskRequested();
   const wantsSkillAuthoring = skillAuthoringRequested();
   if (subjectiveRouteChoice) return null;
-  if (taskShape !== "engineering_execution" && !explicitDiscoveryRoute && !dependencyAgentMatch.selected && !wantsSkillAuthoring) return null;
+  if (taskShape !== "engineering_execution" && !readOnlyEngineeringReview && !explicitDiscoveryRoute && !dependencyAgentMatch.selected && !wantsSkillAuthoring) return null;
   const selectedOwner = selectExecutionOwner();
   const selectedAgentProvider = [
     ...runtimeScopedProjectExecutionAgents,
@@ -3709,6 +3726,8 @@ const intentDirectionSelection = {
     ? "not_required" : intentArchitectureProvider ? "selected_not_invoked" : "capability_gap",
   claimBoundary: "Discovery and route selection only; no native confirmation, invocation or Permission.",
 };
+const inspectionOwnerId = readOnlyEngineeringReview ? selectExecutionOwner() : null;
+const inspectionOwner = candidateExecutionAgents.find((agent) => agent.id === inspectionOwnerId) ?? null;
 const rankedRoutes = (localToolRequest?.applies === true
   ? [localDependencyToolRoute()].filter(Boolean)
   : [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes])
@@ -3724,6 +3743,11 @@ const rankedRoutes = (localToolRequest?.applies === true
         candidateRoute.owner !== requestedMethodOwner.id || routeMethodOwner?.source !== "dependency_agent_contract" ||
         routeMethodOwner.id !== requestedMethodOwner.id || routeMethodOwner.sourceRef !== requestedMethodOwner.sourceRef ||
         routeMethodOwner.contentDigest !== requestedMethodOwner.contentDigest);
+    const missingInspectionOwner = readOnlyEngineeringReview &&
+      (!inspectionOwner || !inspectionOwner.sourceRef || !/^[a-f0-9]{64}$/iu.test(inspectionOwner.contentDigest ?? "") ||
+        !providerEligibleForRoute(inspectionOwner) || candidateRoute.owner !== inspectionOwner.id ||
+        routeMethodOwner?.id !== inspectionOwner.id || routeMethodOwner.source !== inspectionOwner.source ||
+        routeMethodOwner.sourceRef !== inspectionOwner.sourceRef || routeMethodOwner.contentDigest !== inspectionOwner.contentDigest);
     const route = {
       ...candidateRoute,
       intentDirectionSelection,
@@ -3731,9 +3755,10 @@ const rankedRoutes = (localToolRequest?.applies === true
         ? { ...candidateRoute.selectedCapabilityProviders, intentArchitecture: intentArchitectureProvider }
         : candidateRoute.selectedCapabilityProviders,
       blockedReasons: [...(candidateRoute.blockedReasons ?? []), ...(missingDirectionCapability ? ["confirmed long-term direction lacks an eligible architecture provider"] : []),
-        ...(missingRequestedMethod ? ["explicit method demand lacks its unique eligible source-bound owner for the current operation"] : [])],
-      score: missingDirectionCapability || missingRequestedMethod ? Math.min(candidateRoute.score, 49) : candidateRoute.score,
-      scoreBand: missingDirectionCapability || missingRequestedMethod ? "blocked" : candidateRoute.scoreBand,
+        ...(missingRequestedMethod ? ["explicit method demand lacks its unique eligible source-bound owner for the current operation"] : []),
+        ...(missingInspectionOwner ? ["current read-only engineering review lacks an eligible discovered owner route"] : [])],
+      score: missingDirectionCapability || missingRequestedMethod || missingInspectionOwner ? Math.min(candidateRoute.score, 49) : candidateRoute.score,
+      scoreBand: missingDirectionCapability || missingRequestedMethod || missingInspectionOwner ? "blocked" : candidateRoute.scoreBand,
     };
     const executionCapabilityGate = evaluateRouteExecutionGate({
       route,
@@ -4045,9 +4070,9 @@ const workerTaskPacketDrafts = selectedWorkerLanes
         // Recognize only a complete, narrow prohibition clause here. A phrase
         // containing further actions remains mutation-like, never stripped.
         const effectText = taskEffectText(purpose);
-        const requestsMutation = !readOnlyProfessionalReview && /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|modify|change|patch|delete|remove)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除/iu.test(effectText);
-        const requestsExternalWrite = !readOnlyProfessionalReview && /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件|代投|投递/iu.test(effectText);
-        const requestsInspection = readOnlyProfessionalReview || /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
+        const requestsMutation = !currentReadOnlyOperation && /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|modify|change|patch|delete|remove)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除/iu.test(effectText);
+        const requestsExternalWrite = !currentReadOnlyOperation && /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件|代投|投递/iu.test(effectText);
+        const requestsInspection = currentReadOnlyOperation || /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
         // Material references supply read scope as data. Their file names must
         // never enter current-operation parsing (for example, update-plan.md).
         const scopeFiles = requirementsContext
@@ -4180,7 +4205,7 @@ const unprovenMultiLaneExecution =
 const nativeChoicePending = criticalChoiceBlocksExecution || thinkingChoiceBlocksExecution;
 const fastPathNativeChoicePending =
   entryClassification.path === "fast_path" && nativeChoicePending;
-const executionGateApplies = professionalMethodDemand || entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
+const executionGateApplies = professionalMethodDemand || readOnlyEngineeringReview || entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
 const routeCompatibilityBlocked =
   executionGateApplies &&
   recommendedRoute &&
