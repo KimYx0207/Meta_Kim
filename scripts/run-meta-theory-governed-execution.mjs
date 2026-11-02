@@ -9130,6 +9130,18 @@ function buildContextEngineeringBudget({
   };
 }
 
+/** Keep the current host's criteria in the existing goal/assessment contract. */
+function buildCurrentGoalContract({ task, outputLanguage, intentDialogue }) {
+  const goal = buildGoalContractPacket({ task, outputLanguage, acceptanceCriteria: intentDialogue?.acceptanceCriteria ?? [] });
+  goal.confirmedOutcome = intentDialogue?.outcome ?? task;
+  goal.intentBinding = intentDialogue;
+  if (intentDialogue?.acceptanceSource) goal.acceptanceSource = intentDialogue.acceptanceSource;
+  if (intentDialogue?.nonGoals?.length) goal.contractFields.boundaries = [
+    ...goal.contractFields.boundaries, ...intentDialogue.nonGoals,
+  ];
+  return goal;
+}
+
 function buildCoreLoopArtifact({
   runId,
   task,
@@ -9442,9 +9454,7 @@ function buildCoreLoopArtifact({
     maxIterationHandling: "Fix cards may iterate only while Review or Verification failures remain bounded.",
     escalationOwner: "meta-warden",
   };
-  const goalContractPacket = buildGoalContractPacket({ task, outputLanguage, acceptanceCriteria: intentDialogue?.acceptanceCriteria ?? [] });
-  goalContractPacket.confirmedOutcome = intentDialogue?.outcome ?? task;
-  goalContractPacket.intentBinding = intentDialogue;
+  const goalContractPacket = buildCurrentGoalContract({ task, outputLanguage, intentDialogue });
   const traceEvalControlPlane = buildTraceEvalControlPlane({
     runId,
     goalContractPacket,
@@ -9668,7 +9678,7 @@ function buildCoreLoopArtifact({
       stage: "Critical",
       realIntent: intentDialogue?.outcome ?? goalContractPacket.contractFields.outcome,
       intentBinding: intentDialogue,
-      successCriteria: goalContractPacket.acceptanceCriteria.map((criterion) => criterion.description),
+      successCriteria: intentDialogue?.successCriteria ?? goalContractPacket.acceptanceCriteria.map((criterion) => criterion.description),
       nonGoals: orchestrationReport.criticalSummary?.nonGoals ?? [],
       blockingUnknowns: [],
       noQuotaClarification: true,
@@ -10882,13 +10892,8 @@ export function buildWorkflowContractPackets({
     contentEvidencePacket,
     fetchPacket,
     intentPacket: {
-      realIntent: intentDialogue?.outcome ?? task,
-      trueUserIntent: intentDialogue?.outcome ?? task,
-      intentBinding: intentDialogue,
-      successCriteria: coreLoop.goalContractPacket.acceptanceCriteria.map((criterion) => criterion.description).join("\n"),
-      nonGoals: "Do not require private docs, publish, deploy, or claim live runtime public-ready evidence.",
-      blockingUnknowns: [],
-      noQuotaClarification: "No filler clarification is needed; route-changing choices require native choice evidence.",
+      ...coreLoop.intentPacket,
+      trueUserIntent: coreLoop.intentPacket.realIntent,
       intentPacketVersion: "v1",
     },
     intentGatePacket: {
@@ -11787,6 +11792,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       } else plannedPackets.push({ ...template, taskPacketId: runId + "-thinking-" + request.roleInstanceId, roleInstanceId: request.roleInstanceId,
         todayTask: request.todayTask, coreProblem: hostThinking.intentPacket.realIntent, output: request.output,
         nonGoals: request.nonGoals, capabilityNeed: request.capabilityNeed, capabilityRequirements: request.capabilityNeed,
+        acceptanceCriteria: [...new Set([...(template.acceptanceCriteria ?? []), ...request.verifySteps.map((step) => step.verify)])],
         scopeFiles: draft.scopeFiles, shardScope: draft.shardScope, toolRequirements: request.toolRequirements,
         acceptanceCriterionIds: request.acceptanceCriterionIds, qualityBar: request.qualityBar, evidenceRefs: request.evidenceRefs,
         referenceDirection: request.referenceDirection, verifySteps: request.verifySteps, effectClass: request.effectClass,
@@ -11956,7 +11962,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       nextAction: designMissing ? { stage: "Thinking", action: "invoke_discovered_design_owner", inputRefs: ["criticalSummary.intentBinding", "fetchEvidence", "preDecisionOptionFrame"], expectedOutput: "Concrete user journeys, rules, recovery, resources, then complete task slices and true dependencies; preserve settled decisions." } : null } : null,
     criticalSummary: {
       realGoal: intentDialogue?.outcome ?? task,
-      successCriteria: intentDialogue?.acceptanceCriteria?.length ? intentDialogue.acceptanceCriteria.map((criterion) => criterion.description) : [intentDialogue?.outcome ?? task],
+      successCriteria: intentDialogue?.successCriteria ?? (intentDialogue?.acceptanceCriteria?.length ? intentDialogue.acceptanceCriteria.map((criterion) => criterion.description) : [intentDialogue?.outcome ?? task]),
       intentBinding: intentDialogue,
       orchestrationAcceptanceCriteria: [
         "One default route drives Critical, Fetch, Thinking, Execution, Review, Meta-Review, Verification, and Evolution.",
@@ -11965,6 +11971,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       ],
       nonGoals: [
         "Do not expand beyond the user's goal and authorization.",
+        ...(intentDialogue?.nonGoals ?? []),
         ...(Array.isArray(intentDialogue?.constraints?.nonGoals) ? intentDialogue.constraints.nonGoals : []),
         ...(Array.isArray(intentDialogue?.constraints?.forbidden) ? intentDialogue.constraints.forbidden : []),
       ],
@@ -12453,7 +12460,35 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       substrateRef: consumedPlanChoice.substrateRef, observedClaimDigest: consumedPlanChoice.observedClaimDigest,
       currentIntentDigest: intentDialogue.intentDigest, claimBoundary: "Only the consumed original choice extends settled decisions; no new goal or permission is authenticated." };
   }
-  const designGoal = buildGoalContractPacket({ task: normalizedTask, acceptanceCriteria: intentDialogue.acceptanceCriteria });
+  const hostCritical = normalizeHostCritical({ input: criticalInput ?? (thinkingInput ? { ...thinkingInput.intentPacket, taskHash: thinkingInput.taskHash, intentDigest: thinkingInput.intentDigest } : !consumedPlanChoice && predecessorPreparation?.intentPacket.status === "host_provided_not_independently_verified" ? predecessorPreparation.intentPacket : null), task: normalizedTask, dialogue: intentDialogue });
+  if (hostCritical) {
+    if ([...hostCritical.successCriteria, ...hostCritical.nonGoals].some((value) => typeof value !== "string" || !value.trim())) {
+      throw new TypeError("Current Critical success criteria and non-goals must retain their actual text");
+    }
+    if (criticalInput != null && thinkingInput != null) {
+      const thinkingCritical = normalizeHostCritical({ input: { ...thinkingInput.intentPacket, taskHash: thinkingInput.taskHash, intentDigest: thinkingInput.intentDigest }, task: normalizedTask, dialogue: intentDialogue });
+      const meaning = (packet) => ["successCriteria", "nonGoals", "blockingUnknowns"].map((key) =>
+        [...new Set(packet[key].map((value) => typeof value === "string" ? value.trim() : value))].sort());
+      if (productDesignDigest(meaning(hostCritical)) !== productDesignDigest(meaning(thinkingCritical))) {
+        throw new TypeError("Critical and Thinking describe different current success criteria, non-goals or unresolved decisions");
+      }
+    }
+    intentDialogue.successCriteria = [...hostCritical.successCriteria];
+    intentDialogue.nonGoals = [...hostCritical.nonGoals];
+    if (intentDialogue.status !== "host_provided_understanding") {
+      intentDialogue.status = "host_provided_not_independently_verified";
+      if (intentDialogue.intentDigest == null) intentDialogue.evidenceRefs = [...new Set([...intentDialogue.evidenceRefs, ...hostCritical.evidenceRefs])];
+    }
+    if (intentDialogue.acceptanceCriteria.length === 0) {
+      // Reuse the existing aggregate criterion, never invent per-condition IDs
+      // or replace an explicitly supplied criterion with the same name.
+      intentDialogue.acceptanceCriteria = buildGoalContractPacket({ task: normalizedTask }).acceptanceCriteria.map((criterion) => ({
+        ...criterion, description: hostCritical.successCriteria.join("\n"),
+      }));
+      intentDialogue.acceptanceSource = "host_provided_not_independently_verified";
+    }
+  }
+  const designGoal = buildCurrentGoalContract({ task: normalizedTask, intentDialogue });
   // The existing goal supplies user-outcome even without a separate confirmed
   // dialogue. Reuse that criterion for explicit designs without promoting the
   // dialogue to confirmed or granting execution permission.
@@ -12582,7 +12617,6 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   if (planChallengePreview.planChallengeState.stopRequested === true || planChallengePreview.planChallengeState.phase === "stopped_by_user") {
     return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId, stateDir, artifactDir, projectRoot, preview: planChallengePreview, outputLanguage });
   }
-  const hostCritical = normalizeHostCritical({ input: criticalInput ?? (thinkingInput ? { ...thinkingInput.intentPacket, taskHash: thinkingInput.taskHash, intentDigest: thinkingInput.intentDigest } : !consumedPlanChoice && predecessorPreparation?.intentPacket.status === "host_provided_not_independently_verified" ? predecessorPreparation.intentPacket : null), task: normalizedTask, dialogue: intentDialogue });
   const hostThinking = normalizeHostThinking({ input: thinkingInput, task: normalizedTask, dialogue: intentDialogue, requirementsDiscovery });
   // Typed host questions, rather than generated lexical defaults, are the
   // current Critical frontier. Permission remains with the existing host gates.
