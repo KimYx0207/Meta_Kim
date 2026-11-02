@@ -78,6 +78,7 @@ import {
   runGlobalProjectionPackageChild,
   verifyExecutingGlobalProjectionPackage,
 } from "./global-projection-package-store.mjs";
+import { assertSourceRuntimeEvidencePins } from "../src/infrastructure/installer/projection-package-boundary.mjs";
 
 // Recorder is lazily opened in runSync(); helpers record through this holder
 // so we do not have to thread recorder arg through every sync function.
@@ -3435,6 +3436,7 @@ async function handOffToStableProjectionPackage() {
     return false;
   }
 
+  assertSourceRuntimeEvidencePins({ packageRoot: repoRoot, homeRoot, env: process.env });
   const stablePackage = await materializeGlobalProjectionPackage({
     sourceRoot: repoRoot,
     homeRoot,

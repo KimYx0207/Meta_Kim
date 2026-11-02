@@ -1,8 +1,54 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { rmSync } from "node:fs";
+import path from "node:path";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 
 let runtimeFixture;
+
+function sourceFixture(t) {
+  const fixture = createGovernanceRuntimeFixture(t);
+  const refreshed = fixture.run(["scripts/refresh-runtime-evidence-pins.mjs"]);
+  assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
+  return fixture;
+}
+
+test("Skill authoring requires the discovered meta-skill-creator while ordinary code creation does not", (t) => {
+  const fixture = sourceFixture(t);
+  const inspect = (task) => {
+    const result = fixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"]);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  const ordinary = inspect("Create a backend API for saving pagination metadata.");
+  assert.equal(ordinary.recommendedRoute?.owner, "backend");
+
+  const task = "Find an execution agent and create skill named project-save-method for reusable backend API verification.";
+  const available = inspect(task);
+  for (const task of [
+    "Create skill named project-save-method for a repeatable project workflow.",
+    "Review existing skill project-save-method for repeatable workflow boundaries.",
+  ]) {
+    const authoring = inspect(task);
+    const authoringRoute = authoring.rankedRoutes.find((entry) => entry.id.startsWith("execution-capability-discovery:"));
+    assert.equal(authoringRoute?.selectedCapabilityProviders.skill?.id, "meta-skill-creator");
+  }
+  const availableCreation = available.rankedRoutes.find((entry) => entry.id.startsWith("execution-capability-discovery:"));
+  assert.equal(availableCreation.selectedCapabilityProviders.skillCreation?.id, "meta-skill-creator");
+  for (const runtime of [".codex", ".claude"]) {
+    rmSync(path.join(fixture.home, runtime, "skills/meta-skill-creator"), { recursive: true });
+  }
+  const refresh = fixture.run(["scripts/discover-global-capabilities.mjs", "--runtime-inventory-only"]);
+  assert.equal(refresh.status, 0, refresh.stderr || refresh.stdout);
+  const missing = inspect(task);
+  const missingCreation = missing.rankedRoutes.find((entry) => entry.id.startsWith("execution-capability-discovery:"));
+  assert.equal(missingCreation.selectedCapabilityProviders.skillCreation, null);
+  assert.equal(missingCreation.selectedCapabilityProviders.skill, null);
+  assert.ok(missingCreation.blockedReasons.includes("meta-skill-creator provider missing for Skill authoring"));
+  assert.equal(missingCreation.scoreBand, "blocked");
+  assert.equal(availableCreation.selectedCapabilityProviders.skill?.id, "meta-skill-creator");
+  assert.equal(ordinary.recommendedRoute?.selectedCapabilityProviders?.skill?.id, "meta-theory");
+});
 
 function route(task, runtime = "auto", os = "auto", extraArgs = []) {
   const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", runtime, "--os", os, "--json", ...extraArgs], {
@@ -92,7 +138,7 @@ function assertNativeCodexSpawn(
 }
 
 test("routing fixtures recall internal patterns and platform/OS matrices", (t) => {
-  runtimeFixture = createGovernanceRuntimeFixture(t);
+  runtimeFixture = sourceFixture(t);
   const pureQuery = route("Meta_Kim 是什么？", "codex", "windows");
   assert.equal(pureQuery.entryClassification.path, "fast_path");
   assert.equal(pureQuery.routeExecutionGate?.applies, false);

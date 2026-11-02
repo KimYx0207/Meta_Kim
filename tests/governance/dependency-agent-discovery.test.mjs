@@ -10,9 +10,17 @@ import {
   discoverDependencyAgentContracts,
   matchDependencyAgentContracts,
 } from "../../scripts/dependency-agent-discovery.mjs";
+import { agentCapabilityProfileDigest, agentProfileOwnerBinding, saveAgentCapabilityProfiles } from "../../scripts/agent-capability-profile.mjs";
 let runtimeFixture;
+function routingFixture(t) {
+  const runtime = createGovernanceRuntimeFixture(t);
+  // Refresh source-only pins inside the copied fixture, never host evidence.
+  const pins = runtime.run(["scripts/refresh-runtime-evidence-pins.mjs"]);
+  assert.equal(pins.status, 0, pins.stderr || pins.stdout);
+  return runtime;
+}
 before(() => {
-  runtimeFixture = createGovernanceRuntimeFixture(null);
+  runtimeFixture = routingFixture(null);
 });
 after(() => runtimeFixture?.cleanup());
 
@@ -38,7 +46,87 @@ function stable(value) {
 }
 const serialize = (value) => JSON.stringify(stable(value), null, 2) + "\n";
 
-function fixture(t, { tools = "Read" } = {}) {
+test("dependency project profile consumes its declared source root and cannot bypass a Type B fit decision", async (t) => {
+  const service = fixture(t);
+  const projectRoot = fs.mkdtempSync(path.join(runtimeFixture.root, "profile-business-B-"));
+  fs.mkdirSync(path.join(projectRoot, ".git"));
+  const write = (ref, value) => {
+    const target = path.join(projectRoot, ref);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, typeof value === "string" ? value : JSON.stringify(value));
+    return { ref, contentDigest: `sha256:${sha(fs.readFileSync(target))}` };
+  };
+  const evidence = write("AGENTS.md", "Draft from verified work history only. No publishing or invented experience.");
+  const material = write("materials/work-history.md", "Fixture facts: customer support, verified employment dates; no invented achievements.");
+  const skillRef = ".agents/skills/resume-history/SKILL.md";
+  const projectSkill = write(skillRef, "# Verified resume history\n\nBusiness B: retain the verified employment dates and do not invent achievements.\n");
+  for (const [id, content] of [["resume-history", "Framework A shadow: must not supply the business method."], ["framework-only-method", "Only framework A owns this method."]]) {
+    const dir = path.join(runtimeFixture.repoRoot, ".agents/skills", id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "SKILL.md"), content);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  }
+  const discovered = await discoverDependencyAgentContracts({ ...service.options, projectRoot });
+  const owner = discovered.agents.find((entry) => entry.id === "kim-service:resume-editor");
+  const profile = { capabilityProfileId: "resume-project", capabilityProfileVersion: "1", owner: agentProfileOwnerBinding(owner, { projectRoot }),
+    capabilityLoadout: { slots: [
+      { capabilitySlot: "context", bindingType: "skill", providerId: "get-context", mode: "default" },
+      { capabilitySlot: "resume-history", bindingType: "skill", providerId: "resume-history", mode: "default" },
+    ] }, projectEvidenceRefs: [evidence], materialRefs: [material, projectSkill], referenceDirection: "Use the verified history and retain the source contract's read-only boundary." };
+  const preview = saveAgentCapabilityProfiles({ projectRoot, profiles: [profile], expectedOldHash: null });
+  const approval = write("reviews/adopt.json", { scope: "project_capability_profile", status: "approved", projectRoot, candidateDigest: preview.contentDigest, expectedOldHash: null,
+    evidenceClass: "fixture_artifact_not_host_approval" });
+  assert.equal(saveAgentCapabilityProfiles({ projectRoot, profiles: [profile], approvalRefs: [approval], expectedOldHash: null, apply: true }).status, "committed");
+  const contextFor = (resolution) => {
+    const assessmentRef = write(`reviews/fit-${resolution}.json`, { projectRoot, owner: profile.owner, capabilityProfileId: profile.capabilityProfileId, capabilityProfileVersion: "1",
+      profileDigest: agentCapabilityProfileDigest(profile), ownerResolution: resolution, evidenceRefs: [evidence], rationale: "Fixture host assessment: this actual source contract fits factual resume drafting.", hardConflicts: [] });
+    const approvalRef = write(`reviews/approval-${resolution}.json`, { scope: "project_agent_fit", status: "approved", projectRoot, assessmentDigest: assessmentRef.contentDigest });
+    return { profileSelections: [], fitAssessments: [{ owner: profile.owner, assessmentRef }], approvalRefs: [approvalRef] };
+  };
+  const route = (context, businessRoot = projectRoot) => {
+    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "请把我的客服经历改成运营助理岗位简历", "--runtime", "codex", "--os", "windows", "--json",
+      ...(businessRoot ? ["--project-root", businessRoot] : []),
+      "--agent-profile-context-json", JSON.stringify(context)], { env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: service.root } });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  const ready = route(contextFor("reuse_existing_owner"));
+  assert.equal(ready.recommendedRoute?.owner, owner.id);
+  assert.equal(ready.recommendedRoute.agentCapabilityProfile.contentDigest, agentCapabilityProfileDigest(profile));
+  assert.equal(ready.recommendedRoute.agentCapabilityProfile.materials[0].content, fs.readFileSync(path.join(projectRoot, material.ref), "utf8"));
+  assert.equal(ready.recommendedRoute.codexSpawnBinding.ownerBindingMode, "run_scoped_owner_contract");
+  assert.equal(ready.recommendedRoute.codexSpawnBinding.nativeAgentType, null);
+  assert.equal(ready.recommendedRoute.selectedCapabilityProviders.agent.source, "dependency_agent_contract");
+  const selected = ready.recommendedRoute.selectedCapabilityProviders.skill;
+  assert.equal(selected.id, "resume-history");
+  assert.equal(selected.source, "project_runtime_skill_inventory");
+  assert.equal(selected.sourceRef, skillRef);
+  assert.equal(selected.runtime, "codex");
+  assert.equal(selected.contentDigest, projectSkill.contentDigest.slice(7), "the selected provider is B's bytes, not A's same-name shadow");
+  assert.equal(ready.ownerDiscoveryPacket.projectRuntimeCapabilityProviders.some((entry) => entry.id === "framework-only-method"), false);
+  const global = ready.recommendedRoute.selectedCapabilityProviders["profile:skill:context"];
+  assert.equal(global.source, "codex_global_skill_filesystem_light_scan");
+  assert.equal(global.sourceRef, "~/.codex/skills/get-context/SKILL.md");
+  for (const binding of [ready.recommendedRoute.codexSpawnBinding, ready.workerTaskPacketDrafts[0].codexSpawnBinding]) {
+    const message = JSON.parse(binding.message);
+    assert.equal(message.capabilityLoadout.selectedProviders.skill.contentDigest, projectSkill.contentDigest.slice(7));
+    const body = message.requiredMaterials.find((entry) => entry.sourceRef === skillRef);
+    assert.equal(body.content, fs.readFileSync(path.join(projectRoot, skillRef), "utf8"));
+    assert.equal(body.contentDigest, projectSkill.contentDigest);
+  }
+  const deferred = route(contextFor("upgrade_existing_owner"));
+  assert.equal(deferred.recommendedRoute, null);
+  assert.ok(deferred.capabilityGapPacket.projectCapabilityProfileDecisions.some((entry) => entry.ownerResolution === "upgrade_existing_owner"));
+  assert.equal(fs.existsSync(path.join(projectRoot, ".codex/agents")), false);
+  assert.equal(fs.existsSync(path.join(projectRoot, ".meta-kim/state/default/project-capabilities.json")), false);
+  const sameRoot = route({}, null);
+  assert.equal(sameRoot.recommendedRoute.owner, owner.id);
+  const ownSkill = sameRoot.ownerDiscoveryPacket.projectRuntimeCapabilityProviders.find((entry) => entry.id === "resume-history");
+  assert.equal(ownSkill.contentDigest, sha(fs.readFileSync(path.join(runtimeFixture.repoRoot, skillRef))));
+  assert.ok(sameRoot.ownerDiscoveryPacket.projectRuntimeCapabilityProviders.some((entry) => entry.id === "framework-only-method"));
+});
+
+function fixture(t, { tools = "Read", professionalReview = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "meta-kim-agent-index-"));
   t.after(() => {
     assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
@@ -57,9 +145,10 @@ function fixture(t, { tools = "Read" } = {}) {
     ["workplace-writer", "周报邮件整理：把实际工作进度写清楚", ["写一份工作周报", "邮件怎么说清进度", "汇报已完成和待确认的事"]],
     ["pricing-cost-analyst", "报价与成本测算：比较价格和现金投入", ["核算报价", "计算单笔成本", "几个价格怎么选"]],
     ["concept-tutor", "概念讲解与答疑：解释学习者卡住的那一步", ["这道题为什么这样算", "这个概念我一直听不懂", "不要只给答案帮我讲明白"]],
+    ...(professionalReview ? [["product-architect", "Product architecture and requirements review", ["product architecture", "review the current candidate", "product-architect"]]] : []),
   ]) {
     const capability = {
-      id: `${id}-assist`, summary, useWhen: triggers,
+      id: id === "product-architect" ? "product-architect-deliver" : `${id}-assist`, summary, useWhen: triggers,
       doNotUseWhen: ["不发布", "不编造事实", "不处理其他角色的工作"],
       input: { type: "object", properties: { facts: { type: "string" } }, required: ["facts"] },
       output: { type: "object", properties: { draft: { type: "string", description: "事实 / 草稿" } }, required: ["draft"] },
@@ -247,6 +336,145 @@ test("engineering work mentioning a professional domain does not select a read-o
   assert.equal(route.ownerDiscoveryPacket.dependencyAgentDiscovery.match.selected, null);
 });
 
+test("implementation, build failure and inspection select the corresponding professional owner", (t) => {
+  const runtime = routingFixture(t);
+  for (const [id, description] of [
+    ["code-reviewer", "Review code and report findings; no implementation."],
+    ["build-error-resolver", "Resolve build and type errors only."],
+    ["javascript-pro", "Implement and repair JavaScript applications."],
+    ["python-pro", "Implement and repair Python applications."],
+    ["doc-updater", "Maintain product and API documentation."],
+  ]) {
+    fs.writeFileSync(path.join(runtime.home, ".codex/agents", `${id}.toml`),
+      `name = "${id}"\ndescription = "${description}"\ndeveloper_instructions = "Discovery fixture only; does not prove host invocation."\n`);
+  }
+  const run = (task) => {
+    const result = runtime.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"]);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  const cases = [
+    ["修复 Python 后端保存响应的并发竞态，保留事务和版本历史。", "python-pro"],
+    ["修复 React 前端页面的 JavaScript 提交状态。", "frontend"],
+    ["修复前端 TypeScript 代码的构建失败和类型错误。", "build-error-resolver"],
+    ["修复后端 TypeScript 代码中的分页错误。", "javascript-pro"],
+    ["Repair the Node.js backend API pagination logic.", "javascript-pro"],
+    ["只读审查后端 API 代码，只列出问题，不修改文件。", "code-reviewer"],
+    ["Run backend API regression tests and verify pagination.", "test"],
+    ["运行后端 API 回归测试，验证分页结果。", "test"],
+    ["只读审查后端 API 回归测试，列出覆盖缺口，不修改文件。", "code-reviewer"],
+    ["编写 Python API 文档和 README。", "doc-updater"],
+  ];
+  for (const [task, owner] of cases) assert.equal(run(task).recommendedRoute?.owner, owner, task);
+
+  // Real inventories need not contain the fixture's broad backend/worker aliases.
+  for (const id of ["backend", "worker", "frontend"]) {
+    fs.rmSync(path.join(runtime.home, ".codex/agents", `${id}.toml`));
+  }
+  for (const [task, owner] of cases) {
+    assert.equal(run(task).recommendedRoute?.owner, owner === "frontend" ? "javascript-pro" : owner, task);
+  }
+  const missing = run("检查并修复后端数据接口中的分页与边界处理问题，给出最小代码改动及可复现验证办法。");
+  assert.equal(missing.recommendedRoute, null);
+  assert.equal(missing.capabilityGapPacket?.returnToStage, "Thinking");
+  const execution = missing.rankedRoutes.find((route) => route.id.startsWith("execution-capability-discovery:"));
+  assert.equal(execution.owner, null);
+  assert.ok(execution.blockedReasons.includes("execution owner missing"));
+});
+
+test("owner qualification preserves domain and execution boundaries across inventory gaps", (t) => {
+  const runtime = routingFixture(t);
+  const run = (task) => {
+    const result = runtime.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"]);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  const assertOwnerGap = (task) => {
+    const result = run(task);
+    assert.equal(result.recommendedRoute, null, task);
+    assert.equal(result.capabilityGapPacket?.returnToStage, "Thinking", task);
+    const execution = result.rankedRoutes.find((route) => route.id.startsWith("execution-capability-discovery:"));
+    assert.equal(execution.owner, null, task);
+    assert.ok(execution.blockedReasons.includes("execution owner missing"), task);
+  };
+  const regressionTask = "Run backend API regression tests and verify pagination.";
+  assert.equal(run("Implement Python backend API for build artifact metadata persistence.").recommendedRoute?.owner, "backend");
+  assert.equal(run(regressionTask).recommendedRoute?.owner, "test");
+  assert.equal(run("只读审查后端 API 回归测试，列出覆盖缺口，不修改文件。").recommendedRoute?.owner, "review");
+  fs.rmSync(path.join(runtime.home, ".codex/agents/test.toml"));
+  assert.equal(run(regressionTask).recommendedRoute?.owner, "worker");
+
+  for (const id of ["frontend", "worker"]) fs.rmSync(path.join(runtime.home, ".codex/agents", `${id}.toml`));
+  assertOwnerGap("修复 React 前端页面的提交状态，保留当前界面交互。");
+  assertOwnerGap(regressionTask);
+  fs.rmSync(path.join(runtime.home, ".codex/agents/backend.toml"));
+  const pythonRepair = "修复 Python 后端保存响应的并发竞态，保留事务和版本历史。";
+  for (const id of ["python-reviewer", "python-pro"]) {
+    // Both the reviewer role family and an implementation-shaped ID must obey
+    // the discovered read-only contract. These are not host invocations.
+    fs.writeFileSync(path.join(runtime.home, ".codex/agents", `${id}.toml`),
+      `name = "${id}"\ndescription = "Read-only Python code review; report findings, no implementation."\ndeveloper_instructions = "Do not edit files. Discovery fixture only."\n`);
+    assertOwnerGap(pythonRepair);
+  }
+});
+
+test("owner refusal keeps the denied action and object without excluding a frontend status display", (t) => {
+  const runtime = routingFixture(t);
+  fs.writeFileSync(path.join(runtime.home, ".codex/agents/frontend.toml"),
+    'name = "frontend"\ndescription = "Implement React and Vue frontend applications."\ndeveloper_instructions = "Preserve the project stack. Refuse backend schema changes."\n');
+  const run = (task) => {
+    const result = runtime.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"]);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  assert.equal(run("Fix frontend code in src/Editor.vue to show backend availability.").recommendedRoute?.owner, "frontend");
+  assert.equal(run("Fix frontend code in src/Editor.vue to show backend availability without backend schema changes.").recommendedRoute?.owner, "frontend",
+    "a denied change stated as a constraint is not a requested mutation");
+  for (const id of ["worker", "backend"]) fs.rmSync(path.join(runtime.home, ".codex/agents", `${id}.toml`));
+  const refused = run("Fix frontend code in src/Editor.vue and change backend schema in server/schema.sql.");
+  assert.equal(refused.recommendedRoute, null, "a real backend-schema mutation cannot use this frontend identity or an unqualified fallback");
+  assert.equal(refused.capabilityGapPacket?.returnToStage, "Thinking");
+  const execution = refused.rankedRoutes.find((route) => route.id.startsWith("execution-capability-discovery:"));
+  assert.equal(execution.owner, null);
+  assert.ok(execution.blockedReasons.includes("execution owner missing"));
+});
+
+test("qualified specialists outside the preference lists remain discoverable within their domain", (t) => {
+  const runtime = routingFixture(t);
+  for (const id of ["worker", "backend", "frontend"]) fs.rmSync(path.join(runtime.home, ".codex/agents", `${id}.toml`));
+  for (const [id, description] of [
+    ["rust-pro", "Implement and repair Rust backend applications."],
+    ["vue-pro", "Implement and repair Vue frontend applications."],
+  ]) fs.writeFileSync(path.join(runtime.home, ".codex/agents", `${id}.toml`),
+    `name = "${id}"\ndescription = "${description}"\ndeveloper_instructions = "Implement the authorized scope and run focused tests. Discovery fixture only."\n`);
+  const reactRepair = "修复 React 前端页面的提交状态，保留当前界面交互。";
+  const backendDescription = "Implement backend APIs and database services.";
+  for (const [task, expectedOwner, description, instructions] of [
+    ["修复 Rust 后端 API 代码中的分页错误。", "rust-pro"],
+    ["修复 Vue 前端页面代码中的提交状态。", "vue-pro"],
+    [reactRepair, null],
+    [reactRepair, null, backendDescription, "Own backend implementation. Do not implement frontend UI. Discovery fixture only."],
+    [reactRepair, "backend", backendDescription, "Own backend implementation. Implement frontend UI. Discovery fixture only."],
+    [reactRepair, null, "Implement backend APIs and frontend UI.", "Implement frontend UI. Do not implement frontend UI. Discovery fixture only."],
+    [reactRepair, null, `${backendDescription} Do not implement frontend UI.`, "Own backend implementation. Discovery fixture only."],
+    [reactRepair, null, backendDescription, "Own backend implementation. 禁止实现前端界面。Discovery fixture only."],
+  ]) {
+    if (description) fs.writeFileSync(path.join(runtime.home, ".codex/agents/backend.toml"),
+      `name = "backend"\ndescription = "${description}"\ndeveloper_instructions = "${instructions}"\n`);
+    const result = runtime.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"]);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const route = JSON.parse(result.stdout);
+    assert.equal(route.recommendedRoute?.owner ?? null, expectedOwner, task);
+    if (expectedOwner === null) {
+      assert.equal(route.recommendedRoute, null);
+      assert.equal(route.capabilityGapPacket?.returnToStage, "Thinking");
+      const execution = route.rankedRoutes.find((entry) => entry.id.startsWith("execution-capability-discovery:"));
+      assert.equal(execution.owner, null);
+      assert.ok(execution.blockedReasons.includes("execution owner missing"));
+    }
+  }
+});
+
 test("strategy questions retain professional discovery without handing off unless a concrete text deliverable is requested", (t) => {
   const { root } = fixture(t);
   const run = (task) => {
@@ -338,14 +566,42 @@ test("Chinese read-only wording never erases a later requested write or submissi
   });
 });
 
-test("a professional text match cannot suppress an explicit subjective page design choice", (t) => {
-  const { root } = fixture(t);
-  const task = "帮我把简历改得更清楚，这个页面不好看，帮我弄高级一点";
-  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
-    encoding: "utf8", timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
+test("a professional review demand preserves the current action and subjective page design boundary", (t) => {
+  const { root } = fixture(t, { professionalReview: true });
+  const routeFor = (task, actionTask) => {
+    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--action-task", actionTask,
+      "--method-work-kind", "support", "--method-capability-id", "product-architect-deliver", "--runtime", "codex", "--os", "windows", "--json"], {
+      timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  };
+  const taskA = "Run meta-theory. Use the discovered product-architect professional method to review the captured current Digital visual creation workspace PRD candidate and its deployment, user journey and asset-reuse dependencies. Then independently review that complete professional result in a fresh read-only process using the same product-architect contract. Preserve development pause; do not implement business changes.";
+  const action = "Use product-architect to assess the actual current candidate product architecture, complete user flow, online target and asset-reuse prerequisites from the captured views. Return the source product output object with concrete findings and limits; a partial assessment can be handed to independent review without inventing missing facts.\ndocs/PRD.md";
+  const reviewed = routeFor(taskA, action);
+  assert.equal(reviewed.recommendedRoute?.owner, "kim-service:product-architect");
+  assert.equal(reviewed.recommendedRoute.selectedCapabilityProviders.agent.source, "dependency_agent_contract");
+  assert.equal(reviewed.recommendedRoute.ownerContract.id, "product-architect-deliver");
+  assert.equal(reviewed.subjectiveUiCapabilityAmplification, null);
+  assert.equal(reviewed.routeExecutionGate.canHandoffToHost, true);
+  assert.equal(reviewed.workerTaskPacketDrafts[0].safetyEvidence.status, "proven");
+  assert.equal(reviewed.workerTaskPacketDrafts[0].mutationPolicy, "read_only");
+  const mixedActions = [
+    "Then implement src/workspace.ts and deploy it.",
+    "Then generate a video.",
+    "do not wait—deploy now",
+    "不仅读还部署",
+  ];
+  const mixedResults = mixedActions.map((additionalAction) => {
+    const route = routeFor(taskA, `${action}\n${additionalAction}`);
+    return { additionalAction, routeId: route.recommendedRoute?.id,
+      canHandoffToHost: route.routeExecutionGate.canHandoffToHost,
+      choicePolicy: route.routeExecutionGate.entryChoiceDecision.choicePolicy };
   });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  const route = JSON.parse(result.stdout);
+  assert.deepEqual(mixedResults, mixedActions.map((additionalAction) => ({ additionalAction,
+    routeId: "subjective-ui-design-orchestration:codex:windows", canHandoffToHost: false, choicePolicy: "must_ask" })));
+  const task = "帮我把简历改得更清楚，这个页面不好看，帮我弄高级一点";
+  const route = routeFor(task, task);
   assert.equal(route.recommendedRoute?.id, "subjective-ui-design-orchestration:codex:windows");
   assert.equal(route.routeExecutionGate.canHandoffToHost, false);
   assert.equal(route.routeExecutionGate.entryChoiceDecision.choicePolicy, "must_ask");

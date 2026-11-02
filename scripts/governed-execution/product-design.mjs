@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import path from "node:path";
 import { evaluateTaskOutcome } from "../../src/domain/governance/task-outcome.mjs";
+import { stageLaneNodeId } from "./stage-dag.mjs";
 
 const text = (value) => typeof value === "string" && value.trim().length > 0;
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
 const list = (value) => Array.isArray(value) && value.every(text);
+const milestonePolicy = JSON.parse(readFileSync(new URL("../../config/contracts/workflow-contract.json", import.meta.url), "utf8"))
+  .protocols.preDecisionOptionFrame.humanMilestonePolicy;
+const evaluatedOutcomeReviews = new WeakMap();
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : object(value)
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 export const productDesignDigest = (value) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
@@ -57,6 +61,9 @@ export function normalizeRequirementsDiscovery({ input = null, dialogue }) {
     requireThat(["discoverable_fact", "routine_design_decision", "material_user_decision"].includes(item.resolutionClass), "Unknown decision resolution class");
     requireThat(text(item.recommendationRationale), "Decision requires a recommendation rationale");
     requireThat(Array.isArray(item.options ?? []) && (item.options ?? []).every((option) => object(option) && text(option.label) && text(option.tradeoff)), "Decision options require explicit tradeoffs");
+    for (const key of ["artifactFlowRefs", "sideEffectActions"]) if (item.affects?.[key] !== undefined) {
+      requireThat(list(item.affects[key]), `Decision affects.${key} must contain concrete references`);
+    }
     for (const key of ["trusted", "status", "userAnswer", "answerEvidenceRefs", "executionAllowed", "nativeInvocationVerified"]) requireThat(!Object.hasOwn(item, key), `Decision content cannot assert ${key}`);
     return { questionId: item.questionId, question: item.question, questionTarget: item.questionTarget ?? "wrong_goal_risk",
       decisionImpact: item.decisionImpact, impactPriority: Number.isFinite(item.impactPriority) ? item.impactPriority : 50,
@@ -77,6 +84,7 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract })
   bind(input, dialogue, goalContract, "Product design");
   requireThat(text(input.designId) && Number.isInteger(input.revision) && input.revision > 0, "Design needs identity and positive revision");
   requireThat(["exploration", "delivery"].includes(input.mode), "Design mode must be exploration or delivery");
+  if (input.lifecycle !== undefined) requireThat(milestonePolicy.lifecycleValues.includes(input.lifecycle), "Unknown design lifecycle");
   requireThat(list(input.sourceRefs) && input.sourceRefs.length > 0, "Design needs current source references");
   requireThat(!(input.decisionItems?.length), "Discover requirements before design; pass decisionItems through requirementsDiscoveryInput");
   const settled = new Set((dialogue.settledDecisionRefs ?? []).map((decision) => decision.decisionId));
@@ -122,6 +130,7 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract })
   const flows = structuredClone(input.artifactFlow ?? []);
   const flowIds = uniqueRows(flows, "id", "Artifact flow");
   for (const flow of flows) {
+    if (flow.artifactKind !== undefined) requireThat(flow.artifactKind === "other" || milestonePolicy.milestones.some((rule) => rule.artifactKind === flow.artifactKind), "Unknown artifact kind");
     requireThat(taskIds.has(flow.producerTaskId) && list(flow.consumerTaskIds) && flow.consumerTaskIds.length > 0 && flow.consumerTaskIds.every((id) => taskIds.has(id)), "Artifact flow references unknown producer or consumer");
     requireThat(flow.consumerTaskIds.every((id) => dependencyClosure(id).has(flow.producerTaskId)), "Artifact flow consumer must depend on its producer directly or transitively");
     requireThat(text(flow.terminalArtifactRef) && list(flow.sourceArtifactRefs) && list(flow.scopeEvidenceRefs) && flow.scopeEvidenceRefs.length > 0, "Artifact flow needs final deliverable and scope evidence");
@@ -132,7 +141,7 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract })
   const normalized = { schemaVersion: 1, taskHash: input.taskHash, intentDigest: input.intentDigest ?? null, acceptanceDigest: input.acceptanceDigest,
     designId: input.designId, revision: input.revision, mode: input.mode, sourceRefs: [...input.sourceRefs], settledDecisionRefs: [...(input.settledDecisionRefs ?? [])],
     domainTerms: structuredClone(input.domainTerms ?? []), userJourneys: journeys, taskSlices: slices, artifactFlow: flows,
-    revisionContext: structuredClone(input.revisionContext ?? null) };
+    revisionContext: structuredClone(input.revisionContext ?? null), ...(input.lifecycle !== undefined ? { lifecycle: input.lifecycle } : {}) };
   const revisionImpact = deriveDesignRevisionImpact(normalized);
   return { ...normalized, designDigest: productDesignDigest(normalized), uncoveredCriteria, revisionImpact,
     readiness: input.mode === "delivery" && slices.length > 0 && uncoveredCriteria.length === 0 ? "structure_ready_not_reviewed" : "design_incomplete",
@@ -185,6 +194,59 @@ export function projectDesignWorkerTasks({ design, runId, templates }) {
   });
 }
 
+/** Project observed design-stage facts into existing node decisions, never selected owners or permissions. */
+export function projectDesignHumanMilestones({ design, requirementsDiscovery, sideEffectActions = [], workerTaskPackets }) {
+  const requests = [];
+  const gaps = [];
+  if (!design) return { requests, gaps };
+  const packets = new Map(workerTaskPackets.filter((packet) => packet.designBinding).map((packet) => [packet.designBinding.sliceId, packet]));
+  const taskIds = (ids) => ids.map((id) => packets.get(id)?.taskPacketId).filter(Boolean);
+  const implementationIds = design.taskSlices.filter((slice) => slice.workKind !== "support").map((slice) => slice.id);
+  const lifecycle = design.lifecycle ?? "unknown";
+  const addGap = (id, reason, ids, sourceRefs) => gaps.push({ id, reason, taskPacketIds: taskIds(ids), sourceRefs,
+    nextAction: { stage: "Thinking", action: "prepare_discovered_read_only_review_slice",
+      slice: { id: `review-${id}`, workKind: "support", outcome: "Read the actual supplied plan and produce a reviewable artifact before implementation consumes it",
+        capabilityNeed: ["read-only product or system design review"], inputRefs: sourceRefs,
+        completionDemo: "Current artifact and source evidence ready for one human judgement" } } });
+  for (const rule of milestonePolicy.milestones.filter((item) => item.beforeImplementation)) {
+    if (implementationIds.length && !design.artifactFlow.some((flow) => flow.artifactKind === rule.artifactKind)) {
+      addGap(rule.id, "reviewable_producer_required_before_implementation", implementationIds, design.sourceRefs);
+    }
+  }
+  for (const flow of design.artifactFlow) {
+    if (flow.artifactKind === "other") continue;
+    const rule = milestonePolicy.milestones.find((item) => item.artifactKind === flow.artifactKind);
+    if (!rule) { addGap(flow.id, "artifact_stage_facts_required", flow.consumerTaskIds, flow.sourceArtifactRefs); continue; }
+    const producer = design.taskSlices.find((slice) => slice.id === flow.producerTaskId);
+    if (rule.beforeImplementation && producer.workKind !== "support") {
+      addGap(flow.id, "read_only_review_producer_required", [flow.producerTaskId, ...flow.consumerTaskIds], flow.sourceArtifactRefs); continue;
+    }
+    let trigger;
+    const decisions = (requirementsDiscovery?.decisionItems ?? []).filter((item) => item.resolutionClass === "material_user_decision" &&
+      item.affects.artifactFlowRefs?.includes(flow.id));
+    if (rule.activation === "first_or_material") {
+      if (lifecycle === "first_delivery") trigger = "first";
+      else if (lifecycle === "material_revision" && design.revisionContext) trigger = "material_change";
+      else if (lifecycle === "within_accepted_scope") trigger = "within_accepted_scope";
+      else { addGap(flow.id, "lifecycle_source_evidence_required", flow.consumerTaskIds, design.sourceRefs); continue; }
+    } else if (decisions.length) {
+      if (rule.activation === "side_effect_decision" && !decisions.some((item) =>
+        item.affects.sideEffectActions?.some((action) => sideEffectActions.includes(action)))) {
+        addGap(flow.id, "current_flow_side_effect_evidence_required", flow.consumerTaskIds, flow.scopeEvidenceRefs); continue;
+      }
+      trigger = rule.triggers[0];
+    } else { addGap(flow.id, "material_tradeoff_evidence_required", flow.consumerTaskIds, flow.scopeEvidenceRefs); continue; }
+    const packet = packets.get(flow.producerTaskId);
+    if (!packet) { addGap(flow.id, "discovered_producer_required", flow.consumerTaskIds, flow.sourceArtifactRefs); continue; }
+    requests.push({ nodeId: stageLaneNodeId("Execution", packet.taskPacketId), milestoneId: rule.id, trigger,
+      artifactRef: flow.terminalArtifactRef, artifactVersion: design.revision, flowId: flow.id, evidence: [
+        { evidenceRef: `flow:${productDesignDigest(flow.id)}`, digest: `sha256:${productDesignDigest({ designId: design.designId, revision: design.revision, flow, producer: producer.deliverables })}` },
+        ...decisions.map((decision) => ({ evidenceRef: `decision:${productDesignDigest(decision.questionId)}`, digest: `sha256:${productDesignDigest(decision)}` })),
+      ] });
+  }
+  return { requests, gaps };
+}
+
 /** Review input is an assessment. This validates current artifact bytes and
  * bindings, never authenticates native tools or turns assessment into permission. */
 export async function evaluateProductOutcomeReview({ input, artifact, projectRoot }) {
@@ -209,6 +271,7 @@ export async function evaluateProductOutcomeReview({ input, artifact, projectRoo
     snapshots.push({ ...snapshot, verifiedSha256: hash });
   }
   const outcome = evaluateTaskOutcome(goal, input.observations);
+  requireThat(outcome.errors.length === 0 && !outcome.results.some((result) => result.status === "invalid"), "Outcome review contains an invalid observation binding or assessment");
   for (const observation of input.observations) {
     requireThat(list(observation.artifactRefs) && observation.artifactRefs.length > 0, "Each outcome observation must identify its reviewed artifacts");
     for (const ref of observation.artifactRefs) {
@@ -219,27 +282,53 @@ export async function evaluateProductOutcomeReview({ input, artifact, projectRoo
   }
   const revisionRequests = structuredClone(input.revisionRequests ?? []);
   requireThat(Array.isArray(revisionRequests), "Revision requests must be an array");
-  for (const request of revisionRequests) requireThat(tasks.has(request.taskId) && goal.acceptanceCriteria.some((criterion) => criterion.id === request.criterionId) && ["Critical", "Fetch", "Thinking", "Execution"].includes(request.returnToStage) && text(request.finding) && text(request.requiredChange) && list(request.evidenceRefs) && request.evidenceRefs.length > 0, "Revision needs selected task, criterion, evidence and concrete change");
-  return { schemaVersion: 1, runId: artifact.runId, reviewDigest: productDesignDigest(input), reviewRef: input.reviewRef,
-    designDigest: design?.designDigest ?? null, artifactSnapshots: snapshots, outcomeEvaluation: outcome, revisionRequests,
+  for (const request of revisionRequests) {
+    const target = packets.find((packet) => packet.taskPacketId === request.taskId);
+    requireThat(target?.acceptanceCriterionIds?.includes(request.criterionId) &&
+      ["Critical", "Fetch", "Thinking", "Execution"].includes(request.returnToStage) && text(request.finding) && text(request.requiredChange) &&
+      list(request.evidenceRefs) && request.evidenceRefs.length > 0, "Revision needs the task's assigned criterion, evidence and concrete change");
+    const related = input.observations.filter((observation) => observation.criterionId === request.criterionId &&
+      request.evidenceRefs.some((ref) => ref === observation.evidenceRef || observation.artifactRefs.includes(ref)));
+    requireThat(related.length > 0, "Revision must refer to this criterion's current observation and artifact");
+    requireThat(outcome.results.find((result) => result.criterionId === request.criterionId)?.reason === "reported_task_bound_assessment",
+      "Revision requires a valid current criterion observation");
+    request.artifactRefs = [...new Set(related.flatMap((observation) => observation.artifactRefs))];
+  }
+  const coveredTaskCriteria = input.observations.flatMap((observation) => snapshots.filter((snapshot) => observation.artifactRefs.includes(snapshot.ref)).map((snapshot) => ({
+    taskId: snapshot.producerTaskId, criterionId: observation.criterionId, artifactRef: snapshot.ref, sha256: snapshot.verifiedSha256,
+    verdict: outcome.results.find((result) => result.criterionId === observation.criterionId).status,
+  })));
+  const review = { schemaVersion: 1, runId: artifact.runId, reviewDigest: productDesignDigest(input), reviewRef: input.reviewRef,
+    designDigest: design?.designDigest ?? null, artifactSnapshots: snapshots, outcomeEvaluation: outcome, revisionRequests, coveredTaskCriteria,
     nextAction: revisionRequests.length ? { action: "revise", stage: revisionRequests[0].returnToStage, taskIds: [...new Set(revisionRequests.map((request) => request.taskId))] }
       : { action: outcome.status === "pass" ? "continue_verification" : "obtain_missing_outcome_evidence", stage: "Review", taskIds: [] },
     status: outcome.status, evidenceKind: "supplied_assessment_with_current_artifact_binding", nativeInvocationVerified: false,
     claimBoundary: "Current artifact bytes and supplied independent assessments were checked; host invocation and user acceptance are not authenticated here." };
+  evaluatedOutcomeReviews.set(review, structuredClone(review));
+  return review;
+}
+
+/** Same-process validated content, not native human acceptance or execution permission. */
+export function readEvaluatedOutcomeReview(review) {
+  if (review == null) return null;
+  const snapshot = evaluatedOutcomeReviews.get(review);
+  requireThat(snapshot, "Current evaluated outcome review required");
+  return structuredClone(snapshot);
 }
 
 export function projectProductReview(artifact, review) {
   const core = artifact.coreLoop;
   const prior = artifact.reviewPacket ?? core?.reviewPacket ?? {};
+  const nextAction = artifact.machineExecution?.nextAction ?? review.nextAction;
   const findings = review.revisionRequests.map((request) => ({ findingId: `outcome-${productDesignDigest([review.reviewDigest, request.taskId, request.criterionId]).slice(0, 16)}`,
     taskPacketId: request.taskId, criterionId: request.criterionId, severity: "high", finding: request.finding, summary: request.finding,
     requiredChange: request.requiredChange, returnToStage: request.returnToStage, evidenceRefs: request.evidenceRefs, status: "open" }));
   const reviewPacket = { ...prior, ...(review.status === "pass" ? {} : { status: "partial" }), qualityGate: review.status === "pass" ? prior.qualityGate ?? "partial" : "partial",
     revisionNeeded: findings.length > 0, findings: [...(prior.findings ?? []).filter((finding) => !String(finding.findingId ?? "").startsWith("outcome-")), ...findings],
-    outcomeReviewRef: review.reviewRef, revisionRequests: review.revisionRequests, nextAction: review.nextAction };
+    outcomeReviewRef: review.reviewRef, revisionRequests: review.revisionRequests, nextAction };
   const traceEvalControlPlane = { ...(artifact.traceEvalControlPlane ?? core?.traceEvalControlPlane), outcomeEvaluation: review.outcomeEvaluation };
   return { ...artifact, ...(review.status === "pass" ? {} : { status: "partial" }), outcomeReviewPacket: review, reviewPacket, traceEvalControlPlane,
     ...(artifact.defaultRuntimePath ? { defaultRuntimePath: { ...artifact.defaultRuntimePath, traceEvalControlPlane } } : {}),
     ...(core ? { coreLoop: { ...core, outcomeReviewPacket: review, reviewPacket, traceEvalControlPlane } } : {}),
-    ...(artifact.summaryPacket ? { summaryPacket: { ...artifact.summaryPacket, nextAction: JSON.stringify(review.nextAction), publicReady: false } } : {}) };
+    ...(artifact.summaryPacket ? { summaryPacket: { ...artifact.summaryPacket, nextAction: JSON.stringify(nextAction), publicReady: false } } : {}) };
 }

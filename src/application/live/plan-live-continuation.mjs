@@ -345,8 +345,8 @@ export async function planLiveContinuation(optionsOrCommand = {}, maybeOptions =
   return makePlan(command, authority, claim, adapter);
 }
 
-/** Execute only a previously validated plan through its injected adapter. */
-export async function executeLiveContinuation({
+/** Reserve the existing effect before either in-process or host dispatch. */
+async function reserveLiveContinuationEffect({
   plan,
   adapterRegistry,
   commandStore,
@@ -425,6 +425,14 @@ export async function executeLiveContinuation({
     fail("durable effect protocol did not enter dispatch_started", "LIVE_CONTINUATION_EFFECT_DISPATCH_NOT_STARTED");
   }
 
+  return { command, freshPlan, effect, executionNowMs, authorityRepository };
+}
+
+/** Execute only a previously validated plan through its injected adapter. */
+export async function executeLiveContinuation(options = {}) {
+  const { command, freshPlan, effect, executionNowMs, authorityRepository } = await reserveLiveContinuationEffect(options);
+  const { adapterRegistry } = options;
+
   let invocation;
   let adapterError = null;
   try {
@@ -480,6 +488,109 @@ export async function executeLiveContinuation({
     result: invocation.result,
     externalModelQuota: false,
   });
+}
+
+function hostRequestFor(command, workOrder) {
+  const { payload } = command;
+  if (command.runtime !== "codex" || command.runtimeAdapter !== "codex-host-threads" ||
+      !["handoff", "resume"].includes(command.action)) fail("unsupported host tool binding");
+  if (Object.hasOwn(payload, "workOrder")) fail("work order content must remain in private host input");
+  for (const key of ["graphDigest", "taskFingerprint", "targetThreadId", "approvalRef", "workOrderRef", "workOrderDigest"]) {
+    if (typeof payload[key] !== "string" || !payload[key]) fail(`host request requires ${key}`);
+  }
+  if (payload.targetActorId !== payload.targetThreadId) fail("host target owner/thread binding mismatch");
+  let request;
+  if (command.action === "handoff") {
+    if (typeof workOrder !== "string" || !workOrder.trim() || canonicalDigest(workOrder) !== payload.workOrderDigest) {
+      fail("approved work order digest mismatch");
+    }
+    request = { tool: "mcp__codex_app__send_message_to_thread", arguments: { threadId: payload.targetThreadId, prompt: workOrder } };
+  } else {
+    if (payload.afterCursor != null && typeof payload.afterCursor !== "string") fail("invalid host completion cursor");
+    request = { tool: "mcp__codex_app__wait_threads", arguments: {
+      targets: [{ threadId: payload.targetThreadId, ...(payload.afterCursor == null ? {} : { afterCursor: payload.afterCursor }) }], timeoutMs: 60_000 } };
+  }
+  return { request, requestDigest: canonicalDigest({ commandDigest: command.commandDigest, request,
+    approvalRef: payload.approvalRef, workOrderDigest: payload.workOrderDigest }) };
+}
+
+async function existingHostEffect(command, commandStore, repository) {
+  const records = await commandStore.list();
+  const recorded = records.find((item) => item.command.commandId === command.commandId || item.command.nonce === command.nonce);
+  if (!recorded) return null;
+  if (recorded.command.commandDigest !== command.commandDigest) fail("host command replay binding mismatch");
+  await callResume(repository, command, {});
+  const projection = repository.projectRun(command.runId);
+  if (projection.eventChain.ok !== true) fail("host effect event chain is not verified");
+  const idempotencyKey = `live-continuation:${canonicalDigest({ commandId: command.commandId, nonce: command.nonce, commandDigest: command.commandDigest })}`;
+  const effect = projection.effects.find((item) => item.idempotencyKey === idempotencyKey);
+  if (!effect || effect.runId !== command.runId || effect.nodeId !== command.nodeId ||
+      effect.attemptId !== command.claim.attemptId || effect.providerBinding.adapterId !== command.runtimeAdapter) {
+    fail("recorded host command has no matching effect");
+  }
+  const reconciliation = projection.events.find((event) => event.eventType === "EffectReconciledCompleted" && event.payload.effectId === effect.effectId);
+  return { ...effect, recordedReceiptDigest: reconciliation?.payload.evidence?.receiptDigest ?? null };
+}
+
+/** Prepare a fixed host-tool request. The current host, never command JSON, supplies authorization. */
+export async function prepareLiveHostContinuation({ command: input, workOrder, authorize, ...options } = {}) {
+  const command = validateLiveContinuationCommand(input);
+  const transport = hostRequestFor(command, workOrder);
+  if (typeof authorize !== "function") return { status: "blocked", reason: "current_host_authorization_required", mayDispatch: false };
+  const approval = await authorize({ command, ...transport });
+  if (approval?.status !== "ready") return { status: approval?.status === "waiting" ? "waiting" : "blocked",
+    reason: approval?.reason ?? "current_host_authorization_required", mayDispatch: false };
+  for (const [key, value] of Object.entries({ commandDigest: command.commandDigest, targetThreadId: command.payload.targetThreadId,
+    workOrderDigest: command.payload.workOrderDigest, approvalRef: command.payload.approvalRef })) {
+    if (approval[key] !== value) fail(`host authorization ${key} mismatch`);
+  }
+  const repository = executionRepositoryFor(options);
+  const store = executionStoreFor(options);
+  const existing = await existingHostEffect(command, store, repository);
+  if (existing) return { status: "already_prepared", mayDispatch: false, effectState: existing.state, effect: existing,
+    ...transport, adapterInvocationObserved: false, completionVerified: false };
+  const plan = await planLiveContinuation({ ...options, command });
+  const { effect } = await reserveLiveContinuationEffect({ ...options, plan });
+  return freeze({ status: "prepared", mayDispatch: true, effectState: "dispatch_started", effect, ...transport,
+    adapterInvocationObserved: false, authorizationSource: "current_host_scope_assertion", authorizationAuthenticatedByLibrary: false,
+    ownerReceivedVerified: false, completionVerified: false });
+}
+
+/** Ingest the host's bound tool return; this never dispatches or accepts the business outcome. */
+export async function completeLiveHostContinuation({ command: input, workOrder, receipt, ...options } = {}) {
+  const command = validateLiveContinuationCommand(input);
+  const transport = hostRequestFor(command, workOrder);
+  const repository = executionRepositoryFor(options);
+  const effect = await existingHostEffect(command, executionStoreFor(options), repository);
+  if (!effect) fail("host receipt has no prepared command");
+  const nowMs = options.nowMs ?? Date.now();
+  if (effect.state === "dispatch_started") await markEffectInDoubt(repository, command, effect.effectId, nowMs);
+  if (!receipt || receipt.effectId !== effect.effectId || receipt.requestDigest !== transport.requestDigest ||
+      receipt.targetThreadId !== command.payload.targetThreadId || receipt.tool !== transport.request.tool) {
+    fail("host receipt request binding mismatch");
+  }
+  const receiptDigest = canonicalDigest(receipt);
+  if (effect.state === "reconciled_completed") {
+    if (effect.recordedReceiptDigest !== receiptDigest) fail("host receipt replay differs from the recorded return");
+    return { status: "already_recorded", effectState: effect.state, mayDispatch: false, completionVerified: false, ownerReceivedVerified: false };
+  }
+  if (!["dispatch_started", "in_doubt"].includes(effect.state)) fail("host effect is not dispatched");
+  const result = receipt.toolResult;
+  let body = result?.structuredContent;
+  if (!body && result?.content?.length === 1 && result.content[0]?.type === "text" && typeof result.content[0].text === "string") {
+    try { body = JSON.parse(result.content[0].text); } catch { /* Unknown tool text remains in doubt. */ }
+  }
+  const target = command.payload.targetThreadId;
+  const targetObserved = body && typeof body === "object" && !Array.isArray(body) && !Object.hasOwn(body, "error") &&
+    (command.action === "handoff" ? body.threadId === target :
+      body.wake?.threadId === target || (Array.isArray(body.polls) && body.polls.some((poll) => poll?.thread?.id === target && typeof poll.cursor === "string")));
+  const returned = receipt.outcome === "returned" && result && (result.isError === false || result.isError === undefined) && targetObserved;
+  if (!returned) return { status: "in_doubt", effectState: "in_doubt", mayDispatch: false, completionVerified: false, ownerReceivedVerified: false };
+  await repository.reconcileEffect({ effectId: effect.effectId, outcome: "completed", nowMs,
+    reconcilerIdentity: command.actor, evidence: { receiptDigest, requestDigest: transport.requestDigest, receipt,
+      evidenceKind: "host_supplied_tool_return", completionVerified: false, ownerReceivedVerified: false } });
+  return { status: "receipt_recorded", effectState: "reconciled_completed", receiptDigest,
+    mayDispatch: false, toolReturnObserved: true, completionVerified: false, ownerReceivedVerified: false };
 }
 
 export function createLiveContinuationPlanner(options = {}) {

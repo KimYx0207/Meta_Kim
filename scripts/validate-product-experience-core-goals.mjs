@@ -442,7 +442,7 @@ function assertProductExperience(report) {
   const supportGateById = new Map(packet.supportGates.map((gate) => [gate.id, gate]));
   assert.equal(supportGateById.get("P-105").status, "pass");
   assert.equal(supportGateById.get("P-106").status, "partial");
-  assert.equal(supportGateById.get("P-107").status, "pass");
+  assert.equal(supportGateById.get("P-107").status, "declared_not_evaluated");
   assert.equal(supportGateById.get("P-108").status, "pass");
   assert.equal(supportGateById.get("P-109").status, "partial");
   assert.equal(supportGateById.get("P-110").status, "pass");

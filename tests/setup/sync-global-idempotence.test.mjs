@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import os from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { directoryContentEqual } from "../../scripts/install-global-skills-all-runtimes.mjs";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 
 const repoRoot = join(import.meta.dirname, "..", "..");
 
@@ -77,4 +78,22 @@ test("dependency skill tree comparison ignores mtimes but detects content drift"
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("direct global sync rejects stale source pins before its stable-package handoff", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  const prepared = runtime.run(["scripts/refresh-runtime-evidence-pins.mjs"]);
+  assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+  appendFileSync(join(runtime.repoRoot, "AGENTS.md"), "\nDirect global lifecycle fixture.\n");
+  const ledger = join(runtime.repoRoot, "config/runtime-capability-evidence.json");
+  const before = readFileSync(ledger, "utf8");
+  const config = join(runtime.home, ".codex/config.toml");
+  const configBefore = existsSync(config) ? readFileSync(config, "utf8") : null;
+  const result = runtime.run(["scripts/sync-global-meta-theory.mjs", "--targets", "codex", "--skip-durable-mcp"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Source runtime evidence is stale or invalid/u);
+  assert.equal(readFileSync(ledger, "utf8"), before);
+  assert.equal(existsSync(join(runtime.home, ".meta-kim/runtime/projection-packages")), false);
+  assert.equal(existsSync(join(runtime.home, ".meta-kim/install-manifest.json")), false);
+  assert.equal(existsSync(config) ? readFileSync(config, "utf8") : null, configBefore);
 });

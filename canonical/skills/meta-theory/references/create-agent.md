@@ -73,7 +73,7 @@ On-demand trigger questions (answer honestly before skipping):
 
 When Type B is triggered by a **capability gap in the Meta_Kim repository itself**, use the stricter **governance owner factory lane** instead of an ad-hoc prompt-writing loop. Public Meta_Kim does not persist non-governance execution agents; implementation capability is recorded as run-scoped skill/tool evidence.
 
-When Type B is triggered while Meta_Kim is used inside a **user project**, search global agents first. If a global agent already fits, use it directly and do not copy it into the project. Copy a global agent into the user project only when project-specific knowledge, boundary changes, persistent skill/tool additions, or recurring local ownership require modification; that copy must be recorded as project-local upgrade work, not ordinary reuse.
+When Type B is triggered while Meta_Kim is used inside a **user project**, search global agents first. If a global agent already fits, use it directly and do not copy it into the project. Project facts and stable default skill/tool preferences belong in the independently approved capability profile. Copy a global agent only when its stable responsibility, refusal, input/output contract or explicitly required independent project identity must change; record that copy as project-local upgrade work, not ordinary reuse.
 
 When the user's intent explicitly says the agent should be created, iterated, upgraded, or kept in the project, the route must not collapse into `worker_task_only`. The factory may still reject bad agent design, but it must return a durable project-agent candidate or a blocked `capabilityGapPacket` explaining which evidence is missing. Temporary runtime subagents are allowed only as factory workers or reviewers; they are not the created agent.
 
@@ -114,6 +114,16 @@ Required Conductor deliverables: orchestration board, dependencies, merge path.
 | Conductor | orchestration board, dependencies, merge path |
 | Prism | quality review, anti-slop check, evidence closure |
 | Scout | external capability discovery and gap evidence |
+
+## Reviewed creator artifact handoff
+
+The factory produces professional content before the materializer runs. For a new Skill, apply the discovered `meta-skill-creator` core contract: minimum domain research, package plan, trigger positives/negatives, two real inputs and a boundary task. Do not substitute official `skill-creator`, `create-agent`, or generic Goal/Responsibility/Refusal text. Agent identity remains Type B with its existing Genesis/Artisan/Review/Warden artifacts; Hook/MCP creation is outside this agent/skill/command materializer.
+
+The existing JS API accepts `projectCapabilityCreationArtifacts`; no CLI flag or new authority is implied. Each record binds `requestedCapability`, `capabilityType`, `runtime` and the actual target `projectRoot`, separately from the framework package root. The remaining `creationArtifact` fields are `sourceRef`, `creatorProviderId`, `creatorMethodRef`, `evidenceRefs`, `contentDigest` and `review: {status, approvalRef, contentDigest}`. The prepared source must exist; method/evidence refs must be readable nonempty local sources. Skill provenance resolves to the selected `meta-skill-creator` method. The approval ref contains the same scope, creator/method, evidence refs, approved status and digest; a boolean without a checkable approval source is insufficient.
+
+`contentDigest` is `sha256:` plus the SHA-256 of JSON for the existing copy preview's sorted whole-package `{relPath, baselineHash}` file table. Skill references/assets/scripts are included. The materializer checks a private stable snapshot, then uses the existing copy/transaction/ownership path; it never invents domain content or calls a model. Missing output or approval remains partial with a factory next step and blocks public-ready. Candidate-only text and unfulfilled conditions such as “unless Warden approval is supplied” grant no file-write authority.
+
+These checks prove artifact consistency, not creator invocation, native host loading or quality improvement. Attach actual method application and host records separately. Direct global reuse writes nothing. Copying for iteration is only preparation; the project owner then performs the reviewed adaptation and verifies it on the task. Preserve unknown user files, project-owned copies, CAS and exact approval boundaries.
 
 ## Fixed Artifacts (Governance Owner Factory Mode)
 
@@ -171,9 +181,21 @@ Created or upgraded agents inherit durable capability shape, not a frozen tactic
 - Long-term identity may include meta-skill package providers, such as `superpowers` or `ecc`, as compatible capability providers.
 - Long-term identity must not include the concrete sub-skill, shell command, plugin sub-capability, or prompt tactic that happened to win one Fetch.
 - `findskill` is only a runtime-local capability search entrypoint. Its search result can justify a current-run `selectedSkill`, not a permanent agent binding.
-Concrete choices belong in run artifacts: `capabilitySearchResult`, `matchedCapabilities`, `capabilityBindings`, `orchestrationTaskBoardPacket`, and `workerTaskPacket`; `executionAgentCard` is included only for project-local/external execution-agent creation or upgrade.
+Actual choices belong in run artifacts: `capabilitySearchResult`, `matchedCapabilities`, `capabilityBindings`, `orchestrationTaskBoardPacket`, and `workerTaskPacket`. An independent reviewed versioned default capability profile may name stable providers; this does not turn a current-run search winner into identity or prove execution. `executionAgentCard` remains only for project-local/external identity creation or upgrade.
 
 Genesis owns the durable boundary. Artisan owns provider compatibility and selection rules. Fetch owns the current-run concrete selection.
+
+### Project fit and independent default configuration
+
+Trigger this path when a project needs a retained owner/default method or current project facts may change fit. First read the actual project rules/dependencies, selected owner source/version/digest and relevant method/feedback sources. Host Thinking supplies a source-bound professional fit assessment; Node checks current bindings, not professional truth from keywords, complete fields or an approved boolean.
+
+Use `workflow-contract.json` → `agentBlueprintPacket.projectCapabilityProfilePolicy`. The optional runner `agentCapabilityProfileContext` carries only relevant `profileSelections`, `fitAssessments` and actual approval/evidence refs to the same selector entry. The private project-owned `.meta-kim/state/default/agent-capability-profiles.json` is configuration, not a run cache or copy-ownership manifest. Preview then explicitly apply with exact content-bound approval, prior hash and the existing project transaction; ordinary runs, sync and install never write it. Same version cannot silently change; transaction backups support explicit reviewed adoption of old compatible content as a new version. An ordinary clone without this ignored file is unconfigured.
+
+Input → action → output: actual source-A defaults and project-B evidence → read and verify each in its declared root, resolve relevant slots in base/project/run order → freeze one source-bound profile/loadout per actual lane owner and deliver its constraints and exact necessary materials in that worker's existing message. Missing roots, stale hashes, unsafe links, bad versions or required providers return a concrete gap; never guess a sidecar or fall back across roots. Required/default/optional differ. Project stack overrides a framework preference, not an identity refusal, required MetaSC, permission or unsupported runtime. An unneeded optional provider does not authorize networking or hot-loading its catalog.
+
+For a generic frontend identity that really supports Vue, a Vue project can override a React default and retain the global identity. A React-only identity explicitly refusing Vue cannot gain that responsibility by adding a Skill. Stable responsibility/refusal/input/output changes need reviewed Type B adaptation; a missing qualified long-term specialist may justify Type B creation on the first Fetch, without waiting for repeated failure. When fit requires identity derivation, this profile-only first slice returns the Type B work order/gap and does not claim that identity derivation has been performed. Existing project identities are iterated in place after approval rather than cloned for every ticket.
+
+Verification must distinguish saved configuration, source reads, worker delivery, actual source use, native invocation and task effect. Test fitting reuse and required role change, plus no-profile compatibility and hard-conflict cases. Preserve actual materials/read receipts and independently review their effect; configuration existence or a successful copy never proves improvement. Codex `agent_type` alone cannot bind an exact same-name source/digest or enforce a tool allowlist. Project business Hooks are managed once by the project owner, infrastructure Hooks globally; Agents do not install private Hooks or expand authority.
 
 ### Execution Agent Abstraction Boundary
 
@@ -199,7 +221,7 @@ Required fields:
 - `purpose`: what durable problem class the agent owns.
 - `capabilities`: 4-8 reusable capability classes with domain-specific nouns.
 - `nonCapabilities`: explicit refusals, including external writes, one-run implementation work, and work better handled by skill/script/provider.
-- `loadoutSlots`: abstract skill, command, MCP, runtime tool, or normal tool slots; concrete providers stay in run-scoped `capabilityBindings`.
+- `loadoutSlots`: abstract skill, command, MCP, runtime tool, or normal tool slots; stable provider preferences may be held in the separate approved default profile, while actual `capabilityBindings` stay run-scoped.
 - `inputs`: stable input contract.
 - `outputs`: stable output contract.
 - `handoff`: upstream evidence needed and downstream consumer expectations.
@@ -426,7 +448,7 @@ Read the canonical `meta-artisan` agent definition first, then use the current r
 2. **ROI score**: `ROI = (task coverage × frequency) / (context cost + learning curve)`
 3. **Output**: per-agent abstract capability slots, compatible provider packages (`superpowers`, `ecc`, etc.), selection rules, and example run-scoped candidates with ROI and rationale
 
-Do not write the example candidates as durable bindings. They are examples of what Fetch may select into `selectedSkill` for a future run.
+Do not promote example candidates automatically. Persistent adoption needs source-bound fit, review and approval of the separate default profile; current availability, permission and actual selection are still checked per run.
 
 ### Step 5: Sentinel — safety design (on demand)
 

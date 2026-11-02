@@ -13,6 +13,36 @@ import { resolveExistingManagedProjectCandidates } from "../../../scripts/existi
 export const STABLE_PROJECT_DEPLOYMENTS_ENV =
   "META_KIM_STABLE_PROJECT_DEPLOYMENTS_JSON";
 
+/** Check the target package's own source bindings before immutable packing. */
+export function assertSourceRuntimeEvidencePins({
+  packageRoot,
+  homeRoot = os.homedir(),
+  env = process.env,
+  processExecPath = process.execPath,
+  spawnSyncImpl = spawnSync,
+}) {
+  const sourceRoot = path.resolve(packageRoot);
+  const result = spawnSyncImpl(
+    processExecPath,
+    [path.join(sourceRoot, "scripts", "refresh-runtime-evidence-pins.mjs"), "--check"],
+    {
+      cwd: sourceRoot,
+      env: sanitizeProjectionPackageEnvironment(env, {
+        sourceRoot,
+        storeRoot: path.join(homeRoot, ".meta-kim", "runtime", "projection-packages"),
+      }),
+      encoding: "utf8",
+      timeout: 30_000,
+      shell: false,
+      windowsHide: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.signal || result.status !== 0) {
+    throw new Error(`Source runtime evidence is stale or invalid; run npm run meta:sync from the source checkout before packing.\n${result.stderr || result.stdout || result.signal || "Source evidence check did not exit successfully."}`);
+  }
+}
+
 function pathKey(value, platformName) {
   const resolved = path.resolve(value);
   return platformName === "win32" ? resolved.toLowerCase() : resolved;
@@ -147,6 +177,13 @@ export function createProjectionPackageBoundary({
   }
 
   async function materializeStablePackage() {
+    assertSourceRuntimeEvidencePins({
+      packageRoot: sourceRoot,
+      homeRoot: resolvedHomeRoot,
+      env,
+      processExecPath,
+      spawnSyncImpl,
+    });
     return await materializeGlobalProjectionPackage({
       sourceRoot,
       homeRoot: resolvedHomeRoot,

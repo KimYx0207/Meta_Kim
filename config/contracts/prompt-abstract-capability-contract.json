@@ -59,10 +59,10 @@
       "id": "skill-agent-tool-creation",
       "kind": "abstract_foundational",
       "sourceRefs": ["config/skills.json", "canonical/skills/meta-theory/references/create-agent.md", "config/capability-index/provider-registry.json"],
-      "examples": ["skill-creator", "create-agent pipeline", "meta-genesis", "meta-artisan"],
+      "examples": ["meta-skill-creator", "create-agent pipeline", "meta-genesis", "meta-artisan"],
       "promptHardcodePolicy": "hardcode_gap_gate_not_provider_name_first",
       "trigger": "Fetch proves no existing owner/provider/tool/skill can satisfy a reusable capability gap",
-      "conflictPolicy": "Creation starts only after capability discovery, gap proof, route scoring, review, and Warden approval for durable writeback; never create to bypass missing Fetch."
+      "conflictPolicy": "Creation starts only after capability discovery, project fit, gap proof, route scoring, review, and Warden approval for durable writeback. Skill creation/refactor/review applies meta-skill-creator only. Materialization consumes real prepared source, checkable creator/approval refs and a scope-bound whole-package digest; missing output returns a factory next step, never a placeholder or invocation claim."
     },
     {
       "id": "runtime-native-surfaces",
@@ -152,7 +152,12 @@
     {
       "id": "creation-after-gap-proof",
       "capabilityFamily": "skill-agent-tool-creation",
-      "rule": "skill-creator or create-agent routes require capability discovery, gap proof, review, and Warden approval before durable writeback."
+      "rule": "Skill authoring requires discovered meta-skill-creator; Agent identity retains Type B. Both need capability discovery, gap proof, reviewed creator output and content-bound approval before durable writeback. Ordinary code creation is not Skill creation; copying for iteration is preparation, not completed improvement."
+    },
+    {
+      "id": "project-method-fit-and-reference-consumption",
+      "capabilityFamily": "memory-graph-and-observability",
+      "rule": "Before each task evaluate verified project constraints, relevant repeated failures and current method source/version, then choose reuse/adaptation/creation. The second same-type failure changes design/evidence route; three cross-task structural uses justify Skill extraction evaluation; explicit persistent learning triggers evaluation immediately. Use existing evidenceRefs/referenceDirection/handoffContract and report sources actually read, changed action and observed outcome; saved files and copies do not prove improvement."
     },
     {
       "id": "native-ability-preservation",

@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import * as hostContinuation from "../../src/application/live/plan-live-continuation.mjs";
+import { canonicalDigest } from "../../src/domain/shared/canonical-digest.mjs";
+import { openDurableRunRepository } from "../../src/application/run/open-durable-run-repository.mjs";
 
 import {
   LIVE_CONTINUATION_ACTIONS,
@@ -22,6 +27,113 @@ import {
 } from "../../src/infrastructure/live/live-runtime-adapter-registry.mjs";
 
 const DIGEST = "sha256:" + "a".repeat(64);
+
+test("host continuation prepares without sending and commits a bound tool receipt once", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "meta-host-continuation-"));
+  await mkdir(path.join(root, ".git"));
+  const kernel = await openDurableRunRepository(path.join(root, "kernel.sqlite"));
+  t.after(async () => { kernel.close(); await rm(root, { recursive: true, force: true }); });
+  const nowMs = Date.now();
+  const binding = { runId: "host-run", graphDigest: "host-graph", taskFingerprint: "host-task" };
+  kernel.createRun({ ...binding, nowMs });
+  const claim = kernel.claimNode({ runId: binding.runId, nodeId: "host-node", ownerId: "original-host",
+    nodeDefinitionHash: "node", inputHash: "input", dependencyOutputHash: "dependencies", leaseMs: 300_000, nowMs });
+  const current = kernel.resumeRun(binding);
+  const workOrder = "Update docs/PRD.md with the verified 6/6 source result and 来源/时码. Keep site/video unverified; do not restart the job.";
+  const next = createLiveContinuationCommand({ action: "handoff", runId: binding.runId, nodeId: "host-node",
+    expectedRevision: current.cursor, checkpointId: current.headCheckpointId, effectState: "none",
+    claim: { attemptId: claim.attemptId, ownerId: "original-host", fenceToken: claim.fenceToken, leaseExpiresAtMs: nowMs + 300_000 },
+    actor: "original-host", runtimeAdapter: "codex-host-threads", runtime: "codex", nonce: "host-event-1",
+    issuedAtMs: nowMs, expiresAtMs: nowMs + 240_000,
+    payload: { ...binding, targetActorId: "original-business-thread", targetThreadId: "original-business-thread",
+      approvalRef: "human:existing-task-authorization", workOrderRef: "owned-work-order-1", workOrderDigest: canonicalDigest(workOrder) } });
+  let sends = 0;
+  const registry = createLiveRuntimeAdapterRegistry({ adapters: [{ adapterId: "codex-host-threads", runtime: "codex",
+    capabilities: ["handoff", "resume"], execute() { sends++; throw new Error("Node must never call a host tool"); } }] });
+  const store = createLiveContinuationCommandStore({ projectRoot: root });
+  const options = { command: next, workOrder, adapterRegistry: registry, commandStore: store, durableRepository: kernel, nowMs };
+  const authorize = async ({ command: approved }) => ({ status: "ready", commandDigest: approved.commandDigest,
+    targetThreadId: approved.payload.targetThreadId, workOrderDigest: approved.payload.workOrderDigest, approvalRef: approved.payload.approvalRef });
+  const denied = await hostContinuation.prepareLiveHostContinuation(options);
+  assert.equal(denied.status, "blocked");
+  const paused = await hostContinuation.prepareLiveHostContinuation({ ...options,
+    authorize: async () => ({ status: "waiting", reason: "explicit_user_pause" }) });
+  assert.equal(paused.status, "waiting");
+  await assert.rejects(hostContinuation.prepareLiveHostContinuation({ ...options, workOrder: `${workOrder} changed`, authorize }), /work order digest mismatch/iu);
+  assert.equal((await store.list()).length, 0);
+  assert.equal(kernel.projectRun(binding.runId).effects.length, 0);
+  const exchange = path.join(root, ".meta-kim/work/exchange");
+  await mkdir(exchange, { recursive: true });
+  const commandFile = path.join(exchange, "command.json");
+  const workOrderFile = path.join(exchange, "work-order.txt");
+  const requestFile = path.join(exchange, "request.json");
+  await writeFile(commandFile, JSON.stringify(next));
+  await writeFile(workOrderFile, workOrder);
+  const cli = (args) => promisify(execFile)(process.execPath, [path.resolve("scripts/live-host-continuation.mjs"), ...args], { timeout: 30_000 });
+  const sharedArgs = ["--project-root", root, "--db", path.join(root, "kernel.sqlite")];
+  const preparedCli = await cli(["prepare", ...sharedArgs, "--input", commandFile, "--output", requestFile,
+    "--work-order", workOrderFile, "--authorized-command-digest", next.commandDigest, "--approval-ref", next.payload.approvalRef]);
+  assert.equal(JSON.parse(preparedCli.stdout).status, "prepared");
+  assert.equal(preparedCli.stdout.includes(workOrder), false, "CLI stdout contains metadata, not the business work order");
+  const prepared = JSON.parse(await readFile(requestFile, "utf8"));
+  assert.equal(prepared.status, "prepared");
+  assert.equal(prepared.adapterInvocationObserved, false);
+  assert.equal(prepared.request.tool, "mcp__codex_app__send_message_to_thread");
+  assert.deepEqual(prepared.request.arguments, { threadId: next.payload.targetThreadId, prompt: workOrder });
+  assert.equal(sends, 0);
+  const replay = await hostContinuation.prepareLiveHostContinuation({ ...options, authorize });
+  assert.equal(replay.mayDispatch, false);
+  assert.equal((await store.list()).length, 1);
+  assert.equal(Object.hasOwn((await store.list())[0].command.payload, "workOrder"), false);
+  assert.equal((await readFile(store.filePath, "utf8")).includes("docs/PRD.md"), false, "Private task text is absent from the command log");
+  const receipt = { effectId: prepared.effect.effectId, requestDigest: prepared.requestDigest,
+    targetThreadId: next.payload.targetThreadId, tool: prepared.request.tool,
+    outcome: "returned", toolResult: { content: [{ type: "text", text: JSON.stringify({ threadId: next.payload.targetThreadId }) }], isError: false } };
+  const complete = (value) => hostContinuation.completeLiveHostContinuation({ ...options, receipt: value });
+  await assert.rejects(complete({ ...receipt, requestDigest: "sha256:" + "0".repeat(64) }), /receipt.*binding/iu);
+  const unknown = await complete({ ...receipt, outcome: "unknown", toolResult: null });
+  assert.equal(unknown.effectState, "in_doubt");
+  assert.equal(kernel.projectRun(binding.runId).effects[0].state, "in_doubt");
+  for (const toolResult of [
+    { content: [{ type: "text", text: "permission denied" }] },
+    { structuredContent: { threadId: "another-thread" } },
+    { structuredContent: { threadId: next.payload.targetThreadId, error: "permission denied" } },
+  ]) {
+    assert.equal((await complete({ ...receipt, toolResult })).effectState, "in_doubt");
+    assert.equal(kernel.projectRun(binding.runId).effects[0].state, "in_doubt");
+  }
+  const rawReceiptFile = path.join(exchange, "tool-return.json");
+  const rawReceiptText = JSON.stringify(receipt.toolResult);
+  await writeFile(rawReceiptFile, rawReceiptText);
+  const commitCli = await cli(["commit", ...sharedArgs, "--input", rawReceiptFile, "--request", requestFile, "--outcome", "returned"]);
+  const committed = JSON.parse(commitCli.stdout);
+  assert.equal(committed.status, "receipt_recorded");
+  assert.equal(committed.effectState, "reconciled_completed");
+  assert.equal(committed.completionVerified, false);
+  assert.equal(committed.ownerReceivedVerified, false);
+  assert.equal(await readFile(rawReceiptFile, "utf8"), rawReceiptText, "The original tool return is retained unchanged");
+  const cursor = kernel.projectRun(binding.runId).cursor;
+  const again = await complete(receipt);
+  assert.equal(again.status, "already_recorded");
+  assert.equal(kernel.projectRun(binding.runId).cursor, cursor);
+  assert.equal(sends, 0, "Neither preparation nor receipt ingestion sends a message");
+  const waitInput = { ...next }; delete waitInput.commandDigest;
+  const wait = createLiveContinuationCommand({ ...waitInput, commandId: "host-wait-1", nonce: "host-wait-event-1",
+    action: "resume", expectedRevision: kernel.resumeRun(binding).cursor,
+    payload: { ...next.payload, afterCursor: "fixture-cursor:0" } });
+  const waitPrepared = await hostContinuation.prepareLiveHostContinuation({ ...options, command: wait, authorize });
+  assert.equal(waitPrepared.request.tool, "mcp__codex_app__wait_threads");
+  assert.deepEqual(waitPrepared.request.arguments.targets, [{ threadId: next.payload.targetThreadId, afterCursor: "fixture-cursor:0" }]);
+  // Shape taken from the observed host protocol, with synthetic identities only.
+  const waitReceipt = { effectId: waitPrepared.effect.effectId, requestDigest: waitPrepared.requestDigest,
+    targetThreadId: next.payload.targetThreadId, tool: waitPrepared.request.tool, outcome: "returned",
+    toolResult: { content: [{ type: "text", text: JSON.stringify({ timedOut: true, wake: { reason: "timeout" },
+      polls: [{ thread: { id: next.payload.targetThreadId, hostId: "fixture-host", status: "running" }, cursor: "fixture-cursor:1" }] }) }] } };
+  const waitComplete = await hostContinuation.completeLiveHostContinuation({ ...options, command: wait, receipt: waitReceipt });
+  assert.equal(waitComplete.status, "receipt_recorded");
+  assert.equal(waitComplete.completionVerified, false, "A completed wait call is not business completion");
+  assert.equal(sends, 0);
+});
 
 function command(overrides = {}) {
   return createLiveContinuationCommand({

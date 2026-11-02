@@ -22,6 +22,8 @@ import { discoverDependencyAgentContracts, matchDependencyAgentContracts, readDe
 import { discoverDependencySkillContracts } from "./dependency-skill-discovery.mjs";
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT } from "./governed-execution/local-dependency-tool-contract.mjs";
 import { durableCapabilityRequestsFromTask } from "./capability-request-intent.mjs";
+import { resolveAgentCapabilityProfile } from "./agent-capability-profile.mjs";
+import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
 import { decomposeTaskActions, extractActionPaths } from "./task-action-decomposition.mjs";
 import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
 import {
@@ -67,6 +69,20 @@ async function readGlobalInventoryJson(fallback) {
 
 const task = argValue("--task", "");
 const actionTask = argValue("--action-task", task);
+const methodWorkKind = argValue("--method-work-kind", null);
+const methodCapabilityId = argValue("--method-capability-id", null);
+const methodContextRaw = argValue("--method-context-json", null);
+const methodContext = methodContextRaw ? JSON.parse(methodContextRaw) : { capabilityNeed: [], artifactFlow: [] };
+if ((methodWorkKind || methodCapabilityId) &&
+    (!["support", "vertical_slice", "migration_batch"].includes(methodWorkKind) || !methodCapabilityId?.trim())) {
+  throw new TypeError("Method selection requires the existing slice workKind and methodCapabilityId");
+}
+if (!methodContext || typeof methodContext !== "object" || Array.isArray(methodContext) ||
+    !Array.isArray(methodContext.capabilityNeed) || methodContext.capabilityNeed.some((need) => typeof need !== "string" || !need.trim()) ||
+    !Array.isArray(methodContext.artifactFlow) || methodContext.artifactFlow.some((flow) => !flow || typeof flow !== "object" || Array.isArray(flow)) ||
+    methodContextRaw && !methodCapabilityId) {
+  throw new TypeError("Method context requires the current slice capability demand and artifact flow, without selecting an owner or granting permission");
+}
 const requestedRouteRunId = argValue("--run-id", null);
 // A route-search constraint, never a claim of native confirmation or Permission.
 const intentDeliveryStrategy = argValue("--intent-delivery-strategy", null);
@@ -220,6 +236,12 @@ function activeRuntimeSupport() {
   return claims.some((claim) => claim.hostSupport === "unsupported") ? "unsupported" : "unknown";
 }
 const dependencyProjectRoot = path.resolve(argValue("--project-root") || process.env.META_KIM_CALLER_CWD || repoPath("."));
+const agentCapabilityProfileContext = JSON.parse(argValue("--agent-profile-context-json", "{}"));
+if (!agentCapabilityProfileContext || typeof agentCapabilityProfileContext !== "object" || Array.isArray(agentCapabilityProfileContext) ||
+    Object.keys(agentCapabilityProfileContext).some((key) => !workflowContract.protocols.agentBlueprintPacket.projectCapabilityProfilePolicy.contextFields.includes(key)) ||
+    Object.values(agentCapabilityProfileContext).some((value) => !Array.isArray(value))) {
+  throw new TypeError("agentCapabilityProfileContext requires only profileSelections, fitAssessments and approvalRefs arrays");
+}
 const localOverrides = await readDependencyProjectOverrides(dependencyProjectRoot);
 const projectProjectionMode = localOverrides.projectProjectionMode ?? "project";
 const projectProjectionPolicy = {
@@ -486,7 +508,8 @@ async function projectRuntimeAgents() {
   ];
   const agents = [];
   for (const { runtime: runtimeName, dir, extension } of dirs) {
-    const absDir = repoPath(dir);
+    const absDir = inspectTrustedPath(dependencyProjectRoot, dir)?.target;
+    if (!absDir) continue;
     if (!(await exists(absDir))) continue;
     const entries = await fs.readdir(absDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -498,9 +521,9 @@ async function projectRuntimeAgents() {
       let validCustomAgentDefinition = null;
       let customAgentDefinitionErrors = [];
       let contentDigest = null;
+      const content = await fs.readFile(path.join(absDir, entry.name), "utf8");
+      contentDigest = createHash("sha256").update(content).digest("hex");
       if (runtimeName === "codex") {
-        const content = await fs.readFile(path.join(absDir, entry.name), "utf8");
-        contentDigest = createHash("sha256").update(content).digest("hex");
         ({ metadata, errors: customAgentDefinitionErrors } = parseCodexAgentDefinition(content));
         validCustomAgentDefinition = customAgentDefinitionErrors.length === 0;
         if (validCustomAgentDefinition) id = metadata.name;
@@ -511,7 +534,9 @@ async function projectRuntimeAgents() {
         source: "project_runtime_agent_inventory",
         runtime: runtimeName,
         sourceRef: toPosix(path.join(dir, entry.name)),
+        sourceRoot: dependencyProjectRoot,
         executionBlock: layer === "meta",
+        own: runtimeName === "codex" ? null : content,
         metadata,
         validCustomAgentDefinition,
         customAgentDefinitionErrors,
@@ -524,13 +549,13 @@ async function projectRuntimeAgents() {
       });
     }
   }
-  const openclawWorkspaces = repoPath("openclaw/workspaces");
+  const openclawWorkspaces = path.join(dependencyProjectRoot, "openclaw/workspaces");
   if (await exists(openclawWorkspaces)) {
     const entries = await fs.readdir(openclawWorkspaces, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const soulPath = path.join("openclaw/workspaces", entry.name, "SOUL.md");
-      if (!(await exists(repoPath(soulPath)))) continue;
+      if (!inspectTrustedPath(dependencyProjectRoot, soulPath)) continue;
       const id = entry.name;
       const layer = id.startsWith("meta-") ? "meta" : "execution";
       agents.push({
@@ -539,6 +564,8 @@ async function projectRuntimeAgents() {
         source: "project_runtime_agent_inventory",
         runtime: "openclaw",
         sourceRef: toPosix(soulPath),
+        sourceRoot: dependencyProjectRoot,
+        contentDigest: createHash("sha256").update(await fs.readFile(path.join(dependencyProjectRoot, soulPath))).digest("hex"),
         executionBlock: layer === "meta",
       });
     }
@@ -618,6 +645,7 @@ async function globalRuntimeAgentProviders() {
       contentDigest,
       sourceKey: `${platformId}:agents:${id}:personal:${sourceRef}`,
       executionBlock: layer === "meta",
+      own: agentProjection.format === "codex_toml" ? null : content,
       metadata,
       validCustomAgentDefinition,
       customAgentDefinitionErrors,
@@ -688,19 +716,23 @@ async function projectSkillProviders() {
   ];
   const providers = [];
   for (const { runtime: runtimeName, dir, marker } of dirs) {
-    const absDir = repoPath(dir);
+    const absDir = inspectTrustedPath(dependencyProjectRoot, dir)?.target;
+    if (!absDir) continue;
     if (!(await exists(absDir))) continue;
     const entries = await fs.readdir(absDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const skillFile = path.join(dir, entry.name, marker);
-      if (!(await exists(repoPath(skillFile)))) continue;
+      const skillPath = inspectTrustedPath(dependencyProjectRoot, skillFile)?.target;
+      if (!skillPath) continue;
       providers.push({
         id: entry.name,
         type: "skills",
         source: "project_runtime_skill_inventory",
+        sourceRoot: dependencyProjectRoot,
         runtime: runtimeName,
         sourceRef: toPosix(skillFile),
+        contentDigest: createHash("sha256").update(await fs.readFile(skillPath)).digest("hex"),
       });
     }
   }
@@ -956,7 +988,18 @@ const localToolExecutionGate = {
   sourceReviewBinding: localSourceReviewMatches ? { status: "exact_review_bound", evidenceRefs: localSourceReview.evidenceRefs } : { status: "not_verified" },
   effectClass: "read_only_support",
 };
-const dependencyAgentMatches = matchDependencyAgentContracts(task, dependencyAgentDiscovery.agents);
+const dependencyAgentMatches = matchDependencyAgentContracts(methodCapabilityId
+  ? [actionTask, ...methodContext.capabilityNeed].join("\n") : task, dependencyAgentDiscovery.agents);
+const methodContractOwners = methodCapabilityId ? dependencyAgentDiscovery.agents.filter((agent) =>
+  agent.ownerContract.capabilities.some((capability) => methodCapabilityId === capability.id ||
+    methodCapabilityId === `${agent.dependencyId}:${capability.id}`)) : [];
+const currentMethodOperation = methodCapabilityId ? inspectCurrentMethodOperation([actionTask, ...methodContext.capabilityNeed].join("\n")) : null;
+// Dependency discovery already verifies source bytes, read-only permissions and
+// sideEffects=[]. A support demand selects that bounded method, not a verb-prefix
+// grammar. Future flow consumers do not turn its current review into implementation.
+const readOnlyProfessionalReview = methodWorkKind === "support" && methodContractOwners.length === 1 &&
+  methodContractOwners[0].routeEligible === true && methodContractOwners[0].executionBlock !== true &&
+  !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition;
 const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some(
   (request) => request.mutationAuthorized && request.candidateType !== "script",
 );
@@ -1010,6 +1053,7 @@ const PRODUCT_BUILD_INTENT_SIGNALS = {
 };
 const dependencyAgentScopeExclusion = explicitCapabilityLifecycle
   ? "explicit_capability_lifecycle_uses_existing_governance"
+  : readOnlyProfessionalReview ? null
   : ["engineering_execution", "platform_governance", "goal_contract"].includes(taskShape) ||
     (/decision|judge|判断|决策|选择|取舍|怎么改|怎么做|是否要|要不要|路径|方案|策略|转化|how should|improve conversion/.test(taskText) &&
       !explicitProfessionalTextProduction) ||
@@ -1020,14 +1064,19 @@ const dependencyAgentScopeExclusion = explicitCapabilityLifecycle
     : null;
 const dependencyAgentMatch = dependencyAgentScopeExclusion
   ? { ...dependencyAgentMatches, selected: null, reason: dependencyAgentScopeExclusion }
+  : readOnlyProfessionalReview
+    ? { ...dependencyAgentMatches, selected: methodContractOwners[0], reason: "source_verified_method_for_current_read_only_review" }
   : dependencyAgentMatches;
 // A quality adjective does not change a source-matched professional text task
 // into UI design. The selected method retains its own required inputs/boundaries.
 // An explicit interface/page request still needs its existing design choice.
 const explicitInterfaceScope = /\b(?:ui|ux|website|webpage|user interface)\b|页面|界面|网页|网站/iu.test(task);
 const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true &&
-  (!dependencyAgentMatch.selected || explicitInterfaceScope);
-const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: dependencyAgentMatches, scopeExclusion: dependencyAgentScopeExclusion });
+  !readOnlyProfessionalReview && (!dependencyAgentMatch.selected || explicitInterfaceScope);
+const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: methodCapabilityId
+  ? { ...dependencyAgentMatch, selected: methodContractOwners.length === 1 && methodContractOwners[0].routeEligible === true &&
+    methodContractOwners[0].executionBlock !== true ? methodContractOwners[0] : null }
+  : dependencyAgentMatches, scopeExclusion: dependencyAgentScopeExclusion });
 const repoCanonicalSkillProviders = capabilityEntries(repoCapabilityIndex, "skills").map((entry) => compactCapabilityProvider(entry, "repo_canonical_capability_index", "skills"));
 const projectRuntimeSkillProviders = await projectSkillProviders();
 const codexGlobalSkillFileProviders = await codexGlobalSkillProviders();
@@ -1689,6 +1738,113 @@ function selectAnyProvider(preferredIds = [], allowedTypes = null) {
   return providers[0] ?? null;
 }
 
+const agentProfileSnapshots = new Map();
+function skillAuthoringRequested(text = task) {
+  return /(?:create|refactor|rewrite|design|review|evaluate|audit|optimi[sz]e)\s+(?:(?:a|an|the|this|existing|project|new|reusable)\s+){0,5}skills?\b|(?:创建|新建|改写|重构|设计|评审|审核|优化)\s*(?:一个|现有|本项目|当前项目|项目|新的|可复用)?\s*(?:skill|技能)/iu.test(text) ||
+    durableCapabilityRequestsFromTask(text).some((request) => request.candidateType === "skill" && request.requestedAction !== "reuse");
+}
+
+function profileForExecutionOwner(owner, capabilityNeed = [], fallbackProviders = [], action = task) {
+  if (!owner) return { status: "not_configured", fitStatus: "not_evaluated", selectedProviders: [], blockedReasons: [] };
+  const skillAuthoring = decomposeTaskActions(String(action)).length === 1 && skillAuthoringRequested(action);
+  const key = stableJson({ id: owner.id, source: owner.source, sourceRef: owner.sourceRef, contentDigest: owner.contentDigest, capabilityNeed, skillAuthoring, fallback: fallbackProviders.map((provider) => provider?.id) });
+  if (!agentProfileSnapshots.has(key)) {
+    agentProfileSnapshots.set(key, resolveAgentCapabilityProfile({
+      projectRoot: dependencyProjectRoot, owner, context: agentCapabilityProfileContext, providers: reusableProviders,
+      runtime, osTarget, capabilityNeed, fallbackProviders, skillAuthoring,
+      providerEligible: (provider) => providerEligibleForRoute(provider) && runtimeMatchScore(provider) < 9 &&
+        provider.executionEligible !== false && provider.osSupport?.[osTarget] !== "unsupported",
+    }));
+  }
+  return agentProfileSnapshots.get(key);
+}
+
+function profileSelectedProviders(selected, snapshot) {
+  const result = { ...selected };
+  const slotKeys = { skill: "skill", mcp_tool: "mcpTool", command: "command", runtime_tool: "runtimeTool" };
+  for (const slot of snapshot.slots ?? []) {
+    result[`profile:${slot.bindingType}:${slot.capabilitySlot}`] = slot.provider;
+    result[slotKeys[slot.bindingType]] = slot.provider;
+  }
+  const creator = snapshot.slots?.find((slot) => slot.capabilitySlot === "skill-agent-tool-creation");
+  if (creator) result.skill = creator.provider;
+  return result;
+}
+
+const implementationActionPattern = /\b(?:fix|implement|build|refactor|rebuild|migrate|write|edit|update|repair|modify|change|patch)\b|修复|修改|实现|构建|重构|迁移|写入|编辑|更新|改代码|搞定/iu;
+
+function explicitOwnerRefusalConflict(owner, action = taskText) {
+  const contract = [owner?.description, owner?.own, owner?.boundary, owner?.metadata?.description, owner?.metadata?.developer_instructions].filter(Boolean).join("\n");
+  const clauses = taskEffectText(action).toLowerCase()
+    .split(/(?=\b(?:and|or|then|but|to|while|without|using|for)\b)|[，,、;；]/iu)
+    .map((clause) => clause.trim().replace(/^(?:and|or|then|but|to|while|using|for)\s+/iu, ""))
+    .filter((clause) => !/^(?:without|do not|don't|don’t|never)\b/iu.test(clause));
+  const mutationObjects = clauses.flatMap((clause) => {
+    const mutation = implementationActionPattern.exec(clause);
+    return mutation ? [clause.slice(mutation.index + mutation[0].length)] : [];
+  });
+  if (!mutationObjects.length) return false;
+  const refusals = contract.matchAll(/\b(?:(?:do not|does not|never|cannot)\s+(?:implement|support|use|build|work with|modify|change|edit|write)|refuse(?:s)?\s*(?:to\s+(?:implement|support|use|build|modify|change|edit|write))?)\s+([^.!?;。；\n]+)/giu);
+  return [...refusals].some((match) => {
+    // Keep the complete refused object: backend schema changes is narrower
+    // than backend. Purpose/display clauses do not become mutation objects.
+    const subject = match[1].toLowerCase().replace(/\s+\b(?:changes?|modifications?|implementation|development|writes?)\s*$/u, "");
+    const terms = (subject.match(/[a-z0-9][a-z0-9.+#-]*/gu) ?? []).filter((term) => !["a", "an", "any", "the", "in", "of", "with"].includes(term));
+    const objects = terms.length === 1 ? clauses : mutationObjects;
+    return terms.length > 0 && objects.some((object) => terms.every((term) => termMatchesProviderText(object, term)));
+  });
+}
+
+// Apply the same qualification to ordinary, dependency and per-lane owners.
+// An assessed profile never grants tools, permissions or a native identity.
+function applyAgentProfilesToRoute(route) {
+  const selected = route.selectedCapabilityProviders ?? {};
+  const owner = selected.agent ?? candidateExecutionAgents.find((candidate) => candidate.id === route.owner);
+  const snapshot = profileForExecutionOwner(owner, [], Object.values(selected).filter(Boolean));
+  const gaps = [...snapshot.blockedReasons ?? []];
+  if (owner && explicitOwnerRefusalConflict(owner)) gaps.push("owner_explicit_refusal_conflicts_with_task");
+  for (const request of [...agentCapabilityProfileContext.profileSelections ?? [], ...agentCapabilityProfileContext.fitAssessments ?? []]) {
+    const requestedOwner = candidateExecutionAgents.find((candidate) => {
+      const resolved = profileForExecutionOwner(candidate);
+      return stableJson(resolved.owner) === stableJson(request.owner);
+    });
+    if (!requestedOwner) gaps.push("profile_context_owner_not_discovered");
+    else {
+      const resolved = profileForExecutionOwner(requestedOwner);
+      if (resolved.status === "capability_gap") gaps.push(...resolved.blockedReasons);
+    }
+  }
+  const bindLane = (lane) => {
+    const laneOwner = candidateExecutionAgents.find((candidate) => candidate.id === lane.ownerAgent);
+    const previous = lane.capabilityBinding?.selectedProviders ?? {};
+    const laneSnapshot = profileForExecutionOwner(laneOwner, lane.capabilityNeed ?? [], Object.values(previous).filter(Boolean), lane.purpose ?? task);
+    if (laneSnapshot.status === "capability_gap") gaps.push(...laneSnapshot.blockedReasons);
+    if (laneOwner && explicitOwnerRefusalConflict(laneOwner, lane.purpose ?? taskText)) gaps.push(`owner_explicit_refusal_conflicts_with_lane:${lane.laneId}`);
+    const providers = profileSelectedProviders(previous, laneSnapshot);
+    if (providers.mcpTool) providers.mcp = providers.mcpTool;
+    return { ...lane, agentCapabilityProfile: laneSnapshot,
+      capabilityProvider: providers.skill ?? lane.capabilityProvider,
+      capabilityBinding: { ...lane.capabilityBinding, selectedProviders: providers },
+      ...(lane.codexSpawnBinding ? { codexSpawnBinding: codexSpawnBindingForOwner(lane.ownerAgent, lane.ownerKind ?? "agent", lane.laneId,
+        { ...lane, agentCapabilityProfile: laneSnapshot, capabilityLoadout: { ...laneSnapshot, selectedProviders: providers } }) } : {}),
+    };
+  };
+  const parallelExecutionLanes = route.parallelExecutionLanes?.map(bindLane);
+  const subjectiveUiCapabilityAmplification = route.subjectiveUiCapabilityAmplification
+    ? { ...route.subjectiveUiCapabilityAmplification, lanes: route.subjectiveUiCapabilityAmplification.lanes.map(bindLane) } : undefined;
+  const mergedSelected = profileSelectedProviders(selected, snapshot);
+  return { ...route, agentCapabilityProfile: snapshot,
+    selectedCapabilityProviders: mergedSelected,
+    ...(route.codexSpawnBinding && owner ? { codexSpawnBinding: codexSpawnBindingForOwner(owner.id, "agent", null, {
+      purpose: actionTask, roleDisplayName: roleDisplayNameForOwner(owner.id), agentCapabilityProfile: snapshot,
+      capabilityLoadout: { ...snapshot, selectedProviders: mergedSelected },
+    }) } : {}),
+    ...(parallelExecutionLanes ? { parallelExecutionLanes } : {}),
+    ...(subjectiveUiCapabilityAmplification ? { subjectiveUiCapabilityAmplification } : {}),
+    ...(gaps.length ? { score: Math.min(route.score, 49), scoreBand: "blocked", blockedReasons: [...route.blockedReasons ?? [], ...gaps] } : {}),
+  };
+}
+
 const CAPABILITY_NEED_TERMS = {
   "software-architecture-and-extension-boundaries": ["architecture", "architectural", "maintainability", "extension", "system-design", "架构", "可扩展", "可维护"],
   "product-intent-and-context": ["product", "context", "get-context", "design-consultation", "strategy", "用户", "产品"],
@@ -2167,6 +2323,9 @@ function buildCodexWorkerMessage(ownerId, ownerKind, roleInstanceId, taskPacket 
     ownerDefinition,
     ownerContract: provider?.ownerContract ?? null,
     capabilityLoadout,
+    agentCapabilityProfile: taskPacket?.agentCapabilityProfile ?? null,
+    referenceDirection: taskPacket?.agentCapabilityProfile?.referenceDirection ?? taskPacket?.decisionImpact ?? null,
+    requiredMaterials: taskPacket?.agentCapabilityProfile?.materials ?? [],
     scope: {
       purpose: taskPacket?.purpose ?? `Execute the bounded worker task owned by ${ownerId}.`,
       decisionImpact: taskPacket?.decisionImpact ?? null,
@@ -2260,35 +2419,133 @@ function codexSpawnBindingForOwner(ownerId, ownerKind = "agent", roleInstanceId 
   return binding;
 }
 
-function selectExecutionOwner() {
-  if (dependencyAgentMatch.selected && !requestedOwnerSourceKey && !requestedOwnerSourceRef && !requestedOwnerContentDigest) {
-    return dependencyAgentMatch.selected.id;
+// Remove complete prohibition clauses without erasing a later requested action.
+function taskEffectText(text) {
+  return String(text ?? "").replace(/\b(?:do not|don't|don’t|never)\s+(?:modify|edit|write|delete|remove|create|change|patch)\s+(?:any\s+)?(?:files|source files|code)[.!]?(?=$|[\n;])/giu, "")
+    .split(/[，,、;；。.!?\n]/u)
+    .filter((clause) => !/^(?:不|不要|不得|禁止)(?:(?:修改|改动|编辑|写入|写|删除|移除|创建|更新)(?:任何|原始|原有|现有)?(?:文件|代码|源码)|(?:代投|投递)简历)$/u.test(clause.trim()))
+    .join("; ");
+}
+
+// The method ID is a capability demand, never an owner or authorization. Check
+// action heads so a reviewed build/deployment plan does not become a build job.
+function inspectCurrentMethodOperation(text) {
+  const inspection = "(?:check|review|inspect|audit|assess|evaluate|analy[sz]e|verify|investigate|compare|read)\\b|(?:只读)?(?:审阅|评审|检查|审查|审核|评估|分析|验证|排查|读取|阅读|对照)";
+  const mutation = "\\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|repair|modify|change|patch|delete|remove|deploy|publish|release|upload|send|execute|run|generate|render)\\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除|部署|发布|上传|发送|运行|执行|生成|制作";
+  const actionHead = new RegExp(`^(?:${inspection}|${mutation})`, "iu");
+  const reviewHead = new RegExp(`^(?:(?:read[- ]only)\\s+)?(?:${inspection})`, "iu");
+  const mutationHead = new RegExp(`^(?:${mutation})`, "iu");
+  const retainedEffect = new RegExp(`(?:${mutation})`, "iu");
+  const useMethod = new RegExp(`^use\\b.*?\\bto\\s+(?=${inspection}|${mutation})`, "iu");
+  const nextAction = new RegExp(`\\s+(?:and|then|but|also)\\s+(?=${inspection}|${mutation}|do not\\b)|(?:并且|然后|随后|接着|并)(?=${inspection}|${mutation})`, "iu");
+  let review = false;
+  let sideEffect = false;
+  let unclearProhibition = false;
+  const actions = decomposeTaskActions(taskEffectText(String(text ?? "").replace(GOVERNANCE_CHAIN_PREFIX_RE, "").trim()));
+  for (const action of actions) {
+    for (const clause of action.terms.split(/(?<=[.!?])\s+|[\n;；。]/u).flatMap((part) => part.split(nextAction))) {
+      let head = clause.trim().replace(/^(?:(?:please|first|then|next|finally)\s+|(?:首先|然后|随后|最后|先|再)[，,:：]?\s*)/iu, "");
+      // Only taskEffectText removes a complete narrow prohibition. A retained
+      // mixed/unclear clause cannot hide a later effect behind its first word.
+      if (/^(?:do not|don't|don’t|never|without)\b|^(?:不要|不得|禁止|不)/iu.test(head) && retainedEffect.test(head)) {
+        unclearProhibition = true;
+      }
+      head = head.replace(useMethod, "");
+      if (!actionHead.test(head) && !reviewHead.test(head)) continue;
+      review ||= reviewHead.test(head);
+      sideEffect ||= mutationHead.test(head);
+    }
   }
+  return { readOnlyReview: review && !sideEffect && !unclearProhibition, sideEffectRequested: sideEffect, unclearProhibition };
+}
+
+function selectExecutionOwner() {
+  const effectText = taskEffectText(readOnlyProfessionalReview ? actionTask : taskText);
+  const inspectionRequested = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
+  const mutationRequested = implementationActionPattern.test(effectText);
+  const testExecutionRequested = /\b(?:run|execute)\b.{0,50}\b(?:tests?|regressions?|smoke|validation|qa)\b|(?:运行|执行|跑|进行).{0,30}(?:测试|回归|验证)/iu.test(effectText);
+  const buildFailureRequested = /\b(?:build|compile|typecheck|type-check|tsc)\b.{0,50}\b(?:fail(?:ure|ed)?|error|broken|cannot|unable)\b|\b(?:fail(?:ed|ure)?|error)\b.{0,50}\b(?:build|compile|typecheck|type-check|tsc)\b|构建失败|编译失败|类型错误|类型检查失败/iu.test(effectText);
+  const documentationRequested = /\b(?:docs?|readme|documentation)\b|文档/iu.test(effectText);
+  const workKind = readOnlyProfessionalReview ? "inspection" : mutationRequested
+    ? buildFailureRequested ? "build_repair" : "implementation"
+    : testExecutionRequested ? "test_execution"
+      : inspectionRequested ? "inspection"
+        : productBuildExecutionRequested() ? "implementation" : "other";
+  const implementationMutationRequested = ["implementation", "build_repair"].includes(workKind);
+  const matchesTerm = (text, term) => /^[\x00-\x7f]+$/u.test(term)
+    ? termMatchesProviderText(text, term)
+    : text.includes(term);
+  const taskMatches = (terms) => terms.some((term) => matchesTerm(taskText, term));
+  const frontendTerms = ["frontend", "ui", "react", "user interface", "前端", "页面", "界面"];
+  const frontendRequested = implementationMutationRequested && !documentationRequested && taskMatches(frontendTerms);
+  // Qualify once before every preference and fallback. An overlapping language
+  // or domain name never upgrades a read-only/review contract into an executor.
+  const ownerPermitsWork = (id) => {
+    const agent = candidateExecutionAgents.find((candidate) => candidate.id === id);
+    if (explicitOwnerRefusalConflict(agent, readOnlyProfessionalReview ? actionTask : taskText)) return false;
+    const declaredCapabilities = [agent?.description, agent?.own,
+      agent?.metadata?.description, agent?.metadata?.developer_instructions].filter(Boolean).join("\n");
+    const contract = [declaredCapabilities, agent?.boundary].filter(Boolean).join("\n");
+    // Explicit exclusions are constraints, never positive capability evidence.
+    // Keep later refusals even when another sentence declares the same domain.
+    const refusalClausePattern = /(?:\b(?:do\s+not|does\s+not|don't|don’t|never|cannot|can't|can’t|must\s+not|not\s+(?:for|responsible\s+for)|refuse(?:s)?\s+to|exclude(?:s|d)?|no)\b|(?:不得|不要|不能|禁止|拒绝|不负责|不支持|排除))[^.!?;。；\n]*/giu;
+    const refusals = (contract.match(refusalClausePattern) ?? []).join("\n");
+    const affirmativeCapabilities = declaredCapabilities.replace(refusalClausePattern, " ");
+    const reviewRole = /(?:^|[-_])review(?:er)?(?:$|[-_])/iu.test(id);
+    const readOnly = reviewRole || /\bread[-_ ]only\b|\bno implementation\b|只读|禁止(?:修改|写入)(?:文件|代码)/iu.test(contract) ||
+      /\b(?:do not|don't|never)\s+(?:edit|modify|write|change)\s+(?:any\s+)?(?:files|code|source files)\s*(?:[.!;\n]|$)/iu.test(contract);
+    const buildOnly = matchesTerm(id, "build-error-resolver");
+    if (!implementationMutationRequested && workKind !== "test_execution") return true;
+    if (readOnly || (buildOnly && workKind !== "build_repair")) return false;
+    if (frontendRequested && frontendTerms.some((term) => matchesTerm(refusals, term))) return false;
+    if (!frontendRequested || buildOnly) return true;
+    return ["worker", "javascript", "typescript"].some((term) => matchesTerm(id, term)) ||
+      frontendTerms.some((term) => matchesTerm(`${id}\n${affirmativeCapabilities}`, term));
+  };
   const candidates = [...new Set(candidateExistingExecutionOwners)].filter(
     (id) =>
       typeof id === "string" &&
       !id.includes("general-purpose") &&
-      !/runtimeInstanceAlias|nickname/i.test(id),
+      !/runtimeInstanceAlias|nickname/i.test(id) &&
+      ownerPermitsWork(id),
   );
   if (candidates.length === 0) return null;
+  if (dependencyAgentMatch.selected && !requestedOwnerSourceKey && !requestedOwnerSourceRef && !requestedOwnerContentDigest && candidates.includes(dependencyAgentMatch.selected.id)) {
+    return dependencyAgentMatch.selected.id;
+  }
   const taskLower = String(taskText || "").toLowerCase();
   const findInAvailable = (prefs) => {
     for (const pref of prefs) {
       const exact = candidates.find((id) => id === pref);
       if (exact) return exact;
-      const partial = candidates.find((id) => id.includes(pref));
+      const partial = candidates.find((id) => matchesTerm(id, pref));
       if (partial) return partial;
     }
     return null;
   };
-  const implementationMutationRequested =
-    productBuildExecutionRequested() ||
-    /\b(?:fix|implement|build|refactor|rebuild|migrate|write|edit|update|repair|code)\b|修复|实现|构建|重构|迁移|写入|编辑|更新|改代码|搞定/iu.test(taskText);
-  const preferenceGroups = [
-    ...(implementationMutationRequested ? [{
-      terms: ["security", "backend", "hook", "routing", "runtime", "code", "安全", "后端", "钩子", "路由", "运行时", "修复", "实现"],
-      owners: ["backend-security-coder", "backend", "build-error-resolver", "code-reviewer", "worker"],
-    }] : []),
+  if (workKind === "inspection") return findInAvailable(["code-reviewer", "architect-review", "review", "reviewer", "analysis", "worker"]);
+  if (workKind === "test_execution") return findInAvailable(["test", "verify", "qa", "e2e-runner", "worker"]);
+  if (workKind === "build_repair") {
+    const buildOwner = findInAvailable(["build-error-resolver"]);
+    if (buildOwner) return buildOwner;
+  }
+  if (implementationMutationRequested) {
+    if (documentationRequested) return findInAvailable(["doc-updater", "docs", "api-documenter", "content-specialist", "worker"]);
+    // Domain eligibility was applied to every candidate above. Preferences
+    // cannot suppress a related specialist discovered outside this short list.
+    if (frontendRequested) {
+      const frontendOwner = findInAvailable(["frontend-engineer", "frontend-developer", "frontend", "react-specialist", "nextjs-developer", "javascript-pro", "typescript-pro", "worker"]);
+      if (frontendOwner) return frontendOwner;
+    }
+  }
+  const preferenceGroups = implementationMutationRequested ? [
+    { terms: ["python"], owners: ["python-pro", "fastapi-pro", "django-pro", "backend", "worker"] },
+    { terms: ["typescript", "tsc"], owners: ["typescript-pro", "javascript-pro", "backend", "worker"] },
+    { terms: ["javascript", "node.js", "nodejs"], owners: ["javascript-pro", "typescript-pro", "backend", "worker"] },
+    { terms: ["security", "backend", "hook", "routing", "runtime", "code", "安全", "后端", "钩子", "路由", "运行时"], owners: ["backend-security-coder", "backend-data-engineer", "backend-developer", "backend", "worker"] },
+    { terms: ["doc", "docs", "readme", "文档"], owners: ["doc-updater", "docs", "api-documenter", "content-specialist", "worker"] },
+    { terms: ["api", "server"], owners: ["backend-security-coder", "backend-data-engineer", "backend-developer", "backend", "worker"] },
+  ] : [
     {
       terms: ["agent", "subagent", "owner", "search", "discover", "find", "智能体", "代理", "搜索", "寻找", "发现"],
       owners: ["codebase-search", "search-specialist", "analysis", "worker", "backend"],
@@ -2315,11 +2572,11 @@ function selectExecutionOwner() {
     },
   ];
   for (const group of preferenceGroups) {
-    if (!group.terms.some((term) => taskLower.includes(term))) continue;
+    if (!taskMatches(group.terms)) continue;
     const owner = findInAvailable(group.owners);
     if (owner) return owner;
   }
-  const genericOwner = findInAvailable([
+  const genericOwner = findInAvailable(implementationMutationRequested ? ["worker", "backend"] : [
     "worker",
     "backend",
     "code-reviewer",
@@ -2332,7 +2589,7 @@ function selectExecutionOwner() {
     const idLower = id.toLowerCase();
     let score = 0;
     for (const part of idLower.split(/[-_./]/)) {
-      if (part && part.length >= 3 && taskLower.includes(part)) score += 1;
+      if (part && part.length >= 3 && matchesTerm(taskLower, part)) score += 1;
     }
     return { id, score };
   });
@@ -2448,9 +2705,9 @@ function buildParallelExecutionLanes() {
 
   function deriveLaneSafetyEvidence(segment, laneId) {
     const segmentText = String(segment?.terms ?? "");
-    const mutationRequested = /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|delete|remove|deploy|publish|release|upload|send)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除|部署|发布|上传|发送/iu.test(taskText);
-    const inspectionRequested = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(taskText);
-    const externalWriteRequested = /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件/iu.test(taskText);
+    const mutationRequested = !readOnlyProfessionalReview && /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|delete|remove|deploy|publish|release|upload|send)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除|部署|发布|上传|发送/iu.test(taskText);
+    const inspectionRequested = readOnlyProfessionalReview || /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(taskText);
+    const externalWriteRequested = !readOnlyProfessionalReview && /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件/iu.test(taskText);
     const explicitPaths = extractActionPaths(segmentText);
     const readOnly = inspectionRequested && !mutationRequested && !externalWriteRequested;
     const dependencyKnown = segment.dependencyEvidence !== "unproven";
@@ -2643,17 +2900,17 @@ function classifyOrchestratorKinds(lanes) {
 function executionCapabilityDiscoveryRoute() {
   const parallelExecutionLanes = buildParallelExecutionLanes();
   const explicitDiscoveryRoute = capabilityDiscoveryTaskRequested();
+  const wantsSkillAuthoring = skillAuthoringRequested();
   if (subjectiveRouteChoice) return null;
-  if (taskShape !== "engineering_execution" && !explicitDiscoveryRoute && !dependencyAgentMatch.selected) return null;
+  if (taskShape !== "engineering_execution" && !explicitDiscoveryRoute && !dependencyAgentMatch.selected && !wantsSkillAuthoring) return null;
   const selectedOwner = selectExecutionOwner();
   const selectedAgentProvider = [
     ...runtimeScopedProjectExecutionAgents,
     ...runtimeScopedLocalGlobalAgents,
     ...dependencyAgentDiscovery.agents,
   ].find((agent) => agent.id === selectedOwner) ?? null;
-  const usesDependencyContract = selectedAgentProvider?.source === "dependency_agent_contract";
+  const usesDependencyContract = selectedAgentProvider?.source === "dependency_agent_contract" && !wantsSkillAuthoring;
   const wantsDiscovery = explicitDiscoveryRoute || /find|discover|search|寻找|发现/.test(taskText);
-  const wantsCreation = /create|scaffold|generate|创建|生成/.test(taskText);
   // findskill is a reference-only discovery capability consumed in model
   // context. It may be selected for discovery, while execution providers
   // continue through the strict reference-only filter.
@@ -2662,12 +2919,13 @@ function executionCapabilityDiscoveryRoute() {
     ["findskill", "skill-scout", "skill-stocktake"],
     { allowReferenceOnly: true },
   );
-  const selectedSkillCreation = selectProvider("skills", ["meta-skill-creator", "create-agent", "agent-teams-playbook"]);
-  const selectedSkill = usesDependencyContract ? null : wantsDiscovery
+  const selectedSkillCreation = sortProvidersForRuntime(reusableProviders.filter((provider) =>
+    provider.type === "skills" && provider.id === "meta-skill-creator" && providerEligibleForRoute(provider)))[0] ?? null;
+  const selectedSkill = usesDependencyContract ? null : wantsSkillAuthoring
+    ? selectedSkillCreation
+    : wantsDiscovery
     ? selectedSkillDiscovery ?? selectedSkillCreation
-    : wantsCreation
-      ? selectedSkillCreation ?? selectedSkillDiscovery
-      : selectProvider("skills", ["tdd-workflow", "verification-loop", "meta-theory"]);
+    : selectProvider("skills", ["tdd-workflow", "verification-loop", "meta-theory"]);
   const selectedAgentCreation = selectProvider("skills", ["create-agent", "agent-teams-playbook", "meta-skill-creator"]);
   const discoveredMcpServer = selectProvider("mcpServers", ["meta-kim-runtime", "repo-mcp", "codex-config-mcp"]);
   const discoveredMcpTool = selectProvider("mcpTools", ["get_meta_runtime_capabilities", "list_meta_agents", "get_meta_agent"]);
@@ -2678,11 +2936,12 @@ function executionCapabilityDiscoveryRoute() {
   const selectedRuntimeTool = selectProvider("runtimeTools", usesDependencyContract ? ["filesystem"] : ["apply_patch", "shell_command", "Bash"]);
   const blockedReasons = [];
   if (!selectedOwner) blockedReasons.push("execution owner missing");
+  if (wantsSkillAuthoring && !selectedSkillCreation) blockedReasons.push("meta-skill-creator provider missing for Skill authoring");
   if (!usesDependencyContract && !selectedSkill) blockedReasons.push("skill provider missing");
   if (!usesDependencyContract && !selectedMcpServer && !selectedMcpTool) blockedReasons.push("MCP provider missing");
   // Missing accepted runtime-tool evidence blocks Execution in the independent
   // capability gate below; it must not erase the correct design-time route.
-  const routeScore = blockedReasons.length ? 49 : usesDependencyContract ? 96 : explicitDiscoveryRoute ? 92 : 88;
+  const routeScore = blockedReasons.length ? 49 : usesDependencyContract ? 96 : explicitDiscoveryRoute || wantsSkillAuthoring ? 92 : 88;
   return {
     id: `execution-capability-discovery:${runtime}:${osTarget}`,
     owner: selectedOwner,
@@ -3415,17 +3674,28 @@ const intentDirectionSelection = {
 const rankedRoutes = (localToolRequest?.applies === true
   ? [localDependencyToolRoute()].filter(Boolean)
   : [...candidateWeapons.map(routeForWeapon), ...syntheticRoutes])
+  .map(applyAgentProfilesToRoute)
   .map((candidateRoute) => {
     const missingDirectionCapability = intentDirectionSelection.status === "capability_gap";
+    const requestedMethodOwner = methodContractOwners.length === 1 && methodContractOwners[0].executionBlock !== true &&
+      providerEligibleForRoute(methodContractOwners[0]) && !explicitOwnerRefusalConflict(methodContractOwners[0], actionTask)
+      ? methodContractOwners[0] : null;
+    const routeMethodOwner = candidateRoute.selectedCapabilityProviders?.agent;
+    const missingRequestedMethod = Boolean(methodCapabilityId) &&
+      (!requestedMethodOwner || methodWorkKind === "support" && !readOnlyProfessionalReview ||
+        candidateRoute.owner !== requestedMethodOwner.id || routeMethodOwner?.source !== "dependency_agent_contract" ||
+        routeMethodOwner.id !== requestedMethodOwner.id || routeMethodOwner.sourceRef !== requestedMethodOwner.sourceRef ||
+        routeMethodOwner.contentDigest !== requestedMethodOwner.contentDigest);
     const route = {
       ...candidateRoute,
       intentDirectionSelection,
       selectedCapabilityProviders: intentArchitectureProvider
         ? { ...candidateRoute.selectedCapabilityProviders, intentArchitecture: intentArchitectureProvider }
         : candidateRoute.selectedCapabilityProviders,
-      blockedReasons: [...(candidateRoute.blockedReasons ?? []), ...(missingDirectionCapability ? ["confirmed long-term direction lacks an eligible architecture provider"] : [])],
-      score: missingDirectionCapability ? Math.min(candidateRoute.score, 49) : candidateRoute.score,
-      scoreBand: missingDirectionCapability ? "blocked" : candidateRoute.scoreBand,
+      blockedReasons: [...(candidateRoute.blockedReasons ?? []), ...(missingDirectionCapability ? ["confirmed long-term direction lacks an eligible architecture provider"] : []),
+        ...(missingRequestedMethod ? ["explicit method demand lacks its unique eligible source-bound owner for the current operation"] : [])],
+      score: missingDirectionCapability || missingRequestedMethod ? Math.min(candidateRoute.score, 49) : candidateRoute.score,
+      scoreBand: missingDirectionCapability || missingRequestedMethod ? "blocked" : candidateRoute.scoreBand,
     };
     const executionCapabilityGate = evaluateRouteExecutionGate({
       route,
@@ -3453,6 +3723,11 @@ const capabilityGapPacket = recommendedRoute ? null : {
   ownerDiscoveryRef: "ownerDiscoveryPacket",
   missing: rankedRoutes[0]?.blockedReasons?.length ? rankedRoutes[0].blockedReasons : ["owner_weapon_dependency_route"],
   returnToStage: "Thinking",
+  ...(methodCapabilityId ? { methodRequest: { workKind: methodWorkKind, methodCapabilityId,
+    capabilityNeed: methodContext.capabilityNeed, artifactFlow: methodContext.artifactFlow } } : {}),
+  projectCapabilityProfileDecisions: [...new Map([...agentProfileSnapshots.values()]
+    .filter((entry) => entry.status === "capability_gap")
+    .map((entry) => [stableJson(entry.owner), entry])).values()],
 };
 const capabilityGapDetected = !recommendedRoute || explicitCapabilityGapRequested();
 const capabilityGapDecision = capabilityGapDetected
@@ -3705,6 +3980,8 @@ const workerTaskPacketDrafts = selectedWorkerLanes
         safetyEvidence: lane.safetyEvidence ?? { status: "unproven" },
         purpose: lane.purpose,
         decisionImpact: lane.decisionImpact,
+        agentCapabilityProfile: lane.agentCapabilityProfile,
+        capabilityLoadout: { ...lane.agentCapabilityProfile, selectedProviders: lane.capabilityBinding?.selectedProviders ?? {} },
       };
       const codexSpawnBinding = codexSpawnBindingForOwner(
         lane.ownerAgent,
@@ -3728,13 +4005,10 @@ const workerTaskPacketDrafts = selectedWorkerLanes
         const purpose = actions.length === 1 ? actions[0].terms : String(actionTask ?? "").trim();
         // Recognize only a complete, narrow prohibition clause here. A phrase
         // containing further actions remains mutation-like, never stripped.
-        const effectText = purpose.replace(/\b(?:do not|don't|don’t|never)\s+(?:modify|edit|write|delete|remove|create|change|patch)\s+(?:any\s+)?(?:files|source files|code)[.!]?(?=$|[\n;])/giu, "")
-          .split(/[，,、;；。.!?\n]/u)
-          .filter((clause) => !/^(?:不|不要|不得|禁止)(?:(?:修改|改动|编辑|写入|写|删除|移除|创建|更新)(?:任何|原始|原有|现有)?(?:文件|代码|源码)|(?:代投|投递)简历)$/u.test(clause.trim()))
-          .join("; ");
-        const requestsMutation = /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|modify|change|patch|delete|remove)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除/iu.test(effectText);
-        const requestsExternalWrite = /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件|代投|投递/iu.test(effectText);
-        const requestsInspection = /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
+        const effectText = taskEffectText(purpose);
+        const requestsMutation = !readOnlyProfessionalReview && /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|modify|change|patch|delete|remove)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除/iu.test(effectText);
+        const requestsExternalWrite = !readOnlyProfessionalReview && /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件|代投|投递/iu.test(effectText);
+        const requestsInspection = readOnlyProfessionalReview || /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
         const scopeFiles = actions.length === 1 ? extractActionPaths(purpose) : [];
         const readOnly = requestsInspection && !requestsMutation && !requestsExternalWrite;
         const proven = actions.length === 1 && scopeFiles.length > 0 && scopeFiles.every((scope) => scopeComparisonKey(scope) !== null) && !requestsExternalWrite && (readOnly || requestsMutation);
@@ -3771,6 +4045,8 @@ const workerTaskPacketDrafts = selectedWorkerLanes
           safetyEvidence,
           purpose,
           decisionImpact: "Single-worker route selected by Thinking.",
+          agentCapabilityProfile: recommendedRoute.agentCapabilityProfile,
+          capabilityLoadout: { ...recommendedRoute.agentCapabilityProfile, selectedProviders: recommendedRoute.selectedCapabilityProviders },
         };
         const codexSpawnBinding = codexSpawnBindingForOwner(
           selectedOwner,
@@ -3861,7 +4137,7 @@ const unprovenMultiLaneExecution =
 const nativeChoicePending = criticalChoiceBlocksExecution || thinkingChoiceBlocksExecution;
 const fastPathNativeChoicePending =
   entryClassification.path === "fast_path" && nativeChoicePending;
-const executionGateApplies = entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
+const executionGateApplies = Boolean(methodCapabilityId) || entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
 const routeCompatibilityBlocked =
   executionGateApplies &&
   recommendedRoute &&

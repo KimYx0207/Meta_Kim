@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -169,6 +171,8 @@ export async function spawnCli(
   return await new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
+    const stdoutStream = { decoder: new StringDecoder("utf8"), bytes: 0, hash: createHash("sha256"), truncated: false };
+    const stderrStream = { decoder: new StringDecoder("utf8"), bytes: 0, hash: createHash("sha256"), truncated: false };
     let settled = false;
     let timedOut = false;
     let outputLimitExceeded = false;
@@ -177,6 +181,8 @@ export async function spawnCli(
     const finish = (status, signal, error = null) => {
       if (settled) return;
       settled = true;
+      stdout += stdoutStream.decoder.end();
+      stderr += stderrStream.decoder.end();
       if (timer) clearTimeout(timer);
       const endedAt = new Date();
       const durationMs = Math.max(
@@ -189,6 +195,12 @@ export async function spawnCli(
         error,
         stdout,
         stderr,
+        stdoutRawSha256: stdoutStream.hash.digest("hex"),
+        stderrRawSha256: stderrStream.hash.digest("hex"),
+        stdoutBytes: stdoutStream.bytes,
+        stderrBytes: stderrStream.bytes,
+        stdoutTruncated: stdoutStream.truncated,
+        stderrTruncated: stderrStream.truncated,
         timedOut,
         outputLimitExceeded,
         command: invocation.command,
@@ -212,20 +224,22 @@ export async function spawnCli(
       finish(null, null, error);
       return;
     }
-    const append = (current, chunk) => {
-      const next = current + chunk.toString("utf8");
-      if (Buffer.byteLength(next, "utf8") > maxOutputBytes) {
+    const append = (current, chunk, stream) => {
+      stream.hash.update(chunk);
+      stream.bytes += chunk.length;
+      if (stream.bytes > maxOutputBytes) {
+        stream.truncated = true;
         outputLimitExceeded = true;
         child.kill();
         return current;
       }
-      return next;
+      return current + stream.decoder.write(chunk);
     };
     child.stdout.on("data", (chunk) => {
-      stdout = append(stdout, chunk);
+      stdout = append(stdout, chunk, stdoutStream);
     });
     child.stderr.on("data", (chunk) => {
-      stderr = append(stderr, chunk);
+      stderr = append(stderr, chunk, stderrStream);
     });
     child.on("error", (error) => {
       childError = error;

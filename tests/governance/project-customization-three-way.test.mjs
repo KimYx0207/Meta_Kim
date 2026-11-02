@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { durableCapabilityRequestsFromTask } from "../../scripts/capability-request-intent.mjs";
 import {
   buildProjectCustomizationPacket,
   executeProjectCustomizationPacket,
@@ -14,6 +15,41 @@ const globalOwner = {
   source: "local_global_agent_inventory",
   sourceRef: "~/.codex/agents/test-automator.toml",
 };
+
+test("candidate-only and pending approval clauses never become capability names or mutation authority", () => {
+  for (const task of [
+    "Create a candidate-only skill unless Warden approval is supplied.",
+    "Create skill project-checklist unless Warden approval is supplied, responsible for checking release files.",
+    "Create candidate-only skill named project-checklist for repeatable release verification.",
+    "请创建 skill project-checklist，用于发布验证，但仅作为候选，批准后再落盘。",
+  ]) {
+    const requests = durableCapabilityRequestsFromTask(task);
+    assert.ok(requests.every((request) => request.mutationAuthorized === false), task);
+    assert.ok(requests.every((request) => request.explicitCapabilityId !== "unless"), task);
+  }
+  const explicit = durableCapabilityRequestsFromTask("请创建 skill project-checklist，用于发布验证并拒绝修改用户文件。");
+  assert.equal(explicit[0].explicitCapabilityId, "project-checklist");
+  assert.equal(explicit[0].mutationAuthorized, true);
+  assert.equal(explicit[0].requestedAction, "create", "refusal to modify user files is not an iteration request");
+  for (const task of [
+    "Create skill named unless, responsible for repeatable release verification.",
+    "Create skill named unless for repeatable release verification.",
+  ]) {
+    const namedUnless = durableCapabilityRequestsFromTask(task);
+    assert.equal(namedUnless[0].explicitCapabilityId, "unless");
+    assert.equal(namedUnless[0].specificationReady, true);
+    assert.equal(namedUnless[0].mutationAuthorized, true, "an explicit identifier is distinct from an unless approval clause");
+  }
+  for (const task of [
+    "Create skill named unless for repeatable release verification unless Warden approval is supplied.",
+    "Create skill named unless for repeatable release verification, candidate-only until approval.",
+  ]) {
+    const conditional = durableCapabilityRequestsFromTask(task);
+    assert.equal(conditional[0].explicitCapabilityId, "unless");
+    assert.equal(conditional[0].mutationAuthorized, false, "conditions after a name still withhold mutation authority");
+  }
+  assert.deepEqual(durableCapabilityRequestsFromTask("Create a backend API for save response verification."), []);
+});
 
 function packet(task, localGlobalAgents = [globalOwner]) {
   return buildProjectCustomizationPacket({

@@ -8,12 +8,28 @@ import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fi
 import { buildFanoutSafetyPacket } from "../../scripts/governed-execution/fanout-policy.mjs";
 import { buildReadOnlyWorkerPrompt } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
 import { validateArtifact } from "../../scripts/validate-run-artifact.mjs";
+import { advanceGovernedGoal } from "../../scripts/governed-execution/advance-goal.mjs";
+import { buildTaskGoalContract } from "../../src/domain/governance/task-outcome.mjs";
 
 const criteria = [
   { id: "contract", description: "Preserve the API contract", kind: "semantic", required: true },
   { id: "client", description: "Client consumes the exact contract", kind: "semantic", required: true },
 ];
 const dialogue = { taskHash: "test-task", status: "host_provided_understanding", outcome: "A compatible client", constraints: { forbidden: ["add case studies"], nonGoals: ["change author introduction"] }, acceptanceCriteria: criteria, settledDecisionRefs: [], deliveryStrategy: null };
+
+test("machine continuation requires a live host adapter and preserves pauses and resource waits without invocation", async () => {
+  const goalContract = buildTaskGoalContract({ task: "Inspect the current contract", acceptanceCriteria: [{ id: "contract", description: "The actual contract was inspected", kind: "deterministic" }] });
+  let invoked = 0;
+  const base = { runId: "host-boundary", goalContract };
+  assert.equal((await advanceGovernedGoal(base)).reason, "current_host_execution_adapter_required");
+  for (const status of ["paused", "waiting", "blocked"]) {
+    const result = await advanceGovernedGoal({ ...base, host: { authorize: async () => ({ status, reason: "actual_host_boundary" }),
+      adapterRegistry: { invoke: async () => { invoked += 1; } } } });
+    assert.equal(result.status, status);
+    assert.equal(result.reason, "actual_host_boundary");
+  }
+  assert.equal(invoked, 0);
+});
 function route(lanes, drafts = []) {
   return { recommendedRoute: { id: "fixture", owner: "backend", verificationOwner: "review", parallelExecutionLanes: lanes }, workerTaskPacketDrafts: drafts };
 }
@@ -74,6 +90,8 @@ test("a sole review worker owns the requested review deliverable without claimin
 
 test("actual generated plan preserves worker dependencies and passes the artifact schema without claiming missing criterion coverage", (t) => {
   const fixture = createGovernanceRuntimeFixture(t);
+  const pins = fixture.run(["scripts/refresh-runtime-evidence-pins.mjs"]);
+  assert.equal(pins.status, 0, pins.stderr || pins.stdout);
   const script = `
     import { runMetaTheoryGovernedExecution } from './scripts/run-meta-theory-governed-execution.mjs';
     import { intentDialogueDigest } from './scripts/governed-execution/intent-dialogue.mjs';
@@ -99,6 +117,13 @@ test("actual generated plan preserves worker dependencies and passes the artifac
     ] };
     await runMetaTheoryGovernedExecution({ ...options, runId: 'assigned-work-order-plan', taskCriterionAssignments: assignments });
     if (invocations !== 3) throw new Error('Assigned exact three-step plan did not invoke its three injected callbacks: ' + invocations);
+    let admissions = 0;
+    const waiting = await runMetaTheoryGovernedExecution({ ...options, runId: 'machine-host-resource-wait', taskCriterionAssignments: assignments,
+      stageRunner: { adapterRegistry: { invoke: async () => { throw new Error('Resource wait reached provider'); } },
+        authorize: async () => { admissions++; return { status: 'waiting', reason: 'current_host_resource_not_admitted' }; } } });
+    if (admissions !== 1 || waiting.machineExecution.status !== 'waiting' || waiting.machineExecution.reason !== 'current_host_resource_not_admitted') {
+      throw new Error('The ordinary runner did not consume the bound host adapter without a new execution flag');
+    }
     const resume = { ...options, runId: 'assigned-work-order-plan', stageRunner: { ...stageRunner, durableMode: 'resume' }, taskCriterionAssignments: assignments };
     await runMetaTheoryGovernedExecution(resume);
     if (invocations !== 3) throw new Error('Materialized resume invoked workers again');
@@ -122,6 +147,7 @@ test("actual generated plan preserves worker dependencies and passes the artifac
   const file = path.join(fixture.repoRoot, "tmp/work-order/work-order-plan.json");
   const artifact = JSON.parse(readFileSync(file, "utf8"));
   assert.equal(artifact.workerTaskPackets.length, 3, "Confirmed outcome and constraint prose must not become extra executable actions");
+  assert.equal(artifact.machineExecution.reason, "current_host_execution_adapter_required");
   assert.deepEqual(artifact.workerTaskPackets.map(packet => packet.scopeFiles), [["src/api/Contract.json"], ["src/client/Types.ts"], ["tests/client.test.ts"]]);
   assert.deepEqual(artifact.workerTaskPackets.map(packet => packet.dependsOn), [[], [artifact.workerTaskPackets[0].taskPacketId], [artifact.workerTaskPackets[0].taskPacketId, artifact.workerTaskPackets[1].taskPacketId]]);
   for (const packet of artifact.workerTaskPackets) {

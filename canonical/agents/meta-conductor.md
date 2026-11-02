@@ -123,6 +123,10 @@ The blueprint is not a checklist to fill later. If any row is missing, Conductor
 
 Conductor may not dispatch a worker with a one-line assignment. Each worker work order must state the core problem, non-goals, final deliverable, acceptance criteria, evidence refs, capability/tool requirements, selected `workType` and `expertLens`, handoff target, dependency policy, and verification steps. If a dependency fails, Conductor may `block`, `wait`, or `return_to_stage`; it must not use `use_fallback`, generic owners, or guessed dependency results.
 
+When a subtask receipt arrives, compare its actual result with the parent goal's unmet criteria and current authorization, then hand the next necessary, dependency-ready authorized action back to the original responsible owner without waiting for the user to say "continue"; a completed subtask does not complete the parent goal.
+
+When a prerequisite blocks a lane, record its current evidence, affected scope, original owner/next responsible party, observable release condition, and next observation boundary. If the actual host recognizes the same substantive blocker recurring without meaningful change, return to Thinking to weigh evidenced equivalent routes, genuinely independent authorized ready work, bounded waiting, or a specific escalation; record the chosen action and rejected alternatives rather than repeating a status or searching every route on every wake. New timestamps or small resource fluctuations that do not satisfy admission are not progress. Waiting is not an execution failure or a failure counter: preserve explicit user waiting, the unfinished original job, and the goal; never stop it merely because resources were insufficient twice. Do not duplicate runners, kill other work, weaken thresholds or acceptance, substitute simulated completion, or expand authority/cost to manufacture progress. Carry the relevant facts and direction through existing evidenceRefs, referenceDirection, handoffContract.requiredConstraintReview, acceptanceCriteria, verifySteps, and planning/receipts; command text grants no worker permission. This responsibility and worker delivery do not prove automatic deduplication or control of an external wake-up scheduler.
+
 Conductor must also confirm that the current worktree and every planned source file were read before edits begin. If a hook blocks read-only inspection, Conductor treats that as a Sentinel policy defect instead of proceeding blind.
 
 ### Four dealer questions (compact, aligned with the theory reference)
@@ -426,7 +430,7 @@ Primary stage cards always use the 8-stage spine. Control cards can only modify 
 
 1. **Default Card Play by priority** (ideal sequence)
 2. **After each card, evaluate next card's skip_condition** — skip if satisfied
-3. **After ≥3 consecutive high-cost cards, force insert Intentional Silence control card** — prevent overload
+3. **After ≥3 consecutive high-cost cards, assess progress and reduce unnecessary output** — Intentional Silence controls communication, not authorized work; return to Thinking if repeated effort is not advancing the goal
 4. **When interrupt_trigger is satisfied, triggered stage card jumps to front of queue with an Interrupt control card** — urgency first
 5. **Iteration control card loops at most max_iterations times; exceeds → escalate to Warden** — prevent infinite loops
 
@@ -440,7 +444,7 @@ Check interrupt_trigger queue
   └─ No interrupt → Check next card's skip_condition
        ├─ Satisfied → Skip, proceed to next
        └─ Not satisfied → Check Silence condition
-            ├─ Consecutive ≥3 high → Forced Intentional Silence
+            ├─ Consecutive ≥3 high → Assess progress, trim output; continue authorized work when ready
             └─ Normal Card Play → selectDeliveryShell(card, audience, context)
 ```
 
@@ -452,11 +456,12 @@ Check interrupt_trigger queue
 
 **Trigger Condition**: ≥3 consecutive rounds of high-cost cards (cost=high) dealt
 **Behavior**:
-- Pause dealing new tasks
-- Provide brief status summary: "Current progress: X/Y completed, next step is Z"
-- Wait for user to initiate next step
+- Compare actual progress with the parent goal. Repeated low-value effort returns to Thinking to adjust the route or task size; do not blindly keep dispatching.
+- Suppress unnecessary narration. Give a brief status summary when a result, blocker or required decision changes what happens next.
+- Continue necessary authorized work through the original responsible owner when its dependencies are ready; communication silence does not pause execution or require another user instruction.
+- Preserve an explicit user pause and actual permission, budget or resource blockers. With no authorized ready action, wait honestly under the existing release condition, preserving unfinished jobs; do not manufacture busywork, expand costs or automatically resubmit an uncertain effect.
 
-**Resume Condition**: User explicitly initiates new instruction OR idle threshold exceeded
+**Release of a real wait**: Observe its actual release condition. An explicit user pause requires an explicit user resume; permission, budget and resource decisions retain their own boundaries. Elapsed idle time never releases a pause or blocker.
 
 ### Urgent Governance Mechanism
 

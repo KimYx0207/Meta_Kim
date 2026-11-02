@@ -2568,6 +2568,23 @@
         "explicit_auto_proceed",
         "stopped_by_user"
       ],
+      "humanMilestonePolicy": {
+        "milestones": [
+          { "id": "direction_system_plan", "label": "方向与系统方案", "artifactKind": "system_plan", "activation": "first_or_material", "beforeImplementation": true, "triggers": ["first", "material_change", "within_accepted_scope"] },
+          { "id": "prd_mvp_scope", "label": "PRD与MVP范围", "artifactKind": "prd", "activation": "first_or_material", "beforeImplementation": true, "triggers": ["first", "material_change", "within_accepted_scope"] },
+          { "id": "key_sample", "label": "关键样稿或样片", "artifactKind": "key_sample", "activation": "first_or_material", "triggers": ["first", "material_change", "within_accepted_scope"] },
+          { "id": "real_mvp", "label": "真实MVP验收", "artifactKind": "working_mvp", "activation": "first_or_material", "triggers": ["first", "material_change", "within_accepted_scope"] },
+          { "id": "next_investment", "label": "补齐与下一投入", "artifactKind": "investment_proposal", "activation": "material_decision", "triggers": ["value_scope_cost_tradeoff"] },
+          { "id": "framework_feedback", "label": "方法与框架反哺", "artifactKind": "durable_change_proposal", "activation": "material_decision", "triggers": ["durable_change"] },
+          { "id": "release_scale", "label": "上线与扩量", "artifactKind": "release_scale_plan", "activation": "side_effect_decision", "triggers": ["external_side_effect"] }
+        ],
+        "lifecycleValues": ["first_delivery", "material_revision", "within_accepted_scope", "unknown"],
+        "requestSource": "Thinking produces normalized design.lifecycle and artifactFlow[].artifactKind from source evidence. The ordinary runner derives declarations from actual discovered design packets and producer/consumer flows; stageRunner.humanMilestones remains an explicit compatibility input. Pending requests are projected onto unresolvedQuestions. Never infer lifecycle from revision=1, task keywords or an approval flag.",
+        "materialConditions": "The last three checkpoints require a material_user_decision whose affects.artifactFlowRefs names the exact flow; release/scale additionally joins affects.sideEffectActions to the current governed sideEffectActions. Missing stage/producer/material facts return to Thinking or Fetch for affected tasks only.",
+        "inheritance": "Ordinary fixes on an accepted unchanged route add no milestone. Reuse a consumed current decision only for the same project/run/task/node and relevant evidence; unrelated logs do not invalidate it.",
+        "humanResponse": "Confirmation accepts this version; revise or return keeps affected dependencies waiting. Native observation and single CAS consumption establish a human judgement, never execution permission or publication authorization.",
+        "execution": "Only affected dependencies wait. The original host authorize, claim, budget and unresolved-effect gates still apply. Graph/task changes cannot resume the old run. Unknown host results must not prompt again automatically."
+      },
       "planChallengeState": {
         "requiredFields": [
           "active",
@@ -3139,15 +3156,40 @@
           "description": "A large governance agent may stay intact only when it owns a coherent governance boundary; otherwise split supporting detail into references while preserving the agent identity boundary."
         }
       },
+      "projectCapabilityProfilePolicy": {
+        "schemaVersion": 1,
+        "path": ".meta-kim/state/default/agent-capability-profiles.json",
+        "ownership": "project_private_configuration_not_projection_or_copy_ownership",
+        "contextField": "agentCapabilityProfileContext",
+        "selectorArgument": "--agent-profile-context-json",
+        "contextFields": ["profileSelections", "fitAssessments", "approvalRefs"],
+        "ownerBindingFields": ["ownerAgent", "runtime", "scope", "source", "sourceRef", "sourceRoot", "contentDigest"],
+        "profileFields": ["capabilityProfileId", "capabilityProfileVersion", "owner", "capabilityLoadout", "projectEvidenceRefs", "referenceDirection"],
+        "profileOptionalFields": ["contentDigest", "baseProfileRef", "materialRefs"],
+        "profileIdentityPolicy": "Current profile IDs are unique. Lookup uses stable owner runtime/scope/source/ref identity, not its mutable digest; use still verifies the complete current binding. Source changes require review, and the same profile ID/version cannot change provenance or content.",
+        "referenceFields": ["ref", "contentDigest"],
+        "fitAssessmentFields": ["projectRoot", "owner", "capabilityProfileId", "capabilityProfileVersion", "profileDigest", "ownerResolution", "evidenceRefs", "rationale", "hardConflicts"],
+        "fitOptionalFields": ["fallbackProviderIds", "runLoadoutDigest"],
+        "fitOptionalFieldPolicy": "A current source-bound assessment must name any allowed default fallback; current-run loadout overrides require its exact runLoadoutDigest. These records are not caller permission grants.",
+        "slotFields": ["capabilitySlot", "bindingType", "providerId", "mode"],
+        "bindingTypes": ["skill", "mcp_tool", "command", "runtime_tool"],
+        "selectionModes": ["required", "default", "optional"],
+        "fitResolutions": ["reuse_existing_owner", "upgrade_existing_owner", "create_owner_first"],
+        "fitStatusWithoutEvidence": "not_evaluated",
+        "approvalScopes": ["project_capability_profile", "project_agent_fit"],
+        "truthBoundary": "The host Thinking assessment supplies professional judgment. Source/hash/scope checks prove current artifact bindings, never semantic fit, host approval authenticity, native invocation or permission grants.",
+        "mergeOrder": ["declared_source_defaults", "project_overrides", "run_scoped_overrides"],
+        "hardConstraints": ["owner_refusals", "current_user_constraints", "required_meta_skill_creator", "permissions", "runtime_os_provider_support"],
+        "writePolicy": "Explicit preview/apply with content-bound local approval sources, expectedOldHash and the existing project-mutation-session transaction. Same version cannot change content. Normal run/sync/install never saves this configuration.",
+        "missingPolicy": "No file preserves the old route with not_evaluated fit; a declared selection, known conflict or durable adaptation need cannot use compatibility to bypass the gap.",
+        "recoveryPolicy": "Current configuration plus version/digest and existing transaction backups only. Clone without this ignored private file is unconfigured; no reconstruction from old worker packets. Explicit reviewed adoption can restore compatible old content as a new version."
+      },
       "globalAgentReusePolicy": {
         "searchGlobalBeforeCopy": true,
         "directUseDoesNotCopyToProject": true,
         "copyToProjectOnlyWhen": [
-          "project_specific_knowledge_required",
-          "capability_boundary_must_change",
-          "skills_or_tools_must_be_persistently_added",
-          "global_agent_partial_fit_requires_iteration",
-          "recurring_project_pattern_requires_local_owner"
+          "stable_professional_judgment_or_responsibility_contract_must_change",
+          "explicit_independent_project_identity_requires_reviewed_substantive_adaptation"
         ],
         "reviewStages": [
           "Critical",
@@ -3164,7 +3206,7 @@
         ],
         "creationBlockedUntilExistingAgentsChecked": true,
         "checkedAgentsMustBeNamedInCapabilityGapPacket": true,
-        "description": "Fetch inventories global agents, project/runtime agents, skills, commands, hooks, rules/prompts, MCP capabilities, plugins, runtime tools, and capability indexes as evidence while confirming the problem and candidate solutions. Thinking resolves the owner/loadout from that evidence. Per-run discovery reads the cached global inventory plus lightweight project scans; full global scans are reserved for install, update, explicit refresh, stale/missing cache, or high-risk provider routes. A global agent or provider that already satisfies the orchestration node is used directly and is not copied into the user project. Only agents that need project-specific modification, persistent capability changes, or recurring local ownership are copied into the downstream project as project-local agents, under governance review. When the user explicitly asks to create, iterate, upgrade, or keep an agent in the project, the result must be a durable project-local abstract agent candidate or a blocked capabilityGapPacket; a temporary subagent prompt or runtime nickname cannot satisfy the deliverable. agentCopyPolicy=copy_to_project_for_modification is valid only with ownerSource=project_local and ownerResolution=upgrade_existing_owner; agentCopyPolicy=create_project_local_agent is valid only with ownerSource=project_local and ownerResolution=create_owner_first."
+        "description": "Fetch checks cached global and lightweight actual-project inventories and current project rules/dependencies. Host Thinking evaluates real owner/source and project evidence before resolving reuse_existing_owner, upgrade_existing_owner or create_owner_first. A fitting global identity remains global; knowledge, methods and stable default providers first belong in the independent project capability profile, never an automatic identity copy. Stable responsibility/refusal/input/output changes require reviewed substantive Type B adaptation; a real long-term professional owner gap may justify Type B creation on the first Fetch. Explicit independent project identity changes the deliverable but does not waive adaptation or host evidence. Copies remain preparation until adapted. Actual capabilityBindings stay run_scoped; a temporary worker or runtime nickname cannot satisfy a durable identity deliverable. copy_to_project_for_modification requires project_local/upgrade_existing_owner; create_project_local_agent requires project_local/create_owner_first. Full global scanning remains limited to install/update/explicit refresh or evidenced cache/probe needs."
       },
       "durableProjectAgentPolicy": {
         "appliesWhenUserRequestsAgentCreationOrIteration": true,

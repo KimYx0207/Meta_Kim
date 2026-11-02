@@ -590,25 +590,42 @@ function normalizeMemoryEntry(resultEntry, source) {
 }
 
 function normalizeProjectText(text) {
-  return String(text || "").toLowerCase().replace(/[-_\s]+/gu, "");
+  return typeof text === "string" ? text.trim().toLowerCase() : "";
+}
+
+/** Compare declared paths without erasing punctuation or POSIX case. */
+function projectPathKey(value) {
+  if (typeof value !== "string" || !value) return "";
+  if (/^(?:[a-z]:[\\/]|(?:\\\\|\/\/)[^\\/])/iu.test(value)) {
+    const normalized = path.win32.normalize(value).replace(/\\/gu, "/");
+    const root = path.win32.parse(normalized).root;
+    return `win:${(normalized.length > root.length ? normalized.replace(/\/+$/u, "") : normalized).toLowerCase()}`;
+  }
+  if (!path.posix.isAbsolute(value)) return "";
+  const normalized = path.posix.normalize(value);
+  return `posix:${normalized === "/" ? normalized : normalized.replace(/\/+$/u, "")}`;
 }
 
 function isProjectMemory(memory, project, cwd) {
-  const projectNeedle = normalizeProjectText(project);
-  const cwdNeedle = normalizeProjectText(cwd);
-  const tags = Array.isArray(memory.tags) ? memory.tags : [];
   const metadata = memory.metadata && typeof memory.metadata === "object" ? memory.metadata : {};
-  const haystack = normalizeProjectText([
-    memory.content,
-    ...tags,
-    metadata.project_dir,
-    metadata.cwd,
-    metadata.project,
-  ].join(" "));
-  return (
-    (projectNeedle && haystack.includes(projectNeedle)) ||
-    (cwdNeedle && normalizeProjectText(metadata.project_dir || metadata.cwd) === cwdNeedle)
-  );
+  const pathClaims = [metadata.project_dir, metadata.cwd]
+    .filter((value) => typeof value === "string" && value.length > 0);
+  if (pathClaims.length > 0) {
+    const currentPath = projectPathKey(cwd);
+    // A conflicting or unusable explicit path cannot borrow identity from tags.
+    return Boolean(currentPath) && pathClaims.every((value) => projectPathKey(value) === currentPath);
+  }
+  const projectName = normalizeProjectText(project);
+  if (!projectName) return false;
+  const declaredProject = normalizeProjectText(metadata.project);
+  if (declaredProject) return declaredProject === projectName;
+  // These tags are written for many projects; only a distinct legacy project
+  // tag can supply identity when no structured project metadata exists.
+  const genericTags = new Set(["metakim", "claude", "codex", "cursor", "openclaw", "sessionstart", "userprompt", "stop"]);
+  return (Array.isArray(memory.tags) ? memory.tags : []).some((tag) => {
+    const name = normalizeProjectText(tag);
+    return name === projectName && !genericTags.has(name.replace(/[-_\s]+/gu, ""));
+  });
 }
 
 function isGenericLifecycleMemory(content) {
@@ -616,12 +633,6 @@ function isGenericLifecycleMemory(content) {
     /Claude Code 会话启动/u.test(content) ||
     /Runtime session-start checkpoint/iu.test(content) ||
     /会话启动/u.test(content)
-  );
-}
-
-function isHighSignalMemory(content) {
-  return /8000|MCP Memory Service|third layer|cross-session|第三层|跨会话|召回|记忆/iu.test(
-    content,
   );
 }
 
@@ -680,9 +691,6 @@ function scoreMemory(memory, project, cwd, terms, sourceRank) {
   if (/UserPromptSubmit prompt|user-prompt|stop checkpoint|session summary/iu.test(memory.content)) {
     score += 4;
   }
-  if (isHighSignalMemory(memory.content)) {
-    score += 15;
-  }
   if (/New task for existing agent|You are not alone in the codebase/iu.test(memory.content)) {
     score -= 25;
   }
@@ -699,16 +707,7 @@ function excerptRecalledMemory(content, terms, maxLength = 260) {
   const sanitized = sanitizeRecalledMemory(content);
   if (!sanitized || sanitized.length <= maxLength) return sanitized;
   const lowered = sanitized.toLowerCase();
-  const needles = [
-    "mcp memory service",
-    "memory service",
-    "8000",
-    "third layer",
-    "cross-session",
-    "召回",
-    "记忆",
-    ...terms,
-  ]
+  const needles = terms
     .map((term) => String(term || "").trim().toLowerCase())
     .filter((term) => term.length >= 2);
   let bestIndex = -1;
@@ -734,15 +733,14 @@ function buildRecallQueries(query, project, cwd, event) {
     }
   };
   add(query);
-  add(`${project} current problems decisions next steps blockers bugs hooks memory recall`);
-  add(`${project} MCP Memory Service 8000 third layer cross-session recall current problem`);
-  add(`${project} recent work implementation verification follow up`);
-  add(`${project} ${event} governed run progress`);
   if (query && !query.toLowerCase().includes(project.toLowerCase())) {
     add(`${project} ${query}`);
   }
+  add(`${project} current problems decisions next steps blockers`);
+  add(`${project} recent work verification follow up`);
+  add(`${project} ${event} progress`);
   const cwdName = path.basename(cwd || "");
-  if (cwdName && cwdName !== project) add(`${cwdName} ${project} memory hooks`);
+  if (cwdName && cwdName !== project) add(`${cwdName} ${query || event}`);
   return queries.slice(0, 5);
 }
 
@@ -773,7 +771,7 @@ async function recentMemories(endpoint) {
 async function recallMemories(endpoint, query, project, cwd, event) {
   const candidates = [];
   const queries = buildRecallQueries(query, project, cwd, event);
-  const terms = recallTerms(query, project, cwd, event, ...queries);
+  const terms = recallTerms(query, project);
   for (const recallQuery of queries) {
     const results = await searchMemories(endpoint, recallQuery);
     candidates.push(...results.map((memory, index) => ({
@@ -815,18 +813,9 @@ async function recallMemories(endpoint, query, project, cwd, event) {
     (left, right) => right.recall_score - left.recall_score,
   );
   const nonGeneric = ranked.filter((memory) => !isGenericLifecycleMemory(memory.content));
-  const preferredRecent = (nonGeneric.length ? nonGeneric : ranked)
-    .filter(
-      (memory) =>
-        memory.source === "recent" &&
-        isProjectMemory(memory, project, cwd) &&
-        isHighSignalMemory(memory.content),
-    )
-    .sort((left, right) => memoryCreatedAt(right) - memoryCreatedAt(left))
-    .slice(0, 2);
   const selected = [];
   const selectedKeys = new Set();
-  for (const memory of [...preferredRecent, ...(nonGeneric.length ? nonGeneric : ranked)]) {
+  for (const memory of nonGeneric.length ? nonGeneric : ranked) {
     const key = memoryDedupeKey(memory.content);
     if (selectedKeys.has(key)) continue;
     selected.push(memory);
@@ -836,7 +825,35 @@ async function recallMemories(endpoint, query, project, cwd, event) {
   return selected;
 }
 
-function formatMemoryContext(memories, runtime, event) {
+/** Keep provenance as bounded, sanitized historical data, never a full local path. */
+function memoryProjectDeclaration(memory, project, cwd) {
+  const metadata = memory.metadata && typeof memory.metadata === "object" ? memory.metadata : {};
+  const declaredProject = typeof metadata.project === "string" ? metadata.project.trim() : "";
+  const declaredPaths = [metadata.project_dir, metadata.cwd]
+    .filter((value) => typeof value === "string" && value.length > 0);
+  const currentPath = projectPathKey(cwd);
+  const knownPaths = declaredPaths.map(projectPathKey).filter(Boolean);
+  let relation = "unconfirmed";
+  if ((declaredProject || declaredPaths.length) && isProjectMemory(memory, project, cwd)) {
+    relation = "current project";
+  } else if (
+    (currentPath && knownPaths.some((value) => value !== currentPath)) ||
+    (!declaredPaths.length && declaredProject && normalizeProjectText(declaredProject) !== normalizeProjectText(project))
+  ) {
+    relation = "other project";
+  }
+  const rawName = declaredProject || declaredPaths.find((value) => projectPathKey(value)) || declaredPaths[0] || "";
+  // Redact before path shortening: a bearer token itself can contain slashes.
+  const sanitizedName = sanitizeRecalledMemory(rawName.replace(/[\p{Cc}\p{Cf}]/gu, " "));
+  const basename = path.posix.basename(sanitizedName.replace(/\\/gu, "/").replace(/\/+$/u, ""));
+  let name = basename.slice(0, 64) || "unspecified";
+  if (!declaredProject && relation === "other project" && normalizeProjectText(name) === normalizeProjectText(project)) {
+    name += `#${createHash("sha256").update(knownPaths[0]).digest("hex").slice(0, 8)}`;
+  }
+  return `[historical project: ${JSON.stringify(name)}; relation: ${relation}]`;
+}
+
+function formatMemoryContext(memories, runtime, event, project, cwd) {
   if (!Array.isArray(memories) || memories.length === 0) return "";
   const lines = [
     `Untrusted recalled memory context (${runtime}, ${event})`,
@@ -848,7 +865,7 @@ function formatMemoryContext(memories, runtime, event) {
       : "";
     let content = excerptRecalledMemory(memory.content, memory.excerpt_terms || []);
     if (!content) continue;
-    lines.push(`> ${content}${tags}`);
+    lines.push(`> ${memoryProjectDeclaration(memory, project, cwd)} ${content}${tags}`);
   }
   if (lines.length === 2) return "";
   const context = lines.join("\n");
@@ -905,7 +922,7 @@ async function main() {
     context = memoryReadyStatus(endpoint);
   } else if (event !== "stop") {
     const memories = await recallMemories(endpoint, query, project, cwd, event);
-    context = formatMemoryContext(memories, runtime, event);
+    context = formatMemoryContext(memories, runtime, event, project, cwd);
   }
 
   const content = buildContent(payload, runtime, cwd, event);

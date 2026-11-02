@@ -76,7 +76,8 @@
       "outputPacket": "agentLoadoutDecision",
       "decides": [
         "which abstract capability slots belong to the durable agent",
-        "which concrete skills, scripts, tools, or MCP providers stay run-scoped",
+        "which reviewed stable skills or providers belong in an independent versioned default profile and which actual bindings stay run-scoped",
+        "whether project evidence permits profile-only reuse or requires a Type B identity decision",
         "which good-looking providers are rejected and why"
       ],
       "requiredFields": [
@@ -90,6 +91,7 @@
       ],
       "failIf": [
         "long-term identity binds to provider-specific commands or child skills",
+        "a default profile overrides owner refusals, required meta-skill-creator, current user constraints, permission or runtime support",
         "ROI reasoning is absent",
         "a provider is selected only because an outside project uses it"
       ]

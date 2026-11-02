@@ -22,7 +22,7 @@ function asksOnlyForCapabilityCreationDecision(line) {
   return !alsoAuthorizesMutation;
 }
 
-function explicitCapabilityIdFromLine(line, decision) {
+function explicitCapabilityDeclarationFromLine(line, decision) {
   const keyword = decision === "create_agent"
     ? "agent|智能体|代理"
     : decision === "create_skill"
@@ -32,9 +32,14 @@ function explicitCapabilityIdFromLine(line, decision) {
         : null;
   if (!keyword) return null;
   const match = String(line ?? "").match(
-    new RegExp(`(?:${keyword})\\s*(?:名为|叫做|called|named|:|：)?\\s*[\\x60'\"]?([a-z0-9][a-z0-9._-]{1,79})`, "iu"),
+    new RegExp(`(?:${keyword})\\s*(名为|叫做|called|named|:|：)?\\s*[\\x60'\"]?([a-z0-9][a-z0-9._-]{1,79})`, "iu"),
   );
-  return match?.[1]?.toLowerCase() ?? null;
+  if (!match) return null;
+  // Unmarked grammar after a type is not a name; an explicit naming marker
+  // still permits a deliberately chosen identifier such as "named unless".
+  if (!match[1] && /^(?:unless|if|when|once|after|before|for|to|is|are|that|which|should|must|candidate-only)$/iu.test(match[2])) return null;
+  const nameEnd = match.index + match[0].length;
+  return { id: match[2].toLowerCase(), nameStart: nameEnd - match[2].length, nameEnd };
 }
 
 function durableCapabilitySpecificationReady(line, explicitCapabilityId) {
@@ -46,8 +51,8 @@ function durableCapabilitySpecificationReady(line, explicitCapabilityId) {
   );
 }
 
-function explicitlyRequestsDurableCapabilityAction(line, decision) {
-  const text = String(line ?? "")
+function positiveCapabilityActionText(line) {
+  return String(line ?? "")
     .replace(
       /(?:不要|不需要|无需|不应|禁止|拒绝)\s*(?:再|进行|执行)?\s*(?:新建|创建|生成|固化|沉淀|写入|安装|新增|添加|复制|迭代|修改|升级|定制|复用)/giu,
       "",
@@ -56,6 +61,14 @@ function explicitlyRequestsDurableCapabilityAction(line, decision) {
       /(?:do\s+not|don't|without|no\s+need\s+to|refuse\s+to)\s*(?:create|add|persist|generate|install|copy|iterate|modify|upgrade|customize|reuse)/giu,
       "",
     );
+}
+
+function explicitlyRequestsDurableCapabilityAction(line, decision, declaration) {
+  const textOutsideName = declaration
+    ? `${line.slice(0, declaration.nameStart)}${" ".repeat(declaration.nameEnd - declaration.nameStart)}${line.slice(declaration.nameEnd)}`
+    : String(line ?? "");
+  if (/\bcandidate[- ]only\b|\bunless\s+\w|\bonly\s+if\b|\b(?:pending|awaiting|after)\s+(?:warden\s+)?approval\b|仅(?:作为|做)?候选|只(?:作为|做)?候选|(?:批准|审批|确认)后再|待(?:批准|审批|确认)/iu.test(textOutsideName)) return false;
+  const text = positiveCapabilityActionText(line);
   const chineseAction = "新建|创建|固化|沉淀|写入|安装|新增|添加|复制|迭代|修改|升级|定制|复用";
   const capabilityType = decision === "create_agent"
     ? "agent|智能体|代理"
@@ -110,7 +123,9 @@ export function durableCapabilityRequestsFromTask(task, runId = "meta-run") {
     if (!decision) continue;
     const explicitNeed = /需要|should|candidate|沉淀|可复用|直接复用|复用|reusable|reuse|recurring|重复|长期|迭代|修改|升级|定制|新建|创建|keeps recurring|iterate|modify|upgrade|customize|create/i.test(line);
     if (!explicitNeed) continue;
-    const explicitCapabilityId = explicitCapabilityIdFromLine(line, decision);
+    const declaration = explicitCapabilityDeclarationFromLine(line, decision);
+    const explicitCapabilityId = declaration?.id ?? null;
+    const actionText = positiveCapabilityActionText(line);
     const requestedCapability =
       decision === "create_skill" && /prd\s*review\s*standard/i.test(line)
         ? "prd-review-standard-skill"
@@ -121,12 +136,12 @@ export function durableCapabilityRequestsFromTask(task, runId = "meta-run") {
       requestedCapability,
       explicitCapabilityId,
       specificationReady: durableCapabilitySpecificationReady(line, explicitCapabilityId),
-      mutationAuthorized: explicitlyRequestsDurableCapabilityAction(line, decision),
+      mutationAuthorized: explicitlyRequestsDurableCapabilityAction(line, decision, declaration),
       decision,
       requestedAction:
-        /迭代|修改|升级|定制|iterate|modify|upgrade|customize/i.test(line)
+        /迭代|修改|升级|定制|iterate|modify|upgrade|customize/i.test(actionText)
           ? "iterate"
-          : /新建|创建|create|new project/i.test(line)
+          : /新建|创建|create|new project/i.test(actionText)
             ? "create"
             : "reuse",
       candidateType:

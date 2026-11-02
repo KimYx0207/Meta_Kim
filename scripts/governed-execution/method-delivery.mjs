@@ -155,3 +155,148 @@ export function methodDeliveryMatches({ envelope, runId, packet, outputText }) {
     envelope.actualOutput?.sha256 === hash(outputText) && envelope.acceptanceStatus === "pending_independent_review" &&
     envelope.userOutcomeAccepted === false);
 }
+
+export function decodeMachineMethodResult({ text, outputContract, maxBytes }) {
+  const fail = (message) => { throw new Error(`Machine result boundary: ${message}`); };
+  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const types = new Set(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null']);
+  const annotations = new Set(['title', 'description', 'deliveryFormat', '$comment', 'default', 'examples', 'deprecated', 'readOnly', 'writeOnly']);
+  const keywords = new Set(['required', 'type', 'enum', 'const', 'properties', 'additionalProperties', 'items', 'minLength', 'maxLength', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum']);
+  const counts = ['minLength', 'maxLength', 'minItems', 'maxItems', 'minProperties', 'maxProperties'];
+  const bounds = ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum'];
+  const active = new WeakSet();
+  const equal = (a, b) => {
+    if (a === b) return true;
+    if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((value, index) => equal(value, b[index]));
+    if (!object(a) || !object(b)) return false;
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every((key) => own(b, key) && equal(a[key], b[key]));
+  };
+  const jsonValue = (value, path) => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+    if (typeof value === 'number' && Number.isFinite(value)) return;
+    if (!Array.isArray(value) && !object(value)) fail(`${path} must contain only JSON values`);
+    if (active.has(value)) fail(`${path} contains a cycle`);
+    active.add(value);
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        if (!own(value, i)) fail(`${path} contains a sparse array`);
+        jsonValue(value[i], `${path}[${i}]`);
+      }
+    } else {
+      for (const key of Object.keys(value)) jsonValue(value[key], `${path}[${JSON.stringify(key)}]`);
+    }
+    active.delete(value);
+  };
+  const checkSchema = (schema, path) => {
+    if (typeof schema === 'boolean') return;
+    if (!object(schema)) fail(`${path} must be an object or boolean schema`);
+    if (active.has(schema)) fail(`${path} contains a schema cycle`);
+    active.add(schema);
+    for (const key of Object.keys(schema)) {
+      if (!keywords.has(key) && !annotations.has(key)) fail(`${path}: unsupported schema keyword ${JSON.stringify(key)}`);
+    }
+    if (own(schema, 'type')) {
+      const declared = Array.isArray(schema.type) ? schema.type : [schema.type];
+      if (!declared.length || declared.some((type) => !types.has(type)) || new Set(declared).size !== declared.length) fail(`${path}.type is invalid`);
+    }
+    if (own(schema, 'required')) {
+      if (!Array.isArray(schema.required) || schema.required.some((key) => typeof key !== 'string') || new Set(schema.required).size !== schema.required.length) fail(`${path}.required must be an array of distinct strings`);
+    }
+    if (own(schema, 'enum')) {
+      if (!Array.isArray(schema.enum) || !schema.enum.length) fail(`${path}.enum must be a nonempty array`);
+      jsonValue(schema.enum, `${path}.enum`);
+      for (let i = 0; i < schema.enum.length; i++) {
+        for (let j = 0; j < i; j++) if (equal(schema.enum[i], schema.enum[j])) fail(`${path}.enum contains duplicate values`);
+      }
+    }
+    if (own(schema, 'const')) jsonValue(schema.const, `${path}.const`);
+    for (const key of counts) {
+      if (own(schema, key) && (!Number.isSafeInteger(schema[key]) || schema[key] < 0)) fail(`${path}.${key} must be a nonnegative safe integer`);
+    }
+    for (const key of bounds) {
+      if (own(schema, key) && (typeof schema[key] !== 'number' || !Number.isFinite(schema[key]))) fail(`${path}.${key} must be a finite number`);
+    }
+    if (own(schema, 'uniqueItems') && typeof schema.uniqueItems !== 'boolean') fail(`${path}.uniqueItems must be boolean`);
+    if (own(schema, 'properties')) {
+      if (!object(schema.properties)) fail(`${path}.properties must be an object`);
+      for (const key of Object.keys(schema.properties)) checkSchema(schema.properties[key], `${path}.properties[${JSON.stringify(key)}]`);
+    }
+    if (own(schema, 'additionalProperties')) checkSchema(schema.additionalProperties, `${path}.additionalProperties`);
+    if (own(schema, 'items')) checkSchema(schema.items, `${path}.items`);
+    active.delete(schema);
+  };
+  const matchesType = (value, type) => {
+    if (type === 'null') return value === null;
+    if (type === 'object') return object(value);
+    if (type === 'array') return Array.isArray(value);
+    if (type === 'integer') return typeof value === 'number' && Number.isInteger(value);
+    if (type === 'number') return typeof value === 'number' && Number.isFinite(value);
+    return typeof value === type;
+  };
+  const validate = (value, schema, path) => {
+    if (schema === true) return;
+    if (schema === false) fail(`${path} is forbidden by its schema`);
+    if (own(schema, 'type')) {
+      const declared = Array.isArray(schema.type) ? schema.type : [schema.type];
+      if (!declared.some((type) => matchesType(value, type))) fail(`${path} does not match declared type`);
+    }
+    if (own(schema, 'enum') && !schema.enum.some((candidate) => equal(value, candidate))) fail(`${path} does not match enum`);
+    if (own(schema, 'const') && !equal(value, schema.const)) fail(`${path} does not match const`);
+    if (typeof value === 'string') {
+      let length = 0;
+      for (const character of value) length++;
+      if (own(schema, 'minLength') && length < schema.minLength) fail(`${path} violates minLength`);
+      if (own(schema, 'maxLength') && length > schema.maxLength) fail(`${path} violates maxLength`);
+    }
+    if (typeof value === 'number') {
+      if (own(schema, 'minimum') && value < schema.minimum) fail(`${path} violates minimum`);
+      if (own(schema, 'maximum') && value > schema.maximum) fail(`${path} violates maximum`);
+      if (own(schema, 'exclusiveMinimum') && value <= schema.exclusiveMinimum) fail(`${path} violates exclusiveMinimum`);
+      if (own(schema, 'exclusiveMaximum') && value >= schema.exclusiveMaximum) fail(`${path} violates exclusiveMaximum`);
+    }
+    if (Array.isArray(value)) {
+      if (own(schema, 'minItems') && value.length < schema.minItems) fail(`${path} violates minItems`);
+      if (own(schema, 'maxItems') && value.length > schema.maxItems) fail(`${path} violates maxItems`);
+      if (schema.uniqueItems === true) {
+        for (let i = 0; i < value.length; i++) {
+          for (let j = 0; j < i; j++) if (equal(value[i], value[j])) fail(`${path} violates uniqueItems`);
+        }
+      }
+      if (own(schema, 'items')) value.forEach((item, index) => validate(item, schema.items, `${path}[${index}]`));
+    } else if (object(value)) {
+      const keys = Object.keys(value);
+      if (own(schema, 'minProperties') && keys.length < schema.minProperties) fail(`${path} violates minProperties`);
+      if (own(schema, 'maxProperties') && keys.length > schema.maxProperties) fail(`${path} violates maxProperties`);
+      if (own(schema, 'required')) {
+        for (const key of schema.required) if (!own(value, key)) fail(`${path} lacks required property ${JSON.stringify(key)}`);
+      }
+      for (const key of keys) {
+        const childPath = `${path}[${JSON.stringify(key)}]`;
+        if (own(schema, 'properties') && own(schema.properties, key)) validate(value[key], schema.properties[key], childPath);
+        else if (own(schema, 'additionalProperties')) validate(value[key], schema.additionalProperties, childPath);
+      }
+    }
+  };
+  try {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) fail('maxBytes must be a positive safe integer');
+    if (typeof text !== 'string') fail('text must be a string');
+    if (Buffer.byteLength(text, 'utf8') > maxBytes) fail('text exceeds maxBytes in UTF-8 bytes');
+    checkSchema(outputContract, 'outputContract');
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (error) {
+      if (error instanceof SyntaxError) fail('text must be one complete JSON object without prose or code fences');
+      throw error;
+    }
+    if (!object(result)) fail('top-level JSON must be an object');
+    jsonValue(result, '$');
+    validate(result, outputContract, '$');
+    return result;
+  } catch (error) {
+    if (error instanceof RangeError) fail('input or schema exceeds supported recursion depth or runtime capacity');
+    throw error;
+  }
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import {
+  cpSync,
   lstatSync,
   existsSync,
   mkdirSync,
@@ -19,7 +20,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
-import { withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
+import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
 import { prepareDependencyCalculationInput, bindDependencyCalculationWorkOrder, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
@@ -38,7 +39,7 @@ import { buildAgentProjectionTargets } from "./runtime-tool-profiles.mjs";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
 import { resolveRuntimeHomeDir } from "./meta-kim-sync-config.mjs";
 import { copyProjectCapability } from "./project-capability-copy.mjs";
-import { projectCapabilityRetrievalForPublication } from "./capability-publication-sanitizer.mjs";
+import { projectCapabilityRetrievalForPublication, sanitizeCapabilityPublicationText } from "./capability-publication-sanitizer.mjs";
 import { durableCapabilityRequestsFromTask, safeSlug } from "./capability-request-intent.mjs";
 import {
   buildPlanChallengeState,
@@ -91,8 +92,9 @@ import {
   validateWardenWritebackApproval as validateExactWardenWritebackApproval,
 } from "../src/domain/evolution/warden-writeback-approval.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
+import { advanceGovernedGoal } from "./governed-execution/advance-goal.mjs";
 import { prepareIntentDialogue, bindIntentToWorkerTasks, applyTaskCriterionAssignments, normalizeTaskCriterionAssignments, buildIntentCriterionCoverage, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
-import { normalizeRequirementsDiscovery, normalizeProductDesign, projectDesignWorkerTasks, evaluateProductOutcomeReview, projectProductReview, productDesignDigest } from "./governed-execution/product-design.mjs";
+import { normalizeRequirementsDiscovery, normalizeProductDesign, projectDesignWorkerTasks, projectDesignHumanMilestones, evaluateProductOutcomeReview, projectProductReview, productDesignDigest } from "./governed-execution/product-design.mjs";
 import {
   buildTaskGoalContract as buildGoalContractPacket,
   evaluateTaskOutcome,
@@ -1479,18 +1481,25 @@ async function loadAlreadyMaterializedDurableRun({
   };
 }
 
-/** Read/revalidate the latest review without mutating the immutable run or files. */
-export async function readProductReviewProjection({ artifact, projectRoot, jsonPath, outputDir = path.dirname(jsonPath) }) {
+async function readPersistedOutcomeReviewInput({ artifact, jsonPath, outputDir }) {
   const pointerPath = resolveOutputFile(outputDir, `${artifact.runId}.outcome-review.json`);
   const baseArtifactSha256 = await fileDigestIfExists(jsonPath);
   let saved;
   try { saved = JSON.parse(await fs.readFile(pointerPath, "utf8")); }
-  catch (error) { if (error.code === "ENOENT") return artifact; throw error; }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
   if (saved.runId !== artifact.runId || saved.baseArtifactSha256 !== baseArtifactSha256) throw new Error("Review projection base artifact changed");
-  const review = await evaluateProductOutcomeReview({ input: saved.input, artifact, projectRoot });
+  return saved.input;
+}
+
+/** Read/revalidate the latest review without mutating the immutable run or files. */
+export async function readProductReviewProjection({ artifact, projectRoot, jsonPath, outputDir = path.dirname(jsonPath) }) {
+  const input = await readPersistedOutcomeReviewInput({ artifact, jsonPath, outputDir });
+  if (!input) return artifact;
+  const review = await evaluateProductOutcomeReview({ input, artifact, projectRoot });
   const reviewed = projectProductReview(artifact, review);
   const projectionPath = resolveOutputFile(outputDir, `${artifact.runId}.review-${review.reviewDigest.slice(0, 20)}.json`);
-  return { ...reviewed, paths: { ...(artifact.paths ?? {}), json: projectionPath, executionJson: jsonPath, review: pointerPath } };
+  return { ...reviewed, paths: { ...(artifact.paths ?? {}), json: projectionPath, executionJson: jsonPath,
+    review: resolveOutputFile(outputDir, `${artifact.runId}.outcome-review.json`) } };
 }
 
 // Both initial publication and review refresh share the existing filesystem
@@ -1511,11 +1520,11 @@ async function updateLatestGovernedProjection(outputDir, operation) {
 }
 
 /** Append a review projection without changing immutable execution receipts. */
-async function applyPersistedOutcomeReview({ artifact, input, projectRoot, jsonPath, outputDir }) {
+async function applyPersistedOutcomeReview({ artifact, input, projectRoot, jsonPath, outputDir, evaluatedReview = null }) {
   if (!input) return readProductReviewProjection({ artifact, projectRoot, jsonPath, outputDir });
   const pointerPath = resolveOutputFile(outputDir, `${artifact.runId}.outcome-review.json`);
   const baseArtifactSha256 = await fileDigestIfExists(jsonPath);
-  const review = await evaluateProductOutcomeReview({ input, artifact, projectRoot });
+  const review = evaluatedReview ?? await evaluateProductOutcomeReview({ input, artifact, projectRoot });
   const reviewed = projectProductReview(artifact, review);
   const projectionPath = resolveOutputFile(outputDir, `${artifact.runId}.review-${review.reviewDigest.slice(0, 20)}.json`);
   const livePath = resolveOutputFile(outputDir, `${artifact.runId}.live.json`);
@@ -2677,10 +2686,11 @@ function buildBusinessPhasePlanPacket({
     "evolution",
     writebackFlow.status !== "none-with-reason",
   );
+  const designRouteGap = orchestrationReport.capabilityGaps.find((gap) => gap.gapType === "design_slice_capability_gap");
   const phaseStatuses = new Map([
     ["direction", "done"],
-    ["planning", planningRequired ? "done" : "skipped"],
-    ["execution", orchestrationReport.workerTaskPackets.length > 0 ? "done" : "skipped"],
+    ["planning", designRouteGap ? "blocked" : planningRequired ? "done" : "skipped"],
+    ["execution", designRouteGap ? "blocked" : orchestrationReport.workerTaskPackets.length > 0 ? "done" : "skipped"],
     ["review", reviewRequired ? (orchestrationReport.reviewResult.status === "pass" ? "done" : "blocked") : "skipped"],
     ["meta_review", metaReviewRequired ? "done" : "skipped"],
     ["revision", !reviewRequired || orchestrationReport.reviewResult.status === "pass" ? "skipped" : "pending"],
@@ -2731,8 +2741,12 @@ function buildBusinessPhasePlanPacket({
               : "run artifact and markdown report",
       skipReason,
       triggerEvaluation,
-      statusReason: businessPhaseStatusReason({ phase, status, triggerEvaluation, skipReason }),
-      nextAction: businessPhaseNextAction({ phase, status }),
+      statusReason: designRouteGap && ["planning", "execution"].includes(phase)
+        ? `当前设计缺少可用的专业方法路线：${designRouteGap.decisionReason}`
+        : businessPhaseStatusReason({ phase, status, triggerEvaluation, skipReason }),
+      nextAction: designRouteGap && ["planning", "execution"].includes(phase)
+        ? "返回 Thinking，按原能力需求解决具体方法缺口后再形成工单；不替换为泛用负责人。"
+        : businessPhaseNextAction({ phase, status }),
     };
   });
   const currentPhase = determineCurrentBusinessPhase(phases);
@@ -7525,18 +7539,39 @@ export function buildProjectCustomizationPacket({
   orchestrationReport,
   runtimeInvocationPlanPacket,
   outputLanguage,
+  creationArtifacts = [],
+  projectRoot = activeProjectRoot(),
 }) {
   const requests = durableCapabilityRequestsFromTask(task, runId);
   const ownerDiscoveryPacket = orchestrationReport?.selectedExecutionRoute?.ownerDiscoveryPacket ?? {};
   const selectedBindings = runtimeInvocationPlanPacket?.requiredBindings ?? [];
+  const selectedProviders = orchestrationReport?.selectedExecutionRoute?.selectedCapabilityProviders ?? {};
+  const profileDecisions = [
+    orchestrationReport?.selectedExecutionRoute?.recommendedRoute?.agentCapabilityProfile,
+    ...(orchestrationReport?.selectedExecutionRoute?.capabilityGapPacket?.projectCapabilityProfileDecisions ?? []),
+  ].filter(Boolean);
+  const discoveredProviders = [
+    selectedProviders.skillCreation,
+    ...(ownerDiscoveryPacket.candidateReusableCapabilityProviders ?? []),
+    ...(ownerDiscoveryPacket.projectRuntimeCapabilityProviders ?? []),
+    ...(ownerDiscoveryPacket.localGlobalCapabilityProviders ?? []),
+  ].filter(Boolean);
   const decisions = requests.map((request) => {
+    const matchingCreationArtifacts = creationArtifacts.filter((artifact) =>
+      artifact?.requestedCapability === request.requestedCapability &&
+      artifact.capabilityType === request.candidateType && artifact.runtime != null &&
+      normalizeRouteRuntime(artifact.runtime) === normalizeRouteRuntime(runtime) &&
+      typeof artifact.projectRoot === "string" && path.isAbsolute(artifact.projectRoot) &&
+      localToolSamePath(artifact.projectRoot, projectRoot));
     const candidates = projectCustomizationCandidateSets(ownerDiscoveryPacket, request.candidateType, runtime);
     const projectCandidate = exactRequestedCandidate(candidates.project, request);
     const globalCandidate = exactRequestedCandidate(candidates.global, request);
     const explicitGlobalReuse = /全局|global/i.test(request.sourceText) &&
       /不要.{0,12}(?:复制|创建|生成|copy|create).{0,12}(?:项目|project)/i.test(request.sourceText);
     const noIterationGlobalReuse = /(?:全局|global).{0,40}(?:不需要|无需|without|no).{0,12}(?:迭代|修改|升级|定制|iteration|modify|upgrade|custom)|(?:不需要|无需).{0,12}(?:迭代|修改|升级|定制).{0,40}(?:全局|global)/iu.test(request.sourceText);
-    const iterationRequested = request.requestedAction === "iterate" && !noIterationGlobalReuse;
+    const profileDecision = request.candidateType === "agent" ? profileDecisions.find((entry) =>
+      entry.fitStatus === "host_assessed_sources_current" && [projectCandidate?.id, globalCandidate?.id, request.requestedCapability].includes(entry.owner?.ownerAgent)) : null;
+    const iterationRequested = request.requestedAction === "iterate" && !noIterationGlobalReuse && profileDecision?.ownerResolution !== "reuse_existing_owner";
     const projectSpecific = !explicitGlobalReuse &&
       /(?:项目|本项目|当前项目|project|repo).{0,12}(?:专用|专属|新增|新建|创建|生成|迭代|修改|specific|local)|(?:专用|专属|specific).{0,12}(?:项目|本项目|project|repo)/i.test(
         request.sourceText,
@@ -7582,7 +7617,12 @@ export function buildProjectCustomizationPacket({
       requestedCapability: request.requestedCapability,
       requestText: request.sourceText,
       creationSpecificationReady: request.specificationReady,
+      creationArtifact: matchingCreationArtifacts.length === 1 ? matchingCreationArtifacts[0] : null,
+      creatorProvider: request.candidateType === "skill"
+        ? discoveredProviders.find((provider) => provider.id === "meta-skill-creator" && provider.type === "skills") ?? null
+        : request.candidateType === "agent" ? selectedProviders.agentCreation ?? null : null,
       mutationAuthorized: request.mutationAuthorized === true,
+      agentCapabilityProfile: profileDecision,
       decision,
       reason,
       targetPath,
@@ -7665,7 +7705,7 @@ export function buildProjectCustomizationPacket({
     requiresApproval: decision !== "use_global_directly",
     userSummary: copy.projectSummary(copy.projectDecisions[decision], reason),
     truthBoundary:
-      "This packet records whether to reuse, upgrade, or create. It does not claim that a project capability file was written, loaded by the host, or invoked.",
+      "This task-derived lifecycle packet is not a project-history fit assessment; host Thinking must consume actual project evidence. It does not claim a capability was written, loaded or invoked.",
   };
 }
 
@@ -7706,101 +7746,111 @@ function resolveProjectCapabilitySourceRef(sourceRef, projectRoot) {
   return path.resolve(projectRoot, ...ref.replaceAll("\\", "/").split("/"));
 }
 
-function generatedProjectCapabilityContent({ runtime, type, id, runId, reason }) {
-  const description = `Project-local ${type} ${id}, materialized by governed run ${runId}.`;
-  const goal = `Goal: provide the project-local ${type} capability ${id}.`;
-  const responsibility = `Responsibility: fulfill only the confirmed governed-run need. ${reason}`;
-  const refusal = "Refusal boundary: refuse unrelated responsibilities, global configuration mutation, destructive actions, and overwriting user-owned files.";
-  const instruction = [goal, responsibility, refusal].join("\n");
-  if (type === "agent" && runtime === "codex") {
-    return [
-      `name = ${JSON.stringify(id)}`,
-      `description = ${JSON.stringify(description)}`,
-      `developer_instructions = ${JSON.stringify(instruction)}`,
-      "",
-    ].join("\n");
-  }
-  if (type === "agent") {
-    return [
-      "---",
-      `name: ${id}`,
-      `description: ${description}`,
-      "---",
-      "",
-      `# ${id}`,
-      "",
-      `## Goal`,
-      "",
-      goal,
-      "",
-      `## Responsibility`,
-      "",
-      responsibility,
-      "",
-      `## Refusal boundary`,
-      "",
-      refusal,
-      "",
-    ].join("\n");
-  }
-  if (type === "skill") {
-    return [
-      "---",
-      `name: ${id}`,
-      `description: ${description}`,
-      "---",
-      "",
-      `# ${id}`,
-      "",
-      `## Goal`,
-      "",
-      goal,
-      "",
-      `## Responsibility`,
-      "",
-      responsibility,
-      "",
-      `## Refusal boundary`,
-      "",
-      refusal,
-      "",
-    ].join("\n");
-  }
-  return [
-    `# ${id}`,
-    "",
-    `## Goal`,
-    "",
-    goal,
-    "",
-    `## Responsibility`,
-    "",
-    responsibility,
-    "",
-    `## Refusal boundary`,
-    "",
-    refusal,
-    "",
-  ].join("\n");
+function capabilityFactoryNextStep(decision) {
+  return {
+    owner: decision.capabilityType === "agent" ? "meta-genesis" : "meta-artisan",
+    creatorProviderId: decision.capabilityType === "skill" ? "meta-skill-creator" : decision.creatorProvider?.id ?? (decision.capabilityType === "agent" ? "create-agent" : null),
+    methodRef: decision.creatorProvider?.sourceRef ?? (decision.capabilityType === "agent" ? "canonical/skills/meta-theory/references/create-agent.md" : null),
+    requiredOutput: "A scope-bound creationArtifact with real prepared source, creator method/evidence refs and content-bound approval; no placeholder capability.",
+  };
 }
 
-function generatedProjectCapabilitySource({
-  candidateRoot,
-  runtime,
-  type,
-  id,
-  runId,
-  reason,
-}) {
+/** Verify the prepared artifact and snapshot its bytes; this never invokes a creator. */
+function preparedProjectCapabilitySource({ decision, root, runtime, id, candidateRoot }) {
+  const artifact = decision.creationArtifact;
+  if (!artifact) throw new Error("creator_output_required");
+  const matchesScope = (record) => record?.requestedCapability === decision.requestedCapability &&
+    record.capabilityType === decision.capabilityType && record.runtime != null &&
+    projectCapabilityRuntime(record.runtime) === runtime &&
+    typeof record.projectRoot === "string" && path.isAbsolute(record.projectRoot) &&
+    localToolSamePath(realpathSync(record.projectRoot), realpathSync(root));
+  if (!matchesScope(artifact)) throw new Error("creation_artifact_scope_mismatch");
+  const checkedRef = (ref, referenceRoot = root) => {
+    const file = resolveProjectCapabilitySourceRef(ref, referenceRoot);
+    if (!file || !existsSync(file) || lstatSync(file).isSymbolicLink() || !lstatSync(file).isFile() || readFileSync(file).length === 0) {
+      throw new Error("creator_provenance_source_required");
+    }
+    return file;
+  };
+  if (!artifact.creatorProviderId || !artifact.creatorMethodRef || !Array.isArray(artifact.evidenceRefs) || artifact.evidenceRefs.length === 0) {
+    throw new Error("creator_provenance_source_required");
+  }
+  const method = checkedRef(artifact.creatorMethodRef);
+  artifact.evidenceRefs.forEach((ref) => checkedRef(ref));
+  if (decision.capabilityType === "skill") {
+    if (artifact.creatorProviderId !== "meta-skill-creator" || decision.creatorProvider?.id !== "meta-skill-creator") {
+      throw new Error("meta_skill_creator_provider_required");
+    }
+    const selectedRef = String(decision.creatorProvider.sourceRef ?? "").trim();
+    let providerRoot = root;
+    if (selectedRef && !path.isAbsolute(selectedRef) && !selectedRef.startsWith("~/")) {
+      const sourceRoot = decision.creatorProvider.sourceRoot;
+      const projectSource = decision.creatorProvider.source === "project_runtime_skill_inventory";
+      const publishedBusinessRoot = sanitizeCapabilityPublicationText(root, {
+        repoRoot: REPO_ROOT, homeDir: process.env.USERPROFILE ?? process.env.HOME ?? "",
+      });
+      // Publication is not root authority. The artifact already binds this B;
+      // only its discovered project method's exact path and bytes can restore it.
+      const businessSource = projectSource && sourceRoot !== "." &&
+        (sourceRoot === publishedBusinessRoot ||
+          (typeof sourceRoot === "string" && path.isAbsolute(sourceRoot) && localToolSamePath(sourceRoot, root)));
+      if (businessSource) {
+        const trusted = inspectTrustedPath(root, selectedRef);
+        if (!trusted || !lstatSync(trusted.target).isFile()) throw new Error("creator_provenance_source_required");
+        const expectedDigest = String(decision.creatorProvider.contentDigest ?? "").replace(/^sha256:/u, "");
+        if (!/^[a-f0-9]{64}$/iu.test(expectedDigest)) throw new Error("creator_provider_content_digest_required");
+        if (createHash("sha256").update(readFileSync(trusted.target)).digest("hex") !== expectedDigest.toLowerCase()) {
+          throw new Error("creator_provider_content_digest_mismatch");
+        }
+        providerRoot = root;
+      } else if (sourceRoot === "." && projectSource) {
+        providerRoot = REPO_ROOT;
+      } else if (typeof sourceRoot === "string" && path.isAbsolute(sourceRoot)) {
+        providerRoot = sourceRoot;
+      } else {
+        throw new Error("creator_provider_source_root_required");
+      }
+    }
+    const selectedMethod = checkedRef(selectedRef, providerRoot);
+    if (!localToolSamePath(realpathSync(method), realpathSync(selectedMethod))) throw new Error("creator_method_source_mismatch");
+  }
+  if (artifact.review?.status !== "approved" || artifact.review.contentDigest !== artifact.contentDigest) throw new Error("creator_review_approval_required");
+  const approval = JSON.parse(readFileSync(checkedRef(artifact.review.approvalRef), "utf8"));
+  if (!matchesScope(approval) || approval.status !== "approved" || approval.contentDigest !== artifact.contentDigest ||
+      approval.creatorProviderId !== artifact.creatorProviderId || approval.creatorMethodRef !== artifact.creatorMethodRef ||
+      JSON.stringify(approval.evidenceRefs) !== JSON.stringify(artifact.evidenceRefs)) {
+    throw new Error("creator_review_approval_required");
+  }
+  let source = resolveProjectCapabilitySourceRef(artifact.sourceRef, root);
+  if (!source || !existsSync(source)) throw new Error("creator_prepared_source_required");
+  if (decision.capabilityType === "skill" && lstatSync(source).isFile() && path.basename(source).toLowerCase() === "skill.md") source = path.dirname(source);
   mkdirSync(candidateRoot, { recursive: true });
-  const extension = type === "agent" && runtime === "codex" ? ".toml" : ".md";
-  const sourcePath = path.join(candidateRoot, `${type}-${id}${extension}`);
-  writeFileSync(
-    sourcePath,
-    generatedProjectCapabilityContent({ runtime, type, id, runId, reason }),
-    "utf8",
-  );
-  return sourcePath;
+  const snapshotRoot = mkdtempSync(path.join(candidateRoot, `reviewed-${id}-`));
+  const snapshot = path.join(snapshotRoot, "source");
+  try {
+    cpSync(source, snapshot, { recursive: true });
+    const preview = copyProjectCapability({ projectDir: root, runtime, type: decision.capabilityType, id, source: snapshot, mode: "create", apply: false });
+    if (preview.capability.files.some((file) => file.state === "preserved_project_copy")) throw new Error("existing_project_capability_requires_iteration");
+    const files = preview.capability.files.map(({ relPath, baselineHash }) => ({ relPath, baselineHash })).sort((a, b) => a.relPath.localeCompare(b.relPath));
+    const contentDigest = `sha256:${createHash("sha256").update(JSON.stringify(files)).digest("hex")}`;
+    if (contentDigest !== artifact.contentDigest) throw new Error("creator_prepared_content_digest_mismatch");
+    return {
+      source: snapshot,
+      snapshotRoot,
+      creationEvidence: {
+        evidenceTier: "artifact_consistent",
+        nativeInvocationVerified: false,
+        creatorProviderId: artifact.creatorProviderId,
+        creatorMethodRef: artifact.creatorMethodRef,
+        evidenceRefs: artifact.evidenceRefs,
+        approvalRef: artifact.review.approvalRef,
+        contentDigest,
+      },
+    };
+  } catch (error) {
+    rmSync(snapshotRoot, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function projectCustomizationUserLine({ decision, result, outputLanguage }) {
@@ -7869,6 +7919,12 @@ export function executeProjectCustomizationPacket({
     path.join(os.tmpdir(), "meta-kim-project-capability-candidates-"),
   );
   const decisions = (packet?.decisions ?? []).map((decision) => {
+    if (decision.capabilityType === "agent" && ["upgrade_existing_owner", "create_owner_first"].includes(decision.agentCapabilityProfile?.ownerResolution)) {
+      const result = { requestId: decision.requestId, status: "failed", applied: false, targetPaths: [],
+        reason: "type_b_identity_adaptation_deferred", factoryNextStep: capabilityFactoryNextStep(decision), adaptationStatus: "identity_lane_not_implemented" };
+      results.push(result);
+      return { ...decision, executionStatus: result.status, actualTargetPaths: [] };
+    }
     if (decision.copyPolicy === "use_global_directly") {
       const result = {
         requestId: decision.requestId,
@@ -7943,20 +7999,14 @@ export function executeProjectCustomizationPacket({
       return { ...decision, executionStatus: result.status, actualTargetPaths: [] };
     }
 
+    let preparedSource = null;
     try {
       const source = copyMode === "iterate"
         ? resolveProjectCapabilitySourceRef(
             decision.sourceCapabilityRef ?? decision.targetPath,
             root,
           )
-        : generatedProjectCapabilitySource({
-            candidateRoot: resolvedCandidateRoot,
-            runtime: copyRuntime,
-            type: decision.capabilityType,
-            id,
-            runId,
-            reason: `${decision.requestText ?? "Confirmed project capability request"} ${decision.reason}`,
-          });
+        : (preparedSource = preparedProjectCapabilitySource({ decision, root, runtime: copyRuntime, id, candidateRoot: resolvedCandidateRoot })).source;
       if (!source || !existsSync(source)) {
         throw new Error("selected_capability_source_unresolved");
       }
@@ -7991,6 +8041,9 @@ export function executeProjectCustomizationPacket({
         transactionStatus: copyResult.transaction?.status ?? copyResult.status,
         ownershipClass: copyResult.capability?.ownershipClass,
         dependencyUpdatePolicy: copyResult.capability?.dependencyUpdatePolicy,
+        preparationOnly: copyMode === "iterate",
+        adaptationStatus: copyMode === "iterate" ? "copied_not_adapted" : "reviewed_artifact_materialized",
+        ...(preparedSource ? { creationEvidence: preparedSource.creationEvidence } : {}),
       };
       results.push(result);
       return { ...decision, executionStatus: result.status, actualTargetPaths: targetPaths };
@@ -8001,9 +8054,12 @@ export function executeProjectCustomizationPacket({
         applied: false,
         targetPaths: [],
         reason: error.message,
+        ...(copyMode === "create" ? { factoryNextStep: capabilityFactoryNextStep(decision) } : {}),
       };
       results.push(result);
       return { ...decision, executionStatus: result.status, actualTargetPaths: [] };
+    } finally {
+      if (preparedSource) rmSync(preparedSource.snapshotRoot, { recursive: true, force: true });
     }
   });
 
@@ -8038,7 +8094,7 @@ export function executeProjectCustomizationPacket({
     ...packet,
     status,
     decisions,
-    requiresApproval: false,
+    requiresApproval: decisions.some((decision) => decision.approvalRequired && decision.executionStatus !== "applied" && decision.copyPolicy !== "use_global_directly"),
     userSummary,
     execution: {
       schemaVersion: "project-customization-execution-v0.1",
@@ -8062,7 +8118,7 @@ export function executeProjectCustomizationPacket({
         ? "At least one required project capability mutation failed; the run must remain partial and must not claim completion."
         : status === "read_only"
           ? "Project capability mutation was not applied because the run was read-only/check/dry-run or the request did not explicitly authorize create, copy, or iteration."
-          : "Project capability write claims are backed by project-capability-copy transaction results; global reuse claims mean no project copy was created.",
+          : "Project writes are backed by copy transactions and reviewed creation artifacts; iteration copy is preparation, global reuse writes no copy. This does not prove project-history fit, method improvement or native creator/host invocation.",
   };
   if (ownsCandidateRoot) {
     rmSync(resolvedCandidateRoot, { recursive: true, force: true });
@@ -8557,8 +8613,8 @@ function buildRepeatFailureDesignGate() {
   return {
     id: "P-107",
     name: "同类错误二次即底层设计失败",
-    status: "pass",
-    evidenceKind: "product_support_gate",
+    status: "declared_not_evaluated",
+    evidenceKind: "declared_policy_not_execution_evidence",
     sameFailureOccurrenceThreshold: 2,
     actionOnSecondOccurrence: "bottom_design_failure_return_to_critical_fetch_thinking",
     returnToStages: ["Critical", "Fetch", "Thinking"],
@@ -9078,6 +9134,7 @@ function buildCoreLoopArtifact({
   projectRoot = null,
   projectCapabilityMutationMode = "auto",
   projectCapabilityCandidateRoot = null,
+  projectCapabilityCreationArtifacts = [],
   runtime = "codex",
   osTarget = "windows",
   outputLanguage = "zh-CN",
@@ -9463,6 +9520,8 @@ function buildCoreLoopArtifact({
     orchestrationReport,
     runtimeInvocationPlanPacket,
     outputLanguage,
+    creationArtifacts: projectCapabilityCreationArtifacts,
+    projectRoot: projectRoot ?? activeProjectRoot(),
   });
   const projectCustomizationPacket = executeProjectCustomizationPacket({
     packet: projectCustomizationPlan,
@@ -10411,6 +10470,9 @@ export function buildWorkflowContractPackets({
     owner: "meta-conductor",
   });
   const agentBlueprintPacket = {
+    projectCapabilityProfiles: coreLoop.thinkingPacket.workerTaskPackets
+      .filter((packet) => packet.agentCapabilityProfile)
+      .map((packet) => ({ taskPacketId: packet.taskPacketId, ownerAgent: packet.ownerAgent, profile: packet.agentCapabilityProfile })),
     roles: [
       {
         businessRoleId: "operations",
@@ -10459,9 +10521,10 @@ export function buildWorkflowContractPackets({
     primaryDeliverable,
     mergeStrategy: "meta-conductor merges worker evidence into one artifact; meta-prism verifies strict packet closure.",
   };
+  const designRouteGap = orchestrationReport.productDesignPacket && orchestrationReport.capabilityGaps.some((gap) => gap.gapType === "design_slice_capability_gap");
   const rawWorkerTasks = coreLoop.thinkingPacket.workerTaskPackets.length > 0
     ? coreLoop.thinkingPacket.workerTaskPackets
-    : [
+    : designRouteGap ? [] : [
         {
           taskPacketId: `${runId}-worker-001`,
           owner: "meta-conductor",
@@ -10597,7 +10660,7 @@ export function buildWorkflowContractPackets({
     })),
     synthesisOwner: "meta-conductor",
   };
-  const dispatchEnvelopePacket = {
+  const dispatchEnvelopePacket = designRouteGap ? null : {
     ownerAgent: "meta-conductor",
     businessRoleId: "operations",
     roleDisplayName: "operations",
@@ -10836,7 +10899,7 @@ export function buildWorkflowContractPackets({
     sideEffectLedgerPacket,
     rollbackPlanPacket,
     agentBlueprintPacket,
-    capabilityGapPacket: {
+    capabilityGapPacket: designRouteGap ? orchestrationReport.selectedExecutionRoute.capabilityGapPacket : {
       gapId: `${runId}-capability-gap-none`,
       requestedCapability: "governed execution artifact validation",
       currentAgentsChecked: ["meta-conductor", "meta-prism", "meta-warden"],
@@ -11140,7 +11203,7 @@ export function evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) {
   return evaluateTaskOutcome(goal, observations);
 }
 
-function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, projectRoot = activeProjectRoot() }) {
+function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, projectRoot = activeProjectRoot() }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   return [
@@ -11155,6 +11218,9 @@ function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", 
     "--json",
     "--runner-compact",
     "--project-root", path.resolve(projectRoot),
+    ...(agentCapabilityProfileContext ? ["--agent-profile-context-json", JSON.stringify(agentCapabilityProfileContext)] : []),
+    ...(methodRequest ? ["--method-work-kind", methodRequest.workKind, "--method-capability-id", methodRequest.methodCapabilityId,
+      "--method-context-json", JSON.stringify({ capabilityNeed: methodRequest.capabilityNeed, artifactFlow: methodRequest.artifactFlow })] : []),
     ...(runId ? ["--run-id", runId] : []),
     ...(codexHostToolSchema ? ["--codex-host-tool-schema", codexHostToolSchema] : []),
     ...(intentDeliveryStrategy ? ["--intent-delivery-strategy", intentDeliveryStrategy] : []),
@@ -11162,7 +11228,7 @@ function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", 
   ];
 }
 
-async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, projectRoot = activeProjectRoot(), spawnError = null }) {
+async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, projectRoot = activeProjectRoot(), spawnError = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const originalArgv = process.argv;
@@ -11174,7 +11240,7 @@ async function selectExecutionRouteInProcess({ task, actionTask = task, runtime 
     process.argv = [
       process.execPath,
       SELECT_EXECUTION_ROUTE_SCRIPT,
-      ...selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, projectRoot }),
+      ...selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, methodRequest, projectRoot }),
     ];
     console.log = (...args) => stdout.push(args.join(" "));
     console.error = (...args) => stderr.push(args.join(" "));
@@ -11211,10 +11277,10 @@ async function selectExecutionRouteInProcess({ task, actionTask = task, runtime 
   }
 }
 
-async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
-  const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, projectRoot });
+  const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, methodRequest, projectRoot });
   const result = spawnSync(
     process.execPath,
     [SELECT_EXECUTION_ROUTE_SCRIPT, ...args],
@@ -11236,6 +11302,8 @@ async function selectExecutionRoute({ task, actionTask = task, runtime = "codex"
       codexHostToolSchema,
       intentDeliveryStrategy,
       localToolRequest,
+      agentCapabilityProfileContext,
+      methodRequest,
       projectRoot,
       spawnError: result.error,
     });
@@ -11343,7 +11411,7 @@ function providersByLane(routeResult, lane) {
   const selectedProviders = laneBinding.selectedProviders ?? {};
   const skillLoadout = [];
   if (laneProvider?.type === "skills") skillLoadout.push(laneProvider);
-  for (const provider of [selectedProviders.skill]) {
+  for (const provider of Object.values(selectedProviders).filter((entry) => entry?.type === "skills")) {
     if (provider?.type === "skills" && !skillLoadout.some((item) => item.id === provider.id)) {
       skillLoadout.push(provider);
     }
@@ -11362,16 +11430,16 @@ function providersByLane(routeResult, lane) {
       }
     }
   }
-  const runtimeTools = [lane?.runtimeTool, selectedProviders.runtimeTool, selected.runtimeTool, selected.runtimeEdit, selected.shell]
+  const runtimeTools = [lane?.runtimeTool, ...Object.values(selectedProviders).filter((entry) => entry?.type === "runtimeTools"), selected.runtimeTool, selected.runtimeEdit, selected.shell]
     .filter(Boolean)
     .filter((provider, index, all) => all.findIndex((item) => item.id === provider.id) === index);
   return {
     skillLoadout,
-    mcpLoadout: [selectedProviders.mcp, ...(!hasLaneBinding ? [selected.mcp, selected.mcpServer, selected.mcpTool] : [])]
+    mcpLoadout: [...Object.values(selectedProviders).filter((entry) => ["mcpServers", "mcpTools"].includes(entry?.type)), ...(!hasLaneBinding ? [selected.mcp, selected.mcpServer, selected.mcpTool] : [])]
       .filter(Boolean)
       .filter((provider, index, all) => all.findIndex((item) => item.id === provider.id) === index),
     toolLoadout: runtimeTools,
-    commandLoadout: [selectedProviders.command, ...(!hasLaneBinding ? [selected.command, selected.verificationCommand] : [])]
+    commandLoadout: [...Object.values(selectedProviders).filter((entry) => entry?.type === "commands"), ...(!hasLaneBinding ? [selected.command, selected.verificationCommand] : [])]
       .filter(Boolean)
       .filter((provider, index, all) => all.findIndex((item) => item.id === provider.id) === index),
   };
@@ -11439,6 +11507,8 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
     const taskPacketId = `${runId}-${lane.laneId ?? `route-${index + 1}`}`;
     const roleDisplayName = lane.roleDisplayName ?? draft.roleDisplayName ?? "operations";
     const ownerAgent = lane.ownerAgent ?? draft.ownerAgent ?? route?.owner ?? "meta-conductor";
+    const agentCapabilityProfile = lane.agentCapabilityProfile ?? draft.agentCapabilityProfile ??
+      (route?.agentCapabilityProfile?.owner?.ownerAgent === ownerAgent ? route.agentCapabilityProfile : null);
     const selectedOwner = [route?.selectedCapabilityProviders?.agent]
       .find((provider) => provider?.id === ownerAgent && provider?.ownerContract);
     const ownerSource =
@@ -11481,6 +11551,7 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
       routeId,
       owner: ownerAgent,
       ownerAgent,
+      agentCapabilityProfile,
       ownerSource,
       ownerSourceRef,
       ownerContract: selectedOwner?.ownerContract ?? lane.ownerContract ?? draft.ownerContract ?? null,
@@ -11550,7 +11621,10 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
         commands: loadout.commandLoadout,
       },
       capabilityLoadout: {
-        capabilityProfileId: routeId,
+        capabilityProfileId: agentCapabilityProfile?.capabilityProfileId ?? routeId,
+        capabilityProfileVersion: agentCapabilityProfile?.capabilityProfileVersion ?? null,
+        contentDigest: agentCapabilityProfile?.contentDigest ?? null,
+        fitStatus: agentCapabilityProfile?.fitStatus ?? "not_evaluated",
         repoSkills: capabilityProviderRefs(loadout.skillLoadout),
         runtimeSkillCandidates: capabilityProviderRefs(loadout.skillLoadout),
         repoMcpTools: capabilityProviderRefs(loadout.mcpLoadout),
@@ -11563,9 +11637,16 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
       toolLoadout: loadout.toolLoadout,
       commandLoadout: loadout.commandLoadout,
       readBeforeEditRequired: lane.laneId === "read-before-edit-implementation",
-      referenceDirection: lane.decisionImpact ?? draft.decisionImpact ?? "Use selected route evidence.",
+      referenceDirection: agentCapabilityProfile?.referenceDirection ?? lane.decisionImpact ?? draft.decisionImpact ?? "Use selected route evidence.",
       handoffTarget: draft.verificationOwner ?? route?.verificationOwner ?? "meta-prism",
       handoffContract: {
+        requiredConstraintReview: agentCapabilityProfile?.status === "ready" ? {
+          capabilityProfileId: agentCapabilityProfile.capabilityProfileId,
+          contentDigest: agentCapabilityProfile.contentDigest,
+          projectEvidenceRefs: agentCapabilityProfile.projectEvidenceRefs,
+          materialRefs: (agentCapabilityProfile.materials ?? []).map(({ sourceRef, contentDigest }) => ({ sourceRef, contentDigest })),
+          acceptance: "Report sources actually used, the changed decision and unresolved conflicts; self-report requires independent review.",
+        } : null,
         handoffTo: draft.verificationOwner ?? route?.verificationOwner ?? "meta-prism",
         handoffWhen: "after lane result and evidence are produced",
         handoffPayload: "lane result, provider loadout, evidence refs, blockers",
@@ -11605,13 +11686,13 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, agentCapabilityProfileContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
   const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
     ? intentDialogue?.deliveryStrategy ?? null : null;
-  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, actionTask: task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, projectRoot, environment });
+  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, actionTask: task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, projectRoot, environment });
   routeResult.intentBinding = intentDialogue;
   let route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
@@ -11620,27 +11701,54 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     request: calculationRequest, runId, route: routeResult, workerTaskPackets: plannedPackets, environment, projectRoot,
   });
   const designRouteEvidence = [];
+  const designCapabilityGaps = [];
   if (design) {
     const templates = [];
     for (const slice of design.taskSlices) {
       const sliceTask = [task, slice.outcome, ...slice.capabilityNeed, ...slice.scopeFiles].join("\n");
-      const sliceRoute = await selectExecutionRoute({ task: sliceTask, actionTask: [slice.outcome, ...slice.scopeFiles].join("\n"), runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, projectRoot, environment });
+      const currentArtifactFlow = design.artifactFlow.filter((flow) => flow.producerTaskId === slice.id || flow.consumerTaskIds.includes(slice.id));
+      const methodRequest = slice.methodCapabilityId ? { workKind: slice.workKind ?? "vertical_slice", methodCapabilityId: slice.methodCapabilityId,
+        capabilityNeed: slice.capabilityNeed, artifactFlow: currentArtifactFlow } : null;
+      const sliceRoute = await selectExecutionRoute({ task: sliceTask, actionTask: [slice.outcome, ...slice.scopeFiles].join("\n"), runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, agentCapabilityProfileContext, methodRequest, projectRoot, environment });
       const candidates = buildRouteDrivenWorkerTasks({ runId, routeResult: sliceRoute, task: sliceTask });
-      const selected = candidates.find((packet) => packet.ownerAgent === sliceRoute.recommendedRoute?.owner) ?? candidates[0];
-      if (!selected) throw new TypeError(`No discovered owner route for design slice ${slice.id}`);
-      templates.push(selected);
-      designRouteEvidence.push({ sliceId: slice.id, capabilityNeed: slice.capabilityNeed, selectedOwner: selected.ownerAgent, route: sliceRoute.recommendedRoute, gate: sliceRoute.routeExecutionGate });
+      const selected = methodRequest ? candidates.find((packet) => packet.ownerAgent === sliceRoute.recommendedRoute?.owner &&
+        (packet.ownerContract?.capabilities ?? []).some((capability) => methodRequest.methodCapabilityId === capability.id ||
+          methodRequest.methodCapabilityId === `${packet.ownerContract.dependencyId}:${capability.id}`))
+        : candidates.find((packet) => packet.ownerAgent === sliceRoute.recommendedRoute?.owner) ?? candidates[0];
+      const gapPacket = selected ? null : sliceRoute.capabilityGapPacket ?? {
+        gap: "The discovered route cannot supply the design slice's requested method owner.",
+        missing: [slice.methodCapabilityId ?? "design_slice_execution_owner"], returnToStage: "Thinking",
+      };
+      if (selected) templates.push(selected);
+      else designCapabilityGaps.push({ gapId: `${runId}-design-${slice.id}-capability-gap`, blocked: true,
+        gapType: "design_slice_capability_gap", decision: "blocked_or_needs_approval", owner: "meta-conductor",
+        sliceId: slice.id, capabilityNeed: slice.capabilityNeed, methodCapabilityId: slice.methodCapabilityId ?? null,
+        reason: gapPacket.gap, decisionReason: gapPacket.missing.join("; "), returnToStage: "Thinking", capabilityGapPacket: gapPacket });
+      designRouteEvidence.push({ sliceId: slice.id, capabilityNeed: slice.capabilityNeed, artifactFlow: currentArtifactFlow,
+        selectedOwner: selected?.ownerAgent ?? null, route: sliceRoute.recommendedRoute, gate: sliceRoute.routeExecutionGate,
+        capabilityGapPacket: gapPacket, capabilityGapDecision: sliceRoute.capabilityGapDecision });
       providerList.push(...providerListFromRoute(sliceRoute));
     }
-    plannedPackets = projectDesignWorkerTasks({ design, runId, templates });
+    // Projection requires one genuine template per slice. Keep this unresolved
+    // design as a gap, rather than fabricating an owner or an invalid partial DAG.
+    plannedPackets = designCapabilityGaps.length ? [] : projectDesignWorkerTasks({ design, runId, templates });
     if (designRouteEvidence.length) {
-      route = designRouteEvidence[0].route;
+      const firstGap = designRouteEvidence.find((item) => item.capabilityGapPacket);
+      route = firstGap ? null : designRouteEvidence[0].route;
       routeResult.recommendedRoute = route;
-      const firstGate = designRouteEvidence[0].gate ?? {};
-      const allReady = designRouteEvidence.every((item) => item.gate?.routeCompatible === true && item.gate?.canHandoffToHost === true && item.gate?.handoffStatus === "ready_for_host_handoff");
-      routeResult.routeExecutionGate = { ...firstGate, canHandoffToHost: allReady, handoffStatus: allReady ? "ready_for_host_handoff" : "blocked", hostAction: allReady ? "host_action_required" : "return_to_thinking", designRouteEvidence };
+      const firstGate = (firstGap ?? designRouteEvidence[0]).gate ?? {};
+      const allReady = !firstGap && designRouteEvidence.every((item) => item.gate?.routeCompatible === true && item.gate?.canHandoffToHost === true && item.gate?.handoffStatus === "ready_for_host_handoff");
+      routeResult.routeExecutionGate = { ...firstGate, canHandoffToHost: allReady, handoffStatus: allReady ? "ready_for_host_handoff" : "blocked", hostAction: allReady ? "host_action_required" : "return_to_thinking", designRouteEvidence,
+        ...(firstGap ? { routeCompatible: false, returnToStage: "Thinking", reason: firstGap.capabilityGapPacket.gap,
+          blockedBy: [...(firstGate.blockedBy ?? []), "design_slice_method_owner_unresolved"] } : {}) };
+      if (firstGap) {
+        routeResult.capabilityGapDetected = true;
+        routeResult.capabilityGapPacket = { ...firstGap.capabilityGapPacket, designSliceGaps: designCapabilityGaps };
+        routeResult.capabilityGapDecision = firstGap.capabilityGapDecision ?? { decision: "blocked_or_needs_approval",
+          blockedReason: firstGap.capabilityGapPacket.gap, decisionEvidence: { status: "blocked" } };
+      }
     }
-    if (taskCriterionAssignments) {
+    if (taskCriterionAssignments && !designCapabilityGaps.length) {
       const assigned = applyTaskCriterionAssignments({ workerTaskPackets: plannedPackets, dialogue: intentDialogue, input: taskCriterionAssignments });
       if (assigned.some((packet, index) => JSON.stringify([...packet.acceptanceCriterionIds].sort()) !== JSON.stringify([...plannedPackets[index].acceptanceCriterionIds].sort()))) throw new TypeError("Explicit criterion assignment conflicts with the product design");
     }
@@ -11650,7 +11758,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", reason: designMissing ? "A host design must follow requirements discovery before execution" : "Product design is not ready for delivery" };
     plannedPackets = plannedPackets.map((packet) => ({ ...packet, workOrderReadiness: "incomplete", finalizationGate: "blocked_before_host_handoff" }));
   }
-  const intentBoundPackets = bindIntentToWorkerTasks({
+  const intentBoundPackets = designCapabilityGaps.length ? [] : bindIntentToWorkerTasks({
     workerTaskPackets: applyTaskCriterionAssignments({ workerTaskPackets: plannedPackets, dialogue: intentDialogue, input: taskCriterionAssignments }),
     routeResult, dialogue: intentDialogue ?? prepareIntentDialogue({ task }),
   }).map((packet, index) => design ? { ...packet, coreProblem: plannedPackets[index].coreProblem, todayTask: plannedPackets[index].todayTask } : packet);
@@ -11683,7 +11791,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
   const criterionCoverage = buildIntentCriterionCoverage({ workerTaskPackets, dialogue: intentDialogue });
   const routeGate = routeResult.routeExecutionGate ?? {};
   const blocked = routeGate.handoffStatus === "blocked";
-  const capabilityGaps = routeResult.capabilityGapDetected && routeResult.capabilityGapDecision
+  const capabilityGaps = [...designCapabilityGaps, ...(routeResult.capabilityGapDetected && routeResult.capabilityGapDecision
     ? [
         {
           gapId: `${runId}-route-capability-gap`,
@@ -11696,7 +11804,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
           owner: "meta-conductor",
         },
       ]
-    : [];
+    : [])];
   const selectedLaneIds = workerTaskPackets.map((packet) => packet.roleInstanceId);
   const omittedLanesWithReason =
     route?.subjectiveUiCapabilityAmplification?.omittedLanesWithReason?.map((lane) => ({
@@ -11726,6 +11834,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         Array.isArray(packet.commandLoadout),
     ),
     requiredGoalCriteriaAssigned: criterionCoverage.status !== "incomplete",
+    designMethodOwnersResolved: designCapabilityGaps.length === 0,
   };
   return {
     status: route && !blocked ? "pass" : "partial",
@@ -11814,7 +11923,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     workerTaskPackets,
     reviewResult: {
       owner: "meta-prism",
-      status: checks.multiTypeCapabilityInventoryPresent && checks.workerTasksDeclareExecutionMode && checks.requiredGoalCriteriaAssigned ? "pass" : "partial",
+      status: checks.multiTypeCapabilityInventoryPresent && checks.workerTasksDeclareExecutionMode && checks.requiredGoalCriteriaAssigned && checks.designMethodOwnersResolved ? "pass" : "partial",
       checks,
       findings: blocked
         ? [
@@ -11897,6 +12006,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   invokeCapabilityProbes = false,
   projectRoot = process.env.META_KIM_CALLER_CWD || process.cwd(),
   projectCapabilityMutationMode = "auto",
+  projectCapabilityCreationArtifacts = [],
+  agentCapabilityProfileContext = null,
   planChallengeContradictionEvidence = [],
   requestedSideEffectActions = [],
   previousPlanChallengeRunId = null,
@@ -11909,6 +12020,11 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   // Snapshot the parsed host boundary before any asynchronous discovery. A
   // caller changing a constraints object later cannot change this work order.
   const confirmedIntentSnapshot = confirmedIntent == null ? null : structuredClone(confirmedIntent);
+  const humanMilestonesSnapshot = structuredClone(stageRunner?.humanMilestones ?? []);
+  if (!Array.isArray(projectCapabilityCreationArtifacts)) throw new TypeError("projectCapabilityCreationArtifacts must be an array");
+  const projectCapabilityCreationArtifactsSnapshot = structuredClone(projectCapabilityCreationArtifacts);
+  if (agentCapabilityProfileContext != null && (typeof agentCapabilityProfileContext !== "object" || Array.isArray(agentCapabilityProfileContext))) throw new TypeError("agentCapabilityProfileContext must be an object");
+  const agentCapabilityProfileContextSnapshot = agentCapabilityProfileContext == null ? null : structuredClone(agentCapabilityProfileContext);
   const understandingSnapshot = sharedUnderstandingConfirmed == null ? null : structuredClone(sharedUnderstandingConfirmed);
   const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
   const designGoal = buildGoalContractPacket({ task: normalizedTask, acceptanceCriteria: intentDialogue.acceptanceCriteria });
@@ -11969,6 +12085,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   // the immutable execution identity; the confirmed intent/design still is.
   const taskFingerprint = productDesign || designRequirementSnapshot
     ? stableId("task", JSON.stringify([allocatedTaskFingerprint, productDesign?.designDigest ?? null, designRequirementSnapshot])) : allocatedTaskFingerprint;
+  const machineHostBound = stageRunner?.enabled !== false && typeof stageRunner?.adapterRegistry?.invoke === "function" && typeof stageRunner?.authorize === "function";
+  if (machineHostBound) stageRunner = { ...stageRunner, enabled: true };
   const durableStageRunnerEnabled = stageRunner?.enabled === true;
   const durableMode = durableStageRunnerEnabled ? (stageRunner.durableMode ?? "fresh") : null;
   if (durableStageRunnerEnabled && !["fresh", "resume"].includes(durableMode)) {
@@ -12190,6 +12308,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     designRequirement: designRequirementSnapshot,
     localToolRequest,
     calculationRequest,
+    agentCapabilityProfileContext: agentCapabilityProfileContextSnapshot,
     projectRoot: path.resolve(projectRoot),
     environment: calculationEnvironment,
   });
@@ -12435,6 +12554,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       projectRoot: path.resolve(projectRoot),
       projectCapabilityMutationMode: resolvedProjectCapabilityMutationMode,
       projectCapabilityCandidateRoot,
+      projectCapabilityCreationArtifacts: projectCapabilityCreationArtifactsSnapshot,
       runtime: routeRuntime,
       osTarget: routeOs,
       outputLanguage: resolvedOutputLanguage,
@@ -12464,11 +12584,60 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       ...spineWorkerBinding,
     },
   };
+  const designHumanMilestones = projectDesignHumanMilestones({ design: productDesign, requirementsDiscovery,
+    sideEffectActions: governedSideEffectActions, workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets });
+  // Explicit declarations remain compatible, but cannot replace a gate produced
+  // from the current normalized design and its actual artifact flow.
+  const humanMilestones = [...designHumanMilestones.requests, ...humanMilestonesSnapshot.filter((request) =>
+    !designHumanMilestones.requests.some((current) => current.nodeId === request.nodeId && current.milestoneId === request.milestoneId))];
+  coreLoop.thinkingPacket = { ...coreLoop.thinkingPacket, humanMilestonePlan: designHumanMilestones };
   let durableCoordinator = null;
   let durableExecution = null;
   let durableBodyError = null;
+  let executionOutcomeReview = null;
+  let executionReviewInput = outcomeReviewSnapshot;
+  let machineExecution = { status: "blocked", reason: stageRunner?.enabled === false ? "execution_explicitly_disabled" : "current_host_execution_adapter_required", calls: [], publicReady: false };
   try {
-  if (stageRunner?.enabled === true) {
+  if (machineHostBound) {
+    const gate = orchestrationReport.selectedExecutionRoute?.routeExecutionGate;
+    const packets = coreLoop.thinkingPacket.workerTaskPackets;
+    const ready = planChallengeHandoffReady && packets.length > 0 && packets.every((packet) => packet.workOrderReadiness === "ready") &&
+      orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete" && gate?.canHandoffToHost === true && gate.routeCompatible === true;
+    if (!ready) machineExecution = { ...machineExecution, reason: "current_governed_route_not_ready" };
+    else {
+      const kernel = await openDurableRunRepository(stageRunner.durableDbPath ?? path.join(outputDir, "machine-runs.sqlite"));
+      try {
+        if (durableMode === "resume" && existsSync(jsonPath)) {
+          // The existing resume reader already verified this run's paired bytes.
+          // Evaluate before dispatch, then reuse this same content assessment.
+          const previous = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+          executionReviewInput ??= await readPersistedOutcomeReviewInput({ artifact: previous, jsonPath, outputDir });
+          if (executionReviewInput) executionOutcomeReview = await evaluateProductOutcomeReview({ input: executionReviewInput, artifact: previous, projectRoot });
+        }
+        machineExecution = await advanceGovernedGoal({ runId: effectiveRunId, goalContract: coreLoop.goalContractPacket,
+          stageDagPacket: coreLoop.stageDagPacket, workerTaskPackets: packets, projectRoot,
+          artifactRoot: stageRunner.machineArtifactRoot ?? path.join(outputDir, "machine-results"),
+          runtime: normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime), host: stageRunner,
+          kernel, taskFingerprint, observations: stageRunner.outcomeObservations ?? [], env: calculationEnvironment,
+          humanMilestones, thinkingGaps: designHumanMilestones.gaps, design: productDesign, outcomeReview: executionOutcomeReview });
+        const milestoneQuestions = machineExecution.humanMilestoneReviews.filter((review) => review.decisionId && !review.nextAction).map((review) => ({
+          questionId: `human-milestone:${review.bindingDigest}`,
+          question: `请判断${review.label}：${review.artifactRef ?? "当前工单结果"}（${review.artifactVersion != null ? `第 ${review.artifactVersion} 版，` : ""}摘要 ${review.artifactSha256 ?? review.bindingDigest}）`,
+          questionTarget: "wrong_acceptance_or_quality_risk", decisionImpact: "Only this node's affected dependencies wait for the current version judgement.",
+          impactPriority: 100, dependsOn: [], evidenceRefs: review.evidence.map((item) => item.evidenceRef),
+          recommendationState: "preference_only", recommendedAnswer: null, recommendationRationale: null,
+          userAnswer: review.selectedOptionId ?? null, answerEvidenceRefs: review.answerEvidenceRef ? [review.answerEvidenceRef] : [],
+          invalidatedBy: review.invalidatedBy ?? null, status: review.decisionState === "invalidated" ? "invalidated"
+            : review.decisionState === "consumed" ? "answered" : "open",
+          milestoneId: review.milestoneId, nodeId: review.nodeId, decisionId: review.decisionId, revision: review.revision,
+          artifactRef: review.artifactRef ?? null, artifactVersion: review.artifactVersion ?? null,
+        }));
+        planChallengePreview = { ...planChallengePreview, unresolvedQuestions: [
+          ...planChallengePreview.unresolvedQuestions, ...milestoneQuestions] };
+        coreLoop = { ...coreLoop, preDecisionOptionFrame: planChallengePreview };
+      } finally { kernel.close(); }
+    }
+  } else if (stageRunner?.enabled === true) {
     const routeExecutionGate = orchestrationReport.selectedExecutionRoute?.routeExecutionGate ?? {};
     const localToolGate = orchestrationReport.selectedExecutionRoute?.localToolExecutionGate;
     const localToolPackets = coreLoop.thinkingPacket.workerTaskPackets;
@@ -12672,12 +12841,14 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     !["partial", "read_only"].includes(coreLoop.projectCustomizationPacket.status) &&
     coreLoop.productExperiencePacket.status === "product_experience_pass" &&
     coreLoop.contextEngineeringBudget.status === "pass" &&
-    (!coreLoop.stageRunnerBridgePacket || coreLoop.stageRunnerBridgePacket.status === "pass")
+    (!coreLoop.stageRunnerBridgePacket || coreLoop.stageRunnerBridgePacket.status === "pass") &&
+    (!machineHostBound || machineExecution.status === "completed")
       ? "pass"
       : "partial";
   const partialReasons = artifactStatus === "pass"
     ? []
     : [
+        machineHostBound && machineExecution.status !== "completed" ? `machine_execution=${machineExecution.status}:${machineExecution.reason}` : null,
         orchestrationReport.status !== "pass" ? `orchestration=${orchestrationReport.status}` : null,
         runtimeEvidence.status !== "pass" ? `runtime_projection=${runtimeEvidence.status}` : null,
         coreLoop.runtimeInvocationPlanPacket.status !== "pass"
@@ -12907,6 +13078,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     conductorConsumptionEvidence: coreLoop.conductorConsumptionEvidence,
     traceEvalControlPlane: coreLoop.traceEvalControlPlane,
     stageRunnerBridgePacket: coreLoop.stageRunnerBridgePacket ?? null,
+    machineExecution,
     dependencyCalculationPacket,
     agUiStageEvents: coreLoop.agUiStageEvents,
     performanceCostBudget: coreLoop.performanceCostBudget,
@@ -13114,6 +13286,21 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     await stageRunner.materializationFaultInjector?.("materialized");
     await fs.rm(jsonStagingPath, { force: true });
     await fs.rm(markdownStagingPath, { force: true });
+  } else if (machineHostBound && durableStageRunnerEnabled) {
+    // A waiting machine run stays active, but its artifacts need the same paired
+    // digests as other durable runs before the existing resume reader can trust them.
+    const machineJson = `${JSON.stringify(artifact, null, 2)}\n`;
+    const jsonSha256 = textSha256(machineJson);
+    const markdownSha256 = textSha256(userReportMarkdown);
+    let machineReservation = await readDurableReservation(reservationPath, { runId: effectiveRunId, taskFingerprint });
+    await atomicWriteFile(jsonStagingPath, machineJson);
+    await atomicWriteFile(markdownStagingPath, userReportMarkdown);
+    machineReservation = await updateDurableReservation(reservationPath, machineReservation, {
+      phase: "staged", status: "reserved_or_incomplete", jsonSha256, markdownSha256, stagingRefs,
+    });
+    await commitStagedArtifact(jsonStagingPath, jsonPath, jsonSha256);
+    await commitStagedArtifact(markdownStagingPath, markdownPath, markdownSha256);
+    await updateDurableReservation(reservationPath, machineReservation, { phase: "artifacts_committed" });
   } else {
     await atomicWriteFile(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`);
     await atomicWriteFile(markdownPath, userReportMarkdown);
@@ -13138,8 +13325,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     )}\n`
   ));
   const deliveredArtifact = { ...artifact, paths: { json: jsonPath, liveProjection: liveProjectionPath, markdown: markdownPath, latest: latestPath, db: dbPath } };
-  const reviewedArtifact = outcomeReviewSnapshot ? await applyPersistedOutcomeReview({ artifact: deliveredArtifact, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir }) : deliveredArtifact;
-  if (outcomeReviewSnapshot) await notifyReviewed(reviewedArtifact);
+  const reviewedArtifact = executionReviewInput ? await applyPersistedOutcomeReview({ artifact: deliveredArtifact, input: executionReviewInput, projectRoot, jsonPath, outputDir, evaluatedReview: executionOutcomeReview }) : deliveredArtifact;
+  if (executionReviewInput) await notifyReviewed(reviewedArtifact);
   await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Delivery", status: "records_saved", reason: taskProgressReason(resolvedOutputLanguage, "delivery"), details: { source: "committed_run_artifacts" } }));
   return currentCallNotice(reviewedArtifact);
   } catch (error) {

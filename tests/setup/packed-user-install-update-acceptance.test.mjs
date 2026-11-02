@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
+  cpSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -38,6 +42,8 @@ import {
   resolveGlobalAgentProjectionTargets,
   resolveRuntimeProfilesFromManifest,
 } from "../../scripts/meta-kim-sync-config.mjs";
+import { resolveNpmCliJsPath } from "../../scripts/runtime-cli-invocation.mjs";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 
 const acceptanceSource = readFileSync(
   "scripts/verify-packed-user-install-update.mjs",
@@ -1455,4 +1461,90 @@ test("packed MCP acceptance follows the shared durable strategy across supported
   );
   assert.match(validatorSource, /mcpDefinitionFingerprint/u);
   assert.doesNotMatch(validatorSource, /slice\(-2\)|\["mcp",\s*"serve"\]/u);
+});
+
+test("source lifecycle prepack and installed public project install/update preserve packaged evidence", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  const npm = resolveNpmCliJsPath();
+  const env = { ...runtime.env, NPM_CONFIG_OFFLINE: "true", npm_config_offline: "true", META_KIM_SKIP_OPTIONAL_TOOLS: "1", META_KIM_WITH_GLOBAL_HOOKS: "0" };
+  const origin = process.cwd();
+  // The routing fixture intentionally omits bin/examples/root release assets.
+  // Complete this mirror from npm's real first-party file table before packing.
+  const listing = runtime.run([npm, "pack", "--dry-run", "--ignore-scripts", "--json", "--offline"], { cwd: origin, env });
+  assert.equal(listing.status, 0, listing.stderr || listing.stdout);
+  const packageFiles = JSON.parse(listing.stdout)[0].files.map((entry) => entry.path).sort();
+  for (const relative of packageFiles) {
+    const target = path.resolve(runtime.repoRoot, relative);
+    assert.equal(path.relative(runtime.repoRoot, target).startsWith(".."), false);
+    mkdirSync(path.dirname(target), { recursive: true });
+    cpSync(path.join(origin, relative), target);
+  }
+  if (existsSync(path.join(origin, ".gitignore"))) cpSync(path.join(origin, ".gitignore"), path.join(runtime.repoRoot, ".gitignore"));
+  const currentAgents = readFileSync(path.join(origin, "AGENTS.md"), "utf8");
+  assert.equal(runtime.run(["scripts/refresh-runtime-evidence-pins.mjs"]).status, 0);
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nPacked lifecycle fixture change.\n");
+  const sourceLedger = path.join(runtime.repoRoot, "config/runtime-capability-evidence.json");
+  const staleLedger = readFileSync(sourceLedger, "utf8");
+  const packDir = path.join(runtime.root, "pack");
+  mkdirSync(packDir);
+  const packArgs = [npm, "pack", "--json", "--pack-destination", packDir, "--offline"];
+  const refused = runtime.run(packArgs, { env });
+  assert.equal(refused.status, 1, refused.stderr || refused.stdout);
+  assert.match(`${refused.stdout}\n${refused.stderr}`, /repo_projection pin\(s\) drifted/u);
+  assert.deepEqual(readdirSync(packDir), []);
+  assert.equal(readFileSync(sourceLedger, "utf8"), staleLedger);
+  const prepared = runtime.run([npm, "run", "meta:sync", "--", "--targets", "codex"], { env });
+  assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+  // The successful candidate uses the current source bytes, not the temporary
+  // drift marker used to prove that the earlier prepack correctly refused it.
+  writeFileSync(path.join(runtime.repoRoot, "AGENTS.md"), currentAgents);
+  const currentSource = runtime.run([npm, "run", "meta:sync", "--", "--targets", "codex"], { env });
+  assert.equal(currentSource.status, 0, currentSource.stderr || currentSource.stdout);
+  const packed = runtime.run(packArgs, { env });
+  assert.equal(packed.status, 0, packed.stderr || packed.stdout);
+  const metadata = packed.stdout.match(/\[\s*\{[\s\S]*\}\s*\]\s*$/u);
+  assert.ok(metadata, "npm pack returns real candidate metadata");
+  assert.deepEqual(JSON.parse(metadata[0])[0].files.map((entry) => entry.path).sort(), packageFiles);
+  const archives = readdirSync(packDir).filter((name) => name.endsWith(".tgz"));
+  assert.equal(archives.length, 1);
+
+  // Reuse this checkout's already-installed declared dependency tree entirely
+  // inside the disposable prefix. Offline npm still installs the real tarball;
+  // no dependency, lockfile, cache or tool is added to the user's environment.
+  const prefix = path.join(runtime.root, "prefix");
+  mkdirSync(prefix);
+  const dependencyTree = path.resolve("node_modules");
+  cpSync(dependencyTree, path.join(prefix, "node_modules"), { recursive: true });
+  const manifest = JSON.parse(readFileSync(path.join(runtime.repoRoot, "package.json"), "utf8"));
+  writeFileSync(path.join(prefix, "package.json"), JSON.stringify({ name: "packed-lifecycle-fixture", private: true, dependencies: manifest.dependencies }));
+  const installed = runtime.run([npm, "install", "--prefix", prefix, "--ignore-scripts", "--no-bin-links", "--no-audit", "--no-fund", "--package-lock=false", "--offline", path.join(packDir, archives[0])], { env });
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  const installedRoot = path.join(prefix, "node_modules", manifest.name);
+  const installedCli = path.join(installedRoot, Object.values(manifest.bin)[0]);
+  assert.equal(existsSync(installedCli), true, "npm installed the public CLI declared by this package");
+  cpSync(dependencyTree, path.join(installedRoot, "node_modules"), { recursive: true });
+  const installedLedger = path.join(installedRoot, "config/runtime-capability-evidence.json");
+  const evidenceBefore = readFileSync(installedLedger, "utf8");
+  assert.equal(evidenceBefore, readFileSync(sourceLedger, "utf8"));
+  assert.equal(existsSync(path.join(installedRoot, ".git")), false);
+  const project = path.join(runtime.root, "project");
+  const ordinary = path.join(runtime.root, "ordinary");
+  mkdirSync(path.join(project, ".git"), { recursive: true });
+  mkdirSync(ordinary);
+  writeFileSync(path.join(ordinary, "user-owned.txt"), "preserve\n");
+  // Remove the candidate origins before product execution. Every CLI below
+  // resolves its own modules/evidence from the npm-installed package root.
+  rmSync(runtime.repoRoot, { recursive: true, force: true });
+  rmSync(packDir, { recursive: true, force: true });
+  const productEnv = { ...env, NPM_CONFIG_IGNORE_SCRIPTS: "true", npm_config_ignore_scripts: "true" };
+  for (const mode of ["install", "update"]) {
+    const result = runtime.run([installedCli, mode, "--silent", "--scope", "project", "--targets", "codex", "--project-dir", project], { cwd: ordinary, env: productEnv });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(readFileSync(installedLedger, "utf8"), evidenceBefore);
+    const check = runtime.run([path.join(installedRoot, "scripts/refresh-runtime-evidence-pins.mjs"), "--check"], { cwd: ordinary, env: productEnv });
+    assert.equal(check.status, 0, check.stderr || check.stdout);
+  }
+  assert.equal(existsSync(path.join(project, ".meta-kim/state/default/project-bootstrap.json")), true);
+  assert.equal(readFileSync(path.join(ordinary, "user-owned.txt"), "utf8"), "preserve\n");
+  assert.equal(existsSync(path.join(runtime.home, ".meta-kim/runtime/projection-packages")), false);
 });

@@ -121,10 +121,10 @@ ROI = (Task Coverage x Usage Frequency) / (Context Cost + Learning Curve)
 |---|---|
 | Abstract capability slots | capability loadout policy, ROI scoring, provider-package fit, tool budget design, run-level capability selection rules |
 | Allowed meta-skill package providers | meta-theory, agent-teams-playbook, findskill, superpowers, ecc |
-| Runtime sub-skill selection rule | Select concrete runtime sub-skills only during the current run, based on SOUL boundaries, ROI evidence, runtime inventory, and Sentinel security approval. Concrete sub-skill names are run-local choices, not persistent dependencies in this agent definition. |
+| Runtime sub-skill selection rule | Keep actual executable bindings run-scoped. Reviewed stable concrete Skill/provider preferences may live in an independent versioned capability profile; resolve relevant defaults against the current project, runtime, permissions and source evidence. Do not embed this configuration in the identity. |
 | Run-scoped capability discovery | Artisan may initiate findskill or capability discovery for loadout gaps and provider-package fit inside its own responsibility. Results are valid only for the current run unless Warden approves a canonical loadout-policy writeback. |
 | Boundary routing | External broad discovery belongs to Scout. Long-term loadout policy belongs to Artisan. Writeback requires Warden gate approval, with Chrysalis coordinating and the target specialist performing writeback. |
-| Forbidden long-term binding | Do not bind Artisan to concrete runtime child skills, plugin command names, or provider-specific sub-skill identifiers as long-term dependencies. |
+| Forbidden long-term binding | Do not bind this identity to a tactic that won one Fetch. Independent approved default configuration does not change Artisan's governance responsibility, grant tools or prove availability/invocation. |
 
 ## Agent Design Station Output
 
@@ -140,7 +140,7 @@ When a `create_agent` route is under consideration, Artisan owns the loadout sta
 - `handoffContract`: what Genesis, Librarian, Prism, Warden, or worker tasks receive.
 - `verificationMethod`: how the loadout decision can be replayed or failed.
 
-Do not make an outside project's catalog, command names, or provider package shape part of a durable agent identity. Translate useful capability patterns into Meta_Kim capability slots and keep concrete provider choices in run-scoped bindings.
+Do not make an outside project's catalog, command names, or provider package shape part of durable identity. Use workflow-contract `agentBlueprintPacket.projectCapabilityProfilePolicy` for the independent private project configuration, host fit evidence and per-owner run snapshot. Apply source defaults, project overrides and current-run choices only after hard refusals, user constraints, required MetaSC, permission and runtime checks; check the final provider again. Required/default/optional are distinct, and untriggered optional capabilities are not loaded or invoked. Project facts or default changes prefer profile reuse; stable role-contract changes return to Genesis/Type B. Project business Hooks have one project configuration owner; infrastructure Hooks remain global infrastructure.
 
 ## Collaboration
 

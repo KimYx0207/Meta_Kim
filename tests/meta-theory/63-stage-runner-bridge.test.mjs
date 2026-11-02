@@ -1,19 +1,88 @@
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { createNativeHumanMilestoneConsumer, bindVerifiedHostPlanChallengeDecision } from "../../scripts/governed-execution/plan-challenge-host-continuation.mjs";
+import { createNativeHostAnswerRepository } from "../../src/data/repositories/native-host-answer-repository.mjs";
+import { issueNativeDecisionChallenge } from "../../src/domain/decision/native-decision-authority.mjs";
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, chmodSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { advanceGovernedGoal, commitMachineSourceProposal } from "../../scripts/governed-execution/advance-goal.mjs";
+import { openDurableRunRepository } from "../../src/application/run/open-durable-run-repository.mjs";
+import { buildTaskGoalContract } from "../../src/domain/governance/task-outcome.mjs";
 import {
   applyStageRunnerBridgeResult,
   buildRuntimeChildEnv,
   buildReadOnlyWorkerPrompt,
   invokeReadOnlyRuntimeWorker,
   prepareReadOnlyRuntimeInvocation,
+  readObservedMachineResult,
   runStageRunnerBridge,
 } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
+
+test("machine result transport keeps the complete final JSON separately from the redacted display and CLI trace", async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-machine-wire-"));
+  t.after(() => { assert.equal(path.dirname(root), path.resolve(os.tmpdir())); rmSync(root, { recursive: true, force: true }); });
+  const body = { status: "blocked", content: "", reason: `C:/business/source.json ${"实际领域正文".repeat(4500)}` };
+  const final = JSON.stringify(body);
+  const records = [
+    { type: "thread.started", thread_id: "transport-fixture" },
+    { type: "item.completed", item: { id: "reasoning", type: "reasoning", text: "NEVER_EXPORT_REASONING_TRACE" } },
+    { type: "item.completed", item: { id: "final", type: "agent_message", text: final } },
+    { type: "turn.completed", usage: {} },
+  ];
+  const wire = `${records.map((item) => JSON.stringify(item)).join("\n")}\n`;
+  const program = `let input="";process.stdin.on("data",chunk=>input+=chunk);process.stdin.on("end",async()=>{if(input.includes("fixture-write-conflict"))(await import("node:fs")).writeFileSync(${JSON.stringify(path.join(root, "conflict.json"))},"preserved fixture bytes",{flag:"wx"});const wire=Buffer.from(${JSON.stringify(wire)});const split=wire.indexOf(Buffer.from("实际"))+1;process.stdout.write(wire.subarray(0,split));setTimeout(()=>process.stdout.write(wire.subarray(split)),25);});`;
+  if (process.platform === "win32") {
+    writeFileSync(path.join(root, "fake-codex.mjs"), program);
+    writeFileSync(path.join(root, "codex.cmd"), '@echo off\r\n"%~dp0\\node.exe" "%~dp0\\fake-codex.mjs" %*\r\n');
+  } else {
+    const cli = path.join(root, "codex"); writeFileSync(cli, `#!/usr/bin/env node\n${program}`); chmodSync(cli, 0o700);
+  }
+  // A synthetic CLI process tests transport only; it makes no model call.
+  const result = await invokeReadOnlyRuntimeWorker({ runtime: "codex", workspaceRoot: root, prompt: "Return the requested JSON",
+    env: { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH}` },
+    machineResultArtifact: { ownedRoot: root, relativePath: "final.json", maxBytes: 256 * 1024, responseContract: { type: "object" } } });
+  assert.equal(result.status, "pass", JSON.stringify(result));
+  const actual = await readObservedMachineResult(result);
+  const actualCharacters = [...actual];
+  const firstDifference = [...final].findIndex((char, index) => char !== actualCharacters[index]);
+  assert.equal(actual === final, true, JSON.stringify({ actualBytes: Buffer.byteLength(actual), expectedBytes: Buffer.byteLength(final),
+    replacementCharacters: [...actual].filter((char) => char === "\ufffd").length, firstDifference }));
+  assert.equal(result.machineResultArtifact.bytes, Buffer.byteLength(final));
+  assert.notEqual(result.outputText, final);
+  assert.ok(result.outputText.length <= 16000);
+  assert.equal(readFileSync(result.machineResultArtifact.path, "utf8").includes("NEVER_EXPORT_REASONING_TRACE"), false);
+  let writeAdmissions = 0;
+  const blocked = await commitMachineSourceProposal({ proposalResult: result,
+    authorizeWrite: async () => { writeAdmissions++; throw new Error("Blocked output reached write admission"); } });
+  assert.equal(blocked.status, "blocked");
+  assert.equal(blocked.reason, "machine_proposal_blocked");
+  assert.equal(blocked.proposalReason, body.reason);
+  assert.equal(writeAdmissions, 0, "A real observed blocked message needs no reviewer or write admission");
+  const conflictPath = path.join(root, "conflict.json");
+  const conflict = await invokeReadOnlyRuntimeWorker({ runtime: "codex", workspaceRoot: root, prompt: "fixture-write-conflict: Return the requested JSON",
+    env: { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH}` },
+    machineResultArtifact: { ownedRoot: root, relativePath: "conflict.json", maxBytes: 256 * 1024, responseContract: { type: "object" } } });
+  assert.equal(conflict.status, "failed");
+  assert.equal(conflict.failureClass, "machine_result_artifact_write_failed");
+  assert.equal(conflict.runtimeProcessInvoked, true);
+  assert.equal(conflict.exitCode, 0, "Transport succeeded before the host's artifact write failed");
+  assert.equal(conflict.sessionId, "transport-fixture");
+  assert.equal(conflict.messageId, "final");
+  assert.equal(conflict.rawOutputSha256, result.rawOutputSha256);
+  assert.ok(conflict.durationMs > 0 && Date.parse(conflict.endedAt) >= Date.parse(conflict.startedAt));
+  assert.match(conflict.inputSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(conflict.machineResultArtifact, undefined);
+  assert.equal(readFileSync(conflictPath, "utf8"), "preserved fixture bytes");
+  await assert.rejects(readObservedMachineResult(conflict), /not_observed_by_host_invoker/u);
+  await assert.rejects(readObservedMachineResult(structuredClone(result)), /not_observed_by_host_invoker/u);
+  writeFileSync(result.machineResultArtifact.path, `${final} `);
+  await assert.rejects(readObservedMachineResult(result), /artifact_changed/u);
+});
 import {
   buildStageDagPacket,
+  stageLaneNodeId,
 } from "../../scripts/governed-execution/stage-dag.mjs";
 import { discoverDependencyAgentContracts, loadDependencyAgentMethod, componentHash, stableJson, sha256 } from "../../scripts/dependency-agent-discovery.mjs";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
@@ -131,30 +200,52 @@ test("read-only worker prompt retains the original governed user task", () => {
 
 test("large confirmed work orders reach runtime adapters intact without an invented prompt budget", async () => {
   const required = `${"Required reader acceptance: ".repeat(3_000)}Preserve the final EPUB illustrations.`;
-  const selected = packet("one", { acceptanceCriteria: [required], intentBinding: {
+  const qualityContext = {
+    qualityBar: "Read the current artifact and use existing evidence; do not create a second verification harness.",
+    evidenceRefs: ["fixture:reader-artifact", "fixture:approved-reader-requirements"],
+    verifySteps: [{ id: "reader", step: "npm run build", verify: "This command is a verification direction, not permission for this read-only worker to run it." }],
+    referenceDirection: "Compare the actual illustrations with the approved artifact; report missing runtime evidence rather than substituting test counts.",
+  };
+  const original = packet("one", { ...qualityContext, acceptanceCriteria: [required], intentBinding: {
     status: "host_provided_understanding", intentDigest: "a".repeat(64), confirmedOutcome: "An EPUB with its original illustrations",
     constraints: { outputFormat: "EPUB", preserve: ["original-illustrations"] },
     acceptanceCriteria: [{ id: "reader", description: required, kind: "semantic", required: true }],
   } });
-  const prompt = buildReadOnlyWorkerPrompt({ runId: "complete-prompt", runtime: "codex",
-    node: dagFor(["one"]).nodes[0], packet: selected, requestTask: "Inspect the reader artifact." });
-  assert.ok(prompt.length > 64_000, "Exercise the former arbitrary cutoff");
-  assert.ok(prompt.includes(required));
-  for (const runtime of ["codex", "claude"]) {
-    const invocation = await prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot: process.cwd(), packet: selected, prompt });
-    assert.equal(invocation.input, prompt, `${runtime} stdin must preserve the complete task`);
+  const assertQualityContext = (input) => {
+    const line = input.split("\n").find((entry) => entry.startsWith("Task packet: "));
+    const task = JSON.parse(line.slice("Task packet: ".length));
+    for (const [field, value] of Object.entries(qualityContext)) assert.deepEqual(task[field], value, `actual worker input preserves ${field}`);
+    assert.ok(input.includes(required));
+  };
+  for (const profile of [null, { status: "ready", owner: { ownerAgent: original.ownerAgent }, materials: [] }]) {
+    // A synthetic profile only distinguishes transport branches; it is not a
+    // source/fit or native invocation attestation.
+    const selected = { ...original, ...(profile ? { agentCapabilityProfile: profile } : {}) };
+    const prompt = buildReadOnlyWorkerPrompt({ runId: "complete-prompt", runtime: "codex",
+      node: dagFor(["one"]).nodes[0], packet: selected, requestTask: "Inspect the reader artifact." });
+    assert.ok(prompt.length > 64_000, "Exercise the former arbitrary cutoff");
+    for (const runtime of ["codex", "claude"]) {
+      const invocation = await prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot: process.cwd(), packet: selected, prompt });
+      assert.equal(invocation.input, prompt, `${runtime} stdin must preserve the complete task`);
+      assertQualityContext(invocation.input);
+      if (runtime === "codex") assert.equal(invocation.args[invocation.args.indexOf("--sandbox") + 1], "read-only");
+      else {
+        assert.equal(invocation.args[invocation.args.indexOf("--permission-mode") + 1], "plan");
+        assert.equal(invocation.args[invocation.args.indexOf("--allowedTools") + 1], "Read,Glob,Grep");
+      }
+    }
+    let calls = 0;
+    const bridge = await runStageRunnerBridge({ runId: "complete-prompt", runtime: "codex",
+      stageDagPacket: dagFor(["one"]), workerTaskPackets: [selected], workspaceRoot: process.cwd(),
+      evidenceKind: "custom_test_double", invokeWorker: async (options) => {
+        calls += 1;
+        assertQualityContext(options.prompt);
+        return passingInvoker()(options);
+      } });
+    assert.equal(calls, 1);
+    assert.equal(bridge.status, "pass");
+    assert.equal(bridge.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
   }
-  let calls = 0;
-  const bridge = await runStageRunnerBridge({ runId: "complete-prompt", runtime: "codex",
-    stageDagPacket: dagFor(["one"]), workerTaskPackets: [selected], workspaceRoot: process.cwd(),
-    evidenceKind: "custom_test_double", invokeWorker: async (options) => {
-      calls += 1;
-      assert.ok(options.prompt.includes(required));
-      return passingInvoker()(options);
-    } });
-  assert.equal(calls, 1);
-  assert.equal(bridge.status, "pass");
-  assert.equal(bridge.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
 });
 
 test("an adapter context rejection remains an explicit failure after receiving the full work order", async () => {
@@ -508,6 +599,272 @@ function useDependencyEnvironment(t, environment) {
   process.env.META_KIM_KIM_SERVICE_ROOT = environment.META_KIM_KIM_SERVICE_ROOT;
   t.after(() => original === undefined ? delete process.env.META_KIM_KIM_SERVICE_ROOT : process.env.META_KIM_KIM_SERVICE_ROOT = original);
 }
+
+test("machine goal consumes a verified revision in the actual unfinished worker request", async (t) => {
+  const fixture = await dependencyMethodFixture(t, { structured: true });
+  const { evaluateProductOutcomeReview } = await import("../../scripts/governed-execution/product-design.mjs");
+  const projects = JSON.parse(readFileSync("config/capability-index/dependency-project-registry.json", "utf8")).projects;
+  const discovered = await discoverDependencyAgentContracts({ projects, projectRoot: fixture.root, environment: fixture.environment });
+  const currentOwner = discovered.agents.find((owner) => owner.id === fixture.selected.ownerAgent);
+  const selected = { ...fixture.selected, ownerSource: currentOwner.source, ownerSourceRef: currentOwner.sourceRef,
+    ownerBindingMode: currentOwner.ownerBindingMode, ownerContract: currentOwner.ownerContract };
+  const program = `let input="";process.stdin.on("data",chunk=>input+=chunk);process.stdin.on("end",()=>{const task=JSON.parse(input.split("\\n").find(line=>line.startsWith("Task packet: ")).slice(13));const body={draft:task.referenceDirection??"independent",status:"partial",handoff:{nextOwner:task.ownerAgent,requiresDecision:false}};process.stdout.write([{type:"thread.started",thread_id:"synthetic-"+task.taskPacketId},{type:"item.completed",item:{id:"final",type:"agent_message",text:JSON.stringify(body)}},{type:"turn.completed",usage:{}}].map(record=>JSON.stringify(record)).join("\\n")+"\\n");});`;
+  writeFileSync(path.join(fixture.root, "fake-codex.mjs"), program);
+  if (process.platform === "win32") writeFileSync(path.join(fixture.root, "codex.cmd"), '@echo off\r\n"%~dp0\\node.exe" "%~dp0\\fake-codex.mjs" %*\r\n');
+  else { writeFileSync(path.join(fixture.root, "codex"), `#!/usr/bin/env node\n${program}`); chmodSync(path.join(fixture.root, "codex"), 0o700); }
+  const env = { ...process.env, ...fixture.environment, PATH: `${fixture.root}${path.delimiter}${process.env.PATH}` };
+  const task = "Inspect the current report and make its next bounded review satisfy the original criteria.";
+  const metricContract = "量=检查条目；单位=条/秒；范围分母=本合成夹具的全部12条；测法=现有本地报告检查；质量门槛=12/12条有来源；速度门槛=30秒内；基线可达证据=fixture:baseline（合成输入，不是实际性能证明）。";
+  const goalContract = buildTaskGoalContract({ task, acceptanceCriteria: [
+    { id: "report-correctness", description: metricContract, kind: "semantic" },
+    { id: "independent-audit", description: "The independent audit has its evidence", kind: "semantic" },
+  ] });
+  const packets = ["a", "b", "c"].map((id) => ({ ...selected, taskPacketId: id,
+    methodInputs: { facts: "Existing facts; no additional tools or writes" }, todayTask: "Original bounded task",
+    referenceDirection: "Use the existing facts", evidenceRefs: ["fixture:original"], verifySteps: [],
+    acceptanceCriterionIds: [id === "b" ? "independent-audit" : "report-correctness"], dependsOn: id === "c" ? ["a"] : [] }));
+  const dag = dagFor(["a", "b", "c"], { capacity: 1, laneOverrides: { c: { dependsOn: [stageLaneNodeId("Execution", "a")] } } });
+  const material = "Current supplied report: the exact statement still requires correction.";
+  writeFileSync(path.join(fixture.root, "report.md"), material);
+  const requiredChange = "Compare the exact disputed statement with the supplied facts and return a corrected bounded report with the comparison evidence.";
+  const captures = [];
+  const authorized = [];
+  const host = { ownerId: "fixture-host", adapterId: "synthetic-cli", maxResultBytes: 256 * 1024,
+    authorize: async ({ taskPacket }) => { if (taskPacket) authorized.push(structuredClone(taskPacket)); return { status: "ready" }; },
+    adapterRegistry: { invoke: async (_id, request) => { captures.push(structuredClone({ packet: request.packet, prompt: request.prompt }));
+      return { result: await invokeReadOnlyRuntimeWorker({ ...request, env }) }; } } };
+  const run = async (mode, returnToStage = "Execution", { omitReview = false, patchInput = null } = {}) => {
+    const runId = `verified-revision-${mode}`;
+    const artifact = { runId, goalContractPacket: goalContract, workerTaskPackets: packets };
+    const input = { schemaVersion: 1, runId, taskHash: goalContract.taskHash, intentDigest: null, acceptanceDigest: goalContract.acceptanceDigest,
+      designDigest: null, reviewRef: "fixture:current-review", artifactSnapshots: [{ ref: "report.md", sha256: sha256(material), producerTaskId: "a" }],
+      observations: [{ criterionId: "report-correctness", taskHash: goalContract.taskHash, acceptanceDigest: goalContract.acceptanceDigest,
+        artifactRefs: ["report.md"], verdict: "fail", evidenceKind: "independent_review", producer: "prior-producer", reviewer: "independent-reviewer", evidenceRef: "fixture:current-review" }],
+      revisionRequests: [{ taskId: "c", criterionId: "report-correctness", returnToStage, finding: "The statement disagrees with the supplied facts",
+        requiredChange, evidenceRefs: ["fixture:current-review"] }] };
+    patchInput?.(input);
+    const outcomeReview = omitReview ? null : await evaluateProductOutcomeReview({ input, artifact, projectRoot: fixture.root });
+    const kernel = await openDurableRunRepository(path.join(fixture.root, `${mode}.sqlite`));
+    try {
+      try { kernel.resumeRun({ runId, graphDigest: dag.graphDigest, taskFingerprint: sha256(task) }); }
+      catch {
+        kernel.createRun({ runId, graphDigest: dag.graphDigest, taskFingerprint: sha256(task) });
+        const nodeId = stageLaneNodeId("Execution", "a");
+        const claim = kernel.claimNode({ runId, nodeId, ownerId: host.ownerId, nodeDefinitionHash: "fixture-a", inputHash: "fixture-a", dependencyOutputHash: "fixture-a", leaseMs: 30_000 });
+        kernel.completeNode({ ...claim, runId, nodeId, ownerId: host.ownerId, output: { outputSha256: sha256(material), domainOutput: { status: "partial", handoff: { requiresDecision: false, nextOwner: fixture.selected.ownerAgent } } } });
+      }
+      return await advanceGovernedGoal({ runId, goalContract, stageDagPacket: dag, workerTaskPackets: packets, projectRoot: fixture.root,
+        artifactRoot: path.join(fixture.root, mode), runtime: "codex", host, kernel, taskFingerprint: sha256(task), env, outcomeReview });
+    } finally { kernel.close(); }
+  };
+  const result = await run("execute");
+  assert.deepEqual(captures.map(({ packet }) => packet.taskPacketId), ["b", "c"], JSON.stringify(result));
+  const actual = captures.find(({ packet }) => packet.taskPacketId === "c");
+  assert.ok(actual.prompt.includes(requiredChange), "The actual CLI prompt must contain the concrete verified revision");
+  assert.ok(actual.prompt.includes(sha256(material)), "The current artifact digest must travel with the requested change");
+  assert.ok(actual.prompt.includes(metricContract), "The existing criterion description must retain the complete measurement and quality/speed requirements");
+  assert.ok(actual.packet.verifySteps.some((check) => check.verify === metricContract));
+  assert.deepEqual(actual.packet, authorized.find((packet) => packet.taskPacketId === "c"), "Authorize and invoke must see the same packet");
+  assert.deepEqual(actual.packet.scopeFiles, packets[2].scopeFiles);
+  assert.deepEqual(actual.packet.ownerContract, packets[2].ownerContract);
+  assert.ok(result.calls.find((call) => call.taskPacketId === "c").domainOutput.draft.includes(requiredChange), "An actual synthetic CLI consumed the revised direction");
+  await run("execute");
+  assert.equal(captures.length, 2, "The same review cannot replay completed workers");
+  await t.test("invalid observation binding cannot create executable revisions", async () => {
+    const beforeInvalid = captures.length;
+    await assert.rejects(run("invalid-observation", "Execution", { patchInput: (input) => { input.observations[0].taskHash = "wrong-task"; } }), /invalid.*observation|binding/i);
+    assert.equal(captures.length, beforeInvalid);
+  });
+  await t.test("pending stage revision survives omission and unrelated review, while a current replacement is single-use", async () => {
+    const beforeThinking = captures.length;
+    const thinking = await run("thinking", "Thinking");
+    assert.deepEqual(captures.slice(beforeThinking).map(({ packet }) => packet.taskPacketId), ["b"]);
+    assert.equal(thinking.nextAction.stage, "Thinking");
+    assert.ok(JSON.stringify(thinking.nextAction).includes(requiredChange), "The real host receives the full unfinished stage action, not an empty blocked reason");
+    const beforeOmitted = captures.length;
+    const omitted = await run("thinking", "Thinking", { omitReview: true });
+    assert.equal(omitted.nextAction?.stage, "Thinking");
+    assert.equal(captures.length, beforeOmitted, "Omission cannot release C or replay B");
+    const b = thinking.calls.find((call) => call.taskPacketId === "b");
+    const bOnly = await run("thinking", "Thinking", { patchInput: (input) => {
+      const ref = path.relative(fixture.root, b.machineResultArtifact.path).split(path.sep).join("/");
+      input.reviewRef = "fixture:b-only-review";
+      input.artifactSnapshots = [{ ref, sha256: b.outputSha256, producerTaskId: "b" }];
+      input.observations[0] = { ...input.observations[0], criterionId: "independent-audit", artifactRefs: [ref], verdict: "pass", evidenceRef: input.reviewRef };
+      input.revisionRequests = [];
+    } });
+    assert.equal(bOnly.nextAction.stage, "Thinking", "A B-only review cannot clear the pending C criterion");
+    assert.equal(captures.length, beforeOmitted);
+    const replaced = await run("thinking", "Execution");
+    assert.deepEqual(captures.slice(beforeOmitted).map(({ packet }) => packet.taskPacketId), ["c"]);
+    assert.ok(replaced.calls[0].domainOutput.draft.includes(requiredChange));
+    const beforeStale = captures.length;
+    await assert.rejects(run("thinking", "Thinking"), /superseded.*review/i);
+    assert.equal(captures.length, beforeStale, "A superseded review cannot restore the old wait or resend work");
+  });
+  const inconclusive = await run("inconclusive", "Fetch", { patchInput: (input) => { input.observations[0].verdict = "inconclusive"; } });
+  assert.equal(inconclusive.nextAction.stage, "Fetch");
+  assert.equal(inconclusive.outcome.results.find((result) => result.criterionId === "report-correctness").status, "inconclusive");
+  writeFileSync(path.join(fixture.root, "report.md"), "Changed after the review snapshot");
+  await assert.rejects(run("wrong-current-sha"), /changed since review/);
+});
+
+test("machine goal keeps a decision local while independent work continues without replay on resume", async (t) => {
+  const fixture = await dependencyMethodFixture(t, { structured: true });
+  const program = `let input="";process.stdin.on("data",chunk=>input+=chunk);process.stdin.on("end",()=>{
+    const line=input.split("\\n").find(line=>line.startsWith("Task packet: "));
+    const task=JSON.parse(line.slice("Task packet: ".length));
+    const body={draft:task.taskPacketId,status:task.taskPacketId==="a"&&task.description==="technical-block"?"blocked":"partial",handoff:{nextOwner:task.ownerAgent,
+      requiresDecision:task.taskPacketId==="a"&&task.description==="needs-decision"}};
+    const records=[{type:"thread.started",thread_id:"synthetic-"+task.taskPacketId},
+      {type:"item.completed",item:{id:"final",type:"agent_message",text:JSON.stringify(body)}},{type:"turn.completed",usage:{}}];
+    process.stdout.write(records.map(record=>JSON.stringify(record)).join("\\n")+"\\n");});`;
+  if (process.platform === "win32") {
+    writeFileSync(path.join(fixture.root, "fake-codex.mjs"), program);
+    writeFileSync(path.join(fixture.root, "codex.cmd"), '@echo off\r\n"%~dp0\\node.exe" "%~dp0\\fake-codex.mjs" %*\r\n');
+  } else {
+    const cli = path.join(fixture.root, "codex");
+    writeFileSync(cli, `#!/usr/bin/env node\n${program}`); chmodSync(cli, 0o700);
+  }
+  const env = { ...process.env, ...fixture.environment, PATH: `${fixture.root}${path.delimiter}${process.env.PATH}` };
+  const dag = dagFor(["a", "b", "c"], { capacity: 1,
+    laneOverrides: { c: { dependsOn: [stageLaneNodeId("Execution", "a")] } } });
+  const task = "Inspect the supplied facts and independently verify the parent deliverable.";
+  const goalContract = buildTaskGoalContract({ task });
+  const invoked = [];
+  const host = { ownerId: "synthetic-cli-host", adapterId: "synthetic-cli", maxResultBytes: 256 * 1024,
+    authorize: async () => ({ status: "ready" }), adapterRegistry: { invoke: async (_id, request) => {
+      invoked.push(request.packet.taskPacketId);
+      // An actual synthetic CLI process exercises observed-result transport, not a model.
+      return { result: await invokeReadOnlyRuntimeWorker({ ...request, env }) };
+    } } };
+  const run = async (mode, extra = {}) => {
+    const kernel = await openDurableRunRepository(path.join(fixture.root, `${mode}.sqlite`));
+    try {
+      return await advanceGovernedGoal({ runId: `local-wait-${mode}`, goalContract, stageDagPacket: dag,
+        workerTaskPackets: ["a", "b", "c"].map((id) => ({ ...fixture.selected, taskPacketId: id, description: mode,
+          methodInputs: { facts: mode }, dependsOn: id === "c" ? ["a"] : [] })),
+        projectRoot: process.cwd(), artifactRoot: path.join(fixture.root, mode), runtime: "codex",
+        host: { ...host, ...extra.host }, kernel, taskFingerprint: sha256(task), env,
+        humanMilestones: extra.humanMilestones ?? [], observations: extra.observations ?? [] });
+    } finally { kernel.close(); }
+  };
+  const waiting = await run("needs-decision");
+  assert.equal(waiting.status, "waiting", JSON.stringify(waiting));
+  assert.deepEqual(invoked, ["a", "b"], "A waits for a decision; independent B runs and dependent C does not");
+  assert.equal(waiting.status, "waiting");
+  assert.equal(waiting.reason, "professional_result_requires_input_or_decision");
+  assert.equal(waiting.outcome.status, "incomplete");
+  assert.deepEqual(waiting.calls.map((call) => call.taskPacketId), ["a", "b"]);
+  const resumed = await run("needs-decision");
+  assert.deepEqual(invoked, ["a", "b"], "The reopened kernel does not replay A or B, or release C");
+  assert.equal(resumed.status, "waiting");
+  assert.deepEqual(resumed.calls, []);
+  const milestone = { nodeId: stageLaneNodeId("Execution", "a"), milestoneId: "prd_mvp_scope", trigger: "first",
+    evidence: [{ evidenceRef: "evidence:prd", digest: `sha256:${"1".repeat(64)}` }] };
+  let hostQuestions = 0;
+  const humanHost = (selectedOptionId) => {
+    let request;
+    let response;
+    let returnedAt;
+    const repository = createNativeHostAnswerRepository({ profileRoot: fixture.root });
+    return createNativeHumanMilestoneConsumer({ repository,
+      now: () => new Date(Date.parse(returnedAt) + 1).toISOString(),
+      prepareDecision: async ({ decision }) => {
+        assert.equal(invoked.at(-1), "b", "Independent B must run before the host waits for a human answer");
+        hostQuestions += 1;
+        const issuedAt = new Date().toISOString();
+        returnedAt = new Date(Date.parse(issuedAt) + 1).toISOString();
+        const options = decision.options.map(({ optionId }) => ({ optionId,
+          label: ({ "option:accept": "确认本版", "option:revise": "提出修改", "option:return": "退回方案" })[optionId], description: optionId }));
+        const question = { id: "milestone", header: "当前版本", question: "请判断本版材料", options };
+        request = { id: hostQuestions, method: "item/tool/requestUserInput", params: {
+          threadId: "synthetic-human-thread", turnId: `turn-${hostQuestions}`, itemId: `item-${hostQuestions}`,
+          questions: [{ ...question, options: options.map(({ label, description }) => ({ label, description })) }] } };
+        response = { id: hostQuestions, result: { answers: { milestone: { answers: [options.find((item) => item.optionId === selectedOptionId).label] } } } };
+        return { issuedChallenge: issueNativeDecisionChallenge(decision, { runtime: "codex", surface: "request_user_input",
+          challengeRef: `challenge:milestone-${hostQuestions}`, requestRef: `request:milestone-${hostQuestions}`,
+          issuedAt, expiresAt: new Date(Date.parse(issuedAt) + 60_000).toISOString() }),
+        expectedBinding: { threadId: request.params.threadId, turnId: request.params.turnId, itemId: request.params.itemId },
+        presentation: { question } };
+      },
+      hostConnection: { hostConnectionRef: "host:synthetic-human-milestone",
+        takeRequestUserInput: async () => ({ request, timeSourceClaimRef: "time-source:request" }),
+        takeResponse: async () => ({ response, at: returnedAt, timeSourceClaimRef: "time-source:return" }),
+        ackResponse: async () => {} },
+    });
+  };
+  const consumer = humanHost("option:accept");
+  const paused = await run("needs-decision", { humanMilestones: [milestone], host: { humanDecisionConsumer: consumer,
+    authorize: async () => ({ status: "waiting", reason: "explicit_user_pause" }) } });
+  assert.equal(paused.reason, "explicit_user_pause");
+  assert.equal(hostQuestions, 0);
+  const accepted = await run("needs-decision", { humanMilestones: [milestone], host: { humanDecisionConsumer: consumer } });
+  assert.equal(accepted.humanMilestoneReviews[0].accepted, true, JSON.stringify(accepted));
+  assert.deepEqual(invoked, ["a", "b", "c"], "A/B outputs are reused; the current consumed human reply releases only C");
+  assert.equal(hostQuestions, 1);
+  const acceptedAgain = await run("needs-decision", { humanMilestones: [milestone], host: { humanDecisionConsumer: consumer } });
+  assert.deepEqual(acceptedAgain.calls, []);
+  assert.equal(hostQuestions, 1, "Replay revalidates the stored consumed reply without another human prompt");
+  assert.equal(bindVerifiedHostPlanChallengeDecision({ verifiedDecision: { approved: true, state: "consumed" }, preview: {} }).accepted, false);
+  const changed = await run("needs-decision", { humanMilestones: [{ ...milestone,
+    evidence: [{ evidenceRef: "evidence:prd", digest: `sha256:${"2".repeat(64)}` }] }] });
+  assert.equal(changed.humanMilestoneReviews[0].accepted, false, "The old accepted reply cannot approve changed PRD evidence");
+  assert.equal(changed.humanMilestoneReviews[0].reason, "human_milestone_changed_evidence_requires_revision");
+  const returned = await run("human-return", { humanMilestones: [milestone], host: { humanDecisionConsumer: humanHost("option:return") } });
+  assert.deepEqual(returned.calls.map((call) => call.taskPacketId), ["a", "b"]);
+  assert.equal(returned.humanMilestoneReviews[0].reason, "human_milestone_returned");
+  const revised = await run("human-revise", { humanMilestones: [milestone], host: { humanDecisionConsumer: humanHost("option:revise") } });
+  assert.deepEqual(revised.calls.map((call) => call.taskPacketId), ["a", "b"]);
+  assert.equal(revised.humanMilestoneReviews[0].reason, "human_milestone_revision_required");
+  const technical = await run("technical-block", { humanMilestones: [milestone], host: { humanDecisionConsumer: humanHost("option:accept") } });
+  assert.equal(technical.humanMilestoneReviews[0].accepted, true);
+  assert.deepEqual(technical.calls.map((call) => call.taskPacketId), ["a", "b"], "A human judgement does not resolve technical blocked inputs");
+  const repairStart = invoked.length;
+  const partial = await run("partial-without-decision");
+  assert.deepEqual(invoked.slice(repairStart), ["a", "b", "c"], "An ordinary fix adds no milestone; partial alone does not block dependent work");
+  assert.equal(partial.status, "waiting", "Executed work does not establish parent acceptance");
+  assert.equal(partial.reason, "parent_goal_outcome_evidence_or_authorized_plan_required");
+  assert.equal(partial.publicReady, false);
+  await t.test("persisted human declaration survives omitted request arguments", async () => {
+    const pending = await run("declaration-pending", { humanMilestones: [milestone] });
+    assert.deepEqual(pending.calls.map((call) => call.taskPacketId), ["a", "b"]);
+    const omitted = await run("declaration-pending");
+    assert.equal(omitted.reason, "human_milestone_review_required");
+    assert.deepEqual(omitted.calls, [], "Omitting the declaration cannot execute its dependent C");
+    assert.equal(omitted.humanMilestoneReviews[0].accepted, false);
+    const reportedPass = await run("declaration-pending", { observations: goalContract.acceptanceCriteria.map((criterion) => ({
+      criterionId: criterion.id, taskHash: goalContract.taskHash, acceptanceDigest: goalContract.acceptanceDigest,
+      verdict: "pass", evidenceKind: "human_review", reviewer: "synthetic-user", evidenceRef: "fixture:reported-goal-pass" })) });
+    assert.equal(reportedPass.status, "waiting", "Reported criterion pass cannot complete a run with its persisted human decision unanswered");
+    assert.equal(reportedPass.userOutcomeAccepted, false);
+  });
+  await t.test("E1 to E2 to E1 cannot revive an invalidated consumed decision", async () => {
+    const admissions = [];
+    const authorize = async ({ node }) => {
+      if (node?.nodeId === stageLaneNodeId("Execution", "c")) {
+        admissions.push(node.nodeId);
+        return { status: "waiting", reason: "stop_before_worker" };
+      }
+      return { status: "ready" };
+    };
+    const liveConsumer = humanHost("option:accept");
+    const acceptedE1 = await run("evidence-lifecycle", { humanMilestones: [milestone],
+      host: { authorize, humanDecisionConsumer: liveConsumer } });
+    assert.equal(acceptedE1.humanMilestoneReviews[0].accepted, true);
+    const changedE2 = await run("evidence-lifecycle", { humanMilestones: [{ ...milestone,
+      evidence: [{ evidenceRef: "evidence:prd", digest: `sha256:${"2".repeat(64)}` }] }], host: { authorize } });
+    assert.equal(changedE2.humanMilestoneReviews[0].accepted, false);
+    const beforeRestore = admissions.length;
+    const questionsBeforeRestore = hostQuestions;
+    const restoredE1 = await run("evidence-lifecycle", { humanMilestones: [milestone],
+      host: { authorize, humanDecisionConsumer: liveConsumer } });
+    assert.equal(restoredE1.humanMilestoneReviews[0].accepted, false);
+    assert.equal(restoredE1.humanMilestoneReviews[0].decisionState, "invalidated");
+    assert.equal(admissions.length, beforeRestore, "Invalidated E1 cannot even admit C for execution");
+    assert.equal(hostQuestions, questionsBeforeRestore, "Invalidated/unknown history does not cause an automatic new human request");
+  });
+});
 
 test("verified dependency methods preserve exact source and use one restricted Claude role or explicit Codex contract mode", async (t) => {
   const fixture = await dependencyMethodFixture(t);

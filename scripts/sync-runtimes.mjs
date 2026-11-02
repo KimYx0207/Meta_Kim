@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import {
   buildMetaKimHooksTemplate,
   hookCommandNode,
@@ -54,6 +55,7 @@ import {
 } from "./project-capability-ownership.mjs";
 import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
 import { metaKimMcpRuntimeEnvironment } from "./global-runtime-mcp.mjs";
+import { main as refreshRuntimeEvidencePinsCli } from "./refresh-runtime-evidence-pins.mjs";
 
 const cliArgs = process.argv.slice(2);
 const checkOnly = process.argv.includes("--check");
@@ -62,6 +64,7 @@ const reverseMode = process.argv.includes("--reverse");
 const dryRun = process.argv.includes("--dry-run");
 const forceWrite = process.argv.includes("--force");
 const applyReverseWriteback = process.argv.includes("--apply");
+const refreshSourcePins = cliArgs.includes("--refresh-source-pins");
 const reverseApprovalArgIndex = cliArgs.indexOf("--approval");
 const reverseApprovalPath = reverseApprovalArgIndex >= 0
   ? cliArgs[reverseApprovalArgIndex + 1]
@@ -3453,6 +3456,40 @@ async function syncClaudeProjection(
   }
 }
 
+/** Bind maintenance to the official refresher's package, leaving raw sync overrides intact. */
+async function requireSourceMaintenancePackageRoot() {
+  const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const [packageRoot, configuredRoot] = await Promise.all([
+    fs.realpath(moduleRoot),
+    fs.realpath(repoRoot),
+  ]);
+  const pathKey = (value) => {
+    const resolved = path.resolve(value);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  if (pathKey(packageRoot) !== pathKey(configuredRoot)) {
+    throw new Error("Source pin maintenance requires the configured source root to match the executing package root; a different checkout cannot authorize this package's evidence writes.");
+  }
+  return packageRoot;
+}
+
+async function requireSourceMaintenanceCheckout(packageRoot) {
+  const marker = await fs.lstat(path.join(packageRoot, ".git")).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!marker || marker.isSymbolicLink() || !(marker.isFile() || marker.isDirectory())) {
+    throw new Error("Source pin maintenance requires a Meta_Kim source checkout; installed packages must not rewrite their evidence ledger.");
+  }
+}
+
+function maintainSourceEvidencePins(check = false) {
+  const code = refreshRuntimeEvidencePinsCli(check ? ["--check"] : []);
+  if (code !== 0) {
+    throw new Error(`Source runtime evidence ${check ? "check" : "preparation"} failed; run npm run meta:sync from the source checkout.`);
+  }
+}
+
 async function main() {
   // ── Help ────────────────────────────────────────────────────────
   if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
@@ -3464,6 +3501,7 @@ Options:
   --global-assets <types>         Profile-declared asset families to write in global scope
   --lang <code>                   Messages: en | zh-CN | ja-JP | ko-KR (aliases: zh, ja, ko)
   --check                        Show what would be synced without writing
+  --refresh-source-pins          Maintainer checkout: prepare source evidence before projection and check it afterward
   --reverse                      Reverse sync: runtime -> canonical (collect evolution signals)
   --dry-run                      Preview reverse sync changes without writing
   --approval <file>              Exact Warden approval v0.2 for reverse-sync candidates
@@ -3492,6 +3530,9 @@ Examples:
   }
 
   const scope = parseScopeArg(cliArgs);
+  const sourceMaintenanceRoot = refreshSourcePins
+    ? await requireSourceMaintenancePackageRoot()
+    : null;
   const targetContext = await resolveTargetContext(cliArgs);
   runtimeProfilesForSync = targetContext.profiles;
   syncScopeForWritePlan = scope;
@@ -3514,14 +3555,25 @@ Examples:
   if (requestedGlobalAssetTypes !== null && syncScopeForWritePlan !== "global") {
     throw new Error("--global-assets can only be used with --scope global");
   }
+  if (refreshSourcePins && checkOnly && reverseMode && applyReverseWriteback) {
+    throw new Error("--check cannot apply reverse source maintenance; collect or preview candidates without --apply.");
+  }
+  if (refreshSourcePins && !checkOnly && (!reverseMode || (applyReverseWriteback && !dryRun))) {
+    await requireSourceMaintenanceCheckout(sourceMaintenanceRoot);
+  }
+  if (refreshSourcePins && !reverseMode) {
+    // Prepare once before any projection or downstream package check. A later
+    // source edit must fail the final read-only check, never be re-signed here.
+    maintainSourceEvidencePins(checkOnly);
+  }
   globalProjectionRecordDescriptors = syncScopeForWritePlan === "global"
     ? buildGlobalProjectionRecordDescriptors(selectedTargets)
     : [];
   const dirs = resolveProjectionDirs(scope);
-  const agents = await loadCanonicalAgents();
+  let agents = await loadCanonicalAgents();
   canonicalAgentsForGlobalOnly = agents;
-  const teamDirectory = buildWorkspaceDirectory(agents);
-  const canonicalSkills = await loadCanonicalSkills();
+  let teamDirectory = buildWorkspaceDirectory(agents);
+  let canonicalSkills = await loadCanonicalSkills();
   const changedFiles = [];
 
   // Safety assertion: all writes must stay within allowedRoots
@@ -3570,6 +3622,13 @@ Examples:
     // After reverse sync, optionally run forward sync to propagate updates
     // only after an exact-bound canonical batch was actually applied.
     if (!dryRun && reverseResult.applied) {
+      if (refreshSourcePins && !checkOnly) maintainSourceEvidencePins();
+      // Approved writeback changes the projection inputs; the snapshot loaded
+      // for candidate discovery must not overwrite that newly approved state.
+      agents = await loadCanonicalAgents();
+      canonicalAgentsForGlobalOnly = agents;
+      teamDirectory = buildWorkspaceDirectory(agents);
+      canonicalSkills = await loadCanonicalSkills();
       console.log("");
       console.log(t.reverseModePropagating);
       // Continue to forward sync below
@@ -4789,6 +4848,7 @@ Examples:
       throw new Error(`Install manifest update failed: ${result.error ?? "unknown error"}`);
     }
   }
+  if (refreshSourcePins && !checkOnly) maintainSourceEvidencePins(true);
 }
 
 if (

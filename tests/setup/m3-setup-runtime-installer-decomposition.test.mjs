@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -10,8 +10,10 @@ import {
 } from "../../src/application/installer/ensure-stable-global-projection-package.mjs";
 import {
   createProjectionPackageBoundary,
+  assertSourceRuntimeEvidencePins,
   STABLE_PROJECT_DEPLOYMENTS_ENV,
 } from "../../src/infrastructure/installer/projection-package-boundary.mjs";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const CONTRACT_PATH = path.join(
@@ -321,4 +323,28 @@ test("source boundaries keep setup as facade and retain one package-store author
   assert.doesNotMatch(setup, /function stableGlobalSetupArgs\(/u);
   assert.doesNotMatch(setup, /function mergeDelegatedGlobalSetupResult\(/u);
   assert.doesNotMatch(setup, /async function stableProjectionPackageIntegrityOk\(/u);
+});
+
+test("setup product boundary checks the target package and rejects stale pins before materialization", async (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  const prepared = runtime.run(["scripts/refresh-runtime-evidence-pins.mjs"]);
+  assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+  // The imported boundary lives in the source checkout; its check must execute
+  // the copied target package's CLI rather than validate against this root.
+  assertSourceRuntimeEvidencePins({ packageRoot: runtime.repoRoot, homeRoot: runtime.home, env: runtime.env });
+  const ledger = path.join(runtime.repoRoot, "config/runtime-capability-evidence.json");
+  const before = readFileSync(ledger, "utf8");
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nStale target-package fixture.\n");
+  const boundary = createProjectionPackageBoundary({
+    packageRoot: runtime.repoRoot,
+    callerCwd: runtime.repoRoot,
+    homeRoot: runtime.home,
+    env: runtime.env,
+    managedProjectManifestRelPath: ".meta-kim/state/default/project-bootstrap.json",
+    normalizeTargets: (targets) => [...new Set(targets ?? [])],
+  });
+  await assert.rejects(boundary.materializeStablePackage(), /Source runtime evidence is stale or invalid/u);
+  assert.equal(readFileSync(ledger, "utf8"), before);
+  assert.equal(existsSync(path.join(runtime.home, ".meta-kim/runtime/projection-packages")), false);
+  assert.equal(existsSync(path.join(runtime.home, ".meta-kim/install-manifest.json")), false);
 });

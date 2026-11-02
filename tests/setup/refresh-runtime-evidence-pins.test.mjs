@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   digestRepositorySource,
@@ -16,6 +16,8 @@ import {
   refreshRuntimeEvidencePins,
   renderRuntimeEvidenceLedger,
 } from "../../scripts/refresh-runtime-evidence-pins.mjs";
+import { resolveNpmCliJsPath } from "../../scripts/runtime-cli-invocation.mjs";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -170,4 +172,221 @@ test("non-repo_projection observations never trigger a recompute", () => {
   const { ledger: next, changes } = refreshRuntimeEvidencePins(ledger);
   assert.deepEqual(changes, []);
   assert.deepEqual(next, ledger);
+});
+
+test("source maintenance repairs stale pins before projection and is idempotent", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  const control = runtime.run([REFRESH_PINS_SCRIPT]);
+  assert.equal(control.status, 0, control.stderr || control.stdout);
+  const ledgerFile = path.join(runtime.repoRoot, RUNTIME_CAPABILITY_EVIDENCE_PATH);
+  const before = JSON.parse(readFileSync(ledgerFile, "utf8"));
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nSource-only lifecycle fixture change.\n");
+  const stale = runtime.run([REFRESH_PINS_SCRIPT, "--check"]);
+  assert.equal(stale.status, 1);
+  const blocked = runtime.run(["scripts/select-execution-route.mjs", "--task", "Implement backend API pagination.", "--runtime", "codex", "--os", "windows", "--json"]);
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /AGENTS\.md SHA-256 mismatch/u);
+
+  // Exercise the maintained npm entry, not a test-side repair of the new drift.
+  const args = [resolveNpmCliJsPath(), "run", "meta:sync", "--", "--targets", "codex"];
+  const prepared = runtime.run(args);
+  assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+  const current = runtime.run([REFRESH_PINS_SCRIPT, "--check"]);
+  assert.equal(current.status, 0, current.stderr || current.stdout);
+  const afterText = readFileSync(ledgerFile, "utf8");
+  const expected = structuredClone(before);
+  for (const observation of expected.observations) {
+    if (observation.observationClass !== "repo_projection") continue;
+    for (const artifact of observation.sourceArtifacts) {
+      if (artifact.path === "AGENTS.md") artifact.sha256 = digestRepositorySource(path.join(runtime.repoRoot, "AGENTS.md"));
+    }
+  }
+  assert.deepEqual(JSON.parse(afterText), expected, "maintenance changes source pins only, never dates or host/live facts");
+  const consumer = runtime.run(["scripts/select-execution-route.mjs", "--task", "Implement backend API pagination.", "--runtime", "codex", "--os", "windows", "--json"]);
+  assert.equal(consumer.status, 0, consumer.stderr || consumer.stdout);
+  const repeated = runtime.run(args);
+  assert.equal(repeated.status, 0, repeated.stderr || repeated.stdout);
+  assert.equal(readFileSync(ledgerFile, "utf8"), afterText);
+});
+
+test("source maintenance help, check, reverse preview and installed roots never repair pins", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT]).status, 0);
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nRead-only lifecycle fixture.\n");
+  const ledger = path.join(runtime.repoRoot, RUNTIME_CAPABILITY_EVIDENCE_PATH);
+  const before = readFileSync(ledger, "utf8");
+  const base = ["scripts/sync-runtimes.mjs", "--refresh-source-pins", "--targets", "codex"];
+  for (const [args, status] of [[ ["--help"], 0 ], [ ["--check"], 1 ], [ ["--reverse"], 0 ], [ ["--reverse", "--dry-run"], 0 ]]) {
+    const result = runtime.run([...base, ...args]);
+    assert.equal(result.status, status, result.stderr || result.stdout);
+    assert.equal(readFileSync(ledger, "utf8"), before, args.join(" "));
+  }
+  rmSync(path.join(runtime.repoRoot, ".git"), { recursive: true, force: true });
+  const installed = runtime.run(base);
+  assert.notEqual(installed.status, 0);
+  assert.match(installed.stderr, /requires a Meta_Kim source checkout/u);
+  assert.equal(readFileSync(ledger, "utf8"), before);
+});
+
+test("source maintenance refuses a different configured source root before any writes", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT]).status, 0);
+  const otherRoot = path.join(runtime.root, "other-repo");
+  cpSync(runtime.repoRoot, otherRoot, { recursive: true });
+  rmSync(path.join(runtime.repoRoot, ".git"), { recursive: true });
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nExecuting installed-like package drift.\n");
+  appendFileSync(path.join(otherRoot, "AGENTS.md"), "\nDifferent source checkout drift.\n");
+  appendFileSync(path.join(otherRoot, "canonical/agents/meta-warden.md"), "\nOther source projection fixture.\n");
+  const snapshot = (root) => ({
+    ledger: readFileSync(path.join(root, RUNTIME_CAPABILITY_EVIDENCE_PATH), "utf8"),
+    manifest: readFileSync(path.join(root, ".meta-kim/install-manifest.json"), "utf8"),
+    projection: readFileSync(path.join(root, ".codex/agents/meta-warden.toml"), "utf8"),
+  });
+  const executingBefore = snapshot(runtime.repoRoot);
+  const otherBefore = snapshot(otherRoot);
+  const args = ["scripts/sync-runtimes.mjs", "--refresh-source-pins", "--targets", "codex"];
+  const env = { ...runtime.env, META_KIM_REPO_ROOT: otherRoot };
+  for (const extraArgs of [[], ["--check"], ["--reverse"], ["--reverse", "--dry-run"]]) {
+    const result = runtime.run([...args, ...extraArgs], { env });
+    const executingAfter = snapshot(runtime.repoRoot);
+    const otherAfter = snapshot(otherRoot);
+    t.diagnostic(JSON.stringify({
+      args: extraArgs,
+      status: result.status,
+      executingLedgerUnchanged: executingAfter.ledger === executingBefore.ledger,
+      otherLedgerUnchanged: otherAfter.ledger === otherBefore.ledger,
+      executingManifestUnchanged: executingAfter.manifest === executingBefore.manifest,
+      otherManifestUnchanged: otherAfter.manifest === otherBefore.manifest,
+    }));
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stderr, /Source pin maintenance requires the configured source root to match the executing package root/u);
+    assert.deepEqual(executingAfter, executingBefore);
+    assert.deepEqual(otherAfter, otherBefore);
+  }
+
+  // The raw installer override remains independent of source maintenance.
+  const raw = runtime.run(["scripts/sync-runtimes.mjs", "--targets", "codex"], { env });
+  assert.equal(raw.status, 0, raw.stderr || raw.stdout);
+  assert.deepEqual(snapshot(runtime.repoRoot), executingBefore);
+  const otherAfterRaw = snapshot(otherRoot);
+  assert.equal(otherAfterRaw.ledger, otherBefore.ledger);
+  assert.match(otherAfterRaw.projection, /Other source projection fixture/u);
+  assert.notEqual(otherAfterRaw.manifest, otherBefore.manifest);
+});
+
+test("source maintenance accepts an equivalent explicit source root", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT]).status, 0);
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nEquivalent root lifecycle fixture.\n");
+  const equivalentRoot = `${runtime.repoRoot}${path.sep}scripts${path.sep}..${path.sep}`;
+  const env = {
+    ...runtime.env,
+    META_KIM_REPO_ROOT: process.platform === "win32" ? equivalentRoot.toUpperCase() : equivalentRoot,
+  };
+  const args = ["scripts/sync-runtimes.mjs", "--refresh-source-pins", "--targets", "codex"];
+  const prepared = runtime.run(args, { env });
+  assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT, "--check"]).status, 0);
+  const ledger = path.join(runtime.repoRoot, RUNTIME_CAPABILITY_EVIDENCE_PATH);
+  const after = readFileSync(ledger, "utf8");
+  const repeated = runtime.run(args, { env });
+  assert.equal(repeated.status, 0, repeated.stderr || repeated.stdout);
+  assert.equal(readFileSync(ledger, "utf8"), after);
+});
+
+test("source preparation fails before projection and a failed manifest never reverts correct pins", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT]).status, 0);
+  const ledger = path.join(runtime.repoRoot, RUNTIME_CAPABILITY_EVIDENCE_PATH);
+  const original = readFileSync(ledger, "utf8");
+  const projected = path.join(runtime.repoRoot, ".codex/agents/meta-warden.toml");
+  const projectedBefore = readFileSync(projected, "utf8");
+  appendFileSync(path.join(runtime.repoRoot, "canonical/agents/meta-warden.md"), "\nSource preparation fixture note.\n");
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nSource preparation fixture change.\n");
+  writeFileSync(ledger, "{ malformed fixture\n");
+  const args = ["scripts/sync-runtimes.mjs", "--refresh-source-pins", "--targets", "codex"];
+  const invalid = runtime.run(args);
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /Nothing was written/u);
+  assert.equal(readFileSync(ledger, "utf8"), "{ malformed fixture\n");
+  assert.equal(readFileSync(projected, "utf8"), projectedBefore);
+
+  writeFileSync(ledger, original);
+  const partial = runtime.run(args, { env: { ...runtime.env, META_KIM_TEST_FAIL_SYNC_RUNTIMES_MANIFEST: "1" } });
+  assert.notEqual(partial.status, 0);
+  assert.match(partial.stderr, /manifest persistence was intentionally failed/u);
+  const prepared = readFileSync(ledger, "utf8");
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT, "--check"]).status, 0);
+  const recovered = runtime.run(args);
+  assert.equal(recovered.status, 0, recovered.stderr || recovered.stdout);
+  assert.equal(readFileSync(ledger, "utf8"), prepared);
+});
+
+test("source maintenance detects a later source edit without signing it again", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT]).status, 0);
+  const agents = path.join(runtime.repoRoot, "AGENTS.md");
+  appendFileSync(agents, "\nPrepared source fixture.\n");
+  const preparedHash = digestRepositorySource(agents);
+  const preload = path.join(runtime.root, "concurrent-source-edit.mjs");
+  // Fault injection belongs only to this disposable launcher. No production
+  // Hook or retry mode is introduced to manufacture a passing source state.
+  writeFileSync(preload, `import { appendFileSync } from "node:fs";\nconst original = process.stdout.write.bind(process.stdout);\nlet edited = false;\nprocess.stdout.write = function (chunk, ...args) {\n  const result = original(chunk, ...args);\n  if (!edited && /^refreshed \\d+ repo_projection/u.test(String(chunk))) {\n    edited = true;\n    appendFileSync(${JSON.stringify(agents)}, "\\nConcurrent fixture edit after preparation.\\n");\n  }\n  return result;\n};\n`);
+  const result = runtime.run(["--import", pathToFileURL(preload).href, "scripts/sync-runtimes.mjs", "--refresh-source-pins", "--targets", "codex"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Source runtime evidence check failed/u);
+  const ledger = JSON.parse(readFileSync(path.join(runtime.repoRoot, RUNTIME_CAPABILITY_EVIDENCE_PATH), "utf8"));
+  const artifact = ledger.observations.find((entry) => entry.id === "codex.repo.projection.2026-07-28").sourceArtifacts.find((entry) => entry.path === "AGENTS.md");
+  assert.equal(artifact.sha256, preparedHash);
+  assert.notEqual(digestRepositorySource(agents), preparedHash);
+});
+
+test("reverse source maintenance prepares pins only after exact approved canonical apply", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT]).status, 0);
+  const ledger = path.join(runtime.repoRoot, RUNTIME_CAPABILITY_EVIDENCE_PATH);
+  const before = readFileSync(ledger, "utf8");
+  const canonical = path.join(runtime.repoRoot, "canonical/agents/meta-warden.md");
+  const canonicalBefore = readFileSync(canonical, "utf8");
+  const projected = path.join(runtime.repoRoot, ".claude/agents/meta-warden.md");
+  appendFileSync(projected, "\nReverse lifecycle fixture note.\n");
+  appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nPending reverse preparation fixture.\n");
+  const candidatePath = path.join(runtime.root, "reverse-candidate.json");
+  const args = ["scripts/sync-runtimes.mjs", "--refresh-source-pins", "--targets", "claude", "--reverse", "--candidate-output", candidatePath];
+  const collected = runtime.run(args);
+  assert.equal(collected.status, 0, collected.stderr || collected.stdout);
+  assert.equal(readFileSync(canonical, "utf8"), canonicalBefore);
+  assert.equal(readFileSync(ledger, "utf8"), before);
+  const candidate = JSON.parse(readFileSync(candidatePath, "utf8"));
+  assert.equal(candidate.mutationCandidates.length, 1);
+  // This exact-bound approval is disposable development input, not a claim
+  // that a production Warden approved or a host executed any mutation.
+  const approval = {
+    ...candidate.approvalPacketTemplate,
+    approvalId: "source-lifecycle-fixture",
+    approvedAt: new Date().toISOString(),
+    diffSummary: "Apply one exact disposable lifecycle fixture note.",
+    rollbackPlan: "Restore the exact prior fixture bytes.",
+    riskReview: { status: "accepted", owner: "meta-sentinel" },
+  };
+  const approvalPath = path.join(runtime.root, "reverse-approval.json");
+  const wrong = structuredClone(approval);
+  wrong.mutationBindings[0].candidateDigest = `sha256:${"0".repeat(64)}`;
+  writeFileSync(approvalPath, JSON.stringify(wrong));
+  const rejected = runtime.run([...args, "--approval", approvalPath, "--apply"]);
+  assert.equal(rejected.status, 0, rejected.stderr || rejected.stdout);
+  assert.match(rejected.stdout, /canonicalWrites=0/u);
+  assert.equal(readFileSync(canonical, "utf8"), canonicalBefore);
+  assert.equal(readFileSync(ledger, "utf8"), before);
+  writeFileSync(approvalPath, JSON.stringify(approval));
+  const check = runtime.run([...args, "--approval", approvalPath, "--apply", "--check"]);
+  assert.notEqual(check.status, 0);
+  assert.match(check.stderr, /--check cannot apply reverse source maintenance/u);
+  assert.equal(readFileSync(canonical, "utf8"), canonicalBefore);
+  assert.equal(readFileSync(ledger, "utf8"), before);
+  const applied = runtime.run([...args, "--approval", approvalPath, "--apply"]);
+  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+  assert.match(readFileSync(canonical, "utf8"), /Reverse lifecycle fixture note/u);
+  assert.match(readFileSync(projected, "utf8"), /Reverse lifecycle fixture note/u);
+  assert.equal(runtime.run([REFRESH_PINS_SCRIPT, "--check"]).status, 0);
 });
