@@ -97,7 +97,7 @@ import {
 } from "../src/domain/evolution/warden-writeback-approval.mjs";
 import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters.mjs";
 import { advanceGovernedGoal } from "./governed-execution/advance-goal.mjs";
-import { prepareIntentDialogue, normalizeHostCritical, normalizeHostThinking, intentDialogueDigest, bindIntentToWorkerTasks, applyTaskCriterionAssignments, normalizeTaskCriterionAssignments, buildIntentCriterionCoverage, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
+import { prepareIntentDialogue, normalizeHostCritical, normalizeHostThinking, hostCriticalGoalCriteria, sameHostCriticalMeaning, intentDialogueDigest, bindIntentToWorkerTasks, applyTaskCriterionAssignments, normalizeTaskCriterionAssignments, buildIntentCriterionCoverage, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
 import { normalizeRequirementsDiscovery, normalizeProductDesign, projectDesignWorkerTasks, projectDesignHumanMilestones, evaluateProductOutcomeReview, projectProductReview, productDesignDigest } from "./governed-execution/product-design.mjs";
 import {
   buildTaskGoalContract as buildGoalContractPacket,
@@ -12461,15 +12461,11 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       currentIntentDigest: intentDialogue.intentDigest, claimBoundary: "Only the consumed original choice extends settled decisions; no new goal or permission is authenticated." };
   }
   const hostCritical = normalizeHostCritical({ input: criticalInput ?? (thinkingInput ? { ...thinkingInput.intentPacket, taskHash: thinkingInput.taskHash, intentDigest: thinkingInput.intentDigest } : !consumedPlanChoice && predecessorPreparation?.intentPacket.status === "host_provided_not_independently_verified" ? predecessorPreparation.intentPacket : null), task: normalizedTask, dialogue: intentDialogue });
+  let thinkingCritical = thinkingInput != null && criticalInput == null ? hostCritical : null;
   if (hostCritical) {
-    if ([...hostCritical.successCriteria, ...hostCritical.nonGoals].some((value) => typeof value !== "string" || !value.trim())) {
-      throw new TypeError("Current Critical success criteria and non-goals must retain their actual text");
-    }
     if (criticalInput != null && thinkingInput != null) {
-      const thinkingCritical = normalizeHostCritical({ input: { ...thinkingInput.intentPacket, taskHash: thinkingInput.taskHash, intentDigest: thinkingInput.intentDigest }, task: normalizedTask, dialogue: intentDialogue });
-      const meaning = (packet) => ["successCriteria", "nonGoals", "blockingUnknowns"].map((key) =>
-        [...new Set(packet[key].map((value) => typeof value === "string" ? value.trim() : value))].sort());
-      if (productDesignDigest(meaning(hostCritical)) !== productDesignDigest(meaning(thinkingCritical))) {
+      thinkingCritical = normalizeHostCritical({ input: { ...thinkingInput.intentPacket, taskHash: thinkingInput.taskHash, intentDigest: thinkingInput.intentDigest }, task: normalizedTask, dialogue: intentDialogue });
+      if (!sameHostCriticalMeaning(hostCritical, thinkingCritical)) {
         throw new TypeError("Critical and Thinking describe different current success criteria, non-goals or unresolved decisions");
       }
     }
@@ -12480,11 +12476,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       if (intentDialogue.intentDigest == null) intentDialogue.evidenceRefs = [...new Set([...intentDialogue.evidenceRefs, ...hostCritical.evidenceRefs])];
     }
     if (intentDialogue.acceptanceCriteria.length === 0) {
-      // Reuse the existing aggregate criterion, never invent per-condition IDs
-      // or replace an explicitly supplied criterion with the same name.
-      intentDialogue.acceptanceCriteria = buildGoalContractPacket({ task: normalizedTask }).acceptanceCriteria.map((criterion) => ({
-        ...criterion, description: hostCritical.successCriteria.join("\n"),
-      }));
+      // Text reuses the aggregate ID; structured definitions retain their IDs.
+      // Neither replaces a criterion explicitly supplied before this fallback.
+      intentDialogue.acceptanceCriteria = hostCriticalGoalCriteria({ task: normalizedTask, critical: hostCritical });
       intentDialogue.acceptanceSource = "host_provided_not_independently_verified";
     }
   }
@@ -12617,7 +12611,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   if (planChallengePreview.planChallengeState.stopRequested === true || planChallengePreview.planChallengeState.phase === "stopped_by_user") {
     return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId, stateDir, artifactDir, projectRoot, preview: planChallengePreview, outputLanguage });
   }
-  const hostThinking = normalizeHostThinking({ input: thinkingInput, task: normalizedTask, dialogue: intentDialogue, requirementsDiscovery });
+  const hostThinking = normalizeHostThinking({ input: thinkingInput == null ? null : { ...thinkingInput, intentPacket: thinkingCritical }, task: normalizedTask, dialogue: intentDialogue, requirementsDiscovery });
   // Typed host questions, rather than generated lexical defaults, are the
   // current Critical frontier. Permission remains with the existing host gates.
   const declaredQuestionIds = new Set(requirementsDiscovery?.decisionItems.map((item) => item.questionId) ?? []);

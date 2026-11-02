@@ -167,7 +167,40 @@ export function normalizeHostCritical({ input = null, task, dialogue }) {
       !Array.isArray(input.nonGoals) || !Array.isArray(input.successCriteria) || !input.successCriteria.length) {
     throw new TypeError("Critical requires the current task/intent, evidence, success criteria, non-goals and unresolved decision IDs");
   }
+  const structured = typeof input.successCriteria[0] !== "string";
+  if (input.nonGoals.some((value) => typeof value !== "string" || !value.trim()) || input.successCriteria.some((criterion) =>
+    structured
+      ? !criterion || typeof criterion !== "object" || Array.isArray(criterion) ||
+        ["id", "condition", "evidenceRequired"].some((key) => typeof criterion[key] !== "string" || !criterion[key].trim())
+      : typeof criterion !== "string" || !criterion.trim())) {
+    throw new TypeError("Critical needs text success criteria or structured id/condition/evidenceRequired definitions, and text non-goals");
+  }
+  if (structured && new Set(input.successCriteria.map((criterion) => criterion.id)).size !== input.successCriteria.length) {
+    throw new TypeError("Structured Critical criterion identities must be unique");
+  }
   return structuredClone(input);
+}
+
+/** Map validated Critical content only at the existing Goal text boundary. */
+export function hostCriticalGoalCriteria({ task, critical }) {
+  if (typeof critical.successCriteria[0] === "string") return buildTaskGoalContract({ task }).acceptanceCriteria.map((criterion) => ({
+    ...criterion, description: critical.successCriteria.join("\n"),
+  }));
+  return critical.successCriteria.map((criterion) => ({
+    id: criterion.id, description: `${criterion.condition}\nevidenceRequired: ${criterion.evidenceRequired}`,
+    kind: "semantic", required: true,
+  }));
+}
+
+/** Compare validated current conditions, not object order or source refs. */
+export function sameHostCriticalMeaning(left, right) {
+  const meaning = (packet) => [
+    packet.successCriteria.map((criterion) => JSON.stringify(canonical(typeof criterion === "string" ? criterion.trim() : {
+      id: criterion.id, condition: criterion.condition.trim(), evidenceRequired: criterion.evidenceRequired.trim(),
+    }))),
+    packet.nonGoals.map((value) => value.trim()), packet.blockingUnknowns,
+  ].map((values) => [...new Set(values)].sort());
+  return JSON.stringify(meaning(left)) === JSON.stringify(meaning(right));
 }
 
 /** Consume the existing host-provided understanding boundary, never grant authority.
