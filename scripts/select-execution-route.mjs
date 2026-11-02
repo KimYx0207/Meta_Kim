@@ -73,6 +73,18 @@ const methodWorkKind = argValue("--method-work-kind", null);
 const methodCapabilityId = argValue("--method-capability-id", null);
 const methodContextRaw = argValue("--method-context-json", null);
 const methodContext = methodContextRaw ? JSON.parse(methodContextRaw) : { capabilityNeed: [], artifactFlow: [] };
+const requirementsContextRaw = argValue("--requirements-discovery-json", null);
+const requirementsContext = requirementsContextRaw ? JSON.parse(requirementsContextRaw) : null;
+if (requirementsContext && (!/^[a-f0-9]{64}$/u.test(requirementsContext.discoveryDigest ?? "") ||
+    !Array.isArray(requirementsContext.evidenceRefs) || requirementsContext.evidenceRefs.length === 0 ||
+    requirementsContext.evidenceRefs.some((ref) => typeof ref !== "string" || !ref.trim()) ||
+    !Array.isArray(requirementsContext.capabilityNeed) || requirementsContext.capabilityNeed.some((need) => typeof need !== "string" || !need.trim()) ||
+    !Array.isArray(requirementsContext.methods) || requirementsContext.methods.some((method) => !method ||
+      typeof method !== "object" || Array.isArray(method) ||
+      method.methodCapabilityId !== null && typeof method.methodCapabilityId !== "string" ||
+      method.sourceRef !== null && typeof method.sourceRef !== "string"))) {
+  throw new TypeError("Requirements route context requires current material references and method demands, never an owner or authorization");
+}
 if ((methodWorkKind || methodCapabilityId) &&
     (!["support", "vertical_slice", "migration_batch"].includes(methodWorkKind) || !methodCapabilityId?.trim())) {
   throw new TypeError("Method selection requires the existing slice workKind and methodCapabilityId");
@@ -988,18 +1000,32 @@ const localToolExecutionGate = {
   sourceReviewBinding: localSourceReviewMatches ? { status: "exact_review_bound", evidenceRefs: localSourceReview.evidenceRefs } : { status: "not_verified" },
   effectClass: "read_only_support",
 };
-const dependencyAgentMatches = matchDependencyAgentContracts(methodCapabilityId
-  ? [actionTask, ...methodContext.capabilityNeed].join("\n") : task, dependencyAgentDiscovery.agents);
+const professionalMethodDemand = Boolean(methodCapabilityId || requirementsContext);
+const dependencyAgentMatches = matchDependencyAgentContracts(professionalMethodDemand
+  ? [actionTask, ...(requirementsContext?.capabilityNeed ?? methodContext.capabilityNeed)].join("\n") : task, dependencyAgentDiscovery.agents);
+const explorationMethod = requirementsContext?.methods.length === 1 ? requirementsContext.methods[0] : null;
 const methodContractOwners = methodCapabilityId ? dependencyAgentDiscovery.agents.filter((agent) =>
   agent.ownerContract.capabilities.some((capability) => methodCapabilityId === capability.id ||
-    methodCapabilityId === `${agent.dependencyId}:${capability.id}`)) : [];
-const currentMethodOperation = methodCapabilityId ? inspectCurrentMethodOperation([actionTask, ...methodContext.capabilityNeed].join("\n")) : null;
+    methodCapabilityId === `${agent.dependencyId}:${capability.id}`))
+  : explorationMethod ? dependencyAgentDiscovery.agents.filter((agent) => {
+    if (!explorationMethod.methodCapabilityId || !explorationMethod.sourceRef ||
+        !agent.ownerContract.capabilities.some((capability) => explorationMethod.methodCapabilityId === capability.id ||
+          explorationMethod.methodCapabilityId === `${agent.dependencyId}:${capability.id}`)) return false;
+    // Both references are demands relative to the actual business root. Only
+    // discovery reads files and verifies their contract/component hashes.
+    const requestedSource = path.resolve(dependencyProjectRoot, explorationMethod.sourceRef);
+    const discoveredSource = path.resolve(dependencyProjectRoot, agent.sourceRef);
+    return osTarget === "windows" ? requestedSource.toLowerCase() === discoveredSource.toLowerCase() : requestedSource === discoveredSource;
+  }) : requirementsContext?.methods.length === 0 && dependencyAgentMatches.selected ? [dependencyAgentMatches.selected] : [];
+const currentMethodOperation = professionalMethodDemand ? inspectCurrentMethodOperation(requirementsContext
+  ? actionTask : [actionTask, ...methodContext.capabilityNeed].join("\n")) : null;
 // Dependency discovery already verifies source bytes, read-only permissions and
 // sideEffects=[]. A support demand selects that bounded method, not a verb-prefix
 // grammar. Future flow consumers do not turn its current review into implementation.
-const readOnlyProfessionalReview = methodWorkKind === "support" && methodContractOwners.length === 1 &&
+const readOnlyProfessionalReview = (methodWorkKind === "support" || requirementsContext) && methodContractOwners.length === 1 &&
   methodContractOwners[0].routeEligible === true && methodContractOwners[0].executionBlock !== true &&
-  !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition;
+  !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition &&
+  (!requirementsContext || currentMethodOperation.readOnlyReview);
 const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some(
   (request) => request.mutationAuthorized && request.candidateType !== "script",
 );
@@ -1072,8 +1098,8 @@ const dependencyAgentMatch = dependencyAgentScopeExclusion
 // An explicit interface/page request still needs its existing design choice.
 const explicitInterfaceScope = /\b(?:ui|ux|website|webpage|user interface)\b|页面|界面|网页|网站/iu.test(task);
 const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true &&
-  !readOnlyProfessionalReview && (!dependencyAgentMatch.selected || explicitInterfaceScope);
-const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: methodCapabilityId
+  explicitInterfaceScope && !readOnlyProfessionalReview;
+const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: professionalMethodDemand
   ? { ...dependencyAgentMatch, selected: methodContractOwners.length === 1 && methodContractOwners[0].routeEligible === true &&
     methodContractOwners[0].executionBlock !== true ? methodContractOwners[0] : null }
   : dependencyAgentMatches, scopeExclusion: dependencyAgentScopeExclusion });
@@ -2423,7 +2449,16 @@ function codexSpawnBindingForOwner(ownerId, ownerKind = "agent", roleInstanceId 
 function taskEffectText(text) {
   return String(text ?? "").replace(/\b(?:do not|don't|don’t|never)\s+(?:modify|edit|write|delete|remove|create|change|patch)\s+(?:any\s+)?(?:files|source files|code)[.!]?(?=$|[\n;])/giu, "")
     .split(/[，,、;；。.!?\n]/u)
-    .filter((clause) => !/^(?:不|不要|不得|禁止)(?:(?:修改|改动|编辑|写入|写|删除|移除|创建|更新)(?:任何|原始|原有|现有)?(?:文件|代码|源码)|(?:代投|投递)简历)$/u.test(clause.trim()))
+    .filter((clause) => {
+      const statement = clause.trim();
+      // A direct prohibition governs its whole object, including coordinated
+      // prohibited operations. A condition, contrast or later imperative does
+      // not: keep that clause for the existing ambiguity/effect checks.
+      const directProhibition = /^(?:不|不要|不得|禁止)(?:改(?:代码|源码|文件)|(?:修改|改动|编辑|写入|写|删除|移除|创建|更新|实现|开发|构建|安装|打开|连接|访问|发起|发送|发|进行|运行|执行|生成|制作|部署|发布|上传|代投|投递).+)$/u.test(statement);
+      const falseClaimProhibition = /^不以.+冒充.+$/u.test(statement);
+      const mixedOrConditional = /(?:但|而|却|不过|然而|然后|随后|接着|接下来|先|再|就|才|直接|仍|还|同时|并|以便|为了|从而|如果|除非|只要|否则|—|--|[:：])|\b(?:but|then|instead|also|if|unless|until|without)\b/iu.test(statement);
+      return !((directProhibition || falseClaimProhibition) && !mixedOrConditional);
+    })
     .join("; ");
 }
 
@@ -2431,7 +2466,7 @@ function taskEffectText(text) {
 // action heads so a reviewed build/deployment plan does not become a build job.
 function inspectCurrentMethodOperation(text) {
   const inspection = "(?:check|review|inspect|audit|assess|evaluate|analy[sz]e|verify|investigate|compare|read)\\b|(?:只读)?(?:审阅|评审|检查|审查|审核|评估|分析|验证|排查|读取|阅读|对照)";
-  const mutation = "\\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|repair|modify|change|patch|delete|remove|deploy|publish|release|upload|send|execute|run|generate|render)\\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除|部署|发布|上传|发送|运行|执行|生成|制作";
+  const mutation = "\\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|repair|modify|change|patch|delete|remove|deploy|publish|release|upload|send|execute|run|generate|render)\\b|修复|修改|改(?:代码|源码|文件)|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除|部署|发布|上传|发送|运行|执行|生成|制作";
   const actionHead = new RegExp(`^(?:${inspection}|${mutation})`, "iu");
   const reviewHead = new RegExp(`^(?:(?:read[- ]only)\\s+)?(?:${inspection})`, "iu");
   const mutationHead = new RegExp(`^(?:${mutation})`, "iu");
@@ -2691,6 +2726,9 @@ function resolveProvider({ kind, terms, runtime: runtimeName = runtime }) {
 }
 
 function buildParallelExecutionLanes() {
+  // Requirements findings are material for one current professional operation,
+  // not a design DAG or authorization to execute the described future product.
+  if (requirementsContext) return null;
   // Draft whole actions from the original text; normalized matching text must
   // never become the authority for file paths, task content or dependencies.
   const actions = decomposeTaskActions(String(actionTask ?? "").replace(GOVERNANCE_CHAIN_PREFIX_RE, "").trim());
@@ -3681,8 +3719,8 @@ const rankedRoutes = (localToolRequest?.applies === true
       providerEligibleForRoute(methodContractOwners[0]) && !explicitOwnerRefusalConflict(methodContractOwners[0], actionTask)
       ? methodContractOwners[0] : null;
     const routeMethodOwner = candidateRoute.selectedCapabilityProviders?.agent;
-    const missingRequestedMethod = Boolean(methodCapabilityId) &&
-      (!requestedMethodOwner || methodWorkKind === "support" && !readOnlyProfessionalReview ||
+    const missingRequestedMethod = professionalMethodDemand &&
+      (!requestedMethodOwner || (methodWorkKind === "support" || requirementsContext) && !readOnlyProfessionalReview ||
         candidateRoute.owner !== requestedMethodOwner.id || routeMethodOwner?.source !== "dependency_agent_contract" ||
         routeMethodOwner.id !== requestedMethodOwner.id || routeMethodOwner.sourceRef !== requestedMethodOwner.sourceRef ||
         routeMethodOwner.contentDigest !== requestedMethodOwner.contentDigest);
@@ -3725,6 +3763,7 @@ const capabilityGapPacket = recommendedRoute ? null : {
   returnToStage: "Thinking",
   ...(methodCapabilityId ? { methodRequest: { workKind: methodWorkKind, methodCapabilityId,
     capabilityNeed: methodContext.capabilityNeed, artifactFlow: methodContext.artifactFlow } } : {}),
+  ...(requirementsContext ? { requirementsDiscovery: requirementsContext } : {}),
   projectCapabilityProfileDecisions: [...new Map([...agentProfileSnapshots.values()]
     .filter((entry) => entry.status === "capability_gap")
     .map((entry) => [stableJson(entry.owner), entry])).values()],
@@ -4009,7 +4048,11 @@ const workerTaskPacketDrafts = selectedWorkerLanes
         const requestsMutation = !readOnlyProfessionalReview && /\b(?:fix|implement|build|create|refactor|rebuild|migrate|write|edit|update|modify|change|patch|delete|remove)\b|修复|修改|实现|构建|创建|重构|迁移|写入|编辑|更新|删除|移除/iu.test(effectText);
         const requestsExternalWrite = !readOnlyProfessionalReview && /\b(?:deploy|publish|release|upload|send|email)\b|部署|发布|上传|发送|邮件|代投|投递/iu.test(effectText);
         const requestsInspection = readOnlyProfessionalReview || /\b(?:check|review|inspect|audit|analy[sz]e|verify|investigate|read)\b|只读|审阅|检查|审查|审核|分析|验证|排查|读取|阅读/iu.test(effectText);
-        const scopeFiles = actions.length === 1 ? extractActionPaths(purpose) : [];
+        // Material references supply read scope as data. Their file names must
+        // never enter current-operation parsing (for example, update-plan.md).
+        const scopeFiles = requirementsContext
+          ? [...new Set(requirementsContext.evidenceRefs.flatMap((ref) => extractActionPaths(`"${ref}"`)))]
+          : actions.length === 1 ? extractActionPaths(purpose) : [];
         const readOnly = requestsInspection && !requestsMutation && !requestsExternalWrite;
         const proven = actions.length === 1 && scopeFiles.length > 0 && scopeFiles.every((scope) => scopeComparisonKey(scope) !== null) && !requestsExternalWrite && (readOnly || requestsMutation);
         const safetyEvidence = {
@@ -4137,7 +4180,7 @@ const unprovenMultiLaneExecution =
 const nativeChoicePending = criticalChoiceBlocksExecution || thinkingChoiceBlocksExecution;
 const fastPathNativeChoicePending =
   entryClassification.path === "fast_path" && nativeChoicePending;
-const executionGateApplies = Boolean(methodCapabilityId) || entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
+const executionGateApplies = professionalMethodDemand || entryClassification.path !== "fast_path" || fastPathNativeChoicePending;
 const routeCompatibilityBlocked =
   executionGateApplies &&
   recommendedRoute &&

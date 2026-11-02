@@ -2686,7 +2686,8 @@ function buildBusinessPhasePlanPacket({
     "evolution",
     writebackFlow.status !== "none-with-reason",
   );
-  const designRouteGap = orchestrationReport.capabilityGaps.find((gap) => gap.gapType === "design_slice_capability_gap");
+  const designRouteGap = orchestrationReport.capabilityGaps.find((gap) =>
+    ["design_slice_capability_gap", "requirements_exploration_capability_gap"].includes(gap.gapType));
   const phaseStatuses = new Map([
     ["direction", "done"],
     ["planning", designRouteGap ? "blocked" : planningRequired ? "done" : "skipped"],
@@ -2742,7 +2743,7 @@ function buildBusinessPhasePlanPacket({
       skipReason,
       triggerEvaluation,
       statusReason: designRouteGap && ["planning", "execution"].includes(phase)
-        ? `当前设计缺少可用的专业方法路线：${designRouteGap.decisionReason}`
+        ? `当前规划缺少可用的专业方法路线：${designRouteGap.decisionReason}`
         : businessPhaseStatusReason({ phase, status, triggerEvaluation, skipReason }),
       nextAction: designRouteGap && ["planning", "execution"].includes(phase)
         ? "返回 Thinking，按原能力需求解决具体方法缺口后再形成工单；不替换为泛用负责人。"
@@ -10521,7 +10522,8 @@ export function buildWorkflowContractPackets({
     primaryDeliverable,
     mergeStrategy: "meta-conductor merges worker evidence into one artifact; meta-prism verifies strict packet closure.",
   };
-  const designRouteGap = orchestrationReport.productDesignPacket && orchestrationReport.capabilityGaps.some((gap) => gap.gapType === "design_slice_capability_gap");
+  const designRouteGap = orchestrationReport.capabilityGaps.some((gap) =>
+    ["design_slice_capability_gap", "requirements_exploration_capability_gap"].includes(gap.gapType));
   const rawWorkerTasks = coreLoop.thinkingPacket.workerTaskPackets.length > 0
     ? coreLoop.thinkingPacket.workerTaskPackets
     : designRouteGap ? [] : [
@@ -11203,7 +11205,7 @@ export function evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) {
   return evaluateTaskOutcome(goal, observations);
 }
 
-function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, projectRoot = activeProjectRoot() }) {
+function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, projectRoot = activeProjectRoot() }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   return [
@@ -11221,6 +11223,7 @@ function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", 
     ...(agentCapabilityProfileContext ? ["--agent-profile-context-json", JSON.stringify(agentCapabilityProfileContext)] : []),
     ...(methodRequest ? ["--method-work-kind", methodRequest.workKind, "--method-capability-id", methodRequest.methodCapabilityId,
       "--method-context-json", JSON.stringify({ capabilityNeed: methodRequest.capabilityNeed, artifactFlow: methodRequest.artifactFlow })] : []),
+    ...(requirementsContext ? ["--requirements-discovery-json", JSON.stringify(requirementsContext)] : []),
     ...(runId ? ["--run-id", runId] : []),
     ...(codexHostToolSchema ? ["--codex-host-tool-schema", codexHostToolSchema] : []),
     ...(intentDeliveryStrategy ? ["--intent-delivery-strategy", intentDeliveryStrategy] : []),
@@ -11228,7 +11231,7 @@ function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", 
   ];
 }
 
-async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, projectRoot = activeProjectRoot(), spawnError = null }) {
+async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, projectRoot = activeProjectRoot(), spawnError = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const originalArgv = process.argv;
@@ -11240,7 +11243,7 @@ async function selectExecutionRouteInProcess({ task, actionTask = task, runtime 
     process.argv = [
       process.execPath,
       SELECT_EXECUTION_ROUTE_SCRIPT,
-      ...selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, methodRequest, projectRoot }),
+      ...selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, methodRequest, requirementsContext, projectRoot }),
     ];
     console.log = (...args) => stdout.push(args.join(" "));
     console.error = (...args) => stderr.push(args.join(" "));
@@ -11277,10 +11280,10 @@ async function selectExecutionRouteInProcess({ task, actionTask = task, runtime 
   }
 }
 
-async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
-  const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, methodRequest, projectRoot });
+  const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, methodRequest, requirementsContext, projectRoot });
   const result = spawnSync(
     process.execPath,
     [SELECT_EXECUTION_ROUTE_SCRIPT, ...args],
@@ -11304,6 +11307,7 @@ async function selectExecutionRoute({ task, actionTask = task, runtime = "codex"
       localToolRequest,
       agentCapabilityProfileContext,
       methodRequest,
+      requirementsContext,
       projectRoot,
       spawnError: result.error,
     });
@@ -11686,17 +11690,61 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, agentCapabilityProfileContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
   const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
     ? intentDialogue?.deliveryStrategy ?? null : null;
-  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task, actionTask: task, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, projectRoot, environment });
+  // The normalized exploration is not a design. Its method/source declarations
+  // constrain discovery; they cannot select an owner, authenticate a result or
+  // authorize implementation of the future product described in the materials.
+  const requirementsContext = !design && !calculationRequest && !localToolRequest?.applies && requirementsDiscovery ? {
+    discoveryDigest: requirementsDiscovery.discoveryDigest, evidenceRefs: requirementsDiscovery.evidenceRefs,
+    capabilityNeed: [], methods: [],
+  } : null;
+  if (requirementsContext) {
+    for (const [index, finding] of (Array.isArray(requirementsDiscovery.findings) ? requirementsDiscovery.findings : []).entries()) {
+      if (finding?.phase !== "requirements_exploration" || finding?.input?.phase !== "requirements_exploration") continue;
+      const goal = finding.input.goal;
+      requirementsContext.capabilityNeed.push(...(typeof goal === "string" ? [goal] : goal && typeof goal === "object" && !Array.isArray(goal)
+        ? Object.values(goal).filter((value) => typeof value === "string" && value.trim()) : []));
+      const method = finding.domainOutput?.exploration?.methodConsumption;
+      if (method) requirementsContext.methods.push({
+        methodCapabilityId: typeof method.capabilityId === "string" ? method.capabilityId : null,
+        sourceRef: typeof finding.domainOutput.exploration.sourceRefs?.serviceAgent?.path === "string"
+          ? finding.domainOutput.exploration.sourceRefs.serviceAgent.path : null,
+        evidenceRef: `requirementsDiscoveryPacket.findings[${index}]`,
+      });
+    }
+    requirementsContext.capabilityNeed = [...new Set(requirementsContext.capabilityNeed)];
+    requirementsContext.methods = [...new Map(requirementsContext.methods.map((method) =>
+      [JSON.stringify([method.methodCapabilityId, method.sourceRef]), method])).values()];
+  }
+  const routeResult = await selectExecutionRoute({ task: intentDialogue?.routeTask ?? task,
+    actionTask: task,
+    runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest,
+    agentCapabilityProfileContext, requirementsContext, projectRoot, environment });
   routeResult.intentBinding = intentDialogue;
   let route = routeResult.recommendedRoute;
   const providerList = providerListFromRoute(routeResult);
-  let plannedPackets = buildRouteDrivenWorkerTasks({ runId, routeResult, task });
+  const requirementsCapabilityGaps = requirementsContext && !route ? [{
+    gapId: `${runId}-requirements-capability-gap`, gapType: "requirements_exploration_capability_gap", blocked: true,
+    owner: "meta-conductor", decision: "blocked_or_needs_approval", returnToStage: "Thinking",
+    reason: routeResult.capabilityGapPacket?.gap ?? "Current requirements exploration has no unique source-verified read-only method route.",
+    decisionReason: routeResult.capabilityGapPacket?.missing?.join("; ") ?? "requirements_exploration_method_owner_unresolved",
+    capabilityGapPacket: routeResult.capabilityGapPacket, requirementsDiscovery: requirementsContext,
+  }] : [];
+  if (requirementsCapabilityGaps.length) routeResult.routeExecutionGate = {
+    ...routeResult.routeExecutionGate, handoffStatus: "blocked", canHandoffToHost: false,
+    hostAction: "return_to_thinking", returnToStage: "Thinking", reason: requirementsCapabilityGaps[0].decisionReason,
+  };
+  let plannedPackets = requirementsCapabilityGaps.length ? [] : buildRouteDrivenWorkerTasks({ runId, routeResult, task });
+  if (requirementsContext) plannedPackets = plannedPackets.map((packet) => ({ ...packet,
+    capabilityNeed: [...new Set([...packet.capabilityNeed, ...requirementsContext.capabilityNeed])],
+    evidenceRefs: [...new Set([...packet.evidenceRefs, ...requirementsContext.evidenceRefs, "requirementsDiscoveryPacket"])],
+    referenceDirection: `${packet.referenceDirection}\nConsume the current proposed requirements exploration at requirementsDiscoveryPacket (${requirementsContext.discoveryDigest}) and its actual source files. Preserve the original task, unknowns and constraints; findings are neither an accepted design nor human answers or execution permission.`,
+  }));
   if (!design && calculationRequest) plannedPackets = await bindDependencyCalculationWorkOrder({
     request: calculationRequest, runId, route: routeResult, workerTaskPackets: plannedPackets, environment, projectRoot,
   });
@@ -11758,7 +11806,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", reason: designMissing ? "A host design must follow requirements discovery before execution" : "Product design is not ready for delivery" };
     plannedPackets = plannedPackets.map((packet) => ({ ...packet, workOrderReadiness: "incomplete", finalizationGate: "blocked_before_host_handoff" }));
   }
-  const intentBoundPackets = designCapabilityGaps.length ? [] : bindIntentToWorkerTasks({
+  const intentBoundPackets = designCapabilityGaps.length || requirementsCapabilityGaps.length ? [] : bindIntentToWorkerTasks({
     workerTaskPackets: applyTaskCriterionAssignments({ workerTaskPackets: plannedPackets, dialogue: intentDialogue, input: taskCriterionAssignments }),
     routeResult, dialogue: intentDialogue ?? prepareIntentDialogue({ task }),
   }).map((packet, index) => design ? { ...packet, coreProblem: plannedPackets[index].coreProblem, todayTask: plannedPackets[index].todayTask } : packet);
@@ -11791,7 +11839,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
   const criterionCoverage = buildIntentCriterionCoverage({ workerTaskPackets, dialogue: intentDialogue });
   const routeGate = routeResult.routeExecutionGate ?? {};
   const blocked = routeGate.handoffStatus === "blocked";
-  const capabilityGaps = [...designCapabilityGaps, ...(routeResult.capabilityGapDetected && routeResult.capabilityGapDecision
+  const capabilityGaps = [...designCapabilityGaps, ...requirementsCapabilityGaps, ...(routeResult.capabilityGapDetected && routeResult.capabilityGapDecision
     ? [
         {
           gapId: `${runId}-route-capability-gap`,
@@ -11835,6 +11883,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     ),
     requiredGoalCriteriaAssigned: criterionCoverage.status !== "incomplete",
     designMethodOwnersResolved: designCapabilityGaps.length === 0,
+    requirementsMethodOwnerResolved: requirementsCapabilityGaps.length === 0,
   };
   return {
     status: route && !blocked ? "pass" : "partial",
@@ -11923,7 +11972,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     workerTaskPackets,
     reviewResult: {
       owner: "meta-prism",
-      status: checks.multiTypeCapabilityInventoryPresent && checks.workerTasksDeclareExecutionMode && checks.requiredGoalCriteriaAssigned && checks.designMethodOwnersResolved ? "pass" : "partial",
+      status: checks.multiTypeCapabilityInventoryPresent && checks.workerTasksDeclareExecutionMode && checks.requiredGoalCriteriaAssigned && checks.designMethodOwnersResolved && checks.requirementsMethodOwnerResolved ? "pass" : "partial",
       checks,
       findings: blocked
         ? [
@@ -12306,6 +12355,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     taskCriterionAssignments: taskCriterionAssignmentsSnapshot,
     design: productDesign,
     designRequirement: designRequirementSnapshot,
+    requirementsDiscovery,
     localToolRequest,
     calculationRequest,
     agentCapabilityProfileContext: agentCapabilityProfileContextSnapshot,
