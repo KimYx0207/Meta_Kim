@@ -654,7 +654,7 @@ function dependencyDeclarations(manifest) {
     "dependencies", "devDependencies", "optionalDependencies", "peerDependencies",
     "peerDependenciesMeta", "overrides", "bundledDependencies", "bundleDependencies",
     "workspaces", "engines", "os", "cpu", "libc",
-  ].filter((key) => Object.hasOwn(manifest, key)).map((key) => [key, manifest[key]])));
+  ].filter((key) => Object.hasOwn(manifest, key)).map((key) => [key, manifest[key]]))));
 }
 
 /** Read both npm's locked identities and the installed dependency bytes. */
