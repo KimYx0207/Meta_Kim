@@ -22,6 +22,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
 import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
+import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
 import { prepareDependencyCalculationInput, bindDependencyCalculationWorkOrder, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
@@ -11716,6 +11717,110 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   });
 }
 
+/** Complete bounded write planning from checked paths and the current full DAG. */
+function completeHostLocalWritePlanning(records) {
+  const dependencies = new Map(records.map(({ request }) => [request.roleInstanceId, request.dependsOn]));
+  const follows = (from, to) => {
+    const pending = [...dependencies.get(from)];
+    const seen = new Set();
+    while (pending.length) {
+      const id = pending.pop();
+      if (id === to) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      pending.push(...dependencies.get(id));
+    }
+    return false;
+  };
+  const footprints = new Map(records.map((record) => [record.request.roleInstanceId,
+    record.packet ? [...new Set(record.request.effectClass === "local_write"
+      ? [...record.packet.scopeFiles, ...record.packet.shardScope] : record.packet.scopeFiles)].map(scopeComparisonKey) : null]));
+  for (const record of records) {
+    if (record.request.effectClass !== "local_write" || !record.packet) continue;
+    const { request, selectedRoute, draft, packet } = record;
+    const planningBlockers = [...(draft.safetyEvidence.planningBlockers ?? [])
+      .filter((reason) => reason !== "current_thinking_scope_dependency_check_required"), ...(record.planningBlockers ?? [])];
+    let orderedOverlap = false;
+    const scopes = footprints.get(request.roleInstanceId);
+    if (!scopes.length || scopes.some((scope) => scope === null)) planningBlockers.push("current_write_scope_unresolved");
+    for (const peer of records) {
+      if (peer === record) continue;
+      const peerScopes = footprints.get(peer.request.roleInstanceId);
+      if (!peer.packet || peer.planningBlockers?.length || !peerScopes.length || peerScopes.some((scope) => scope === null) || peer.request.effectClass === "external_write") {
+        planningBlockers.push("peer_scope_unresolved:" + peer.request.roleInstanceId);
+        continue;
+      }
+      const disjoint = scopes.length && scopes.every((scope) => scope !== null &&
+        peerScopes.every((peerScope) => scopeKeysAreProvablyDisjoint(scope, peerScope)));
+      if (!disjoint) {
+        if (follows(request.roleInstanceId, peer.request.roleInstanceId) || follows(peer.request.roleInstanceId, request.roleInstanceId)) orderedOverlap = true;
+        else planningBlockers.push("unordered_scope_collision:" + peer.request.roleInstanceId);
+      }
+    }
+    const proven = planningBlockers.length === 0;
+    const gate = selectedRoute.routeExecutionGate;
+    const previousPlanning = new Set(gate.planningBlockers ?? []);
+    const blockedBy = [...new Set([...(gate.blockedBy ?? []).filter((reason) => !previousPlanning.has(reason)), ...planningBlockers])];
+    const ready = proven && !selectedRoute.capabilityGapDetected && gate.routeCompatible === true && blockedBy.length === 0;
+    const dependencyEvidence = records.length === 1 ? "single_action_no_other_workers" : "current_thinking_dependency_graph";
+    const safetyEvidence = { status: proven ? "proven" : "unproven", shardScope: packet.shardScope,
+      dependencyEvidence, planningBlockers,
+      evidenceBasis: "current_thinking_graph_and_trusted_project_scope_planning_only",
+      claimBoundary: "Current run lexical scope and dependency plan only; not physical alias isolation, live workspace ownership or host permission." };
+    const fields = { taskPacketId: packet.taskPacketId, scopeFiles: packet.scopeFiles, shardScope: packet.shardScope, dependsOn: packet.dependsOn, dependencyEvidence, safetyEvidence,
+      mutationPolicy: "scoped_local_writes_only", externalWritePolicy: "forbidden", externalWriteBoundary: false,
+      workspaceIsolation: proven ? orderedOverlap ? "shared_workspace_ordered_dependencies" : "shared_workspace_disjoint_paths" : "unproven",
+      collisionPolicy: proven ? "deny_writes_outside_shard_scope_and_merge_through_meta_conductor" : "unproven",
+      workOrderReadiness: ready ? "ready" : "incomplete", finalizationGate: ready ? "host_action_required" : "blocked_before_host_handoff" };
+    Object.assign(draft, fields);
+    Object.assign(packet, fields);
+    selectedRoute.routeExecutionGate = { ...gate, planningBlockers, blockedBy, canHandoffToHost: ready,
+      handoffStatus: ready ? "ready_for_host_handoff" : "blocked", hostAction: ready ? "host_action_required" : "return_to_thinking",
+      returnToStage: ready ? null : "Thinking" };
+  }
+}
+
+/** Reuse the selected binding with the final operation and acceptance content. */
+function synchronizeHostWorkOrder({ draft, packet }) {
+  if (!packet) return;
+  Object.assign(draft, { taskPacketId: packet.taskPacketId, purpose: packet.todayTask, todayTask: packet.todayTask,
+    coreProblem: packet.coreProblem, output: packet.output, nonGoals: packet.nonGoals, acceptanceCriteria: packet.acceptanceCriteria,
+    acceptanceCriterionIds: packet.acceptanceCriterionIds, verifySteps: packet.verifySteps,
+    capabilityNeed: packet.capabilityNeed, capabilityRequirements: packet.capabilityRequirements,
+    methodCapabilityId: packet.methodCapabilityId ?? null, methodInputs: packet.methodInputs ?? null,
+    scopeFiles: packet.scopeFiles, shardScope: packet.shardScope, dependsOn: packet.dependsOn,
+    dependencyEvidence: packet.dependencyEvidence, safetyEvidence: packet.safetyEvidence, mutationPolicy: packet.mutationPolicy,
+    workspaceIsolation: packet.workspaceIsolation, externalWritePolicy: packet.externalWritePolicy, collisionPolicy: packet.collisionPolicy,
+    workOrderReadiness: packet.workOrderReadiness, finalizationGate: packet.finalizationGate });
+  if (draft.codexSpawnBinding) {
+    // These messages are JSON produced by the selected-source binding builder.
+    const projectMessage = (text) => {
+      const message = JSON.parse(text);
+      message.taskPacketId = packet.taskPacketId;
+      message.metaKimBinding = { ...message.metaKimBinding, taskPacketId: packet.taskPacketId,
+        bindingRef: `${message.metaKimBinding.runId}:${message.metaKimBinding.family}:${message.metaKimBinding.providerId}:${packet.taskPacketId}` };
+      message.todayTask = packet.todayTask;
+      message.scope = { ...message.scope, purpose: packet.todayTask, scopeFiles: packet.scopeFiles,
+        nonGoals: [...new Set([...message.scope.nonGoals, ...packet.nonGoals])] };
+      message.outputContract = { ...message.outputContract, deliverable: packet.output,
+        acceptanceCriteria: packet.acceptanceCriteria, acceptanceCriterionIds: packet.acceptanceCriterionIds,
+        verifySteps: packet.verifySteps, verification: packet.verifySteps, verificationOwner: packet.handoffTarget };
+      message.methodCapabilityId = packet.methodCapabilityId ?? null;
+      message.methodInputs = packet.methodInputs ?? null;
+      message.coordination = { ...message.coordination, dependsOn: packet.dependsOn, shardScope: packet.shardScope,
+        dependencyEvidence: packet.dependencyEvidence, safetyEvidence: packet.safetyEvidence, mutationPolicy: packet.mutationPolicy,
+        workspaceIsolation: packet.workspaceIsolation, externalWritePolicy: packet.externalWritePolicy, collisionPolicy: packet.collisionPolicy };
+      message.workOrderReadiness = packet.workOrderReadiness;
+      message.finalizationGate = packet.finalizationGate;
+      return JSON.stringify(message);
+    };
+    const binding = draft.codexSpawnBinding;
+    draft.codexSpawnBinding = { ...binding, message: projectMessage(binding.message),
+      followupTaskTemplate: { ...binding.followupTaskTemplate, message: projectMessage(binding.followupTaskTemplate.message) } };
+    packet.runtimeInvocationPlan = draft.codexSpawnBinding;
+  }
+}
+
 async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, hostThinking = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
@@ -11777,19 +11882,24 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
   });
   const designRouteEvidence = [];
   const designCapabilityGaps = [];
+  const hostWorkOrderRecords = [];
   if (hostThinking) {
     plannedPackets = [];
+    const records = hostWorkOrderRecords;
     for (const request of hostThinking.thinkingPacket.workerTaskPackets) {
       const selectedRoute = await selectExecutionRoute({ task, actionTask: request.todayTask, runtime: routeRuntime, os: routeOs, runId,
         projectRoot, environment, codexHostToolSchema, agentCapabilityProfileContext, requirementsContext,
         hostWorkOrder: { ...request, inventoryDigest: hostThinking.fetchPacket.capabilityDiscovery.inventoryDigest } });
       const draft = selectedRoute.workerTaskPacketDrafts?.[0];
       const template = draft ? buildRouteDrivenWorkerTasks({ runId, routeResult: selectedRoute, task })[0] : null;
-      if (!template || selectedRoute.routeExecutionGate?.canHandoffToHost !== true) {
+      const localPlanning = request.effectClass === "local_write" && draft && !selectedRoute.capabilityGapDetected &&
+        selectedRoute.routeExecutionGate?.routeCompatible === true;
+      let packet = null;
+      if (!template || (!localPlanning && selectedRoute.routeExecutionGate?.canHandoffToHost !== true)) {
         designCapabilityGaps.push({ gapId: runId + "-thinking-" + request.roleInstanceId, gapType: "design_slice_capability_gap",
           blocked: true, returnToStage: "Thinking", sliceId: request.roleInstanceId, reason: selectedRoute.capabilityGapPacket?.gap ?? "Selected work order is not ready for host handoff",
           decisionReason: selectedRoute.capabilityGapPacket?.missing.join("; ") ?? "host_selected_work_order_unresolved", capabilityGapPacket: selectedRoute.capabilityGapPacket });
-      } else plannedPackets.push({ ...template, taskPacketId: runId + "-thinking-" + request.roleInstanceId, roleInstanceId: request.roleInstanceId,
+      } else packet = { ...template, taskPacketId: runId + "-thinking-" + request.roleInstanceId, roleInstanceId: request.roleInstanceId,
         todayTask: request.todayTask, coreProblem: hostThinking.intentPacket.realIntent, output: request.output,
         nonGoals: request.nonGoals, capabilityNeed: request.capabilityNeed, capabilityRequirements: request.capabilityNeed,
         acceptanceCriteria: [...new Set([...(template.acceptanceCriteria ?? []), ...request.verifySteps.map((step) => step.verify)])],
@@ -11799,20 +11909,74 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         dependsOn: request.dependsOn.map((id) => runId + "-thinking-" + id),
         workOrderReadiness: draft.safetyEvidence.status === "proven" ? "ready" : "incomplete",
         handoffContract: { ...template.handoffContract, ...(request.handoffContract ?? {}), handoffTo: template.handoffTarget },
-        ...(request.methodCapabilityId ? { methodCapabilityId: request.methodCapabilityId, methodInputs: request.methodInputs ?? null } : {}) });
+        ...(request.methodCapabilityId ? { methodCapabilityId: request.methodCapabilityId, methodInputs: request.methodInputs ?? null } : {}) };
+      records.push({ request, selectedRoute, draft, template, packet });
+      providerList.push(...providerListFromRoute(selectedRoute));
+    }
+    const hasLocalWrites = records.some(({ request }) => request.effectClass === "local_write");
+    if (design && !designCapabilityGaps.length) {
+      const templates = design.taskSlices.map((slice) => records.find(({ request }) => request.roleInstanceId === slice.id)?.packet);
+      const projected = projectDesignWorkerTasks({ design, runId, templates });
+      for (const record of records) {
+        const packet = projected.find((item) => item.roleInstanceId === record.request.roleInstanceId);
+        if (!hasLocalWrites) { record.packet = packet ?? null; continue; }
+        const previous = record.packet;
+        const checkedKeys = previous.scopeFiles.map(scopeComparisonKey).sort();
+        const designKeys = (packet?.scopeFiles ?? []).map((file) => file.split(/[\\/]/u).some((part) => part === "." || part === "..")
+          ? null : scopeComparisonKey(path.resolve(projectRoot, file))).sort();
+        const expectedDependencies = record.request.dependsOn.map((id) => `${runId}-design-${id}`).sort();
+        record.planningBlockers = [];
+        if (!packet || JSON.stringify(designKeys) !== JSON.stringify(checkedKeys) ||
+            JSON.stringify([...(packet?.dependsOn ?? [])].sort()) !== JSON.stringify(expectedDependencies)) {
+          record.planningBlockers.push("design_thinking_scope_or_dependencies_conflict:" + record.request.roleInstanceId);
+        }
+        if (design.readiness !== "structure_ready_not_reviewed") record.planningBlockers.push("current_design_not_ready");
+        if (packet && (productDesignDigest([...packet.capabilityNeed].sort()) !== productDesignDigest([...previous.capabilityNeed].sort()) ||
+            (packet.methodCapabilityId ?? null) !== (previous.methodCapabilityId ?? null) ||
+            productDesignDigest(packet.methodInputs ?? null) !== productDesignDigest(previous.methodInputs ?? null))) {
+          record.planningBlockers.push("design_thinking_capability_or_method_binding_conflict:" + record.request.roleInstanceId);
+        }
+        // The design may add content, but must not replace checked filesystem
+        // scopes, selected method inputs or the owned output shard.
+        const finalPacket = packet ?? previous;
+        record.packet = { ...finalPacket, scopeFiles: previous.scopeFiles, shardScope: previous.shardScope,
+          capabilityNeed: previous.capabilityNeed, capabilityRequirements: previous.capabilityRequirements,
+          methodCapabilityId: previous.methodCapabilityId, methodInputs: previous.methodInputs,
+          acceptanceCriteria: [...new Set([...(record.template.acceptanceCriteria ?? []), ...finalPacket.verifySteps.map((step) => step.verify)])] };
+      }
+    }
+    if (hasLocalWrites) completeHostLocalWritePlanning(records);
+    plannedPackets = records.flatMap(({ packet }) => packet ? [packet] : []);
+    for (const record of records) {
+      const { request, selectedRoute, packet, planningBlockers = [] } = record;
+      if (packet && planningBlockers.length && request.effectClass !== "local_write") {
+        packet.workOrderReadiness = "incomplete";
+        packet.finalizationGate = "blocked_before_host_handoff";
+      }
+      if (packet && packet.workOrderReadiness !== "ready" && selectedRoute.routeExecutionGate.canHandoffToHost) {
+        selectedRoute.routeExecutionGate = { ...selectedRoute.routeExecutionGate, canHandoffToHost: false,
+          handoffStatus: "blocked", hostAction: "return_to_thinking", returnToStage: "Thinking",
+          blockedBy: [...selectedRoute.routeExecutionGate.blockedBy, ...planningBlockers, "work_order_safety_unproven:" + request.roleInstanceId] };
+      }
+      if (selectedRoute.recommendedRoute) selectedRoute.recommendedRoute.executionCapabilityGate = {
+        ...selectedRoute.recommendedRoute.executionCapabilityGate, ...selectedRoute.routeExecutionGate,
+      };
       designRouteEvidence.push({ sliceId: request.roleInstanceId, capabilityNeed: request.capabilityNeed,
         route: selectedRoute.recommendedRoute, gate: selectedRoute.routeExecutionGate, capabilityGapPacket: selectedRoute.capabilityGapPacket });
-      providerList.push(...providerListFromRoute(selectedRoute));
     }
     const firstGap = designRouteEvidence.find((item) => item.capabilityGapPacket);
     route = firstGap ? null : designRouteEvidence[0]?.route ?? null;
-    routeResult.recommendedRoute = route;
-    routeResult.routeExecutionGate = firstGap?.gate ?? designRouteEvidence[0]?.gate ?? routeResult.routeExecutionGate;
-    if (firstGap) { plannedPackets = []; routeResult.capabilityGapPacket = firstGap.capabilityGapPacket; }
-    if (design && !firstGap) {
-      const templates = design.taskSlices.map((slice) => plannedPackets.find((packet) => packet.roleInstanceId === slice.id));
-      plannedPackets = projectDesignWorkerTasks({ design, runId, templates });
+    const incomplete = designRouteEvidence.find((item) => item.gate?.canHandoffToHost !== true || item.gate.routeCompatible !== true);
+    routeResult.routeExecutionGate = { ...(incomplete?.gate ?? designRouteEvidence[0]?.gate ?? routeResult.routeExecutionGate),
+      blockedBy: [...new Set(designRouteEvidence.flatMap((item) => item.gate?.blockedBy ?? []))],
+      planningBlockers: [...new Set(designRouteEvidence.flatMap((item) => item.gate?.planningBlockers ?? []))], designRouteEvidence };
+    if (route) {
+      const { designRouteEvidence: trace, ...aggregateGate } = routeResult.routeExecutionGate;
+      route = { ...route, executionCapabilityGate: { ...route.executionCapabilityGate, ...aggregateGate } };
     }
+    routeResult.recommendedRoute = route;
+    routeResult.workerTaskPacketDrafts = records.flatMap(({ draft }) => draft ? [draft] : []);
+    if (firstGap) { plannedPackets = []; routeResult.capabilityGapPacket = firstGap.capabilityGapPacket; }
   }
   if (design && !hostThinking) {
     const templates = [];
@@ -11896,6 +12060,12 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
           localToolBinding: { runId, taskHash: taskOutcomeDigest(task), intentDigest: packet.intentBinding.intentDigest, selectedCapability: localGate.selectedCapability, input: localGate.input } },
       }))
     : intentBoundPackets;
+  if (hostWorkOrderRecords.some(({ request }) => request.effectClass === "local_write")) {
+    for (const record of hostWorkOrderRecords) {
+      const finalPacket = workerTaskPackets.find((packet) => packet.roleInstanceId === record.request.roleInstanceId);
+      if (finalPacket) synchronizeHostWorkOrder({ ...record, packet: finalPacket });
+    }
+  }
   const intentCapabilityGaps = workerTaskPackets.filter((packet) => packet.intentCapabilitySelection.status === "capability_gap");
   if (intentCapabilityGaps.length) {
     routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", intentCapabilityGaps: intentCapabilityGaps.map((packet) => packet.taskPacketId) };

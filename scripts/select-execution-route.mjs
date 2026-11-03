@@ -1938,6 +1938,7 @@ if (fetchOnly || hostWorkOrder) {
     blockers.push("current_verification_owner_source_required");
   }
   const readOnly = ["read_only_worker", "read_only_support"].includes(hostWorkOrder.effectClass);
+  const localWrite = hostWorkOrder.effectClass === "local_write";
   if (owner?.source === "dependency_agent_contract") {
     const capabilities = owner.ownerContract.capabilities.filter((capability) =>
       !hostWorkOrder.methodCapabilityId || capability.id === hostWorkOrder.methodCapabilityId ||
@@ -1952,9 +1953,35 @@ if (fetchOnly || hostWorkOrder) {
     }
   }
   const scopeFiles = [];
+  const shardScope = localWrite ? [] : hostWorkOrder.shardScope;
+  const planningBlockers = localWrite ? ["current_thinking_scope_dependency_check_required"] : [];
+  const checkedScope = (file) => {
+    if (scopeComparisonKey(file) === null || file.split(/[\\/]/u).some((part) => part === "." || part === "..")) return null;
+    const root = path.resolve(dependencyProjectRoot);
+    const relative = path.relative(root, path.isAbsolute(file) ? file : path.resolve(root, file));
+    if (!relative || path.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path.sep)) return null;
+    try { return inspectTrustedPath(root, relative, { allowMissing: localWrite })?.target ?? null; }
+    catch { return null; }
+  };
   for (const file of hostWorkOrder.scopeFiles ?? []) {
-    try { scopeFiles.push(inspectTrustedPath(dependencyProjectRoot, file, { allowMissing: !readOnly }).target); }
-    catch { blockers.push("scope_outside_current_project_or_unavailable"); }
+    const checked = checkedScope(file);
+    if (checked) scopeFiles.push(checked);
+    else blockers.push("scope_outside_current_project_or_unavailable:" + file);
+  }
+  if (localWrite) {
+    if (!scopeFiles.length) planningBlockers.push("local_write_scope_files_required");
+    for (const shard of hostWorkOrder.shardScope) {
+      const checked = checkedScope(shard);
+      if (checked) shardScope.push(checked);
+      else blockers.push("shard_outside_current_project_or_unavailable:" + shard);
+    }
+    for (const file of scopeFiles) {
+      const key = scopeComparisonKey(file);
+      if (!shardScope.some((shard) => {
+        const shardKey = scopeComparisonKey(shard);
+        return key === shardKey || key.startsWith(shardKey + "/");
+      })) planningBlockers.push("write_scope_not_covered_by_shard:" + path.relative(dependencyProjectRoot, file));
+    }
   }
   const snapshot = owner ? profileForExecutionOwner(owner, hostWorkOrder.capabilityNeed ?? [], Object.values(selected), hostWorkOrder.todayTask) : null;
   if (snapshot?.status === "capability_gap") blockers.push(...snapshot.blockedReasons);
@@ -1993,24 +2020,27 @@ if (fetchOnly || hostWorkOrder) {
   const ready = !blockers.length && executionGate.routeCompatible === true;
   const binding = owner ? codexSpawnBindingForOwner(owner.id, "agent", hostWorkOrder.roleInstanceId,
     { ...hostWorkOrder, purpose: hostWorkOrder.todayTask, roleDisplayName: hostWorkOrder.roleDisplayName,
+      scopeFiles, shardScope,
       verificationOwner: selected.verificationAgent?.id, verification: hostWorkOrder.verifySteps, agentCapabilityProfile: snapshot,
       capabilityLoadout: { ...snapshot, selectedProviders: providersAfterProfile } }) : null;
   const draft = { ...hostWorkOrder, ownerAgent: owner?.id, ownerSource: owner?.source, sourceRef: owner?.sourceRef,
-    ownerContract: owner?.ownerContract ?? null, purpose: hostWorkOrder.todayTask, scopeFiles, shardScope: hostWorkOrder.shardScope,
+    ownerContract: owner?.ownerContract ?? null, purpose: hostWorkOrder.todayTask, scopeFiles, shardScope,
     codexSpawnBinding: binding, agentCapabilityProfile: snapshot,
     mutationPolicy: readOnly ? "read_only" : "scoped_local_writes_only", externalWriteBoundary: hostWorkOrder.effectClass === "external_write",
     workspaceIsolation: readOnly ? "shared_read_only_workspace" : "unproven", externalWritePolicy: "forbidden_without_host_authorization",
     collisionPolicy: readOnly ? "single_worker_bounded_scope" : "unproven",
-    safetyEvidence: { status: ready && readOnly ? "proven" : "unproven", shardScope: hostWorkOrder.shardScope,
-      evidenceBasis: "current_discovered_sources_and_requested_read_only_scope_not_permission" } };
+    safetyEvidence: { status: ready && readOnly ? "proven" : "unproven", shardScope,
+      ...(localWrite ? { planningBlockers } : {}),
+      evidenceBasis: localWrite ? "trusted_project_paths_pending_current_thinking_graph" : "current_discovered_sources_and_requested_read_only_scope_not_permission" } };
   console.log(JSON.stringify({ schemaVersion: 1, task, taskShape, runtime, os: osTarget, fetchPacket, ownerDiscoveryPacket,
     recommendedRoute: blockers.length ? null : { ...route, executionCapabilityGate: executionGate },
     rankedRoutes: [route], workerTaskPacketDrafts: ready ? [draft] : [],
     capabilityGapPacket: ready ? null : gap([...blockers, ...executionGate.blockers ?? []]),
     capabilityGapDetected: !ready, capabilityGapDecision: ready ? null : { decision: "blocked_or_needs_approval" },
-    routeExecutionGate: { routeCompatible: executionGate.routeCompatible, canHandoffToHost: ready,
-      canEnterExecution: false, executionAuthorized: false, handoffStatus: ready ? "ready_for_host_handoff" : "blocked",
-      hostAction: ready ? "host_action_required" : "return_to_thinking", returnToStage: ready ? null : "Thinking", blockedBy: blockers } }));
+    routeExecutionGate: { routeCompatible: executionGate.routeCompatible, canHandoffToHost: ready && !planningBlockers.length,
+      canEnterExecution: false, executionAuthorized: false, handoffStatus: ready && !planningBlockers.length ? "ready_for_host_handoff" : "blocked",
+      hostAction: ready && !planningBlockers.length ? "host_action_required" : "return_to_thinking", returnToStage: ready && !planningBlockers.length ? null : "Thinking",
+      planningBlockers, blockedBy: [...blockers, ...planningBlockers] } }));
   return;
 }
 
