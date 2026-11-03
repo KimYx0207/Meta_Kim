@@ -711,7 +711,7 @@ async function dependencySnapshot(bundleDir, packageName) {
     packages.push({ path: relativePath, name: installed.name, version: locked.version,
       integrity: locked.integrity, resolved: locked.resolved });
   }
-  return { packages, closure: closureForEntries(entries) };
+  return { packages, closure: closureForEntries(entries), entries };
 }
 
 async function acceptedDependencyBase(sourceManifest, homeRoot) {
@@ -756,7 +756,21 @@ async function acceptedDependencyBase(sourceManifest, homeRoot) {
 async function assertAcceptedDependencies(bundleDir, dependencyBase) {
   const current = await dependencySnapshot(bundleDir, dependencyBase.packageName);
   if (JSON.stringify(current) !== JSON.stringify(dependencyBase.dependencySnapshot)) {
-    throw new Error("Dependency-preserving update changed accepted dependency paths, identities, or bytes");
+    const previous = dependencyBase.dependencySnapshot;
+    const differences = {};
+    for (const [label, before, after] of [
+      ["packages", previous.packages, current.packages],
+      ["entries", previous.entries, current.entries],
+    ]) {
+      const expected = new Map(before.map((entry) => [entry.path, entry]));
+      const actual = new Map(after.map((entry) => [entry.path, entry]));
+      differences[label] = [...new Set([...expected.keys(), ...actual.keys()])]
+        .filter((key) => JSON.stringify(expected.get(key)) !== JSON.stringify(actual.get(key)))
+        .map((key) => ({ path: key, before: expected.get(key), after: actual.get(key) }));
+    }
+    throw new Error("Dependency-preserving update changed accepted dependency paths, identities, or bytes", {
+      cause: differences,
+    });
   }
 }
 
