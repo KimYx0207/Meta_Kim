@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "contractId": "meta-kim-core-loop-contract",
   "owner": "meta-warden",
+  "projectResearchPolicy": {
+    "id": "project-research-prd-v1",
+    "projectAnalysisPosition": "before_critical_without_new_stage",
+    "requiredWhen": ["complete_product_design", "explicit_research_request"],
+    "minimumGithubRepositories": 3,
+    "targetGithubRepositories": 5,
+    "minimumObservedStars": 100,
+    "queryChannelsPerKeyword": ["web", "github"],
+    "authority": "Existing requirements dialogue and PRD remain the only requirement/task authority; immutable research records hold supporting evidence only.",
+    "workerRule": "Task slices select relevant source IDs. Verify current task/intent, source freshness, stored bytes and selected summaries before dispatch; send only selected evidence and stable reread references.",
+    "truthBoundary": "A project scan or supplied source metadata does not prove host understanding, external invocation, semantic relevance or user approval. Gaps return to Fetch; material choices return to the existing Critical dialogue."
+  },
   "taskProgressPolicy": {
     "id": "task-progress-v1",
     "sourcePolicyRef": "config/contracts/core-loop-contract.json#/productExperienceCoreGoals/supportGateRequirements/P-107",

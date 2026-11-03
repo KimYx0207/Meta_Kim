@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { dependencyRootBinding } from "./managed-dependency-source.mjs";
 import {
   checkedPath, componentHash, stableJson, uniqueIds, stringArray, sha256,
   matchDependencyAgentContracts,
@@ -17,12 +18,7 @@ const excluded = (project) => project.interface.invokeAs === "reference"
     .includes(project.capabilityCard?.routeEligibility);
 
 function rootBinding(project, localOverrides, environment) {
-  const envName = project.interface.capabilityIndex.rootEnv;
-  if (envName && Object.hasOwn(environment, envName)) return { value: environment[envName], source: `environment:${envName}` };
-  if (Object.hasOwn(localOverrides.dependencyRoots ?? {}, project.id)) return {
-    value: localOverrides.dependencyRoots[project.id], source: `.meta-kim/local.overrides.json#dependencyRoots.${project.id}`,
-  };
-  return { value: project.source?.localPath, source: `dependency-project-registry.json#${project.id}.source.localPath` };
+  return dependencyRootBinding(project, localOverrides, environment);
 }
 
 function validateSkillCapability(capability) {
@@ -145,6 +141,7 @@ export async function discoverDependencySkillContracts({
     const binding = rootBinding(project, localOverrides, environment);
     const source = { dependencyId: project.id, sourceRef: `dependency:${project.id}/${project.interface.capabilityIndex.path}`, rootBinding: binding.source, componentReadIds: [] };
     result.sources.push(source);
+    if (binding.error) { Object.assign(source, { status: "invalid", reason: binding.error }); continue; }
     if (excluded(project)) { Object.assign(source, { status: "reference_only", reason: "Dependency is not authorized for execution contract discovery." }); continue; }
     if (binding.value === undefined || binding.value === null) { Object.assign(source, { status: "not_configured", reason: "No explicit local root; no sibling or home scan attempted." }); continue; }
     try {

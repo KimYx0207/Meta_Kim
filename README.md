@@ -267,6 +267,8 @@ At a fresh clone, Meta_Kim intentionally separates source files, generated proje
 
 The default Enter path is **global reusable capabilities**. Agents, commands, MCP, and skills are installed into each selected runtime's official global/home locations when that runtime supports them. Global hook wiring is opt-in: pass `--with-global-hooks` when you intentionally want Meta_Kim to update Claude/Codex/Cursor hook settings. Projects reuse global capabilities directly; project-local agents, commands, MCP, hooks, or skills are created only when Fetch/Thinking proves project-specific customization, iteration, or a dedicated override is needed.
 
+Selecting a Kim_Service component also installs its complete indexed capability source into the managed user store and registers it in the existing installation manifest. Other projects can then discover its professional agents and skills without configuring a sibling checkout. Explicit dependency-root overrides still take precedence; existing user-owned capability directories are preserved. Global discovery honors each runtime's configured home and shared skill locations. A configured MCP entry remains unverified until its actual callable tools are observed.
+
 If you explicitly choose **Project directory updates**, setup asks which project directories to update and writes the target-selected project runtime projection there, including project hooks/config where that runtime supports them. This path does not install global reusable capabilities and does not run project cleanup.
 
 Project files are still allowed, but they are not the default reusable capability store. Confirmed project bootstrap writes only project context/config/state plus proven project-specific overrides, preserving existing user config through managed blocks, add-only writes, protected JSON merge, backups, and manifests. Every applied project bootstrap records `.meta-kim/` state and backup files.
@@ -327,7 +329,7 @@ Surface compatibility is intentionally weaker than runtime support. A tool can s
 
 ### Call reviewed external calculation capabilities
 
-`calculate_materials` retains its `task`, `inputJson`, and `dependencyRoot` arguments and uses the existing capability route to call a reviewed read-only Kim_Service capability. Bind `META_KIM_KIM_SERVICE_ROOT` to an existing checkout. Generated MCP configuration binds the actual host through `META_KIM_RUNTIME_FAMILY`; unknown hosts and blocked routes do not execute.
+`calculate_materials` retains its `task`, `inputJson`, and `dependencyRoot` arguments and uses the existing capability route to call a reviewed read-only Kim_Service capability. Normal dependency installation registers the managed source automatically; `META_KIM_KIM_SERVICE_ROOT` is an optional explicit checkout override. Generated MCP configuration binds the actual host through `META_KIM_RUNTIME_FAMILY`; unknown hosts and blocked routes do not execute.
 
 Meta owns intent, capability provenance, permissions, fixed-entrypoint invocation and generic receipt integrity. Service owns domain inputs, material questions, typed business-result validation and delivery. Read the selected component's `calculation-tool.json`, `delivery-tool.json` and `docs/` rather than duplicating industry rules in the framework. The original `--input-json -` calculator CLI and old calculation contracts remain readable. Full professional delivery requires a Service version with a reviewed delivery contract; an older dependency is never silently treated as upgraded.
 

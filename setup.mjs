@@ -57,6 +57,7 @@ import {
   recordSetupRuntimeExecutableBindings,
   resolveSetupRuntimeLaunchInventoryRoots,
 } from "./scripts/runtime-executable-binding.mjs";
+import { probeRuntimeCli } from "./scripts/runtime-cli-probe.mjs";
 import {
   adoptHistoricalWindowsMcpMemoryBootArtifactOwnership,
   isExactMcpMemoryBootManifestIdentity,
@@ -553,21 +554,8 @@ function spawnCliSync(command, commandArgs = [], options = {}) {
   });
 }
 
-// Cross-platform CLI detection: tries direct, .exe, then where/which fallback
 function detectCli(name) {
-  for (const cmd of [name, `${name}.exe`]) {
-    const ver = run(`${cmd} --version`);
-    if (ver) return ver.split(/\r?\n/)[0].trim();
-  }
-  const resolved = isWin
-    ? run(`where ${name} 2>nul`)
-    : run(`which ${name} 2>/dev/null`);
-  if (resolved) {
-    const path = resolved.split(/\r?\n/)[0].trim();
-    const ver = run(`"${path}" --version`);
-    if (ver) return ver.split(/\r?\n/)[0].trim();
-  }
-  return null;
+  return probeRuntimeCli(name, { cwd:PROJECT_DIR }).version;
 }
 
 function gitProxyArgs() {
@@ -5303,12 +5291,15 @@ async function detectRuntimes() {
       })}${C.reset}`,
     );
     console.log("");
-    const proceed = await askYesNo(t.continueAnyway, false);
-    if (!proceed) {
-      console.log("");
-      console.log(`${C.dim}${t.setupCancelled}${C.reset}`);
-      console.log("");
-      process.exit(0);
+    const { cliTargets } = await resolveTargetContext(args);
+    if (cliTargets.length === 0) {
+      const proceed = await askYesNo(t.continueAnyway, false);
+      if (!proceed) {
+        console.log("");
+        console.log(`${C.dim}${t.setupCancelled}${C.reset}`);
+        console.log("");
+        process.exit(0);
+      }
     }
   }
 

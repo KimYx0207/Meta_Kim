@@ -17,6 +17,7 @@ import { loadDependencyAgentMethod } from "../dependency-agent-discovery.mjs";
 import { projectWorkerProgressEvent } from "./worker-result-projection.mjs";
 import { calculationHandoffForWorker } from "./dependency-calculation-handoff.mjs";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
+import { readTaskResearchEvidence } from "./research-records.mjs";
 import {
   appendMethodInvocationContext, assertMethodInputsReady, buildMethodInvocationContext,
   buildMethodDeliveryEnvelope, methodDeliveryMatches,
@@ -381,6 +382,9 @@ export function buildReadOnlyWorkerPrompt({
     evidenceRefs: packet.evidenceRefs,
     verifySteps: packet.verifySteps,
     referenceDirection: packet.referenceDirection,
+    ...(packet.researchEvidence ? { researchEvidence: packet.researchEvidence } : {}),
+    ...(packet.researchContextBinding ? { researchContextBinding: packet.researchContextBinding } : {}),
+    ...(packet.projectContextBinding ? { projectContextBinding: packet.projectContextBinding } : {}),
     requiredConstraintReview: packet.handoffContract?.requiredConstraintReview ?? null,
     scopeFiles: Array.isArray(packet.scopeFiles) ? packet.scopeFiles : [],
     shardScope: Array.isArray(packet.shardScope) ? packet.shardScope : [],
@@ -494,9 +498,22 @@ function appendOwnerMethod(prompt, method) {
   return method ? `${prompt}\nSelected owner method (source SHA-256: ${method.contentDigest}):\n${method.sourceText}` : prompt;
 }
 
+async function verifyWorkerResearch(packet, projectRoot) {
+  if (!packet?.researchEvidence?.length) return;
+  const current = packet.intentBinding ?? packet.researchContextBinding;
+  const research = packet.researchContextBinding;
+  if (!current || (research && (research.taskHash !== current.taskHash ||
+    (research.intentDigest ?? null) !== (current.intentDigest ?? null)))) {
+    throw new Error("Worker research must bind the current task and intent");
+  }
+  await readTaskResearchEvidence({ projectRoot, evidence: packet.researchEvidence,
+    taskHash: current.taskHash, intentDigest: current.intentDigest ?? null });
+}
+
 /** A source-verified invocation plan is not evidence that a process/model ran. */
 export async function prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot, packet, prompt, upstreamResults = [], env = process.env }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
+  await verifyWorkerResearch(packet, path.resolve(workspaceRoot));
   const method = await loadDependencyAgentMethod({ packet, environment: env, projectRoot: path.resolve(workspaceRoot) });
   const methodContext = buildMethodInvocationContext({ method, packet, upstreamResults });
   assertMethodInputsReady(methodContext);
@@ -1418,6 +1435,7 @@ export async function runStageRunnerBridge({
           let methodBinding = null;
           let sourceValidationPending = false;
           try {
+            await verifyWorkerResearch(packet, resolvedWorkspace);
             prompt = buildReadOnlyWorkerPrompt({ runId, runtime: normalizedRuntime,
               node, packet, requestTask, upstreamResults });
             const calculationContext = calculationHandoffForWorker({ handoff: dependencyCalculationHandoff,

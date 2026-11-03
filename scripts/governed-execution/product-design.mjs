@@ -3,6 +3,7 @@ import { promises as fs, readFileSync } from "node:fs";
 import path from "node:path";
 import { evaluateTaskOutcome } from "../../src/domain/governance/task-outcome.mjs";
 import { stageLaneNodeId } from "./stage-dag.mjs";
+import { normalizeResearchEvidence, researchForTask } from "./research-records.mjs";
 
 const text = (value) => typeof value === "string" && value.trim().length > 0;
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -74,12 +75,14 @@ export function normalizeRequirementsDiscovery({ input = null, dialogue }) {
   });
   const normalized = { schemaVersion: 1, taskHash: input.taskHash, intentDigest: input.intentDigest ?? null,
     evidenceRefs: [...input.evidenceRefs], findings: structuredClone(input.findings ?? []), resolvedFacts: structuredClone(input.resolvedFacts ?? []), decisionItems };
+  const research = normalizeResearchEvidence({ input: input.research, taskHash: dialogue.taskHash, intentDigest: dialogue.intentDigest ?? null });
+  if (research) normalized.research = research;
   requireThat(Array.isArray(normalized.resolvedFacts) && normalized.resolvedFacts.every((fact) => decisionItems.some((item) => item.questionId === fact.questionId && item.resolutionClass === "discoverable_fact") && text(fact.value) && list(fact.evidenceRefs) && fact.evidenceRefs.length > 0), "Resolved facts require a fact question and source evidence");
   return { ...normalized, discoveryDigest: productDesignDigest(normalized),
     claimBoundary: "Proposed requirements exploration. Answers, authorization and native invocation come from the current host, not this content." };
 }
 
-export function normalizeProductDesign({ input = null, dialogue, goalContract }) {
+export function normalizeProductDesign({ input = null, dialogue, goalContract, research = null, requireResearch = false }) {
   if (input == null) return null;
   bind(input, dialogue, goalContract, "Product design");
   requireThat(text(input.designId) && Number.isInteger(input.revision) && input.revision > 0, "Design needs identity and positive revision");
@@ -99,10 +102,20 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract })
     requireThat((journey.criterionIds ?? []).every((id) => criteria.has(id)), "Journey references unknown goal criterion");
   }
   const slices = structuredClone(input.taskSlices ?? []);
+  const researchRequired = requireResearch || research?.required === true;
+  const knownResearch = new Set(research?.sources.map(source => source.id) ?? []);
+  const researchRefs = input.researchRefs ?? [];
+  requireThat(list(researchRefs) && researchRefs.every(id => knownResearch.has(id)), "Design references unknown research evidence");
+  const researchGaps = researchRequired ? [...research?.gaps ?? ["required_research_missing"]] : [];
   checkDag(slices, "id");
   for (const slice of slices) {
     slice.scopeFiles ??= [];
     slice.inputRefs ??= [];
+    if (research || researchRequired || slice.researchRefs !== undefined) {
+      slice.researchRefs ??= [];
+      requireThat(list(slice.researchRefs) && slice.researchRefs.every(id => knownResearch.has(id)), "Task slice references unknown research evidence");
+    }
+    if (researchRequired && !slice.researchRefs?.length && !text(slice.researchNotApplicableReason)) researchGaps.push(`task_research_binding_missing:${slice.id}`);
     requireThat(text(slice.outcome) && list(slice.capabilityNeed) && slice.capabilityNeed.length > 0, "Task slice needs outcome and capability demand");
     requireThat(text(slice.completionDemo), "Task slice requires an observable completion demonstration");
     for (const key of ["scopeFiles", "inputRefs", "criterionIds", "journeyRefs", "decisionRefs", "artifactFlowRefs"]) requireThat(list(slice[key] ?? []), `Task slice ${key} must be a string list`);
@@ -141,10 +154,12 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract })
   const normalized = { schemaVersion: 1, taskHash: input.taskHash, intentDigest: input.intentDigest ?? null, acceptanceDigest: input.acceptanceDigest,
     designId: input.designId, revision: input.revision, mode: input.mode, sourceRefs: [...input.sourceRefs], settledDecisionRefs: [...(input.settledDecisionRefs ?? [])],
     domainTerms: structuredClone(input.domainTerms ?? []), userJourneys: journeys, taskSlices: slices, artifactFlow: flows,
-    revisionContext: structuredClone(input.revisionContext ?? null), ...(input.lifecycle !== undefined ? { lifecycle: input.lifecycle } : {}) };
+    revisionContext: structuredClone(input.revisionContext ?? null), ...(input.lifecycle !== undefined ? { lifecycle: input.lifecycle } : {}),
+    ...(research || researchRequired ? { researchBinding: { required: researchRequired, digest: research?.digest ?? null,
+      sourceIds: [...new Set([...researchRefs, ...slices.flatMap(slice => slice.researchRefs ?? [])])], gaps: researchGaps } } : {}) };
   const revisionImpact = deriveDesignRevisionImpact(normalized);
   return { ...normalized, designDigest: productDesignDigest(normalized), uncoveredCriteria, revisionImpact,
-    readiness: input.mode === "delivery" && slices.length > 0 && uncoveredCriteria.length === 0 ? "structure_ready_not_reviewed" : "design_incomplete",
+    readiness: researchGaps.length ? "research_incomplete" : input.mode === "delivery" && slices.length > 0 && uncoveredCriteria.length === 0 ? "structure_ready_not_reviewed" : "design_incomplete",
     invocationStatus: "content_supplied_not_authenticated", nativeInvocationVerified: false };
 }
 
@@ -171,8 +186,9 @@ export function deriveDesignRevisionImpact(design) {
 
 /** Consume a discovered route template; the design cannot supply an owner or
  * grant a tool. Per-slice templates were selected using its capability demand. */
-export function projectDesignWorkerTasks({ design, runId, templates }) {
+export function projectDesignWorkerTasks({ design, runId, templates, research = null, projectContext = null }) {
   if (!design) return templates;
+  requireThat(!design.researchBinding?.digest || design.researchBinding.digest === research?.digest, "Design research changed before task handoff");
   requireThat(design.revisionContext?.previousRunId !== runId, "Changed design requires a new run, not resume or overwrite");
   return design.taskSlices.map((slice, index) => {
     const packet = templates[index];
@@ -187,6 +203,11 @@ export function projectDesignWorkerTasks({ design, runId, templates }) {
       dependencyEvidence: "explicit_design_dependencies", capabilityNeed: [...slice.capabilityNeed], capabilityRequirements: [...slice.capabilityNeed],
       acceptanceCriterionIds: [...slice.criterionIds], verifySteps: slice.verification.map((check, i) => ({ id: `${taskPacketId}-check-${i + 1}`, step: check.procedure, verify: check.expectedEvidence })),
       designBinding: { designId: design.designId, revision: design.revision, designDigest: design.designDigest, sliceId: slice.id },
+      ...(slice.researchRefs?.length ? { researchContextBinding: { taskHash: design.taskHash, intentDigest: design.intentDigest } } : {}),
+      ...(slice.researchRefs?.length ? { researchEvidence: researchForTask({ research, sourceIds: slice.researchRefs }) } : {}),
+      ...(projectContext ? { projectContextBinding: { digest: projectContext.digest, lifecycle: projectContext.lifecycle,
+        modules: projectContext.modules.filter(module => !scopeFiles.length || scopeFiles.some(file => module.directory === "." || file.startsWith(module.directory + "/"))),
+        limitations: projectContext.limitations } } : {}),
       methodInputs: structuredClone(slice.methodInputs ?? null), ...(slice.methodCapabilityId ? { methodCapabilityId: slice.methodCapabilityId } : {}),
       designTask: { completionDemo: slice.completionDemo, inputRefs: slice.inputRefs, deliverables: slice.deliverables, journeyRefs: slice.journeyRefs ?? [], decisionRefs: slice.decisionRefs ?? [], dependencyReasons: slice.dependencyReasons ?? [] },
       artifactFlowRefs: [...(slice.artifactFlowRefs ?? [])], artifactFlow: design.artifactFlow.filter((flow) => flow.producerTaskId === slice.id || flow.consumerTaskIds.includes(slice.id)),
@@ -274,6 +295,13 @@ export async function evaluateProductOutcomeReview({ input, artifact, projectRoo
   requireThat(outcome.errors.length === 0 && !outcome.results.some((result) => result.status === "invalid"), "Outcome review contains an invalid observation binding or assessment");
   for (const observation of input.observations) {
     requireThat(list(observation.artifactRefs) && observation.artifactRefs.length > 0, "Each outcome observation must identify its reviewed artifacts");
+    if (goal.acceptanceCriteria.find(criterion => criterion.id === observation.criterionId)?.measurement) {
+      for (const sample of observation.measurement?.samples ?? []) {
+        requireThat(observation.artifactRefs.includes(sample.evidenceRef) && snapshots.some(snapshot =>
+          snapshot.ref === sample.evidenceRef && snapshot.verifiedSha256 === sample.evidenceDigest),
+        "Numeric sample evidence must bind a current reviewed artifact snapshot");
+      }
+    }
     for (const ref of observation.artifactRefs) {
       const snapshot = snapshots.find((item) => item.ref === ref);
       const producer = snapshot && packets.find((packet) => packet.taskPacketId === snapshot.producerTaskId);

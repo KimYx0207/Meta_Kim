@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { resolveWindowsCliLaunchDescriptor } from "./runtime-cli-invocation.mjs";
+import { runRuntimeCliVersion } from "./runtime-cli-version.mjs";
 
 const INVENTORY_SCHEMA = "meta-kim-runtime-launch-inventory-v2";
 const INVENTORY_PURPOSE = "setup_inventory_and_drift_detection";
@@ -345,7 +346,7 @@ export function recordSetupRuntimeExecutableBindings({
   profile = "default",
   targets,
   pathResolver = discoverRuntimeExecutablePaths,
-  versionRunner = (launcher, args) => spawnSync(launcher, args, { encoding: "utf8", windowsHide: true, shell: false }),
+  versionRunner = runRuntimeCliVersion,
 } = {}) {
   if (!/^[a-z0-9][a-z0-9._-]*$/iu.test(profile) || profile === "." || profile === "..") {
     throw new Error("runtime launch inventory profile is invalid");

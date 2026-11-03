@@ -65,6 +65,7 @@ import {
   validateSkillFrontmatter,
 } from "./install-skill-sanitizer.mjs";
 import { fileURLToPath } from "node:url";
+import { materializeManagedServiceSource, readManagedServiceSource } from "./managed-dependency-source.mjs";
 import {
   parseSkillsArg,
   resolveTargetContext,
@@ -4281,6 +4282,28 @@ async function validateServiceStage(spec, stagedPath) {
   }
 }
 
+async function prepareManagedServiceSource(activeTargets) {
+  if (dryRun || pluginsOnly) return;
+  const selected = SKILL_REPOS.filter(spec => repoNameFromFullName(spec.repoFullName) === "Kim_Service"
+    && activeTargets.some(runtime => !spec.targets || spec.targets.includes(runtime)));
+  if (!selected.length) return;
+  const declared = selected.find(spec => spec.localRepoPath)?.localRepoPath;
+  let root = !declared && !updateMode ? readManagedServiceSource()?.value : null;
+  if (!root) {
+    const temporary = declared ? null : await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-service-source-"));
+    try {
+      if (temporary) await runGitAsync(["clone", "--depth", "1", selected[0].repo, temporary], {
+        skillLabel: "Kim_Service professional capability source", cloneProgress: { skillId: "kim-service", rootPath: temporary },
+      });
+      root = await materializeManagedServiceSource({ sourceRoot: declared ?? temporary,
+        metaKimVersion: JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")).version });
+    } finally {
+      if (temporary) await fs.rm(temporary, { recursive: true, force: true });
+    }
+  }
+  for (const spec of selected) spec.localRepoPath = root;
+}
+
 async function stageAndDeployServiceSkill(spec, targetDir) {
   const targetExists = await pathExists(targetDir) && !(await isEmptyDir(targetDir));
   const knownLegacy = targetExists && await isKnownLegacySkillRoot(spec, targetDir);
@@ -4595,6 +4618,7 @@ async function main() {
   // targets, so unrelated selected skills and runtimes can still update.
   // Per-target checks remain in the write paths to detect later changes.
   await preflightServiceSkillTargets(homes, activeTargets);
+  await prepareManagedServiceSource(activeTargets);
 
   // Whole-runtime maintenance is not part of a selected dependency update.
   // Even owned retirement and old staging cleanup can touch another task.

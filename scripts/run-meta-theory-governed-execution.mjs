@@ -100,6 +100,8 @@ import { resolveReadySetExecutor } from "./governed-execution/ready-set-adapters
 import { advanceGovernedGoal } from "./governed-execution/advance-goal.mjs";
 import { prepareIntentDialogue, normalizeHostCritical, normalizeHostThinking, hostCriticalGoalCriteria, sameHostCriticalMeaning, intentDialogueDigest, bindIntentToWorkerTasks, applyTaskCriterionAssignments, normalizeTaskCriterionAssignments, buildIntentCriterionCoverage, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
 import { normalizeRequirementsDiscovery, normalizeProductDesign, projectDesignWorkerTasks, projectDesignHumanMilestones, evaluateProductOutcomeReview, projectProductReview, productDesignDigest } from "./governed-execution/product-design.mjs";
+import { inspectProjectContext } from "./governed-execution/project-context.mjs";
+import { persistResearchEvidence, readTaskResearchEvidence } from "./governed-execution/research-records.mjs";
 import {
   buildTaskGoalContract as buildGoalContractPacket,
   evaluateTaskOutcome,
@@ -11821,7 +11823,7 @@ function synchronizeHostWorkOrder({ draft, packet }) {
   }
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, hostThinking = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, hostThinking = null, projectContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
@@ -11916,7 +11918,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     const hasLocalWrites = records.some(({ request }) => request.effectClass === "local_write");
     if (design && !designCapabilityGaps.length) {
       const templates = design.taskSlices.map((slice) => records.find(({ request }) => request.roleInstanceId === slice.id)?.packet);
-      const projected = projectDesignWorkerTasks({ design, runId, templates });
+      const projected = projectDesignWorkerTasks({ design, runId, templates, research: requirementsDiscovery?.research, projectContext });
       for (const record of records) {
         const packet = projected.find((item) => item.roleInstanceId === record.request.roleInstanceId);
         if (!hasLocalWrites) { record.packet = packet ?? null; continue; }
@@ -12007,7 +12009,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     }
     // Projection requires one genuine template per slice. Keep this unresolved
     // design as a gap, rather than fabricating an owner or an invalid partial DAG.
-    plannedPackets = designCapabilityGaps.length ? [] : projectDesignWorkerTasks({ design, runId, templates });
+    plannedPackets = designCapabilityGaps.length ? [] : projectDesignWorkerTasks({ design, runId, templates, research: requirementsDiscovery?.research, projectContext });
     if (designRouteEvidence.length) {
       const firstGap = designRouteEvidence.find((item) => item.capabilityGapPacket);
       route = firstGap ? null : designRouteEvidence[0].route;
@@ -12246,7 +12248,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
 
 /** Persist host preparation without manufacturing execution workers or a DAG. */
 async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, language, goalContract,
-  dialogue, confirmedIntent, requirementsDiscovery, preview, critical, fetchResult = null, previousRunId = null, projectRoot }) {
+  dialogue, confirmedIntent, requirementsDiscovery, preview, critical, fetchResult = null, previousRunId = null, projectRoot, projectContext = null, researchRequired = false }) {
   const id = validateRunId(runId ?? uniqueRunId(taskFingerprint), "preparation runId");
   const jsonPath = resolveOutputFile(outputDir, id + ".json");
   const markdownPath = resolveOutputFile(outputDir, id + "." + language + ".md");
@@ -12258,21 +12260,25 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
   const factQuestions = questions.filter((question) => question.status === "open" && question.resolutionClass === "discoverable_fact");
   const factIds = new Set(factQuestions.map((question) => question.questionId));
   const needsInput = open.length > 0 || (critical?.blockingUnknowns.some((id) => !factIds.has(id)) ?? false);
-  const status = stopped ? "stopped_by_user" : needsInput ? "needs_input" : "needs_thinking";
-  const nextAction = { stage: factQuestions.length && !needsInput ? "Fetch" : needsInput || !critical ? "Critical" : "Thinking",
-    action: stopped ? "wait_for_explicit_user_resume" : needsInput ? ready.some((question) => question.options?.length >= 2) ? "invoke_current_native_choice_surface" : "complete_current_material_question" : factQuestions.length ? "resolve_discoverable_facts" : !critical ? "produce_current_critical_understanding" : "consume_fetch_and_produce_thinking",
-    producer: "current_host_ai", questions: ready, inputRefs: ["intentPacket", "preDecisionOptionFrame", "fetchPacket"],
+  const researchGaps = researchRequired || requirementsDiscovery?.research?.required
+    ? requirementsDiscovery?.research?.gaps ?? ["required_research_missing"] : [];
+  const status = stopped ? "stopped_by_user" : needsInput ? "needs_input" : researchGaps.length ? "needs_research" : "needs_thinking";
+  const nextAction = { stage: needsInput || !critical ? "Critical" : factQuestions.length || researchGaps.length ? "Fetch" : "Thinking",
+    action: stopped ? "wait_for_explicit_user_resume" : needsInput ? ready.some((question) => question.options?.length >= 2) ? "invoke_current_native_choice_surface" : "complete_current_material_question" : !critical ? "produce_current_critical_understanding" : factQuestions.length ? "resolve_discoverable_facts" : "consume_fetch_and_produce_thinking",
+    producer: "current_host_ai", questions: ready, researchGaps, inputRefs: ["projectContextPacket", "intentPacket", "preDecisionOptionFrame", "fetchPacket", "requirementsDiscoveryPacket.research"],
     completionRule: "Return the actual native choice or current host reasoning through this ordinary entry before formal dispatch." };
+  if (!stopped && critical && !needsInput && researchGaps.length) nextAction.action = "complete_topic_research_and_source_bindings";
   const materialView = { intentPacket: critical, requirementsDiscoveryPacket: requirementsDiscovery, preDecisionOptionFrame: { ...preview, unresolvedQuestions: questions } };
   const commonMaterials = stopped ? { bindings: [], gaps: [] } : collectPlanChallengeMaterials({ artifact: materialView, projectRoot });
   const materialBindings = commonMaterials.bindings;
   const bindingDigest = productDesignDigest({ taskHash: goalContract.taskHash, intentDigest: dialogue.intentDigest ?? null,
-    requirementsDigest: requirementsDiscovery?.discoveryDigest ?? null, critical, questions, materialBindings });
+    requirementsDigest: requirementsDiscovery?.discoveryDigest ?? null, projectContextDigest: projectContext?.digest ?? null, critical, questions, materialBindings });
   if (needsInput && previousRunId) {
     const priorPath = resolveOutputFile(outputDir, previousRunId + ".json");
     const prior = JSON.parse(await fs.readFile(priorPath, "utf8"));
     const priorOpen = prior.preDecisionOptionFrame?.unresolvedQuestions.filter((question) => question.status === "open") ?? [];
-    if (prior.preparation?.status === "needs_input" && prior.task === task &&
+    if (prior.preparation?.status === "needs_input" && prior.task === task && prior.projectContextPacket?.digest === projectContext?.digest &&
+        prior.requirementsDiscoveryPacket?.discoveryDigest === requirementsDiscovery?.discoveryDigest &&
         productDesignDigest(priorOpen) === productDesignDigest(questions.filter((question) => question.status === "open")) &&
         productDesignDigest(prior.preparation.materialBindings) === productDesignDigest(materialBindings)) {
       const priorMarkdown = resolveOutputFile(outputDir, previousRunId + "." + prior.resolvedOutputLanguage + ".md");
@@ -12290,13 +12296,16 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     return { ...existing, paths: { json: jsonPath, markdown: markdownPath } };
   }
   const text = ["# 宿主准备", "", "状态：" + status,
-    ...ready.map((question) => question.question), "", "下一步：" + nextAction.action,
+    ...ready.map((question) => question.question), "", "项目分析：" + (projectContext?.lifecycle ?? "unavailable"),
+    ...(requirementsDiscovery?.research ? ["研究记录：" + requirementsDiscovery.research.recordRef,
+      "匹配 GitHub 参考：" + requirementsDiscovery.research.matchingRepositoryCount + "（最低3，目标5）", ...researchGaps.map(gap => "研究缺口：" + gap)] : []),
+    "", "下一步：" + nextAction.action,
     "尚未形成正式执行工单或执行图；候选库存不是实际调用、权限或验收。", ""].join("\n");
   const artifact = { schemaVersion: 1, artifactKind: "host_preparation", runId: id, task, taskFingerprint, status: stopped ? "stopped_by_user" : "partial",
     partialReasons: [status], resolvedOutputLanguage: language,
     preparation: { status, createdAt: new Date().toISOString(), bindingDigest, previousRunId,
       intentSnapshot: confirmedIntent, materialBindings, materialGaps: commonMaterials.gaps, markdownSha256: textSha256(text) },
-    goalContractPacket: goalContract, requirementsDiscoveryPacket: requirementsDiscovery,
+    goalContractPacket: goalContract, requirementsDiscoveryPacket: requirementsDiscovery, projectContextPacket: projectContext,
     intentPacket: { ...(critical ?? {}), stage: "Critical", realIntent: dialogue.outcome, intentBinding: dialogue,
       status: critical ? "host_provided_not_independently_verified" : "host_reasoning_required" },
     preDecisionOptionFrame: { ...preview, unresolvedQuestions: questions, readyDecisionFrontier: ready },
@@ -12621,6 +12630,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: priorIntent.taskHash, intentDigest: newDigest, evidenceRefs: confirmedIntentSnapshot.evidenceRefs };
     }
   }
+  const projectContext = await inspectProjectContext({ projectRoot: path.resolve(projectRoot) });
   const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
   if (consumedPlanChoice?.status === "consumed") {
     intentDialogue.settledDecisionRefs = [...confirmedIntentSnapshot.settledDecisions];
@@ -12663,15 +12673,17 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     const currentQuestion = requirementsSource.decisionItems?.find((item) => item.questionId === oldQuestion.questionId);
     if (!currentQuestion || productDesignDigest([currentQuestion.question, currentQuestion.options, currentQuestion.evidenceRefs]) !==
         productDesignDigest([oldQuestion.question, oldQuestion.options, oldQuestion.evidenceRefs])) throw new TypeError("A consumed answer cannot settle a changed question or options");
-    requirementsSource = { ...requirementsSource, intentDigest: intentDialogue.intentDigest ?? null };
+    requirementsSource = { ...requirementsSource, intentDigest: intentDialogue.intentDigest ?? null,
+      ...(requirementsSource.research ? { research: { ...requirementsSource.research, intentDigest: intentDialogue.intentDigest ?? null } } : {}) };
   }
   const requirementsDiscovery = normalizeRequirementsDiscovery({ input: requirementsSource, dialogue: intentDialogue });
   const discoveryDecisionItems = (requirementsDiscovery?.decisionItems ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `requirementsDiscoveryPacket.decisionItems[${index}].evidenceRefs[${refIndex}]`) }));
   const discoveryResolvedFacts = (requirementsDiscovery?.resolvedFacts ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `requirementsDiscoveryPacket.resolvedFacts[${index}].evidenceRefs[${refIndex}]`) }));
   const discoverySettledDecisions = (intentDialogue.settledDecisionRefs ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `preDecisionOptionFrame.intentBinding.settledDecisionRefs[${index}].evidenceRefs[${refIndex}]`) }));
-  const productDesign = normalizeProductDesign({ input: designInput == null ? null : structuredClone(designInput), dialogue: intentDialogue, goalContract: designGoal });
   const designRequirementSnapshot = designRequirement == null ? (designRequired ? { required: true, reason: "Current host requires product design after requirements discovery" } : null) : structuredClone(designRequirement);
   if (designRequirementSnapshot && (typeof designRequirementSnapshot.required !== "boolean" || typeof designRequirementSnapshot.reason !== "string" || !designRequirementSnapshot.reason.trim())) throw new TypeError("Design requirement needs explicit host judgment and reason");
+  const productDesign = normalizeProductDesign({ input: designInput == null ? null : structuredClone(designInput), dialogue: intentDialogue,
+    goalContract: designGoal, research: requirementsDiscovery?.research, requireResearch: designRequirementSnapshot?.required === true });
   const outcomeReviewSnapshot = outcomeReviewInput == null ? null : structuredClone(outcomeReviewInput);
   const taskCriterionAssignmentsSnapshot = normalizeTaskCriterionAssignments({ dialogue: intentDialogue, input: taskCriterionAssignments == null ? null : structuredClone(taskCriterionAssignments) });
   const calculationInput = dependencyCalculationInput == null ? null : structuredClone(dependencyCalculationInput);
@@ -12742,6 +12754,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const resolvedOutputLanguage = languageResolution.language;
   const outputDir = artifactDir ? path.resolve(artifactDir) : path.resolve(stateDir);
   await fs.mkdir(outputDir, { recursive: true });
+  if (requirementsDiscovery?.research) requirementsDiscovery.research = await persistResearchEvidence({ research: requirementsDiscovery.research, outputDir, projectRoot: path.resolve(projectRoot) });
   const governedSideEffectActions = [
     ...(Array.isArray(requestedSideEffectActions) ? requestedSideEffectActions : []),
   ];
@@ -12801,7 +12814,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         planChallengeSatisfied: questions.length > 0 && !pending, executionAllowed: false,
         phase: frontier.length ? "awaiting_user_answer" : pending ? "awaiting_fact_discovery" : questions.length ? "plan_challenge_satisfied" : "inactive" } };
   }
-  const preparationPending = !hostCritical || hostCritical.blockingUnknowns.length > 0 ||
+  const researchRequired = designRequirementSnapshot?.required === true || requirementsDiscovery?.research?.required === true;
+  const researchPending = researchRequired && requirementsDiscovery?.research?.readiness !== "ready";
+  const preparationPending = researchPending || !hostCritical || hostCritical.blockingUnknowns.length > 0 ||
     planChallengePreview.unresolvedQuestions.some((question) => declaredQuestionIds.has(question.questionId) && question.status === "open");
   const existingPath = runId == null ? null : resolveOutputFile(outputDir, String(runId) + ".json");
   const existing = existingPath && existsSync(existingPath) ? JSON.parse(await fs.readFile(existingPath, "utf8")) : null;
@@ -12819,7 +12834,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       runtime, os: osTarget, projectRoot, environment: calculationEnvironment, fetchOnly: true }) : null;
     return writeHostPreparation({ task: normalizedTask, runId, taskFingerprint, outputDir, language: resolvedOutputLanguage,
       goalContract: designGoal, dialogue: intentDialogue, confirmedIntent: confirmedIntentSnapshot, requirementsDiscovery,
-      preview: { ...planChallengePreview, currentQuestionIds: [...declaredQuestionIds] }, critical: hostCritical, fetchResult: fetched, previousRunId: requestedPreviousRunId, projectRoot: path.resolve(projectRoot) });
+      preview: { ...planChallengePreview, currentQuestionIds: [...declaredQuestionIds] }, critical: hostCritical, fetchResult: fetched, previousRunId: requestedPreviousRunId, projectRoot: path.resolve(projectRoot), projectContext, researchRequired });
   }
   if (hostThinking && priorPreparation?.fetchPacket.capabilityDiscovery?.inventoryDigest !== hostThinking.fetchPacket.capabilityDiscovery.inventoryDigest) {
     throw new TypeError("Thinking must consume the actual previous Fetch preparation inventory");
@@ -12996,6 +13011,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     design: productDesign,
     designRequirement: designRequirementSnapshot,
     requirementsDiscovery,
+    projectContext,
     localToolRequest,
     calculationRequest,
     agentCapabilityProfileContext: agentCapabilityProfileContextSnapshot,
@@ -13003,6 +13019,10 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     projectRoot: path.resolve(projectRoot),
     environment: calculationEnvironment,
   });
+  for (const packet of orchestrationReport.workerTaskPackets ?? []) {
+    if (packet.researchEvidence?.length) await readTaskResearchEvidence({ projectRoot: path.resolve(projectRoot), evidence: packet.researchEvidence,
+      taskHash: intentDialogue.taskHash, intentDigest: intentDialogue.intentDigest ?? null });
+  }
   if (!hostThinking) planChallengePreview = buildPlanChallengeState({
     task: dialogueTask,
     decisionItems: discoveryDecisionItems,
@@ -13275,6 +13295,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     ...coreLoop,
     productDesignPacket: productDesign,
     requirementsDiscoveryPacket: requirementsDiscovery,
+    projectContextPacket: projectContext,
     designRequirementPacket: orchestrationReport.designRequirementPacket,
     runnerSpineBindingPacket: {
       schemaVersion: "governed-runner-spine-bindings-v1",
@@ -13757,6 +13778,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     taskFingerprint,
     productDesignPacket: productDesign,
     requirementsDiscoveryPacket: requirementsDiscovery,
+    projectContextPacket: projectContext,
     designRequirementPacket: orchestrationReport.designRequirementPacket,
     ...(durableExecution ? { durableExecution } : {}),
     resolvedOutputLanguage,

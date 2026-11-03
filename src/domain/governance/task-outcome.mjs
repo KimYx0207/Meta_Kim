@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeMeasurementRule, evaluateNumericMeasurement } from "./numeric-measurement.mjs";
 
 // The policy is durable; the requested outcome and its criteria belong to one run.
 export const FRAMEWORK_GOAL_POLICY = "Understand the user's outcome, compare evidence-backed routes, discover or create missing capabilities, orchestrate within dependencies and permissions, and verify the resulting deliverable. Governance structure is not proof of task success or global optimality.";
@@ -31,9 +32,13 @@ function normalizeCriteria(criteria, task) {
       throw new TypeError("Criteria require unique ids, descriptions, a known kind and a boolean required flag");
     }
     ids.add(criterion.id);
+    if (criterion.measurement !== undefined && criterion.kind !== "deterministic") {
+      throw new TypeError("Numerical measurements require a deterministic acceptance criterion");
+    }
     return {
       id: criterion.id, description: criterion.description.trim(), kind: criterion.kind,
       required: criterion.required !== false,
+      ...(criterion.measurement !== undefined ? { measurement: normalizeMeasurementRule(criterion.measurement) } : {}),
     };
   });
   if (!normalized.some((criterion) => criterion.required)) throw new TypeError("At least one required outcome criterion is needed");
@@ -163,6 +168,13 @@ export function evaluateTaskOutcome(goalContract, observations = []) {
     if (observation.evidenceKind === "independent_review" &&
         (typeof observation.producer !== "string" || !observation.producer.trim() || observation.producer.trim() === observation.reviewer.trim())) {
       return { ...base, status: "inconclusive", reason: "independent_review_not_established" };
+    }
+    if (criterion.measurement) {
+      const measurement = evaluateNumericMeasurement(criterion.measurement, observation.measurement);
+      const status = measurement.status === "pass" ? observation.verdict
+        : observation.verdict === "fail" ? "fail" : measurement.status;
+      return { ...base, status, evidenceRef: observation.evidenceRef, measurement,
+        reason: measurement.status === "pass" ? "measured_target_and_reported_assessment" : measurement.reason };
     }
     return { ...base, status: observation.verdict, evidenceRef: observation.evidenceRef, reason: "reported_task_bound_assessment" };
   });

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { checkedPath, componentHash, stableJson, sha256 } from "./dependency-source-integrity.mjs";
+import { dependencyRootBinding } from "./managed-dependency-source.mjs";
 import { OS_TARGETS, RUNTIMES, repoRoot, toPosix } from "./governance-lib.mjs";
 import { matchDependencyAgentContracts } from "./dependency-agent-matching.mjs";
 import { sanitizeCapabilityPublicationText } from "./capability-publication-sanitizer.mjs";
@@ -19,65 +20,10 @@ const TOOL_PERMISSIONS = {
   WebFetch: "network:read-web-fetch",
 };
 const compare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
-const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
 // Shared source-integrity checks; exporting them does not widen Agent permissions.
 export { checkedPath, componentHash, stableJson, uniqueIds, stringArray, sha256 };
 
-// Kim Service's v1 index hashes sorted JSON plus a final LF, and sorted
-// component-relative file names separated from their raw bytes with NULs.
-function stable(value) {
-  if (Array.isArray(value)) return value.map(stable);
-  if (value && typeof value === "object") return Object.fromEntries(
-    Object.keys(value).sort(compare).map((key) => [key, stable(value[key])]),
-  );
-  return value;
-}
-const stableJson = (value) => JSON.stringify(stable(value), null, 2) + "\n";
-
-function relativeSegments(value) {
-  assert.equal(typeof value, "string", "component path must be a relative string");
-  assert(!/[\\:\0]/u.test(value), "component path must use portable relative segments");
-  const segments = value.split("/");
-  assert(segments.every((part) => part && part !== "." && part !== ".."), "component path cannot escape its root");
-  return segments;
-}
-
-async function checkedPath(root, relative, directory = false) {
-  let current = root;
-  const segments = relativeSegments(relative);
-  for (const [index, segment] of segments.entries()) {
-    current = path.join(current, segment);
-    const stat = await fs.lstat(current);
-    assert(!stat.isSymbolicLink(), "component path cannot traverse a symlink or junction");
-    assert(index < segments.length - 1 || directory ? stat.isDirectory() : stat.isFile(), "component path has an unexpected file type");
-  }
-  return current;
-}
-
-async function componentHash(root) {
-  const files = [];
-  async function visit(directory, prefix = "") {
-    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
-      relativeSegments(name);
-      const file = path.join(directory, entry.name);
-      const stat = await fs.lstat(file);
-      assert(!stat.isSymbolicLink(), "component tree cannot contain a symlink or junction");
-      if (stat.isDirectory()) await visit(file, name);
-      else {
-        assert(stat.isFile(), "component tree must contain only regular files");
-        files.push(name);
-      }
-    }
-  }
-  await visit(root);
-  const hash = createHash("sha256");
-  for (const name of files.sort(compare)) {
-    hash.update(name).update("\0").update(await fs.readFile(path.join(root, name))).update("\0");
-  }
-  return hash.digest("hex");
-}
 
 function uniqueIds(records, label) {
   assert(Array.isArray(records), `${label} must be an array`);
@@ -106,12 +52,7 @@ function validateCapability(capability) {
 }
 
 function declaredRoot(project, localOverrides, environment) {
-  const envName = project.interface.capabilityIndex.rootEnv;
-  if (envName && Object.hasOwn(environment, envName)) return { value: environment[envName], source: `environment:${envName}` };
-  if (Object.hasOwn(localOverrides.dependencyRoots ?? {}, project.id)) return {
-    value: localOverrides.dependencyRoots[project.id], source: `.meta-kim/local.overrides.json#dependencyRoots.${project.id}`,
-  };
-  return { value: project.source?.localPath, source: `dependency-project-registry.json#${project.id}.source.localPath` };
+  return dependencyRootBinding(project, localOverrides, environment);
 }
 
 /** Local bindings belong to the caller project; registry policy stays in the package. */
@@ -126,6 +67,7 @@ export async function resolveDependencyProjectRoot({ dependencyId, projectRoot, 
   const project = projects.find((entry) => entry.id === dependencyId && entry.interface?.capabilityIndex);
   if (!project) return null;
   const binding = declaredRoot(project, await readDependencyProjectOverrides(projectRoot), environment);
+  if (binding.error) throw new Error(binding.error);
   return typeof binding.value === "string" && binding.value.trim() ? path.resolve(projectRoot, binding.value) : null;
 }
 
@@ -225,6 +167,7 @@ export async function discoverDependencyAgentContracts({ projects = [], projectR
   for (const project of projects.filter((entry) => entry.interface?.capabilityIndex)) {
     const binding = declaredRoot(project, localOverrides, environment);
     const source = { dependencyId: project.id, sourceRef: `dependency:${project.id}/${project.interface.capabilityIndex.path}`, rootBinding: binding.source };
+    if (binding.error) { result.sources.push({ ...source, status: "invalid", reason: binding.error }); continue; }
     if (project.interface.invokeAs === "reference"
       || ["reference_only", "external_reference", "blocked", "blocked_for_execution"].includes(project.capabilityCard?.routeEligibility)) {
       result.sources.push({ ...source, status: "reference_only", reason: "The dependency registry does not authorize owner-contract selection from this project." });

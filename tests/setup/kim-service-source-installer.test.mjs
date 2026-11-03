@@ -7,6 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { kimDecisionRecord } from "../../scripts/discover-dependency-capabilities.mjs";
 import { directoryClosureSync } from "../../scripts/install-manifest.mjs";
+import { stableJson, sha256 } from "../../scripts/dependency-source-integrity.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const installer = process.env.META_KIM_TEST_PACKED_INSTALLER ?? path.join(repoRoot, "scripts/install-global-skills-all-runtimes.mjs");
@@ -34,6 +35,20 @@ function sourceHash(source) {
   return createHash("sha256").update(JSON.stringify(specs.map(([,subdir])=>[subdir,treeHash(path.join(source,subdir))])))
     .update(readFileSync(path.join(source,"generated/capabilities.json"))).digest("hex");
 }
+function refreshSourceIndex(source) {
+  const file=path.join(source,"generated/capabilities.json"),index=JSON.parse(readFileSync(file,"utf8"));
+  for(const component of index.components) {
+    const base=path.join(source,component.path),files=[];
+    function visit(directory) { for(const item of readdirSync(directory,{withFileTypes:true})) {
+      const target=path.join(directory,item.name);
+      if(item.isDirectory())visit(target);else files.push(path.relative(base,target).replaceAll("\\","/"));
+    } }
+    visit(base);const hash=createHash("sha256");
+    for(const name of files.sort())hash.update(name).update("\0").update(readFileSync(path.join(base,name))).update("\0");
+    component.contentSha256=hash.digest("hex");
+  }
+  put(file,JSON.stringify(index));
+}
 function sandbox(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-service-install-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -48,7 +63,7 @@ for (const key of ['spawn','spawnSync','execFile','execFileSync']) { const origi
     META_KIM_CLAUDE_HOME: path.join(home,".claude"), META_KIM_CODEX_HOME: path.join(home,".codex"), META_KIM_CURSOR_HOME: path.join(home,".cursor"), META_KIM_OPENCLAW_HOME: path.join(home,".openclaw"), META_KIM_SKIP_OPTIONAL_TOOLS: "1", NODE_OPTIONS: `--import=${new URL(`file:///${hook.replaceAll("\\", "/")}`).href}` });
   return { root, home, env, networkLog };
 }
-function fixture(root) {
+function fixture(root, { withProfessionalAgent = false } = {}) {
   const source = path.join(root, "source", "Kim_Service"); mkdirSync(path.join(source, ".git"), { recursive: true });
   const components = [];
   for (const [id, subdir] of specs) {
@@ -56,14 +71,44 @@ function fixture(root) {
     const entrypoint = type === "hook" ? ".claude/hooks/user-prompt-submit.js" : "SKILL.md";
     put(path.join(base, entrypoint), type === "hook" ? "process.stdout.write('{}');\n" : `---\nname: ${path.posix.basename(subdir)}\ndescription: Offline installation regression fixture.\n---\n\n# Fixture\n`);
     put(path.join(base, "LICENSE"), "fixture license\n"); put(path.join(base, "NOTICE"), "fixture notice\n");
-    put(path.join(base, "capability.json"), JSON.stringify({ schemaVersion:1, id:path.posix.basename(subdir), componentType:type, entrypoint }));
-    components.push({ id:path.posix.basename(subdir), path:subdir, componentType:type });
+    const contract = { schemaVersion:1, id:path.posix.basename(subdir), componentVersion:"1.0.0", componentType:type, entrypoint, capabilities:[] };
+    put(path.join(base, "capability.json"), JSON.stringify(contract));
     if (type === "hook") {
       put(path.join(base, ".claude/prompt-optimizer-meta.md"), "fixture optimizer\n");
       put(path.join(base, ".codex/hooks/user-prompt-submit.js"), "import '../../.claude/hooks/user-prompt-submit.js';\n");
     }
+    const files = [];
+    function visit(directory) {
+      for (const item of readdirSync(directory, { withFileTypes:true })) {
+        const file = path.join(directory, item.name);
+        if (item.isDirectory()) visit(file); else files.push(path.relative(base, file).replaceAll("\\", "/"));
+      }
+    }
+    visit(base);
+    const hash = createHash("sha256");
+    for (const file of files.sort()) hash.update(file).update("\0").update(readFileSync(path.join(base,file))).update("\0");
+    components.push({ id:contract.id, path:subdir, componentType:type, componentVersion:contract.componentVersion,
+      entrypoint, capabilityIds:[], contentSha256:hash.digest("hex"), contractSha256:sha256(stableJson(contract)) });
   }
-  put(path.join(source, "generated/capabilities.json"), JSON.stringify({ schemaVersion:1, components }));
+  const capabilities=[];
+  if(withProfessionalAgent) {
+    const base=path.join(source,"agents/example-engineer");
+    put(path.join(base,"AGENT.md"),"---\nname: example-engineer\ndescription: Offline professional agent fixture.\ntools: Read\n---\n\nReview supplied evidence.\n");
+    put(path.join(base,"LICENSE"),"fixture license\n");
+    put(path.join(base,"check.mjs"),"throw new Error('Discovery cannot execute dependency checks');\n");
+    const capability={id:"example-engineer",summary:"Review example evidence",useWhen:["example evidence"],doNotUseWhen:["external writes"],input:{type:"object",required:[]},output:{type:"object",required:[]},permissions:["filesystem:read-user-materials"],sideEffects:[],humanGate:{required:false,when:[]},validation:["check.mjs"]};
+    const contract={schemaVersion:1,id:"example-engineer",componentType:"agent",componentVersion:"1.0.0",entrypoint:"AGENT.md",capabilities:[capability]};
+    put(path.join(base,"capability.json"),JSON.stringify(contract));
+    components.push({id:contract.id,path:"agents/example-engineer",componentType:"agent",componentVersion:"1.0.0",entrypoint:"AGENT.md",capabilityIds:[capability.id],validation:["check.mjs"],contractSha256:sha256(stableJson(contract))});
+    capabilities.push({...capability,componentId:contract.id,componentType:"agent",componentVersion:"1.0.0",componentPath:"agents/example-engineer",entrypoint:"AGENT.md",contractSha256:sha256(stableJson(contract))});
+  }
+  put(path.join(source, "generated/capabilities.json"), JSON.stringify({ schemaVersion:1, componentCount:components.length, capabilityCount:capabilities.length, components, capabilities }));
+  if(withProfessionalAgent) {
+    refreshSourceIndex(source);
+    const file=path.join(source,"generated/capabilities.json"),index=JSON.parse(readFileSync(file,"utf8"));
+    index.capabilities[0].componentContentSha256=index.components.find(component=>component.id==="example-engineer").contentSha256;
+    put(file,JSON.stringify(index));
+  }
   return source;
 }
 function run(ctx, source, { ids = specs.map(([id])=>id), targets = "claude,codex,cursor,openclaw", update = false, local = true, dryRun = false } = {}) {
@@ -156,6 +201,7 @@ test("selected HookPrompt update preserves Codex configuration and unselected ru
   const component = path.join(source, "hooks/hookprompt");
   put(path.join(component, "package.json"), '{"private":true,"type":"commonjs"}\n');
   put(path.join(component, ".claude/hooks/user-prompt-submit.cjs"), "// new dependency closure\n");
+  refreshSourceIndex(source);
   passed(run(ctx, source, { ids: ["hookprompt"], targets: "claude,codex", update: true }));
   assert.equal(readFileSync(configPath, "utf8"), config, "selected dependency never reconciles unrelated Codex config");
   assert.deepEqual(readFileSync(hooksPath), hooks, "existing adapter registration remains byte-identical");
@@ -224,7 +270,7 @@ test("missing explicit subdir and required Hook attachment fail without network 
   rmSync(path.join(complete,"hooks/hookprompt/.claude/prompt-optimizer-meta.md"));
   const oldHook = path.join(second.home, ".claude/skills/hookprompt");
   const oldHash = treeHash(oldHook, true);
-  const hook=run(second,complete,{ids:["hookprompt"],update:true}); assert.notEqual(hook.status,0); assert.match(hook.stderr,/ENOENT|prompt-optimizer/);
+  const hook=run(second,complete,{ids:["hookprompt"],update:true}); assert.notEqual(hook.status,0); assert.match(hook.stderr,/content hash mismatch/);
   assert.equal(treeHash(oldHook, true), oldHash);
 });
 test("a mismatched local Skill entrypoint fails before replacing an installed component", (t) => {
@@ -232,6 +278,7 @@ test("a mismatched local Skill entrypoint fails before replacing an installed co
   passed(run(ctx, source, { ids: ["goalpro"], targets: "claude" }));
   const target = path.join(ctx.home, ".claude/skills/goalpro"); const before = treeHash(target, true);
   put(path.join(source, "skills/goalpro/SKILL.md"), "---\nname: unrelated\ndescription: Wrong component.\n---\n");
+  refreshSourceIndex(source);
   const result = run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true });
   assert.notEqual(result.status, 0); assert.match(result.stderr, /no valid matching entrypoint/);
   assert.equal(treeHash(target, true), before);
@@ -243,7 +290,7 @@ test("a rejected local multi-stage extraction never falls back to a per-runtime 
   rmSync(path.join(source,"skills/goalpro"),{recursive:true});
   // Parent-directory declaration uses the existing repoName lookup, so failure occurs in staging.
   const missing=run(ctx,path.dirname(source),{ids:["goalpro"],update:true});
-  assert.notEqual(missing.status,0); assert.match(missing.stderr,/Local dependency source missing/);
+  assert.notEqual(missing.status,0); assert.match(missing.stderr,/ENOENT.*goalpro/);
   assert.equal(treeHash(ctx.home, true), before);
 });
 test("a recognized explicit Service root missing its index fails without network or old-target mutation", (t) => {
@@ -264,7 +311,9 @@ test("a recognized explicit Service root missing its index fails without network
 test("explicit partial Service source reads only the requested component", (t) => {
   const ctx=sandbox(t); const source=fixture(ctx.root);
   for (const [id,subdir] of specs) if(id!=="findskill") rmSync(path.join(source,subdir),{recursive:true});
-  put(path.join(source,"generated/capabilities.json"),JSON.stringify({schemaVersion:1,components:[{id:"find-skill",componentType:"skill",path:"skills/find-skill"}]}));
+  const index=JSON.parse(readFileSync(path.join(source,"generated/capabilities.json"),"utf8"));
+  index.components=index.components.filter(component=>component.id==="find-skill"); index.componentCount=1;
+  put(path.join(source,"generated/capabilities.json"),JSON.stringify(index));
   passed(run(ctx,source,{ids:["findskill"],targets:"claude,codex"}));
   assert.ok(existsSync(path.join(ctx.home,".claude/skills/findskill/SKILL.md"))); assert.ok(existsSync(path.join(ctx.home,".codex/skills/findskill/SKILL.md")));
 });
@@ -344,12 +393,14 @@ test("only the exact unchanged installer receipt permits replacement; drift neve
   }
   put(ledger, originalReceipt);
   put(path.join(source, "skills/goalpro/SKILL.md"), "---\nname: goalpro\ndescription: Updated verified source.\n---\n\n# Updated source\n");
+  refreshSourceIndex(source);
   passed(run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true }));
   assert.match(readFileSync(path.join(target, "SKILL.md"), "utf8"), /Updated source/);
   for (const ownershipClass of [null, "install_projection"]) {
     const value = JSON.parse(readFileSync(ledger)); value.entries.find((entry) => entry.path === target).ownershipClass = ownershipClass;
     put(ledger, JSON.stringify(value));
     put(path.join(source, "skills/goalpro/NOTICE"), `Updated source for ${ownershipClass ?? "legacy null"}\n`);
+    refreshSourceIndex(source);
     passed(run(ctx, source, { ids: ["goalpro"], targets: "claude", update: true }));
     assert.equal(readFileSync(path.join(target, "NOTICE"), "utf8"), readFileSync(path.join(source, "skills/goalpro/NOTICE"), "utf8"));
   }
@@ -383,6 +434,7 @@ for (const scenario of [
       const subdir = specs.find(([candidate]) => candidate === id)[1];
       put(path.join(source, subdir, "NOTICE"), "changed source reaches other owned targets\n");
     }
+    refreshSourceIndex(source);
     const before = treeHash(rejected, true); const receiptBefore = JSON.parse(readFileSync(ledger)).entries.find(entry => entry.path === rejected);
     const denied = run(ctx, source, { ...scenario, update: true });
     const unchanged = treeHash(rejected, true) === before;
@@ -400,16 +452,36 @@ test("single-runtime remote route preserves unknown and historical targets throu
   const ctx = sandbox(t); const source = fixture(ctx.root);
   const target = path.join(ctx.home, ".claude/skills/agent-teams-playbook");
   put(path.join(target, "user-owned.txt"), "remote-preserve\n");
+  mockRemoteSource(ctx, source);
   const unknown = run(ctx, source, { ids: ["agent-teams-playbook"], targets: "claude", update: true, local: false });
   passed(unknown); assert.match(unknown.stderr, /preserved without replacement/);
   assert.equal(readFileSync(path.join(target, "user-owned.txt"), "utf8"), "remote-preserve\n");
   put(path.join(target, ".git/config"), '[remote "origin"]\n url = https://github.com/KimYx0207/agent-teams-playbook.git\n');
   cpSync(path.join(source, "skills/agent-teams-playbook"), path.join(target, "skills/agent-teams-playbook"), { recursive: true });
-  const before = treeHash(target, true); mockRemoteSource(ctx, source);
+  const before = treeHash(target, true);
   passed(run(ctx, source, { ids: ["agent-teams-playbook"], targets: "claude", update: true, local: false }));
   assert.equal(treeHash(legacyBackup(target), true), before);
   assert.ok(existsSync(path.join(target, "SKILL.md")));
   assert.equal(existsSync(path.join(target, ".git")), false);
+});
+
+test("all six unowned Service skills are preserved while the complete professional source is installed and discoverable", t => {
+  const ctx=sandbox(t),source=fixture(ctx.root,{withProfessionalAgent:true});
+  const targets=specs.map(([id])=>path.join(ctx.home,".claude/skills",id));
+  for(const target of targets)put(path.join(target,"user-owned.txt"),`preserve ${path.basename(target)}\n`);
+  const hashes=targets.map(target=>treeHash(target,true)),sourceBefore=treeHash(source,true);
+  passed(run(ctx,source,{targets:"claude",update:true}));
+  assert.deepEqual(targets.map(target=>treeHash(target,true)),hashes);
+  assert.equal(treeHash(source,true),sourceBefore);
+  const consumer=path.join(ctx.root,"unrelated-consumer");mkdirSync(consumer);
+  const query=`import {readManagedServiceSource} from ${JSON.stringify(new URL("../../scripts/managed-dependency-source.mjs",import.meta.url).href)};
+    import {discoverDependencyAgentContracts} from ${JSON.stringify(new URL("../../scripts/dependency-agent-discovery.mjs",import.meta.url).href)};
+    const source=readManagedServiceSource();const result=await discoverDependencyAgentContracts({projectRoot:${JSON.stringify(consumer)},environment:process.env,projects:[{id:'kim-service',source:{localPath:null},interface:{capabilityIndex:{format:'component-capabilities-v1',path:'generated/capabilities.json',rootEnv:'META_KIM_KIM_SERVICE_ROOT'}}}]});
+    console.log(JSON.stringify({managed:!!source,agents:result.agents.map(agent=>agent.id),rootBinding:result.sources[0].rootBinding}));`;
+  const discovered=spawnSync(process.execPath,["--input-type=module","-e",query],{cwd:consumer,env:ctx.env,encoding:"utf8",timeout:30000});
+  passed(discovered);
+  assert.deepEqual(JSON.parse(discovered.stdout),{managed:true,agents:["kim-service:example-engineer"],rootBinding:"install-manifest.json#kim-service-dependency-source"});
+  assert.equal(existsSync(path.join(consumer,".meta-kim/local.overrides.json")),false);
 });
 
 test("all unowned findskill and meta-skill targets are reported while unrelated skills install", (t) => {

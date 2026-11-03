@@ -25,6 +25,7 @@ import {
 import {
   loadSyncManifest,
   resolveRuntimeProjection,
+  resolveRuntimeHomeDir,
 } from "./meta-kim-sync-config.mjs";
 import {
   manifestPathFor,
@@ -187,7 +188,7 @@ export async function checkCanonicalCapabilityIndex(
 const PLATFORMS = {
   claudeCode: {
     name: "Claude Code",
-    baseDir: () => path.join(os.homedir(), ".claude"),
+    baseDir: () => resolveRuntimeHomeDir("claude"),
     // 每个类型的扫描函数
     scanners: {
       agents: async (baseDir) =>
@@ -213,7 +214,7 @@ const PLATFORMS = {
   },
   openclaw: {
     name: "OpenClaw",
-    baseDir: () => path.join(os.homedir(), ".openclaw"),
+    baseDir: () => resolveRuntimeHomeDir("openclaw"),
     scanners: {
       agents: async (baseDir) => scanOpenClawAgents(baseDir),
       skills: async (baseDir) => scanOpenClawSkills(baseDir),
@@ -231,7 +232,7 @@ const PLATFORMS = {
   },
   codex: {
     name: "Codex",
-    baseDir: () => path.join(os.homedir(), ".codex"),
+    baseDir: () => resolveRuntimeHomeDir("codex"),
     scanners: {
       agents: async (baseDir) =>
         scanTomlFilesRecursive(path.join(baseDir, "agents")),
@@ -254,7 +255,7 @@ const PLATFORMS = {
   },
   cursor: {
     name: "Cursor",
-    baseDir: () => path.join(os.homedir(), ".cursor"),
+    baseDir: () => resolveRuntimeHomeDir("cursor"),
     scanners: {
       agents: async (baseDir) =>
         scanMarkdownFiles(path.join(baseDir, "agents")),
@@ -1421,12 +1422,13 @@ async function scanCodexTomlMcpTools(configPath) {
 
 function runKnownMcpSelfTest(command, args) {
   if (!command || !Array.isArray(args)) return null;
-  const scriptArg = args.find((arg) =>
-    typeof arg === "string" && arg.replace(/\\/g, "/").endsWith("scripts/mcp/meta-runtime-server.mjs")
-  );
-  if (!scriptArg) return null;
-
-  const result = spawnSync(command, [...args, "--self-test"], {
+  const trustedScript = path.join(repoRoot, "scripts/mcp/meta-runtime-server.mjs");
+  // A matching filename suffix cannot authorize a configured command or its
+  // arguments. Static discovery only self-tests this package's own Node entry.
+  if (args.length !== 1 || typeof args[0] !== "string"
+    || path.resolve(repoRoot, args[0]) !== trustedScript
+    || !["node", "node.exe", process.execPath].includes(command)) return null;
+  const result = spawnSync(process.execPath, [trustedScript, "--self-test"], {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -1595,7 +1597,8 @@ async function extractSkillMetadata(filePath) {
 
 // ========== 平台扫描 ==========
 
-async function scanPlatform(platformId, platform) {
+export async function scanPlatform(platformId, platform = PLATFORMS[platformId]) {
+  if (!platform) throw new Error(`Unknown discovery platform: ${platformId}`);
   const baseDir = platform.baseDir();
   const result = {
     platform: platform.name,
@@ -1620,7 +1623,7 @@ async function scanPlatform(platformId, platform) {
     await fs.access(baseDir);
   } catch {
     result.errors.push(`Platform directory not found: ${baseDir}`);
-    return result;
+    // Shared native capability roots can exist before a runtime home is created.
   }
 
   // 扫描每种能力类型

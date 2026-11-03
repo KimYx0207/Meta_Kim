@@ -188,7 +188,8 @@ export function hostCriticalGoalCriteria({ task, critical }) {
   }));
   return critical.successCriteria.map((criterion) => ({
     id: criterion.id, description: `${criterion.condition}\nevidenceRequired: ${criterion.evidenceRequired}`,
-    kind: "semantic", required: true,
+    kind: criterion.measurement ? "deterministic" : criterion.kind ?? "semantic", required: true,
+    ...(criterion.measurement ? { measurement: structuredClone(criterion.measurement) } : {}),
   }));
 }
 
@@ -197,6 +198,7 @@ export function sameHostCriticalMeaning(left, right) {
   const meaning = (packet) => [
     packet.successCriteria.map((criterion) => JSON.stringify(canonical(typeof criterion === "string" ? criterion.trim() : {
       id: criterion.id, condition: criterion.condition.trim(), evidenceRequired: criterion.evidenceRequired.trim(),
+      ...(criterion.measurement ? { measurement: criterion.measurement } : {}),
     }))),
     packet.nonGoals.map((value) => value.trim()), packet.blockingUnknowns,
   ].map((values) => [...new Set(values)].sort());
