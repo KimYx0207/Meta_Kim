@@ -651,7 +651,14 @@ function pythonCandidates() {
   for (const key of ["ProgramFiles", "ProgramFiles(x86)"]) {
     if (process.env[key]) scanVersionDirectories(process.env[key]);
   }
-  scanVersionDirectories("C:\\");
+  for (const value of [process.env.SystemDrive, process.env.SYSTEMDRIVE, process.env.SystemRoot, process.env.SYSTEMROOT, process.env.WINDIR, process.env.windir]) {
+    if (typeof value !== "string") continue;
+    const declared = value.trim();
+    const absolute = /^[a-z]:$/iu.test(declared) ? `${declared}\\` : declared;
+    if (!/^[a-z]:[\\/]/iu.test(absolute)) continue;
+    scanVersionDirectories(path.win32.parse(path.win32.normalize(absolute)).root);
+    break;
+  }
 
   return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
 }

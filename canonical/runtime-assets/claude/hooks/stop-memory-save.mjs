@@ -11,7 +11,8 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import http from "node:http";
@@ -36,10 +37,7 @@ function endpointFromMemoryPort() {
   return /^\d{1,5}$/u.test(port) ? `http://localhost:${port}` : null;
 }
 
-const DEFAULT_ENDPOINT =
-  process.env.MCP_MEMORY_URL ||
-  endpointFromMemoryPort() ||
-  "http://localhost:8000";
+const DEFAULT_ENDPOINT = "http://localhost:8000";
 const TIMEOUT_MS = 4000;
 const HEALTH_TIMEOUT_MS = 500;
 const REMOTE_MEMORY_ALLOWED = process.env.META_KIM_ALLOW_REMOTE_MEMORY === "1";
@@ -56,14 +54,15 @@ const SECRET_PATTERNS = [
 ];
 
 async function loadConfig() {
+  const claudeHome = resolve(
+    process.env.META_KIM_CLAUDE_HOME?.trim() ||
+    process.env.CLAUDE_HOME?.trim() ||
+    join(homedir(), ".claude"),
+  );
   const candidates = [
+    join(claudeHome, "hooks", "config.json"),
+    join(claudeHome, "hooks", "memory-hooks", "config.json"),
     join(__dirname, "..", "memory-hooks", "config.json"),
-    join(
-      process.env.HOME || process.env.USERPROFILE || "~",
-      ".claude",
-      "hooks",
-      "config.json",
-    ),
   ];
   for (const p of candidates) {
     try {
@@ -77,7 +76,8 @@ async function loadConfig() {
 }
 
 function getEndpoint(cfg) {
-  return cfg?.memoryService?.http?.endpoint || DEFAULT_ENDPOINT;
+  return process.env.MCP_MEMORY_URL || endpointFromMemoryPort() ||
+    cfg?.memoryService?.http?.endpoint || DEFAULT_ENDPOINT;
 }
 
 function isPrivateIpv4(hostname) {

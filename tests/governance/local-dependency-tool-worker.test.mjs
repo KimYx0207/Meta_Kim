@@ -22,7 +22,7 @@ async function fixture(t, { behavior = 'completed' } = {}) {
     output: { type: 'object', required: ['completed'], properties: { completed: { type: 'boolean' } } },
     permissions: ['Read selected target', 'Execute already installed tool'], sideEffects: [], humanGate: { required: false, when: [] }, validation: ['tests/behavior.py'], invocation };
   const contract = { schemaVersion: 1, id: 'semgrep-skill', componentType: 'skill', componentVersion: '1.1.0', entrypoint: 'SKILL.md', capabilities: [capability] };
-  const script = `import sys, json, pathlib, hashlib, platform, os\ni=json.load(sys.stdin)\nassert not any(k in os.environ for k in ['ANTHROPIC_AUTH_TOKEN','OPENAI_API_KEY','HTTP_PROXY','HTTPS_PROXY','NODE_OPTIONS'])\nassert pathlib.Path(os.environ['HOME']).resolve() != pathlib.Path.home().parent\nr=pathlib.Path(__file__).resolve().parent.parent/'rules/local-security.yml'\nh=hashlib.sha256(r.read_bytes()).hexdigest()\no={'schemaVersion':1,'componentVersion':'1.1.0','status':'${behavior === 'unavailable' ? 'unavailable' : 'completed'}','completed':${behavior === 'unavailable' ? 'False' : 'True'},'findings':[],'errors':[],'runtime':{'pythonVersion':platform.python_version(),'semgrepVersion':${behavior === 'unavailable' ? 'None' : "'fixture-not-semgrep'"}},'rules':{'source':'canonical:skills/semgrep-skill/rules/local-security.yml','sourceSha256':h,'effectiveSha256':h,'includedRuleIds':['python-subprocess-shell-true','javascript-eval']},'networkUsed':False,'filesModified':False}\n${behavior === 'malformed' ? "o['secretSnippet']='not permitted'" : ''}\n${behavior === 'modify' ? "(pathlib.Path(i['workspaceRoot'])/i['target']/'sample.py').write_text('changed')" : ''}\nprint(json.dumps(o))\nsys.exit(${behavior === 'unavailable' ? '3' : '0'})\n`;
+  const script = `import sys, json, pathlib, hashlib, platform, os\nif os.name == 'nt':\n import ctypes\n system_dir=ctypes.create_unicode_buffer(32768)\n assert ctypes.windll.kernel32.GetSystemDirectoryW(system_dir, len(system_dir)) > 0\n system_path=pathlib.Path(system_dir.value).resolve()\n search_dirs=[pathlib.Path(p).resolve() for p in os.environ['PATH'].split(os.pathsep)]\n assert system_path in search_dirs\n assert system_path/'WindowsPowerShell'/'v1.0' in search_dirs\ni=json.load(sys.stdin)\nassert not any(k in os.environ for k in ['ANTHROPIC_AUTH_TOKEN','OPENAI_API_KEY','HTTP_PROXY','HTTPS_PROXY','NODE_OPTIONS'])\nassert pathlib.Path(os.environ['HOME']).resolve() != pathlib.Path.home().parent\nr=pathlib.Path(__file__).resolve().parent.parent/'rules/local-security.yml'\nh=hashlib.sha256(r.read_bytes()).hexdigest()\no={'schemaVersion':1,'componentVersion':'1.1.0','status':'${behavior === 'unavailable' ? 'unavailable' : 'completed'}','completed':${behavior === 'unavailable' ? 'False' : 'True'},'findings':[],'errors':[],'runtime':{'pythonVersion':platform.python_version(),'semgrepVersion':${behavior === 'unavailable' ? 'None' : "'fixture-not-semgrep'"}},'rules':{'source':'canonical:skills/semgrep-skill/rules/local-security.yml','sourceSha256':h,'effectiveSha256':h,'includedRuleIds':['python-subprocess-shell-true','javascript-eval']},'networkUsed':False,'filesModified':False}\n${behavior === 'malformed' ? "o['secretSnippet']='not permitted'" : ''}\n${behavior === 'modify' ? "(pathlib.Path(i['workspaceRoot'])/i['target']/'sample.py').write_text('changed')" : ''}\nprint(json.dumps(o))\nsys.exit(${behavior === 'unavailable' ? '3' : '0'})\n`;
   const files = { 'SKILL.md': '---\nname: semgrep-skill\n---\n# Fixture only\n', 'capability.json': stableJson(contract), 'scripts/scan.py': script, 'rules/local-security.yml': 'rules: []\n', 'tests/behavior.py': '# discovery must not invoke\n' };
   for (const [name, bytes] of Object.entries(files)) { const file = path.join(componentRoot, name); await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, bytes); }
   const contentSha256 = await componentHash(componentRoot), contractSha256 = sha256(stableJson(contract));
@@ -180,6 +180,16 @@ test('a real guarded Python fixture invocation preserves source and cannot mint 
   const receipt = await fs.readFile(result.localToolReceipt.path);
   assert.equal(sha256(receipt), result.localToolReceipt.sha256);
   assert.equal(JSON.parse(receipt).targetBeforeSha256, JSON.parse(receipt).targetAfterSha256);
+});
+
+test('Windows scanner refuses to guess a system directory when native authority is unavailable', { skip: process.platform !== 'win32' }, async (t) => {
+  const f = await fixture(t);
+  t.mock.method(process.report, 'getReport', () => ({ sharedObjects: [] }));
+  const result = await invokeLocalDependencyToolWorker(f.options);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.localToolProcessInvoked, false);
+  assert.equal(result.completed, false);
+  assert.match(result.failureMessage, /trusted Windows system directory is unavailable/u);
 });
 
 test('an unavailable scanner is an actual attempt with nonzero exit, not completion', async (t) => {

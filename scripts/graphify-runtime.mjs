@@ -137,7 +137,7 @@ export function pythonCandidates(platform = process.platform, env = process.env)
 
 // Scan common Windows install locations for a python.exe that PATH may miss.
 // Covers: per-user (winget default), system-wide (Python.org installer),
-// C:\PythonXY (legacy), and Program Files (both 64/32-bit trees).
+// system-volume PythonXY (legacy), and Program Files (both 64/32-bit trees).
 // Returns [{ major, minor, path }] sorted by version descending.
 export function discoverWindowsPythonPaths(env = process.env) {
   const roots = new Set();
@@ -148,10 +148,17 @@ export function discoverWindowsPythonPaths(env = process.env) {
     }
   };
 
-  if (env.LOCALAPPDATA) addRoot(join(env.LOCALAPPDATA, "Programs", "Python"));
+  if (env.LOCALAPPDATA) addRoot(win32.join(env.LOCALAPPDATA, "Programs", "Python"));
   if (env.ProgramFiles) addRoot(env.ProgramFiles);
   if (env["ProgramFiles(x86)"]) addRoot(env["ProgramFiles(x86)"]);
-  addRoot("C:\\");
+  for (const value of [env.SystemDrive, env.SYSTEMDRIVE, env.SystemRoot, env.SYSTEMROOT, env.WINDIR, env.windir]) {
+    if (typeof value !== "string") continue;
+    const declared = value.trim();
+    const absolute = /^[a-z]:$/iu.test(declared) ? `${declared}\\` : declared;
+    if (!/^[a-z]:[\\/]/iu.test(absolute)) continue;
+    addRoot(win32.parse(win32.normalize(absolute)).root);
+    break;
+  }
 
   const pythonDirRe = /^Python(\d)(\d+)(?:-32)?$/i;
   const found = [];
@@ -170,7 +177,7 @@ export function discoverWindowsPythonPaths(env = process.env) {
       if (!match) continue;
       const major = Number.parseInt(match[1], 10);
       const minor = Number.parseInt(match[2], 10);
-      const exe = join(root, entry, "python.exe");
+      const exe = win32.join(root, entry, "python.exe");
       try {
         if (!existsSync(exe) || !statSync(exe).isFile()) continue;
       } catch {

@@ -54,6 +54,7 @@ import { join, dirname, relative, resolve, isAbsolute, win32 as windowsPath, pos
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { resolveMemoryEndpoint } from "./memory-endpoint.mjs";
+import { resolveRuntimeHomeDir } from "./meta-kim-sync-config.mjs";
 import {
   executeSafeManagedFileTransaction,
   normalizeManagedRelPath,
@@ -85,13 +86,14 @@ const CANONICAL_MANAGED_ASSET_SPEC = join(
   CANONICAL_HOOK_DIR,
   "managed-assets.json",
 );
-const HOOKS_TARGET_DIR = join(homedir(), ".claude", "hooks");
+const CLAUDE_HOME = resolveRuntimeHomeDir("claude");
+const HOOKS_TARGET_DIR = join(CLAUDE_HOME, "hooks");
 const HOOK_TARGET = join(HOOKS_TARGET_DIR, "mcp_memory_global.py");
 const CONFIG_TARGET = join(HOOKS_TARGET_DIR, "config.json");
-const CLAUDE_SETTINGS = join(homedir(), ".claude", "settings.json");
-const CODEX_HOME = join(homedir(), ".codex");
-const CURSOR_HOME = join(homedir(), ".cursor");
-const OPENCLAW_HOME = join(homedir(), ".openclaw");
+const CLAUDE_SETTINGS = join(CLAUDE_HOME, "settings.json");
+const CODEX_HOME = resolveRuntimeHomeDir("codex");
+const CURSOR_HOME = resolveRuntimeHomeDir("cursor");
+const OPENCLAW_HOME = resolveRuntimeHomeDir("openclaw");
 const RUNTIME_MANIFEST_DIR = join(
   homedir(),
   ".meta-kim",
@@ -397,7 +399,14 @@ export function collectWindowsPythonCommandCandidates({
   for (const key of ["ProgramFiles", "ProgramFiles(x86)"]) {
     if (env[key]) scanVersionDirectories(env[key]);
   }
-  scanVersionDirectories("C:\\");
+  for (const value of [env.SystemDrive, env.SYSTEMDRIVE, env.SystemRoot, env.SYSTEMROOT, env.WINDIR, env.windir]) {
+    if (typeof value !== "string") continue;
+    const declared = value.trim();
+    const absolute = /^[a-z]:$/iu.test(declared) ? `${declared}\\` : declared;
+    if (!/^[a-z]:[\\/]/iu.test(absolute)) continue;
+    scanVersionDirectories(windowsPath.parse(windowsPath.normalize(absolute)).root);
+    break;
+  }
   return candidates.filter((candidate) => pathExists(candidate));
 }
 
@@ -572,7 +581,11 @@ function listRegularFiles(rootDir) {
 }
 
 function homeRel(filePath) {
-  return normalizeManagedRelPath(relative(homedir(), filePath));
+  const relPath = relative(homedir(), filePath);
+  if (isAbsolute(relPath) || relPath === ".." || relPath.startsWith(`..${pathSeparator}`)) {
+    return null;
+  }
+  return normalizeManagedRelPath(relPath);
 }
 
 function runtimeManifestPath(runtime) {
@@ -700,7 +713,7 @@ function runtimeHomeFor(runtime) {
   if (!/^[a-z][a-z0-9-]*$/u.test(runtime)) {
     managedAssetSpecError(`unsafe runtime id ${JSON.stringify(runtime)}`);
   }
-  const runtimeHome = safeSpecPath(homedir(), `.${runtime}`);
+  const runtimeHome = resolveRuntimeHomeDir(runtime);
   const relPath = runtimeHome ? homeRel(runtimeHome) : null;
   const inspected = relPath
     ? inspectTrustedPath(homedir(), relPath, { allowMissing: true })
@@ -888,10 +901,11 @@ function retiredOwnedFileSpecs(runtime) {
   });
 }
 
-function preflightManagedAssetSpec() {
+function preflightManagedAssetSpec(targets) {
   const targetOwners = new Map();
   for (const group of ["owned", "delegatedToGlobalSync"]) {
     for (const [runtime, declarations] of Object.entries(MANAGED_ASSET_SPEC[group])) {
+      if (!targets.includes(runtime)) continue;
       runtimeHomeFor(runtime);
       for (const [index, declaration] of declarations.entries()) {
         const specs = expandManagedDeclaration(group, runtime, declaration, index, {
@@ -912,6 +926,7 @@ function preflightManagedAssetSpec() {
     }
   }
   for (const runtime of Object.keys(MANAGED_ASSET_SPEC.retiredOwned)) {
+    if (!targets.includes(runtime)) continue;
     for (const [index, spec] of retiredOwnedFileSpecs(runtime).entries()) {
       const key = absolutePathKey(spec.target);
       const owner = `retiredOwned.${runtime}[${index}]`;
@@ -935,8 +950,6 @@ function declaredFileSpecs(group, runtime, options = {}) {
     expandManagedDeclaration(group, runtime, declaration, index, options)
   );
 }
-
-preflightManagedAssetSpec();
 
 function canonicalFileSpecs(runtime) {
   return declaredFileSpecs("owned", runtime);
@@ -1746,6 +1759,16 @@ if (args.includes("--force")) {
 
 async function main() {
   const targets = parseTargets(args);
+  for (const runtime of targets) {
+    const runtimeHome = resolveRuntimeHomeDir(runtime);
+    if (!homeRel(runtimeHome)) {
+      throw new Error(
+        `Configured ${runtime} home is outside this memory installer's supported user-home boundary: ${runtimeHome}. ` +
+        "No files were changed and no default-directory fallback was used.",
+      );
+    }
+  }
+  preflightManagedAssetSpec(targets);
   if (args.includes("--check")) {
     if (!check(targets).ok) process.exitCode = 1;
   }

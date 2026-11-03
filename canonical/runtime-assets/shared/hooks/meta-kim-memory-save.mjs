@@ -138,10 +138,14 @@ function detectCwd(payload) {
 }
 
 function endpointFromClaudeConfig() {
-  const home = os.homedir();
+  const claudeHome = path.resolve(
+    process.env.META_KIM_CLAUDE_HOME?.trim() ||
+    process.env.CLAUDE_HOME?.trim() ||
+    path.join(os.homedir(), ".claude"),
+  );
   const candidates = [
-    path.join(home, ".claude", "hooks", "config.json"),
-    path.join(home, ".claude", "hooks", "memory-hooks", "config.json"),
+    path.join(claudeHome, "hooks", "config.json"),
+    path.join(claudeHome, "hooks", "memory-hooks", "config.json"),
   ];
   for (const filePath of candidates) {
     const cfg = safeJsonParse(readText(filePath, 4000), null);

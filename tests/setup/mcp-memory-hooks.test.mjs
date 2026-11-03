@@ -19,6 +19,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import {
   createInitialState,
   sanitizeStateProfile,
@@ -178,6 +179,7 @@ function createMemoryInstallerFixture() {
   for (const fileName of [
     "install-mcp-memory-hooks.mjs",
     "memory-endpoint.mjs",
+    "meta-kim-sync-config.mjs",
     "safe-managed-file-operations.mjs",
     "transient-rename.mjs",
   ]) {
@@ -2668,6 +2670,32 @@ describe("MCP memory cross-runtime hooks", () => {
     }
   });
 
+  test("canonical managed-assets collision is rejected before install and remove writes", () => {
+    for (const flags of [[], ["--remove"]]) {
+      const fixture = createMemoryInstallerFixture();
+      const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-memory-owner-collision-"));
+      try {
+        const spec = JSON.parse(readFileSync(fixture.specPath, "utf8"));
+        const declaration = { source: "shared/hooks/utils.mjs", target: "hooks/collision.mjs" };
+        spec.owned.codex.push(declaration);
+        spec.delegatedToGlobalSync.codex.push(declaration);
+        writeFileSync(fixture.specPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
+        const result = spawnSync(process.execPath, [fixture.installer, "--targets", "codex", ...flags], {
+          cwd: fixture.fixtureRoot,
+          encoding: "utf8",
+          env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, META_KIM_CODEX_HOME: "", CODEX_HOME: "" },
+          timeout: 20000,
+        });
+        assert.equal(result.status, 1, result.stderr || result.stdout);
+        assert.match(result.stderr, /single-owner collision/);
+        assert.deepEqual(readdirSync(tempHome), []);
+      } finally {
+        rmSync(tempHome, { recursive: true, force: true });
+        rmSync(fixture.fixtureRoot, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("installer blocks malformed Claude settings before any memory-owned runtime write", () => {
     const installer = path.join(repoRoot, "scripts", "install-mcp-memory-hooks.mjs");
     for (const fixture of [
@@ -3673,6 +3701,55 @@ describe("MCP memory cross-runtime hooks", () => {
     );
   });
 
+  test("Claude Python discovery uses the declared volume after explicit and PATH candidates", () => {
+    const scanned = [];
+    const candidates = collectWindowsPythonCommandCandidates({
+      env: { META_KIM_PYTHON: "E:\\Tools\\python.exe", SystemDrive: "D:", SystemRoot: "C:\\Windows" },
+      locatedPaths: ["F:\\Tools\\python.exe"],
+      pathExists: (candidate) => candidate.endsWith("python.exe"),
+      listDirectoryNames: (directory) => { scanned.push(directory); return ["Python312"]; },
+    });
+    assert.deepEqual(candidates, ["E:\\Tools\\python.exe", "F:\\Tools\\python.exe", "D:\\Python312\\python.exe"]);
+    assert.deepEqual(scanned, ["D:\\"]);
+  });
+
+  test("Claude Python discovery derives SystemRoot and WINDIR volumes without guessing C", () => {
+    for (const [env, expected] of [
+      [{ SystemRoot: "E:\\Windows" }, ["E:\\"]],
+      [{ WINDIR: "F:/Windows" }, ["F:\\"]],
+      [{}, []],
+      [{ SystemDrive: "D:relative", SystemRoot: "Windows", WINDIR: "/Windows" }, []],
+    ]) {
+      const scanned = [];
+      collectWindowsPythonCommandCandidates({ env, pathExists: () => false, listDirectoryNames: (directory) => { scanned.push(directory); return []; } });
+      assert.deepEqual(scanned, expected);
+    }
+  });
+
+  test("Claude Stop Python discovery follows declared volumes and preserves explicit priority", () => {
+    const source = readRepoFile("canonical", "runtime-assets", "claude", "hooks", "stop-save-progress.mjs");
+    const functions = source.slice(source.indexOf("function pythonPathEntries()"), source.indexOf("function resolvePythonCommand()"));
+    assert.ok(functions.includes("function pythonCandidates()"));
+    for (const [declaration, expectedRoot] of [
+      [{ SystemDrive: "D:", SystemRoot: "C:\\Windows" }, "D:\\"],
+      [{ SystemRoot: "E:\\Windows" }, "E:\\"],
+      [{ WINDIR: "F:/Windows" }, "F:\\"],
+      [{}, null],
+      [{ SystemDrive: "D:relative", SystemRoot: "Windows", WINDIR: "/Windows" }, null],
+    ]) {
+      const scanned = [];
+      const explicit = "G:\\Explicit\\python.exe";
+      const candidates = runInNewContext(`${functions}\npythonCandidates();`, {
+        process: { platform: "win32", env: { ...declaration, META_KIM_PYTHON: explicit, PATH: "H:\\PathPython" } },
+        path: path.win32,
+        existsSync: (file) => path.win32.basename(file) === "python.exe",
+        readdirSync: (directory) => { scanned.push(directory); return [{ name: "Python312", isDirectory: () => true }]; },
+      });
+      assert.deepEqual(scanned, expectedRoot ? [expectedRoot] : []);
+      assert.deepEqual(Array.from(candidates), [explicit, "H:\\PathPython\\python.exe", ...(expectedRoot ? [path.win32.join(expectedRoot, "Python312", "python.exe")] : [])]);
+    }
+  });
+
   test("Claude Stop resolves explicit Python paths with hidden probe and execution", () => {
     const source = readRepoFile(
       "canonical",
@@ -3693,7 +3770,7 @@ describe("MCP memory cross-runtime hooks", () => {
     assert.match(source, /timeout: 8000/);
     assert.match(source, /"Programs", "Python"/);
     assert.match(source, /\^Python\\d\+\(\?:-32\)\?\$/);
-    assert.match(source, /scanVersionDirectories\("C:\\\\"\)/);
+    assert.doesNotMatch(source, /scanVersionDirectories\("C:\\\\"\)/);
     assert.match(source, /let stdout = "";/);
     assert.match(source, /let stderr = "";/);
     assert.match(source, /resolve\(\{ code, stdout, stderr \}\)/);

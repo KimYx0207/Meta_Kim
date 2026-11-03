@@ -755,6 +755,8 @@ function compareVersionLikeNamesDesc(left, right) {
 function findCodexAppBundledMarketplaceSource({
   platformName = process.platform,
   pathExists = defaultPathExists,
+  env = process.env,
+  readDirectory = readdirSync,
   windowsAppsRoots,
   bundledMarketplaceSource,
   codexHome,
@@ -767,15 +769,16 @@ function findCodexAppBundledMarketplaceSource({
     return null;
   }
 
-  const roots = windowsAppsRoots ?? [
-    process.env.ProgramFiles ? path.win32.join(process.env.ProgramFiles, "WindowsApps") : null,
-    "C:\\Program Files\\WindowsApps",
-  ].filter(Boolean);
+  const roots = windowsAppsRoots ?? [...new Set(
+    [env.ProgramFiles, env.ProgramW6432]
+      .filter((root) => typeof root === "string" && path.win32.isAbsolute(root))
+      .map((root) => path.win32.join(root, "WindowsApps")),
+  )];
 
   for (const root of roots) {
     let entries = [];
     try {
-      entries = readdirSync(root, { withFileTypes: true })
+      entries = readDirectory(root, { withFileTypes: true })
         .filter((entry) => entry.isDirectory() && /^OpenAI\.Codex_/i.test(entry.name))
         .map((entry) => entry.name);
     } catch {

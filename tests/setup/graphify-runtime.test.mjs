@@ -1,6 +1,8 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 
 import {
@@ -14,10 +16,55 @@ import {
   checkNetworkx,
   ensurePip,
   discoverWindowsPythonPathCommands,
+  discoverWindowsPythonPaths,
   resolveGraphifyExecutable,
 } from "../../scripts/graphify-runtime.mjs";
 
 const repoRoot = join(import.meta.dirname, "..", "..");
+
+function withWindowsPythonFilesystem(t, run) {
+  const scanned = [];
+  t.mock.method(fs, "existsSync", () => true);
+  t.mock.method(fs, "readdirSync", (root) => {
+    scanned.push(root);
+    return ["Python312"];
+  });
+  t.mock.method(fs, "statSync", () => ({ isFile: () => true }));
+  syncBuiltinESMExports();
+  try {
+    run(scanned);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+}
+
+describe("discoverWindowsPythonPaths()", () => {
+  test("discovers Python on the declared system volume instead of assuming C", (t) => {
+    withWindowsPythonFilesystem(t, (scanned) => {
+      assert.deepEqual(discoverWindowsPythonPaths({ SystemDrive: "D:", SystemRoot: "C:\\Windows" }), [
+        { major: 3, minor: 12, path: "D:\\Python312\\python.exe" },
+      ]);
+      assert.deepEqual(scanned, ["D:\\"]);
+    });
+  });
+
+  test("derives a system volume from an absolute SystemRoot or WINDIR", (t) => {
+    withWindowsPythonFilesystem(t, (scanned) => {
+      assert.equal(discoverWindowsPythonPaths({ SystemRoot: "E:\\Windows" })[0].path, "E:\\Python312\\python.exe");
+      assert.equal(discoverWindowsPythonPaths({ WINDIR: "F:/Windows" })[0].path, "F:\\Python312\\python.exe");
+      assert.deepEqual(scanned, ["E:\\", "F:\\"]);
+    });
+  });
+
+  test("does not guess a volume from missing or relative system declarations", (t) => {
+    withWindowsPythonFilesystem(t, (scanned) => {
+      assert.deepEqual(discoverWindowsPythonPaths({}), []);
+      assert.deepEqual(discoverWindowsPythonPaths({ SystemDrive: "D:relative", SystemRoot: "Windows", WINDIR: "/Windows" }), []);
+      assert.deepEqual(scanned, []);
+    });
+  });
+});
 
 describe("project-post-copy-init graphify bootstrap", () => {
   test("uses the shared Python detector instead of a local launcher list", () => {

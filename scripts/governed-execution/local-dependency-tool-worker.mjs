@@ -11,6 +11,7 @@ import { runCommandWithIgnoredStdin } from '../eval-process-runner.mjs';
 import { taskOutcomeDigest } from '../../src/domain/governance/task-outcome.mjs';
 import { intentDialogueDigest } from './intent-dialogue.mjs';
 import { discoverRuntimeExecutablePaths } from '../runtime-executable-binding.mjs';
+import { resolveTrustedWindowsSystemDirectory } from '../mcp-memory-process-control.mjs';
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT, LOCAL_DEPENDENCY_TOOL_OUTPUT_SHAPES as shapes, LOCAL_DEPENDENCY_TOOL_OUTPUT_STATUSES as statuses, LOCAL_DEPENDENCY_TOOL_SCHEMA_VERSION as schemaVersion, LOCAL_DEPENDENCY_TOOL_INPUT_FIELDS as inputFields } from './local-dependency-tool-contract.mjs';
 import { checkedLocalToolTarget, checkedLocalToolTempRoot, createLocalToolControlDirectory } from './local-tool-control-paths.mjs';
 export { LOCAL_DEPENDENCY_TOOL_CONTRACT };
@@ -264,8 +265,12 @@ export async function invokeLocalDependencyToolWorker({ runId, runtime, workspac
         env.PYTHONUSERBASE = userBase;
       }
     }
-    const windowsRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:/Windows';
-    const osDirs = process.platform === 'win32' ? [path.join(windowsRoot, 'System32'), path.join(windowsRoot, 'System32/WindowsPowerShell/v1.0')] : ['/usr/bin', '/bin'];
+    let osDirs = ['/usr/bin', '/bin'];
+    if (process.platform === 'win32') {
+      const systemDirectory = resolveTrustedWindowsSystemDirectory();
+      assert(systemDirectory, 'trusted Windows system directory is unavailable');
+      osDirs = [systemDirectory, path.join(systemDirectory, 'WindowsPowerShell/v1.0')];
+    }
     env.PATH = [...new Set([semgrepIdentity && path.dirname(semgrepIdentity.realpath), path.dirname(pythonPath), ...osDirs].filter(Boolean))].join(path.delimiter); delete env.Path;
     const helper = fileURLToPath(new URL('./local-dependency-tool-process.mjs', import.meta.url));
     const helperHash = sha256(await fs.readFile(helper)); const nodeHash = sha256(await fs.readFile(process.execPath));

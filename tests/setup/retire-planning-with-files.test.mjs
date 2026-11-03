@@ -102,6 +102,44 @@ test("retirement is a no-op for a fresh install without a manifest", () => {
   }
 });
 
+test("retirement CLI follows native runtime home aliases and Meta_Kim overrides", async (t) => {
+  for (const withOverride of [false, true]) {
+    await t.test(withOverride ? "explicit Meta_Kim homes win" : "native aliases select relocated homes", () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-retire-home-alias-"));
+      try {
+        const env = { ...process.env, HOME: root, USERPROFILE: root };
+        const selected = [];
+        for (const runtime of runtimeIds) {
+          const key = runtime.toUpperCase();
+          const aliasHome = path.join(root, "relocated", runtime);
+          const overrideHome = path.join(root, "overridden", runtime);
+          delete env[`META_KIM_${key}_HOME`];
+          env[`${key}_HOME`] = aliasHome;
+          if (withOverride) env[`META_KIM_${key}_HOME`] = overrideHome;
+          const targetHome = withOverride ? overrideHome : aliasHome;
+          selected.push(path.join(targetHome, "skills", "planning-with-files"));
+          for (const home of [path.join(root, `.${runtime}`), aliasHome, overrideHome]) {
+            const skill = path.join(home, "skills", "planning-with-files");
+            mkdirSync(skill, { recursive: true });
+            writeFileSync(path.join(skill, "SKILL.md"), "# user-owned fixture\n");
+          }
+        }
+        const before = directoryClosureSync(root);
+        const result = spawnSync(process.execPath, [retirementScript], {
+          cwd: repoRoot, encoding: "utf8", windowsHide: true, env, timeout: 30_000,
+        });
+        assert.equal(result.status, 2, result.stdout + result.stderr);
+        const payload = JSON.parse(result.stdout);
+        assert.deepEqual(payload.removed, []);
+        assert.deepEqual(payload.preserved.map((entry) => entry.path).sort(), selected.sort());
+        assert.deepEqual(directoryClosureSync(root), before, "unowned content in every other home remains untouched");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test("preserved legacy planning does not block independent skill install, update, or repeat update", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-retire-independent-update-"));
   const packageRoot = process.env.META_KIM_TEST_PACKED_ROOT || repoRoot;

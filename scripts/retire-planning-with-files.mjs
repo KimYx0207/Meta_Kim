@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { assertInstallerWritePath } from "./installer-write-boundary.mjs";
+import { resolveRuntimeHomeDir } from "./meta-kim-sync-config.mjs";
 import {
   directoryClosureSync,
   manifestPathFor,
@@ -395,13 +395,9 @@ export async function retirePlanningWithFiles({ homes, targets, dryRun = false, 
 }
 
 async function main() {
-  const home = os.homedir();
-  const homes = {
-    claude: process.env.META_KIM_CLAUDE_HOME || path.join(home, ".claude"),
-    codex: process.env.META_KIM_CODEX_HOME || path.join(home, ".codex"),
-    cursor: process.env.META_KIM_CURSOR_HOME || path.join(home, ".cursor"),
-    openclaw: process.env.META_KIM_OPENCLAW_HOME || path.join(home, ".openclaw"),
-  };
+  const homes = Object.fromEntries(
+    ["claude", "codex", "cursor", "openclaw"].map((runtime) => [runtime, resolveRuntimeHomeDir(runtime)]),
+  );
   const result = await retirePlanningWithFiles({
     homes,
     targets: Object.keys(homes),

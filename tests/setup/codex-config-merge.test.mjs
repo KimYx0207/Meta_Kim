@@ -59,6 +59,40 @@ function appMaterializationFixture(t, names = ["browser", "codex-app-tools"]) {
 }
 
 describe("Codex config merge", () => {
+  test("Windows marketplace discovery follows declared install volumes without guessing a C drive", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const roots = ["D:\\Applications\\WindowsApps", "E:\\Native Applications\\WindowsApps"];
+    const installed = `${roots[1]}\\OpenAI.Codex_current\\app\\resources\\plugins\\openai-bundled`;
+    const visited = [];
+    const options = {
+      platformName: "win32",
+      codexHome: fixture.codexHome,
+      env: { ProgramFiles: "D:\\Applications", ProgramW6432: "E:\\Native Applications" },
+      readDirectory: (root) => {
+        visited.push(root);
+        return [{ name: "OpenAI.Codex_current", isDirectory: () => true }];
+      },
+      pathExists: (candidate) => candidate === installed,
+    };
+    const planned = planCodexAppNativeControls("", options);
+    assert.deepEqual(visited, roots);
+    assert.ok(sectionBlock(planned.text, "marketplaces.openai-bundled").includes(installed));
+
+    for (const env of [{}, { ProgramFiles: "relative", ProgramW6432: "E:relative" }]) {
+      visited.length = 0;
+      const fallback = planCodexAppNativeControls("", {
+        ...options, env, pathExists: () => true,
+      });
+      assert.deepEqual(visited, [], "missing or relative declarations must not scan an invented install root");
+      assert.ok(fallback.text.includes(fixture.source), "the current materialized source remains usable");
+    }
+
+    visited.length = 0;
+    const explicitRoot = "F:\\ExplicitApps";
+    planCodexAppNativeControls("", { ...options, windowsAppsRoots: [explicitRoot] });
+    assert.deepEqual(visited, [explicitRoot], "explicit discovery roots retain their existing priority");
+  });
+
   test("App materialization: keeps a valid current source without a WindowsApps installation", (t) => {
     const fixture = appMaterializationFixture(t);
     const sourceLine = `source = '${fixture.source}'`;
