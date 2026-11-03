@@ -1442,7 +1442,7 @@ export async function materializeGlobalProjectionPackage({
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
     npmRuntime.run([
       ...projectionInstallArgs(stageBundleDir, archivePath),
-      ...(dependencyBase ? ["--offline", "--package-lock=true"] : []),
+      ...(dependencyBase ? ["--prefer-offline", "--package-lock=true"] : []),
     ], stageDir);
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
     if (dependencyBase) await assertAcceptedDependencies(stageBundleDir, dependencyBase);
