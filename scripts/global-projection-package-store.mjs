@@ -1459,7 +1459,16 @@ export async function materializeGlobalProjectionPackage({
       ...(dependencyBase ? ["--prefer-offline", "--package-lock=true"] : []),
     ], stageDir);
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
-    if (dependencyBase) await assertAcceptedDependencies(stageBundleDir, dependencyBase);
+    if (dependencyBase) {
+      if (!dependencyBase.dependencySnapshot.entries.some((entry) => entry.path === "node_modules/.bin")) {
+        const generatedBinDir = path.join(stageBundleDir, "node_modules", ".bin");
+        const generatedBinStat = await lstatIfExists(generatedBinDir);
+        if (generatedBinStat?.isDirectory() && !generatedBinStat.isSymbolicLink()) {
+          await fs.rmdir(generatedBinDir);
+        }
+      }
+      await assertAcceptedDependencies(stageBundleDir, dependencyBase);
+    }
 
     for (const relativePath of STAGED_PATH_BEARING_BUNDLE_FILES) {
       normalizeStagedBundleMetadataFile(path.join(stageBundleDir, relativePath));
