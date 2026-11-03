@@ -234,6 +234,7 @@ async function createTrustedNpmRunner({ sourceRoot, homeRoot, env }) {
     } catch (error) {
       throw new Error(
         `Trusted npm command failed: ${error?.code ?? error?.status ?? "unknown"}`,
+        { cause: error },
       );
     }
   };
