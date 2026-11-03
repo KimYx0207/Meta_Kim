@@ -9,6 +9,7 @@ import {
   CATEGORIES,
   directoryClosureSync,
   fileIntegritySync,
+  readManifest,
 } from "./install-manifest.mjs";
 import { resolveCliInvocation } from "./runtime-cli-invocation.mjs";
 import { renameWithTransientRetryAsync } from "./transient-rename.mjs";
@@ -638,6 +639,126 @@ export function projectionInstallArgs(prefixDir, archivePath) {
   ];
 }
 
+function canonicalDependencyValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalDependencyValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) =>
+      [key, canonicalDependencyValue(value[key])]
+    ));
+  }
+  return value;
+}
+
+function dependencyDeclarations(manifest) {
+  return JSON.stringify(canonicalDependencyValue(Object.fromEntries([
+    "dependencies", "devDependencies", "optionalDependencies", "peerDependencies",
+    "peerDependenciesMeta", "overrides", "bundledDependencies", "bundleDependencies",
+    "workspaces", "engines", "os", "cpu", "libc",
+  ].filter((key) => Object.hasOwn(manifest, key)).map((key) => [key, manifest[key]])));
+}
+
+/** Read both npm's locked identities and the installed dependency bytes. */
+async function dependencySnapshot(bundleDir, packageName) {
+  const firstPartyPath = `node_modules/${packageName}`;
+  const entries = [];
+  const walk = async (relativePath) => {
+    if (relativePath === firstPartyPath || relativePath === "node_modules/.package-lock.json") return;
+    const absolutePath = path.join(bundleDir, relativePath);
+    const stat = await fs.lstat(absolutePath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Accepted dependency reuse does not support links: ${relativePath}`);
+    }
+    if (stat.isDirectory()) {
+      entries.push({ path: relativePath, kind: "dir" });
+      for (const name of (await fs.readdir(absolutePath)).sort()) {
+        await walk(`${relativePath}/${name}`);
+      }
+    } else if (stat.isFile()) {
+      const bytes = await fs.readFile(absolutePath);
+      entries.push({ path: relativePath, kind: "file", size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex") });
+    } else {
+      throw new Error(`Accepted dependency reuse found an unsupported entry: ${relativePath}`);
+    }
+  };
+  await walk("node_modules");
+  const lock = await readJson(path.join(bundleDir, "package-lock.json"), "accepted dependency lock");
+  if (![2, 3].includes(lock.lockfileVersion) || !lock.packages ||
+      typeof lock.packages !== "object" || Array.isArray(lock.packages) ||
+      !lock.packages[""] || !lock.packages[firstPartyPath]) {
+    throw new Error("Accepted dependency reuse requires a package-lock v2/v3 package inventory");
+  }
+  const packages = [];
+  for (const relativePath of Object.keys(lock.packages).sort()) {
+    if (!relativePath || relativePath === firstPartyPath) continue;
+    if (safeFirstPartyRelativePath(relativePath) !== relativePath ||
+        !relativePath.startsWith("node_modules/") ||
+        relativePath.startsWith(`${firstPartyPath}/`)) {
+      throw new Error(`Accepted dependency lock has an unsupported package path: ${relativePath}`);
+    }
+    const locked = lock.packages[relativePath];
+    if (!locked || locked.link || typeof locked.version !== "string" ||
+        typeof locked.integrity !== "string" || !locked.integrity ||
+        typeof locked.resolved !== "string" || !locked.resolved) {
+      throw new Error(`Accepted dependency lock lacks an exact identity: ${relativePath}`);
+    }
+    const installed = await readJson(path.join(bundleDir, relativePath, "package.json"), "accepted dependency manifest");
+    packageNameSegments(installed.name);
+    if (installed.version !== locked.version) {
+      throw new Error(`Accepted dependency version differs from its lock: ${relativePath}`);
+    }
+    packages.push({ path: relativePath, name: installed.name, version: locked.version,
+      integrity: locked.integrity, resolved: locked.resolved });
+  }
+  return { packages, closure: closureForEntries(entries) };
+}
+
+async function acceptedDependencyBase(sourceManifest, homeRoot) {
+  const manifestPath = path.join(path.resolve(homeRoot), ".meta-kim", "install-manifest.json");
+  if (!await lstatIfExists(manifestPath)) return null;
+  const manifest = readManifest(manifestPath);
+  if (!manifest || manifest.scope !== "global") {
+    throw new Error("Existing global install manifest cannot establish accepted dependencies");
+  }
+  const authorities = manifest.entries.filter((entry) =>
+    entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
+    entry.purpose === PROJECTION_PACKAGE_PURPOSE.bundle
+  );
+  if (authorities.length === 0) return null;
+  if (authorities.length !== 1) {
+    throw new Error("Dependency-preserving update requires one manifest-bound stable package authority");
+  }
+  const authority = authorities[0];
+  const versionRoot = path.join(projectionPackageStoreRoot(homeRoot),
+    ...packageNameSegments(sourceManifest.name), assertVersion(manifest.metaKimVersion));
+  if (authority.category !== CATEGORIES.C || authority.kind !== "dir" ||
+      authority.ownershipClass !== "install_projection" || authority.runtimeTarget != null ||
+      pathKey(path.dirname(authority.path)) !== pathKey(versionRoot) ||
+      !SHA256_RE.test(path.basename(authority.path))) {
+    throw new Error("Accepted dependency authority is outside its manifest-bound package layout");
+  }
+  await assertPlainDirectoryChain(projectionPackageStoreHome(homeRoot), authority.path);
+  const receipt = await readJson(path.join(authority.path, RECEIPT_FILE), "accepted package receipt");
+  const verified = await findAuthoritativeGlobalProjectionPackage(manifest, {
+    homeRoot, expectedPackageName: sourceManifest.name,
+    expectedPackageVersion: manifest.metaKimVersion,
+    expectedFirstPartyClosure: receipt.firstPartyClosure,
+  });
+  if (!verified) throw new Error("Accepted dependency authority failed its receipt or manifest closure verification");
+  const previousManifest = await readJson(verified.packageManifestPath, "accepted package manifest");
+  if (dependencyDeclarations(previousManifest) !== dependencyDeclarations(sourceManifest)) {
+    throw new Error("Package dependency declarations changed; dependency-preserving update requires a separate dependency decision");
+  }
+  return { ...verified, dependencySnapshot: await dependencySnapshot(verified.bundleDir, sourceManifest.name) };
+}
+
+async function assertAcceptedDependencies(bundleDir, dependencyBase) {
+  const current = await dependencySnapshot(bundleDir, dependencyBase.packageName);
+  if (JSON.stringify(current) !== JSON.stringify(dependencyBase.dependencySnapshot)) {
+    throw new Error("Dependency-preserving update changed accepted dependency paths, identities, or bytes");
+  }
+}
+
 /**
  * Bundle metadata files into which npm can write the staged tarball's path.
  * Relative to the stage bundle directory.
@@ -1187,6 +1308,7 @@ export async function materializeGlobalProjectionPackage({
   );
   packageNameSegments(sourceManifest.name);
   assertVersion(sourceManifest.version);
+  const dependencyBase = await acceptedDependencyBase(sourceManifest, homeRoot);
   const npmRunner = await createTrustedNpmRunner({
     sourceRoot: sourcePackageRoot,
     homeRoot,
@@ -1286,13 +1408,15 @@ export async function materializeGlobalProjectionPackage({
         throw new Error("Existing projection package digest is not a plain directory");
       }
       try {
-        return await verifyGlobalProjectionPackage(finalLayout.digestDir, {
+        const existing = await verifyGlobalProjectionPackage(finalLayout.digestDir, {
           homeRoot: storeHome,
           expectedPackageName: sourceManifest.name,
           expectedPackageVersion: sourceManifest.version,
           expectedPackageTarballSha256: packageTarballSha256,
           expectedFirstPartyClosure: sourceSnapshotBeforePack.closure,
         });
+        if (dependencyBase) await assertAcceptedDependencies(existing.bundleDir, dependencyBase);
+        return existing;
       } catch (error) {
         const receiptStat = await lstatIfExists(finalLayout.receiptPath);
         const incompleteWinner =
@@ -1307,8 +1431,19 @@ export async function materializeGlobalProjectionPackage({
     const stageBundleDir = path.join(stageDir, BUNDLE_DIR);
     await fs.mkdir(stageBundleDir, { recursive: true });
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
-    npmRuntime.run(projectionInstallArgs(stageBundleDir, archivePath), stageDir);
+    if (dependencyBase) {
+      // Copy only into this new staging area; the accepted immutable bundle is never edited.
+      await fs.cp(dependencyBase.bundleDir, stageBundleDir, {
+        recursive: true, force: false, errorOnExist: true,
+        filter: (sourcePath) => pathKey(sourcePath) !== pathKey(dependencyBase.packageRoot),
+      });
+    }
+    npmRuntime.run([
+      ...projectionInstallArgs(stageBundleDir, archivePath),
+      ...(dependencyBase ? ["--offline", "--package-lock=true"] : []),
+    ], stageDir);
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
+    if (dependencyBase) await assertAcceptedDependencies(stageBundleDir, dependencyBase);
 
     for (const relativePath of STAGED_PATH_BEARING_BUNDLE_FILES) {
       normalizeStagedBundleMetadataFile(path.join(stageBundleDir, relativePath));
