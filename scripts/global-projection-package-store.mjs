@@ -1429,15 +1429,16 @@ export async function materializeGlobalProjectionPackage({
     }
 
     const stageBundleDir = path.join(stageDir, BUNDLE_DIR);
-    await fs.mkdir(stageBundleDir, { recursive: true });
-    await assertPlainDirectoryChain(storeHome, stageBundleDir);
     if (dependencyBase) {
       // Copy only into this new staging area; the accepted immutable bundle is never edited.
       await fs.cp(dependencyBase.bundleDir, stageBundleDir, {
         recursive: true, force: false, errorOnExist: true,
         filter: (sourcePath) => pathKey(sourcePath) !== pathKey(dependencyBase.packageRoot),
       });
+    } else {
+      await fs.mkdir(stageBundleDir, { recursive: true });
     }
+    await assertPlainDirectoryChain(storeHome, stageBundleDir);
     npmRuntime.run([
       ...projectionInstallArgs(stageBundleDir, archivePath),
       ...(dependencyBase ? ["--offline", "--package-lock=true"] : []),
