@@ -112,7 +112,7 @@ const runtimeProfileCatalog = {
       supportsGlobalSkillSync: true,
       supportsGlobalDependencyInstall: true,
       supportsGlobalHooks: true,
-      envKeys: ["META_KIM_CLAUDE_HOME", "CLAUDE_HOME"],
+      envKeys: ["META_KIM_CLAUDE_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_HOME"],
       defaultHomeDir: ".claude",
     },
   },
@@ -534,7 +534,7 @@ export async function resolveTargetContext(argv = process.argv.slice(2)) {
 
 const runtimeHomeSpecs = {
   claude: {
-    envKeys: ["META_KIM_CLAUDE_HOME", "CLAUDE_HOME"],
+    envKeys: ["META_KIM_CLAUDE_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_HOME"],
     defaultDir: ".claude",
   },
   codex: {

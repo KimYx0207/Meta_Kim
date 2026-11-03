@@ -1,183 +1,44 @@
-/**
- * Tests for resolveRuntimeHome() — runtime home directory resolution.
- * Covers: env var override and default home fallbacks for formal plus candidate runtimes.
- */
-
-import { test, describe } from "node:test";
-import assert from "node:assert";
-import { mockEnv } from "./_mocks.mjs";
-
-// Re-read setup.mjs source to extract the function logic inline for testing
-// (setup.mjs is a script, not a module — we test the logic by reimplementing it
-//  in the test file to match the actual behavior, so the test stays stable
-//  when the source changes in non-functional ways.)
-
-const OS_HOME = process.env.HOME || process.env.USERPROFILE || "/home/test";
-const RUNTIME_HOME_ENV_KEYS = {
-  claude: ["META_KIM_CLAUDE_HOME", "CLAUDE_HOME"],
-  codex: ["META_KIM_CODEX_HOME", "CODEX_HOME"],
-  openclaw: ["META_KIM_OPENCLAW_HOME", "OPENCLAW_HOME"],
-  cursor: ["META_KIM_CURSOR_HOME", "CURSOR_HOME"],
-  qoder: ["META_KIM_QODER_HOME", "QODER_HOME"],
-};
-
-function mockRuntimeHomeEnv(runtimeId, overrides = {}) {
-  const cleared = Object.fromEntries(
-    (RUNTIME_HOME_ENV_KEYS[runtimeId] || []).map((key) => [key, ""]),
-  );
-  return mockEnv({ ...cleared, ...overrides });
-}
-
-function resolveRuntimeHomeUnderTest(runtimeId) {
-  const envKeys = {
-    claude: ["META_KIM_CLAUDE_HOME", "CLAUDE_HOME"],
-    codex: ["META_KIM_CODEX_HOME", "CODEX_HOME"],
-    openclaw: ["META_KIM_OPENCLAW_HOME", "OPENCLAW_HOME"],
-    cursor: ["META_KIM_CURSOR_HOME", "CURSOR_HOME"],
-    qoder: ["META_KIM_QODER_HOME", "QODER_HOME"],
-  };
-  const keys = envKeys[runtimeId] || [runtimeId.toUpperCase() + "_HOME"];
-  for (const key of keys) {
-    const v = process.env[key];
-    if (v) return key + "→" + v; // prefix so we can verify which key matched
-  }
-  const defaults = {
-    codex: ".codex",
-    openclaw: ".openclaw",
-    qoder: ".qoder",
-  };
-  const dir = defaults[runtimeId] || "." + runtimeId;
-  return "HOME→" + OS_HOME + "/" + dir;
-}
-
-describe("resolveRuntimeHome()", () => {
-  test("returns env-overridden path for META_KIM_CLAUDE_HOME", () => {
-    const restore = mockEnv({ META_KIM_CLAUDE_HOME: "/custom/claude" });
-    try {
-      const result = resolveRuntimeHomeUnderTest("claude");
-      assert.match(result, /^META_KIM_CLAUDE_HOME→/);
-      assert.ok(result.includes("/custom/claude"), result);
-    } finally {
-      restore();
-    }
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import { resolveRuntimeHomeInfo, resolveRuntimeHomeDir } from '../../scripts/meta-kim-sync-config.mjs';
+import { mockEnv } from './_mocks.mjs';
+const runtimes=['claude','codex','cursor','openclaw','qoder'];
+const keys=runtimes.flatMap(r=>['META_KIM_'+r.toUpperCase()+'_HOME',r.toUpperCase()+'_HOME']).concat('CLAUDE_CONFIG_DIR');
+function withEnv(values, action){const restore=mockEnv({...Object.fromEntries(keys.map(k=>[k,''])),...values});try{return action();}finally{restore();}}
+describe('actual runtime home resolver',()=>{
+ for(const runtime of runtimes){
+  test(runtime+' uses the actual host home fallback',()=>withEnv({},()=>{
+   assert.deepEqual(resolveRuntimeHomeInfo(runtime),{dir:path.join(os.homedir(),'.'+runtime),source:'default'});
+   assert.equal(resolveRuntimeHomeDir(runtime),path.join(os.homedir(),'.'+runtime));
+  }));
+  test(runtime+' honors native directory and Meta override',()=>{
+   const nativeKey=runtime.toUpperCase()+'_HOME',metaKey='META_KIM_'+runtime.toUpperCase()+'_HOME';
+   const native=path.join(os.tmpdir(),'Native Home',runtime),override=path.join(os.tmpdir(),'Meta Home',runtime);
+   withEnv({[nativeKey]:native},()=>assert.deepEqual(resolveRuntimeHomeInfo(runtime),{dir:native,source:'env:'+nativeKey}));
+   withEnv({[nativeKey]:native,[metaKey]:'  '+override+'  '},()=>assert.deepEqual(resolveRuntimeHomeInfo(runtime),{dir:override,source:'env:'+metaKey}));
   });
-
-  test("falls back to CLAUDE_HOME for claude", () => {
-    const restore = mockRuntimeHomeEnv("claude", {
-      CLAUDE_HOME: "/fallback/claude",
-    });
-    try {
-      const result = resolveRuntimeHomeUnderTest("claude");
-      assert.match(result, /^CLAUDE_HOME→/);
-    } finally {
-      restore();
-    }
+ }
+ test('Claude native CLAUDE_CONFIG_DIR wins over the legacy alias',()=>withEnv({CLAUDE_CONFIG_DIR:path.join(os.tmpdir(),'native-claude'),CLAUDE_HOME:path.join(os.tmpdir(),'legacy-claude')},()=>{
+  assert.deepEqual(resolveRuntimeHomeInfo('claude'),{dir:path.join(os.tmpdir(),'native-claude'),source:'env:CLAUDE_CONFIG_DIR'});
+ }));
+ test('Meta override wins over both native and legacy Claude directories',()=>withEnv({META_KIM_CLAUDE_HOME:path.join(os.tmpdir(),'meta-claude'),CLAUDE_CONFIG_DIR:path.join(os.tmpdir(),'native-claude'),CLAUDE_HOME:path.join(os.tmpdir(),'legacy-claude')},()=>{
+  assert.equal(resolveRuntimeHomeInfo('claude').source,'env:META_KIM_CLAUDE_HOME');
+ }));
+ test('whitespace declarations fall through and relative values use the caller cwd',()=>withEnv({META_KIM_CLAUDE_HOME:'  ',CLAUDE_CONFIG_DIR:'  runtime vault/claude  '},()=>{
+  assert.deepEqual(resolveRuntimeHomeInfo('claude'),{dir:path.resolve('runtime vault/claude'),source:'env:CLAUDE_CONFIG_DIR'});
+ }));
+ test('unknown runtime identifiers are rejected by the real resolver',()=>{
+  assert.throws(()=>resolveRuntimeHomeDir('unknown'),/Unknown runtime/);
+ });
+ for(const [platform,home] of [['darwin','/Users/portable-fixture'],['linux','/home/portable-fixture']]){
+  test(platform+' logical path behavior uses the real resolver without drive assumptions',(t)=>{
+   let actual,expected;
+   withEnv({},()=>{t.mock.method(os,'homedir',()=>home);t.mock.method(path,'join',path.posix.join);try{actual=resolveRuntimeHomeInfo('codex');expected={dir:home+'/.codex',source:'default'};}finally{t.mock.restoreAll();}});
+   assert.deepEqual(actual,expected);
+   withEnv({CLAUDE_CONFIG_DIR:' /Volumes/Portable Space/claude '},()=>{t.mock.method(path,'resolve',path.posix.resolve);try{actual=resolveRuntimeHomeInfo('claude');}finally{t.mock.restoreAll();}});
+   assert.deepEqual(actual,{dir:'/Volumes/Portable Space/claude',source:'env:CLAUDE_CONFIG_DIR'});
   });
-
-  test("returns env-overridden path for META_KIM_CODEX_HOME", () => {
-    const restore = mockEnv({ META_KIM_CODEX_HOME: "/custom/codex" });
-    try {
-      const result = resolveRuntimeHomeUnderTest("codex");
-      assert.match(result, /^META_KIM_CODEX_HOME→/);
-      assert.ok(result.includes("/custom/codex"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("falls back to home/.codex for codex when no env", () => {
-    const restore = mockRuntimeHomeEnv("codex");
-    try {
-      const result = resolveRuntimeHomeUnderTest("codex");
-      assert.ok(result.includes("/.codex"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("falls back to home/.openclaw for openclaw when no env", () => {
-    const restore = mockRuntimeHomeEnv("openclaw");
-    try {
-      const result = resolveRuntimeHomeUnderTest("openclaw");
-      assert.ok(result.includes("/.openclaw"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("falls back to home/.cursor for cursor when no env", () => {
-    const restore = mockRuntimeHomeEnv("cursor");
-    try {
-      const result = resolveRuntimeHomeUnderTest("cursor");
-      assert.ok(result.includes("/.cursor"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("returns env-overridden path for META_KIM_QODER_HOME", () => {
-    const restore = mockEnv({ META_KIM_QODER_HOME: "/custom/qoder" });
-    try {
-      const result = resolveRuntimeHomeUnderTest("qoder");
-      assert.match(result, /^META_KIM_QODER_HOME→/);
-      assert.ok(result.includes("/custom/qoder"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("falls back to QODER_HOME for qoder", () => {
-    const restore = mockRuntimeHomeEnv("qoder", {
-      QODER_HOME: "/fallback/qoder",
-    });
-    try {
-      const result = resolveRuntimeHomeUnderTest("qoder");
-      assert.match(result, /^QODER_HOME→/);
-    } finally {
-      restore();
-    }
-  });
-
-  test("falls back to home/.qoder for qoder when no env", () => {
-    const restore = mockRuntimeHomeEnv("qoder");
-    try {
-      const result = resolveRuntimeHomeUnderTest("qoder");
-      assert.ok(result.includes("/.qoder"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("META_KIM_CLAUDE_HOME takes priority over CLAUDE_HOME", () => {
-    const restore = mockEnv({
-      META_KIM_CLAUDE_HOME: "/priority/claude",
-      CLAUDE_HOME: "/secondary/claude",
-    });
-    try {
-      const result = resolveRuntimeHomeUnderTest("claude");
-      assert.ok(result.includes("/priority/claude"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("trims whitespace from env values", () => {
-    const restore = mockEnv({ META_KIM_CLAUDE_HOME: "  /trimmed/claude  " });
-    try {
-      const result = resolveRuntimeHomeUnderTest("claude");
-      assert.ok(result.includes("/trimmed/claude"), result);
-    } finally {
-      restore();
-    }
-  });
-
-  test("unknown runtimeId falls back to uppercase_HOME pattern", () => {
-    const restore = mockEnv({});
-    try {
-      const result = resolveRuntimeHomeUnderTest("unknown");
-      assert.ok(result.includes("/.unknown"), result);
-    } finally {
-      restore();
-    }
-  });
+ }
 });

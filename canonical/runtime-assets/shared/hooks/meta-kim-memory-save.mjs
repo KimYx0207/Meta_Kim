@@ -140,6 +140,7 @@ function detectCwd(payload) {
 function endpointFromClaudeConfig() {
   const claudeHome = path.resolve(
     process.env.META_KIM_CLAUDE_HOME?.trim() ||
+    process.env.CLAUDE_CONFIG_DIR?.trim() ||
     process.env.CLAUDE_HOME?.trim() ||
     path.join(os.homedir(), ".claude"),
   );

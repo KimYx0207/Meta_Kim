@@ -10,7 +10,7 @@ import { test } from "node:test";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const homeKeys = ["CLAUDE", "CODEX", "CURSOR", "OPENCLAW"].flatMap(
   (runtime) => [`META_KIM_${runtime}_HOME`, `${runtime}_HOME`],
-);
+).concat("CLAUDE_CONFIG_DIR");
 
 function runNode(args, cwd, env, input = "") {
   return new Promise((resolve, reject) => {
@@ -47,6 +47,9 @@ for (const scenario of [
   { name: "shared hook uses CLAUDE_HOME configuration", hook: "shared/hooks/meta-kim-memory-save.mjs", endpoint: "config" },
   { name: "Claude lifecycle hook uses CLAUDE_HOME configuration", hook: "claude/hooks/meta-kim-memory-save.mjs", endpoint: "config" },
   { name: "shared hook gives META_KIM_CLAUDE_HOME priority", hook: "shared/hooks/meta-kim-memory-save.mjs", endpoint: "config", metaOverride: true },
+  { name: "legacy hook uses official CLAUDE_CONFIG_DIR", hook: "claude/hooks/stop-memory-save.mjs", endpoint: "config", official: true },
+  { name: "shared hook uses official CLAUDE_CONFIG_DIR", hook: "shared/hooks/meta-kim-memory-save.mjs", endpoint: "config", official: true },
+  { name: "Claude lifecycle uses official CLAUDE_CONFIG_DIR", hook: "claude/hooks/meta-kim-memory-save.mjs", endpoint: "config", official: true },
 ]) {
   test(scenario.name, async () => {
     const fixture = await mkdtemp(path.join(os.tmpdir(), "meta-kim-memory-path-"));
@@ -85,7 +88,12 @@ for (const scenario of [
       const env = { ...isolatedEnv(home), CLAUDE_HOME: configuredHome };
       if (scenario.metaOverride) {
         env.CLAUDE_HOME = path.join(home, ".claude");
+        env.CLAUDE_CONFIG_DIR = path.join(home, ".claude");
         env.META_KIM_CLAUDE_HOME = configuredHome;
+      }
+      if (scenario.official) {
+        env.CLAUDE_HOME = path.join(home, ".claude");
+        env.CLAUDE_CONFIG_DIR = configuredHome;
       }
       if (scenario.endpoint === "url") {
         env.MCP_MEMORY_URL = endpoint;
