@@ -199,6 +199,8 @@ Meta-theory work must be correct before production starts, not rescued by Review
 
 Before editing files, inspect the current worktree and source files that will be changed: `git status --short`, `git diff --stat`, targeted diffs, targeted source reads, and repo-scoped search. This read-before-edit step belongs to Critical/Fetch. A hook that blocks read-only inspection is a governance defect to route to Sentinel/Conductor, not a reason to work blind.
 
+For actual task supervision, consume `config/contracts/core-loop-contract.json`'s `taskProgressPolicy` through the existing host checkpoint or durable execution path. A new protected host work order binds current criterion IDs, stable capability/method identity and immutable input/strategy snapshots. Register its running attempt before dispatch, then submit the same attempt's criterion results through the returned checkpoint template. Use the existing task-level observation/correction operations for a repeated ineffective route; do not clear all stages or invalidate unrelated work. Inspect exposes coverage, counters and the exact next required action. Legacy or unbound host work remains explicitly unobserved; installing files or adding a reminder does not prove supervision is active. Correcting a task requires the current goal/trigger-bound reviewed decision and a changed evidenced basis, without relaxing scope, criteria or permissions.
+
 Required internal stage records:
 
 - Critical: `realIntent`, `successCriteria`, `nonGoals`, `blockingUnknowns`, `noQuotaClarification`

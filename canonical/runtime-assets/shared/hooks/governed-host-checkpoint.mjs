@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { resolveProjectRoot } from "./project-root.mjs";
 import { publicTaskBinding } from "./governed-task-reference.mjs";
 import { completeStage, readSpineState, STAGE_ORDER, writeSpineState } from "./spine-state.mjs";
+import { TASK_PROGRESS_POLICY, checkedTaskProgress, taskProgressGoal, taskProgressRoute, taskProgressEvidenceBasis, projectTaskProgress, recordTaskProgress, recordTaskProgressCorrection,
+  taskProgressHasActiveAttempt, taskProgressDependencyReadiness } from "./task-progress.mjs";
 
 const MAX_INPUT_BYTES = 64 * 1024;
 const REPORT_FIELDS = Object.freeze({
@@ -71,13 +74,66 @@ export function readGovernedHostCheckpointInput(inputPath, projectRoot) {
   } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
+function verifyProgressEvidence(evidence, projectRoot, capture = false) {
+  requireValue(Array.isArray(evidence) && evidence.length > 0 && evidence.length <= 64, "task_progress_basis_missing");
+  const snapshots = [];
+  for (const item of evidence) {
+    requireValue(object(item) && text(item.ref) && /^[a-f0-9]{64}$/u.test(item.sha256 || ""), "task_progress_evidence_invalid");
+    const candidate = path.resolve(projectRoot, item.ref);
+    const relative = path.relative(projectRoot, candidate);
+    requireValue(relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative), "task_progress_evidence_outside_project");
+    let cursor = projectRoot;
+    for (const part of relative.split(path.sep)) {
+      cursor = path.join(cursor, part);
+      requireValue(!lstatSync(cursor).isSymbolicLink(), "task_progress_evidence_redirected");
+    }
+    requireValue(samePath(realpathSync(candidate), candidate), "task_progress_evidence_redirected");
+    const before = lstatSync(candidate);
+    requireValue(before.isFile() && before.nlink === 1 && before.size <= 1024 * 1024, "task_progress_evidence_not_bounded_plain_file");
+    let descriptor;
+    try {
+      descriptor = openSync(candidate, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+      const opened = fstatSync(descriptor);
+      requireValue(opened.ino === before.ino && opened.dev === before.dev && opened.size === before.size && opened.nlink === 1,
+        "task_progress_evidence_changed");
+      const bytes = Buffer.alloc(before.size + 1);
+      let count = 0;
+      while (count < bytes.length) {
+        const read = readSync(descriptor, bytes, count, bytes.length - count, null);
+        if (!read) break;
+        count += read;
+      }
+      const after = fstatSync(descriptor);
+      requireValue(count === before.size && after.size === before.size && after.mtimeMs === before.mtimeMs
+        && samePath(realpathSync(candidate), candidate), "task_progress_evidence_changed");
+      requireValue(createHash("sha256").update(bytes.subarray(0, count)).digest("hex") === item.sha256, "task_progress_evidence_hash_mismatch");
+      if (capture) snapshots.push({ ref: item.ref, bytes: bytes.subarray(0, count) });
+    } finally { if (descriptor !== undefined) closeSync(descriptor); }
+  }
+  return snapshots;
+}
+
+function verifyPacketProgressEvidence(packet, root) {
+  verifyProgressEvidence(packet.progressBasisEvidence, root);
+  if (packet.strategyRef) verifyProgressEvidence([{ ref: packet.strategyRef.ref, sha256: packet.strategyRef.sha256 }], root);
+}
+
+function verifyObservationEvidence(observation, root) {
+  verifyProgressEvidence(observation.basisEvidence, root);
+  if (observation.criterionEvidence.length) verifyProgressEvidence(observation.criterionEvidence, root);
+  if (observation.resultRef) verifyProgressEvidence([{ ref: observation.resultRef, sha256: observation.resultDigest }], root);
+}
+
 export function governedHostCheckpointTemplate(stage) {
   requireValue(STAGE_ORDER.includes(stage), "checkpoint_stage_invalid");
   const records = {
     critical: { realIntent: "", publicTitle: "", successCriteria: [""], nonGoals: [], blockingUnknowns: [], noQuotaClarification: true },
     fetch: { evidence: [""], decisionImpactMap: [""], capabilityDiscovery: { sources: [""], matches: [""] }, memoryStrategy: "" },
-    thinking: { designFrame: "", chosenRationale: "", consideredLanes: [""], dependencyPolicy: "", reviewStandard: "", workerTaskPackets: [{ taskPacketId: "", ownerAgent: "", ownerSource: "", roleDisplayName: "", roleInstanceId: "", scope: "", expectedOutput: "", verification: "", mergeOwner: "", weapon: "", dependsOn: [] }] },
-    execution: { workerResultPackets: [{ taskPacketId: "", ownerAgent: "", resultStatus: "reported_complete", summary: "", evidenceRefs: [""] }] },
+    thinking: { designFrame: "", chosenRationale: "", consideredLanes: [""], dependencyPolicy: "", reviewStandard: "", workerTaskPackets: [{ taskPacketId: "", ownerAgent: "", ownerSource: "", roleDisplayName: "", roleInstanceId: "", scope: "", expectedOutput: "", verification: "", mergeOwner: "", weapon: "", capabilityId: "", strategyRef: { id: "", ref: "", sha256: "" }, dependsOn: [], progressPolicyId: TASK_PROGRESS_POLICY.id,
+      acceptanceCriterionIds: ["<copy-current-goal-criterion-id>"], progressBasisEvidence: [{ ref: "", sha256: "" }] }] },
+    execution: { workerResultPackets: [{ taskPacketId: "", ownerAgent: "", resultStatus: "reported_complete", summary: "", evidenceRefs: [""],
+      progress: { attemptId: "", criterionId: "", classification: "progress", basisEvidence: [{ ref: "", sha256: "" }],
+        resultRef: "", resultDigest: "", criterionEvidence: [{ ref: "", sha256: "" }], evidenceRefs: [""] } }] },
     review: { upstreamAssessment: "", verdict: "pass", findings: [] },
     "meta-review": { upstreamAssessment: "", verdict: "pass", findings: [] },
     verification: { checks: [{ name: "", observedResult: "", passed: false, evidenceRefs: [""] }] },
@@ -97,7 +153,37 @@ function checkedWorkerPackets(packets, state = {}) {
     requireValue(texts(packet.dependsOn, true), "thinking_worker_dependencies_invalid");
     ids.add(packet.taskPacketId);
     const selected = { ...Object.fromEntries(fields.map((key) => [key, packet[key]])), dependsOn: packet.dependsOn,
-      ownerBindingMode: "run_scoped_owner_contract", invocationState: "selected_not_invoked", evidenceLevel: "owner_reported" };
+      ownerBindingMode: "run_scoped_owner_contract", invocationState: "selected_not_invoked", evidenceLevel: "owner_reported",
+      progressPolicyId: TASK_PROGRESS_POLICY.id };
+    requireValue(text(packet.capabilityId) && packet.capabilityId.length <= 256 && !/\s/u.test(packet.capabilityId), "thinking_capability_identity_required");
+    selected.capabilityId = packet.capabilityId;
+    if (packet.methodCapabilityId !== undefined) {
+      requireValue(text(packet.methodCapabilityId) && !/\s/u.test(packet.methodCapabilityId), "thinking_method_identity_invalid");
+      selected.methodCapabilityId = packet.methodCapabilityId;
+    }
+    requireValue(object(packet.strategyRef) && text(packet.strategyRef.id) && text(packet.strategyRef.ref)
+      && /^[a-f0-9]{64}$/u.test(packet.strategyRef.sha256 || ""), "thinking_strategy_ref_invalid");
+    selected.strategyRef = { id: packet.strategyRef.id, ref: packet.strategyRef.ref, sha256: packet.strategyRef.sha256 };
+    if (packet.acceptanceCriterionIds !== undefined) {
+      const criteria = taskProgressGoal(state.criticalRecord).criteria;
+      requireValue(texts(packet.acceptanceCriterionIds) && new Set(packet.acceptanceCriterionIds).size === packet.acceptanceCriterionIds.length
+        && packet.acceptanceCriterionIds.every((id) => criteria.some((criterion) => criterion.criterionId === id)), "thinking_criterion_binding_invalid");
+      selected.acceptanceCriterionIds = [...packet.acceptanceCriterionIds];
+    }
+    requireValue(selected.acceptanceCriterionIds && Array.isArray(packet.progressBasisEvidence) && packet.progressBasisEvidence.length > 0,
+      "thinking_progress_binding_required");
+    selected.progressBasisEvidence = packet.progressBasisEvidence.map((item) => {
+      requireValue(object(item) && text(item.ref) && /^[a-f0-9]{64}$/u.test(item.sha256 || ""), "thinking_progress_basis_invalid");
+      return { ref: item.ref, sha256: item.sha256 };
+    });
+    const currentReplacement = !state.hostRevision && packet.replacesTaskPacketId !== undefined
+      ? (state.workerTaskPackets || []).find((old) => old.taskPacketId === packet.replacesTaskPacketId) : null;
+    if (currentReplacement) {
+      selected.replacesTaskPacketId = currentReplacement.taskPacketId;
+      selected.logicalTaskPacketId = currentReplacement.logicalTaskPacketId || currentReplacement.taskPacketId;
+      if (currentReplacement.progressContextId) selected.progressContextId = currentReplacement.progressContextId;
+      if (currentReplacement.progressDependencyBarrier) selected.progressDependencyBarrier = currentReplacement.progressDependencyBarrier;
+    }
     if (state.hostRevision) {
       const history = state.hostRevisionHistory || [];
       const prior = history.flatMap((entry) => entry.invalidated.workerTaskPackets || []);
@@ -108,6 +194,8 @@ function checkedWorkerPackets(packets, state = {}) {
         requireValue(replaced, "revision_replaced_task_unknown");
         selected.replacesTaskPacketId = replaced.taskPacketId;
         selected.logicalTaskPacketId = replaced.logicalTaskPacketId || replaced.taskPacketId;
+        if (replaced.progressContextId) selected.progressContextId = replaced.progressContextId;
+        if (replaced.progressDependencyBarrier) selected.progressDependencyBarrier = replaced.progressDependencyBarrier;
       } else selected.logicalTaskPacketId = packet.taskPacketId;
       selected.revisionId = state.hostRevision.revisionId;
     }
@@ -208,6 +296,7 @@ function checkedRecord(stage, raw, state, completing, publicTitle = null) {
   if (stage === "critical") {
     take("realIntent"); take("successCriteria", texts); take("nonGoals", (v) => texts(v, true));
     take("blockingUnknowns", (v) => texts(v, true)); take("noQuotaClarification", (v) => v === true);
+    taskProgressGoal(record);
     if (publicTitle) record.publicTitle = publicTitle;
     requireValue(!completing || record.blockingUnknowns.length === 0, "critical_blocking_unknowns_unsettled");
   } else if (stage === "fetch") {
@@ -231,9 +320,22 @@ function checkedRecord(stage, raw, state, completing, publicTitle = null) {
       requireValue(packet && !resultIds.has(packet.taskPacketId), "execution_result_binding_invalid");
       requireValue(["reported_complete", "reported_failed", "reported_blocked"].includes(result.resultStatus)
         && text(result.summary) && texts(result.evidenceRefs), "execution_result_incomplete");
+      requireValue(!(result.progress !== undefined && result.progressObservations !== undefined), "task_progress_observations_ambiguous");
+      const observations = result.progressObservations ?? (result.progress === undefined ? [] : [result.progress]);
+      requireValue(Array.isArray(observations) && observations.length <= 64, "task_progress_observations_invalid");
+      requireValue(new Set(observations.map((observation) => observation?.criterionId)).size === observations.length
+        && new Set(observations.map((observation) => observation?.attemptId)).size <= 1, "task_progress_duplicate_or_mixed_attempt_observations");
+      requireValue(packet.progressPolicyId !== TASK_PROGRESS_POLICY.id || result.resultStatus === "reported_blocked" || observations.length > 0,
+        "task_progress_terminal_metadata_required");
+      for (const observation of observations) requireValue(result.resultStatus === "reported_failed" ? ["ineffective", "unresolved"].includes(observation?.classification)
+        : result.resultStatus === "reported_blocked" ? ["waiting", "question", "paused"].includes(observation?.classification)
+          : ["progress", "ineffective"].includes(observation?.classification), "task_progress_result_status_mismatch");
       resultIds.add(packet.taskPacketId);
       return { runId: state.runId, taskPacketId: packet.taskPacketId, ownerAgent: packet.ownerAgent, resultStatus: result.resultStatus,
-        status: "in_doubt", summary: result.summary, evidenceRefs: result.evidenceRefs, evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+        status: "in_doubt", summary: result.summary, evidenceRefs: result.evidenceRefs, evidenceLevel: "owner_reported", nativeInvocationVerified: false,
+        ...(observations.length === 0 ? {} : { progressObservations: observations.map((observation) => checkedTaskProgress(observation.classification === "ineffective"
+          ? { ...observation, failureClass: result.resultStatus === "reported_failed" ? "execution_failed" : "criterion_not_met" }
+          : observation, packet, taskProgressGoal(state.criticalRecord))) }) };
     });
     requireValue(!completing || (packets.length === resultIds.size && record.workerResultPackets.every((result) => result.resultStatus === "reported_complete")), "execution_results_unsettled");
     if (state.hostRevision) record.revisionResponses = checkedRevisionResponses(raw.revisionResponses, state, completing);
@@ -287,7 +389,9 @@ function checkpointInspection(state) {
     currentStageStatus: state.stages[state.currentStage].status, active: state.active,
     revisionId: state.hostRevision?.revisionId || null, hostRevision: state.hostRevision || null, returnTargets: returnTargets(state.currentStage),
     revision: state.hostCheckpointRevision || 0, evidenceLevel: "owner_reported", publicReadyAuthority: false,
-    expectedRevision: state.hostCheckpointRevision || 0, expectedStage: state.currentStage, expectedStatus: state.stages[state.currentStage].status };
+    expectedRevision: state.hostCheckpointRevision || 0, expectedStage: state.currentStage, expectedStatus: state.stages[state.currentStage].status,
+    progressCoverage: state.taskProgressLedger ? "reported_attempts_only" : "not_observed",
+    goalCriteria: state.criticalRecord ? taskProgressGoal(state.criticalRecord).criteria : [] };
 }
 
 function currentTaskReferences(state) {
@@ -299,6 +403,11 @@ function currentTaskReferences(state) {
     replacesTaskPacketId: identity(packet.replacesTaskPacketId) ? packet.replacesTaskPacketId : null,
     revisionId: identity(packet.revisionId) ? packet.revisionId : null,
     ownerAgent: typeof packet.ownerAgent === "string" ? packet.ownerAgent.slice(0, 160) : null,
+    progressCoverage: packet.progressPolicyId === TASK_PROGRESS_POLICY.id ? "reported_attempts_only" : "not_observed",
+    ...(!packet.progressPolicyId ? { nextRequiredAction: "record_actual_attempt_result" } : {}),
+    ...(state.criticalRecord ? { progress: projectTaskProgress(state.taskProgressLedger, taskProgressGoal(state.criticalRecord).goalDigest,
+      packet.logicalTaskPacketId || packet.taskPacketId, packet.progressContextId) } : {}),
+    dependencyReadiness: taskProgressDependencyReadiness(packet, packets, state.workerResultPackets || []),
   }));
 }
 
@@ -325,6 +434,134 @@ export async function resolveGovernedHostTaskReference(options) {
 export function governedHostReturnTemplate() {
   return { ownerAgent: "", summary: "", evidenceRefs: [""], expectedRevision: null, expectedStage: "", expectedStatus: "",
     findings: [{ findingId: "", feedbackId: "", taskPacketId: "", summary: "" }] };
+}
+
+export function governedHostTaskProgressTemplate() {
+  return { ownerAgent: "", summary: "", evidenceRefs: [""], expectedRevision: null, expectedStage: "execution", expectedStatus: "in_progress",
+    taskRef: "task:<copy-current-reference>",
+    progress: { attemptId: "", criterionId: "", classification: "running", basisEvidence: [{ ref: "", sha256: "" }], evidenceRefs: [""] } };
+}
+
+export function governedHostTaskCorrectionTemplate() {
+  return { ownerAgent: "", summary: "", evidenceRefs: [""], expectedRevision: null, expectedStage: "execution", expectedStatus: "in_progress",
+    taskRef: "task:<copy-current-reference>", rationale: "", basisEvidence: [{ ref: "", sha256: "" }], decisionRef: { ref: "", sha256: "" },
+    replacement: governedHostCheckpointTemplate("thinking").record.workerTaskPackets[0] };
+}
+
+function reviewedTaskCorrection(request, state, previous, replacement, goal, root) {
+  const snapshot = verifyProgressEvidence([request.decisionRef], root, true)[0];
+  requireValue(snapshot.bytes.length <= MAX_INPUT_BYTES, "task_progress_correction_review_too_large");
+  const decision = JSON.parse(snapshot.bytes.toString("utf8"));
+  const pending = projectTaskProgress(state.taskProgressLedger, goal.goalDigest, previous.logicalTaskPacketId || previous.taskPacketId, previous.progressContextId).pendingCorrections;
+  const triggerIds = pending.map((entry) => entry.triggerEventId).sort();
+  requireValue(object(decision) && decision.schemaVersion === 1 && decision.kind === "task_progress_correction_review"
+    && decision.verdict === "approved" && text(decision.producer) && decision.producer === request.ownerAgent
+    && text(decision.reviewer) && decision.reviewer !== decision.producer && text(decision.rationale), "task_progress_reviewed_decision_required");
+  requireValue(decision.goalDigest === goal.goalDigest && decision.taskPacketId === previous.taskPacketId
+    && decision.logicalTaskPacketId === (previous.logicalTaskPacketId || previous.taskPacketId)
+    && decision.replacementTaskPacketId === replacement.taskPacketId
+    && Array.isArray(decision.triggerEventIds) && new Set(decision.triggerEventIds).size === decision.triggerEventIds.length
+    && JSON.stringify([...decision.triggerEventIds].sort()) === JSON.stringify(triggerIds)
+    && decision.routeDigest === taskProgressRoute(replacement)
+    && decision.evidenceBasisDigest === taskProgressEvidenceBasis(request.basisEvidence), "task_progress_review_binding_mismatch");
+  return { ref: request.decisionRef.ref, sha256: request.decisionRef.sha256, producer: decision.producer, reviewer: decision.reviewer,
+    goalDigest: goal.goalDigest, triggerEventIds: triggerIds, routeDigest: decision.routeDigest, evidenceBasisDigest: decision.evidenceBasisDigest,
+    evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+}
+
+async function boundTaskOperation(options) {
+  const { root, state } = await boundState(options);
+  const request = options.input;
+  requireValue(object(request) && Buffer.byteLength(JSON.stringify(request)) <= MAX_INPUT_BYTES, "checkpoint_input_invalid");
+  requireValue(text(request.ownerAgent) && text(request.summary) && texts(request.evidenceRefs), "checkpoint_report_incomplete");
+  requireValue(request.expectedRevision === (state.hostCheckpointRevision || 0)
+    && request.expectedStage === state.currentStage && request.expectedStatus === state.stages[state.currentStage].status, "revision_conflict");
+  requireValue(state.currentStage === "execution" && state.stages.execution.status !== "completed", "task_progress_execution_stage_required");
+  const references = currentTaskReferences(state).filter((entry) => entry.publicTaskRef === request.taskRef);
+  requireValue(references.length === 1, "task_reference_unknown_or_ambiguous");
+  const packet = state.workerTaskPackets.find((item) => item.taskPacketId === references[0].taskPacketId);
+  return { root, state, request, packet };
+}
+
+async function writeTaskOperation(root, state, next, request) {
+  next.hostCheckpointRevision = (state.hostCheckpointRevision || 0) + 1;
+  next.updatedAt = new Date().toISOString();
+  next.hostCheckpointSummary = { stage: state.currentStage, status: "in_progress", revision: next.hostCheckpointRevision,
+    ownerAgent: request.ownerAgent, summary: request.summary, evidenceRefs: request.evidenceRefs, recordedAt: next.updatedAt,
+    evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+  const write = await writeSpineState(root, next, { expectedRunId: state.runId, expectedActive: true, expectedStage: request.expectedStage,
+    expectedStageStatus: request.expectedStatus, expectedCheckpointRevision: request.expectedRevision });
+  requireValue(write.written === true, `checkpoint_write_rejected:${write.reason}`);
+  return { written: true, ...checkpointInspection(next), nativeInvocationVerified: false };
+}
+
+/** Register running/waiting observations before dispatch, never fabricate a terminal result. */
+export async function observeGovernedHostTask(options) {
+  const { root, state, request, packet } = await boundTaskOperation(options);
+  requireValue(TASK_PROGRESS_POLICY.ignoredClassifications.includes(request.progress?.classification), "task_progress_terminal_uses_result_checkpoint");
+  const dependency = taskProgressDependencyReadiness(packet, state.workerTaskPackets, state.workerResultPackets || []);
+  requireValue(request.progress.classification !== "running" || dependency.ready, `task_progress_dependency_stale:${dependency.blockedTaskIds.join(",")}`);
+  const observation = checkedTaskProgress(request.progress, packet, taskProgressGoal(state.criticalRecord));
+  verifyPacketProgressEvidence(packet, root);
+  verifyObservationEvidence(observation, root);
+  requireValue(taskProgressEvidenceBasis(packet.progressBasisEvidence) === observation.evidenceBasisDigest, "task_progress_packet_basis_mismatch");
+  const reduced = recordTaskProgress(state.taskProgressLedger, observation);
+  if (!reduced.changed) return { written: false, replay: true, ...checkpointInspection(state) };
+  const next = { ...state, taskProgressLedger: reduced.ledger };
+  return writeTaskOperation(root, state, next, request);
+}
+
+/** Revise one blocked route without invalidating unrelated work or granting execution authority. */
+export async function correctGovernedHostTask(options) {
+  const { root, state, request, packet: previous } = await boundTaskOperation(options);
+  requireValue(object(request.replacement) && request.replacement.replacesTaskPacketId === previous.taskPacketId
+    && request.replacement.taskPacketId !== previous.taskPacketId
+    && !state.workerTaskPackets.some((packet) => packet.taskPacketId === request.replacement.taskPacketId), "task_progress_replacement_identity_invalid");
+  const mutableKeys = new Set(["taskPacketId", "replacesTaskPacketId", "logicalTaskPacketId", "ownerAgent", "ownerSource", "weapon", "capabilityId", "methodCapabilityId", "strategyRef", "progressBasisEvidence",
+    "progressPolicyId", "invocationState", "evidenceLevel"]);
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(request.replacement)])) {
+    if (!mutableKeys.has(key)) requireValue(JSON.stringify(request.replacement[key]) === JSON.stringify(previous[key]), `task_progress_correction_changed_contract:${key}`);
+  }
+  requireValue(JSON.stringify(request.replacement.progressBasisEvidence) === JSON.stringify(request.basisEvidence), "task_progress_replacement_basis_mismatch");
+  const checked = checkedWorkerPackets([{ ...request.replacement, dependsOn: [] }], { ...state, hostRevision: null })[0];
+  const replacement = { ...previous, ...checked, dependsOn: previous.dependsOn,
+    replacesTaskPacketId: previous.taskPacketId, logicalTaskPacketId: previous.logicalTaskPacketId || previous.taskPacketId };
+  verifyPacketProgressEvidence(replacement, root);
+  const goal = taskProgressGoal(state.criticalRecord);
+  const reviewedDecision = reviewedTaskCorrection(request, state, previous, replacement, goal, root);
+  const next = structuredClone(state);
+  next.taskProgressLedger = recordTaskProgressCorrection(state.taskProgressLedger, { goalDigest: goal.goalDigest, oldPacket: previous,
+    replacement, rationale: request.rationale, evidenceRefs: request.evidenceRefs, basisEvidence: request.basisEvidence });
+  next.taskProgressLedger.corrections.at(-1).reviewedDecision = reviewedDecision;
+  const affected = new Set([previous.taskPacketId]);
+  let expanded;
+  do {
+    expanded = false;
+    for (const packet of state.workerTaskPackets) if (!affected.has(packet.taskPacketId) && packet.dependsOn.some((id) => affected.has(id))) {
+      affected.add(packet.taskPacketId); expanded = true;
+    }
+  } while (expanded);
+  requireValue(!state.workerTaskPackets.some((packet) => affected.has(packet.taskPacketId)
+    && taskProgressHasActiveAttempt(state.taskProgressLedger, goal.goalDigest, packet.logicalTaskPacketId || packet.taskPacketId))
+    && !(state.workerLifecycle || []).some((worker) => affected.has(worker.taskPacketId) && worker.status === "active"),
+  "task_progress_correction_waits_for_affected_active_attempt");
+  next.workerTaskPackets = state.workerTaskPackets.map((packet) => {
+    if (packet.taskPacketId === previous.taskPacketId) return replacement;
+    if (!affected.has(packet.taskPacketId)) return packet;
+    const dependsOn = packet.dependsOn.map((id) => id === previous.taskPacketId ? replacement.taskPacketId : id);
+    const progressContextId = createHash("sha256").update(JSON.stringify([goal.goalDigest, packet.logicalTaskPacketId || packet.taskPacketId,
+      packet.progressContextId || "initial", reviewedDecision.sha256, dependsOn])).digest("hex");
+    return { ...packet, dependsOn, progressContextId,
+      progressDependencyBarrier: { contextId: progressContextId, correctionDecisionSha256: reviewedDecision.sha256 } };
+  });
+  next.taskCorrectionHistory = [...(state.taskCorrectionHistory || []), { previousPacket: previous,
+    affectedPackets: state.workerTaskPackets.filter((packet) => affected.has(packet.taskPacketId)),
+    replacedResults: (state.workerResultPackets || []).filter((result) => affected.has(result.taskPacketId)),
+    ownerAgent: request.ownerAgent, rationale: request.rationale, evidenceRefs: request.evidenceRefs }];
+  next.workerResultPackets = (state.workerResultPackets || []).filter((result) => !affected.has(result.taskPacketId));
+  if (next.executionRecord) next.executionRecord.workerResultPackets = next.workerResultPackets;
+  const written = await writeTaskOperation(root, state, next, request);
+  return { ...written, taskPacketId: replacement.taskPacketId, replacedTaskPacketId: previous.taskPacketId, independentResultsPreserved: true };
 }
 
 /** Return within the bound run. Archive invalidated evidence before replacing its active projection. */
@@ -411,9 +648,39 @@ export async function checkpointGovernedHost(options) {
   requireValue(["complete", "blocked", "in_progress"].includes(request.status), "checkpoint_status_invalid");
   const completing = request.status === "complete";
   const record = checkedRecord(options.stage, request.record, state, completing, publicTitle);
+  let taskProgressLedger = state.taskProgressLedger;
+  if (options.stage === "thinking" && record.workerTaskPackets) {
+    for (const packet of record.workerTaskPackets) verifyPacketProgressEvidence(packet, root);
+  }
+  if (options.stage === "execution" && record.workerResultPackets) {
+    const goal = taskProgressGoal(state.criticalRecord);
+    for (const result of record.workerResultPackets) {
+      const packet = state.workerTaskPackets.find((item) => item.taskPacketId === result.taskPacketId);
+      const pending = projectTaskProgress(taskProgressLedger, goal.goalDigest, packet.logicalTaskPacketId || packet.taskPacketId, packet.progressContextId).pendingCorrections;
+      requireValue(result.progressObservations?.length || pending.length === 0, "task_progress_correction_required_before_attempt");
+      const dependency = taskProgressDependencyReadiness(packet, state.workerTaskPackets, state.workerResultPackets || []);
+      requireValue(result.resultStatus === "reported_blocked" || dependency.ready, `task_progress_dependency_stale:${dependency.blockedTaskIds.join(",")}`);
+      for (const observation of result.progressObservations || []) {
+        verifyPacketProgressEvidence(packet, root);
+        verifyObservationEvidence(observation, root);
+        requireValue(taskProgressEvidenceBasis(packet.progressBasisEvidence) === observation.evidenceBasisDigest, "task_progress_packet_basis_mismatch");
+        taskProgressLedger = recordTaskProgress(taskProgressLedger, observation).ledger;
+      }
+    }
+  }
+  const progressGoal = state.criticalRecord ? taskProgressGoal(state.criticalRecord) : null;
+  const taskCorrections = progressGoal ? (state.workerTaskPackets || []).flatMap((packet) => projectTaskProgress(taskProgressLedger,
+    progressGoal.goalDigest, packet.logicalTaskPacketId || packet.taskPacketId, packet.progressContextId).pendingCorrections) : [];
+  const incompleteTaskCriteria = options.stage === "execution" ? (record.workerResultPackets || []).filter((result) => {
+    const packet = state.workerTaskPackets.find((item) => item.taskPacketId === result.taskPacketId);
+    return packet.progressPolicyId === TASK_PROGRESS_POLICY.id && !packet.acceptanceCriterionIds.every((id) =>
+      result.progressObservations?.some((observation) => observation.criterionId === id && observation.classification === "progress"));
+  }).map((result) => result.taskPacketId) : [];
+  const effectiveCompleting = completing && taskCorrections.length === 0 && incompleteTaskCriteria.length === 0;
   const report = { stage: options.stage, ownerAgent: request.ownerAgent, summary: request.summary, evidenceRefs: request.evidenceRefs,
-    status: request.status, evidenceLevel: "owner_reported", nativeInvocationVerified: false, recordedAt: new Date().toISOString() };
+    status: completing && !effectiveCompleting ? "in_progress" : request.status, evidenceLevel: "owner_reported", nativeInvocationVerified: false, recordedAt: new Date().toISOString() };
   const next = structuredClone(state);
+  if (taskProgressLedger) next.taskProgressLedger = taskProgressLedger;
   next.updatedAt = report.recordedAt;
   if (!next.ownerAgent) next.ownerAgent = report.ownerAgent;
   next[REPORT_FIELDS[options.stage]] = { ...(record.incomplete ? next[REPORT_FIELDS[options.stage]] : {}), ...record, ...report };
@@ -428,14 +695,19 @@ export async function checkpointGovernedHost(options) {
     next.workerTaskPackets = record.workerTaskPackets;
     next.reviewStandard = record.reviewStandard;
   }
-  if (options.stage === "execution" && Array.isArray(record.workerResultPackets)) next.workerResultPackets = record.workerResultPackets.map((result) => ({ ...result, reportedAt: report.recordedAt }));
+  if (options.stage === "execution" && Array.isArray(record.workerResultPackets)) {
+    const results = new Map((state.workerResultPackets || []).map((result) => [result.taskPacketId, result]));
+    for (const result of record.workerResultPackets) results.set(result.taskPacketId, { ...result, reportedAt: report.recordedAt });
+    next.workerResultPackets = [...results.values()];
+    next.executionRecord.workerResultPackets = next.workerResultPackets;
+  }
   if (Array.isArray(record.revisionResponses)) {
     next.revisionResponses = [...(next.revisionResponses || []), ...record.revisionResponses.map((response) => ({ ...response, revisedAt: report.recordedAt }))];
     if (completing) next.hostRevision.status = "revision_reported";
   }
   if (options.stage === "verification" && completing && next.hostRevision) next.hostRevision.status = "verification_reported";
-  const updated = completing ? completeStage(next, options.stage) : next;
-  if (completing) {
+  const updated = effectiveCompleting ? completeStage(next, options.stage) : next;
+  if (effectiveCompleting) {
     updated.stages[options.stage].evidenceLevel = "owner_reported";
     updated.stages[options.stage].evidenceRefs = report.evidenceRefs;
   }
@@ -443,7 +715,7 @@ export async function checkpointGovernedHost(options) {
     expectedStage: state.currentStage, expectedStageStatus: state.stages[state.currentStage].status, expectedCheckpointRevision: state.hostCheckpointRevision || 0 });
   requireValue(write.written === true, `checkpoint_write_rejected:${write.reason}`);
   return { written: true, runId: state.runId, currentStage: updated.currentStage, revision: next.hostCheckpointRevision,
-    evidenceLevel: "owner_reported", nativeInvocationVerified: false, publicReadyAuthority: false };
+    taskCorrections, incompleteTaskCriteria, evidenceLevel: "owner_reported", nativeInvocationVerified: false, publicReadyAuthority: false };
 }
 
 export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skillPath, language = "zh-CN" }) {
@@ -456,6 +728,7 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     `Read and apply the installed skill ${skillPath}. The current host owns governance and dispatches actual work to discovered capabilities.`,
     `Write stage records through ${adapterPath}. Use --inspect for the current template or --template <stage> for lightweight input.`,
     "For review or feedback rework, inspect fresh revision/stage/status, then explicitly --return-to fetch|thinking|execution with findings and that CAS. Preserve the same run; use fresh taskPacketIds linked by replacesTaskPacketId. --template-return describes the input.",
+    "New Thinking packets use task-progress-v1: bind current criterion IDs and hash-verified project evidence. Before dispatch, register running through --observe-task with fresh CAS; report that same attempt/result through execution checkpoint. A task_replan_required needs scoped --correct-task after Thinking, not a global reset. --template-progress and --template-correction show the shapes. Legacy packets are explicitly not_observed.",
     `Invocation: ${command}`,
     "Record the actual goal, acceptance and unresolved decisions, then actual evidence and capability discovery, then the Thinking route and workerTaskPackets. Execute, review and verify those same work orders. Checkpoint after each stage, not a fabricated retrospective pass.",
     "Records remain owner_reported. Native worker returns require actual host evidence; JSON, booleans, a planned-only runner or tool exits cannot certify the eight stages, user acceptance or public-ready.",
@@ -466,6 +739,7 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     `立即读取并应用已安装技能 ${skillPath}，由当前主线程承接治理并按能力分派实际工作。`,
     `阶段记录通过 ${adapterPath} 写回同一任务。先用 --inspect 读取当前模板，或 --template <stage> 获取轻量输入。`,
     "审查或反馈需要返工时，先inspect取得revision/stage/status，再用--return-to fetch|thinking|execution提交发现与这组CAS；沿用同一run，新工单用replacesTaskPacketId关联旧版。--template-return提供输入模板。",
+    "新Thinking工单绑定task-progress-v1、当前criterion ID和项目内真实证据hash。派工前用--observe-task及新鲜CAS登记running；执行checkpoint回写同一attempt与真实结果。单任务需改路时，主控完成Thinking后用--correct-task，不全局重置；--template-progress/--template-correction提供输入。旧工单明确为not_observed。",
     `调用：${command}`,
     "先记录真实目标、标准和未决项，再记录实际检索及能力发现，再提交Thinking方案与workerTaskPackets，随后按同一工单执行、审查、验证并记录结果。每阶段完成后立刻checkpoint，不能最后补写一套假通过。",
     "这些是owner_reported阶段/结果；原生调用返回仍须真实宿主证据，不能用JSON、布尔值、planned-only runner或工具退出推断八阶段通过、用户验收或public-ready。",
@@ -475,17 +749,21 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
 async function main() {
   const arg = (key) => { const i = process.argv.indexOf(key); return i < 0 ? null : process.argv[i + 1]; };
   if (process.argv.includes("--help")) {
-    process.stdout.write("Usage: node governed-host-checkpoint.mjs --project-root <root> --run-id <existing run> --conversation-id <verified chat> [--inspect | --resolve-task-ref <task:20hex> | --stage <current stage> --input <project JSON file or -> | --return-to fetch|thinking|execution --input <project JSON file or ->]\n--inspect provides current public/raw task references and fresh CAS; --resolve-task-ref resolves exactly one current task without writing. Historical references are refused. --template <stage> and --template-return are read-only. Returns require fresh expectedRevision/expectedStage/expectedStatus and findings. Reports are owner_reported, never native invocation or public-ready proof.\n");
+    process.stdout.write("Usage: node governed-host-checkpoint.mjs --project-root <root> --run-id <existing run> --conversation-id <verified chat> [--inspect | --resolve-task-ref <task:20hex> | --stage <current stage> --input <project JSON file or -> | --return-to fetch|thinking|execution --input <project JSON file or -> | --observe-task --input <project JSON file or -> | --correct-task --input <project JSON file or ->]\n--inspect supplies current criterion/task refs and fresh CAS. Scoped task operations require fresh expectedRevision/expectedStage/expectedStatus; observe running before terminal result, correct only the blocked task after Thinking. Evidence must be hash-verified project files <=1MiB. --template <stage>, --template-return, --template-progress, --template-correction are read-only. Legacy attempts remain not_observed. Reports are owner_reported, never native invocation or public-ready proof.\n");
     return;
   }
   if (arg("--template")) { process.stdout.write(JSON.stringify(governedHostCheckpointTemplate(arg("--template")), null, 2) + "\n"); return; }
   if (process.argv.includes("--template-return")) { process.stdout.write(JSON.stringify(governedHostReturnTemplate(), null, 2) + "\n"); return; }
+  if (process.argv.includes("--template-progress")) { process.stdout.write(JSON.stringify(governedHostTaskProgressTemplate(), null, 2) + "\n"); return; }
+  if (process.argv.includes("--template-correction")) { process.stdout.write(JSON.stringify(governedHostTaskCorrectionTemplate(), null, 2) + "\n"); return; }
   const options = { projectRoot: arg("--project-root"), runId: arg("--run-id"), conversationId: arg("--conversation-id"), stage: arg("--stage") };
-  requireValue(["--inspect", "--resolve-task-ref", "--stage", "--return-to"].reduce((count, flag) => count + process.argv.filter((value) => value === flag).length, 0) === 1, "checkpoint_operation_ambiguous");
+  requireValue(["--inspect", "--resolve-task-ref", "--stage", "--return-to", "--observe-task", "--correct-task"].reduce((count, flag) => count + process.argv.filter((value) => value === flag).length, 0) === 1, "checkpoint_operation_ambiguous");
   if (process.argv.includes("--inspect")) { process.stdout.write(JSON.stringify(await inspectGovernedHostCheckpoint(options), null, 2) + "\n"); return; }
   if (process.argv.includes("--resolve-task-ref")) { process.stdout.write(JSON.stringify(await resolveGovernedHostTaskReference({ ...options, taskRef: arg("--resolve-task-ref") }), null, 2) + "\n"); return; }
   const root = checkedProjectRoot(options.projectRoot);
   options.input = readGovernedHostCheckpointInput(arg("--input"), root);
+  if (process.argv.includes("--observe-task")) { process.stdout.write(JSON.stringify(await observeGovernedHostTask(options)) + "\n"); return; }
+  if (process.argv.includes("--correct-task")) { process.stdout.write(JSON.stringify(await correctGovernedHostTask(options)) + "\n"); return; }
   requireValue(!(arg("--return-to") && options.stage), "checkpoint_operation_ambiguous");
   process.stdout.write(JSON.stringify(arg("--return-to")
     ? await returnGovernedHostToStage({ ...options, targetStage: arg("--return-to") })

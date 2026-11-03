@@ -2281,6 +2281,7 @@ const META_KIM_HOOK_FILE_NAMES = new Set([
   "skip-reminder.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "spine-state-gates.mjs",
   "spine-state-utils.mjs",

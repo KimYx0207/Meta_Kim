@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -9,28 +10,77 @@ import { activateSpineState, createInitialState, readSpineState, recordWorkerLif
 import { createLiveReadRepository } from "../../src/infrastructure/live/live-read-repository.mjs";
 import { buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 import { buildLocalFeedbackText } from "../../src/presentation/live/live-feedback-draft.mjs";
+import { taskProgressGoal } from "../../canonical/runtime-assets/shared/hooks/task-progress.mjs";
 
 const CHAT = "01900000-0000-7000-8000-000000000001";
 const ADAPTER = path.resolve("canonical/runtime-assets/shared/hooks/governed-host-checkpoint.mjs");
+const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const INPUT_SNAPSHOT = "Immutable revision input snapshot\n";
+const STRATEGY_SNAPSHOT = "Preserve exact finding, task and revision identity\n";
+const BASIS = [{ ref: "local/input-snapshot.txt", sha256: sha256(INPUT_SNAPSHOT) }];
+const STRATEGY = { id: "fixture:exact-revision-method", ref: "local/strategy-snapshot.txt", sha256: sha256(STRATEGY_SNAPSHOT) };
 const packet = (id, replacesTaskPacketId) => ({ taskPacketId: id, ...(replacesTaskPacketId ? { replacesTaskPacketId } : {}),
   ownerAgent: "javascript-pro", ownerSource: "global inventory", roleDisplayName: "backend", roleInstanceId: "revision-test",
-  scope: "Repair revision behavior", expectedOutput: "A corrected result", verification: "node test", mergeOwner: "meta-conductor", weapon: "runtime:apply_patch", dependsOn: [] });
+  scope: "Repair revision behavior", expectedOutput: "A corrected result", verification: "node test", mergeOwner: "meta-conductor", weapon: "runtime:apply_patch", dependsOn: [],
+  capabilityId: "runtime:revision-repair", methodCapabilityId: "method:exact-revision", strategyRef: STRATEGY,
+  acceptanceCriterionIds: taskProgressGoal(critical).criteria.map((criterion) => criterion.criterionId), progressBasisEvidence: BASIS });
 const critical = { realIntent: "Keep revision work in the same run", successCriteria: ["Revision trace is preserved"], nonGoals: [], blockingUnknowns: [], noQuotaClarification: true };
 const fetchRecord = { evidence: ["source.mjs"], decisionImpactMap: ["Reuse the spine"], memoryStrategy: "project_only", capabilityDiscovery: { sources: ["global inventory"], matches: ["javascript-pro"] } };
 const thinking = (id, replaces) => ({ designFrame: "Existing state machine", chosenRationale: "Preserve identity", consideredLanes: ["backend"], dependencyPolicy: "one owner", reviewStandard: "Fresh checks", workerTaskPackets: [packet(id, replaces)] });
 
-async function fixture(t, initialPackets = [packet("task-first")]) {
+async function fixture(t, initialPackets = [packet("task-first")], legacySaved = false) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-revision-"));
   mkdirSync(path.join(root, ".git"));
+  mkdirSync(path.join(root, "local"));
+  writeFileSync(path.join(root, BASIS[0].ref), INPUT_SNAPSHOT);
+  writeFileSync(path.join(root, STRATEGY.ref), STRATEGY_SNAPSHOT);
   t.after(() => { assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep)); rmSync(root, { recursive: true, force: true }); });
   const state = createInitialState({ activationMode: "hook_observed", driverMode: "hook_observed", hookGateMode: "advisory",
     sourceConversation: { runtime: "codex", conversationId: CHAT, matchBasis: "transcript_file_verified" } });
   await activateSpineState(root, state);
   const options = { projectRoot: root, cwd: root, runId: state.runId, conversationId: CHAT };
-  const checkpoint = (stage, record, extra = {}) => host.checkpointGovernedHost({ ...options, stage, input: {
-    ownerAgent: "meta-conductor", summary: `Actual ${stage} report`, evidenceRefs: ["test-evidence.json"], status: "complete", record, ...extra } });
+  const preparedResults = new Map();
+  const checkpoint = async (stage, record, extra = {}) => {
+    if (stage === "execution" && record.workerResultPackets) {
+      const workerResultPackets = [];
+      for (const result of record.workerResultPackets) {
+        const resultKey = JSON.stringify(result);
+        let progressObservations = preparedResults.get(resultKey);
+        if (!progressObservations) {
+          const current = await readSpineState(root);
+          const currentPacket = current.workerTaskPackets.find((item) => item.taskPacketId === result.taskPacketId);
+          const attemptId = `revision-attempt-${preparedResults.size + 1}`;
+          const resultRef = `local/result-${preparedResults.size + 1}.json`;
+          writeFileSync(path.join(root, resultRef), resultKey);
+          progressObservations = [];
+          for (const criterionId of currentPacket.acceptanceCriterionIds) {
+            const inspected = await host.inspectGovernedHostCheckpoint(options);
+            const common = { attemptId, criterionId, basisEvidence: currentPacket.progressBasisEvidence, evidenceRefs: [resultRef] };
+            await host.observeGovernedHostTask({ ...options, input: { ownerAgent: "meta-conductor", summary: "Actual revision worker starting", evidenceRefs: [resultRef],
+              expectedRevision: inspected.expectedRevision, expectedStage: inspected.expectedStage, expectedStatus: inspected.expectedStatus,
+              taskRef: inspected.taskReferences.find((item) => item.taskPacketId === currentPacket.taskPacketId).publicTaskRef,
+              progress: { ...common, classification: "running" } } });
+            progressObservations.push({ ...common, classification: "progress", resultRef, resultDigest: sha256(resultKey),
+              criterionEvidence: [{ ref: resultRef, sha256: sha256(resultKey) }] });
+          }
+          preparedResults.set(resultKey, progressObservations);
+        }
+        workerResultPackets.push({ ...result, progressObservations });
+      }
+      record = { ...record, workerResultPackets };
+    }
+    return host.checkpointGovernedHost({ ...options, stage, input: {
+      ownerAgent: "meta-conductor", summary: `Actual ${stage} report`, evidenceRefs: ["test-evidence.json"], status: "complete", record, ...extra } });
+  };
   await checkpoint("critical", critical); await checkpoint("fetch", fetchRecord); await checkpoint("thinking", { ...thinking("task-first"), workerTaskPackets: initialPackets });
-  await checkpoint("execution", { workerResultPackets: initialPackets.map((item) => ({ taskPacketId: item.taskPacketId, ownerAgent: item.ownerAgent, resultStatus: "reported_complete", summary: "First draft", evidenceRefs: ["first.txt"] })) });
+  const initialResults = { workerResultPackets: initialPackets.map((item) => ({ taskPacketId: item.taskPacketId, ownerAgent: item.ownerAgent, resultStatus: "reported_complete", summary: "First draft", evidenceRefs: ["first.txt"] })) };
+  if (legacySaved) {
+    const legacy = await readSpineState(root);
+    for (const item of legacy.workerTaskPackets) delete item.progressPolicyId;
+    await writeSpineState(root, legacy);
+    await host.checkpointGovernedHost({ ...options, stage: "execution", input: {
+      ownerAgent: "meta-conductor", summary: "Actual legacy owner report", evidenceRefs: ["first.txt"], status: "complete", record: initialResults } });
+  } else await checkpoint("execution", initialResults);
   const request = async (extra = {}) => {
     const current = await host.inspectGovernedHostCheckpoint(options);
     return { ownerAgent: "meta-conductor", summary: "Repair the actual finding", evidenceRefs: ["review.json"],
@@ -289,4 +339,16 @@ test("revision response and verification require exact finding/task/artifact bin
   assert.equal(state.revisionResponses[0].sourceDeliverableId, "output-a");
   assert.equal(state.revisionResponses[0].deliverableId, "output-new");
   assert.equal(state.verificationPacket.verificationResults[0].nativeInvocationVerified, false);
+});
+
+test("a saved legacy packet retains its report API and explicitly remains outside attempt supervision", async (t) => {
+  const f = await fixture(t, [packet("task-first")], true);
+  const state = await readSpineState(f.root);
+  assert.equal(state.currentStage, "review");
+  assert.equal(state.workerResultPackets[0].resultStatus, "reported_complete");
+  assert.equal(state.workerResultPackets[0].nativeInvocationVerified, false);
+  assert.equal(state.taskProgressLedger, undefined);
+  const inspected = await host.inspectGovernedHostCheckpoint(f.options);
+  assert.equal(inspected.taskReferences[0].progressCoverage, "not_observed");
+  assert.equal(inspected.taskReferences[0].nextRequiredAction, "record_actual_attempt_result");
 });

@@ -386,6 +386,8 @@ Warden is the **card recipient**, not the card dealer. Conductor designs the dec
 
 **Interrupt trigger**: If a governance violation is detected during execution (skip-level, self-execution, or circular evidence), Warden immediately interrupts and issues a corrective dispatch.
 
+For repeated ineffective execution, review the task-progress policy, persistent attempt/result ledger and the actual next-dispatch consumer. A reminder, a counter alone or a planned return to Thinking is not correction closure. Require a scoped replacement with changed evidenced basis, preserve independent work, and distinguish owner-reported progress from authenticated invocation and accepted user outcomes. Missing host coverage remains an explicit limitation.
+
 ## Long-Term Capability Slot
 
 | Field | Rule |

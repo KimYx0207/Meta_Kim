@@ -2,6 +2,20 @@
   "schemaVersion": 1,
   "contractId": "meta-kim-core-loop-contract",
   "owner": "meta-warden",
+  "taskProgressPolicy": {
+    "id": "task-progress-v1",
+    "sourcePolicyRef": "config/contracts/core-loop-contract.json#/productExperienceCoreGoals/supportGateRequirements/P-107",
+    "sameBasisIneffectiveThreshold": 2,
+    "units": "terminal_execution_attempt_per_logical_task",
+    "ignoredClassifications": ["waiting", "question", "running", "paused"],
+    "nonCountingTerminalClassifications": ["unresolved"],
+    "mutationAuthority": "none",
+    "scope": "current goal, criterion, logical task and dependency context; only recorded attempts are supervised and historical records remain preserved",
+    "identityRule": "Deduplicate stable attempt/result identities; timestamps, summaries and evidence-reference renames do not create attempts or change the evidence basis.",
+    "correctionRule": "Persist a task-scoped Thinking correction after the second ineffective same-basis terminal attempt. Preserve independent work; reject the unchanged affected task until an explicitly reviewed replacement changes the substantive route or evidence contents under the original goal and authority.",
+    "dependencyRule": "After a prerequisite is corrected, its transitive dependents wait for fresh accepted current-context prerequisite results. Generate the dependent context from the correction, preserve old records without carrying stale counts into the new basis, and never cancel or duplicate an in-flight attempt.",
+    "truthBoundary": "Host assessments remain owner-reported. Counters establish recorded execution history, not native invocation, semantic truth, universal interception or user acceptance."
+  },
   "defaultEntry": {
     "path": "governed_execution_layer",
     "trigger": "ordinary natural-language durable task or explicit meta-theory shortcut",

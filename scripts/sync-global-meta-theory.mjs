@@ -222,6 +222,7 @@ const GLOBAL_HOOK_PACKAGE_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",

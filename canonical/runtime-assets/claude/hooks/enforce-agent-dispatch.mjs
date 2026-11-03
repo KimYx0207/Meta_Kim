@@ -85,6 +85,8 @@
 import process from "node:process";
 import { join, normalize } from "node:path";
 import { readJsonFromStdin, extractFilePath } from "./utils.mjs";
+import { publicTaskBinding } from "./governed-task-reference.mjs";
+import { taskProgressGoal, projectTaskProgress, taskProgressDependencyReadiness } from "./task-progress.mjs";
 import {
   isReadOnlyBash,
   classifyBashCommand,
@@ -1336,6 +1338,39 @@ if (!state || !state.active) {
 
 // Agent dispatch tools: record dispatch + track dispatch chain.
 // Claude calls this capability `Agent`; Codex exposes it as `spawn_agent`.
+if (isExecutionTool(toolName) && state.criticalRecord?.successCriteria
+  && String(process.env.META_KIM_CAPABILITY_GATE || "progressive").toLowerCase() !== "off") {
+  let reference = toolInput;
+  if (!reference.taskPacketId && !reference.publicTaskRef && typeof toolInput.message === "string" && toolInput.message.trim().startsWith("{")) {
+    try {
+      const envelope = JSON.parse(toolInput.message);
+      if (envelope?.schemaVersion === "codex-native-worker-invocation-v0.2") reference = envelope;
+    } catch { /* Ordinary clear-text messages are not task bindings. */ }
+  }
+  const matches = (packet) => reference.taskPacketId === packet.taskPacketId
+    || reference.publicTaskRef === publicTaskBinding(packet.taskPacketId);
+  const retired = (state.taskCorrectionHistory || []).some((entry) => matches(entry.previousPacket));
+  if (retired) exitAfterDeny("Task progress correction: the referenced old work order has been replaced; inspect the current task reference before dispatch.");
+  const packets = state.workerTaskPackets || [];
+  const matched = packets.filter(matches);
+  if (matched.length === 1) {
+    const goal = taskProgressGoal(state.criticalRecord);
+    const dependencyReadiness = taskProgressDependencyReadiness(matched[0], packets, state.workerResultPackets || []);
+    if (!dependencyReadiness.ready) exitAfterDeny(`Task progress dependency wait: current prerequisite criterion results required for ${dependencyReadiness.blockedTaskIds.join(", ")}; independent work remains available.`);
+    const visited = new Set();
+    const blocked = (packet) => {
+      if (visited.has(packet.taskPacketId)) return false;
+      visited.add(packet.taskPacketId);
+      if (projectTaskProgress(state.taskProgressLedger, goal.goalDigest, packet.logicalTaskPacketId || packet.taskPacketId, packet.progressContextId).pendingCorrections.length) return true;
+      if (!taskProgressDependencyReadiness(packet, packets, state.workerResultPackets || []).ready) return true;
+      return packet.dependsOn.some((id) => {
+        const dependency = packets.find((item) => item.taskPacketId === id);
+        return dependency && blocked(dependency);
+      });
+    };
+    if (blocked(matched[0])) exitAfterDeny("Task progress correction required: return this task to Thinking and use the scoped checkpoint --correct-task operation; independent work remains available.");
+  }
+}
 if (isAgentDispatchTool(toolName)) {
   const agentDesc =
     toolInput?.description ||

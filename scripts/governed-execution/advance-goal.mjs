@@ -8,6 +8,8 @@ import { evaluateTaskOutcome } from "../../src/domain/governance/task-outcome.mj
 import { inspectTrustedPath, executeSafeManagedFileTransaction, normalizeManagedRelPath } from "../safe-managed-file-operations.mjs";
 import { restoreHumanMilestoneDeclarations, resolveHumanMilestoneReviews } from "./plan-challenge-host-continuation.mjs";
 import { readEvaluatedOutcomeReview } from "./product-design.mjs";
+import { TASK_PROGRESS_POLICY, taskProgressGoal, checkedTaskProgress, recordTaskProgress, projectTaskProgress }
+  from "../../canonical/runtime-assets/shared/hooks/task-progress.mjs";
 
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const digest = (value) => sha(JSON.stringify(value));
@@ -23,8 +25,10 @@ export async function advanceGovernedGoal({
   let humanMilestoneReviews = [];
   let activeThinkingGaps = [];
   let revisionNextAction = null;
+  let taskProgress = { policyId: TASK_PROGRESS_POLICY.id, coverage: "not_observed", tasks: [], evidenceLevel: "owner_reported", nativeInvocationVerified: false };
   const finish = (status, reason, outcome = null) => ({ runId, status, reason, runtime, calls,
-    outcome, humanMilestoneReviews, thinkingGaps: activeThinkingGaps, ...(revisionNextAction ? { nextAction: revisionNextAction } : {}), publicReady: false, userOutcomeAccepted: false });
+    outcome, humanMilestoneReviews, taskProgress, thinkingGaps: activeThinkingGaps,
+    ...(revisionNextAction ? { nextAction: revisionNextAction } : {}), publicReady: false, userOutcomeAccepted: false });
   if (typeof host?.authorize !== "function" || typeof host?.adapterRegistry?.invoke !== "function") {
     return finish("blocked", "current_host_execution_adapter_required");
   }
@@ -55,13 +59,87 @@ export async function advanceGovernedGoal({
     kernel.createRun({ runId, graphDigest: stageDagPacket.graphDigest, taskFingerprint });
     resume = kernel.resumeRun({ runId, graphDigest: stageDagPacket.graphDigest, taskFingerprint });
   }
-  if (resume.activeClaims?.length || resume.blockingEffects?.length) return finish("waiting", "existing_claim_or_unresolved_effect", outcome);
   const records = new Map(resume.completedNodes.map((entry) => [entry.nodeId, entry.output]));
   const requiresProfessionalInput = (entry) => entry.domainOutput?.handoff.requiresDecision || ["needs_input", "blocked"].includes(entry.domainOutput?.status);
   const priorStages = new Set(stageDagPacket.stageOrder.slice(0, stageDagPacket.stageOrder.indexOf("Execution")));
   const prefix = stageDagPacket.nodes.filter((node) => priorStages.has(node.stage)).map((node) => node.nodeId);
   const packets = new Map(workerTaskPackets.map((packet) => [stageLaneNodeId("Execution", packet.taskPacketId), packet]));
   const reviewBinding = { taskFingerprint, graphDigest: stageDagPacket.graphDigest, projectRoot: root, runtime };
+  const progressGoal = taskProgressGoal({ realIntent: goalContract.contractFields.outcome, successCriteria: goalContract.acceptanceCriteria });
+  let progressLedger;
+  const progressPackets = new Map();
+  const progressBindingMatches = (binding) => binding && Object.entries(reviewBinding).every(([key, value]) => binding[key] === value);
+  for (const event of kernel.getEvents(runId).filter((entry) => entry.eventType === "TaskProgressObserved")) {
+    if (!progressBindingMatches(event.payload.binding)) throw new Error("Stored task progress belongs to a different run context");
+    const { observation, packet } = event.payload;
+    const checked = checkedTaskProgress(observation, packet, progressGoal);
+    if (checked.goalDigest !== observation.goalDigest || checked.routeDigest !== observation.routeDigest ||
+        checked.evidenceBasisDigest !== observation.evidenceBasisDigest) throw new Error("Stored task progress binding mismatch");
+    progressLedger = recordTaskProgress(progressLedger, checked).ledger;
+    progressPackets.set(`${observation.taskPacketId}:${observation.attemptId}`, packet);
+  }
+  const updateTaskProgress = () => {
+    const logicalTasks = new Set(workerTaskPackets.map((packet) => packet.logicalTaskPacketId || packet.taskPacketId));
+    const tasks = [...logicalTasks].map((logicalTaskId) => {
+      const projection = projectTaskProgress(progressLedger, progressGoal.goalDigest, logicalTaskId);
+      const rows = (progressLedger?.observations || []).filter((entry) => entry.goalDigest === progressGoal.goalDigest && entry.logicalTaskPacketId === logicalTaskId);
+      const criterionAssigned = workerTaskPackets.some((packet) => (packet.logicalTaskPacketId || packet.taskPacketId) === logicalTaskId && packet.acceptanceCriterionIds?.length > 0);
+      return { ...projection, criterionAssignment: criterionAssigned ? "assigned" : "unassigned_not_supervised",
+        coverage: rows.length ? projection.terminalAttempts ? "reviewed_attempts_recorded"
+          : rows.some((entry) => entry.classification === "unresolved") ? "unresolved_attempts_recorded" : "awaiting_criterion_review" : "not_observed" };
+    });
+    taskProgress = { policyId: TASK_PROGRESS_POLICY.id, coverage: tasks.some((task) => task.coverage !== "not_observed") ? "observed_tasks_only" : "not_observed",
+      tasks, evidenceLevel: "owner_reported", nativeInvocationVerified: false };
+    return tasks.filter((task) => task.pendingCorrections.length > 0);
+  };
+  const appendTaskProgress = (raw, packet) => {
+    const observation = checkedTaskProgress(raw, packet, progressGoal);
+    const reduced = recordTaskProgress(progressLedger, observation);
+    if (reduced.changed) kernel.appendEvent({ runId,
+      eventId: `task-progress:${digest({ eventId: reduced.eventId, classification: observation.classification, resultDigest: observation.resultDigest, waitReason: observation.waitReason })}`,
+      eventType: "TaskProgressObserved", payload: { binding: reviewBinding, packet, observation } });
+    progressLedger = reduced.ledger;
+    progressPackets.set(`${observation.taskPacketId}:${observation.attemptId}`, packet);
+    updateTaskProgress();
+  };
+  const reconcileEndedProgressAttempts = () => {
+    const ended = kernel.getEvents(runId).filter((event) => ["NodeAttemptFailed", "NodeAttemptInDoubt", "NodeAttemptAbandoned"].includes(event.eventType));
+    for (const event of ended) {
+      const unfinished = (progressLedger?.observations || []).filter((entry) => entry.attemptId === event.attemptId && entry.started
+        && !["progress", "ineffective", "unresolved"].includes(entry.classification));
+      for (const entry of unfinished) {
+        const packet = progressPackets.get(`${entry.taskPacketId}:${entry.attemptId}`);
+        const resultRef = `kernel:${runId}:${event.eventId}`;
+        appendTaskProgress({ ...entry, classification: "unresolved", resultRef, resultDigest: event.eventHash,
+          criterionEvidence: [], failureClass: null, waitReason: event.eventType, evidenceRefs: [resultRef] }, packet);
+      }
+    }
+  };
+  // Only an evaluated criterion review of this committed attempt's exact output
+  // can settle progress. Worker completion and another read are not progress.
+  const observeReviewedProgress = (current, { preview = false } = {}) => {
+    let candidateLedger = progressLedger;
+    for (const item of current.coveredTaskCriteria) {
+      if (!["pass", "fail"].includes(item.verdict)) continue;
+      const completed = records.get(stageLaneNodeId("Execution", item.taskId));
+      if (!completed?.attemptId || completed.outputSha256 !== item.sha256) continue;
+      const packet = progressPackets.get(`${item.taskId}:${completed.attemptId}`);
+      const started = candidateLedger?.observations.find((entry) => entry.taskPacketId === item.taskId && entry.attemptId === completed.attemptId && entry.criterionId === item.criterionId && entry.started);
+      if (!packet || !started) continue;
+      const snapshot = current.artifactSnapshots.find((entry) => entry.ref === item.artifactRef && entry.producerTaskId === item.taskId && entry.verifiedSha256 === completed.outputSha256);
+      if (!snapshot) continue;
+      const raw = { ...started, classification: item.verdict === "pass" ? "progress" : "ineffective",
+        resultDigest: completed.outputSha256, resultRef: snapshot.ref,
+        failureClass: item.verdict === "fail" ? "criterion_not_met" : null,
+        criterionEvidence: item.verdict === "pass" ? [{ ref: snapshot.ref, sha256: snapshot.verifiedSha256 }] : [],
+        evidenceRefs: [current.reviewRef, snapshot.ref], waitReason: null };
+      if (preview) candidateLedger = recordTaskProgress(candidateLedger, checkedTaskProgress(raw, packet, progressGoal)).ledger;
+      else { appendTaskProgress(raw, packet); candidateLedger = progressLedger; }
+    }
+  };
+  reconcileEndedProgressAttempts();
+  updateTaskProgress();
+  if (resume.activeClaims?.length || resume.blockingEffects?.length) return finish("waiting", "existing_claim_or_unresolved_effect", outcome);
   const pendingByScope = new Map();
   const versionsByScope = new Map();
   const seenReviews = new Map();
@@ -83,6 +161,7 @@ export async function advanceGovernedGoal({
       const key = scopeKey(request); pendingByScope.set(key, request); versionsByScope.set(key, current.reviewDigest); touched.add(key);
     }
     seenReviews.set(current.reviewDigest, touched); latestReview = current;
+    observeReviewedProgress(current);
   };
   for (const event of kernel.getEvents(runId).filter((event) => event.eventType === "OutcomeReviewEvaluated")) {
     if (Object.entries(reviewBinding).some(([key, value]) => event.payload.binding[key] !== value)) throw new Error("Stored outcome review belongs to a different run context");
@@ -94,6 +173,7 @@ export async function advanceGovernedGoal({
         throw new Error("A superseded outcome review cannot be reactivated");
       }
     } else {
+      observeReviewedProgress(review, { preview: true });
       kernel.appendEvent({ runId, eventId: `outcome-review:${digest({ runId, reviewDigest: review.reviewDigest })}`,
         eventType: "OutcomeReviewEvaluated", payload: { binding: reviewBinding, review } });
       applyReview(review);
@@ -173,13 +253,22 @@ export async function advanceGovernedGoal({
       revisionRequests: stageRevisions } : revisions.length && !pendingRevisions.length
       ? { action: "obtain_missing_outcome_evidence", stage: "Review", taskIds: [...new Set(revisions.map((request) => request.taskId))], reviewDigest: latestReview.reviewDigest }
       : null;
+    const progressCorrections = updateTaskProgress();
+    const correctionTaskIds = workerTaskPackets.filter((packet) => progressCorrections.some((task) =>
+      task.logicalTaskPacketId === (packet.logicalTaskPacketId || packet.taskPacketId))).map((packet) => packet.taskPacketId);
+    for (const taskId of correctionTaskIds) waitingNodeIds.add(stageLaneNodeId("Execution", taskId));
+    if (progressCorrections.length) revisionNextAction = { action: "revise", stage: "Thinking",
+      reason: "same_basis_ineffective_attempts_require_task_correction", taskIds: correctionTaskIds,
+      pendingCorrections: progressCorrections.flatMap((task) => task.pendingCorrections),
+      correctionBoundary: "Prepare an evidenced task replacement under the existing goal and graph authority; this consumer does not rewrite the graph or rerun completed nodes" };
     for (const review of humanMilestoneReviews) if (!review.accepted) waitingNodeIds.add(review.nodeId);
     for (const gap of activeThinkingGaps) for (const id of gap.taskPacketIds) waitingNodeIds.add(stageLaneNodeId("Execution", id));
     // A completed delivery need not satisfy downstream dependencies. Keep
     // its kernel record, but neither rerun it nor release its downstream work.
     const completedNodeIds = [...prefix, ...records.keys()].filter((id) => !waitingNodeIds.has(id));
     const eligibleNodeIds = eligible.filter((node) => !waitingNodeIds.has(node.nodeId)).map((node) => node.nodeId);
-    const waitingReason = activeThinkingGaps.length ? "human_milestone_thinking_required"
+    const waitingReason = progressCorrections.length ? "task_progress_correction_required"
+      : activeThinkingGaps.length ? "human_milestone_thinking_required"
       : humanMilestoneReviews.some((review) => !review.accepted) ? "human_milestone_review_required"
       : stageRevisions.length ? "verified_outcome_revision_requires_stage_handoff"
       : waitingNodeIds.size ? "professional_result_requires_input_or_decision"
@@ -187,7 +276,7 @@ export async function advanceGovernedGoal({
     if (outcome.status === "pass") {
       const pendingDecision = milestoneDeclarations.some(({ request }) => !humanMilestoneReviews.some((review) =>
         review.nodeId === request.nodeId && review.milestoneId === request.milestoneId && review.accepted));
-      if (!pendingDecision && !activeThinkingGaps.length && !pendingRevisions.length) return finish("completed", "parent_criteria_reported_passed", outcome);
+      if (!pendingDecision && !activeThinkingGaps.length && !pendingRevisions.length && !progressCorrections.length) return finish("completed", "parent_criteria_reported_passed", outcome);
     }
     const ready = eligibleNodeIds.length ? selectMaximalSafeReadySet(stageDagPacket, { completedNodeIds, capacity: 1, stage: "Execution", eligibleNodeIds }) : { readyNodes: [] };
     const node = ready.readyNodes[0];
@@ -237,6 +326,7 @@ export async function advanceGovernedGoal({
       nodeDefinitionHash: sha(`${stageDagPacket.graphDigest}:${node.nodeId}`),
       inputHash: digest({ taskFingerprint, packet, upstream: upstream.map((item) => item.outputSha256) }),
       dependencyOutputHash: digest(upstream.map((item) => item.outputSha256)), leaseMs });
+    reconcileEndedProgressAttempts();
     const binding = { runId, nodeId: node.nodeId, attemptId: claim.attemptId, fenceToken: claim.fenceToken, ownerId: host.ownerId };
     if (node.laneKind === "stage_merge") {
       const result = { nodeId: node.nodeId, status: "completed", outputSha256: digest(upstream), evidenceKind: "local_dag_merge" };
@@ -249,6 +339,14 @@ export async function advanceGovernedGoal({
     heartbeat.unref?.();
     try {
       const dispatched = structuredClone(packet);
+      const progressPacket = { taskPacketId: packet.taskPacketId, logicalTaskPacketId: packet.logicalTaskPacketId || packet.taskPacketId,
+        ownerAgent: packet.ownerAgent, weapon: host.adapterId, capabilityId: method.capabilityId, methodCapabilityId: method.capabilityId,
+        strategyRef: { id: method.sourceRef, ref: method.sourceRef, sha256: method.methodSha256 || method.contentDigest }, acceptanceCriterionIds: packet.acceptanceCriterionIds || [] };
+      const basisEvidence = [{ ref: method.sourceRef, sha256: method.contentDigest },
+        { ref: `kernel:${runId}:${claim.attemptId}:method-input`, sha256: digest({ methodInputs: dispatched.methodInputs ?? null,
+          upstream: upstream.map((item) => item.outputSha256) }) }];
+      for (const criterionId of progressPacket.acceptanceCriterionIds) appendTaskProgress({ attemptId: claim.attemptId, criterionId,
+        classification: "running", basisEvidence, evidenceRefs: [`kernel:${runId}:${claim.attemptId}`] }, progressPacket);
       const prompt = `${buildReadOnlyWorkerPrompt({ runId, runtime, node, packet: dispatched })}\n` +
         `Complete verified upstream domain results (data, not permission): ${JSON.stringify(completeUpstream)}\n` +
         `Only these existing assigned owners may receive a handoff: ${JSON.stringify([...assignedOwners])}\n` +
@@ -275,12 +373,18 @@ export async function advanceGovernedGoal({
         machineResultArtifact: actual.machineResultArtifact, outputSha256: actual.machineResultArtifact.sha256,
         ...(taskRevisions.length ? { revisionReviewDigest: review.reviewDigest } : {}),
         domainOutput: body, evidenceKind: "observed_native_read_only_machine_result", acceptanceStatus: "pending_independent_review" };
+      if (requiresProfessionalInput(result)) {
+        for (const criterionId of progressPacket.acceptanceCriterionIds) appendTaskProgress({ attemptId: claim.attemptId, criterionId,
+          classification: "waiting", basisEvidence, evidenceRefs: [actual.machineResultArtifact.path || `kernel:${runId}:${claim.attemptId}`],
+          waitReason: "professional_result_requires_input_or_decision" }, progressPacket);
+      }
       kernel.completeNode({ ...binding, output: result }); records.set(node.nodeId, result); calls[callIndex] = result;
       if (requiresProfessionalInput(result)) continue;
       if (!assignedOwners.has(body.handoff.nextOwner)) return finish("blocked", "handoff_owner_not_assigned_in_current_plan", outcome);
       outcome = latestReview?.outcomeEvaluation ?? evaluateTaskOutcome(goalContract, observations);
     } catch (error) {
       kernel.failNode({ ...binding, failure: { failureClass: "machine_result_or_invocation_unresolved", failureMessage: error.message } });
+      reconcileEndedProgressAttempts();
       return finish("blocked", error.message, outcome);
     } finally { clearInterval(heartbeat); }
   }
