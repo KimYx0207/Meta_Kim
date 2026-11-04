@@ -67,10 +67,6 @@ function hasSection(text, name) {
   return new RegExp(`^#{1,3}\\s+${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "im").test(text);
 }
 
-function scoreSections(text, sections) {
-  return Math.round((sections.filter((section) => hasSection(text, section)).length / sections.length) * 100);
-}
-
 const skillPath = repoPath("canonical/skills/meta-theory/SKILL.md");
 const skillText = await fs.readFile(skillPath, "utf8");
 assert(lineCount(skillText) <= 600 || /justified exception/i.test(skillText), "SKILL.md exceeds 600 lines without justified exception");
@@ -85,8 +81,6 @@ const referenceFiles = await listFiles(repoPath("canonical/skills/meta-theory/re
 for (const file of referenceFiles) {
   const text = await fs.readFile(file, "utf8");
   const rel = path.relative(repoPath("."), file).replace(/\\/g, "/");
-  const score = scoreSections(text, REQUIRED_REFERENCE_SECTIONS);
-  assert(score >= 85, `${rel} quantificationLevel ${score} < 85`);
   for (const section of REQUIRED_REFERENCE_SECTIONS) assert(hasSection(text, section), `${rel} missing ${section}`);
   assert(/owner|action|output/i.test(text), `${rel} missing owner/action/output instruction`);
   assert(/pass|fail|block/i.test(text), `${rel} missing pass/fail/block instruction`);
@@ -96,8 +90,6 @@ const agentFiles = await listFiles(repoPath("canonical/agents"), (file) => /^met
 for (const file of agentFiles) {
   const text = await fs.readFile(file, "utf8");
   const rel = path.relative(repoPath("."), file).replace(/\\/g, "/");
-  const score = scoreSections(text, REQUIRED_AGENT_SECTIONS);
-  assert(score >= 85, `${rel} executabilityScore ${score} < 85`);
   for (const section of REQUIRED_AGENT_SECTIONS) assert(hasSection(text, section), `${rel} missing ${section}`);
   assert(!/subagent_type:\s*general-purpose/i.test(text), `${rel} must not advertise general-purpose execution fallback`);
   assert(/does not own|forbidden actions/i.test(text), `${rel} missing boundary denial`);

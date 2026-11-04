@@ -30,7 +30,7 @@
 
 Meta_Kim is a general agent governance framework that runs through hosts such as Claude Code and Codex. Its core is intent, decision-making and orchestration across research, operations, learning, writing, software and other tasks supported by discovered capabilities. Industry roles are optional capabilities. The framework compares feasible routes, coordinates owners and dependencies, verifies outcomes, and preserves useful lessons.
 
-Current release: [v3.7.3](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.7.3). Release notes: [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md) · [日本語](CHANGELOG.ja-JP.md) · [한국어](CHANGELOG.ko-KR.md).
+Current release: [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0). Release notes: [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md) · [日本語](CHANGELOG.ja-JP.md) · [한국어](CHANGELOG.ko-KR.md).
 
 > You say: “Compare the feasible options under my budget and time constraints, recommend one with evidence, organize the work, and tell me which outcomes were actually verified.”
 

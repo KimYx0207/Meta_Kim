@@ -80,6 +80,7 @@ import { bindLocalDependencyToolWorkOrder, invokeLocalDependencyToolWorker } fro
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT, LOCAL_DEPENDENCY_TOOL_INPUT_FIELDS, LOCAL_DEPENDENCY_TOOL_SCHEMA_VERSION } from "./governed-execution/local-dependency-tool-contract.mjs";
 import { checkedLocalToolTarget, checkedLocalToolTempRoot, createLocalToolControlDirectory, localToolInside, localToolSamePath, resolveLocalToolRunnerControlPaths } from "./governed-execution/local-tool-control-paths.mjs";
 import { buildGovernanceRequirementsShadow } from "./governed-execution/governance-requirements-shadow-adapter.mjs";
+import { readCurrentTaskFacts, selectTaskDesignRoute, mergeTaskSafetyFacts, requireCurrentDispatchPolicy, inheritTaskDesignFacts, verifyTaskDesignReadiness } from "./governed-execution/task-design-dispatch.mjs";
 import {
   buildLegacyGovernanceRequirementSnapshot,
   deriveGovernanceTaskFacts,
@@ -4587,7 +4588,7 @@ function buildConductorConsumptionEvidence({
   };
 }
 
-function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket) {
+export function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket, governanceRequirementPlan = null) {
   const contractStages = CORE_LOOP_CONTRACT.stages ?? [];
   const stageOrder = CORE_LOOP_CONTRACT.defaultEntry?.spine ?? contractStages.map((item) => item.stage);
   const stageAuthorities = Object.fromEntries(
@@ -4618,6 +4619,9 @@ function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket) 
       stageLaneNodeId("Execution", packet.taskPacketId),
     ]),
   );
+  for (const [stage, gate] of [["Review", "review"], ["Meta-Review", "metaReview"], ["Evolution", "evolution"]]) {
+    if (governanceRequirementPlan?.gates?.[gate]?.effectiveRequired === false) stageLanes[stage] = [];
+  }
   const executionLanes = workerTaskPackets.map((packet, index) => {
     const resourceScopes = uniqueStrings([
       ...(packet.scopeFiles ?? []).map((scope) => `file:${scope}`),
@@ -9175,6 +9179,7 @@ function buildCoreLoopArtifact({
   executionAllowed = false,
   preDecisionOptionFrame = null,
   hostProvenance = null,
+  governanceRequirementPlan = null,
 }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
@@ -9495,6 +9500,7 @@ function buildCoreLoopArtifact({
   const stageDagPacket = buildRunnerStageDagPacket(
     workerTaskPackets,
     agentTeamsPlaybookPacket,
+    governanceRequirementPlan,
   );
   const runtimeSubagentInvocationPacket = buildRuntimeSubagentInvocationPacket({
     agentTeamsPlaybookPacket,
@@ -10059,7 +10065,7 @@ function workflowCapabilityBinding(match) {
 export function buildRouteBranchingOptions(orchestrationReport) {
   const route = orchestrationReport?.selectedExecutionRoute;
   const decisionCard = route?.decisionCard;
-  const routeOptions = Array.isArray(decisionCard?.options) ? decisionCard.options : [];
+  const routeOptions = routeCandidateOptions(route);
   if (routeOptions.length < 2) return [];
 
   // A completed native route choice must not be reopened when a later
@@ -10074,7 +10080,7 @@ export function buildRouteBranchingOptions(orchestrationReport) {
   const recommendedDefault = String(decisionCard.recommendedDefault ?? "").trim();
   for (const routeOption of routeOptions) {
     if (!routeOption || typeof routeOption !== "object") continue;
-    const label = String(routeOption.label ?? routeOption.id ?? "").trim();
+    const label = String(routeOption.whatChanges ?? routeOption.optionId ?? "").trim();
     if (!label || seenLabels.has(label)) {
       continue;
     }
@@ -11908,6 +11914,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         scopeFiles: draft.scopeFiles, shardScope: draft.shardScope, toolRequirements: request.toolRequirements,
         acceptanceCriterionIds: request.acceptanceCriterionIds, qualityBar: request.qualityBar, evidenceRefs: request.evidenceRefs,
         referenceDirection: request.referenceDirection, verifySteps: request.verifySteps, effectClass: request.effectClass,
+        ...(request.taskFacts ? { taskFacts: request.taskFacts, taskFactsSubject: request.todayTask } : {}),
         dependsOn: request.dependsOn.map((id) => runId + "-thinking-" + id),
         workOrderReadiness: draft.safetyEvidence.status === "proven" ? "ready" : "incomplete",
         handoffContract: { ...template.handoffContract, ...(request.handoffContract ?? {}), handoffTo: template.handoffTarget },
@@ -11918,10 +11925,10 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     const hasLocalWrites = records.some(({ request }) => request.effectClass === "local_write");
     if (design && !designCapabilityGaps.length) {
       const templates = design.taskSlices.map((slice) => records.find(({ request }) => request.roleInstanceId === slice.id)?.packet);
-      const projected = projectDesignWorkerTasks({ design, runId, templates, research: requirementsDiscovery?.research, projectContext });
+      const projected = projectDesignWorkerTasks({ design, runId, templates, research: requirementsDiscovery?.research, projectContext, projectRoot });
       for (const record of records) {
         const packet = projected.find((item) => item.roleInstanceId === record.request.roleInstanceId);
-        if (!hasLocalWrites) { record.packet = packet ?? null; continue; }
+        if (!hasLocalWrites) { record.packet = packet ?? (design.taskSlices.some(slice => slice.id === record.request.roleInstanceId) ? null : record.packet); continue; }
         const previous = record.packet;
         const checkedKeys = previous.scopeFiles.map(scopeComparisonKey).sort();
         const designKeys = (packet?.scopeFiles ?? []).map((file) => file.split(/[\\/]/u).some((part) => part === "." || part === "..")
@@ -12009,7 +12016,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     }
     // Projection requires one genuine template per slice. Keep this unresolved
     // design as a gap, rather than fabricating an owner or an invalid partial DAG.
-    plannedPackets = designCapabilityGaps.length ? [] : projectDesignWorkerTasks({ design, runId, templates, research: requirementsDiscovery?.research, projectContext });
+    plannedPackets = designCapabilityGaps.length ? [] : projectDesignWorkerTasks({ design, runId, templates, research: requirementsDiscovery?.research, projectContext, projectRoot });
     if (designRouteEvidence.length) {
       const firstGap = designRouteEvidence.find((item) => item.capabilityGapPacket);
       route = firstGap ? null : designRouteEvidence[0].route;
@@ -12041,7 +12048,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     routeResult, dialogue: intentDialogue ?? prepareIntentDialogue({ task }),
   }).map((packet, index) => design ? { ...packet, coreProblem: plannedPackets[index].coreProblem, todayTask: plannedPackets[index].todayTask } : packet);
   const localGate = routeResult.localToolExecutionGate;
-  const workerTaskPackets = localGate?.status === "ready"
+  const workerTaskPackets = (localGate?.status === "ready"
     ? intentBoundPackets.map((packet) => ({
         ...packet, executionMode: "local_tool_execution", effectClass: "read_only_support",
         intentBinding: { ...packet.intentBinding, status: intentDialogue.status },
@@ -12061,7 +12068,11 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
           tools: [{ id: `${localGate.selectedCapability.id}:local_cli`, type: "runtimeTools", invocation: localGate.selectedCapability.selectedCapability.invocation, invocationStatus: "not_invoked" }],
           localToolBinding: { runId, taskHash: taskOutcomeDigest(task), intentDigest: packet.intentBinding.intentDigest, selectedCapability: localGate.selectedCapability, input: localGate.input } },
       }))
-    : intentBoundPackets;
+    : intentBoundPackets).map(packet => {
+      const assessment = verifyTaskDesignReadiness(packet);
+      return { ...packet, taskDesignAssessment: { ...assessment, blockedOnlyByDesign: !assessment.ready && packet.workOrderReadiness === "ready" },
+        ...(assessment.ready ? {} : { workOrderReadiness: "incomplete", finalizationGate: "blocked_before_host_handoff" }) };
+    });
   if (hostWorkOrderRecords.some(({ request }) => request.effectClass === "local_write")) {
     for (const record of hostWorkOrderRecords) {
       const finalPacket = workerTaskPackets.find((packet) => packet.roleInstanceId === record.request.roleInstanceId);
@@ -12248,7 +12259,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
 
 /** Persist host preparation without manufacturing execution workers or a DAG. */
 async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, language, goalContract,
-  dialogue, confirmedIntent, requirementsDiscovery, preview, critical, fetchResult = null, previousRunId = null, projectRoot, projectContext = null, researchRequired = false }) {
+  dialogue, confirmedIntent, requirementsDiscovery, preview, critical, fetchResult = null, previousRunId = null, projectRoot, projectContext = null, researchRequired = false, taskDesignRoute = null, governanceTaskFacts = null, designPending = false }) {
   const id = validateRunId(runId ?? uniqueRunId(taskFingerprint), "preparation runId");
   const jsonPath = resolveOutputFile(outputDir, id + ".json");
   const markdownPath = resolveOutputFile(outputDir, id + "." + language + ".md");
@@ -12268,6 +12279,18 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     producer: "current_host_ai", questions: ready, researchGaps, inputRefs: ["projectContextPacket", "intentPacket", "preDecisionOptionFrame", "fetchPacket", "requirementsDiscoveryPacket.research"],
     completionRule: "Return the actual native choice or current host reasoning through this ordinary entry before formal dispatch." };
   if (!stopped && critical && !needsInput && researchGaps.length) nextAction.action = "complete_topic_research_and_source_bindings";
+  if (!stopped && critical && !needsInput && !researchGaps.length && designPending) nextAction.action = "produce_integrated_design_for_current_boundaries";
+  if (!stopped && critical && !needsInput && taskDesignRoute?.route === "assess_unknowns") {
+    nextAction.stage = "Thinking";
+    nextAction.action = "assess_current_task_design_facts";
+    nextAction.factsInput = { option: "governanceTaskFacts", cliFlag: "--governance-task-facts-input", schemaVersion: "governance-task-facts-v2",
+      taskHash: goalContract.taskHash, dimensions: { uncertainty: ["clear", "focused_unknown", "undecided", "unknown"], coupling: ["local", "shared_state", "shared_contract", "unknown"], operationalRisk: ["low", "sensitive", "unknown"], verification: ["direct", "needs_probe", "unknown"] },
+      rule: "Assess the current task from source/evidence. Preserve null for unexamined security facts. This is host reasoning, not user approval." };
+  }
+  if (!stopped && critical && taskDesignRoute?.humanDecisionRequired && !open.length) {
+    nextAction.stage = "Critical";
+    nextAction.action = "declare_current_material_options_for_native_choice";
+  }
   const materialView = { intentPacket: critical, requirementsDiscoveryPacket: requirementsDiscovery, preDecisionOptionFrame: { ...preview, unresolvedQuestions: questions } };
   const commonMaterials = stopped ? { bindings: [], gaps: [] } : collectPlanChallengeMaterials({ artifact: materialView, projectRoot });
   const materialBindings = commonMaterials.bindings;
@@ -12306,6 +12329,7 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     preparation: { status, createdAt: new Date().toISOString(), bindingDigest, previousRunId,
       intentSnapshot: confirmedIntent, materialBindings, materialGaps: commonMaterials.gaps, markdownSha256: textSha256(text) },
     goalContractPacket: goalContract, requirementsDiscoveryPacket: requirementsDiscovery, projectContextPacket: projectContext,
+    taskDesignRoutePacket: taskDesignRoute, governanceTaskFacts,
     intentPacket: { ...(critical ?? {}), stage: "Critical", realIntent: dialogue.outcome, intentBinding: dialogue,
       status: critical ? "host_provided_not_independently_verified" : "host_reasoning_required" },
     preDecisionOptionFrame: { ...preview, unresolvedQuestions: questions, readyDecisionFrontier: ready },
@@ -12680,10 +12704,17 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const discoveryDecisionItems = (requirementsDiscovery?.decisionItems ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `requirementsDiscoveryPacket.decisionItems[${index}].evidenceRefs[${refIndex}]`) }));
   const discoveryResolvedFacts = (requirementsDiscovery?.resolvedFacts ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `requirementsDiscoveryPacket.resolvedFacts[${index}].evidenceRefs[${refIndex}]`) }));
   const discoverySettledDecisions = (intentDialogue.settledDecisionRefs ?? []).map((item, index) => ({ ...item, evidenceRefs: item.evidenceRefs.map((_, refIndex) => `preDecisionOptionFrame.intentBinding.settledDecisionRefs[${index}].evidenceRefs[${refIndex}]`) }));
-  const designRequirementSnapshot = designRequirement == null ? (designRequired ? { required: true, reason: "Current host requires product design after requirements discovery" } : null) : structuredClone(designRequirement);
+  const resumeFactsPath = stageRunner?.durableMode === "resume" && runId != null
+    ? resolveOutputFile(path.resolve(artifactDir ?? stateDir), validateRunId(String(runId), "resume facts runId") + ".json") : null;
+  const resumeFactsArtifact = resumeFactsPath && existsSync(resumeFactsPath) ? JSON.parse(await fs.readFile(resumeFactsPath, "utf8")) : null;
+  const currentTaskFacts = readCurrentTaskFacts(governanceTaskFacts ?? inheritTaskDesignFacts(predecessorPreparation ?? resumeFactsArtifact,
+    { intentDigest: intentDialogue.intentDigest, requirementsDigest: requirementsDiscovery?.discoveryDigest }), normalizedTask);
+  const taskDesignRoutePacket = selectTaskDesignRoute(currentTaskFacts);
+  let designRequirementSnapshot = designRequirement == null ? (designRequired || taskDesignRoutePacket.designRequired ? { required: true, reason: "Current host requires integrated design for the current mechanism or shared boundaries" } : null) : structuredClone(designRequirement);
   if (designRequirementSnapshot && (typeof designRequirementSnapshot.required !== "boolean" || typeof designRequirementSnapshot.reason !== "string" || !designRequirementSnapshot.reason.trim())) throw new TypeError("Design requirement needs explicit host judgment and reason");
+  if (taskDesignRoutePacket.designRequired && designRequirementSnapshot?.required === false) throw new TypeError("A shared boundary or undecided mechanism cannot bypass integrated design with a contradictory requirement");
   const productDesign = normalizeProductDesign({ input: designInput == null ? null : structuredClone(designInput), dialogue: intentDialogue,
-    goalContract: designGoal, research: requirementsDiscovery?.research, requireResearch: designRequirementSnapshot?.required === true });
+    goalContract: designGoal, research: requirementsDiscovery?.research, requireResearch: requirementsDiscovery?.research?.required === true || taskDesignRoutePacket.researchRequired });
   const outcomeReviewSnapshot = outcomeReviewInput == null ? null : structuredClone(outcomeReviewInput);
   const taskCriterionAssignmentsSnapshot = normalizeTaskCriterionAssignments({ dialogue: intentDialogue, input: taskCriterionAssignments == null ? null : structuredClone(taskCriterionAssignments) });
   const calculationInput = dependencyCalculationInput == null ? null : structuredClone(dependencyCalculationInput);
@@ -12814,9 +12845,17 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         planChallengeSatisfied: questions.length > 0 && !pending, executionAllowed: false,
         phase: frontier.length ? "awaiting_user_answer" : pending ? "awaiting_fact_discovery" : questions.length ? "plan_challenge_satisfied" : "inactive" } };
   }
-  const researchRequired = designRequirementSnapshot?.required === true || requirementsDiscovery?.research?.required === true;
+  const taskScopedThinking = hostThinking?.thinkingPacket.workerTaskPackets.length > 0 && hostThinking.thinkingPacket.workerTaskPackets.every(packet => {
+    const facts = readCurrentTaskFacts(packet.taskFacts, packet.todayTask);
+    return facts != null;
+  });
+  if (taskScopedThinking && !designRequired && designRequirement == null) designRequirementSnapshot = null;
+  const researchRequired = (!taskScopedThinking && taskDesignRoutePacket.researchRequired) || requirementsDiscovery?.research?.required === true;
   const researchPending = researchRequired && requirementsDiscovery?.research?.readiness !== "ready";
-  const preparationPending = researchPending || !hostCritical || hostCritical.blockingUnknowns.length > 0 ||
+  const designPending = designRequirementSnapshot?.required === true && productDesign?.readiness !== "structure_ready_not_reviewed";
+  const materialDecisionPending = taskDesignRoutePacket.humanDecisionRequired && !(requirementsDiscovery?.decisionItems?.some(item => item.resolutionClass === "material_user_decision") && planChallengePreview.planChallengeState.planChallengeSatisfied === true);
+  const designAssessmentPending = taskDesignRoutePacket.route === "assess_unknowns";
+  const preparationPending = researchPending || designPending || materialDecisionPending || designAssessmentPending || !hostCritical || hostCritical.blockingUnknowns.length > 0 ||
     planChallengePreview.unresolvedQuestions.some((question) => declaredQuestionIds.has(question.questionId) && question.status === "open");
   const existingPath = runId == null ? null : resolveOutputFile(outputDir, String(runId) + ".json");
   const existing = existingPath && existsSync(existingPath) ? JSON.parse(await fs.readFile(existingPath, "utf8")) : null;
@@ -12829,12 +12868,16 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     return applyPersistedOutcomeReview({ artifact: existing, input: outcomeReviewSnapshot, projectRoot, jsonPath: existingPath, outputDir });
   }
   const existingExecutionResume = Boolean(existingPlan && durableMode === "resume");
+  if (existingExecutionResume) requireCurrentDispatchPolicy(existing);
+  if (existingExecutionResume && currentTaskFacts && productDesignDigest(currentTaskFacts) !== productDesignDigest(existing.governanceTaskFacts)) {
+    throw new TypeError("Changed task design facts need a one-way successor; the committed execution identity cannot be overwritten");
+  }
   if (!existingExecutionResume && (preparationPending || !hostThinking)) {
     const fetched = !preparationPending ? await selectExecutionRoute({ task: normalizedTask, actionTask: normalizedTask,
       runtime, os: osTarget, projectRoot, environment: calculationEnvironment, fetchOnly: true }) : null;
     return writeHostPreparation({ task: normalizedTask, runId, taskFingerprint, outputDir, language: resolvedOutputLanguage,
       goalContract: designGoal, dialogue: intentDialogue, confirmedIntent: confirmedIntentSnapshot, requirementsDiscovery,
-      preview: { ...planChallengePreview, currentQuestionIds: [...declaredQuestionIds] }, critical: hostCritical, fetchResult: fetched, previousRunId: requestedPreviousRunId, projectRoot: path.resolve(projectRoot), projectContext, researchRequired });
+      preview: { ...planChallengePreview, currentQuestionIds: [...declaredQuestionIds] }, critical: hostCritical, fetchResult: fetched, previousRunId: requestedPreviousRunId, projectRoot: path.resolve(projectRoot), projectContext, researchRequired, taskDesignRoute: taskDesignRoutePacket, governanceTaskFacts: currentTaskFacts, designPending });
   }
   if (hostThinking && priorPreparation?.fetchPacket.capabilityDiscovery?.inventoryDigest !== hostThinking.fetchPacket.capabilityDiscovery.inventoryDigest) {
     throw new TypeError("Thinking must consume the actual previous Fetch preparation inventory");
@@ -12947,6 +12990,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       durableDbPath,
     });
     if (materialized) {
+      requireCurrentDispatchPolicy(materialized);
       if ((materialized.requirementsDiscoveryPacket?.discoveryDigest ?? null) !== (requirementsDiscovery?.discoveryDigest ?? null)) throw new TypeError("Materialized execution cannot resume with changed requirements; create a new run");
       applyTaskCriterionAssignments({ workerTaskPackets: materialized.workerTaskPackets ?? [], dialogue: intentDialogue, input: taskCriterionAssignmentsSnapshot });
       if (materialized.dependencyCalculationPacket) materialized.dependencyCalculationPacket = {
@@ -13041,7 +13085,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     planChallengePreview.planChallengeState.phase !== "stopped_by_user" &&
     (planChallengePreview.planChallengeState.active !== true || planChallengePreview.planChallengeState.planChallengeSatisfied === true);
   resolvedProjectCapabilityMutationMode = planChallengeHandoffReady ? requestedProjectCapabilityMutationMode : "read_only";
-  const governanceRequirementLegacySnapshot = buildLegacyGovernanceRequirementSnapshot({
+  let governanceRequirementLegacySnapshot = buildLegacyGovernanceRequirementSnapshot({
     task: normalizedTask,
     orchestrationReport,
     planChallengePreview,
@@ -13053,17 +13097,26 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     planChallengePreview,
     requestedSideEffectActions: governedSideEffectActions,
   });
+  const effectiveFacts = mergeTaskSafetyFacts(currentTaskFacts, derivedGovernanceTaskFacts,
+    { requestedSideEffectActions: governedSideEffectActions, workerTaskPackets: orchestrationReport.workerTaskPackets });
+  if (currentTaskFacts) {
+    const currentRequirements = buildGovernanceRequirementsShadow({ governanceTaskFacts: effectiveFacts }).evaluation.governanceRequirements;
+    governanceRequirementLegacySnapshot = { ...governanceRequirementLegacySnapshot, gates: { ...governanceRequirementLegacySnapshot.gates } };
+    for (const key of ["clarification", "humanDecision", "permission", "securityReview"]) {
+      if (currentRequirements[key].required || ["permission", "securityReview"].includes(key)) governanceRequirementLegacySnapshot.gates[key] = { ...currentRequirements[key], reason: "Current task-bound facts determine this independent gate; lexical hints remain diagnostic" };
+    }
+  }
   const governanceLegacyGate = legacyGateFromSnapshot(governanceRequirementLegacySnapshot);
   const governanceRequirementsShadow = buildGovernanceRequirementsShadow({
-    governanceTaskFacts: governanceTaskFacts ?? derivedGovernanceTaskFacts,
+    governanceTaskFacts: currentTaskFacts ?? governanceTaskFacts ?? derivedGovernanceTaskFacts,
     legacyGate: governanceLegacyGate,
   });
   const internallyDerivedGovernanceRequirements = buildGovernanceRequirementsShadow({
-    governanceTaskFacts: derivedGovernanceTaskFacts,
+    governanceTaskFacts: effectiveFacts,
     legacyGate: governanceLegacyGate,
   });
   const cutoverEvaluation = internallyDerivedGovernanceRequirements.evaluation;
-  const rolloutPolicy = governanceTaskFacts != null && governanceRequirementsShadow.evaluation == null
+  const rolloutPolicy = currentTaskFacts == null && governanceTaskFacts != null && governanceRequirementsShadow.evaluation == null
     ? {
         ...GOVERNANCE_REQUIREMENT_ROLLOUT,
         defaultMode: "legacy_authoritative",
@@ -13273,6 +13326,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       executionAllowed,
       preDecisionOptionFrame: planChallengePreview,
       hostProvenance,
+      governanceRequirementPlan: governanceRequirementPlanPacket,
     });
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
@@ -13368,7 +13422,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         JSON.stringify(packet.localToolBinding.input) === JSON.stringify(localToolRequest.input) &&
         path.resolve(packet.localToolBinding.input.workspaceRoot) === path.resolve(projectRoot) &&
         packet.scopeFiles?.length === 1 && packet.scopeFiles[0] === localToolRequest.input.target);
-    const workOrderGateReady = coreLoop.thinkingPacket.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready") &&
+    const workOrderGateReady = coreLoop.thinkingPacket.workerTaskPackets.some((packet) => packet.workOrderReadiness === "ready") &&
+      coreLoop.thinkingPacket.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready" || packet.taskDesignAssessment?.blockedOnlyByDesign === true) &&
       orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete";
     const routeHandoffReady = localToolBridgeEligible || (routeExecutionGate.routeCompatible === true &&
       routeExecutionGate.canHandoffToHost === true &&
@@ -13870,6 +13925,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     cardPlanPacket,
     businessPhasePlanPacket,
     governanceRequirementPlanPacket,
+    taskDesignRoutePacket,
+    governanceTaskFacts: currentTaskFacts,
     governanceStartReasonPacket,
     businessFlowBlueprintPacket,
     selectedExecutionRoute: orchestrationReport.selectedExecutionRoute,
@@ -14201,6 +14258,9 @@ function positionalTask(fallback = null) {
         "--native-choice-evidence",
         "--confirmed-intent",
         "--requirements-discovery-input",
+        "--critical-input",
+        "--thinking-input",
+        "--governance-task-facts-input",
         "--design-input",
         "--outcome-review-input",
         "--local-tool-input",
@@ -14391,6 +14451,7 @@ async function main() {
     confirmedIntent,
     criticalInput: await readContentInput("--critical-input"),
     thinkingInput: await readContentInput("--thinking-input"),
+    governanceTaskFacts: await readContentInput("--governance-task-facts-input"),
     planChallengeHostInput: await readContentInput("--plan-challenge-host-input"),
     previousPlanChallengeRunId: argValue("--previous-plan-challenge-run", null),
     requirementsDiscoveryInput: await readContentInput("--requirements-discovery-input"),

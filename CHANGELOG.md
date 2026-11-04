@@ -8,6 +8,20 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-11-04
+
+- **Choose the product mechanism before production.** Product options describe different user flows and tradeoffs, separately from model, tool or agent selection. Delivery with an option list now requires a selected option and reason; exploration may remain undecided, and clear bounded changes need no invented alternatives.
+- **Research the decision, without generic source quotas.** Relevant official documentation, user flows, implementation source, cases and papers can resolve a question. Default repository counts, star floors and paired search channels are removed; explicit user research requirements remain enforced. Missing or contradictory evidence stays visible.
+- **Carry the relevant design into actual work.** Workers receive the selected mechanism, complete related journeys, decisions, shared terms, state and interfaces. Task context and current source bytes are checked before invocation; produced inputs must match the current producer and readable artifact.
+- **Keep necessary upstream content beyond the preview.** Selected dependency results retain their complete text with a labelled navigation preview. Existing output limits fail explicitly, while separately verified machine artifacts remain distinct from their display preview. Older truncated results cannot silently become complete inputs.
+- **Use task facts to choose work depth.** Current assessments distinguish design uncertainty, shared implementation contracts, operational risk and verification needs for the task and each subtask. Worker or file counts do not establish complexity, unknown safety facts remain unknown, and internal provider scores alone no longer demand user choices.
+- **Continue independent ready work.** The existing DAG can run eligible tasks while work with missing facts, design or evidence and its real dependents wait. Completed results are retained on recovery, and the overall run remains partial until all required work completes. Permission boundaries stay independent.
+- **Revise valid numerical failures.** A measured result that misses its target, or a valid measurement with a failing assessment, can return through the existing targeted revision path. Missing samples, forged evidence and mismatched tasks or versions remain rejected.
+- **Report observed calls separately from batch completion.** Partial runs retain authenticated built-in process or tool observations without marking the whole plan executed. An injected callback's self-report still cannot establish native invocation.
+- **Preserve history through explicit migration.** Older research and governance facts remain readable evidence, with a current reviewed successor required for new dispatch. Existing design inputs without the new optional fields keep their digest; old work orders must restore current context instead of bypassing its checks.
+
+This release contains Meta_Kim changes only. Unpublished method changes in the separate Kim_Service repository are not included.
+
 ## [3.8.0] - 2026-11-04
 
 - **Update the stable installation without silently changing accepted dependencies.** When dependency declarations are unchanged, updates reuse the verified dependency versions and files, or restore missing packages from the original lock. Changed or conflicting content is reported with its source, and installation failures retain their original cause. Staging cleanup preserves user-owned files.

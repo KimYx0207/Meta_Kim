@@ -28,7 +28,7 @@ Claude Code, Codex 같은 호스트에서 사용자의 제약에 맞는 대안�
 
 추천에는 근거와 불확실성을 함께 제시합니다. 절차가 끝났거나 구조 검사가 통과했다는 사실만으로 사용자 목표를 달성했다고 판단하지 않습니다.
 
-현재 릴리스: [v3.7.3](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.7.3). 변경 기록: [한국어](CHANGELOG.ko-KR.md) · [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md) · [日本語](CHANGELOG.ja-JP.md).
+현재 릴리스: [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0). 변경 기록: [한국어](CHANGELOG.ko-KR.md) · [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md) · [日本語](CHANGELOG.ja-JP.md).
 
 ### 한 줄 요약
 

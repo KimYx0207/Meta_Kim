@@ -4052,12 +4052,6 @@ const criticalChoiceDecision = evaluateChoiceRequirement(choiceSurfacePolicy, {
     entrySignals.queryPreambleSignal !== true,
 });
 
-const legacyScoreChoiceNeeded = Boolean(
-  recommendedRoute &&
-  recommendedRoute.score >= 70 &&
-  recommendedRoute.score < 85,
-);
-
 function checkpointChoiceOptions() {
   const checkpoints = recommendedRoute?.subjectiveUiCapabilityAmplification?.decisionCheckpoints ?? [];
   const checkpoint = checkpoints.find((candidate) =>
@@ -4073,7 +4067,7 @@ function checkpointChoiceOptions() {
     checkpoint.options
       .map((option) => String(option ?? "").trim())
       .filter(Boolean),
-  )].slice(0, 3);
+  )];
   if (options.length < 2) return null;
   return {
     stage: checkpoint.stage ?? "route",
@@ -4104,28 +4098,10 @@ function buildDecisionCard() {
       options: checkpoint.options,
     };
   }
-  const options = rankedRoutes
-    .filter((route) => route?.id && route.score >= 70 && !(route.blockedReasons?.length))
-    .slice(0, 3)
-    .map((route) => ({
-      id: route.id,
-      bestFor: route.scoreBand,
-      benefit: "Uses discovered owner, weapon, runtime, OS, and verification route.",
-      cost: "May need more evidence if score is below 85.",
-      risk: route.blockedReasons.join("; ") || "partial capability support may remain.",
-      expectedResult: "Bounded execution route.",
-      verification: route.verificationMethod ?? "manual review",
-    }));
-  if (options.length < 2) return null;
-  return {
-    recommendedDefault: recommendedRoute.id,
-    reason: "Route is useful but needs confirmation or more evidence because score is 70-84.",
-    choicePolicy: choiceSurfacePolicy.choiceRequiredWhen,
-    options,
-  };
+  return null;
 }
 
-let decisionCard = criticalChoiceDecision.required || subjectiveRouteChoice || legacyScoreChoiceNeeded
+let decisionCard = criticalChoiceDecision.required || subjectiveRouteChoice
   ? buildDecisionCard()
   : null;
 const thinkingChoiceDimensions = [
@@ -4160,12 +4136,7 @@ const criticalChoiceBlocksExecution =
 const thinkingChoiceBlocksExecution =
   thinkingChoiceDecision.required && !hasChoiceStage("Thinking");
 const routeScoreReady =
-  Boolean(recommendedRoute?.score >= 85) ||
-  Boolean(
-    recommendedRoute?.score >= 70 &&
-    decisionCard &&
-    hasChoiceStage("Thinking"),
-  );
+  Boolean(recommendedRoute && !(recommendedRoute.blockedReasons?.length));
 
 const selectedWorkerLanes =
   recommendedRoute?.subjectiveUiCapabilityAmplification?.lanes ??

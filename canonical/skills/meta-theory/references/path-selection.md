@@ -4,7 +4,7 @@ Choose the smallest path that can honestly satisfy the real product problem.
 
 ## Paths
 
-- `fast_path`: pure read-only query, local evidence enough, no write, no durable artifact, no handoff. It may set `queryBypass: true`, but only for read-only tools. This does not skip a user choice if the analysis reveals materially different routes, scopes, risks, owners, or acceptance standards.
+- `fast_path`: pure read-only query, local evidence enough, no write, no durable artifact, no handoff. It may set `queryBypass: true`, but only for read-only tools. This does not skip a user choice that changes the delivered outcome, scope, maintenance responsibility, resource commitment, authorization or acceptance standard.
 - `standard_path`: executable work with limited risk. Keep the canonical stage order, but apply fitness-informed depth: Critical / Fetch / Thinking may be concise inline records for a clear local task; Execution and fresh Verification remain required; Review runs only when risk, ambiguity, blast radius, a failed check, or the intended claim justifies it; Evolution is skipped with inline `none-with-reason` unless a durable learning trigger exists.
 - `regulated_path`: security, release, install, cross-runtime, public-ready, governance-contract, or high-blast-radius work. Use all gates, explicit evidence, Meta-Review when review quality matters, and fresh verification.
 
@@ -20,6 +20,7 @@ Choose the smallest path that can honestly satisfy the real product problem.
 - Evolution is not part of the default execution scaffold. Dispatch it only for a reusable capability gap, repeated failure scar, durable agent/skill/tool/hook/runtime lesson, governance-contract change, or explicit user request for durable learning.
 - If capability is missing, return to Thinking or create `capabilityGapPacket`; do not invent a fallback owner.
 - Bind alternatives to the current user's outcome and constraints. "Best" means the strongest evidenced feasible route among the considered candidates; record missing evidence and avoid claims of global optimality.
+- Product mechanisms and execution-provider routes are separate choices. Internal model/tool/agent substitutions do not establish different user experiences. Keep permissions independent of both, and never use a route-fit score as design-quality evidence or as a substitute for uncertainty, coupling, operational-risk and verification facts.
 - For decisions, research, operations, learning and other non-coding goals, discover the required capabilities without forcing an engineering or industry template. Compare expected outcome, cost, risk, reversibility and the smallest discriminating verification before choosing.
 - Keep task-outcome verification separate from framework acceptance. Use `outcome-evaluation.md`; a valid plan or successful schema check cannot close the user's goal.
 
@@ -33,14 +34,14 @@ Use when choosing fast, standard, or regulated path, or when comparing minimal f
 - `fetchPacket`
 - runtime and OS target
 - dependency candidates
-- route score inputs
+- current capability support, evidence and task-bound depth facts
 - choice-surface policy
 
 ## Do
 
-- Score route as intentFit 20%, ownerFit 15%, weaponFit 15%, dependencyFit 15%, runtimeSupport 10%, osSupport 10%, verificationStrength 10%, riskRollbackClarity 5%.
-- Select `>=85` automatically when no branch-changing choice is needed.
-- Ask only when route, risk, scope, owner, runtime, OS, dependency, or acceptance changes.
+- Compare actual capability fit, supported runtime/OS, required inputs, verification, risk and reversibility. Existing provider-fit rankings are diagnostic, not calibrated design quality or permission.
+- Choose internal owners/tools autonomously when the user-visible outcome and authorized boundaries are unchanged; a score band alone cannot create a user question.
+- Ask only for a material change to outcome, scope, maintenance responsibility, resource commitment, authorization or acceptance. Investigate missing facts before asking.
 
 ## Do not
 
@@ -50,23 +51,23 @@ Use when choosing fast, standard, or regulated path, or when comparing minimal f
 
 ## Required packet
 
-`pathSelectionPacket`: `pathCandidates`, `selectedPath`, `whyThisPath`, `routeScoreBreakdown`, `rejectedRoutes`, `userChoiceNeeded`, `decisionCard`.
+Use the existing `pathSelectionPacket`: candidates, selected path, evidence-based rationale, rejected routes, actual user-choice need and any material decision card. A retained `routeScoreBreakdown` is a provider-fit diagnostic, never a replacement for task facts or product acceptance.
 
 ## Pass
 
-- selected path has score band and rationale.
-- rejected routes list score and reason.
+- selected path has current evidence and a concrete rationale.
+- rejected routes name the constraint or evidence that makes them unsuitable.
 - public-ready path has verification evidence and intent acceptance requirements.
 
 ## Fail
 
-- best path has no score formula.
-- `70-84` route proceeds without confirmation or extra evidence.
-- `<50` route lacks `capabilityGapPacket`.
+- a numerical rank substitutes for missing capability evidence or user-goal acceptance.
+- internal provider substitutions are offered as different product mechanisms.
+- missing capabilities lack a concrete gap and next action.
 
 ## Block
 
-Block routes with unsupported runtime, unsupported OS, fake owner, reference-only execution dependency, unresolved high/critical finding, or publicReadyScore `<90`.
+Block routes with unsupported runtime/OS, fake owner, reference-only execution dependency, unresolved high/critical findings, missing required evidence or missing authorization. A fixed public-ready score cannot prove outcome quality or override these conditions.
 
 ## Return to stage
 
@@ -78,7 +79,7 @@ Run `npm run meta:capabilities:route -- --task "fuzzy product monetization task"
 
 ## Writeback
 
-Write recurring path scoring failures to `config/governance/decision-pattern-catalog.json` or scar tests.
+Write recurring evidence/selection failures to the existing decision-pattern catalog or regression tests; do not add a new scoring authority.
 
 ## Preserve
 

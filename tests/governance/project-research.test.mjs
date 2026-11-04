@@ -12,11 +12,12 @@ import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runti
 import { hostCriticalGoalCriteria, sameHostCriticalMeaning } from "../../scripts/governed-execution/intent-dialogue.mjs";
 import { evaluateProductOutcomeReview } from "../../scripts/governed-execution/product-design.mjs";
 import { createHash } from "node:crypto";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 const observedAt = "2026-01-01T00:00:00Z";
 function researchInput(taskHash = "task") {
-  return { schemaVersion: 1, taskHash, intentDigest: null, required: true,
-    topics: [{ id: "design", question: "Which design fits?", keywords: ["product discovery"], decisionRefs: [], sourceIds: ["one", "two", "three"],
+  return { schemaVersion: 2, taskHash, intentDigest: null, required: true,
+    topics: [{ id: "design", question: "Which design fits?", decisionImpact: "Select the fitting product mechanism", status: "resolved", conclusion: "Retain the existing workflow supported by these sources", keywords: ["product discovery"], decisionRefs: [], sourceIds: ["one", "two", "three"],
       queries: ["web", "github"].map(channel => ({ keyword: "product discovery", channel, query: "product discovery", observedAt })) }],
     sources: ["one", "two", "three"].map(id => ({ id, kind: "github", url: `https://github.com/example/${id}`, observedAt,
       stars: 100, revision: "a".repeat(40), relevance: "Dependency-aware product decisions", findings: `Finding ${id}`, adaptation: "Use evidence records; retain the existing eight stages" })) };
@@ -48,18 +49,20 @@ test("bounded project context distinguishes new roots and existing multi-languag
     assert.ok(bounded.limitations.length > 0);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-test("research counts only topic-linked matching repositories and reports source, freshness and keyword gaps", () => {
+test("research follows decisions and retains explicit user source constraints, freshness and query requirements", () => {
   const normalize = input => normalizeResearchEvidence({ input, taskHash: "task", now: Date.parse("2026-11-04") });
   const input = researchInput(); assert.equal(normalize(input).readiness, "ready");
   const unknown = structuredClone(input); unknown.topics[0].sourceIds.push("unknown");
   assert.throws(() => normalize(unknown), /unknown source/);
   const gap = structuredClone(input); gap.topics[0].queries.pop(); gap.sources[0].expiresAt = "2026-02-01"; gap.sources[1].stars = 99;
+  gap.constraints = { evidenceRefs: ["fixture:explicit-user-research-requirement"], minimumGithubRepositories: 3, minimumObservedStars: 100, requiredChannels: ["web", "github"] };
   const result = normalize(gap);
   assert.ok(result.gaps.includes("research_source_expired:one"));
-  assert.ok(result.gaps.includes("matching_github_repositories_below_three"));
+  assert.ok(result.gaps.includes("explicit_minimum_github_repositories_unmet"));
   assert.ok(result.gaps.some(value => value.startsWith("keyword_query_missing:")));
   const unrelated = structuredClone(input); unrelated.topics[0].sourceIds = ["one"];
   assert.equal(normalize(unrelated).matchingRepositoryCount, 1);
+  assert.equal(normalize(unrelated).readiness, "ready", "A sufficient relevant source has no generic repository quota");
   const repeated = structuredClone(input); repeated.topics[0].queries.push(repeated.topics[0].queries[0]);
   assert.equal(normalize(repeated).topics[0].queries.length, 2);
 });
@@ -74,9 +77,10 @@ test("immutable research survives a later turn; selected task evidence reaches t
     assert.equal(later.digest, research.digest);
     const input = { schemaVersion: 1, taskHash: goal.taskHash, intentDigest: null, acceptanceDigest: goal.acceptanceDigest,
       designId: "inspection", revision: 1, mode: "delivery", sourceRefs: ["package.json"], researchRefs: ["one"],
-      taskSlices: [{ id: "report", outcome: "Report package metadata", capabilityNeed: ["read metadata"], scopeFiles: ["package.json"], inputRefs: [], researchRefs: ["one"], criterionIds: ["user-outcome"], dependsOn: [], completionDemo: "Read the metadata report", deliverables: [{ id: "report", description: "Package report", consumer: "User" }], verification: [{ criterionId: "user-outcome", procedure: "Compare metadata", expectedEvidence: "Exact metadata" }] }] };
+      taskSlices: [{ id: "report", outcome: "Report package metadata", taskFacts: readOnlyFixtureTaskFacts("Report package metadata"), capabilityNeed: ["read metadata"], scopeFiles: ["package.json"], inputRefs: [], researchRefs: ["one"], criterionIds: ["user-outcome"], dependsOn: [], completionDemo: "Read the metadata report", deliverables: [{ id: "report", description: "Package report", consumer: "User" }], verification: [{ criterionId: "user-outcome", procedure: "Compare metadata", expectedEvidence: "Exact metadata" }] }] };
     const design = normalizeProductDesign({ input, dialogue, goalContract: goal, research, requireResearch: true });
-    const [packet] = projectDesignWorkerTasks({ design, runId: "run", research, templates: [{ ownerAgent: "reader", workOrderReadiness: "ready" }] });
+    await writeFile(path.join(root, "package.json"), '{"name":"fixture"}');
+    const [packet] = projectDesignWorkerTasks({ design, runId: "run", research, projectRoot: root, templates: [{ ownerAgent: "reader", workOrderReadiness: "ready" }] });
     assert.equal(packet.researchEvidence.length, 1);
     const prompt = buildReadOnlyWorkerPrompt({ runId: "run", runtime: "codex", node: { nodeId: "node" }, packet });
     assert.ok(prompt.includes("Finding one")); assert.ok(!prompt.includes("Finding two"));
@@ -106,7 +110,7 @@ test("immutable research survives a later turn; selected task evidence reaches t
     assert.ok(normalizeProductDesign({ input: noBinding, dialogue, goalContract: goal, research, requireResearch: true }).researchBinding.gaps.some(gap => gap.startsWith("task_research_binding_missing")));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-test("the ordinary runner records old-project context before Critical and pauses full design for missing research", async t => {
+test("the ordinary runner prepares Critical first and only explicit decision research blocks Fetch", async t => {
   const fixture = createGovernanceRuntimeFixtureScope(t);
   const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const task = "Create a complete design for the requested product";
@@ -116,12 +120,19 @@ test("the ordinary runner records old-project context before Critical and pauses
   assert.equal(initial.hostInvocationRequestPacket.nextAction.action, "produce_current_critical_understanding");
   assert.deepEqual(initial.workerTaskPackets, []);
   const result = await runMetaTheoryGovernedExecution({ task, runId: "project-research-missing", stateDir: path.resolve("tmp/research-state"), dbPath: path.resolve("tmp/research.sqlite"),
+    governanceTaskFacts: readOnlyFixtureTaskFacts(task),
+    requirementsDiscoveryInput: { schemaVersion: 1, taskHash: goal.taskHash, intentDigest: null, evidenceRefs: ["fixture:research-request"], decisionItems: [], research: { ...researchInput(goal.taskHash), topics: researchInput(goal.taskHash).topics.map(topic => ({ ...topic, status: "unresolved" })) } },
     designRequired: true, criticalInput: { taskHash: goal.taskHash, intentDigest: null, realIntent: task, evidenceRefs: ["fixture:request"], blockingUnknowns: [], nonGoals: [], successCriteria: ["Review a complete evidence-backed PRD"] } });
   assert.equal(result.projectContextPacket.stagePosition, "before_critical");
   assert.equal(result.projectContextPacket.lifecycle, "existing_project");
   assert.equal(result.hostInvocationRequestPacket.nextAction.stage, "Fetch");
-  assert.ok(result.hostInvocationRequestPacket.nextAction.researchGaps.includes("required_research_missing"));
+  assert.ok(result.hostInvocationRequestPacket.nextAction.researchGaps.includes("decision_evidence_unresolved:design"));
   assert.deepEqual(result.workerTaskPackets, []);
+  const designOnly = await runMetaTheoryGovernedExecution({ task, runId: "project-design-with-local-evidence", stateDir: path.resolve("tmp/research-state"), dbPath: path.resolve("tmp/research.sqlite"),
+    governanceTaskFacts: readOnlyFixtureTaskFacts(task), designRequired: true,
+    criticalInput: { taskHash: goal.taskHash, intentDigest: null, realIntent: task, evidenceRefs: ["fixture:request"], blockingUnknowns: [], nonGoals: [], successCriteria: ["Review a complete evidence-backed PRD"] } });
+  assert.equal(designOnly.hostInvocationRequestPacket.nextAction.stage, "Thinking");
+  assert.deepEqual(designOnly.hostInvocationRequestPacket.nextAction.researchGaps, []);
 });
 test("Critical numerical criteria preserve their rule, and real outcome review rejects forged sample hashes", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-measured-"));

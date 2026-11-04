@@ -10,6 +10,7 @@ import test from "node:test";
 import { advanceGovernedGoal, commitMachineSourceProposal } from "../../scripts/governed-execution/advance-goal.mjs";
 import { openDurableRunRepository } from "../../src/application/run/open-durable-run-repository.mjs";
 import { buildTaskGoalContract } from "../../src/domain/governance/task-outcome.mjs";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 import {
   applyStageRunnerBridgeResult,
   buildRuntimeChildEnv,
@@ -108,7 +109,7 @@ function lane(taskPacketId, overrides = {}) {
 }
 
 function packet(taskPacketId, overrides = {}) {
-  return {
+  const workOrder = {
     taskPacketId,
     owner: "test",
     ownerAgent: "test-automator",
@@ -123,6 +124,12 @@ function packet(taskPacketId, overrides = {}) {
     externalWriteBoundary: false,
     ...overrides,
   };
+  workOrder.todayTask ??= workOrder.description;
+  if (!Object.hasOwn(overrides, "taskFacts")) {
+    workOrder.taskFacts = readOnlyFixtureTaskFacts(workOrder.todayTask);
+    workOrder.taskFactsSubject = workOrder.todayTask;
+  }
+  return workOrder;
 }
 
 function dagFor(taskPacketIds, { capacity = taskPacketIds.length, laneOverrides = {} } = {}) {
@@ -1077,4 +1084,37 @@ test("durable historical native labels cannot attest a current process or method
   const applied = applyStageRunnerBridgeResult(coreLoopForMethod(bridge, selected), bridge);
   assert.equal(applied.executionResult.actualWorkerExecution, false);
   assert.equal(applied.executionResult.workerExecutionEvidence[0].ownerMethodBinding, null);
+});
+
+test("partial work retains actual built-in process observation while injected claims remain unverified", async t => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-partial-process-"));
+  t.after(() => { assert.equal(path.dirname(root), path.resolve(os.tmpdir())); rmSync(root, { recursive: true, force: true }); });
+  const wire = [
+    { type: "thread.started", thread_id: "synthetic-partial-process" },
+    { type: "item.completed", item: { id: "final", type: "agent_message", text: "Bounded fixture output" } },
+    { type: "turn.completed", usage: {} },
+  ].map(value => JSON.stringify(value)).join("\n") + "\n";
+  const program = `process.stdin.resume();process.stdin.on("end",()=>process.stdout.write(${JSON.stringify(wire)}));`;
+  if (process.platform === "win32") {
+    writeFileSync(path.join(root, "fake-codex.mjs"), program);
+    writeFileSync(path.join(root, "codex.cmd"), '@echo off\r\n"%~dp0\\node.exe" "%~dp0\\fake-codex.mjs" %*\r\n');
+  } else {
+    writeFileSync(path.join(root, "codex"), `#!/usr/bin/env node\n${program}`); chmodSync(path.join(root, "codex"), 0o700);
+  }
+  const packets = [packet("ready"), packet("waiting", { taskFacts: null })];
+  const stageDagPacket = dagFor(["ready", "waiting"]);
+  // A local synthetic CLI exercises built-in process observation, not a model or an official provider.
+  const observed = await runStageRunnerBridge({ runId: "partial-observed", runtime: "codex", stageDagPacket, workerTaskPackets: packets, workspaceRoot: root,
+    workerEnv: { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH}` } });
+  assert.equal(observed.status, "partial");
+  assert.equal(observed.executionProjection.invocationTruth.nativeRuntimeInvoked, true);
+  assert.equal(observed.executionProjection.invocationTruth.nativeInvocationAttemptCount, 1);
+  assert.equal(observed.executionProjection.invocationTruth.executionComplete, false);
+  assert.equal(observed.executionProjection.invocationTruth.bridgeCallbackCompleted, false);
+  assert.equal(observed.executionProjection.invocationTruth.plannedIsInvoked, false);
+  const injected = await runStageRunnerBridge({ runId: "partial-injected", runtime: "codex", stageDagPacket, workerTaskPackets: packets, workspaceRoot: root,
+    invokeWorker: async () => ({ status: "pass", runtimeProcessInvoked: true, outputText: "Self-reported native", exitCode: 0 }) });
+  assert.equal(injected.status, "partial");
+  assert.equal(injected.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
+  assert.equal(injected.executionProjection.invocationTruth.nativeInvocationAttemptCount, 0);
 });

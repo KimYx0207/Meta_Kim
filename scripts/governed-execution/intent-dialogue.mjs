@@ -317,7 +317,7 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
       criterionAssignmentSource: hasExplicitAssignment ? "explicit_goal_ids" : acceptanceCriterionIds.length ? primaryWorkers.length ? "sole_primary_outcome_owner" : "sole_verification_outcome_owner" : "unassigned",
       nonGoals: [...new Set([...strings(packet.nonGoals), ...globalNonGoals])],
       coreProblem: dialogue.outcome,
-      todayTask: implementation ? `${dialogue.outcome}\n${packet.todayTask ?? ""}`.trim() : packet.todayTask,
+      todayTask: implementation && !packet.taskFacts ? `${dialogue.outcome}\n${packet.todayTask ?? ""}`.trim() : packet.todayTask,
       acceptanceCriteria: [...(packet.acceptanceCriteria ?? []),
         ...assignedCriteria.map((criterion) => criterion.description)],
       handoffContract: { ...packet.handoffContract,
@@ -344,11 +344,12 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
 
 export function routeCandidateOptions(routeResult) {
   const card = routeResult?.decisionCard;
-  const routes = routeResult?.rankedRoutes ?? [];
-  const feasible = routes.filter((route) =>
-    route.score >= 70 && !(route.blockedReasons?.length)).slice(0, 3);
-  const options = card?.options?.length ? card.options : feasible.length ? feasible :
-    routeResult?.recommendedRoute ? [routeResult.recommendedRoute] : [];
+  const options = (card?.options ?? []).filter(option =>
+    option.source?.startsWith("recommendedRoute.subjectiveUiCapabilityAmplification.decisionCheckpoints.") ||
+    (Array.isArray(option.materialDimensions) && option.materialDimensions.some(dimension =>
+      ["result", "scope", "cost", "permission", "compatibility", "publicReadyAcceptance"].includes(dimension)) &&
+      refs(option.evidenceRefs) && typeof option.expectedResult === "string" && option.expectedResult.trim()));
+  if (options.length < 2) return [];
   return options.map((option) => ({
     optionId: option.id, whatChanges: option.bestFor ?? option.weapon ?? option.id,
     problemSolved: option.benefit ?? "Uses capabilities discovered for the current task.",

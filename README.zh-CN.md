@@ -30,7 +30,7 @@
 
 Meta_Kim 是通过 Claude Code、Codex 等宿主运行的通用 Agent 治理框架，核心是理解意图、辅助决策和编排能力。研究、经营、学习、写作、软件开发等任务，都按实际需要发现能力、比较可行路线、组织负责人和依赖、验证结果。行业角色是可选能力；框架负责把它们用在合适的位置，并保留可复用经验。
 
-当前发布：[v3.7.3](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.7.3)。更新日志：[简体中文](CHANGELOG.zh-CN.md) · [English](CHANGELOG.md) · [日本語](CHANGELOG.ja-JP.md) · [한국어](CHANGELOG.ko-KR.md)。
+当前发布：[v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0)。更新日志：[简体中文](CHANGELOG.zh-CN.md) · [English](CHANGELOG.md) · [日本語](CHANGELOG.ja-JP.md) · [한국어](CHANGELOG.ko-KR.md)。
 
 > 你说：“按我的预算和时间比较可行方案，给出有依据的推荐，安排执行顺序，最后明确哪些结果真的验证过。”
 

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { evaluateTaskOutcome } from "../../src/domain/governance/task-outcome.mjs";
 import { stageLaneNodeId } from "./stage-dag.mjs";
 import { normalizeResearchEvidence, researchForTask } from "./research-records.mjs";
+import { inspectTrustedPath } from "../safe-managed-file-operations.mjs";
+import { readCurrentTaskFacts } from "./task-design-dispatch.mjs";
 
 const text = (value) => typeof value === "string" && value.trim().length > 0;
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -95,6 +97,19 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
   const journeys = structuredClone(input.userJourneys ?? []);
   const journeyIds = uniqueRows(journeys, "id", "User journeys");
   const criteria = new Set(goalContract.acceptanceCriteria.map((criterion) => criterion.id));
+  const solutionOptions = structuredClone(input.solutionOptions ?? []);
+  const optionIds = uniqueRows(solutionOptions, "id", "Product solution options");
+  const experiences = new Set();
+  for (const option of solutionOptions) {
+    requireThat(text(option.mechanism) && text(option.scenario) && list(option.userFlow) && option.userFlow.length > 0,
+      "Product options need a user scenario, solution mechanism and actual user flow");
+    for (const key of ["benefits", "costs", "failureConditions", "unknowns", "evidenceRefs"]) requireThat(list(option[key] ?? []), `Product option ${key} must be a list`);
+    const experience = productDesignDigest([option.scenario, option.userFlow, option.benefits ?? [], option.costs ?? [], option.failureConditions ?? []]);
+    requireThat(!experiences.has(experience), "Execution tool substitutions with the same user flow and tradeoffs are not distinct product options");
+    experiences.add(experience);
+  }
+  if (input.mode === "delivery" && solutionOptions.length > 0) requireThat(optionIds.has(input.selectedOptionId) && text(input.selectionRationale), "Delivery requires a selected product option and rationale");
+  if (input.selectedOptionId !== undefined) requireThat(optionIds.has(input.selectedOptionId) && text(input.selectionRationale), "Selected product option needs an existing identity and rationale");
   for (const journey of journeys) {
     requireThat(text(journey.audience) && text(journey.motivation), "Journey requires audience and motivation");
     requireThat(Array.isArray(journey.steps) && journey.steps.length > 0 && journey.steps.every((step) => text(step.action) && text(step.feedback) && text(step.result)), "Journey needs concrete action, feedback and result");
@@ -117,6 +132,11 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
     }
     if (researchRequired && !slice.researchRefs?.length && !text(slice.researchNotApplicableReason)) researchGaps.push(`task_research_binding_missing:${slice.id}`);
     requireThat(text(slice.outcome) && list(slice.capabilityNeed) && slice.capabilityNeed.length > 0, "Task slice needs outcome and capability demand");
+    if (slice.taskFacts != null) {
+      const taskFacts = readCurrentTaskFacts(slice.taskFacts, slice.outcome);
+      requireThat(taskFacts, "Task slice requires current task-bound v2 design facts");
+      slice.taskFacts = structuredClone(taskFacts);
+    }
     requireThat(text(slice.completionDemo), "Task slice requires an observable completion demonstration");
     for (const key of ["scopeFiles", "inputRefs", "criterionIds", "journeyRefs", "decisionRefs", "artifactFlowRefs"]) requireThat(list(slice[key] ?? []), `Task slice ${key} must be a string list`);
     requireThat(slice.criterionIds.length > 0 && slice.criterionIds.every((id) => criteria.has(id)), "Task slice requires existing goal criteria");
@@ -131,6 +151,20 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
     if ((slice.dependsOn ?? []).length) requireThat(Array.isArray(slice.dependencyReasons) && slice.dependsOn.every((id) => slice.dependencyReasons.some((reason) => reason.taskId === id && text(reason.reason))), "Each task dependency needs its actual blocking reason");
   }
   const taskIds = new Set(slices.map((slice) => slice.id));
+  const sharedState = structuredClone(input.sharedState ?? []);
+  const interfaces = structuredClone(input.interfaces ?? []);
+  const stateIds = uniqueRows(sharedState, "id", "Shared state");
+  const interfaceIds = uniqueRows(interfaces, "id", "Shared interfaces");
+  for (const state of sharedState) requireThat(text(state.description) && taskIds.has(state.ownerTaskId) && list(state.consumerTaskIds ?? []) &&
+    (state.consumerTaskIds ?? []).every(id => taskIds.has(id)), "Shared state needs its actual owner, consumers and responsibility");
+  for (const contract of interfaces) requireThat(taskIds.has(contract.producerTaskId) && list(contract.consumerTaskIds) && contract.consumerTaskIds.every(id => taskIds.has(id)) &&
+    (text(contract.contract) || object(contract.contract)), "Interface needs producer, consumers and a concrete contract");
+  for (const slice of slices) {
+    for (const [key, known] of [["stateRefs", stateIds], ["interfaceRefs", interfaceIds]]) {
+      requireThat(slice[key] === undefined || list(slice[key]) && slice[key].every(id => known.has(id)), `Task references unknown ${key}`);
+    }
+    requireThat(slice.domainTermRefs === undefined || list(slice.domainTermRefs) && slice.domainTermRefs.every(term => (input.domainTerms ?? []).some(item => (item.id ?? item.term) === term)), "Task references unknown domain terms");
+  }
   const slicesById = new Map(slices.map((slice) => [slice.id, slice]));
   const dependencyClosure = (taskId, seen = new Set()) => {
     for (const dependencyId of slicesById.get(taskId).dependsOn ?? []) {
@@ -155,6 +189,10 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
     designId: input.designId, revision: input.revision, mode: input.mode, sourceRefs: [...input.sourceRefs], settledDecisionRefs: [...(input.settledDecisionRefs ?? [])],
     domainTerms: structuredClone(input.domainTerms ?? []), userJourneys: journeys, taskSlices: slices, artifactFlow: flows,
     revisionContext: structuredClone(input.revisionContext ?? null), ...(input.lifecycle !== undefined ? { lifecycle: input.lifecycle } : {}),
+    ...(input.solutionOptions !== undefined ? { solutionOptions } : {}),
+    ...(input.selectedOptionId !== undefined ? { selectedOptionId: input.selectedOptionId, selectionRationale: input.selectionRationale } : {}),
+    ...(input.sharedState !== undefined ? { sharedState } : {}), ...(input.interfaces !== undefined ? { interfaces } : {}),
+    ...(slices.some(slice => slice.decisionRefs?.length) ? { decisions: structuredClone((dialogue.settledDecisionRefs ?? []).filter(decision => slices.some(slice => slice.decisionRefs?.includes(decision.decisionId)))) } : {}),
     ...(research || researchRequired ? { researchBinding: { required: researchRequired, digest: research?.digest ?? null,
       sourceIds: [...new Set([...researchRefs, ...slices.flatMap(slice => slice.researchRefs ?? [])])], gaps: researchGaps } } : {}) };
   const revisionImpact = deriveDesignRevisionImpact(normalized);
@@ -186,7 +224,7 @@ export function deriveDesignRevisionImpact(design) {
 
 /** Consume a discovered route template; the design cannot supply an owner or
  * grant a tool. Per-slice templates were selected using its capability demand. */
-export function projectDesignWorkerTasks({ design, runId, templates, research = null, projectContext = null }) {
+export function projectDesignWorkerTasks({ design, runId, templates, research = null, projectContext = null, projectRoot = null }) {
   if (!design) return templates;
   requireThat(!design.researchBinding?.digest || design.researchBinding.digest === research?.digest, "Design research changed before task handoff");
   requireThat(design.revisionContext?.previousRunId !== runId, "Changed design requires a new run, not resume or overwrite");
@@ -195,14 +233,36 @@ export function projectDesignWorkerTasks({ design, runId, templates, research = 
     requireThat(packet, "Design task has no discovered capability route");
     const scopeFiles = [...slice.scopeFiles];
     const taskPacketId = `${runId}-design-${slice.id}`;
-    const ready = design.readiness === "structure_ready_not_reviewed" && scopeFiles.length > 0 && packet.workOrderReadiness === "ready";
+    const sourceBindings = [...new Set(slice.inputRefs.length ? slice.inputRefs : design.sourceRefs)].map(ref => {
+      const flow = design.artifactFlow.find(flow => flow.terminalArtifactRef === ref && flow.consumerTaskIds.includes(slice.id));
+      if (flow) return { ref, status: "pending_upstream", producerTaskId: `${runId}-design-${flow.producerTaskId}` };
+      if (/^[a-z][a-z0-9+.-]*:/iu.test(ref) && !path.isAbsolute(ref)) return { ref, status: "reference_only", limitation: "Reference is not an observed project file" };
+      if (!projectRoot) return { ref, status: "unbound", limitation: "Current project root required before dispatch" };
+      const checked = inspectTrustedPath(projectRoot, ref);
+      if (!checked || !statSync(checked.target).isFile()) return { ref, status: "unavailable", limitation: "Source missing, outside the project or unsafe" };
+      const bytes = readFileSync(checked.target);
+      return { ref, status: "bound", sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+    });
+    const context = { schemaVersion: 1, taskPacketId, taskHash: design.taskHash, intentDigest: design.intentDigest, designDigest: design.designDigest,
+      designId: design.designId, revision: design.revision, sliceId: slice.id,
+      ...(design.selectedOptionId ? { selectedOption: design.solutionOptions.find(option => option.id === design.selectedOptionId), selectionRationale: design.selectionRationale } : {}),
+      journeys: design.userJourneys.filter(journey => slice.journeyRefs?.includes(journey.id)),
+      decisions: (design.decisions ?? []).filter(decision => slice.decisionRefs?.includes(decision.decisionId)),
+      domainTerms: design.domainTerms.filter(term => !slice.domainTermRefs || slice.domainTermRefs.includes(term.id ?? term.term)),
+      sharedState: (design.sharedState ?? []).filter(state => slice.stateRefs ? slice.stateRefs.includes(state.id) : state.ownerTaskId === slice.id || state.consumerTaskIds?.includes(slice.id)),
+      interfaces: (design.interfaces ?? []).filter(contract => slice.interfaceRefs ? slice.interfaceRefs.includes(contract.id) : contract.producerTaskId === slice.id || contract.consumerTaskIds.includes(slice.id)),
+      artifactFlow: design.artifactFlow.filter(flow => flow.producerTaskId === slice.id || flow.consumerTaskIds.includes(slice.id)), sourceBindings };
+    const designContext = { ...context, digest: productDesignDigest(context), authority: "Task-scoped projection of the single PRD; no user approval or tool permission" };
+    const ready = design.readiness === "structure_ready_not_reviewed" && scopeFiles.length > 0 && packet.workOrderReadiness === "ready" && !sourceBindings.some(source => source.status === "unavailable");
     return { ...packet, taskPacketId, roleInstanceId: slice.id, businessFlowLaneId: slice.id,
       coreProblem: slice.outcome, todayTask: slice.outcome, description: slice.outcome,
       output: slice.deliverables.map((item) => item.description).join("; "), deliverableLink: `design://${design.designId}/${slice.id}`,
       scopeFiles, shardScope: scopeFiles, dependsOn: (slice.dependsOn ?? []).map((id) => `${runId}-design-${id}`),
       dependencyEvidence: "explicit_design_dependencies", capabilityNeed: [...slice.capabilityNeed], capabilityRequirements: [...slice.capabilityNeed],
       acceptanceCriterionIds: [...slice.criterionIds], verifySteps: slice.verification.map((check, i) => ({ id: `${taskPacketId}-check-${i + 1}`, step: check.procedure, verify: check.expectedEvidence })),
-      designBinding: { designId: design.designId, revision: design.revision, designDigest: design.designDigest, sliceId: slice.id },
+      designBinding: { designId: design.designId, revision: design.revision, designDigest: design.designDigest, sliceId: slice.id, contextDigest: designContext.digest },
+      designContext,
+      ...(slice.taskFacts ? { taskFacts: structuredClone(slice.taskFacts), taskFactsSubject: slice.outcome } : {}),
       ...(slice.researchRefs?.length ? { researchContextBinding: { taskHash: design.taskHash, intentDigest: design.intentDigest } } : {}),
       ...(slice.researchRefs?.length ? { researchEvidence: researchForTask({ research, sourceIds: slice.researchRefs }) } : {}),
       ...(projectContext ? { projectContextBinding: { digest: projectContext.digest, lifecycle: projectContext.lifecycle,
@@ -213,6 +273,32 @@ export function projectDesignWorkerTasks({ design, runId, templates, research = 
       artifactFlowRefs: [...(slice.artifactFlowRefs ?? [])], artifactFlow: design.artifactFlow.filter((flow) => flow.producerTaskId === slice.id || flow.consumerTaskIds.includes(slice.id)),
       workOrderReadiness: ready ? "ready" : "incomplete", finalizationGate: ready ? packet.finalizationGate : "blocked_before_host_handoff" };
   });
+}
+
+/** Recheck the same task/PRD/source binding for native and injected dispatches. */
+export async function verifyTaskDesignContext({ packet, projectRoot, upstreamResults = [] }) {
+  if (!packet?.designBinding) return;
+  const context = packet.designContext;
+  requireThat(context, "Legacy design task needs current PRD context migration before dispatch");
+  const { digest, authority, ...content } = context;
+  requireThat(productDesignDigest(content) === digest && digest === packet.designBinding.contextDigest && context.designDigest === packet.designBinding.designDigest &&
+    context.designId === packet.designBinding.designId && context.revision === packet.designBinding.revision && context.sliceId === packet.designBinding.sliceId &&
+    context.taskPacketId === packet.taskPacketId, "Design context digest or current task binding changed");
+  if (packet.intentBinding) requireThat(context.taskHash === packet.intentBinding.taskHash && (context.intentDigest ?? null) === (packet.intentBinding.intentDigest ?? null), "Design context must preserve current intent");
+  for (const source of context.sourceBindings) {
+    if (source.status === "reference_only") continue;
+    let expected = source.sha256;
+    if (source.status === "pending_upstream") {
+      const producer = upstreamResults.find(result => result.taskPacketId === source.producerTaskId);
+      const output = producer?.deliveryEnvelope?.reportedArtifactRefs?.find(artifact => artifact.ref === source.ref);
+      requireThat(["completed", "pass"].includes(producer?.status) && /^[a-f0-9]{64}$/u.test(output?.sha256 ?? ""), `Upstream artifact ${source.ref} has no current producer evidence`);
+      expected = output.sha256;
+    } else requireThat(source.status === "bound", `Design input ${source.ref} is ${source.status}; return to Thinking for current source binding`);
+    const checked = inspectTrustedPath(projectRoot, source.ref);
+    requireThat(checked, `Design input ${source.ref} is missing or outside the trusted project`);
+    const current = createHash("sha256").update(await fs.readFile(checked.target)).digest("hex");
+    requireThat(current === expected, `Design input ${source.ref} changed; review the affected design before dispatch`);
+  }
 }
 
 /** Project observed design-stage facts into existing node decisions, never selected owners or permissions. */
@@ -318,7 +404,11 @@ export async function evaluateProductOutcomeReview({ input, artifact, projectRoo
     const related = input.observations.filter((observation) => observation.criterionId === request.criterionId &&
       request.evidenceRefs.some((ref) => ref === observation.evidenceRef || observation.artifactRefs.includes(ref)));
     requireThat(related.length > 0, "Revision must refer to this criterion's current observation and artifact");
-    requireThat(outcome.results.find((result) => result.criterionId === request.criterionId)?.reason === "reported_task_bound_assessment",
+    const result = outcome.results.find(result => result.criterionId === request.criterionId);
+    const measuredFailure = result?.status === "fail" &&
+      (result.reason === "numeric_target_not_met" && result.measurement?.status === "fail" ||
+        result.reason === "measured_target_and_reported_assessment" && result.measurement?.status === "pass");
+    requireThat(result?.reason === "reported_task_bound_assessment" || measuredFailure,
       "Revision requires a valid current criterion observation");
     request.artifactRefs = [...new Set(related.flatMap((observation) => observation.artifactRefs))];
   }

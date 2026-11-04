@@ -140,11 +140,9 @@ test("settled answers are retained while material unresolved decisions and Permi
   assert.equal(local.planChallengeState.executionAllowed, false);
 });
 
-test("route options describe actual discovered routes rather than fabricated validator choices", () => {
+test("provider routes remain internal choices rather than fabricated product alternatives", () => {
   const options = routeCandidateOptions({ recommendedRoute: { id: "csv-local", owner: "backend", weapon: "exec_command", score: 90 }, rankedRoutes: [{ id: "csv-local", owner: "backend", weapon: "exec_command", score: 90, blockedReasons: [] }] });
-  assert.equal(options.length, 1);
-  assert.equal(options[0].optionId, "csv-local");
-  assert.equal(options[0].whatChanges, "exec_command");
+  assert.deepEqual(options, []);
 });
 
 test("real runner consumes one bound intent across goal, worker and blueprint without granting execution", async (t) => {

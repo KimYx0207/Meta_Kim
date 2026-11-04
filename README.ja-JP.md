@@ -28,7 +28,7 @@ Claude Code や Codex などのホスト上で、ユーザーの制約に合う�
 
 選択肢の推奨には根拠と不確実性を示します。処理の完了や構造チェックの合格だけで、ユーザーの目的を達成したとは判断しません。
 
-現在のリリース：[v3.7.3](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.7.3)。変更履歴：[日本語](CHANGELOG.ja-JP.md) · [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md) · [한국어](CHANGELOG.ko-KR.md)。
+現在のリリース：[v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0)。変更履歴：[日本語](CHANGELOG.ja-JP.md) · [English](CHANGELOG.md) · [简体中文](CHANGELOG.zh-CN.md) · [한국어](CHANGELOG.ko-KR.md)。
 
 ### 一言でいうと
 

@@ -133,8 +133,8 @@ function normalizedSignals({ task, orchestrationReport, planChallengePreview, re
     dataValue(classificationSignals, "parallelismHints", "entryClassification.signals", {}),
     "entryClassification.signals.parallelismHints",
   );
-  const multiStep = workers.length > 1 ||
-    Number(dataValue(parallelism, "delimitedSegmentCount", "parallelismHints", 0)) > 1;
+  // Worker topology describes scheduling, not the design or safety of a task.
+  const multiStep = false;
   const externalSideEffect = externalWrite || sideEffects.length > 0 || destructiveOrProduction;
   const materialDimensions = [];
   const dimensionSignals = denseArray(
@@ -146,7 +146,7 @@ function normalizedSignals({ task, orchestrationReport, planChallengePreview, re
   if (dimensionSignals.includes("risk_or_permission") || highRisk) materialDimensions.push("risk");
   if (externalSideEffect && !materialDimensions.includes("permission")) materialDimensions.push("permission");
   const internalImplementationOnly =
-    !activeDecision && !subjective && !productBuild && !highRisk && !externalSideEffect && workers.length <= 1;
+    !activeDecision && !subjective && !productBuild && !highRisk && !externalSideEffect;
   return {
     activeDecision,
     capabilityNames,
@@ -174,8 +174,8 @@ export function deriveGovernanceTaskFacts(input) {
   const planChallengePreview = dataValue(args, "planChallengePreview", "input");
   const requestedSideEffectActions = dataValue(args, "requestedSideEffectActions", "input", []);
   const signals = normalizedSignals({ task, orchestrationReport, planChallengePreview, requestedSideEffectActions });
-  const crossModule = signals.workerCount > 1;
-  const multipleCapabilities = new Set(signals.capabilityNames).size > 1 || signals.workerCount > 1;
+  const crossModule = false;
+  const multipleCapabilities = new Set(signals.capabilityNames).size > 1;
   const planningSignal = signals.multiStep || crossModule || signals.migration || signals.externalSideEffect || signals.productBuild || multipleCapabilities;
   const facts = {
     schemaVersion: "governance-task-facts-v1",
@@ -210,16 +210,16 @@ export function deriveGovernanceTaskFacts(input) {
       internalImplementationOnly: signals.internalImplementationOnly,
     },
     security: {
-      auth: false,
-      permission: signals.highRisk || signals.externalSideEffect,
-      credential: false,
-      secret: false,
-      payment: false,
-      production: signals.destructiveOrProduction,
-      databaseDestructive: signals.destructiveOrProduction && signals.migration,
-      systemConfiguration: signals.destructiveOrProduction && !signals.migration,
-      highPrivilegeDependency: false,
-      highRiskMcp: false,
+      auth: null,
+      permission: signals.highRisk || signals.externalSideEffect ? true : null,
+      credential: null,
+      secret: null,
+      payment: null,
+      production: signals.destructiveOrProduction ? true : null,
+      databaseDestructive: signals.destructiveOrProduction && signals.migration ? true : null,
+      systemConfiguration: signals.destructiveOrProduction && !signals.migration ? true : null,
+      highPrivilegeDependency: null,
+      highRiskMcp: null,
     },
     verification: {
       deterministicChecks: signals.classification.governedEntry === true

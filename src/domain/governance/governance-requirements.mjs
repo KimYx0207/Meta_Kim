@@ -152,11 +152,18 @@ export function validateGovernanceTaskFacts(taskFacts) {
   assertPlainObject(taskFacts, "taskFacts");
   assertExactKeys(
     taskFacts,
-    ["schemaVersion", "intent", "clarity", "evidence", "change", "decision", "security", "verification"],
+    ["schemaVersion", "intent", "clarity", "evidence", "change", "decision", "security", "verification", ...(taskFacts.schemaVersion === "governance-task-facts-v2" ? ["taskHash", "design"] : [])],
     "taskFacts",
   );
-  if (taskFacts.schemaVersion !== FACTS_SCHEMA_VERSION) {
+  if (![FACTS_SCHEMA_VERSION, "governance-task-facts-v2"].includes(taskFacts.schemaVersion)) {
     throw new TypeError(`taskFacts.schemaVersion must be ${FACTS_SCHEMA_VERSION}.`);
+  }
+  if (taskFacts.schemaVersion === "governance-task-facts-v2") {
+    if (!/^[a-f0-9]{64}$/u.test(taskFacts.taskHash ?? "")) throw new TypeError("taskFacts.taskHash must bind the current task.");
+    assertPlainObject(taskFacts.design, "taskFacts.design");
+    const dimensions = { uncertainty: ["clear", "focused_unknown", "undecided", "unknown"], coupling: ["local", "shared_state", "shared_contract", "unknown"], operationalRisk: ["low", "sensitive", "unknown"], verification: ["direct", "needs_probe", "unknown"] };
+    assertExactKeys(taskFacts.design, Object.keys(dimensions), "taskFacts.design");
+    for (const [key, values] of Object.entries(dimensions)) if (!values.includes(taskFacts.design[key])) throw new TypeError(`taskFacts.design.${key} is invalid.`);
   }
 
   assertPlainObject(taskFacts.intent, "taskFacts.intent");
@@ -200,7 +207,7 @@ export function validateGovernanceTaskFacts(taskFacts) {
 
   assertPlainObject(taskFacts.security, "taskFacts.security");
   assertExactKeys(taskFacts.security, SECURITY_FACT_KEYS, "taskFacts.security");
-  for (const key of SECURITY_FACT_KEYS) assertBoolean(taskFacts.security[key], `taskFacts.security.${key}`);
+  for (const key of SECURITY_FACT_KEYS) if (taskFacts.security[key] !== null) assertBoolean(taskFacts.security[key], `taskFacts.security.${key}`);
 
   assertPlainObject(taskFacts.verification, "taskFacts.verification");
   assertExactKeys(taskFacts.verification, ["deterministicChecks"], "taskFacts.verification");
@@ -213,6 +220,11 @@ export function validateGovernanceTaskFacts(taskFacts) {
   }
   return Object.freeze({
     ...taskFacts,
+    intent: Object.freeze({ ...taskFacts.intent }),
+    change: Object.freeze({ ...taskFacts.change }),
+    decision: Object.freeze({ ...taskFacts.decision, materialDimensions: Object.freeze([...taskFacts.decision.materialDimensions]) }),
+    security: Object.freeze({ ...taskFacts.security }),
+    ...(taskFacts.design ? { design: Object.freeze({ ...taskFacts.design }) } : {}),
     clarity: Object.freeze({ ...taskFacts.clarity, blockingUnknowns: Object.freeze(blockingUnknowns) }),
     evidence: Object.freeze({ ...taskFacts.evidence, references: Object.freeze(evidenceReferences) }),
     verification: Object.freeze({ ...taskFacts.verification, deterministicChecks: Object.freeze(deterministicChecks) }),
@@ -275,21 +287,24 @@ export function evaluateGovernanceRequirements(taskFacts, { legacyGate = null } 
     .filter((key) => key !== "behaviorPreservingInternalOnly")
     .map((key) => CHANGE_EVIDENCE_REFS[key]);
   const securityReasons = securityFactKeys.map((key) => SECURITY_EVIDENCE_REFS[key]);
+  if (facts.design?.operationalRisk === "sensitive") securityReasons.push("fact:current-sensitive-operation");
   const hasMaterialDecision =
     facts.decision.reasonableOptionCount >= 2 &&
     facts.decision.materialDimensions.length > 0 &&
     facts.decision.internalImplementationOnly === false;
-  const planningRequired =
-    facts.change.multiStep || facts.change.crossModule || facts.change.dataMigration ||
-    facts.change.externalSideEffect || facts.change.complexArchitectureChange || facts.change.multipleCapabilities;
+  const design = facts.design;
+  const integratedDesign = design?.uncertainty === "undecided" || ["shared_state", "shared_contract"].includes(design?.coupling);
+  const focusedProbe = design?.uncertainty === "focused_unknown" || design?.verification === "needs_probe";
+  const planningRequired = integratedDesign || focusedProbe ||
+    facts.change.crossModule || facts.change.dataMigration || facts.change.externalSideEffect || facts.change.complexArchitectureChange;
   const permissionRequired =
-    facts.change.externalSideEffect || securityFactKeys.some((key) =>
+    design?.operationalRisk === "sensitive" || facts.change.externalSideEffect || securityFactKeys.some((key) =>
       ["permission", "credential", "secret", "payment", "production", "databaseDestructive", "systemConfiguration", "highPrivilegeDependency", "highRiskMcp"].includes(key),
     );
   const reviewRequired =
     facts.intent.userRequestedReview || facts.change.publicInterfaceChange || facts.change.complexBusinessLogic ||
     facts.change.crossModule || facts.change.dataStructureChange || facts.change.complexArchitectureChange ||
-    securityReasons.length > 0;
+    securityReasons.length > 0 || integratedDesign || design?.operationalRisk === "sensitive";
   const metaReviewRequired =
     reviewRequired && (securityReasons.length > 0 || facts.change.complexArchitectureChange || facts.change.externalSideEffect);
   const verificationRequired = facts.intent.executable;
@@ -304,7 +319,7 @@ export function evaluateGovernanceRequirements(taskFacts, { legacyGate = null } 
       facts.clarity.blockingUnknowns.length > 0 ? facts.clarity.blockingUnknowns : ["policy:clarity-not-required"],
     ),
     research: requirement(
-      facts.evidence.currentExternalFactsRequired || facts.evidence.localEvidenceSufficient === false,
+      focusedProbe || facts.evidence.currentExternalFactsRequired || facts.evidence.localEvidenceSufficient === false,
       facts.evidence.currentExternalFactsRequired
         ? "Current external facts are required before the route can be trusted."
         : facts.evidence.localEvidenceSufficient === false
